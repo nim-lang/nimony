@@ -6,7 +6,7 @@
 
 ]#
 
-import std/[os, tables, sets]
+import std/[os, tables, sets, syncio]
 import semos, nifconfig, nimony_model
 import ".." / gear2 / modnames
 
@@ -141,6 +141,34 @@ proc requiresTool*(tool, src: string; forceRebuild: bool) =
     nimexec("c -d:release " & src)
     moveFile src.changeFileExt(ExeExt), t
 
+proc generateMakefile(c: DepContext) =
+  var s = ""
+  s.add "# Auto-generated Makefile\n"
+
+  # every .nif file is produced by a .nim file from the nifler tool:
+  for k, v in c.nodes:
+    s.add "\n" & k & ".nif:"
+    for f in v.files:
+      s.add "  " & f
+    s.add "\n\t nifler --portablePaths --deps parse " & k & ".nim " & k & ".nif"
+
+  # ever .nif file depends on the indexes of its imports:
+  for k, v in c.nodes:
+    s.add "\n" & k & ".nif:"
+    for f in v.deps:
+      s.add "  " & f & ".idx.nif"
+    s.add "\n\t nimsem m " & k
+
+  # every .idx.nif file depends on its .nif file:
+  for k, v in c.nodes:
+    for f in v.deps:
+      s.add "\n" & f & ".idx.nif:"
+      s.add "  " & f & ".nif"
+      s.add "\n\t nimsem m " & f & ".idx.nif"
+
+  s.add "\nall: " & c.rootNode.files[0] & ".nif"
+  writeFile "Makefile", s
+
 proc buildGraph(project: string) =
   var config = NifConfig()
   config.bits = sizeof(int)*8
@@ -153,7 +181,8 @@ proc buildGraph(project: string) =
 
   var c = DepContext(config: config, rootNode: Node(files: @[project]), includeStack: @[])
   c.nodes[project] = c.rootNode
-
+  parseDeps c, project, c.rootNode
+  generateMakefile c
 
 when isMainModule:
   createDir("nifcache")
