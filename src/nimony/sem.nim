@@ -1791,10 +1791,25 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         skip n
     of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT, UntypedT, TypedT, CstringT, PointerT:
       takeTree c, n
-    of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT, SetT, StaticT, TypedescT:
+    of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT, StaticT, TypedescT:
       takeToken c, n
       semLocalTypeImpl c, n, context
       wantParRi c, n
+    of SetT:
+      takeToken c, n
+      let elemTypeStart = c.dest.len
+      semLocalTypeImpl c, n, context
+      wantParRi c, n
+      let elemType = cursorAt(c.dest, elemTypeStart)
+      # XXX allow unresolved types
+      if not isOrdinalType(elemType, allowEnumWithHoles = true):
+        c.dest.endRead()
+        c.buildErr info, "set element type must be ordinal"
+      else:
+        let length = lengthOrd(c, elemType)
+        c.dest.endRead()
+        if length.isNaN or length > MaxSetElements:
+          c.buildErr info, "type " & typeToString(elemType) & " is too large to be a set element type"
     of OrT, AndT:
       takeToken c, n
       semLocalTypeImpl c, n, context
@@ -2645,11 +2660,15 @@ proc semSetConstr(c: var SemContext, it: var Item) =
   of AutoT: discard
   else:
     buildErr c, it.n.info, "invalid expected type for set constructor: " & typeToString(it.typ)
+  var elemStart = c.dest.len
+  var elemInfo = elem.n.info
   while elem.n.kind != ParRi:
     if isRangeNode(c, elem.n):
       inc elem.n # call tag
       skip elem.n # `..`
       c.dest.buildTree RangeX, elem.n.info:
+        elemStart = c.dest.len
+        elemInfo = elem.n.info
         semExpr c, elem
         semExpr c, elem
       inc elem.n # right paren of call
@@ -2657,7 +2676,15 @@ proc semSetConstr(c: var SemContext, it: var Item) =
       skip elem.n # resem elements?
     else:
       semExpr c, elem
-    # XXX check if elem.typ is too big
+  # XXX allow unresolved types
+  if not isOrdinalType(elem.typ, allowEnumWithHoles = true):
+    c.buildErr elemInfo, "set element type must be ordinal"
+  #elif elem.typ.typeKind == IntT and c.dest[elemStart].kind == IntLit:
+  #  set to range of 0..<DefaultSetElements
+  else:
+    let length = lengthOrd(c, elem.typ)
+    if length.isNaN or length > MaxSetElements:
+      c.buildErr elemInfo, "type " & typeToString(elem.typ) & " is too large to be a set element type"
   it.n = elem.n
   wantParRi c, it.n
   let typeStart = c.dest.len
