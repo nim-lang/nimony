@@ -1617,8 +1617,6 @@ proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
           if n.kind == ParRi: break
           inc n
 
-proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[SemFlag])
-
 proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; context: TypeDeclContext) =
   if s.kind in {TypeY, TypevarY}:
     let res = tryLoadSym(s.name)
