@@ -6,7 +6,7 @@
 
 ]#
 
-import std/[os, tables, sets, syncio]
+import std/[os, tables, sets, syncio, assertions, strutils]
 import semos, nifconfig, nimony_model
 import ".." / gear2 / modnames
 
@@ -21,6 +21,11 @@ proc indexFile(f: FilePair): string = "nifcache" / f.modname & ".2.idx.nif"
 proc parsedFile(f: FilePair): string = "nifcache" / f.modname & ".1.nif"
 proc depsFile(f: FilePair): string = "nifcache" / f.modname & ".1.deps.nif"
 proc semmedFile(f: FilePair): string = "nifcache" / f.modname & ".2.nif"
+
+proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
+  result = resolveFile(paths, origin, toResolve)
+  if not fileExists(result) and toResolve.startsWith("std/"):
+    result = resolveFile(paths, origin, toResolve.substr(4))
 
 type
   Node = ref object
@@ -55,7 +60,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
     discard "ignore wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c.config.paths, current.files[current.active].nimFile, f1)
+      let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
       # check for recursive include files:
       var isRecursive = false
       for a in c.includeStack:
@@ -77,7 +82,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
         discard "ignore recursive include"
 
 proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo; current: Node) =
-  let f2 = resolveFile(c.config.paths, current.files[current.active].nimFile, f1)
+  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
   let p = c.toPair(f2)
   current.deps.add p
   if not c.processedModules.containsOrIncl(p.modname):
