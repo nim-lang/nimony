@@ -29,6 +29,7 @@ type
     active: int
 
   DepContext = object
+    nifler: string
     config: NifConfig
     nodes: seq[Node]
     rootNode: Node
@@ -136,6 +137,9 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
     if nested == 0: break
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
+  exec quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(p.nimFile) & " " &
+    quoteShell(parsedFile(p))
+
   let depsFile = depsFile(p)
   var stream = nifstreams.open(depsFile)
   try:
@@ -186,12 +190,13 @@ proc buildGraph(project: string) =
   config.bits = sizeof(int)*8
 
   let nifler = findTool("nifler")
-  let name = moduleSuffix(project, config.paths)
-  let src = "nifcache" / name & ".1.nif"
-  exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(project) & " " &
-    quoteShell(src)
 
-  var c = DepContext(config: config, rootNode: nil, includeStack: @[])
+  let cfgNif = "nifcache" / moduleSuffix(project, []) & ".cfg.nif"
+  exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
+    quoteShell(cfgNif)
+  parseNifConfig cfgNif, config
+
+  var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[])
   let p = c.toPair(project)
   c.rootNode = Node(files: @[p])
   c.nodes.add c.rootNode
