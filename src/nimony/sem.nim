@@ -10,7 +10,7 @@
 
 import std / [tables, sets, syncio, formatfloat, assertions]
 include nifprelude
-import nimony_model, symtabs, builtintypes, decls, symparser,
+import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints,
   semdata, sembasics, semos, expreval, semborrow
@@ -184,19 +184,19 @@ proc producesNoReturn(c: var SemContext; info: PackedLineInfo; dest: var Cursor)
     discard
 
 proc semInclude(c: var SemContext; it: var Item) =
-  var files: seq[string] = @[]
+  var files: seq[ImportedFilename] = @[]
   var hasError = false
   let info = it.n.info
   var x = it.n
   skip it.n
   inc x # skip the `include`
-  filenameVal(x, files, hasError)
+  filenameVal(x, files, hasError, allowAs = false)
 
   if hasError:
     c.buildErr info, "wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c, getFile(c, info), f1)
+      let f2 = resolveFile(c, getFile(c, info), f1.path)
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false
@@ -222,15 +222,25 @@ proc semInclude(c: var SemContext; it: var Item) =
 
   producesVoid c, info, it.typ
 
-proc importSingleFile(c: var SemContext; f1, origin: string; info: PackedLineInfo) =
-  let f2 = resolveFile(c, origin, f1)
+proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; info: PackedLineInfo) =
+  let f2 = resolveFile(c, origin, f1.path)
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
     if needsRecompile(f2, suffix):
       selfExec c, f2
 
-    loadInterface suffix, c.importTab
+    let moduleName = pool.strings.getOrIncl(f1.name)
+    let moduleSym = identToSym(c, moduleName, ModuleY)
+    let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
+    c.currentScope.addOverloadable(moduleName, s)
+    var moduleDecl = createTokenBuf(2)
+    moduleDecl.addParLe(ModuleY, info)
+    moduleDecl.addParRi()
+    publish moduleSym, moduleDecl
+    var module = ImportedModule()
+    loadInterface suffix, module.iface, moduleSym, c.importTab
+    c.importedModules[moduleSym] = module
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
@@ -251,9 +261,9 @@ proc semImport(c: var SemContext; it: var Item) =
         cyclicImport(c, x)
         return
 
-  var files: seq[string] = @[]
+  var files: seq[ImportedFilename] = @[]
   var hasError = false
-  filenameVal(x, files, hasError)
+  filenameVal(x, files, hasError, allowAs = true)
   if hasError:
     c.buildErr info, "wrong `import` statement"
   else:
@@ -449,6 +459,7 @@ type
     KeepMagics
     PreferIterators
     AllowUndeclared
+    AllowModuleSym
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
@@ -852,9 +863,12 @@ proc containsGenericParams(n: TypeCursor): bool =
 
 type
   DotExprState = enum
-    MatchedDot, FailedDot, InvalidDot
+    MatchedDotField ## matched a dot field, i.e. result is a dot expression
+    MatchedDotSym ## matched a qualified identifier
+    FailedDot
+    InvalidDot
 
-proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo): DotExprState
+proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo; flags: set[SemFlag]): DotExprState
 
 proc semBuiltinSubscript(c: var SemContext; lhs: Item; it: var Item)
 
@@ -1127,7 +1141,7 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
     swap c.dest, lhsBuf
-    semExpr c, lhs
+    semExpr c, lhs, {AllowModuleSym}
     swap c.dest, lhsBuf
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
@@ -1139,10 +1153,10 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
     skipParRi cs.fn.n
     it.n = cs.fn.n
     # now interpret the dot expression:
-    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo)
+    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared})
     if dotState == FailedDot or
         # also ignore non-proc fields:
-        (dotState == MatchedDot and cs.fn.typ.typeKind != ProcT):
+        (dotState == MatchedDotField and cs.fn.typ.typeKind != ProcT):
       cs.source = MethodCall
       # turn a.b(...) into b(a, ...)
       # first, delete the output of `tryBuiltinDot`:
@@ -1213,7 +1227,39 @@ proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
   else:
     result = ObjField(level: -1)
 
-proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo): DotExprState =
+proc findModuleSymbol(n: Cursor): SymId =
+  result = SymId(0)
+  if n.kind == Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing and symKind(res.decl) == ModuleY:
+      result = n.symId
+  elif n.kind == ParLe and exprKind(n) in {OchoiceX, CchoiceX}:
+    # if any sym in choice is module sym, count it as a module reference
+    # this emulates behavior that was caused by sym order shenanigans before, could be removed
+    var n = n
+    inc n
+    while n.kind != ParRi:
+      result = findModuleSymbol(n)
+      if result != SymId(0): break
+      inc n
+
+proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
+  # mirrors semIdent
+  let insertPos = c.dest.len
+  # XXX does not handle the case where `module` is the current module
+  let count = buildSymChoiceForForeignModule(c, c.importedModules[module], ident, info)
+  if count == 1:
+    let sym = c.dest[insertPos+1].symId
+    c.dest.shrink insertPos
+    c.dest.add symToken(sym, info)
+    result = fetchSym(c, sym)
+  else:
+    result = Sym(kind: if count == 0: NoSym else: CchoiceY)
+
+proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[SemFlag])
+
+proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
+                   info: PackedLineInfo; flags: set[SemFlag]): DotExprState =
   let exprStart = c.dest.len
   let expected = it.typ
   c.dest.addParLe(DotX, info)
@@ -1234,13 +1280,22 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
           c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
           it.typ = field.typ # will be fit later with commonType
           it.kind = FldY
-          result = MatchedDot
+          result = MatchedDotField
         else:
           c.dest.add identToken(fieldName, info)
           c.buildErr info, "undeclared field: " & pool.strings[fieldName]
       else:
         c.dest.add identToken(fieldName, info)
         c.buildErr info, "object type expected"
+    elif lhs.kind == ModuleY:
+      # this is a qualified identifier, i.e. module.name
+      # consider matched even if undeclared
+      result = MatchedDotSym
+      c.dest.shrink exprStart
+      let module = findModuleSymbol(lhs.n)
+      let s = semQualifiedIdent(c, module, fieldName, info)
+      semExprSym c, it, s, exprStart, flags
+      return
     elif t.typeKind == TupleT:
       var tup = t
       inc tup
@@ -1250,10 +1305,10 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
           c.dest.add symToken(field.name.symId, info)
           it.typ = field.typ # will be fit later with commonType
           it.kind = FldY
-          result = MatchedDot
+          result = MatchedDotField
           break
         skip tup
-      if result != MatchedDot:
+      if result != MatchedDotField:
         c.dest.add identToken(fieldName, info)
         c.buildErr info, "undeclared field: " & pool.strings[fieldName]
       c.dest.add intToken(pool.integers.getOrIncl(0), info)
@@ -1261,10 +1316,10 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       c.dest.add identToken(fieldName, info)
       c.buildErr info, "object type expected"
   c.dest.addParRi()
-  if result == MatchedDot:
+  if result == MatchedDotField:
     commonType c, it, exprStart, expected
 
-proc semDot(c: var SemContext, it: var Item) =
+proc semDot(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   let exprStart = c.dest.len
   let info = it.n.info
   let expected = it.typ
@@ -1273,7 +1328,7 @@ proc semDot(c: var SemContext, it: var Item) =
   var lhsBuf = createTokenBuf(4)
   var lhs = Item(n: it.n, typ: c.types.autoType)
   swap c.dest, lhsBuf
-  semExpr c, lhs
+  semExpr c, lhs, {AllowModuleSym}
   swap c.dest, lhsBuf
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
@@ -1284,7 +1339,7 @@ proc semDot(c: var SemContext, it: var Item) =
     inc it.n
   skipParRi it.n
   # now interpret the dot expression:
-  let state = tryBuiltinDot(c, it, lhs, fieldName, info)
+  let state = tryBuiltinDot(c, it, lhs, fieldName, info, flags)
   if state == FailedDot:
     # attempt a dot call, i.e. build b(a) from a.b
     c.dest.shrink exprStart
@@ -2186,6 +2241,9 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
         skipToParams n
       elif s.kind == LabelY:
         discard
+      elif s.kind == ModuleY:
+        if AllowModuleSym notin flags:
+          c.buildErr it.n.info, "module symbol '" & pool.syms[s.name] & "' not allowed in this context"
       else:
         # XXX enum field?
         assert false, "not implemented"
@@ -3081,7 +3139,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         semCall c, it
     of DotX:
       toplevelGuard c:
-        semDot c, it
+        semDot c, it, flags
     of DconvX:
       toplevelGuard c:
         semDconv c, it
@@ -3193,6 +3251,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
+  # XXX could add self module symbol here
 
   assert n0 == "stmts"
   #echo "PHASE 1"

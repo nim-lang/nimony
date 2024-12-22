@@ -8,7 +8,7 @@
 
 import std / [tables, sets, syncio, formatfloat, assertions]
 include nifprelude
-import nimony_model, symtabs, builtintypes, decls, symparser,
+import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints,
   semdata, semos, expreval
@@ -16,65 +16,6 @@ import nimony_model, symtabs, builtintypes, decls, symparser,
 import ".." / gear2 / modnames
 
 # -------------- symbol lookups -------------------------------------
-
-proc unquote*(c: var Cursor): StrId =
-  var r = ""
-  while true:
-    case c.kind
-    of ParLe:
-      inc c
-    of ParRi:
-      inc c
-      break
-    of EofToken:
-      r.add "<unexpected eof>"
-      break
-    of Ident, StringLit:
-      r.add pool.strings[c.litId]
-      inc c
-    of IntLit:
-      r.addInt pool.integers[c.intId]
-      inc c
-    of CharLit:
-      let ch = char(c.uoperand)
-      r.add ch
-      inc c
-    of UIntLit:
-      r.add $pool.uintegers[c.uintId]
-      inc c
-    of FloatLit:
-      r.addFloat pool.floats[c.floatId]
-      inc c
-    of UnknownToken, DotToken, Symbol, SymbolDef:
-      r.add "<unexpected token>: " & $c.kind
-      inc c
-  assert r.len > 0
-  result = getOrIncl(pool.strings, r)
-
-proc getIdent*(n: var Cursor): StrId =
-  var nested = 0
-  while exprKind(n) in {OchoiceX, CchoiceX}:
-    inc nested
-    inc n
-  case n.kind
-  of Ident:
-    result = n.litId
-    inc n
-  of Symbol, SymbolDef:
-    let sym = pool.syms[n.symId]
-    var isGlobal = false
-    result = pool.strings.getOrIncl(extractBasename(sym, isGlobal))
-    inc n
-  of ParLe:
-    if exprKind(n) == QuotedX:
-      result = unquote(n)
-    else:
-      result = StrId(0)
-  else:
-    result = StrId(0)
-  while nested > 0:
-    if n.kind == ParRi: dec nested
-    inc n
 
 template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind;
                     info: PackedLineInfo; body: untyped) =
@@ -84,10 +25,12 @@ template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind
 
 proc considerImportedSymbols(c: var SemContext; name: StrId; info: PackedLineInfo): int =
   result = 0
-  let candidates = c.importTab.getOrDefault(name)
-  inc result, candidates.len
-  for defId in candidates:
-    c.dest.add symToken(defId, info)
+  for moduleId in c.importTab.getOrDefault(name):
+    # prevent copies
+    let candidates = addr c.importedModules[moduleId].iface[name]
+    inc result, candidates[].len
+    for defId in candidates[]:
+      c.dest.add symToken(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
@@ -140,17 +83,17 @@ proc buildSymChoiceForSelfModule(c: var SemContext;
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 
-proc buildSymChoiceForForeignModule(c: var SemContext; importFrom: ImportedModule;
-                                    identifier: StrId; info: PackedLineInfo) =
-  var count = 0
+proc buildSymChoiceForForeignModule*(c: var SemContext; importFrom: ImportedModule;
+                                     identifier: StrId; info: PackedLineInfo): int =
+  result = 0
   let oldLen = c.dest.len
   c.dest.buildTree OchoiceX, info:
     let candidates = importFrom.iface.getOrDefault(identifier)
     for defId in candidates:
       c.dest.add symToken(defId, info)
-      inc count
+      inc result
   # if the sym choice is empty, create an ident node:
-  if count == 0:
+  if result == 0:
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 

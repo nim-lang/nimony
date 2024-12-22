@@ -72,9 +72,9 @@ type
     g*: ProgramContext
     typeRequests*, procRequests*: seq[InstRequest]
     includeStack*: seq[string]
-    #importedModules: seq[ImportedModule]
+    importedModules*: Table[SymId, ImportedModule]
     instantiatedFrom*: seq[PackedLineInfo]
-    importTab*: Iface
+    importTab*: OrderedTable[StrId, seq[SymId]] ## mapping of identifiers to modules containing the identifier
     globals*, locals*: Table[string, int]
     types*: BuiltinTypes
     typeMem*: Table[string, TokenBuf]
