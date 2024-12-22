@@ -81,17 +81,17 @@ proc buildSymChoiceForSelfModule(c: var SemContext;
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 
-proc buildSymChoiceForForeignModule(c: var SemContext; importFrom: ImportedModule;
-                                    identifier: StrId; info: PackedLineInfo) =
-  var count = 0
+proc buildSymChoiceForForeignModule*(c: var SemContext; importFrom: ImportedModule;
+                                    identifier: StrId; info: PackedLineInfo): int =
+  result = 0
   let oldLen = c.dest.len
   c.dest.buildTree OchoiceX, info:
     let candidates = importFrom.iface.getOrDefault(identifier)
     for defId in candidates:
       c.dest.add symToken(defId, info)
-      inc count
+      inc result
   # if the sym choice is empty, create an ident node:
-  if count == 0:
+  if result == 0:
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 

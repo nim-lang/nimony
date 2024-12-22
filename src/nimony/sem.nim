@@ -234,6 +234,10 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; i
     let moduleSym = identToSym(c, moduleName, ModuleY)
     let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
     c.currentScope.addOverloadable(moduleName, s)
+    var moduleDecl = createTokenBuf(2)
+    moduleDecl.addParLe(ModuleY, info)
+    moduleDecl.addParRi()
+    publish moduleSym, moduleDecl
     var module = ImportedModule()
     loadInterface suffix, module.iface
     # merge module symbols into import table:
@@ -863,7 +867,7 @@ type
   DotExprState = enum
     MatchedDot, FailedDot, InvalidDot
 
-proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo): DotExprState
+proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo; flags: set[SemFlag]): DotExprState
 
 proc semBuiltinSubscript(c: var SemContext; lhs: Item; it: var Item)
 
@@ -1148,7 +1152,7 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
     skipParRi cs.fn.n
     it.n = cs.fn.n
     # now interpret the dot expression:
-    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo)
+    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared})
     if dotState == FailedDot or
         # also ignore non-proc fields:
         (dotState == MatchedDot and cs.fn.typ.typeKind != ProcT):
@@ -1222,7 +1226,37 @@ proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
   else:
     result = ObjField(level: -1)
 
-proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo): DotExprState =
+proc findModuleSymbol(n: Cursor): SymId =
+  result = SymId(0)
+  if n.kind == Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing and symKind(res.decl) == ModuleY:
+      result = n.symId
+  elif n.kind == ParLe and exprKind(n) in {OchoiceX, CchoiceX}:
+    # if any sym in choice is module sym, count it as a module reference
+    # this behavior did not exist before and could be removed
+    var n = n
+    inc n
+    while n.kind != ParRi:
+      result = findModuleSymbol(n)
+      if result != SymId(0): break
+      inc n
+
+proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
+  let insertPos = c.dest.len
+  let count = buildSymChoiceForForeignModule(c, c.importedModules[module], ident, info)
+  if count == 1:
+    let sym = c.dest[insertPos+1].symId
+    c.dest.shrink insertPos
+    c.dest.add symToken(sym, info)
+    result = fetchSym(c, sym)
+  else:
+    result = Sym(kind: if count == 0: NoSym else: CchoiceY)
+
+proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[SemFlag])
+
+proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
+                   info: PackedLineInfo; flags: set[SemFlag]): DotExprState =
   let exprStart = c.dest.len
   let expected = it.typ
   c.dest.addParLe(DotX, info)
@@ -1233,6 +1267,15 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     c.buildErr info, "identifier after `.` expected"
     result = InvalidDot
   else:
+    let module = findModuleSymbol(lhs.n)
+    if module != SymId(0):
+      # this is a qualified identifier, i.e. module.name
+      # consider matched even if undeclared
+      result = MatchedDot
+      c.dest.shrink exprStart
+      let s = semQualifiedIdent(c, module, fieldName, info)
+      semExprSym c, it, s, exprStart, flags
+      return
     let t = skipModifier(lhs.typ)
     if t.kind == Symbol:
       let objType = objtypeImpl(t.symId)
@@ -1273,7 +1316,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
   if result == MatchedDot:
     commonType c, it, exprStart, expected
 
-proc semDot(c: var SemContext, it: var Item) =
+proc semDot(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   let exprStart = c.dest.len
   let info = it.n.info
   let expected = it.typ
@@ -1293,7 +1336,7 @@ proc semDot(c: var SemContext, it: var Item) =
     inc it.n
   skipParRi it.n
   # now interpret the dot expression:
-  let state = tryBuiltinDot(c, it, lhs, fieldName, info)
+  let state = tryBuiltinDot(c, it, lhs, fieldName, info, flags)
   if state == FailedDot:
     # attempt a dot call, i.e. build b(a) from a.b
     c.dest.shrink exprStart
@@ -3090,7 +3133,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         semCall c, it
     of DotX:
       toplevelGuard c:
-        semDot c, it
+        semDot c, it, flags
     of DconvX:
       toplevelGuard c:
         semDconv c, it
