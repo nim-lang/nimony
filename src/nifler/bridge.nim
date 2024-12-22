@@ -524,17 +524,20 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     for i in 0..<n.len-3:
       toNif(n[i], n, c)
     # n.len-3: pragmas: must be empty (it is deprecated anyway)
-    if n[n.len-3].kind != nkEmpty:
-      c.b.addTree "err"
-      c.b.endTree()
-
-    toNif(n[n.len-2], n, c)
-    let last {.cursor.} = n[n.len-1]
-    if last.kind == nkRecList:
-      for child in last:
-        toNif(child, n, c)
+    if n.len == 0:
+      c.b.addEmpty 2 # pragmas, body
     else:
-      toNif(last, n, c)
+      if n[n.len-3].kind != nkEmpty:
+        c.b.addTree "err"
+        c.b.endTree()
+
+      toNif(n[n.len-2], n, c)
+      let last {.cursor.} = n[n.len-1]
+      if last.kind == nkRecList:
+        for child in last:
+          toNif(child, n, c)
+      else:
+        toNif(last, n, c)
     c.b.endTree()
 
   of nkTupleTy:

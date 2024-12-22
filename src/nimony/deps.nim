@@ -50,7 +50,6 @@ proc parseDeps(c: var DepContext; p: FilePair; current: Node)
 proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
   var files: seq[string] = @[]
   var hasError = false
-  let info = it.info
   var x = it
   skip it
   inc x # skip the `include`
