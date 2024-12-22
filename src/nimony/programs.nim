@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, os, tables, times]
+import std / [syncio, os, tables, times, packedsets]
 include nifprelude
 import nifindexes, symparser, reporters
 
@@ -48,14 +48,18 @@ proc load*(suffix: string): NifModule =
   else:
     result = prog.mods[suffix]
 
-proc loadInterface*(suffix: string; iface: var Iface) =
+proc loadInterface*(suffix: string; iface: var Iface;
+                    module: SymId; importTab: var OrderedTable[StrId, seq[SymId]]) =
   let m = load(suffix)
+  var marker = initPackedSet[StrId]()
   for k, _ in m.index.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
     let symId = pool.syms.getOrIncl(k)
     iface.mgetOrPut(strId, @[]).add symId
+    if not marker.containsOrIncl(strId):
+      importTab.mgetOrPut(strId, @[]).add(module)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):
