@@ -49,16 +49,19 @@ proc load*(suffix: string): NifModule =
     result = prog.mods[suffix]
 
 proc loadInterface*(suffix: string; iface: var Iface;
-                    module: SymId; importTab: var OrderedTable[StrId, seq[SymId]]) =
+                    module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
+                    marker: var PackedSet[StrId]; negateMarker: bool) =
   let m = load(suffix)
-  var marker = initPackedSet[StrId]()
   for k, _ in m.index.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
     let symId = pool.syms.getOrIncl(k)
     iface.mgetOrPut(strId, @[]).add symId
-    if not marker.containsOrIncl(strId):
+    let symMarked =
+      if negateMarker: marker.missingOrExcl(strId)
+      else: marker.containsOrIncl(strId)
+    if not symMarked:
       # mark that this module contains the identifier `strId`:
       importTab.mgetOrPut(strId, @[]).add(module)
 

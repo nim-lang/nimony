@@ -8,7 +8,7 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions]
+import std / [tables, sets, syncio, formatfloat, assertions, packedsets]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -222,7 +222,15 @@ proc semInclude(c: var SemContext; it: var Item) =
 
   producesVoid c, info, it.typ
 
-proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; info: PackedLineInfo) =
+type
+  ImportModeKind = enum
+    ImportAll, FromImport, ImportExcept
+  
+  ImportMode = object
+    kind: ImportModeKind
+    list: PackedSet[StrId] # `from import` or `import except` symbol list
+
+proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
   let f2 = resolveFile(c, origin, f1.path)
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
@@ -239,11 +247,18 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; i
     moduleDecl.addParRi()
     publish moduleSym, moduleDecl
     var module = ImportedModule()
-    loadInterface suffix, module.iface, moduleSym, c.importTab
+    var marker = mode.list
+    loadInterface suffix, module.iface, moduleSym, c.importTab,
+      marker, negateMarker = mode.kind == FromImport
     c.importedModules[moduleSym] = module
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
+
+proc doImportMode(c: var SemContext; files: seq[ImportedFilename]; mode: ImportMode; info: PackedLineInfo) =
+  let origin = getFile(c, info)
+  for f in files:
+    importSingleFile c, f, origin, mode, info
 
 proc semImport(c: var SemContext; it: var Item) =
   let info = it.n.info
@@ -267,9 +282,69 @@ proc semImport(c: var SemContext; it: var Item) =
   if hasError:
     c.buildErr info, "wrong `import` statement"
   else:
-    let origin = getFile(c, info)
-    for f in files:
-      importSingleFile c, f, origin, info
+    doImportMode c, files, ImportMode(kind: ImportAll, list: initPackedSet[StrId]()), info
+
+  producesVoid c, info, it.typ
+
+proc semImportExcept(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  var x = it.n
+  skip it.n
+  inc x # skip the `importexcept`
+
+  if x.kind == ParLe and x == "pragmax":
+    inc x
+    var y = x
+    skip y
+    if y.substructureKind == PragmasS:
+      inc y
+      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+        cyclicImport(c, x)
+        return
+
+  var files: seq[ImportedFilename] = @[]
+  var hasError = false
+  filenameVal(x, files, hasError, allowAs = true)
+  if hasError:
+    c.buildErr info, "wrong `import except` statement"
+  else:
+    var excluded = initPackedSet[StrId]()
+    while x.kind != ParRi:
+      excluded.incl getIdent(x)
+    doImportMode c, files, ImportMode(kind: ImportExcept, list: excluded), info
+
+  producesVoid c, info, it.typ
+
+proc semFromImport(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  var x = it.n
+  skip it.n
+  inc x # skip the `from`
+
+  if x.kind == ParLe and x == "pragmax":
+    inc x
+    var y = x
+    skip y
+    if y.substructureKind == PragmasS:
+      inc y
+      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+        cyclicImport(c, x)
+        return
+
+  var files: seq[ImportedFilename] = @[]
+  var hasError = false
+  filenameVal(x, files, hasError, allowAs = true)
+  if hasError:
+    c.buildErr info, "wrong `from import` statement"
+  else:
+    var included = initPackedSet[StrId]()
+    while x.kind != ParRi:
+      if x.kind == ParLe and x == $NilX:
+        # from a import nil
+        discard
+      else:
+        included.incl getIdent(x)
+    doImportMode c, files, ImportMode(kind: FromImport, list: included), info
 
   producesVoid c, info, it.typ
 
@@ -2886,6 +2961,7 @@ proc isDeclared(c: var SemContext; name: StrId): bool =
   while scope != nil:
     if name in scope.tab:
       return true
+    scope = scope.up
   result = name in c.importTab
 
 proc semDeclared(c: var SemContext; it: var Item) =
@@ -3110,6 +3186,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           semCall c, it
       of IncludeS: semInclude c, it
       of ImportS: semImport c, it
+      of ImportExceptS: semImportExcept c, it
+      of FromImportS: semFromImport c, it
       of AsgnS:
         toplevelGuard c:
           semAsgn c, it
