@@ -125,21 +125,10 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
 
 proc processDeps(c: var DepContext; n: Cursor; current: Node) =
   var n = n
-  var nested = 0
-  while true:
-    case n.kind
-    of ParLe:
-      inc nested
-      if pool.tags[n.tagId] == "stmts":
-        inc n
-        processDep c, n, current
-      else:
-        inc n
-    of ParRi:
-      dec nested
-      inc n
-    else: inc n
-    if nested == 0: break
+  if n.kind == ParLe and pool.tags[n.tagId] == "stmts":
+    inc n
+    while n.kind != ParRi:
+      processDep c, n, current
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
   exec quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(p.nimFile) & " " &
