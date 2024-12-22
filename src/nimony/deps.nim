@@ -130,8 +130,10 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
       processDep c, n, current
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  exec quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(p.nimFile) & " " &
+  let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(p.nimFile) & " " &
     quoteShell(parsedFile(p))
+  #echo cmd
+  exec cmd
 
   let depsFile = depsFile(p)
   var stream = nifstreams.open(depsFile)
@@ -154,6 +156,12 @@ proc requiresTool*(tool, src: string; forceRebuild: bool) =
     nimexec("c -d:release " & src)
     moveFile src.changeFileExt(ExeExt), t
 
+proc toUnix(p: string): string =
+  when defined(windows):
+    p.replace("\\", "/")
+  else:
+    p
+
 proc generateMakefile(c: DepContext) =
   var s = ""
   s.add "# Auto-generated Makefile\n"
@@ -162,17 +170,19 @@ proc generateMakefile(c: DepContext) =
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
   for v in c.nodes:
-    s.add "\n" & semmedFile(v.files[0]) & ":"
+    s.add "\n" & toUnix(semmedFile(v.files[0])) & ":"
     for f in v.files:
-      s.add " " & parsedFile(f)
+      s.add " " & toUnix(parsedFile(f))
     for f in v.deps:
-      s.add "  " & indexFile(f)
-    s.add "\n\t nimsem m " & parsedFile(v.files[0]) & " " & semmedFile(v.files[0])
+      s.add "  " & toUnix(indexFile(f))
+    s.add "\n\tnimsem m " & toUnix(parsedFile(v.files[0])) & " " &
+      toUnix(semmedFile(v.files[0]))
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
   for v in c.nodes:
-    s.add "\n" & parsedFile(v.files[0]) & ": " & v.files[0].nimFile
-    s.add "\n\t nifler --portablePaths --deps parse " & v.files[0].nimFile & " " & parsedFile(v.files[0])
+    s.add "\n" & toUnix(parsedFile(v.files[0])) & ": " & toUnix(v.files[0].nimFile)
+    s.add "\n\tnifler --portablePaths --deps parse " & toUnix(v.files[0].nimFile) & " " &
+      toUnix(parsedFile(v.files[0]))
 
   # every .idx.nif file depends on its semmed.nif file, but these cannot go out of sync
   # so we don't do anything here.
