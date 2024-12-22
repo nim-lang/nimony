@@ -13,19 +13,33 @@ import ".." / gear2 / modnames
 include nifprelude
 
 type
+  FilePair = object
+    nimFile: string
+    modname: string
+
+proc indexFile(f: FilePair): string = "nifcache" / f.modname & ".2.idx.nif"
+proc parsedFile(f: FilePair): string = "nifcache" / f.modname & ".1.nif"
+proc depsFile(f: FilePair): string = "nifcache" / f.modname & ".1.deps.nif"
+proc semmedFile(f: FilePair): string = "nifcache" / f.modname & ".2.nif"
+
+type
   Node = ref object
-    files: seq[string]
-    deps: seq[string]
+    files: seq[FilePair]
+    deps: seq[FilePair]
+    active: int
 
   DepContext = object
     config: NifConfig
-    nodes: Table[string, Node]
+    nodes: seq[Node]
     rootNode: Node
     includeStack: seq[string]
     processedModules: HashSet[string]
 
+proc toPair(c: DepContext; f: string): FilePair =
+  FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
+
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
-proc parseDeps(c: var DepContext; src: string; current: Node)
+proc parseDeps(c: var DepContext; p: FilePair; current: Node)
 
 proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
   var files: seq[string] = @[]
@@ -40,7 +54,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
     discard "ignore wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c.config.paths, getFile(info), f1)
+      let f2 = resolveFile(c.config.paths, current.files[current.active].nimFile, f1)
       # check for recursive include files:
       var isRecursive = false
       for a in c.includeStack:
@@ -49,23 +63,26 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
           break
 
       if not isRecursive:
-        current.files.add f2
+        let oldActive = current.active
+        current.active = current.files.len
+        current.files.add c.toPair(f2)
         var buf = parseFile(f2, c.config.paths)
         c.includeStack.add f2
         var n = cursorAt(buf, 0)
         processDep c, n, current
+        current.active = oldActive
         c.includeStack.setLen c.includeStack.len - 1
       else:
         discard "ignore recursive include"
 
-proc importSingleFile(c: var DepContext; f1, origin: string; info: PackedLineInfo; current: Node) =
-  let f2 = resolveFile(c.config.paths, origin, f1)
-  let suffix = moduleSuffix(f2, c.config.paths)
-  current.deps.add f2
-  if not c.processedModules.containsOrIncl(suffix):
-    var imported = Node(files: @[f2])
-    c.nodes[f2] = imported
-    parseDeps c, f2, imported
+proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo; current: Node) =
+  let f2 = resolveFile(c.config.paths, current.files[current.active].nimFile, f1)
+  let p = c.toPair(f2)
+  current.deps.add p
+  if not c.processedModules.containsOrIncl(p.modname):
+    var imported = Node(files: @[p])
+    c.nodes.add imported
+    parseDeps c, p, imported
 
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
@@ -88,9 +105,8 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   if hasError:
     discard "ignore wrong `import` statement"
   else:
-    let origin = getFile(info)
     for f in files:
-      importSingleFile c, f, origin, info, current
+      importSingleFile c, f, info, current
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   case stmtKind(n)
@@ -119,8 +135,8 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
     else: inc n
     if nested == 0: break
 
-proc parseDeps(c: var DepContext; src: string; current: Node) =
-  let depsFile = src.changeFileExt(".deps.nif")
+proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
+  let depsFile = depsFile(p)
   var stream = nifstreams.open(depsFile)
   try:
     discard processDirectives(stream.r)
@@ -144,29 +160,25 @@ proc requiresTool*(tool, src: string; forceRebuild: bool) =
 proc generateMakefile(c: DepContext) =
   var s = ""
   s.add "# Auto-generated Makefile\n"
+  s.add "\nall: " & semmedFile(c.rootNode.files[0])
 
-  # every .nif file is produced by a .nim file from the nifler tool:
-  for k, v in c.nodes:
-    s.add "\n" & k & ".nif:"
+  # every semchecked .nif file depends on all of its parsed.nif file
+  # plus on the indexes of its imports:
+  for v in c.nodes:
+    s.add "\n" & semmedFile(v.files[0]) & ":"
     for f in v.files:
-      s.add "  " & f
-    s.add "\n\t nifler --portablePaths --deps parse " & k & ".nim " & k & ".nif"
-
-  # ever .nif file depends on the indexes of its imports:
-  for k, v in c.nodes:
-    s.add "\n" & k & ".nif:"
+      s.add " " & parsedFile(f)
     for f in v.deps:
-      s.add "  " & f & ".idx.nif"
-    s.add "\n\t nimsem m " & k
+      s.add "  " & indexFile(f)
+    s.add "\n\t nimsem m " & parsedFile(v.files[0]) & " " & semmedFile(v.files[0])
 
-  # every .idx.nif file depends on its .nif file:
-  for k, v in c.nodes:
-    for f in v.deps:
-      s.add "\n" & f & ".idx.nif:"
-      s.add "  " & f & ".nif"
-      s.add "\n\t nimsem m " & f & ".idx.nif"
+  # every parsed.nif file is produced by a .nim file by the nifler tool:
+  for v in c.nodes:
+    s.add "\n" & parsedFile(v.files[0]) & ": " & v.files[0].nimFile
+    s.add "\n\t nifler --portablePaths --deps parse " & v.files[0].nimFile & " " & parsedFile(v.files[0])
 
-  s.add "\nall: " & c.rootNode.files[0] & ".nif"
+  # every .idx.nif file depends on its semmed.nif file, but these cannot go out of sync
+  # so we don't do anything here.
   writeFile "Makefile", s
 
 proc buildGraph(project: string) =
@@ -179,9 +191,12 @@ proc buildGraph(project: string) =
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(project) & " " &
     quoteShell(src)
 
-  var c = DepContext(config: config, rootNode: Node(files: @[project]), includeStack: @[])
-  c.nodes[project] = c.rootNode
-  parseDeps c, project, c.rootNode
+  var c = DepContext(config: config, rootNode: nil, includeStack: @[])
+  let p = c.toPair(project)
+  c.rootNode = Node(files: @[p])
+  c.nodes.add c.rootNode
+  c.processedModules.incl p.modname
+  parseDeps c, p, c.rootNode
   generateMakefile c
 
 when isMainModule:
