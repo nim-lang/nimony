@@ -190,7 +190,8 @@ proc semInclude(c: var SemContext; it: var Item) =
   var x = it.n
   skip it.n
   inc x # skip the `include`
-  filenameVal(x, files, hasError, allowAs = false)
+  while x.kind != ParRi:
+    filenameVal(x, files, hasError, allowAs = false)
 
   if hasError:
     c.buildErr info, "wrong `include` statement"
