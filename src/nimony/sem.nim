@@ -1270,15 +1270,6 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     c.buildErr info, "identifier after `.` expected"
     result = InvalidDot
   else:
-    let module = findModuleSymbol(lhs.n)
-    if module != SymId(0):
-      # this is a qualified identifier, i.e. module.name
-      # consider matched even if undeclared
-      result = MatchedDotSym
-      c.dest.shrink exprStart
-      let s = semQualifiedIdent(c, module, fieldName, info)
-      semExprSym c, it, s, exprStart, flags
-      return
     let t = skipModifier(lhs.typ)
     if t.kind == Symbol:
       let objType = objtypeImpl(t.symId)
@@ -1296,6 +1287,15 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       else:
         c.dest.add identToken(fieldName, info)
         c.buildErr info, "object type expected"
+    elif lhs.kind == ModuleY:
+      # this is a qualified identifier, i.e. module.name
+      # consider matched even if undeclared
+      result = MatchedDotSym
+      c.dest.shrink exprStart
+      let module = findModuleSymbol(lhs.n)
+      let s = semQualifiedIdent(c, module, fieldName, info)
+      semExprSym c, it, s, exprStart, flags
+      return
     elif t.typeKind == TupleT:
       var tup = t
       inc tup
