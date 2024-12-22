@@ -743,7 +743,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       error e, "to implement: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
-    of MacroS, TemplateS, IncludeS, ImportS:
+    of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS:
       # pure compile-time construct, ignore:
       skip c
     of TypeS:

@@ -42,6 +42,8 @@ type
     DiscardS = "discard"
     IncludeS = "include"
     ImportS = "import"
+    FromImportS = "from"
+    ImportExceptS = "importexcept"
 
   SymKind* = enum
     NoSym
