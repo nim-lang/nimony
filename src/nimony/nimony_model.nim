@@ -166,6 +166,7 @@ type
     IterT = "itertype"
     InvokeT = "at" # might not be the best idea to do it this way...
     ArrayT = "array"
+    RangeT = "rangetype"
     UncheckedArrayT = "uarray"
     SetT = "sett"
     AutoT = "auto"

@@ -1617,7 +1617,9 @@ proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
           if n.kind == ParRi: break
           inc n
 
-proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; context: TypeDeclContext) =
+proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[SemFlag])
+
+proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; context: TypeDeclContext) =
   if s.kind in {TypeY, TypevarY}:
     let res = tryLoadSym(s.name)
     let beforeMagic = c.dest.len
@@ -1640,6 +1642,11 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; context: TypeDe
         c.dest.shrink c.dest.len-1
         var t = typ.body
         semLocalTypeImpl c, t, context
+  elif context == AllowValues:
+    var dummyBuf = createTokenBuf(1)
+    dummyBuf.add dotToken(info)
+    var it = Item(n: cursorAt(dummyBuf, 0), typ: c.types.autoType)
+    semExprSym c, it, s, start, {}
   elif s.kind != NoSym:
     var orig = createTokenBuf(1)
     orig.add c.dest[c.dest.len-1]
@@ -1774,6 +1781,48 @@ proc instGenericType(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo
     else:
       dest.buildLocalErr info, "too many generic arguments provided"
 
+proc isRangeExpr(n: Cursor): bool =
+  var n = n
+  if n.exprKind notin {CallX, InfixX}:
+    return false
+  inc n
+  let name = getIdent(n)
+  result = name != StrId(0) and pool.strings[name] == ".."
+
+proc addRangeValues(c: var SemContext; n: var Cursor) =
+  # XXX should consider unresolved values
+  var err: bool = false
+  let first = asSigned(evalOrdinal(c, n), err)
+  if err:
+    c.buildErr n.info, "could not evaluate as ordinal", n
+    err = false
+  else:
+    c.dest.addIntLit(first, n.info)
+  skip n
+  let last = asSigned(evalOrdinal(c, n), err)
+  if err:
+    c.buildErr n.info, "could not evaluate as ordinal", n
+    err = false
+  else:
+    c.dest.addIntLit(last, n.info)
+
+proc semRangeTypeFromExpr(c: var SemContext; n: var Cursor; info: PackedLineInfo) =
+  inc n # call tag
+  skip n # `..`
+  c.dest.addParLe(RangeT, info)
+  var it = Item(n: n, typ: c.types.autoType)
+  var valuesBuf = createTokenBuf(4)
+  swap c.dest, valuesBuf
+  semExpr c, it
+  semExpr c, it
+  swap c.dest, valuesBuf
+  n = it.n
+  # insert base type:
+  c.dest.addSubtree it.typ
+  var values = cursorAt(valuesBuf, 0)
+  addRangeValues c, values
+  wantParRi c, n
+
 proc semInvoke(c: var SemContext; n: var Cursor) =
   let typeStart = c.dest.len
   let info = n.info
@@ -1798,7 +1847,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     let head = cursorAt(c.dest, typeStart+1)
     let kind = head.typeKind
     endRead(c.dest)
-    if kind in {ArrayT, VarargsT,
+    if kind in {ArrayT, RangeT, VarargsT,
       PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT}:
       # magics that can be invoked
       magicKind = kind
@@ -1833,6 +1882,21 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
           magicExpr.takeTree args # element type
           magicExpr.addSubtree indexPart
           skipParRi args
+        of RangeT:
+          # range types are invoked as `range[a..b]`
+          if isRangeExpr(args):
+            # don't bother calling semLocalTypeImpl, fully build type here
+            magicExpr.shrink 0
+            swap c.dest, magicExpr
+            semRangeTypeFromExpr c, args, info
+            swap c.dest, magicExpr
+            c.dest.endRead()
+            c.dest.shrink typeStart
+            c.dest.add magicExpr
+            return
+          else:
+            # error?
+            discard
         of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT:
           # unary invocations
           magicExpr.takeTree args
@@ -1899,23 +1963,30 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
   let info = n.info
   case n.kind
   of Ident:
+    let start = c.dest.len
     let s = semIdent(c, n)
-    semTypeSym c, s, info, context
+    semTypeSym c, s, info, start, context
   of Symbol:
+    let start = c.dest.len
     let s = fetchSym(c, n.symId)
     c.dest.add n
     inc n
-    semTypeSym c, s, info, context
+    semTypeSym c, s, info, start, context
   of ParLe:
     case typeKind(n)
     of NoType:
       if exprKind(n) == QuotedX:
+        let start = c.dest.len
         let s = semQuoted(c, n)
-        semTypeSym c, s, info, context
+        semTypeSym c, s, info, start, context
       elif context == AllowValues:
         var it = Item(n: n, typ: c.types.autoType)
         semExpr c, it
         n = it.n
+      elif false and isRangeExpr(n):
+        # a..b, interpret as range type but only without AllowValues
+        # to prevent conflict with HSlice
+        semRangeTypeFromExpr c, n, info
       else:
         c.buildErr info, "not a type", n
         skip n
@@ -1950,7 +2021,50 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     of ArrayT:
       takeToken c, n
       semLocalTypeImpl c, n, context
+      # index type, possibilities are:
+      # 1. length as integer
+      # 2. range expression i.e. `a..b`
+      # 3. full ordinal type i.e. `uint8`, `Enum`, `range[a..b]`
+      # 4. standalone unresolved expression/type variable, could resolve to 1 or 3
+      if isRangeExpr(n):
+        semRangeTypeFromExpr c, n, info
+      else:
+        var indexBuf = createTokenBuf(4)
+        swap c.dest, indexBuf
+        semLocalTypeImpl c, n, AllowValues
+        swap c.dest, indexBuf
+        var index = cursorAt(indexBuf, 0)
+        if index.typeKind == RangeT:
+          # range expression
+          c.dest.addSubtree index
+        elif index.kind == Symbol and fetchSym(c, index.symId).kind == TypevarY: # or index.typeKind in {UnresolvedT, InvokeT]
+          # unresolved types are left alone
+          # check for invocations would need earlier ordinal type check
+          c.dest.addSubtree index
+        elif index.typeKind != NoType:
+          # XXX should check for ordinal type, then turn it into range type
+          c.dest.addSubtree index
+        else:
+          # length expression
+          var err = false # ignore for now
+          let length = asSigned(evalOrdinal(c, index), err)
+          c.dest.addParLe(RangeT, info)
+          c.dest.addSubtree c.types.intType
+          c.dest.addIntLit 0, info
+          c.dest.addIntLit length - 1, info
+          c.dest.addParRi()
+      wantParRi c, n
+    of RangeT:
+      takeToken c, n
+      let baseTypeStart = c.dest.len
+      semLocalTypeImpl c, n, context
+      var valuesBuf = createTokenBuf(4)
+      swap c.dest, valuesBuf
       semLocalTypeImpl c, n, AllowValues
+      semLocalTypeImpl c, n, AllowValues
+      swap c.dest, valuesBuf
+      var values = cursorAt(valuesBuf, 0)
+      addRangeValues c, values
       wantParRi c, n
     of VarargsT:
       takeToken c, n
@@ -2314,8 +2428,9 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
   elif s.kind in {TypeY, TypevarY}:
     let typeStart = c.dest.len
     c.dest.buildTree TypedescT, it.n.info:
+      let symStart = c.dest.len
       c.dest.add symToken(s.name, it.n.info)
-      semTypeSym c, s, it.n.info, InLocalDecl
+      semTypeSym c, s, it.n.info, symStart, InLocalDecl
     it.typ = typeToCursor(c, typeStart)
     c.dest.shrink typeStart
     commonType c, it, start, expected
@@ -2470,21 +2585,13 @@ proc semWhen(c: var SemContext; it: var Item) =
     # none of the branches evaluated, output nothing
     c.dest.shrink start
 
-proc isRangeNode(c: var SemContext; n: Cursor): bool =
-  var n = n
-  if n.exprKind notin {CallX, InfixX}:
-    return false
-  inc n
-  let name = getIdent(n)
-  result = name != StrId(0) and pool.strings[name] == ".."
-
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
   if it.n == "set":
     takeToken c, it.n
     while it.n.kind != ParRi:
       let info = it.n.info
-      if isRangeNode(c, it.n):
+      if isRangeExpr(it.n):
         inc it.n # call tag
         skip it.n # `..`
         c.dest.buildTree RangeX, it.n.info:
@@ -2769,7 +2876,11 @@ proc semArrayConstr(c: var SemContext, it: var Item) =
   let typeStart = c.dest.len
   c.dest.buildTree ArrayT, it.n.info:
     c.dest.addSubtree elem.typ
-    c.dest.add intToken(pool.integers.getOrIncl(count), it.n.info)
+    c.dest.addParLe(RangeT, it.n.info)
+    c.dest.addSubtree c.types.intType
+    c.dest.addIntLit(0, it.n.info)
+    c.dest.addIntLit(count - 1, it.n.info)
+    c.dest.addParRi()
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
   c.dest.shrink typeStart
@@ -2796,7 +2907,7 @@ proc semSetConstr(c: var SemContext, it: var Item) =
   var elemStart = c.dest.len
   var elemInfo = elem.n.info
   while elem.n.kind != ParRi:
-    if isRangeNode(c, elem.n):
+    if isRangeExpr(elem.n):
       inc elem.n # call tag
       skip elem.n # `..`
       c.dest.buildTree RangeX, elem.n.info:
@@ -3129,7 +3240,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SetT, StaticT, TypedescT,
-            TupleT, ArrayT, VarargsT, ProcT, IterT, UntypedT, TypedT, CstringT, PointerT:
+            TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT, CstringT, PointerT:
           # every valid local type expression
           semLocalTypeExpr c, it
         of OrT, AndT, NotT, InvokeT:
