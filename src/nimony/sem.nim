@@ -183,20 +183,148 @@ proc producesNoReturn(c: var SemContext; info: PackedLineInfo; dest: var Cursor)
     # allowed in expression context
     discard
 
+type ImportedFilename* = object
+  path*: string
+  alias*: string ## optional `as` alias
+
+proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs = false) =
+  case n.kind
+  of StringLit, Ident:
+    res.add ImportedFilename(path: pool.strings[n.litId])
+    inc n
+  of Symbol:
+    var s = pool.syms[n.symId]
+    extractBasename s
+    res.add ImportedFilename(path: s)
+    inc n
+  of ParLe:
+    case exprKind(n)
+    of OchoiceX, CchoiceX:
+      inc n
+      if n.kind != ParRi:
+        filenameVal(n, res, hasError)
+        while n.kind != ParRi: skip n
+        inc n
+      else:
+        hasError = true
+        inc n
+    of QuotedX:
+      let s = pool.strings[unquote(n)]
+      res.add ImportedFilename(path: s)
+    of CallX, InfixX:
+      var x = n
+      skip n # ensure we skipped it completely
+      inc x
+      var op = ""
+      let opId = getIdent(x)
+      if opId == StrId(0):
+        hasError = true
+      else:
+        op = pool.strings[opId]
+      if hasError:
+        discard
+      elif op == "as":
+        if not allowAs:
+          hasError = true
+          return
+        if x.kind == ParRi:
+          hasError = true
+          return
+        var rhs = x
+        skip rhs # skip lhs
+        if rhs.kind == ParRi:
+          hasError = true
+          return
+        let aliasId = getIdent(rhs)
+        if aliasId == StrId(0):
+          hasError = true
+        else:
+          let alias = pool.strings[aliasId]
+          var prefix: seq[ImportedFilename] = @[]
+          filenameVal(x, prefix, hasError, allowAs = false)
+          if x.kind != ParRi: hasError = true
+          for pre in mitems(prefix):
+            if pre.path != "":
+              res.add ImportedFilename(path: pre.path, alias: alias)
+          if prefix.len == 0:
+            hasError = true
+      else: # any operator, could restrict to slash-like
+        var prefix: seq[ImportedFilename] = @[]
+        filenameVal(x, prefix, hasError, allowAs = false)
+        var suffix: seq[ImportedFilename] = @[]
+        filenameVal(x, suffix, hasError, allowAs = allowAs)
+        if x.kind != ParRi: hasError = true
+        for pre in mitems(prefix):
+          for suf in mitems(suffix):
+            if pre.path != "" and suf.path != "":
+              res.add ImportedFilename(path: pre.path & op & suf.path, alias: suf.alias)
+            else:
+              hasError = true
+        if prefix.len == 0 or suffix.len == 0:
+          hasError = true
+    of PrefixX:
+      var x = n
+      skip n # ensure we skipped it completely
+      inc x
+      var op = ""
+      let opId = getIdent(x)
+      if opId == StrId(0):
+        hasError = true
+      else:
+        op = pool.strings[opId]
+      if hasError:
+        discard
+      else: # any operator, could restrict to slash-like
+        var suffix: seq[ImportedFilename] = @[]
+        filenameVal(x, suffix, hasError, allowAs = allowAs)
+        if x.kind != ParRi: hasError = true
+        for suf in mitems(suffix):
+          if suf.path != "":
+            res.add ImportedFilename(path: op & suf.path, alias: suf.alias)
+          else:
+            hasError = true
+        if suffix.len == 0:
+          hasError = true
+    of ParX, AconstrX:
+      inc n
+      if n.kind != ParRi:
+        while n.kind != ParRi:
+          filenameVal(n, res, hasError, allowAs)
+        inc n
+      else:
+        hasError = true
+        inc n
+    of TupleConstrX:
+      inc n
+      skip n # skip type
+      if n.kind != ParRi:
+        while n.kind != ParRi:
+          filenameVal(n, res, hasError, allowAs)
+        inc n
+      else:
+        hasError = true
+        inc n
+    else:
+      skip n
+      hasError = true
+  else:
+    skip n
+    hasError = true
+
 proc semInclude(c: var SemContext; it: var Item) =
-  var files: seq[string] = @[]
+  var files: seq[ImportedFilename] = @[]
   var hasError = false
   let info = it.n.info
   var x = it.n
   skip it.n
   inc x # skip the `include`
-  filenameVal(x, files, hasError)
+  filenameVal(x, files, hasError, allowAs = false)
 
   if hasError:
     c.buildErr info, "wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c, getFile(c, info), f1)
+      let f2 = resolveFile(c, getFile(c, info), f1.path)
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false
@@ -251,15 +379,15 @@ proc semImport(c: var SemContext; it: var Item) =
         cyclicImport(c, x)
         return
 
-  var files: seq[string] = @[]
+  var files: seq[ImportedFilename] = @[]
   var hasError = false
-  filenameVal(x, files, hasError)
+  filenameVal(x, files, hasError, allowAs = true)
   if hasError:
     c.buildErr info, "wrong `import` statement"
   else:
     let origin = getFile(c, info)
     for f in files:
-      importSingleFile c, f, origin, info
+      importSingleFile c, f.path, origin, info
 
   producesVoid c, info, it.typ
 

@@ -63,6 +63,7 @@ type
     TemplateY = "template"
     TypeY = "type"
     LabelY = "block"
+    ModuleY = "module"
     CchoiceY = "cchoice"
 
   ExprKind* = enum
