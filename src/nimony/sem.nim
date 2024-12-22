@@ -222,15 +222,24 @@ proc semInclude(c: var SemContext; it: var Item) =
 
   producesVoid c, info, it.typ
 
-proc importSingleFile(c: var SemContext; f1, origin: string; info: PackedLineInfo) =
-  let f2 = resolveFile(c, origin, f1)
+proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; info: PackedLineInfo) =
+  let f2 = resolveFile(c, origin, f1.path)
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
     if needsRecompile(f2, suffix):
       selfExec c, f2
 
-    loadInterface suffix, c.importTab
+    let moduleName = pool.strings.getOrIncl(f1.name)
+    let moduleSym = identToSym(c, moduleName, ModuleY)
+    let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
+    c.currentScope.addOverloadable(moduleName, s)
+    var module = ImportedModule()
+    loadInterface suffix, module.iface
+    # merge module symbols into import table:
+    for strId, symIds in module.iface:
+      c.importTab.mgetOrPut(strId, @[]).add(symIds)
+    c.importedModules[moduleSym] = module
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
@@ -259,7 +268,7 @@ proc semImport(c: var SemContext; it: var Item) =
   else:
     let origin = getFile(c, info)
     for f in files:
-      importSingleFile c, f.path, origin, info
+      importSingleFile c, f, origin, info
 
   producesVoid c, info, it.typ
 

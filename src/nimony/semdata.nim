@@ -72,7 +72,7 @@ type
     g*: ProgramContext
     typeRequests*, procRequests*: seq[InstRequest]
     includeStack*: seq[string]
-    #importedModules: seq[ImportedModule]
+    importedModules*: Table[SymId, ImportedModule]
     instantiatedFrom*: seq[PackedLineInfo]
     importTab*: Iface
     globals*, locals*: Table[string, int]
