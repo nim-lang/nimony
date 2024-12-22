@@ -1238,7 +1238,7 @@ proc findModuleSymbol(n: Cursor): SymId =
       result = n.symId
   elif n.kind == ParLe and exprKind(n) in {OchoiceX, CchoiceX}:
     # if any sym in choice is module sym, count it as a module reference
-    # this behavior did not exist before and could be removed
+    # this emulates behavior that was caused by sym order shenanigans before, could be removed
     var n = n
     inc n
     while n.kind != ParRi:
@@ -1247,7 +1247,9 @@ proc findModuleSymbol(n: Cursor): SymId =
       inc n
 
 proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
+  # mirrors semIdent
   let insertPos = c.dest.len
+  # XXX does not handle the case where `module` is the current module
   let count = buildSymChoiceForForeignModule(c, c.importedModules[module], ident, info)
   if count == 1:
     let sym = c.dest[insertPos+1].symId
@@ -3252,6 +3254,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
+  # XXX could add self module symbol here
 
   assert n0 == "stmts"
   #echo "PHASE 1"

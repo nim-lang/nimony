@@ -31,14 +31,14 @@ proc resolveFile*(c: SemContext; origin: string; toResolve: string): string =
       inc i
 
 type ImportedFilename* = object
-  path*: string
-  name*: string
+  path*: string ## stringified path from AST that has to be resolved
+  name*: string ## extracted module name to define a sym for in `import`
 
 proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs = false) =
   case n.kind
   of StringLit, Ident:
     let s = pool.strings[n.litId]
-    # maybe call splitFile and get filename without extension for name:
+    # XXX `s` could be something like "foo/bar.nim" which would need to extract the name "bar"
     res.add ImportedFilename(path: s, name: s)
     inc n
   of Symbol:
