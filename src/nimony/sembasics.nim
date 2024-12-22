@@ -25,10 +25,12 @@ template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind
 
 proc considerImportedSymbols(c: var SemContext; name: StrId; info: PackedLineInfo): int =
   result = 0
-  let candidates = c.importTab.getOrDefault(name)
-  inc result, candidates.len
-  for defId in candidates:
-    c.dest.add symToken(defId, info)
+  for moduleId in c.importTab.getOrDefault(name):
+    # prevent copies
+    let candidates = addr c.importedModules[moduleId].iface[name]
+    inc result, candidates[].len
+    for defId in candidates[]:
+      c.dest.add symToken(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)

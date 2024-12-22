@@ -48,14 +48,14 @@ proc load*(suffix: string): NifModule =
   else:
     result = prog.mods[suffix]
 
-proc loadInterface*(suffix: string; importTab: var Iface) =
+proc loadInterface*(suffix: string; iface: var Iface) =
   let m = load(suffix)
   for k, _ in m.index.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
     let symId = pool.syms.getOrIncl(k)
-    importTab.mgetOrPut(strId, @[]).add symId
+    iface.mgetOrPut(strId, @[]).add symId
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):

@@ -240,9 +240,9 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; i
     publish moduleSym, moduleDecl
     var module = ImportedModule()
     loadInterface suffix, module.iface
-    # merge module symbols into import table:
-    for strId, symIds in module.iface:
-      c.importTab.mgetOrPut(strId, @[]).add(symIds)
+    for strId, _ in module.iface:
+      # mark that this module contains the identifier `strId`:
+      c.importTab.mgetOrPut(strId, @[]).add(moduleSym)
     c.importedModules[moduleSym] = module
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
