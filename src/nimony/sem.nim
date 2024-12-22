@@ -12,7 +12,7 @@ import std / [tables, sets, syncio, formatfloat, assertions]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
-  intervals, xints,
+  intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow
 
 import ".." / gear2 / modnames
