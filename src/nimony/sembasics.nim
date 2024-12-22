@@ -82,7 +82,7 @@ proc buildSymChoiceForSelfModule(c: var SemContext;
     c.dest.add identToken(identifier, info)
 
 proc buildSymChoiceForForeignModule*(c: var SemContext; importFrom: ImportedModule;
-                                    identifier: StrId; info: PackedLineInfo): int =
+                                     identifier: StrId; info: PackedLineInfo): int =
   result = 0
   let oldLen = c.dest.len
   c.dest.buildTree OchoiceX, info:

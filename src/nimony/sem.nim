@@ -462,6 +462,7 @@ type
     KeepMagics
     PreferIterators
     AllowUndeclared
+    AllowModuleSym
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
@@ -865,7 +866,10 @@ proc containsGenericParams(n: TypeCursor): bool =
 
 type
   DotExprState = enum
-    MatchedDot, FailedDot, InvalidDot
+    MatchedDotField ## matched a dot field, i.e. result is a dot expression
+    MatchedDotSym ## matched a qualified identifier
+    FailedDot
+    InvalidDot
 
 proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo; flags: set[SemFlag]): DotExprState
 
@@ -1140,7 +1144,7 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
     swap c.dest, lhsBuf
-    semExpr c, lhs
+    semExpr c, lhs, {AllowModuleSym}
     swap c.dest, lhsBuf
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
@@ -1155,7 +1159,7 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
     let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared})
     if dotState == FailedDot or
         # also ignore non-proc fields:
-        (dotState == MatchedDot and cs.fn.typ.typeKind != ProcT):
+        (dotState == MatchedDotField and cs.fn.typ.typeKind != ProcT):
       cs.source = MethodCall
       # turn a.b(...) into b(a, ...)
       # first, delete the output of `tryBuiltinDot`:
@@ -1271,7 +1275,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     if module != SymId(0):
       # this is a qualified identifier, i.e. module.name
       # consider matched even if undeclared
-      result = MatchedDot
+      result = MatchedDotSym
       c.dest.shrink exprStart
       let s = semQualifiedIdent(c, module, fieldName, info)
       semExprSym c, it, s, exprStart, flags
@@ -1286,7 +1290,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
           c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
           it.typ = field.typ # will be fit later with commonType
           it.kind = FldY
-          result = MatchedDot
+          result = MatchedDotField
         else:
           c.dest.add identToken(fieldName, info)
           c.buildErr info, "undeclared field: " & pool.strings[fieldName]
@@ -1302,10 +1306,10 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
           c.dest.add symToken(field.name.symId, info)
           it.typ = field.typ # will be fit later with commonType
           it.kind = FldY
-          result = MatchedDot
+          result = MatchedDotField
           break
         skip tup
-      if result != MatchedDot:
+      if result != MatchedDotField:
         c.dest.add identToken(fieldName, info)
         c.buildErr info, "undeclared field: " & pool.strings[fieldName]
       c.dest.add intToken(pool.integers.getOrIncl(0), info)
@@ -1313,7 +1317,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       c.dest.add identToken(fieldName, info)
       c.buildErr info, "object type expected"
   c.dest.addParRi()
-  if result == MatchedDot:
+  if result == MatchedDotField:
     commonType c, it, exprStart, expected
 
 proc semDot(c: var SemContext, it: var Item; flags: set[SemFlag]) =
@@ -1325,7 +1329,7 @@ proc semDot(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   var lhsBuf = createTokenBuf(4)
   var lhs = Item(n: it.n, typ: c.types.autoType)
   swap c.dest, lhsBuf
-  semExpr c, lhs
+  semExpr c, lhs, {AllowModuleSym}
   swap c.dest, lhsBuf
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
@@ -2238,6 +2242,9 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
         skipToParams n
       elif s.kind == LabelY:
         discard
+      elif s.kind == ModuleY:
+        if AllowModuleSym notin flags:
+          c.buildErr it.n.info, "module symbol '" & pool.syms[s.name] & "' not allowed in this context"
       else:
         # XXX enum field?
         assert false, "not implemented"
