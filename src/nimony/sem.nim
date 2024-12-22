@@ -278,7 +278,8 @@ proc semImport(c: var SemContext; it: var Item) =
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
-  filenameVal(x, files, hasError, allowAs = true)
+  while x.kind != ParRi:
+    filenameVal(x, files, hasError, allowAs = true)
   if hasError:
     c.buildErr info, "wrong `import` statement"
   else:
