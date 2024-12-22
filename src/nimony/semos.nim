@@ -8,7 +8,7 @@
 
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
-import nimony_model, symtabs, builtintypes, decls, symparser,
+import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   semdata
 
@@ -30,15 +30,21 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
       result = paths[i] / nimFile
       inc i
 
-proc filenameVal*(n: var Cursor; res: var seq[string]; hasError: var bool) =
+type ImportedFilename* = object
+  path*: string ## stringified path from AST that has to be resolved
+  name*: string ## extracted module name to define a sym for in `import`
+
+proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs = false) =
   case n.kind
   of StringLit, Ident:
-    res.add pool.strings[n.litId]
+    let s = pool.strings[n.litId]
+    # XXX `s` could be something like "foo/bar.nim" which would need to extract the name "bar"
+    res.add ImportedFilename(path: s, name: s)
     inc n
   of Symbol:
     var s = pool.syms[n.symId]
     extractBasename s
-    res.add s
+    res.add ImportedFilename(path: s, name: s)
     inc n
   of ParLe:
     case exprKind(n)
@@ -51,41 +57,88 @@ proc filenameVal*(n: var Cursor; res: var seq[string]; hasError: var bool) =
       else:
         hasError = true
         inc n
+    of QuotedX:
+      let s = pool.strings[unquote(n)]
+      res.add ImportedFilename(path: s, name: s)
     of CallX, InfixX:
       var x = n
       skip n # ensure we skipped it completely
       inc x
-      var isSlash = false
-      case x.kind
-      of StringLit, Ident:
-        isSlash = pool.strings[x.litId] == "/"
-      of Symbol:
-        var s = pool.syms[x.symId]
-        extractBasename s
-        isSlash = s == "/"
-      else: hasError = true
-      if not hasError:
-        inc x # skip slash
-        var prefix: seq[string] = @[]
-        filenameVal(x, prefix, hasError)
-        var suffix: seq[string] = @[]
-        filenameVal(x, suffix, hasError)
+      var op = ""
+      let opId = getIdent(x)
+      if opId == StrId(0):
+        hasError = true
+      else:
+        op = pool.strings[opId]
+      if hasError:
+        discard
+      elif op == "as":
+        if not allowAs:
+          hasError = true
+          return
+        if x.kind == ParRi:
+          hasError = true
+          return
+        var rhs = x
+        skip rhs # skip lhs
+        if rhs.kind == ParRi:
+          hasError = true
+          return
+        let aliasId = getIdent(rhs)
+        if aliasId == StrId(0):
+          hasError = true
+        else:
+          let alias = pool.strings[aliasId]
+          var prefix: seq[ImportedFilename] = @[]
+          filenameVal(x, prefix, hasError, allowAs = false)
+          if x.kind != ParRi: hasError = true
+          for pre in mitems(prefix):
+            if pre.path != "":
+              res.add ImportedFilename(path: pre.path, name: alias)
+          if prefix.len == 0:
+            hasError = true
+      else: # any operator, could restrict to slash-like
+        var prefix: seq[ImportedFilename] = @[]
+        filenameVal(x, prefix, hasError, allowAs = false)
+        var suffix: seq[ImportedFilename] = @[]
+        filenameVal(x, suffix, hasError, allowAs = allowAs)
         if x.kind != ParRi: hasError = true
         for pre in mitems(prefix):
           for suf in mitems(suffix):
-            if pre != "" and suf != "":
-              res.add pre & "/" & suf
+            if pre.path != "" and suf.path != "":
+              res.add ImportedFilename(path: pre.path & op & suf.path, name: suf.name)
             else:
               hasError = true
         if prefix.len == 0 or suffix.len == 0:
           hasError = true
-      else:
+    of PrefixX:
+      var x = n
+      skip n # ensure we skipped it completely
+      inc x
+      var op = ""
+      let opId = getIdent(x)
+      if opId == StrId(0):
         hasError = true
+      else:
+        op = pool.strings[opId]
+      if hasError:
+        discard
+      else: # any operator, could restrict to slash-like
+        var suffix: seq[ImportedFilename] = @[]
+        filenameVal(x, suffix, hasError, allowAs = allowAs)
+        if x.kind != ParRi: hasError = true
+        for suf in mitems(suffix):
+          if suf.path != "":
+            res.add ImportedFilename(path: op & suf.path, name: suf.name)
+          else:
+            hasError = true
+        if suffix.len == 0:
+          hasError = true
     of ParX, AconstrX:
       inc n
       if n.kind != ParRi:
         while n.kind != ParRi:
-          filenameVal(n, res, hasError)
+          filenameVal(n, res, hasError, allowAs)
         inc n
       else:
         hasError = true
@@ -95,7 +148,7 @@ proc filenameVal*(n: var Cursor; res: var seq[string]; hasError: var bool) =
       skip n # skip type
       if n.kind != ParRi:
         while n.kind != ParRi:
-          filenameVal(n, res, hasError)
+          filenameVal(n, res, hasError, allowAs)
         inc n
       else:
         hasError = true

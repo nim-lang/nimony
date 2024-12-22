@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata
+import nimony_model, decls, programs, semdata, typeprops
 
 type
   Item* = object
@@ -311,20 +311,10 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
       else:
         singleArgImpl(m, impl, arg)
 
-proc typebits*(context: ptr SemContext; n: PackedToken): int =
-  if n.kind == IntLit:
-    result = pool.integers[n.intId]
-  elif n.kind == InlineInt:
-    result = n.soperand
-  else:
-    result = 0
-  if result == -1:
-    result = context.g.config.bits
-
 proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
   if (f.kind == IntLit or f.kind == InlineInt) and
      (a.kind == IntLit or a.kind == InlineInt):
-    result = typebits(context, f.load) - typebits(context, a.load)
+    result = typebits(context.g.config, f.load) - typebits(context.g.config, a.load)
   else:
     result = -1
 

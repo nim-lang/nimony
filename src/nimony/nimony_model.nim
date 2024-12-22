@@ -42,7 +42,7 @@ type
     DiscardS = "discard"
     IncludeS = "include"
     ImportS = "import"
-    FromS = "from"
+    FromImportS = "from"
     ImportExceptS = "importexcept"
     ExportS = "export"
 
@@ -66,6 +66,7 @@ type
     TemplateY = "template"
     TypeY = "type"
     LabelY = "block"
+    ModuleY = "module"
     CchoiceY = "cchoice"
 
   ExprKind* = enum
