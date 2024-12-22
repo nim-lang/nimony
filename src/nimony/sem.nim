@@ -2035,9 +2035,20 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         swap c.dest, indexBuf
         var index = cursorAt(indexBuf, 0)
         if index.typeKind == RangeT:
-          # range expression
+          # direct range type
           c.dest.addSubtree index
-        elif index.kind == Symbol and fetchSym(c, index.symId).kind == TypevarY: # or index.typeKind in {UnresolvedT, InvokeT]
+        elif isOrdinalType(index):
+          # ordinal type, turn it into a range type
+          var err = false # ignore for now
+          let first = asSigned(firstOrd(c, index), err)
+          let last = asSigned(lastOrd(c, index), err)
+          c.dest.addParLe(RangeT, index.info)
+          c.dest.addSubtree index # base type
+          c.dest.addIntLit(first, index.info)
+          c.dest.addIntLit(last, index.info)
+          c.dest.addParRi()
+        elif index.typeKind == InvokeT or (index.kind == Symbol and
+            fetchSym(c, index.symId).kind == TypevarY): # or UnresolvedT
           # unresolved types are left alone
           # check for invocations would need earlier ordinal type check
           c.dest.addSubtree index
@@ -2056,7 +2067,6 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       wantParRi c, n
     of RangeT:
       takeToken c, n
-      let baseTypeStart = c.dest.len
       semLocalTypeImpl c, n, context
       var valuesBuf = createTokenBuf(4)
       swap c.dest, valuesBuf
