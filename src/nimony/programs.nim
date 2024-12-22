@@ -59,6 +59,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
     let symId = pool.syms.getOrIncl(k)
     iface.mgetOrPut(strId, @[]).add symId
     if not marker.containsOrIncl(strId):
+      # mark that this module contains the identifier `strId`:
       importTab.mgetOrPut(strId, @[]).add(module)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
