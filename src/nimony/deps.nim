@@ -6,7 +6,7 @@
 
 ]#
 
-import std/[os, tables, sets, syncio, assertions, strutils]
+import std/[os, tables, sets, syncio, assertions, strutils, times]
 import semos, nifconfig, nimony_model
 import ".." / gear2 / modnames
 
@@ -150,11 +150,16 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
     while n.kind != ParRi:
       processDep c, n, current
 
+proc execNifler(nifler, input, output: string) =
+  if fileExists(output) and fileExists(input) and
+      getLastModificationTime(output) > getLastModificationTime(input):
+    discard "nothing to do"
+  else:
+    exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
+      quoteShell(output)
+
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(p.nimFile) & " " &
-    quoteShell(parsedFile(p))
-  #echo cmd
-  exec cmd
+  execNifler c.nifler, p.nimFile, parsedFile(p)
 
   let depsFile = depsFile(p)
   var stream = nifstreams.open(depsFile)
