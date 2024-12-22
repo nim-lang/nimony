@@ -205,8 +205,11 @@ proc generateMakefile(c: DepContext) =
     s.add "\n" & mescape(semmedFile(v.files[0])) & ":"
     for f in v.files:
       s.add " " & mescape(parsedFile(f))
+    var seenDeps = initHashSet[string]()
     for f in v.deps:
-      s.add "  " & mescape(indexFile(f))
+      let idxFile = mescape(indexFile(f))
+      if not seenDeps.containsOrIncl(idxFile):
+        s.add "  " & idxFile
     s.add "\n\tnimsem m " & mescape(parsedFile(v.files[0])) & " " &
       mescape(semmedFile(v.files[0]))
 
