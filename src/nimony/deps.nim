@@ -197,27 +197,33 @@ proc mescape(p: string): string =
 proc generateMakefile(c: DepContext) =
   var s = ""
   s.add "# Auto-generated Makefile\n"
-  s.add "\nall: " & semmedFile(c.rootNode.files[0])
+  s.add "\nall: " & mescape semmedFile(c.rootNode.files[0])
 
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
   for v in c.nodes:
     s.add "\n" & mescape(semmedFile(v.files[0])) & ":"
-    for f in v.files:
-      s.add " " & mescape(parsedFile(f))
     var seenDeps = initHashSet[string]()
+    for f in v.files:
+      let pf = parsedFile(f)
+      if not seenDeps.containsOrIncl(pf):
+        s.add " " & mescape(pf)
     for f in v.deps:
-      let idxFile = mescape(indexFile(f))
+      let idxFile = indexFile(f)
       if not seenDeps.containsOrIncl(idxFile):
-        s.add "  " & idxFile
+        s.add "  " & mescape(idxFile)
     s.add "\n\tnimsem m " & mescape(parsedFile(v.files[0])) & " " &
       mescape(semmedFile(v.files[0]))
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
+  var seenFiles = initHashSet[string]()
   for v in c.nodes:
-    s.add "\n" & mescape(parsedFile(v.files[0])) & ": " & mescape(v.files[0].nimFile)
-    s.add "\n\tnifler --portablePaths --deps parse " & mescape(v.files[0].nimFile) & " " &
-      mescape(parsedFile(v.files[0]))
+    for i in 0..<v.files.len:
+      let f = parsedFile(v.files[i])
+      if not seenFiles.containsOrIncl(f):
+        s.add "\n" & mescape(f) & ": " & mescape(v.files[i].nimFile)
+        s.add "\n\tnifler --portablePaths --deps parse " & mescape(v.files[i].nimFile) & " " &
+          mescape(f)
 
   # every .idx.nif file depends on its semmed.nif file, but these cannot go out of sync
   # so we don't do anything here.
