@@ -190,35 +190,36 @@ proc semInclude(c: var SemContext; it: var Item) =
   var x = it.n
   skip it.n
   inc x # skip the `include`
-  filenameVal(x, files, hasError)
+  while x.kind != ParRi:
+    filenameVal(x, files, hasError)
 
-  if hasError:
-    c.buildErr info, "wrong `include` statement"
-  else:
-    for f1 in items(files):
-      let f2 = resolveFile(c.g.config.paths, getFile(info), f1)
-      c.meta.includedFiles.add f2
-      # check for recursive include files:
-      var isRecursive = false
-      for a in c.includeStack:
-        if a == f2:
-          isRecursive = true
-          break
+    if hasError:
+      c.buildErr info, "wrong `include` statement"
+    else:
+      for f1 in items(files):
+        let f2 = resolveFile(c.g.config.paths, getFile(info), f1)
+        c.meta.includedFiles.add f2
+        # check for recursive include files:
+        var isRecursive = false
+        for a in c.includeStack:
+          if a == f2:
+            isRecursive = true
+            break
 
-      if not isRecursive:
-        var buf = parseFile(f2, c.g.config.paths)
-        c.includeStack.add f2
-        #c.m.includes.add f2
-        var n = cursorAt(buf, 0)
-        semStmt(c, n)
-        c.includeStack.setLen c.includeStack.len - 1
-      else:
-        var m = ""
-        for i in 0..<c.includeStack.len:
-          m.add shortenDir c.includeStack[i]
-          m.add " -> "
-        m.add shortenDir f2
-        c.buildErr info, "recursive include: " & m
+        if not isRecursive:
+          var buf = parseFile(f2, c.g.config.paths)
+          c.includeStack.add f2
+          #c.m.includes.add f2
+          var n = cursorAt(buf, 0)
+          semStmt(c, n)
+          c.includeStack.setLen c.includeStack.len - 1
+        else:
+          var m = ""
+          for i in 0..<c.includeStack.len:
+            m.add shortenDir c.includeStack[i]
+            m.add " -> "
+          m.add shortenDir f2
+          c.buildErr info, "recursive include: " & m
 
   producesVoid c, info, it.typ
 
@@ -250,16 +251,16 @@ proc semImport(c: var SemContext; it: var Item) =
       if y.kind == Ident and pool.strings[y.litId] == "cyclic":
         cyclicImport(c, x)
         return
-
-  var files: seq[string] = @[]
-  var hasError = false
-  filenameVal(x, files, hasError)
-  if hasError:
-    c.buildErr info, "wrong `import` statement"
-  else:
-    let origin = getFile(info)
-    for f in files:
-      importSingleFile c, f, origin, info
+  while x.kind != ParRi:
+    var files: seq[string] = @[]
+    var hasError = false
+    filenameVal(x, files, hasError)
+    if hasError:
+      c.buildErr info, "wrong `import` statement"
+    else:
+      let origin = getFile(info)
+      for f in files:
+        importSingleFile c, f, origin, info
 
   producesVoid c, info, it.typ
 

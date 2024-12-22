@@ -25,7 +25,6 @@ Command:
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
   -p, --path:PATH           add PATH to the search path
-  -r, --run                 run the makefile and the compiled program
   -f, --forcebuild          force a rebuild
   --noenv                   do not read configuration from `NIM_*`
                             environment variables

@@ -49,39 +49,39 @@ proc parseDeps(c: var DepContext; p: FilePair; current: Node)
 
 proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
   var files: seq[string] = @[]
-  var hasError = false
   var x = it
   skip it
   inc x # skip the `include`
-  filenameVal(x, files, hasError)
+  while x.kind != ParRi:
+    var hasError = false
+    filenameVal(x, files, hasError)
 
-  if hasError:
-    discard "ignore wrong `include` statement"
-  else:
-    for f1 in items(files):
-      let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
-      # check for recursive include files:
-      var isRecursive = false
-      for a in c.includeStack:
-        if a == f2:
-          isRecursive = true
-          break
+    if hasError:
+      discard "ignore wrong `include` statement"
+    else:
+      for f1 in items(files):
+        let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+        # check for recursive include files:
+        var isRecursive = false
+        for a in c.includeStack:
+          if a == f2:
+            isRecursive = true
+            break
 
-      if not isRecursive:
-        let oldActive = current.active
-        current.active = current.files.len
-        current.files.add c.toPair(f2)
-        var buf = parseFile(f2, c.config.paths)
-        c.includeStack.add f2
-        var n = cursorAt(buf, 0)
-        processDep c, n, current
-        current.active = oldActive
-        c.includeStack.setLen c.includeStack.len - 1
-      else:
-        discard "ignore recursive include"
+        if not isRecursive and fileExists(f2):
+          let oldActive = current.active
+          current.active = current.files.len
+          current.files.add c.toPair(f2)
+          parseDeps(c, c.toPair(f2), current)
+          c.includeStack.add f2
+          current.active = oldActive
+          c.includeStack.setLen c.includeStack.len - 1
+        else:
+          discard "ignore recursive include"
 
 proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo; current: Node) =
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+  if not fileExists(f2): return
   let p = c.toPair(f2)
   current.deps.add p
   if not c.processedModules.containsOrIncl(p.modname):
@@ -94,32 +94,53 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the `import`
+  while x.kind != ParRi:
+    if x.kind == ParLe and x == "pragmax":
+      inc x
+      var y = x
+      skip y
+      if y.substructureKind == PragmasS:
+        inc y
+        if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+          continue
 
-  if x.kind == ParLe and x == "pragmax":
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasS:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        return
+    var files: seq[string] = @[]
+    var hasError = false
+    filenameVal(x, files, hasError)
+    if hasError:
+      discard "ignore wrong `import` statement"
+    else:
+      for f in files:
+        importSingleFile c, f, info, current
 
+proc processFrom(c: var DepContext; it: var Cursor; current: Node) =
+  let info = it.info
+  var x = it
+  skip it
+  inc x # skip the `from`
   var files: seq[string] = @[]
   var hasError = false
   filenameVal(x, files, hasError)
   if hasError:
-    discard "ignore wrong `import` statement"
+    discard "ignore wrong `from` statement"
   else:
     for f in files:
       importSingleFile c, f, info, current
+      break
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   case stmtKind(n)
   of ImportS:
     processImport c, n, current
-  of IncludeS:
+  of IncludeS, ImportExceptS:
     processInclude c, n, current
+  of FromS:
+    processFrom c, n, current
+  of ExportS:
+    discard "ignore `export` statement"
+    skip n
   else:
+    #echo "IGNORING ", toString(n, false)
     skip n
 
 proc processDeps(c: var DepContext; n: Cursor; current: Node) =
@@ -156,11 +177,22 @@ proc requiresTool*(tool, src: string; forceRebuild: bool) =
     nimexec("c -d:release " & src)
     moveFile src.changeFileExt(ExeExt), t
 
-proc toUnix(p: string): string =
+proc mescape(p: string): string =
   when defined(windows):
-    p.replace("\\", "/")
+    result = p.replace("\\", "/")
   else:
-    p
+    result = p
+  result = result.multiReplace({
+    " ": "\\ ",   # Spaces
+    "#": "\\#",   # Comments
+    "$": "$$",    # Variables
+    ":": "\\:",   # Rule separators
+    "(": "\\(",   # Function calls
+    ")": "\\)",
+    "*": "\\*",   # Wildcards
+    "[": "\\[",   # Pattern matching
+    "]": "\\]"
+  })
 
 proc generateMakefile(c: DepContext) =
   var s = ""
@@ -170,19 +202,19 @@ proc generateMakefile(c: DepContext) =
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
   for v in c.nodes:
-    s.add "\n" & toUnix(semmedFile(v.files[0])) & ":"
+    s.add "\n" & mescape(semmedFile(v.files[0])) & ":"
     for f in v.files:
-      s.add " " & toUnix(parsedFile(f))
+      s.add " " & mescape(parsedFile(f))
     for f in v.deps:
-      s.add "  " & toUnix(indexFile(f))
-    s.add "\n\tnimsem m " & toUnix(parsedFile(v.files[0])) & " " &
-      toUnix(semmedFile(v.files[0]))
+      s.add "  " & mescape(indexFile(f))
+    s.add "\n\tnimsem m " & mescape(parsedFile(v.files[0])) & " " &
+      mescape(semmedFile(v.files[0]))
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
   for v in c.nodes:
-    s.add "\n" & toUnix(parsedFile(v.files[0])) & ": " & toUnix(v.files[0].nimFile)
-    s.add "\n\tnifler --portablePaths --deps parse " & toUnix(v.files[0].nimFile) & " " &
-      toUnix(parsedFile(v.files[0]))
+    s.add "\n" & mescape(parsedFile(v.files[0])) & ": " & mescape(v.files[0].nimFile)
+    s.add "\n\tnifler --portablePaths --deps parse " & mescape(v.files[0].nimFile) & " " &
+      mescape(parsedFile(v.files[0]))
 
   # every .idx.nif file depends on its semmed.nif file, but these cannot go out of sync
   # so we don't do anything here.
