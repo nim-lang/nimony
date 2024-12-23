@@ -2148,10 +2148,20 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
     c.addXint state.thisValue, c.dest[declStart].info
     inc n
   else:
-    let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
-    if explicitValue != state.thisValue:
-      state.hasHole = true
-      state.thisValue = explicitValue
+    var ec = initEvalContext(addr c)
+    var valueCursor = n
+    let fieldValue = eval(ec, valueCursor)
+    if fieldValue.kind == StringLit:
+      c.dest.add parLeToken(pool.tags.getOrIncl($TupleConstrX), n.info)
+      c.addXint state.thisValue, n.info
+      c.dest.add fieldValue
+      c.dest.addParRi()
+      n = valueCursor
+    else:
+      let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
+      if explicitValue != state.thisValue:
+        state.hasHole = true
+        state.thisValue = explicitValue
   c.addSym delayed
   wantParRi c, n
   publish c, delayed.s.name, declStart
