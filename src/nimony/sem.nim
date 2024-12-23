@@ -2029,21 +2029,19 @@ proc exportMarkerBecomesNifTag(c: var SemContext; insertPos: int; crucial: Cruci
   assert crucial.magic.len > 0
   let info = c.dest[insertPos].info
 
-  var a: Cursor
   if crucial.bits != 0:
     let nifTag = [
       parLeToken(pool.tags.getOrIncl(crucial.magic), info),
       intToken(pool.integers.getOrIncl(crucial.bits), info),
       parRiToken(info)
     ]
-    a = fromBuffer(nifTag)
+    c.dest.replace fromBuffer(nifTag), insertPos
   else:
     let nifTag = [
       parLeToken(pool.tags.getOrIncl(crucial.magic), info),
       parRiToken(info)
     ]
-    a = fromBuffer(nifTag)
-  c.dest.replace a, insertPos
+    c.dest.replace fromBuffer(nifTag), insertPos
 
 proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   let declStart = c.dest.len
