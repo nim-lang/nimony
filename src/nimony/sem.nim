@@ -38,7 +38,7 @@ proc combineType(c: var SemContext; info: PackedLineInfo; dest: var Cursor; src:
   else:
     c.typeMismatch info, src, dest
 
-proc implicitlyDiscardablen: Cursor, noreturnOnly = false): bool =
+proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
   template checkBranch(branch) =
     if not implicitlyDiscardable(branch, noreturnOnly):
       return false
@@ -144,7 +144,7 @@ proc implicitlyDiscardablen: Cursor, noreturnOnly = false): bool =
     result = false
 
 proc isNoReturn(n: Cursor): bool {.inline.} =
-  result = implicitlyDiscardablen, noreturnOnly = true)
+  result = implicitlyDiscardable(n, noreturnOnly = true)
 
 proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCursor) =
   if typeKind(expected) == AutoT:
@@ -197,7 +197,7 @@ proc semInclude(c: var SemContext; it: var Item) =
     c.buildErr info, "wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c, getFile(c, info), f1.path)
+      let f2 = resolveFile(c.g.config.paths, getFile(info), f1.path)
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false
@@ -226,13 +226,13 @@ proc semInclude(c: var SemContext; it: var Item) =
 type
   ImportModeKind = enum
     ImportAll, FromImport, ImportExcept
-  
+
   ImportMode = object
     kind: ImportModeKind
     list: PackedSet[StrId] # `from import` or `import except` symbol list
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
-  let f2 = resolveFile(c, origin, f1.path)
+  let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
@@ -257,7 +257,7 @@ proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
 
 proc doImportMode(c: var SemContext; files: seq[ImportedFilename]; mode: ImportMode; info: PackedLineInfo) =
-  let origin = getFile(c, info)
+  let origin = getFile(info)
   for f in files:
     importSingleFile c, f, origin, mode, info
 
@@ -488,7 +488,7 @@ template withFromInfo(req: InstRequest; body: untyped) =
 
 type
   TypeDeclContext = enum
-    InLocalDecl, InTypeSection, InObjectDecl, InParamDecl, InheritanceDecl, InReturnTypeDecl, AllowValues,
+    InLocalDecl, InTypeSection, InObjectDecl, InParamDecl, InInheritanceDecl, InReturnTypeDecl, AllowValues,
     InGenericConstraint
 
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext)
@@ -605,7 +605,7 @@ proc semConstStrExpr(c: var SemContext; n: var Cursor) =
     c.dest.shrink start
     c.dest.add valueBuf
 
-proc semConstentExpr(c: var SemContext; n: var Cursor) =
+proc semConstIntExpr(c: var SemContext; n: var Cursor) =
   let start = c.dest.len
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
@@ -616,7 +616,7 @@ proc semConstentExpr(c: var SemContext; n: var Cursor) =
   var valueBuf = evalExpr(c, e)
   endRead(c.dest)
   let value = cursorAt(valueBuf, 0)
-  if not isConstentValue(value):
+  if not isConstIntValue(value):
     if value.kind == ParLe and value.tagId == ErrT:
       c.dest.add valueBuf
     else:
@@ -694,7 +694,7 @@ template emptyNode(): Cursor =
   # XXX find a better solution for this
   c.types.voidType
 
-template skipToLocalTypen =
+template skipToLocalType(n) =
   inc n # skip ParLe
   inc n # skip name
   skip n # skip export marker
@@ -1192,7 +1192,7 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
     if lhs.n.kind == Symbol and isRoutine(lhs.kind):
       let res = tryLoadSym(lhs.n.symId)
       assert res.status == LacksNothing
-      if isGeneric(asRoutineres.decl)):
+      if isGeneric(asRoutine(res.decl)):
         cs.hasGenericArgs = true
         cs.genericDest = createTokenBuf(16)
         swap c.dest, cs.genericDest
@@ -1555,7 +1555,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
   of Align, Bits:
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     inc n
-    semConstentExpr(c, n)
+    semConstIntExpr(c, n)
     c.dest.addParRi()
   of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow:
     crucial.flags.incl pk
@@ -1601,7 +1601,7 @@ proc semIdent(c: var SemContext; n: var Cursor): Sym =
   inc n
 
 proc semQuoted(c: var SemContext; n: var Cursor): Sym =
-  let nameId = unquoten
+  let nameId = unquote(n)
   result = semIdentImpl(c, n, nameId)
 
 proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
@@ -1776,7 +1776,7 @@ proc instGenericType(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo
     else:
       dest.buildLocalErr info, "too many generic arguments provided"
 
-proc semvoke(c: var SemContext; n: var Cursor) =
+proc semInvoke(c: var SemContext; n: var Cursor) =
   let typeStart = c.dest.len
   let info = n.info
   takeToken c, n # copy `at`
@@ -2006,7 +2006,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       if crucial.hasVarargs.isValid:
         addVarargsParameter c, beforeParams, crucial.hasVarargs
     of InvokeT:
-      semvoke c, n
+      semInvoke c, n
   of DotToken:
     if context in {InReturnTypeDecl, InGenericConstraint}:
       takeToken c, n
@@ -2109,7 +2109,7 @@ proc addXint(c: var SemContext; x: xint; info: PackedLineInfo) =
     else:
       c.buildErr info, "enum value not a constant expression"
 
-proc evalConstentExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): xint =
+proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): xint =
   let beforeExpr = c.dest.len
   var x = Item(n: n, typ: expected)
   semExpr c, x
@@ -2148,7 +2148,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
     c.addXint state.thisValue, c.dest[declStart].info
     inc n
   else:
-    let explicitValue = evalConstentExpr(c, n, c.types.autoType) # 4
+    let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
     if explicitValue != state.thisValue:
       state.hasHole = true
       state.thisValue = explicitValue
@@ -2490,20 +2490,20 @@ proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
         inc it.n # call tag
         skip it.n # `..`
         c.dest.buildTree RangeX, it.n.info:
-          let a = evalConstentExpr(c, it.n, selectorType)
-          let b = evalConstentExpr(c, it.n, selectorType)
+          let a = evalConstIntExpr(c, it.n, selectorType)
+          let b = evalConstIntExpr(c, it.n, selectorType)
           if seen.doesOverlapOrIncl(a, b):
             buildErr c, info, "overlapping values"
         inc it.n # right paren of call
       elif it.n.exprKind == RangeX:
         takeToken c, it.n
-        let a = evalConstentExpr(c, it.n, selectorType)
-        let b = evalConstentExpr(c, it.n, selectorType)
+        let a = evalConstIntExpr(c, it.n, selectorType)
+        let b = evalConstIntExpr(c, it.n, selectorType)
         if seen.doesOverlapOrIncl(a, b):
           buildErr c, info, "overlapping values"
         wantParRi c, it.n
       else:
-        let a = evalConstentExpr(c, it.n, selectorType)
+        let a = evalConstIntExpr(c, it.n, selectorType)
         if seen.containsOrIncl(a):
           buildErr c, info, "value already handled"
     wantParRi c, it.n
@@ -3007,7 +3007,7 @@ proc semBuiltinSubscript(c: var SemContext; lhs: Item; it: var Item) =
   if lhs.n.kind == Symbol and lhs.kind == TypeY and
       getTypeSection(lhs.n.symId).typevars == "typevars":
     # lhs is a generic type symbol, this is a generic invocation
-    # treat it as a type expression to call semvoke
+    # treat it as a type expression to call semInvoke
     semLocalTypeExpr c, it
     return
   # XXX also check for proc generic instantiation, including symchoice
@@ -3224,6 +3224,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ForS:
         toplevelGuard c:
           semFor c, it
+      of ExportS:
+        # XXX ignored for now
+        skip it.n
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
