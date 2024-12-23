@@ -39,9 +39,11 @@ type
   Node = ref object
     files: seq[FilePair]
     deps: seq[FilePair]
+    id, parent: int
     active: int
 
   DepContext = object
+    forceRebuild: bool
     nifler: string
     config: NifConfig
     nodes: seq[Node]
@@ -87,15 +89,30 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
         else:
           discard "ignore recursive include"
 
+proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
+  var it = current.id
+  while it != -1:
+    if c.nodes[it].files[0].modname == p.modname:
+      return true
+    it = c.nodes[it].parent
+  return false
+
 proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo; current: Node) =
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
   if not fileExists(f2): return
   let p = c.toPair(f2)
-  current.deps.add p
   if not c.processedModules.containsOrIncl(p.modname):
-    var imported = Node(files: @[p])
+    current.deps.add p
+    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id)
     c.nodes.add imported
     parseDeps c, p, imported
+  else:
+    # add the dependency anyway unless it creates a cycle:
+    if wouldCreateCycle(c, current, p):
+      discard "ignore cycle"
+      echo "cycle detected: ", current.files[0].nimFile, " <-> ", p.nimFile
+    else:
+      current.deps.add p
 
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
@@ -158,16 +175,16 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
     while n.kind != ParRi:
       processDep c, n, current
 
-proc execNifler(nifler, input, output: string) =
-  if fileExists(output) and fileExists(input) and
+proc execNifler(c: var DepContext; input, output: string) =
+  if not c.forceRebuild and fileExists(output) and fileExists(input) and
       getLastModificationTime(output) > getLastModificationTime(input):
     discard "nothing to do"
   else:
-    exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
+    exec quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
       quoteShell(output)
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  execNifler c.nifler, p.nimFile, parsedFile(p)
+  execNifler c, p.nimFile, parsedFile(p)
 
   let depsFile = depsFile(p)
   var stream = nifstreams.open(depsFile)
@@ -227,7 +244,7 @@ proc generateMakefile(c: DepContext): string =
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
     s.add "\n\tnimsem m " & mescape(parsedFile(v.files[0])) & " " &
-      mescape(semmedFile(v.files[0]))
+      mescape(semmedFile(v.files[0])) & " " & mescape(indexFile(v.files[0]))
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
   var seenFiles = initHashSet[string]()
@@ -243,28 +260,31 @@ proc generateMakefile(c: DepContext): string =
   result = "nifcache" / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
 
-proc buildGraph(project: string) =
+proc buildGraph(project: string; compat, forceRebuild: bool) =
   var config = NifConfig()
   config.bits = sizeof(int)*8
 
   let nifler = findTool("nifler")
 
-  let cfgNif = "nifcache" / moduleSuffix(project, []) & ".cfg.nif"
-  exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
-    quoteShell(cfgNif)
-  parseNifConfig cfgNif, config
+  if compat:
+    let cfgNif = "nifcache" / moduleSuffix(project, []) & ".cfg.nif"
+    exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
+      quoteShell(cfgNif)
+    parseNifConfig cfgNif, config
 
-  var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[])
+  var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
+    forceRebuild: forceRebuild)
   let p = c.toPair(project)
-  c.rootNode = Node(files: @[p])
+  c.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0)
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
   let makeFilename = generateMakefile c
-  echo "run with: make -f ", makeFilename
+  #echo "run with: make -f ", makeFilename
+  exec "make" & (if forceRebuild: " -B" else: "") & " -f " & quoteShell(makeFilename)
 
 when isMainModule:
   createDir("nifcache")
   requiresTool "nifler", "src/nifler/nifler.nim", false
 
-  buildGraph paramStr(1)
+  buildGraph paramStr(1), true, true
