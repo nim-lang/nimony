@@ -25,10 +25,10 @@ type
     nimFile: string
     modname: string
 
-proc indexFile(f: FilePair): string = f.modname & ".2.idx.nif"
-proc parsedFile(f: FilePair): string = f.modname & ".1.nif"
-proc depsFile(f: FilePair): string = f.modname & ".1.deps.nif"
-proc semmedFile(f: FilePair): string = f.modname & ".2.nif"
+proc indexFile(f: FilePair): string = "nifcache" / f.modname & ".2.idx.nif"
+proc parsedFile(f: FilePair): string = "nifcache" / f.modname & ".1.nif"
+proc depsFile(f: FilePair): string = "nifcache" / f.modname & ".1.deps.nif"
+proc semmedFile(f: FilePair): string = "nifcache" / f.modname & ".2.nif"
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -235,13 +235,13 @@ proc generateMakefile(c: DepContext): string =
     for i in 0..<v.files.len:
       let f = parsedFile(v.files[i])
       if not seenFiles.containsOrIncl(f):
-        let nimFile = relativePath(v.files[i].nimFile, "nifcache", '/')
+        let nimFile = v.files[i].nimFile
         s.add "\n" & mescape(f) & ": " & mescape(nimFile)
         s.add "\n\tnifler --portablePaths --deps parse " & mescape(nimFile) & " " &
           mescape(f)
 
-  result = c.rootNode.files[0].modname & ".makefile"
-  writeFile "nifcache" / result, s
+  result = "nifcache" / c.rootNode.files[0].modname & ".makefile"
+  writeFile result, s
 
 proc buildGraph(project: string) =
   var config = NifConfig()
@@ -261,7 +261,7 @@ proc buildGraph(project: string) =
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
   let makeFilename = generateMakefile c
-  echo "run with: make -C nifcache -f ", makeFilename
+  echo "run with: make -f ", makeFilename
 
 when isMainModule:
   createDir("nifcache")
