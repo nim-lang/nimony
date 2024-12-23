@@ -236,7 +236,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
-    if needsRecompile(f2, suffix):
+    if c.canSelfExec and needsRecompile(f2, suffix):
       selfExec c, f2
 
     let moduleName = pool.strings.getOrIncl(f1.name)
@@ -3349,7 +3349,7 @@ proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   result = move c.dest
 
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-               commandLineArgs: sink string) =
+               commandLineArgs: sink string; canSelfExec: bool) =
   var n0 = setupProgram(infile, outfile)
   var c = SemContext(
     dest: createTokenBuf(),
@@ -3359,7 +3359,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     g: ProgramContext(config: config),
     phase: SemcheckTopLevelSyms,
     routine: SemRoutine(kind: NoSym),
-    commandLineArgs: commandLineArgs)
+    commandLineArgs: commandLineArgs,
+    canSelfExec: canSelfExec)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
   # XXX could add self module symbol here
 

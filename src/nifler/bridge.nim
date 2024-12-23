@@ -566,6 +566,16 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       c.depsEnabled = oldDepsEnabled
       swap c.b, c.deps
       c.lineInfoEnabled = oldLineInfoEnabled
+  of nkCallKinds:
+    let oldDepsEnabled = c.depsEnabled
+    if n.len > 0 and n[0].kind == nkIdent and n[0].ident.s == "runnableExamples":
+      c.depsEnabled = false
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+    c.depsEnabled = oldDepsEnabled
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
