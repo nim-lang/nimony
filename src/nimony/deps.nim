@@ -224,9 +224,10 @@ proc mescape(p: string): string =
     "]": "\\]"
   })
 
-proc generateMakefile(c: DepContext): string =
+proc generateMakefile(c: DepContext; commandLineArgs: string): string =
   var s = ""
   s.add "# Auto-generated Makefile\n"
+  s.add "export PATH := " & mescape(os.getAppDir()) & ":$(PATH)\n"
   s.add "\n.PHONY: all\n"
   s.add "\nall: " & mescape indexFile(c.rootNode.files[0])
 
@@ -243,7 +244,7 @@ proc generateMakefile(c: DepContext): string =
       let idxFile = indexFile(f)
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
-    s.add "\n\tnimsem m " & mescape(parsedFile(v.files[0])) & " " &
+    s.add "\n\tnimsem " & commandLineArgs & " m " & mescape(parsedFile(v.files[0])) & " " &
       mescape(semmedFile(v.files[0])) & " " & mescape(indexFile(v.files[0]))
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
@@ -260,10 +261,8 @@ proc generateMakefile(c: DepContext): string =
   result = "nifcache" / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
 
-proc buildGraph(project: string; compat, forceRebuild: bool) =
-  var config = NifConfig()
-  config.bits = sizeof(int)*8
-
+proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: bool;
+    commandLineArgs: string) =
   let nifler = findTool("nifler")
 
   if compat:
@@ -279,12 +278,6 @@ proc buildGraph(project: string; compat, forceRebuild: bool) =
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
-  let makeFilename = generateMakefile c
+  let makeFilename = generateMakefile(c, commandLineArgs)
   #echo "run with: make -f ", makeFilename
   exec "make" & (if forceRebuild: " -B" else: "") & " -f " & quoteShell(makeFilename)
-
-when isMainModule:
-  createDir("nifcache")
-  requiresTool "nifler", "src/nifler/nifler.nim", false
-
-  buildGraph paramStr(1), true, true

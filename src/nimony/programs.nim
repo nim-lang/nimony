@@ -34,7 +34,7 @@ proc suffixToNif*(suffix: string): string {.inline.} =
 
 proc needsRecompile*(nimfile, suffix: string): bool =
   let nifModule = suffixToNif(suffix)
-  result =  not fileExists(nifModule) or getLastModificationTime(nifModule) < getLastModificationTime(nimfile)
+  result = not fileExists(nifModule) or getLastModificationTime(nifModule) < getLastModificationTime(nimfile)
 
 proc load*(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
