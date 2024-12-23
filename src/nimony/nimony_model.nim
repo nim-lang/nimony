@@ -44,6 +44,7 @@ type
     ImportS = "import"
     FromImportS = "from"
     ImportExceptS = "importexcept"
+    ExportS = "export"
 
   SymKind* = enum
     NoSym

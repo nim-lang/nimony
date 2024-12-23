@@ -197,7 +197,7 @@ proc semInclude(c: var SemContext; it: var Item) =
     c.buildErr info, "wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c, getFile(c, info), f1.path)
+      let f2 = resolveFile(c.g.config.paths, getFile(info), f1.path)
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false
@@ -226,13 +226,13 @@ proc semInclude(c: var SemContext; it: var Item) =
 type
   ImportModeKind = enum
     ImportAll, FromImport, ImportExcept
-  
+
   ImportMode = object
     kind: ImportModeKind
     list: PackedSet[StrId] # `from import` or `import except` symbol list
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
-  let f2 = resolveFile(c, origin, f1.path)
+  let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
@@ -257,7 +257,7 @@ proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
 
 proc doImportMode(c: var SemContext; files: seq[ImportedFilename]; mode: ImportMode; info: PackedLineInfo) =
-  let origin = getFile(c, info)
+  let origin = getFile(info)
   for f in files:
     importSingleFile c, f, origin, mode, info
 
@@ -3224,6 +3224,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ForS:
         toplevelGuard c:
           semFor c, it
+      of ExportS:
+        # XXX ignored for now
+        skip it.n
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
