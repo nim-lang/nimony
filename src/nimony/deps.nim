@@ -1,3 +1,11 @@
+#       Nimony
+# (c) Copyright 2024 Andreas Rumpf
+#
+# See the file "license.txt", included in this
+# distribution, for details about the copyright.
+
+## Dependency analysis for Nimony.
+
 #[
 
 - Build the graph. Every node is a list of files representing the main source file plus its included files.
@@ -17,10 +25,10 @@ type
     nimFile: string
     modname: string
 
-proc indexFile(f: FilePair): string = "nifcache" / f.modname & ".2.idx.nif"
-proc parsedFile(f: FilePair): string = "nifcache" / f.modname & ".1.nif"
-proc depsFile(f: FilePair): string = "nifcache" / f.modname & ".1.deps.nif"
-proc semmedFile(f: FilePair): string = "nifcache" / f.modname & ".2.nif"
+proc indexFile(f: FilePair): string = f.modname & ".2.idx.nif"
+proc parsedFile(f: FilePair): string = f.modname & ".1.nif"
+proc depsFile(f: FilePair): string = f.modname & ".1.deps.nif"
+proc semmedFile(f: FilePair): string = f.modname & ".2.nif"
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -48,7 +56,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node)
 proc parseDeps(c: var DepContext; p: FilePair; current: Node)
 
 proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
-  var files: seq[string] = @[]
+  var files: seq[ImportedFilename] = @[]
   var x = it
   skip it
   inc x # skip the `include`
@@ -60,7 +68,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
       discard "ignore wrong `include` statement"
     else:
       for f1 in items(files):
-        let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+        let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1.path)
         # check for recursive include files:
         var isRecursive = false
         for a in c.includeStack:
@@ -104,28 +112,28 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
         if y.kind == Ident and pool.strings[y.litId] == "cyclic":
           continue
 
-    var files: seq[string] = @[]
+    var files: seq[ImportedFilename] = @[]
     var hasError = false
     filenameVal(x, files, hasError)
     if hasError:
       discard "ignore wrong `import` statement"
     else:
       for f in files:
-        importSingleFile c, f, info, current
+        importSingleFile c, f.path, info, current
 
 proc processFrom(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
   skip it
   inc x # skip the `from`
-  var files: seq[string] = @[]
+  var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError)
   if hasError:
     discard "ignore wrong `from` statement"
   else:
     for f in files:
-      importSingleFile c, f, info, current
+      importSingleFile c, f.path, info, current
       break
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
@@ -134,7 +142,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     processImport c, n, current
   of IncludeS, ImportExceptS:
     processInclude c, n, current
-  of FromS:
+  of FromImportS:
     processFrom c, n, current
   of ExportS:
     discard "ignore `export` statement"
@@ -199,7 +207,7 @@ proc mescape(p: string): string =
     "]": "\\]"
   })
 
-proc generateMakefile(c: DepContext) =
+proc generateMakefile(c: DepContext): string =
   var s = ""
   s.add "# Auto-generated Makefile\n"
   s.add "\nall: " & mescape semmedFile(c.rootNode.files[0])
@@ -232,7 +240,8 @@ proc generateMakefile(c: DepContext) =
 
   # every .idx.nif file depends on its semmed.nif file, but these cannot go out of sync
   # so we don't do anything here.
-  writeFile "Makefile", s
+  result = "nifcache" / semmedFile(c.rootNode.files[0]) & ".makefile"
+  writeFile result, s
 
 proc buildGraph(project: string) =
   var config = NifConfig()
@@ -251,7 +260,8 @@ proc buildGraph(project: string) =
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
-  generateMakefile c
+  let makeFilename = generateMakefile c
+  echo "Makefile: ", makeFilename
 
 when isMainModule:
   createDir("nifcache")
