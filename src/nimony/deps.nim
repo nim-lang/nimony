@@ -210,12 +210,13 @@ proc mescape(p: string): string =
 proc generateMakefile(c: DepContext): string =
   var s = ""
   s.add "# Auto-generated Makefile\n"
-  s.add "\nall: " & mescape semmedFile(c.rootNode.files[0])
+  s.add "\n.PHONY: all\n"
+  s.add "\nall: " & mescape indexFile(c.rootNode.files[0])
 
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
   for v in c.nodes:
-    s.add "\n" & mescape(semmedFile(v.files[0])) & ":"
+    s.add "\n" & mescape(indexFile(v.files[0])) & ":"
     var seenDeps = initHashSet[string]()
     for f in v.files:
       let pf = parsedFile(f)
@@ -234,14 +235,13 @@ proc generateMakefile(c: DepContext): string =
     for i in 0..<v.files.len:
       let f = parsedFile(v.files[i])
       if not seenFiles.containsOrIncl(f):
-        s.add "\n" & mescape(f) & ": " & mescape(v.files[i].nimFile)
-        s.add "\n\tnifler --portablePaths --deps parse " & mescape(v.files[i].nimFile) & " " &
+        let nimFile = relativePath(v.files[i].nimFile, "nifcache", '/')
+        s.add "\n" & mescape(f) & ": " & mescape(nimFile)
+        s.add "\n\tnifler --portablePaths --deps parse " & mescape(nimFile) & " " &
           mescape(f)
 
-  # every .idx.nif file depends on its semmed.nif file, but these cannot go out of sync
-  # so we don't do anything here.
-  result = "nifcache" / semmedFile(c.rootNode.files[0]) & ".makefile"
-  writeFile result, s
+  result = c.rootNode.files[0].modname & ".makefile"
+  writeFile "nifcache" / result, s
 
 proc buildGraph(project: string) =
   var config = NifConfig()
@@ -261,7 +261,7 @@ proc buildGraph(project: string) =
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
   let makeFilename = generateMakefile c
-  echo "Makefile: ", makeFilename
+  echo "run with: make -C nifcache -f ", makeFilename
 
 when isMainModule:
   createDir("nifcache")
