@@ -127,6 +127,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mLow: res LowX
   of mHigh: res HighX
   of mArray: res ArrayT
+  of mRange: res RangeT
   of mSet: res SetT
   of mVarargs: res VarargsT
   of mRef: res RefT

@@ -393,6 +393,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       else:
         linearMatch m, f, a
       expectParRi m, f
+    of RangeT:
+      # for now acts the same as base type
+      var a = skipModifier(arg.typ)
+      inc f # skip to base type
+      linearMatch m, f, a
+      skip f
+      skip f
+      expectParRi m, f
     of ArrayT, SetT, UncheckedArrayT:
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
