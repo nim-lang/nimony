@@ -65,6 +65,20 @@
   (pragmas 2
    (magic 7 "LeI")) . .) ,12
  
+ (type ~9 :MyObject.0.tesg7afhq1 . . . 2
+  (object . ~9,1
+   (fld :x.0.tesg7afhq1 . . ~2,~7
+    (i -1) .) ~6,1
+   (fld :y.0.tesg7afhq1 . . ~5,~7
+    (i -1) .))) ,12
+
+  (proc 5 :fooObjBar.0.tesg7afhq1 . . . 14
+    (params) . . . 2,1
+    (stmts 4
+    (var :global.0 . . 8 MyObject.0.tesg7afhq1 27
+      (obj ~8 MyObject.0.tesg7afhq1 2
+      (kv ~2 x.0.tesg7afhq1 2 +123) 10
+      (kv ~10 y.0.tesg7afhq1 2 +456)))))
  
  (proc 5 :foo222.0.tesg7afhq1 . . . 9
   (params) . . . 2,1
