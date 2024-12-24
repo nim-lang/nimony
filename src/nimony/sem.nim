@@ -1299,6 +1299,7 @@ proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
     skip n # pragmas
     skip n # type
     skip n # value
+    skipParRi n
   if baseType.kind == Symbol:
     result = findObjField(objtypeImpl(baseType.symId), name, level+1)
   else:
@@ -2916,6 +2917,49 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
   c.dest.shrink typeStart
   commonType c, it, exprStart, origExpected
 
+proc semObjConstr(c: var SemContext, it: var Item) =
+  let exprStart = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  takeToken c, it.n
+  it.typ = semLocalType(c, it.n)
+  var objType = it.typ
+  if objType.kind == Symbol:
+    objType = objtypeImpl(objType.symId)
+    if objType.typeKind != ObjectT:
+      c.dest.shrink exprStart
+      c.buildErr info, "expected object type for object constructor"
+      return
+  var setFields = initHashSet[SymId]()
+  while it.n.kind != ParRi:
+    if it.n.exprKind != KvX:
+      c.buildErr it.n.info, "expected key/value pair in object constructor"
+    else:
+      takeToken c, it.n
+      let fieldInfo = it.n.info
+      let fieldName = getIdent(it.n)
+      if fieldName == StrId(0):
+        c.buildErr fieldInfo, "identifier expected for object field"
+        skip it.n
+      else:
+        let field = findObjField(objType, fieldName)
+        if field.level >= 0:
+          if setFields.containsOrIncl(field.sym):
+            c.buildErr fieldInfo, "field already set: " & pool.strings[fieldName]
+            skip it.n
+          else:
+            c.dest.add symToken(field.sym, info)
+            # maybe add inheritance depth too somehow?
+            var val = Item(n: it.n, typ: field.typ)
+            semExpr c, val
+            it.n = val.n
+        else:
+          c.buildErr fieldInfo, "undeclared field: " & pool.strings[fieldName]
+          skip it.n
+      wantParRi c, it.n
+  wantParRi c, it.n
+  commonType c, it, exprStart, expected
+
 proc getDottedIdent(n: var Cursor): string =
   let isError = n.kind == ParLe and n.tagId == ErrT
   if isError:
@@ -3265,6 +3309,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSuf c, it
     of TupleConstrX:
       semTupleConstr c, it
+    of OconstrX:
+      semObjConstr c, it
     of DefinedX:
       semDefined c, it
     of DeclaredX:
@@ -3288,7 +3334,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semCast c, it
     of NilX:
       semNil c, it
-    of DerefX, PatX, AddrX, SizeofX, OconstrX, KvX,
+    of DerefX, PatX, AddrX, SizeofX, KvX,
        ConvX, RangeX, RangesX,
        OconvX, HconvX,
        CompilesX, HighX, LowX, TypeofX:
