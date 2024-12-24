@@ -200,7 +200,11 @@ proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}
   traverseType e, c, flags
   swap(result, e.dest)
 
+  inc c # skips TupleConstr
   traverseExpr e, c
+  skip c
+  skipParRi e, c
+
   wantParRi e, c
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =

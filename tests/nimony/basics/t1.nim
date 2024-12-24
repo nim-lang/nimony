@@ -133,3 +133,30 @@ proc `[]`*[I;T](a: T; i: I): T {.magic: "ArrGet".}
 proc foo2 =
   var x = [1, 2, 3]
   let m = x[1]
+
+type
+  Color1 = enum
+    Red1, Blue1, Green1
+
+  Color2 = enum
+    Red2 = 0, Blue2 = 1, Green2 = 2
+
+  Color3 = enum
+    Red3 = "r1", Blue3 = "r2", Green3 = "r3"
+
+  Color4 = enum
+    Red4 = (0, "r1"), Blue4 = (1, "r2"), Green4 = (2, "r3")
+
+  Color5 = enum
+    Red5 = "456", Blue5 = 5, Green5 = (7, "r3")
+
+
+proc fooColor =
+  var x = Red1
+  case x
+  of Red1:
+    let s = 1
+  of Blue1:
+    let s2 = 3
+  of Green1:
+    let s3 = 4

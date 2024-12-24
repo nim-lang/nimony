@@ -85,9 +85,12 @@ proc eval*(c: var EvalContext, n: var Cursor): Cursor =
     inc n
     let sym = tryLoadSym(symId)
     if sym.status == LacksNothing:
-      let local = asLocal(sym.decl)
+      var local = asLocal(sym.decl)
       case local.kind
-      of ConstY, EfldY:
+      of ConstY:
+        return local.val
+      of EfldY:
+        inc local.val # takes the first counter field
         return local.val
       else: discard
     error "cannot evaluate symbol at compile time: " & pool.syms[symId], info
