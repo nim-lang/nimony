@@ -1061,6 +1061,55 @@ proc semCast(c: var SemContext; it: var Item) =
     c.dest.shrink beforeExpr
     c.buildErr info, "cannot `cast` between types " & typeToString(srcType) & " and " & typeToString(destType)
 
+proc buildCallSource(buf: var TokenBuf; cs: CallState) =
+  case cs.source
+  of RegularCall:
+    buf.add cs.callNode
+    buf.addSubtree cs.fn.n
+    for a in cs.args:
+      buf.addSubtree a.n
+  of MethodCall:
+    assert cs.args.len >= 1
+    buf.add cs.callNode
+    buf.addParLe(DotX, cs.callNode.info)
+    buf.addSubtree cs.args[0].n
+    buf.addParRi()
+    buf.addSubtree cs.fn.n
+    for i in 1 ..< cs.args.len:
+      buf.addSubtree cs.args[i].n
+  of DotCall:
+    assert cs.args.len == 1
+    buf.addParLe(DotX, cs.callNode.info)
+    buf.addSubtree cs.args[0].n
+    buf.addSubtree cs.fn.n
+  of SubscriptCall:
+    buf.addParLe(AtX, cs.callNode.info)
+    for a in cs.args:
+      buf.addSubtree a.n
+  of DotAsgnCall:
+    assert cs.args.len == 2
+    buf.addParLe(AsgnS, cs.callNode.info)
+    buf.addParLe(DotX, cs.callNode.info)
+    buf.addSubtree cs.args[0].n
+    var callee = cs.fn.n
+    let nameId = getIdent(callee)
+    assert nameId != StrId(0)
+    var name = pool.strings[nameId]
+    assert name[^1] == '='
+    name.setLen name.len - 1
+    buf.add identToken(pool.strings.getOrIncl(name), cs.callNode.info)
+    buf.addParRi()
+    buf.addSubtree cs.args[1].n
+  of SubscriptAsgnCall:
+    buf.addParLe(AsgnS, cs.callNode.info)
+    buf.addParLe(AtX, cs.callNode.info)
+    let valueIndex = cs.args.len - 1
+    for i in 0 ..< valueIndex:
+      buf.addSubtree cs.args[i].n
+    buf.addParRi()
+    buf.addSubtree cs.args[valueIndex].n
+  buf.addParRi()
+
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
@@ -1143,56 +1192,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     else:
       errorMsg = "undeclared identifier"
     var errored = createTokenBuf(4)
-    # rebuild original call:
-    case cs.source
-    of RegularCall:
-      errored.add cs.callNode
-      errored.addSubtree cs.fn.n
-      for a in cs.args:
-        errored.addSubtree a.n
-    of MethodCall:
-      assert cs.args.len >= 1
-      errored.add cs.callNode
-      errored.addParLe(DotX, cs.callNode.info)
-      errored.addSubtree cs.args[0].n
-      errored.addParRi()
-      errored.addSubtree cs.fn.n
-      for i in 1 ..< cs.args.len:
-        errored.addSubtree cs.args[i].n
-    of DotCall:
-      assert cs.args.len == 1
-      errored.addParLe(DotX, cs.callNode.info)
-      errored.addSubtree cs.args[0].n
-      errored.addSubtree cs.fn.n
-    of SubscriptCall:
-      errored.addParLe(AtX, cs.callNode.info)
-      for a in cs.args:
-        errored.addSubtree a.n
-    of DotAsgnCall:
-      assert cs.args.len == 2
-      errored.addParLe(AsgnS, cs.callNode.info)
-      errored.addParLe(DotX, cs.callNode.info)
-      errored.addSubtree cs.args[0].n
-      var callee = cs.fn.n
-      let nameId = getIdent(callee)
-      assert nameId != StrId(0)
-      var name = pool.strings[nameId]
-      assert name[^1] == '='
-      name.setLen name.len - 1
-      errored.add identToken(pool.strings.getOrIncl(name), cs.callNode.info)
-      errored.addParRi()
-      errored.addSubtree cs.args[1].n
-      errored.addParRi()
-    of SubscriptAsgnCall:
-      errored.addParLe(AsgnS, cs.callNode.info)
-      errored.addParLe(AtX, cs.callNode.info)
-      let valueIndex = cs.args.len - 1
-      for i in 0 ..< valueIndex:
-        errored.addSubtree cs.args[i].n
-      errored.addParRi()
-      errored.addSubtree cs.args[valueIndex].n
-      errored.addParRi()
-    errored.addParRi()
+    buildCallSource errored, cs
     buildErr c, cs.callNode.info, errorMsg, cursorAt(errored, 0)
 
 proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = RegularCall) =
