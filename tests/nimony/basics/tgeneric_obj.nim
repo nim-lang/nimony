@@ -39,3 +39,15 @@ proc foo(x: int; y: string): int =
 proc overloaded() =
   let someInt = `+`(23, 90)
   discard foo(34+56, "xyz")
+
+type
+  HSlice*[T, U] = object
+    a: T
+    b: U
+  Slice*[T] = HSlice[T, T]
+
+proc `..`*[T, U](a: T, b: U): HSlice[U, T] = discard
+
+# needs `..` to compile for now:
+var myarr2: array[0..2, int] = myarr
+myarr2 = [4, 5, 6]
