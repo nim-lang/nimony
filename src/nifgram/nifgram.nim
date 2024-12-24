@@ -666,7 +666,6 @@ proc compile(c: var Context) =
           c.t = next(c.r)
           if c.t.tk == EofToken:
             error c, "')' expected, but got " & $c.t
-            break
           if c.t.tk == ParLe: inc nested
           elif c.t.tk == ParRi:
             dec nested

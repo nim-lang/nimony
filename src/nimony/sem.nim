@@ -2285,13 +2285,40 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
 
   if n.kind == DotToken:
     # empty value
-    c.addXint state.thisValue, c.dest[declStart].info
+    let info = c.dest[declStart].info
+    c.dest.add parLeToken(pool.tags.getOrIncl($TupleConstrX), info)
+    c.addXint state.thisValue, info
+    c.dest.add strToken(delayed.lit, info)
+    c.dest.addParRi()
     inc n
   else:
-    let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
-    if explicitValue != state.thisValue:
-      state.hasHole = true
-      state.thisValue = explicitValue
+    if n.kind == ParLe and n.exprKind == TupleConstrX:
+      c.dest.add n
+      inc n
+      let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
+      if explicitValue != state.thisValue:
+        state.hasHole = true
+        state.thisValue = explicitValue
+      c.dest.add evalExpr(c, n)
+      wantParRi c, n
+    else:
+      var ec = initEvalContext(addr c)
+      var valueCursor = n
+      let fieldValue = eval(ec, valueCursor)
+      if fieldValue.kind == StringLit:
+        c.dest.add parLeToken(pool.tags.getOrIncl($TupleConstrX), n.info)
+        c.addXint state.thisValue, n.info
+        c.dest.add fieldValue
+        c.dest.addParRi()
+        n = valueCursor
+      else:
+        c.dest.add parLeToken(pool.tags.getOrIncl($TupleConstrX), n.info)
+        let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
+        if explicitValue != state.thisValue:
+          state.hasHole = true
+          state.thisValue = explicitValue
+        c.dest.add strToken(delayed.lit, n.info)
+        c.dest.addParRi()
   c.addSym delayed
   wantParRi c, n
   publish c, delayed.s.name, declStart
