@@ -1643,6 +1643,8 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         var t = typ.body
         semLocalTypeImpl c, t, context
   elif context == AllowValues:
+    # non type symbol, treat as expression
+    # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
     var dummyBuf = createTokenBuf(1)
     dummyBuf.add dotToken(info)
     var it = Item(n: cursorAt(dummyBuf, 0), typ: c.types.autoType)
@@ -1790,7 +1792,7 @@ proc isRangeExpr(n: Cursor): bool =
   result = name != StrId(0) and pool.strings[name] == ".."
 
 proc addRangeValues(c: var SemContext; n: var Cursor) =
-  # XXX should consider unresolved values
+  # XXX AllowValues refactor would need this to handle StaticT/UnresolvedT
   var err: bool = false
   let first = asSigned(evalOrdinal(c, n), err)
   if err:
@@ -1980,6 +1982,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         let s = semQuoted(c, n)
         semTypeSym c, s, info, start, context
       elif context == AllowValues:
+        # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
         var it = Item(n: n, typ: c.types.autoType)
         semExpr c, it
         n = it.n
@@ -2146,6 +2149,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       inc n
   else:
     if context == AllowValues:
+      # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
       var it = Item(n: n, typ: c.types.autoType)
       semExpr c, it
       n = it.n
