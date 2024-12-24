@@ -2058,8 +2058,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           else:
             c.dest.addIntLit(last, index.info)
           c.dest.addParRi()
-        elif index.typeKind == InvokeT or (index.kind == Symbol and
-            fetchSym(c, index.symId).kind == TypevarY): # or UnresolvedT
+        elif containsGenericParams(index):
           # unresolved types are left alone
           c.dest.addSubtree index
         elif index.typeKind != NoType:
