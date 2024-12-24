@@ -842,7 +842,9 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
     inc ops  # (concept
     skip ops # .
     skip ops # .
-    skip ops #   (typevar Self ...)
+    inc ops # (typevar
+    let self = ops.symId # Self
+    skipToEnd ops # ...)
     if ops == "stmts":
       inc ops
       while ops.kind != ParRi:
@@ -853,7 +855,7 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
           if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
             var d = ops
             skipToParams d
-            cands.addUnique FnCandidate(kind: ConceptProcY, sym: prc.symId, typ: d)
+            cands.addUnique FnCandidate(kind: ConceptProcY, sym: prc.symId, typ: d, selfType: self)
         skip ops
 
 proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCandidates; args: openArray[Item], genericArgs: Cursor) =
@@ -1119,6 +1121,12 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       var magicExpr = Item(n: cursorAt(magicExprBuf, 0), typ: it.typ)
       semExpr c, magicExpr
       it.typ = magicExpr.typ
+    elif false and finalFn.kind == ConceptProcY:
+      # substitute the Self in the return type
+      var sc = SubsContext(params: addr m[idx].inferred)
+      var buf = createTokenBuf(4)
+      subs(c, buf, sc, m[idx].returnType)
+      typeofCallIs c, it, cs.beforeCall, typeToCursor(c, buf, 0)
     elif c.routine.inGeneric == 0 and m[idx].inferred.len > 0 and isMagic == NonMagicCall:
       let inst = c.requestRoutineInstance(finalFn.sym, m[idx], cs.callNode.info)
       c.dest[cs.beforeCall+1].setSymId inst.targetSym
@@ -2310,7 +2318,6 @@ proc semGenericParams(c: var SemContext; n: var Cursor) =
     while n.kind != ParRi:
       semGenericParam c, n
     wantParRi c, n
-    dec c.routine.inGeneric
   elif n == $InvokeT:
     takeTree c, n
   else:
@@ -2814,6 +2821,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
         semLocalTypeImpl c, n, InTypeSection
     if isGeneric:
       closeScope c
+      dec c.routine.inGeneric
   else:
     c.takeTree n # generics
     semTypePragmas c, n, beforeExportMarker
