@@ -2793,6 +2793,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
 
   if c.phase == SemcheckSignatures or (delayed.status == OkNew and c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
+    let prevGeneric = c.routine.inGeneric
     if n.kind == DotToken:
       takeToken c, n
       isGeneric = false
@@ -2813,7 +2814,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
         semLocalTypeImpl c, n, InTypeSection
     if isGeneric:
       closeScope c
-      dec c.routine.inGeneric # increased by semGenericParams
+      c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
   else:
     c.takeTree n # generics
     semTypePragmas c, n, beforeExportMarker
