@@ -1961,6 +1961,74 @@ proc addVarargsParameter(c: var SemContext; paramsAt: int; info: PackedLineInfo)
       endRead(c.dest)
       c.dest.insert fromBuffer(varargsParam), insertPos
 
+proc semArrayType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
+  let info = n.info
+  takeToken c, n
+  semLocalTypeImpl c, n, context
+  # index type, possibilities are:
+  # 1. length as integer
+  # 2. range expression i.e. `a..b`
+  # 3. full ordinal type i.e. `uint8`, `Enum`, `range[a..b]`
+  # 4. standalone unresolved expression/type variable, could resolve to 1 or 3
+  if isRangeExpr(n):
+    semRangeTypeFromExpr c, n, info
+  else:
+    var indexBuf = createTokenBuf(4)
+    swap c.dest, indexBuf
+    semLocalTypeImpl c, n, AllowValues
+    swap c.dest, indexBuf
+    var index = cursorAt(indexBuf, 0)
+    if index.typeKind == RangeT:
+      # direct range type
+      c.dest.addSubtree index
+    elif isOrdinalType(index):
+      # ordinal type, turn it into a range type
+      c.dest.addParLe(RangeT, index.info)
+      c.dest.addSubtree index # base type
+      var err = false
+      let first = asSigned(firstOrd(c, index), err)
+      if err:
+        c.buildErr index.info, "could not get first index of ordinal type: " & typeToString(index)
+      else:
+        c.dest.addIntLit(first, index.info)
+      err = false
+      let last = asSigned(lastOrd(c, index), err)
+      if err:
+        c.buildErr index.info, "could not get last index of ordinal type: " & typeToString(index)
+      else:
+        c.dest.addIntLit(last, index.info)
+      c.dest.addParRi()
+    elif containsGenericParams(index):
+      # unresolved types are left alone
+      c.dest.addSubtree index
+    elif index.typeKind != NoType:
+      c.buildErr index.info, "unknown array index type: " & typeToString(index)
+    else:
+      # length expression
+      var err = false
+      let length = asSigned(evalOrdinal(c, index), err)
+      if err:
+        c.buildErr index.info, "invalid array index: " & typeToString(index)
+      else:
+        c.dest.addParLe(RangeT, info)
+        c.dest.addSubtree c.types.intType
+        c.dest.addIntLit 0, info
+        c.dest.addIntLit length - 1, info
+        c.dest.addParRi()
+  wantParRi c, n
+
+proc semRangeType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
+  takeToken c, n
+  semLocalTypeImpl c, n, context
+  var valuesBuf = createTokenBuf(4)
+  swap c.dest, valuesBuf
+  semLocalTypeImpl c, n, AllowValues
+  semLocalTypeImpl c, n, AllowValues
+  swap c.dest, valuesBuf
+  var values = cursorAt(valuesBuf, 0)
+  addRangeValues c, values
+  wantParRi c, n
+
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   case n.kind
@@ -2023,70 +2091,9 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     of TupleT:
       semTupleType c, n
     of ArrayT:
-      takeToken c, n
-      semLocalTypeImpl c, n, context
-      # index type, possibilities are:
-      # 1. length as integer
-      # 2. range expression i.e. `a..b`
-      # 3. full ordinal type i.e. `uint8`, `Enum`, `range[a..b]`
-      # 4. standalone unresolved expression/type variable, could resolve to 1 or 3
-      if isRangeExpr(n):
-        semRangeTypeFromExpr c, n, info
-      else:
-        var indexBuf = createTokenBuf(4)
-        swap c.dest, indexBuf
-        semLocalTypeImpl c, n, AllowValues
-        swap c.dest, indexBuf
-        var index = cursorAt(indexBuf, 0)
-        if index.typeKind == RangeT:
-          # direct range type
-          c.dest.addSubtree index
-        elif isOrdinalType(index):
-          # ordinal type, turn it into a range type
-          c.dest.addParLe(RangeT, index.info)
-          c.dest.addSubtree index # base type
-          var err = false
-          let first = asSigned(firstOrd(c, index), err)
-          if err:
-            c.buildErr index.info, "could not get first index of ordinal type: " & typeToString(index)
-          else:
-            c.dest.addIntLit(first, index.info)
-          err = false
-          let last = asSigned(lastOrd(c, index), err)
-          if err:
-            c.buildErr index.info, "could not get last index of ordinal type: " & typeToString(index)
-          else:
-            c.dest.addIntLit(last, index.info)
-          c.dest.addParRi()
-        elif containsGenericParams(index):
-          # unresolved types are left alone
-          c.dest.addSubtree index
-        elif index.typeKind != NoType:
-          c.buildErr index.info, "unknown array index type: " & typeToString(index)
-        else:
-          # length expression
-          var err = false
-          let length = asSigned(evalOrdinal(c, index), err)
-          if err:
-            c.buildErr index.info, "invalid array index: " & typeToString(index)
-          else:
-            c.dest.addParLe(RangeT, info)
-            c.dest.addSubtree c.types.intType
-            c.dest.addIntLit 0, info
-            c.dest.addIntLit length - 1, info
-            c.dest.addParRi()
-      wantParRi c, n
+      semArrayType c, n, context
     of RangeT:
-      takeToken c, n
-      semLocalTypeImpl c, n, context
-      var valuesBuf = createTokenBuf(4)
-      swap c.dest, valuesBuf
-      semLocalTypeImpl c, n, AllowValues
-      semLocalTypeImpl c, n, AllowValues
-      swap c.dest, valuesBuf
-      var values = cursorAt(valuesBuf, 0)
-      addRangeValues c, values
-      wantParRi c, n
+      semRangeType c, n, context
     of VarargsT:
       takeToken c, n
       if n.kind != ParRi:
