@@ -3153,7 +3153,7 @@ proc semSubscript(c: var SemContext; it: var Item) =
   swap c.dest, lhsBuf
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
-  semBuiltinSubscript(c, lhs, it)
+  semBuiltinSubscript(c, it, lhs)
 
 proc semDconv(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
