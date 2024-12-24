@@ -1,27 +1,27 @@
 (.nif24)
-,1,tests/nimony/basics/tsetter.nif(stmts 5
- (type :int.0.tsekb6w8b 
+,1,tests/nimony/basics/tsetter.nim(stmts 5
+ (type :int.0.tseyo1t971 
   (i -1) . 4
   (pragmas 2
    (magic 7 Int)) .) 9,2
- (type ~4 :Foo.0.tsekb6w8b . . . 2
+ (type ~4 :Foo.0.tseyo1t971 . . . 2
   (object . .)) ,4
- (proc 5 :bar=.0.tsekb6w8b . . . 11
+ (proc 5 :bar=.0.tseyo1t971 . . . 11
   (params 1
-   (param :x.0 . . 3 Foo.0.tsekb6w8b .) 9
+   (param :x.0 . . 3 Foo.0.tseyo1t971 .) 9
    (param :y.0 . . ~15,~4
     (i -1) .)) . . . 30
   (stmts 
    (discard .))) ,5
- (proc 5 :\5B\5D=.0.tsekb6w8b . . . 10
+ (proc 5 :\5B\5D=.0.tseyo1t971 . . . 10
   (params 1
-   (param :x.1 . . 3 Foo.0.tsekb6w8b .) 9
+   (param :x.1 . . 3 Foo.0.tseyo1t971 .) 9
    (param :y.1 . . ~14,~5
     (i -1) .) 17
    (param :z.0 . . ~22,~5
     (i -1) .)) . . . 37
   (stmts 
    (discard .))) 4,7
- (var :foo.0.tsekb6w8b . . 5 Foo.0.tsekb6w8b .) ,8
- (call bar=.0.tsekb6w8b foo.0.tsekb6w8b 10 +123) ,9
- (call \5B\5D=.0.tsekb6w8b foo.0.tsekb6w8b 4 +123 11 +456))
+ (var :foo.0.tseyo1t971 . . 5 Foo.0.tseyo1t971 .) ,8
+ (call bar=.0.tseyo1t971 foo.0.tseyo1t971 10 +123) ,9
+ (call \5B\5D=.0.tseyo1t971 foo.0.tseyo1t971 4 +123 11 +456))
