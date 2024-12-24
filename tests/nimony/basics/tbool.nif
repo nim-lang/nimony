@@ -7,10 +7,12 @@
   (enum ~18,1
    (efld ~8 :false.0.tbojn1uzv 
     (false) . 
-    (bool) +0) ~8,1
+    (bool) 
+    (tup +0 "false")) ~8,1
    (efld ~7 :true.0.tbojn1uzv 
     (true) . 
-    (bool) +1))) 4,3
+    (bool) 
+    (tup +1 "true")))) 4,3
  (let :x.0.tbojn1uzv . . 22,~3
   (bool) 16,~2
   (true)))
