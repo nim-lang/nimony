@@ -524,17 +524,20 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     for i in 0..<n.len-3:
       toNif(n[i], n, c)
     # n.len-3: pragmas: must be empty (it is deprecated anyway)
-    if n[n.len-3].kind != nkEmpty:
-      c.b.addTree "err"
-      c.b.endTree()
-
-    toNif(n[n.len-2], n, c)
-    let last {.cursor.} = n[n.len-1]
-    if last.kind == nkRecList:
-      for child in last:
-        toNif(child, n, c)
+    if n.len == 0:
+      c.b.addEmpty 2 # pragmas, body
     else:
-      toNif(last, n, c)
+      if n[n.len-3].kind != nkEmpty:
+        c.b.addTree "err"
+        c.b.endTree()
+
+      toNif(n[n.len-2], n, c)
+      let last {.cursor.} = n[n.len-1]
+      if last.kind == nkRecList:
+        for child in last:
+          toNif(child, n, c)
+      else:
+        toNif(last, n, c)
     c.b.endTree()
 
   of nkTupleTy:
@@ -563,6 +566,16 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       c.depsEnabled = oldDepsEnabled
       swap c.b, c.deps
       c.lineInfoEnabled = oldLineInfoEnabled
+  of nkCallKinds:
+    let oldDepsEnabled = c.depsEnabled
+    if n.len > 0 and n[0].kind == nkIdent and n[0].ident.s == "runnableExamples":
+      c.depsEnabled = false
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+    c.depsEnabled = oldDepsEnabled
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
@@ -579,12 +592,14 @@ proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, de
 proc close*(c: var TranslationContext) =
   c.b.close()
   if c.depsEnabled:
+    c.deps.endTree()
     c.deps.close()
 
 proc moduleToIr*(n: PNode; c: var TranslationContext) =
   c.b.addHeader "Nifler", "nim-parsed"
   if c.depsEnabled:
     c.deps.addHeader "Nifler", "nim-deps"
+    c.deps.addTree "stmts"
   toNif(n, nil, c)
 
 proc createConf(): ConfigRef =

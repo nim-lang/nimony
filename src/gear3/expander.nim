@@ -550,7 +550,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         traverseType(e, c)
         swap skipped, e.dest
         inc nested
-      of ConvX:
+      of ConvX, CastX:
         e.dest.add c
         inc c
         traverseType(e, c)
@@ -762,7 +762,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       error e, "to implement: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS:
+    of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS, ExportS:
       # pure compile-time construct, ignore:
       skip c
     of TypeS:

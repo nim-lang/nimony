@@ -17,7 +17,7 @@ import ".." / gear2 / modnames
 proc stdFile(f: string): string =
   getAppDir() / "lib" / f
 
-proc resolveFile*(c: SemContext; origin: string; toResolve: string): string =
+proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =
   let nimFile = toResolve.addFileExt(".nim")
   #if toResolve.startsWith("std/") or toResolve.startsWith("ext/"):
   #  result = stdFile nimFile
@@ -26,8 +26,8 @@ proc resolveFile*(c: SemContext; origin: string; toResolve: string): string =
   else:
     result = splitFile(origin).dir / nimFile
     var i = 0
-    while not fileExists(result) and i < c.g.config.paths.len:
-      result = c.g.config.paths[i] / nimFile
+    while not fileExists(result) and i < paths.len:
+      result = paths[i] / nimFile
       inc i
 
 type ImportedFilename* = object
@@ -173,7 +173,7 @@ proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, paths)
   let src = "nifcache" / name & ".1.nif"
-  exec quoteShell(nifler) & " --portablePaths p " & quoteShell(nimFile) & " " &
+  exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 
   var stream = nifstreams.open(src)
@@ -183,9 +183,9 @@ proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
   finally:
     nifstreams.close(stream)
 
-proc getFile*(c: var SemContext; info: PackedLineInfo): string =
+proc getFile*(info: PackedLineInfo): string =
   let (fid, _, _) = unpack(pool.man, info)
   result = pool.files[fid]
 
 proc selfExec*(c: var SemContext; file: string) =
-  exec os.getAppFilename() & c.commandLineArgs & " m " & quoteShell(file)
+  exec os.getAppFilename() & c.commandLineArgs & " --ischild m " & quoteShell(file)

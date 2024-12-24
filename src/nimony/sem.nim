@@ -190,13 +190,14 @@ proc semInclude(c: var SemContext; it: var Item) =
   var x = it.n
   skip it.n
   inc x # skip the `include`
-  filenameVal(x, files, hasError, allowAs = false)
+  while x.kind != ParRi:
+    filenameVal(x, files, hasError, allowAs = false)
 
   if hasError:
     c.buildErr info, "wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c, getFile(c, info), f1.path)
+      let f2 = resolveFile(c.g.config.paths, getFile(info), f1.path)
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false
@@ -225,17 +226,17 @@ proc semInclude(c: var SemContext; it: var Item) =
 type
   ImportModeKind = enum
     ImportAll, FromImport, ImportExcept
-  
+
   ImportMode = object
     kind: ImportModeKind
     list: PackedSet[StrId] # `from import` or `import except` symbol list
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
-  let f2 = resolveFile(c, origin, f1.path)
+  let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
-    if needsRecompile(f2, suffix):
+    if c.canSelfExec and needsRecompile(f2, suffix):
       selfExec c, f2
 
     let moduleName = pool.strings.getOrIncl(f1.name)
@@ -256,7 +257,7 @@ proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
 
 proc doImportMode(c: var SemContext; files: seq[ImportedFilename]; mode: ImportMode; info: PackedLineInfo) =
-  let origin = getFile(c, info)
+  let origin = getFile(info)
   for f in files:
     importSingleFile c, f, origin, mode, info
 
@@ -278,7 +279,8 @@ proc semImport(c: var SemContext; it: var Item) =
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
-  filenameVal(x, files, hasError, allowAs = true)
+  while x.kind != ParRi:
+    filenameVal(x, files, hasError, allowAs = true)
   if hasError:
     c.buildErr info, "wrong `import` statement"
   else:
@@ -2149,21 +2151,19 @@ proc exportMarkerBecomesNifTag(c: var SemContext; insertPos: int; crucial: Cruci
   assert crucial.magic.len > 0
   let info = c.dest[insertPos].info
 
-  var a: Cursor
   if crucial.bits != 0:
     let nifTag = [
       parLeToken(pool.tags.getOrIncl(crucial.magic), info),
       intToken(pool.integers.getOrIncl(crucial.bits), info),
       parRiToken(info)
     ]
-    a = fromBuffer(nifTag)
+    c.dest.replace fromBuffer(nifTag), insertPos
   else:
     let nifTag = [
       parLeToken(pool.tags.getOrIncl(crucial.magic), info),
       parRiToken(info)
     ]
-    a = fromBuffer(nifTag)
-  c.dest.replace a, insertPos
+    c.dest.replace fromBuffer(nifTag), insertPos
 
 proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   let declStart = c.dest.len
@@ -3341,6 +3341,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ForS:
         toplevelGuard c:
           semFor c, it
+      of ExportS:
+        # XXX ignored for now
+        skip it.n
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
@@ -3463,7 +3466,7 @@ proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   result = move c.dest
 
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-               commandLineArgs: sink string) =
+               commandLineArgs: sink string; canSelfExec: bool) =
   var n0 = setupProgram(infile, outfile)
   var c = SemContext(
     dest: createTokenBuf(),
@@ -3473,7 +3476,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     g: ProgramContext(config: config),
     phase: SemcheckTopLevelSyms,
     routine: SemRoutine(kind: NoSym),
-    commandLineArgs: commandLineArgs)
+    commandLineArgs: commandLineArgs,
+    canSelfExec: canSelfExec)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
   # XXX could add self module symbol here
 
