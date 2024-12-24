@@ -151,7 +151,6 @@ template loop(e: var EContext; c: var Cursor; body: untyped) =
       break
     of EofToken:
       error e, "expected ')', but EOF reached"
-      break
     else: discard
     body
 
@@ -368,7 +367,6 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
         break
       of EofToken:
         error e, "expected ')', but EOF reached"
-        break
       else: discard
       if c.kind == ParLe:
         let pk = c.pragmaKind
@@ -554,17 +552,19 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         swap skipped, e.dest
         traverseType(e, c)
         swap skipped, e.dest
-        inc nested
       of ConvX, CastX:
         e.dest.add c
         inc c
         traverseType(e, c)
         traverseExpr(e, c)
-        inc nested
+      of OconstrX:
+        e.dest.add tagToken("oconstr", c.info)
+        inc c
+        traverseType(e, c)
       else:
         e.dest.add c
-        inc nested
         inc c
+      inc nested
     of ParRi:
       e.dest.add c
       dec nested
