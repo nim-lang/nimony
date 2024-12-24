@@ -19,7 +19,6 @@ type
     kind*: SymKind
     sym*: SymId
     typ*: Cursor
-    selfType*: SymId
 
   MatchError* = object
     info: PackedLineInfo
@@ -130,22 +129,16 @@ iterator inheritanceChain(s: SymId): SymId =
     else:
       break
 
-proc isTypevar(s: SymId): bool =
-  let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  let typevar = asTypevar(res.decl)
-  result = typevar.kind == TypevarY
-
 proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
     result = true
     inc f
-  elif a.kind == Symbol:# and isTypevar(a.symId):
+  elif a.kind == Symbol:
     let res = tryLoadSym(a.symId)
     assert res.status == LacksNothing
     var typevar = asTypevar(res.decl)
-    if typevar.kind == TypevarY: # or true
+    if typevar.kind == TypevarY:
       result = matchesConstraint(m, f, typevar.typ)
   elif f.kind == Symbol:
     let res = tryLoadSym(f.symId)
@@ -196,6 +189,12 @@ proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   assert typevar.kind == TypevarY
   result = matchesConstraint(m, typevar.typ, a)
 
+proc isTypevar(s: SymId): bool =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  let typevar = asTypevar(res.decl)
+  result = typevar.kind == TypevarY
+
 proc linearMatch(m: var Match; f, a: var Cursor, containsStartTag = true) =
   var nested = 0
   while true:
@@ -204,12 +203,10 @@ proc linearMatch(m: var Match; f, a: var Cursor, containsStartTag = true) =
       let fs = f.symId
       if m.inferred.contains(fs):
         # rematch?
-        var prev = m.inferred[fs]
-        linearMatch(m, prev, a)
+        linearMatch(m, m.inferred[fs], a)
         if m.err: break
       elif matchesConstraint(m, fs, a):
-        if true or fs in m.tvars:
-          m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
+        m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
         skip a
         continue
@@ -246,22 +243,17 @@ proc skipModifier*(a: Cursor): Cursor =
   if result.kind == ParLe and result.typeKind in TypeModifiers:
     inc result
 
-proc commonType(m: var Match; f, a: Cursor): Cursor =
+proc commonType(f, a: Cursor): Cursor =
   # XXX Refine
-  if false and f.kind == Symbol and isTypevar(f.symId) and f.symId notin m.tvars:
-    # foreign typevar, do not override
-    result = f
-  else:
-    result = a
+  result = a
 
 proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
-  let com = commonType(m, f, a)
+  let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:
     m.error concat("could not match again: ", pool.syms[typeVar], "; expected ",
       typeToString(f), " but got ", typeToString(a))
   elif matchesConstraint(m, typeVar, com):
-    if true or typeVar in m.tvars:
-      m.inferred[typeVar] = skipModifier(com)
+    m.inferred[typeVar] = skipModifier(com)
   else:
     m.error concat(typeToString(a), " does not match constraint ", typeToString(typeImpl typeVar))
 
@@ -283,8 +275,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
     if m.inferred.contains(fs):
       typevarRematch(m, fs, m.inferred[fs], a)
     elif matchesConstraint(m, fs, a):
-      if true or fs in m.tvars:
-        m.inferred[fs] = a
+      m.inferred[fs] = a
     else:
       m.error concat(typeToString(a), " does not match constraint ", typeToString(f))
   elif isObjectType(fs):
@@ -559,14 +550,10 @@ proc collectDefaultValues(f: var Cursor): seq[Item] =
     result.add Item(n: param.val, typ: param.typ)
     skip f
 
-const ConceptProcY = CchoiceY
-
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
   m.tvars = initHashSet[SymId]()
-  if fn.kind == ConceptProcY:
-    m.tvars.incl fn.selfType
   m.fn = fn
   if fn.kind in RoutineKinds:
     var e = explicitTypeVars
