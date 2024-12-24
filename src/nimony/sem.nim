@@ -2521,94 +2521,100 @@ proc semLocalTypeExpr(c: var SemContext, it: var Item) =
   it.typ = typeToCursor(c, start)
   c.dest.shrink start
 
+proc semSubscriptAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
+  # check if LHS is builtin subscript:
+  var subscript = Item(n: it.n, typ: c.types.autoType)
+  inc subscript.n # tag
+  var subscriptLhsBuf = createTokenBuf(4)
+  swap c.dest, subscriptLhsBuf
+  var subscriptLhs = Item(n: subscript.n, typ: c.types.autoType)
+  semExpr c, subscriptLhs, {KeepMagics}
+  swap c.dest, subscriptLhsBuf
+  let afterSubscriptLhs = subscriptLhs.n
+  subscript.n = afterSubscriptLhs
+  subscriptLhs.n = cursorAt(subscriptLhsBuf, 0)
+  var subscriptBuf = createTokenBuf(8)
+  swap c.dest, subscriptBuf
+  let builtin = tryBuiltinSubscript(c, subscript, subscriptLhs)
+  swap c.dest, subscriptBuf
+  if builtin:
+    # build regular assignment:
+    c.dest.addParLe(AsgnS, info)
+    c.dest.add subscriptBuf
+    semExpr c, subscript # use the type and position from the subscript
+    it.n = subscript.n
+    wantParRi c, it.n
+    producesVoid c, info, it.typ
+  else:
+    # generate call to `[]=`:
+    var callBuf = createTokenBuf(16)
+    callBuf.addParLe(CallX, subscriptLhs.n.info)
+    callBuf.add identToken(pool.strings.getOrIncl("[]="), subscriptLhs.n.info)
+    callBuf.addSubtree subscriptLhs.n
+    it.n = afterSubscriptLhs
+    while it.n.kind != ParRi:
+      # arguments of the subscript
+      callBuf.takeTree it.n
+    skipParRi it.n # end subscript expression
+    callBuf.takeTree it.n # assignment value
+    callBuf.addParRi()
+    skipParRi it.n # end assignment
+    var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
+    semCall c, call, SubscriptAsgnCall
+    it.typ = call.typ
+
+proc semDotAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
+  # check if LHS is builtin subscript:
+  let dotInfo = it.n.info
+  var dot = Item(n: it.n, typ: c.types.autoType)
+  inc dot.n # tag
+  var dotLhsBuf = createTokenBuf(4)
+  swap c.dest, dotLhsBuf
+  var dotLhs = Item(n: dot.n, typ: c.types.autoType)
+  semExpr c, dotLhs, {KeepMagics}
+  swap c.dest, dotLhsBuf
+  dot.n = dotLhs.n
+  dotLhs.n = cursorAt(dotLhsBuf, 0)
+  let fieldName = getIdent(dot.n)
+  # skip optional inheritance depth:
+  if dot.n.kind == IntLit:
+    inc dot.n
+  skipParRi dot.n
+  var dotBuf = createTokenBuf(8)
+  swap c.dest, dotBuf
+  let builtin = tryBuiltinDot(c, dot, dotLhs, fieldName, dotInfo, {}) != FailedDot
+  swap c.dest, dotBuf
+  if builtin:
+    # build regular assignment:
+    c.dest.addParLe(AsgnS, info)
+    c.dest.add dotBuf
+    semExpr c, dot # use the type and position from the dot expression
+    it.n = dot.n
+    wantParRi c, it.n
+    producesVoid c, info, it.typ
+  else:
+    # generate call to `field=`:
+    var callBuf = createTokenBuf(16)
+    callBuf.addParLe(CallX, dotLhs.n.info)
+    callBuf.add identToken(pool.strings.getOrIncl(pool.strings[fieldName] & "="), dotLhs.n.info)
+    callBuf.addSubtree dotLhs.n
+    it.n = dot.n
+    callBuf.takeTree it.n # assignment value
+    callBuf.addParRi()
+    skipParRi it.n
+    var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
+    semCall c, call, DotAsgnCall
+    # XXX original compiler also checks if the call fails and tries a dotcall for the LHS
+    it.typ = call.typ
+
 proc semAsgn(c: var SemContext; it: var Item) =
   let info = it.n.info
   inc it.n
   case it.n.exprKind
   of AtX:
-    # check if LHS is builtin subscript:
-    var subscript = Item(n: it.n, typ: c.types.autoType)
-    inc subscript.n # tag
-    var subscriptLhsBuf = createTokenBuf(4)
-    swap c.dest, subscriptLhsBuf
-    var subscriptLhs = Item(n: subscript.n, typ: c.types.autoType)
-    semExpr c, subscriptLhs, {KeepMagics}
-    swap c.dest, subscriptLhsBuf
-    let afterSubscriptLhs = subscriptLhs.n
-    subscript.n = afterSubscriptLhs
-    subscriptLhs.n = cursorAt(subscriptLhsBuf, 0)
-    var subscriptBuf = createTokenBuf(8)
-    swap c.dest, subscriptBuf
-    let builtin = tryBuiltinSubscript(c, subscript, subscriptLhs)
-    swap c.dest, subscriptBuf
-    if builtin:
-      # build regular assignment:
-      c.dest.addParLe(AsgnS, info)
-      c.dest.add subscriptBuf
-      semExpr c, subscript # use the type and position from the subscript
-      it.n = subscript.n
-      wantParRi c, it.n
-      producesVoid c, info, it.typ
-    else:
-      # generate call to `[]=`:
-      var callBuf = createTokenBuf(16)
-      callBuf.addParLe(CallX, subscriptLhs.n.info)
-      callBuf.add identToken(pool.strings.getOrIncl("[]="), subscriptLhs.n.info)
-      callBuf.addSubtree subscriptLhs.n
-      it.n = afterSubscriptLhs
-      while it.n.kind != ParRi:
-        # arguments of the subscript
-        callBuf.takeTree it.n
-      skipParRi it.n # end subscript expression
-      callBuf.takeTree it.n # assignment value
-      callBuf.addParRi()
-      skipParRi it.n # end assignment
-      var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
-      semCall c, call, SubscriptAsgnCall
-      it.typ = call.typ
+    semSubscriptAsgn c, it, info
   of DotX:
-    # check if LHS is builtin subscript:
-    let dotInfo = it.n.info
-    var dot = Item(n: it.n, typ: c.types.autoType)
-    inc dot.n # tag
-    var dotLhsBuf = createTokenBuf(4)
-    swap c.dest, dotLhsBuf
-    var dotLhs = Item(n: dot.n, typ: c.types.autoType)
-    semExpr c, dotLhs, {KeepMagics}
-    swap c.dest, dotLhsBuf
-    dot.n = dotLhs.n
-    dotLhs.n = cursorAt(dotLhsBuf, 0)
-    let fieldName = getIdent(dot.n)
-    # skip optional inheritance depth:
-    if dot.n.kind == IntLit:
-      inc dot.n
-    skipParRi dot.n
-    var dotBuf = createTokenBuf(8)
-    swap c.dest, dotBuf
-    let builtin = tryBuiltinDot(c, dot, dotLhs, fieldName, dotInfo, {}) != FailedDot
-    swap c.dest, dotBuf
-    if builtin:
-      # build regular assignment:
-      c.dest.addParLe(AsgnS, info)
-      c.dest.add dotBuf
-      semExpr c, dot # use the type and position from the dot expression
-      it.n = dot.n
-      wantParRi c, it.n
-      producesVoid c, info, it.typ
-    else:
-      # generate call to `field=`:
-      var callBuf = createTokenBuf(16)
-      callBuf.addParLe(CallX, dotLhs.n.info)
-      callBuf.add identToken(pool.strings.getOrIncl(pool.strings[fieldName] & "="), dotLhs.n.info)
-      callBuf.addSubtree dotLhs.n
-      it.n = dot.n
-      callBuf.takeTree it.n # assignment value
-      callBuf.addParRi()
-      skipParRi it.n
-      var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
-      semCall c, call, DotAsgnCall
-      # XXX original compiler also checks if the call fails and tries a dotcall for the LHS
-      it.typ = call.typ
+    semDotAsgn c, it, info
   else:
     c.dest.addParLe(AsgnS, info)
     var a = Item(n: it.n, typ: c.types.autoType)
