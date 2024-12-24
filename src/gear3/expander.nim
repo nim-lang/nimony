@@ -234,7 +234,27 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.dest.add c
       inc c
       traverseType e, c
-      traverseExpr e, c
+      if c.typeKind == RangeT:
+        inc c
+        skip c
+        expectIntLit e, c
+        let first = pool.integers[c.intId]
+        inc c
+        expectIntLit e, c
+        let last = pool.integers[c.intId]
+        inc c
+        skipParRi e, c
+        e.dest.addIntLit(last - first + 1, c.info)
+      else:
+        # should not be possible, but assume length anyway
+        traverseExpr e, c
+      wantParRi e, c
+    of RangeT:
+      # skip to base type
+      inc c
+      traverseType e, c
+      skip c
+      skip c
       wantParRi e, c
     of UncheckedArrayT:
       if IsPointerOf in flags:

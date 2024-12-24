@@ -65,7 +65,7 @@ proc isOrdinalType*(typ: TypeCursor; allowEnumWithHoles: bool = false): bool =
       result = isOrdinalType(decl.body)
   of ParLe:
     case typ.typeKind
-    of IntT, UIntT, CharT, BoolT:
+    of IntT, UIntT, CharT, BoolT, RangeT:
       result = true
     of InvokeT:
       # check base type
@@ -120,6 +120,16 @@ proc firstOrd*(c: var SemContext; typ: TypeCursor): xint =
       else: result = createNaN()
     of UIntT, CharT, BoolT:
       result = zero()
+    of RangeT:
+      var first = typ
+      skip first # base type
+      case first.kind
+      of IntLit:
+        result = createXint pool.integers[first.intId]
+      of UIntLit:
+        result = createXint pool.uintegers[first.uintId]
+      else:
+        result = createNaN()
     of InvokeT:
       # check base type
       var base = typ
@@ -185,6 +195,17 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       of 32: result = createXint high(uint32).uint64
       of 64: result = createXint high(uint64)
       else: result = createNaN()
+    of RangeT:
+      var last = typ
+      skip last # base type
+      skip last # first
+      case last.kind
+      of IntLit:
+        result = createXint pool.integers[last.intId]
+      of UIntLit:
+        result = createXint pool.uintegers[last.uintId]
+      else:
+        result = createNaN()
     of BoolT:
       result = createXint 1.uint64
     of InvokeT:
