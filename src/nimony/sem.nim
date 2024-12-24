@@ -864,7 +864,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCa
 proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
                             info: PackedLineInfo): ProcInstance =
   let key = typeToCanon(m.typeArgs, 0)
-  var targetSym = c.instantiatedProcs.getOrDefault(key)
+  var targetSym = c.instantiatedProcs.mgetOrPut(origin).getOrDefault(key)
   if targetSym == SymId(0):
     let targetSym = newSymId(c, origin)
     var signature = createTokenBuf(30)
@@ -890,7 +890,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
       returnType: cursorAt(signature, beforeRetType))
     publish targetSym, ensureMove signature
 
-    c.instantiatedProcs[key] = targetSym
+    c.instantiatedProcs[origin][key] = targetSym
     var req = InstRequest(
       origin: origin,
       targetSym: targetSym,
@@ -1120,8 +1120,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       semExpr c, magicExpr
       it.typ = magicExpr.typ
     elif c.routine.inGeneric == 0 and m[idx].inferred.len > 0 and isMagic == NonMagicCall:
-      assert cs.fn.n.kind == Symbol
-      let inst = c.requestRoutineInstance(cs.fn.n.symId, m[idx], cs.callNode.info)
+      let inst = c.requestRoutineInstance(finalFn.sym, m[idx], cs.callNode.info)
       c.dest[cs.beforeCall+1].setSymId inst.targetSym
       typeofCallIs c, it, cs.beforeCall, inst.returnType
     else:
@@ -1865,7 +1864,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     semLocalTypeImpl c, n, AllowValues
   swap c.usedTypevars, genericArgs
   wantParRi c, n
-  if genericArgs == 0 and ok:
+  if (genericArgs == 0 or magicKind != NoType) and ok:
     # we have to be eager in generic type instantiations so that type-checking
     # can do its job properly:
     let key = typeToCanon(c.dest, typeStart)
@@ -2311,6 +2310,7 @@ proc semGenericParams(c: var SemContext; n: var Cursor) =
     while n.kind != ParRi:
       semGenericParam c, n
     wantParRi c, n
+    dec c.routine.inGeneric
   elif n == $InvokeT:
     takeTree c, n
   else:
