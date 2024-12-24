@@ -2813,7 +2813,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
         semLocalTypeImpl c, n, InTypeSection
     if isGeneric:
       closeScope c
-      dec c.routine.inGeneric
+      dec c.routine.inGeneric # increased by semGenericParams
   else:
     c.takeTree n # generics
     semTypePragmas c, n, beforeExportMarker
