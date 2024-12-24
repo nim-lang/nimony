@@ -12,11 +12,11 @@
  (type ~6 :Color.0.tesg7afhq1 . . . 2
   (enum ,1
    (efld ~6 :Red.0.tesg7afhq1 . .
-    (i -1) +0) 10,1
+    (i -1) (tup +0 "r1")) 10,1
    (efld ~7 :Blue.0.tesg7afhq1 . .
-    (i -1) +1) 21,1
+    (i -1) (tup +1 "r2")) 21,1
    (efld ~8 :Green.0.tesg7afhq1 . .
-    (i -1) +2)))
+    (i -1) (tup +2 "r3"))))
 
 
 (type ~21 :bool.0.tesg7afhq1
@@ -26,10 +26,10 @@
   (enum ~18,1
    (efld ~8 :false.0.tesg7afhq1 
     (false) . 
-    (bool) +0) ~8,1
+    (bool) (tup +0 "false")) ~8,1
    (efld ~7 :true.0.tesg7afhq1 
     (true) . 
-    (bool) +1))) 4,3
+    (bool) (tup +1 "true")))) 4,3
 
   (type ~7 :Parent.0.tesg7afhq1 . . . 2
   (object . ~7,1
