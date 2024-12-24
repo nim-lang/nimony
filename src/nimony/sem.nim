@@ -864,7 +864,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCa
 proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
                             info: PackedLineInfo): ProcInstance =
   let key = typeToCanon(m.typeArgs, 0)
-  var targetSym = c.instantiatedProcs.mgetOrPut(origin).getOrDefault(key)
+  var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
     let targetSym = newSymId(c, origin)
     var signature = createTokenBuf(30)
@@ -890,7 +890,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
       returnType: cursorAt(signature, beforeRetType))
     publish targetSym, ensureMove signature
 
-    c.instantiatedProcs[origin][key] = targetSym
+    c.instantiatedProcs[(origin, key)] = targetSym
     var req = InstRequest(
       origin: origin,
       targetSym: targetSym,
