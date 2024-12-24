@@ -246,6 +246,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         skipParRi e, c
         e.dest.addIntLit(last - first + 1, c.info)
       else:
+        # should not be possible, but assume length anyway
         traverseExpr e, c
       wantParRi e, c
     of RangeT:

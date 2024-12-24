@@ -1986,6 +1986,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       elif false and isRangeExpr(n):
         # a..b, interpret as range type but only without AllowValues
         # to prevent conflict with HSlice
+        # disabled for now, array types special case range expressions
         semRangeTypeFromExpr c, n, info
       else:
         c.buildErr info, "not a type", n
@@ -2039,31 +2040,39 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           c.dest.addSubtree index
         elif isOrdinalType(index):
           # ordinal type, turn it into a range type
-          var err = false # ignore for now
-          let first = asSigned(firstOrd(c, index), err)
-          let last = asSigned(lastOrd(c, index), err)
           c.dest.addParLe(RangeT, index.info)
           c.dest.addSubtree index # base type
-          c.dest.addIntLit(first, index.info)
-          c.dest.addIntLit(last, index.info)
+          var err = false
+          let first = asSigned(firstOrd(c, index), err)
+          if err:
+            c.buildErr index.info, "could not get first index of ordinal type: " & typeToString(index)
+          else:
+            c.dest.addIntLit(first, index.info)
+          err = false
+          let last = asSigned(lastOrd(c, index), err)
+          if err:
+            c.buildErr index.info, "could not get last index of ordinal type: " & typeToString(index)
+          else:
+            c.dest.addIntLit(last, index.info)
           c.dest.addParRi()
         elif index.typeKind == InvokeT or (index.kind == Symbol and
             fetchSym(c, index.symId).kind == TypevarY): # or UnresolvedT
           # unresolved types are left alone
-          # check for invocations would need earlier ordinal type check
           c.dest.addSubtree index
         elif index.typeKind != NoType:
-          # XXX should check for ordinal type, then turn it into range type
-          c.dest.addSubtree index
+          c.buildErr index.info, "unknown array index type: " & typeToString(index)
         else:
           # length expression
-          var err = false # ignore for now
+          var err = false
           let length = asSigned(evalOrdinal(c, index), err)
-          c.dest.addParLe(RangeT, info)
-          c.dest.addSubtree c.types.intType
-          c.dest.addIntLit 0, info
-          c.dest.addIntLit length - 1, info
-          c.dest.addParRi()
+          if err:
+            c.buildErr index.info, "invalid array index: " & typeToString(index)
+          else:
+            c.dest.addParLe(RangeT, info)
+            c.dest.addSubtree c.types.intType
+            c.dest.addIntLit 0, info
+            c.dest.addIntLit length - 1, info
+            c.dest.addParRi()
       wantParRi c, n
     of RangeT:
       takeToken c, n
