@@ -947,7 +947,8 @@ type
 
 proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo; flags: set[SemFlag]): DotExprState
 
-proc semBuiltinSubscript(c: var SemContext; lhs: Item; it: var Item)
+proc tryBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item): bool
+proc semBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item)
 
 type
   TransformedCallSource = enum
@@ -1207,7 +1208,7 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
         cs.fn.kind = lhs.kind
         fnName = getFnIdent(c)
     if not cs.hasGenericArgs:
-      semBuiltinSubscript(c, lhs, cs.fn)
+      semBuiltinSubscript(c, cs.fn, lhs)
       fnName = getFnIdent(c)
       it.n = cs.fn.n
   elif cs.fn.n.exprKind == DotX:
@@ -2353,13 +2354,90 @@ proc semLocalTypeExpr(c: var SemContext, it: var Item) =
 
 proc semAsgn(c: var SemContext; it: var Item) =
   let info = it.n.info
-  takeToken c, it.n
-  var a = Item(n: it.n, typ: c.types.autoType)
-  semExpr c, a # infers type of `left-hand-side`
-  semExpr c, a # ensures type compatibility with `left-hand-side`
-  it.n = a.n
-  wantParRi c, it.n
-  producesVoid c, info, it.typ
+  inc it.n
+  case it.n.exprKind
+  of AtX:
+    var subscript = Item(n: it.n, typ: c.types.autoType)
+    inc subscript.n # tag
+    var lhsBuf = createTokenBuf(4)
+    swap c.dest, lhsBuf
+    var lhs = Item(n: subscript.n, typ: c.types.autoType)
+    semExpr c, lhs, {KeepMagics}
+    swap c.dest, lhsBuf
+    subscript.n = lhs.n
+    lhs.n = cursorAt(lhsBuf, 0)
+    var subscriptBuf = createTokenBuf(8)
+    swap c.dest, subscriptBuf
+    let builtin = tryBuiltinSubscript(c, subscript, lhs)
+    swap c.dest, subscriptBuf
+    if builtin:
+      c.dest.addParLe(AsgnS, info)
+      c.dest.add subscriptBuf
+      semExpr c, subscript # use the type and position of the subscript
+      it.n = subscript.n
+      wantParRi c, it.n
+      producesVoid c, info, it.typ
+    else:
+      var callBuf = createTokenBuf(16)
+      callBuf.addParLe(CallX, lhs.n.info)
+      callBuf.add identToken(pool.strings.getOrIncl("[]="), lhs.n.info)
+      callBuf.addSubtree lhs.n
+      while subscript.n.kind != ParRi:
+        callBuf.takeTree subscript.n
+      skipParRi subscript.n
+      it.n = subscript.n
+      callBuf.takeTree it.n # assignment value
+      callBuf.addParRi()
+      skipParRi it.n
+      var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
+      semCall c, call, SubscriptCall # XXX incorrect source kind
+      it.typ = call.typ
+  of DotX:
+    var dot = Item(n: it.n, typ: c.types.autoType)
+    inc dot.n # tag
+    var lhsBuf = createTokenBuf(4)
+    swap c.dest, lhsBuf
+    var lhs = Item(n: dot.n, typ: c.types.autoType)
+    semExpr c, lhs, {KeepMagics}
+    swap c.dest, lhsBuf
+    dot.n = lhs.n
+    lhs.n = cursorAt(lhsBuf, 0)
+    let fieldName = getIdent(dot.n)
+    # skip optional inheritance depth:
+    if dot.n.kind == IntLit:
+      inc dot.n
+    skipParRi dot.n
+    var dotBuf = createTokenBuf(8)
+    swap c.dest, dotBuf
+    let builtin = tryBuiltinDot(c, dot, lhs, fieldName, info, {}) != FailedDot
+    swap c.dest, dotBuf
+    if builtin:
+      c.dest.addParLe(AsgnS, info)
+      c.dest.add dotBuf
+      semExpr c, dot # use the type and position of the subscript
+      it.n = dot.n
+      wantParRi c, it.n
+      producesVoid c, info, it.typ
+    else:
+      var callBuf = createTokenBuf(16)
+      callBuf.addParLe(CallX, lhs.n.info)
+      callBuf.add identToken(pool.strings.getOrIncl(pool.strings[fieldName] & "="), lhs.n.info)
+      callBuf.addSubtree lhs.n
+      it.n = dot.n
+      callBuf.takeTree it.n # assignment value
+      callBuf.addParRi()
+      skipParRi it.n
+      var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
+      semCall c, call, DotCall # XXX incorrect source kind
+      it.typ = call.typ
+  else:
+    c.dest.addParLe(AsgnS, info)
+    var a = Item(n: it.n, typ: c.types.autoType)
+    semExpr c, a # infers type of `left-hand-side`
+    semExpr c, a # ensures type compatibility with `left-hand-side`
+    it.n = a.n
+    wantParRi c, it.n
+    producesVoid c, info, it.typ
 
 proc semEmit(c: var SemContext; it: var Item) =
   let info = it.n.info
@@ -3000,15 +3078,21 @@ proc semIsMainModule(c: var SemContext; it: var Item) =
   it.typ = c.types.boolType
   commonType c, it, beforeExpr, expected
 
-proc semBuiltinSubscript(c: var SemContext; lhs: Item; it: var Item) =
+proc tryBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item): bool =
   # it.n is after lhs, at args
+  result = false
   if lhs.n.kind == Symbol and lhs.kind == TypeY and
       getTypeSection(lhs.n.symId).typevars == "typevars":
     # lhs is a generic type symbol, this is a generic invocation
     # treat it as a type expression to call semInvoke
     semLocalTypeExpr c, it
-    return
+    return true
   # XXX also check for proc generic instantiation, including symchoice
+
+proc semBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item) =
+  # it.n is after lhs, at args
+  if tryBuiltinSubscript(c, it, lhs):
+    return
 
   # build call:
   var callBuf = createTokenBuf(16)
