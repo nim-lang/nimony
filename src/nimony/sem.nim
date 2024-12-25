@@ -1557,7 +1557,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     inc n
     semConstIntExpr(c, n)
     c.dest.addParRi()
-  of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow:
+  of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow, NoSideEffect:
     crucial.flags.incl pk
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     c.dest.addParRi()
@@ -3122,7 +3122,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           if pool.tags[it.n.tag] == "err":
             c.takeTree it.n
           else:
-            buildErr c, it.n.info, "expression expected"
+            buildErr c, it.n.info, "expression expected; tag: " & pool.tags[it.n.tag]
             skip it.n
         of ObjectT, EnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
@@ -3222,7 +3222,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ForS:
         toplevelGuard c:
           semFor c, it
-      of ExportS:
+      of ExportS, CommentS:
         # XXX ignored for now
         skip it.n
     of FalseX, TrueX:

@@ -367,7 +367,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           expectStrLit e, c
           result.externName = pool.strings[c.litId]
           inc c
-        of Nodecl, Selectany, Threadvar, Globalvar, Discardable, NoReturn, Varargs, Borrow:
+        of Nodecl, Selectany, Threadvar, Globalvar, Discardable, NoReturn, Varargs, Borrow, NoSideEffect:
           result.flags.incl pk
           inc c
         of Header:
@@ -743,7 +743,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       error e, "to implement: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS, ExportS:
+    of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS, ExportS, CommentS:
       # pure compile-time construct, ignore:
       skip c
     of TypeS:
