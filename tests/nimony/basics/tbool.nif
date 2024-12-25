@@ -13,7 +13,7 @@
     (true) . 
     (bool) 
     (tup +1 "true")))) 26
- (proc :dollar.bool.0.tbojn1uzv . . . 
+ (proc :dollar.bool.0.tbojn1uzv x . . 
   (params 
    (param :e . . 
     (bool) .))

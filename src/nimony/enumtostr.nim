@@ -45,42 +45,43 @@ proc genEnumToStrProcCase(dest: var TokenBuf; enumDecl: var Cursor; symId: SymId
 
   dest.addParRi() # case
 
-proc genEnumToStrProc*(typeDecl: var Cursor; stringType: var Cursor): TokenBuf =
-  result = createTokenBuf()
+proc genEnumToStrProc*(dest: var TokenBuf, typeDecl: var Cursor; stringType: var Cursor) =
   let decl = asTypeDecl(typeDecl)
   let enumSymId = decl.name.symId
+  let enumSymInfo = decl.name.info
   let dollorName = "dollar." & pool.syms[enumSymId]
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
-  result.add tagToken("proc", typeDecl.info)
-  result.add symdefToken(dollorSymId, typeDecl.info)
+  dest.add tagToken("proc", typeDecl.info)
+  dest.add symdefToken(dollorSymId, typeDecl.info)
 
   # Todo: defaults to (nodecl)
-  result.addDotToken()
-  result.addDotToken()
-  result.addDotToken()
+  let exportIdent = pool.strings.getOrIncl("x")
+  dest.add identToken(exportIdent, typeDecl.info)
+  dest.addDotToken()
+  dest.addDotToken()
 
   let paramSymId = pool.syms.getOrIncl("e")
-  result.add tagToken("params", typeDecl.info)
-  result.add tagToken("param", typeDecl.info)
-  result.add symdefToken(paramSymId, typeDecl.info)
-  result.addDotToken()
-  result.addDotToken()
-  result.add symToken(enumSymId, typeDecl.info)
-  result.addDotToken()
-  result.addParRi() # param
-  result.addParRi() # params
+  dest.add tagToken("params", typeDecl.info)
+  dest.add tagToken("param", typeDecl.info)
+  dest.add symdefToken(paramSymId, typeDecl.info)
+  dest.addDotToken()
+  dest.addDotToken()
+  dest.add symToken(enumSymId, enumSymInfo)
+  dest.addDotToken()
+  dest.addParRi() # param
+  dest.addParRi() # params
 
-  result.add stringType
-  result.addParRi()
+  dest.add stringType
+  dest.addParRi()
 
-  result.addDotToken()
-  result.addDotToken()
+  dest.addDotToken()
+  dest.addDotToken()
 
 
-  result.add tagToken("stmts", typeDecl.info)
+  dest.add tagToken("stmts", typeDecl.info)
   var body = decl.body
-  genEnumToStrProcCase(result, body, paramSymId)
-  result.addParRi() # stmts
+  genEnumToStrProcCase(dest, body, paramSymId)
+  dest.addParRi() # stmts
 
-  result.addParRi() # proc
+  dest.addParRi() # proc

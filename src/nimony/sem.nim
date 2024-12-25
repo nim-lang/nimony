@@ -2973,14 +2973,17 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   c.addSym delayed
   wantParRi c, n
 
+
+  publish c, delayed.s.name, declStart
+
   if isEnumTypeDecl:
     var dest = createTokenBuf()
     var enumTypeDecl = cursorAt(c.dest, declStart)
-    dest.add genEnumToStrProc(enumTypeDecl, c.types.stringType)
+    genEnumToStrProc(dest, enumTypeDecl, c.types.stringType)
     endRead(c.dest)
+
     c.dest.add dest
 
-  publish c, delayed.s.name, declStart
 
 proc semTypedBinaryArithmetic(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
