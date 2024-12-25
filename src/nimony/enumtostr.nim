@@ -52,19 +52,19 @@ proc genEnumToStrProc*(dest: var TokenBuf, typeDecl: var Cursor; stringType: var
   let dollorName = "dollar." & pool.syms[enumSymId]
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
-  dest.add tagToken("proc", typeDecl.info)
-  dest.add symdefToken(dollorSymId, typeDecl.info)
+  dest.add tagToken("proc", enumSymInfo)
+  dest.add symdefToken(dollorSymId, enumSymInfo)
 
   # Todo: defaults to (nodecl)
   let exportIdent = pool.strings.getOrIncl("x")
-  dest.add identToken(exportIdent, typeDecl.info)
+  dest.add identToken(exportIdent, enumSymInfo)
   dest.addDotToken()
   dest.addDotToken()
 
   let paramSymId = pool.syms.getOrIncl("e")
-  dest.add tagToken("params", typeDecl.info)
-  dest.add tagToken("param", typeDecl.info)
-  dest.add symdefToken(paramSymId, typeDecl.info)
+  dest.add tagToken("params", enumSymInfo)
+  dest.add tagToken("param", enumSymInfo)
+  dest.add symdefToken(paramSymId, enumSymInfo)
   dest.addDotToken()
   dest.addDotToken()
   dest.add symToken(enumSymId, enumSymInfo)
@@ -79,7 +79,7 @@ proc genEnumToStrProc*(dest: var TokenBuf, typeDecl: var Cursor; stringType: var
   dest.addDotToken()
 
 
-  dest.add tagToken("stmts", typeDecl.info)
+  dest.add tagToken("stmts", enumSymInfo)
   var body = decl.body
   genEnumToStrProcCase(dest, body, paramSymId)
   dest.addParRi() # stmts
