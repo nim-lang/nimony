@@ -12,7 +12,27 @@
    (efld ~7 :true.0.tbojn1uzv 
     (true) . 
     (bool) 
-    (tup +1 "true")))) 4,3
+    (tup +1 "true")))) 26
+ (proc :dollar.bool.0.tbojn1uzv . . . 
+  (params 
+   (param :e . . 
+    (bool) .))
+  (string) . . 
+  (stmts 2
+   (result :result.0 . .
+    (string) .) 2
+   (case e ~18,1
+    (of 
+     (set 
+      (false)) 
+     (stmts 
+      (ret "false"))) ~8,1
+    (of 
+     (set 
+      (true)) 
+     (stmts 
+      (ret "true"))))
+   (ret result.0))) 4,3
  (let :x.0.tbojn1uzv . . 22,~3
   (bool) 16,~2
   (true)))

@@ -13,7 +13,7 @@ include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
-  semdata, sembasics, semos, expreval, semborrow
+  semdata, sembasics, semos, expreval, semborrow, enumtostr
 
 import ".." / gear2 / modnames
 
@@ -2938,6 +2938,8 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   let beforeExportMarker = c.dest.len
   wantExportMarker c, n # 1
 
+  var isEnumTypeDecl = false
+
   if c.phase == SemcheckSignatures or (delayed.status == OkNew and c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
     let prevGeneric = c.routine.inGeneric
@@ -2957,6 +2959,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     else:
       if n.typeKind == EnumT:
         semEnumType c, n, delayed.s.name, beforeExportMarker
+        isEnumTypeDecl = true
       else:
         semLocalTypeImpl c, n, InTypeSection
     if isGeneric:
@@ -2969,6 +2972,14 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
 
   c.addSym delayed
   wantParRi c, n
+
+  if isEnumTypeDecl:
+    var dest = createTokenBuf()
+    var enumTypeDecl = cursorAt(c.dest, declStart)
+    dest.add genEnumToStrProc(enumTypeDecl, c.types.stringType)
+    endRead(c.dest)
+    c.dest.add dest
+
   publish c, delayed.s.name, declStart
 
 proc semTypedBinaryArithmetic(c: var SemContext; it: var Item) =
