@@ -16,7 +16,7 @@
 
 import std/[os, tables, sets, syncio, assertions, strutils, times]
 import semos, nifconfig, nimony_model
-import ".." / gear2 / modnames
+import ".." / gear2 / modnames, semdata
 
 include nifprelude
 
@@ -41,6 +41,7 @@ type
     deps: seq[FilePair]
     id, parent: int
     active: int
+    isSystem: bool
 
   DepContext = object
     forceRebuild: bool
@@ -50,6 +51,7 @@ type
     rootNode: Node
     includeStack: seq[string]
     processedModules: HashSet[string]
+    moduleFlags: set[ModuleFlag]
 
 proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
@@ -97,13 +99,14 @@ proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
     it = c.nodes[it].parent
   return false
 
-proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo; current: Node) =
+proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
+                      current: Node; isSystem: bool) =
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
   if not fileExists(f2): return
   let p = c.toPair(f2)
   if not c.processedModules.containsOrIncl(p.modname):
     current.deps.add p
-    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id)
+    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: isSystem)
     c.nodes.add imported
     parseDeps c, p, imported
   else:
@@ -136,7 +139,7 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
       discard "ignore wrong `import` statement"
     else:
       for f in files:
-        importSingleFile c, f.path, info, current
+        importSingleFile c, f.path, info, current, false
 
 proc processFrom(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
@@ -150,7 +153,7 @@ proc processFrom(c: var DepContext; it: var Cursor; current: Node) =
     discard "ignore wrong `from` statement"
   else:
     for f in files:
-      importSingleFile c, f.path, info, current
+      importSingleFile c, f.path, info, current, false
       break
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
@@ -192,6 +195,8 @@ proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
     discard processDirectives(stream.r)
     var buf = fromStream(stream)
     processDeps c, beginRead(buf), current
+    if {SkipSystem, IsSystem} * c.moduleFlags == {}:
+      importSingleFile c, stdlibFile("std/system"), NoLineInfo, current, true
   finally:
     nifstreams.close(stream)
 
@@ -244,7 +249,8 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
       let idxFile = indexFile(f)
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
-    s.add "\n\tnimsem " & commandLineArgs & " m " & mescape(parsedFile(v.files[0])) & " " &
+    let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "")
+    s.add "\n\tnimsem " & args & " m " & mescape(parsedFile(v.files[0])) & " " &
       mescape(semmedFile(v.files[0])) & " " & mescape(indexFile(v.files[0]))
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
@@ -262,7 +268,7 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
   writeFile result, s
 
 proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: bool;
-    commandLineArgs: string) =
+    commandLineArgs: string; moduleFlags: set[ModuleFlag]) =
   let nifler = findTool("nifler")
 
   if compat:
@@ -272,9 +278,9 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: 
     parseNifConfig cfgNif, config
 
   var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
-    forceRebuild: forceRebuild)
+    forceRebuild: forceRebuild, moduleFlags: moduleFlags)
   let p = c.toPair(project)
-  c.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0)
+  c.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode

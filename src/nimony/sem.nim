@@ -225,7 +225,7 @@ proc semInclude(c: var SemContext; it: var Item) =
 
 type
   ImportModeKind = enum
-    ImportAll, FromImport, ImportExcept
+    ImportAll, FromImport, ImportExcept, ImportSystem
 
   ImportMode = object
     kind: ImportModeKind
@@ -237,7 +237,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffix):
-      selfExec c, f2
+      selfExec c, f2, (if mode.kind == ImportSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
     let moduleSym = identToSym(c, moduleName, ModuleY)
@@ -3364,6 +3364,11 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   # XXX could add self module symbol here
 
   assert n0 == "stmts"
+
+  if {SkipSystem, IsSystem} * moduleFlags == {}:
+    importSingleFile(c, ImportedFilename(path: stdlibFile("std/system"), name: "system"),
+       "", ImportMode(kind: ImportSystem, list: initPackedSet[StrId]()), n0.info)
+
   #echo "PHASE 1"
   var n1 = phaseX(c, n0, SemcheckTopLevelSyms)
   #echo "PHASE 2: ", toString(n1)
