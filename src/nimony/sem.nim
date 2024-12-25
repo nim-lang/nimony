@@ -1723,12 +1723,13 @@ type
 
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState)
 
-proc semEnumType(c: var SemContext; n: var Cursor; enumType: SymId; beforeExportMarker: int) =
+proc semEnumType(c: var SemContext; n: var Cursor; enumType: SymId; beforeExportMarker: int): bool =
   # XXX Propagate hasHole somehow
   takeToken c, n
   let magicToken = c.dest[beforeExportMarker]
   var state = EnumTypeState(enumType: enumType, thisValue: createXint(0'i64), hasHole: false,
     isBoolType: magicToken.kind == ParLe and pool.tags[magicToken.tagId] == $BoolT)
+  result = not state.isBoolType
   while n.substructureKind == EfldS:
     semEnumField(c, n, state)
     inc state.thisValue
@@ -2958,8 +2959,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       takeToken c, n
     else:
       if n.typeKind == EnumT:
-        semEnumType c, n, delayed.s.name, beforeExportMarker
-        isEnumTypeDecl = true
+        isEnumTypeDecl = semEnumType(c, n, delayed.s.name, beforeExportMarker)
       else:
         semLocalTypeImpl c, n, InTypeSection
     if isGeneric:
@@ -2981,8 +2981,9 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     var enumTypeDecl = cursorAt(c.dest, declStart)
     genEnumToStrProc(dest, enumTypeDecl, c.types.stringType)
     endRead(c.dest)
-
-    c.dest.add dest
+    var dollorProcDecl = beginRead(dest)
+    var it = Item(n: dollorProcDecl, typ: c.types.autoType)
+    semExpr(c, it)
 
 
 proc semTypedBinaryArithmetic(c: var SemContext; it: var Item) =
