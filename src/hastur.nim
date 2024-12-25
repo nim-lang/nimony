@@ -143,8 +143,13 @@ type
     Tracked # tracked tests: These are processed and can contain "track info"
             # for line, col, filename extraction (useful for nimsuggest-like tests)
 
+proc toCommand(cat: Category): string =
+  case cat
+  of Basics: "m"
+  of Normal, Tracked: "c"
+
 proc execNimony(cmd: string; cat: Category): (string, int) =
-  result = execLocal("nimony", (if cat == Basics: "--noSystem " else: "") & cmd)
+  result = execLocal("nimony", toCommand(cat) & " " & cmd)
 
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
@@ -152,7 +157,7 @@ proc generatedFile(orig, ext: string): string =
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   inc c.total
-  var nimonycmd = "m --isMain"
+  var nimonycmd = "--isMain"
   if cat == Tracked:
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file), cat)
@@ -268,13 +273,13 @@ type
 
 proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
   # Records a new test case.
-  let (compilerOutput, compilerExitCode) = execNimony("m " & quoteShell(file), cat)
+  let (compilerOutput, compilerExitCode) = execNimony(quoteShell(file), cat)
   if compilerExitCode == 1:
     let idx = compilerOutput.find(ErrorKeyword)
     assert idx >= 0, "compiler output did not contain: " & ErrorKeyword
     copyFile file, test
     # run the test again so that the error messages contain the correct paths:
-    let (finalCompilerOutput, finalCompilerExitCode) = osproc.execCmdEx("nimony m " & quoteShell(test))
+    let (finalCompilerOutput, finalCompilerExitCode) = execNimony(quoteShell(test), cat)
     assert finalCompilerExitCode == 1, "the compiler should have failed once again"
     gitAdd test
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
@@ -287,7 +292,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
 
     addTestCode test, file
     if {RecordCodegen, RecordAst} * flags != {}:
-      let (finalCompilerOutput, finalCompilerExitCode) = osproc.execCmdEx("nimony m " & quoteShell(test))
+      let (finalCompilerOutput, finalCompilerExitCode) = execNimony(quoteShell(test), cat)
       assert finalCompilerExitCode == 0, finalCompilerOutput
 
     if RecordCodegen in flags:
