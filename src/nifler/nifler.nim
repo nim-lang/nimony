@@ -24,6 +24,7 @@ Command:
 
 Options:
   --portablePaths       keep line information portable accross different OSes
+  --deps                produce a <inputfile>.deps.nif file
   --force, -f           force a rebuild
   --version             show the version
   --help                show this help
@@ -37,6 +38,7 @@ proc handleCmdLine() =
   var args: seq[string] = @[]
   var forceRebuild = false
   var portablePaths = true # false
+  var deps = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -50,6 +52,7 @@ proc handleCmdLine() =
       of "version", "v": writeVersion()
       of "force", "f": forceRebuild = true
       of "portablepaths": portablePaths = true
+      of "deps": deps = true
       else: quit(Usage)
     of cmdEnd: assert false, "cannot happen"
 
@@ -66,7 +69,7 @@ proc handleCmdLine() =
           getLastModificationTime(outp) > getLastModificationTime(inp):
         discard "nothing to do"
       else:
-        parseFile inp, outp, portablePaths
+        parseFile inp, outp, portablePaths, deps
   of "config":
     if args.len == 0:
       quit "'config' command takes a filename"

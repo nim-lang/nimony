@@ -30,7 +30,7 @@ proc len*[Id, T](t: BiTable[Id, T]): int = t.vals.len
 
 proc mustRehash(length, counter: int): bool {.inline.} =
   assert(length > counter)
-  result = (length * 2 < counter * 3) or (length - counter < 4)
+  result = (length < counter div 2 + counter) or (length - counter < 4)
 
 const
   idStart = 1

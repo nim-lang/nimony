@@ -4,8 +4,6 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import compiler / [pathutils]
-
 # --------------------------------------------------
 # Fast&sufficient string hashing. We use custom code here so that we're independent
 # from Nim's hashing implementation. Stability is more important as these checksums

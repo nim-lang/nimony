@@ -12,7 +12,7 @@ proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IterY, MacroY, TemplateY, ConverterY, MethodY}
 
 proc isLocal*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, FldY}
+  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, FldY, EfldY}
 
 type
   Local* = object
@@ -38,6 +38,9 @@ proc asLocal*(c: Cursor): Local =
     result.typ = c
     skip c
     result.val = c
+
+proc asTypevar*(c: Cursor): Local {.inline.} =
+  result = asLocal(c)
 
 type
   Routine* = object

@@ -1,0 +1,1 @@
+tests/nimony/basics/deps/includeb.nim(2, 1) Error: recursive include: tests/nimony/basics/deps/includea.nim -> tests/nimony/basics/deps/includeb.nim -> tests/nimony/basics/deps/includea.nim

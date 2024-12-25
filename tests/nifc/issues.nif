@@ -12,6 +12,11 @@
   )
   )
 
+  (type ~6 :bool.0.tesg7afhq1 . 2
+  (enum 12,1 (u +8) 2,1
+   (efld ~8 :false.0.tesg7afhq1 +0) 12,1
+   (efld ~7 :true.0.tesg7afhq1 +1))) ,13
+
   (type :MyObject3.m .
   (object . (fld :a1 . (i +32 (atomic)))
     (fld :a2 . (i +64 (atomic)))
@@ -134,6 +139,9 @@
   )
   )
 
+  (type :MyObject.aligned . (object .
+    (fld :a1.c (pragmas (align +8)) (bool))))
+
   (proc :foo.sizealignoffset . . . (stmts
     (call assert.c (eq (sizeof (i +32)) +4))
     (call assert.c (eq (sizeof MyObject2.m) +24))
@@ -141,6 +149,7 @@
     (call assert.c (eq (alignof MyObject2.m) +8))
     (call assert.c (eq (offsetof MyObject2.m a2) +8))
     (call assert.c (eq (offsetof MyObject2.m a3) +16))
+    (call assert.c (eq (sizeof MyObject.aligned) +8))
   ))
 
   (proc :foo.floatspecial . . . (stmts
@@ -155,6 +164,13 @@
     (call assert.c (eq (suf -9223372036854775806 "i64") -9223372036854775806))
     (call assert.c (eq (suf +18446744073709551615u "u64") +18446744073709551615u))
   ))
+
+  (type :FooProc.cdecl . (proctype . (params) (i +32) (pragmas (cdecl))))
+  (type :FooProc.stdcall . (proctype . (params) (i +32) (pragmas (stdcall))))
+  (type :FooProc.safecall . (proctype . (params) (i +32) (pragmas (safecall))))
+  (type :FooProc.fastcall . (proctype . (params) (i +32) (pragmas (fastcall))))
+  (type :FooProc.noconv . (proctype . (params) (i +32) (pragmas (noconv))))
+  (type :FooProc.member . (proctype . (params) (i +32) (pragmas (member))))
 
   (proc :foo.inline . (i +32) (pragmas (inline)) (stmts
     (ret +1)
@@ -250,6 +266,12 @@
     (call foo.fastcall)
     (call foo.noconv)
     (call foo.member)
+    (var :foovar.cdecl . FooProc.cdecl foo.cdecl)
+    (var :foovar.stdcall . FooProc.stdcall foo.stdcall)
+    (var :foovar.safecall . FooProc.safecall foo.safecall)
+    (var :foovar.fastcall . FooProc.fastcall foo.fastcall)
+    (var :foovar.noconv . FooProc.noconv foo.noconv)
+    (var :foovar.member . FooProc.member foo.member)
 
     (var :x.c . (i +8) (suf +12 "i8"))
     (discard x.c)
@@ -281,6 +303,8 @@
     (call assert.c (eq s.cpp +3))
 
     (call foo.escaped)
+
+    (var :x.0 . 6,~3 bool.0.tesg7afhq1 4 false.0.tesg7afhq1)
 
     (ret +0)
   ))

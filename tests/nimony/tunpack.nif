@@ -1,0 +1,158 @@
+(.nif24)
+,2,tests/nimony/tunpack.nim(stmts 2,1
+ (type :int.0.tun857qmo1 
+  (i -1) . 5
+  (pragmas 2
+   (magic 7 Int)) .) 2,2
+ (type :bool.0.tun857qmo1 
+  (bool) . 6
+  (pragmas 2
+   (magic 7 Bool)) .) 2,4
+ (type :cstring.0.tun857qmo1 
+  (cstring) . 9
+  (pragmas 2
+   (magic 7 Cstring)) .) 2,5
+ (type :pointer.0.tun857qmo1 
+  (pointer) . 9
+  (pragmas 2
+   (magic 7 Pointer)) .) 2,7
+ (type :string.0.tun857qmo1 
+  (string) . 8
+  (pragmas 2
+   (magic 7 String)) .) ,9
+ (proc 5 :\2B.0.tun857qmo1 
+  (add -3) . . 9
+  (params 1
+   (param :x.0 . . ~8,~8
+    (i -1) .) 4
+   (param :y.0 . . ~11,~8
+    (i -1) .)) 2,~8
+  (i -1) 26
+  (pragmas 2
+   (magic 7 "AddI")) . .) ,10
+ (proc 5 :\2D.0.tun857qmo1 
+  (sub -3) . . 9
+  (params 1
+   (param :x.1 . . ~8,~9
+    (i -1) .) 4
+   (param :y.1 . . ~11,~9
+    (i -1) .)) 2,~9
+  (i -1) 26
+  (pragmas 2
+   (magic 7 "SubI")) . .) ,12
+ (proc 5 :<=.0.tun857qmo1 
+  (le -3) . . 10
+  (params 1
+   (param :x.2 . . ~9,~11
+    (i -1) .) 4
+   (param :y.2 . . ~12,~11
+    (i -1) .)) 2,~10
+  (bool) 28
+  (pragmas 2
+   (magic 7 "LeI")) . .) 4,14
+ (var :x.0.tun857qmo1 . . ~2,~13
+  (i -1) 4
+  (cast ~6,~13
+   (i -1) 10 +55)) 4,16
+ (var :y.0.tun857qmo1 . . ~2,~11
+  (pointer) 13
+  (nil)) 2,19
+ (const :myconst.0.tun857qmo1 . . ,~15
+  (cstring) 17
+  (conv ~17,~15
+   (cstring) 
+   (suf "abc" "R"))) 4,21
+ (var :zz.0.tun857qmo1 . . ~2,~17
+  (cstring) 14 "xzy") ,23
+ (proc 5 :$.0.tun857qmo1 x . . 9
+  (params 1
+   (param :s.0 . . ~8,~16
+    (string) .)) 2,~16
+  (string) . . .) ,24
+ (proc 5 :$.1.tun857qmo1 x . . 9
+  (params 1
+   (param :s.1 . . ~8,~23
+    (i -1) .)) 2,~17
+  (string) . . .) ,25
+ (proc 5 :$.2.tun857qmo1 x . . 9
+  (params 1
+   (param :s.2 . . ~8,~23
+    (bool) .)) 2,~18
+  (string) . . .) 2,28
+ (type :untyped.0.tun857qmo1 
+  (untyped) . 9
+  (pragmas 2
+   (magic 7 Expr)) .) ,30
+ (iterator 9 :unpack.0.tun857qmo1 
+  (unpack) . . 15
+  (params) 2,~2
+  (untyped) 27
+  (pragmas 2
+   (magic 7 Unpack)) . .) ,31
+ (proc 5 :unpackToCall.0.tun857qmo1 
+  (unpack) . . 17
+  (params 1
+   (param :fn.0 . . ~16,~3
+    (untyped) .)) . 31
+  (pragmas 2
+   (magic 7 Unpack)) . .) ,33
+ (template 9 :toArray.0.tun857qmo1 . . . 16
+  (params 14
+   (param :vanon.0 . . 
+    (varargs) .)) 2,~5
+  (untyped) 28
+  (pragmas 2
+   (varargs)) . 42
+  (stmts 
+   (arr 7
+    (unpack)))) ,34
+ (template 9 :toTuple.0.tun857qmo1 . . . 16
+  (params 14
+   (param :vanon.1 . . 
+    (varargs) .)) 2,~6
+  (untyped) 28
+  (pragmas 2
+   (varargs)) . 42
+  (stmts 
+   (tup 7
+    (unpack)))) ,36
+ (template 9 :toStringArray.0.tun857qmo1 . . . 22
+  (params 14
+   (param :vanon.2 . . 
+    (varargs) .)) 2,~8
+  (untyped) 34
+  (pragmas 2
+   (varargs)) . 48
+  (stmts 
+   (arr 13
+    (unpack 
+     (ochoice $.0.tun857qmo1 $.1.tun857qmo1 $.2.tun857qmo1))))) ,38
+ (proc 5 :use.0.tun857qmo1 . . . 9
+  (params) . . . 2,1
+  (stmts 4
+   (let :a.0 . . 36,~6
+    (array
+     (i -1) +3) 36,~6
+    (stmts 
+     (arr ~24,6 +1 ~21,6 +2 ~18,6 +3))) 4,2
+   (let :t.0 . . 12
+    (tuple 
+     (fld :Field0.1.tun857qmo1 . .
+      (string) .) 5
+     (fld :Field1.0.tun857qmo1 . .
+      (i -1) .)) 36,~7
+    (stmts 
+     (tup ~24,7 "a" ~19,7 +2))) 4,4
+   (let :emptyTuple.0 . .
+    (tuple) 36,~9
+    (stmts 
+     (tup))) 4,6
+   (let :s.3 . . 42,~9
+    (array ~46,~29
+     (string) +3) 42,~9
+    (stmts 
+     (arr ~24,9
+      (call 37,~9 $.0.tun857qmo1 "a") ~19,9
+      (call 32,~9 $.1.tun857qmo1 +1) ~16,9
+      (call 29,~9 $.0.tun857qmo1 "b")))))) 3,47
+ (call ~3 use.0.tun857qmo1))

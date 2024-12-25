@@ -32,7 +32,7 @@ proc destroy*[T](s: Arena[T]) =
 proc new*[T](s: var Arena[T]): ptr T =
   if s.tail.len >= s.tail.cap:
     let oldTail = s.tail
-    let newCap = oldTail.cap * 3 div 2
+    let newCap = oldTail.cap div 2 + oldTail.cap
     assert newCap > 2
     s.tail = createChunk[T](newCap)
     oldTail.next = s.tail
@@ -44,7 +44,7 @@ proc new*[T](s: var Arena[T]): ptr T =
 proc newArrayUninit*[T](s: var Arena[T]; len: int): ptr UncheckedArray[T] =
   if s.tail.len + len > s.tail.cap:
     let oldTail = s.tail
-    let newCap = max(oldTail.cap * 3 div 2, len)
+    let newCap = max(oldTail.cap div 2 + oldTail.cap, len)
     assert newCap > 2
     s.tail = createChunkUninit[T](newCap)
     oldTail.next = s.tail

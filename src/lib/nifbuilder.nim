@@ -35,7 +35,8 @@ proc attachedToFile*(b: Builder): bool {.inline.} = b.mode == UsesFile
 proc extract*(b: sink Builder): string =
   ## Extracts the buffer from the builder.
   ## The builder should not be used afterwards.
-  assert b.nesting == 0, "unpaired '(' or ')'"
+  when not defined(showBroken):
+    assert b.nesting == 0, "unpaired '(' or ')'" & $b.nesting
   assert b.mode == UsesMem, "cannot extract from a file"
   result = move(b.buf)
 
@@ -249,8 +250,10 @@ proc addTree*(b: var Builder; kind: string) =
   inc b.nesting
 
 proc endTree*(b: var Builder) =
-  assert b.nesting > 0, "generating ')' would produce a syntax error"
-  dec b.nesting
+  when not defined(showBroken):
+    assert b.nesting > 0, "generating ')' would produce a syntax error"
+  if b.nesting >= 0:
+    dec b.nesting
   undoWhitespace b
   b.put ')'
 

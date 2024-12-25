@@ -1,28 +1,29 @@
-## Tester tool for Nimony.
+## Hastur - Tester tool for Nimony and its related subsystems (NIFC etc).
 ## (c) 2024 Andreas Rumpf
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
-import "../.." / gear2 / modnames
-import compiler / pathutils
+import gear2 / modnames
 
 const
   Version = "0.6"
-  Usage = "tester - tester tool for Nimony Version " & Version & """
+  Usage = "hastur - tester tool for Nimony Version " & Version & """
 
   (c) 2024 Andreas Rumpf
 Usage:
-  tester [options] [command] [arguments]
+  hastur [options] [command] [arguments]
 
 Commands:
-  tests                run the test suite.
+  all                  run all tests (also the default action).
+  nimony               run Nimony tests.
+  nifc                 run NIFC tests.
   test <file>          run test <file>.
-  overwrite <file>     overwrite the test results for the test in <file>.
   record <file> <tout> track the results to make it part of the test suite.
 
 Arguments are forwarded to the Nimony compiler.
 
 Options:
+  --overwrite           overwrite the selected test results
   --ast                 track the contents of the AST too
   --codegen             track the contents of the code generator too
   --version             show the version
@@ -131,9 +132,12 @@ proc markersToCmdLine(s: seq[LineInfo]): string =
   for x in items(s):
     result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
 
+proc execLocal(exe, cmd: string): (string, int) =
+  let bin = "." / exe.addFileExt(ExeExt)
+  result = osproc.execCmdEx(bin & " " & cmd)
+
 proc execNimony(cmd: string): (string, int) =
-  const nimonyExe = when defined(windows): ".\\nimony.exe" else: "./nimony"
-  result = osproc.execCmdEx(nimonyExe & " " & cmd)
+  result = execLocal("nimony", cmd)
 
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
@@ -141,7 +145,7 @@ proc generatedFile(orig, ext: string): string =
 
 proc testFile(c: var TestCounters; file: string; overwrite, useTrack: bool) =
   inc c.total
-  var nimonycmd = "m"
+  var nimonycmd = "m --isMain"
   if useTrack:
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file))
@@ -194,9 +198,9 @@ proc testDir(c: var TestCounters; dir: string; overwrite, useTrack: bool) =
   for f in items files:
     testFile c, f, overwrite, useTrack
 
-proc tests(overwrite: bool) =
-  ## Run all the tests in the test-suite.
-  const TestDir = "src/nimony/tests"
+proc nimonytests(overwrite: bool) =
+  ## Run all the nimonytests in the test-suite.
+  const TestDir = "tests/nimony"
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   for x in walkDir(TestDir, relative = true):
@@ -218,6 +222,11 @@ proc test(t: string; overwrite, useTrack: bool) =
 
 proc exec(cmd: string) =
   let (s, exitCode) = execCmdEx(cmd)
+  if exitCode != 0:
+    quit "FAILURE " & cmd & "\n" & s
+
+proc exec(exe, cmd: string) =
+  let (s, exitCode) = execLocal(exe, cmd)
   if exitCode != 0:
     quit "FAILURE " & cmd & "\n" & s
 
@@ -270,14 +279,61 @@ proc record(file, test: string; flags: set[RecordFlag]) =
 
 proc buildNimony() =
   exec "nim c src/nimony/nimony.nim"
-  let nimony = "nimony".addFileExt(ExeExt)
-  moveFile "src/nimony/" & nimony, nimony
+  let exe = "nimony".addFileExt(ExeExt)
+  moveFile "src/nimony/" & exe, exe
+
+proc buildNifc() =
+  exec "nim c src/nifc/nifc.nim"
+  let exe = "nifc".addFileExt(ExeExt)
+  moveFile "src/nifc/" & exe, exe
+
+proc buildGear3() =
+  exec "nim c src/gear3/gear3.nim"
+  let exe = "gear3".addFileExt(ExeExt)
+  moveFile "src/gear3/" & exe, exe
+
+proc execNifc(cmd: string) =
+  exec "nifc", cmd
+
+proc execGear3(cmd: string) =
+  exec "gear3", cmd
+
+proc nifctests(overwrite: bool) =
+  let t1 = "tests/nifc/selectany/t1.nif"
+  let t2 = "tests/nifc/selectany/t2.nif"
+  let t3 = "tests/nifc/selectany/t3.nif"
+  execNifc " c -r " & t1 & " " & t2 & " " & t3
+  let app = "tests/nifc/app.c.nif"
+  execNifc " c -r " & app
+
+  let hello = "tests/nifc/hello.nif"
+  execNifc " c -r " & hello
+  execNifc " c -r --opt:speed " & hello
+  execNifc " c -r --opt:size " & hello
+  # TEST CPP
+  execNifc " cpp -r " & hello
+  execNifc " cpp -r --opt:speed " & hello
+
+  let tryIssues = "tests/nifc/try.nif"
+  execNifc " cpp -r " & tryIssues
+
+  let issues = "tests/nifc/issues.nif"
+  execNifc " c -r --linedir:on " & issues
+  execNifc " cpp -r --linedir:off " & issues
+
+proc gear3tests(overwrite: bool) =
+  let mod1 = "tests/gear3/mod1"
+  let helloworld = "tests/gear3/gear3_helloworld"
+  execGear3 mod1 & ".nif"
+  execGear3 helloworld & ".nif"
+  execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
 proc handleCmdLine =
   var primaryCmd = ""
   var args: seq[string] = @[]
 
   var flags: set[RecordFlag] = {}
+  var overwrite = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -292,6 +348,7 @@ proc handleCmdLine =
         of "version", "v": writeVersion()
         of "codegen": flags.incl RecordCodegen
         of "ast": flags.incl RecordAst
+        of "overwrite": overwrite = true
         else: writeHelp()
       else:
         args.add key
@@ -300,31 +357,41 @@ proc handleCmdLine =
           args[^1].add val
     of cmdEnd: assert false, "cannot happen"
   if primaryCmd.len == 0:
-    primaryCmd = "tests"
+    primaryCmd = "all"
 
   case primaryCmd
-  of "tests":
+  of "all":
     buildNimony()
-    tests(false)
+    buildNifc()
+    buildGear3()
+    nimonytests(overwrite)
+    nifctests(overwrite)
+    gear3tests(overwrite)
+
+  of "nimony":
+    buildNimony()
+    nimonytests(overwrite)
+  of "nifc":
+    buildNifc()
+    nifctests(overwrite)
+
+  of "gear3":
+    buildGear3()
+    gear3tests(overwrite)
   of "test":
     buildNimony()
+    buildNifc()
     if args.len > 0:
-      test args[0], false, args[0].contains("track")
+      test args[0], overwrite, args[0].contains("track")
     else:
       quit "`test` takes an argument"
-  of "overwrite":
-    buildNimony()
-    if args.len > 0:
-      test args[0], true, args[0].contains("track")
-    else:
-      quit "`overwrite` takes an argument"
   of "record":
     buildNimony()
     if args.len == 2:
       let inp = args[0].addFileExt(".nim")
       let outp = args[1].addFileExt(".nim")
       if splitFile(args[1]).dir == "":
-        record inp, "tests/basics" / outp, flags
+        record inp, "tests/nimony/basics" / outp, flags
       else:
         record inp, outp, flags
     else:

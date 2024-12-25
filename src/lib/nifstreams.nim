@@ -32,13 +32,13 @@ template soperand*(n: PackedToken): int32 = cast[int32](uoperand(n))
 template toX(k: TokenKind; operand: uint32): uint32 =
   uint32(k) or (operand shl TokenKindBits)
 
-proc toToken*[L](kind: TokenKind; id: L; info: PackedLineInfo): PackedToken {.inline.} =
+proc toToken[L](kind: TokenKind; id: L; info: PackedLineInfo): PackedToken {.inline.} =
   PackedToken(x: toX(kind, uint32(id)), info: info)
 
 proc parRiToken*(info: PackedLineInfo): PackedToken {.inline.} =
   PackedToken(x: toX(ParRi, 0'u32), info: info)
 
-proc addToken*[L](tree: var seq[PackedToken]; kind: TokenKind; id: L; info: PackedLineInfo) =
+proc addToken[L](tree: var seq[PackedToken]; kind: TokenKind; id: L; info: PackedLineInfo) =
   tree.add PackedToken(x: toX(kind, uint32(id)), info: info)
 
 proc copyKeepLineInfo*(dest: var PackedToken; src: PackedToken) {.inline.} =
@@ -88,6 +88,36 @@ proc createLiterals*(): Literals =
   assert t2 == ErrT
 
 var pool* = createLiterals()
+
+proc identToken*(s: StrId; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(Ident, s, info)
+
+proc symToken*(s: SymId; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(Symbol, s, info)
+
+proc dotToken*(info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(DotToken, 0'u32, info)
+
+proc symdefToken*(s: SymId; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(SymbolDef, s, info)
+
+proc parLeToken*(t: TagId; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(ParLe, t, info)
+
+proc intToken*(id: IntId; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(IntLit, id, info)
+
+proc uintToken*(id: UIntId; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(UIntLit, id, info)
+
+proc floatToken*(id: FloatId; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(FloatLit, id, info)
+
+proc charToken*(ch: char; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(CharLit, uint32(ch), info)
+
+proc strToken*(id: StrId; info: PackedLineInfo): PackedToken {.inline.} =
+  toToken(StringLit, id, info)
 
 proc registerTag*(tag: string; expected: TagId) =
   ## Mostly useful for code generators like Nifgram.
@@ -182,6 +212,11 @@ proc symId*(n: PackedToken): SymId {.inline.} =
   assert n.kind in {Symbol, SymbolDef}
   SymId(n.uoperand)
 
+proc setSymId*(dest: var PackedToken; sym: SymId) {.inline.} =
+  let k = dest.kind
+  assert k in {Symbol, SymbolDef}
+  dest.x = toX(k, uint32 sym)
+
 proc intId*(n: PackedToken): IntId {.inline.} =
   assert n.kind == IntLit
   IntId(n.uoperand)
@@ -252,7 +287,8 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
     of EofToken:
       b.addIntLit tree[n].soperand
     of ParRi:
-      discard stack.pop()
+      if stack.len > 0:
+        discard stack.pop()
       b.endTree()
     of ParLe:
       b.addTree(pool.tags[tree[n].tagId])

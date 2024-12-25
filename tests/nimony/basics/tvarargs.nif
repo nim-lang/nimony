@@ -1,0 +1,132 @@
+(.nif24)
+,2,tests/nimony/basics/tvarargs.nim(stmts 2,1
+ (type :int.0.tvaktfkwp 
+  (i -1) . 5
+  (pragmas 2
+   (magic 7 Int)) .) 2,2
+ (type :bool.0.tvaktfkwp 
+  (bool) . 6
+  (pragmas 2
+   (magic 7 Bool)) .) 2,3
+ (type :char.0.tvaktfkwp 
+  (c +8) . 6
+  (pragmas 2
+   (magic 7 Char)) .) 2,4
+ (type :string.0.tvaktfkwp 
+  (string) . 8
+  (pragmas 2
+   (magic 7 String)) .) ,6
+ (proc 5 :\2B.0.tvaktfkwp 
+  (add -3) . . 9
+  (params 1
+   (param :x.0 . . ~8,~5
+    (i -1) .) 4
+   (param :y.0 . . ~11,~5
+    (i -1) .)) 2,~5
+  (i -1) 26
+  (pragmas 2
+   (magic 7 "AddI")) . .) ,7
+ (proc 5 :\2D.0.tvaktfkwp 
+  (sub -3) . . 9
+  (params 1
+   (param :x.1 . . ~8,~6
+    (i -1) .) 4
+   (param :y.1 . . ~11,~6
+    (i -1) .)) 2,~6
+  (i -1) 26
+  (pragmas 2
+   (magic 7 "SubI")) . .) ,9
+ (proc 5 :<=.0.tvaktfkwp 
+  (le -3) . . 10
+  (params 1
+   (param :x.2 . . ~9,~8
+    (i -1) .) 4
+   (param :y.2 . . ~12,~8
+    (i -1) .)) 2,~7
+  (bool) 28
+  (pragmas 2
+   (magic 7 "LeI")) . .) 8,12
+ (type ~6 :File.0.tvaktfkwp x . . 2
+  (object . .)) 4,14
+ (var :stdout.0.tvaktfkwp . . 8 File.0.tvaktfkwp .) ,16
+ (proc 5 :write.0.tvaktfkwp . . . 10
+  (params 1
+   (param :f.0 . . 3
+    (mut 4 File.0.tvaktfkwp) .) 14
+   (param :c.0 . . ~22,~13
+    (c +8) .)) . . . 35
+  (stmts 
+   (discard .))) ,17
+ (proc 5 :write.1.tvaktfkwp . . . 10
+  (params 1
+   (param :f.1 . . 3
+    (mut 4 File.0.tvaktfkwp) .) 14
+   (param :s.0 . . ~22,~13
+    (string) .)) . . . 37
+  (stmts 
+   (discard .))) ,19
+ (cmd write.0.tvaktfkwp 6
+  (haddr stdout.0.tvaktfkwp) 14 '\0A') 2,22
+ (type :untyped.0.tvaktfkwp 
+  (untyped) . 9
+  (pragmas 2
+   (magic 7 Expr)) .) ,24
+ (iterator 9 :unpack.0.tvaktfkwp 
+  (unpack) . . 15
+  (params) 2,~2
+  (untyped) 27
+  (pragmas 2
+   (magic 7 Unpack)) . .) ,26
+ (template 9 :echo.0.tvaktfkwp x . . 14
+  (params 5
+   (param :vanon.0 . . 
+    (varargs) .)) . 17
+  (pragmas 2
+   (varargs)) . 2,1
+  (stmts 4
+   (for 11
+    (unpack) 
+    (unpackflat 
+     (let :x.3 . . ~4,~5
+      (untyped) .)) ~2,1
+    (stmts 
+     (cmd 
+      (ochoice write.0.tvaktfkwp write.1.tvaktfkwp) 6 stdout.0.tvaktfkwp 14 x.3))) ,2
+   (cmd write.0.tvaktfkwp 6
+    (haddr stdout.0.tvaktfkwp) 14 '\0A'))) 4,31
+ (var :someVar.0.tvaktfkwp . .
+  (string) 10 "") 2,27
+ (stmts 2,1
+  (stmts 
+   (cmd write.1.tvaktfkwp 6
+    (haddr stdout.0.tvaktfkwp) 1,5 "a")) 2,1
+  (stmts 
+   (cmd write.1.tvaktfkwp 6
+    (haddr stdout.0.tvaktfkwp) 6,5 someVar.0.tvaktfkwp)) 2,1
+  (stmts 
+   (cmd write.1.tvaktfkwp 6
+    (haddr stdout.0.tvaktfkwp) 15,5 "b")) ,2
+  (cmd write.0.tvaktfkwp 6
+   (haddr 
+    (haddr stdout.0.tvaktfkwp)) 14 '\0A')) 2,27
+ (stmts 2,1
+  (stmts 
+   (cmd write.1.tvaktfkwp 6
+    (haddr stdout.0.tvaktfkwp) 1,7 "xzy")) 2,1
+  (stmts 
+   (cmd write.0.tvaktfkwp 6
+    (haddr stdout.0.tvaktfkwp) 8,7 'c')) ,2
+  (cmd write.0.tvaktfkwp 6
+   (haddr 
+    (haddr stdout.0.tvaktfkwp)) 14 '\0A')) 2,27
+ (stmts ,2
+  (cmd write.0.tvaktfkwp 6
+   (haddr 
+    (haddr stdout.0.tvaktfkwp)) 14 '\0A')) 2,27
+ (stmts 2,1
+  (stmts 
+   (cmd write.1.tvaktfkwp 6
+    (haddr stdout.0.tvaktfkwp) 1,11 someVar.0.tvaktfkwp)) ,2
+  (cmd write.0.tvaktfkwp 6
+   (haddr 
+    (haddr stdout.0.tvaktfkwp)) 14 '\0A')))

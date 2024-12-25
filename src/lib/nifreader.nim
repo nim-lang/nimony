@@ -187,16 +187,19 @@ proc decodeFilename*(t: Token): string =
     copyMem(addr result[0], t.filename.p, t.filename.len)
 
 proc decodeFloat*(t: Token): BiggestFloat =
+  result = 0.0
   assert t.tk == FloatLit
   let res = parseutils.parseBiggestFloat(toOpenArray(t.s.p, 0, t.s.len-1), result)
   assert res == t.s.len
 
 proc decodeUInt*(t: Token): BiggestUInt =
+  result = 0
   assert t.tk == UIntLit
   let res = parseutils.parseBiggestUInt(toOpenArray(t.s.p, 0, t.s.len-1), result)
   assert res == t.s.len
 
 proc decodeInt*(t: Token): BiggestInt =
+  result = 0
   assert t.tk == IntLit
   let res = parseutils.parseBiggestInt(toOpenArray(t.s.p, 0, t.s.len-1), result)
   assert res == t.s.len

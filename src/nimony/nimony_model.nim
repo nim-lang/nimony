@@ -21,6 +21,7 @@ type
     AsgnS = "asgn"
     BlockS = "block"
     IfS = "if"
+    WhenS = "when"
     BreakS = "break"
     ContinueS = "continue"
     WhileS = "while"
@@ -41,6 +42,9 @@ type
     DiscardS = "discard"
     IncludeS = "include"
     ImportS = "import"
+    FromImportS = "from"
+    ImportExceptS = "importexcept"
+    ExportS = "export"
 
   SymKind* = enum
     NoSym
@@ -55,13 +59,14 @@ type
     FldY = "fld"
     ProcY = "proc"
     FuncY = "func"
-    IterY = "iter"
+    IterY = "iterator"
     ConverterY = "converter"
     MethodY = "method"
     MacroY = "macro"
     TemplateY = "template"
     TypeY = "type"
     LabelY = "block"
+    ModuleY = "module"
     CchoiceY = "cchoice"
 
   ExprKind* = enum
@@ -110,6 +115,7 @@ type
     ConvX = "conv"
     OconvX = "oconv" # object conversion
     HconvX = "hconv" # hidden basic type conversion
+    DconvX = "dconv" # conversion between `distinct` types
     CallX = "call"
     CallStrLitX = "callstrlit"
     InfixX = "infix"
@@ -128,6 +134,7 @@ type
     LowX = "low"
     TypeofX = "typeof"
     UnpackX = "unpack"
+    IsMainModuleX = "ismainmodule"
 
   TypeKind* = enum
     NoType
@@ -160,11 +167,16 @@ type
     IterT = "itertype"
     InvokeT = "at" # might not be the best idea to do it this way...
     ArrayT = "array"
+    RangeT = "rangetype"
     UncheckedArrayT = "uarray"
     SetT = "sett"
     AutoT = "auto"
     SymKindT = "symkind"
     TypedescT = "typedesc"
+    UntypedT = "untyped"
+    TypedT = "typed"
+    CstringT = "cstring"
+    PointerT = "pointer"
 
   PragmaKind* = enum
     NoPragma
@@ -181,6 +193,8 @@ type
     Globalvar = "global"
     Discardable = "discardable"
     NoReturn = "noreturn"
+    Varargs = "varargs"
+    Borrow = "borrow"
 
   SubstructureKind* = enum
     NoSub
@@ -197,6 +211,7 @@ type
     RestrictS = "restrict"
     PragmasS = "pragmas"
     UnpackFlatS = "unpackflat"
+    UnpackTupS = "unpacktup"
 
   CallConv* = enum
     NoCallConv
@@ -272,3 +287,12 @@ proc symKind*(c: Cursor): SymKind {.inline.} =
     result = NoSym
 
 template `==`*(n: Cursor; s: string): bool = n.kind == ParLe and pool.tags[n.tagId] == s
+
+const
+  RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
+
+proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind; info = NoLineInfo) =
+  dest.add parLeToken(pool.tags.getOrIncl($kind), info)
+
+proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo): PackedToken =
+  parLeToken(pool.tags.getOrIncl($kind), info)

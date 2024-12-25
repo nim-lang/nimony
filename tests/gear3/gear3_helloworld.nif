@@ -1,6 +1,131 @@
 (.nif24)
 
 (stmts
+  (type ~6 :Data.0.tesg7afhq1 x . . 2
+    (tuple 6
+    (fld :a.0.tesg7afhq1 . . ~14,~9
+      (i -1) .) 14
+
+    (fld :b.0.tesg7afhq1 . . ~22,~6
+      (i -1) .)))
+
+ (type ~6 :Color.0.tesg7afhq1 . . . 2
+  (enum ,1
+   (efld ~6 :Red.0.tesg7afhq1 . .
+    (i -1) (tup +0 "r1")) 10,1
+   (efld ~7 :Blue.0.tesg7afhq1 . .
+    (i -1) (tup +1 "r2")) 21,1
+   (efld ~8 :Green.0.tesg7afhq1 . .
+    (i -1) (tup +2 "r3"))))
+
+
+(type ~21 :bool.0.tesg7afhq1
+  (bool) . ~16
+  (pragmas 2
+   (magic 7 Bool)) 2
+  (enum ~18,1
+   (efld ~8 :false.0.tesg7afhq1 
+    (false) . 
+    (bool) (tup +0 "false")) ~8,1
+   (efld ~7 :true.0.tesg7afhq1 
+    (true) . 
+    (bool) (tup +1 "true")))) 4,3
+
+  (type ~7 :Parent.0.tesg7afhq1 . . . 2
+  (object . ~7,1
+   (fld :core.0.tesg7afhq1 . . ~2,~6
+    (i -1) .))) 8,9
+ (type ~6 :Child.0.tesg7afhq1 . . . 2
+  (object 10 Parent.0.tesg7afhq1 ~6,1
+   (fld :id.0.tesg7afhq1 . . ~2,~9
+    (i -1) .) ~6,2
+   (fld :name.0.tesg7afhq1 . . ~2,~10
+    (i -1) .))) 4,13
+ (var :s.0.tesg7afhq1 . . 3 Child.0.tesg7afhq1 .)
+
+
+(proc 5 :==.0.tesg7afhq1 
+  (eq -3) . . 10
+  (params 1
+   (param :x.0 . . ~9,~7
+    (i -1) .) 4
+   (param :y.0 . . ~12,~7
+    (i -1) .)) 26,~3
+  (bool) 28
+  (pragmas 2
+   (magic 7 "EqI")) . .) ,10
+ (proc 5 :<=.0.tesg7afhq1 
+  (le -3) . . 10
+  (params 1
+   (param :x.1 . . ~9,~9
+    (i -1) .) 4
+   (param :y.1 . . ~12,~9
+    (i -1) .)) 26,~5
+  (bool) 28
+  (pragmas 2
+   (magic 7 "LeI")) . .) ,12
+ 
+ (type ~9 :MyObject.0.tesg7afhq1 . . . 2
+  (object . ~9,1
+   (fld :x.0.tesg7afhq1 . . ~2,~7
+    (i -1) .) ~6,1
+   (fld :y.0.tesg7afhq1 . . ~5,~7
+    (i -1) .))) ,12
+
+  (proc 5 :fooObjBar.0.tesg7afhq1 . . . 14
+    (params) . . . 2,1
+    (stmts 4
+    (var :global.0 . . 8 MyObject.0.tesg7afhq1 27
+      (obj ~8 MyObject.0.tesg7afhq1 2
+      (kv ~2 x.0.tesg7afhq1 2 +123) 10
+      (kv ~10 y.0.tesg7afhq1 2 +456)))))
+ 
+ (proc 5 :foo222.0.tesg7afhq1 . . . 9
+  (params) . . . 2,1
+  (stmts 4
+   (var :global.0 . .
+    (i -1) 9 +12) 7,2
+   (asgn ~7 global.0 2 +1) ,3
+   (case 5 global.0 ,1
+    (of 
+     (set 3 +11 7 +12 11 +13 15
+      (range +8 3 +9)) 2,1
+     (stmts 
+      (discard 8 +1))) ,3
+    (of 
+     (set 3 +2) 2,1
+     (stmts 
+      (discard 8 +2))) ,5
+    (of 
+     (set 3 +3) 2,1
+     (stmts 
+      (discard 8 +3))) ,7
+    (else 2,1
+     (stmts 
+      (discard 8 +4))))))
+ 
+ (proc 5 :foobar3.0.tesg7afhq1 . . . 13
+  (params) . . . 2,1
+  (stmts 6
+   (const :myconst.0 . . ~6,~4
+    (cstring) 17
+    (conv ~23,~4
+     (cstring) 
+     (suf "abc" "R")))))
+ 
+ (proc 5 :ifExpr.0.tesg7afhq1 . . . 11
+  (params) . . . 2,1
+  (stmts 4
+   (let :s.0 . . 20,~8
+    (bool) 6
+    (eq
+     (i -1) ~2 +1 3 +1)) 4,1
+   (let :s2.0 . . 20,~9
+    (bool) 7
+    (le
+     (i -1) ~2 +1 3 +2))))
+
+
   (var :x . . (i +32) +12)
   (var :y . . (i +32) +12)
 
@@ -57,11 +182,11 @@
     (var :m.c . . (bool) (true))
     (case m.c
     (of
-     (ranges (true))
+     (set (true))
      (stmts
       (call foo.c +1 +2)))
     (of
-     (ranges (false))
+     (set (false))
      (stmts
       (call foo.c +2 +2))))
 

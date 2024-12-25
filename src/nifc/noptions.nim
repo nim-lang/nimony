@@ -24,6 +24,7 @@ type
     options*: set[Option]
     optimizeLevel*: OptimizeLevel
     nifcacheDir*: string
+    outputFile*: string
 
   State* = object
     selects*: seq[string] # names of modules with functions with selectany pragmas

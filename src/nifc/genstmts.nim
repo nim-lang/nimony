@@ -109,6 +109,8 @@ proc genCaseCond(c: var GeneratedCode; t: Tree; n: NodePos) =
         genBranchValue c, t, b
       else:
         genBranchValue c, t, ch
+      c.add ":"
+      c.add NewLine
   else:
     error c.m, "no `ranges` expected but got: ", t, n
 
@@ -153,7 +155,6 @@ proc genSwitch(c: var GeneratedCode; t: Tree; caseStmt: NodePos) =
       else:
         let (cond, action) = sons2(t, n)
         c.genCaseCond t, cond
-        c.add Colon
         c.add CurlyLe
         genStmt c, t, action
         c.add CurlyRi
@@ -166,6 +167,7 @@ proc genSwitch(c: var GeneratedCode; t: Tree; caseStmt: NodePos) =
         error c.m, "no `of` before `else` but got: ", t, n
       else:
         c.add DefaultKeyword
+        c.add NewLine
         c.add CurlyLe
         genStmt c, t, n.firstSon
         c.add CurlyRi

@@ -105,8 +105,9 @@ type
   TranslationContext = object
     conf: ConfigRef
     section: string
-    b: Builder
+    b, deps: Builder
     portablePaths: bool
+    depsEnabled, lineInfoEnabled: bool
 
 proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
   var fp = toFullPath(c.conf, i.fileIndex)
@@ -116,6 +117,7 @@ proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
 
 proc relLineInfo(n, parent: PNode; c: var TranslationContext;
                  emitSpace = false) =
+  if not c.lineInfoEnabled: return
   let i = n.info
   if parent == nil:
     absLineInfo i, c
@@ -215,8 +217,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     relLineInfo(n, parent, c)
     c.b.addTree("type")
     var name: PNode
-    var visibility: PNode
-    var pragma: PNode
+    var visibility: PNode = nil
+    var pragma: PNode = nil
     if n[0].kind == nkPragmaExpr:
       pragma = n[0][1]
       if n[0][0].kind == nkPostfix:
@@ -291,8 +293,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       c.b.addTree(c.section)
       # flatten it further:
       var name: PNode
-      var visibility: PNode
-      var pragma: PNode
+      var visibility: PNode = nil
+      var pragma: PNode = nil
       if n[i].kind == nkPragmaExpr:
         pragma = n[i][1]
         if n[i][0].kind == nkPostfix:
@@ -423,7 +425,6 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       relLineInfo(it, n, c)
 
       c.b.addTree("efld")
-      relLineInfo(it, n, c)
 
       toNif name, it, c
       c.b.addEmpty # export marker
@@ -520,19 +521,61 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     c.section = "fld"
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
-    for i in 0..<n.len-2:
+    for i in 0..<n.len-3:
       toNif(n[i], n, c)
-    # n.len-2: pragmas: must be empty (it is deprecated anyway)
-    if n[n.len-2].kind != nkEmpty:
-      c.b.addTree "err"
-      c.b.endTree()
-    let last {.cursor.} = n[n.len-1]
-    if last.kind == nkRecList:
-      for child in last:
-        toNif(child, n, c)
+    # n.len-3: pragmas: must be empty (it is deprecated anyway)
+    if n.len == 0:
+      c.b.addEmpty 2 # pragmas, body
     else:
-      toNif(last, n, c)
+      if n[n.len-3].kind != nkEmpty:
+        c.b.addTree "err"
+        c.b.endTree()
+
+      toNif(n[n.len-2], n, c)
+      let last {.cursor.} = n[n.len-1]
+      if last.kind == nkRecList:
+        for child in last:
+          toNif(child, n, c)
+      else:
+        toNif(last, n, c)
     c.b.endTree()
+
+  of nkTupleTy:
+    c.section = "fld"
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+
+  of nkImportStmt, nkFromStmt, nkExportStmt, nkExportExceptStmt, nkImportAs, nkImportExceptStmt, nkIncludeStmt:
+    # the usual recursion:
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+
+    if c.depsEnabled:
+      let oldLineInfoEnabled = c.lineInfoEnabled
+      c.lineInfoEnabled = false
+      let oldDepsEnabled = c.depsEnabled
+      swap c.b, c.deps
+      c.depsEnabled = false
+      toNif(n, nil, c)
+      c.depsEnabled = oldDepsEnabled
+      swap c.b, c.deps
+      c.lineInfoEnabled = oldLineInfoEnabled
+  of nkCallKinds:
+    let oldDepsEnabled = c.depsEnabled
+    if n.len > 0 and n[0].kind == nkIdent and n[0].ident.s == "runnableExamples":
+      c.depsEnabled = false
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+    c.depsEnabled = oldDepsEnabled
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
@@ -540,12 +583,23 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       toNif(n[i], n, c)
     c.b.endTree()
 
-proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths: bool): TranslationContext =
+proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, depsEnabled: bool): TranslationContext =
   result = TranslationContext(conf: conf, b: nifbuilder.open(outfile),
-    portablePaths: portablePaths)
+    portablePaths: portablePaths, depsEnabled: depsEnabled, lineInfoEnabled: true)
+  if depsEnabled:
+    result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"))
+
+proc close*(c: var TranslationContext) =
+  c.b.close()
+  if c.depsEnabled:
+    c.deps.endTree()
+    c.deps.close()
 
 proc moduleToIr*(n: PNode; c: var TranslationContext) =
   c.b.addHeader "Nifler", "nim-parsed"
+  if c.depsEnabled:
+    c.deps.addHeader "Nifler", "nim-deps"
+    c.deps.addTree "stmts"
   toNif(n, nil, c)
 
 proc createConf(): ConfigRef =
@@ -561,15 +615,15 @@ template bench(task, body) =
   else:
     body
 
-proc parseFile*(thisfile, outfile: string; portablePaths: bool) =
+proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
   let stream = llStreamOpen(AbsoluteFile thisfile, fmRead)
   if stream == nil:
     quit "cannot open file: " & thisfile
   else:
     var conf = createConf()
-    var parser: Parser
+    var parser: Parser = default(Parser)
     openParser(parser, AbsoluteFile(thisfile), stream, newIdentCache(), conf)
-    var tc = initTranslationContext(conf, outfile, portablePaths)
+    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled)
 
     bench "parseAll":
       let fullTree = parseAll(parser)
@@ -577,4 +631,4 @@ proc parseFile*(thisfile, outfile: string; portablePaths: bool) =
     bench "moduleToIr":
       moduleToIr(fullTree, tc)
     closeParser(parser)
-    tc.b.close()
+    tc.close()

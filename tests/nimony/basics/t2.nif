@@ -1,18 +1,18 @@
 (.nif24)
-,2,src/nimony/tests/basics/t2.nim(stmts 2,1
- (type :int.0.t27hh87f1 
+,2,tests/nimony/basics/t2.nim(stmts 2,1
+ (type :int.0.t277k7ei1 
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,3
- (type :float.0.t27hh87f1 
+ (type :float.0.t277k7ei1 
   (f +64) . 7
   (pragmas 2
    (magic 7 Float)) .) 2,4
- (type :string.0.t27hh87f1 
+ (type :string.0.t277k7ei1 
   (string) . 8
   (pragmas 2
    (magic 7 String)) .) ,7
- (proc 5 :\2B.0.t27hh87f1 
+ (proc 5 :\2B.0.t277k7ei1 
   (add -3) . . 9
   (params 1
    (param :x.0 . . ~8,~6
@@ -22,22 +22,22 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,9
- (proc 5 :foo.0.t27hh87f1 . . . 8
+ (proc 5 :foo.0.t277k7ei1 . . . 8
   (params 1
    (param :x.1 . . ~7,~8
     (i -1) .) 9
    (param :y.1 . . ~15,~5
     (string) .)) 2,~8
   (i -1) . . 2,1
-  (result :result.0 . . ,~9
-   (i -1) .) 2,1
   (stmts 4
-   (var :x.2 . .
+   (result :result.0 . . ~4,~9
+    (i -1) .) 4
+   (var :x.3 . .
     (string) 4 "abc") 7,1
    (asgn ~7 result.0 2 +4) 2,2
-   (asgn ~2 x.2 2 "34") ~2,~1
+   (asgn ~2 x.3 2 "34") ~2,~1
    (ret result.0))) ,14
- (proc 5 :overloaded.0.t27hh87f1 . . . 15
+ (proc 5 :overloaded.0.t277k7ei1 . . . 15
   (params) . . . 2,1
   (stmts 4
    (let :someInt.0 . . ~4,~14
@@ -45,6 +45,16 @@
     (add
      (i -1) 1 +23 5 +90)) ,1
    (discard 11
-    (call ~3 foo.0.t27hh87f1 3
+    (call ~3 foo.0.t277k7ei1 3
      (add
-      (i -1) ~2 +34 1 +56) 8 "xyz")))))
+      (i -1) ~2 +34 1 +56) 8 "xyz")))) ,18
+ (proc 5 :exprReturn.0.t277k7ei1 . . . 15
+  (params 1
+   (param :x.2 . . ~14,~17
+    (i -1) .)) 2,~17
+  (i -1) . . 31
+  (stmts 
+   (result :result.1 . . ~29,~17
+    (i -1) .) 
+   (asgn result.1 x.2) ~31
+   (ret result.1))))

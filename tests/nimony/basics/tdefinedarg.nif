@@ -1,0 +1,22 @@
+(.nif24)
+,1,tests/nimony/basics/tdefinedarg.nim(stmts 5
+ (type :untyped.0.tdetxkbxo 
+  (untyped) . 9
+  (pragmas 2
+   (magic 7 Expr)) .) ,2
+ (proc 5 :defined.0.tdetxkbxo 
+  (defined) . . 12
+  (params 1
+   (param :x.0 . . ~8,~2
+    (untyped) .)) . 25
+  (pragmas 2
+   (magic 7 Defined)) . .) 4,4
+ (let :x.0.tdetxkbxo . .
+  (bool)
+  (false)) 4,5
+ (let :y.0.tdetxkbxo . .
+  (bool)
+  (true)) 4,6
+ (let :z.0.tdetxkbxo . .
+  (bool)
+  (false)))

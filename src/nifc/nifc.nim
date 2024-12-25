@@ -36,7 +36,7 @@ Options:
   --cc:SYMBOL               specify the C compiler
   --opt:none|speed|size     optimize not at all or for speed|size
   --lineDir:on|off          generation of #line directive on|off
-  --bits:N                  (int M) has N bits; possible values: 64, 32, 16
+  --bits:N                  `(i -1)` has N bits; possible values: 64, 32, 16
   --version                 show the version
   --help                    show this help
 """
@@ -76,6 +76,7 @@ proc handleCmdLine() =
     s.config.cCompiler = ccCLang
   else:
     s.config.cCompiler = ccGcc
+  s.config.nifcacheDir = "nifcache"
 
   for kind, key, val in getopt():
     case kind
@@ -147,10 +148,13 @@ proc handleCmdLine() =
           s.config.options.excl optLineDir
         else:
           quit "'on', 'off' expected, but '$1' found" % val
+      of "nifcache":
+        s.config.nifcacheDir = val
+      of "out", "o":
+        s.config.outputFile = val
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
 
-  s.config.nifcacheDir = "nifcache"
   createDir(s.config.nifcacheDir)
   if actionTable.len != 0:
     for action in actionTable.keys:
@@ -177,13 +181,15 @@ proc handleCmdLine() =
         write h, "#include \"" & extractFilename(x) & "\"\n"
       h.close()
     let appName = actionTable[currentAction][^1].splitFile.name.mangleFileName
+    if s.config.outputFile == "":
+      s.config.outputFile = appName
 
     when defined(windows):
       let makefilePath = s.config.nifcacheDir / "Makefile." & appName & ".bat"
-      generateBatMakefile(s, makefilePath, appName, actionTable)
+      generateBatMakefile(s, makefilePath, s.config.outputFile, actionTable)
     else:
       let makefilePath = s.config.nifcacheDir / "Makefile." & appName
-      generateMakefile(s, makefilePath, appName, actionTable)
+      generateMakefile(s, makefilePath, s.config.outputFile, actionTable)
     if toRun:
       let makeCmd = genMakeCmd(s.config, makefilePath)
       let (output, exitCode) = execCmdEx(makeCmd)

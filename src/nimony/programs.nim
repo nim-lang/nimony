@@ -4,9 +4,9 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, os, tables, times]
+import std / [syncio, os, tables, times, packedsets]
 include nifprelude
-import nifindexes, symparser
+import nifindexes, symparser, reporters
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
@@ -34,7 +34,7 @@ proc suffixToNif*(suffix: string): string {.inline.} =
 
 proc needsRecompile*(nimfile, suffix: string): bool =
   let nifModule = suffixToNif(suffix)
-  result =  not fileExists(nifModule) or getLastModificationTime(nifModule) < getLastModificationTime(nimfile)
+  result = not fileExists(nifModule) or getLastModificationTime(nifModule) < getLastModificationTime(nimfile)
 
 proc load*(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
@@ -48,28 +48,39 @@ proc load*(suffix: string): NifModule =
   else:
     result = prog.mods[suffix]
 
-proc loadInterface*(suffix: string; importTab: var Iface) =
+proc loadInterface*(suffix: string; iface: var Iface;
+                    module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
+                    marker: var PackedSet[StrId]; negateMarker: bool) =
   let m = load(suffix)
   for k, _ in m.index.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
     let symId = pool.syms.getOrIncl(k)
-    importTab.mgetOrPut(strId, @[]).add symId
+    iface.mgetOrPut(strId, @[]).add symId
+    let symMarked =
+      if negateMarker: marker.missingOrExcl(strId)
+      else: marker.containsOrIncl(strId)
+    if not symMarked:
+      # mark that this module contains the identifier `strId`:
+      importTab.mgetOrPut(strId, @[]).add(module)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
+  when defined(debug):
+    writeStackTrace()
   write stdout, "[Error] "
+  if isValid(c.info):
+    write stdout, infoToStr(c.info)
+    write stdout, " "
   write stdout, msg
   writeLine stdout, toString(c, false)
-  when defined(debug):
-    echo getStackTrace()
   quit 1
 
 proc error*(msg: string) {.noreturn.} =
+  when defined(debug):
+    writeStackTrace()
   write stdout, "[Error] "
   write stdout, msg
-  when defined(debug):
-    echo getStackTrace()
   quit 1
 
 type

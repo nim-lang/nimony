@@ -8,42 +8,39 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs
-
-proc addStrLit*(dest: var TokenBuf; s: string; info = NoLineInfo) =
-  dest.add toToken(StringLit, pool.strings.getOrIncl(s), info)
-
-proc addIntLit*(dest: var TokenBuf; i: BiggestInt; info = NoLineInfo) =
-  dest.add toToken(IntLit, pool.integers.getOrIncl(i), info)
-
-proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind; info = NoLineInfo) =
-  dest.add toToken(IntLit, pool.tags.getOrIncl($kind), info)
+import nimony_model, decls, programs, semdata, typeprops
 
 type
   Item* = object
     n*, typ*: Cursor
     kind*: SymKind
 
+  FnCandidate* = object
+    kind*: SymKind
+    sym*: SymId
+    typ*: Cursor
+
+  MatchError* = object
+    info: PackedLineInfo
+    msg: string
+    pos: int
+
   Match* = object
     inferred*: Table[SymId, Cursor]
     tvars: HashSet[SymId]
-    fn*: Item
+    fn*: FnCandidate
     args*, typeArgs*: TokenBuf
-    err*: bool
+    err*, flipped*: bool
     skippedMod: TypeKind
     argInfo: PackedLineInfo
     pos, opened: int
     inheritanceCosts, intCosts: int
     returnType*: Cursor
+    context: ptr SemContext
+    error: MatchError
+    firstVarargPosition*: int
 
-proc createMatch*(): Match = Match()
-
-proc error(m: var Match; msg: string) =
-  if m.err: return # first error is the important one
-  m.args.addParLe ErrT, m.argInfo
-  m.args.addStrLit "[" & $m.pos & "] " & msg # at position [x]
-  m.args.addParRi()
-  m.err = true
+proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
 proc concat(a: varargs[string]): string =
   result = a[0]
@@ -51,6 +48,24 @@ proc concat(a: varargs[string]): string =
 
 proc typeToString*(n: Cursor): string =
   result = toString(n, false)
+
+proc error(m: var Match; msg: sink string) =
+  if m.err: return # first error is the important one
+  m.err = true
+  m.error = MatchError(info: m.argInfo, msg: msg, pos: m.pos+1)
+
+proc addErrorMsg*(dest: var string; m: Match) =
+  assert m.err
+  dest.add "[" & $(m.error.pos) & "] " & m.error.msg
+
+proc addErrorMsg*(dest: var TokenBuf; m: Match) =
+  assert m.err
+  dest.addParLe ErrT, m.argInfo
+  dest.addDotToken()
+  let str = "For type " & typeToString(m.fn.typ) & " mismatch at position\n" &
+    "[" & $(m.pos+1) & "] " & m.error.msg
+  dest.addStrLit str
+  dest.addParRi()
 
 proc expected(f, a: Cursor): string =
   concat("expected: ", typeToString(f), " but got: ", typeToString(a))
@@ -84,18 +99,18 @@ proc isObjectType(s: SymId): bool =
   let impl = objtypeImpl(s)
   result = impl.typeKind == ObjectT
 
+proc isEnumType*(n: Cursor): bool =
+  if n.kind == Symbol:
+    let impl = getTypeSection(n.symId)
+    result = impl.kind == TypeY and impl.body.typeKind == EnumT
+  else:
+    result = false
+
 proc isConcept(s: SymId): bool =
   #let impl = typeImpl(s)
   # XXX Model Concept in the grammar
   #result = impl.tag == ConceptT
   result = false
-
-proc asTypeAlias(s: SymId): Cursor =
-  let impl = typeImpl(s)
-  if impl.kind == Symbol or impl.typeKind == InvokeT:
-    result = impl
-  else:
-    result = errCursor()
 
 iterator inheritanceChain(s: SymId): SymId =
   var objbody = objtypeImpl(s)
@@ -118,29 +133,72 @@ proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
     result = true
+    inc f
   elif a.kind == Symbol:
-    result = matchesConstraint(m, f, typeImpl(a.symId))
-  elif f.kind == ParLe:
-    if f.typeKind == OrT:
+    let res = tryLoadSym(a.symId)
+    assert res.status == LacksNothing
+    var typevar = asTypevar(res.decl)
+    if typevar.kind == TypevarY:
+      result = matchesConstraint(m, f, typevar.typ)
+  elif f.kind == Symbol:
+    let res = tryLoadSym(f.symId)
+    assert res.status == LacksNothing
+    var typeImpl = asTypeDecl(res.decl)
+    if typeImpl.kind == TypeY:
+      result = matchesConstraint(m, typeImpl.body, a)
+    inc f
+  else:
+    case f.typeKind
+    of NotT:
+      inc f
+      if not matchesConstraint(m, f, a):
+        result = true
+      if f.kind != ParRi: result = false
+      skipToEnd f
+    of AndT:
+      inc f
+      result = true
+      while f.kind != ParRi:
+        if not matchesConstraint(m, f, a):
+          result = false
+          break
+      skipToEnd f
+    of OrT:
       inc f
       while f.kind != ParRi:
         if matchesConstraint(m, f, a):
           result = true
           break
-      if f.kind == ParRi: inc f
-    elif a.kind == ParLe:
+      skipToEnd f
+    of ConceptT:
+      # XXX Use some algorithm here that can cache the result
+      # so that it can remember e.g. "int fulfils Fibable". For
+      # now this should be good enough for our purposes:
+      result = true
+      skip f
+    elif f.kind == ParLe and a.kind == ParLe:
       result = f.tagId == a.tagId
       inc f
-      if f.kind == ParRi: inc f
+      if f.kind != ParRi: result = false
+      skipToEnd f
 
 proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
-  var f = typeImpl(f)
-  result = matchesConstraint(m, f, a)
+  let res = tryLoadSym(f)
+  assert res.status == LacksNothing
+  var typevar = asTypevar(res.decl)
+  assert typevar.kind == TypevarY
+  result = matchesConstraint(m, typevar.typ, a)
 
-proc linearMatch(m: var Match; f, a: var Cursor) =
+proc isTypevar(s: SymId): bool =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  let typevar = asTypevar(res.decl)
+  result = typevar.kind == TypevarY
+
+proc linearMatch(m: var Match; f, a: var Cursor, containsStartTag = true) =
   var nested = 0
   while true:
-    if f.kind == Symbol and m.tvars.contains(f.symId):
+    if f.kind == Symbol and isTypevar(f.symId):
       # type vars are specal:
       let fs = f.symId
       if m.inferred.contains(fs):
@@ -149,6 +207,9 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
         if m.err: break
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
+        inc f
+        skip a
+        continue
       else:
         m.error concat(typeToString(a), " does not match constraint ", typeToString(f))
         break
@@ -166,7 +227,7 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
           break
         inc nested
       of ParRi:
-        if nested == 0: break
+        if nested == ord(containsStartTag): break
         dec nested
     else:
       m.error expected(f, a)
@@ -205,13 +266,12 @@ proc useArg(m: var Match; arg: Item) =
   if usedDeref:
     m.args.addParRi()
 
-proc singleArg(m: var Match; f: var Cursor; arg: Item)
+proc singleArgImpl(m: var Match; f: var Cursor; arg: Item)
 
 proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
-  if m.tvars.contains(fs):
-    # it is a type var we own
+  if isTypevar(fs):
     if m.inferred.contains(fs):
       typevarRematch(m, fs, m.inferred[fs], a)
     elif matchesConstraint(m, fs, a):
@@ -229,7 +289,10 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
         if fparent == a.symId:
           m.args.addParLe OconvX, m.argInfo
           m.args.addIntLit diff, m.argInfo
-          inc m.inheritanceCosts, diff
+          if m.flipped:
+            dec m.inheritanceCosts, diff
+          else:
+            inc m.inheritanceCosts, diff
           inc m.opened
           diff = 0 # mark as success
           break
@@ -245,17 +308,16 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
     if a.kind == Symbol and a.symId == fs:
       discard "perfect match"
     else:
-      var impl = asTypeAlias(fs)
+      var impl = typeImpl(fs)
       if impl.kind == ParLe and impl.tagId == ErrT:
-        # not a type alias!
         m.error expected(f, a)
       else:
-        singleArg(m, impl, arg)
+        singleArgImpl(m, impl, arg)
 
-proc cmpTypeBits(f, a: Cursor): int =
+proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
   if (f.kind == IntLit or f.kind == InlineInt) and
      (a.kind == IntLit or a.kind == InlineInt):
-    result = typebits(f.load) - typebits(a.load)
+    result = typebits(context.g.config, f.load) - typebits(context.g.config, a.load)
   else:
     result = -1
 
@@ -268,7 +330,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
     return
   let forig = f
   inc f
-  let cmp = cmpTypeBits(f, a)
+  let cmp = cmpTypeBits(m.context, f, a)
   if cmp == 0:
     discard "same types"
   elif cmp > 0:
@@ -277,6 +339,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
       m.error "implicit conversion to " & typeToString(forig) & " is not mutable"
     else:
       m.args.addParLe HconvX, m.argInfo
+      m.args.addSubtree forig
       inc m.intCosts
       inc m.opened
   else:
@@ -289,7 +352,7 @@ proc expectParRi(m: var Match; f: var Cursor) =
   else:
     m.error "BUG: formal type not at end!"
 
-proc singleArg(m: var Match; f: var Cursor; arg: Item) =
+proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
   of Symbol:
     matchSymbol m, f, arg
@@ -306,7 +369,7 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
         m.args.addParLe HaddrX, m.argInfo
         inc m.opened
       inc f
-      singleArg m, f, Item(n: arg.n, typ: a)
+      singleArgImpl m, f, Item(n: arg.n, typ: a)
       expectParRi m, f
     of IntT, UIntT, FloatT, CharT:
       matchIntegralType m, f, arg
@@ -333,41 +396,133 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
       else:
         linearMatch m, f, a
       expectParRi m, f
-    of ArrayT:
+    of RangeT:
+      # for now acts the same as base type
+      var a = skipModifier(arg.typ)
+      inc f # skip to base type
+      linearMatch m, f, a
+      skip f
+      skip f
+      expectParRi m, f
+    of ArrayT, SetT, UncheckedArrayT:
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
+      expectParRi m, f
+    of CstringT:
+      var a = skipModifier(arg.typ)
+      if a.typeKind == NilT:
+        discard "ok"
+        inc f
+      elif a.typeKind == StringT and arg.n.kind == StringLit:
+        inc m.intCosts
+        inc f
+      else:
+        linearMatch m, f, a
+      expectParRi m, f
+    of PointerT:
+      var a = skipModifier(arg.typ)
+      case a.typeKind
+      of NilT:
+        discard "ok"
+        inc f
+      of PtrT:
+        inc m.intCosts
+      else:
+        linearMatch m, f, a
       expectParRi m, f
     of TypedescT:
       # do not skip modifier
       var a = arg.typ
       linearMatch m, f, a
       expectParRi m, f
-    else:
+    of VarargsT:
+      discard "do not even advance f here"
+      if m.firstVarargPosition < 0:
+        m.firstVarargPosition = m.args.len
+    of UntypedT, TypedT:
+      # `typed` and `untyped` simply match everything:
+      inc f
+      expectParRi m, f
+    of TupleT:
+      let fOrig = f
+      let aOrig = arg.typ
+      var a = aOrig
+      if a.typeKind != TupleT:
+        m.error expected(fOrig, aOrig)
+        skip f
+      else:
+        # skip tags:
+        inc f
+        inc a
+        while f.kind != ParRi:
+          if a.kind == ParRi:
+            # len(f) > len(a)
+            m.error expected(fOrig, aOrig)
+          # only the type of the field is important:
+          var ffld = asLocal(f).typ
+          var afld = asLocal(a).typ
+          linearMatch m, ffld, afld
+          # skip fields:
+          skip f
+          skip a
+        if a.kind != ParRi:
+          # len(a) > len(f)
+          m.error expected(fOrig, aOrig)
+    of NoType, ObjectT, EnumT, VoidT, PtrT, RefT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
+        ConceptT, DistinctT, StaticT, ProcT, IterT, AutoT, SymKindT:
       m.error "BUG: unhandled type: " & pool.tags[f.tagId]
   else:
     m.error "BUG: " & expected(f, arg.typ)
 
+proc singleArg(m: var Match; f: var Cursor; arg: Item) =
+  singleArgImpl(m, f, arg)
   if not m.err:
     m.useArg arg # since it was a match, copy it
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
 
+proc typematch*(m: var Match; formal: Cursor; arg: Item) =
+  var f = formal
+  singleArg m, f, arg
+
+type
+  TypeRelation* = enum
+    NoMatch
+    ConvertibleMatch
+    GenericMatch
+    EqualMatch
+
+proc usesConversion*(m: Match): bool {.inline.} =
+  result = abs(m.inheritanceCosts) + m.intCosts > 0
+
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
   var i = 0
-  while i < args.len and f.kind != ParRi:
+  var isVarargs = false
+  while f.kind != ParRi:
     m.skippedMod = NoType
-    m.argInfo = args[i].n.info
 
     assert f.symKind == ParamY
     let param = asLocal(f)
     var ftyp = param.typ
-    skip f
+    # This is subtle but only this order of `i >= args.len` checks
+    # is correct for all cases (varargs/too few args/too many args)
+    if ftyp != "varargs":
+      if i >= args.len: break
+      skip f
+    else:
+      isVarargs = true
+      if i >= args.len: break
+    m.argInfo = args[i].n.info
 
     singleArg m, ftyp, args[i]
     if m.err: break
     inc m.pos
     inc i
+  if isVarargs:
+    if m.firstVarargPosition < 0:
+      m.firstVarargPosition = m.args.len
+    skip f
 
 
 iterator typeVars(fn: SymId): SymId =
@@ -379,6 +534,7 @@ iterator typeVars(fn: SymId): SymId =
     for i in 1..3:
       skip c # name, export marker, pattern
     if c.substructureKind == TypevarsS:
+      inc c
       while c.kind != ParRi:
         if c.symKind == TypeVarY:
           var tv = c
@@ -394,19 +550,26 @@ proc collectDefaultValues(f: var Cursor): seq[Item] =
     result.add Item(n: param.val, typ: param.typ)
     skip f
 
-proc sigmatch*(m: var Match; fn: Item; args: openArray[Item];
+proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
                explicitTypeVars: Cursor) =
+  assert fn.kind != NoSym or fn.sym == SymId(0)
   m.tvars = initHashSet[SymId]()
   m.fn = fn
-  if fn.n.kind == Symbol:
+  if fn.kind in RoutineKinds:
     var e = explicitTypeVars
-    for v in typeVars(fn.n.symId):
+    for v in typeVars(fn.sym):
       m.tvars.incl v
       if e.kind != DotToken and e.kind != ParRi:
-        m.inferred[v] = e
+        if matchesConstraint(m, v, e):
+          m.inferred[v] = e
+        else:
+          let res = tryLoadSym(v)
+          assert res.status == LacksNothing
+          var typevar = asTypevar(res.decl)
+          assert typevar.kind == TypevarY
+          m.error concat(typeToString(e), " does not match constraint ", typeToString(typevar.typ))
         skip e
-
-  if explicitTypeVars.kind != DotToken:
+  elif explicitTypeVars.kind != DotToken:
     # aka there are explicit type vars
     if m.tvars.len == 0:
       m.error "routine is not generic"
@@ -427,15 +590,15 @@ proc sigmatch*(m: var Match; fn: Item; args: openArray[Item];
     let moreArgs = collectDefaultValues(f)
     sigmatchLoop m, f, moreArgs
     if f.kind != ParRi:
-      m.error "too many parameters"
+      m.error "too few arguments"
 
   if f.kind == ParRi:
     inc f
     m.returnType = f # return type follows the parameters in the token stream
 
   # check all type vars have a value:
-  if not m.err and fn.n.kind == Symbol:
-    for v in typeVars(fn.n.symId):
+  if not m.err and fn.kind in RoutineKinds:
+    for v in typeVars(fn.sym):
       let inf = m.inferred.getOrDefault(v)
       if inf == default(Cursor):
         m.error "could not infer type for " & pool.syms[v]

@@ -1,0 +1,62 @@
+(.nif24)
+,2,tests/nimony/basics/tcstring.nim(stmts 2,1
+ (type :int.0.tcs1re56a 
+  (i -1) . 5
+  (pragmas 2
+   (magic 7 Int)) .) 2,2
+ (type :bool.0.tcs1re56a 
+  (bool) . 6
+  (pragmas 2
+   (magic 7 Bool)) .) 2,4
+ (type :cstring.0.tcs1re56a 
+  (cstring) . 9
+  (pragmas 2
+   (magic 7 Cstring)) .) 2,5
+ (type :pointer.0.tcs1re56a 
+  (pointer) . 9
+  (pragmas 2
+   (magic 7 Pointer)) .) ,8
+ (proc 5 :\2B.0.tcs1re56a 
+  (add -3) . . 9
+  (params 1
+   (param :x.0 . . ~8,~7
+    (i -1) .) 4
+   (param :y.0 . . ~11,~7
+    (i -1) .)) 2,~7
+  (i -1) 26
+  (pragmas 2
+   (magic 7 "AddI")) . .) ,9
+ (proc 5 :\2D.0.tcs1re56a 
+  (sub -3) . . 9
+  (params 1
+   (param :x.1 . . ~8,~8
+    (i -1) .) 4
+   (param :y.1 . . ~11,~8
+    (i -1) .)) 2,~8
+  (i -1) 26
+  (pragmas 2
+   (magic 7 "SubI")) . .) ,11
+ (proc 5 :<=.0.tcs1re56a 
+  (le -3) . . 10
+  (params 1
+   (param :x.2 . . ~9,~10
+    (i -1) .) 4
+   (param :y.2 . . ~12,~10
+    (i -1) .)) 2,~9
+  (bool) 28
+  (pragmas 2
+   (magic 7 "LeI")) . .) 4,13
+ (var :x.0.tcs1re56a . . ~2,~12
+  (i -1) 4
+  (cast ~6,~12
+   (i -1) 10 +55)) 4,15
+ (var :y.0.tcs1re56a . . ~2,~10
+  (pointer) 13
+  (nil)) 2,18
+ (const :myconst.0.tcs1re56a . . ,~14
+  (cstring) 17
+  (conv ~17,~14
+   (cstring) 
+   (suf "abc" "R"))) 4,20
+ (var :zz.0.tcs1re56a . . ~2,~16
+  (cstring) 14 "xzy"))

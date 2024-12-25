@@ -666,7 +666,6 @@ proc compile(c: var Context) =
           c.t = next(c.r)
           if c.t.tk == EofToken:
             error c, "')' expected, but got " & $c.t
-            break
           if c.t.tk == ParLe: inc nested
           elif c.t.tk == ParRi:
             dec nested
@@ -734,7 +733,7 @@ when isMainModule:
     var inp = ""
     var outp = ""
     var tagsFile = ""
-    var specTags: OrderedTable[string, int]
+    var specTags: OrderedTable[string, int] = initOrderedTable[string, int]()
     for kind, key, val in getopt():
       case kind
       of cmdArgument:

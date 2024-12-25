@@ -27,15 +27,16 @@ type
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: TypeId)
 
-proc recordDependency(m: Module; o: var TypeOrder; parent, child: TypeId) =
+proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: TypeId;
+                      viaPointer: var bool) =
   var ch = child
-  var viaPointer = false
   while true:
     case m.code[ch].kind
     of APtrC, PtrC:
       viaPointer = true
       ch = elementType(m.code, ch)
     of FlexarrayC:
+      viaPointer = false
       ch = elementType(m.code, ch)
     else:
       break
@@ -70,9 +71,13 @@ proc recordDependency(m: Module; o: var TypeOrder; parent, child: TypeId) =
     else:
       let decl = asTypeDecl(m.code, def.pos)
       if not containsOrIncl(o.lookedAtBodies, decl.body.int):
-        recordDependency m, o, parent, decl.body
+        recordDependencyImpl m, o, def.pos, decl.body, viaPointer
   else:
     discard "uninteresting type as we only focus on the required struct declarations"
+
+proc recordDependency(m: Module; o: var TypeOrder; parent, child: TypeId) =
+  var viaPointer = false
+  recordDependencyImpl m, o, parent, child, viaPointer
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: TypeId) =
   for x in sons(m.code, t):
@@ -127,7 +132,7 @@ proc genProcTypePragma(c: var GeneratedCode; types: TypeGraph; n: NodePos; isVar
   # ProcTypePragma ::= CallingConvention | (varargs) | Attribute
   case types[n].kind
   of CallingConventions:
-    c.add " __" & $types[n].kind
+    discard "already handled"
   of VarargsC:
     isVarargs = true
   of AttrC:
@@ -254,17 +259,38 @@ proc genType(c: var GeneratedCode; types: TypeGraph; t: TypeId; name = "") =
     c.add BracketRi
   of ProctypeC:
     let decl = asProcType(types, t)
-    if types[decl.returnType].kind == Empty:
-      c.add "void"
-    else:
-      genType c, types, decl.returnType
-    c.add Space
-    c.add ParLe
+    var lastCallConv = Empty
+    if types[decl.pragmas].kind == PragmasC:
+      for ch in sons(types, decl.pragmas):
+        case types[ch].kind
+        of CallingConventions:
+          lastCallConv = types[ch].kind
+        else:
+          discard
     var isVarargs = false
-    genProcTypePragmas c, types, decl.pragmas, isVarargs
-    c.add Star # "(*fn)"
-    maybeAddName(c, name)
-    c.add ParRi
+    if lastCallConv != Empty:
+      c.add CallingConvToStr[lastCallConv]
+      c.add "_PTR"
+      c.add ParLe
+      if types[decl.returnType].kind == Empty:
+        c.add "void"
+      else:
+        genType c, types, decl.returnType
+      c.add Comma
+      genProcTypePragmas c, types, decl.pragmas, isVarargs
+      maybeAddName(c, name)
+      c.add ParRi
+    else:
+      if types[decl.returnType].kind == Empty:
+        c.add "void"
+      else:
+        genType c, types, decl.returnType
+      c.add Space
+      c.add ParLe
+      genProcTypePragmas c, types, decl.pragmas, isVarargs
+      c.add Star # "(*fn)"
+      maybeAddName(c, name)
+      c.add ParRi
     c.add ParLe
     var i = 0
     for ch in sons(types, decl.params):
@@ -306,10 +332,17 @@ proc genObjectOrUnionBody(c: var GeneratedCode; types: TypeGraph; n: NodePos) =
       c.add Semicolon
     else: discard
 
-proc genEnumDecl(c: var GeneratedCode; t: TypeGraph; n: NodePos) =
+proc genEnumDecl(c: var GeneratedCode; t: TypeGraph; n: NodePos; name: string) =
   # (efld SymbolDef Expr)
   # EnumDecl ::= (enum Type EnumFieldDecl+)
   let baseType = n.firstSon
+  c.add TypedefKeyword
+  c.genType t, baseType
+  c.add Space
+  c.add name
+  c.add Semicolon
+  c.add NewLine
+
   for ch in sonsFromX(t, n):
     if t[ch].kind == EfldC:
       let (a, b) = sons2(t, ch)
@@ -363,13 +396,14 @@ proc generateTypes(c: var GeneratedCode; types: TypeGraph; o: TypeOrder) =
         c.add s
         c.add Semicolon
       of EnumC:
-        genEnumDecl c, types, decl.body
+        genEnumDecl c, types, decl.body, s
       of ProctypeC:
         c.add TypedefKeyword
         genType c, types, decl.body, s
         c.add Semicolon
       else:
         c.add declKeyword
+        c.add s
         c.add CurlyLe
         # XXX generate attributes and pragmas here
         c.genObjectOrUnionBody types, decl.body

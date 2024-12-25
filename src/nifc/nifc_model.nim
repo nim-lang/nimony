@@ -320,8 +320,10 @@ proc toString(b: var Builder; tree: PackedTree[NifcKind]; n: NodePos; m: Module)
     b.addEmpty()
   of Ident:
     b.addIdent(m.lits.strings[tree[n].litId])
-  of Sym, IntLit, UIntLit, FloatLit:
+  of Sym:
     b.addSymbol(m.lits.strings[tree[n].litId])
+  of IntLit, UIntLit, FloatLit:
+    b.addNumber(m.lits.strings[tree[n].litId])
   of SymDef:
     b.addSymbolDef(m.lits.strings[tree[n].litId])
   of CharLit:

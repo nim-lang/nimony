@@ -179,6 +179,19 @@ proc genUIntLit(c: var GeneratedCode; litId: StrId) =
 
 # Type graph
 
+const
+  CallingConvToStr: array[CdeclC..NoinlineC, string] = [
+    "N_CDECL",
+    "N_STDCALL", "N_SAFECALL",
+    "N_SYSCALL", # this is probably not correct for all platforms,
+                 # but one can #define it to what one wants
+    "N_FASTCALL",
+    "N_THISCALL",
+    "N_NOCONV",
+    "N_NOCONV", #ccMember is N_NOCONV
+    "N_INLINE", "N_NOINLINE"
+    ]
+
 include gentypes
 
 # Procs
@@ -333,20 +346,6 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
     error c.m, "expected SymbolDef but got: ", t, n
 
 include genstmts
-
-
-const
-  CallingConvToStr: array[CdeclC..NoinlineC, string] = [
-    "N_CDECL",
-    "N_STDCALL", "N_SAFECALL",
-    "N_SYSCALL", # this is probably not correct for all platforms,
-                 # but one can #define it to what one wants
-    "N_FASTCALL",
-    "N_THISCALL",
-    "N_NOCONV",
-    "N_NOCONV", #ccMember is N_NOCONV
-    "N_INLINE", "N_NOINLINE"
-    ]
 
 
 proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
