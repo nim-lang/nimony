@@ -207,6 +207,9 @@ proc linearMatch(m: var Match; f, a: var Cursor, containsStartTag = true) =
         if m.err: break
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
+        inc f
+        skip a
+        continue
       else:
         m.error concat(typeToString(a), " does not match constraint ", typeToString(f))
         break
