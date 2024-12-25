@@ -152,7 +152,7 @@ proc handleCmdLine() =
     createDir("nifcache")
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
-    buildGraph config, args[0], compat, forceRebuild, commandLineArgs
+    buildGraph config, args[0], compat, forceRebuild, commandLineArgs, moduleFlags
 
 when isMainModule:
   handleCmdLine()

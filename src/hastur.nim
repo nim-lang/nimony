@@ -136,19 +136,26 @@ proc execLocal(exe, cmd: string): (string, int) =
   let bin = "." / exe.addFileExt(ExeExt)
   result = osproc.execCmdEx(bin & " " & cmd)
 
-proc execNimony(cmd: string): (string, int) =
-  result = execLocal("nimony", cmd)
+type
+  Category = enum
+    Normal, # normal category
+    Basics, # basic tests: These are processed with --noSystem
+    Tracked # tracked tests: These are processed and can contain "track info"
+            # for line, col, filename extraction (useful for nimsuggest-like tests)
+
+proc execNimony(cmd: string; cat: Category): (string, int) =
+  result = execLocal("nimony", (if cat == Basics: "--noSystem " else: "") & cmd)
 
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
   result = "nifcache" / name.addFileExt(ext)
 
-proc testFile(c: var TestCounters; file: string; overwrite, useTrack: bool) =
+proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   inc c.total
   var nimonycmd = "m --isMain"
-  if useTrack:
+  if cat == Tracked:
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
-  let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file))
+  let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file), cat)
 
   let msgs = file.changeFileExt(".msgs")
 
@@ -189,14 +196,27 @@ proc testFile(c: var TestCounters; file: string; overwrite, useTrack: bool) =
       let nif = generatedFile(file, ".2.nif")
       diffFiles c, file, ast, nif, overwrite
 
-proc testDir(c: var TestCounters; dir: string; overwrite, useTrack: bool) =
+proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
   var files: seq[string] = @[]
   for x in walkDir(dir):
     if x.kind == pcFile and x.path.endsWith(".nim"):
       files.add x.path
   sort files
   for f in items files:
-    testFile c, f, overwrite, useTrack
+    testFile c, f, overwrite, cat
+
+proc parseCategory(path: string): Category =
+  case path
+  of "track": Tracked
+  of "basics": Basics
+  else: Normal
+
+proc findCategory(path: string): Category =
+  for x in split(path, {DirSep, AltSep}):
+    let cat = parseCategory x
+    if cat != Normal:
+      return cat
+  return Normal
 
 proc nimonytests(overwrite: bool) =
   ## Run all the nimonytests in the test-suite.
@@ -204,17 +224,18 @@ proc nimonytests(overwrite: bool) =
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   for x in walkDir(TestDir, relative = true):
+    let cat = parseCategory x.path
     if x.kind == pcDir:
-      testDir c, TestDir / x.path, overwrite, (x.path == "track")
+      testDir c, TestDir / x.path, overwrite, cat
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
     echo "SUCCESS."
 
-proc test(t: string; overwrite, useTrack: bool) =
+proc test(t: string; overwrite: bool; cat: Category) =
   var c = TestCounters(total: 0, failures: 0)
-  testFile c, t, overwrite, useTrack
+  testFile c, t, overwrite, cat
   if c.failures > 0:
     quit "FAILURE: Test failed."
   else:
@@ -245,9 +266,9 @@ type
   RecordFlag = enum
     RecordAst, RecordCodegen
 
-proc record(file, test: string; flags: set[RecordFlag]) =
+proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
   # Records a new test case.
-  let (compilerOutput, compilerExitCode) = osproc.execCmdEx("nimony m " & quoteShell(file))
+  let (compilerOutput, compilerExitCode) = execNimony("m " & quoteShell(file), cat)
   if compilerExitCode == 1:
     let idx = compilerOutput.find(ErrorKeyword)
     assert idx >= 0, "compiler output did not contain: " & ErrorKeyword
@@ -382,7 +403,7 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     if args.len > 0:
-      test args[0], overwrite, args[0].contains("track")
+      test args[0], overwrite, findCategory(args[0])
     else:
       quit "`test` takes an argument"
   of "record":
@@ -390,10 +411,11 @@ proc handleCmdLine =
     if args.len == 2:
       let inp = args[0].addFileExt(".nim")
       let outp = args[1].addFileExt(".nim")
+      let cat = findCategory(args[1])
       if splitFile(args[1]).dir == "":
-        record inp, "tests/nimony/basics" / outp, flags
+        record inp, "tests/nimony/basics" / outp, flags, cat
       else:
-        record inp, outp, flags
+        record inp, outp, flags, cat
     else:
       quit "`record` takes two arguments"
   else:

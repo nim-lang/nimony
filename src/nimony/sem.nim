@@ -225,7 +225,7 @@ proc semInclude(c: var SemContext; it: var Item) =
 
 type
   ImportModeKind = enum
-    ImportAll, FromImport, ImportExcept
+    ImportAll, FromImport, ImportExcept, ImportSystem
 
   ImportMode = object
     kind: ImportModeKind
@@ -237,7 +237,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffix):
-      selfExec c, f2
+      selfExec c, f2, (if mode.kind == ImportSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
     let moduleSym = identToSym(c, moduleName, ModuleY)
@@ -679,7 +679,7 @@ proc semStmt(c: var SemContext; n: var Cursor) =
   var it = Item(n: n, typ: c.types.autoType)
   let exPos = c.dest.len
   semExpr c, it
-  if classifyType(c, it.typ) in {NoType, VoidT, AutoT}:
+  if classifyType(c, it.typ) in {NoType, VoidT, AutoT, UntypedT}:
     discard "ok"
   else:
     # analyze the expression that was just produced:
@@ -973,7 +973,8 @@ proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
   c.dest.addSubtree cs.fn.n
   for a in cs.args:
     c.dest.addSubtree a.n
-  typeofCallIs c, it, cs.beforeCall, c.types.autoType
+  # untyped propagates to the result type:
+  typeofCallIs c, it, cs.beforeCall, c.types.untypedType
   wantParRi c, it.n
 
 proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
@@ -1584,7 +1585,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     inc n
     semConstIntExpr(c, n)
     c.dest.addParRi()
-  of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow:
+  of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow, NoSideEffect:
     crucial.flags.incl pk
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     c.dest.addParRi()
@@ -3458,7 +3459,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           if pool.tags[it.n.tag] == "err":
             c.takeTree it.n
           else:
-            buildErr c, it.n.info, "expression expected"
+            buildErr c, it.n.info, "expression expected; tag: " & pool.tags[it.n.tag]
             skip it.n
         of ObjectT, EnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
@@ -3558,7 +3559,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ForS:
         toplevelGuard c:
           semFor c, it
-      of ExportS:
+      of ExportS, CommentS:
         # XXX ignored for now
         skip it.n
     of FalseX, TrueX:
@@ -3701,6 +3702,11 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   # XXX could add self module symbol here
 
   assert n0 == "stmts"
+
+  if {SkipSystem, IsSystem} * moduleFlags == {}:
+    importSingleFile(c, ImportedFilename(path: stdlibFile("std/system"), name: "system"),
+       "", ImportMode(kind: ImportSystem, list: initPackedSet[StrId]()), n0.info)
+
   #echo "PHASE 1"
   var n1 = phaseX(c, n0, SemcheckTopLevelSyms)
   #echo "PHASE 2: ", toString(n1)
