@@ -15,6 +15,7 @@ type
     uint8Type*, uint16Type*, uint32Type*, uint64Type*: Cursor
     float32Type*, float64Type*: Cursor
     emptyTupleType*: Cursor
+    untypedType*: Cursor
 
 proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -75,6 +76,9 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.mem.add tagToken"tuple" # 51
   result.mem.addParRi() # 52
 
+  result.mem.add tagToken"untyped" # 53
+  result.mem.addParRi() # 54
+
   result.mem.freeze()
 
   result.autoType = result.mem.cursorAt(0)
@@ -97,3 +101,4 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.float32Type = result.mem.cursorAt(45)
   result.float64Type = result.mem.cursorAt(48)
   result.emptyTupleType = result.mem.cursorAt(51)
+  result.untypedType = result.mem.cursorAt(53)

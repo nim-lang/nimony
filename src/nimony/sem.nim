@@ -970,7 +970,8 @@ proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
   c.dest.addSubtree cs.fn.n
   for a in cs.args:
     c.dest.addSubtree a.n
-  typeofCallIs c, it, cs.beforeCall, c.types.autoType
+  # untyped propagates to the result type:
+  typeofCallIs c, it, cs.beforeCall, c.types.untypedType
   wantParRi c, it.n
 
 proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
