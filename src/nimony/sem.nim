@@ -2185,7 +2185,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         semLocalTypeImpl c, n, context
         wantParRi c, n
     of ProcT, IterT:
-      if tryTypeClass(c, n, context):
+      if tryTypeClass(c, n):
         return
       takeToken c, n
       wantDot c, n # name
