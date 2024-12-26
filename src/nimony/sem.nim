@@ -996,37 +996,6 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
     discard "ok"
     # XXX Add hderef here somehow
     c.dest.addSubtree arg.n
-  elif (destBase.typeKind == EnumT and # skipDistinct skips to body
-      srcBase.typeKind in IntegralTypes + {EnumT}):
-    let val = evalOrdinal(c, arg.n, noSideEffect = true)
-    if not val.isNaN():
-      # XXX optimize for no holes
-      var err = false # ignore for now
-      var valOrd = asSigned(val, err)
-      var found = false
-      var field = asEnumDecl(destBase).firstField
-      while field.kind != ParRi:
-        var fieldVal = asLocal(field).val
-        inc fieldVal # skip tuple tag
-        var fieldOrd: int64
-        case fieldVal.kind
-        of IntLit:
-          fieldOrd = pool.integers[fieldVal.intId]
-        of UIntLit:
-          fieldOrd = pool.uintegers[fieldVal.uintId].int64
-        else:
-          break
-        if fieldOrd >= valOrd:
-          found = fieldOrd == valOrd
-          break
-        skip field
-      if found:
-        discard "ok"
-        c.dest.addSubtree arg.n
-      else:
-        c.buildErr info, "value is not in enum range"
-    else:
-      c.buildErr info, "cannot prove that conversion to enum is safe"
   elif isDistinct:
     var matchArg = Item(n: arg.n, typ: srcBase)
     var m = createMatch(addr c)

@@ -129,6 +129,7 @@ proc asObjectDecl*(c: Cursor): ObjectDecl =
 type
   EnumDecl* = object
     kind*: TypeKind
+    baseType*: Cursor
     firstField*: Cursor
 
 proc asEnumDecl*(c: Cursor): EnumDecl =
@@ -137,7 +138,25 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
   result = EnumDecl(kind: kind)
   if kind == EnumT:
     inc c
+    result.baseType = c
+    skip c
     result.firstField = c
+
+type
+  EnumField* = object
+    kind*: SymKind
+    name*: Cursor
+    val*: Cursor
+
+proc asEnumField*(c: Cursor): EnumField =
+  var c = c
+  let kind = symKind c
+  result = EnumField(kind: kind)
+  if kind == EfldY:
+    inc c
+    result.name = c
+    skip c
+    result.val = c
 
 type
   ForStmt* = object
