@@ -1,6 +1,6 @@
 
 import std / [os, strutils]
-import "../src/lib" / [nifreader, nifbuilder, nif_linkedtree, treemangler]
+import "../src/lib" / [nifreader, nifbuilder, nif_linkedtree]
 
 const
   ExpectedOutput = """
