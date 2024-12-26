@@ -157,7 +157,7 @@ proc generatedFile(orig, ext: string): string =
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   inc c.total
-  var nimonycmd = "--isMain"
+  var nimonycmd = (if cat == Basics: "--noSystem " else: "") & "--isMain"
   if cat == Tracked:
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file), cat)
