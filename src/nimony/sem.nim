@@ -979,7 +979,7 @@ proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
 
 proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo) =
   const
-    IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT} # XXX enum-enum conv needs warning
+    IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT}
     StringTypes = {StringT, CstringT}
 
   var srcType = skipModifier(arg.typ)
