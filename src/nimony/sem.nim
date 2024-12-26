@@ -986,6 +986,7 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
 
   # distinct type conversion?
   var isDistinct = false
+  # also skips to type body for symbols:
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
 
@@ -1038,7 +1039,7 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
   commonType c, it, beforeExpr, expected
 
 proc isCastableType(t: TypeCursor): bool =
-  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT}
+  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; it: var Item) =
@@ -1056,6 +1057,7 @@ proc semCast(c: var SemContext; it: var Item) =
 
   # distinct type conversion?
   var isDistinct = false
+  # also skips to type body for symbols:
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
   if destBase.isCastableType and srcBase.isCastableType:
