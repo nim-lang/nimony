@@ -19,14 +19,14 @@
  (type :set.0.tgekp9q4q1 
   (sett) 4
   (typevars 1
-   (typevar :T.0 . . . .)) 8
+   (typevar :T.0.tgekp9q4q1 . . . .)) 8
   (pragmas 2
    (magic 7 Set)) .) 2,8
  (type :array.0.tgekp9q4q1 
   (array) 7
   (typevars 1
-   (typevar :Index.0 . . . .) 8
-   (typevar :T.1 . . . .)) 18
+   (typevar :Index.0.tgekp9q4q1 . . . .) 8
+   (typevar :T.1.tgekp9q4q1 . . . .)) 18
   (pragmas 2
    (magic 7 Array)) .) 4,10
  (var :myset.0.tgekp9q4q1 . . 10
@@ -51,9 +51,9 @@
   (arr 1 +1 4 +2 7 +3)) 15,17
  (type ~13 :MyGeneric.0.tgekp9q4q1 . ~4
   (typevars 1
-   (typevar :T.2 . . . .)) . 2
+   (typevar :T.2.tgekp9q4q1 . . . .)) . 2
   (object . ~13,1
-   (fld :x.0.tgekp9q4q1 . . 3 T.2 .))) 2,21
+   (fld :x.0.tgekp9q4q1 . . 3 T.2.tgekp9q4q1 .))) 2,21
  (var :myglob.0.tgekp9q4q1 . . 17 MyGeneric.1.tgekp9q4q1 .) 2,22
  (var :other.0.tgekp9q4q1 . . 16 MyGeneric.2.tgekp9q4q1 .) 9,24
  (asgn ~3
@@ -102,26 +102,26 @@
       (i -1) ~2 +34 1 +56) 8 "xyz")))) 16,42
  (type ~14 :HSlice.0.tgekp9q4q1 x ~7
   (typevars 1
-   (typevar :T.3 . . . .) 4
-   (typevar :U.0 . . . .)) . 2
+   (typevar :T.3.tgekp9q4q1 . . . .) 4
+   (typevar :U.0.tgekp9q4q1 . . . .)) . 2
   (object . ~14,1
-   (fld :a.0.tgekp9q4q1 . . 3 T.3 .) ~14,2
-   (fld :b.0.tgekp9q4q1 . . 3 U.0 .))) 12,45
+   (fld :a.0.tgekp9q4q1 . . 3 T.3.tgekp9q4q1 .) ~14,2
+   (fld :b.0.tgekp9q4q1 . . 3 U.0.tgekp9q4q1 .))) 12,45
  (type ~10 :Slice.0.tgekp9q4q1 x ~4
   (typevars 1
-   (typevar :T.4 . . . .)) . 8
-  (at ~6 HSlice.0.tgekp9q4q1 1 T.4 4 T.4)) ,47
+   (typevar :T.4.tgekp9q4q1 . . . .)) . 8
+  (at ~6 HSlice.0.tgekp9q4q1 1 T.4.tgekp9q4q1 4 T.4.tgekp9q4q1)) ,47
  (proc 5 :\2E..0.tgekp9q4q1 x . 10
   (typevars 1
-   (typevar :T.5 . . . .) 4
-   (typevar :U.1 . . . .)) 16
+   (typevar :T.5.tgekp9q4q1 . . . .) 4
+   (typevar :U.1.tgekp9q4q1 . . . .)) 16
   (params 1
-   (param :a.0 . . 3 T.5 .) 7
-   (param :b.0 . . 3 U.1 .)) 20
-  (at ~6 HSlice.0.tgekp9q4q1 1 T.5 4 U.1) . . 45
+   (param :a.0 . . 3 T.5.tgekp9q4q1 .) 7
+   (param :b.0 . . 3 U.1.tgekp9q4q1 .)) 20
+  (at ~6 HSlice.0.tgekp9q4q1 1 T.5.tgekp9q4q1 4 U.1.tgekp9q4q1) . . 45
   (stmts 
    (result :result.1 . . ~25
-    (at ~6 HSlice.0.tgekp9q4q1 1 T.5 4 U.1) .) 
+    (at ~6 HSlice.0.tgekp9q4q1 1 T.5.tgekp9q4q1 4 U.1.tgekp9q4q1) .) 
    (discard .) ~45
    (ret result.1))) 4,50
  (var :myarr2.0.tgekp9q4q1 . . 12,~39
@@ -133,25 +133,25 @@
   (arr 1 +4 4 +5 7 +6)) ,53
  (proc 5 :foo.1.tgekp9q4q1 . . 8
   (typevars 1
-   (typevar :I.0 . . . .) 4
-   (typevar :T.6 . . . .)) 14
+   (typevar :I.0.tgekp9q4q1 . . . .) 4
+   (typevar :T.6.tgekp9q4q1 . . . .)) 14
   (params 1
    (param :x.2 . . 8
-    (array 4 T.6 1 I.0) .)) . . . 33
+    (array 4 T.6.tgekp9q4q1 1 I.0.tgekp9q4q1) .)) . . . 33
   (stmts 
    (discard .))) 3,54
  (call ~3 foo.2.tgekp9q4q1 1 myarr2.0.tgekp9q4q1) ,56
  (proc 5 :identity.0.tgekp9q4q1 . . 13
   (typevars 1
-   (typevar :I.1 . . . .) 4
-   (typevar :T.7 . . . .)) 19
+   (typevar :I.1.tgekp9q4q1 . . . .) 4
+   (typevar :T.7.tgekp9q4q1 . . . .)) 19
   (params 1
    (param :x.3 . . 8
-    (array 4 T.7 1 I.1) .)) 23
-  (array 4 T.7 1 I.1) . . 2,1
+    (array 4 T.7.tgekp9q4q1 1 I.1.tgekp9q4q1) .)) 23
+  (array 4 T.7.tgekp9q4q1 1 I.1.tgekp9q4q1) . . 2,1
   (stmts 7
    (result :result.2 . . 19,~1
-    (array 4 T.7 1 I.1) .) 7
+    (array 4 T.7.tgekp9q4q1 1 I.1.tgekp9q4q1) .) 7
    (asgn ~7 result.2 2 x.3) ~2,~1
    (ret result.2))) 7,58
  (asgn ~7 myarr2.0.tgekp9q4q1 10

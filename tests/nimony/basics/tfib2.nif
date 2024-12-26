@@ -91,11 +91,11 @@
       (param :y.7 . . 3 Self.0.tfie0imm3 .)) 14 Self.0.tfie0imm3 . . .)))) ,22
  (proc 5 :fib.0.tfie0imm3 . . 8
   (typevars 1
-   (typevar :T.0 . . 3 Fibable.0.tfie0imm3 .)) 20
+   (typevar :T.0.tfie0imm3 . . 3 Fibable.0.tfie0imm3 .)) 20
   (params 1
-   (param :a.1 . . 3 T.0 .)) 8 T.0 . . 2,1
+   (param :a.1 . . 3 T.0.tfie0imm3 .)) 8 T.0.tfie0imm3 . . 2,1
   (stmts 
-   (result :result.0 . . 22,~1 T.0 .) 
+   (result :result.0 . . 22,~1 T.0.tfie0imm3 .) 
    (if 3
     (elif 2
      (infix <= ~2 a.1 3 +2) ~1,1

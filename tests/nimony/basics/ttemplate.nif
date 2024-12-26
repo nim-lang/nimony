@@ -15,15 +15,15 @@
  (type :array.0.tte6j7czy 
   (array) 7
   (typevars 1
-   (typevar :Index.0 . . . .) 8
-   (typevar :T.0 . . . .)) 18
+   (typevar :Index.0.tte6j7czy . . . .) 8
+   (typevar :T.0.tte6j7czy . . . .)) 18
   (pragmas 2
    (magic 7 Array)) .) 15,9
  (type ~13 :MyGeneric.0.tte6j7czy . ~4
   (typevars 1
-   (typevar :T.1 . . . .)) . 2
+   (typevar :T.1.tte6j7czy . . . .)) . 2
   (object . ~13,1
-   (fld :x.0.tte6j7czy . . 3 T.1 .))) 2,13
+   (fld :x.0.tte6j7czy . . 3 T.1.tte6j7czy .))) 2,13
  (var :myglob.0.tte6j7czy . . 17 MyGeneric.1.tte6j7czy .) 2,14
  (var :other.0.tte6j7czy . . 16 MyGeneric.2.tte6j7czy .) 9,16
  (asgn ~3
@@ -88,12 +88,12 @@
    (magic 7 UInt)) .) ,34
  (template 9 :conv.0.tte6j7czy . . 13
   (typevars 1
-   (typevar :T.2 . . . .)) 16
+   (typevar :T.2.tte6j7czy . . . .)) 16
   (params 1
    (param :x.3 . . ~15,~33
-    (i -1) .)) 10 T.2 . . 30
+    (i -1) .)) 10 T.2.tte6j7czy . . 30
   (stmts 1
-   (conv 1 T.2 1 x.3))) 4,36
+   (conv 1 T.2.tte6j7czy 1 x.3))) 4,36
  (let :val.0.tte6j7czy . .
   (i -1) 6 +123) ,37
  (discard 30,~3
