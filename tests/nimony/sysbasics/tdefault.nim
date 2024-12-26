@@ -20,7 +20,6 @@ template default*[T: ref](x: typedesc[T]): T = T(nil)
 discard default(string)
 discard default(int)
 
-when false: # need semcheck for ConvX
-  discard default(ptr int)
-  type Enum = enum a, b, c
-  discard default(Enum)
+discard default(ptr int)
+type Enum = enum a, b, c
+discard default(Enum)

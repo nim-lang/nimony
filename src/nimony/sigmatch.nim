@@ -447,6 +447,16 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       else:
         linearMatch m, f, a
       expectParRi m, f
+    of PtrT, RefT:
+      var a = skipModifier(arg.typ)
+      case a.typeKind
+      of NilT:
+        discard "ok"
+        inc f
+        skip f
+      else:
+        linearMatch m, f, a
+      expectParRi m, f
     of TypedescT:
       # do not skip modifier
       var a = arg.typ
@@ -485,7 +495,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         if a.kind != ParRi:
           # len(a) > len(f)
           m.error expected(fOrig, aOrig)
-    of NoType, ObjectT, EnumT, VoidT, PtrT, RefT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
+    of NoType, ObjectT, EnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ProcT, IterT, AutoT, SymKindT, TypeKindT:
       m.error "BUG: unhandled type: " & pool.tags[f.tagId]
   else:

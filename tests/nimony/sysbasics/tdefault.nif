@@ -151,4 +151,21 @@
  (discard 49,~5
   (stmts "")) ,20
  (discard 43,~18
-  (stmts +0)))
+  (stmts +0)) ,22
+ (discard 47,~5
+  (stmts 1
+   (conv ~32,5
+    (ptr ~12,~16,src/nimony/lib/std/system.nim
+     (i -1)) 1
+    (nil)))) 10,23
+ (type ~5 :Enum.0.tde837gue . . . 2
+  (enum 5
+   (efld :a.0.tde837gue . . Enum.0.tde837gue 
+    (tup +0 "a")) 8
+   (efld :b.0.tde837gue . . Enum.0.tde837gue 
+    (tup +1 "b")) 11
+   (efld :c.0.tde837gue . . Enum.0.tde837gue 
+    (tup +2 "c")))) ,24
+ (discard 48,~9
+  (stmts 1
+   (conv ~34,9 Enum.0.tde837gue 1 +0))))
