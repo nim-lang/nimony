@@ -977,18 +977,12 @@ proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
   typeofCallIs c, it, cs.beforeCall, c.types.untypedType
   wantParRi c, it.n
 
-proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
+proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo) =
   const
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT}
     StringTypes = {StringT, CstringT}
-  let beforeExpr = c.dest.len
-  let info = cs.callNode.info
-  c.dest.add parLeToken(ConvX, info)
-  var destType = cs.fn.typ
-  if destType.typeKind == TypedescT: inc destType
-  c.dest.copyTree destType
 
-  var srcType = skipModifier(cs.args[0].typ)
+  var srcType = skipModifier(arg.typ)
 
   # distinct type conversion?
   var isDistinct = false
@@ -1000,13 +994,13 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
      (destBase.containsGenericParams or srcBase.containsGenericParams):
     discard "ok"
     # XXX Add hderef here somehow
-    c.dest.addSubtree cs.args[0].n
+    c.dest.addSubtree arg.n
   elif isDistinct:
-    var arg = Item(n: cs.args[0].n, typ: srcBase)
+    var matchArg = Item(n: arg.n, typ: srcBase)
     var m = createMatch(addr c)
-    typematch m, destBase, arg
+    typematch m, destBase, matchArg
     if m.err:
-      c.typeMismatch info, cs.args[0].typ, destType
+      c.typeMismatch info, arg.typ, destType
     else:
       # distinct type conversions can also involve conversions
       # between different integer sizes or object types and then
@@ -1014,24 +1008,34 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
       c.dest.add m.args
   else:
     # maybe object types with an inheritance relation?
-    var arg = cs.args[0]
+    var matchArg = arg
     var m = createMatch(addr c)
-    typematch m, destType, arg
+    typematch m, destType, matchArg
     if not m.err:
       c.dest.add m.args
     else:
       # also try the other direction:
       var m = createMatch(addr c)
       m.flipped = true
-      arg.typ = destType
-      typematch m, srcType, arg
+      matchArg.typ = destType
+      typematch m, srcType, matchArg
       if not m.err:
         c.dest.add m.args
       else:
-        c.typeMismatch info, cs.args[0].typ, destType
+        c.typeMismatch info, arg.typ, destType
 
+proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
+  let beforeExpr = c.dest.len
+  let info = cs.callNode.info
+  var destType = cs.fn.typ
+  if destType.typeKind == TypedescT: inc destType
+  c.dest.add parLeToken(ConvX, info)
+  c.dest.copyTree destType
+  semConvArg(c, destType, cs.args[0], info)
   wantParRi c, it.n
-  commonType c, it, beforeExpr, destType
+  let expected = it.typ
+  it.typ = destType
+  commonType c, it, beforeExpr, expected
 
 proc isCastableType(t: TypeCursor): bool =
   const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT}
@@ -1897,6 +1901,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     # can do its job properly:
     let key = typeToCanon(c.dest, typeStart)
     if c.instantiatedTypes.hasKey(key):
+      c.dest.shrink typeStart
       c.dest.add symToken(c.instantiatedTypes[key], info)
     else:
       var args = cursorAt(c.dest, beforeArgs)
@@ -3396,6 +3401,24 @@ proc semSubscript(c: var SemContext; it: var Item) =
   lhs.n = cursorAt(lhsBuf, 0)
   semBuiltinSubscript(c, it, lhs)
 
+proc semConv(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  takeToken c, it.n
+  var destType = semLocalType(c, it.n)
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  var argBuf = createTokenBuf(16)
+  swap c.dest, argBuf
+  semExpr c, arg
+  swap c.dest, argBuf
+  it.n = arg.n
+  arg.n = cursorAt(argBuf, 0)
+  semConvArg(c, destType, arg, info)
+  wantParRi c, it.n
+  let expected = it.typ
+  it.typ = destType
+  commonType c, it, beforeExpr, expected
+
 proc semDconv(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   let info = it.n.info
@@ -3431,7 +3454,9 @@ proc semDconv(c: var SemContext; it: var Item) =
       c.dest.add m.args
   it.n = x.n
   wantParRi c, it.n
-  commonType c, it, beforeExpr, destType
+  let expected = it.typ
+  it.typ = destType
+  commonType c, it, beforeExpr, expected
 
 proc whichPass(c: SemContext): PassKind =
   result = if c.phase == SemcheckSignatures: checkSignatures else: checkBody
@@ -3651,8 +3676,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semCast c, it
     of NilX:
       semNil c, it
+    of ConvX:
+      semConv c, it
     of DerefX, PatX, AddrX, SizeofX, KvX,
-       ConvX, RangeX, RangesX,
+       RangeX, RangesX,
        OconvX, HconvX,
        CompilesX, HighX, LowX, TypeofX:
       # XXX To implement
