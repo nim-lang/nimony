@@ -3311,12 +3311,24 @@ proc semObjConstr(c: var SemContext, it: var Item) =
       fieldBuf.add it.n
       inc it.n
       let fieldInfo = it.n.info
+      let fieldNameCursor = it.n
       let fieldName = getIdent(it.n)
       if fieldName == StrId(0):
         c.buildErr fieldInfo, "identifier expected for object field"
         skip it.n
       else:
-        let field = findObjField(objType, fieldName)
+        var field = ObjField(level: -1)
+        if fieldNameCursor.kind == Symbol:
+          let sym = fieldNameCursor.symId
+          let res = tryLoadSym(sym)
+          if res.status == LacksNothing and res.decl == $FldY:
+            # trust that it belongs to this object for now
+            # level is not known but not used either, set it to 0:
+            field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
+          else:
+            field = findObjField(objType, fieldName)
+        else:
+          field = findObjField(objType, fieldName)
         if field.level >= 0:
           if field.sym in setFieldPositions:
             c.buildErr fieldInfo, "field already set: " & pool.strings[fieldName]

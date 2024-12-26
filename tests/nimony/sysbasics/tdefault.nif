@@ -81,4 +81,26 @@
  (asgn ~7 global.0.tde837gue 10
   (obj ~5,~6 MyObject.0.tde837gue 2
    (kv ~2 x.1.tde837gue 2 +123) 10
-   (kv ~10 y.1.tde837gue 2 +456))))
+   (kv ~10 y.1.tde837gue 2 +456))) ,29
+ (template 9 :resem.0.tde837gue . . . 14
+  (params) . . . 2,1
+  (stmts 7
+   (asgn ~7 global.0.tde837gue 10
+    (obj ~7,~8 MyObject.0.tde837gue 2
+     (kv ~2 x.1.tde837gue 2 +123) 
+     (kv ~12,~10 :y.1.tde837gue 33,676,src/nimony/lib/std/system.nim
+      (stmts +0)))) 7,1
+   (asgn ~7 global.0.tde837gue 10
+    (obj ~7,~9 MyObject.0.tde837gue 2
+     (kv ~2 x.1.tde837gue 2 +123) 10
+     (kv ~10 y.1.tde837gue 2 +456))))) 2,30
+ (stmts 7
+  (asgn ~7 global.0.tde837gue 10
+   (obj ~7,~8 MyObject.0.tde837gue 2
+    (kv ~2 x.1.tde837gue 2 +123) 
+    (kv y.1.tde837gue 33,676,src/nimony/lib/std/system.nim
+     (stmts +0)))) 7,1
+  (asgn ~7 global.0.tde837gue 10
+   (obj ~7,~9 MyObject.0.tde837gue 2
+    (kv ~2 x.1.tde837gue 2 +123) 10
+    (kv ~10 y.1.tde837gue 2 +456)))))
