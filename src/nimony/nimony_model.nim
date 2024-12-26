@@ -173,6 +173,7 @@ type
     SetT = "sett"
     AutoT = "auto"
     SymKindT = "symkind"
+    TypeKindT = "typekind"
     TypedescT = "typedesc"
     UntypedT = "untyped"
     TypedT = "typed"
