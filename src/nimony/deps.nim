@@ -183,8 +183,19 @@ proc execNifler(c: var DepContext; input, output: string) =
       getLastModificationTime(output) > getLastModificationTime(input):
     discard "nothing to do"
   else:
-    exec quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
+    let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
       quoteShell(output)
+    exec cmd
+
+proc importSystem(c: var DepContext; current: Node) =
+  let p = c.toPair(stdlibFile("std/system.nim"))
+  current.deps.add p
+  if not c.processedModules.containsOrIncl(p.modname):
+    #echo "NIFLING ", p.nimFile, " -> ", parsedFile(p)
+    execNifler c, p.nimFile, parsedFile(p)
+    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
+    c.nodes.add imported
+    parseDeps c, p, imported
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
   execNifler c, p.nimFile, parsedFile(p)
@@ -195,8 +206,8 @@ proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
     discard processDirectives(stream.r)
     var buf = fromStream(stream)
     processDeps c, beginRead(buf), current
-    if {SkipSystem, IsSystem} * c.moduleFlags == {}:
-      importSingleFile c, stdlibFile("std/system"), NoLineInfo, current, true
+    if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
+      importSystem c, current
   finally:
     nifstreams.close(stream)
 

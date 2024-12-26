@@ -65,8 +65,10 @@ proc handleCmdLine() =
     else:
       let inp = args[0]
       let outp = if args.len >= 2: args[1].addFileExt".nif" else: changeFileExt(inp, ".nif")
+      let depsNif = outp.changeFileExt(".deps.nif")
       if not forceRebuild and fileExists(outp) and fileExists(inp) and
-          getLastModificationTime(outp) > getLastModificationTime(inp):
+          getLastModificationTime(outp) > getLastModificationTime(inp) and
+          (not deps or (fileExists(depsNif) and getLastModificationTime(depsNif) > getLastModificationTime(inp))):
         discard "nothing to do"
       else:
         parseFile inp, outp, portablePaths, deps
