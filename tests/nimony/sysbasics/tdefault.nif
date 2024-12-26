@@ -147,17 +147,39 @@
     (typedesc 1 T.2) .)) 18 T.2 . . 47
   (stmts 1
    (conv ~10 T.2 1
-    (nil)))) ,19
- (discard 49,~5
-  (stmts "")) ,20
- (discard 43,~18
-  (stmts +0)) ,22
- (discard 47,~5
+    (nil)))) ,20
+ (proc 5 :default.18.tde837gue 
+  (defaultobj) . 13
+  (typevars 1
+   (typevar :T.3 . . 3
+    (typekind 
+     (object)) .)) 24
+  (params 1
+   (param :x.18 . . 11
+    (typedesc 1 T.3) .)) 18 T.3 44
+  (pragmas 2
+   (magic 7 DefaultObj)) . .) ,21
+ (proc 5 :default.19.tde837gue 
+  (defaulttup) . 13
+  (typevars 1
+   (typevar :T.4 . . 8
+    (typekind 
+     (tuple)) .)) 23
+  (params 1
+   (param :x.19 . . 11
+    (typedesc 1 T.4) .)) 18 T.4 43
+  (pragmas 2
+   (magic 7 DefaultTup)) . .) ,23
+ (discard 49,~9
+  (stmts "")) ,24
+ (discard 43,~22
+  (stmts +0)) ,26
+ (discard 47,~9
   (stmts 1
-   (conv ~32,5
-    (ptr ~12,~16,src/nimony/lib/std/system.nim
+   (conv ~32,9
+    (ptr ~12,~20,src/nimony/lib/std/system.nim
      (i -1)) 1
-    (nil)))) 10,23
+    (nil)))) 10,27
  (type ~5 :Enum.0.tde837gue . . . 2
   (enum 5
    (efld :a.0.tde837gue . . Enum.0.tde837gue 
@@ -165,7 +187,30 @@
    (efld :b.0.tde837gue . . Enum.0.tde837gue 
     (tup +1 "b")) 11
    (efld :c.0.tde837gue . . Enum.0.tde837gue 
-    (tup +2 "c")))) ,24
- (discard 48,~9
+    (tup +2 "c")))) ,28
+ (discard 48,~13
   (stmts 1
-   (conv ~34,9 Enum.0.tde837gue 1 +0))))
+   (conv ~34,13 Enum.0.tde837gue 1 +0))) 9,30
+ (type ~4 :Obj.0.tde837gue . . . 2
+  (object . ~9,1
+   (fld :x.0.tde837gue . . 2,~25,src/nimony/lib/std/system.nim
+    (i -1) .) ~9,2
+   (fld :y.0.tde837gue . . 2,12,src/nimony/lib/std/system.nim
+    (string) .) ~9,3
+   (fld :z.0.tde837gue . . 3
+    (tuple 6
+     (fld :a.1.tde837gue . . 17,27,src/nimony/lib/std/system.nim
+      (bool) .) 15
+     (fld :b.1.tde837gue . . 3 Enum.0.tde837gue .)) .))) ,35
+ (discard 15
+  (obj 1 Obj.0.tde837gue 
+   (kv ~13,~4 :x.0.tde837gue 28,~33
+    (stmts +0)) 
+   (kv ~13,~3 :y.0.tde837gue 34,~21
+    (stmts "")) 
+   (kv ~13,~2 :z.0.tde837gue 
+    (tup 30,~35
+     (stmts ~45,32,src/nimony/lib/std/system.nim
+      (false)) 33,~20
+     (stmts 1
+      (conv ~34,13 Enum.0.tde837gue 1 +0)))))))

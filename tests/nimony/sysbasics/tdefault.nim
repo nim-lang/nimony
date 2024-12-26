@@ -17,9 +17,20 @@ template default*[T: enum](x: typedesc[T]): T = T(0)
 
 template default*[T: ptr](x: typedesc[T]): T = T(nil)
 template default*[T: ref](x: typedesc[T]): T = T(nil)
+
+proc default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
+proc default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
+
 discard default(string)
 discard default(int)
 
 discard default(ptr int)
 type Enum = enum a, b, c
 discard default(Enum)
+
+type Obj = object
+  x: int
+  y: string
+  z: tuple[a: bool, b: Enum]
+
+discard default(Obj)
