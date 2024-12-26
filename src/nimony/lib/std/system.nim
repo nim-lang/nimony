@@ -348,3 +348,6 @@ template `>=`*(x, y: untyped): untyped =
 template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
+
+proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
+  ## Converts an enum value to a string.

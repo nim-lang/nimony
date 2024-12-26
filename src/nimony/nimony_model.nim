@@ -135,6 +135,7 @@ type
     LowX = "low"
     TypeofX = "typeof"
     UnpackX = "unpack"
+    EnumToStrX = "enumtostr"
     IsMainModuleX = "ismainmodule"
 
   TypeKind* = enum
