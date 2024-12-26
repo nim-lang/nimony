@@ -30,7 +30,8 @@ proc isOrdinalType*(typ: TypeCursor; allowEnumWithHoles: bool = false): bool =
         # check for holes
         var field = asEnumDecl(decl.body).firstField
         var last: xint
-        let firstVal = asEnumField(field).val
+        var firstVal = asLocal(field).val
+        inc firstVal # skip tuple tag
         case firstVal.kind
         of IntLit:
           last = createXint pool.integers[firstVal.intId]
@@ -41,7 +42,8 @@ proc isOrdinalType*(typ: TypeCursor; allowEnumWithHoles: bool = false): bool =
           return false
         skip field
         while field.kind != ParRi:
-          let val = asEnumField(field).val
+          var val = asLocal(field).val
+          inc val # skip tuple tag
           var thisVal: xint
           case val.kind
           of IntLit:
@@ -91,7 +93,8 @@ proc firstOrd*(c: var SemContext; typ: TypeCursor): xint =
     case decl.body.typeKind
     of EnumT:
       var field = asEnumDecl(decl.body).firstField
-      let firstVal = asEnumField(field).val
+      var firstVal = asLocal(field).val
+      inc firstVal # skip tuple tag
       case firstVal.kind
       of IntLit:
         result = createXint pool.integers[firstVal.intId]
@@ -159,7 +162,8 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       while field.kind != ParRi:
         last = field
         skip field
-      let lastVal = asEnumField(field).val
+      var lastVal = asLocal(field).val
+      inc lastVal # skip tuple tag
       case lastVal.kind
       of IntLit:
         result = createXint pool.integers[lastVal.intId]
