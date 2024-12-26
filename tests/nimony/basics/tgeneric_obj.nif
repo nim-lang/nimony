@@ -34,7 +34,9 @@
    (u +8)) .) 4,11
  (var :myarr.0.tgekp9q4q1 . . 12
   (array ~14,~10
-   (i -1) 1 +3) .) 4,12
+   (i -1) 
+   (rangetype
+    (i -1) +0 +2)) .) 4,12
  (let :u8.0.tgekp9q4q1 . .
   (u +8) 5
   (suf +3u "u8")) 6,13
@@ -82,10 +84,10 @@
   (stmts 4
    (result :result.0 . . ~4,~32
     (i -1) .) 4
-   (var :x.2 . .
+   (var :x.4 . .
     (string) 4 "abc") 7,1
    (asgn ~7 result.0 2 +4) 2,2
-   (asgn ~2 x.2 2 "34") ~2,~1
+   (asgn ~2 x.4 2 "34") ~2,~1
    (ret result.0))) ,37
  (proc 5 :overloaded.0.tgekp9q4q1 . . . 15
   (params) . . . 2,1
@@ -97,7 +99,112 @@
    (discard 11
     (call ~3 foo.0.tgekp9q4q1 3
      (add
-      (i -1) ~2 +34 1 +56) 8 "xyz")))) 19,21
+      (i -1) ~2 +34 1 +56) 8 "xyz")))) 16,42
+ (type ~14 :HSlice.0.tgekp9q4q1 x ~7
+  (typevars 1
+   (typevar :T.3 . . . .) 4
+   (typevar :U.0 . . . .)) . 2
+  (object . ~14,1
+   (fld :a.0.tgekp9q4q1 . . 3 T.3 .) ~14,2
+   (fld :b.0.tgekp9q4q1 . . 3 U.0 .))) 12,45
+ (type ~10 :Slice.0.tgekp9q4q1 x ~4
+  (typevars 1
+   (typevar :T.4 . . . .)) . 8
+  (at ~6 HSlice.0.tgekp9q4q1 1 T.4 4 T.4)) ,47
+ (proc 5 :\2E..0.tgekp9q4q1 x . 10
+  (typevars 1
+   (typevar :T.5 . . . .) 4
+   (typevar :U.1 . . . .)) 16
+  (params 1
+   (param :a.0 . . 3 T.5 .) 7
+   (param :b.0 . . 3 U.1 .)) 20
+  (at ~6 HSlice.0.tgekp9q4q1 1 T.5 4 U.1) . . 45
+  (stmts 
+   (result :result.1 . . ~25
+    (at ~6 HSlice.0.tgekp9q4q1 1 T.5 4 U.1) .) 
+   (discard .) ~45
+   (ret result.1))) 4,50
+ (var :myarr2.0.tgekp9q4q1 . . 12,~39
+  (array ~14,~10
+   (i -1) 
+   (rangetype
+    (i -1) +0 +2)) 27 myarr.0.tgekp9q4q1) 7,51
+ (asgn ~7 myarr2.0.tgekp9q4q1 2
+  (arr 1 +4 4 +5 7 +6)) ,53
+ (proc 5 :foo.1.tgekp9q4q1 . . 8
+  (typevars 1
+   (typevar :I.0 . . . .) 4
+   (typevar :T.6 . . . .)) 14
+  (params 1
+   (param :x.2 . . 8
+    (array 4 T.6 1 I.0) .)) . . . 33
+  (stmts 
+   (discard .))) 3,54
+ (call ~3 foo.2.tgekp9q4q1 1 myarr2.0.tgekp9q4q1) ,56
+ (proc 5 :identity.0.tgekp9q4q1 . . 13
+  (typevars 1
+   (typevar :I.1 . . . .) 4
+   (typevar :T.7 . . . .)) 19
+  (params 1
+   (param :x.3 . . 8
+    (array 4 T.7 1 I.1) .)) 23
+  (array 4 T.7 1 I.1) . . 2,1
+  (stmts 7
+   (result :result.2 . . 19,~1
+    (array 4 T.7 1 I.1) .) 7
+   (asgn ~7 result.2 2 x.3) ~2,~1
+   (ret result.2))) 7,58
+ (asgn ~7 myarr2.0.tgekp9q4q1 10
+  (call ~8 identity.1.tgekp9q4q1 1 myarr2.0.tgekp9q4q1)) 19,50
+ (proc :\2E..1.tgekp9q4q1 . ~19,~3 . 
+  (at \2E..0.tgekp9q4q1
+   (i -1)
+   (i -1)) ~3,~3
+  (params 1
+   (param :a.2 . .
+    (i -1) .) 7
+   (param :b.2 . .
+    (i -1) .)) 1,~3 HSlice.1.tgekp9q4q1 ~19,~3 . ~19,~3 . 26,~3
+  (stmts 
+   (result :result.3 . . ~25 HSlice.1.tgekp9q4q1 .) 
+   (discard .) ~45
+   (ret result.3))) 3,54
+ (proc :foo.2.tgekp9q4q1 . ~3,~1 . 
+  (at foo.1.tgekp9q4q1 13,~43
+   (rangetype
+    (i -1) +0 +2) ~1,~53
+   (i -1)) 11,~1
+  (params 1
+   (param :x.7 . . 8
+    (array ~21,~52
+     (i -1) ~7,~42
+     (rangetype
+      (i -1) +0 +2)) .)) ~3,~1 . ~3,~1 . ~3,~1 . 30,~1
+  (stmts 
+   (discard .))) 17,58
+ (proc :identity.1.tgekp9q4q1 . ~17,~2 . 
+  (at identity.0.tgekp9q4q1 ~1,~47
+   (rangetype
+    (i -1) +0 +2) ~15,~57
+   (i -1)) 2,~2
+  (params 1
+   (param :x.8 . . 8
+    (array ~26,~55
+     (i -1) ~12,~45
+     (rangetype
+      (i -1) +0 +2)) .)) 6,~2
+  (array ~21,~55
+   (i -1) ~7,~45
+   (rangetype
+    (i -1) +0 +2)) ~17,~2 . ~17,~2 . ~15,~1
+  (stmts 7
+   (result :result.4 . . 19,~1
+    (array ~26,~55
+     (i -1) ~12,~45
+     (rangetype
+      (i -1) +0 +2)) .) 7
+   (asgn ~7 result.4 2 x.8) ~2,~1
+   (ret result.4))) 19,21
  (type :MyGeneric.1.tgekp9q4q1 . 
   (at MyGeneric.0.tgekp9q4q1 ~17,~20
    (i -1)) ~4,~4 . ~2,~4
@@ -109,4 +216,13 @@
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
    (fld :x.2.tgekp9q4q1 . . ~2,~15
-    (f +64) .))))
+    (f +64) .))) 20,47
+ (type :HSlice.1.tgekp9q4q1 . 
+  (at HSlice.0.tgekp9q4q1
+   (i -1)
+   (i -1)) ~4,~5 . ~2,~5
+  (object . ~14,1
+   (fld :a.1.tgekp9q4q1 . .
+    (i -1) .) ~14,2
+   (fld :b.1.tgekp9q4q1 . .
+    (i -1) .))))

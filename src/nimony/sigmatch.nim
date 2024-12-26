@@ -129,6 +129,53 @@ iterator inheritanceChain(s: SymId): SymId =
     else:
       break
 
+proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool
+
+proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
+  result = false
+  case f.typeKind
+  of NotT:
+    inc f
+    if not matchesConstraint(m, f, a):
+      result = true
+    if f.kind != ParRi: result = false
+    skipToEnd f
+  of AndT:
+    inc f
+    result = true
+    while f.kind != ParRi:
+      if not matchesConstraint(m, f, a):
+        result = false
+        break
+    skipToEnd f
+  of OrT:
+    inc f
+    while f.kind != ParRi:
+      if matchesConstraint(m, f, a):
+        result = true
+        break
+    skipToEnd f
+  of ConceptT:
+    # XXX Use some algorithm here that can cache the result
+    # so that it can remember e.g. "int fulfils Fibable". For
+    # now this should be good enough for our purposes:
+    result = true
+    skip f
+  of TypeKindT:
+    var aTag = a
+    if a.kind == Symbol:
+      aTag = typeImpl(a.symId)
+    inc f
+    assert f.kind == ParLe
+    result = aTag.kind == ParLe and f.tagId == aTag.tagId
+    inc f
+    assert f.kind == ParRi
+    inc f
+    assert f.kind == ParRi
+    inc f
+  else:
+    result = false
+
 proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
@@ -137,9 +184,11 @@ proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   elif a.kind == Symbol:
     let res = tryLoadSym(a.symId)
     assert res.status == LacksNothing
-    var typevar = asTypevar(res.decl)
-    if typevar.kind == TypevarY:
+    if res.decl.symKind == TypevarY:
+      var typevar = asTypevar(res.decl)
       result = matchesConstraint(m, f, typevar.typ)
+    elif res.decl.symKind == TypeY:
+      result = matchesConstraintAux(m, f, a)
   elif f.kind == Symbol:
     let res = tryLoadSym(f.symId)
     assert res.status == LacksNothing
@@ -148,39 +197,7 @@ proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
       result = matchesConstraint(m, typeImpl.body, a)
     inc f
   else:
-    case f.typeKind
-    of NotT:
-      inc f
-      if not matchesConstraint(m, f, a):
-        result = true
-      if f.kind != ParRi: result = false
-      skipToEnd f
-    of AndT:
-      inc f
-      result = true
-      while f.kind != ParRi:
-        if not matchesConstraint(m, f, a):
-          result = false
-          break
-      skipToEnd f
-    of OrT:
-      inc f
-      while f.kind != ParRi:
-        if matchesConstraint(m, f, a):
-          result = true
-          break
-      skipToEnd f
-    of ConceptT:
-      # XXX Use some algorithm here that can cache the result
-      # so that it can remember e.g. "int fulfils Fibable". For
-      # now this should be good enough for our purposes:
-      result = true
-      skip f
-    elif f.kind == ParLe and a.kind == ParLe:
-      result = f.tagId == a.tagId
-      inc f
-      if f.kind != ParRi: result = false
-      skipToEnd f
+    result = matchesConstraintAux(m, f, a)
 
 proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   let res = tryLoadSym(f)
@@ -207,6 +224,9 @@ proc linearMatch(m: var Match; f, a: var Cursor, containsStartTag = true) =
         if m.err: break
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
+        inc f
+        skip a
+        continue
       else:
         m.error concat(typeToString(a), " does not match constraint ", typeToString(f))
         break
@@ -393,6 +413,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       else:
         linearMatch m, f, a
       expectParRi m, f
+    of RangeT:
+      # for now acts the same as base type
+      var a = skipModifier(arg.typ)
+      inc f # skip to base type
+      linearMatch m, f, a
+      skip f
+      skip f
+      expectParRi m, f
     of ArrayT, SetT, UncheckedArrayT:
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
@@ -416,6 +444,16 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         inc f
       of PtrT:
         inc m.intCosts
+      else:
+        linearMatch m, f, a
+      expectParRi m, f
+    of PtrT, RefT:
+      var a = skipModifier(arg.typ)
+      case a.typeKind
+      of NilT:
+        discard "ok"
+        inc f
+        skip f
       else:
         linearMatch m, f, a
       expectParRi m, f
@@ -457,8 +495,8 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         if a.kind != ParRi:
           # len(a) > len(f)
           m.error expected(fOrig, aOrig)
-    of NoType, ObjectT, EnumT, VoidT, PtrT, RefT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, ProcT, IterT, AutoT, SymKindT:
+    of NoType, ObjectT, EnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
+        ConceptT, DistinctT, StaticT, ProcT, IterT, AutoT, SymKindT, TypeKindT:
       m.error "BUG: unhandled type: " & pool.tags[f.tagId]
   else:
     m.error "BUG: " & expected(f, arg.typ)

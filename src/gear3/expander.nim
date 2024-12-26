@@ -151,7 +151,6 @@ template loop(e: var EContext; c: var Cursor; body: untyped) =
       break
     of EofToken:
       error e, "expected ')', but EOF reached"
-      break
     else: discard
     body
 
@@ -200,7 +199,11 @@ proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}
   traverseType e, c, flags
   swap(result, e.dest)
 
+  inc c # skips TupleConstr
   traverseExpr e, c
+  skip c
+  skipParRi e, c
+
   wantParRi e, c
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
@@ -214,7 +217,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     inc c
   of ParLe:
     case c.typeKind
-    of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT:
+    of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT:
       error e, "type expected but got: ", c
     of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
@@ -234,7 +237,27 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.dest.add c
       inc c
       traverseType e, c
-      traverseExpr e, c
+      if c.typeKind == RangeT:
+        inc c
+        skip c
+        expectIntLit e, c
+        let first = pool.integers[c.intId]
+        inc c
+        expectIntLit e, c
+        let last = pool.integers[c.intId]
+        inc c
+        skipParRi e, c
+        e.dest.addIntLit(last - first + 1, c.info)
+      else:
+        # should not be possible, but assume length anyway
+        traverseExpr e, c
+      wantParRi e, c
+    of RangeT:
+      # skip to base type
+      inc c
+      traverseType e, c
+      skip c
+      skip c
       wantParRi e, c
     of UncheckedArrayT:
       if IsPointerOf in flags:
@@ -283,8 +306,13 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         let (s, sinfo) = getSym(e, c)
         e.dest.add symToken(s, sinfo)
         e.demand s
-      while c.substructureKind == FldS:
-        traverseField(e, c, flags)
+
+      if c.kind == DotToken:
+        e.dest.add c
+        inc c
+      else:
+        while c.substructureKind == FldS:
+          traverseField(e, c, flags)
 
       wantParRi e, c
     of EnumT:
@@ -344,7 +372,6 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
         break
       of EofToken:
         error e, "expected ')', but EOF reached"
-        break
       else: discard
       if c.kind == ParLe:
         let pk = c.pragmaKind
@@ -537,10 +564,23 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         traverseType(e, c)
         traverseExpr(e, c)
         inc nested
+      of DconvX:
+        inc c
+        var skipped = createTokenBuf()
+        swap skipped, e.dest
+        traverseType(e, c)
+        swap skipped, e.dest
+        traverseExpr(e, c)
+        skipParRi(e, c)
+      of OconstrX:
+        e.dest.add tagToken("oconstr", c.info)
+        inc c
+        traverseType(e, c)
+        inc nested
       else:
         e.dest.add c
-        inc nested
         inc c
+        inc nested
     of ParRi:
       e.dest.add c
       dec nested
@@ -729,11 +769,22 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       inc c
       e.loop c:
         traverseExpr e, c
-    of EmitS, AsgnS, RetS, CallS, DiscardS:
+    of EmitS, AsgnS, RetS, CallS:
       e.dest.add c
       inc c
       e.loop c:
         traverseExpr e, c
+    of DiscardS:
+      let discardToken = c
+      inc c
+      if c.kind == DotToken:
+        # eliminates discard without side effects
+        inc c
+        skipParRi e, c
+      else:
+        e.dest.add discardToken
+        traverseExpr e, c
+        wantParRi e, c
     of BreakS: traverseBreak e, c
     of WhileS: traverseWhile e, c
     of BlockS: traverseBlock e, c
