@@ -173,11 +173,8 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     inc f
     assert f.kind == ParRi
     inc f
-  elif f.kind == ParLe and a.kind == ParLe:
-    result = f.tagId == a.tagId
-    inc f
-    if f.kind != ParRi: result = false
-    skipToEnd f
+  else:
+    result = false
 
 proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
