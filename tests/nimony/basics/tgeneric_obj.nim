@@ -46,7 +46,7 @@ type
     b: U
   Slice*[T] = HSlice[T, T]
 
-proc `..`*[T, U](a: T, b: U): int = discard # : HSlice[T, U]
+proc `..`*[T, U](a: T, b: U): HSlice[T, U] = discard
 
 # needs `..` to compile for now:
 var myarr2: array[0..2, int] = myarr

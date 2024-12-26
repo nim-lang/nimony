@@ -1897,6 +1897,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     # can do its job properly:
     let key = typeToCanon(c.dest, typeStart)
     if c.instantiatedTypes.hasKey(key):
+      c.dest.shrink typeStart
       c.dest.add symToken(c.instantiatedTypes[key], info)
     else:
       var args = cursorAt(c.dest, beforeArgs)
