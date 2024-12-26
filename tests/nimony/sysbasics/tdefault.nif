@@ -165,7 +165,28 @@
    (efld :b.0.tde837gue . . Enum.0.tde837gue 
     (tup +1 "b")) 11
    (efld :c.0.tde837gue . . Enum.0.tde837gue 
-    (tup +2 "c")))) ,24
+    (tup +2 "c")))) 5,23
+ (proc :dollar`.Enum.0.tde837gue x . . 
+  (params 
+   (param :e . . Enum.0.tde837gue .))
+  (string) . . 
+  (stmts 7
+   (result :result.0 . . ~8,21,src/nimony/lib/std/system.nim
+    (string) .) 7
+   (case e 5
+    (of 
+     (set a.0.tde837gue) 
+     (stmts 
+      (ret "a"))) 8
+    (of 
+     (set b.0.tde837gue) 
+     (stmts 
+      (ret "b"))) 11
+    (of 
+     (set c.0.tde837gue) 
+     (stmts 
+      (ret "c"))))
+   (ret result.0))) ,24
  (discard 48,~9
   (stmts 1
    (conv ~34,9 Enum.0.tde837gue 1 +0))))

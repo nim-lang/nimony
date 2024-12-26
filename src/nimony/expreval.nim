@@ -184,5 +184,13 @@ proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
     result = createXint pool.integers[val.intId]
   of UIntLit:
     result = createXint pool.uintegers[val.uintId]
+  of ParLe:
+    case val.exprKind
+    of FalseX:
+      result = createXint(0'i64)
+    of TrueX:
+      result = createXint(1'i64)
+    else:
+      result = createNaN()
   else:
     result = createNaN()
