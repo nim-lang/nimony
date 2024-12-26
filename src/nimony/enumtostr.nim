@@ -45,11 +45,11 @@ proc genEnumToStrProcCase(dest: var TokenBuf; enumDecl: var Cursor; symId: SymId
 
   dest.addParRi() # case
 
-proc genEnumToStrProc*(dest: var TokenBuf, typeDecl: var Cursor; stringType: var Cursor) =
+proc genEnumToStrProc*(dest: var TokenBuf, typeDecl: var Cursor; stringType: Cursor) =
   let decl = asTypeDecl(typeDecl)
   let enumSymId = decl.name.symId
   let enumSymInfo = decl.name.info
-  let dollorName = "dollar." & pool.syms[enumSymId]
+  let dollorName = "dollar`." & pool.syms[enumSymId]
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
   dest.add tagToken("proc", enumSymInfo)
