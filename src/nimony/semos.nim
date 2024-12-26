@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
 import ".." / gear2 / modnames
 
 proc stdlibFile*(f: string): string =
-  getAppDir() / "lib" / f
+  currentSourcePath().parentDir() / "lib" / f
 
 proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =
   let nimFile = toResolve.addFileExt(".nim")

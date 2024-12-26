@@ -979,13 +979,14 @@ proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
 
 proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo) =
   const
-    IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT}
+    IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT}
     StringTypes = {StringT, CstringT}
 
   var srcType = skipModifier(arg.typ)
 
   # distinct type conversion?
   var isDistinct = false
+  # also skips to type body for symbols:
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
 
@@ -1038,7 +1039,7 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
   commonType c, it, beforeExpr, expected
 
 proc isCastableType(t: TypeCursor): bool =
-  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT}
+  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; it: var Item) =
@@ -1056,6 +1057,7 @@ proc semCast(c: var SemContext; it: var Item) =
 
   # distinct type conversion?
   var isDistinct = false
+  # also skips to type body for symbols:
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
   if destBase.isCastableType and srcBase.isCastableType:
@@ -2062,6 +2064,18 @@ proc semRangeType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   addRangeValues c, values
   wantParRi c, n
 
+proc tryTypeClass(c: var SemContext; n: var Cursor): bool =
+  # if the type tree has no children, interpret it as a type kind typeclass
+  var op = n
+  inc op
+  if op.kind == ParRi:
+    c.dest.addParLe(TypeKindT, n.info)
+    takeTree c, n
+    c.dest.addParRi()
+    result = true
+  else:
+    result = false
+
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   case n.kind
@@ -2095,13 +2109,17 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       else:
         c.buildErr info, "not a type", n
         skip n
-    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT, UntypedT, TypedT, CstringT, PointerT:
+    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT:
       takeTree c, n
     of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT, StaticT, TypedescT:
+      if tryTypeClass(c, n):
+        return
       takeToken c, n
       semLocalTypeImpl c, n, context
       wantParRi c, n
     of SetT:
+      if tryTypeClass(c, n):
+        return
       takeToken c, n
       let elemTypeStart = c.dest.len
       semLocalTypeImpl c, n, context
@@ -2122,10 +2140,16 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       semLocalTypeImpl c, n, context
       wantParRi c, n
     of TupleT:
+      if tryTypeClass(c, n):
+        return
       semTupleType c, n
     of ArrayT:
+      if tryTypeClass(c, n):
+        return
       semArrayType c, n, context
     of RangeT:
+      if tryTypeClass(c, n):
+        return
       semRangeType c, n, context
     of VarargsT:
       takeToken c, n
@@ -2140,16 +2164,16 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           n = it.n
       wantParRi c, n
     of ObjectT:
-      if context == InGenericConstraint:
-        c.dest.takeTree n
+      if tryTypeClass(c, n):
+        discard
       elif context != InTypeSection:
         c.buildErr info, "`object` type must be defined in a `type` section"
         skip n
       else:
         semObjectType c, n
     of EnumT:
-      if context == InGenericConstraint:
-        c.dest.takeTree n
+      if tryTypeClass(c, n):
+        discard
       else:
         c.buildErr info, "`enum` type must be defined in a `type` section"
         skip n
@@ -2168,6 +2192,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         semLocalTypeImpl c, n, context
         wantParRi c, n
     of ProcT, IterT:
+      if tryTypeClass(c, n):
+        return
       takeToken c, n
       wantDot c, n # name
       let beforeParams = c.dest.len
@@ -3491,7 +3517,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SetT, StaticT, TypedescT,
-            TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT, CstringT, PointerT:
+            TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT, CstringT, PointerT, TypeKindT:
           # every valid local type expression
           semLocalTypeExpr c, it
         of OrT, AndT, NotT, InvokeT:
