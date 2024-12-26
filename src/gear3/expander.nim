@@ -306,8 +306,13 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         let (s, sinfo) = getSym(e, c)
         e.dest.add symToken(s, sinfo)
         e.demand s
-      while c.substructureKind == FldS:
-        traverseField(e, c, flags)
+
+      if c.kind == DotToken:
+        e.dest.add c
+        inc c
+      else:
+        while c.substructureKind == FldS:
+          traverseField(e, c, flags)
 
       wantParRi e, c
     of EnumT:
