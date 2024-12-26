@@ -30,3 +30,10 @@ proc foo(x: int; y: string): int =
 proc overloaded() =
   let someInt = `+`(23, 90)
   discard foo(34+56, "xyz")
+
+type uint* {.magic: UInt.}
+
+template conv[T](x: int): T = T(x)
+
+let val = 123
+discard conv[uint](val)
