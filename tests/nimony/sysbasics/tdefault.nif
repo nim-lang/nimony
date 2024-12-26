@@ -124,8 +124,8 @@
   (params 1
    (param :x.15 . . 11
     (typedesc 1 T.0) .)) 18 T.0 . . 48
-  (stmts 
-   (cast 5 T.0 8 +0))) ,17
+  (stmts 1
+   (conv ~10 T.0 1 +0))) ,17
  (template 9 :default.16.tde837gue x . 17
   (typevars 1
    (typevar :T.1 . . 3
@@ -167,5 +167,5 @@
    (efld :c.0.tde837gue . . Enum.0.tde837gue 
     (tup +2 "c")))) ,24
  (discard 48,~9
-  (stmts 
-   (cast ~33,9 Enum.0.tde837gue 8 +0))))
+  (stmts 1
+   (conv ~34,9 Enum.0.tde837gue 1 +0))))

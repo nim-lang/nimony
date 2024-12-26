@@ -12,6 +12,7 @@ import nimony_model, decls, programs, xints, semdata
 type
   EvalContext* = object
     c: ptr SemContext
+    noSideEffect*: bool
     values: seq[TokenBuf]
     trueValue, falseValue: Cursor
 
@@ -30,8 +31,8 @@ proc isConstStringValue*(n: Cursor): bool =
 proc isConstCharValue*(n: Cursor): bool =
   n.kind == CharLit
 
-proc initEvalContext*(c: ptr SemContext): EvalContext =
-  result = EvalContext(c: c, values: @[])
+proc initEvalContext*(c: ptr SemContext, noSideEffect = false): EvalContext =
+  result = EvalContext(c: c, noSideEffect: noSideEffect, values: @[])
 
 proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
@@ -167,14 +168,14 @@ proc eval*(c: var EvalContext, n: var Cursor): Cursor =
   else:
     error "cannot evaluate expression at compile time: " & toString(n, false), n.info
 
-proc evalExpr*(c: var SemContext, n: var Cursor): TokenBuf =
-  var ec = initEvalContext(addr c)
+proc evalExpr*(c: var SemContext, n: var Cursor, noSideEffect = false): TokenBuf =
+  var ec = initEvalContext(addr c, noSideEffect)
   let val = eval(ec, n)
   result = createTokenBuf(val.span)
   result.addSubtree val
 
-proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
-  var ec = initEvalContext(addr c)
+proc evalOrdinal*(c: var SemContext, n: Cursor, noSideEffect = false): xint =
+  var ec = initEvalContext(addr c, noSideEffect)
   var n0 = n
   let val = eval(ec, n0)
   case val.kind
