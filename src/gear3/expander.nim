@@ -758,11 +758,22 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       inc c
       e.loop c:
         traverseExpr e, c
-    of EmitS, AsgnS, RetS, CallS, DiscardS:
+    of EmitS, AsgnS, RetS, CallS:
       e.dest.add c
       inc c
       e.loop c:
         traverseExpr e, c
+    of DiscardS:
+      let discardToken = c
+      inc c
+      if c.kind == DotToken:
+        # eliminates discard without side effects
+        inc c
+        skipParRi e, c
+      else:
+        e.dest.add discardToken
+        traverseExpr e, c
+        wantParRi e, c
     of BreakS: traverseBreak e, c
     of WhileS: traverseWhile e, c
     of BlockS: traverseBlock e, c
