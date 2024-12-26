@@ -132,6 +132,7 @@ iterator inheritanceChain(s: SymId): SymId =
 proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool
 
 proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
+  result = false
   case f.typeKind
   of NotT:
     inc f
