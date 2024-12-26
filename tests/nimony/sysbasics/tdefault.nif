@@ -1,0 +1,171 @@
+(.nif24)
+,1,tests/nimony/sysbasics/tdefault.nim(stmts 
+ (template 9 :default.0.tde837gue x . . 17
+  (params 1
+   (param :x.0 . . 11
+    (typedesc ~1,60,src/nimony/lib/std/system.nim
+     (bool)) .)) 28,60,src/nimony/lib/std/system.nim
+  (bool) . . 45
+  (stmts ~45,32,src/nimony/lib/std/system.nim
+   (false))) ,1
+ (template 9 :default.1.tde837gue x . . 17
+  (params 1
+   (param :x.1 . . 11
+    (typedesc ~25,41,src/nimony/lib/std/system.nim
+     (c +8)) .)) 4,41,src/nimony/lib/std/system.nim
+  (c +8) . . 45
+  (stmts '\00')) ,2
+ (template 9 :default.2.tde837gue x . . 17
+  (params 1
+   (param :x.2 . . 11
+    (typedesc ~25,4,src/nimony/lib/std/system.nim
+     (i -1)) .)) 4,4,src/nimony/lib/std/system.nim
+  (i -1) . . 43
+  (stmts +0)) ,3
+ (template 9 :default.3.tde837gue x . . 17
+  (params 1
+   (param :x.3 . . 11
+    (typedesc ~25,15,src/nimony/lib/std/system.nim
+     (u -1)) .)) 4,15,src/nimony/lib/std/system.nim
+  (u -1) . . 45
+  (stmts +0u)) ,4
+ (template 9 :default.4.tde837gue x . . 17
+  (params 1
+   (param :x.4 . . 11
+    (typedesc ~25,6,src/nimony/lib/std/system.nim
+     (i +8)) .)) 4,6,src/nimony/lib/std/system.nim
+  (i +8) . . 45
+  (stmts 
+   (suf +0 "i8"))) ,5
+ (template 9 :default.5.tde837gue x . . 17
+  (params 1
+   (param :x.5 . . 11
+    (typedesc ~25,15,src/nimony/lib/std/system.nim
+     (u +8)) .)) 4,15,src/nimony/lib/std/system.nim
+  (u +8) . . 47
+  (stmts 
+   (suf +0u "u8"))) ,6
+ (template 9 :default.6.tde837gue x . . 17
+  (params 1
+   (param :x.6 . . 11
+    (typedesc ~25,6,src/nimony/lib/std/system.nim
+     (i +16)) .)) 4,6,src/nimony/lib/std/system.nim
+  (i +16) . . 47
+  (stmts 
+   (suf +0 "i16"))) ,7
+ (template 9 :default.7.tde837gue x . . 17
+  (params 1
+   (param :x.7 . . 11
+    (typedesc ~25,15,src/nimony/lib/std/system.nim
+     (u +16)) .)) 4,15,src/nimony/lib/std/system.nim
+  (u +16) . . 49
+  (stmts 
+   (suf +0u "u16"))) ,8
+ (template 9 :default.8.tde837gue x . . 17
+  (params 1
+   (param :x.8 . . 11
+    (typedesc ~25,6,src/nimony/lib/std/system.nim
+     (i +32)) .)) 4,6,src/nimony/lib/std/system.nim
+  (i +32) . . 47
+  (stmts 
+   (suf +0 "i32"))) ,9
+ (template 9 :default.9.tde837gue x . . 17
+  (params 1
+   (param :x.9 . . 11
+    (typedesc ~25,15,src/nimony/lib/std/system.nim
+     (u +32)) .)) 4,15,src/nimony/lib/std/system.nim
+  (u +32) . . 49
+  (stmts 
+   (suf +0u "u32"))) ,10
+ (template 9 :default.10.tde837gue x . . 17
+  (params 1
+   (param :x.10 . . 11
+    (typedesc ~25,6,src/nimony/lib/std/system.nim
+     (i +64)) .)) 4,6,src/nimony/lib/std/system.nim
+  (i +64) . . 47
+  (stmts 
+   (suf +0 "i64"))) ,11
+ (template 9 :default.11.tde837gue x . . 17
+  (params 1
+   (param :x.11 . . 11
+    (typedesc ~25,15,src/nimony/lib/std/system.nim
+     (u +64)) .)) 4,15,src/nimony/lib/std/system.nim
+  (u +64) . . 49
+  (stmts 
+   (suf +0u "u64"))) ,12
+ (template 9 :default.12.tde837gue x . . 17
+  (params 1
+   (param :x.12 . . 11
+    (typedesc ~25,22,src/nimony/lib/std/system.nim
+     (f +32)) .)) 4,22,src/nimony/lib/std/system.nim
+  (f +32) . . 51
+  (stmts 
+   (suf +0.0 "f32"))) ,13
+ (template 9 :default.13.tde837gue x . . 17
+  (params 1
+   (param :x.13 . . 11
+    (typedesc ~25,23,src/nimony/lib/std/system.nim
+     (f +64)) .)) 4,23,src/nimony/lib/std/system.nim
+  (f +64) . . 51
+  (stmts 
+   (suf +0.0 "f64"))) ,14
+ (template 9 :default.14.tde837gue x . . 17
+  (params 1
+   (param :x.14 . . 11
+    (typedesc ~25,30,src/nimony/lib/std/system.nim
+     (string)) .)) 4,30,src/nimony/lib/std/system.nim
+  (string) . . 49
+  (stmts "")) ,15
+ (template 9 :default.15.tde837gue x . 17
+  (typevars 1
+   (typevar :T.0 . . 3
+    (typekind 
+     (enum)) .)) 26
+  (params 1
+   (param :x.15 . . 11
+    (typedesc 1 T.0) .)) 18 T.0 . . 48
+  (stmts 1
+   (conv ~10 T.0 1 +0))) ,17
+ (template 9 :default.16.tde837gue x . 17
+  (typevars 1
+   (typevar :T.1 . . 3
+    (typekind 
+     (ptr)) .)) 25
+  (params 1
+   (param :x.16 . . 11
+    (typedesc 1 T.1) .)) 18 T.1 . . 47
+  (stmts 1
+   (conv ~10 T.1 1
+    (nil)))) ,18
+ (template 9 :default.17.tde837gue x . 17
+  (typevars 1
+   (typevar :T.2 . . 3
+    (typekind 
+     (ref)) .)) 25
+  (params 1
+   (param :x.17 . . 11
+    (typedesc 1 T.2) .)) 18 T.2 . . 47
+  (stmts 1
+   (conv ~10 T.2 1
+    (nil)))) ,19
+ (discard 49,~5
+  (stmts "")) ,20
+ (discard 43,~18
+  (stmts +0)) ,22
+ (discard 47,~5
+  (stmts 1
+   (conv ~32,5
+    (ptr ~12,~16,src/nimony/lib/std/system.nim
+     (i -1)) 1
+    (nil)))) 10,23
+ (type ~5 :Enum.0.tde837gue . . . 2
+  (enum 5
+   (efld :a.0.tde837gue . . Enum.0.tde837gue 
+    (tup +0 "a")) 8
+   (efld :b.0.tde837gue . . Enum.0.tde837gue 
+    (tup +1 "b")) 11
+   (efld :c.0.tde837gue . . Enum.0.tde837gue 
+    (tup +2 "c")))) ,24
+ (discard 48,~9
+  (stmts 1
+   (conv ~34,9 Enum.0.tde837gue 1 +0))))

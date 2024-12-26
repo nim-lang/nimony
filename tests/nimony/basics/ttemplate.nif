@@ -60,7 +60,7 @@
   (stmts 4
    (result :result.0 . . ~4,~23
     (i -1) .) 4
-   (var :x.3 . .
+   (var :x.4 . .
     (string) 4 "abc") 7,1
    (asgn ~7 result.0 23,~4
     (stmts 2
@@ -69,7 +69,7 @@
       (stmts 2
        (add ~32,~20
         (i -1) ~10,4 +2 ~7,4 +89))))) 2,2
-   (asgn ~2 x.3 2 "34") ~2,~1
+   (asgn ~2 x.4 2 "34") ~2,~1
    (ret result.0))) ,28
  (proc 5 :overloaded.0.tte6j7czy . . . 15
   (params) . . . 2,1
@@ -81,7 +81,25 @@
    (discard 11
     (call ~3 foo.0.tte6j7czy 3
      (add
-      (i -1) ~2 +34 1 +56) 8 "xyz")))) 19,13
+      (i -1) ~2 +34 1 +56) 8 "xyz")))) 5,32
+ (type :uint.0.tte6j7czy 
+  (u -1) . 6
+  (pragmas 2
+   (magic 7 UInt)) .) ,34
+ (template 9 :conv.0.tte6j7czy . . 13
+  (typevars 1
+   (typevar :T.2 . . . .)) 16
+  (params 1
+   (param :x.3 . . ~15,~33
+    (i -1) .)) 10 T.2 . . 30
+  (stmts 1
+   (conv 1 T.2 1 x.3))) 4,36
+ (let :val.0.tte6j7czy . .
+  (i -1) 6 +123) ,37
+ (discard 30,~3
+  (stmts 1
+   (conv ~26,~2
+    (u -1) ~12,3 val.0.tte6j7czy))) 19,13
  (type :MyGeneric.1.tte6j7czy . 
   (at MyGeneric.0.tte6j7czy ~17,~12
    (i -1)) ~4,~4 . ~2,~4

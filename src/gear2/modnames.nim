@@ -32,7 +32,6 @@ proc uhash(s: string): UHash =
 # ------------------------------------------
 
 from std / os import splitFile, relativePath, isAbsolute, getCurrentDir, `/`
-from std / strutils import replace
 
 proc extractModulename(x: string): string = splitFile(x).name
 
@@ -49,8 +48,6 @@ proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
     let candidate = relativePath(path, s, '/')
     if candidate.len < f.len:
       f = candidate
-  #when defined(windows): path.replace('\\', '/') else: path
-  #pathutils.customPath(path)
   let m = extractModulename(f)
   var id = uhash(f)
   result = newStringOfCap(10)

@@ -14,8 +14,8 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
 
 import ".." / gear2 / modnames
 
-proc stdFile(f: string): string =
-  getAppDir() / "lib" / f
+proc stdlibFile*(f: string): string =
+  currentSourcePath().parentDir() / "lib" / f
 
 proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =
   let nimFile = toResolve.addFileExt(".nim")
@@ -187,5 +187,5 @@ proc getFile*(info: PackedLineInfo): string =
   let (fid, _, _) = unpack(pool.man, info)
   result = pool.files[fid]
 
-proc selfExec*(c: var SemContext; file: string) =
-  exec os.getAppFilename() & c.commandLineArgs & " --ischild m " & quoteShell(file)
+proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
+  exec os.getAppFilename() & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)

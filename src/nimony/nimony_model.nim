@@ -45,6 +45,7 @@ type
     FromImportS = "from"
     ImportExceptS = "importexcept"
     ExportS = "export"
+    CommentS = "comment"
 
   SymKind* = enum
     NoSym
@@ -172,6 +173,7 @@ type
     SetT = "sett"
     AutoT = "auto"
     SymKindT = "symkind"
+    TypeKindT = "typekind"
     TypedescT = "typedesc"
     UntypedT = "untyped"
     TypedT = "typed"
@@ -195,6 +197,7 @@ type
     NoReturn = "noreturn"
     Varargs = "varargs"
     Borrow = "borrow"
+    NoSideEffect = "noSideEffect"
 
   SubstructureKind* = enum
     NoSub
