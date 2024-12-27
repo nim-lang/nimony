@@ -1665,8 +1665,18 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
       # maybe substitution performed here?
       inc c.usedTypevars
     elif beforeMagic != afterMagic:
-      # was magic, nothing to do
-      discard
+      # was magic symbol, may be typeclass, otherwise nothing to do
+      if context == InGenericConstraint:
+        let magic = cursorAt(c.dest, start).typeKind
+        endRead(c.dest)
+        # magic types that are just symbols and not in the syntax:
+        if magic in {ArrayT, SetT, RangeT}:
+          var typeclassBuf = createTokenBuf(4)
+          typeclassBuf.addParLe(TypeKindT, info)
+          typeclassBuf.addParLe(magic, info)
+          typeclassBuf.addParRi()
+          typeclassBuf.addParRi()
+          replace(c.dest, cursorAt(typeclassBuf, 0), start)
     else:
       let typ = asTypeDecl(res.decl)
       if typ.body.typeKind in {ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}:
@@ -2079,6 +2089,15 @@ proc tryTypeClass(c: var SemContext; n: var Cursor): bool =
   else:
     result = false
 
+proc isOrExpr(n: Cursor): bool =
+  # old nim special cases `|` infixes in type contexts
+  result = n.exprKind == InfixX
+  if result:
+    var n = n
+    inc n
+    let name = getIdent(n)
+    result = name != StrId(0) and pool.strings[name] == "|"
+
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   case n.kind
@@ -2099,6 +2118,22 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         let start = c.dest.len
         let s = semQuoted(c, n)
         semTypeSym c, s, info, start, context
+      elif isOrExpr(n):
+        c.dest.addParLe(OrT, info)
+        inc n # tag
+        inc n # `|`
+        var nested = 1
+        while nested != 0:
+          if isOrExpr(n):
+            inc n # tag
+            inc n # `|`
+            inc nested
+          elif n.kind == ParRi:
+            inc n
+            dec nested
+          else:
+            semLocalTypeImpl c, n, context
+        c.dest.addParRi()
       elif context == AllowValues:
         # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
         var it = Item(n: n, typ: c.types.autoType)
@@ -2112,7 +2147,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       else:
         c.buildErr info, "not a type", n
         skip n
-    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT:
+    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT,
+        SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
       takeTree c, n
     of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT, StaticT, TypedescT:
       if tryTypeClass(c, n):
@@ -2139,8 +2175,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           c.buildErr info, "type " & typeToString(elemType) & " is too large to be a set element type"
     of OrT, AndT:
       takeToken c, n
-      semLocalTypeImpl c, n, context
-      semLocalTypeImpl c, n, context
+      while n.kind != ParRi:
+        semLocalTypeImpl c, n, context
       wantParRi c, n
     of TupleT:
       if tryTypeClass(c, n):
@@ -3864,7 +3900,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SetT, StaticT, TypedescT,
-            TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT, CstringT, PointerT, TypeKindT:
+            TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT,
+            CstringT, PointerT, TypeKindT, OrdinalT:
           # every valid local type expression
           semLocalTypeExpr c, it
         of OrT, AndT, NotT, InvokeT:

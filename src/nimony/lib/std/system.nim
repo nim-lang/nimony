@@ -59,6 +59,22 @@ proc unpackToCall(fn: untyped) {.magic: Unpack.}
 const
   isMainModule* {.magic: "IsMainModule".}: bool = false
 
+type
+  Ordinal*[T] {.magic: Ordinal.} ## Generic ordinal type. Includes integer,
+                                  ## bool, character, and enumeration types
+                                  ## as well as their subtypes. See also
+                                  ## `SomeOrdinal`.
+
+type
+  range*[T]{.magic: "Range".}         ## Generic type to construct range types.
+  array*[I, T]{.magic: "Array".}      ## Generic type to construct
+                                      ## fixed-length arrays.
+
+proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect.}
+proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
+proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
+proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
+
 # integer calculations:
 proc `+`*(x: int8): int8 {.magic: "UnaryPlusI", noSideEffect.}
 proc `+`*(x: int16): int16 {.magic: "UnaryPlusI", noSideEffect.}
@@ -306,9 +322,6 @@ template `>=`*(x, y: untyped): untyped =
 template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
-
-proc low*[T](x: typedesc[T]): typed {.magic: Low.}
-proc high*[T](x: typedesc[T]): typed {.magic: High.}
 
 template default*(x: typedesc[bool]): bool = false
 template default*(x: typedesc[char]): char = '\0'
