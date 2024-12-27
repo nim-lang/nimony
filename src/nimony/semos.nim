@@ -16,7 +16,7 @@ import ".." / gear2 / modnames
 
 proc stdlibFile*(f: string): string =
   let appDir = getAppDir()
-  let (head, tail) = splitPath(f)
+  let (head, tail) = splitPath(appDir)
   if tail == "bin":
     result = head / "lib" / f
   else:
