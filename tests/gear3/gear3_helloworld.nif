@@ -9,6 +9,9 @@
     (fld :b.0.tesg7afhq1 . . ~22,~6
       (i -1) .)))
 
+  (type ~9 :EmptyObj.0.tesg7afhq1 . . . 2
+    (object . .))
+
  (type ~6 :Color.0.tesg7afhq1 . . . 2
   (enum ,1
    (efld ~6 :Red.0.tesg7afhq1 . .

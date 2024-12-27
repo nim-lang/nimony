@@ -306,8 +306,13 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         let (s, sinfo) = getSym(e, c)
         e.dest.add symToken(s, sinfo)
         e.demand s
-      while c.substructureKind == FldS:
-        traverseField(e, c, flags)
+
+      if c.kind == DotToken:
+        e.dest.add c
+        inc c
+      else:
+        while c.substructureKind == FldS:
+          traverseField(e, c, flags)
 
       wantParRi e, c
     of EnumT:
@@ -552,19 +557,30 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         swap skipped, e.dest
         traverseType(e, c)
         swap skipped, e.dest
+        inc nested
       of ConvX, CastX:
         e.dest.add c
         inc c
         traverseType(e, c)
         traverseExpr(e, c)
+        inc nested
+      of DconvX:
+        inc c
+        var skipped = createTokenBuf()
+        swap skipped, e.dest
+        traverseType(e, c)
+        swap skipped, e.dest
+        traverseExpr(e, c)
+        skipParRi(e, c)
       of OconstrX:
         e.dest.add tagToken("oconstr", c.info)
         inc c
         traverseType(e, c)
+        inc nested
       else:
         e.dest.add c
         inc c
-      inc nested
+        inc nested
     of ParRi:
       e.dest.add c
       dec nested
@@ -753,11 +769,22 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       inc c
       e.loop c:
         traverseExpr e, c
-    of EmitS, AsgnS, RetS, CallS, DiscardS:
+    of EmitS, AsgnS, RetS, CallS:
       e.dest.add c
       inc c
       e.loop c:
         traverseExpr e, c
+    of DiscardS:
+      let discardToken = c
+      inc c
+      if c.kind == DotToken:
+        # eliminates discard without side effects
+        inc c
+        skipParRi e, c
+      else:
+        e.dest.add discardToken
+        traverseExpr e, c
+        wantParRi e, c
     of BreakS: traverseBreak e, c
     of WhileS: traverseWhile e, c
     of BlockS: traverseBlock e, c
