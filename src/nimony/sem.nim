@@ -738,6 +738,7 @@ proc pickBestMatch(c: var SemContext; m: openArray[Match]): int =
         case cmpMatches(m[result], m[i])
         of NobodyWins:
           other = i
+          #echo "ambiguous ", pool.syms[m[result].fn.sym], " vs ", pool.syms[m[i].fn.sym]
         of FirstWins:
           discard "result remains the same"
         of SecondWins:
@@ -979,7 +980,7 @@ proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
 
 proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo) =
   const
-    IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT}
+    IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT}
     StringTypes = {StringT, CstringT}
 
   var srcType = skipModifier(arg.typ)
@@ -1039,7 +1040,7 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
   commonType c, it, beforeExpr, expected
 
 proc isCastableType(t: TypeCursor): bool =
-  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT}
+  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT, HoleyEnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; it: var Item) =
@@ -1668,7 +1669,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
       discard
     else:
       let typ = asTypeDecl(res.decl)
-      if typ.body.typeKind in {ObjectT, EnumT, DistinctT, ConceptT}:
+      if typ.body.typeKind in {ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}:
         # types that should stay as symbols, see sigmatch.matchSymbol
         discard
       else:
@@ -1731,7 +1732,7 @@ type
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState)
 
 proc semEnumType(c: var SemContext; n: var Cursor; enumType: SymId; beforeExportMarker: int) =
-  # XXX Propagate hasHole somehow
+  let start = c.dest.len
   takeToken c, n
   let magicToken = c.dest[beforeExportMarker]
   var state = EnumTypeState(enumType: enumType, thisValue: createXint(0'i64), hasHole: false,
@@ -1739,6 +1740,8 @@ proc semEnumType(c: var SemContext; n: var Cursor; enumType: SymId; beforeExport
   while n.substructureKind == EfldS:
     semEnumField(c, n, state)
     inc state.thisValue
+  if state.hasHole:
+    c.dest[start] = parLeToken(HoleyEnumT, c.dest[start].info)
   wantParRi c, n
 
 proc declareConceptSelf(c: var SemContext; info: PackedLineInfo) =
@@ -2037,13 +2040,13 @@ proc semArrayType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
       # unresolved types are left alone
       c.dest.addSubtree index
     elif index.typeKind != NoType:
-      c.buildErr index.info, "unknown array index type: " & typeToString(index)
+      c.buildErr index.info, "invalid array index type: " & typeToString(index)
     else:
       # length expression
       var err = false
       let length = asSigned(evalOrdinal(c, index), err)
       if err:
-        c.buildErr index.info, "invalid array index: " & typeToString(index)
+        c.buildErr index.info, "invalid array index type: " & typeToString(index)
       else:
         c.dest.addParLe(RangeT, info)
         c.dest.addSubtree c.types.intType
@@ -2171,7 +2174,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         skip n
       else:
         semObjectType c, n
-    of EnumT:
+    of EnumT, HoleyEnumT:
       if tryTypeClass(c, n):
         discard
       else:
@@ -2989,7 +2992,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     if n.kind == DotToken:
       takeToken c, n
     else:
-      if n.typeKind == EnumT:
+      if n.typeKind in {EnumT, HoleyEnumT}:
         semEnumType(c, n, delayed.s.name, beforeExportMarker)
         isEnumTypeDecl = true
       else:
@@ -3658,7 +3661,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           else:
             buildErr c, it.n.info, "expression expected; tag: " & pool.tags[it.n.tag]
             skip it.n
-        of ObjectT, EnumT, DistinctT, ConceptT:
+        of ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
