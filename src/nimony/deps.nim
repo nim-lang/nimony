@@ -45,7 +45,7 @@ type
 
   DepContext = object
     forceRebuild: bool
-    nifler: string
+    nifler, nimsem: string
     config: NifConfig
     nodes: seq[Node]
     rootNode: Node
@@ -183,8 +183,19 @@ proc execNifler(c: var DepContext; input, output: string) =
       getLastModificationTime(output) > getLastModificationTime(input):
     discard "nothing to do"
   else:
-    exec quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
+    let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
       quoteShell(output)
+    exec cmd
+
+proc importSystem(c: var DepContext; current: Node) =
+  let p = c.toPair(stdlibFile("std/system.nim"))
+  current.deps.add p
+  if not c.processedModules.containsOrIncl(p.modname):
+    #echo "NIFLING ", p.nimFile, " -> ", parsedFile(p)
+    execNifler c, p.nimFile, parsedFile(p)
+    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
+    c.nodes.add imported
+    parseDeps c, p, imported
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
   execNifler c, p.nimFile, parsedFile(p)
@@ -195,33 +206,20 @@ proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
     discard processDirectives(stream.r)
     var buf = fromStream(stream)
     processDeps c, beginRead(buf), current
-    if {SkipSystem, IsSystem} * c.moduleFlags == {}:
-      importSingleFile c, stdlibFile("std/system"), NoLineInfo, current, true
+    if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
+      importSystem c, current
   finally:
     nifstreams.close(stream)
-
-proc nimexec*(cmd: string) =
-  let t = findExe("nim")
-  if t.len == 0:
-    quit("FAILURE: cannot find nim.exe / nim binary")
-  exec quoteShell(t) & " " & cmd
-
-proc requiresTool*(tool, src: string; forceRebuild: bool) =
-  let t = findTool(tool)
-  if not fileExists(t) or forceRebuild:
-    nimexec("c -d:release " & src)
-    moveFile src.changeFileExt(ExeExt), t
 
 proc mescape(p: string): string =
   when defined(windows):
     result = p.replace("\\", "/")
   else:
-    result = p
+    result = p.replace(":", "\\:") # Rule separators
   result = result.multiReplace({
     " ": "\\ ",   # Spaces
     "#": "\\#",   # Comments
     "$": "$$",    # Variables
-    ":": "\\:",   # Rule separators
     "(": "\\(",   # Function calls
     ")": "\\)",
     "*": "\\*",   # Wildcards
@@ -232,7 +230,7 @@ proc mescape(p: string): string =
 proc generateMakefile(c: DepContext; commandLineArgs: string): string =
   var s = ""
   s.add "# Auto-generated Makefile\n"
-  s.add "export PATH := " & mescape(os.getAppDir()) & ":$(PATH)\n"
+  s.add "PATH := " & mescape(os.getAppDir()) & ":$(PATH)\nexport PATH\n"
   s.add "\n.PHONY: all\n"
   s.add "\nall: " & mescape indexFile(c.rootNode.files[0])
 
@@ -250,7 +248,7 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
     let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "")
-    s.add "\n\tnimsem " & args & " m " & mescape(parsedFile(v.files[0])) & " " &
+    s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(parsedFile(v.files[0])) & " " &
       mescape(semmedFile(v.files[0])) & " " & mescape(indexFile(v.files[0]))
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
@@ -261,7 +259,7 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
       if not seenFiles.containsOrIncl(f):
         let nimFile = v.files[i].nimFile
         s.add "\n" & mescape(f) & ": " & mescape(nimFile)
-        s.add "\n\tnifler --portablePaths --deps parse " & mescape(nimFile) & " " &
+        s.add "\n\t" & mescape(c.nifler) & " --portablePaths --deps parse " & mescape(nimFile) & " " &
           mescape(f)
 
   result = "nifcache" / c.rootNode.files[0].modname & ".makefile"
@@ -278,7 +276,7 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: 
     parseNifConfig cfgNif, config
 
   var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
-    forceRebuild: forceRebuild, moduleFlags: moduleFlags)
+    forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"))
   let p = c.toPair(project)
   c.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
   c.nodes.add c.rootNode

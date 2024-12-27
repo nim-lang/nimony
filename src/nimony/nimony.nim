@@ -41,18 +41,6 @@ Options:
 proc writeHelp() = quit(Usage, QuitSuccess)
 proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
-proc nimexec(cmd: string) =
-  let t = findExe("nim")
-  if t.len == 0:
-    quit("FAILURE: cannot find nim.exe / nim binary")
-  exec quoteShell(t) & " " & cmd
-
-proc requiresTool(tool, src: string; forceRebuild: bool) =
-  let t = findTool(tool)
-  if not fileExists(t) or forceRebuild:
-    nimexec("c -d:release " & src)
-    moveFile src.changeFileExt(ExeExt), t
-
 proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                          commandLineArgs: string; forceRebuild: bool) =
   let nifler = findTool("nifler")
@@ -144,12 +132,14 @@ proc handleCmdLine() =
   of SingleModule:
     if not isChild:
       createDir("nifcache")
+      createDir(binDir())
       requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
       requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
     createDir("nifcache")
+    createDir(binDir())
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
     buildGraph config, args[0], compat, forceRebuild, commandLineArgs, moduleFlags

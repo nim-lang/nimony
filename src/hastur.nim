@@ -133,7 +133,7 @@ proc markersToCmdLine(s: seq[LineInfo]): string =
     result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
 
 proc execLocal(exe, cmd: string): (string, int) =
-  let bin = "." / exe.addFileExt(ExeExt)
+  let bin = "src/nimony/bin" / exe.addFileExt(ExeExt)
   result = osproc.execCmdEx(bin & " " & cmd)
 
 type
@@ -143,8 +143,13 @@ type
     Tracked # tracked tests: These are processed and can contain "track info"
             # for line, col, filename extraction (useful for nimsuggest-like tests)
 
+proc toCommand(cat: Category): string =
+  case cat
+  of Basics: "m"
+  of Normal, Tracked: "c"
+
 proc execNimony(cmd: string; cat: Category): (string, int) =
-  result = execLocal("nimony", (if cat == Basics: "--noSystem " else: "") & cmd)
+  result = execLocal("nimony", toCommand(cat) & " " & cmd)
 
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
@@ -152,7 +157,7 @@ proc generatedFile(orig, ext: string): string =
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   inc c.total
-  var nimonycmd = "m --isMain"
+  var nimonycmd = (if cat == Basics: "--noSystem " else: "") & "--isMain"
   if cat == Tracked:
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file), cat)
@@ -268,13 +273,13 @@ type
 
 proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
   # Records a new test case.
-  let (compilerOutput, compilerExitCode) = execNimony("m " & quoteShell(file), cat)
+  let (compilerOutput, compilerExitCode) = execNimony(quoteShell(file), cat)
   if compilerExitCode == 1:
     let idx = compilerOutput.find(ErrorKeyword)
     assert idx >= 0, "compiler output did not contain: " & ErrorKeyword
     copyFile file, test
     # run the test again so that the error messages contain the correct paths:
-    let (finalCompilerOutput, finalCompilerExitCode) = osproc.execCmdEx("nimony m " & quoteShell(test))
+    let (finalCompilerOutput, finalCompilerExitCode) = execNimony(quoteShell(test), cat)
     assert finalCompilerExitCode == 1, "the compiler should have failed once again"
     gitAdd test
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
@@ -287,7 +292,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
 
     addTestCode test, file
     if {RecordCodegen, RecordAst} * flags != {}:
-      let (finalCompilerOutput, finalCompilerExitCode) = osproc.execCmdEx("nimony m " & quoteShell(test))
+      let (finalCompilerOutput, finalCompilerExitCode) = execNimony(quoteShell(test), cat)
       assert finalCompilerExitCode == 0, finalCompilerOutput
 
     if RecordCodegen in flags:
@@ -298,20 +303,23 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
       let nif = generatedFile(test, ".2.nif")
       addTestCode test.changeFileExt(".nif"), nif
 
+proc binDir*(): string =
+  result = "src/nimony/bin"
+
 proc buildNimony() =
   exec "nim c src/nimony/nimony.nim"
   let exe = "nimony".addFileExt(ExeExt)
-  moveFile "src/nimony/" & exe, exe
+  moveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNifc() =
   exec "nim c src/nifc/nifc.nim"
   let exe = "nifc".addFileExt(ExeExt)
-  moveFile "src/nifc/" & exe, exe
+  moveFile "src/nifc/" & exe, binDir() / exe
 
 proc buildGear3() =
   exec "nim c src/gear3/gear3.nim"
   let exe = "gear3".addFileExt(ExeExt)
-  moveFile "src/gear3/" & exe, exe
+  moveFile "src/gear3/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -379,6 +387,8 @@ proc handleCmdLine =
     of cmdEnd: assert false, "cannot happen"
   if primaryCmd.len == 0:
     primaryCmd = "all"
+
+  createDir binDir()
 
   case primaryCmd
   of "all":
