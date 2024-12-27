@@ -103,15 +103,15 @@ jobs:
           echo '${{ github.workspace }}'"/external/mingw-${{ matrix.target.cpu }}/bin" >> $GITHUB_PATH
           echo '${{ github.workspace }}'"/external/dlls-${{ matrix.target.cpu }}" >> $GITHUB_PATH
 
-      # - name: Install winget
-      #   if: runner.os == 'Windows'
-      #   uses: Cyberboss/install-winget@v1
-      #   with:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install winget
+        if: runner.os == 'Windows'
+        uses: Cyberboss/install-winget@v1
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # - name: Install make dependencies (Windows)
-      #   if: runner.os == 'Windows'
-      #   run: winget install ezwinports.make --disable-interactivity --accept-source-agreements
+      - name: Install make dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: winget install ezwinports.make --disable-interactivity --accept-source-agreements
 
       # - name: Restore Nim from cache
       #   if: >
