@@ -18,7 +18,7 @@ proc stdlibFile*(f: string): string =
   let appDir = getAppDir()
   let (head, tail) = splitPath(f)
   if tail == "bin":
-    result = head / "lib" / f
+    result = head / "src/nimony/lib" / f
   else:
     result = appDir / "lib" / f
 
