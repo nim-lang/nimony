@@ -738,7 +738,7 @@ proc pickBestMatch(c: var SemContext; m: openArray[Match]): int =
         case cmpMatches(m[result], m[i])
         of NobodyWins:
           other = i
-          echo "ambiguous ", pool.syms[m[result].fn.sym], " vs ", pool.syms[m[i].fn.sym]
+          #echo "ambiguous ", pool.syms[m[result].fn.sym], " vs ", pool.syms[m[i].fn.sym]
         of FirstWins:
           discard "result remains the same"
         of SecondWins:
