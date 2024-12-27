@@ -148,6 +148,8 @@ type
   Color5 = enum
     Red5 = "456", Blue5 = 5, Green5 = (7, "r3")
 
+proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
+  ## Converts an enum value to a string.
 
 proc fooColor =
   var x = Red1
