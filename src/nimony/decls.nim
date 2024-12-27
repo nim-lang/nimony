@@ -135,7 +135,7 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
   var c = c
   let kind = typeKind c
   result = EnumDecl(kind: kind)
-  if kind == EnumT:
+  if kind in {EnumT, HoleyEnumT}:
     inc c
     result.firstField = c
 

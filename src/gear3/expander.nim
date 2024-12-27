@@ -315,8 +315,8 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
           traverseField(e, c, flags)
 
       wantParRi e, c
-    of EnumT:
-      e.dest.add c
+    of EnumT, HoleyEnumT:
+      e.dest.add tagToken("enum", c.info)
       inc c
 
       var fields = createTokenBuf()
