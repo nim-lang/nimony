@@ -15,7 +15,43 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
 import ".." / gear2 / modnames
 
 proc stdlibFile*(f: string): string =
-  getAppDir() / "lib" / f
+  let appDir = getAppDir()
+  let (head, tail) = splitPath(f)
+  if tail == "bin":
+    result = head / "lib" / f
+  else:
+    result = appDir / "lib" / f
+
+proc binDir*(): string =
+  let appDir = getAppDir()
+  let (head, tail) = splitPath(appDir)
+  if tail == "bin":
+    result = appDir
+  else:
+    result = appDir / "bin"
+
+proc toolDir*(f: string): string =
+  result = binDir() / f
+
+proc findTool*(name: string): string =
+  assert not name.isAbsolute
+  let exe = name.addFileExt(ExeExt)
+  result = toolDir(exe)
+
+proc exec*(cmd: string) =
+  if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
+
+proc nimexec(cmd: string) =
+  let t = findExe("nim")
+  if t.len == 0:
+    quit("FAILURE: cannot find nim.exe / nim binary")
+  exec quoteShell(t) & " " & cmd
+
+proc requiresTool*(tool, src: string; forceRebuild: bool) =
+  let t = findTool(tool)
+  if not fileExists(t) or forceRebuild:
+    nimexec("c -d:release " & src)
+    moveFile src.changeFileExt(ExeExt), t
 
 proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =
   let nimFile = toResolve.addFileExt(".nim")
@@ -161,13 +197,6 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     hasError = true
 
 # ------------------ include/import handling ------------------------
-
-proc findTool*(name: string): string =
-  let exe = name.addFileExt(ExeExt)
-  result = getAppDir() / exe
-
-proc exec*(cmd: string) =
-  if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
 
 proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
   let nifler = findTool("nifler")
