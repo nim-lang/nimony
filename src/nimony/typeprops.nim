@@ -26,45 +26,16 @@ proc isOrdinalType*(typ: TypeCursor; allowEnumWithHoles: bool = false): bool =
     let decl = asTypeDecl(s.decl)
     case decl.body.typeKind
     of EnumT:
-      if not allowEnumWithHoles:
-        # check for holes
-        var field = asEnumDecl(decl.body).firstField
-        var last: xint
-        var firstVal = asLocal(field).val
-        inc firstVal # skip tuple tag
-        case firstVal.kind
-        of IntLit:
-          last = createXint pool.integers[firstVal.intId]
-        of UIntLit:
-          last = createXint pool.uintegers[firstVal.uintId]
-        else:
-          # enum field with non int/uint value?
-          return false
-        skip field
-        while field.kind != ParRi:
-          var val = asLocal(field).val
-          inc val # skip tuple tag
-          var thisVal: xint
-          case val.kind
-          of IntLit:
-            thisVal = createXint pool.integers[val.intId]
-          of UIntLit:
-            thisVal = createXint pool.uintegers[val.uintId]
-          else:
-            # enum field with non int/uint value?
-            return false
-          inc last
-          if thisVal != last:
-            return false
-          skip field
       result = true
+    of HoleyEnumT:
+      result = allowEnumWithHoles
     of DistinctT:
       # check base type
       var baseType = decl.body
       inc baseType # skip distinct tag
-      result = isOrdinalType(baseType)
+      result = isOrdinalType(baseType, allowEnumWithHoles)
     else:
-      result = isOrdinalType(decl.body)
+      result = isOrdinalType(decl.body, allowEnumWithHoles)
   of ParLe:
     case typ.typeKind
     of IntT, UIntT, CharT, BoolT, RangeT:
@@ -73,7 +44,7 @@ proc isOrdinalType*(typ: TypeCursor; allowEnumWithHoles: bool = false): bool =
       # check base type
       var base = typ
       inc base # skip invoke tag
-      result = isOrdinalType(base)
+      result = isOrdinalType(base, allowEnumWithHoles)
     else:
       result = false
   else:
@@ -91,7 +62,7 @@ proc firstOrd*(c: var SemContext; typ: TypeCursor): xint =
       return
     let decl = asTypeDecl(s.decl)
     case decl.body.typeKind
-    of EnumT:
+    of EnumT, HoleyEnumT:
       var field = asEnumDecl(decl.body).firstField
       var firstVal = asLocal(field).val
       inc firstVal # skip tuple tag
@@ -155,14 +126,13 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       return
     let decl = asTypeDecl(s.decl)
     case decl.body.typeKind
-    of EnumT:
-      # check for holes
+    of EnumT, HoleyEnumT:
       var field = asEnumDecl(decl.body).firstField
       var last = field
       while field.kind != ParRi:
         last = field
         skip field
-      var lastVal = asLocal(field).val
+      var lastVal = asLocal(last).val
       inc lastVal # skip tuple tag
       case lastVal.kind
       of IntLit:

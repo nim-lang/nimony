@@ -144,6 +144,7 @@ type
     ObjectT = "object"
     TupleT = "tuple"
     EnumT = "enum"
+    HoleyEnumT = "onum"
     IntT = "i"
     UIntT = "u"
     FloatT = "f"
