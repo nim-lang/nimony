@@ -1039,6 +1039,17 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
   it.typ = destType
   commonType c, it, beforeExpr, expected
 
+proc semObjConstr(c: var SemContext, it: var Item)
+
+proc semObjConstrFromCall(c: var SemContext; it: var Item; cs: CallState) =
+  skipParRi it.n
+  var objBuf = createTokenBuf()
+  objBuf.add parLeToken(OconstrX, cs.callNode.info)
+  objBuf.add cs.fn.n
+  objBuf.addParRi()
+  var objConstr = Item(n: cursorAt(objBuf, 0), typ: it.typ)
+  semObjConstr c, objConstr
+
 proc isCastableType(t: TypeCursor): bool =
   const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT, HoleyEnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
@@ -1118,8 +1129,6 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
     buf.addSubtree cs.args[valueIndex].n
   buf.addParRi()
 
-proc semObjConstr(c: var SemContext, it: var Item)
-
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
@@ -1148,13 +1157,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     semConvFromCall c, it, cs
     return
   elif cs.fn.kind == TypeY and cs.args.len == 0:
-    skipParRi it.n
-    var objBuf = createTokenBuf()
-    objBuf.add parLeToken(OconstrX, cs.callNode.info)
-    objBuf.add cs.fn.n
-    objBuf.addParRi()
-    var objConstr = Item(n: cursorAt(objBuf, 0), typ: it.typ)
-    semObjConstr c, objConstr
+    semObjConstrFromCall c, it, cs
     return
   else:
     # Keep in mind that proc vars are a thing:
