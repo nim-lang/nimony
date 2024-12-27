@@ -388,6 +388,8 @@ proc handleCmdLine =
   if primaryCmd.len == 0:
     primaryCmd = "all"
 
+  createDir binDir()
+
   case primaryCmd
   of "all":
     buildNimony()
