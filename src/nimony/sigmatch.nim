@@ -165,6 +165,8 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     var aTag = a
     if a.kind == Symbol:
       aTag = typeImpl(a.symId)
+    if aTag.typeKind == TypeKindT:
+      inc aTag
     inc f
     assert f.kind == ParLe
     result = aTag.kind == ParLe and f.tagId == aTag.tagId
@@ -173,6 +175,9 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     inc f
     assert f.kind == ParRi
     inc f
+  of OrdinalT:
+    result = isOrdinalType(a)
+    skip f
   else:
     result = false
 
@@ -496,7 +501,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
           # len(a) > len(f)
           m.error expected(fOrig, aOrig)
     of NoType, ObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, ProcT, IterT, AutoT, SymKindT, TypeKindT:
+        ConceptT, DistinctT, StaticT, ProcT, IterT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error "BUG: unhandled type: " & pool.tags[f.tagId]
   else:
     m.error "BUG: " & expected(f, arg.typ)

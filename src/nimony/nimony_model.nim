@@ -183,6 +183,7 @@ type
     TypedT = "typed"
     CstringT = "cstring"
     PointerT = "pointer"
+    OrdinalT = "ordinal"
 
   PragmaKind* = enum
     NoPragma

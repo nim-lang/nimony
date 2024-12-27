@@ -1665,8 +1665,18 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
       # maybe substitution performed here?
       inc c.usedTypevars
     elif beforeMagic != afterMagic:
-      # was magic, nothing to do
-      discard
+      # was magic symbol, may be typeclass, otherwise nothing to do
+      if context == InGenericConstraint:
+        let magic = cursorAt(c.dest, start).typeKind
+        endRead(c.dest)
+        # magic types that are just symbols and not in the syntax:
+        if magic in {ArrayT, SetT, RangeT}:
+          var typeclassBuf = createTokenBuf(4)
+          typeclassBuf.addParLe(TypeKindT, info)
+          typeclassBuf.addParLe(magic, info)
+          typeclassBuf.addParRi()
+          typeclassBuf.addParRi()
+          replace(c.dest, cursorAt(typeclassBuf, 0), start)
     else:
       let typ = asTypeDecl(res.decl)
       if typ.body.typeKind in {ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}:
@@ -2079,6 +2089,15 @@ proc tryTypeClass(c: var SemContext; n: var Cursor): bool =
   else:
     result = false
 
+proc isOrExpr(n: Cursor): bool =
+  # old nim special cases `|` infixes in type contexts
+  result = n.exprKind == InfixX
+  if result:
+    var n = n
+    inc n
+    let name = getIdent(n)
+    result = name != StrId(0) and pool.strings[name] == "|"
+
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   case n.kind
@@ -2099,6 +2118,22 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         let start = c.dest.len
         let s = semQuoted(c, n)
         semTypeSym c, s, info, start, context
+      elif isOrExpr(n):
+        c.dest.addParLe(OrT, info)
+        inc n # tag
+        inc n # `|`
+        var nested = 1
+        while nested != 0:
+          if isOrExpr(n):
+            inc n # tag
+            inc n # `|`
+            inc nested
+          elif n.kind == ParRi:
+            inc n
+            dec nested
+          else:
+            semLocalTypeImpl c, n, context
+        c.dest.addParRi()
       elif context == AllowValues:
         # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
         var it = Item(n: n, typ: c.types.autoType)
@@ -2112,7 +2147,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       else:
         c.buildErr info, "not a type", n
         skip n
-    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT:
+    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT,
+        SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
       takeTree c, n
     of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT, StaticT, TypedescT:
       if tryTypeClass(c, n):
@@ -2139,8 +2175,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           c.buildErr info, "type " & typeToString(elemType) & " is too large to be a set element type"
     of OrT, AndT:
       takeToken c, n
-      semLocalTypeImpl c, n, context
-      semLocalTypeImpl c, n, context
+      while n.kind != ParRi:
+        semLocalTypeImpl c, n, context
       wantParRi c, n
     of TupleT:
       if tryTypeClass(c, n):
@@ -3609,6 +3645,204 @@ proc semEnumToStr(c: var SemContext; it: var Item) =
 
   it.typ = c.types.stringType
 
+proc buildLowValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
+  case typ.kind
+  of Symbol:
+    let s = tryLoadSym(typ.symId)
+    assert s.status == LacksNothing
+    if s.decl.symKind != TypeY:
+      c.buildErr typ.info, "cannot get low value of non-type"
+      return
+    let decl = asTypeDecl(s.decl)
+    case decl.body.typeKind
+    of EnumT, HoleyEnumT:
+      # first field
+      var field = asEnumDecl(decl.body).firstField
+      let first = asLocal(field)
+      c.dest.add first.name
+    else:
+      c.buildErr info, "invalid type for low: " & typeToString(typ)
+  of ParLe:
+    case typ.typeKind
+    of IntT:
+      var bitsCursor = typ
+      inc bitsCursor # skip int tag
+      let rawBits = typebits(bitsCursor.load)
+      var bits = rawBits
+      if rawBits != -1:
+        c.dest.addParLe(SufX, info)
+      else:
+        bits = c.g.config.bits
+      let value =
+        case bits
+        of 8: low(int8).int64
+        of 16: low(int16).int64
+        of 32: low(int32).int64
+        else: low(int64)
+      c.dest.add intToken(pool.integers.getOrIncl(value), info)
+      if rawBits != -1:
+        c.dest.add strToken(pool.strings.getOrIncl("i" & $rawBits), info)
+        c.dest.addParRi()
+    of UIntT:
+      var bitsCursor = typ
+      inc bitsCursor # skip uint tag
+      let rawBits = typebits(bitsCursor.load)
+      var bits = rawBits
+      if rawBits != -1:
+        c.dest.addParLe(SufX, info)
+      else:
+        bits = c.g.config.bits
+      let value = 0'u64
+      c.dest.add uintToken(pool.uintegers.getOrIncl(value), info)
+      if rawBits != -1:
+        c.dest.add strToken(pool.strings.getOrIncl("u" & $rawBits), info)
+        c.dest.addParRi()
+    of CharT:
+      c.dest.add charToken('\0', info)
+    of RangeT:
+      var first = typ
+      inc first
+      let base = first
+      skip first
+      c.dest.addParLe(ConvX, info)
+      c.dest.addSubtree base
+      c.dest.addSubtree first
+      c.dest.addParRi()
+    of ArrayT:
+      var index = typ
+      inc index # tag
+      skip index # element
+      buildLowValue(c, index, info)
+    of BoolT:
+      c.dest.addParLe(FalseX, info)
+      c.dest.addParRi()
+    of FloatT:
+      c.dest.addParLe(NegInfX, info)
+      c.dest.addParRi()
+    else:
+      c.buildErr info, "invalid type for low: " & typeToString(typ)
+  else:
+    c.buildErr info, "invalid type for low: " & typeToString(typ)
+
+proc buildHighValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
+  case typ.kind
+  of Symbol:
+    let s = tryLoadSym(typ.symId)
+    assert s.status == LacksNothing
+    if s.decl.symKind != TypeY:
+      c.buildErr typ.info, "cannot get high value of non-type"
+      return
+    let decl = asTypeDecl(s.decl)
+    case decl.body.typeKind
+    of EnumT, HoleyEnumT:
+      # last field
+      var field = asEnumDecl(decl.body).firstField
+      var lastField = field
+      while field.kind != ParRi:
+        lastField = field
+        skip field
+      let last = asLocal(lastField)
+      c.dest.add last.name
+    else:
+      c.buildErr info, "invalid type for high: " & typeToString(typ)
+  of ParLe:
+    case typ.typeKind
+    of IntT:
+      var bitsCursor = typ
+      inc bitsCursor # skip int tag
+      let rawBits = typebits(bitsCursor.load)
+      var bits = rawBits
+      if rawBits != -1:
+        c.dest.addParLe(SufX, info)
+      else:
+        bits = c.g.config.bits
+      let value =
+        case bits
+        of 8: high(int8).int64
+        of 16: high(int16).int64
+        of 32: high(int32).int64
+        else: high(int64)
+      c.dest.add intToken(pool.integers.getOrIncl(value), info)
+      if rawBits != -1:
+        c.dest.add strToken(pool.strings.getOrIncl("i" & $rawBits), info)
+        c.dest.addParRi()
+    of UIntT:
+      var bitsCursor = typ
+      inc bitsCursor # skip uint tag
+      let rawBits = typebits(bitsCursor.load)
+      var bits = rawBits
+      if rawBits != -1:
+        c.dest.addParLe(SufX, info)
+      else:
+        bits = c.g.config.bits
+      let value =
+        case bits
+        of 8: high(uint8).uint64
+        of 16: high(uint16).uint64
+        of 32: high(uint32).uint64
+        else: high(uint64)
+      c.dest.add uintToken(pool.uintegers.getOrIncl(value), info)
+      if rawBits != -1:
+        c.dest.add strToken(pool.strings.getOrIncl("u" & $rawBits), info)
+        c.dest.addParRi()
+    of CharT:
+      c.dest.add charToken(high(char), info)
+    of RangeT:
+      var last = typ
+      inc last
+      let base = last
+      skip last
+      skip last
+      c.dest.addParLe(ConvX, info)
+      c.dest.addSubtree base
+      c.dest.addSubtree last
+      c.dest.addParRi()
+    of ArrayT:
+      var index = typ
+      inc index # tag
+      skip index # element
+      buildHighValue(c, index, info)
+    of BoolT:
+      c.dest.addParLe(TrueX, info)
+      c.dest.addParRi()
+    of FloatT:
+      c.dest.addParLe(InfX, info)
+      c.dest.addParRi()
+    else:
+      c.buildErr info, "invalid type for high: " & typeToString(typ)
+  else:
+    c.buildErr info, "invalid type for high: " & typeToString(typ)
+
+proc semLow(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  takeToken c, it.n
+  let typ = semLocalType(c, it.n)
+  wantParRi c, it.n
+  if containsGenericParams(typ):
+    discard
+  else:
+    c.dest.shrink beforeExpr
+    buildLowValue(c, typ, info)
+  let expected = it.typ
+  it.typ = typ
+  commonType c, it, beforeExpr, expected
+
+proc semHigh(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  takeToken c, it.n
+  let typ = semLocalType(c, it.n)
+  wantParRi c, it.n
+  if containsGenericParams(typ):
+    discard
+  else:
+    c.dest.shrink beforeExpr
+    buildHighValue(c, typ, info)
+  let expected = it.typ
+  it.typ = typ
+  commonType c, it, beforeExpr, expected
+
 proc whichPass(c: SemContext): PassKind =
   result = if c.phase == SemcheckSignatures: checkSignatures else: checkBody
 
@@ -3666,7 +3900,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SetT, StaticT, TypedescT,
-            TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT, CstringT, PointerT, TypeKindT:
+            TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT,
+            CstringT, PointerT, TypeKindT, OrdinalT:
           # every valid local type expression
           semLocalTypeExpr c, it
         of OrT, AndT, NotT, InvokeT:
@@ -3835,10 +4070,14 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semObjDefault c, it
     of DefaultTupX:
       semTupleDefault c, it
+    of LowX:
+      semLow c, it
+    of HighX:
+      semHigh c, it
     of DerefX, PatX, AddrX, SizeofX, KvX,
        RangeX, RangesX,
        OconvX, HconvX,
-       CompilesX, HighX, LowX, TypeofX:
+       CompilesX, TypeofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)
       takeToken c, it.n

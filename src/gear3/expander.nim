@@ -217,7 +217,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     inc c
   of ParLe:
     case c.typeKind
-    of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT:
+    of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
       error e, "type expected but got: ", c
     of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
