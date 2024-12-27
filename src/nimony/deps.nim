@@ -29,6 +29,12 @@ proc indexFile(f: FilePair): string = "nifcache" / f.modname & ".2.idx.nif"
 proc parsedFile(f: FilePair): string = "nifcache" / f.modname & ".1.nif"
 proc depsFile(f: FilePair): string = "nifcache" / f.modname & ".1.deps.nif"
 proc semmedFile(f: FilePair): string = "nifcache" / f.modname & ".2.nif"
+proc cFile(f: FilePair): string = "nifcache" / f.modname & ".c"
+proc objFile(f: FilePair): string = "nifcache" / f.modname & ".o"
+
+# It turned out to be too annoying in practice to have the exe file in
+# the current directory per default so we now put it into the nifcache too:
+proc exeFile(f: FilePair): string = "nifcache" / f.modname & ExeExt
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -43,8 +49,15 @@ type
     active: int
     isSystem: bool
 
+  Command* = enum
+    DoCheck, # like `nim check`
+    DoTranslate, # translate to C like "nim --compileOnly"
+    DoCompile, # like `nim c` but with nifler
+    DoRun # like `nim run`
+
   DepContext = object
     forceRebuild: bool
+    cmd: Command
     nifler, nimsem: string
     config: NifConfig
     nodes: seq[Node]
@@ -232,7 +245,34 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
   s.add "# Auto-generated Makefile\n"
   s.add "PATH := " & mescape(os.getAppDir()) & ":$(PATH)\nexport PATH\n"
   s.add "\n.PHONY: all\n"
-  s.add "\nall: " & mescape indexFile(c.rootNode.files[0])
+  let dest =
+    case c.cmd
+    of DoCheck:
+      indexFile(c.rootNode.files[0])
+    of DoTranslate:
+      ""
+    of DoCompile, DoRun:
+      exeFile(c.rootNode.files[0])
+  s.add "\nall: " & mescape dest
+
+  # The .exe file depends on all .o files:
+  if c.cmd in {DoCompile, DoRun}:
+    s.add " " & mescape(exeFile(c.rootNode.files[0])) & ":"
+    for v in c.nodes:
+      s.add " " & mescape(objFile(v.files[0]))
+    s.add "\n\t$(CC) -o $@ $^"
+
+    # The .o files depend on all of their .c files:
+    s.add "%.o : %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
+
+    # The .c files depend on their .3.nif files:
+    let nifc = findTool("nifc")
+    s.add "%.c : %.3.nif\n\t" & mescape(nifc) & " $< -o $@"
+
+    # The .3.nif files depend on all of their .2.nif files:
+    let gear3 = findTool("gear3")
+    s.add "%.3.nif : %.2.nif\n\t" & mescape(gear3) & " $< -o $@"
+
 
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
@@ -266,7 +306,7 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
   writeFile result, s
 
 proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: bool;
-    commandLineArgs: string; moduleFlags: set[ModuleFlag]) =
+    commandLineArgs: string; moduleFlags: set[ModuleFlag]; cmd: Command) =
   let nifler = findTool("nifler")
 
   if compat:
@@ -276,7 +316,8 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: 
     parseNifConfig cfgNif, config
 
   var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
-    forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"))
+    forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
+    cmd: cmd)
   let p = c.toPair(project)
   c.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
   c.nodes.add c.rootNode
