@@ -764,7 +764,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         inc n # skip the SymbolDef
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
-              SizeofX, LowX, HighX, AddrX, DefaultObjX, DefaultTupX}:
+              SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -3586,6 +3586,29 @@ proc semDconv(c: var SemContext; it: var Item) =
   it.typ = destType
   commonType c, it, beforeExpr, expected
 
+proc semEnumToStr(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  takeToken c, it.n
+  var x = Item(n: it.n, typ: c.types.autoType)
+
+  var exprTokenBuf = createTokenBuf()
+  swap c.dest, exprTokenBuf
+  semExpr c, x
+  swap c.dest, exprTokenBuf
+  it.n = x.n
+  let typeSymId = x.typ.symId
+  let typeName = pool.syms[typeSymId]
+  let dollorName = "dollar`." & typeName
+  let dollorSymId = pool.syms.getOrIncl(dollorName)
+  shrink c.dest, beforeExpr
+  c.dest.add parLeToken(pool.tags.getOrIncl($CallX), info)
+  c.dest.add symToken(dollorSymId, info)
+  c.dest.add exprTokenBuf
+  c.dest.addParRi()
+
+  it.typ = c.types.stringType
+
 proc whichPass(c: SemContext): PassKind =
   result = if c.phase == SemcheckSignatures: checkSignatures else: checkBody
 
@@ -3806,6 +3829,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semNil c, it
     of ConvX:
       semConv c, it
+    of EnumToStrX:
+      semEnumToStr c, it
     of DefaultObjX:
       semObjDefault c, it
     of DefaultTupX:
