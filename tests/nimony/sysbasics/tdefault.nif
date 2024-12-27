@@ -17,13 +17,13 @@
    (efld :b.0.tde837gue . . Enum.0.tde837gue 
     (tup +1 "b")) 11
    (efld :c.0.tde837gue . . Enum.0.tde837gue 
-    (tup +2 "c")))) 5,23
+    (tup +2 "c")))) 5,4
  (proc :dollar`.Enum.0.tde837gue x . . 
   (params 
    (param :e . . Enum.0.tde837gue .))
   (string) . . 
   (stmts 7
-   (result :result.0 . . ~8,21,src/nimony/lib/std/system.nim
+   (result :result.0 . .
     (string) .) 7
    (case e 5
     (of 
@@ -38,8 +38,8 @@
      (set c.0.tde837gue) 
      (stmts 
       (ret "c"))))
-   (ret result.0))) ,24
- (discard 48,~9
+   (ret result.0))) ,5
+ (discard 57,727,src/nimony/lib/std/system.nim
   (stmts 1
    (conv ~43,~727,tests/nimony/sysbasics/tdefault.nim Enum.0.tde837gue 1 +0))) 9,7
  (type ~4 :Obj.0.tde837gue . . . 2
@@ -73,12 +73,12 @@
     (string) .)) 4,~8,src/nimony/lib/std/system.nim
   (i -1) . . 2,1
   (stmts 4
-   (result :result.0 . . ~2,~9,src/nimony/lib/std/system.nim
+   (result :result.1 . . ~2,~9,src/nimony/lib/std/system.nim
     (i -1) .) 4
    (var :x.1 . .
     (string) 4 "abc") 7,1
-   (asgn ~7 result.0 2 +4) ~2,~1
-   (ret result.0))) 11,19
+   (asgn ~7 result.1 2 +4) ~2,~1
+   (ret result.1))) 11,19
  (type ~9 :MyObject.0.tde837gue . . . 2
   (object . ~9,1
    (fld :x.1.tde837gue . . ,~14,src/nimony/lib/std/system.nim
