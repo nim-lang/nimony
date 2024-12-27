@@ -1148,6 +1148,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     semConvFromCall c, it, cs
     return
   elif cs.fn.kind == TypeY and cs.args.len == 0:
+    skipParRi it.n
     var objBuf = createTokenBuf()
     objBuf.add parLeToken(OconstrX, cs.callNode.info)
     objBuf.add cs.fn.n
