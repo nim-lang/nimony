@@ -50,6 +50,7 @@ proc `xor`*(x, y: bool): bool {.magic: "Xor", noSideEffect.}
 
 type
   untyped* {.magic: Expr.}
+  typed* {.magic: Stmt.}
 
 iterator unpack*(): untyped {.magic: Unpack.}
 
@@ -306,6 +307,9 @@ template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
 
+proc low*[T](x: typedesc[T]): typed {.magic: Low.}
+proc high*[T](x: typedesc[T]): typed {.magic: High.}
+
 template default*(x: typedesc[bool]): bool = false
 template default*(x: typedesc[char]): char = '\0'
 template default*(x: typedesc[int]): int = 0
@@ -321,7 +325,7 @@ template default*(x: typedesc[uint64]): uint64 = 0'u64
 template default*(x: typedesc[float32]): float32 = 0.0'f32
 template default*(x: typedesc[float64]): float64 = 0.0'f64
 template default*(x: typedesc[string]): string = ""
-template default*[T: enum](x: typedesc[T]): T = T(0)
+template default*[T: enum](x: typedesc[T]): T = low(T)
 
 template default*[T: ptr](x: typedesc[T]): T = T(nil)
 template default*[T: ref](x: typedesc[T]): T = T(nil)
