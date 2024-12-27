@@ -133,7 +133,7 @@ proc markersToCmdLine(s: seq[LineInfo]): string =
     result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
 
 proc execLocal(exe, cmd: string): (string, int) =
-  let bin = "." / exe.addFileExt(ExeExt)
+  let bin = "src/nimony/bin" / exe.addFileExt(ExeExt)
   result = osproc.execCmdEx(bin & " " & cmd)
 
 type
@@ -303,20 +303,23 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
       let nif = generatedFile(test, ".2.nif")
       addTestCode test.changeFileExt(".nif"), nif
 
+proc binDir*(): string =
+  result = "src/nimony/bin"
+
 proc buildNimony() =
   exec "nim c src/nimony/nimony.nim"
   let exe = "nimony".addFileExt(ExeExt)
-  moveFile "src/nimony/" & exe, exe
+  moveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNifc() =
   exec "nim c src/nifc/nifc.nim"
   let exe = "nifc".addFileExt(ExeExt)
-  moveFile "src/nifc/" & exe, exe
+  moveFile "src/nifc/" & exe, binDir() / exe
 
 proc buildGear3() =
   exec "nim c src/gear3/gear3.nim"
   let exe = "gear3".addFileExt(ExeExt)
-  moveFile "src/gear3/" & exe, exe
+  moveFile "src/gear3/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
