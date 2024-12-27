@@ -3624,14 +3624,8 @@ proc buildLowValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
       var field = asEnumDecl(decl.body).firstField
       let first = asLocal(field)
       c.dest.add first.name
-    of DistinctT:
-      c.dest.addParLe(DconvX, info)
-      var baseType = decl.body
-      inc baseType # skip distinct tag
-      buildLowValue c, baseType, info
-      c.dest.addParRi()
     else:
-      buildLowValue c, decl.body, info
+      c.buildErr info, "invalid type for low: " & typeToString(typ)
   of ParLe:
     case typ.typeKind
     of IntT:
@@ -3713,14 +3707,8 @@ proc buildHighValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
         skip field
       let last = asLocal(lastField)
       c.dest.add last.name
-    of DistinctT:
-      c.dest.addParLe(DconvX, info)
-      var baseType = decl.body
-      inc baseType # skip distinct tag
-      buildHighValue c, baseType, info
-      c.dest.addParRi()
     else:
-      buildHighValue c, decl.body, info
+      c.buildErr info, "invalid type for high: " & typeToString(typ)
   of ParLe:
     case typ.typeKind
     of IntT:
