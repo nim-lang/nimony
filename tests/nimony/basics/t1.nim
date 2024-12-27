@@ -40,8 +40,6 @@ var global: MyObject
 global.x = 45
 discard foo(global.x, "123")
 discard global.x.foo("123")
-global = MyObject(x: 123)
-global = MyObject(x: 123, y: 456)
 
 overloaded()
 overloaded("abc")
