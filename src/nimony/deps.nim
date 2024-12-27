@@ -215,7 +215,7 @@ proc mescape(p: string): string =
   when defined(windows):
     result = p.replace("\\", "/")
   else:
-    result = p.replace(":": "\\:") # Rule separators
+    result = p.replace(":", "\\:") # Rule separators
   result = result.multiReplace({
     " ": "\\ ",   # Spaces
     "#": "\\#",   # Comments
