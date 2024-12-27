@@ -577,6 +577,10 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         inc c
         traverseType(e, c)
         inc nested
+      of CmdX, CallStrLitX, InfixX, PrefixX:
+        e.dest.add tagToken("call", c.info)
+        inc c
+        inc nested
       else:
         e.dest.add c
         inc c
