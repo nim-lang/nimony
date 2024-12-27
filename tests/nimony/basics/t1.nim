@@ -158,3 +158,5 @@ proc fooColor =
     let s2 = 3
   of Green1:
     let s3 = 4
+
+  let m = $Blue1
