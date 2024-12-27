@@ -578,7 +578,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, BorrowP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
-           InlineP, NoinlineP, NoInitP:
+           InlineP, NoinlineP, NoInitP, InjectP, GensymP:
           result.flags.incl pk
           inc c
         of HeaderP:
@@ -1259,7 +1259,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       skip c
     of TypeS:
       traverseTypeDecl e, c
-    of ContinueS, WhenS:
+    of ContinueS, WhenS, MixinS, BindS:
       error e, "unreachable: ", c
     of PragmasS:
       skip c
