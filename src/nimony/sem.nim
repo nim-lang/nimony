@@ -13,7 +13,7 @@ include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
-  semdata, sembasics, semos, expreval, semborrow
+  semdata, sembasics, semos, expreval, semborrow, enumtostr
 
 import ".." / gear2 / modnames
 
@@ -763,7 +763,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         inc n # skip the SymbolDef
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
-              SizeofX, LowX, HighX, AddrX, EnumToStrX}:
+              SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -2970,6 +2970,8 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   let beforeExportMarker = c.dest.len
   wantExportMarker c, n # 1
 
+  var isEnumTypeDecl = false
+
   if c.phase == SemcheckSignatures or (delayed.status == OkNew and c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
     let prevGeneric = c.routine.inGeneric
@@ -2988,7 +2990,8 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       takeToken c, n
     else:
       if n.typeKind == EnumT:
-        semEnumType c, n, delayed.s.name, beforeExportMarker
+        semEnumType(c, n, delayed.s.name, beforeExportMarker)
+        isEnumTypeDecl = true
       else:
         semLocalTypeImpl c, n, InTypeSection
     if isGeneric:
@@ -3001,7 +3004,19 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
 
   c.addSym delayed
   wantParRi c, n
+
+
   publish c, delayed.s.name, declStart
+
+  if isEnumTypeDecl:
+    var dest = createTokenBuf()
+    var enumTypeDecl = cursorAt(c.dest, declStart)
+    genEnumToStrProc(dest, enumTypeDecl, c.types.stringType)
+    endRead(c.dest)
+    var dollorProcDecl = beginRead(dest)
+    var it = Item(n: dollorProcDecl, typ: c.types.autoType)
+    semExpr(c, it)
+
 
 proc semTypedBinaryArithmetic(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
@@ -3235,47 +3250,155 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
   c.dest.shrink typeStart
   commonType c, it, exprStart, origExpected
 
+proc callDefault(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
+  var callBuf = createTokenBuf(16)
+  callBuf.addParLe(CallX, info)
+  swap c.dest, callBuf
+  discard buildSymChoice(c, pool.strings.getOrIncl("default"), info, FindAll)
+  swap c.dest, callBuf
+  callBuf.addSubtree typ
+  callBuf.addParRi()
+  var it = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
+  semCall c, it
+
+proc buildObjConstrField(c: var SemContext; field: Local; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
+  let fieldSym = field.name.symId
+  if fieldSym in setFields:
+    c.dest.addSubtree setFields[fieldSym]
+  else:
+    c.dest.addParLe(KvX, info)
+    c.dest.add(field.name)
+    callDefault c, field.typ, info
+    c.dest.addParRi()
+
+proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
+  c.dest.addParLe(OconstrX, info)
+  c.dest.addSubtree typ
+  var objImpl = typ
+  if objImpl.kind == Symbol:
+    objImpl = objtypeImpl(objImpl.symId)
+  var obj = asObjectDecl(objImpl)
+  # same field order as old nim VM: starting with most shallow base type
+  while obj.parentType.kind != DotToken:
+    var parentImpl = obj.parentType
+    if parentImpl.kind == Symbol:
+      parentImpl = objtypeImpl(parentImpl.symId)
+    elif parentImpl.typeKind == InvokeT:
+      inc parentImpl # get to symbol
+      parentImpl = objtypeImpl(parentImpl.symId)
+    else:
+      # should not be possible
+      discard
+    let parent = asObjectDecl(parentImpl)
+    obj.parentType = parent.parentType
+    var currentField = parent.firstField
+    while currentField.kind != ParRi:
+      let field = asLocal(currentField)
+      buildObjConstrField(c, field, setFields, info)
+      skip currentField
+  var currentField = obj.firstField
+  while currentField.kind != ParRi:
+    let field = asLocal(currentField)
+    buildObjConstrField(c, field, setFields, info)
+    skip currentField
+  c.dest.addParRi()
+
 proc semObjConstr(c: var SemContext, it: var Item) =
   let exprStart = c.dest.len
   let expected = it.typ
   let info = it.n.info
-  takeToken c, it.n
+  inc it.n
   it.typ = semLocalType(c, it.n)
+  c.dest.shrink exprStart
   var objType = it.typ
   if objType.kind == Symbol:
     objType = objtypeImpl(objType.symId)
     if objType.typeKind != ObjectT:
-      c.dest.shrink exprStart
       c.buildErr info, "expected object type for object constructor"
       return
-  var setFields = initHashSet[SymId]()
+  var fieldBuf = createTokenBuf(16)
+  var setFieldPositions = initTable[SymId, int]()
   while it.n.kind != ParRi:
     if it.n.exprKind != KvX:
       c.buildErr it.n.info, "expected key/value pair in object constructor"
     else:
-      takeToken c, it.n
+      let fieldStart = fieldBuf.len
+      fieldBuf.add it.n
+      inc it.n
       let fieldInfo = it.n.info
+      let fieldNameCursor = it.n
       let fieldName = getIdent(it.n)
       if fieldName == StrId(0):
         c.buildErr fieldInfo, "identifier expected for object field"
         skip it.n
       else:
-        let field = findObjField(objType, fieldName)
+        var field = ObjField(level: -1)
+        if fieldNameCursor.kind == Symbol:
+          let sym = fieldNameCursor.symId
+          let res = tryLoadSym(sym)
+          if res.status == LacksNothing and res.decl == $FldY:
+            # trust that it belongs to this object for now
+            # level is not known but not used either, set it to 0:
+            field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
+          else:
+            field = findObjField(objType, fieldName)
+        else:
+          field = findObjField(objType, fieldName)
         if field.level >= 0:
-          if setFields.containsOrIncl(field.sym):
+          if field.sym in setFieldPositions:
             c.buildErr fieldInfo, "field already set: " & pool.strings[fieldName]
             skip it.n
           else:
-            c.dest.add symToken(field.sym, info)
+            setFieldPositions[field.sym] = fieldStart
+            fieldBuf.add symToken(field.sym, info)
             # maybe add inheritance depth too somehow?
             var val = Item(n: it.n, typ: field.typ)
+            swap c.dest, fieldBuf
             semExpr c, val
+            swap c.dest, fieldBuf
             it.n = val.n
         else:
           c.buildErr fieldInfo, "undeclared field: " & pool.strings[fieldName]
           skip it.n
-      wantParRi c, it.n
-  wantParRi c, it.n
+      fieldBuf.addParRi()
+      skipParRi it.n
+  skipParRi it.n
+  var setFields = initTable[SymId, Cursor]()
+  for field, pos in setFieldPositions:
+    setFields[field] = cursorAt(fieldBuf, pos)
+  buildDefaultObjConstr(c, it.typ, setFields, info)
+  commonType c, it, exprStart, expected
+
+proc semObjDefault(c: var SemContext; it: var Item) =
+  let exprStart = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  inc it.n
+  it.typ = semLocalType(c, it.n)
+  c.dest.shrink exprStart
+  skipParRi it.n
+  buildDefaultObjConstr(c, it.typ, initTable[SymId, Cursor](), info)
+  commonType c, it, exprStart, expected
+
+proc buildDefaultTuple(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
+  c.dest.addParLe(TupleConstrX, info)
+  var currentField = typ
+  inc currentField # skip tuple tag
+  while currentField.kind != ParRi:
+    let field = asLocal(currentField)
+    callDefault c, field.typ, info
+    skip currentField
+  c.dest.addParRi()
+
+proc semTupleDefault(c: var SemContext; it: var Item) =
+  let exprStart = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  inc it.n
+  it.typ = semLocalType(c, it.n)
+  c.dest.shrink exprStart
+  skipParRi it.n
+  buildDefaultTuple(c, it.typ, info)
   commonType c, it, exprStart, expected
 
 proc getDottedIdent(n: var Cursor): string =
@@ -3705,6 +3828,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semConv c, it
     of EnumToStrX:
       semEnumToStr c, it
+    of DefaultObjX:
+      semObjDefault c, it
+    of DefaultTupX:
+      semTupleDefault c, it
     of DerefX, PatX, AddrX, SizeofX, KvX,
        RangeX, RangesX,
        OconvX, HconvX,

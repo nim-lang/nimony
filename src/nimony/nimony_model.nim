@@ -137,6 +137,8 @@ type
     UnpackX = "unpack"
     EnumToStrX = "enumtostr"
     IsMainModuleX = "ismainmodule"
+    DefaultObjX = "defaultobj"
+    DefaultTupX = "defaulttup"
 
   TypeKind* = enum
     NoType

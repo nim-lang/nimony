@@ -557,19 +557,30 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         swap skipped, e.dest
         traverseType(e, c)
         swap skipped, e.dest
+        inc nested
       of ConvX, CastX:
         e.dest.add c
         inc c
         traverseType(e, c)
         traverseExpr(e, c)
+        inc nested
+      of DconvX:
+        inc c
+        var skipped = createTokenBuf()
+        swap skipped, e.dest
+        traverseType(e, c)
+        swap skipped, e.dest
+        traverseExpr(e, c)
+        skipParRi(e, c)
       of OconstrX:
         e.dest.add tagToken("oconstr", c.info)
         inc c
         traverseType(e, c)
+        inc nested
       else:
         e.dest.add c
         inc c
-      inc nested
+        inc nested
     of ParRi:
       e.dest.add c
       dec nested
