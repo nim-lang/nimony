@@ -136,6 +136,8 @@ type
     TypeofX = "typeof"
     UnpackX = "unpack"
     IsMainModuleX = "ismainmodule"
+    DefaultObjX = "defaultobj"
+    DefaultTupX = "defaulttup"
 
   TypeKind* = enum
     NoType

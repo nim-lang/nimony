@@ -318,7 +318,7 @@ type
 
 proc identToSym*(c: var SemContext; lit: StrId; kind: SymKind): SymId =
   var name = pool.strings[lit]
-  if c.currentScope.kind == ToplevelScope or kind in {FldY, EfldY}:
+  if c.currentScope.kind == ToplevelScope or kind in {FldY, EfldY, TypevarY}:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)

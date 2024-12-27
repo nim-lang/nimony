@@ -525,7 +525,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       toNif(n[i], n, c)
     # n.len-3: pragmas: must be empty (it is deprecated anyway)
     if n.len == 0:
-      c.b.addEmpty 2 # pragmas, body
+      # object typeclass, has no children
+      discard
     else:
       if n[n.len-3].kind != nkEmpty:
         c.b.addTree "err"
@@ -540,7 +541,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
         toNif(last, n, c)
     c.b.endTree()
 
-  of nkTupleTy:
+  of nkTupleTy, nkTupleClassTy:
     c.section = "fld"
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
