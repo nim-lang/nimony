@@ -932,6 +932,12 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
         # eliminates discard without side effects
         inc c
         skipParRi e, c
+      elif stmtKind(c) == StmtsS:
+        e.dest.add discardToken
+        inc c
+        traverseExpr e, c
+        skipParRi e, c
+        wantParRi e, c
       else:
         e.dest.add discardToken
         traverseExpr e, c

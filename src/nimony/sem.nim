@@ -3048,14 +3048,9 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   publish c, delayed.s.name, declStart
 
   if isEnumTypeDecl:
-    var dest = createTokenBuf()
-    var enumTypeDecl = cursorAt(c.dest, declStart)
-    genEnumToStrProc(dest, enumTypeDecl, c.types.stringType)
-    endRead(c.dest)
-    var dollorProcDecl = beginRead(dest)
-    var it = Item(n: dollorProcDecl, typ: c.types.autoType)
-    semExpr(c, it)
-
+    var enumTypeDecl = tryLoadSym(delayed.s.name)
+    assert enumTypeDecl.status == LacksNothing
+    genEnumToStrProc(c, enumTypeDecl.decl)
 
 proc semTypedBinaryArithmetic(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
