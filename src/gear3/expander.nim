@@ -227,6 +227,7 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
   e.dest.add tagToken("ptr", info)
   e.dest.add tagToken("c", info)
   e.dest.addIntLit(8, info)
+  e.dest.addParRi() # "c"
   e.dest.addParRi() # "ptr"
   e.dest.addParRi() # "fld"
 
@@ -606,7 +607,8 @@ proc genStringLit(e: var EContext; c: Cursor) =
   if existing != SymId(0):
     e.dest.add symToken(existing, info)
   else:
-    let strName = pool.syms.getOrIncl(s)
+    let strName = pool.syms.getOrIncl("str`." & $e.strLits.len)
+    e.strLits[s] = strName
     e.stringDecls.add tagToken("const", info)
     e.stringDecls.add symdefToken(strName, info)
     e.stringDecls.addDotToken() # pragmas
@@ -625,13 +627,13 @@ proc genStringLit(e: var EContext; c: Cursor) =
     e.stringDecls.add parLeToken(KvX, info)
     let lenField = pool.syms.getOrIncl(LengthField)
     e.stringDecls.add symToken(lenField, info)
-    e.stringDecls.addIntLit(s.len, info)
+    # length also contains the "isConst" flag:
+    e.stringDecls.addIntLit(s.len * 2 + 1, info)
     e.stringDecls.addParRi() # "kv"
 
     e.stringDecls.addParRi() # "oconstr"
     e.stringDecls.addParRi() # "const"
-    e.strLits[s] = strName
-    e.dest.add symToken(existing, info)
+    e.dest.add symToken(strName, info)
 
 proc traverseExpr(e: var EContext; c: var Cursor) =
   var nested = 0
@@ -932,7 +934,6 @@ proc importSymbol(e: var EContext; s: SymId) =
 proc writeOutput(e: var EContext) =
   var b = nifbuilder.open(e.dir / e.main & ".c.nif")
   b.addHeader "gear3", "nifc"
-  b.addTree "stmts"
   for h in e.headers:
     b.withTree "incl":
       b.addStrLit pool.strings[h]
@@ -1008,7 +1009,6 @@ proc writeOutput(e: var EContext) =
       inc nested
     inc c
 
-  b.endTree()
   b.close()
 
 proc splitModulePath(s: string): (string, string, string) =
@@ -1036,14 +1036,9 @@ proc expand*(infile: string) =
     while c.kind != ParRi:
       traverseStmt e, c, TraverseTopLevel
     e.dest.add e.stringDecls
-    wantParRi e, c
   else:
     error e, "expected (stmts) but got: ", c
 
-  if c.kind == ParRi:
-    error e, "unmached ')'"
-  elif c.kind != EofToken:
-    quit "Internal error: file not processed completely"
   # fix point expansion:
   var i = 0
   while i < e.requires.len:
@@ -1051,6 +1046,7 @@ proc expand*(infile: string) =
     if not e.declared.contains(imp):
       importSymbol(e, imp)
     inc i
+  wantParRi e, c
   writeOutput e
 
 when isMainModule:

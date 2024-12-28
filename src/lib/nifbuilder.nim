@@ -44,7 +44,8 @@ proc close*(b: var Builder) =
   if b.mode == UsesFile:
     write b.f, b.buf
     close b.f
-  assert b.nesting == 0, "unpaired '(' or ')'"
+  when not defined(showBroken):
+    assert b.nesting == 0, "unpaired '(' or ')'"
 
 proc putPending(b: var Builder; s: string) =
   b.buf.add s
