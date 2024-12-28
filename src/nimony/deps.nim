@@ -257,21 +257,21 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
 
   # The .exe file depends on all .o files:
   if c.cmd in {DoCompile, DoRun}:
-    s.add " " & mescape(exeFile(c.rootNode.files[0])) & ":"
+    s.add "\n" & mescape(exeFile(c.rootNode.files[0])) & ":"
     for v in c.nodes:
       s.add " " & mescape(objFile(v.files[0]))
     s.add "\n\t$(CC) -o $@ $^"
 
     # The .o files depend on all of their .c files:
-    s.add "%.o : %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
+    s.add "\n%.o : %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
 
-    # The .c files depend on their .3.nif files:
+    # The .c files depend on their .c.nif files:
     let nifc = findTool("nifc")
-    s.add "%.c : %.3.nif\n\t" & mescape(nifc) & " $< -o $@"
+    s.add "\n%.c : %.c.nif\n\t" & mescape(nifc) & " $< -o $@"
 
-    # The .3.nif files depend on all of their .2.nif files:
+    # The .c.nif files depend on all of their .2.nif files:
     let gear3 = findTool("gear3")
-    s.add "%.3.nif : %.2.nif\n\t" & mescape(gear3) & " $< -o $@"
+    s.add "\n%.c.nif : %.2.nif\n\t" & mescape(gear3) & " $<"
 
 
   # every semchecked .nif file depends on all of its parsed.nif file

@@ -206,6 +206,44 @@ proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}
 
   wantParRi e, c
 
+const
+  NimStringName = "NimStr.0.sys"
+  StringField = "s.0.sys"
+  LengthField = "len.0.sys"
+
+proc genStringType(e: var EContext; info: PackedLineInfo) =
+  let s = pool.syms.getOrIncl(NimStringName)
+  e.dest.add tagToken("type", info)
+  e.dest.add symdefToken(s, info)
+  e.dest.add tagToken("object", info)
+  e.dest.addDotToken()
+
+  e.dest.add tagToken("fld", info)
+  let strField = pool.syms.getOrIncl(StringField)
+  e.dest.add symdefToken(strField, info)
+  e.dest.addDotToken()
+  e.dest.add tagToken("ptr", info)
+  e.dest.add tagToken("c", info)
+  e.dest.addIntLit(8, info)
+  e.dest.addParRi() # "ptr"
+  e.dest.addParRi() # "fld"
+
+  e.dest.add tagToken("fld", info)
+  let lenField = pool.syms.getOrIncl(LengthField)
+  e.dest.add symdefToken(lenField, info)
+  e.dest.addDotToken()
+  e.dest.add tagToken("i", info)
+  e.dest.addIntLit(-1, info)
+  e.dest.addParRi() # "i"
+  e.dest.addParRi() # "fld"
+
+  e.dest.addParRi() # "object"
+  e.dest.addParRi() # "type"
+
+proc useStringType(e: var EContext; info: PackedLineInfo) =
+  let s = pool.syms.getOrIncl(NimStringName)
+  e.dest.add symToken(s, info)
+
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   case c.kind
   of DotToken:
@@ -331,7 +369,11 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.dest.add fields
 
       wantParRi e, c
-    of VoidT, StringT, VarargsT, NilT, ConceptT,
+    of StringT:
+      useStringType e, c.info
+      inc c
+      skipParRi e, c
+    of VoidT, VarargsT, NilT, ConceptT,
        IterT, InvokeT, SetT:
       error e, "unimplemented type: ", c
   else:
@@ -929,7 +971,16 @@ proc expand*(infile: string) =
   var c = beginRead(m.buf)
   e.mods[e.main] = m
 
-  traverseStmt e, c, TraverseTopLevel
+  if stmtKind(c) == StmtsS:
+    e.dest.add c
+    inc c
+    genStringType e, c.info
+    while c.kind != ParRi:
+      traverseStmt e, c, TraverseTopLevel
+    wantParRi e, c
+  else:
+    error e, "expected (stmts) but got: ", c
+
   if c.kind == ParRi:
     error e, "unmached ')'"
   elif c.kind != EofToken:
