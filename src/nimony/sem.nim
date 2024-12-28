@@ -3301,7 +3301,7 @@ proc buildObjConstrField(c: var SemContext; field: Local; setFields: Table[SymId
     c.dest.addSubtree setFields[fieldSym]
   else:
     c.dest.addParLe(KvX, info)
-    c.dest.add(field.name)
+    c.dest.add symToken(fieldSym, info)
     callDefault c, field.typ, info
     c.dest.addParRi()
 
@@ -3654,7 +3654,7 @@ proc buildLowValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
       # first field
       var field = asEnumDecl(decl.body).firstField
       let first = asLocal(field)
-      c.dest.add first.name
+      c.dest.add symToken(first.name.symId, info)
     else:
       c.buildErr info, "invalid type for low: " & typeToString(typ)
   of ParLe:
