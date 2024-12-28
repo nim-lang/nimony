@@ -175,7 +175,7 @@ proc traverseField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
 
   skipExportMarker e, c
 
-  inc c # pragmas: must be empty
+  skip c # pragmas
   e.dest.addDotToken()
 
   traverseType e, c, flags
@@ -307,12 +307,12 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
       traverseArrayBody e, body
     else:
       error e, "expected tuple or array, but got: ", body
-    e.dest.addParRi()
+    e.dest.addParRi() # "type"
 
     swap e.dest, buf
     e.pending.add buf
-  else:
-    e.dest.add symToken(val, info)
+  # regardless of what we had to do, we still need to add the typename:
+  e.dest.add symToken(val, info)
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   case c.kind

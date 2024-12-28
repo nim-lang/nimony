@@ -360,6 +360,6 @@ proc mangle*(c: var Cursor): string =
       b.addIdent "!unknown!"
     of EofToken:
       b.addIdent "!eof!"
-    if nested == 0: break
     inc c
+    if nested == 0: break
   result = b.extract()
