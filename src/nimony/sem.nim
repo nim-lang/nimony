@@ -634,11 +634,6 @@ proc semConstExpr(c: var SemContext; it: var Item) =
   c.dest.shrink start
   c.dest.add valueBuf
 
-proc isLastSon(n: Cursor): bool =
-  var n = n
-  skip n
-  result = n.kind == ParRi
-
 proc semStmtsExprImpl(c: var SemContext; it: var Item) =
   while it.n.kind != ParRi:
     if not isLastSon(it.n):
@@ -648,8 +643,11 @@ proc semStmtsExprImpl(c: var SemContext; it: var Item) =
   wantParRi c, it.n
 
 proc semStmtsExpr(c: var SemContext; it: var Item) =
+  let before = c.dest.len
   takeToken c, it.n
   semStmtsExprImpl c, it
+  let kind = if classifyType(c, it.typ) == VoidT: $StmtsS else: $ExprX
+  c.dest[before] = parLeToken(pool.tags.getOrIncl(kind), c.dest[before].info)
 
 proc semProcBody(c: var SemContext; itB: var Item) =
   let beforeBodyPos = c.dest.len
@@ -4069,6 +4067,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semLow c, it
     of HighX:
       semHigh c, it
+    of ExprX:
+      semStmtsExpr c, it
     of DerefX, PatX, AddrX, SizeofX, KvX,
        RangeX, RangesX,
        OconvX, HconvX,

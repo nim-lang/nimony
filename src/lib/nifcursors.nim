@@ -363,3 +363,8 @@ proc mangle*(c: var Cursor): string =
     inc c
     if nested == 0: break
   result = b.extract()
+
+proc isLastSon*(n: Cursor): bool =
+  var n = n
+  skip n
+  result = n.kind == ParRi

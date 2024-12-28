@@ -680,6 +680,28 @@ proc genStringLit(e: var EContext; c: Cursor) =
     e.pending.addParRi() # "const"
     e.dest.add symToken(strName, info)
 
+proc traverseStmtsExpr(e: var EContext; c: var Cursor) =
+  let head = c.load()
+  inc c
+  if isLastSon(c):
+    traverseExpr e, c
+    skipParRi e, c
+  else:
+    e.dest.add head
+    while c.kind != ParRi:
+      if not isLastSon(c):
+        traverseStmt e, c
+      else:
+        traverseExpr e, c
+    wantParRi e, c
+
+proc traverseTupleConstr(e: var EContext; c: var Cursor) =
+  e.dest.add tagToken("oconstr", c.info)
+  inc c
+  while c.kind != ParRi:
+    traverseExpr e, c
+  wantParRi e, c
+
 proc traverseExpr(e: var EContext; c: var Cursor) =
   var nested = 0
   while true:
@@ -710,10 +732,9 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         inc nested
       of DconvX:
         inc c
-        var skipped = createTokenBuf()
-        swap skipped, e.dest
+        let beforeType = e.dest.len
         traverseType(e, c)
-        swap skipped, e.dest
+        e.dest.shrink beforeType
         traverseExpr(e, c)
         skipParRi(e, c)
       of OconstrX:
@@ -721,10 +742,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         inc c
         traverseType(e, c)
         inc nested
+      of TupleConstrX:
+        traverseTupleConstr e, c
       of CmdX, CallStrLitX, InfixX, PrefixX:
         e.dest.add tagToken("call", c.info)
         inc c
         inc nested
+      of ExprX:
+        traverseStmtsExpr e, c
       else:
         e.dest.add c
         inc c
@@ -932,12 +957,6 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
         # eliminates discard without side effects
         inc c
         skipParRi e, c
-      elif stmtKind(c) == StmtsS:
-        e.dest.add discardToken
-        inc c
-        traverseExpr e, c
-        skipParRi e, c
-        wantParRi e, c
       else:
         e.dest.add discardToken
         traverseExpr e, c
