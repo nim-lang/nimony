@@ -7,7 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [hashes, os, tables, sets, syncio, times]
+import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
 import nifindexes, symparser
@@ -30,6 +30,8 @@ type
     headers: HashSet[StrId]
     currentOwner: SymId
     toMangle: Table[SymbolKey, string]
+    strLits: Table[string, SymId]
+    stringDecls: TokenBuf
 
 proc newNifModule(infile: string): NifModule =
   result = NifModule(stream: nifstreams.open(infile))
@@ -585,6 +587,51 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
     e.headers.incl prag.header
   discard setOwner(e, oldOwner)
 
+proc genCstringLit(e: var EContext; c: var Cursor): bool =
+  var cb = c
+  if cb.typeKind == CstringT:
+    inc cb
+    skipParRi e, cb
+    if cb.kind == StringLit:
+      e.dest.addStrLit pool.strings[cb.litId]
+      return true
+  c = cb
+  return false
+
+proc genStringLit(e: var EContext; c: Cursor) =
+  assert c.kind == StringLit
+  let info = c.info
+  let s {.cursor.} = pool.strings[c.litId]
+  let existing = e.strLits.getOrDefault(s)
+  if existing != SymId(0):
+    e.dest.add symdefToken(existing, info)
+  else:
+    let strName = pool.syms.getOrIncl(s)
+    e.stringDecls.add tagToken("const", info)
+    e.stringDecls.add symdefToken(strName, info)
+    e.stringDecls.addDotToken() # pragmas
+
+    # type:
+    e.stringDecls.add symToken(pool.syms.getOrIncl(NimStringName), info)
+    # value:
+    e.stringDecls.add parLeToken(OconstrX, info)
+
+    e.stringDecls.add parLeToken(KvX, info)
+    let strField = pool.syms.getOrIncl(StringField)
+    e.stringDecls.add symToken(strField, info)
+    e.stringDecls.addStrLit(s)
+    e.stringDecls.addParRi() # "kv"
+
+    e.stringDecls.add parLeToken(KvX, info)
+    let lenField = pool.syms.getOrIncl(LengthField)
+    e.stringDecls.add symToken(lenField, info)
+    e.stringDecls.addIntLit(s.len, info)
+    e.stringDecls.addParRi() # "kv"
+
+    e.stringDecls.addParRi() # "oconstr"
+    e.stringDecls.addParRi() # "const"
+    e.strLits[s] = c.symId
+
 proc traverseExpr(e: var EContext; c: var Cursor) =
   var nested = 0
   while true:
@@ -600,11 +647,18 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         traverseType(e, c)
         swap skipped, e.dest
         inc nested
-      of ConvX, CastX:
+      of CastX:
         e.dest.add c
         inc c
         traverseType(e, c)
         traverseExpr(e, c)
+        inc nested
+      of ConvX:
+        e.dest.add c
+        inc c
+        if not genCstringLit(e, c):
+          traverseType(e, c)
+          traverseExpr(e, c)
         inc nested
       of DconvX:
         inc c
@@ -642,7 +696,10 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       e.dest.add c
       e.demand c.symId
       inc c
-    of UnknownToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    of StringLit:
+      genStringLit e, c
+      inc c
+    of UnknownToken, DotToken, Ident, CharLit, IntLit, UIntLit, FloatLit:
       e.dest.add c
       inc c
 
@@ -977,6 +1034,7 @@ proc expand*(infile: string) =
     genStringType e, c.info
     while c.kind != ParRi:
       traverseStmt e, c, TraverseTopLevel
+    e.dest.add e.stringDecls
     wantParRi e, c
   else:
     error e, "expected (stmts) but got: ", c
