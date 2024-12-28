@@ -217,8 +217,8 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
   let s = pool.syms.getOrIncl(NimStringName)
   e.dest.add tagToken("type", info)
   e.dest.add symdefToken(s, info)
-  e.dest.add tagToken("object", info)
   e.dest.addDotToken()
+  e.dest.add tagToken("object", info)
 
   e.dest.add tagToken("fld", info)
   let strField = pool.syms.getOrIncl(StringField)
