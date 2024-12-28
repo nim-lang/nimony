@@ -31,7 +31,8 @@ type
     currentOwner: SymId
     toMangle: Table[SymbolKey, string]
     strLits: Table[string, SymId]
-    stringDecls: TokenBuf
+    newTypes: Table[string, SymId]
+    pending: TokenBuf
 
 proc newNifModule(infile: string): NifModule =
   result = NifModule(stream: nifstreams.open(infile))
@@ -179,7 +180,7 @@ proc traverseField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
 
   traverseType e, c, flags
 
-  inc c # skips value
+  skip c # skips value
   wantParRi e, c
 
 proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}): TokenBuf =
@@ -217,12 +218,16 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
   let s = pool.syms.getOrIncl(NimStringName)
   e.dest.add tagToken("type", info)
   e.dest.add symdefToken(s, info)
+  e.offer s
+
   e.dest.addDotToken()
   e.dest.add tagToken("object", info)
+  e.dest.addDotToken()
 
   e.dest.add tagToken("fld", info)
   let strField = pool.syms.getOrIncl(StringField)
   e.dest.add symdefToken(strField, info)
+  e.offer strField
   e.dest.addDotToken()
   e.dest.add tagToken("ptr", info)
   e.dest.add tagToken("c", info)
@@ -234,6 +239,7 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
   e.dest.add tagToken("fld", info)
   let lenField = pool.syms.getOrIncl(LengthField)
   e.dest.add symdefToken(lenField, info)
+  e.offer lenField
   e.dest.addDotToken()
   e.dest.add tagToken("i", info)
   e.dest.addIntLit(-1, info)
@@ -246,6 +252,67 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
 proc useStringType(e: var EContext; info: PackedLineInfo) =
   let s = pool.syms.getOrIncl(NimStringName)
   e.dest.add symToken(s, info)
+
+proc traverseTupleBody(e: var EContext; c: var Cursor) =
+  let info = c.info
+  inc c
+  e.dest.add tagToken("object", info)
+  e.dest.addDotToken()
+  while c.substructureKind == FldS:
+    traverseField(e, c, {})
+  wantParRi e, c
+
+proc traverseArrayBody(e: var EContext; c: var Cursor) =
+  e.dest.add c
+  inc c
+  traverseType e, c
+  if c.typeKind == RangeT:
+    inc c
+    skip c
+    expectIntLit e, c
+    let first = pool.integers[c.intId]
+    inc c
+    expectIntLit e, c
+    let last = pool.integers[c.intId]
+    inc c
+    skipParRi e, c
+    e.dest.addIntLit(last - first + 1, c.info)
+  else:
+    # should not be possible, but assume length anyway
+    traverseExpr e, c
+  wantParRi e, c
+
+proc traverseAsNamedType(e: var EContext; c: var Cursor) =
+  let info = c.info
+  var body = c
+  let key = mangle c
+
+  var val = e.newTypes.getOrDefault(key)
+  if val == SymId(0):
+    val = pool.syms.getOrIncl(key)
+    e.newTypes[key] = val
+
+    var buf = createTokenBuf(30)
+    swap e.dest, buf
+
+    e.dest.add tagToken("type", info)
+    e.dest.add symdefToken(val, info)
+    e.offer val
+
+    e.dest.addDotToken()
+    case body.typeKind
+    of TupleT:
+      traverseTupleBody e, body
+    of ArrayT:
+      traverseArrayBody e, body
+    else:
+      error e, "expected tuple or array, but got: ", body
+    e.dest.addParRi()
+
+    swap e.dest, buf
+    e.pending.add buf
+  else:
+    e.dest.add symToken(val, info)
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   case c.kind
@@ -275,24 +342,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.loop c:
         traverseType e, c
     of ArrayT:
-      e.dest.add c
-      inc c
-      traverseType e, c
-      if c.typeKind == RangeT:
-        inc c
-        skip c
-        expectIntLit e, c
-        let first = pool.integers[c.intId]
-        inc c
-        expectIntLit e, c
-        let last = pool.integers[c.intId]
-        inc c
-        skipParRi e, c
-        e.dest.addIntLit(last - first + 1, c.info)
-      else:
-        # should not be possible, but assume length anyway
-        traverseExpr e, c
-      wantParRi e, c
+      traverseAsNamedType e, c
     of RangeT:
       # skip to base type
       inc c
@@ -328,14 +378,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       traverseType e, c, flags
       skipParRi e, c
     of TupleT:
-      inc c
-      e.dest.add tagToken("object", c.info)
-      e.dest.addDotToken()
-      while c.substructureKind == FldS:
-        traverseField(e, c, flags)
-
-      wantParRi e, c
-
+      traverseAsNamedType e, c
     of ObjectT:
       e.dest.add c
       inc c
@@ -609,30 +652,32 @@ proc genStringLit(e: var EContext; c: Cursor) =
   else:
     let strName = pool.syms.getOrIncl("str`." & $e.strLits.len)
     e.strLits[s] = strName
-    e.stringDecls.add tagToken("const", info)
-    e.stringDecls.add symdefToken(strName, info)
-    e.stringDecls.addDotToken() # pragmas
+    e.pending.add tagToken("const", info)
+    e.pending.add symdefToken(strName, info)
+    e.offer strName
+
+    e.pending.addDotToken() # pragmas
 
     # type:
-    e.stringDecls.add symToken(pool.syms.getOrIncl(NimStringName), info)
+    e.pending.add symToken(pool.syms.getOrIncl(NimStringName), info)
     # value:
-    e.stringDecls.add parLeToken(OconstrX, info)
+    e.pending.add parLeToken(OconstrX, info)
 
-    e.stringDecls.add parLeToken(KvX, info)
+    e.pending.add parLeToken(KvX, info)
     let strField = pool.syms.getOrIncl(StringField)
-    e.stringDecls.add symToken(strField, info)
-    e.stringDecls.addStrLit(s)
-    e.stringDecls.addParRi() # "kv"
+    e.pending.add symToken(strField, info)
+    e.pending.addStrLit(s)
+    e.pending.addParRi() # "kv"
 
-    e.stringDecls.add parLeToken(KvX, info)
+    e.pending.add parLeToken(KvX, info)
     let lenField = pool.syms.getOrIncl(LengthField)
-    e.stringDecls.add symToken(lenField, info)
+    e.pending.add symToken(lenField, info)
     # length also contains the "isConst" flag:
-    e.stringDecls.addIntLit(s.len * 2 + 1, info)
-    e.stringDecls.addParRi() # "kv"
+    e.pending.addIntLit(s.len * 2 + 1, info)
+    e.pending.addParRi() # "kv"
 
-    e.stringDecls.addParRi() # "oconstr"
-    e.stringDecls.addParRi() # "const"
+    e.pending.addParRi() # "oconstr"
+    e.pending.addParRi() # "const"
     e.dest.add symToken(strName, info)
 
 proc traverseExpr(e: var EContext; c: var Cursor) =
@@ -1035,7 +1080,7 @@ proc expand*(infile: string) =
     genStringType e, c.info
     while c.kind != ParRi:
       traverseStmt e, c, TraverseTopLevel
-    e.dest.add e.stringDecls
+    e.dest.add e.pending
   else:
     error e, "expected (stmts) but got: ", c
 

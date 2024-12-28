@@ -7,7 +7,7 @@
 ## Cursors into token streams. Suprisingly effective even for more complex algorithms.
 
 import std / assertions
-import nifreader, nifstreams, bitabs, lineinfos
+import nifreader, nifstreams, bitabs, lineinfos, treemangler
 
 type
   Cursor* = object
@@ -326,3 +326,40 @@ proc parse*(r: var Stream; dest: var TokenBuf;
     let tok = r.next()
     dest.add tok
     if tok.kind == EofToken: break
+
+proc mangle*(c: var Cursor): string =
+  var nested = 0
+  var b = createMangler(30)
+  while true:
+    case c.kind
+    of ParLe:
+      b.addTree(pool.tags[c.tagId])
+      inc nested
+    of ParRi:
+      dec nested
+      b.endTree()
+    of Symbol:
+      b.addSymbol(pool.syms[c.symId])
+    of SymbolDef:
+      b.addSymbolDef(pool.syms[c.symId])
+    of StringLit:
+      b.addStrLit(pool.strings[c.litId])
+    of IntLit:
+      b.addIntLit(pool.integers[c.intId])
+    of UIntLit:
+      b.addUIntLit(pool.uintegers[c.uintId])
+    of FloatLit:
+      b.addFloatLit(pool.floats[c.floatId])
+    of DotToken:
+      b.addEmpty()
+    of CharLit:
+      b.addCharLit(char c.uoperand)
+    of Ident:
+      b.addIdent(pool.strings[c.litId])
+    of UnknownToken:
+      b.addIdent "!unknown!"
+    of EofToken:
+      b.addIdent "!eof!"
+    if nested == 0: break
+    inc c
+  result = b.extract()
