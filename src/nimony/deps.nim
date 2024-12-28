@@ -29,6 +29,7 @@ proc indexFile(f: FilePair): string = "nifcache" / f.modname & ".2.idx.nif"
 proc parsedFile(f: FilePair): string = "nifcache" / f.modname & ".1.nif"
 proc depsFile(f: FilePair): string = "nifcache" / f.modname & ".1.deps.nif"
 proc semmedFile(f: FilePair): string = "nifcache" / f.modname & ".2.nif"
+proc nifcFile(f: FilePair): string = "nifcache" / f.modname & ".c.nif"
 proc cFile(f: FilePair): string = "nifcache" / f.modname & ".c"
 proc objFile(f: FilePair): string = "nifcache" / f.modname & ".o"
 
@@ -265,13 +266,17 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
     # The .o files depend on all of their .c files:
     s.add "\n%.o : %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
 
-    # The .c files depend on their .c.nif files:
+    # entry point is special:
     let nifc = findTool("nifc")
-    s.add "\n%.c : %.c.nif\n\t" & mescape(nifc) & " $< -o $@"
+    s.add "\n" & mescape(cFile(c.rootNode.files[0])) & ": " & mescape(nifcFile c.rootNode.files[0])
+    s.add "\n\t" & mescape(nifc) & " c --compileOnly --isMain $<"
+
+    # The .c files depend on their .c.nif files:
+    s.add "\n%.c : %.c.nif\n\t" & mescape(nifc) & " c --compileOnly $<"
 
     # The .c.nif files depend on all of their .2.nif files:
     let gear3 = findTool("gear3")
-    s.add "\n%.c.nif : %.2.nif\n\t" & mescape(gear3) & " $<"
+    s.add "\n%.c.nif : %.2.nif %.2.idx.nif\n\t" & mescape(gear3) & " $<"
 
 
   # every semchecked .nif file depends on all of its parsed.nif file

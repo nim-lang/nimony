@@ -33,6 +33,8 @@ Command:
 
 Options:
   -r, --run                 run the makefile and the compiled program
+  --compileOnly             compile only, do not run the makefile and the compiled program
+  --isMain                  mark the file as the main program
   --cc:SYMBOL               specify the C compiler
   --opt:none|speed|size     optimize not at all or for speed|size
   --lineDir:on|off          generation of #line directive on|off
@@ -67,6 +69,8 @@ proc generateBackend(s: var State; action: Action; files: seq[string]; isLastAct
 proc handleCmdLine() =
   var args: seq[string] = @[]
   var toRun = false
+  var compileOnly = false
+  var isMain = false
   var currentAction = atNone
 
   var actionTable = initActionTable()
@@ -122,6 +126,8 @@ proc handleCmdLine() =
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "run", "r": toRun = true
+      of "compileonly": compileOnly = true
+      of "ismain": isMain = true
       of "cc":
         case val.normalize
         of "gcc":
@@ -160,7 +166,8 @@ proc handleCmdLine() =
     for action in actionTable.keys:
       case action
       of atC, atCpp:
-        generateBackend(s, action, actionTable[action], currentAction == action)
+        let isLast = (if compileOnly: isMain else: currentAction == action)
+        generateBackend(s, action, actionTable[action], isLast)
       of atNative:
         let args = actionTable[action]
         if args.len == 0:
@@ -184,19 +191,20 @@ proc handleCmdLine() =
     if s.config.outputFile == "":
       s.config.outputFile = appName
 
-    when defined(windows):
-      let makefilePath = s.config.nifcacheDir / "Makefile." & appName & ".bat"
-      generateBatMakefile(s, makefilePath, s.config.outputFile, actionTable)
-    else:
-      let makefilePath = s.config.nifcacheDir / "Makefile." & appName
-      generateMakefile(s, makefilePath, s.config.outputFile, actionTable)
-    if toRun:
-      let makeCmd = genMakeCmd(s.config, makefilePath)
-      let (output, exitCode) = execCmdEx(makeCmd)
-      if exitCode != 0:
-        quit "execution of an external program failed: " & output
-      if execCmd("./" & appName) != 0:
-        quit "execution of an external program failed: " & appName
+    if not compileOnly:
+      when defined(windows):
+        let makefilePath = s.config.nifcacheDir / "Makefile." & appName & ".bat"
+        generateBatMakefile(s, makefilePath, s.config.outputFile, actionTable)
+      else:
+        let makefilePath = s.config.nifcacheDir / "Makefile." & appName
+        generateMakefile(s, makefilePath, s.config.outputFile, actionTable)
+      if toRun:
+        let makeCmd = genMakeCmd(s.config, makefilePath)
+        let (output, exitCode) = execCmdEx(makeCmd)
+        if exitCode != 0:
+          quit "execution of an external program failed: " & output
+        if execCmd("./" & appName) != 0:
+          quit "execution of an external program failed: " & appName
   else:
     writeHelp()
 
