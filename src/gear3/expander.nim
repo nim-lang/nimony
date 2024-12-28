@@ -604,7 +604,7 @@ proc genStringLit(e: var EContext; c: Cursor) =
   let s {.cursor.} = pool.strings[c.litId]
   let existing = e.strLits.getOrDefault(s)
   if existing != SymId(0):
-    e.dest.add symdefToken(existing, info)
+    e.dest.add symToken(existing, info)
   else:
     let strName = pool.syms.getOrIncl(s)
     e.stringDecls.add tagToken("const", info)
@@ -630,7 +630,8 @@ proc genStringLit(e: var EContext; c: Cursor) =
 
     e.stringDecls.addParRi() # "oconstr"
     e.stringDecls.addParRi() # "const"
-    e.strLits[s] = c.symId
+    e.strLits[s] = strName
+    e.dest.add symToken(existing, info)
 
 proc traverseExpr(e: var EContext; c: var Cursor) =
   var nested = 0
