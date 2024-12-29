@@ -1769,11 +1769,11 @@ proc semEnumType(c: var SemContext; n: var Cursor; enumType: SymId; beforeExport
     var err = false
     let max = asUnsigned(lastValue, err)
     # according to old size align computation:
-    if max <= high(uint8):
+    if max <= high(uint8).uint64:
       baseType = c.types.uint8Type
-    elif max <= high(uint16):
+    elif max <= high(uint16).uint64:
       baseType = c.types.uint16Type
-    elif max <= high(uint32):
+    elif max <= high(uint32).uint64:
       baseType = c.types.int32Type # according to old codegen
     else:
       baseType = c.types.int64Type # according to old codegen
