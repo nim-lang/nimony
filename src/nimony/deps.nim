@@ -35,7 +35,7 @@ proc objFile(f: FilePair): string = "nifcache" / f.modname & ".o"
 
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
-proc exeFile(f: FilePair): string = "nifcache" / f.modname & ExeExt
+proc exeFile(f: FilePair): string = "nifcache" / f.modname.addFileExt ExeExt
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
