@@ -3,6 +3,7 @@
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
+import lib / nifindexes
 import gear2 / modnames
 
 const
@@ -317,7 +318,7 @@ proc buildNifc() =
   moveFile "src/nifc/" & exe, binDir() / exe
 
 proc buildGear3() =
-  exec "nim c src/gear3/gear3.nim"
+  exec "nim c -d:showBroken src/gear3/gear3.nim"
   let exe = "gear3".addFileExt(ExeExt)
   moveFile "src/gear3/" & exe, binDir() / exe
 
@@ -354,6 +355,7 @@ proc gear3tests(overwrite: bool) =
   let mod1 = "tests/gear3/mod1"
   let helloworld = "tests/gear3/gear3_helloworld"
   execGear3 mod1 & ".nif"
+  createIndex mod1 & ".c.nif", false
   execGear3 helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 

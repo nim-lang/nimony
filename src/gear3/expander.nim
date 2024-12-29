@@ -693,12 +693,14 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
 proc genCstringLit(e: var EContext; c: var Cursor): bool =
   var cb = c
   if cb.typeKind == CstringT:
-    inc cb
-    skipParRi e, cb
+    inc cb # skip "(cstring"
+    skipParRi e, cb # skip ")"
     if cb.kind == StringLit:
       e.dest.addStrLit pool.strings[cb.litId]
+      inc cb
+      skipParRi e, cb # skip ")" from "(conv"
+      c = cb
       return true
-  c = cb
   return false
 
 proc genStringLit(e: var EContext; c: Cursor) =
@@ -805,7 +807,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         if not genCstringLit(e, c):
           traverseType(e, c)
           traverseExpr(e, c)
-        inc nested
+          inc nested
       of DconvX:
         inc c
         let beforeType = e.dest.len
