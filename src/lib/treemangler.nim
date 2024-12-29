@@ -7,13 +7,13 @@
 ## Turn NIF trees into identifiers. See the spec section "NIF trees as identifiers"
 ## for the used algorithm.
 
-import std / [assertions, tables, formatfloat]
+import std / [assertions, tables, formatfloat, strutils]
 
 type
   Mangler* = object ## In the end `extract` must be called.
     buf: string
     nesting: int
-    tags, syms: Table[string, int]
+    seen: Table[string, int]
 
 proc `=copy`(dest: var Mangler; src: Mangler) {.error.}
 
@@ -48,10 +48,10 @@ proc escape(b: var Mangler; c: char) =
   b.put HexChars[n and 0xF]
 
 const
-  ControlLetters = {'A', 'Z', 'E', 'S', 'O', 'U', 'X', 'R', 'K'}
+  ControlLetters = {'A', 'Z', 'E', 'S', 'O', 'U', 'X', 'R'} # not yet necessary: 'K'
 
 template needsEscape(c: char): bool =
-  c notin ({'a'..'z', '0'..'9', '_', '.'} - ControlLetters)
+  c notin ({'a'..'z', '0'..'9', '_'} - ControlLetters)
 
 proc addRaw*(b: var Mangler; s: string) =
   put b, s
@@ -67,26 +67,26 @@ proc addBegin(b: var Mangler) =
   else:
     b.put 'A'
 
-proc referencePrevious(buf: var string; tab: var Table[string, int]; s: string; refCmd: char): bool =
+proc referencePrevious(b: var Mangler; s: string): bool =
   result = false
   if s.len > 2:
-    let existing = tab.getOrDefault(s)
+    let existing = b.seen.getOrDefault(s)
+    let oldLen = b.buf.len
     if existing == 0:
-      tab[s] = tab.len+1
+      b.seen[s] = oldLen
     else:
-      let oldLen = buf.len
-      buf.add refCmd
-      buf.addInt(existing-1)
-      if buf.len - oldLen >= s.len:
+      b.buf.add 'R'
+      b.buf.addInt(existing-1)
+      if b.buf.len - oldLen >= s.len:
         # undo, it was a pessimization!
-        buf.setLen oldLen
+        b.buf.setLen oldLen
       else:
         result = true
 
 #  ------------ Atoms ------------------------
 
 proc putTag*(b: var Mangler; tag: string) =
-  if not referencePrevious(b.buf, b.tags, tag, 'K'):
+  if not referencePrevious(b, tag):
     for c in tag:
       if needsEscape c:
         b.escape c
@@ -95,31 +95,32 @@ proc putTag*(b: var Mangler; tag: string) =
 
 proc addIdent*(b: var Mangler; s: string) =
   addSep b
-  if not referencePrevious(b.buf, b.syms, s, 'R'):
+  if not referencePrevious(b, s):
     for c in s:
       if c == '.' or c.needsEscape:
         b.escape c
       else:
         b.put c
 
+proc addSymbolBody(b: var Mangler; s: string) =
+  for part in s.split('.'):
+    if not referencePrevious(b, part):
+      for c in part:
+        if c.needsEscape:
+          b.escape c
+        else:
+          b.put c
+
 proc addSymbol*(b: var Mangler; s: string) =
   addSep b
-  if not referencePrevious(b.buf, b.syms, s, 'R'):
-    for c in s:
-      if c.needsEscape:
-        b.escape c
-      else:
-        b.put c
+  if not referencePrevious(b, s):
+    addSymbolBody(b, s)
 
 proc addSymbolDef*(b: var Mangler; s: string) =
   addSep b
   b.put 'O'
-  if not referencePrevious(b.buf, b.syms, s, 'R'):
-    for c in s:
-      if c.needsEscape:
-        b.escape c
-      else:
-        b.put c
+  if not referencePrevious(b, s):
+    addSymbolBody(b, s)
 
 proc addStrLit*(b: var Mangler; s: string) =
   addSep b

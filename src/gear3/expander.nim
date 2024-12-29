@@ -10,7 +10,7 @@
 import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
-import nifindexes, symparser
+import nifindexes, symparser, treemangler
 import ".." / nimony / nimony_model
 
 type
@@ -69,6 +69,69 @@ proc error(e: var EContext; msg: string) {.noreturn.} =
   when defined(debug):
     echo getStackTrace()
   quit 1
+
+proc mangleImpl(b: var Mangler; c: var Cursor) =
+  var nested = 0
+  while true:
+    case c.kind
+    of ParLe:
+      let tag {.cursor.} = pool.tags[c.tagId]
+      if tag == "fld":
+        inc c
+        skip c # name
+        skip c # export marker
+        skip c # pragmas
+        mangleImpl b, c # type is interesting
+        skip c # value
+        inc c # ParRi
+      else:
+        b.addTree(tag)
+        inc nested
+        inc c
+    of ParRi:
+      dec nested
+      b.endTree()
+      inc c
+    of Symbol:
+      b.addSymbol(pool.syms[c.symId])
+      inc c
+    of SymbolDef:
+      b.addSymbolDef(pool.syms[c.symId])
+      inc c
+    of StringLit:
+      b.addStrLit(pool.strings[c.litId])
+      inc c
+    of IntLit:
+      b.addIntLit(pool.integers[c.intId])
+      inc c
+    of UIntLit:
+      b.addUIntLit(pool.uintegers[c.uintId])
+      inc c
+    of FloatLit:
+      b.addFloatLit(pool.floats[c.floatId])
+      inc c
+    of DotToken:
+      b.addEmpty()
+      inc c
+    of CharLit:
+      b.addCharLit(char c.uoperand)
+      inc c
+    of Ident:
+      b.addIdent(pool.strings[c.litId])
+      inc c
+    of UnknownToken:
+      b.addIdent "!unknown!"
+      inc c
+    of EofToken:
+      b.addIdent "!eof!"
+      inc c
+    if nested == 0: break
+
+proc mangle*(c: var Cursor): string =
+  var nested = 0
+  var b = createMangler(30)
+  mangleImpl b, c
+  result = b.extract()
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
   result = e.currentOwner
@@ -289,7 +352,7 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
 
   var val = e.newTypes.getOrDefault(key)
   if val == SymId(0):
-    val = pool.syms.getOrIncl(key)
+    val = pool.syms.getOrIncl(key & ".0.t")
     e.newTypes[key] = val
 
     var buf = createTokenBuf(30)
