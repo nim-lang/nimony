@@ -19,6 +19,7 @@ proc zero*(): xint = xint(val: 0)
 proc createNaN*(): xint = xint(nan: true)
 
 proc isNaN*(x: xint): bool {.inline.} = x.nan
+proc isNegative*(x: xint): bool {.inline.} = x.neg
 
 proc asSigned*(x: xint; err: var bool): int64 =
   result = 0
