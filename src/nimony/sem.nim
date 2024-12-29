@@ -1742,6 +1742,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState)
 proc semEnumType(c: var SemContext; n: var Cursor; enumType: SymId; beforeExportMarker: int) =
   let start = c.dest.len
   takeToken c, n
+  wantDot c, n
   let magicToken = c.dest[beforeExportMarker]
   var state = EnumTypeState(enumType: enumType, thisValue: createXint(0'i64), hasHole: false,
     isBoolType: magicToken.kind == ParLe and pool.tags[magicToken.tagId] == $BoolT)
@@ -3735,7 +3736,7 @@ proc buildHighValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
         lastField = field
         skip field
       let last = asLocal(lastField)
-      c.dest.add last.name
+      c.dest.add symToken(last.name.symId, info)
     else:
       c.buildErr info, "invalid type for high: " & typeToString(typ)
   of ParLe:

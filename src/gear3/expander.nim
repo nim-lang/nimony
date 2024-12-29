@@ -245,7 +245,7 @@ proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}
 
   skip c # pragmas: must be empty
 
-  skip c # skips enum type which we already know
+  skip c # type: must be the enum itself
 
   inc c # skips TupleConstr
   traverseExpr e, c
@@ -458,9 +458,8 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     of EnumT, HoleyEnumT:
       e.dest.add tagToken("enum", c.info)
       inc c
+      traverseType e, c, flags # base type
 
-      # XXX Fixme
-      e.dest.addSubtree e.typeCache.builtins.uint8Type
       while c.substructureKind == EfldS:
         traverseEnumField(e, c, flags)
 

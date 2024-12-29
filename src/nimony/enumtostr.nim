@@ -17,6 +17,7 @@ proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId: SymId)
   c.dest.add tagToken("case", enumDecl.info)
   c.dest.add symToken(symId, enumDecl.info)
   inc enumDecl # skips enum
+  skip enumDecl # skips base type
   while enumDecl.kind != ParRi:
     let enumDeclInfo = enumDecl.info
     c.dest.add tagToken("of", enumDeclInfo)
