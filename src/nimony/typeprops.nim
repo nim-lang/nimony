@@ -96,6 +96,7 @@ proc firstOrd*(c: var SemContext; typ: TypeCursor): xint =
       result = zero()
     of RangeT:
       var first = typ
+      inc first # tag
       skip first # base type
       case first.kind
       of IntLit:
@@ -171,6 +172,7 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       else: result = createNaN()
     of RangeT:
       var last = typ
+      inc last # tag
       skip last # base type
       skip last # first
       case last.kind
