@@ -1,0 +1,110 @@
+(.nif24)
+,3,tests/nimony/basics/tenumsizes.nim(stmts 7
+ (type ~2 :A.0.ten11nvsp1 . . . 2
+  (enum
+   (u +8) ~7,1
+   (efld :a0.0.ten11nvsp1 . . A.0.ten11nvsp1 
+    (tup +0 "a0")) ~3,1
+   (efld :a1.0.ten11nvsp1 . . A.0.ten11nvsp1 
+    (tup +1 "a1")) 1,1
+   (efld :a2.0.ten11nvsp1 . . A.0.ten11nvsp1 
+    (tup +2 "a2")) 5,1
+   (efld :a3.0.ten11nvsp1 . . A.0.ten11nvsp1 
+    (tup +3 "a3")))) 5
+ (proc :dollar`.A.0.ten11nvsp1 x . . 
+  (params 
+   (param :e . . A.0.ten11nvsp1 .))
+  (string) . . 
+  (stmts 4
+   (result :result.0 . .
+    (string) .) 4
+   (case e ~7,1
+    (of 
+     (set a0.0.ten11nvsp1) 
+     (stmts 
+      (ret "a0"))) ~3,1
+    (of 
+     (set a1.0.ten11nvsp1) 
+     (stmts 
+      (ret "a1"))) 1,1
+    (of 
+     (set a2.0.ten11nvsp1) 
+     (stmts 
+      (ret "a2"))) 5,1
+    (of 
+     (set a3.0.ten11nvsp1) 
+     (stmts 
+      (ret "a3"))))
+   (ret result.0))) 7,2
+ (type ~2 :B.0.ten11nvsp1 . . . 2
+  (onum
+   (i +32) ~2,1
+   (efld ~5 :b0.0.ten11nvsp1 . . B.0.ten11nvsp1 
+    (tup -1 "b0")) 2,1
+   (efld :b1.0.ten11nvsp1 . . B.0.ten11nvsp1 
+    (tup +0 "b1")) 6,1
+   (efld :b2.0.ten11nvsp1 . . B.0.ten11nvsp1 
+    (tup +1 "b2")) 15,1
+   (efld ~5 :b3.0.ten11nvsp1 . . B.0.ten11nvsp1 
+    (tup +5 "b3")))) 5,2
+ (proc :dollar`.B.0.ten11nvsp1 x . . 
+  (params 
+   (param :e . . B.0.ten11nvsp1 .))
+  (string) . . 
+  (stmts 4
+   (result :result.1 . .
+    (string) .) 4
+   (case e ~2,1
+    (of 
+     (set ~5 b0.0.ten11nvsp1) 
+     (stmts 
+      (ret "b0"))) 2,1
+    (of 
+     (set b1.0.ten11nvsp1) 
+     (stmts 
+      (ret "b1"))) 6,1
+    (of 
+     (set b2.0.ten11nvsp1) 
+     (stmts 
+      (ret "b2"))) 15,1
+    (of 
+     (set ~5 b3.0.ten11nvsp1) 
+     (stmts 
+      (ret "b3"))))
+   (ret result.1))) 7,4
+ (type ~2 :C.0.ten11nvsp1 . . . 2
+  (onum
+   (u +16) ~7,1
+   (efld :c0.0.ten11nvsp1 . . C.0.ten11nvsp1 
+    (tup +0 "c0")) ~3,1
+   (efld :c1.0.ten11nvsp1 . . C.0.ten11nvsp1 
+    (tup +1 "c1")) 6,1
+   (efld ~5 :c2.0.ten11nvsp1 . . C.0.ten11nvsp1 
+    (tup +30000 "c2")) 14,1
+   (efld :c3.0.ten11nvsp1 . . C.0.ten11nvsp1 
+    (tup +30001 "c3")))) 5,4
+ (proc :dollar`.C.0.ten11nvsp1 x . . 
+  (params 
+   (param :e . . C.0.ten11nvsp1 .))
+  (string) . . 
+  (stmts 4
+   (result :result.2 . .
+    (string) .) 4
+   (case e ~7,1
+    (of 
+     (set c0.0.ten11nvsp1) 
+     (stmts 
+      (ret "c0"))) ~3,1
+    (of 
+     (set c1.0.ten11nvsp1) 
+     (stmts 
+      (ret "c1"))) 6,1
+    (of 
+     (set ~5 c2.0.ten11nvsp1) 
+     (stmts 
+      (ret "c2"))) 14,1
+    (of 
+     (set c3.0.ten11nvsp1) 
+     (stmts 
+      (ret "c3"))))
+   (ret result.2))))
