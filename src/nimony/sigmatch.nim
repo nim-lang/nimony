@@ -436,6 +436,9 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         discard "ok"
         inc f
       elif a.typeKind == StringT and arg.n.kind == StringLit:
+        m.args.addParLe HconvX, m.argInfo
+        m.args.addSubtree f
+        inc m.opened
         inc m.intCosts
         inc f
       else:
