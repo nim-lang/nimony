@@ -264,7 +264,7 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
     s.add "\n\t$(CC) -o $@ $^"
 
     # The .o files depend on all of their .c files:
-    s.add "\n%.o : %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
+    s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
 
     # entry point is special:
     let nifc = findTool("nifc")
@@ -272,17 +272,17 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
     s.add "\n\t" & mescape(nifc) & " c --compileOnly --isMain $<"
 
     # The .c files depend on their .c.nif files:
-    s.add "\n%.c : %.c.nif\n\t" & mescape(nifc) & " c --compileOnly $<"
+    s.add "\n%.c: %.c.nif\n\t" & mescape(nifc) & " c --compileOnly $<"
 
     # The .c.nif files depend on all of their .2.nif files:
     let gear3 = findTool("gear3")
-    s.add "\n%.c.nif : %.2.nif %.2.idx.nif\n\t" & mescape(gear3) & " $<"
+    s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(gear3) & " $<"
 
 
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
   for v in c.nodes:
-    s.add "\n" & mescape(indexFile(v.files[0])) & ":"
+    s.add "\n" & mescape(indexFile(v.files[0])) & " " & mescape(semmedFile(v.files[0])) & ":"
     var seenDeps = initHashSet[string]()
     for f in v.files:
       let pf = parsedFile(f)
