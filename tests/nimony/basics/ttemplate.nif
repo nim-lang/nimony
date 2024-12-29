@@ -63,10 +63,10 @@
    (var :x.4 . .
     (string) 4 "abc") 7,1
    (asgn ~7 result.0 23,~4
-    (stmts 2
+    (expr 2
      (add ~32,~20
       (i -1) ~18,4 +4 ~2
-      (stmts 2
+      (expr 2
        (add ~32,~20
         (i -1) ~10,4 +2 ~7,4 +89))))) 2,2
    (asgn ~2 x.4 2 "34") ~2,~1
@@ -97,7 +97,7 @@
  (let :val.0.tte6j7czy . .
   (i -1) 6 +123) ,37
  (discard 30,~3
-  (stmts 1
+  (expr 1
    (conv ~26,~2
     (u -1) ~12,3 val.0.tte6j7czy))) 19,13
  (type :MyGeneric.1.tte6j7czy . 

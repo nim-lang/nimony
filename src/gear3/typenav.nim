@@ -46,6 +46,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       result = c.builtins.autoType # still an error
   of ExprX:
     var n = n
+    inc n # skip "expr"
     while n.kind != ParRi:
       let prev = n
       skip n
@@ -88,8 +89,13 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       result = c.builtins.autoType # still an error
   of RangesX, RangeX:
     result = getTypeImpl(c, n.firstSon)
-  of QuotedX, OchoiceX, CchoiceX, KvX, UnpackX, TypeofX, LowX, HighX:
+  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX:
     discard "keep the error type"
+  of KvX:
+    var n = n
+    inc n # skip "kv"
+    skip n # skip key
+    result = getTypeImpl(c, n)
   of AddrX, HaddrX:
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
@@ -110,6 +116,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     var buf = createTokenBuf(4)
     buf.add parLeToken(TupleT, n.info)
     var n = n
+    inc n
     while n.kind != ParRi:
       buf.addUnstructured getTypeImpl(c, n)
       skip n

@@ -10,18 +10,13 @@
 import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
-import nifindexes, symparser, treemangler
-import ".." / nimony / nimony_model
+import nifindexes, symparser, treemangler, typenav
+import ".." / nimony / [nimony_model, programs]
 
 type
-  NifModule = ref object
-    buf: TokenBuf
-    stream: Stream
-    index: NifIndex
   SymbolKey = (SymId, SymId) # (symbol, owner)
 
   EContext = object
-    mods: Table[string, NifModule]
     dir, main, ext: string
     dest: TokenBuf
     declared: HashSet[SymId]
@@ -33,27 +28,7 @@ type
     strLits: Table[string, SymId]
     newTypes: Table[string, SymId]
     pending: TokenBuf
-
-proc newNifModule(infile: string): NifModule =
-  result = NifModule(stream: nifstreams.open(infile))
-  discard processDirectives(result.stream.r)
-
-  result.buf = fromStream(result.stream)
-  # fromStream only parses the topLevel 'stmts'
-  let eof = next(result.stream)
-  result.buf.add eof
-  let indexName = infile.changeFileExt".idx.nif"
-  if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
-    createIndex infile, true
-  result.index = readIndex(indexName)
-
-proc load(e: var EContext; suffix: string): NifModule =
-  if not e.mods.hasKey(suffix):
-    let infile = e.dir / suffix & e.ext
-    result = newNifModule(infile)
-    e.mods[suffix] = result
-  else:
-    result = e.mods[suffix]
+    typeCache: TypeCache
 
 proc error(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
   write stdout, "[Error] "
@@ -128,7 +103,6 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
     if nested == 0: break
 
 proc mangle*(c: var Cursor): string =
-  var nested = 0
   var b = createMangler(30)
   mangleImpl b, c
   result = b.extract()
@@ -246,6 +220,19 @@ proc traverseField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   skip c # skips value
   wantParRi e, c
 
+proc ithTupleField(counter: int): SymId {.inline.} =
+  pool.syms.getOrIncl("fld." & $counter)
+
+proc genTupleField(e: var EContext; typ: var Cursor; counter: int) =
+  e.dest.add tagToken("fld", typ.info)
+  let name = ithTupleField(counter)
+  e.dest.add symdefToken(name, typ.info)
+  e.offer name
+  e.dest.addDotToken() # pragmas
+  e.dest.addSubtree(typ)
+  skip typ
+  e.dest.addParRi() # "fld"
+
 proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}): TokenBuf =
   e.dest.add c # efld
   inc c
@@ -321,8 +308,19 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
   inc c
   e.dest.add tagToken("object", info)
   e.dest.addDotToken()
-  while c.substructureKind == FldS:
-    traverseField(e, c, {})
+  var counter = 0
+  while c.kind != ParRi:
+    if c.substructureKind == FldS:
+      inc c # skip fld
+      skip c # skip name
+      skip c # skip export marker
+      skip c # skip pragmas
+      genTupleField(e, c, counter)
+      skip c # skip value
+      skipParRi e, c
+    else:
+      genTupleField(e, c, counter)
+    inc counter
   wantParRi e, c
 
 proc traverseArrayBody(e: var EContext; c: var Cursor) =
@@ -760,9 +758,22 @@ proc traverseStmtsExpr(e: var EContext; c: var Cursor) =
 
 proc traverseTupleConstr(e: var EContext; c: var Cursor) =
   e.dest.add tagToken("oconstr", c.info)
+  let tupleType = e.typeCache.getType(c)
+  e.dest.addSubtree(tupleType)
   inc c
+  var counter = 0
   while c.kind != ParRi:
-    traverseExpr e, c
+    e.dest.add tagToken("kv", c.info)
+    e.dest.add symToken(ithTupleField(counter), c.info)
+    inc counter
+    if c.exprKind == KvX:
+      inc c # skip "kv"
+      skip c # skip key
+      traverseExpr e, c
+      skipParRi e, c
+    else:
+      traverseExpr e, c
+    e.dest.addParRi() # "kv"
   wantParRi e, c
 
 proc traverseExpr(e: var EContext; c: var Cursor) =
@@ -1044,25 +1055,15 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     error e, "statement expected, but got: ", c
 
 proc importSymbol(e: var EContext; s: SymId) =
-  let nifName = pool.syms[s]
-  let modname = extractModule(nifName)
-  if modname == "":
-    error e, "undeclared identifier: " & nifName
-  else:
-    var m = load(e, modname)
-    var entry = m.index.public.getOrDefault(nifName)
-    if entry.offset == 0:
-      entry = m.index.private.getOrDefault(nifName)
-    if entry.offset == 0:
-      error e, "undeclared identifier: " & nifName
-    m.stream.r.jumpTo entry.offset
-    var buf = createTokenBuf(30)
-    nifcursors.parse(m.stream, buf, entry.info)
-    var c = beginRead(buf)
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing:
+    var c = res.decl
     e.dest.add tagToken("imp", c.info)
     traverseStmt e, c, TraverseSig
     e.dest.addDotToken()
     e.dest.addParRi()
+  else:
+    error e, "could not find symbol: " & pool.syms[s]
 
 proc writeOutput(e: var EContext) =
   var b = nifbuilder.open(e.dir / e.main & ".c.nif")
@@ -1156,11 +1157,10 @@ proc expand*(infile: string) =
   let (dir, file, ext) = splitModulePath(infile)
   var e = EContext(dir: (if dir.len == 0: getCurrentDir() else: dir), ext: ext, main: file,
     dest: createTokenBuf(),
-    nestedIn: @[(StmtsS, SymId(0))])
+    nestedIn: @[(StmtsS, SymId(0))],
+    typeCache: createTypeCache())
 
-  var m = newNifModule(infile)
-  var c = beginRead(m.buf)
-  e.mods[e.main] = m
+  var c = setupProgram(infile, infile.changeFileExt ".c.nif")
 
   if stmtKind(c) == StmtsS:
     e.dest.add c
