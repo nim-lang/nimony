@@ -326,3 +326,8 @@ proc parse*(r: var Stream; dest: var TokenBuf;
     let tok = r.next()
     dest.add tok
     if tok.kind == EofToken: break
+
+proc isLastSon*(n: Cursor): bool =
+  var n = n
+  skip n
+  result = n.kind == ParRi

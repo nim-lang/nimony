@@ -73,9 +73,10 @@ proc fillTokenTable(tab: var BiTable[Token, string]) =
     assert id == Token(e), $(id, " ", ord(e))
 
 type
-  GenFlags* = enum
+  GenFlag* = enum
     gfMainModule # isMainModule
     gfHasError   # already generated the error variable
+    gfProducesMainProc # needs main proc
 
   GeneratedCode* = object
     m: Module
@@ -91,13 +92,11 @@ type
     headerFile: seq[Token]
     generatedTypes: IntSet
     requestedSyms: HashSet[string]
-    flags: set[GenFlags]
+    flags: set[GenFlag]
 
-proc initGeneratedCode*(m: sink Module, isMain: bool): GeneratedCode =
+proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
-      fileIds: initPackedSet[FileId]())
-  if isMain:
-    result.flags.incl gfMainModule
+      fileIds: initPackedSet[FileId](), flags: flags)
   fillTokenTable(result.tokens)
 
 proc add*(c: var GeneratedCode; t: PredefinedToken) {.inline.} =
@@ -278,7 +277,8 @@ proc genParam(c: var GeneratedCode; t: Tree; n: NodePos) =
   else:
     error c.m, "expected SymbolDef but got: ", t, n
 
-proc genVarPragmas(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genVarPragmas(c: var GeneratedCode; t: Tree; n: NodePos): NifcKind =
+  result = Empty
   if t[n].kind == Empty:
     discard
   elif t[n].kind == PragmasC:
@@ -290,6 +290,8 @@ proc genVarPragmas(c: var GeneratedCode; t: Tree; n: NodePos) =
         c.add " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & "))"
       of WasC:
         c.add "/* " & toString(t, ch.firstSon, c.m) & " */"
+      of StaticC:
+        result = StaticC
       else:
         error c.m, "invalid pragma: ", t, ch
   else:
@@ -315,6 +317,13 @@ template moveToDataSection(body: untyped) =
     c.data.add c.code[i]
   setLen c.code, oldLen
 
+template moveToInitSection(body: untyped) =
+  let oldLen = c.code.len
+  body
+  for i in oldLen ..< c.code.len:
+    c.init.add c.code[i]
+  setLen c.code, oldLen
+
 include genexprs
 
 type
@@ -327,6 +336,7 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
   if t[d.name].kind == SymDef:
     let lit = t[d.name].litId
     let name = mangle(c.m.lits.strings[lit])
+    let beforeDecl = c.code.len
     if toExtern:
       c.add ExternKeyword
 
@@ -335,7 +345,9 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
     if vk == IsThreadlocal:
       c.add "__thread "
     genType c, t, d.typ, name
-    genVarPragmas c, t, d.pragmas
+    let vis = genVarPragmas(c, t, d.pragmas)
+    if vis == StaticC:
+      c.code.insert(Token(StaticKeyword), beforeDecl)
     if t[d.value].kind != Empty:
       c.add AsgnOpr
       if vk != IsLocal: inc c.inSimpleInit
@@ -468,6 +480,9 @@ proc genToplevel(c: var GeneratedCode; t: Tree; n: NodePos) =
   of ProcC: genProcDecl c, t, n, false
   of VarC, GvarC, TvarC: genStmt c, t, n
   of ConstC: genStmt c, t, n
+  of DiscardC, AsgnC:
+    moveToInitSection:
+      genStmt c, t, n
   of TypeC: discard "handled in a different pass"
   of EmitC: genEmitStmt c, t, n
   else:
@@ -501,10 +516,10 @@ proc writeLineDir(f: var CppFile, c: var GeneratedCode) =
     write f, def
     write f, "\n"
 
-proc generateCode*(s: var State, inp, outp: string; isMain: bool) =
+proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   var m = load(inp)
   m.config = s.config
-  var c = initGeneratedCode(m, isMain)
+  var c = initGeneratedCode(m, flags)
 
   var co = TypeOrder()
   traverseTypes(c.m, co)
@@ -516,7 +531,7 @@ proc generateCode*(s: var State, inp, outp: string; isMain: bool) =
   var f = CppFile(f: open(outp, fmWrite))
   f.write "#define NIM_INTBITS " & $s.bits & "\n"
   f.write Prelude
-  if isMain:
+  if gfMainModule in c.flags:
     f.write $ThreadVarToken & "NB8 " & $ErrToken & $Semicolon & "\n"
 
   writeTokenSeq f, c.includes, c
@@ -526,7 +541,16 @@ proc generateCode*(s: var State, inp, outp: string; isMain: bool) =
   writeTokenSeq f, c.data, c
   writeTokenSeq f, c.protos, c
   writeTokenSeq f, c.code, c
-  if c.init.len > 0:
+
+  if gfProducesMainProc in c.flags:
+    f.write "int cmdCount;"
+    f.write "char **cmdLine;"
+    f.write "int main(int argc, char **argv) {\n"
+    f.write "  cmdCount = argc;\n"
+    f.write "  cmdLine = argv;\n"
+    writeTokenSeq f, c.init, c
+    f.write "}\n\n"
+  elif c.init.len > 0:
     f.write "void __attribute__((constructor)) init(void) {"
     writeTokenSeq f, c.init, c
     f.write "}\n\n"

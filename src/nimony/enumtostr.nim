@@ -1,21 +1,28 @@
+#       Nimony
+# (c) Copyright 2024 Andreas Rumpf
+#
+# See the file "license.txt", included in this
+# distribution, for details about the copyright.
+
+## Generation for enum to string conversions.
+
 include nifprelude
 
-import decls, nimony_model
-
+import decls, nimony_model, semdata, sembasics
 
 proc tagToken(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
 
-proc genEnumToStrProcCase(dest: var TokenBuf; enumDecl: var Cursor; symId: SymId) =
-  dest.add tagToken("case", enumDecl.info)
-  dest.add symToken(symId, enumDecl.info)
+proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId: SymId) =
+  c.dest.add tagToken("case", enumDecl.info)
+  c.dest.add symToken(symId, enumDecl.info)
   inc enumDecl # skips enum
   skip enumDecl # skips base type
   while enumDecl.kind != ParRi:
     let enumDeclInfo = enumDecl.info
-    dest.add tagToken("of", enumDeclInfo)
+    c.dest.add tagToken("of", enumDeclInfo)
 
-    dest.add tagToken("set", enumDeclInfo)
+    c.dest.add tagToken("set", enumDeclInfo)
 
     inc enumDecl
     let symId = enumDecl.symId
@@ -33,56 +40,57 @@ proc genEnumToStrProcCase(dest: var TokenBuf; enumDecl: var Cursor; symId: SymId
 
     inc enumDecl # Skips ParRi
 
-    dest.add symToken(symId, symInfo)
-    dest.addParRi() # set
+    c.dest.add symToken(symId, symInfo)
+    c.dest.addParRi() # set
 
-    dest.add tagToken("stmts", enumDeclInfo)
-    dest.add tagToken("ret", enumDeclInfo)
-    dest.add strToken(fieldValue, enumDeclInfo)
-    dest.addParRi() # ret
-    dest.addParRi() # stmts
+    c.dest.add tagToken("stmts", enumDeclInfo)
+    c.dest.add tagToken("ret", enumDeclInfo)
+    c.dest.add strToken(fieldValue, enumDeclInfo)
+    c.dest.addParRi() # ret
+    c.dest.addParRi() # stmts
 
-    dest.addParRi() # of
+    c.dest.addParRi() # of
 
-  dest.addParRi() # case
+  c.dest.addParRi() # case
 
-proc genEnumToStrProc*(dest: var TokenBuf, typeDecl: var Cursor; stringType: Cursor) =
+proc genEnumToStrProc*(c: var SemContext; typeDecl: var Cursor) =
   let decl = asTypeDecl(typeDecl)
   let enumSymId = decl.name.symId
   let enumSymInfo = decl.name.info
   let dollorName = "dollar`." & pool.syms[enumSymId]
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
-  dest.add tagToken("proc", enumSymInfo)
-  dest.add symdefToken(dollorSymId, enumSymInfo)
+  c.dest.add tagToken("proc", enumSymInfo)
+  c.dest.add symdefToken(dollorSymId, enumSymInfo)
 
   # Todo: defaults to (nodecl)
   let exportIdent = pool.strings.getOrIncl("x")
-  dest.add identToken(exportIdent, enumSymInfo)
-  dest.addDotToken()
-  dest.addDotToken()
+  c.dest.add identToken(exportIdent, enumSymInfo)
+  c.dest.addDotToken()
+  c.dest.addDotToken()
 
-  let paramSymId = pool.syms.getOrIncl("e")
-  dest.add tagToken("params", enumSymInfo)
-  dest.add tagToken("param", enumSymInfo)
-  dest.add symdefToken(paramSymId, enumSymInfo)
-  dest.addDotToken()
-  dest.addDotToken()
-  dest.add symToken(enumSymId, enumSymInfo)
-  dest.addDotToken()
-  dest.addParRi() # param
-  dest.addParRi() # params
+  var paramName = "e"
+  c.makeLocalSym(paramName)
+  let paramSymId = pool.syms.getOrIncl(paramName)
+  c.dest.add tagToken("params", enumSymInfo)
+  c.dest.add tagToken("param", enumSymInfo)
+  c.dest.add symdefToken(paramSymId, enumSymInfo)
+  c.dest.addDotToken()
+  c.dest.addDotToken()
+  c.dest.add symToken(enumSymId, enumSymInfo)
+  c.dest.addDotToken()
+  c.dest.addParRi() # param
+  c.dest.addParRi() # params
 
-  dest.add stringType
-  dest.addParRi()
+  c.dest.add c.types.stringType
+  c.dest.addParRi()
 
-  dest.addDotToken()
-  dest.addDotToken()
+  c.dest.addDotToken()
+  c.dest.addDotToken()
 
-
-  dest.add tagToken("stmts", enumSymInfo)
+  c.dest.add tagToken("stmts", enumSymInfo)
   var body = decl.body
-  genEnumToStrProcCase(dest, body, paramSymId)
-  dest.addParRi() # stmts
+  genEnumToStrProcCase(c, body, paramSymId)
+  c.dest.addParRi() # stmts
 
-  dest.addParRi() # proc
+  c.dest.addParRi() # proc

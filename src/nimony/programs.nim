@@ -126,7 +126,7 @@ proc splitModulePath(s: string): (string, string, string) =
     main.setLen dotPos
   result = (dir, main, ext)
 
-proc setupProgram*(infile, outfile: string): Cursor =
+proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   let (dir, file, _) = splitModulePath(infile)
   let (_, _, ext) = splitModulePath(outfile)
   prog.dir = (if dir.len == 0: getCurrentDir() else: dir)
@@ -134,6 +134,13 @@ proc setupProgram*(infile, outfile: string): Cursor =
   prog.main = file
 
   var m = newNifModule(infile)
+
+  if hasIndex:
+    let indexName = infile.changeFileExt".idx.nif"
+    #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
+    #  createIndex infile
+    m.index = readIndex(indexName)
+
   #echo "INPUT IS ", toString(m.buf)
   result = beginRead(m.buf)
   prog.mods[prog.main] = m
