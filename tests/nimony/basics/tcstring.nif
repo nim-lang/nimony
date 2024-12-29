@@ -59,4 +59,6 @@
    (cstring) 
    (suf "abc" "R"))) 4,20
  (var :zz.0.tcs1re56a . . ~2,~16
-  (cstring) 14 "xzy"))
+  (cstring)
+  (hconv 2,6,tests/nimony/basics/tcstring.nim
+   (cstring) 18,22,tests/nimony/basics/tcstring.nim "xzy")))

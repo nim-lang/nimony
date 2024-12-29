@@ -801,10 +801,11 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         traverseType(e, c)
         traverseExpr(e, c)
         inc nested
-      of HConvX, ConvX:
-        e.dest.add tagToken("conv", c.info)
+      of HconvX, ConvX:
+        let info = c.info
         inc c
         if not genCstringLit(e, c):
+          e.dest.add tagToken("conv", info)
           traverseType(e, c)
           traverseExpr(e, c)
           inc nested
