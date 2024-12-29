@@ -1,3 +1,5 @@
+# test enum base types
+
 type A = enum
   a0, a1, a2, a3
 type B = enum
