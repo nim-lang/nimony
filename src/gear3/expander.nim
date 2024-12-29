@@ -232,7 +232,7 @@ proc genTupleField(e: var EContext; typ: var Cursor; counter: int) =
   e.traverseType(typ, {})
   e.dest.addParRi() # "fld"
 
-proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}): TokenBuf =
+proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   e.dest.add c # efld
   inc c
 
@@ -245,11 +245,7 @@ proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}
 
   skip c # pragmas: must be empty
 
-  result = createTokenBuf()
-
-  swap(e.dest, result)
-  traverseType e, c, flags
-  swap(result, e.dest)
+  skip c # skips enum type which we already know
 
   inc c # skips TupleConstr
   traverseExpr e, c
@@ -463,16 +459,10 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.dest.add tagToken("enum", c.info)
       inc c
 
-      var fields = createTokenBuf()
-      var commonType = createTokenBuf()
-
-      swap(e.dest, fields)
+      # XXX Fixme
+      e.dest.addSubtree e.typeCache.builtins.uint8Type
       while c.substructureKind == EfldS:
-        commonType = traverseEnumField(e, c, flags)
-      swap(fields, e.dest)
-
-      e.dest.add commonType
-      e.dest.add fields
+        traverseEnumField(e, c, flags)
 
       wantParRi e, c
     of StringT:

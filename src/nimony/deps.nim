@@ -330,4 +330,7 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: 
   parseDeps c, p, c.rootNode
   let makeFilename = generateMakefile(c, commandLineArgs)
   #echo "run with: make -f ", makeFilename
+  when defined(windows):
+    putEnv("CC", "gcc")
+    putEnv("CXX", "g++")
   exec "make" & (if forceRebuild: " -B" else: "") & " -f " & quoteShell(makeFilename)

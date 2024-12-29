@@ -10,13 +10,12 @@
 ## A type navigator can recompute the type of an expression.
 
 include nifprelude
-import std/assertions
 
 import ".." / nimony / [nimony_model, builtintypes, decls, programs]
 
 type
   TypeCache* = object
-    builtins: BuiltinTypes
+    builtins*: BuiltinTypes
     mem: seq[TokenBuf]
 
 proc createTypeCache*(): TypeCache =
