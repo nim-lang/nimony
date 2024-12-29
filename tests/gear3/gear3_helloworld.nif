@@ -13,7 +13,7 @@
     (object . .))
 
  (type ~6 :Color.0.tesg7afhq1 . . . 2
-  (enum . ,1
+  (enum (u +8) ,1
    (efld ~6 :Red.0.tesg7afhq1 . .
     (i -1) (tup +0 "r1")) 10,1
    (efld ~7 :Blue.0.tesg7afhq1 . .
