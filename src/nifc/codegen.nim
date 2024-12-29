@@ -541,15 +541,17 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   writeTokenSeq f, c.data, c
   writeTokenSeq f, c.protos, c
   writeTokenSeq f, c.code, c
-  if c.init.len > 0:
-    if gfMainModule in c.flags:
-      f.write "int cmdCount;"
-      f.write "char **cmdLine;"
-      f.write "int main(int argc, char **argv) {\n"
-      f.write "  cmdCount = argc;\n"
-      f.write "  cmdLine = argv;\n"
-    else:
-      f.write "void __attribute__((constructor)) init(void) {"
+
+  if gfProducesMainProc in c.flags:
+    f.write "int cmdCount;"
+    f.write "char **cmdLine;"
+    f.write "int main(int argc, char **argv) {\n"
+    f.write "  cmdCount = argc;\n"
+    f.write "  cmdLine = argv;\n"
+    writeTokenSeq f, c.init, c
+    f.write "}\n\n"
+  elif c.init.len > 0:
+    f.write "void __attribute__((constructor)) init(void) {"
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   f.f.close
