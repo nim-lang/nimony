@@ -801,8 +801,8 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         traverseType(e, c)
         traverseExpr(e, c)
         inc nested
-      of ConvX:
-        e.dest.add c
+      of HConvX, ConvX:
+        e.dest.add tagToken("conv", c.info)
         inc c
         if not genCstringLit(e, c):
           traverseType(e, c)
@@ -887,14 +887,20 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
     e.addKeyVal genPragmas, "bits", intToken(prag.bits, pinfo), pinfo
   closeGenPragmas e, genPragmas
 
-  traverseType e, c
+  var nodecl = prag.flags.contains(Nodecl)
+  if tag == "param" and typeKind(c) == VarargsT:
+    skip c
+    nodecl = true
+  else:
+    traverseType e, c
+
   if mode != TraverseSig:
     traverseExpr e, c
   else:
     e.dest.addDotToken()
     skip c
   wantParRi e, c
-  if Nodecl in prag.flags:
+  if nodecl:
     e.dest.shrink toPatch
   if prag.header != StrId(0):
     e.headers.incl prag.header
@@ -1072,6 +1078,7 @@ proc importSymbol(e: var EContext; s: SymId) =
 proc writeOutput(e: var EContext) =
   var b = nifbuilder.open(e.dir / e.main & ".c.nif")
   b.addHeader "gear3", "nifc"
+  b.addTree "stmts"
   for h in e.headers:
     b.withTree "incl":
       b.addStrLit pool.strings[h]
@@ -1147,6 +1154,7 @@ proc writeOutput(e: var EContext) =
       inc nested
     inc c
 
+  b.endTree()
   b.close()
 
 proc splitModulePath(s: string): (string, string, string) =
@@ -1167,7 +1175,6 @@ proc expand*(infile: string) =
   var c = setupProgram(infile, infile.changeFileExt ".c.nif", true)
 
   if stmtKind(c) == StmtsS:
-    e.dest.add c
     inc c
     genStringType e, c.info
     while c.kind != ParRi:
@@ -1183,7 +1190,7 @@ proc expand*(infile: string) =
     if not e.declared.contains(imp):
       importSymbol(e, imp)
     inc i
-  wantParRi e, c
+  skipParRi e, c
   writeOutput e
 
 when isMainModule:

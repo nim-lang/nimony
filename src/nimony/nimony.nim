@@ -91,7 +91,9 @@ proc handleCmdLine() =
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "forcebuild", "f": forceRebuild = true
-      of "run", "r": doRun = true
+      of "run", "r":
+        doRun = true
+        forwardArg = false
       of "compat": compat = true
       of "path", "p": config.paths.add val
       of "define", "d": config.defines.incl val

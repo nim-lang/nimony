@@ -39,6 +39,7 @@ type
     Arrow = "->"
     Star = "*"
     Amp = "&"
+    DoubleQuote = "\""
     AsgnOpr = " = "
     ScopeOpr = "::"
     ConstKeyword = "const "
@@ -445,7 +446,13 @@ proc genInclude(c: var GeneratedCode; t: Tree; n: NodePos) =
       discard "skip the #include keyword"
     else:
       c.includes.add Token(IncludeKeyword)
-    c.includes.add header
+    if headerAsStr[0] == '<':
+      c.includes.add header
+    else:
+      c.includes.add Token(DoubleQuote)
+      c.includes.add header
+      c.includes.add Token(DoubleQuote)
+
     c.includes.add Token NewLine
 
 proc genImp(c: var GeneratedCode; t: Tree; n: NodePos) =
@@ -480,7 +487,7 @@ proc genToplevel(c: var GeneratedCode; t: Tree; n: NodePos) =
   of ProcC: genProcDecl c, t, n, false
   of VarC, GvarC, TvarC: genStmt c, t, n
   of ConstC: genStmt c, t, n
-  of DiscardC, AsgnC:
+  of DiscardC, AsgnC, CallC:
     moveToInitSection:
       genStmt c, t, n
   of TypeC: discard "handled in a different pass"
