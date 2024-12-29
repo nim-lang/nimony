@@ -73,9 +73,10 @@ proc fillTokenTable(tab: var BiTable[Token, string]) =
     assert id == Token(e), $(id, " ", ord(e))
 
 type
-  GenFlags* = enum
+  GenFlag* = enum
     gfMainModule # isMainModule
     gfHasError   # already generated the error variable
+    gfProducesMainProc # needs main proc
 
   GeneratedCode* = object
     m: Module
@@ -91,13 +92,11 @@ type
     headerFile: seq[Token]
     generatedTypes: IntSet
     requestedSyms: HashSet[string]
-    flags: set[GenFlags]
+    flags: set[GenFlag]
 
-proc initGeneratedCode*(m: sink Module, isMain: bool): GeneratedCode =
+proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
-      fileIds: initPackedSet[FileId]())
-  if isMain:
-    result.flags.incl gfMainModule
+      fileIds: initPackedSet[FileId](), flags: flags)
   fillTokenTable(result.tokens)
 
 proc add*(c: var GeneratedCode; t: PredefinedToken) {.inline.} =
@@ -517,10 +516,10 @@ proc writeLineDir(f: var CppFile, c: var GeneratedCode) =
     write f, def
     write f, "\n"
 
-proc generateCode*(s: var State, inp, outp: string; isMain: bool) =
+proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   var m = load(inp)
   m.config = s.config
-  var c = initGeneratedCode(m, isMain)
+  var c = initGeneratedCode(m, flags)
 
   var co = TypeOrder()
   traverseTypes(c.m, co)
@@ -532,7 +531,7 @@ proc generateCode*(s: var State, inp, outp: string; isMain: bool) =
   var f = CppFile(f: open(outp, fmWrite))
   f.write "#define NIM_INTBITS " & $s.bits & "\n"
   f.write Prelude
-  if isMain:
+  if gfMainModule in c.flags:
     f.write $ThreadVarToken & "NB8 " & $ErrToken & $Semicolon & "\n"
 
   writeTokenSeq f, c.includes, c
@@ -543,7 +542,14 @@ proc generateCode*(s: var State, inp, outp: string; isMain: bool) =
   writeTokenSeq f, c.protos, c
   writeTokenSeq f, c.code, c
   if c.init.len > 0:
-    f.write "void __attribute__((constructor)) init(void) {"
+    if gfMainModule in c.flags:
+      f.write "int cmdCount;"
+      f.write "char **cmdLine;"
+      f.write "int main(int argc, char **argv) {\n"
+      f.write "  cmdCount = argc;\n"
+      f.write "  cmdLine = argv;\n"
+    else:
+      f.write "void __attribute__((constructor)) init(void) {"
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   f.f.close

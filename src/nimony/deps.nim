@@ -244,8 +244,8 @@ proc mescape(p: string): string =
 proc generateMakefile(c: DepContext; commandLineArgs: string): string =
   var s = ""
   s.add "# Auto-generated Makefile\n"
-  s.add "PATH := " & mescape(os.getAppDir()) & ":$(PATH)\nexport PATH\n"
   s.add "\n.PHONY: all\n"
+  s.add ".SECONDARY:\n" # don't delete intermediate files
   let dest =
     case c.cmd
     of DoCheck:

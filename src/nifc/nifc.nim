@@ -52,7 +52,7 @@ proc genMakeCmd(config: ConfigRef, makefilePath: string): string =
   else:
     result = "make -f " & makefilePath
 
-proc generateBackend(s: var State; action: Action; files: seq[string]; isLastAction: bool) =
+proc generateBackend(s: var State; action: Action; files: seq[string]; flags: set[GenFlag]) =
   assert action in {atC, atCpp}
   if files.len == 0:
     quit "command takes a filename"
@@ -61,10 +61,10 @@ proc generateBackend(s: var State; action: Action; files: seq[string]; isLastAct
   for i in 0..<files.len-1:
     let inp = files[i]
     let outp = s.config.nifcacheDir / splitFile(inp).name.mangleFileName & destExt
-    generateCode s, inp, outp, false
+    generateCode s, inp, outp, {}
   let inp = files[^1]
   let outp = s.config.nifcacheDir / splitFile(inp).name.mangleFileName & destExt
-  generateCode s, inp, outp, isLastAction
+  generateCode s, inp, outp, flags
 
 proc handleCmdLine() =
   var args: seq[string] = @[]
@@ -167,7 +167,10 @@ proc handleCmdLine() =
       case action
       of atC, atCpp:
         let isLast = (if compileOnly: isMain else: currentAction == action)
-        generateBackend(s, action, actionTable[action], isLast)
+        var flags = if isLast: {gfMainModule} else: {}
+        if isMain:
+          flags.incl gfProducesMainProc
+        generateBackend(s, action, actionTable[action], flags)
       of atNative:
         let args = actionTable[action]
         if args.len == 0:
