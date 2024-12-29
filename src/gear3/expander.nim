@@ -715,7 +715,10 @@ proc genStringLit(e: var EContext; c: Cursor) =
     e.pending.add symdefToken(strName, info)
     e.offer strName
 
-    e.pending.addDotToken() # pragmas
+    e.pending.add tagToken("pragmas", info)
+    e.pending.add tagToken("static", info)
+    e.pending.addParRi()
+    e.pending.addParRi()
 
     # type:
     e.pending.add symToken(pool.syms.getOrIncl(NimStringName), info)

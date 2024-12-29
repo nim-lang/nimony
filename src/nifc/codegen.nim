@@ -278,7 +278,8 @@ proc genParam(c: var GeneratedCode; t: Tree; n: NodePos) =
   else:
     error c.m, "expected SymbolDef but got: ", t, n
 
-proc genVarPragmas(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genVarPragmas(c: var GeneratedCode; t: Tree; n: NodePos): NifcKind =
+  result = Empty
   if t[n].kind == Empty:
     discard
   elif t[n].kind == PragmasC:
@@ -290,6 +291,8 @@ proc genVarPragmas(c: var GeneratedCode; t: Tree; n: NodePos) =
         c.add " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & "))"
       of WasC:
         c.add "/* " & toString(t, ch.firstSon, c.m) & " */"
+      of StaticC:
+        result = StaticC
       else:
         error c.m, "invalid pragma: ", t, ch
   else:
@@ -334,6 +337,7 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
   if t[d.name].kind == SymDef:
     let lit = t[d.name].litId
     let name = mangle(c.m.lits.strings[lit])
+    let beforeDecl = c.code.len
     if toExtern:
       c.add ExternKeyword
 
@@ -342,7 +346,9 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
     if vk == IsThreadlocal:
       c.add "__thread "
     genType c, t, d.typ, name
-    genVarPragmas c, t, d.pragmas
+    let vis = genVarPragmas(c, t, d.pragmas)
+    if vis == StaticC:
+      c.code.insert(Token(StaticKeyword), beforeDecl)
     if t[d.value].kind != Empty:
       c.add AsgnOpr
       if vk != IsLocal: inc c.inSimpleInit
