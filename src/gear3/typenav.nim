@@ -10,6 +10,7 @@
 ## A type navigator can recompute the type of an expression.
 
 include nifprelude
+import std/assertions
 
 import ".." / nimony / [nimony_model, builtintypes, decls, programs]
 
@@ -38,6 +39,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         else:
           if isRoutine(symKind(res.decl)):
             result = res.decl
+          #else:
+          #  assert false, "not type for: " & pool.syms[n.symId]
   of AtX, PatX:
     result = getTypeImpl(c, n.firstSon)
     if typeKind(result) == ArrayT:
@@ -100,7 +103,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
     buf.add parLeToken(PtrT, n.info)
-    buf.addUnstructured elemType
+    buf.addSubtree elemType
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
@@ -108,7 +111,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
     buf.add parLeToken(SetT, n.info)
-    buf.addUnstructured elemType
+    buf.addSubtree elemType
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
@@ -118,7 +121,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     var n = n
     inc n
     while n.kind != ParRi:
-      buf.addUnstructured getTypeImpl(c, n)
+      buf.addSubtree getTypeImpl(c, n)
       skip n
     buf.addParRi()
     c.mem.add buf
@@ -127,7 +130,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
     buf.add parLeToken(ArrayT, n.info)
-    buf.addUnstructured elemType
+    buf.addSubtree elemType
     var n = n
     var arrayLen = 0
     while n.kind != ParRi:

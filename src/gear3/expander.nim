@@ -229,8 +229,7 @@ proc genTupleField(e: var EContext; typ: var Cursor; counter: int) =
   e.dest.add symdefToken(name, typ.info)
   e.offer name
   e.dest.addDotToken() # pragmas
-  e.dest.addSubtree(typ)
-  skip typ
+  e.traverseType(typ, {})
   e.dest.addParRi() # "fld"
 
 proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}): TokenBuf =
@@ -758,8 +757,8 @@ proc traverseStmtsExpr(e: var EContext; c: var Cursor) =
 
 proc traverseTupleConstr(e: var EContext; c: var Cursor) =
   e.dest.add tagToken("oconstr", c.info)
-  let tupleType = e.typeCache.getType(c)
-  e.dest.addSubtree(tupleType)
+  var tupleType = e.typeCache.getType(c)
+  e.traverseType(tupleType, {})
   inc c
   var counter = 0
   while c.kind != ParRi:
