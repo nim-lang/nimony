@@ -605,11 +605,15 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   e.dest.add symdefToken(s, sinfo)
   e.offer s
 
+  var isGeneric = false
+  if c.kind == ParLe:
+    isGeneric = true
   skipExportMarker e, c
 
   skip c # patterns
 
-  let isGeneric = c.kind != DotToken
+  if c.substructureKind == TypevarsS:
+    isGeneric = true
 
   skip c # generic parameters
 
@@ -1030,11 +1034,11 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of BlockS: traverseBlock e, c
     of IfS: traverseIf e, c
     of CaseS: traverseCase e, c
-    of YieldS, IterS, ForS:
-      error e, "to implement: ", c
+    of YieldS, ForS:
+      error e, "BUG: not eliminated: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS, ExportS, CommentS:
+    of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS, ExportS, CommentS, IterS:
       # pure compile-time construct, ignore:
       skip c
     of TypeS:
