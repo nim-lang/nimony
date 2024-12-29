@@ -1742,15 +1742,40 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState)
 proc semEnumType(c: var SemContext; n: var Cursor; enumType: SymId; beforeExportMarker: int) =
   let start = c.dest.len
   takeToken c, n
-  wantDot c, n
+  let baseTypeStart = c.dest.len
+  if n.kind == DotToken:
+    wantDot c, n
+  else:
+    takeTree c, n
   let magicToken = c.dest[beforeExportMarker]
   var state = EnumTypeState(enumType: enumType, thisValue: createXint(0'i64), hasHole: false,
     isBoolType: magicToken.kind == ParLe and pool.tags[magicToken.tagId] == $BoolT)
+  var signed = false
+  var lastValue = state.thisValue
   while n.substructureKind == EfldS:
     semEnumField(c, n, state)
+    if state.thisValue.isNegative:
+      signed = true
+    lastValue = state.thisValue
     inc state.thisValue
   if state.hasHole:
     c.dest[start] = parLeToken(HoleyEnumT, c.dest[start].info)
+  var baseType: Cursor
+  if signed:
+    baseType = c.types.int32Type
+  else:
+    var err = false
+    let max = asUnsigned(lastValue, err)
+    # according to old size align computation:
+    if max <= high(uint8).uint64:
+      baseType = c.types.uint8Type
+    elif max <= high(uint16).uint64:
+      baseType = c.types.uint16Type
+    elif max <= high(uint32).uint64:
+      baseType = c.types.int32Type # according to old codegen
+    else:
+      baseType = c.types.int64Type # according to old codegen
+  c.dest.replace baseType, baseTypeStart
   wantParRi c, n
 
 proc declareConceptSelf(c: var SemContext; info: PackedLineInfo) =
