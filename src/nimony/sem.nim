@@ -3659,7 +3659,6 @@ proc buildLowValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
       # first field
       var field = asEnumDecl(decl.body).firstField
       let first = asLocal(field)
-      assert first.name.kind == SymbolDef
       c.dest.add symToken(first.name.symId, info)
     else:
       c.buildErr info, "invalid type for low: " & typeToString(typ)
@@ -3743,7 +3742,6 @@ proc buildHighValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
         lastField = field
         skip field
       let last = asLocal(lastField)
-      assert last.name.kind == SymbolDef
       c.dest.add symToken(last.name.symId, info)
     else:
       c.buildErr info, "invalid type for high: " & typeToString(typ)
