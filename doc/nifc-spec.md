@@ -203,7 +203,7 @@ ProcTypePragmas ::= Empty | (pragmas ProcTypePragma+)
 ProcPragmas ::= Empty | (pragmas ProcPragma+)
 
 CommonPragma ::= (align Number) | (was Identifier) | Attribute
-VarPragma ::= CommonPragma
+VarPragma ::= CommonPragma | (static)
 VarPragmas ::= Empty | (pragmas VarPragma+)
 
 ParamPragma ::= (was Identifier) | Attribute

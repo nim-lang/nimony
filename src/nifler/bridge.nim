@@ -397,6 +397,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     c.b.addTree("enum")
     if n.len > 0:
       assert n[0].kind == nkEmpty
+      c.b.addEmpty # base type
     for i in 1..<n.len:
       let it = n[i]
 

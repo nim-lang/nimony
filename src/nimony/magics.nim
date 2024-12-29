@@ -139,6 +139,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mDistinct: res DistinctT
   of mVoid: res VoidT
   of mTuple: res TupleT
+  of mOrdinal: res OrdinalT
   of mIterableType: res IterT
   of mInt: res IntT, -1
   of mInt8: res IntT, 8

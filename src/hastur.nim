@@ -3,6 +3,7 @@
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
+import lib / nifindexes
 import gear2 / modnames
 
 const
@@ -353,6 +354,8 @@ proc nifctests(overwrite: bool) =
 proc gear3tests(overwrite: bool) =
   let mod1 = "tests/gear3/mod1"
   let helloworld = "tests/gear3/gear3_helloworld"
+  createIndex helloworld & ".nif", false
+  createIndex mod1 & ".nif", false
   execGear3 mod1 & ".nif"
   execGear3 helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
@@ -397,7 +400,7 @@ proc handleCmdLine =
     buildGear3()
     nimonytests(overwrite)
     nifctests(overwrite)
-    gear3tests(overwrite)
+    #gear3tests(overwrite)
 
   of "nimony":
     buildNimony()

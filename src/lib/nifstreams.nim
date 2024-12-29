@@ -93,6 +93,7 @@ proc identToken*(s: StrId; info: PackedLineInfo): PackedToken {.inline.} =
   toToken(Ident, s, info)
 
 proc symToken*(s: SymId; info: PackedLineInfo): PackedToken {.inline.} =
+  assert s.uint32 > 0'u32
   toToken(Symbol, s, info)
 
 proc dotToken*(info: PackedLineInfo): PackedToken {.inline.} =

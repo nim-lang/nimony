@@ -4,7 +4,8 @@
   (bool) . ~16
   (pragmas 2
    (magic 7 Bool)) 2
-  (enum ~18,1
+  (enum
+   (u +8) ~18,1
    (efld ~8 :false.0.tbojn1uzv 
     (false) . 
     (bool) 
@@ -15,13 +16,13 @@
     (tup +1 "true")))) 5
  (proc :dollar`.bool.0.tbojn1uzv x . . 
   (params 
-   (param :e . . 21
+   (param :e.0 . . 21
     (bool) .))
   (string) . . 
   (stmts 23
    (result :result.0 . .
     (string) .) 23
-   (case e ~18,1
+   (case e.0 ~18,1
     (of 
      (set 
       (false)) 

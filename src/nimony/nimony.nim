@@ -27,6 +27,7 @@ Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
   -p, --path:PATH           add PATH to the search path
   -f, --forcebuild          force a rebuild
+  -r, --run                 also run the compiled program
   --compat                  turn on compatibility mode
   --noenv                   do not read configuration from `NIM_*`
                             environment variables
@@ -63,6 +64,7 @@ proc handleCmdLine() =
   var forceRebuild = false
   var compat = false
   var useEnv = true
+  var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
   config.defines.incl "nimony"
@@ -89,6 +91,7 @@ proc handleCmdLine() =
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "forcebuild", "f": forceRebuild = true
+      of "run", "r": doRun = true
       of "compat": compat = true
       of "path", "p": config.paths.add val
       of "define", "d": config.defines.incl val
@@ -142,7 +145,10 @@ proc handleCmdLine() =
     createDir(binDir())
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
-    buildGraph config, args[0], compat, forceRebuild, commandLineArgs, moduleFlags
+    requiresTool "gear3", "src/gear3/gear3.nim", forceRebuild
+    requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+    buildGraph config, args[0], compat, forceRebuild, commandLineArgs, moduleFlags,
+      (if doRun: DoRun else: DoCompile)
 
 when isMainModule:
   handleCmdLine()

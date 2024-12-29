@@ -1,7 +1,8 @@
 (.nif24)
 ,1,tests/nimony/sysbasics/tdollar.nim(stmts 9,1
  (type ~7 :Color1.0.tdoqc0e0v . . . 2
-  (enum ~7,1
+  (enum
+   (u +8) ~7,1
    (efld :Red1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v 
     (tup +0 "Red1")) ~1,1
    (efld :Blue1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v 
@@ -10,12 +11,12 @@
     (tup +2 "Green1")))) 2,1
  (proc :dollar`.Color1.0.tdoqc0e0v x . . 
   (params 
-   (param :e . . Color1.0.tdoqc0e0v .))
+   (param :e.0 . . Color1.0.tdoqc0e0v .))
   (string) . . 
   (stmts 9
    (result :result.0 . .
     (string) .) 9
-   (case e ~7,1
+   (case e.0 ~7,1
     (of 
      (set Red1.0.tdoqc0e0v) 
      (stmts 
