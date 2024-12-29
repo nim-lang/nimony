@@ -1,7 +1,7 @@
 (.nif24)
 ,1,tests/nimony/sysbasics/tdollar.nim(stmts 9,1
  (type ~7 :Color1.0.tdoqc0e0v . . . 2
-  (enum ~7,1
+  (enum . ~7,1
    (efld :Red1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v 
     (tup +0 "Red1")) ~1,1
    (efld :Blue1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v 

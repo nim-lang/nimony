@@ -4,7 +4,7 @@
   (bool) . ~16
   (pragmas 2
    (magic 7 Bool)) 2
-  (enum ~18,1
+  (enum . ~18,1
    (efld ~8 :false.0.tbojn1uzv 
     (false) . 
     (bool) 

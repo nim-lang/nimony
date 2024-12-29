@@ -11,7 +11,7 @@
      (i -1)) 1
     (nil)))) 10,4
  (type ~5 :Enum.0.tde837gue . . . 2
-  (enum 5
+  (enum . 5
    (efld :a.0.tde837gue . . Enum.0.tde837gue 
     (tup +0 "a")) 8
    (efld :b.0.tde837gue . . Enum.0.tde837gue 

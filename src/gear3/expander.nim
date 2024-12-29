@@ -318,6 +318,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     of EnumT, HoleyEnumT:
       e.dest.add tagToken("enum", c.info)
       inc c
+      traverseType e, c, flags # base type
 
       var fields = createTokenBuf()
       var commonType = createTokenBuf()
