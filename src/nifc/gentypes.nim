@@ -343,7 +343,7 @@ proc genEnumDecl(c: var GeneratedCode; t: TypeGraph; n: NodePos; name: string) =
   c.add Semicolon
   c.add NewLine
 
-  for ch in sonsFromX(t, n):
+  for ch in sonsFromX(t, n, 2):
     if t[ch].kind == EfldC:
       let (a, b) = sons2(t, ch)
       if t[a].kind == SymDef:
