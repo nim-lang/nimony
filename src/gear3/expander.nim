@@ -616,7 +616,11 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
 
   skip c # generic parameters
 
-  traverseParams e, c
+  if isGeneric:
+    skip c # skip parameters
+    skip c # skip return type
+  else:
+    traverseParams e, c
 
   let pinfo = c.info
   let prag = parsePragmas(e, c)
@@ -665,8 +669,10 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
   e.dest.add symdefToken(s, sinfo)
   e.offer s
 
+  var isGeneric = c.kind == ParLe
   skipExportMarker e, c
-  let isGeneric = c.kind != DotToken
+  if c.substructureKind == TypevarsS:
+    isGeneric = true
   skip c # generic parameters
 
   let prag = parsePragmas(e, c)
