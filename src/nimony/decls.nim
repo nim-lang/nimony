@@ -129,6 +129,7 @@ proc asObjectDecl*(c: Cursor): ObjectDecl =
 type
   EnumDecl* = object
     kind*: TypeKind
+    baseType*: Cursor
     firstField*: Cursor
 
 proc asEnumDecl*(c: Cursor): EnumDecl =
@@ -137,6 +138,8 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
   result = EnumDecl(kind: kind)
   if kind in {EnumT, HoleyEnumT}:
     inc c
+    result.baseType = c
+    skip c
     result.firstField = c
 
 type

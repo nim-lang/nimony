@@ -180,7 +180,7 @@ proc traverseField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   inc c # skips value
   wantParRi e, c
 
-proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}): TokenBuf =
+proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   e.dest.add c # efld
   inc c
 
@@ -193,11 +193,8 @@ proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}
 
   skip c # pragmas: must be empty
 
-  result = createTokenBuf()
 
-  swap(e.dest, result)
-  traverseType e, c, flags
-  swap(result, e.dest)
+  skip c # type: must be the enum itself
 
   inc c # skips TupleConstr
   traverseExpr e, c
@@ -318,17 +315,10 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     of EnumT, HoleyEnumT:
       e.dest.add tagToken("enum", c.info)
       inc c
+      traverseType e, c, flags # base type
 
-      var fields = createTokenBuf()
-      var commonType = createTokenBuf()
-
-      swap(e.dest, fields)
       while c.substructureKind == EfldS:
-        commonType = traverseEnumField(e, c, flags)
-      swap(fields, e.dest)
-
-      e.dest.add commonType
-      e.dest.add fields
+        traverseEnumField(e, c, flags)
 
       wantParRi e, c
     of VoidT, StringT, VarargsT, NilT, ConceptT,
