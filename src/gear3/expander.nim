@@ -1108,9 +1108,14 @@ proc writeOutput(e: var EContext) =
     of Ident:
       b.addIdent(pool.strings[c.litId])
     of Symbol:
-      let owner = ownerStack[^1][0]
-      let key = (c.symId, owner)
-      let val = e.toMangle.getOrDefault(key)
+      var val = ""
+      var ownerPos = ownerStack.len - 1
+      while ownerPos >= 0:
+        let owner = ownerStack[ownerPos][0]
+        let key = (c.symId, owner)
+        val = e.toMangle.getOrDefault(key)
+        if val.len > 0: break
+        dec ownerPos
       if val.len > 0:
         b.addSymbol(val)
       else:
