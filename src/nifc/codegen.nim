@@ -467,7 +467,7 @@ proc genToplevel(c: var GeneratedCode; t: Tree; n: NodePos) =
   of InclC: genInclude c, t, n
   of ProcC: genProcDecl c, t, n, false
   of VarC, GvarC, TvarC: genStmt c, t, n
-  of ConstC, DiscardC: genStmt c, t, n
+  of ConstC, DiscardC, AsgnC: genStmt c, t, n
   of TypeC: discard "handled in a different pass"
   of EmitC: genEmitStmt c, t, n
   else:

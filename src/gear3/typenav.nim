@@ -39,8 +39,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         else:
           if isRoutine(symKind(res.decl)):
             result = res.decl
-          #else:
-          #  assert false, "not type for: " & pool.syms[n.symId]
+      else:
+        quit "gear3:could not find symbol: " & pool.syms[n.symId]
   of AtX, PatX:
     result = getTypeImpl(c, n.firstSon)
     if typeKind(result) == ArrayT:

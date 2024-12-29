@@ -721,7 +721,8 @@ proc genStringLit(e: var EContext; c: Cursor) =
     # type:
     e.pending.add symToken(pool.syms.getOrIncl(NimStringName), info)
     # value:
-    e.pending.add parLeToken(OconstrX, info)
+    e.pending.add tagToken("oconstr", info)
+    e.pending.add symToken(pool.syms.getOrIncl(NimStringName), info)
 
     e.pending.add parLeToken(KvX, info)
     let strField = pool.syms.getOrIncl(StringField)
@@ -1159,7 +1160,7 @@ proc expand*(infile: string) =
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache())
 
-  var c = setupProgram(infile, infile.changeFileExt ".c.nif")
+  var c = setupProgram(infile, infile.changeFileExt ".c.nif", true)
 
   if stmtKind(c) == StmtsS:
     e.dest.add c
