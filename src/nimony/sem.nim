@@ -1047,6 +1047,7 @@ proc semObjConstrFromCall(c: var SemContext; it: var Item; cs: CallState) =
   objBuf.addParRi()
   var objConstr = Item(n: cursorAt(objBuf, 0), typ: it.typ)
   semObjConstr c, objConstr
+  it.typ = objConstr.typ
 
 proc isCastableType(t: TypeCursor): bool =
   const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT, HoleyEnumT}
