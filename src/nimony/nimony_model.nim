@@ -139,6 +139,7 @@ type
     IsMainModuleX = "ismainmodule"
     DefaultObjX = "defaultobj"
     DefaultTupX = "defaulttup"
+    ExprX = "expr" # was nkStmtListExpr in the old Nim
 
   TypeKind* = enum
     NoType
@@ -183,6 +184,7 @@ type
     TypedT = "typed"
     CstringT = "cstring"
     PointerT = "pointer"
+    OrdinalT = "ordinal"
 
   PragmaKind* = enum
     NoPragma

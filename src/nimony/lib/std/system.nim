@@ -50,6 +50,7 @@ proc `xor`*(x, y: bool): bool {.magic: "Xor", noSideEffect.}
 
 type
   untyped* {.magic: Expr.}
+  typed* {.magic: Stmt.}
 
 iterator unpack*(): untyped {.magic: Unpack.}
 
@@ -57,6 +58,22 @@ proc unpackToCall(fn: untyped) {.magic: Unpack.}
 
 const
   isMainModule* {.magic: "IsMainModule".}: bool = false
+
+type
+  Ordinal*[T] {.magic: Ordinal.} ## Generic ordinal type. Includes integer,
+                                  ## bool, character, and enumeration types
+                                  ## as well as their subtypes. See also
+                                  ## `SomeOrdinal`.
+
+type
+  range*[T]{.magic: "Range".}         ## Generic type to construct range types.
+  array*[I, T]{.magic: "Array".}      ## Generic type to construct
+                                      ## fixed-length arrays.
+
+proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect.}
+proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
+proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
+proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 
 # integer calculations:
 proc `+`*(x: int8): int8 {.magic: "UnaryPlusI", noSideEffect.}
@@ -321,7 +338,7 @@ template default*(x: typedesc[uint64]): uint64 = 0'u64
 template default*(x: typedesc[float32]): float32 = 0.0'f32
 template default*(x: typedesc[float64]): float64 = 0.0'f64
 template default*(x: typedesc[string]): string = ""
-template default*[T: enum](x: typedesc[T]): T = T(0)
+template default*[T: enum](x: typedesc[T]): T = low(T)
 
 template default*[T: ptr](x: typedesc[T]): T = T(nil)
 template default*[T: ref](x: typedesc[T]): T = T(nil)

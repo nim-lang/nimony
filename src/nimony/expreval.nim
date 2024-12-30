@@ -66,8 +66,8 @@ proc getFalseValue(c: var EvalContext): Cursor =
     c.falseValue = cursorAt(c.values[i], 0)
   result = c.falseValue
 
-proc eval*(c: var EvalContext, n: var Cursor): Cursor =
-  template error(msg: string, info: PackedLineInfo) =
+proc eval*(c: var EvalContext; n: var Cursor): Cursor =
+  template error(msg: string; info: PackedLineInfo) =
     result = c.error(msg, info)
   template propagateError(r: Cursor): Cursor =
     let val = r

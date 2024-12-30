@@ -89,7 +89,7 @@
     (unpackflat 
      (let :x.3 . . ~4,~5
       (untyped) .)) ~2,1
-    (stmts 
+    (expr 
      (cmd 
       (ochoice write.0.tvaktfkwp write.1.tvaktfkwp) 6 stdout.0.tvaktfkwp 14 x.3))) ,2
    (cmd write.0.tvaktfkwp 6

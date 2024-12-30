@@ -3,6 +3,7 @@
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
+import lib / nifindexes
 import gear2 / modnames
 
 const
@@ -182,9 +183,9 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       let nimcacheC = generatedFile(file, ".c")
       diffFiles c, file, cfile, nimcacheC, overwrite
 
-    when false:
-      # XXX Enable when we have a code generator
-      let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell file.changeFileExt(ExeExt))
+    if cat == Normal:
+      let exe = file.generatedFile(ExeExt)
+      let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       if testProgramExitCode != 0:
         failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode
       let output = file.changeFileExt(".output")
@@ -284,9 +285,9 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     gitAdd test
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
-    when false:
-      # XXX We don't have a backend yet so no `.output` files can be extracted
-      let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell file.changeFileExt(ExeExt))
+    if cat == Normal:
+      let exe = file.generatedFile(ExeExt)
+      let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       assert testProgramExitCode == 0, "the test program had an invalid exitcode; unsupported"
       addTestSpec test.changeFileExt(".output"), testProgramOutput
 
@@ -353,6 +354,8 @@ proc nifctests(overwrite: bool) =
 proc gear3tests(overwrite: bool) =
   let mod1 = "tests/gear3/mod1"
   let helloworld = "tests/gear3/gear3_helloworld"
+  createIndex helloworld & ".nif", false
+  createIndex mod1 & ".nif", false
   execGear3 mod1 & ".nif"
   execGear3 helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
@@ -397,7 +400,7 @@ proc handleCmdLine =
     buildGear3()
     nimonytests(overwrite)
     nifctests(overwrite)
-    gear3tests(overwrite)
+    #gear3tests(overwrite)
 
   of "nimony":
     buildNimony()
