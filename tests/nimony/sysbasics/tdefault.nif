@@ -1,5 +1,5 @@
 (.nif24)
-,1,tests/nimony/sysbasics/tdefault.nim(stmts 
+,1,tests/nimony/sysbasics/tdefault.nim(stmts
  (discard 58,678,lib/std/system.nim
   (expr "")) ,1
  (discard 52,653,lib/std/system.nim
@@ -13,31 +13,31 @@
  (type ~5 :Enum.0.tde837gue . . . 2
   (enum
    (u +8) 5
-   (efld :a.0.tde837gue . . Enum.0.tde837gue 
+   (efld :a.0.tde837gue . . Enum.0.tde837gue
     (tup +0 "a")) 8
-   (efld :b.0.tde837gue . . Enum.0.tde837gue 
+   (efld :b.0.tde837gue . . Enum.0.tde837gue
     (tup +1 "b")) 11
-   (efld :c.0.tde837gue . . Enum.0.tde837gue 
+   (efld :c.0.tde837gue . . Enum.0.tde837gue
     (tup +2 "c")))) 5,4
- (proc :dollar`.Enum.0.tde837gue x . . 
-  (params 
+ (proc :dollar`.Enum.0.tde837gue x . .
+  (params
    (param :e.0 . . Enum.0.tde837gue .))
-  (string) . . 
+  (string) . .
   (stmts 7
    (result :result.0 . . ~8,40,lib/std/system.nim
     (string) .) 7
    (case e.0 5
-    (of 
-     (set a.0.tde837gue) 
-     (stmts 
+    (of
+     (set a.0.tde837gue)
+     (stmts
       (ret "a"))) 8
-    (of 
-     (set b.0.tde837gue) 
-     (stmts 
+    (of
+     (set b.0.tde837gue)
+     (stmts
       (ret "b"))) 11
-    (of 
-     (set c.0.tde837gue) 
-     (stmts 
+    (of
+     (set c.0.tde837gue)
+     (stmts
       (ret "c"))))
    (ret result.0))) ,5
  (discard 57,675,lib/std/system.nim
@@ -54,12 +54,12 @@
       (bool) .) 15
      (fld :b.1.tde837gue . . 3 Enum.0.tde837gue .)) .))) ,12
  (discard 15
-  (obj 1 Obj.0.tde837gue 
+  (obj 1 Obj.0.tde837gue
    (kv x.0.tde837gue 37,642,lib/std/system.nim
-    (expr +0)) 
+    (expr +0))
    (kv y.0.tde837gue 43,666,lib/std/system.nim
-    (expr "")) 
-   (kv z.0.tde837gue 
+    (expr ""))
+   (kv z.0.tde837gue
     (tup 39,638,lib/std/system.nim
      (expr ~33,~294
       (false)) 42,668,lib/std/system.nim
@@ -74,10 +74,21 @@
   (stmts 4
    (result :result.1 . . ~2,~9,lib/std/system.nim
     (i -1) .) 4
+   (var :data.0 . . 10,~3 Obj.0.tde837gue 10
+    (obj ,~3 Obj.0.tde837gue
+     (kv x.0.tde837gue 36,639,src/nimony/lib/std/system.nim
+      (expr +0))
+     (kv y.0.tde837gue 42,663,src/nimony/lib/std/system.nim
+      (expr ""))
+     (kv z.0.tde837gue
+      (tup 38,635,src/nimony/lib/std/system.nim
+       (expr ~33,~294
+        (false)) 41,665,src/nimony/lib/std/system.nim
+       (expr 3 a.0.tde837gue))))) 4,1
    (var :x.1 . .
-    (string) 4 "abc") 7,1
+    (string) 4 "abc") 7,2
    (asgn ~7 result.1 2 +4) ~2,~1
-   (ret result.1))) 11,19
+   (ret result.1))) 11,20
  (type ~9 :MyObject.0.tde837gue . . . 2
   (object . ~9,1
    (fld :x.1.tde837gue . . ,~14,lib/std/system.nim
@@ -86,39 +97,39 @@
     (i -1) .))) 4,22
  (var :global.0.tde837gue . . 8 MyObject.0.tde837gue .) 9,24
  (asgn ~3
-  (dot ~6 global.0.tde837gue x.1.tde837gue +0) 2 +45) ,25
+  (dot ~6 global.0.tde837gue x.1.tde837gue +0) 2 +45) ,26
  (discard 11
   (call ~3 foo.0.tde837gue 7
-   (dot ~6 global.0.tde837gue x.1.tde837gue +0) 11 "123")) ,26
+   (dot ~6 global.0.tde837gue x.1.tde837gue +0) 11 "123")) ,27
  (discard 20
   (call ~3 foo.0.tde837gue ~6
-   (dot ~6 global.0.tde837gue x.1.tde837gue +0) 1 "123")) 7,27
+   (dot ~6 global.0.tde837gue x.1.tde837gue +0) 1 "123")) 7,28
  (asgn ~7 global.0.tde837gue 10
   (obj ~5,~5 MyObject.0.tde837gue 2
-   (kv ~2 x.1.tde837gue 2 +123) 
-   (kv y.1.tde837gue 35,627,lib/std/system.nim
+   (kv ~2 x.1.tde837gue 2 +123)
+   (kv y.1.tde837gue 35,626,lib/std/system.nim
     (expr +0)))) 7,28
  (asgn ~7 global.0.tde837gue 10
   (obj ~5,~6 MyObject.0.tde837gue 2
    (kv ~2 x.1.tde837gue 2 +123) 10
-   (kv ~10 y.1.tde837gue 2 +456))) ,29
+   (kv ~10 y.1.tde837gue 2 +456))) ,30
  (template 9 :resem.0.tde837gue . . . 14
   (params) . . . 2,1
   (stmts 7
    (asgn ~7 global.0.tde837gue 10
     (obj ~7,~8 MyObject.0.tde837gue 2
-     (kv ~2 x.1.tde837gue 2 +123) 
-     (kv y.1.tde837gue 33,624,lib/std/system.nim
+     (kv ~2 x.1.tde837gue 2 +123)
+     (kv y.1.tde837gue 33,623,lib/std/system.nim
       (expr +0)))) 7,1
    (asgn ~7 global.0.tde837gue 10
     (obj ~7,~9 MyObject.0.tde837gue 2
      (kv ~2 x.1.tde837gue 2 +123) 10
-     (kv ~10 y.1.tde837gue 2 +456))))) 2,30
+     (kv ~10 y.1.tde837gue 2 +456))))) 2,31
  (stmts 7
   (asgn ~7 global.0.tde837gue 10
    (obj ~7,~8 MyObject.0.tde837gue 2
-    (kv ~2 x.1.tde837gue 2 +123) 
-    (kv y.1.tde837gue 33,624,lib/std/system.nim
+    (kv ~2 x.1.tde837gue 2 +123)
+    (kv y.1.tde837gue 33,623,lib/std/system.nim
      (expr +0)))) 7,1
   (asgn ~7 global.0.tde837gue 10
    (obj ~7,~9 MyObject.0.tde837gue 2
