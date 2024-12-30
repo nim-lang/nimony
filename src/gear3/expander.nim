@@ -898,7 +898,7 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   if mode != TraverseSig:
     if tag == "gvar":
       case c.kind
-      of StringLit, CharLit, IntLit, UIntLit, FloatLit:
+      of StringLit, CharLit, IntLit, UIntLit, FloatLit, DotToken:
         traverseExpr e, c
       else:
         e.dest.addDotToken()
