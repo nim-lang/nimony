@@ -218,7 +218,7 @@ proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
     b.buf.addLine line
     inc seps
   if file.len > 0:
-    if seps == 0:
+    if line == 0'i32:
       drainPending b
       b.buf.add ",,"
     else: b.buf.add ','
