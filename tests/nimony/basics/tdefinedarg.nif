@@ -12,11 +12,11 @@
   (pragmas 2
    (magic 7 Defined)) . .) 4,4
  (let :x.0.tdetxkbxo . .
-  (bool)
+  (bool) 11
   (false)) 4,5
  (let :y.0.tdetxkbxo . .
-  (bool)
+  (bool) 11
   (true)) 4,6
  (let :z.0.tdetxkbxo . .
-  (bool)
+  (bool) 15
   (false)))

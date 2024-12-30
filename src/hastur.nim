@@ -15,6 +15,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
+  build [all|nimony|nifler|gear3|nifc]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
@@ -134,7 +135,7 @@ proc markersToCmdLine(s: seq[LineInfo]): string =
     result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
 
 proc execLocal(exe, cmd: string): (string, int) =
-  let bin = "src/nimony/bin" / exe.addFileExt(ExeExt)
+  let bin = "bin" / exe.addFileExt(ExeExt)
   result = osproc.execCmdEx(bin & " " & cmd)
 
 type
@@ -247,10 +248,15 @@ proc test(t: string; overwrite: bool; cat: Category) =
   else:
     echo "SUCCESS."
 
-proc exec(cmd: string) =
-  let (s, exitCode) = execCmdEx(cmd)
-  if exitCode != 0:
-    quit "FAILURE " & cmd & "\n" & s
+proc exec(cmd: string; showProgress = false) =
+  if showProgress:
+    let exitCode = execShellCmd(cmd)
+    if exitCode != 0:
+      quit "FAILURE " & cmd & "\n"
+  else:
+    let (s, exitCode) = execCmdEx(cmd)
+    if exitCode != 0:
+      quit "FAILURE " & cmd & "\n" & s
 
 proc exec(exe, cmd: string) =
   let (s, exitCode) = execLocal(exe, cmd)
@@ -305,22 +311,36 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
       addTestCode test.changeFileExt(".nif"), nif
 
 proc binDir*(): string =
-  result = "src/nimony/bin"
+  result = "bin"
 
-proc buildNimony() =
-  exec "nim c src/nimony/nimony.nim"
+proc robustMoveFile(src, dest: string) =
+  if fileExists(src):
+    moveFile src, dest
+
+proc buildNifler(showProgress = false) =
+  exec "nim c src/nifler/nifler.nim", showProgress
+  let exe = "nifler".addFileExt(ExeExt)
+  robustMoveFile "src/nifler/" & exe, binDir() / exe
+
+proc buildNimsem(showProgress = false) =
+  exec "nim c src/nimony/nimsem.nim", showProgress
+  let exe = "nimsem".addFileExt(ExeExt)
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
+
+proc buildNimony(showProgress = false) =
+  exec "nim c src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
-  moveFile "src/nimony/" & exe, binDir() / exe
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
 
-proc buildNifc() =
-  exec "nim c src/nifc/nifc.nim"
+proc buildNifc(showProgress = false) =
+  exec "nim c src/nifc/nifc.nim", showProgress
   let exe = "nifc".addFileExt(ExeExt)
-  moveFile "src/nifc/" & exe, binDir() / exe
+  robustMoveFile "src/nifc/" & exe, binDir() / exe
 
-proc buildGear3() =
-  exec "nim c src/gear3/gear3.nim"
+proc buildGear3(showProgress = false) =
+  exec "nim c src/gear3/gear3.nim", showProgress
   let exe = "gear3".addFileExt(ExeExt)
-  moveFile "src/gear3/" & exe, binDir() / exe
+  robustMoveFile "src/gear3/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -401,6 +421,28 @@ proc handleCmdLine =
     nimonytests(overwrite)
     nifctests(overwrite)
     #gear3tests(overwrite)
+
+  of "build":
+    const showProgress = true
+    case (if args.len > 0: args[0] else: "")
+    of "", "all":
+      buildNifler(showProgress)
+      buildNimsem(showProgress)
+      buildNimony(showProgress)
+      buildNifc(showProgress)
+      buildGear3(showProgress)
+    of "nifler":
+      buildNifler(showProgress)
+    of "nimony":
+      buildNimsem(showProgress)
+      buildNimony(showProgress)
+    of "nifc":
+      buildNifc(showProgress)
+    of "gear3":
+      buildGear3(showProgress)
+    else:
+      writeHelp()
+    removeDir "nifcache"
 
   of "nimony":
     buildNimony()
