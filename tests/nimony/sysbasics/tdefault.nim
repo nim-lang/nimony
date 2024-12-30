@@ -13,6 +13,7 @@ type Obj = object
 discard default(Obj)
 
 proc foo(x: int; y: string): int =
+  var data = Obj()
   var x = "abc"
   result = 4
 

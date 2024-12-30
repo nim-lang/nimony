@@ -1037,6 +1037,18 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
   it.typ = destType
   commonType c, it, beforeExpr, expected
 
+proc semObjConstr(c: var SemContext, it: var Item)
+
+proc semObjConstrFromCall(c: var SemContext; it: var Item; cs: CallState) =
+  skipParRi it.n
+  var objBuf = createTokenBuf()
+  objBuf.add parLeToken(OconstrX, cs.callNode.info)
+  objBuf.add cs.fn.n
+  objBuf.addParRi()
+  var objConstr = Item(n: cursorAt(objBuf, 0), typ: it.typ)
+  semObjConstr c, objConstr
+  it.typ = objConstr.typ
+
 proc isCastableType(t: TypeCursor): bool =
   const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT, HoleyEnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
@@ -1142,6 +1154,9 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     discard
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
     semConvFromCall c, it, cs
+    return
+  elif cs.fn.kind == TypeY and cs.args.len == 0:
+    semObjConstrFromCall c, it, cs
     return
   else:
     # Keep in mind that proc vars are a thing:
