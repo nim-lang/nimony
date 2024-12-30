@@ -896,7 +896,20 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
     traverseType e, c
 
   if mode != TraverseSig:
-    traverseExpr e, c
+    if tag == "gvar":
+      case c.kind
+      of StringLit, CharLit, IntLit, UIntLit, FloatLit:
+        traverseExpr e, c
+      else:
+        e.dest.addDotToken()
+        e.dest.addParRi()
+
+        # asgn
+        e.dest.add tagToken($AsgnS, vinfo)
+        e.dest.add symToken(s, sinfo)
+        traverseExpr e, c
+    else:
+      traverseExpr e, c
   else:
     e.dest.addDotToken()
     skip c
