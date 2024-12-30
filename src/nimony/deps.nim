@@ -334,3 +334,5 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: 
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
   exec "make" & (if forceRebuild: " -B" else: "") & " -f " & quoteShell(makeFilename)
+  if cmd == DoRun:
+    exec exeFile(c.rootNode.files[0])
