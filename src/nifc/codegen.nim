@@ -550,8 +550,8 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   writeTokenSeq f, c.code, c
 
   if gfProducesMainProc in c.flags:
-    f.write "int cmdCount;"
-    f.write "char **cmdLine;"
+    f.write "int cmdCount;\n"
+    f.write "char **cmdLine;\n"
     f.write "int main(int argc, char **argv) {\n"
     f.write "  cmdCount = argc;\n"
     f.write "  cmdLine = argv;\n"
