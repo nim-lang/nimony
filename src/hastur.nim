@@ -313,25 +313,29 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
 proc binDir*(): string =
   result = "bin"
 
+proc robustMoveFile(src, dest: string) =
+  if fileExists(src):
+    moveFile src, dest
+
 proc buildNifler(showProgress = false) =
   exec "nim c src/nifler/nifler.nim", showProgress
   let exe = "nifler".addFileExt(ExeExt)
-  moveFile "src/nifler/" & exe, binDir() / exe
+  robustMoveFile "src/nifler/" & exe, binDir() / exe
 
 proc buildNimony(showProgress = false) =
   exec "nim c src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
-  moveFile "src/nimony/" & exe, binDir() / exe
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNifc(showProgress = false) =
   exec "nim c src/nifc/nifc.nim", showProgress
   let exe = "nifc".addFileExt(ExeExt)
-  moveFile "src/nifc/" & exe, binDir() / exe
+  robustMoveFile "src/nifc/" & exe, binDir() / exe
 
 proc buildGear3(showProgress = false) =
   exec "nim c src/gear3/gear3.nim", showProgress
   let exe = "gear3".addFileExt(ExeExt)
-  moveFile "src/gear3/" & exe, binDir() / exe
+  robustMoveFile "src/gear3/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
