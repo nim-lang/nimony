@@ -322,6 +322,11 @@ proc buildNifler(showProgress = false) =
   let exe = "nifler".addFileExt(ExeExt)
   robustMoveFile "src/nifler/" & exe, binDir() / exe
 
+proc buildNimsem(showProgress = false) =
+  exec "nim c src/nimony/nimsem.nim", showProgress
+  let exe = "nimsem".addFileExt(ExeExt)
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
+
 proc buildNimony(showProgress = false) =
   exec "nim c src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
@@ -422,12 +427,14 @@ proc handleCmdLine =
     case (if args.len > 0: args[0] else: "")
     of "", "all":
       buildNifler(showProgress)
+      buildNimsem(showProgress)
       buildNimony(showProgress)
       buildNifc(showProgress)
       buildGear3(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
+      buildNimsem(showProgress)
       buildNimony(showProgress)
     of "nifc":
       buildNifc(showProgress)

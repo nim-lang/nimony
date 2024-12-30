@@ -3493,7 +3493,7 @@ proc semDefined(c: var SemContext; it: var Item) =
   else:
     let isDefined = name in c.g.config.defines
     let beforeExpr = c.dest.len
-    c.dest.addParLe(if isDefined: TrueX else: FalseX, it.n.info)
+    c.dest.addParLe(if isDefined: TrueX else: FalseX, info)
     c.dest.addParRi()
     let expected = it.typ
     it.typ = c.types.boolType
