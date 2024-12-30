@@ -51,7 +51,7 @@ proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
   if not fileExists(t) or forceRebuild:
     nimexec("c -d:release " & src)
-    moveFile src.changeFileExt(ExeExt), t
+    #moveFile src.changeFileExt(ExeExt), t
 
 proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =
   let nimFile = toResolve.addFileExt(".nim")
