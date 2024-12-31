@@ -2678,6 +2678,7 @@ proc semSubscriptAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
     # build regular assignment:
     c.dest.addParLe(AsgnS, info)
     c.dest.add subscriptBuf
+    subscript.typ = skipModifier(subscript.typ) # remove `var` for rhs
     semExpr c, subscript # use the type and position from the subscript
     it.n = subscript.n
     wantParRi c, it.n
@@ -2725,6 +2726,7 @@ proc semDotAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
     # build regular assignment:
     c.dest.addParLe(AsgnS, info)
     c.dest.add dotBuf
+    dot.typ = skipModifier(dot.typ) # remove `var` for rhs
     semExpr c, dot # use the type and position from the dot expression
     it.n = dot.n
     wantParRi c, it.n
@@ -2756,6 +2758,7 @@ proc semAsgn(c: var SemContext; it: var Item) =
     c.dest.addParLe(AsgnS, info)
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, a # infers type of `left-hand-side`
+    a.typ = skipModifier(a.typ) # remove `var` for rhs
     semExpr c, a # ensures type compatibility with `left-hand-side`
     it.n = a.n
     wantParRi c, it.n
