@@ -276,6 +276,11 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
 
     # The .c.nif files depend on all of their .2.nif files:
     let gear3 = findTool("gear3")
+    s.add "\n" & mescape(nifcFile(c.rootNode.files[0])) & ": " &
+        mescape(semmedFile c.rootNode.files[0]) & " " &
+        mescape(indexFile c.rootNode.files[0])
+    s.add "\n\t" & mescape(gear3) & " --isMain $<"
+
     s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(gear3) & " $<"
 
 

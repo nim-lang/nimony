@@ -168,8 +168,6 @@ proc handleCmdLine() =
       of atC, atCpp:
         let isLast = (if compileOnly: isMain else: currentAction == action)
         var flags = if isLast: {gfMainModule} else: {}
-        if isMain:
-          flags.incl gfProducesMainProc
         generateBackend(s, action, actionTable[action], flags)
       of atNative:
         let args = actionTable[action]

@@ -10,7 +10,7 @@
 import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
-import nifindexes, symparser, treemangler, typenav
+import treemangler, typenav
 import ".." / nimony / [nimony_model, programs]
 
 type
@@ -29,6 +29,8 @@ type
     newTypes: Table[string, SymId]
     pending: TokenBuf
     typeCache: TypeCache
+    initSection: TokenBuf
+    initFunctionSymId: SymId
 
 proc error(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
   write stdout, "[Error] "
@@ -858,6 +860,15 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     if nested == 0:
       break
 
+template moveToInitSection(e: var EContext; c: var Cursor; mode: TraverseMode; body: typed) =
+  # move to init section if needed
+  if mode == TraverseTopLevel:
+    swap e.initSection, e.dest
+    body
+    swap e.initSection, e.dest
+  else:
+    body
+
 proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMode) =
   let toPatch = e.dest.len
   let vinfo = c.info
@@ -896,7 +907,22 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
     traverseType e, c
 
   if mode != TraverseSig:
-    traverseExpr e, c
+    if tag == "gvar":
+      case c.kind
+      of StringLit, CharLit, IntLit, UIntLit, FloatLit, DotToken:
+        traverseExpr e, c
+      else:
+        e.dest.addDotToken()
+        e.dest.addParRi()
+
+        # asgn
+        swap e.dest, e.initSection
+        e.dest.add tagToken($AsgnS, vinfo)
+        e.dest.add symToken(s, sinfo)
+        traverseExpr e, c
+        swap e.dest, e.initSection
+    else:
+      traverseExpr e, c
   else:
     e.dest.addDotToken()
     skip c
@@ -1026,31 +1052,42 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of ConstS:
       traverseLocal e, c, "const", mode
     of CmdS:
-      e.dest.add tagToken("call", c.info)
-      inc c
-      e.loop c:
-        traverseExpr e, c
-    of EmitS, AsgnS, RetS, CallS:
-      e.dest.add c
-      inc c
-      e.loop c:
-        traverseExpr e, c
-    of DiscardS:
-      let discardToken = c
-      inc c
-      if c.kind == DotToken:
-        # eliminates discard without side effects
+      moveToInitSection e, c, mode:
+        e.dest.add tagToken("call", c.info)
         inc c
-        skipParRi e, c
-      else:
-        e.dest.add discardToken
-        traverseExpr e, c
-        wantParRi e, c
+        e.loop c:
+          traverseExpr e, c
+    of EmitS, AsgnS, RetS, CallS:
+      moveToInitSection e, c, mode:
+        e.dest.add c
+        inc c
+        e.loop c:
+          traverseExpr e, c
+    of DiscardS:
+      moveToInitSection e, c, mode:
+        let discardToken = c
+        inc c
+        if c.kind == DotToken:
+          # eliminates discard without side effects
+          inc c
+          skipParRi e, c
+        else:
+          e.dest.add discardToken
+          traverseExpr e, c
+          wantParRi e, c
     of BreakS: traverseBreak e, c
-    of WhileS: traverseWhile e, c
-    of BlockS: traverseBlock e, c
-    of IfS: traverseIf e, c
-    of CaseS: traverseCase e, c
+    of WhileS:
+      moveToInitSection e, c, mode:
+        traverseWhile e, c
+    of BlockS:
+      moveToInitSection e, c, mode:
+        traverseBlock e, c
+    of IfS:
+      moveToInitSection e, c, mode:
+        traverseIf e, c
+    of CaseS:
+      moveToInitSection e, c, mode:
+        traverseCase e, c
     of YieldS, ForS:
       error e, "BUG: not eliminated: ", c
     of FuncS, ProcS, ConverterS, MethodS:
@@ -1124,12 +1161,18 @@ proc writeOutput(e: var EContext) =
     of SymbolDef:
       let owner = ownerStack[^1][0]
       let key = (c.symId, owner)
+
+      # top level statements are not owned by the module
+      let isInitFunction = c.symId == e.initFunctionSymId
+
       let val = e.toMangle.getOrDefault(key)
       if val.len > 0:
         b.addSymbolDef(val)
       else:
         b.addSymbolDef(pool.syms[c.symId])
-      if nextIsOwner >= 0:
+      if isInitFunction:
+        nextIsOwner = -1
+      elif nextIsOwner >= 0:
         ownerStack.add (c.symId, nextIsOwner)
         nextIsOwner = -1
     of CharLit:
@@ -1166,7 +1209,100 @@ proc splitModulePath(s: string): (string, string, string) =
     main.setLen dotPos
   result = (dir, main, ext)
 
-proc expand*(infile: string) =
+proc genInitOrMainFunction(e: var EContext; info: PackedLineInfo; isMain: bool) =
+  if isMain:
+    let cmdCount = pool.syms.getOrIncl("cmdCount.c")
+    let cmdLine = pool.syms.getOrIncl("cmdLine.c")
+
+
+    let cintTypeSym = pool.syms.getOrIncl("int.c")
+    let cCharTypeSym = pool.syms.getOrIncl("char.c")
+
+    var ptrPtrCharTypeBuf = createTokenBuf()
+    ptrPtrCharTypeBuf.add tagToken($PtrT, info)
+    ptrPtrCharTypeBuf.add tagToken($PtrT, info)
+    ptrPtrCharTypeBuf.add symToken(cCharTypeSym, info)
+    ptrPtrCharTypeBuf.addParRi()
+    ptrPtrCharTypeBuf.addParRi()
+
+    e.dest.add tagToken("gvar", info)
+    e.dest.add symdefToken(cmdCount, info)
+    e.dest.addDotToken()
+    e.dest.add symToken(cintTypeSym, info)
+    e.dest.addDotToken()
+    e.dest.addParRi()
+
+    e.dest.add tagToken("gvar", info)
+    e.dest.add symdefToken(cmdLine, info)
+    e.dest.addDotToken()
+    e.dest.add ptrPtrCharTypeBuf
+    e.dest.addDotToken()
+    e.dest.addParRi()
+
+    e.dest.add tagToken("proc", info)
+    let main = pool.syms.getOrIncl("main.c")
+    e.initFunctionSymId = main
+    e.dest.add symdefToken(main, info)
+
+    e.dest.add tagToken("params", info)
+    e.dest.add tagToken("param", info)
+    let argc = pool.syms.getOrIncl("argc.c")
+    e.dest.add symdefToken(argc, info)
+    e.dest.addDotToken()
+    e.dest.add symToken(cintTypeSym, info)
+    e.dest.addDotToken()
+    e.dest.addParRi()
+
+    e.dest.add tagToken("param", info)
+    let argv = pool.syms.getOrIncl("argv.c")
+    e.dest.add symdefToken(argv, info)
+    e.dest.addDotToken()
+    e.dest.add ptrPtrCharTypeBuf
+    e.dest.addDotToken()
+    e.dest.addParRi()
+
+    e.dest.addParRi()
+
+    e.dest.add symToken(cintTypeSym, info)
+    e.dest.addDotToken()
+
+    e.dest.add tagToken("stmts", info)
+    e.dest.add tagToken("asgn", info)
+    e.dest.add symToken(cmdCount, info)
+    e.dest.add symToken(argc, info)
+    e.dest.addParRi()
+
+    e.dest.add tagToken("asgn", info)
+    e.dest.add symToken(cmdLine, info)
+    e.dest.add symToken(argv, info)
+    e.dest.addParRi()
+
+    e.dest.add e.initSection
+    e.dest.addParRi()
+
+    e.dest.addParRi()
+  else:
+    e.dest.add tagToken("proc", info)
+    let init = pool.syms.getOrIncl("init.c")
+    e.initFunctionSymId = init
+    e.dest.add symdefToken(init, info)
+    e.dest.addDotToken()
+    e.dest.addDotToken()
+
+    e.dest.add tagToken("pragmas", info)
+    e.dest.add tagToken("attr", info)
+    e.dest.addStrLit("constructor")
+    e.dest.addParRi()
+    e.dest.addParRi()
+
+    e.dest.add tagToken("stmts", info)
+
+    e.dest.add e.initSection
+    e.dest.addParRi()
+
+    e.dest.addParRi()
+
+proc expand*(infile: string, isMain = false) =
   let (dir, file, ext) = splitModulePath(infile)
   var e = EContext(dir: (if dir.len == 0: getCurrentDir() else: dir), ext: ext, main: file,
     dest: createTokenBuf(),
@@ -1192,6 +1328,7 @@ proc expand*(infile: string) =
       importSymbol(e, imp)
     inc i
   skipParRi e, c
+  genInitOrMainFunction e, c.info, isMain
   writeOutput e
 
 when isMainModule:

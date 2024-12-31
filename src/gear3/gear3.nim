@@ -43,6 +43,7 @@ Command:
   file.nif      expand NIF file to meet NIFC's requirements
 
 Options:
+  --isMain                  mark the file as the main program
   --version                 show the version
   --help                    show this help
 """
@@ -52,6 +53,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 proc handleCmdLine*() =
   var files: seq[string] = @[]
+  var isMain = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -60,6 +62,7 @@ proc handleCmdLine*() =
       case normalize(key)
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
+      of "ismain": isMain = true
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
   if files.len > 1:
@@ -67,7 +70,7 @@ proc handleCmdLine*() =
   elif files.len == 0:
     writeHelp()
   else:
-    expand files[0]
+    expand files[0], isMain
 
 when isMainModule:
   handleCmdLine()

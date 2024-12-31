@@ -77,7 +77,6 @@ type
   GenFlag* = enum
     gfMainModule # isMainModule
     gfHasError   # already generated the error variable
-    gfProducesMainProc # needs main proc
 
   GeneratedCode* = object
     m: Module
@@ -86,7 +85,6 @@ type
     data: seq[Token]
     protos: seq[Token]
     code: seq[Token]
-    init: seq[Token]
     fileIds: PackedSet[FileId]
     tokens: BiTable[Token, string]
     inSimpleInit: int
@@ -233,7 +231,7 @@ proc genProcPragmas(c: var GeneratedCode; t: Tree; n: NodePos;
       of SelectanyC:
         flags.incl isSelectAny
       of AttrC:
-        c.add " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & "))"
+        discard "already handled"
       of WasC:
         c.add "/* " & toString(t, ch.firstSon, c.m) & " */"
       of ErrsC, RaisesC:
@@ -318,13 +316,6 @@ template moveToDataSection(body: untyped) =
     c.data.add c.code[i]
   setLen c.code, oldLen
 
-template moveToInitSection(body: untyped) =
-  let oldLen = c.code.len
-  body
-  for i in oldLen ..< c.code.len:
-    c.init.add c.code[i]
-  setLen c.code, oldLen
-
 include genexprs
 
 type
@@ -369,11 +360,14 @@ proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
     c.add ExternKeyword
 
   var lastCallConv = Empty
+  var lastAttrString = " "
   if t[prc.pragmas].kind == PragmasC:
     for ch in sons(t, prc.pragmas):
       case t[ch].kind
       of CallingConventions, InlineC, NoinlineC:
         lastCallConv = t[ch].kind
+      of AttrC:
+        lastAttrString = " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & ")) "
       else:
         discard
 
@@ -388,6 +382,7 @@ proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
     else:
       genType c, t, prc.returnType
     c.add Comma
+    c.add lastAttrString
     name = genSymDef(c, t, prc.name)
     c.add ParRi
   else:
@@ -395,7 +390,7 @@ proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
       c.add "void"
     else:
       genType c, t, prc.returnType
-    c.add Space
+    c.add lastAttrString
     name = genSymDef(c, t, prc.name)
 
   var flags: set[ProcFlag] = {}
@@ -488,8 +483,7 @@ proc genToplevel(c: var GeneratedCode; t: Tree; n: NodePos) =
   of VarC, GvarC, TvarC: genStmt c, t, n
   of ConstC: genStmt c, t, n
   of DiscardC, AsgnC, CallC:
-    moveToInitSection:
-      genStmt c, t, n
+    genStmt c, t, n
   of TypeC: discard "handled in a different pass"
   of EmitC: genEmitStmt c, t, n
   else:
@@ -549,18 +543,6 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   writeTokenSeq f, c.protos, c
   writeTokenSeq f, c.code, c
 
-  if gfProducesMainProc in c.flags:
-    f.write "int cmdCount;\n"
-    f.write "char **cmdLine;\n"
-    f.write "int main(int argc, char **argv) {\n"
-    f.write "  cmdCount = argc;\n"
-    f.write "  cmdLine = argv;\n"
-    writeTokenSeq f, c.init, c
-    f.write "}\n\n"
-  elif c.init.len > 0:
-    f.write "void __attribute__((constructor)) init(void) {"
-    writeTokenSeq f, c.init, c
-    f.write "}\n\n"
   f.f.close
 
   if c.headerFile.len > 0:
