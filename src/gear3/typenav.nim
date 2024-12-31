@@ -42,12 +42,13 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         quit "gear3:could not find symbol: " & pool.syms[n.symId]
   of AtX, PatX, ArrAtX:
     result = getTypeImpl(c, n.firstSon)
-    if typeKind(result) == ArrayT:
+    case typeKind(result)
+    of ArrayT:
       inc result # to the element type
+    of CstringT:
+      result = c.builtins.charType
     else:
       result = c.builtins.autoType # still an error
-  of StrAtX, CstrAtX:
-    result = c.builtins.charType
   of ExprX:
     var n = n
     inc n # skip "expr"
@@ -93,7 +94,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       result = c.builtins.autoType # still an error
   of RangesX, RangeX:
     result = getTypeImpl(c, n.firstSon)
-  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX, ArrPutX:
+  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX:
     discard "keep the error type"
   of KvX:
     var n = n

@@ -140,10 +140,7 @@ type
     DefaultObjX = "defaultobj"
     DefaultTupX = "defaulttup"
     ExprX = "expr" # was nkStmtListExpr in the old Nim
-    ArrPutX = "arrput"
     ArrAtX = "arrat"
-    StrAtX = "strat"
-    CstrAtX = "cstrat"
 
   TypeKind* = enum
     NoType

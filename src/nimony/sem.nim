@@ -763,7 +763,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, ArrPutX}:
+              ArrAtX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -2761,30 +2761,6 @@ proc semAsgn(c: var SemContext; it: var Item) =
     wantParRi c, it.n
     producesVoid c, info, it.typ
 
-proc semArrPut(c: var SemContext; it: var Item) =
-  # converts `[]=`(a, b, c) to (a[b]) = c
-  let info = it.n.info
-  inc it.n # tag
-  var subscriptExpr = createTokenBuf(16)
-  subscriptExpr.addParLe(AtX, info)
-  var currentArg = it.n
-  var lastArg = currentArg
-  while true:
-    skip currentArg
-    if currentArg.kind == ParRi:
-      subscriptExpr.add currentArg
-      break
-    subscriptExpr.addSubtree lastArg
-    lastArg = currentArg
-  c.dest.addParLe(AsgnS, info)
-  var subscript = Item(n: cursorAt(subscriptExpr, 0), typ: c.types.autoType)
-  semExpr c, subscript
-  var value = Item(n: lastArg, typ: subscript.typ)
-  semExpr c, value
-  it.n = value.n
-  wantParRi c, it.n
-  producesVoid c, info, it.typ
-
 proc semEmit(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
@@ -4093,9 +4069,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semBoolExpr c, it.n
       wantParRi c, it.n
     of ParX:
-      takeToken c, it.n
+      inc it.n
       semExpr c, it
-      wantParRi c, it.n
+      skipParRi it.n
     of CallX, CmdX, CallStrLitX, InfixX, PrefixX:
       toplevelGuard c:
         semCall c, it
@@ -4129,9 +4105,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semIsMainModule c, it
     of AtX:
       semSubscript c, it
-    of ArrPutX:
-      semArrPut c, it
-    of ArrAtX, StrAtX, CstrAtX:
+    of ArrAtX, PatX:
       semTypedAt c, it
     of UnpackX:
       takeToken c, it.n
@@ -4162,7 +4136,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semHigh c, it
     of ExprX:
       semStmtsExpr c, it
-    of DerefX, PatX, AddrX, SizeofX, KvX,
+    of DerefX, AddrX, SizeofX, KvX,
        RangeX, RangesX,
        OconvX, HconvX,
        CompilesX, TypeofX:
