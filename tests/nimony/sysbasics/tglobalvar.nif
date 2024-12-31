@@ -1,0 +1,31 @@
+(.nif24)
+,1,tests/nimony/sysbasics/tglobalvar.nim(stmts 4
+ (var :x.0.tglvud773 . .
+  (i -1) 4 +1) 4,1
+ (var :y.0.tglvud773 . .
+  (i -1) 4 +2) 2,2
+ (asgn ~2 x.0.tglvud773 2 y.0.tglvud773) 4,3
+ (var :z.0.tglvud773 . .
+  (i -1) 4 x.0.tglvud773) 6,5
+ (const :a.0.tglvud773 . .
+  (i -1) 4 +1) 4,6
+ (var :m.0.tglvud773 . .
+  (i -1) 4 a.0.tglvud773) 4,8
+ (let :s.0.tglvud773 . .
+  (i -1) 4 x.0.tglvud773) 4,9
+ (let :n.0.tglvud773 . .
+  (i -1) 4 +3) ,11
+ (block . 2,1
+  (stmts 4
+   (var :x.0 . .
+    (i -1) 4 y.0.tglvud773))) ,14
+ (proc 5 :foo.0.tglvud773 . . . 9
+  (params) . . . 2,1
+  (stmts 4
+   (var :m.0 . .
+    (i -1) 4 a.0.tglvud773) 4,1
+   (let :g.0 . .
+    (i -1) 4 x.0.tglvud773) 6,2
+   (const :s.0 . .
+    (i -1) 4 a.0.tglvud773))) 3,19
+ (call ~3 foo.0.tglvud773))

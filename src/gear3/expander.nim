@@ -911,6 +911,7 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
       case c.kind
       of StringLit, CharLit, IntLit, UIntLit, FloatLit, DotToken:
         traverseExpr e, c
+        wantParRi e, c
       else:
         e.dest.addDotToken()
         e.dest.addParRi()
@@ -920,13 +921,15 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
         e.dest.add tagToken($AsgnS, vinfo)
         e.dest.add symToken(s, sinfo)
         traverseExpr e, c
+        wantParRi e, c
         swap e.dest, e.initSection
     else:
       traverseExpr e, c
+      wantParRi e, c
   else:
     e.dest.addDotToken()
     skip c
-  wantParRi e, c
+    wantParRi e, c
   if nodecl:
     e.dest.shrink toPatch
   if prag.header != StrId(0):
