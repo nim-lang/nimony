@@ -19,6 +19,9 @@ type
     f: File
     nesting: int
 
+  LineInfoFormat = enum
+    LineInfoNone, LineInfoCol, LineInfoColLine, LineInfoFile
+
 proc `=copy`(dest: var Builder; src: Builder) {.error.}
 
 proc open*(filename: string; compact = false): Builder =
@@ -204,29 +207,40 @@ proc addLine(s: var string; x: int32) =
   else:
     s.addInt(x)
 
+template addLineIgnoreZero*(b: var string; x: int32) =
+  # Adds a number if it is not zero.
+  if x != 0:
+    addLine b, x
+
 proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
   addSep b
-  var seps = 0
+  var format = LineInfoNone
   if col != 0'i32:
-    drainPending b
-    b.buf.addLine col
-    inc seps
+    format = LineInfoCol
   if line != 0'i32:
-    if seps == 0:
-      drainPending b
+    format = LineInfoColLine
+  if file.len > 0:
+    format = LineInfoFile
+  drainPending b
+  case format
+  of LineInfoCol:
+    b.buf.addLine col
+  of LineInfoColLine:
+    b.buf.addLineIgnoreZero col
     b.buf.add ','
     b.buf.addLine line
-    inc seps
-  if file.len > 0:
-    if seps == 0:
-      drainPending b
-      b.buf.add ",,"
-    else: b.buf.add ','
+  of LineInfoFile:
+    b.buf.addLineIgnoreZero col
+    b.buf.add ','
+    b.buf.addLineIgnoreZero line
+    b.buf.add ','
     for c in file:
       if c.needsEscape:
         b.escape c
       else:
         b.put c
+  of LineInfoNone:
+    discard "same line info"
 
 proc addKeyw*(b: var Builder; keyw: string) =
   ## Adds a complete compound node that has no children like `(nil)`.
