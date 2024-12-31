@@ -75,6 +75,11 @@ proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
 proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
 proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 
+proc `[]`*[I, T](x: array[I, T], i: I): T {.magic: "ArrAt".}
+proc `[]`*(x: string, i: int): char {.magic: "StrAt".}
+proc `[]`*(x: cstring, i: int): char {.magic: "CstrAt".}
+proc `[]=`*() {.magic: "ArrPut", varargs.}
+
 # integer calculations:
 proc `+`*(x: int8): int8 {.magic: "UnaryPlusI", noSideEffect.}
 proc `+`*(x: int16): int16 {.magic: "UnaryPlusI", noSideEffect.}

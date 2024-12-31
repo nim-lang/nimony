@@ -829,6 +829,24 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         inc nested
       of ExprX:
         traverseStmtsExpr e, c
+      of ArrAtX:
+        # XXX does not handle index type with offset low(I), maybe should be done in sem
+        e.dest.add tagToken("at", c.info)
+        inc c
+        inc nested
+      of StrAtX:
+        e.dest.add tagToken("pat", c.info)
+        e.dest.add tagToken("dot", c.info)
+        inc c
+        traverseExpr(e, c)
+        e.dest.add symToken(pool.syms.getOrIncl(StringField), c.info)
+        e.dest.addIntLit(0, c.info)
+        e.dest.addParRi()
+        inc nested
+      of CstrAtX:
+        e.dest.add tagToken("pat", c.info)
+        inc c
+        inc nested
       else:
         e.dest.add c
         inc c

@@ -762,7 +762,8 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         inc n # skip the SymbolDef
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
-              SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX}:
+              SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
+              ArrAtX, ArrPutX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -2760,6 +2761,30 @@ proc semAsgn(c: var SemContext; it: var Item) =
     wantParRi c, it.n
     producesVoid c, info, it.typ
 
+proc semArrPut(c: var SemContext; it: var Item) =
+  # converts `[]=`(a, b, c) to (a[b]) = c
+  let info = it.n.info
+  inc it.n # tag
+  var subscriptExpr = createTokenBuf(16)
+  subscriptExpr.addParLe(AtX, info)
+  var currentArg = it.n
+  var lastArg = currentArg
+  while true:
+    skip currentArg
+    if currentArg.kind == ParRi:
+      subscriptExpr.add currentArg
+      break
+    subscriptExpr.addSubtree lastArg
+    lastArg = currentArg
+  c.dest.addParLe(AsgnS, info)
+  var subscript = Item(n: cursorAt(subscriptExpr, 0), typ: c.types.autoType)
+  semExpr c, subscript
+  var value = Item(n: lastArg, typ: subscript.typ)
+  semExpr c, value
+  it.n = value.n
+  wantParRi c, it.n
+  producesVoid c, info, it.typ
+
 proc semEmit(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
@@ -3599,6 +3624,29 @@ proc semSubscript(c: var SemContext; it: var Item) =
   lhs.n = cursorAt(lhsBuf, 0)
   semBuiltinSubscript(c, it, lhs)
 
+proc semTypedAt(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let expected = it.typ
+  takeToken c, it.n
+  let lhsInfo = it.n.info
+  var lhs = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, lhs
+  it.n = lhs.n
+  var index = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, index
+  it.n = index.n
+  let typ = skipModifier(lhs.typ)
+  case typ.typeKind
+  of ArrayT:
+    it.typ = typ
+    inc it.typ
+  of StringT, CstringT:
+    it.typ = c.types.charType
+  else:
+    c.buildErr lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
+  wantParRi c, it.n
+  commonType c, it, beforeExpr, expected
+
 proc semConv(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   let info = it.n.info
@@ -4081,6 +4129,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semIsMainModule c, it
     of AtX:
       semSubscript c, it
+    of ArrPutX:
+      semArrPut c, it
+    of ArrAtX, StrAtX, CstrAtX:
+      semTypedAt c, it
     of UnpackX:
       takeToken c, it.n
       wantParRi c, it.n
