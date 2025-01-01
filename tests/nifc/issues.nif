@@ -94,6 +94,17 @@
   (gvar :x.gvar . (bool) (true))
   (tvar :x.tvar . (bool) .)
 
+    (scope
+    (call printf.c "hello %s\0A" "file 1")
+    )
+
+    (call printf.c "hello %s\0A" "file 1")
+
+    (jmp label1.c)
+
+    (call assert.c (false))
+
+    (lab :label1.c)
 
   (var :x.mangled (pragmas (attr "used") (was "x")) (bool) .)
 
