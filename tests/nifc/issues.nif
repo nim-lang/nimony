@@ -213,6 +213,14 @@
     )
   ))
 
+  (proc :foo.attr.used . . (pragmas (attr "used")) (stmts
+    (var :x.c . (bool) (false))
+  ))
+
+  (proc :foo.attr.used.inline . . (pragmas (attr "used") (inline)) (stmts
+    (var :x.c . (bool) (false))
+  ))
+
   (proc :foo.error.stmts . . (pragmas (errs)) (stmts
     (asgn (err) (true))
     (call assert.c (err))
