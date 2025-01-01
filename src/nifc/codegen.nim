@@ -233,7 +233,7 @@ proc genProcPragmas(c: var GeneratedCode; t: Tree; n: NodePos;
       of SelectanyC:
         flags.incl isSelectAny
       of AttrC:
-        c.add " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & "))"
+        discard "already handled"
       of WasC:
         c.add "/* " & toString(t, ch.firstSon, c.m) & " */"
       of ErrsC, RaisesC:
@@ -249,8 +249,8 @@ proc genSymDef(c: var GeneratedCode; t: Tree; n: NodePos): string =
     result = mangle(c.m.lits.strings[lit])
     c.add result
   else:
-    error c.m, "expected SymbolDef but got: ", t, n
     result = ""
+    error c.m, "expected SymbolDef but got: ", t, n
 
 proc genParamPragmas(c: var GeneratedCode; t: Tree; n: NodePos) =
   # ProcPragma ::= (was Identifier) | Attribute
@@ -369,11 +369,14 @@ proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
     c.add ExternKeyword
 
   var lastCallConv = Empty
+  var lastAttrString = ""
   if t[prc.pragmas].kind == PragmasC:
     for ch in sons(t, prc.pragmas):
       case t[ch].kind
       of CallingConventions, InlineC, NoinlineC:
         lastCallConv = t[ch].kind
+      of AttrC:
+        lastAttrString = "__attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & ")) "
       else:
         discard
 
@@ -388,6 +391,7 @@ proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
     else:
       genType c, t, prc.returnType
     c.add Comma
+    c.add lastAttrString
     name = genSymDef(c, t, prc.name)
     c.add ParRi
   else:
@@ -396,6 +400,7 @@ proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
     else:
       genType c, t, prc.returnType
     c.add Space
+    c.add lastAttrString
     name = genSymDef(c, t, prc.name)
 
   var flags: set[ProcFlag] = {}

@@ -311,8 +311,8 @@ proc mangleField(c: var GeneratedCode; tree: TypeGraph; n: NodePos): string =
   if tree[n].kind in {Sym, SymDef}:
     result = mangle(c.m.lits.strings[tree[n].litId])
   else:
-    error c.m, "field name must be a SymDef, but got: ", tree, n
     result = "InvalidFieldName"
+    error c.m, "field name must be a SymDef, but got: ", tree, n
 
 proc genObjectOrUnionBody(c: var GeneratedCode; types: TypeGraph; n: NodePos) =
   for x in sons(types, n):
