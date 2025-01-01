@@ -40,10 +40,13 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
             result = res.decl
       else:
         quit "gear3:could not find symbol: " & pool.syms[n.symId]
-  of AtX, PatX:
+  of AtX, PatX, ArrAtX:
     result = getTypeImpl(c, n.firstSon)
-    if typeKind(result) == ArrayT:
+    case typeKind(result)
+    of ArrayT:
       inc result # to the element type
+    of CstringT:
+      result = c.builtins.charType
     else:
       result = c.builtins.autoType # still an error
   of ExprX:
