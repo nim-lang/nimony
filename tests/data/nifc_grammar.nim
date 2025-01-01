@@ -771,6 +771,172 @@ proc matchRaiseStmt(c: var Context; it: var Item): bool =
     handleRaiseStmt(c, it, before1)
   return true
 
+proc matchAsgnStmt(c: var Context; it: var Item): bool =
+  when declared(handleAsgnStmt):
+    var before1 = save(c, it)
+  var kw2 = false
+  if isTag(c, it, AsgnT):
+    if not matchLvalue(c, it):
+      error(c, it, "Lvalue expected")
+      return false
+    if not matchExpr(c, it):
+      error(c, it, "Expr expected")
+      return false
+    kw2 = matchParRi(c, it)
+  if not kw2: return false
+  when declared(handleAsgnStmt):
+    handleAsgnStmt(c, it, before1)
+  return true
+
+proc matchIfStmt(c: var Context; it: var Item): bool =
+  when declared(handleIfStmt):
+    var before1 = save(c, it)
+  var kw2 = false
+  if isTag(c, it, IfT):
+    var om3 = false
+    while not peekParRi(c, it):
+      var kw4 = false
+      if isTag(c, it, ElifT):
+        if not matchExpr(c, it):
+          error(c, it, "Expr expected")
+          return false
+        if not matchStmtList(c, it):
+          error(c, it, "StmtList expected")
+          return false
+        kw4 = matchParRi(c, it)
+      if not kw4:
+        break
+      else:
+        om3 = true
+    if not om3:
+      error(c, it, "invalid IfStmt")
+      return false
+    var kw5 = false
+    if isTag(c, it, ElseT):
+      if not matchStmtList(c, it):
+        error(c, it, "StmtList expected")
+        return false
+      kw5 = matchParRi(c, it)
+    discard kw5
+    kw2 = matchParRi(c, it)
+  if not kw2: return false
+  when declared(handleIfStmt):
+    handleIfStmt(c, it, before1)
+  return true
+
+proc matchWhileStmt(c: var Context; it: var Item): bool =
+  when declared(handleWhileStmt):
+    var before1 = save(c, it)
+  var kw2 = false
+  if isTag(c, it, WhileT):
+    if not matchExpr(c, it):
+      error(c, it, "Expr expected")
+      return false
+    if not matchStmtList(c, it):
+      error(c, it, "StmtList expected")
+      return false
+    kw2 = matchParRi(c, it)
+  if not kw2: return false
+  when declared(handleWhileStmt):
+    handleWhileStmt(c, it, before1)
+  return true
+
+proc matchCaseStmt(c: var Context; it: var Item): bool =
+  when declared(handleCaseStmt):
+    var before1 = save(c, it)
+  var kw2 = false
+  if isTag(c, it, CaseT):
+    if not matchExpr(c, it):
+      error(c, it, "Expr expected")
+      return false
+    var om3 = false
+    while not peekParRi(c, it):
+      var kw4 = false
+      if isTag(c, it, OfT):
+        if not matchBranchRanges(c, it):
+          error(c, it, "BranchRanges expected")
+          return false
+        if not matchStmtList(c, it):
+          error(c, it, "StmtList expected")
+          return false
+        kw4 = matchParRi(c, it)
+      if not kw4:
+        break
+      else:
+        om3 = true
+    if not om3:
+      error(c, it, "invalid CaseStmt")
+      return false
+    var kw5 = false
+    if isTag(c, it, ElseT):
+      if not matchStmtList(c, it):
+        error(c, it, "StmtList expected")
+        return false
+      kw5 = matchParRi(c, it)
+    discard kw5
+    kw2 = matchParRi(c, it)
+  if not kw2: return false
+  when declared(handleCaseStmt):
+    handleCaseStmt(c, it, before1)
+  return true
+
+proc matchLabelStmt(c: var Context; it: var Item): bool =
+  when declared(handleLabelStmt):
+    var before1 = save(c, it)
+  var kw2 = false
+  if isTag(c, it, LabT):
+    var sym3 = declareSym(c, it)
+    if not success(sym3):
+      error(c, it, "SYMBOLDEF expected")
+      return false
+    kw2 = matchParRi(c, it)
+  if not kw2: return false
+  when declared(handleLabelStmt):
+    handleLabelStmt(c, it, before1)
+  return true
+
+proc matchJumpStmt(c: var Context; it: var Item): bool =
+  when declared(handleJumpStmt):
+    var before1 = save(c, it)
+  var kw2 = false
+  if isTag(c, it, JmpT):
+    if not lookupSym(c, it):
+      error(c, it, "SYMBOL expected")
+      return false
+    kw2 = matchParRi(c, it)
+  if not kw2: return false
+  when declared(handleJumpStmt):
+    handleJumpStmt(c, it, before1)
+  return true
+
+proc matchScopeStmt(c: var Context; it: var Item): bool =
+  when declared(handleScopeStmt):
+    var before1 = save(c, it)
+  var kw2 = false
+  if isTag(c, it, ScopeT):
+    if not matchStmtList(c, it):
+      error(c, it, "StmtList expected")
+      return false
+    kw2 = matchParRi(c, it)
+  if not kw2: return false
+  when declared(handleScopeStmt):
+    handleScopeStmt(c, it, before1)
+  return true
+
+proc matchDiscardStmt(c: var Context; it: var Item): bool =
+  when declared(handleDiscardStmt):
+    var before1 = save(c, it)
+  var kw2 = false
+  if isTag(c, it, DiscardT):
+    if not matchExpr(c, it):
+      error(c, it, "Expr expected")
+      return false
+    kw2 = matchParRi(c, it)
+  if not kw2: return false
+  when declared(handleDiscardStmt):
+    handleDiscardStmt(c, it, before1)
+  return true
+
 proc matchStmt(c: var Context; it: var Item): bool =
   when declared(handleStmt):
     var before1 = save(c, it)
@@ -797,150 +963,48 @@ proc matchStmt(c: var Context; it: var Item): bool =
     if matchRaiseStmt(c, it):
       or2 = true
       break or3
-    var kw4 = false
-    if isTag(c, it, AsgnT):
-      if not matchLvalue(c, it):
-        error(c, it, "Lvalue expected")
-        break or3
-      if not matchExpr(c, it):
-        error(c, it, "Expr expected")
-        break or3
-      kw4 = matchParRi(c, it)
-    if kw4:
+    if matchAsgnStmt(c, it):
       or2 = true
       break or3
-    var kw5 = false
-    if isTag(c, it, IfT):
-      var om6 = false
-      while not peekParRi(c, it):
-        var kw7 = false
-        if isTag(c, it, ElifT):
-          if not matchExpr(c, it):
-            error(c, it, "Expr expected")
-            break or3
-          if not matchStmtList(c, it):
-            error(c, it, "StmtList expected")
-            break or3
-          kw7 = matchParRi(c, it)
-        if not kw7:
-          break
-        else:
-          om6 = true
-      if not om6:
-        error(c, it, "invalid Stmt")
-        break or3
-      var kw8 = false
-      if isTag(c, it, ElseT):
-        if not matchStmtList(c, it):
-          error(c, it, "StmtList expected")
-          break or3
-        kw8 = matchParRi(c, it)
-      discard kw8
-      kw5 = matchParRi(c, it)
-    if kw5:
+    if matchIfStmt(c, it):
       or2 = true
       break or3
-    var kw9 = false
-    if isTag(c, it, WhileT):
-      if not matchExpr(c, it):
-        error(c, it, "Expr expected")
-        break or3
-      if not matchStmtList(c, it):
-        error(c, it, "StmtList expected")
-        break or3
-      kw9 = matchParRi(c, it)
-    if kw9:
+    if matchWhileStmt(c, it):
       or2 = true
       break or3
     if isTag(c, it, BreakT):
       or2 = true
       break or3
-    var kw10 = false
-    if isTag(c, it, CaseT):
-      if not matchExpr(c, it):
-        error(c, it, "Expr expected")
-        break or3
-      var om11 = false
-      while not peekParRi(c, it):
-        var kw12 = false
-        if isTag(c, it, OfT):
-          if not matchBranchRanges(c, it):
-            error(c, it, "BranchRanges expected")
-            break or3
-          if not matchStmtList(c, it):
-            error(c, it, "StmtList expected")
-            break or3
-          kw12 = matchParRi(c, it)
-        if not kw12:
-          break
-        else:
-          om11 = true
-      if not om11:
-        error(c, it, "invalid Stmt")
-        break or3
-      var kw13 = false
-      if isTag(c, it, ElseT):
-        if not matchStmtList(c, it):
-          error(c, it, "StmtList expected")
-          break or3
-        kw13 = matchParRi(c, it)
-      discard kw13
-      kw10 = matchParRi(c, it)
-    if kw10:
+    if matchCaseStmt(c, it):
       or2 = true
       break or3
-    var kw14 = false
-    if isTag(c, it, LabT):
-      var sym15 = declareSym(c, it)
-      if not success(sym15):
-        error(c, it, "SYMBOLDEF expected")
-        break or3
-      kw14 = matchParRi(c, it)
-    if kw14:
+    if matchLabelStmt(c, it):
       or2 = true
       break or3
-    var kw16 = false
-    if isTag(c, it, JmpT):
-      if not lookupSym(c, it):
-        error(c, it, "SYMBOL expected")
-        break or3
-      kw16 = matchParRi(c, it)
-    if kw16:
+    if matchJumpStmt(c, it):
       or2 = true
       break or3
-    var kw17 = false
-    if isTag(c, it, ScopeT):
-      if not matchStmtList(c, it):
-        error(c, it, "StmtList expected")
-        break or3
-      kw17 = matchParRi(c, it)
-    if kw17:
+    if matchScopeStmt(c, it):
       or2 = true
       break or3
-    var kw18 = false
+    var kw4 = false
     if isTag(c, it, RetT):
-      var or19 = false
-      block or20:
+      var or5 = false
+      block or6:
         if matchEmpty(c, it):
-          or19 = true
-          break or20
+          or5 = true
+          break or6
         if matchExpr(c, it):
-          or19 = true
-          break or20
-      if not or19:
+          or5 = true
+          break or6
+      if not or5:
         error(c, it, "invalid Stmt")
         break or3
-      kw18 = matchParRi(c, it)
-    if kw18:
+      kw4 = matchParRi(c, it)
+    if kw4:
       or2 = true
       break or3
-    var kw21 = false
-    if isTag(c, it, DiscardT):
-      if not matchExpr(c, it):
-        error(c, it, "Expr expected")
-        break or3
-      kw21 = matchParRi(c, it)
-    if kw21:
+    if matchDiscardStmt(c, it):
       or2 = true
       break or3
   if not or2: return false
@@ -1919,6 +1983,42 @@ proc matchTopLevelConstruct(c: var Context; it: var Item): bool =
       or2 = true
       break or3
     if matchEmitStmt(c, it):
+      or2 = true
+      break or3
+    if matchCall(c, it):
+      or2 = true
+      break or3
+    if matchCallCanRaise(c, it):
+      or2 = true
+      break or3
+    if matchTryStmt(c, it):
+      or2 = true
+      break or3
+    if matchRaiseStmt(c, it):
+      or2 = true
+      break or3
+    if matchAsgnStmt(c, it):
+      or2 = true
+      break or3
+    if matchIfStmt(c, it):
+      or2 = true
+      break or3
+    if matchWhileStmt(c, it):
+      or2 = true
+      break or3
+    if matchCaseStmt(c, it):
+      or2 = true
+      break or3
+    if matchLabelStmt(c, it):
+      or2 = true
+      break or3
+    if matchJumpStmt(c, it):
+      or2 = true
+      break or3
+    if matchScopeStmt(c, it):
+      or2 = true
+      break or3
+    if matchDiscardStmt(c, it):
       or2 = true
       break or3
   if not or2: return false
