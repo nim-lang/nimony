@@ -492,7 +492,8 @@ proc genToplevel(c: var GeneratedCode; t: Tree; n: NodePos) =
   of ProcC: genProcDecl c, t, n, false
   of VarC, GvarC, TvarC: genStmt c, t, n
   of ConstC: genStmt c, t, n
-  of DiscardC, AsgnC, CallC:
+  of DiscardC, AsgnC, ScopeC, IfC,
+      WhileC, CaseC, LabC, JmpC, TryC, RaiseC, CallC, OnErrC:
     moveToInitSection:
       genStmt c, t, n
   of TypeC: discard "handled in a different pass"

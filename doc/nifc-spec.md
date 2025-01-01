@@ -137,6 +137,14 @@ ConstDecl ::= (const SymbolDef VarPragmas Type Expr)
 EmitStmt ::= (emit Expr+)
 TryStmt ::= (try StmtList StmtList StmtList)
 RaiseStmt ::= (raise [Empty | Expr])
+AsgnStmt ::= (asgn Lvalue Expr)
+IfStmt ::= (if (elif Expr StmtList)+ (else StmtList)? )
+WhileStmt ::= (while Expr StmtList)
+CaseStmt ::= (case Expr (of BranchRanges StmtList)* (else StmtList)?)
+LabelStmt ::= (lab SymbolDef)
+JumpStmt ::= (jmp Symbol)
+ScopeStmt ::= (scope StmtList)
+DiscardStmt ::= (discard Expr)
 
 Stmt ::= Call |
          CallCanRaise |
@@ -145,16 +153,16 @@ Stmt ::= Call |
          EmitStmt |
          TryStmt |
          RaiseStmt |
-         (asgn Lvalue Expr) |
-         (if (elif Expr StmtList)+ (else StmtList)? ) |
-         (while Expr StmtList) |
+         AsgnStmt |
+         IfStmt |
+         WhileStmt |
          (break) |
-         (case Expr (of BranchRanges StmtList)* (else StmtList)?) |
-         (lab SymbolDef) |
-         (jmp Symbol) |
-         (scope StmtList) |
+         CaseStmt |
+         LabelStmt |
+         JumpStmt |
+         ScopeStmt |
          (ret [Empty | Expr]) | # return statement
-         (discard Expr)
+         DiscardStmt
 
 
 StmtList ::= (stmts SCOPE Stmt*)
@@ -221,7 +229,10 @@ IgnoreDecl ::= (nodecl ProcDecl | VarDecl | ConstDecl)
 Include ::= (incl StringLiteral)
 
 TopLevelConstruct ::= ExternDecl | IgnoreDecl | ProcDecl | VarDecl | ConstDecl |
-                      TypeDecl | Include | EmitStmt
+                      TypeDecl | Include | EmitStmt | Call | CallCanRaise |
+                      TryStmt | RaiseStmt | AsgnStmt | IfStmt | WhileStmt |
+                      CaseStmt | LabelStmt | JumpStmt | ScopeStmt | DiscardStmt
+
 Module ::= (stmts TopLevelConstruct*)
 
 ```
