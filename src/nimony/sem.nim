@@ -8,7 +8,7 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, packedsets]
+import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -2515,6 +2515,60 @@ proc semBorrow(c: var SemContext; fn: StrId; beforeParams: int) =
   var it = Item(n: n, typ: c.types.autoType)
   semProcBody c, it
 
+proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
+  # semLocalTypeImpl c, n, InLocalDecl
+  if c.dest[paramsAt].kind == DotToken:
+    result = @[]
+  else:
+    result = @[]
+    var n = cursorAt(c.dest, paramsAt)
+    if n.substructureKind == ParamsS:
+      inc n
+      while n.kind != ParRi:
+        if n.substructureKind == ParamS:
+          skipToLocalType n
+          var localTypeBuf = createTokenBuf()
+          takeTree localTypeBuf, n
+          swap c.dest, localTypeBuf
+          result.add typeToCursor(c, 0)
+          swap c.dest, localTypeBuf
+        else:
+          break
+      endRead(c.dest)
+
+type
+  HookOp = enum
+    hookCloner
+    hookTracer
+    hookTracerDisarmer
+    hookMover
+    hookDtor
+
+proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp) =
+  case op
+  of hookDtor:
+    assert classifyType(c, c.routine.returnType) == VoidT
+    assert params.len == 1
+  else:
+    discard
+  
+proc semHook(c: var SemContext; dest: var TokenBuf; beforeParams: int; symId: SymId, info: PackedLineInfo) =
+  var name = pool.syms[symId]
+  extractBasename(name)
+  name = name.normalize
+
+  case name
+  of "=destroy":
+    let params = getParamsType(c, beforeParams)
+    checkTypeHook(c, params, hookDtor)
+
+    dest.add parLeToken(pool.tags.getOrIncl($ClonerS), info)
+    dest.add params[0]
+    dest.add symToken(symId, info)
+    dest.addParRi()
+  else:
+    discard
+
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   let info = it.n.info
   let declStart = c.dest.len
@@ -2535,6 +2589,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     inc c.routine.inLoop
     inc c.routine.inGeneric
 
+  var hookTagBuf = createTokenBuf()
   try:
     c.openScope() # open parameter scope
     semGenericParams c, it.n
@@ -2564,6 +2619,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
+        semHook(c, hookTagBuf, beforeParams, symId, info)
       of checkBody:
         if it.n != "stmts":
           error "(stmts) expected, but got ", it.n
@@ -2574,6 +2630,9 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
+
+        if c.routine.inGeneric == 0:
+          semHook(c, hookTagBuf, beforeParams, symId, info)
       of checkSignatures:
         c.takeTree it.n
         c.closeScope() # close parameter scope
@@ -2599,6 +2658,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   wantParRi c, it.n
   producesVoid c, info, it.typ
   publish c, symId, declStart
+
+  c.dest.add hookTagBuf
 
 proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[SemFlag]) =
   it.kind = s.kind
@@ -4058,6 +4119,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ExportS, CommentS:
         # XXX ignored for now
         skip it.n
+      of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
+        takeTree c, it.n
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:

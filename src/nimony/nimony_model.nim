@@ -46,6 +46,11 @@ type
     ImportExceptS = "importexcept"
     ExportS = "export"
     CommentS = "comment"
+    ClonerS = "cloner"
+    TracerS = "tracer"
+    DisarmerS = "disarmer"
+    MoverS = "mover"
+    DtorS = "dtor"
 
   SymKind* = enum
     NoSym
