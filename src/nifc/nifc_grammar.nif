@@ -61,6 +61,14 @@
 (RULE :EmitStmt (emit (ONE_OR_MANY Expr)))
 (RULE :TryStmt (try StmtList StmtList StmtList))
 (RULE :RaiseStmt (raise (OR . Expr)))
+(RULE :AsgnStmt (asgn Lvalue Expr))
+(RULE :IfStmt (if (ONE_OR_MANY (elif Expr StmtList)) (ZERO_OR_ONE (else StmtList))))
+(RULE :WhileStmt (while Expr StmtList))
+(RULE :CaseStmt (case Expr (ONE_OR_MANY (of BranchRanges StmtList)) (ZERO_OR_ONE (else StmtList))))
+(RULE :LabelStmt (lab SYMBOLDEF))
+(RULE :JumpStmt (jmp SYMBOL))
+(RULE :ScopeStmt (scope StmtList))
+(RULE :DiscardStmt (discard Expr))
 
 (RULE :Stmt (OR Call
          CallCanRaise
@@ -69,16 +77,16 @@
          EmitStmt
          TryStmt
          RaiseStmt
-         (asgn Lvalue Expr)
-         (if (ONE_OR_MANY (elif Expr StmtList)) (ZERO_OR_ONE (else StmtList)))
-         (while Expr StmtList)
+         AsgnStmt
+         IfStmt
+         WhileStmt
          (break)
-         (case Expr (ONE_OR_MANY (of BranchRanges StmtList)) (ZERO_OR_ONE (else StmtList)))
-         (lab SYMBOLDEF)
-         (jmp SYMBOL)
-         (scope StmtList)
+         CaseStmt
+         LabelStmt
+         JumpStmt
+         ScopeStmt
          (ret (OR . Expr))
-         (discard Expr)
+         DiscardStmt
          ))
 
 (RULE :StmtList (SCOPE (stmts (ZERO_OR_MANY Stmt))))
@@ -144,6 +152,9 @@
 (RULE :Include (incl STRINGLITERAL))
 
 (RULE :TopLevelConstruct (OR ExternDecl IgnoreDecl ProcDecl VarDecl ConstDecl
-                      TypeDecl Include EmitStmt))
+                      TypeDecl Include EmitStmt
+                      Call CallCanRaise TryStmt RaiseStmt AsgnStmt
+                      IfStmt WhileStmt CaseStmt LabelStmt JumpStmt
+                      ScopeStmt DiscardStmt))
 (RULE :Module (stmts (ZERO_OR_MANY TopLevelConstruct)))
 )
