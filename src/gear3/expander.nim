@@ -613,11 +613,28 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
 
   if c.substructureKind == TypevarsS:
     isGeneric = true
-
-  skip c # generic parameters
+    # count each typevar as used:
+    inc c
+    while c.kind != ParRi:
+      assert c.symKind == TypevarY
+      inc c
+      let (typevar, _) = getSymDef(e, c)
+      e.offer typevar
+      skipToEnd c
+    inc c
+  else:
+    skip c # generic parameters
 
   if isGeneric:
-    skip c # skip parameters
+    # count each param as used:
+    inc c
+    while c.kind != ParRi:
+      assert c.symKind == ParamY
+      inc c
+      let (param, _) = getSymDef(e, c)
+      e.offer param
+      skipToEnd c
+    inc c
     skip c # skip return type
   else:
     traverseParams e, c
