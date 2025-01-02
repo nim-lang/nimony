@@ -8,6 +8,8 @@
 
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
+import ".." / lib / nifchecksums
+
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   semdata
@@ -24,7 +26,7 @@ proc stdlibFile*(f: string): string =
 
 proc binDir*(): string =
   let appDir = getAppDir()
-  let (head, tail) = splitPath(appDir)
+  let (_, tail) = splitPath(appDir)
   if tail == "bin":
     result = appDir
   else:
@@ -218,3 +220,33 @@ proc getFile*(info: PackedLineInfo): string =
 
 proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
   exec os.getAppFilename() & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
+
+# ------------------ plugin handling --------------------------
+
+proc compilePlugin(c: var SemContext; info: PackedLineInfo; nimfile, exefile: string) =
+  let nf = resolveFile(c.g.config.paths, getFile(info), nimfile)
+  let cmd = "nim c -o " & quoteShell(exefile) & " " & quoteShell(nf)
+  exec cmd
+
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string) =
+  let p = splitFile(pluginName)
+  let basename = "nifcache" / p.name & "_" & computeChecksum(input)
+  let inputFile = basename & ".in.nif"
+  let outputFile = basename & ".out.nif"
+  let pluginExe = "nifcache" / p.name.addFileExt(ExeExt)
+  if not fileExists(pluginExe):
+    compilePlugin(c, info, pluginName, pluginExe)
+  if fileExists(inputFile) and readFile(inputFile) == input:
+    # do not touch the timestamp
+    discard "nothing to do here"
+  else:
+    writeFile inputFile, input
+
+  if needsRecompile(pluginExe, outputFile):
+    let cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
+    exec cmd
+  var s = nifstreams.open(outputFile)
+  try:
+    parse s, dest, NoLineInfo
+  finally:
+    close s

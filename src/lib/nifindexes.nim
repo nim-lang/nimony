@@ -7,7 +7,7 @@
 ## Create an index file for a NIF file.
 
 import std / [os, tables, assertions, syncio, formatfloat]
-import bitabs, lineinfos, nifreader, nifstreams, nifcursors
+import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 
 #import std / [sha1]
 import "$nim"/dist/checksums/src/checksums/sha1
@@ -19,59 +19,6 @@ proc isImportant(s: string): bool =
   for ch in s:
     if ch == '.': inc c
   result = c >= 2
-
-proc update(dest: var Sha1State; n: PackedToken) =
-  case n.kind
-  of ParLe:
-    update(dest, "(")
-    update(dest, pool.tags[n.tagId])
-  of ParRi:
-    update(dest, ")")
-  of SymbolDef:
-    update(dest, " :")
-    update(dest, pool.syms[n.symId])
-  of Symbol:
-    update(dest, " ")
-    update(dest, pool.syms[n.symId])
-  of Ident:
-    update(dest, " ")
-    update(dest, pool.strings[n.litId])
-  of IntLit:
-    update(dest, " ")
-    update(dest, $pool.integers[n.intId])
-  of UIntLit:
-    update(dest, " ")
-    update(dest, $pool.uintegers[n.uintId])
-  of FloatLit:
-    update(dest, " ")
-    update(dest, $pool.floats[n.floatId])
-  of StringLit:
-    update(dest, " ")
-    update(dest, pool.strings[n.litId])
-  of CharLit:
-    update(dest, " ")
-    update(dest, $n.uoperand)
-  of DotToken:
-    update(dest, ".")
-  of UnknownToken:
-    update(dest, "?")
-  of EofToken:
-    update(dest, "!EOF!")
-
-proc updateLoop(dest: var Sha1State; n: var Cursor; inlineT: TagId; foundInline: var bool) =
-  var nested = 0
-  while true:
-    update dest, n.load
-    case n.kind
-    of ParLe:
-      if n.tagId == inlineT: foundInline = true
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    if nested <= 0:
-      break
-    inc n
 
 proc isExported(n: Cursor): bool =
   var n = n
