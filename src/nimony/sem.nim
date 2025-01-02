@@ -861,9 +861,17 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCa
     m.add createMatch(addr c)
     sigmatch(m[^1], candidate, args, genericArgs)
 
-proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
+proc requestRoutineInstance(c: var SemContext; origin: SymId;
+                            typeArgs: var TokenBuf;
+                            inferred: var Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance =
-  let key = typeToCanon(m.typeArgs, 0)
+  let key = typeToCanon(typeArgs, 0)
+  echo "-------------------------"
+  echo "-> ", typeArgs.cursorAt(0), " ", key
+  for (name, value) in inferred.pairs:
+    echo  pool.syms[name], " => ", value
+  echo "-------------------------"
+  
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
     let targetSym = newSymId(c, origin)
@@ -877,8 +885,8 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
       # InvokeT for the generic params:
       signature.buildTree InvokeT, info:
         signature.add symToken(origin, info)
-        signature.add m.typeArgs
-      var sc = SubsContext(params: addr m.inferred)
+        signature.add typeArgs
+      var sc = SubsContext(params: addr inferred)
       subs(c, signature, sc, decl.params)
       let beforeRetType = signature.len
       subs(c, signature, sc, decl.retType)
@@ -894,7 +902,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
     var req = InstRequest(
       origin: origin,
       targetSym: targetSym,
-      inferred: move(m.inferred)
+      inferred: move(inferred)
     )
     for ins in c.instantiatedFrom: req.requestFrom.add ins
     req.requestFrom.add info
@@ -1194,7 +1202,8 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       semExpr c, magicExpr
       it.typ = magicExpr.typ
     elif c.routine.inGeneric == 0 and m[idx].inferred.len > 0 and isMagic == NonMagicCall:
-      let inst = c.requestRoutineInstance(finalFn.sym, m[idx], cs.callNode.info)
+      var matched = m[idx]
+      let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
       c.dest[cs.beforeCall+1].setSymId inst.targetSym
       typeofCallIs c, it, cs.beforeCall, inst.returnType
     else:
@@ -2544,6 +2553,15 @@ type
     hookMover
     hookDtor
 
+proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
+  var obj = skipModifier(obj)
+  while true:
+    if obj.typeKind == InvokeT:
+      inc obj
+    else:
+      break
+  result = obj.symId
+
 proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info: PackedLineInfo) =
   var cond: bool
   case op
@@ -2598,9 +2616,9 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
     of hookMover:
       buildErr c, info, "signature for '=sink' must be proc[T: object](x: var T; y: T)"
 
-proc expandHook(c: var SemContext; dest: var TokenBuf; obj: TypeCursor, symId: SymId, info: PackedLineInfo) =
+proc expandHook(c: var SemContext; dest: var TokenBuf; obj: SymId, symId: SymId, info: PackedLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($ClonerS), info)
-  dest.add obj
+  dest.add symToken(obj, info)
   dest.add symToken(symId, info)
   dest.addParRi()
 
@@ -2694,8 +2712,15 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
         let isHook = semHook(c, hookTagBuf, beforeParams, symId, info)
-        if c.routine.inGeneric == 0 and isHook.isSome:
-          expandHook(c, hookTagBuf, isHook.unsafeGet, symId, info)
+        if isHook.isSome:
+          let obj = getObjSymId(c, isHook.unsafeGet)
+          if c.routine.inGeneric == 0:
+            expandHook(c, hookTagBuf, obj, symId, info)
+          else:
+            if symId in c.genericHooks:
+              c.genericHooks[symId].add obj
+            else:
+              c.genericHooks[symId] = @[]
 
       of checkSignatures:
         c.takeTree it.n
@@ -4362,6 +4387,32 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     let s = fetchSym(c, val)
     let res = declToCursor(c, s)
     if res.status == LacksNothing:
+      let decl = asTypeDecl(res.decl)
+      var typevars = decl.typevars
+      let name = decl.name.symId
+      if name in c.genericHooks and
+            classifyType(c, typevars) == InvokeT:
+        echo (pool.syms[val], typevars)
+        inc typevars
+        if typevars.kind == Symbol:
+          let symId = typevars.symId
+          let res = tryLoadSym(symId)
+          if res.status == LacksNothing:
+            var inferred = initTable[SymId, Cursor]()
+            var typeArgs = createTokenBuf()
+            let typeDecl = asTypeDecl(res.decl)
+            var typevarsStart = typeDecl.typevars
+            let originHooks = c.genericHooks[name]
+
+            while typevars.kind != ParRi:
+              let name = asTypevar(typevarsStart).name.symId
+              inferred[name] = typevars
+              takeTree(typeArgs, typevars)
+
+            # TODO: info
+            for hook in originHooks:
+              discard requestRoutineInstance(c, hook, typeArgs, inferred, n.info)
+
       c.dest.copyTree res.decl
   wantParRi c, n
   if reportErrors(c) == 0:
