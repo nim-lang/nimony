@@ -217,7 +217,9 @@ proc isTypevar(s: SymId): bool =
   let typevar = asTypevar(res.decl)
   result = typevar.kind == TypevarY
 
-proc linearMatch(m: var Match; f, a: var Cursor, containsStartTag = true) =
+proc linearMatch(m: var Match; f, a: var Cursor, leaveLastParRi = true) =
+  let fOrig = f
+  let aOrig = a
   var nested = 0
   while true:
     if f.kind == Symbol and isTypevar(f.symId):
@@ -225,7 +227,9 @@ proc linearMatch(m: var Match; f, a: var Cursor, containsStartTag = true) =
       let fs = f.symId
       if m.inferred.contains(fs):
         # rematch?
-        linearMatch(m, m.inferred[fs], a)
+        var prev = m.inferred[fs]
+        linearMatch(m, prev, a, leaveLastParRi = false)
+        inc f
         if m.err: break
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
@@ -241,21 +245,23 @@ proc linearMatch(m: var Match; f, a: var Cursor, containsStartTag = true) =
           DotToken, Ident, Symbol, SymbolDef,
           StringLit, CharLit, IntLit, UIntLit, FloatLit:
         if f.uoperand != a.uoperand:
-          m.error expected(f, a)
+          m.error expected(fOrig, aOrig)
           break
       of ParLe:
         if f.uoperand != a.uoperand:
-          m.error expected(f, a)
+          m.error expected(fOrig, aOrig)
           break
         inc nested
       of ParRi:
-        if nested == ord(containsStartTag): break
+        if nested == ord(leaveLastParRi): break
         dec nested
     else:
-      m.error expected(f, a)
+      m.error expected(fOrig, aOrig)
       break
     inc f
     inc a
+    # only match a single tree/token:
+    if nested == 0: break
 
 const
   TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
