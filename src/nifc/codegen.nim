@@ -350,11 +350,24 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
     if vis == StaticC:
       c.code.insert(Token(StaticKeyword), beforeDecl)
     if t[d.value].kind != Empty:
-      c.add AsgnOpr
-      if vk != IsLocal: inc c.inSimpleInit
-      genx c, t, d.value
-      if vk != IsLocal: dec c.inSimpleInit
-    c.add Semicolon
+      if vk == IsGlobal and
+        t[d.value].kind notin {IntLit, UIntLit, FloatLit, CharLit, StrLit, FalseC, TrueC}:
+        c.add Semicolon
+        moveToInitSection:
+          c.add name
+          c.add AsgnOpr
+          inc c.inSimpleInit
+          genx c, t, d.value
+          dec c.inSimpleInit
+          c.add Semicolon
+      else:
+        c.add AsgnOpr
+        if vk != IsLocal: inc c.inSimpleInit
+        genx c, t, d.value
+        if vk != IsLocal: dec c.inSimpleInit
+        c.add Semicolon
+    else:
+      c.add Semicolon
   else:
     error c.m, "expected SymbolDef but got: ", t, n
 
