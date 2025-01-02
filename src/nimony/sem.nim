@@ -662,7 +662,11 @@ proc semProcBody(c: var SemContext; itB: var Item) =
   elif classifyType(c, it.typ) == VoidT:
     discard "ok"
   else:
-    typecheck(c, info, it.typ, c.routine.returnType)
+    # uses closing paren of (stmts:
+    c.dest.insert [parLeToken(pool.tags.getOrIncl($ExprX), info)], beforeBodyPos
+    commonType c, it, beforeBodyPos, c.routine.returnType
+    # now add closing paren
+    c.dest.addParRi()
     # transform `expr` to `result = expr`:
     if c.routine.resId != SymId(0):
       var prefix = [
