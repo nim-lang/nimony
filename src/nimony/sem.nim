@@ -763,7 +763,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX}:
+              ArrAtX, DerefX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -3904,6 +3904,23 @@ proc semHigh(c: var SemContext; it: var Item) =
   it.typ = typ
   commonType c, it, beforeExpr, expected
 
+proc semDeref(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  let expected = it.typ
+  takeToken c, it.n
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, arg
+  it.n = arg.n
+  wantParRi c, it.n
+  case arg.typ.typeKind
+  of RefT, PtrT:
+    it.typ = arg.typ
+    inc it.typ # get to base type
+  else:
+    c.buildErr info, "invalid type for deref: " & typeToString(arg.typ)
+  commonType c, it, beforeExpr, expected
+
 proc whichPass(c: SemContext): PassKind =
   result = if c.phase == SemcheckSignatures: checkSignatures else: checkBody
 
@@ -4139,7 +4156,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semHigh c, it
     of ExprX:
       semStmtsExpr c, it
-    of DerefX, AddrX, SizeofX, KvX,
+    of DerefX:
+      semDeref c, it
+    of AddrX, SizeofX, KvX,
        RangeX, RangesX,
        OconvX, HconvX,
        CompilesX, TypeofX:
