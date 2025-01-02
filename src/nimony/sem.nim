@@ -236,7 +236,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
-    if c.canSelfExec and needsRecompile(f2, suffix):
+    if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
       selfExec c, f2, (if mode.kind == ImportSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
@@ -1599,7 +1599,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`magic` pragma takes a string literal"
     c.dest.addParRi()
-  of ImportC, ImportCpp, ExportC, Header:
+  of ImportC, ImportCpp, ExportC, Header, Plugin:
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     inc n
     if n.kind != ParRi:

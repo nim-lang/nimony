@@ -526,7 +526,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
             error e, "expected string literal or ident, but got: ", c
           result.flags.incl Nodecl
           inc c
-        of ImportC, ImportCpp, ExportC:
+        of ImportC, ImportCpp, ExportC, Plugin:
           inc c
           expectStrLit e, c
           result.externName = pool.strings[c.litId]

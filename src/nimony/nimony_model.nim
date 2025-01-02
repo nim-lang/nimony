@@ -206,6 +206,7 @@ type
     Varargs = "varargs"
     Borrow = "borrow"
     NoSideEffect = "noSideEffect"
+    Plugin = "plugin"
 
   SubstructureKind* = enum
     NoSub
