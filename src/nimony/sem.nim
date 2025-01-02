@@ -2540,18 +2540,70 @@ type
   HookOp = enum
     hookCloner
     hookTracer
-    hookTracerDisarmer
+    hookDisarmer
     hookMover
     hookDtor
 
-proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp) =
+proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info: PackedLineInfo) =
+  var cond: bool
   case op
   of hookDtor:
-    assert classifyType(c, c.routine.returnType) == VoidT
-    assert params.len == 1
-  else:
-    discard
-  
+    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 1
+    if not cond:
+      buildErr c, info, "signature for '=destroy' must be proc[T: object](x: T)"
+  of hookTracer:
+    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+      classifyType(c, params[0]) == MutT and classifyType(c, params[1]) == PointerT
+  of hookDisarmer:
+    cond = classifyType(c, c.routine.returnType) == VoidT and
+        params.len == 1 and classifyType(c, params[0]) == MutT
+  of hookCloner:
+    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+      classifyType(c, params[0]) == MutT
+  of hookMover:
+    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+      classifyType(c, params[0]) == MutT
+
+  if cond:
+    var obj = skipModifier(params[0])
+    while true:
+      if obj.typeKind == InvokeT:
+        inc obj
+      else:
+        break
+
+    if obj.kind != Symbol:
+      cond = false
+    else:
+      let res = tryLoadSym(obj.symId)
+      assert res.status == LacksNothing
+      if res.decl.symKind == TypeY:
+        let typeDecl = asTypeDecl(res.decl)
+
+        if not (classifyType(c, typeDecl.body) == ObjectT):
+          cond = false
+      else:
+        cond = false
+
+  if not cond:
+    case op
+    of hookDtor:
+      buildErr c, info, "signature for '=destroy' must be proc[T: object](x: T)"
+    of hookTracer:
+      buildErr c, info, "signature for '=trace' must be proc[T: object](x: var T; env: pointer)"
+    of hookDisarmer:
+      buildErr c, info, "signature for '=wasMoved' must be proc[T: object](x: var T)"
+    of hookCloner:
+      buildErr c, info, "signature for '=copy' must be proc[T: object](x: var T; y: T)"
+    of hookMover:
+      buildErr c, info, "signature for '=sink' must be proc[T: object](x: var T; y: T)"
+
+proc expandHook(c: var SemContext; dest: var TokenBuf; params: seq[TypeCursor], symId: SymId, info: PackedLineInfo) =
+  dest.add parLeToken(pool.tags.getOrIncl($ClonerS), info)
+  dest.add params[0]
+  dest.add symToken(symId, info)
+  dest.addParRi()
+
 proc semHook(c: var SemContext; dest: var TokenBuf; beforeParams: int; symId: SymId, info: PackedLineInfo) =
   var name = pool.syms[symId]
   extractBasename(name)
@@ -2560,12 +2612,19 @@ proc semHook(c: var SemContext; dest: var TokenBuf; beforeParams: int; symId: Sy
   case name
   of "=destroy":
     let params = getParamsType(c, beforeParams)
-    checkTypeHook(c, params, hookDtor)
-
-    dest.add parLeToken(pool.tags.getOrIncl($ClonerS), info)
-    dest.add params[0]
-    dest.add symToken(symId, info)
-    dest.addParRi()
+    checkTypeHook(c, params, hookDtor, info)
+  of "=wasmoved":
+    let params = getParamsType(c, beforeParams)
+    checkTypeHook(c, params, hookDisarmer, info)
+  of "=trace":
+    let params = getParamsType(c, beforeParams)
+    checkTypeHook(c, params, hookTracer, info)
+  of "=copy":
+    let params = getParamsType(c, beforeParams)
+    checkTypeHook(c, params, hookCloner, info)
+  of "=sink":
+    let params = getParamsType(c, beforeParams)
+    checkTypeHook(c, params, hookMover, info)
   else:
     discard
 
@@ -2619,7 +2678,6 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
-        semHook(c, hookTagBuf, beforeParams, symId, info)
       of checkBody:
         if it.n != "stmts":
           error "(stmts) expected, but got ", it.n
@@ -2630,9 +2688,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
-
-        if c.routine.inGeneric == 0:
-          semHook(c, hookTagBuf, beforeParams, symId, info)
+        semHook(c, hookTagBuf, beforeParams, symId, info)
       of checkSignatures:
         c.takeTree it.n
         c.closeScope() # close parameter scope
