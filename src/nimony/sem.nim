@@ -8,7 +8,7 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
+import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils, options]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -2598,13 +2598,13 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
     of hookMover:
       buildErr c, info, "signature for '=sink' must be proc[T: object](x: var T; y: T)"
 
-proc expandHook(c: var SemContext; dest: var TokenBuf; params: seq[TypeCursor], symId: SymId, info: PackedLineInfo) =
+proc expandHook(c: var SemContext; dest: var TokenBuf; obj: TypeCursor, symId: SymId, info: PackedLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($ClonerS), info)
-  dest.add params[0]
+  dest.add obj
   dest.add symToken(symId, info)
   dest.addParRi()
 
-proc semHook(c: var SemContext; dest: var TokenBuf; beforeParams: int; symId: SymId, info: PackedLineInfo) =
+proc semHook(c: var SemContext; dest: var TokenBuf; beforeParams: int; symId: SymId, info: PackedLineInfo): Option[TypeCursor] =
   var name = pool.syms[symId]
   extractBasename(name)
   name = name.normalize
@@ -2613,20 +2613,25 @@ proc semHook(c: var SemContext; dest: var TokenBuf; beforeParams: int; symId: Sy
   of "=destroy":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookDtor, info)
+    result = some(params[0])
   of "=wasmoved":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookDisarmer, info)
+    result = some(params[0])
   of "=trace":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookTracer, info)
+    result = some(params[0])
   of "=copy":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookCloner, info)
+    result = some(params[0])
   of "=sink":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookMover, info)
+    result = some(params[0])
   else:
-    discard
+    result = none(TypeCursor)
 
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   let info = it.n.info
@@ -2688,7 +2693,10 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
-        semHook(c, hookTagBuf, beforeParams, symId, info)
+        let isHook = semHook(c, hookTagBuf, beforeParams, symId, info)
+        if c.routine.inGeneric == 0 and isHook.isSome:
+          expandHook(c, hookTagBuf, isHook.unsafeGet, symId, info)
+
       of checkSignatures:
         c.takeTree it.n
         c.closeScope() # close parameter scope
