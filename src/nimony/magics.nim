@@ -89,6 +89,7 @@ type
     mUnpack
     mDefaultObj, mDefaultTup
     mArrAt, mPat
+    mDeref
 
 declareMatcher parseMagic, TMagic, 1, 1
 
@@ -125,6 +126,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mSizeOf: res SizeofX
   of mType, mTypeOf: res TypeofX
   of mAddr: res AddrX
+  of mDeref: res DerefX
   of mEqI, mEqB, mEqCh, mEqF64, mEqRef: res EqX, TypedMagic
   of mLeI, mLeB, mLeCh, mLeF64, mLePtr: res LeX, TypedMagic
   of mLtI, mLtB, mLtCh, mLtF64, mLtPtr: res LtX, TypedMagic
