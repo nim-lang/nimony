@@ -1,5 +1,5 @@
 proc generic[T](a, b: ptr T) =
-  discard # a == b
+  discard a == nil
 
 proc main =
   var x: ptr int = nil
