@@ -89,10 +89,36 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
     if isAtom: break
     inc body
 
+proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor): bool =
+  var p = temp.pragmas
+  if p.kind != ParLe:
+    return false
+  while p.kind != ParRi:
+    if p.pragmaKind == Plugin:
+      inc p
+      if p.kind == StringLit:
+        var b = createTokenBuf(30)
+        b.addParLe StmtsS, args.info
+        var a = args
+        while a.kind != ParRi:
+          b.takeTree a
+        b.addParRi()
+        let content = "(.nif24)\n" & b.toString
+
+        runPlugin(c, dest, p.info, pool.strings[p.litId], content)
+        return true
+      skipToEnd p
+    else:
+      skip p
+  return false
+
 proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      templateDecl, args, firstVarargMatch: Cursor;
                      inferred: ptr Table[SymId, Cursor]) =
   var templ = asRoutine(templateDecl)
+
+  if expandPlugin(c, dest, templ, args):
+    return
 
   var e = ExpansionContext(
     newVars: initTable[SymId, SymId](),
