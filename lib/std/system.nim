@@ -82,6 +82,13 @@ template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
 template `[]=`*(x: cstring, i: int; elem: char) =
   (x[i]) = elem
 
+proc `[]`*[T](x: ptr T): var T {.magic: "Deref", noSideEffect.}
+proc `[]`*[T](x: ref T): var T {.magic: "Deref", noSideEffect.}
+template `[]=`*[T](x: ptr T, val: T) =
+  (x[]) = val
+template `[]=`*[T](x: ref T, val: T) =
+  (x[]) = val
+
 # integer calculations:
 proc `+`*(x: int8): int8 {.magic: "UnaryPlusI", noSideEffect.}
 proc `+`*(x: int16): int16 {.magic: "UnaryPlusI", noSideEffect.}
