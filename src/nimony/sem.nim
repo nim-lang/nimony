@@ -4413,7 +4413,6 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     if res.status == LacksNothing:
       let decl = asTypeDecl(res.decl)
       var typevars = decl.typevars
-      # let name = decl.name.symId
       assert classifyType(c, typevars) == InvokeT
       inc typevars
       assert typevars.kind == Symbol
