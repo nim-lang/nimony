@@ -1412,6 +1412,8 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     var root = t
     if root.typeKind in {RefT, PtrT}:
       inc root
+    if root.typeKind == InvokeT:
+      inc root
     if root.kind == Symbol:
       let objType = objtypeImpl(root.symId)
       if objType.typeKind == ObjectT:
@@ -3373,6 +3375,8 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymI
   var objImpl = typ
   if objImpl.typeKind in {RefT, PtrT}:
     inc objImpl
+  if objImpl.typeKind == InvokeT:
+    inc objImpl
   if objImpl.kind == Symbol:
     objImpl = objtypeImpl(objImpl.symId)
   var obj = asObjectDecl(objImpl)
@@ -3412,6 +3416,8 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   c.dest.shrink exprStart
   var objType = it.typ
   if objType.typeKind in {RefT, PtrT}:
+    inc objType
+  if objType.typeKind == InvokeT:
     inc objType
   if objType.kind == Symbol:
     objType = objtypeImpl(objType.symId)

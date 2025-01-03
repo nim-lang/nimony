@@ -29,6 +29,7 @@ type
     newTypes: Table[string, SymId]
     pending: TokenBuf
     typeCache: TypeCache
+    inGeneric: int
 
 proc error(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
   write stdout, "[Error] "
@@ -382,7 +383,13 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   of ParLe:
     case c.typeKind
     of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
-      error e, "type expected but got: ", c
+      if e.inGeneric > 0:
+        e.dest.add c
+        inc c
+        e.loop c:
+          traverseType e, c
+      else:
+        error e, "type expected but got: ", c
     of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
         e.dest.add c
@@ -470,7 +477,13 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       skipParRi e, c
     of VoidT, VarargsT, NilT, ConceptT,
        IterT, InvokeT, SetT:
-      error e, "unimplemented type: ", c
+      if e.inGeneric > 0:
+        e.dest.add c
+        inc c
+        e.loop c:
+          traverseType e, c
+      else:
+        error e, "unimplemented type: ", c
   else:
     error e, "type expected but got: ", c
 
@@ -659,7 +672,9 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
 
   # body:
   if mode != TraverseSig or prag.callConv == InlineC:
+    inc e.inGeneric, ord(isGeneric)
     traverseStmt e, c, TraverseAll
+    dec e.inGeneric, ord(isGeneric)
   else:
     e.dest.addDotToken()
     skip c
@@ -690,13 +705,25 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
   skipExportMarker e, c
   if c.substructureKind == TypevarsS:
     isGeneric = true
-  skip c # generic parameters
+    # count each typevar as used:
+    inc c
+    while c.kind != ParRi:
+      assert c.symKind == TypevarY
+      inc c
+      let (typevar, _) = getSymDef(e, c)
+      e.offer typevar
+      skipToEnd c
+    inc c
+  else:
+    skip c # generic parameters
 
   let prag = parsePragmas(e, c)
 
   e.dest.addDotToken() # adds pragmas
 
+  inc e.inGeneric, ord(isGeneric)
   traverseType e, c, {IsTypeBody}
+  dec e.inGeneric, ord(isGeneric)
   wantParRi e, c
   swap dst, e.dest
   if Nodecl in prag.flags or isGeneric:
