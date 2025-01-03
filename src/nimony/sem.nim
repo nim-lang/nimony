@@ -2535,6 +2535,8 @@ proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
           swap c.dest, localTypeBuf
           result.add typeToCursor(c, 0)
           swap c.dest, localTypeBuf
+          skip n
+          skipParRi n
         else:
           break
       endRead(c.dest)
