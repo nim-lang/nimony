@@ -10,8 +10,8 @@
 import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
-import nifindexes, symparser, treemangler, typenav
-import ".." / nimony / [nimony_model, programs]
+import nifindexes, symparser, treemangler
+import ".." / nimony / [nimony_model, programs, typenav]
 
 type
   SymbolKey = (SymId, SymId) # (symbol, owner)

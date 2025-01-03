@@ -167,6 +167,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mPointer: res PointerT
   of mDefaultObj: res DefaultObjX
   of mDefaultTup: res DefaultTupX
+  of mOpenArray: res OpenArrayT
   else: ("", 0)
 
 when isMainModule:

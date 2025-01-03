@@ -1,6 +1,6 @@
 #
 #
-#           Gear3 Compiler
+#           Nimony
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "copying.txt", included in this
@@ -11,7 +11,7 @@
 
 include nifprelude
 
-import ".." / nimony / [nimony_model, builtintypes, decls, programs]
+import nimony_model, builtintypes, decls, programs
 
 type
   TypeCache* = object
