@@ -658,7 +658,9 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   skip c # miscPos
 
   # body:
-  if mode != TraverseSig or prag.callConv == InlineC:
+  if isGeneric:
+    skip c
+  elif mode != TraverseSig or prag.callConv == InlineC:
     traverseStmt e, c, TraverseAll
   else:
     e.dest.addDotToken()
@@ -690,13 +692,26 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
   skipExportMarker e, c
   if c.substructureKind == TypevarsS:
     isGeneric = true
-  skip c # generic parameters
+    # count each typevar as used:
+    inc c
+    while c.kind != ParRi:
+      assert c.symKind == TypevarY
+      inc c
+      let (typevar, _) = getSymDef(e, c)
+      e.offer typevar
+      skipToEnd c
+    inc c
+  else:
+    skip c # generic parameters
 
   let prag = parsePragmas(e, c)
 
   e.dest.addDotToken() # adds pragmas
 
-  traverseType e, c, {IsTypeBody}
+  if isGeneric:
+    skip c
+  else:
+    traverseType e, c, {IsTypeBody}
   wantParRi e, c
   swap dst, e.dest
   if Nodecl in prag.flags or isGeneric:
