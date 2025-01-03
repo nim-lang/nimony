@@ -2628,25 +2628,21 @@ proc getHookName(symId: SymId): string =
   result = result.normalize
 
 proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): TypeCursor =
+  let params = getParamsType(c, beforeParams)
   case name
   of "=destroy":
-    let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookDtor, info)
     result = params[0]
   of "=wasmoved":
-    let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookDisarmer, info)
     result = params[0]
   of "=trace":
-    let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookTracer, info)
     result = params[0]
   of "=copy":
-    let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookCloner, info)
     result = params[0]
   of "=sink":
-    let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookMover, info)
     result = params[0]
   else:
