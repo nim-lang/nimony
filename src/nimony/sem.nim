@@ -2519,7 +2519,6 @@ proc semBorrow(c: var SemContext; fn: StrId; beforeParams: int) =
   semProcBody c, it
 
 proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
-  # semLocalTypeImpl c, n, InLocalDecl
   if c.dest[paramsAt].kind == DotToken:
     result = @[]
   else:
@@ -2549,14 +2548,17 @@ type
     hookMover
     hookDtor
 
-proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
+proc getObjSymId(c: var SemContext; obj: TypeCursor): Option[SymId] =
   var obj = skipModifier(obj)
   while true:
     if obj.typeKind == InvokeT:
       inc obj
     else:
       break
-  result = obj.symId
+  if obj.kind == Symbol:
+    result = some obj.symId
+  else:
+    result = none(SymId)
 
 proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info: PackedLineInfo) =
   var cond: bool
@@ -2579,17 +2581,12 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
       classifyType(c, params[0]) == MutT
 
   if cond:
-    var obj = skipModifier(params[0])
-    while true:
-      if obj.typeKind == InvokeT:
-        inc obj
-      else:
-        break
+    let obj = getObjSymId(c, params[0])
 
-    if obj.kind != Symbol:
+    if obj.isNone:
       cond = false
     else:
-      let res = tryLoadSym(obj.symId)
+      let res = tryLoadSym(obj.unsafeGet)
       assert res.status == LacksNothing
       if res.decl.symKind == TypeY:
         let typeDecl = asTypeDecl(res.decl)
@@ -2710,8 +2707,9 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
           let obj = getObjSymId(c, params[0])
+          assert obj.isSome
           let kind = getHookTag(name)
-          expandHook(c, hookTagBuf, obj, symId, kind, info)
+          expandHook(c, hookTagBuf, obj.unsafeGet, symId, kind, info)
 
       of checkBody:
         if it.n != "stmts":
@@ -2727,7 +2725,9 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         if name.startsWith("="):
           let isHook = semHook(c, hookTagBuf, name, beforeParams, symId, info)
           if isHook.isSome:
-            let obj = getObjSymId(c, isHook.unsafeGet)
+            let objOpt = getObjSymId(c, isHook.unsafeGet)
+            assert objOpt.isSome
+            let obj = objOpt.unsafeGet
             if c.routine.inGeneric == 0:
               let kind = getHookTag(name)
               expandHook(c, hookTagBuf, obj, symId, kind, info)
