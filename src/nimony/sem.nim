@@ -868,7 +868,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCa
     sigmatch(m[^1], candidate, args, genericArgs)
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
-                            typeArgs: var TokenBuf;
+                            typeArgs: TokenBuf;
                             inferred: var Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance =
   let key = typeToCanon(typeArgs, 0)
