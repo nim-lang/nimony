@@ -62,7 +62,7 @@
     (mut 12
      (at ~8 MyObject.0.tho8gh7q4 1 T.1.tho8gh7q4 4 Y.1.tho8gh7q4)) .)) . . . 2,1
   (stmts 4
-   (let :x.9 . .
+   (let :x.10 . .
     (i -1) 4 +12) 4,1
    (let :y.4 . .
     (i -1) 4 +4))) ,26
@@ -98,7 +98,7 @@
    (param :x.8 . . 11
     (at ~8 MyObject.0.tho8gh7q4 1 T.4.tho8gh7q4 4 Y.4.tho8gh7q4) .)) . . . 2,1
   (stmts 4
-   (let :x.10 . .
+   (let :x.11 . .
     (i -1) 4 +12))) ,35
  (proc 5 :foo.0.tho8gh7q4 . . . 9
   (params) . . . 2,1
@@ -110,17 +110,36 @@
    (var :objbase2.0 . . 10 MyObjectBase.0.tho8gh7q4 .) 10,8
    (call 1 =destroy.0.tho8gh7q4 1 objbase2.0) 10,9
    (call 1 =destroy.0.tho8gh7q4 1 objbase.0))) 3,47
- (call ~3 foo.0.tho8gh7q4) 12,40
+ (call ~3 foo.0.tho8gh7q4) ,49
+ (proc 5 :=checkHook.0.tho8gh7q4 . . 17
+  (typevars 1
+   (typevar :T.5.tho8gh7q4 . . . .) 4
+   (typevar :Y.5.tho8gh7q4 . . . .)) 23
+  (params 1
+   (param :x.9 . . 12
+    (at ~8 MyObject.0.tho8gh7q4 1 T.5.tho8gh7q4 4 Y.5.tho8gh7q4) .)) . . . 2,1
+  (stmts 
+   (discard .))) 4,52
+ (var :obj.0.tho8gh7q4 . . 13 MyObject.1.tho8gh7q4 .) 12,53
+ (call 1 =checkHook.1.tho8gh7q4 1 obj.0.tho8gh7q4) 12,40
  (proc :=destroy.2.tho8gh7q4 . ~12,~8 . 
   (at =destroy.1.tho8gh7q4 ~8,~34,lib/std/system.nim
    (i -1) ~8,~8,lib/std/system.nim
    (f +64)) 9,~8
   (params 1
-   (param :x.12 . . 11 MyObject.1.tho8gh7q4 .)) ~12,~8 . ~12,~8 . ~12,~8 . ~10,~7
+   (param :x.14 . . 11 MyObject.1.tho8gh7q4 .)) ~12,~8 . ~12,~8 . ~12,~8 . ~10,~7
   (stmts 4
-   (let :x.13 . . ~2,~27,lib/std/system.nim
+   (let :x.15 . . ~2,~27,lib/std/system.nim
     (i -1) 4 +12))) 12,40
- (dtor MyObject.1.tho8gh7q4 =destroy.2.tho8gh7q4) 19,36
+ (dtor MyObject.1.tho8gh7q4 =destroy.2.tho8gh7q4) 12,53
+ (proc :=checkHook.1.tho8gh7q4 . ~12,~4 . 
+  (at =checkHook.0.tho8gh7q4 ~8,~47,lib/std/system.nim
+   (i -1) ~8,~21,lib/std/system.nim
+   (f +64)) 11,~4
+  (params 1
+   (param :x.16 . . 12 MyObject.1.tho8gh7q4 .)) ~12,~4 . ~12,~4 . ~12,~4 . ~10,~3
+  (stmts 
+   (discard .))) 19,36
  (type :MyObject.1.tho8gh7q4 . 
   (at MyObject.0.tho8gh7q4 ~15,~30,lib/std/system.nim
    (i -1) ~15,~4,lib/std/system.nim
@@ -144,10 +163,10 @@
    (i -1) 4,32,lib/std/system.nim
    (f +64)) 22,22
   (params 1
-   (param :x.21 . . 3
+   (param :x.24 . . 3
     (mut 12 MyObject.1.tho8gh7q4) .)) ,22 . ,22 . ,22 . 2,23
   (stmts 4
-   (let :x.22 . . ~2,~17,lib/std/system.nim
+   (let :x.25 . . ~2,~17,lib/std/system.nim
     (i -1) 4 +12) 4,1
    (let :y.9 . . ~2,~18,lib/std/system.nim
     (i -1) 4 +4))) 
@@ -157,7 +176,7 @@
    (i -1) 4,32,lib/std/system.nim
    (f +64)) 18,26
   (params 1
-   (param :x.23 . . 3
+   (param :x.26 . . 3
     (mut 12 MyObject.1.tho8gh7q4) .) 24
    (param :y.10 . . 11 MyObject.1.tho8gh7q4 .)) ,26 . ,26 . ,26 . 2,27
   (stmts 
@@ -168,7 +187,7 @@
    (i -1) 4,32,lib/std/system.nim
    (f +64)) 18,29
   (params 1
-   (param :x.24 . . 3
+   (param :x.27 . . 3
     (mut 12 MyObject.1.tho8gh7q4) .) 24
    (param :y.11 . . 11 MyObject.1.tho8gh7q4 .)) ,29 . ,29 . ,29 . 2,30
   (stmts 
@@ -179,10 +198,10 @@
    (f +64) 4,6,lib/std/system.nim
    (i -1)) 22,22
   (params 1
-   (param :x.25 . . 3
+   (param :x.28 . . 3
     (mut 12 MyObject.2.tho8gh7q4) .)) ,22 . ,22 . ,22 . 2,23
   (stmts 4
-   (let :x.26 . . ~2,~17,lib/std/system.nim
+   (let :x.29 . . ~2,~17,lib/std/system.nim
     (i -1) 4 +12) 4,1
    (let :y.12 . . ~2,~18,lib/std/system.nim
     (i -1) 4 +4))) 
@@ -192,7 +211,7 @@
    (f +64) 4,6,lib/std/system.nim
    (i -1)) 18,26
   (params 1
-   (param :x.27 . . 3
+   (param :x.30 . . 3
     (mut 12 MyObject.2.tho8gh7q4) .) 24
    (param :y.13 . . 11 MyObject.2.tho8gh7q4 .)) ,26 . ,26 . ,26 . 2,27
   (stmts 
@@ -203,7 +222,7 @@
    (f +64) 4,6,lib/std/system.nim
    (i -1)) 18,29
   (params 1
-   (param :x.28 . . 3
+   (param :x.31 . . 3
     (mut 12 MyObject.2.tho8gh7q4) .) 24
    (param :y.14 . . 11 MyObject.2.tho8gh7q4 .)) ,29 . ,29 . ,29 . 2,30
   (stmts 
@@ -214,8 +233,8 @@
    (f +64) 4,6,lib/std/system.nim
    (i -1)) 21,32
   (params 1
-   (param :x.29 . . 11 MyObject.2.tho8gh7q4 .)) ,32 . ,32 . ,32 . 2,33
+   (param :x.32 . . 11 MyObject.2.tho8gh7q4 .)) ,32 . ,32 . ,32 . 2,33
   (stmts 4
-   (let :x.30 . . ~2,~27,lib/std/system.nim
+   (let :x.33 . . ~2,~27,lib/std/system.nim
     (i -1) 4 +12))) 
  (dtor MyObject.2.tho8gh7q4 =destroy.3.tho8gh7q4))
