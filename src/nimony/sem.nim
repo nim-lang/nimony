@@ -1336,7 +1336,7 @@ proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
   assert t == "object"
   var n = t
   inc n # skip `(object` token
-  let baseType = n
+  var baseType = n
   skip n # skip basetype
   while n.kind == ParLe and n.substructureKind == FldS:
     inc n # skip FldS
@@ -1352,10 +1352,18 @@ proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
     skip n # type
     skip n # value
     skipParRi n
-  if baseType.kind == Symbol:
-    result = findObjField(objtypeImpl(baseType.symId), name, level+1)
-  else:
+  if baseType.kind == DotToken:
     result = ObjField(level: -1)
+  else:
+    if baseType.typeKind in {RefT, PtrT}:
+      inc baseType
+    if baseType.typeKind == InvokeT:
+      inc baseType # get to root symbol
+    if baseType.kind == Symbol:
+      result = findObjField(objtypeImpl(baseType.symId), name, level+1)
+    else:
+      # maybe error
+      result = ObjField(level: -1)
 
 proc findModuleSymbol(n: Cursor): SymId =
   result = SymId(0)
@@ -1401,8 +1409,11 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     result = InvalidDot
   else:
     let t = skipModifier(lhs.typ)
-    if t.kind == Symbol:
-      let objType = objtypeImpl(t.symId)
+    var root = t
+    if root.typeKind in {RefT, PtrT}:
+      inc root
+    if root.kind == Symbol:
+      let objType = objtypeImpl(root.symId)
       if objType.typeKind == ObjectT:
         let field = findObjField(objType, fieldName)
         if field.level >= 0:
@@ -2162,6 +2173,10 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         let start = c.dest.len
         let s = semQuoted(c, n)
         semTypeSym c, s, info, start, context
+      elif exprKind(n) == ParX:
+        inc n
+        semLocalTypeImpl c, n, context
+        skipParRi n
       elif isOrExpr(n):
         c.dest.addParLe(OrT, info)
         inc n # tag
@@ -3356,12 +3371,16 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymI
   c.dest.addParLe(OconstrX, info)
   c.dest.addSubtree typ
   var objImpl = typ
+  if objImpl.typeKind in {RefT, PtrT}:
+    inc objImpl
   if objImpl.kind == Symbol:
     objImpl = objtypeImpl(objImpl.symId)
   var obj = asObjectDecl(objImpl)
   # same field order as old nim VM: starting with most shallow base type
   while obj.parentType.kind != DotToken:
     var parentImpl = obj.parentType
+    if parentImpl.typeKind in {RefT, PtrT}:
+      inc parentImpl
     if parentImpl.kind == Symbol:
       parentImpl = objtypeImpl(parentImpl.symId)
     elif parentImpl.typeKind == InvokeT:
@@ -3392,6 +3411,8 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   it.typ = semLocalType(c, it.n)
   c.dest.shrink exprStart
   var objType = it.typ
+  if objType.typeKind in {RefT, PtrT}:
+    inc objType
   if objType.kind == Symbol:
     objType = objtypeImpl(objType.symId)
     if objType.typeKind != ObjectT:
