@@ -2627,10 +2627,12 @@ proc getHookName(symId: SymId): string =
   extractBasename(result)
   result = result.normalize
 
-proc getHookTag(name: string): StmtKind =
+proc getHookTag(name: string): Option[StmtKind] =
   const hookTable = toTable({"=destroy": DtorS, "=wasmoved": DisarmerS, "=trace": TracerS, "=copy": ClonerS, "=sink": MoverS})
-  assert name in hookTable
-  result = hookTable[name]
+  if name in hookTable:
+    result = some(hookTable[name])
+  else:
+    result = none(StmtKind)
 
 proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): Option[TypeCursor] =
   case name
@@ -2715,7 +2717,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           let obj = getObjSymId(c, params[0])
           assert obj.isSome
           let kind = getHookTag(name)
-          expandHook(c, hookTagBuf, obj.unsafeGet, symId, kind, info)
+          if kind.isSome:
+            expandHook(c, hookTagBuf, obj.unsafeGet, symId, kind.unsafeGet, info)
 
       of checkBody:
         if it.n != "stmts":
@@ -2735,7 +2738,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
             assert objOpt.isSome
             let obj = objOpt.unsafeGet
             if c.routine.inGeneric == 0:
-              let kind = getHookTag(name)
+              let kind = getHookTag(name).unsafeGet # because it's a hook for sure
               expandHook(c, hookTagBuf, obj, symId, kind, info)
             else:
               if obj in c.genericHooks:

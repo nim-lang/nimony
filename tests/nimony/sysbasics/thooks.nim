@@ -46,3 +46,9 @@ proc foo =
   `=destroy`(objbase)
 
 foo()
+
+proc `=checkHook`[T, Y](x:  MyObject[T, Y]) =
+  discard
+
+var obj: MyObject[int, float]
+`=checkHook`(obj)
