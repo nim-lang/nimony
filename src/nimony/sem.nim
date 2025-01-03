@@ -8,7 +8,7 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, packedsets]
+import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -529,6 +529,12 @@ proc instantiateGenerics(c: var SemContext) =
     let procReqs = move(c.procRequests)
     for p in procReqs: instantiateGenericProc c, p
 
+proc instantiateGenericHooks(c: var SemContext) =
+  ## hooks are instantiated after all generics have been instantiated
+  while c.procRequests.len > 0:
+    let procReqs = move(c.procRequests)
+    for p in procReqs: instantiateGenericProc c, p
+
 # -------------------- sem checking -----------------------------
 
 type
@@ -865,9 +871,11 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCa
     m.add createMatch(addr c)
     sigmatch(m[^1], candidate, args, genericArgs)
 
-proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
+proc requestRoutineInstance(c: var SemContext; origin: SymId;
+                            typeArgs: TokenBuf;
+                            inferred: var Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance =
-  let key = typeToCanon(m.typeArgs, 0)
+  let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
     let targetSym = newSymId(c, origin)
@@ -881,8 +889,8 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
       # InvokeT for the generic params:
       signature.buildTree InvokeT, info:
         signature.add symToken(origin, info)
-        signature.add m.typeArgs
-      var sc = SubsContext(params: addr m.inferred)
+        signature.add typeArgs
+      var sc = SubsContext(params: addr inferred)
       subs(c, signature, sc, decl.params)
       let beforeRetType = signature.len
       subs(c, signature, sc, decl.retType)
@@ -898,7 +906,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId; m: var Match;
     var req = InstRequest(
       origin: origin,
       targetSym: targetSym,
-      inferred: move(m.inferred)
+      inferred: move(inferred)
     )
     for ins in c.instantiatedFrom: req.requestFrom.add ins
     req.requestFrom.add info
@@ -1198,7 +1206,8 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       semExpr c, magicExpr
       it.typ = magicExpr.typ
     elif c.routine.inGeneric == 0 and m[idx].inferred.len > 0 and isMagic == NonMagicCall:
-      let inst = c.requestRoutineInstance(finalFn.sym, m[idx], cs.callNode.info)
+      var matched = m[idx]
+      let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
       c.dest[cs.beforeCall+1].setSymId inst.targetSym
       typeofCallIs c, it, cs.beforeCall, inst.returnType
     else:
@@ -2536,7 +2545,132 @@ proc semBorrow(c: var SemContext; fn: StrId; beforeParams: int) =
   var it = Item(n: n, typ: c.types.autoType)
   semProcBody c, it
 
+proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
+  if c.dest[paramsAt].kind == DotToken:
+    result = @[]
+  else:
+    result = @[]
+    var n = cursorAt(c.dest, paramsAt)
+    if n.substructureKind == ParamsS:
+      inc n
+      while n.kind != ParRi:
+        if n.substructureKind == ParamS:
+          skipToLocalType n
+          var localTypeBuf = createTokenBuf()
+          takeTree localTypeBuf, n
+          swap c.dest, localTypeBuf
+          result.add typeToCursor(c, 0)
+          swap c.dest, localTypeBuf
+          skip n
+          skipParRi n
+        else:
+          break
+      endRead(c.dest)
+
+type
+  HookOp = enum
+    hookCloner
+    hookTracer
+    hookDisarmer
+    hookMover
+    hookDtor
+
+proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
+  var obj = skipModifier(obj)
+  while true:
+    if obj.typeKind == InvokeT:
+      inc obj
+    else:
+      break
+  if obj.kind == Symbol:
+    result = obj.symId
+  else:
+    result = SymId(0)
+
+proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info: PackedLineInfo) =
+  var cond: bool
+  case op
+  of hookDtor:
+    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 1
+    if not cond:
+      buildErr c, info, "signature for '=destroy' must be proc[T: object](x: T)"
+  of hookTracer:
+    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+      classifyType(c, params[0]) == MutT and classifyType(c, params[1]) == PointerT
+  of hookDisarmer:
+    cond = classifyType(c, c.routine.returnType) == VoidT and
+        params.len == 1 and classifyType(c, params[0]) == MutT
+  of hookCloner:
+    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+      classifyType(c, params[0]) == MutT
+  of hookMover:
+    cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
+      classifyType(c, params[0]) == MutT
+
+  if cond:
+    let obj = getObjSymId(c, params[0])
+
+    if obj == SymId(0):
+      cond = false
+    else:
+      let res = tryLoadSym(obj)
+      assert res.status == LacksNothing
+      if res.decl.symKind == TypeY:
+        let typeDecl = asTypeDecl(res.decl)
+
+        if not (classifyType(c, typeDecl.body) == ObjectT):
+          cond = false
+      else:
+        cond = false
+
+  if not cond:
+    case op
+    of hookDtor:
+      buildErr c, info, "signature for '=destroy' must be proc[T: object](x: T)"
+    of hookTracer:
+      buildErr c, info, "signature for '=trace' must be proc[T: object](x: var T; env: pointer)"
+    of hookDisarmer:
+      buildErr c, info, "signature for '=wasMoved' must be proc[T: object](x: var T)"
+    of hookCloner:
+      buildErr c, info, "signature for '=copy' must be proc[T: object](x: var T; y: T)"
+    of hookMover:
+      buildErr c, info, "signature for '=sink' must be proc[T: object](x: var T; y: T)"
+
+proc expandHook(c: var SemContext; dest: var TokenBuf; obj: SymId, symId: SymId, kind: StmtKind, info: PackedLineInfo) =
+  assert kind in {ClonerS, TracerS, DisarmerS, DtorS, MoverS}
+  dest.add parLeToken(pool.tags.getOrIncl($kind), info)
+  dest.add symToken(obj, info)
+  dest.add symToken(symId, info)
+  dest.addParRi()
+
+proc getHookName(symId: SymId): string =
+  result = pool.syms[symId]
+  extractBasename(result)
+  result = result.normalize
+
+proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): TypeCursor =
+  let params = getParamsType(c, beforeParams)
+  case name
+  of "=destroy":
+    checkTypeHook(c, params, hookDtor, info)
+    result = params[0]
+  of "=wasmoved":
+    checkTypeHook(c, params, hookDisarmer, info)
+    result = params[0]
+  of "=trace":
+    checkTypeHook(c, params, hookTracer, info)
+    result = params[0]
+  of "=copy":
+    checkTypeHook(c, params, hookCloner, info)
+    result = params[0]
+  of "=sink":
+    checkTypeHook(c, params, hookMover, info)
+    result = params[0]
+  else:
+    raiseAssert "unreachable"
+
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
+  const hookTable = toTable({"=destroy": DtorS, "=wasmoved": DisarmerS, "=trace": TracerS, "=copy": ClonerS, "=sink": MoverS})
   let info = it.n.info
   let declStart = c.dest.len
   takeToken c, it.n
@@ -2556,6 +2690,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     inc c.routine.inLoop
     inc c.routine.inGeneric
 
+  var hookTagBuf = createTokenBuf()
   try:
     c.openScope() # open parameter scope
     semGenericParams c, it.n
@@ -2585,6 +2720,14 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
+
+        let name = getHookName(symId)
+        if name in hookTable:
+          let params = getParamsType(c, beforeParams)
+          assert params.len >= 1
+          let obj = getObjSymId(c, params[0])
+          expandHook(c, hookTagBuf, obj, symId, hookTable[name], info)
+
       of checkBody:
         if it.n != "stmts":
           error "(stmts) expected, but got ", it.n
@@ -2595,6 +2738,20 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
+        let name = getHookName(symId)
+        if name in hookTable:
+          let objCursor = semHook(c, hookTagBuf, name, beforeParams, symId, info)
+          let obj = getObjSymId(c, objCursor)
+
+          if c.routine.inGeneric == 0:
+            # because it's a hook for sure
+            expandHook(c, hookTagBuf, obj, symId, hookTable[name], info)
+          else:
+            if obj in c.genericHooks:
+              c.genericHooks[obj].add symId
+            else:
+              c.genericHooks[obj] = @[symId]
+
       of checkSignatures:
         c.takeTree it.n
         c.closeScope() # close parameter scope
@@ -2620,6 +2777,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   wantParRi c, it.n
   producesVoid c, info, it.typ
   publish c, symId, declStart
+
+  c.dest.add hookTagBuf
 
 proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[SemFlag]) =
   it.kind = s.kind
@@ -4106,6 +4265,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ExportS, CommentS:
         # XXX ignored for now
         skip it.n
+      of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
+        takeTree c, it.n
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
@@ -4285,7 +4446,43 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     let s = fetchSym(c, val)
     let res = declToCursor(c, s)
     if res.status == LacksNothing:
+      let decl = asTypeDecl(res.decl)
+      var typevars = decl.typevars
+      assert classifyType(c, typevars) == InvokeT
+      inc typevars
+      assert typevars.kind == Symbol
+
+      let symId = typevars.symId
+      if symId in c.genericHooks:
+        var inferred = initTable[SymId, Cursor]()
+        var typeArgs = createTokenBuf()
+        let originHooks = c.genericHooks[symId]
+
+        inc typevars # skips symbol
+
+        var typevarsSeq: seq[Cursor] = @[]
+
+        while typevars.kind != ParRi:
+          typevarsSeq.add typevars
+          takeTree(typeArgs, typevars)
+
+        for hook in originHooks:
+          let res = tryLoadSym(hook)
+          if res.status == LacksNothing:
+            let procDecl = asRoutine(res.decl)
+            var typevarsStart = procDecl.typevars
+            inc typevarsStart # skips typevars tag
+
+            var counter = 0
+            while typevarsStart.kind != ParRi:
+              let name = asTypevar(typevarsStart).name.symId
+              inferred[name] = typevarsSeq[counter]
+              skip typevarsStart
+              inc counter
+            discard requestRoutineInstance(c, hook, typeArgs, inferred, n.info)
+
       c.dest.copyTree res.decl
+  instantiateGenericHooks c
   wantParRi c, n
   if reportErrors(c) == 0:
     writeOutput c, outfile
