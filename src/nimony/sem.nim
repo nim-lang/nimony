@@ -8,7 +8,7 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils, options]
+import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -2554,7 +2554,7 @@ type
     hookMover
     hookDtor
 
-proc getObjSymId(c: var SemContext; obj: TypeCursor): Option[SymId] =
+proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
   var obj = skipModifier(obj)
   while true:
     if obj.typeKind == InvokeT:
@@ -2562,9 +2562,9 @@ proc getObjSymId(c: var SemContext; obj: TypeCursor): Option[SymId] =
     else:
       break
   if obj.kind == Symbol:
-    result = some obj.symId
+    result = obj.symId
   else:
-    result = none(SymId)
+    result = SymId(0)
 
 proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info: PackedLineInfo) =
   var cond: bool
@@ -2589,10 +2589,10 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
   if cond:
     let obj = getObjSymId(c, params[0])
 
-    if obj.isNone:
+    if obj == SymId(0):
       cond = false
     else:
-      let res = tryLoadSym(obj.unsafeGet)
+      let res = tryLoadSym(obj)
       assert res.status == LacksNothing
       if res.decl.symKind == TypeY:
         let typeDecl = asTypeDecl(res.decl)
@@ -2627,39 +2627,33 @@ proc getHookName(symId: SymId): string =
   extractBasename(result)
   result = result.normalize
 
-proc getHookTag(name: string): Option[StmtKind] =
-  const hookTable = toTable({"=destroy": DtorS, "=wasmoved": DisarmerS, "=trace": TracerS, "=copy": ClonerS, "=sink": MoverS})
-  if name in hookTable:
-    result = some(hookTable[name])
-  else:
-    result = none(StmtKind)
-
-proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): Option[TypeCursor] =
+proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): TypeCursor =
   case name
   of "=destroy":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookDtor, info)
-    result = some(params[0])
+    result = params[0]
   of "=wasmoved":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookDisarmer, info)
-    result = some(params[0])
+    result = params[0]
   of "=trace":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookTracer, info)
-    result = some(params[0])
+    result = params[0]
   of "=copy":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookCloner, info)
-    result = some(params[0])
+    result = params[0]
   of "=sink":
     let params = getParamsType(c, beforeParams)
     checkTypeHook(c, params, hookMover, info)
-    result = some(params[0])
+    result = params[0]
   else:
-    result = none(TypeCursor)
+    result = default(TypeCursor)
 
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
+  const hookTable = toTable({"=destroy": DtorS, "=wasmoved": DisarmerS, "=trace": TracerS, "=copy": ClonerS, "=sink": MoverS})
   let info = it.n.info
   let declStart = c.dest.len
   takeToken c, it.n
@@ -2715,10 +2709,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
           let obj = getObjSymId(c, params[0])
-          assert obj.isSome
-          let kind = getHookTag(name)
-          if kind.isSome:
-            expandHook(c, hookTagBuf, obj.unsafeGet, symId, kind.unsafeGet, info)
+          if name in hookTable:
+            expandHook(c, hookTagBuf, obj, symId, hookTable[name], info)
 
       of checkBody:
         if it.n != "stmts":
@@ -2731,20 +2723,18 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
         let name = getHookName(symId)
-        if name.startsWith("="):
-          let isHook = semHook(c, hookTagBuf, name, beforeParams, symId, info)
-          if isHook.isSome:
-            let objOpt = getObjSymId(c, isHook.unsafeGet)
-            assert objOpt.isSome
-            let obj = objOpt.unsafeGet
-            if c.routine.inGeneric == 0:
-              let kind = getHookTag(name).unsafeGet # because it's a hook for sure
-              expandHook(c, hookTagBuf, obj, symId, kind, info)
+        if name in hookTable:
+          let objCursor = semHook(c, hookTagBuf, name, beforeParams, symId, info)
+          let obj = getObjSymId(c, objCursor)
+
+          if c.routine.inGeneric == 0:
+            # because it's a hook for sure
+            expandHook(c, hookTagBuf, obj, symId, hookTable[name], info)
+          else:
+            if obj in c.genericHooks:
+              c.genericHooks[obj].add symId
             else:
-              if obj in c.genericHooks:
-                c.genericHooks[obj].add symId
-              else:
-                c.genericHooks[obj] = @[symId]
+              c.genericHooks[obj] = @[symId]
 
       of checkSignatures:
         c.takeTree it.n
