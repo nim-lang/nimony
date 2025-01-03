@@ -866,12 +866,6 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             inferred: var Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance =
   let key = typeToCanon(typeArgs, 0)
-  echo "-------------------------"
-  echo "-> ", typeArgs.cursorAt(0), " ", key
-  for (name, value) in inferred.pairs:
-    echo  pool.syms[name], " => ", value
-  echo "-------------------------"
-  
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
     let targetSym = newSymId(c, origin)
@@ -2616,17 +2610,24 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
     of hookMover:
       buildErr c, info, "signature for '=sink' must be proc[T: object](x: var T; y: T)"
 
-proc expandHook(c: var SemContext; dest: var TokenBuf; obj: SymId, symId: SymId, info: PackedLineInfo) =
-  dest.add parLeToken(pool.tags.getOrIncl($ClonerS), info)
+proc expandHook(c: var SemContext; dest: var TokenBuf; obj: SymId, symId: SymId, kind: StmtKind, info: PackedLineInfo) =
+  assert kind in {ClonerS, TracerS, DisarmerS, DtorS, MoverS}
+  dest.add parLeToken(pool.tags.getOrIncl($kind), info)
   dest.add symToken(obj, info)
   dest.add symToken(symId, info)
   dest.addParRi()
 
-proc semHook(c: var SemContext; dest: var TokenBuf; beforeParams: int; symId: SymId, info: PackedLineInfo): Option[TypeCursor] =
-  var name = pool.syms[symId]
-  extractBasename(name)
-  name = name.normalize
+proc getHookName(symId: SymId): string =
+  result = pool.syms[symId]
+  extractBasename(result)
+  result = result.normalize
 
+proc getHookTag(name: string): StmtKind =
+  const hookTable = toTable({"=destroy": DtorS, "=wasmoved": DisarmerS, "=trace": TracerS, "=copy": ClonerS, "=sink": MoverS})
+  assert name in hookTable
+  result = hookTable[name]
+
+proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): Option[TypeCursor] =
   case name
   of "=destroy":
     let params = getParamsType(c, beforeParams)
@@ -2701,6 +2702,15 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
+
+        let name = getHookName(symId)
+        if name.startsWith("="):
+          let params = getParamsType(c, beforeParams)
+          assert params.len >= 1
+          let obj = getObjSymId(c, params[0])
+          let kind = getHookTag(name)
+          expandHook(c, hookTagBuf, obj, symId, kind, info)
+
       of checkBody:
         if it.n != "stmts":
           error "(stmts) expected, but got ", it.n
@@ -2711,16 +2721,19 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
-        let isHook = semHook(c, hookTagBuf, beforeParams, symId, info)
-        if isHook.isSome:
-          let obj = getObjSymId(c, isHook.unsafeGet)
-          if c.routine.inGeneric == 0:
-            expandHook(c, hookTagBuf, obj, symId, info)
-          else:
-            if symId in c.genericHooks:
-              c.genericHooks[symId].add obj
+        let name = getHookName(symId)
+        if name.startsWith("="):
+          let isHook = semHook(c, hookTagBuf, name, beforeParams, symId, info)
+          if isHook.isSome:
+            let obj = getObjSymId(c, isHook.unsafeGet)
+            if c.routine.inGeneric == 0:
+              let kind = getHookTag(name)
+              expandHook(c, hookTagBuf, obj, symId, kind, info)
             else:
-              c.genericHooks[symId] = @[]
+              if obj in c.genericHooks:
+                c.genericHooks[obj].add symId
+              else:
+                c.genericHooks[obj] = @[symId]
 
       of checkSignatures:
         c.takeTree it.n
@@ -4389,31 +4402,45 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     if res.status == LacksNothing:
       let decl = asTypeDecl(res.decl)
       var typevars = decl.typevars
-      let name = decl.name.symId
-      if name in c.genericHooks and
-            classifyType(c, typevars) == InvokeT:
-        echo (pool.syms[val], typevars)
-        inc typevars
-        if typevars.kind == Symbol:
-          let symId = typevars.symId
-          let res = tryLoadSym(symId)
+      # let name = decl.name.symId
+      assert classifyType(c, typevars) == InvokeT
+      inc typevars
+      assert typevars.kind == Symbol
+
+      let symId = typevars.symId
+      if symId in c.genericHooks:
+        var inferred = initTable[SymId, Cursor]()
+        var typeArgs = createTokenBuf()
+        let originHooks = c.genericHooks[symId]
+
+        inc typevars # skips symbol
+
+        var typevarsSeq: seq[Cursor] = @[]
+
+        while typevars.kind != ParRi:
+          # let name = asTypevar(typevarsStart).name.symId
+          # inferred[name] = typevars
+          typevarsSeq.add typevars
+          takeTree(typeArgs, typevars)
+          # skip typevarsStart
+
+        for hook in originHooks:
+          let res = tryLoadSym(hook)
           if res.status == LacksNothing:
-            var inferred = initTable[SymId, Cursor]()
-            var typeArgs = createTokenBuf()
-            let typeDecl = asTypeDecl(res.decl)
-            var typevarsStart = typeDecl.typevars
-            let originHooks = c.genericHooks[name]
+            let procDecl = asRoutine(res.decl)
+            var typevarsStart = procDecl.typevars
+            inc typevarsStart # skips typevars tag
 
-            while typevars.kind != ParRi:
+            var counter = 0
+            while typevarsStart.kind != ParRi:
               let name = asTypevar(typevarsStart).name.symId
-              inferred[name] = typevars
-              takeTree(typeArgs, typevars)
-
-            # TODO: info
-            for hook in originHooks:
-              discard requestRoutineInstance(c, hook, typeArgs, inferred, n.info)
+              inferred[name] = typevarsSeq[counter]
+              skip typevarsStart
+              inc counter
+            discard requestRoutineInstance(c, hook, typeArgs, inferred, n.info)
 
       c.dest.copyTree res.decl
+  instantiateGenerics c
   wantParRi c, n
   if reportErrors(c) == 0:
     writeOutput c, outfile
