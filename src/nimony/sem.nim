@@ -1708,7 +1708,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
           replace(c.dest, cursorAt(typeclassBuf, 0), start)
     else:
       let typ = asTypeDecl(res.decl)
-      if typ.body.typeKind in {ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}:
+      if isGeneric(typ) or typ.body.typeKind in {ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}:
         # types that should stay as symbols, see sigmatch.matchSymbol
         discard
       else:
