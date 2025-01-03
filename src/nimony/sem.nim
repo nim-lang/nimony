@@ -2701,12 +2701,11 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close parameter scope
 
         let name = getHookName(symId)
-        if name.startsWith("="):
+        if name in hookTable:
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
           let obj = getObjSymId(c, params[0])
-          if name in hookTable:
-            expandHook(c, hookTagBuf, obj, symId, hookTable[name], info)
+          expandHook(c, hookTagBuf, obj, symId, hookTable[name], info)
 
       of checkBody:
         if it.n != "stmts":
