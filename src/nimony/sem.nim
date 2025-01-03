@@ -529,6 +529,12 @@ proc instantiateGenerics(c: var SemContext) =
     let procReqs = move(c.procRequests)
     for p in procReqs: instantiateGenericProc c, p
 
+proc instantiateGenericHooks(c: var SemContext) =
+  ## hooks are instantiated after all generics have been instantiated
+  while c.procRequests.len > 0:
+    let procReqs = move(c.procRequests)
+    for p in procReqs: instantiateGenericProc c, p
+
 # -------------------- sem checking -----------------------------
 
 type
@@ -4420,11 +4426,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
         var typevarsSeq: seq[Cursor] = @[]
 
         while typevars.kind != ParRi:
-          # let name = asTypevar(typevarsStart).name.symId
-          # inferred[name] = typevars
           typevarsSeq.add typevars
           takeTree(typeArgs, typevars)
-          # skip typevarsStart
 
         for hook in originHooks:
           let res = tryLoadSym(hook)
@@ -4442,7 +4445,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
             discard requestRoutineInstance(c, hook, typeArgs, inferred, n.info)
 
       c.dest.copyTree res.decl
-  instantiateGenerics c
+  instantiateGenericHooks c
   wantParRi c, n
   if reportErrors(c) == 0:
     writeOutput c, outfile
