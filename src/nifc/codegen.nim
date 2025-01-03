@@ -351,7 +351,7 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
       c.code.insert(Token(StaticKeyword), beforeDecl)
     if t[d.value].kind != Empty:
       if vk == IsGlobal and
-        t[d.value].kind notin {IntLit, UIntLit, FloatLit, CharLit, StrLit, FalseC, TrueC}:
+        t[d.value].kind notin {IntLit, UIntLit, FloatLit, CharLit, StrLit, FalseC, TrueC, AconstrC, OconstrC}:
         c.add Semicolon
         moveToInitSection:
           c.add name
