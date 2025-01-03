@@ -29,7 +29,6 @@ type
     newTypes: Table[string, SymId]
     pending: TokenBuf
     typeCache: TypeCache
-    inGeneric: int
 
 proc error(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
   write stdout, "[Error] "
@@ -383,13 +382,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   of ParLe:
     case c.typeKind
     of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
-      if e.inGeneric > 0:
-        e.dest.add c
-        inc c
-        e.loop c:
-          traverseType e, c
-      else:
-        error e, "type expected but got: ", c
+      error e, "type expected but got: ", c
     of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
         e.dest.add c
@@ -477,13 +470,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       skipParRi e, c
     of VoidT, VarargsT, NilT, ConceptT,
        IterT, InvokeT, SetT:
-      if e.inGeneric > 0:
-        e.dest.add c
-        inc c
-        e.loop c:
-          traverseType e, c
-      else:
-        error e, "unimplemented type: ", c
+      error e, "unimplemented type: ", c
   else:
     error e, "type expected but got: ", c
 
@@ -671,10 +658,10 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   skip c # miscPos
 
   # body:
-  if mode != TraverseSig or prag.callConv == InlineC:
-    inc e.inGeneric, ord(isGeneric)
+  if isGeneric:
+    skip c
+  elif mode != TraverseSig or prag.callConv == InlineC:
     traverseStmt e, c, TraverseAll
-    dec e.inGeneric, ord(isGeneric)
   else:
     e.dest.addDotToken()
     skip c
@@ -721,9 +708,10 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
 
   e.dest.addDotToken() # adds pragmas
 
-  inc e.inGeneric, ord(isGeneric)
-  traverseType e, c, {IsTypeBody}
-  dec e.inGeneric, ord(isGeneric)
+  if isGeneric:
+    skip c
+  else:
+    traverseType e, c, {IsTypeBody}
   wantParRi e, c
   swap dst, e.dest
   if Nodecl in prag.flags or isGeneric:
