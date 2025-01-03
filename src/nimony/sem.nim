@@ -2646,7 +2646,7 @@ proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: 
     checkTypeHook(c, params, hookMover, info)
     result = params[0]
   else:
-    result = default(TypeCursor)
+    raiseAssert "unreachable"
 
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   const hookTable = toTable({"=destroy": DtorS, "=wasmoved": DisarmerS, "=trace": TracerS, "=copy": ClonerS, "=sink": MoverS})
