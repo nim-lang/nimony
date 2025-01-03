@@ -851,6 +851,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.add tagToken("at", c.info)
         inc c
         inc nested
+      of SufX:
+        e.dest.add c
+        inc c
+        traverseExpr e, c
+        assert c.kind == StringLit
+        e.dest.add c
+        inc c
+        inc nested
       else:
         e.dest.add c
         inc c
