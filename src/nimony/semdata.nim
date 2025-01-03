@@ -91,3 +91,4 @@ type
                              # to forward command line args properly.
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
+    genericHooks*: Table[SymId, seq[SymId]]

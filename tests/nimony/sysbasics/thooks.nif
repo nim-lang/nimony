@@ -1,0 +1,240 @@
+(.nif24)
+,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
+ (type ~13 :MyObjectBase.0.tho8gh7q4 . . . 2
+  (object . ~13,1
+   (fld :x.0.tho8gh7q4 . . ,4,lib/std/system.nim
+    (i -1) .) ~10,1
+   (fld :y.0.tho8gh7q4 . . ~3,4,lib/std/system.nim
+    (i -1) .))) 17,4
+ (type ~15 :MyObject.0.tho8gh7q4 . ~7
+  (typevars 1
+   (typevar :T.0.tho8gh7q4 . . . .) 4
+   (typevar :Y.0.tho8gh7q4 . . . .)) . 2
+  (object . ~15,1
+   (fld :x.1.tho8gh7q4 . . ,1,lib/std/system.nim
+    (i -1) .) ~12,1
+   (fld :y.1.tho8gh7q4 . . ~3,1,lib/std/system.nim
+    (i -1) .))) ,7
+ (proc 5 :=trace.0.tho8gh7q4 . . . 13
+  (params 1
+   (param :x.0 . . 3
+    (mut 4 MyObjectBase.0.tho8gh7q4) .) 22
+   (param :p.0 . . ~31,41,lib/std/system.nim
+    (pointer) .)) . . . 2,1
+  (stmts 
+   (discard .))) ,7
+ (tracer MyObjectBase.0.tho8gh7q4 =trace.0.tho8gh7q4) ,10
+ (proc 5 :=wasMoved.0.tho8gh7q4 . . . 16
+  (params 1
+   (param :x.1 . . 3
+    (mut 4 MyObjectBase.0.tho8gh7q4) .)) . . . 2,1
+  (stmts 
+   (discard .))) ,10
+ (disarmer MyObjectBase.0.tho8gh7q4 =wasMoved.0.tho8gh7q4) ,13
+ (proc 5 :=copy.0.tho8gh7q4 . . . 12
+  (params 1
+   (param :x.2 . . 3
+    (mut 4 MyObjectBase.0.tho8gh7q4) .) 22
+   (param :y.0 . . 3 MyObjectBase.0.tho8gh7q4 .)) . . . 2,1
+  (stmts 
+   (discard .))) ,13
+ (cloner MyObjectBase.0.tho8gh7q4 =copy.0.tho8gh7q4) ,16
+ (proc 5 :=sink.0.tho8gh7q4 . . . 12
+  (params 1
+   (param :x.3 . . 3
+    (mut 4 MyObjectBase.0.tho8gh7q4) .) 22
+   (param :y.1 . . 3 MyObjectBase.0.tho8gh7q4 .)) . . . 2,1
+  (stmts 
+   (discard .))) ,16
+ (mover MyObjectBase.0.tho8gh7q4 =sink.0.tho8gh7q4) ,19
+ (proc 5 :=destroy.0.tho8gh7q4 . . . 15
+  (params 1
+   (param :x.4 . . 3 MyObjectBase.0.tho8gh7q4 .)) . . . 2,1
+  (stmts 
+   (discard .))) ,19
+ (dtor MyObjectBase.0.tho8gh7q4 =destroy.0.tho8gh7q4) ,22
+ (proc 5 :=wasMoved.1.tho8gh7q4 . . 16
+  (typevars 1
+   (typevar :T.1.tho8gh7q4 . . . .) 4
+   (typevar :Y.1.tho8gh7q4 . . . .)) 22
+  (params 1
+   (param :x.5 . . 3
+    (mut 12
+     (at ~8 MyObject.0.tho8gh7q4 1 T.1.tho8gh7q4 4 Y.1.tho8gh7q4)) .)) . . . 2,1
+  (stmts 4
+   (let :x.10 . .
+    (i -1) 4 +12) 4,1
+   (let :y.4 . .
+    (i -1) 4 +4))) ,26
+ (proc 5 :=copy.1.tho8gh7q4 . . 12
+  (typevars 1
+   (typevar :T.2.tho8gh7q4 . . . .) 4
+   (typevar :Y.2.tho8gh7q4 . . . .)) 18
+  (params 1
+   (param :x.6 . . 3
+    (mut 12
+     (at ~8 MyObject.0.tho8gh7q4 1 T.2.tho8gh7q4 4 Y.2.tho8gh7q4)) .) 24
+   (param :y.2 . . 11
+    (at ~8 MyObject.0.tho8gh7q4 1 T.2.tho8gh7q4 4 Y.2.tho8gh7q4) .)) . . . 2,1
+  (stmts 
+   (discard .))) ,29
+ (proc 5 :=sink.1.tho8gh7q4 . . 12
+  (typevars 1
+   (typevar :T.3.tho8gh7q4 . . . .) 4
+   (typevar :Y.3.tho8gh7q4 . . . .)) 18
+  (params 1
+   (param :x.7 . . 3
+    (mut 12
+     (at ~8 MyObject.0.tho8gh7q4 1 T.3.tho8gh7q4 4 Y.3.tho8gh7q4)) .) 24
+   (param :y.3 . . 11
+    (at ~8 MyObject.0.tho8gh7q4 1 T.3.tho8gh7q4 4 Y.3.tho8gh7q4) .)) . . . 2,1
+  (stmts 
+   (discard .))) ,32
+ (proc 5 :=destroy.1.tho8gh7q4 . . 15
+  (typevars 1
+   (typevar :T.4.tho8gh7q4 . . . .) 4
+   (typevar :Y.4.tho8gh7q4 . . . .)) 21
+  (params 1
+   (param :x.8 . . 11
+    (at ~8 MyObject.0.tho8gh7q4 1 T.4.tho8gh7q4 4 Y.4.tho8gh7q4) .)) . . . 2,1
+  (stmts 4
+   (let :x.11 . .
+    (i -1) 4 +12))) ,35
+ (proc 5 :foo.0.tho8gh7q4 . . . 9
+  (params) . . . 2,1
+  (stmts 4
+   (var :obj.0 . . 13 MyObject.1.tho8gh7q4 .) 4,2
+   (var :obj2.0 . . 14 MyObject.2.tho8gh7q4 .) 10,4
+   (call 1 =destroy.2.tho8gh7q4 1 obj.0) 4,6
+   (var :objbase.0 . . 9 MyObjectBase.0.tho8gh7q4 .) 4,7
+   (var :objbase2.0 . . 10 MyObjectBase.0.tho8gh7q4 .) 10,8
+   (call 1 =destroy.0.tho8gh7q4 1 objbase2.0) 10,9
+   (call 1 =destroy.0.tho8gh7q4 1 objbase.0))) 3,47
+ (call ~3 foo.0.tho8gh7q4) ,49
+ (proc 5 :=checkHook.0.tho8gh7q4 . . 17
+  (typevars 1
+   (typevar :T.5.tho8gh7q4 . . . .) 4
+   (typevar :Y.5.tho8gh7q4 . . . .)) 23
+  (params 1
+   (param :x.9 . . 12
+    (at ~8 MyObject.0.tho8gh7q4 1 T.5.tho8gh7q4 4 Y.5.tho8gh7q4) .)) . . . 2,1
+  (stmts 
+   (discard .))) 4,52
+ (var :obj.0.tho8gh7q4 . . 13 MyObject.1.tho8gh7q4 .) 12,53
+ (call 1 =checkHook.1.tho8gh7q4 1 obj.0.tho8gh7q4) 12,40
+ (proc :=destroy.2.tho8gh7q4 . ~12,~8 . 
+  (at =destroy.1.tho8gh7q4 ~8,~34,lib/std/system.nim
+   (i -1) ~8,~8,lib/std/system.nim
+   (f +64)) 9,~8
+  (params 1
+   (param :x.14 . . 11 MyObject.1.tho8gh7q4 .)) ~12,~8 . ~12,~8 . ~12,~8 . ~10,~7
+  (stmts 4
+   (let :x.15 . . ~2,~27,lib/std/system.nim
+    (i -1) 4 +12))) 12,40
+ (dtor MyObject.1.tho8gh7q4 =destroy.2.tho8gh7q4) 12,53
+ (proc :=checkHook.1.tho8gh7q4 . ~12,~4 . 
+  (at =checkHook.0.tho8gh7q4 ~8,~47,lib/std/system.nim
+   (i -1) ~8,~21,lib/std/system.nim
+   (f +64)) 11,~4
+  (params 1
+   (param :x.16 . . 12 MyObject.1.tho8gh7q4 .)) ~12,~4 . ~12,~4 . ~12,~4 . ~10,~3
+  (stmts 
+   (discard .))) 19,36
+ (type :MyObject.1.tho8gh7q4 . 
+  (at MyObject.0.tho8gh7q4 ~15,~30,lib/std/system.nim
+   (i -1) ~15,~4,lib/std/system.nim
+   (f +64)) ~2,~32 . ,~32
+  (object . ~15,1
+   (fld :x.2.tho8gh7q4 . . ,1,lib/std/system.nim
+    (i -1) .) ~12,1
+   (fld :y.2.tho8gh7q4 . . ~3,1,lib/std/system.nim
+    (i -1) .))) 20,38
+ (type :MyObject.2.tho8gh7q4 . 
+  (at MyObject.0.tho8gh7q4 ~16,~6,lib/std/system.nim
+   (f +64) ~16,~32,lib/std/system.nim
+   (i -1)) ~3,~34 . ~1,~34
+  (object . ~15,1
+   (fld :x.3.tho8gh7q4 . . ,1,lib/std/system.nim
+    (i -1) .) ~12,1
+   (fld :y.3.tho8gh7q4 . . ~3,1,lib/std/system.nim
+    (i -1) .))) 
+ (proc :=wasMoved.2.tho8gh7q4 . ,22 . 
+  (at =wasMoved.1.tho8gh7q4 4,6,lib/std/system.nim
+   (i -1) 4,32,lib/std/system.nim
+   (f +64)) 22,22
+  (params 1
+   (param :x.24 . . 3
+    (mut 12 MyObject.1.tho8gh7q4) .)) ,22 . ,22 . ,22 . 2,23
+  (stmts 4
+   (let :x.25 . . ~2,~17,lib/std/system.nim
+    (i -1) 4 +12) 4,1
+   (let :y.9 . . ~2,~18,lib/std/system.nim
+    (i -1) 4 +4))) 
+ (disarmer MyObject.1.tho8gh7q4 =wasMoved.2.tho8gh7q4) 
+ (proc :=copy.2.tho8gh7q4 . ,26 . 
+  (at =copy.1.tho8gh7q4 4,6,lib/std/system.nim
+   (i -1) 4,32,lib/std/system.nim
+   (f +64)) 18,26
+  (params 1
+   (param :x.26 . . 3
+    (mut 12 MyObject.1.tho8gh7q4) .) 24
+   (param :y.10 . . 11 MyObject.1.tho8gh7q4 .)) ,26 . ,26 . ,26 . 2,27
+  (stmts 
+   (discard .))) 
+ (cloner MyObject.1.tho8gh7q4 =copy.2.tho8gh7q4) 
+ (proc :=sink.2.tho8gh7q4 . ,29 . 
+  (at =sink.1.tho8gh7q4 4,6,lib/std/system.nim
+   (i -1) 4,32,lib/std/system.nim
+   (f +64)) 18,29
+  (params 1
+   (param :x.27 . . 3
+    (mut 12 MyObject.1.tho8gh7q4) .) 24
+   (param :y.11 . . 11 MyObject.1.tho8gh7q4 .)) ,29 . ,29 . ,29 . 2,30
+  (stmts 
+   (discard .))) 
+ (mover MyObject.1.tho8gh7q4 =sink.2.tho8gh7q4) 
+ (proc :=wasMoved.3.tho8gh7q4 . ,22 . 
+  (at =wasMoved.1.tho8gh7q4 4,32,lib/std/system.nim
+   (f +64) 4,6,lib/std/system.nim
+   (i -1)) 22,22
+  (params 1
+   (param :x.28 . . 3
+    (mut 12 MyObject.2.tho8gh7q4) .)) ,22 . ,22 . ,22 . 2,23
+  (stmts 4
+   (let :x.29 . . ~2,~17,lib/std/system.nim
+    (i -1) 4 +12) 4,1
+   (let :y.12 . . ~2,~18,lib/std/system.nim
+    (i -1) 4 +4))) 
+ (disarmer MyObject.2.tho8gh7q4 =wasMoved.3.tho8gh7q4) 
+ (proc :=copy.3.tho8gh7q4 . ,26 . 
+  (at =copy.1.tho8gh7q4 4,32,lib/std/system.nim
+   (f +64) 4,6,lib/std/system.nim
+   (i -1)) 18,26
+  (params 1
+   (param :x.30 . . 3
+    (mut 12 MyObject.2.tho8gh7q4) .) 24
+   (param :y.13 . . 11 MyObject.2.tho8gh7q4 .)) ,26 . ,26 . ,26 . 2,27
+  (stmts 
+   (discard .))) 
+ (cloner MyObject.2.tho8gh7q4 =copy.3.tho8gh7q4) 
+ (proc :=sink.3.tho8gh7q4 . ,29 . 
+  (at =sink.1.tho8gh7q4 4,32,lib/std/system.nim
+   (f +64) 4,6,lib/std/system.nim
+   (i -1)) 18,29
+  (params 1
+   (param :x.31 . . 3
+    (mut 12 MyObject.2.tho8gh7q4) .) 24
+   (param :y.14 . . 11 MyObject.2.tho8gh7q4 .)) ,29 . ,29 . ,29 . 2,30
+  (stmts 
+   (discard .))) 
+ (mover MyObject.2.tho8gh7q4 =sink.3.tho8gh7q4) 
+ (proc :=destroy.3.tho8gh7q4 . ,32 . 
+  (at =destroy.1.tho8gh7q4 4,32,lib/std/system.nim
+   (f +64) 4,6,lib/std/system.nim
+   (i -1)) 21,32
+  (params 1
+   (param :x.32 . . 11 MyObject.2.tho8gh7q4 .)) ,32 . ,32 . ,32 . 2,33
+  (stmts 4
+   (let :x.33 . . ~2,~27,lib/std/system.nim
+    (i -1) 4 +12))) 
+ (dtor MyObject.2.tho8gh7q4 =destroy.3.tho8gh7q4))
