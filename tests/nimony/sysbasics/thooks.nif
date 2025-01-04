@@ -157,84 +157,84 @@
    (fld :x.3.tho8gh7q4 . . ,1,lib/std/system.nim
     (i -1) .) ~12,1
    (fld :y.3.tho8gh7q4 . . ~3,1,lib/std/system.nim
-    (i -1) .))) 
- (proc :=wasMoved.2.tho8gh7q4 . ,22 . 
-  (at =wasMoved.1.tho8gh7q4 4,6,lib/std/system.nim
-   (i -1) 4,32,lib/std/system.nim
-   (f +64)) 22,22
+    (i -1) .))) ,22
+ (proc :=wasMoved.2.tho8gh7q4 . . 
+  (at =wasMoved.1.tho8gh7q4 4,~16,lib/std/system.nim
+   (i -1) 4,10,lib/std/system.nim
+   (f +64)) 22
   (params 1
    (param :x.24 . . 3
-    (mut 12 MyObject.1.tho8gh7q4) .)) ,22 . ,22 . ,22 . 2,23
+    (mut 12 MyObject.1.tho8gh7q4) .)) . . . 2,1
   (stmts 4
    (let :x.25 . . ~2,~17,lib/std/system.nim
     (i -1) 4 +12) 4,1
    (let :y.9 . . ~2,~18,lib/std/system.nim
-    (i -1) 4 +4))) 
- (disarmer MyObject.1.tho8gh7q4 =wasMoved.2.tho8gh7q4) 
- (proc :=copy.2.tho8gh7q4 . ,26 . 
-  (at =copy.1.tho8gh7q4 4,6,lib/std/system.nim
-   (i -1) 4,32,lib/std/system.nim
-   (f +64)) 18,26
+    (i -1) 4 +4))) ,22
+ (disarmer MyObject.1.tho8gh7q4 =wasMoved.2.tho8gh7q4) ,26
+ (proc :=copy.2.tho8gh7q4 . . 
+  (at =copy.1.tho8gh7q4 4,~20,lib/std/system.nim
+   (i -1) 4,6,lib/std/system.nim
+   (f +64)) 18
   (params 1
    (param :x.26 . . 3
     (mut 12 MyObject.1.tho8gh7q4) .) 24
-   (param :y.10 . . 11 MyObject.1.tho8gh7q4 .)) ,26 . ,26 . ,26 . 2,27
+   (param :y.10 . . 11 MyObject.1.tho8gh7q4 .)) . . . 2,1
   (stmts 
-   (discard .))) 
- (cloner MyObject.1.tho8gh7q4 =copy.2.tho8gh7q4) 
- (proc :=sink.2.tho8gh7q4 . ,29 . 
-  (at =sink.1.tho8gh7q4 4,6,lib/std/system.nim
-   (i -1) 4,32,lib/std/system.nim
-   (f +64)) 18,29
+   (discard .))) ,26
+ (cloner MyObject.1.tho8gh7q4 =copy.2.tho8gh7q4) ,29
+ (proc :=sink.2.tho8gh7q4 . . 
+  (at =sink.1.tho8gh7q4 4,~23,lib/std/system.nim
+   (i -1) 4,3,lib/std/system.nim
+   (f +64)) 18
   (params 1
    (param :x.27 . . 3
     (mut 12 MyObject.1.tho8gh7q4) .) 24
-   (param :y.11 . . 11 MyObject.1.tho8gh7q4 .)) ,29 . ,29 . ,29 . 2,30
+   (param :y.11 . . 11 MyObject.1.tho8gh7q4 .)) . . . 2,1
   (stmts 
-   (discard .))) 
- (mover MyObject.1.tho8gh7q4 =sink.2.tho8gh7q4) 
- (proc :=wasMoved.3.tho8gh7q4 . ,22 . 
-  (at =wasMoved.1.tho8gh7q4 4,32,lib/std/system.nim
-   (f +64) 4,6,lib/std/system.nim
-   (i -1)) 22,22
+   (discard .))) ,29
+ (mover MyObject.1.tho8gh7q4 =sink.2.tho8gh7q4) ,22
+ (proc :=wasMoved.3.tho8gh7q4 . . 
+  (at =wasMoved.1.tho8gh7q4 4,10,lib/std/system.nim
+   (f +64) 4,~16,lib/std/system.nim
+   (i -1)) 22
   (params 1
    (param :x.28 . . 3
-    (mut 12 MyObject.2.tho8gh7q4) .)) ,22 . ,22 . ,22 . 2,23
+    (mut 12 MyObject.2.tho8gh7q4) .)) . . . 2,1
   (stmts 4
    (let :x.29 . . ~2,~17,lib/std/system.nim
     (i -1) 4 +12) 4,1
    (let :y.12 . . ~2,~18,lib/std/system.nim
-    (i -1) 4 +4))) 
- (disarmer MyObject.2.tho8gh7q4 =wasMoved.3.tho8gh7q4) 
- (proc :=copy.3.tho8gh7q4 . ,26 . 
-  (at =copy.1.tho8gh7q4 4,32,lib/std/system.nim
-   (f +64) 4,6,lib/std/system.nim
-   (i -1)) 18,26
+    (i -1) 4 +4))) ,22
+ (disarmer MyObject.2.tho8gh7q4 =wasMoved.3.tho8gh7q4) ,26
+ (proc :=copy.3.tho8gh7q4 . . 
+  (at =copy.1.tho8gh7q4 4,6,lib/std/system.nim
+   (f +64) 4,~20,lib/std/system.nim
+   (i -1)) 18
   (params 1
    (param :x.30 . . 3
     (mut 12 MyObject.2.tho8gh7q4) .) 24
-   (param :y.13 . . 11 MyObject.2.tho8gh7q4 .)) ,26 . ,26 . ,26 . 2,27
+   (param :y.13 . . 11 MyObject.2.tho8gh7q4 .)) . . . 2,1
   (stmts 
-   (discard .))) 
- (cloner MyObject.2.tho8gh7q4 =copy.3.tho8gh7q4) 
- (proc :=sink.3.tho8gh7q4 . ,29 . 
-  (at =sink.1.tho8gh7q4 4,32,lib/std/system.nim
-   (f +64) 4,6,lib/std/system.nim
-   (i -1)) 18,29
+   (discard .))) ,26
+ (cloner MyObject.2.tho8gh7q4 =copy.3.tho8gh7q4) ,29
+ (proc :=sink.3.tho8gh7q4 . . 
+  (at =sink.1.tho8gh7q4 4,3,lib/std/system.nim
+   (f +64) 4,~23,lib/std/system.nim
+   (i -1)) 18
   (params 1
    (param :x.31 . . 3
     (mut 12 MyObject.2.tho8gh7q4) .) 24
-   (param :y.14 . . 11 MyObject.2.tho8gh7q4 .)) ,29 . ,29 . ,29 . 2,30
+   (param :y.14 . . 11 MyObject.2.tho8gh7q4 .)) . . . 2,1
   (stmts 
-   (discard .))) 
- (mover MyObject.2.tho8gh7q4 =sink.3.tho8gh7q4) 
- (proc :=destroy.3.tho8gh7q4 . ,32 . 
-  (at =destroy.1.tho8gh7q4 4,32,lib/std/system.nim
-   (f +64) 4,6,lib/std/system.nim
-   (i -1)) 21,32
+   (discard .))) ,29
+ (mover MyObject.2.tho8gh7q4 =sink.3.tho8gh7q4) ,32
+ (proc :=destroy.3.tho8gh7q4 . . 
+  (at =destroy.1.tho8gh7q4 4,,lib/std/system.nim
+   (f +64) 4,~26,lib/std/system.nim
+   (i -1)) 21
   (params 1
-   (param :x.32 . . 11 MyObject.2.tho8gh7q4 .)) ,32 . ,32 . ,32 . 2,33
+   (param :x.32 . . 11 MyObject.2.tho8gh7q4 .)) . . . 2,1
   (stmts 4
    (let :x.33 . . ~2,~27,lib/std/system.nim
-    (i -1) 4 +12))) 
+    (i -1) 4 +12))) ,32
  (dtor MyObject.2.tho8gh7q4 =destroy.3.tho8gh7q4))
