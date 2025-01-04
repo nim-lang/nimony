@@ -1068,7 +1068,6 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of ContinueS, WhenS:
       error e, "unreachable: ", c
     of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
-      # TODO: unimplemented
       skip c
   else:
     error e, "statement expected, but got: ", c

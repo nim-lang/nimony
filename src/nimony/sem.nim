@@ -4358,6 +4358,43 @@ proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   wantParRi c, n
   result = move c.dest
 
+proc requestHookInstance(c: var SemContext; decl: Cursor) =
+  let decl = asTypeDecl(decl)
+  var typevars = decl.typevars
+  assert classifyType(c, typevars) == InvokeT
+  inc typevars
+  assert typevars.kind == Symbol
+
+  let symId = typevars.symId
+  if symId in c.genericHooks:
+    var inferred = initTable[SymId, Cursor]()
+    var typeArgs = createTokenBuf()
+    let originHooks = c.genericHooks[symId]
+
+    inc typevars # skips symbol
+
+    var typevarsSeq: seq[Cursor] = @[]
+
+    while typevars.kind != ParRi:
+      typevarsSeq.add typevars
+      takeTree(typeArgs, typevars)
+
+    for hook in originHooks:
+      let res = tryLoadSym(hook)
+      if res.status == LacksNothing:
+        let info = res.decl.info
+        let procDecl = asRoutine(res.decl)
+        var typevarsStart = procDecl.typevars
+        inc typevarsStart # skips typevars tag
+
+        var counter = 0
+        while typevarsStart.kind != ParRi:
+          let name = asTypevar(typevarsStart).name.symId
+          inferred[name] = typevarsSeq[counter]
+          skip typevarsStart
+          inc counter
+        discard requestRoutineInstance(c, hook, typeArgs, inferred, info)
+
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
   var n0 = setupProgram(infile, outfile)
@@ -4396,41 +4433,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     let s = fetchSym(c, val)
     let res = declToCursor(c, s)
     if res.status == LacksNothing:
-      let decl = asTypeDecl(res.decl)
-      var typevars = decl.typevars
-      assert classifyType(c, typevars) == InvokeT
-      inc typevars
-      assert typevars.kind == Symbol
-
-      let symId = typevars.symId
-      if symId in c.genericHooks:
-        var inferred = initTable[SymId, Cursor]()
-        var typeArgs = createTokenBuf()
-        let originHooks = c.genericHooks[symId]
-
-        inc typevars # skips symbol
-
-        var typevarsSeq: seq[Cursor] = @[]
-
-        while typevars.kind != ParRi:
-          typevarsSeq.add typevars
-          takeTree(typeArgs, typevars)
-
-        for hook in originHooks:
-          let res = tryLoadSym(hook)
-          if res.status == LacksNothing:
-            let procDecl = asRoutine(res.decl)
-            var typevarsStart = procDecl.typevars
-            inc typevarsStart # skips typevars tag
-
-            var counter = 0
-            while typevarsStart.kind != ParRi:
-              let name = asTypevar(typevarsStart).name.symId
-              inferred[name] = typevarsSeq[counter]
-              skip typevarsStart
-              inc counter
-            discard requestRoutineInstance(c, hook, typeArgs, inferred, n.info)
-
+      requestHookInstance(c, res.decl)
       c.dest.copyTree res.decl
   instantiateGenericHooks c
   wantParRi c, n
