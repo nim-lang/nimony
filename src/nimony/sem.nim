@@ -2220,7 +2220,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT,
         SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
       takeTree c, n
-    of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT, StaticT, TypedescT:
+    of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT,
+       StaticT, TypedescT, OpenArrayT:
       if tryTypeClass(c, n):
         return
       takeToken c, n
@@ -4169,7 +4170,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT,
-            CstringT, PointerT, TypeKindT, OrdinalT:
+            CstringT, PointerT, TypeKindT, OrdinalT, OpenArrayT:
           # every valid local type expression
           semLocalTypeExpr c, it
         of OrT, AndT, NotT, InvokeT:

@@ -10,8 +10,8 @@
 import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
-import nifindexes, symparser, treemangler, typenav
-import ".." / nimony / [nimony_model, programs]
+import nifindexes, symparser, treemangler
+import ".." / nimony / [nimony_model, programs, typenav]
 
 type
   SymbolKey = (SymId, SymId) # (symbol, owner)
@@ -318,6 +318,27 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
     inc counter
   wantParRi e, c
 
+proc traverseOpenArrayBody(e: var EContext; c: var Cursor) =
+  e.dest.add tagToken("object", c.info)
+  e.dest.addDotToken()
+  inc c
+  let typ = c
+  e.dest.add tagToken("fld", typ.info)
+  let name = ithTupleField(0)
+  e.dest.add symdefToken(name, typ.info)
+  e.offer name
+  e.dest.addDotToken() # pragmas
+  e.dest.add tagToken("ptr", typ.info)
+  e.traverseType(c, {})
+  e.dest.addParRi() # "ptr"
+  e.dest.addParRi() # "fld"
+
+  var intType = e.typeCache.builtins.intType
+  genTupleField(e, intType, 1)
+
+  traverseType e, c
+  skipParRi e, c
+
 proc traverseArrayBody(e: var EContext; c: var Cursor) =
   e.dest.add c
   inc c
@@ -361,6 +382,8 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
       traverseTupleBody e, body
     of ArrayT:
       traverseArrayBody e, body
+    of OpenArrayT:
+      traverseOpenArrayBody e, body
     else:
       error e, "expected tuple or array, but got: ", body
     e.dest.addParRi() # "type"
@@ -397,7 +420,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       inc c
       e.loop c:
         traverseType e, c
-    of ArrayT:
+    of ArrayT, OpenArrayT:
       traverseAsNamedType e, c
     of RangeT:
       # skip to base type
