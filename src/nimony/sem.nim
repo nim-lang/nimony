@@ -1764,12 +1764,27 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
         semLocal(c, n, FldY)
   wantParRi c, n
 
-proc semTupleType(c: var SemContext; n: var Cursor) =
-  takeToken c, n
+proc semTupleFieldType(c: var SemContext; elemType: var Cursor; context: TypeDeclContext; i: int) =
+  c.dest.add parLeToken(pool.tags.getOrIncl($FldS), elemType.info) # start field
+  c.dest.add identToken(pool.strings.getOrIncl("Field" & $i), elemType.info)
+  c.dest.addDotToken() # export marker
+  c.dest.addDotToken() # pragmas
+  semLocalTypeImpl c, elemType, context
+  c.dest.addDotToken() # value
+  c.dest.addParRi() # end field
+
+proc semTupleType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
+  c.dest.add parLeToken(TupleT, n.info)
+  inc n
   # tuple fields:
   withNewScope c:
-    while n.substructureKind == FldS:
-      semLocal(c, n, FldY)
+    var i = 0
+    while n.kind != ParRi:
+      if n.substructureKind == FldS:
+        semLocal(c, n, FldY)
+      else:
+        semTupleFieldType(c, n, context, i)
+        inc i
   wantParRi c, n
 
 type
@@ -2188,6 +2203,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         inc n
         semLocalTypeImpl c, n, context
         skipParRi n
+      elif exprKind(n) == TupleConstrX:
+        semTupleType(c, n, context)
       elif isOrExpr(n):
         c.dest.addParLe(OrT, info)
         inc n # tag
@@ -2252,7 +2269,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     of TupleT:
       if tryTypeClass(c, n):
         return
-      semTupleType c, n
+      semTupleType c, n, context
     of ArrayT:
       if tryTypeClass(c, n):
         return
@@ -3503,7 +3520,7 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
   typ.addParRi()
   let typeStart = c.dest.len
   var t = typ.cursorAt(0)
-  semTupleType(c, t)
+  semTupleType(c, t, InLocalDecl)
   it.typ = typeToCursor(c, typeStart)
   c.dest.shrink typeStart
   commonType c, it, exprStart, origExpected
