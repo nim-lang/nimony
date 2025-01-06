@@ -1777,9 +1777,9 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
           typeclassBuf.addParRi()
           typeclassBuf.addParRi()
           replace(c.dest, cursorAt(typeclassBuf, 0), start)
-    else:
+    elif res.status == LacksNothing:
       let typ = asTypeDecl(res.decl)
-      if isGeneric(typ) or typ.body.typeKind in {ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}:
+      if isGeneric(typ) or isNominal(typ.body.typeKind):
         # types that should stay as symbols, see sigmatch.matchSymbol
         discard
       else:
@@ -2055,7 +2055,11 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     semLocalTypeImpl c, n, AllowValues
   swap c.usedTypevars, genericArgs
   wantParRi c, n
-  if (genericArgs == 0 or magicKind != NoType) and ok:
+  if ok and (genericArgs == 0 or magicKind != NoType or
+      # structural types are inlined even with generic arguments
+      # XXX cannot instantiate properly if forward declared because typevars are not created in SemcheckTopLevelSyms
+      # maybe they could be declared along with an untyped prepass for the body
+      not isNominal(decl.body.typeKind)):
     # we have to be eager in generic type instantiations so that type-checking
     # can do its job properly:
     let key = typeToCanon(c.dest, typeStart)
