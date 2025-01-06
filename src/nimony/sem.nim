@@ -3363,7 +3363,6 @@ proc semArrayConstr(c: var SemContext, it: var Item) =
     wantParRi c, it.n
     return
 
-  var elemBuf = createTokenBuf()
   var elem = Item(n: it.n, typ: c.types.autoType)
   case it.typ.typeKind
   of ArrayT: # , SeqT, OpenArrayT
@@ -3374,7 +3373,6 @@ proc semArrayConstr(c: var SemContext, it: var Item) =
   else:
     buildErr c, it.n.info, "invalid expected type for array constructor: " & typeToString(it.typ)
   # XXX index types, `index: value` etc not implemented
-  swap elemBuf, c.dest
   semExpr c, elem
   var count = 1
   while elem.n.kind != ParRi:
@@ -3382,7 +3380,6 @@ proc semArrayConstr(c: var SemContext, it: var Item) =
     inc count
   it.n = elem.n
   wantParRi c, it.n
-  swap elemBuf, c.dest
   let typeStart = c.dest.len
   c.dest.buildTree ArrayT, it.n.info:
     c.dest.addSubtree elem.typ
@@ -3393,7 +3390,7 @@ proc semArrayConstr(c: var SemContext, it: var Item) =
     c.dest.addParRi()
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
-  c.dest.add elemBuf
+  c.dest.shrink typeStart
   commonType c, it, exprStart, expected
 
 proc semSetConstr(c: var SemContext, it: var Item) =

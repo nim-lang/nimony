@@ -10,11 +10,7 @@
    (i -1)
    (rangetype
     (i -1) +0 +2)) 4
-  (arr ~4
-   (array
-    (i -1)
-    (rangetype
-     (i -1) +0 +2)) 1 +1 4 +2 7 +3)) 4,4
+  (arr 1 +1 4 +2 7 +3)) 4,4
  (var :s2.0.tbawx6nu81 . . 11,~3
   (array ~11,5,lib/std/system.nim
    (i -1)
@@ -25,8 +21,4 @@
    (i -1)
    (rangetype
     (i -1) +0 +4)) 12
-  (arr ~12
-   (array ,1,lib/std/system.nim
-    (i -1)
-    (rangetype
-     (i -1) +0 +4)) 1 +1 4 +2 7 +3 10 +4 13 +5)))
+  (arr 1 +1 4 +2 7 +3 10 +4 13 +5)))
