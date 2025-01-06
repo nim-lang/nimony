@@ -1,14 +1,14 @@
 (.nif24)
 ,2,tests/nimony/basics/tforloop.nim(stmts 2,1
- (type :int.0.tfoaf4sx41 
+ (type :int.0.tfoaf4sx41
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,2
- (type :bool.0.tfoaf4sx41 
+ (type :bool.0.tfoaf4sx41
   (bool) . 6
   (pragmas 2
    (magic 7 Bool)) .) ,4
- (proc 5 :\2B.0.tfoaf4sx41 
+ (proc 5 :\2B.0.tfoaf4sx41
   (add -3) . . 9
   (params 1
    (param :x.0 . . ~8,~3
@@ -18,7 +18,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,5
- (proc 5 :\2D.0.tfoaf4sx41 
+ (proc 5 :\2D.0.tfoaf4sx41
   (sub -3) . . 9
   (params 1
    (param :x.1 . . ~8,~4
@@ -28,7 +28,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,7
- (proc 5 :<=.0.tfoaf4sx41 
+ (proc 5 :<=.0.tfoaf4sx41
   (le -3) . . 10
   (params 1
    (param :x.2 . . ~9,~6
@@ -51,15 +51,15 @@
    (while 8
     (le ~8,~10
      (i -1) ~2 x.3 3 b.0) 2,1
-    (stmts 
+    (stmts
      (yld 6 x.3) 2,1
      (asgn ~2 x.3 4
       (add ~8,~12
        (i -1) ~2 x.3 2 +1)))))) 4,15
  (for 20
-  (call ~7 countup.0.tfoaf4sx41 1 +0 4 +44) 
-  (unpackflat 
+  (call ~7 countup.0.tfoaf4sx41 1 +0 4 +44)
+  (unpackflat
    (let :mycounter.0 . . ~2,~14
     (i -1) .)) ~2,1
-  (stmts 
+  (stmts
    (discard 8 mycounter.0))))
