@@ -92,3 +92,4 @@ type
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     genericHooks*: Table[SymId, seq[SymId]]
+    hookIndexMap*: Table[string, seq[(SymId, SymId)]]
