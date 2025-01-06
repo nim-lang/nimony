@@ -42,5 +42,4 @@ generic = GenericObj[int](x: 123)
 proc genericProc[T](x: T): GenericObj[T] =
   result = GenericObj[T](x: x)
   result.x = x
-# type is left as InvokeT for now because requestRoutineInstance doesn't semcheck the return type:
-discard genericProc(456)
+generic = genericProc(456)

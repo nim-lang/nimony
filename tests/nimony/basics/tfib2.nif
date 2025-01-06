@@ -1,18 +1,18 @@
 (.nif24)
 ,2,tests/nimony/basics/tfib2.nim(stmts 2,1
- (type :int.0.tfie0imm3 
+ (type :int.0.tfie0imm3
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,2
- (type :bool.0.tfie0imm3 
+ (type :bool.0.tfie0imm3
   (bool) . 6
   (pragmas 2
    (magic 7 Bool)) .) 2,3
- (type :float.0.tfie0imm3 
+ (type :float.0.tfie0imm3
   (f +64) . 7
   (pragmas 2
    (magic 7 Float)) .) ,5
- (proc 5 :\2B.0.tfie0imm3 
+ (proc 5 :\2B.0.tfie0imm3
   (add -3) . . 9
   (params 1
    (param :x.0 . . ~8,~4
@@ -22,7 +22,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,6
- (proc 5 :\2D.0.tfie0imm3 
+ (proc 5 :\2D.0.tfie0imm3
   (sub -3) . . 9
   (params 1
    (param :x.1 . . ~8,~5
@@ -32,7 +32,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,8
- (proc 5 :<=.0.tfie0imm3 
+ (proc 5 :<=.0.tfie0imm3
   (le -3) . . 10
   (params 1
    (param :x.2 . . ~9,~7
@@ -42,7 +42,7 @@
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) ,10
- (proc 5 :\2B.1.tfie0imm3 
+ (proc 5 :\2B.1.tfie0imm3
   (add -3) . . 9
   (params 1
    (param :x.3 . . ~8,~7
@@ -52,7 +52,7 @@
   (f +64) 30
   (pragmas 2
    (magic 7 "AddF64")) . .) ,11
- (proc 5 :\2D.1.tfie0imm3 
+ (proc 5 :\2D.1.tfie0imm3
   (sub -3) . . 9
   (params 1
    (param :x.4 . . ~8,~8
@@ -62,7 +62,7 @@
   (f +64) 30
   (pragmas 2
    (magic 7 "SubF64")) . .) ,13
- (proc 5 :<=.1.tfie0imm3 
+ (proc 5 :<=.1.tfie0imm3
   (le -3) . . 10
   (params 1
    (param :x.5 . . ~9,~10
@@ -73,9 +73,9 @@
   (pragmas 2
    (magic 7 "LeF64")) . .) 10,17
  (type ~8 :Fibable.0.tfie0imm3 . . . 2
-  (concept . . 
+  (concept . .
    (typevar :Self.0.tfie0imm3 . . . .) ~8,1
-   (stmts 
+   (stmts
     (proc 5 :<=.0 . . . 9
      (params 1
       (param :a.0 . . 6 Self.0.tfie0imm3 .) 4
@@ -94,8 +94,8 @@
    (typevar :T.0.tfie0imm3 . . 3 Fibable.0.tfie0imm3 .)) 20
   (params 1
    (param :a.1 . . 3 T.0.tfie0imm3 .)) 8 T.0.tfie0imm3 . . 2,1
-  (stmts 
-   (result :result.0 . . 22,~1 T.0.tfie0imm3 .) 
+  (stmts
+   (result :result.0 . . 22,~1 T.0.tfie0imm3 .)
    (if 3
     (elif 2
      (infix <= ~2 a.1 3 +2) ~1,1
@@ -114,16 +114,16 @@
   (call ~3 fib.1.tfie0imm3 1 +8)) ,29
  (discard 16
   (call ~8 fib.1.tfie0imm3 1 +8)) 11,28
- (proc :fib.1.tfie0imm3 . ~11,~6 . 
+ (proc :fib.1.tfie0imm3 . ~11,~6 .
   (at fib.0.tfie0imm3
    (i -1)) 9,~6
   (params 1
    (param :a.3 . .
     (i -1) .))
   (i -1) ~11,~6 . ~11,~6 . ~9,~5
-  (stmts 
+  (stmts
    (result :result.1 . .
-    (i -1) .) 
+    (i -1) .)
    (if 3
     (elif 2
      (le
@@ -133,7 +133,7 @@
     (else 2,1
      (stmts 7
       (asgn ~7 result.1 11
-       (add
+       (add ~20,~25
         (i -1) ~6
         (call ~3 fib.1.tfie0imm3 2
          (sub
