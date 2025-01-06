@@ -1989,9 +1989,12 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     # we have to be eager in generic type instantiations so that type-checking
     # can do its job properly:
     let key = typeToCanon(c.dest, typeStart)
+    var sym = Sym(kind: TypeY, name: SymId(0), pos: InvalidPos) # pos unused by semTypeSym
     if c.instantiatedTypes.hasKey(key):
+      let cachedSym = c.instantiatedTypes[key]
       c.dest.shrink typeStart
-      c.dest.add symToken(c.instantiatedTypes[key], info)
+      c.dest.add symToken(cachedSym, info)
+      sym.name = cachedSym
     else:
       var args = cursorAt(c.dest, beforeArgs)
       if magicKind != NoType:
@@ -2044,17 +2047,26 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       var sub = createTokenBuf(30)
       subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
       c.dest.endRead()
-      var phase = SemcheckSignatures # maybe SemcheckTopLevelSyms as well
-      var instance = createTokenBuf(30)
+      var phase = SemcheckTopLevelSyms
+      var topLevel = createTokenBuf(30)
       swap c.phase, phase
-      swap c.dest, instance
+      swap c.dest, topLevel
       var tn = beginRead(sub)
+      semTypeSection c, tn
+      swap c.dest, topLevel
+      c.phase = SemcheckSignatures
+      var instance = createTokenBuf(30)
+      swap c.dest, instance
+      tn = beginRead(topLevel)
       semTypeSection c, tn
       swap c.dest, instance
       swap c.phase, phase
       publish targetSym, ensureMove instance
       c.dest.shrink typeStart
       c.dest.add symToken(targetSym, info)
+      sym.name = targetSym
+    assert sym.name != SymId(0)
+    semTypeSym c, sym, info, typeStart, InLocalDecl
 
 proc addVarargsParameter(c: var SemContext; paramsAt: int; info: PackedLineInfo) =
   const vanon = "vanon"
