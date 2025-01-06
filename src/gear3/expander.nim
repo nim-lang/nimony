@@ -871,6 +871,11 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.shrink beforeType
         traverseExpr(e, c)
         skipParRi(e, c)
+      of AconstrX:
+        e.dest.add tagToken("aconstr", c.info)
+        inc c
+        traverseType(e, c)
+        inc nested
       of OconstrX:
         e.dest.add tagToken("oconstr", c.info)
         inc c
