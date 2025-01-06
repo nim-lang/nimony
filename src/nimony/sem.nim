@@ -1141,6 +1141,9 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
     buf.addSubtree cs.args[valueIndex].n
   buf.addParRi()
 
+proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
+  result = semLocalType(c, n, InReturnTypeDecl)
+
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
@@ -1209,7 +1212,12 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       var matched = m[idx]
       let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
       c.dest[cs.beforeCall+1].setSymId inst.targetSym
-      typeofCallIs c, it, cs.beforeCall, inst.returnType
+      var instReturnType = createTokenBuf(16)
+      swap c.dest, instReturnType
+      var subsReturnType = inst.returnType
+      let returnType = semReturnType(c, subsReturnType)
+      swap c.dest, instReturnType
+      typeofCallIs c, it, cs.beforeCall, returnType
     else:
       typeofCallIs c, it, cs.beforeCall, m[idx].returnType
 
@@ -2331,9 +2339,6 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     else:
       c.buildErr info, "not a type", n
       inc n
-
-proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
-  result = semLocalType(c, n, InReturnTypeDecl)
 
 proc exportMarkerBecomesNifTag(c: var SemContext; insertPos: int; crucial: CrucialPragma) =
   assert crucial.magic.len > 0
