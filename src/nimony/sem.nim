@@ -1856,8 +1856,8 @@ proc semConceptType(c: var SemContext; n: var Cursor) =
   wantParRi c, n
   wantParRi c, n
 
-proc instGenericType(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
-                     origin, targetSym: SymId; decl: TypeDecl; args: Cursor) =
+proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+                             origin, targetSym: SymId; decl: TypeDecl; args: Cursor) =
   #[
   What we need to do is rather simple: A generic instantiation is
   the typical (type :Name ex generic_params pragmas body) tuple but
@@ -2032,11 +2032,19 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
         semLocalTypeImpl c, m, InLocalDecl
         return
       let targetSym = newSymId(c, headId)
-      var instance = createTokenBuf(30)
-      instGenericType c, instance, info, headId, targetSym, decl, args
-      c.dest.endRead()
-      publish targetSym, ensureMove instance
       c.instantiatedTypes[key] = targetSym
+      var sub = createTokenBuf(30)
+      subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
+      c.dest.endRead()
+      var phase = SemcheckSignatures # maybe SemcheckTopLevelSyms as well
+      var instance = createTokenBuf(30)
+      swap c.phase, phase
+      swap c.dest, instance
+      var tn = beginRead(sub)
+      semTypeSection c, tn
+      swap c.dest, instance
+      swap c.phase, phase
+      publish targetSym, ensureMove instance
       c.dest.shrink typeStart
       c.dest.add symToken(targetSym, info)
 
