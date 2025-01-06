@@ -85,6 +85,35 @@ proc objtypeImpl*(s: SymId): Cursor =
   if k in {RefT, PtrT}:
     inc result
 
+proc rootObjtypeImpl*(c: Cursor): Cursor =
+  ## get root object type impl from any combination of type symbols,
+  ## generic invocations and a single layer of `ref`/`ptr` indirection
+  result = c
+  var ptrs = 0
+  while true:
+    if result.kind == Symbol:
+      let res = tryLoadSym(result.symId)
+      if res.status != LacksNothing or res.decl.stmtKind != TypeS:
+        break
+      result = asTypeDecl(res.decl).body
+    else:
+      let kind = result.typeKind
+      case kind
+      of RefT, PtrT:
+        if ptrs != 0:
+          break
+        inc ptrs
+        inc result
+      of InvokeT:
+        # get to base sym
+        inc result
+      of ObjectT:
+        # match
+        break
+      else:
+        # not an object type
+        break
+
 proc getTypeSection*(s: SymId): TypeDecl =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing

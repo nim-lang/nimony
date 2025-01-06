@@ -1372,12 +1372,9 @@ proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
   if baseType.kind == DotToken:
     result = ObjField(level: -1)
   else:
-    if baseType.typeKind in {RefT, PtrT}:
-      inc baseType
-    if baseType.typeKind == InvokeT:
-      inc baseType # get to root symbol
-    if baseType.kind == Symbol:
-      result = findObjField(objtypeImpl(baseType.symId), name, level+1)
+    baseType = rootObjtypeImpl(baseType)
+    if baseType.typeKind == ObjectT:
+      result = findObjField(baseType, name, level+1)
     else:
       # maybe error
       result = ObjField(level: -1)
@@ -1426,27 +1423,18 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     result = InvalidDot
   else:
     let t = skipModifier(lhs.typ)
-    var root = t
-    if root.typeKind in {RefT, PtrT}:
-      inc root
-    if root.typeKind == InvokeT:
-      inc root
-    if root.kind == Symbol:
-      let objType = objtypeImpl(root.symId)
-      if objType.typeKind == ObjectT:
-        let field = findObjField(objType, fieldName)
-        if field.level >= 0:
-          c.dest.add symToken(field.sym, info)
-          c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
-          it.typ = field.typ # will be fit later with commonType
-          it.kind = FldY
-          result = MatchedDotField
-        else:
-          c.dest.add identToken(fieldName, info)
-          c.buildErr info, "undeclared field: " & pool.strings[fieldName]
+    let objType = rootObjtypeImpl(t)
+    if objType.typeKind == ObjectT:
+      let field = findObjField(objType, fieldName)
+      if field.level >= 0:
+        c.dest.add symToken(field.sym, info)
+        c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
+        it.typ = field.typ # will be fit later with commonType
+        it.kind = FldY
+        result = MatchedDotField
       else:
         c.dest.add identToken(fieldName, info)
-        c.buildErr info, "object type expected"
+        c.buildErr info, "undeclared field: " & pool.strings[fieldName]
     elif lhs.kind == ModuleY:
       # this is a qualified identifier, i.e. module.name
       # consider matched even if undeclared
@@ -3557,27 +3545,11 @@ proc buildObjConstrField(c: var SemContext; field: Local; setFields: Table[SymId
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
   c.dest.addParLe(OconstrX, info)
   c.dest.addSubtree typ
-  var objImpl = typ
-  if objImpl.typeKind in {RefT, PtrT}:
-    inc objImpl
-  if objImpl.typeKind == InvokeT:
-    inc objImpl
-  if objImpl.kind == Symbol:
-    objImpl = objtypeImpl(objImpl.symId)
+  var objImpl = rootObjtypeImpl(typ)
   var obj = asObjectDecl(objImpl)
   # same field order as old nim VM: starting with most shallow base type
   while obj.parentType.kind != DotToken:
-    var parentImpl = obj.parentType
-    if parentImpl.typeKind in {RefT, PtrT}:
-      inc parentImpl
-    if parentImpl.kind == Symbol:
-      parentImpl = objtypeImpl(parentImpl.symId)
-    elif parentImpl.typeKind == InvokeT:
-      inc parentImpl # get to symbol
-      parentImpl = objtypeImpl(parentImpl.symId)
-    else:
-      # should not be possible
-      discard
+    var parentImpl = rootObjtypeImpl(obj.parentType)
     let parent = asObjectDecl(parentImpl)
     obj.parentType = parent.parentType
     var currentField = parent.firstField
@@ -3599,16 +3571,10 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   inc it.n
   it.typ = semLocalType(c, it.n)
   c.dest.shrink exprStart
-  var objType = it.typ
-  if objType.typeKind in {RefT, PtrT}:
-    inc objType
-  if objType.typeKind == InvokeT:
-    inc objType
-  if objType.kind == Symbol:
-    objType = objtypeImpl(objType.symId)
-    if objType.typeKind != ObjectT:
-      c.buildErr info, "expected object type for object constructor"
-      return
+  var objType = rootObjtypeImpl(it.typ)
+  if objType.typeKind != ObjectT:
+    c.buildErr info, "expected object type for object constructor"
+    return
   var fieldBuf = createTokenBuf(16)
   var setFieldPositions = initTable[SymId, int]()
   while it.n.kind != ParRi:
