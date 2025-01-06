@@ -161,15 +161,15 @@
      (kv ~2 x.2.tde837gue 2 x.1))) 9,1
    (asgn ~3
     (dot ~6 result.2 x.2.tde837gue +0) 2 x.1) ~2,~1
-   (ret result.2))) ,45
- (discard 19
-  (call ~11 genericProc.1.tde837gue 1 +456)) 19,45
- (proc :genericProc.1.tde837gue . ~19,~4 .
+   (ret result.2))) 8,44
+ (asgn ~8 generic.0.tde837gue 13
+  (call ~11 genericProc.1.tde837gue 1 +456)) 21,44
+ (proc :genericProc.1.tde837gue . ~21,~3 .
   (at genericProc.0.tde837gue
-   (i -1)) ,~4
+   (i -1)) ~2,~3
   (params 1
    (param :x.4 . .
-    (i -1) .)) ~1,~4 GenericObj.1.tde837gue ~19,~4 . ~19,~4 . ~17,~3
+    (i -1) .)) ~3,~3 GenericObj.1.tde837gue ~21,~3 . ~21,~3 . ~19,~2
   (stmts 7
    (result :result.3 . . 9,~1 GenericObj.1.tde837gue .) 7
    (asgn ~7 result.3 15
