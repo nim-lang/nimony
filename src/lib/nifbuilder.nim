@@ -213,7 +213,6 @@ template addLineIgnoreZero*(b: var string; x: int32) =
     addLine b, x
 
 proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
-  addSep b
   var format = LineInfoNone
   if col != 0'i32:
     format = LineInfoCol
@@ -224,12 +223,15 @@ proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
   drainPending b
   case format
   of LineInfoCol:
+    addSep b
     b.buf.addLine col
   of LineInfoColLine:
+    addSep b
     b.buf.addLineIgnoreZero col
     b.buf.add ','
     b.buf.addLine line
   of LineInfoFile:
+    addSep b
     b.buf.addLineIgnoreZero col
     b.buf.add ','
     b.buf.addLineIgnoreZero line

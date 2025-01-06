@@ -1,26 +1,26 @@
 (.nif24)
 ,2,tests/nimony/basics/tdistinct.nim(stmts 2,1
- (type :int.0.tdikoa9tc1 
+ (type :int.0.tdikoa9tc1
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,2
- (type :bool.0.tdikoa9tc1 
+ (type :bool.0.tdikoa9tc1
   (bool) . 6
   (pragmas 2
    (magic 7 Bool)) .) 2,3
- (type :char.0.tdikoa9tc1 
+ (type :char.0.tdikoa9tc1
   (c +8) . 6
   (pragmas 2
    (magic 7 Char)) .) 2,4
- (type :string.0.tdikoa9tc1 
+ (type :string.0.tdikoa9tc1
   (string) . 8
   (pragmas 2
    (magic 7 String)) .) 2,6
- (type :int8.0.tdikoa9tc1 
+ (type :int8.0.tdikoa9tc1
   (i +8) . 6
   (pragmas 2
    (magic 7 Int8)) .) ,8
- (proc 5 :\2B.0.tdikoa9tc1 
+ (proc 5 :\2B.0.tdikoa9tc1
   (add -3) . . 9
   (params 1
    (param :x.0 . . ~8,~7
@@ -30,7 +30,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,9
- (proc 5 :\2D.0.tdikoa9tc1 
+ (proc 5 :\2D.0.tdikoa9tc1
   (sub -3) . . 9
   (params 1
    (param :x.1 . . ~8,~8
@@ -40,7 +40,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,11
- (proc 5 :<=.0.tdikoa9tc1 
+ (proc 5 :<=.0.tdikoa9tc1
   (le -3) . . 10
   (params 1
    (param :x.2 . . ~9,~10
@@ -59,13 +59,13 @@
    (param :y.3 . . 3 VarId.0.tdikoa9tc1 .)) 15 VarId.0.tdikoa9tc1 30
   (pragmas 2
    (borrow)) . 9
-  (stmts 
-   (ret 
-    (dconv 6 VarId.0.tdikoa9tc1 
+  (stmts
+   (ret
+    (dconv 6 VarId.0.tdikoa9tc1
      (add ~7,~16
-      (i -1) 
+      (i -1)
       (dconv ~7,~16
-       (i -1) x.3) 
+       (i -1) x.3)
       (dconv ~7,~16
        (i -1) y.3)))))) 4,24
  (var :x.0.tdikoa9tc1 . . 3 VarId.0.tdikoa9tc1 .) 2,26

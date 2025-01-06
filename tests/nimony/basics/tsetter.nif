@@ -1,6 +1,6 @@
 (.nif24)
 ,1,tests/nimony/basics/tsetter.nim(stmts 5
- (type :int.0.tseyo1t971 
+ (type :int.0.tseyo1t971
   (i -1) . 4
   (pragmas 2
    (magic 7 Int)) .) 9,2
@@ -11,7 +11,7 @@
    (param :x.0 . . 3 Foo.0.tseyo1t971 .) 9
    (param :y.0 . . ~15,~4
     (i -1) .)) . . . 30
-  (stmts 
+  (stmts
    (discard .))) ,5
  (proc 5 :\5B\5D=.0.tseyo1t971 . . . 10
   (params 1
@@ -20,7 +20,7 @@
     (i -1) .) 17
    (param :z.0 . . ~22,~5
     (i -1) .)) . . . 37
-  (stmts 
+  (stmts
    (discard .))) 4,7
  (var :foo.0.tseyo1t971 . . 5 Foo.0.tseyo1t971 .) ,8
  (call bar=.0.tseyo1t971 foo.0.tseyo1t971 10 +123) ,9
