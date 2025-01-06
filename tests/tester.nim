@@ -1,3 +1,4 @@
+# It supports overwriting tested results using `--overwrite`
 
 import std / [os, strutils]
 import "../src/lib" / [nifreader, nifbuilder, nif_linkedtree]
@@ -217,7 +218,7 @@ proc testNifGram(overwrite: bool) =
 
 testNifGram(overwrite)
 
-proc hasturTests() =
-  exec "nim c -r src/hastur"
+proc hasturTests(overwrite: bool) =
+  exec "nim c -r src/hastur --overwrite"
 
-hasturTests()
+hasturTests(overwrite)
