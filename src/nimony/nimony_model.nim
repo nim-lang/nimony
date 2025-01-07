@@ -46,6 +46,11 @@ type
     ImportExceptS = "importexcept"
     ExportS = "export"
     CommentS = "comment"
+    ClonerS = "cloner"
+    TracerS = "tracer"
+    DisarmerS = "disarmer"
+    MoverS = "mover"
+    DtorS = "dtor"
 
   SymKind* = enum
     NoSym
@@ -176,6 +181,7 @@ type
     ArrayT = "array"
     RangeT = "rangetype"
     UncheckedArrayT = "uarray"
+    OpenArrayT = "openarray"
     SetT = "sett"
     AutoT = "auto"
     SymKindT = "symkind"
@@ -301,9 +307,25 @@ template `==`*(n: Cursor; s: string): bool = n.kind == ParLe and pool.tags[n.tag
 
 const
   RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
+  CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
 
 proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo): PackedToken =
   parLeToken(pool.tags.getOrIncl($kind), info)
+
+proc isDeclarative*(n: Cursor): bool =
+  case n.stmtKind
+  of FromImportS, ImportS, ExportS, IncludeS, ImportExceptS, TypeS, CommentS, TemplateS:
+    result = true
+  else:
+    case n.substructureKind
+    of PragmasS, TypevarsS:
+      result = true
+    else:
+      case n.exprKind
+      of TypeofX:
+        result = true
+      else:
+        result = false

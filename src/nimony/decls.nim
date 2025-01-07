@@ -14,6 +14,10 @@ proc isRoutine*(t: SymKind): bool {.inline.} =
 proc isLocal*(t: SymKind): bool {.inline.} =
   t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, FldY, EfldY}
 
+const
+  LocalTypePos* = 3
+  LocalValuePos* = 4
+
 type
   Local* = object
     kind*: SymKind
@@ -23,8 +27,7 @@ type
     typ*: Cursor
     val*: Cursor
 
-proc asLocal*(c: Cursor): Local =
-  var c = c
+proc takeLocal*(c: var Cursor): Local =
   let kind = symKind c
   result = Local(kind: kind)
   if isLocal(kind):
@@ -38,6 +41,10 @@ proc asLocal*(c: Cursor): Local =
     result.typ = c
     skip c
     result.val = c
+
+proc asLocal*(c: Cursor): Local =
+  var c = c
+  result = takeLocal(c)
 
 proc asTypevar*(c: Cursor): Local {.inline.} =
   result = asLocal(c)
@@ -58,8 +65,7 @@ type
 proc isGeneric*(r: Routine): bool {.inline.} =
   r.typevars.substructureKind == TypevarsS
 
-proc asRoutine*(c: Cursor): Routine =
-  var c = c
+proc takeRoutine*(c: var Cursor): Routine =
   let kind = symKind c
   result = Routine(kind: kind)
   if isRoutine(kind):
@@ -81,6 +87,15 @@ proc asRoutine*(c: Cursor): Routine =
     result.effects = c
     skip c
     result.body = c
+
+const
+  TypevarsPos* = 3
+  ParamsPos* = 4
+  BodyPos* = 8
+
+proc asRoutine*(c: Cursor): Routine =
+  var c = c
+  result = takeRoutine(c)
 
 type
   TypeDecl* = object

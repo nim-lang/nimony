@@ -10,8 +10,8 @@
 import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
-import nifindexes, symparser, treemangler, typenav
-import ".." / nimony / [nimony_model, programs]
+import nifindexes, symparser, treemangler
+import ".." / nimony / [nimony_model, programs, typenav]
 
 type
   SymbolKey = (SymId, SymId) # (symbol, owner)
@@ -318,6 +318,27 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
     inc counter
   wantParRi e, c
 
+proc traverseOpenArrayBody(e: var EContext; c: var Cursor) =
+  e.dest.add tagToken("object", c.info)
+  e.dest.addDotToken()
+  inc c
+  let typ = c
+  e.dest.add tagToken("fld", typ.info)
+  let name = ithTupleField(0)
+  e.dest.add symdefToken(name, typ.info)
+  e.offer name
+  e.dest.addDotToken() # pragmas
+  e.dest.add tagToken("ptr", typ.info)
+  e.traverseType(c, {})
+  e.dest.addParRi() # "ptr"
+  e.dest.addParRi() # "fld"
+
+  var intType = e.typeCache.builtins.intType
+  genTupleField(e, intType, 1)
+
+  traverseType e, c
+  skipParRi e, c
+
 proc traverseArrayBody(e: var EContext; c: var Cursor) =
   e.dest.add c
   inc c
@@ -361,6 +382,8 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
       traverseTupleBody e, body
     of ArrayT:
       traverseArrayBody e, body
+    of OpenArrayT:
+      traverseOpenArrayBody e, body
     else:
       error e, "expected tuple or array, but got: ", body
     e.dest.addParRi() # "type"
@@ -397,7 +420,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       inc c
       e.loop c:
         traverseType e, c
-    of ArrayT:
+    of ArrayT, OpenArrayT:
       traverseAsNamedType e, c
     of RangeT:
       # skip to base type
@@ -658,7 +681,9 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   skip c # miscPos
 
   # body:
-  if mode != TraverseSig or prag.callConv == InlineC:
+  if isGeneric:
+    skip c
+  elif mode != TraverseSig or prag.callConv == InlineC:
     traverseStmt e, c, TraverseAll
   else:
     e.dest.addDotToken()
@@ -690,13 +715,26 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
   skipExportMarker e, c
   if c.substructureKind == TypevarsS:
     isGeneric = true
-  skip c # generic parameters
+    # count each typevar as used:
+    inc c
+    while c.kind != ParRi:
+      assert c.symKind == TypevarY
+      inc c
+      let (typevar, _) = getSymDef(e, c)
+      e.offer typevar
+      skipToEnd c
+    inc c
+  else:
+    skip c # generic parameters
 
   let prag = parsePragmas(e, c)
 
   e.dest.addDotToken() # adds pragmas
 
-  traverseType e, c, {IsTypeBody}
+  if isGeneric:
+    skip c
+  else:
+    traverseType e, c, {IsTypeBody}
   wantParRi e, c
   swap dst, e.dest
   if Nodecl in prag.flags or isGeneric:
@@ -833,6 +871,12 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.shrink beforeType
         traverseExpr(e, c)
         skipParRi(e, c)
+      of AconstrX:
+        e.dest.add tagToken("aconstr", c.info)
+        var arrayType = e.typeCache.getType(c)
+        inc c
+        e.traverseType(arrayType, {})
+        inc nested
       of OconstrX:
         e.dest.add tagToken("oconstr", c.info)
         inc c
@@ -849,6 +893,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       of ArrAtX:
         # XXX does not handle index type with offset low(I), maybe should be done in sem
         e.dest.add tagToken("at", c.info)
+        inc c
+        inc nested
+      of SufX:
+        e.dest.add c
+        inc c
+        traverseExpr e, c
+        assert c.kind == StringLit
+        e.dest.add c
         inc c
         inc nested
       else:
@@ -1084,6 +1136,8 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       traverseTypeDecl e, c
     of ContinueS, WhenS:
       error e, "unreachable: ", c
+    of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
+      skip c
   else:
     error e, "statement expected, but got: ", c
 

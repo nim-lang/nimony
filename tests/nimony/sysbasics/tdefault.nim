@@ -32,3 +32,14 @@ template resem() =
   global = MyObject(x: 123)
   global = MyObject(x: 123, y: 456)
 resem()
+
+type GenericObj[T] = object
+  x: T
+
+var generic: GenericObj[int]
+generic.x = 45
+generic = GenericObj[int](x: 123)
+proc genericProc[T](x: T): GenericObj[T] =
+  result = GenericObj[T](x: x)
+  result.x = x
+generic = genericProc(456)

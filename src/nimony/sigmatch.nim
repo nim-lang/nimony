@@ -432,7 +432,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       skip f
       skip f
       expectParRi m, f
-    of ArrayT, SetT, UncheckedArrayT:
+    of ArrayT, SetT, UncheckedArrayT, OpenArrayT:
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
       expectParRi m, f
