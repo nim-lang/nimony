@@ -17,7 +17,7 @@ to type `(T, T)`, etc.
 import std/[assertions, tables]
 
 include nifprelude
-import nifindexes, symparser, treemangler
+import nifindexes, symparser, treemangler, typekeys
 import ".." / nimony / [nimony_model, decls, programs, typenav]
 
 type
@@ -33,6 +33,7 @@ type
     op: AttachedOp
     info: PackedLineInfo
     requests: seq[GenHookRequest]
+    structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
 
 
 # Phase 1: Determine if the =hook is trivial:
@@ -127,57 +128,40 @@ proc =dup(x: Obj): Obj =
 ]#
 
 proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
-  copyIntoKind dest, Call, c.info:
-    copyIntoSymUse c.p, dest, s, c.info
+  copyIntoKind c.dest, CallX, c.info:
+    copyIntoSymUse c.dest, s, c.info
     case c.op
     of attachedWasMoved:
-      if paramA[StartPos].kind == SymUse:
+      if paramA[0].kind == Symbol:
         # &*param cancel out to `param`:
-        copyTree dest, paramA, StartPos
+        copyTree c.dest, paramA
       else:
-        copyIntoKind dest, HiddenAddr, c.info:
-          copyTree dest, paramA, StartPos
+        copyIntoKind c.dest, HaddrX, c.info:
+          copyTree c.dest, paramA
     of attachedDestroy, attachedDup:
-      copyTree dest, paramA, StartPos
+      copyTree c.dest, paramA
     of attachedCopy, attachedTrace:
-      copyTree dest, paramA, StartPos
-      copyTree dest, paramB, StartPos
+      copyTree c.dest, paramA
+      copyTree c.dest, paramB
 
 proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
   case c.op
   of attachedDestroy, attachedWasMoved: discard
   of attachedDup:
-    copyTree dest, paramA, StartPos
+    copyTree c.dest, paramA
   of attachedCopy:
-    copyIntoKind dest, Asgn, c.info:
-      copyTree dest, paramA, StartPos
-      copyTree dest, paramB, StartPos
+    copyIntoKind c.dest, AsgnS, c.info:
+      copyTree c.dest, paramA
+      copyTree c.dest, paramB
   of attachedTrace: discard
 
-proc requestLifting(c: var LiftingCtx; op: AttachedOp; typ: SymId; t: TypeCursor): SymId =
-  # For nominal types only.
-  let remote = c.p[typ.m].ops[op].getOrDefault(typ.s)
-  if remote == SymId(0):
-    #assert typ.m == c.thisModule, " should have a remote =hook!"
-    var local = c.generatedOps[op].getOrDefault(typ)
-    if local == SymId(0):
-      local = declareSym(c.p[c.thisModule], ProcDecl, attachedOpToLitId(op))
-      c.generatedOps[op][typ] = local
-      let t2 = canonType(c, c.p[t.m], t.t)
-      c.requests.add GenHookRequest(sym: local, typ: TypeCursor(m: c.types, t: t2), op: op)
-    result = SymId(m: c.thisModule, s: local)
-  else:
-    result = SymId(m: typ.m, s: remote)
-
-proc requestLiftingForStructuralType(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
-  var s = c.structuralTypeToHook[op].getOrDefault(toKey(c.p, t))
-  if s == SymId(0):
-    let t2 = takePos(c.p[c.types])
-    copyTreeX c.p[c.types], c.p[t.m], t.t, c.p
-    s = declareSym(c.p[c.thisModule], ProcDecl, attachedOpToLitId(op))
-    c.requests.add GenHookRequest(sym: s, typ: TypeCursor(m: c.types, t: t2), op: op)
-    c.structuralTypeToHook[op][toKey(c.p, t)] = s
-  result = SymId(m: c.thisModule, s: s)
+proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
+  let key = mangle(t)
+  result = c.structuralTypeToHook[op].getOrDefault(key)
+  if result == SymId(0):
+    result = declareSym(c.p[c.thisModule], ProcDecl, attachedOpToLitId(op))
+    c.requests.add GenHookRequest(sym: result, typ: t, op: op)
+    c.structuralTypeToHook[op][key] = result
 
 proc getStringHook(c: var LiftingCtx): SymId =
   case c.op
@@ -193,14 +177,14 @@ proc getStringHook(c: var LiftingCtx): SymId =
     result = SymId(m: ModuleId(0), s: SymId(-1))
 
 proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
-  if s.s != SymId(-1):
+  if s.s != SymId(0):
     genCallHook c, dest, s, paramA, paramB
 
 proc lift(c: var LiftingCtx; typ, orig: TypeCursor): SymId =
   # Goal: We produce a call to some function. Maybe this function must be
   # synthesized, if so this will be done by calling `requestLifting`.
   if isTrivial(c, typ):
-    return InvalidSymId
+    return NoSymId
   case c.p[typ].kind
   of StringTy:
     result = getStringHook(c)
@@ -233,13 +217,13 @@ when not defined(nimony):
 
 proc needsDeref(c: var LiftingCtx; obj: TokenBuf; isSecondParam: bool): bool {.inline.} =
   result = (c.op in {attachedTrace, attachedWasMoved} or (c.op == attachedCopy and not isSecondParam)) and
-    obj[StartPos].kind == Symbol # still access to the parameter directly
+    obj[0].kind == Symbol # still access to the parameter directly
 
 proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name, typ: Cursor; isSecondParam = false): TokenBuf =
   result = createTempTree(c.thisModule)
   let nd = needsDeref(c, obj, isSecondParam)
   copyIntoKind(result, if nd: VarFieldAccess else: FieldAccess, c.info):
-    copyTree result, obj, StartPos
+    copyTree result, obj, 0
     copyIntoSymUse c.p, result, SymId(m: tree.m, s: name.symId), c.info
     copyTreeX result, typ, c.p
 
@@ -249,16 +233,14 @@ proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; isSecondParam = 
   copyIntoKind(result, TupleFieldAccess, c.info):
     if nd:
       copyIntoKind(result, HiddenDeref, c.info):
-        copyTree result, tup, StartPos
+        copyTree result, tup, 0
     else:
-      copyTree result, tup, StartPos
+      copyTree result, tup, 0
     result.add Position, c.info, uint32(idx)
 
 proc unravelObj(c: var LiftingCtx;
                 n: Cursor; paramA, paramB: TokenBuf) =
   var n = n
-  if n.kind == NilOrXTy:
-    n = n.firstSon
   if n.kind in {RefTy, PtrTy}:
     n = n.firstSon
   assert n.kind == ObjectBody
@@ -335,7 +317,7 @@ template verbatim(result: TokenBuf; s: string) =
 proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId): TokenBuf =
   result = createTempTree(c.thisModule)
   copyIntoKind result, ArrayAt, c.info:
-    copyTree result, arr, StartPos
+    copyTree result, arr, 0
     addSymUse result, indexVar, c.info
 
 proc indexVarLowerThanArrayLen(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId; arrayLen: int64) =
@@ -424,7 +406,7 @@ proc unravelArrayForDup(c: var LiftingCtx;
           let a = accessArrayAt(c, paramA, indexVar)
           let r = accessArrayAt(c, resTree, indexVar)
           copyIntoKind dest, FirstAsgn, c.info:
-            copyTree dest, r, StartPos
+            copyTree dest, r, 0
             unravel c, dest, fieldType, fieldType, a, paramB
 
           incIndexVar c, dest, indexVar
@@ -434,17 +416,17 @@ proc unravelArrayForDup(c: var LiftingCtx;
 proc derefInner(c: var LiftingCtx; x: TokenBuf): TokenBuf =
   result = createTempTree(x.m)
   copyIntoEmit c, result:
-    copyTree result, x, StartPos
+    copyTree result, x, 0
     verbatim result, "->inner"
 
 proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
   copyIntoKinds dest, [IfStmt, ElifBranch], c.info:
-    copyTree dest, paramA, StartPos
+    copyTree dest, paramA, 0
     copyIntoKinds dest, [StmtList, IfStmt], c.info:
       # here we know that `x` is not nil:
       copyIntoKind dest, ElifBranch, c.info:
         copyIntoEmit c, dest:
-          copyTree dest, paramA, StartPos
+          copyTree dest, paramA, 0
           verbatim dest, "->rc == 0"
         copyIntoKind dest, StmtList, c.info:
           let oldOp = c.op
@@ -461,27 +443,27 @@ proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor
             verbatim dest, "QdeallocFixed("
             copyTreeX dest, c.p[baseType.m], baseType.t, c.p
             verbatim dest, ", "
-            copyTree dest, paramA, StartPos
+            copyTree dest, paramA, 0
             verbatim dest, ");"
       copyIntoKind dest, ElseBranch, c.info:
         copyIntoEmit c, dest:
           verbatim dest, "--"
-          copyTree dest, paramA, StartPos
+          copyTree dest, paramA, 0
           verbatim dest, "->rc;"
 
 when false:
   proc deref(x: TokenBuf): TokenBuf =
     result = createTempTree(x.m)
-    copyIntoKind result, DerefExpr, x[StartPos].info:
-      copyTree result, x, StartPos
+    copyIntoKind result, DerefExpr, x[0].info:
+      copyTree result, x, 0
 
 proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
   copyIntoKinds dest, [IfStmt, ElifBranch], c.info:
-    copyTree dest, x, StartPos
+    copyTree dest, x, 0
     copyIntoKind dest, StmtList, c.info:
       copyIntoEmit c, dest:
         verbatim dest, "++"
-        copyTree dest, x, StartPos
+        copyTree dest, x, 0
         verbatim dest, "->rc;"
 
 proc unravelRef(c: var LiftingCtx; refType: TypeCursor;
@@ -495,12 +477,12 @@ proc unravelRef(c: var LiftingCtx; refType: TypeCursor;
     discard "to implement"
   of attachedWasMoved:
     copyIntoEmit c, dest:
-      copyTree dest, paramA, StartPos
+      copyTree dest, paramA, 0
       verbatim dest, " = nullptr;"
   of attachedDup:
     emitIncRef c, dest, paramA
     copyIntoKind dest, RetS, c.info:
-      copyTree dest, paramA, StartPos
+      copyTree dest, paramA, 0
   of attachedCopy:
     # if src != nil: inc src.rc
     # destroy dest[]
@@ -513,8 +495,8 @@ proc unravelRef(c: var LiftingCtx; refType: TypeCursor;
     maybeCallHook c, dest, fn, paramA, paramA
     c.op = oldOp
     copyIntoKind dest, Asgn, c.info:
-      copyTree dest, paramA, StartPos
-      copyTree dest, paramB, StartPos
+      copyTree dest, paramA, 0
+      copyTree dest, paramB, 0
 
 proc unravel(c: var LiftingCtx; typ, orig: TypeCursor; paramA, paramB: TokenBuf) =
   # `unravel`'s job is to "expand" the object fields in contrast to `lift`.

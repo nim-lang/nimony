@@ -324,6 +324,17 @@ proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind; inf
 proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo): PackedToken =
   parLeToken(pool.tags.getOrIncl($kind), info)
 
+template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info: PackedLineInfo; body: untyped) =
+  dest.add parLeToken(kind, info)
+  body
+  dest.addParRi()
+
+proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
+  dest.add symToken(s, info)
+
+proc copyTree*(dest: var TokenBuf; src: TokenBuf) =
+  dest.add src
+
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
   of FromImportS, ImportS, ExportS, IncludeS, ImportExceptS, TypeS, CommentS, TemplateS:
