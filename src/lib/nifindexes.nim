@@ -167,10 +167,10 @@ proc createIndex*(infile: string; buildChecksum: bool;
 
     for value in values:
       let (obj, sym) = value
-      let diff = symToOffsetMap[sym] - symToOffsetMap[obj]
+      let offset = symToOffsetMap[sym]
       hookSectionBuf.buildTree KvT, NoLineInfo:
         hookSectionBuf.add symToken(obj, NoLineInfo)
-        hookSectionBuf.add intToken(pool.integers.getOrIncl(diff), NoLineInfo)
+        hookSectionBuf.add intToken(pool.integers.getOrIncl(offset), NoLineInfo)
 
     hookSectionBuf.addParRi()
 
