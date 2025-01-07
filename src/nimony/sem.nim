@@ -2647,7 +2647,7 @@ proc expandHook(c: var SemContext; dest: var TokenBuf; obj: SymId, symId: SymId,
 proc getHookName(symId: SymId): string =
   result = pool.syms[symId]
   extractBasename(result)
-  result = result.normalize
+  #result = result.normalize
 
 proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): TypeCursor =
   let params = getParamsType(c, beforeParams)
@@ -2670,8 +2670,16 @@ proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: 
   else:
     raiseAssert "unreachable"
 
+proc hookToKind(name: string): StmtKind =
+  case name
+  of "=destroy": DtorS
+  of "=wasmoved": DisarmerS
+  of "=trace": TracerS
+  of "=copy": ClonerS
+  of "=sink": MoverS
+  else: NoStmt
+
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
-  const hookTable = toTable({"=destroy": DtorS, "=wasmoved": DisarmerS, "=trace": TracerS, "=copy": ClonerS, "=sink": MoverS})
   let info = it.n.info
   let declStart = c.dest.len
   takeToken c, it.n
@@ -2722,12 +2730,12 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
 
-        let name = getHookName(symId)
-        if name in hookTable:
+        let hk = hookToKind(getHookName(symId))
+        if hk != NoStmt:
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
           let obj = getObjSymId(c, params[0])
-          expandHook(c, hookTagBuf, obj, symId, hookTable[name], info)
+          expandHook(c, hookTagBuf, obj, symId, hk, info)
 
       of checkBody:
         if it.n != "stmts":
@@ -2740,18 +2748,16 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
         let name = getHookName(symId)
-        if name in hookTable:
+        let hk = hookToKind(name)
+        if hk != NoStmt:
           let objCursor = semHook(c, hookTagBuf, name, beforeParams, symId, info)
           let obj = getObjSymId(c, objCursor)
 
           if c.routine.inGeneric == 0:
             # because it's a hook for sure
-            expandHook(c, hookTagBuf, obj, symId, hookTable[name], info)
+            expandHook(c, hookTagBuf, obj, symId, hk, info)
           else:
-            if obj in c.genericHooks:
-              c.genericHooks[obj].add symId
-            else:
-              c.genericHooks[obj] = @[symId]
+            c.genericHooks.mgetOrPut(obj, @[]).add symId
 
       of checkSignatures:
         c.takeTree it.n

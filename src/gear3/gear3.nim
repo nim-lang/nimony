@@ -30,7 +30,7 @@ Gear 3 accepts Gear 2's grammar.
 ]##
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import expander
+import expander, lifter, duplifier, destroyer
 
 const
   Version = "0.2"

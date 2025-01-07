@@ -39,7 +39,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
           if isRoutine(symKind(res.decl)):
             result = res.decl
       else:
-        quit "gear3:could not find symbol: " & pool.syms[n.symId]
+        quit "could not find symbol: " & pool.syms[n.symId]
   of AtX, PatX, ArrAtX:
     result = getTypeImpl(c, n.firstSon)
     case typeKind(result)
@@ -78,7 +78,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      CastX, ConvX, OconvX, HconvX, DconvX, OconstrX:
     result = n.firstSon
-  of ParX:
+  of ParX, EnsureMoveX:
     result = getTypeImpl(c, n.firstSon)
   of NilX:
     result = c.builtins.nilType

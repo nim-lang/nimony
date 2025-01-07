@@ -384,10 +384,6 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trAsgnRhs c, le, n, e
   wantParRi c, n
 
-proc firstSon*(n: Cursor): Cursor {.inline.} =
-  result = n
-  inc result
-
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # Idea: A variable like `x` does not own its value as it can be read multiple times.
   let typ = getType(c.cache, n)

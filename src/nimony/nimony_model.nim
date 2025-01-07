@@ -146,6 +146,7 @@ type
     DefaultTupX = "defaulttup"
     ExprX = "expr" # was nkStmtListExpr in the old Nim
     ArrAtX = "arrat"
+    EnsureMoveX = "emove" # note that `move` can be written in standard Nim
 
   TypeKind* = enum
     NoType
@@ -211,6 +212,7 @@ type
     Varargs = "varargs"
     Borrow = "borrow"
     NoSideEffect = "noSideEffect"
+    NoDestroy = "nodestroy"
     Plugin = "plugin"
 
   SubstructureKind* = enum
@@ -242,6 +244,13 @@ type
     MemberC = "member"
     InlineC = "inline"
     NoinlineC = "noinline"
+
+  AttachedOp* = enum
+    attachedDestroy,
+    attachedWasMoved,
+    attachedDup,
+    attachedCopy,
+    attachedTrace
 
 declareMatcher parseStmtKind, StmtKind
 
@@ -329,3 +338,7 @@ proc isDeclarative*(n: Cursor): bool =
         result = true
       else:
         result = false
+
+proc firstSon*(n: Cursor): Cursor {.inline.} =
+  result = n
+  inc result
