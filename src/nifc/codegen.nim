@@ -331,6 +331,25 @@ type
   VarKind = enum
     IsLocal, IsGlobal, IsThreadlocal, IsConst
 
+proc isLiteral(t: Tree; n: NodePos): bool =
+  case t[n].kind
+  of IntLit, UIntLit, FloatLit,
+      CharLit, StrLit, FalseC, TrueC, InfC, NegInfC, NanC, SufC:
+    result = true
+  of AconstrC:
+    result = true
+    for ch in sonsFromX(t, n):
+      if not isLiteral(t, ch):
+        return false
+  of OconstrC:
+    result = true
+    for ch in sonsFromX(t, n):
+      let (_, value) = sons2(t, ch)
+      if not isLiteral(t, value):
+        return false
+  else:
+    result = false
+
 proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern = false) =
   let d = asVarDecl(t, n)
   genCLineDir(c, t, info(t, n))
@@ -350,10 +369,7 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
     if vis == StaticC:
       c.code.insert(Token(StaticKeyword), beforeDecl)
     if t[d.value].kind != Empty:
-      if vk == IsGlobal and
-        t[d.value].kind notin {IntLit, UIntLit, FloatLit,
-          CharLit, StrLit, FalseC, TrueC, AconstrC,
-          OconstrC, InfC, NegInfC, NanC, SufC}:
+      if vk == IsGlobal and not isLiteral(t, d.value):
         c.add Semicolon
         moveToInitSection:
           c.add name
