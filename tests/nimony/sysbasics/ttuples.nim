@@ -4,4 +4,4 @@ type
 
 var x0: Tuple = (1, 2, 3)
 var x1: Tuple0
-var x2 = (1, 2, 3, "4", 5.6)
+var x2 = (1, 2, 3, 34, 5.6)
