@@ -873,8 +873,8 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         skipParRi(e, c)
       of AconstrX:
         e.dest.add tagToken("aconstr", c.info)
-        inc c
         var arrayType = e.typeCache.getType(c)
+        inc c
         e.traverseType(arrayType, {})
         inc nested
       of OconstrX:
