@@ -1,5 +1,5 @@
 (.nif24)
-,1,tests/nimony/sysbasics/tdefault.nim(stmts 
+,1,tests/nimony/sysbasics/tdefault.nim(stmts
  (discard 58,706,lib/std/system.nim
   (expr "")) ,1
  (discard 52,681,lib/std/system.nim
@@ -13,31 +13,31 @@
  (type ~5 :Enum.0.tde837gue . . . 2
   (enum
    (u +8) 5
-   (efld :a.0.tde837gue . . Enum.0.tde837gue 
+   (efld :a.0.tde837gue . . Enum.0.tde837gue
     (tup +0 "a")) 8
-   (efld :b.0.tde837gue . . Enum.0.tde837gue 
+   (efld :b.0.tde837gue . . Enum.0.tde837gue
     (tup +1 "b")) 11
-   (efld :c.0.tde837gue . . Enum.0.tde837gue 
+   (efld :c.0.tde837gue . . Enum.0.tde837gue
     (tup +2 "c")))) 5,4
- (proc :dollar`.Enum.0.tde837gue x . . 
-  (params 
+ (proc :dollar`.Enum.0.tde837gue x . .
+  (params
    (param :e.0 . . Enum.0.tde837gue .))
-  (string) . . 
+  (string) . .
   (stmts 7
    (result :result.0 . . ~8,40,lib/std/system.nim
     (string) .) 7
    (case e.0 5
-    (of 
-     (set a.0.tde837gue) 
-     (stmts 
+    (of
+     (set a.0.tde837gue)
+     (stmts
       (ret "a"))) 8
-    (of 
-     (set b.0.tde837gue) 
-     (stmts 
+    (of
+     (set b.0.tde837gue)
+     (stmts
       (ret "b"))) 11
-    (of 
-     (set c.0.tde837gue) 
-     (stmts 
+    (of
+     (set c.0.tde837gue)
+     (stmts
       (ret "c"))))
    (ret result.0))) ,5
  (discard 57,703,lib/std/system.nim
@@ -54,12 +54,12 @@
       (bool) .) 15
      (fld :b.1.tde837gue . . 3 Enum.0.tde837gue .)) .))) ,12
  (discard 15
-  (obj 1 Obj.0.tde837gue 
+  (obj 1 Obj.0.tde837gue
    (kv x.0.tde837gue 37,670,lib/std/system.nim
-    (expr +0)) 
+    (expr +0))
    (kv y.0.tde837gue 43,694,lib/std/system.nim
-    (expr "")) 
-   (kv z.0.tde837gue 
+    (expr ""))
+   (kv z.0.tde837gue
     (tup 39,666,lib/std/system.nim
      (expr ~33,~308
       (false)) 42,696,lib/std/system.nim
@@ -75,12 +75,12 @@
    (result :result.1 . . ~2,~9,lib/std/system.nim
     (i -1) .) 4
    (var :data.0 . . 10,~3 Obj.0.tde837gue 10
-    (obj ,~3 Obj.0.tde837gue 
+    (obj ,~3 Obj.0.tde837gue
      (kv x.0.tde837gue 36,667,lib/std/system.nim
-      (expr +0)) 
+      (expr +0))
      (kv y.0.tde837gue 42,691,lib/std/system.nim
-      (expr "")) 
-     (kv z.0.tde837gue 
+      (expr ""))
+     (kv z.0.tde837gue
       (tup 38,663,lib/std/system.nim
        (expr ~33,~308
         (false)) 41,693,lib/std/system.nim
@@ -106,7 +106,7 @@
    (dot ~6 global.0.tde837gue x.1.tde837gue +0) 1 "123")) 7,28
  (asgn ~7 global.0.tde837gue 10
   (obj ~5,~5 MyObject.0.tde837gue 2
-   (kv ~2 x.1.tde837gue 2 +123) 
+   (kv ~2 x.1.tde837gue 2 +123)
    (kv y.1.tde837gue 35,654,lib/std/system.nim
     (expr +0)))) 7,29
  (asgn ~7 global.0.tde837gue 10
@@ -118,7 +118,7 @@
   (stmts 7
    (asgn ~7 global.0.tde837gue 10
     (obj ~7,~8 MyObject.0.tde837gue 2
-     (kv ~2 x.1.tde837gue 2 +123) 
+     (kv ~2 x.1.tde837gue 2 +123)
      (kv y.1.tde837gue 33,651,lib/std/system.nim
       (expr +0)))) 7,1
    (asgn ~7 global.0.tde837gue 10
@@ -128,7 +128,7 @@
  (stmts 7
   (asgn ~7 global.0.tde837gue 10
    (obj ~7,~8 MyObject.0.tde837gue 2
-    (kv ~2 x.1.tde837gue 2 +123) 
+    (kv ~2 x.1.tde837gue 2 +123)
     (kv y.1.tde837gue 33,651,lib/std/system.nim
      (expr +0)))) 7,1
   (asgn ~7 global.0.tde837gue 10
@@ -161,25 +161,25 @@
      (kv ~2 x.2.tde837gue 2 x.1))) 9,1
    (asgn ~3
     (dot ~6 result.2 x.2.tde837gue +0) 2 x.1) ~2,~1
-   (ret result.2))) ,45
- (discard 19
-  (call ~11 genericProc.1.tde837gue 1 +456)) 19,45
- (proc :genericProc.1.tde837gue . ~19,~4 . 
+   (ret result.2))) 8,44
+ (asgn ~8 generic.0.tde837gue 13
+  (call ~11 genericProc.1.tde837gue 1 +456)) 21,44
+ (proc :genericProc.1.tde837gue . ~21,~3 .
   (at genericProc.0.tde837gue
-   (i -1)) ,~4
+   (i -1)) ~2,~3
   (params 1
    (param :x.4 . .
-    (i -1) .)) ~1,~4 GenericObj.1.tde837gue ~19,~4 . ~19,~4 . ~17,~3
+    (i -1) .)) ~3,~3 GenericObj.1.tde837gue ~21,~3 . ~21,~3 . ~19,~2
   (stmts 7
    (result :result.3 . . 9,~1 GenericObj.1.tde837gue .) 7
    (asgn ~7 result.3 15
-    (obj ~1,~4 GenericObj.1.tde837gue 
+    (obj ~1,~4 GenericObj.1.tde837gue
      (kv x.3.tde837gue 28,640,lib/std/system.nim
       (expr +0)))) 9,1
    (asgn ~3
     (dot ~6 result.3 x.3.tde837gue +0) 2 x.4) ~2,~1
    (ret result.3))) 23,38
- (type :GenericObj.1.tde837gue . 
+ (type :GenericObj.1.tde837gue .
   (at GenericObj.0.tde837gue ~19,~32,lib/std/system.nim
    (i -1)) ~4,~3 . ~2,~3
   (object . ~19,1

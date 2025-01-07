@@ -1,18 +1,18 @@
 (.nif24)
 ,2,tests/nimony/basics/ttemplate.nim(stmts 2,1
- (type :int.0.tte6j7czy 
+ (type :int.0.tte6j7czy
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,3
- (type :float.0.tte6j7czy 
+ (type :float.0.tte6j7czy
   (f +64) . 7
   (pragmas 2
    (magic 7 Float)) .) 2,4
- (type :string.0.tte6j7czy 
+ (type :string.0.tte6j7czy
   (string) . 8
   (pragmas 2
    (magic 7 String)) .) 2,6
- (type :array.0.tte6j7czy 
+ (type :array.0.tte6j7czy
   (array) 7
   (typevars 1
    (typevar :Index.0.tte6j7czy . . . .) 8
@@ -30,7 +30,7 @@
   (dot ~6 myglob.0.tte6j7czy x.1.tte6j7czy +0) 2 +56) 8,17
  (asgn ~3
   (dot ~5 other.0.tte6j7czy x.2.tte6j7czy +0) 2 +79.0) ,19
- (proc 5 :\2B.0.tte6j7czy 
+ (proc 5 :\2B.0.tte6j7czy
   (add -3) . . 9
   (params 1
    (param :x.0 . . ~8,~18
@@ -82,7 +82,7 @@
     (call ~3 foo.0.tte6j7czy 3
      (add
       (i -1) ~2 +34 1 +56) 8 "xyz")))) 5,32
- (type :uint.0.tte6j7czy 
+ (type :uint.0.tte6j7czy
   (u -1) . 6
   (pragmas 2
    (magic 7 UInt)) .) ,34
@@ -100,13 +100,13 @@
   (expr 1
    (conv ~26,~2
     (u -1) ~12,3 val.0.tte6j7czy))) 19,13
- (type :MyGeneric.1.tte6j7czy . 
+ (type :MyGeneric.1.tte6j7czy .
   (at MyGeneric.0.tte6j7czy ~17,~12
    (i -1)) ~4,~4 . ~2,~4
   (object . ~13,1
    (fld :x.1.tte6j7czy . . ~2,~9
     (i -1) .))) 18,14
- (type :MyGeneric.2.tte6j7czy . 
+ (type :MyGeneric.2.tte6j7czy .
   (at MyGeneric.0.tte6j7czy ~16,~11
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
