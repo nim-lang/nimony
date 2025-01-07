@@ -2659,10 +2659,7 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
       buildErr c, info, "signature for '=sink' must be proc[T: object](x: var T; y: T)"
 
 proc expandHook(c: var SemContext; obj: SymId, symId: SymId, op: HookOp) =
-  if $op in c.hookIndexMap:
-    c.hookIndexMap[$op].add (obj, symId)
-  else:
-    c.hookIndexMap[$op] = @[(obj, symId)]
+  c.hookIndexMap.mgetOrPut($op, @[]).add (obj, symId)
 
 proc getHookName(symId: SymId): string =
   result = pool.syms[symId]

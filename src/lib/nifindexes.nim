@@ -6,7 +6,7 @@
 
 ## Create an index file for a NIF file.
 
-import std / [os, tables, assertions, syncio, formatfloat]
+import std / [os, tables, assertions, syncio, formatfloat, sets]
 import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 
 #import std / [sha1]
@@ -197,8 +197,9 @@ type
     info*: PackedLineInfo
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
+    hooks*: Table[string, Table[string, NifIndexEntry]]
 
-proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
+proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsoluteOffset = false) =
   let KvT = registerTag "kv"
   var previousOffset = 0
   var t = next(s)
@@ -220,7 +221,8 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
         if t.kind == IntLit:
           let offset = pool.integers[t.intId] + previousOffset
           tab[key] = NifIndexEntry(offset: offset, info: info)
-          previousOffset = offset
+          if not useAbsoluteOffset:
+            previousOffset = offset
         else:
           assert false, "invalid (kv) construct: IntLit expected"
         t = next(s) # skip offset
@@ -249,6 +251,14 @@ proc readIndex*(indexName: string): NifIndex =
   let PrivateT = registerTag "private"
   let IndexT = registerTag "index"
 
+  let ClonerT = registerTag "cloner"
+  let TracerT = registerTag "tracer"
+  let DisarmerT = registerTag "disarmer"
+  let MoverT = registerTag "mover"
+  let DtorT = registerTag "dtor"
+
+  let hookSet = toHashSet([ClonerT, TracerT, DisarmerT, MoverT, DtorT])
+
   result = default(NifIndex)
   var t = next(s)
   if t.tag == IndexT:
@@ -262,6 +272,13 @@ proc readIndex*(indexName: string): NifIndex =
       readSection s, result.private
     else:
       assert false, "'private' expected"
+    t = next(s)
+    while t.tag in hookSet:
+      let tagName = pool.tags[t.tag]
+      result.hooks[tagName] = initTable[string, NifIndexEntry]()
+      readSection(s, result.hooks[tagName])
+      t = next(s)
+
   else:
     assert false, "expected 'index' tag"
 
