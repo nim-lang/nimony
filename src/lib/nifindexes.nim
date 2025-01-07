@@ -6,7 +6,7 @@
 
 ## Create an index file for a NIF file.
 
-import std / [os, tables, assertions, syncio, formatfloat]
+import std / [os, tables, assertions, syncio, formatfloat, sets]
 import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 
 #import std / [sha1]
@@ -99,7 +99,8 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
     else:
       inc n
 
-proc createIndex*(infile: string; buildChecksum: bool) =
+proc createIndex*(infile: string; buildChecksum: bool;
+    hookIndexMap: Table[string, seq[(SymId, SymId)]]) =
   let PublicT = registerTag "public"
   let PrivateT = registerTag "private"
   let KvT = registerTag "kv"
@@ -117,6 +118,7 @@ proc createIndex*(infile: string; buildChecksum: bool) =
   public.addParLe PublicT
   private.addParLe PrivateT
   var buf = createTokenBuf(100)
+  var symToOffsetMap = initTable[SymId, int]()
 
   while true:
     let offs = offset(s.r)
@@ -137,6 +139,7 @@ proc createIndex*(infile: string; buildChecksum: bool) =
             addr(public)
           else:
             addr(private)
+        symToOffsetMap[sym] = target
         let diff = if isPublic: target - previousPublicTarget
                   else: target - previousPrivateTarget
         dest[].buildTree KvT, info:
@@ -155,16 +158,38 @@ proc createIndex*(infile: string; buildChecksum: bool) =
   content.add toString(public)
   content.add "\n"
   content.add toString(private)
+  content.add "\n"
+
+  for (key, values) in hookIndexMap.pairs:
+    var hookSectionBuf = default(TokenBuf)
+    let tag = registerTag(key)
+    hookSectionBuf.addParLe tag
+
+    for value in values:
+      let (obj, sym) = value
+      let offset = symToOffsetMap[sym]
+      hookSectionBuf.buildTree KvT, NoLineInfo:
+        hookSectionBuf.add symToken(obj, NoLineInfo)
+        hookSectionBuf.add intToken(pool.integers.getOrIncl(offset), NoLineInfo)
+
+    hookSectionBuf.addParRi()
+
+    content.add toString(hookSectionBuf)
+    content.add "\n"
+
   if buildChecksum:
     var checksum = newSha1State()
     processForChecksum(checksum, buf)
     let final = SecureHash checksum.finalize()
-    content.add "\n(checksum \"" & $final & "\")"
+    content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
   if fileExists(indexName) and readFile(indexName) == content:
     discard "no change"
   else:
     writeFile(indexName, content)
+
+proc createIndex*(infile: string; buildChecksum: bool) =
+  createIndex(infile, buildChecksum, initTable[string, seq[(SymId, SymId)]]())
 
 type
   NifIndexEntry* = object
@@ -172,8 +197,9 @@ type
     info*: PackedLineInfo
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
+    hooks*: Table[string, Table[string, NifIndexEntry]]
 
-proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
+proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsoluteOffset = false) =
   let KvT = registerTag "kv"
   var previousOffset = 0
   var t = next(s)
@@ -195,7 +221,8 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
         if t.kind == IntLit:
           let offset = pool.integers[t.intId] + previousOffset
           tab[key] = NifIndexEntry(offset: offset, info: info)
-          previousOffset = offset
+          if not useAbsoluteOffset:
+            previousOffset = offset
         else:
           assert false, "invalid (kv) construct: IntLit expected"
         t = next(s) # skip offset
@@ -224,6 +251,14 @@ proc readIndex*(indexName: string): NifIndex =
   let PrivateT = registerTag "private"
   let IndexT = registerTag "index"
 
+  let ClonerT = registerTag "cloner"
+  let TracerT = registerTag "tracer"
+  let DisarmerT = registerTag "disarmer"
+  let MoverT = registerTag "mover"
+  let DtorT = registerTag "dtor"
+
+  let hookSet = toHashSet([ClonerT, TracerT, DisarmerT, MoverT, DtorT])
+
   result = default(NifIndex)
   var t = next(s)
   if t.tag == IndexT:
@@ -237,6 +272,13 @@ proc readIndex*(indexName: string): NifIndex =
       readSection s, result.private
     else:
       assert false, "'private' expected"
+    t = next(s)
+    while t.tag in hookSet:
+      let tagName = pool.tags[t.tag]
+      result.hooks[tagName] = initTable[string, NifIndexEntry]()
+      readSection(s, result.hooks[tagName])
+      t = next(s)
+
   else:
     assert false, "expected 'index' tag"
 
