@@ -148,6 +148,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addSubtree elemType
     var n = n
     var arrayLen = 0
+    inc n # skips AconstrX
     while n.kind != ParRi:
       skip n
       inc arrayLen
