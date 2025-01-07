@@ -3362,6 +3362,7 @@ proc semArrayConstr(c: var SemContext, it: var Item) =
       buildErr c, it.n.info, "empty array needs a specified type"
     wantParRi c, it.n
     return
+
   var elem = Item(n: it.n, typ: c.types.autoType)
   case it.typ.typeKind
   of ArrayT: # , SeqT, OpenArrayT
