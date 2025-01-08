@@ -2396,6 +2396,13 @@ proc exportMarkerBecomesNifTag(c: var SemContext; insertPos: int; crucial: Cruci
     ]
     c.dest.replace fromBuffer(nifTag), insertPos
 
+proc semLocalValue(c: var SemContext; it: var Item; crucial: CrucialPragma) =
+  if Threadvar in crucial.flags:
+    c.buildErr it.n.info, "a `threadvar` cannot have an init value"
+    skip it.n
+  else:
+    semExpr c, it
+
 proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   let declStart = c.dest.len
   takeToken c, n
@@ -2420,7 +2427,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         withNewScope c:
           semConstExpr c, it # 4
       else:
-        semExpr c, it # 4
+        semLocalValue c, it, crucial # 4
       n = it.n
       insertType c, it.typ, beforeType
     else:
@@ -2434,7 +2441,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
           withNewScope c:
             semConstExpr c, it # 4
         else:
-          semExpr c, it # 4
+          semLocalValue c, it, crucial # 4
         n = it.n
         patchType c, it.typ, beforeType
   else:
