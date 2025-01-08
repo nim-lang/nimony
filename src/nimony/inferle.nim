@@ -54,11 +54,43 @@ proc createFacts*(): Facts =
 
 proc `==`(a, b: VarId): bool {.borrow.}
 
+proc negFact(f: var LeXplusC) =
+  # not (a <= b + c)
+  # -->
+  # a >= b + c - 1
+  # a - c + 1 >= b
+  # b <= a + (1 - c)
+  f.c = createXint(1'i64) - f.c
+  swap f.a, f.b
+
+proc negateFacts*(f: var Facts; start: int) =
+  for i in start ..< f.x.len:
+    negFact(f.x[i])
+
+proc variableChangedByDiff*(f: var Facts; x: VarId; diff: xint) =
+  # after `inc x` we know that x is now bigger by 1 so all
+  # Facts like `x <= b + c` are then `x <= b + c + 1`:
+  for i in 0 ..< f.x.len:
+    if f.x[i].a == x:
+      if f.x[i].b == x: discard "nothing to do; x <= x + c <-> x+1 <= x+1 + c"
+      else: f.x[i].c = f.x[i].c + diff
+    elif f.x[i].b == x:
+      f.x[i].c = f.x[i].c - diff
+
+proc invalidateFactsAbout*(f: var Facts; x: VarId) =
+  var i = 0
+  while i < f.x.len:
+    if f.x[i].a == x or f.x[i].b == x:
+      del f.x, i
+    else:
+      inc i
+
 proc simpleImplies(facts: Facts; v: LeXplusC): bool =
   for f in facts.x:
     if f.a == v.a and f.b == v.b:
       # if we know that  a <= b + 3 we can infer that a <= b + 4
       if f.c <= v.c: return true
+  return false
 
 import intsets
 
