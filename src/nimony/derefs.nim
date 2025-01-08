@@ -519,3 +519,4 @@ proc injectDerefs*(n: Cursor): TokenBuf =
   tr(c, n2, WantT)
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
+  result = ensureMove(c.dest)
