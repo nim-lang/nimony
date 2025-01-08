@@ -244,6 +244,7 @@ type
     MemberC = "member"
     InlineC = "inline"
     NoinlineC = "noinline"
+    NimcallC = "nimcall"
 
   AttachedOp* = enum
     attachedDestroy,

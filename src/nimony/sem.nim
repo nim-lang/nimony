@@ -2352,11 +2352,19 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         return
       takeToken c, n
       wantDot c, n # name
+      wantDot c, n # export marker
+      wantDot c, n # pattern
+      wantDot c, n # generics
       let beforeParams = c.dest.len
+      c.openScope()
       semParams c, n
       semLocalTypeImpl c, n, InReturnTypeDecl
       var crucial = default CrucialPragma
       semPragmas c, n, crucial, ProcY
+      wantDot c, n # exceptions
+      wantDot c, n # body
+      # close it here so that pragmas like `requires` can refer to the params:
+      c.closeScope()
       wantParRi c, n
       if crucial.hasVarargs.isValid:
         addVarargsParameter c, beforeParams, crucial.hasVarargs
