@@ -117,7 +117,7 @@ proc `$`*(a: xint): string =
 
 proc createXint*(x: int64): xint =
   if x == low(int64):
-    xint(neg: true, val: cast[uint64](x))
+    xint(neg: true, val: uint64(high(int64)) + 1'u64)
   elif x < 0:
     xint(neg: true, val: uint64(-x))
   else:
