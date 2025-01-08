@@ -288,13 +288,9 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   if f.substructureKind == ParamsS:
     inc f
     if f.kind != ParRi: inc hasParams
-  elif f.kind == DotToken:
-    inc f
   if a.substructureKind == ParamsS:
     inc a
     if a.kind != ParRi: inc hasParams, 2
-  elif a.kind == DotToken:
-    inc a
   if hasParams == 3:
     while f.kind != ParRi and a.kind != ParRi:
       var fParam = takeLocal(f)
@@ -321,6 +317,10 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error "parameter lists do not match"
     skipToEnd f
 
+  # also correct for the DotToken case:
+  inc f
+  inc a
+
   # match return types:
   let fret = typeKind f
   let aret = typeKind a
@@ -335,7 +335,6 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   if fcc != acc:
     m.error "calling conventions do not match"
   skipToEnd f
-  skipToEnd a
 
 const
   TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
