@@ -116,7 +116,9 @@ proc `$`*(a: xint): string =
   else: $a.val
 
 proc createXint*(x: int64): xint =
-  if x < 0:
+  if x == low(int64):
+    xint(neg: true, val: cast[uint64](x))
+  elif x < 0:
     xint(neg: true, val: uint64(-x))
   else:
     xint(neg: false, val: uint64(x))
