@@ -2,11 +2,11 @@
 ## important distinctions are:
 ## 
 ## 1. generics do not gensym and introduce skUnknown symbols which act as injects,
-##   templates introduce symbols with the same symbol kind
-##   - aim is to use the inject mechanism for generics but with scope behavior
-##     mixing this with the template behavior doesn't really make sense
-##     (i.e. real symbol - inject - real symbol, injects would be checked first)
-##     but would be backwards compatible
+##    templates introduce symbols with the same symbol kind
+##  - aim is to use the inject mechanism for generics but with scope behavior
+##    mixing this with the template behavior doesn't really make sense
+##    (i.e. real symbol - inject - real symbol, injects would be checked first)
+##    but would be backwards compatible
 ## 2. the symbol binding rules seem slightly different (can't tell if these are mostly just special rules for dot fields)
 
 import std/[assertions, sets]
@@ -54,19 +54,18 @@ proc semMixinStmt(c: var SemContext; n: var Cursor; toMixin: var HashSet[StrId])
   wantParRi c, n
 
 type
-  UntypedCtxMode = enum
+  UntypedMode = enum
     UntypedTemplate
     UntypedGeneric
   UntypedCtx = object
     c: ptr SemContext
-    mode: UntypedCtxMode
+    mode: UntypedMode
     toBind: HashSet[SymId]
     toMixin: HashSet[StrId]
     scopeIntroducedInjects: seq[HashSet[StrId]]
     currentInjects: HashSet[StrId]
     params, gensyms: HashSet[SymId]
-    cursorInBody: bool # only for nimsuggest
-    scopeN: int
+    inNestedRoutine: int
     noGenSym: int
     inTemplateHeader: int
 
@@ -313,12 +312,12 @@ when false:
     for i in paramsPos+1..miscPos:
       n[i] = semTemplBody(c, n[i])
     # open scope for locals
-    inc c.scopeN
+    inc c.inNestedRoutine
     openScope(c)
     n[bodyPos] = semTemplBody(c, n[bodyPos])
     # close scope for locals
     closeScope(c)
-    dec c.scopeN
+    dec c.inNestedRoutine
     # close scope for parameters
     closeScope(c)
 
@@ -386,7 +385,7 @@ proc semTemplBody(c: var UntypedCtx; n: var Cursor) =
       of BindS:
         semBindStmt c.c[], n, c.toBind
       of MixinS:
-        if c.scopeN > 0:
+        if c.inNestedRoutine > 0:
           takeToken c.c[], n
           while n.kind != ParRi:
             semTemplBody c, n
