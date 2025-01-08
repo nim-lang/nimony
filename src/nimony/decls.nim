@@ -41,6 +41,7 @@ proc takeLocal*(c: var Cursor): Local =
     result.typ = c
     skip c
     result.val = c
+    skip c
 
 proc asLocal*(c: Cursor): Local =
   var c = c
@@ -87,6 +88,7 @@ proc takeRoutine*(c: var Cursor): Routine =
     result.effects = c
     skip c
     result.body = c
+    skip c
 
 const
   TypevarsPos* = 3

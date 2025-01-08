@@ -2616,7 +2616,6 @@ proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
         if n.substructureKind == ParamS:
           var local = takeLocal(n)
           result.add local.typ
-          skip n
           skipParRi n
         else:
           break
