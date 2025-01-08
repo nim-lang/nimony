@@ -374,9 +374,7 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
         moveToInitSection:
           c.add name
           c.add AsgnOpr
-          inc c.inSimpleInit
           genx c, t, d.value
-          dec c.inSimpleInit
           c.add Semicolon
       else:
         c.add AsgnOpr
