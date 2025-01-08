@@ -63,9 +63,9 @@ proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
 
 proc isTrivialObjectBody(c: var LiftingCtx; body: Cursor): bool =
   var n = body
-  inc n # skip `(object` token
   if n.typeKind in {RefT, PtrT}:
     inc n
+  inc n # skip `(object` token
 
   var baseType = n
   skip n # skip basetype
