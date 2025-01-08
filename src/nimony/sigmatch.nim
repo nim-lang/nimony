@@ -53,6 +53,8 @@ proc error(m: var Match; msg: sink string) =
   if m.err: return # first error is the important one
   m.err = true
   m.error = MatchError(info: m.argInfo, msg: msg, pos: m.pos+1)
+  #writeStackTrace()
+  #echo "ERROR: ", msg
 
 proc addErrorMsg*(dest: var string; m: Match) =
   assert m.err
@@ -263,9 +265,16 @@ proc linearMatch(m: var Match; f, a: var Cursor, leaveLastParRi = true) =
     # only match a single tree/token:
     if nested == 0: break
 
+proc expectParRi(m: var Match; f: var Cursor) =
+  if f.kind == ParRi:
+    inc f
+  else:
+    m.error "BUG: formal type not at end!"
+
 proc extractCallConv(c: var Cursor): CallConv =
   result = NimcallC
   if substructureKind(c) == PragmasS:
+    inc c
     while c.kind != ParRi:
       let res = callConvKind(c)
       if res != NoCallConv:
@@ -334,7 +343,9 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   let acc = extractCallConv(a)
   if fcc != acc:
     m.error "calling conventions do not match"
-  skipToEnd f
+  skip f # effects
+  skip f # body
+  expectParRi m, f
 
 const
   TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
@@ -446,12 +457,6 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   else:
     m.error expected(f, a)
   inc f
-
-proc expectParRi(m: var Match; f: var Cursor) =
-  if f.kind == ParRi:
-    inc f
-  else:
-    m.error "BUG: formal type not at end!"
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
@@ -587,11 +592,9 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       case a.typeKind
       of NilT:
         discard "ok"
-        inc f
         skip f
       else:
         procTypeMatch m, f, a
-      expectParRi m, f
     of NoType, ObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IterT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error "BUG: unhandled type: " & pool.tags[f.tagId]
