@@ -1,8 +1,19 @@
-import std/[assertions, packedsets]
+## attempt at combining generic and template untyped prepasses
+## important distinctions are:
+## 
+## 1. generics do not gensym and introduce skUnknown symbols which act as injects,
+##   templates introduce symbols with the same symbol kind
+##   - aim is to use the inject mechanism for generics but with scope behavior
+##     mixing this with the template behavior doesn't really make sense
+##     (i.e. real symbol - inject - real symbol, injects would be checked first)
+##     but would be backwards compatible
+## 2. the symbol binding rules seem slightly different (can't tell if these are mostly just special rules for dot fields)
+
+import std/[assertions, sets]
 include nifprelude
 import nimony_model, decls, programs, semdata, sembasics, asthelpers, symtabs
 
-proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var PackedSet[SymId]) =
+proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var HashSet[SymId]) =
   takeToken c, n
   while n.kind != ParRi:
     # If 'a' is an overloaded symbol, we used to use the first symbol
@@ -32,7 +43,7 @@ proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var PackedSet[SymId])
         raiseAssert("unreachable")
   wantParRi c, n
 
-proc semMixinStmt(c: var SemContext; n: var Cursor; toMixin: var PackedSet[StrId]) =
+proc semMixinStmt(c: var SemContext; n: var Cursor; toMixin: var HashSet[StrId]) =
   takeToken c, n
   while n.kind != ParRi:
     let name = getIdent(n)
@@ -43,20 +54,44 @@ proc semMixinStmt(c: var SemContext; n: var Cursor; toMixin: var PackedSet[StrId
   wantParRi c, n
 
 type
-  TemplCtx = object
+  UntypedCtxMode = enum
+    UntypedTemplate
+    UntypedGeneric
+  UntypedCtx = object
     c: ptr SemContext
-    toBind: PackedSet[SymId]
-    toMixin, toInject: PackedSet[StrId]
-    params, gensyms: PackedSet[SymId]
+    mode: UntypedCtxMode
+    toBind: HashSet[SymId]
+    toMixin: HashSet[StrId]
+    scopeIntroducedInjects: seq[HashSet[StrId]]
+    currentInjects: HashSet[StrId]
+    params, gensyms: HashSet[SymId]
     cursorInBody: bool # only for nimsuggest
     scopeN: int
     noGenSym: int
     inTemplateHeader: int
 
-proc isTemplParam(c: TemplCtx, s: SymId): bool {.inline.} =
+proc openScope(c: var UntypedCtx) =
+  openScope c.c[]
+  c.scopeIntroducedInjects.add(initHashSet[StrId]())
+
+proc closeScope(c: var UntypedCtx) =
+  closeScope c.c[]
+  var last = c.scopeIntroducedInjects.pop()
+  for prevInject in last:
+    c.currentInjects.excl prevInject
+
+proc inject(c: var UntypedCtx, s: StrId) =
+  if not c.currentInjects.containsOrIncl(s):
+    if c.scopeIntroducedInjects.len != 0:
+      c.scopeIntroducedInjects[^1].incl s
+
+proc isInjected(c: var UntypedCtx, s: StrId): bool {.inline.} =
+  result = s in c.currentInjects
+
+proc isTemplParam(c: UntypedCtx, s: SymId): bool {.inline.} =
   result = s in c.params
 
-proc getIdentReplaceParams(c: var TemplCtx, n: var Cursor): bool =
+proc getIdentReplaceParams(c: var UntypedCtx, n: var Cursor): bool =
   case n.kind
   of Ident:
     result = false
@@ -104,58 +139,69 @@ proc symBinding(n: Cursor): TSymBinding =
     else: discard
     skip n
 
-proc addLocalDecl(c: var TemplCtx, n: var Cursor, k: SymKind) =
-  # locals default to 'gensym', fields default to 'inject':
-  var pragmas = asLocal(n).pragmas
-  if (pragmas.kind != DotToken and symBinding(pragmas) == spInject) or
-      k == FldY:
-    # even if injected, don't produce a sym choice here:
-    #n = semTemplBody(c, n)
-    takeToken c.c[], n
-    let identStart = c.c.dest.len
-    let hasParam = getIdentReplaceParams(c, n)
-    if not hasParam:
-      if k != FldY:
-        var output = cursorAt(c.c.dest, identStart)
-        let ident = getIdent(output)
-        endRead(c.c.dest)
-        c.toInject.incl(ident)
-  else:
-    if pragmas.kind != DotToken:
-      inc pragmas
-      when false:
-        while pragmas.kind != ParRi:
-          # see D20210801T100514
-          var found = false
-          if ni.kind == nkIdent:
-            for a in templatePragmas:
-              if ni.ident.id == ord(a):
-                found = true
-                break
-          if not found:
-            openScope(c)
-            pragmaNode[i] = semTemplBody(c, pragmaNode[i])
-            closeScope(c)
-    let nameStart = c.c.dest.len
-    let hasParam = getIdentReplaceParams(c, n)
-    if not hasParam:
-      var name = cursorAt(c.c.dest, nameStart)
-      let info = name.info
-      if name.kind != Symbol and not (name.kind == Ident and pool.strings[name.litId] == "_"):
-        var ident = pool.strings[getIdent(name)]
-        endRead(c.c.dest)
-        makeLocalSym(c.c[], ident)
-        let s = Sym(kind: k, name: pool.syms.getOrIncl(ident),
-                    pos: c.c.dest.len)
-        let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
-        c.c[].addSym(delayed)
-        var symdefBuf = createTokenBuf(1)
-        symdefBuf.add symdefToken(s.name, info)
-        c.c.dest.replace(cursorAt(symdefBuf, 0), nameStart)
-        if k == ParamY and c.inTemplateHeader > 0:
-          c.params.incl s.name
+proc addLocalDecl(c: var UntypedCtx, n: Cursor, k: SymKind; nameStart: int) =
+  let local = asLocal(n)
+  if c.mode == UntypedTemplate:
+    # locals default to 'gensym', fields default to 'inject':
+    var pragmas = local.pragmas
+    if (pragmas.kind != DotToken and symBinding(pragmas) == spInject) or
+        k == FldY:
+      # even if injected, don't produce a sym choice here:
+      #n = semTemplBody(c, n)
+      var name = local.name
+      var newNameBuf = createTokenBuf(4)
+      swap c.c.dest, newNameBuf
+      let hasParam = getIdentReplaceParams(c, name)
+      swap c.c.dest, newNameBuf
+      var newName = cursorAt(newNameBuf, 0)
+      if not hasParam:
+        if k != FldY:
+          let ident = getIdent(newName)
+          c.inject(ident)
       else:
-        endRead(c.c.dest)
+        c.c.dest.replace(newName, nameStart)
+    else:
+      if pragmas.kind != DotToken:
+        inc pragmas
+        when false:
+          while pragmas.kind != ParRi:
+            # see D20210801T100514
+            var found = false
+            if ni.kind == nkIdent:
+              for a in templatePragmas:
+                if ni.ident.id == ord(a):
+                  found = true
+                  break
+            if not found:
+              openScope(c)
+              pragmaNode[i] = semTemplBody(c, pragmaNode[i])
+              closeScope(c)
+      var name = local.name
+      var newNameBuf = createTokenBuf(4)
+      swap c.c.dest, newNameBuf
+      let hasParam = getIdentReplaceParams(c, name)
+      swap c.c.dest, newNameBuf
+      var newName = cursorAt(newNameBuf, 0)
+      if not hasParam:
+        let info = newName.info
+        if newName.kind != Symbol and not (newName.kind == Ident and pool.strings[newName.litId] == "_"):
+          var ident = pool.strings[getIdent(newName)]
+          makeLocalSym(c.c[], ident)
+          let s = Sym(kind: k, name: pool.syms.getOrIncl(ident),
+                      pos: c.c.dest.len)
+          let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
+          c.c[].addSym(delayed)
+          newNameBuf = createTokenBuf(1)
+          newNameBuf.add symdefToken(s.name, info)
+          c.c.dest.replace(cursorAt(newNameBuf, 0), nameStart)
+          if k == ParamY and c.inTemplateHeader > 0:
+            c.params.incl s.name
+      else:
+        c.c.dest.replace(newName, nameStart)
+  else:
+    var name = asLocal(n).name
+    let ident = getIdent(name)
+    c.inject(ident)
 
 when false:
   proc semTemplSymbol(c: var TemplCtx, n: var Cursor, s: SymId; isField, isAmbiguous: bool) =
@@ -276,19 +322,20 @@ when false:
     # close scope for parameters
     closeScope(c)
 
-proc semTemplLocal(c: var TemplCtx; n: var Cursor; k: SymKind) =
+proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
   raiseAssert("unimplemented")
 
-proc semTemplTypeDecl(c: var TemplCtx; n: var Cursor) =
+proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
   raiseAssert("unimplemented")
 
-proc semTemplRoutineDecl(c: var TemplCtx; n: var Cursor; k: SymKind) =
+proc semTemplRoutineDecl(c: var UntypedCtx; n: var Cursor; k: SymKind) =
   raiseAssert("unimplemented")
 
-proc semTemplBody(c: var TemplCtx; n: var Cursor) =
+proc semTemplBody(c: var UntypedCtx; n: var Cursor) =
   case n.kind
   of Ident:
-    if n.litId in c.toInject:
+    if isInjected(c, n.litId):
+      # skUnknown case for generics
       c.c.dest.add n
       return
     #var choiceBuf = createTokenBuf(4)
@@ -351,48 +398,48 @@ proc semTemplBody(c: var TemplCtx; n: var Cursor) =
         while n.kind != ParRi:
           case n.substructureKind
           of ElifS:
-            openScope c.c[]
+            openScope c
             semTemplBody c, n
             semTemplBody c, n
-            closeScope c.c[]
+            closeScope c
           of ElseS:
-            openScope c.c[]
+            openScope c
             semTemplBody c, n
-            closeScope c.c[]
+            closeScope c
           else: raiseAssert("illformed AST")
         wantParRi c.c[], n
       of WhileS:
         takeToken c.c[], n
-        openScope c.c[]
+        openScope c
         semTemplBody c, n
-        closeScope c.c[]
+        closeScope c
         wantParRi c.c[], n
       of CaseS:
         takeToken c.c[], n
-        openScope c.c[]
+        openScope c
         semTemplBody c, n
         while n.kind != ParRi:
           case n.substructureKind
           of OfS:
             semTemplBody c, n
-            openScope c.c[]
+            openScope c
             semTemplBody c, n
-            closeScope c.c[]
+            closeScope c
           of ElifS:
-            openScope c.c[]
+            openScope c
             semTemplBody c, n
             semTemplBody c, n
-            closeScope c.c[]
+            closeScope c
           of ElseS:
-            openScope c.c[]
+            openScope c
             semTemplBody c, n
-            closeScope c.c[]
+            closeScope c
           else: raiseAssert("illformed AST")
-        closeScope c.c[]
+        closeScope c
         wantParRi c.c[], n
       of ForS:
         takeToken c.c[], n
-        openScope c.c[]
+        openScope c
         case n.substructureKind
         of UnpackFlatS, UnpackTupS:
           takeToken c.c[], n
@@ -401,20 +448,20 @@ proc semTemplBody(c: var TemplCtx; n: var Cursor) =
           wantParRi c.c[], n
         else: raiseAssert("illformed AST")
         semTemplBody c, n
-        openScope c.c[]
+        openScope c
         semTemplBody c, n
-        closeScope c.c[]
-        closeScope c.c[]
+        closeScope c
+        closeScope c
         wantParRi c.c[], n
       of BlockS:
         takeToken c.c[], n
-        openScope c.c[]
+        openScope c
         if n.kind == DotToken:
           takeToken c.c[], n
         else:
           raiseAssert("unimplemented")
         semTemplBody c, n
-        closeScope c.c[]
+        closeScope c
         wantParRi c.c[], n
       of VarS: semTemplLocal(c, n, VarY)
       of LetS: semTemplLocal(c, n, LetY)
@@ -455,6 +502,7 @@ proc semTemplBody(c: var TemplCtx; n: var Cursor) =
           else:
             result = semTemplBodySons(c, n)
       else:
+        # XXX type expressions
         raiseAssert("unimplemented")
     of NilX:
       takeTree c.c[], n
