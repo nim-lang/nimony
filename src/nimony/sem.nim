@@ -13,7 +13,7 @@ include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
-  semdata, sembasics, semos, expreval, semborrow, enumtostr
+  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs
 
 import ".." / gear2 / modnames
 
@@ -772,7 +772,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         inc n # skip the SymbolDef
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
-              SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
+              LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
               ArrAtX, DerefX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
@@ -4156,6 +4156,38 @@ proc semDeref(c: var SemContext; it: var Item) =
     c.buildErr info, "invalid type for deref: " & typeToString(arg.typ)
   commonType c, it, beforeExpr, expected
 
+proc semAddr(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let info = it.n.info
+  let expected = it.typ
+  let beforeArg = c.dest.len
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, arg
+  it.n = arg.n
+  wantParRi c, it.n
+  let a = cursorAt(c.dest, beforeArg)
+  if isAddressable(a):
+    endRead c.dest
+  else:
+    let asStr = toString(a, false)
+    endRead c.dest
+    c.dest.shrink beforeArg
+    c.buildErr info, "invalid expression for `addr` operation: " & asStr
+
+  it.typ = ptrTypeOf(c, arg.typ)
+  commonType c, it, beforeExpr, expected
+
+proc semSizeof(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let expected = it.typ
+  # We don't really have any kind of restrictions on the argument here
+  # and it was semchecked already in overload resolution, so it is fine
+  # to just copy it:
+  takeTree c, it.n
+  it.typ = c.types.intType
+  commonType c, it, beforeExpr, expected
+
 proc whichPass(c: SemContext): PassKind =
   result = if c.phase == SemcheckSignatures: checkSignatures else: checkBody
 
@@ -4399,7 +4431,11 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semStmtsExpr c, it
     of DerefX:
       semDeref c, it
-    of AddrX, SizeofX, KvX,
+    of AddrX:
+      semAddr c, it
+    of SizeofX:
+      semSizeof c, it
+    of KvX,
        RangeX, RangesX,
        OconvX, HconvX,
        CompilesX, TypeofX:

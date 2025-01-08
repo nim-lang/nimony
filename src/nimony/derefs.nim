@@ -60,7 +60,7 @@ proc wantParRi(c: var Context; n: var Cursor) =
   else:
     error "expected ')', but got: ", n
 
-proc rootOf(c: var Context; n: Cursor): SymId =
+proc rootOf(n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind
@@ -76,6 +76,18 @@ proc rootOf(c: var Context; n: Cursor): SymId =
     result = n.symId
   else:
     result = NoSymId
+
+proc isAddressable*(n: Cursor): bool =
+  ## Addressable means that we can take the address of the expression.
+  let s = rootOf(n)
+  if s != NoSymId:
+    let res = tryLoadSym(s)
+    assert res.status == LacksNothing
+    let local = asLocal(res.decl)
+    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, LetY, ConstY}
+    # Assignments to `ConstY` are prevented later.
+  else:
+    result = false
 
 proc tr(c: var Context; n: var Cursor; e: Expects)
 
@@ -205,7 +217,7 @@ proc trReturn(c: var Context; n: var Cursor) =
   wantParRi c, n
 
 proc mightBeDangerous(c: var Context; n: Cursor) =
-  let root = rootOf(c, n)
+  let root = rootOf(n)
   if root != NoSymId:
     for d in items(c.r.dangerousLocations):
       if d[0] == root:
@@ -350,7 +362,7 @@ proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
     var dangerous = false
     trCall c, ri, e, dangerous
     if dangerous:
-      let s = rootOf(c, le)
+      let s = rootOf(le)
       if s != NoSymId:
         c.r.dangerousLocations.add (s, ri)
   else:
