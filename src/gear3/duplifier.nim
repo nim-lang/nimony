@@ -85,8 +85,8 @@ proc trReturn(c: var Context; n: Cursor) =
       tr c, dest, tree, retVal, WantOwner
 
 proc evalLeftHandSide(c: var Context; le: Cursor): TokenBuf =
-  result = createTempTree(dest.m)
-  if le.kind in {SymUse, ModuleSymUse}:
+  result = createTokenBuf(10)
+  if le.kind == Symbol:
     # simple enough:
     copyTree result, tree, le
   else:

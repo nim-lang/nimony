@@ -27,9 +27,6 @@ include nifprelude
 
 import nimony_model, programs, decls, typenav, sembasics, reporters
 
-const
-  NoSymId = SymId(0)
-
 type
   Expects = enum
     WantT

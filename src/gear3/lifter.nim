@@ -34,6 +34,7 @@ type
     info: PackedLineInfo
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
+    hookNames: Table[string, int]
 
 
 # Phase 1: Determine if the =hook is trivial:
@@ -140,7 +141,7 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
           copyTree c.dest, paramA
     of attachedDestroy, attachedDup:
       copyTree c.dest, paramA
-    of attachedCopy, attachedTrace:
+    of attachedCopy, attachedTrace, attachedSink:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
 
@@ -149,78 +150,67 @@ proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
   of attachedDestroy, attachedWasMoved: discard
   of attachedDup:
     copyTree c.dest, paramA
-  of attachedCopy:
+  of attachedCopy, attachedSink:
     copyIntoKind c.dest, AsgnS, c.info:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
   of attachedTrace: discard
 
+proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
+  result = hookName(op) & "_" & key
+  var counter = addr c.hookNames.mgetOrPut(result, -1)
+  counter[] += 1
+  result.add '.'
+  result.addInt counter[]
+  result.add '.'
+  result.add "hooks" # c.thisModuleSuffix
+
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
   let key = mangle(t)
   result = c.structuralTypeToHook[op].getOrDefault(key)
   if result == SymId(0):
-    result = declareSym(c.p[c.thisModule], ProcDecl, attachedOpToLitId(op))
+    let name = generateHookName(c, op, key)
+    result = pool.syms.getOrIncl(name)
     c.requests.add GenHookRequest(sym: result, typ: t, op: op)
     c.structuralTypeToHook[op][key] = result
 
-proc getStringHook(c: var LiftingCtx): SymId =
-  case c.op
-  of attachedDestroy:
-    result = getCodegenProc(c.p, "nimStrDestroy")
-  of attachedWasMoved:
-    result = getCodegenProc(c.p, "nimStrWasMoved")
-  of attachedDup:
-    result = getCodegenProc(c.p, "nimStrDup")
-  of attachedCopy:
-    result = getCodegenProc(c.p, "nimStrCopy")
-  of attachedTrace:
-    result = SymId(m: ModuleId(0), s: SymId(-1))
-
 proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
-  if s.s != SymId(0):
-    genCallHook c, dest, s, paramA, paramB
+  if s != NoSymId:
+    genCallHook c, s, paramA, paramB
 
-proc lift(c: var LiftingCtx; typ, orig: TypeCursor): SymId =
+proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # Goal: We produce a call to some function. Maybe this function must be
   # synthesized, if so this will be done by calling `requestLifting`.
   if isTrivial(c, typ):
     return NoSymId
-  case c.p[typ].kind
-  of StringTy:
-    result = getStringHook(c)
-  of PtrTy, ArrayPtrTy:
-    assert false, "ptr T should have been a 'trivial' type"
-  of ObjectTy, DistinctTy:
-    let symId = fromModuleSymUse(c.p, c.p[typ.m], typ.t)
-    result = requestLifting(c, c.op, symId, orig)
-  of AliasTy:
-    let t = typeImpl(c.p, typ)
-    result = lift(c, t, t)
-  of BracketTy:
-    let ct = canonType(c, c.p[typ.m], typ.t)
-    let fn = getOrDefault(c.p[c.thisModule].instantiatedOps[c.op], ct)
-    if fn != SymId(0):
-      result = SymId(m: c.thisModule, s: fn)
+  var typ = typ
+  var counter = 20
+  while counter > 0 and typ.kind == Symbol:
+    let res = tryLoadSym(typ.symId)
+    if res.status == LacksNothing:
+      let d = asTypeDecl(res.decl)
+      typ = d.body
     else:
-      let impl = skipGenericAlias(c.p, typ)
-      if c.p[impl].kind == BracketTy:
-        result = lift(c, instantiateType(c.p, impl, c.types), typ)
-      else:
-        result = lift(c, impl, typ)
-  of TupleTy, ArrayTy, RefTy:
-    result = requestLiftingForStructuralType(c, c.op, orig)
+      raiseAssert "could not load: " & pool.syms[typ.symId]
+    dec counter
+
+  case typ.typeKind
+  of PtrT:
+    raiseAssert "ptr T should have been a 'trivial' type"
+  of ObjectT, DistinctT, TupleT, ArrayT, RefT:
+    result = requestLifting(c, c.op, typ)
   else:
-    result = InvalidSymId
+    result = NoSymId
 
 when not defined(nimony):
-  proc unravel(c: var LiftingCtx; typ, orig: TypeCursor; paramA, paramB: TokenBuf)
+  proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf)
 
 proc needsDeref(c: var LiftingCtx; obj: TokenBuf; isSecondParam: bool): bool {.inline.} =
-  result = (c.op in {attachedTrace, attachedWasMoved} or (c.op == attachedCopy and not isSecondParam)) and
+  result = (c.op in {attachedTrace, attachedWasMoved} or (c.op in {attachedCopy, attachedSink} and not isSecondParam)) and
     obj[0].kind == Symbol # still access to the parameter directly
 
 proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name, typ: Cursor; isSecondParam = false): TokenBuf =
-  result = createTempTree(c.thisModule)
+  result = createTokenBuf(4)
   let nd = needsDeref(c, obj, isSecondParam)
   copyIntoKind(result, if nd: VarFieldAccess else: FieldAccess, c.info):
     copyTree result, obj, 0
@@ -228,7 +218,7 @@ proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name, typ: Cursor; isSecon
     copyTreeX result, typ, c.p
 
 proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; isSecondParam = false): TokenBuf =
-  result = createTempTree(c.thisModule)
+  result = createTokenBuf(4)
   let nd = needsDeref(c, tup, isSecondParam)
   copyIntoKind(result, TupleFieldAccess, c.info):
     if nd:
@@ -262,8 +252,7 @@ proc unravelObj(c: var LiftingCtx;
       unravel c, dest, fieldType, fieldType, a, b
 
 proc unravelObjForDup(c: var LiftingCtx;
-                      n: Cursor; paramA, paramB: TokenBuf;
-                      orig: TypeCursor) =
+                      n: Cursor; paramA, paramB: TokenBuf) =
   assert n.kind == ObjectBody
   let fieldList = ithSon(n, objectBodyPos)
   copyIntoKind dest, ObjConstr, c.info:
@@ -295,8 +284,7 @@ proc unravelTuple(c: var LiftingCtx;
     inc idx
 
 proc unravelTupleForDup(c: var LiftingCtx;
-                        n: Cursor; paramA, paramB: TokenBuf;
-                        orig: TypeCursor) =
+                        n: Cursor; paramA, paramB: TokenBuf) =
   assert n.kind == TupleTy
   copyIntoKind dest, TupleConstr, c.info:
     copyTree dest, c.p[orig.m], orig.t
@@ -315,7 +303,7 @@ template verbatim(result: TokenBuf; s: string) =
   addVerbatim result, getOrIncl(c.p[result.m].strings, s), c.info
 
 proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId): TokenBuf =
-  result = createTempTree(c.thisModule)
+  result = createTokenBuf(4)
   copyIntoKind result, ArrayAt, c.info:
     copyTree result, arr, 0
     addSymUse result, indexVar, c.info
@@ -373,8 +361,7 @@ proc unravelArray(c: var LiftingCtx;
       incIndexVar c, dest, indexVar
 
 proc unravelArrayForDup(c: var LiftingCtx;
-                        n: Cursor; paramA, paramB: TokenBuf;
-                        orig: TypeCursor) =
+                        n: Cursor; paramA, paramB: TokenBuf) =
   assert n.kind == ArrayTy
   # We generate: (;
   # var result: array;
@@ -396,7 +383,7 @@ proc unravelArrayForDup(c: var LiftingCtx;
         copyTreeX(dest, c.p[orig.m], orig.t, c.p)
         add dest, Empty, c.info # no initial value
 
-      var resTree = createTempTree(c.thisModule)
+      var resTree = createTokenBuf(4)
       addSymUse resTree, res, c.info
 
       let fieldType = TypeCursor(m: tree.id, t: elem)
@@ -414,7 +401,7 @@ proc unravelArrayForDup(c: var LiftingCtx;
     addSymUse dest, res, c.info
 
 proc derefInner(c: var LiftingCtx; x: TokenBuf): TokenBuf =
-  result = createTempTree(x.m)
+  result = createTokenBuf(10)
   copyIntoEmit c, result:
     copyTree result, x, 0
     verbatim result, "->inner"
@@ -498,7 +485,7 @@ proc unravelRef(c: var LiftingCtx; refType: TypeCursor;
       copyTree dest, paramA, 0
       copyTree dest, paramB, 0
 
-proc unravel(c: var LiftingCtx; typ, orig: TypeCursor; paramA, paramB: TokenBuf) =
+proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   # `unravel`'s job is to "expand" the object fields in contrast to `lift`.
   if isTrivial(c, typ):
     genTrivialOp c, dest, paramA, paramB
@@ -546,20 +533,8 @@ proc unravel(c: var LiftingCtx; typ, orig: TypeCursor; paramA, paramB: TokenBuf)
     else:
       unravelArray c, dest, c.p[typ.m], typ.t, paramA, paramB
   else:
-    #lift c, dest, typ, paramA, paramB
     let fn = lift(c, typ, orig)
     maybeCallHook c, dest, fn, paramA, paramB
-
-proc unravelFirstLevel(c: var LiftingCtx; typ, orig: TypeCursor; paramA, paramB: TokenBuf) =
-  if c.p[typ].kind == BracketTy:
-    let impl = skipGenericAlias(c.p, typ)
-    if c.p[impl].kind == BracketTy:
-      let inst = instantiateType(c.p, impl, c.types)
-      unravel(c, dest, inst, orig, paramA, paramB)
-    else:
-      unravel c, dest, impl, orig, paramA, paramB
-  else:
-    unravel c, dest, typ, orig, paramA, paramB
 
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: NodeKind) =
   copyIntoKind(dest, ParamDecl, c.info):
@@ -581,11 +556,11 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   #echo "generating ", c.p[dest.m].strings[name] # name
   #result = declareSym(c.p[c.thisModule], ProcDecl, name)
   let paramA = declareSym(c.p[c.thisModule], ParamDecl, "dest")
-  var paramTreeA = createTempTree(c.thisModule)
+  var paramTreeA = createTokenBuf(4)
   addSymUse paramTreeA, paramA, c.info
 
   var paramB = SymId(-1)
-  var paramTreeB = createTempTree(c.thisModule)
+  var paramTreeB = createTokenBuf(4)
 
   case c.op
   of attachedDestroy, attachedWasMoved, attachedDup: discard
@@ -633,11 +608,11 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       copyIntoKind(dest, StmtList, c.info):
         let d = takePos dest
         copyIntoKind(dest, RetS, c.info):
-          unravelFirstLevel(c, dest, typ, typ, paramTreeA, paramTreeB)
+          unravel(c, dest, typ, typ, paramTreeA, paramTreeB)
         assert hasAtLeastXsons(dest, d, 1), typeToString(c.p, typ)
     else:
       copyIntoKind(dest, StmtList, c.info):
-        unravelFirstLevel(c, dest, typ, typ, paramTreeA, paramTreeB)
+        unravel(c, dest, typ, typ, paramTreeA, paramTreeB)
 
 proc genMissingHooks*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
@@ -647,9 +622,8 @@ proc genMissingHooks*(c: var LiftingCtx) =
       c.op = reqs[i].op
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
-proc createLiftingCtx*(p: Program; thisModule: ModuleId; types: TreeId): ref LiftingCtx =
-  (ref LiftingCtx)(p: p, thisModule: thisModule, types: types, op: attachedDestroy,
-    info: NoLineInfo)
+proc createLiftingCtx*(): ref LiftingCtx =
+  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo)
 
 proc requestHook*(c: var LiftingCtx; sym: SymId; typ: TypeCursor; op: AttachedOp) =
   c.op = op

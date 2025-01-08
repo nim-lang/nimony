@@ -251,6 +251,7 @@ type
     attachedWasMoved,
     attachedDup,
     attachedCopy,
+    attachedSink,
     attachedTrace
 
 declareMatcher parseStmtKind, StmtKind
@@ -354,3 +355,15 @@ proc isDeclarative*(n: Cursor): bool =
 proc firstSon*(n: Cursor): Cursor {.inline.} =
   result = n
   inc result
+
+proc hookName*(op: AttachedOp): string =
+  case op
+  of attachedDestroy: "destroy"
+  of attachedWasMoved: "wasmoved"
+  of attachedDup: "dup"
+  of attachedCopy: "copy"
+  of attachedSink: "sink"
+  of attachedTrace: "trace"
+
+const
+  NoSymId* = SymId(0)
