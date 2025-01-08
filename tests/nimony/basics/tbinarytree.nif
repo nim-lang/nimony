@@ -1,6 +1,6 @@
 (.nif24)
 ,1,tests/nimony/basics/tbinarytree.nim(stmts 5
- (type :int.0.tbivahh0m 
+ (type :int.0.tbivahh0m
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 10,3

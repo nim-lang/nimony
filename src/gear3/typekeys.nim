@@ -7,7 +7,9 @@
 #    distribution, for details about the copyright.
 #
 
+import std/assertions
 include nifprelude
+import ".." / nimony / nimony_model
 import treemangler
 
 proc mangleImpl(b: var Mangler; c: var Cursor) =
@@ -24,6 +26,24 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
         mangleImpl b, c # type is interesting
         skip c # value
         inc c # ParRi
+      elif tag == "array":
+        b.addTree tag
+        inc c
+        mangleImpl b, c # type is interesting
+        if c.kind == ParLe and c.typeKind == RangeT:
+          inc c # RangeT
+          skip c # type is irrelevant, we care about the length
+          assert c.kind == IntLit
+          let first = pool.integers[c.intId]
+          inc c
+          assert c.kind == IntLit
+          let last = pool.integers[c.intId]
+          inc c
+          inc c # ParRi
+          b.addIntLit(last - first + 1)
+        else:
+          mangleImpl b, c
+        inc nested
       else:
         b.addTree(tag)
         inc nested

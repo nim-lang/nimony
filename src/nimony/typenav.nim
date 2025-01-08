@@ -29,7 +29,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   result = c.builtins.autoType # to indicate error
   case exprKind(n)
   of NoExpr:
-    if n.kind == Symbol:
+    case n.kind
+    of Symbol:
       let res = tryLoadSym(n.symId)
       if res.status == LacksNothing:
         let local = asLocal(res.decl)
@@ -40,6 +41,18 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
             result = res.decl
       else:
         quit "could not find symbol: " & pool.syms[n.symId]
+    of IntLit:
+      result = c.builtins.intType
+    of UintLit:
+      result = c.builtins.uintType
+    of CharLit:
+      result = c.builtins.charType
+    of FloatLit:
+      result = c.builtins.floatType
+    of StringLit:
+      result = c.builtins.stringType
+    else:
+      discard
   of AtX, PatX, ArrAtX:
     result = getTypeImpl(c, n.firstSon)
     case typeKind(result)
@@ -135,6 +148,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addSubtree elemType
     var n = n
     var arrayLen = 0
+    inc n # skips AconstrX
     while n.kind != ParRi:
       skip n
       inc arrayLen
