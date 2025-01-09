@@ -773,7 +773,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX}:
+              ArrAtX, DerefX, TupleAtX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -3849,6 +3849,55 @@ proc semTypedAt(c: var SemContext; it: var Item) =
   wantParRi c, it.n
   commonType c, it, beforeExpr, expected
 
+proc semTupleAt(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  takeToken c, it.n
+  let lhsInfo = it.n.info
+  var lhs = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, lhs
+  it.n = lhs.n
+  let beforeIndex = c.dest.len
+  semConstIntExpr c, it.n
+  let typ = skipModifier(lhs.typ)
+  case typ.typeKind
+  of TupleT:
+    c.dest[beforeExpr] = parLeToken(DotX, info)
+    let index = cursorAt(c.dest, beforeIndex)
+    let (err, indexPos) =
+      if isConstIntValue(index):
+        (false, pool.integers[index.intId])
+      else:
+        (true, 0)
+    endRead(c.dest)
+    if err:
+      discard # semConstIntExpr should give error
+    elif indexPos < 0:
+      c.buildErr info, "negative index for tuple not allowed"
+    else:
+      var tup = typ
+      inc tup # skip tag
+      var i = 0
+      while tup.kind != ParRi:
+        if i == indexPos:
+          let fld = asLocal(tup)
+          var fieldSymBuf = createTokenBuf(1)
+          fieldSymBuf.add symToken(fld.name.symId, info)
+          c.dest.replace cursorAt(fieldSymBuf, 0), beforeIndex
+          c.dest.addIntLit(0, info)
+          it.typ = fld.typ
+          i = -1 # found
+          break
+        skip tup
+        inc i
+      if i >= 0: # not found
+        c.buildErr info, "index " & $indexPos & " is not in tuple " & typeToString(typ) & " of length " & $i
+  else:
+    c.buildErr lhsInfo, "invalid lhs type for tuple index: " & typeToString(typ)
+  wantParRi c, it.n
+  commonType c, it, beforeExpr, expected
+
 proc semConv(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   let info = it.n.info
@@ -4352,6 +4401,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSubscript c, it
     of ArrAtX, PatX:
       semTypedAt c, it
+    of TupleAtX:
+      semTupleAt c, it
     of UnpackX:
       takeToken c, it.n
       wantParRi c, it.n

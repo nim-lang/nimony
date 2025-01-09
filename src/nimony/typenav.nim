@@ -107,7 +107,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       result = c.builtins.autoType # still an error
   of RangesX, RangeX:
     result = getTypeImpl(c, n.firstSon)
-  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX:
+  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX, TupleAtX:
     discard "keep the error type"
   of KvX:
     var n = n
