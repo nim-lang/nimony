@@ -1,0 +1,4 @@
+tests/nimony/modules/tfieldviserr.nim(3, 15) Error: undeclared field: private
+tests/nimony/modules/tfieldviserr.nim(4, 12) Error: undeclared identifier
+tests/nimony/modules/tfieldviserr.nim(6, 28) Error: undeclared field: private
+tests/nimony/modules/tfieldviserr.nim(7, 16) Error: undeclared identifier

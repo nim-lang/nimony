@@ -52,6 +52,8 @@ type
     sym*: SymId
     level*: int # inheritance level
     typ*: TypeCursor
+    exported*: bool
+    rootOwner*: SymId # generic root of owner type
 
   SemPhase* = enum
     SemcheckTopLevelSyms,
