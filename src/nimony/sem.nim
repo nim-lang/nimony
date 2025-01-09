@@ -3858,11 +3858,16 @@ proc semTupleAt(c: var SemContext; it: var Item) =
   var lhs = Item(n: it.n, typ: c.types.autoType)
   semExpr c, lhs
   it.n = lhs.n
+  let typ = skipModifier(lhs.typ)
+  if containsGenericParams(typ):
+    var index = Item(n: it.n, typ: c.types.autoType)
+    semExpr c, index
+    it.n = index.n
+    wantParRi c, it.n
+    return
   let beforeIndex = c.dest.len
   semConstIntExpr c, it.n
-  let typ = skipModifier(lhs.typ)
-  case typ.typeKind
-  of TupleT:
+  if typ.typeKind == TupleT:
     c.dest[beforeExpr] = parLeToken(DotX, info)
     let index = cursorAt(c.dest, beforeIndex)
     let (err, indexPos) =
