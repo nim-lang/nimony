@@ -107,7 +107,7 @@ proc evalLeftHandSide(c: var Context; le: Cursor): TokenBuf =
     setDeclPosRaw c.p, c.p[dest.m].syms[tmp], FullTypeId(m: c.localTypes, t: d2)
 
     copyIntoKind result, HiddenDeref, info:
-      addSymUse result, tmp, info
+      copyIntoSymUse result, tmp, info
 
 proc callDestroy(c: var Context; destroyProc: SymId; t: TokenBuf; arg: Cursor) =
   let info = t[arg].info
@@ -118,7 +118,7 @@ proc callDestroy(c: var Context; destroyProc: SymId; t: TokenBuf; arg: Cursor) =
 proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo) =
   copyIntoKind dest, Call, info:
     copyIntoSymUse c.p, dest, destroyProc, info
-    addSymUse dest, arg, info
+    copyIntoSymUse dest, arg, info
 
 proc tempOfTrArg(c: var Context; n: Cursor; typ: FullTypeId): SymId =
   let info = n.info
@@ -200,7 +200,7 @@ proc trAsgn(c: var Context; n: Cursor) =
           #tr c, dest, lhs, StartPos, DontCare
           # XXX Fixme
           copyTree dest, lhs, StartPos
-          addSymUse dest, tmp, ri.info
+          copyIntoSymUse dest, tmp, ri.info
       else:
         if isNotFirstAsgn:
           callDestroy(c, dest, destructor, lhs, StartPos)
@@ -314,7 +314,7 @@ proc finishOwningTemp(dest: var Tree; ow: OwningTemp) =
   if ow.s != SymId(-1):
     dest.patch ow.vr  # finish the VarDecl
     dest.patch ow.st  # finish the StmtList
-    dest.addSymUse ow.s, ow.info
+    dest.copyIntoSymUse ow.s, ow.info
     dest.patch ow.ex  # finish the StmtListExpr
 
 proc trCall(c: var Context; n: Cursor; e: Expects) =
@@ -396,7 +396,7 @@ proc genLastRead(c: var Context; n: Cursor; typ: FullTypeId) =
         copyTree dest, tree, n
 
   dest.patch ow.st # finish the StmtList
-  dest.addSymUse ow.s, ow.info
+  dest.copyIntoSymUse ow.s, ow.info
   dest.patch ow.ex # finish the StmtListExpr
 
 proc trLocation(c: var Context; n: Cursor; e: Expects) =
@@ -524,7 +524,7 @@ proc tr(c: var Context; n: Cursor; e: Expects) =
 
 proc injectDups*(p: Program; t: TreeId; lifter: ref LiftingCtx): TreeId =
   let thisModule = p[t].m
-  var c = Context(p: p, lifter: lifter, procStart: StartPos, localTypes: createTree(p, thisModule))
+  var c = Context(p: p, lifter: lifter, procStart: StartPos, localTypes: createTokenBuf(4))
   assert c.localTypes.int > 0
 
   result = createTree(p, thisModule)

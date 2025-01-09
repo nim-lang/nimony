@@ -141,6 +141,22 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
+  of TupAtX:
+    var n = n
+    inc n # into tuple
+    var tupType = getTypeImpl(c, n)
+    skip n # skip tuple expression
+    if n.kind == IntLit:
+      var idx = pool.integers[n.intId]
+      inc tupType # into the tuple type
+      while idx > 0:
+        skip tupType
+        dec idx
+      if tupType == "fld":
+        let field = asLocal(tupType)
+        result = field.typ
+      else:
+        result = tupType
   of AconstrX:
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)

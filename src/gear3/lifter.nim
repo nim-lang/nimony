@@ -18,7 +18,7 @@ import std/[assertions, tables]
 
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys
-import ".." / nimony / [nimony_model, decls, programs, typenav]
+import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints]
 
 type
   TypeCursor = Cursor
@@ -45,6 +45,10 @@ when not defined(nimony):
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
   # XXX to implement
   false
+
+proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
+  # XXX to implement somehow
+  SymId(0)
 
 proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var n = n
@@ -120,14 +124,6 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
 
 # Phase 2: Do the lifting
 
-#[
-Lifting =dup is done like this:
-
-proc =dup(x: Obj): Obj =
-  Obj(field: x.field, ..., complex: =dup(x.complex))
-
-]#
-
 proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
   copyIntoKind c.dest, CallX, c.info:
     copyIntoSymUse c.dest, s, c.info
@@ -139,18 +135,16 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
       else:
         copyIntoKind c.dest, HaddrX, c.info:
           copyTree c.dest, paramA
-    of attachedDestroy, attachedDup:
+    of attachedDestroy:
       copyTree c.dest, paramA
-    of attachedCopy, attachedTrace, attachedSink:
+    of attachedCopy, attachedTrace, attachedSink, attachedDup:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
 
 proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
   case c.op
   of attachedDestroy, attachedWasMoved: discard
-  of attachedDup:
-    copyTree c.dest, paramA
-  of attachedCopy, attachedSink:
+  of attachedCopy, attachedSink, attachedDup:
     copyIntoKind c.dest, AsgnS, c.info:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
@@ -183,17 +177,8 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # synthesized, if so this will be done by calling `requestLifting`.
   if isTrivial(c, typ):
     return NoSymId
-  var typ = typ
-  var counter = 20
-  while counter > 0 and typ.kind == Symbol:
-    let res = tryLoadSym(typ.symId)
-    if res.status == LacksNothing:
-      let d = asTypeDecl(res.decl)
-      typ = d.body
-    else:
-      raiseAssert "could not load: " & pool.syms[typ.symId]
-    dec counter
 
+  let typ = toTypeImpl typ
   case typ.typeKind
   of PtrT:
     raiseAssert "ptr T should have been a 'trivial' type"
@@ -205,418 +190,347 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
 when not defined(nimony):
   proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf)
 
-proc needsDeref(c: var LiftingCtx; obj: TokenBuf; isSecondParam: bool): bool {.inline.} =
-  result = (c.op in {attachedTrace, attachedWasMoved} or (c.op in {attachedCopy, attachedSink} and not isSecondParam)) and
+proc needsDeref(c: var LiftingCtx; obj: TokenBuf; paramPos: int): bool {.inline.} =
+  result = (c.op in {attachedTrace, attachedWasMoved} or (c.op in {attachedCopy, attachedSink} and paramPos == 0)) and
     obj[0].kind == Symbol # still access to the parameter directly
 
-proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name, typ: Cursor; isSecondParam = false): TokenBuf =
+proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; paramPos = 0): TokenBuf =
+  assert name.kind == SymbolDef
+  let nameSym = name.symId
   result = createTokenBuf(4)
-  let nd = needsDeref(c, obj, isSecondParam)
-  copyIntoKind(result, if nd: VarFieldAccess else: FieldAccess, c.info):
-    copyTree result, obj, 0
-    copyIntoSymUse c.p, result, SymId(m: tree.m, s: name.symId), c.info
-    copyTreeX result, typ, c.p
-
-proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; isSecondParam = false): TokenBuf =
-  result = createTokenBuf(4)
-  let nd = needsDeref(c, tup, isSecondParam)
-  copyIntoKind(result, TupleFieldAccess, c.info):
+  let nd = needsDeref(c, obj, paramPos)
+  copyIntoKind(result, DotX, c.info):
     if nd:
-      copyIntoKind(result, HiddenDeref, c.info):
-        copyTree result, tup, 0
-    else:
-      copyTree result, tup, 0
-    result.add Position, c.info, uint32(idx)
+      result.addParLe HderefX, c.info
+    copyTree result, obj
+    copyIntoSymUse result, nameSym, c.info
+    if nd:
+      result.addParRi()
 
-proc unravelObj(c: var LiftingCtx;
-                n: Cursor; paramA, paramB: TokenBuf) =
+proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): TokenBuf =
+  result = createTokenBuf(4)
+  let nd = needsDeref(c, tup, paramPos)
+  copyIntoKind(result, TupAtX, c.info):
+    if nd:
+      copyIntoKind(result, HderefX, c.info):
+        copyTree result, tup
+    else:
+      copyTree result, tup
+    result.add intToken(pool.integers.getOrIncl(idx), c.info)
+
+proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
   var n = n
-  if n.kind in {RefTy, PtrTy}:
-    n = n.firstSon
-  assert n.kind == ObjectBody
-  let fieldList = ithSon(n, objectBodyPos)
-  for ch in sonsReadonly(fieldList):
-    assert ch.kind == FieldDecl
-    let r = asLocal(ch)
+  if n.typeKind in {RefT, PtrT}:
+    inc n
+  assert n.typeKind == ObjectT
+  inc n
+  # recurse for the inherited object type, if any:
+  if n.kind != DotToken:
+    unravelObj c, n, paramA, paramB
+  skip n # inheritance is gone
+  while n.kind != ParRi:
+    let r = takeLocal(n)
+    assert r.kind == FldY
     # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
-    let fieldType = TypeCursor(m: tree.id, t: r.typ)
+    let fieldType = r.typ
     case c.op
     of attachedDestroy, attachedTrace, attachedWasMoved:
-      let a = accessObjField(c, paramA, r.name, r.typ)
-      unravel c, dest, fieldType, fieldType, a, paramB
-    of attachedDup:
-      assert false, "cannot happen"
-    of attachedCopy:
-      let a = accessObjField(c, paramA, r.name, r.typ)
-      let b = accessObjField(c, paramB, r.name, r.typ, true)
-      unravel c, dest, fieldType, fieldType, a, b
-
-proc unravelObjForDup(c: var LiftingCtx;
-                      n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.kind == ObjectBody
-  let fieldList = ithSon(n, objectBodyPos)
-  copyIntoKind dest, ObjConstr, c.info:
-    copyTree dest, c.p[orig.m], orig.t
-    for ch in sonsReadonly(fieldList):
-      assert ch.kind == FieldDecl
-      let r = asLocal(ch)
-      copyIntoKind dest, ExprColonExpr, c.info:
-        addSymUse dest, r.name.symId, r.name.info
-        let a = accessObjField(c, paramA, r.name, r.typ)
-        let fieldType = TypeCursor(m: tree.id, t: r.typ)
-        unravel c, dest, fieldType, fieldType, a, paramB
+      let a = accessObjField(c, paramA, r.name)
+      unravel c, fieldType, a, paramB
+    of attachedCopy, attachedSink, attachedDup:
+      # attachedDup needs no deref operation for `dest[0]`:
+      let a = accessObjField(c, paramA, r.name, int(c.op == attachedDup))
+      let b = accessObjField(c, paramB, r.name, 1)
+      unravel c, fieldType, a, b
 
 proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
+  assert n.typeKind == TupleT
+  var n = n
+  inc n
   var idx = 0
-  for ch in sonsReadonly(n):
-    let fieldType = TypeCursor(m: tree.id, t: ch)
+  while n.kind != ParRi:
+    var fieldType = n
+    if n == $FldS:
+      fieldType = takeLocal(n).typ
+    else:
+      skip n
+
     case c.op
     of attachedDestroy, attachedTrace, attachedWasMoved:
       let a = accessTupField(c, paramA, idx)
-      unravel c, dest, fieldType, fieldType, a, paramB
-    of attachedDup:
-      assert false, "cannot happen"
-    of attachedCopy:
-      let a = accessTupField(c, paramA, idx)
-      let b = accessTupField(c, paramB, idx, true)
-      unravel c, dest, fieldType, fieldType, a, b
+      unravel c, fieldType, a, paramB
+    of attachedCopy, attachedSink, attachedDup:
+      let a = accessTupField(c, paramA, idx, int(c.op == attachedDup))
+      let b = accessTupField(c, paramB, idx, 1)
+      unravel c, fieldType, a, b
     inc idx
-
-proc unravelTupleForDup(c: var LiftingCtx;
-                        n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.kind == TupleTy
-  copyIntoKind dest, TupleConstr, c.info:
-    copyTree dest, c.p[orig.m], orig.t
-    var idx = 0
-    for ch in sonsReadonly(n):
-      let a = accessTupField(c, paramA, idx)
-      let fieldType = TypeCursor(m: tree.id, t: ch)
-      unravel c, dest, fieldType, fieldType, a, paramB
-      inc idx
-
-template copyIntoEmit(c, result, body: untyped) =
-  copyIntoKind result, EmitStmt, c.info:
-    body
-
-template verbatim(result: TokenBuf; s: string) =
-  addVerbatim result, getOrIncl(c.p[result.m].strings, s), c.info
 
 proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId): TokenBuf =
   result = createTokenBuf(4)
-  copyIntoKind result, ArrayAt, c.info:
-    copyTree result, arr, 0
-    addSymUse result, indexVar, c.info
+  copyIntoKind result, ArrAtX, c.info:
+    copyTree result, arr
+    copyIntoSymUse result, indexVar, c.info
 
-proc indexVarLowerThanArrayLen(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId; arrayLen: int64) =
-  copyIntoEmit c, dest:
-    addSymUse dest, indexVar, c.info
-    verbatim dest, " < "
-    copyIntoKind dest, ConvExpr, c.info:
-      add dest, IntTy, c.info, uint32(c.p.config.pointerWidth)
-      dest.add IntLit, c.info, c.p[dest.m].numbers.getOrIncl(arrayLen)
+proc indexVarLowerThanArrayLen(c: var LiftingCtx; indexVar: SymId; arrayLen: xint) =
+  copyIntoKind c.dest, LtX, c.info:
+    copyIntoKind c.dest, IntT, c.info:
+      c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
+    copyIntoSymUse c.dest, indexVar, c.info
+    var err = false
+    let alen = asSigned(arrayLen, err)
+    if not err:
+      c.dest.add intToken(pool.integers.getOrIncl(alen), c.info)
+    else:
+      err = false
+      let ualen = asUnsigned(arrayLen, err)
+      assert(not err)
+      c.dest.add uintToken(pool.uintegers.getOrIncl(ualen), c.info)
+
+proc addIntType(c: var LiftingCtx) =
+  copyIntoKind c.dest, IntT, c.info:
+    c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
 
 proc incIndexVar(c: var LiftingCtx; indexVar: SymId) =
-  copyIntoEmit c, dest:
-    verbatim dest, "++"
-    addSymUse dest, indexVar, c.info
-    verbatim dest, ";"
+  copyIntoKind c.dest, AsgnS, c.info:
+    copyIntoSymUse c.dest, indexVar, c.info
+    copyIntoKind c.dest, AddX, c.info:
+      addIntType c
+      copyIntoSymUse c.dest, indexVar, c.info
+      c.dest.add intToken(pool.integers.getOrIncl(+1), c.info)
 
 proc declareIndexVar(c: var LiftingCtx; indexVar: SymId) =
-  copyIntoKind dest, VarDecl, c.info:
-    addSymDef dest, indexVar, c.info
-    dest.addEmpty2 c.info # not exported, no pragmas
-    add dest, IntTy, c.info, uint32(c.p.config.pointerWidth)
-    copyIntoKind dest, ConvExpr, c.info:
-      add dest, IntTy, c.info, uint32(c.p.config.pointerWidth)
-      add dest, IntLit, c.info, c.p[dest.m].numbers.getOrIncl(0)
+  copyIntoKind c.dest, VarY, c.info:
+    addSymDef c.dest, indexVar, c.info
+    c.dest.addEmpty2 c.info # not exported, no pragmas
+    addIntType c
+    c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
 
 proc unravelArray(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.kind == ArrayTy
-  let (_, elem) = sons2(n)
-  let arrayLen = getArrayLen(n, c.p)
+  assert n.typeKind == ArrayT
+  let arrayLen = getArrayLen(n)
+  var n = n
+  inc n
+  let baseType = n
 
-  let indexVar = declareSym(c.p[c.thisModule], VarDecl, getOrIncl(c.p[dest.m].strings, "idx"))
-  declareIndexVar c, dest, indexVar
+  let indexVar = pool.syms.getOrIncl("idx.0")
+  declareIndexVar c, indexVar
 
-  let baseType = TypeCursor(m: tree.id, t: elem)
-  copyIntoKind dest, WhileStmt, c.info:
-    indexVarLowerThanArrayLen c, dest, paramA, indexVar, arrayLen
-    copyIntoKind dest, StmtList, c.info:
+  copyIntoKind c.dest, WhileS, c.info:
+    indexVarLowerThanArrayLen c, indexVar, arrayLen
+    copyIntoKind c.dest, StmtsS, c.info:
       case c.op
       of attachedDestroy, attachedTrace, attachedWasMoved:
         let a = accessArrayAt(c, paramA, indexVar)
-        #unravel c, dest, fieldType, fieldType, a, paramB
-        let fn = lift(c, baseType, baseType)
-        maybeCallHook c, dest, fn, a, paramA
-      of attachedDup:
-        assert false, "cannot happen"
-      of attachedCopy:
+        #unravel c, fieldType, fieldType, a, paramB
+        let fn = lift(c, baseType)
+        maybeCallHook c, fn, a, paramA
+      of attachedCopy, attachedDup, attachedSink:
         let a = accessArrayAt(c, paramA, indexVar)
         let b = accessArrayAt(c, paramB, indexVar)
-        let fn = lift(c, baseType, baseType)
-        maybeCallHook c, dest, fn, a, b
+        let fn = lift(c, baseType)
+        maybeCallHook c, fn, a, b
 
-      incIndexVar c, dest, indexVar
-
-proc unravelArrayForDup(c: var LiftingCtx;
-                        n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.kind == ArrayTy
-  # We generate: (;
-  # var result: array;
-  # for i: result[i] = dup(src[i]); result)
-  copyIntoKind dest, StmtListExpr, c.info:
-    copyTreeX(dest, c.p[orig.m], orig.t, c.p)
-    copyIntoKind dest, StmtList, c.info:
-
-      let (_, elem) = sons2(n)
-      let arrayLen = getArrayLen(n, c.p)
-
-      let indexVar = declareSym(c.p[c.thisModule], VarDecl, getOrIncl(c.p[dest.m].strings, "idx"))
-      declareIndexVar c, dest, indexVar
-
-      let res = declareSym(c.p[c.thisModule], VarDecl, getOrIncl(c.p[dest.m].strings, "result"))
-      copyIntoKind dest, VarDecl, c.info:
-        addSymDef dest, res, c.info
-        dest.addEmpty2 c.info # not exported, no pragmas
-        copyTreeX(dest, c.p[orig.m], orig.t, c.p)
-        add dest, Empty, c.info # no initial value
-
-      var resTree = createTokenBuf(4)
-      addSymUse resTree, res, c.info
-
-      let fieldType = TypeCursor(m: tree.id, t: elem)
-      copyIntoKind dest, WhileStmt, c.info:
-        indexVarLowerThanArrayLen c, dest, paramA, indexVar, arrayLen
-        copyIntoKind dest, StmtList, c.info:
-          let a = accessArrayAt(c, paramA, indexVar)
-          let r = accessArrayAt(c, resTree, indexVar)
-          copyIntoKind dest, FirstAsgn, c.info:
-            copyTree dest, r, 0
-            unravel c, dest, fieldType, fieldType, a, paramB
-
-          incIndexVar c, dest, indexVar
-
-    addSymUse dest, res, c.info
+      incIndexVar c, indexVar
 
 proc derefInner(c: var LiftingCtx; x: TokenBuf): TokenBuf =
   result = createTokenBuf(10)
-  copyIntoEmit c, result:
-    copyTree result, x, 0
-    verbatim result, "->inner"
+  copyIntoKind result, DerefX, c.info:
+    copyTree result, x
+
+proc refcountOf(c: var LiftingCtx; x: TokenBuf) =
+  copyIntoKind c.dest, DotX, c.info:
+    copyIntoKind c.dest, DerefX, c.info:
+      copyTree c.dest, x
+    copyIntoSymUse c.dest, pool.syms.getOrIncl("rc.0"), c.info
 
 proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
-  copyIntoKinds dest, [IfStmt, ElifBranch], c.info:
-    copyTree dest, paramA, 0
-    copyIntoKinds dest, [StmtList, IfStmt], c.info:
-      # here we know that `x` is not nil:
-      copyIntoKind dest, ElifBranch, c.info:
-        copyIntoEmit c, dest:
-          copyTree dest, paramA, 0
-          verbatim dest, "->rc == 0"
-        copyIntoKind dest, StmtList, c.info:
-          let oldOp = c.op
-          c.op = attachedDestroy
-          unravel c, dest, baseType, baseType, c.derefInner(paramA), paramA
-          when false:
-            if c.p[baseType].kind == ObjectBody:
-              unravelObj c, dest, c.p[baseType.m], baseType.t, c.derefInner(paramA), paramA
-            else:
-              let fn = lift(c, baseType, baseType)
-              maybeCallHook c, dest, fn, c.derefInner(paramA), paramA
-          c.op = oldOp
-          copyIntoEmit c, dest:
-            verbatim dest, "QdeallocFixed("
-            copyTreeX dest, c.p[baseType.m], baseType.t, c.p
-            verbatim dest, ", "
-            copyTree dest, paramA, 0
-            verbatim dest, ");"
-      copyIntoKind dest, ElseBranch, c.info:
-        copyIntoEmit c, dest:
-          verbatim dest, "--"
-          copyTree dest, paramA, 0
-          verbatim dest, "->rc;"
+  c.dest.addParLe IfS, c.info
+  c.dest.addParLe ElifS, c.info
 
-when false:
-  proc deref(x: TokenBuf): TokenBuf =
-    result = createTempTree(x.m)
-    copyIntoKind result, DerefExpr, x[0].info:
-      copyTree result, x, 0
+  copyTree c.dest, paramA
+  copyIntoKinds c.dest, [StmtsS, IfS], c.info:
+    # here we know that `x` is not nil:
+    copyIntoKind c.dest, ElifS, c.info:
+      copyIntoKind c.dest, EqX, c.info:
+        addIntType c
+        copyIntoKind c.dest, CallS, c.info:
+          copyIntoSymUse c.dest, getCompilerProc(c, "atomicDec"), c.info
+          refcountOf(c, paramA)
+        c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
+
+      copyIntoKind c.dest, StmtsS, c.info:
+        let oldOp = c.op
+        c.op = attachedDestroy
+        unravel c, baseType, c.derefInner(paramA), paramA
+        c.op = oldOp
+        copyIntoKind c.dest, CallS, c.info:
+          copyIntoSymUse c.dest, getCompilerProc(c, "deallocFixed"), c.info
+          copyTree c.dest, paramA
+
+  c.dest.addParRi()
+  c.dest.addParRi()
 
 proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
-  copyIntoKinds dest, [IfStmt, ElifBranch], c.info:
-    copyTree dest, x, 0
-    copyIntoKind dest, StmtList, c.info:
-      copyIntoEmit c, dest:
-        verbatim dest, "++"
-        copyTree dest, x, 0
-        verbatim dest, "->rc;"
+  c.dest.addParLe IfS, c.info
+  c.dest.copyIntoKind ElifS, c.info:
+    copyTree c.dest, x
+    copyIntoKind c.dest, StmtsS, c.info:
+      copyIntoKind c.dest, CallS, c.info:
+        copyIntoSymUse c.dest, getCompilerProc(c, "atomicInc"), c.info
+        refcountOf(c, x)
+  c.dest.addParRi()
 
-proc unravelRef(c: var LiftingCtx; refType: TypeCursor;
-                n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.kind == RefTy
-  let baseType = TypeCursor(m: tree.id, t: n.firstSon)
+proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
+  assert n.typeKind == RefT
+  let baseType = n.firstSon
   case c.op
   of attachedDestroy:
-    emitRefDestructor c, dest, paramA, baseType
+    emitRefDestructor c, paramA, baseType
   of attachedTrace:
     discard "to implement"
   of attachedWasMoved:
-    copyIntoEmit c, dest:
-      copyTree dest, paramA, 0
-      verbatim dest, " = nullptr;"
+    copyIntoKind c.dest, AsgnS, c.info:
+      copyIntoKind c.dest, DerefX, c.info:
+        copyTree c.dest, paramA
+      copyIntoKind c.dest, NilX, c.info: discard
   of attachedDup:
-    emitIncRef c, dest, paramA
-    copyIntoKind dest, RetS, c.info:
-      copyTree dest, paramA, 0
-  of attachedCopy:
+    emitIncRef c, paramB
+    copyIntoKind c.dest, AsgnS, c.info:
+      copyTree c.dest, paramA
+      copyTree c.dest, paramB
+  of attachedCopy, attachedSink:
     # if src != nil: inc src.rc
     # destroy dest[]
     # dest[] = src
-    emitIncRef c, dest, paramB
+    emitIncRef c, paramB
     let oldOp = c.op
     c.op = attachedDestroy
-    let fn = lift(c, refType, refType)
-    #let ad = deref(paramA)
-    maybeCallHook c, dest, fn, paramA, paramA
+    let fn = lift(c, n)
+    maybeCallHook c, fn, paramA, paramA
     c.op = oldOp
-    copyIntoKind dest, Asgn, c.info:
-      copyTree dest, paramA, 0
-      copyTree dest, paramB, 0
+    copyIntoKind c.dest, AsgnS, c.info:
+      copyTree c.dest, paramA
+      copyTree c.dest, paramB
 
 proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   # `unravel`'s job is to "expand" the object fields in contrast to `lift`.
   if isTrivial(c, typ):
-    genTrivialOp c, dest, paramA, paramB
+    genTrivialOp c, paramA, paramB
     return
-  case c.p[typ].kind
-  of ObjectTy:
-    let declPos = typeImpl(c.p, typ)
-    if c.op == attachedDup:
-      unravelObjForDup c, dest, c.p[declPos.m], declPos.t, paramA, paramB, orig
-    else:
-      unravelObj c, dest, c.p[declPos.m], declPos.t, paramA, paramB
 
-  of ObjectBody:
-    let declPos = typ
-    if c.op == attachedDup:
-      unravelObjForDup c, dest, c.p[declPos.m], declPos.t, paramA, paramB, orig
-    else:
-      unravelObj c, dest, c.p[declPos.m], declPos.t, paramA, paramB
+  let typ = toTypeImpl typ
 
-  of AliasTy:
-    unravel(c, dest, typeImpl(c.p, typ), orig, paramA, paramB)
-  of DistinctTy:
-    unravel(c, dest, typeImpl(c.p, typ).firstSon, orig, paramA, paramB)
-  of BracketTy:
-    let ct = canonType(c, c.p[typ.m], typ.t)
-    let fn = getOrDefault(c.p[c.thisModule].instantiatedOps[c.op], ct)
-    if fn != SymId(0):
-      genCallHook c, dest, SymId(m: dest.m, s: fn), paramA, paramB
-    else:
-      let impl = skipGenericAlias(c.p, typ)
-      if c.p[impl].kind == BracketTy:
-        let inst = instantiateType(c.p, impl, c.types)
-        #echo "unravelling ", typeToString(c.p, inst)
-        unravel(c, dest, inst, orig, paramA, paramB)
-      else:
-        unravel c, dest, impl, orig, paramA, paramB
-  of TupleTy:
-    if c.op == attachedDup:
-      unravelTupleForDup c, dest, c.p[typ.m], typ.t, paramA, paramB, orig
-    else:
-      unravelTuple c, dest, c.p[typ.m], typ.t, paramA, paramB
-  of ArrayTy:
-    if c.op == attachedDup:
-      unravelArrayForDup c, dest, c.p[typ.m], typ.t, paramA, paramB, orig
-    else:
-      unravelArray c, dest, c.p[typ.m], typ.t, paramA, paramB
+  case typ.typeKind
+  of ObjectT:
+    unravelObj c, typ, paramA, paramB
+  of DistinctT:
+    unravel(c, typ.firstSon, paramA, paramB)
+  of TupleT:
+    unravelTuple c, typ, paramA, paramB
+  of ArrayT:
+    unravelArray c, typ, paramA, paramB
   else:
-    let fn = lift(c, typ, orig)
-    maybeCallHook c, dest, fn, paramA, paramB
+    let fn = lift(c, typ)
+    maybeCallHook c, fn, paramA, paramB
 
-proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: NodeKind) =
-  copyIntoKind(dest, ParamDecl, c.info):
-    addSymDef dest, param, c.info
-    dest.addEmpty2 c.info # export marker, pragmas
-    copyIntoKind(dest, modifier, c.info):
-      copyTreeX dest, c.p[typ.m], typ.t, c.p
-    dest.addEmpty c.info # value
+proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
+  copyIntoKind(c.dest, ParamS, c.info):
+    addSymDef c.dest, param, c.info
+    c.dest.addEmpty2 c.info # export marker, pragmas
+    copyIntoKind(c.dest, modifier, c.info):
+      copyTree c.dest, typ
+    c.dest.addEmpty c.info # value
 
 proc addParam(c: var LiftingCtx; param: SymId; typ: TypeCursor) =
-  copyIntoKind(dest, ParamDecl, c.info):
-    addSymDef dest, param, c.info
-    dest.addEmpty2 c.info # export marker, pragmas
-    copyTreeX dest, c.p[typ.m], typ.t, c.p
-    dest.addEmpty c.info # value
+  copyIntoKind(c.dest, ParamS, c.info):
+    addSymDef c.dest, param, c.info
+    c.dest.addEmpty2 c.info # export marker, pragmas
+    copyTree c.dest, typ
+    c.dest.addEmpty c.info # value
+
+proc maybeAddResultDecl(c: var LiftingCtx; res: SymId; typ: TypeCursor) =
+  if c.op == attachedDup:
+    copyIntoKind(c.dest, VarS, c.info):
+      addSymDef c.dest, res, c.info
+      c.dest.addEmpty2 c.info # export marker, pragmas
+      copyTree c.dest, typ
+      c.dest.addEmpty c.info # value
+
+proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
+  if c.op == attachedDup:
+    copyIntoKind(c.dest, RetS, c.info):
+      copyIntoSymUse c.dest, res, c.info
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   #let name = attachedOpToLitId(c.op)
   #echo "generating ", c.p[dest.m].strings[name] # name
   #result = declareSym(c.p[c.thisModule], ProcDecl, name)
-  let paramA = declareSym(c.p[c.thisModule], ParamDecl, "dest")
+  let paramA = pool.syms.getOrIncl("dest.0")
   var paramTreeA = createTokenBuf(4)
-  addSymUse paramTreeA, paramA, c.info
+  copyIntoSymUse paramTreeA, paramA, c.info
 
-  var paramB = SymId(-1)
+  var paramB = SymId(0)
   var paramTreeB = createTokenBuf(4)
 
   case c.op
-  of attachedDestroy, attachedWasMoved, attachedDup: discard
-  of attachedCopy, attachedTrace:
-    paramB = declareSym(c.p[c.thisModule], ParamDecl, "src")
-    addSymUse paramTreeB, paramB, c.info
+  of attachedDestroy, attachedWasMoved: discard
+  of attachedCopy, attachedSink, attachedTrace, attachedDup:
+    paramB = pool.syms.getOrIncl("src.0")
+    copyIntoSymUse paramTreeB, paramB, c.info
 
-  copyIntoKind(dest, ProcDecl, c.info):
-    addSymDef dest, sym, c.info
-    dest.addEmpty3 c.info # export marker, pattern, generics
+  copyIntoKind(c.dest, ProcS, c.info):
+    addSymDef c.dest, sym, c.info
+    c.dest.addEmpty3 c.info # export marker, pattern, generics
 
-    copyIntoKind(dest, Params, c.info):
-      case c.op
-      of attachedDestroy:
-        dest.add VoidTy, c.info # return type
-        #addParamWithModifier c, dest, paramA, typ, SinkTy
-        addParam c, dest, paramA, typ
-      of attachedWasMoved:
-        dest.add VoidTy, c.info # return type
-        addParamWithModifier c, dest, paramA, typ, VarTy
-      of attachedDup:
-        copyTree dest, c.p[typ.m], typ.t
-        addParam c, dest, paramA, typ
-      of attachedCopy:
-        dest.add VoidTy, c.info # return type
-        addParamWithModifier c, dest, paramA, typ, VarTy
-        addParam c, dest, paramB, typ
-      of attachedTrace:
-        dest.add VoidTy, c.info # return type
-        addParamWithModifier c, dest, paramA, typ, VarTy
-        addParam c, dest, paramB, charType # XXX Change this to PointerTy once we have it
+    c.dest.addParLe ParamsS, c.info
+    case c.op
+    of attachedDestroy:
+      addParam c, paramA, typ
+      c.dest.addParRi()
+      c.dest.addEmpty() # void return type
+    of attachedWasMoved:
+      addParamWithModifier c, paramA, typ, MutT
+      c.dest.addParRi()
+      c.dest.addEmpty() # void return type
+    of attachedDup:
+      addParam c, paramB, typ
+      c.dest.addParRi()
+      c.dest.copyTree typ
+    of attachedCopy, attachedSink:
+      addParamWithModifier c, paramA, typ, MutT
+      addParam c, paramB, typ
+      c.dest.addParRi()
+      c.dest.addEmpty() # void return type
+    of attachedTrace:
+      addParamWithModifier c, paramA, typ, MutT
+      copyIntoKind(c.dest, ParamS, c.info):
+        addSymDef c.dest, paramB, c.info
+        c.dest.addEmpty2 c.info # export marker, pragmas
+        copyIntoKind(c.dest, PointerT, c.info): discard
+        c.dest.addEmpty c.info # value
 
-    copyIntoKind dest, Pragmas, c.info:
-      addSystemPragma(dest, "nodestroy", c.info, c.p)
+      c.dest.addParRi()
+      c.dest.addEmpty() # void return type
 
-    dest.addEmpty c.info # exc
+    copyIntoKind c.dest, PragmasS, c.info:
+      copyIntoKind c.dest, NoDestroy, c.info: discard
 
-    var a = skipGenericInsts(c.p, typ)
-    let k = c.p[a].kind
+    c.dest.addEmpty c.info # exc
 
-    if k == RefTy:
-      copyIntoKind(dest, StmtList, c.info):
-        unravelRef(c, dest, typ, c.p[a.m], a.t, paramTreeA, paramTreeB)
-    elif c.op == attachedDup:
-      copyIntoKind(dest, StmtList, c.info):
-        let d = takePos dest
-        copyIntoKind(dest, RetS, c.info):
-          unravel(c, dest, typ, typ, paramTreeA, paramTreeB)
-        assert hasAtLeastXsons(dest, d, 1), typeToString(c.p, typ)
-    else:
-      copyIntoKind(dest, StmtList, c.info):
-        unravel(c, dest, typ, typ, paramTreeA, paramTreeB)
+    let a = toTypeImpl typ
+    copyIntoKind(c.dest, StmtsS, c.info):
+      maybeAddResultDecl c, paramA, typ
+      if a.typeKind == RefT:
+        unravelRef(c, typ, paramTreeA, paramTreeB)
+      else:
+        unravel(c, typ, paramTreeA, paramTreeB)
+        maybeAddReturn c, paramA
 
 proc genMissingHooks*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
-  while c.requests.len:
+  while c.requests.len > 0:
     let reqs = move(c.requests)
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
@@ -627,14 +541,14 @@ proc createLiftingCtx*(): ref LiftingCtx =
 
 proc requestHook*(c: var LiftingCtx; sym: SymId; typ: TypeCursor; op: AttachedOp) =
   c.op = op
-  genProcDecl c, dest, sym, typ
-  genMissingHooks(c, dest)
+  genProcDecl c, sym, typ
+  genMissingHooks(c)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
   c.info = info
   let t = if typ.typeKind == SinkT: typ.firstSon else: typ
-  result = lift(c, t, t)
+  result = lift(c, t)
 
 proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): SymId =
   getHook(c, attachedDestroy, typ, info)

@@ -9,7 +9,7 @@
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser,
-  programs, sigmatch, magics, reporters, nifconfig, nifindexes
+  programs, magics, reporters, nifconfig, nifindexes
 
 import ".." / gear2 / modnames
 

@@ -85,8 +85,8 @@ proc createEntryScope(p: Program; thisModule: ModuleId; lifter: ref LiftingCtx;
 
 proc callDestroy(c: var Scope; dest: var TokenBuf; destroyProc: SymId; arg: SymId) =
   copyIntoKind dest, Call, c.info:
-    copyIntoSymUse c.p, dest, destroyProc, c.info
-    addSymUse dest, arg, c.info
+    copyIntoSymUse dest, destroyProc, c.info
+    copyIntoSymUse dest, arg, c.info
 
 proc leaveScope(c: var Scope; dest: var TokenBuf) =
   for i in countdown(c.destroyOps.high, 0):

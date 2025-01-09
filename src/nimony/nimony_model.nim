@@ -146,6 +146,7 @@ type
     DefaultTupX = "defaulttup"
     ExprX = "expr" # was nkStmtListExpr in the old Nim
     ArrAtX = "arrat"
+    TupAtX = "tupat" # tup[0] syntax
     EnsureMoveX = "emove" # note that `move` can be written in standard Nim
 
   TypeKind* = enum
@@ -320,22 +321,48 @@ const
   RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
   CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX}
 
-proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind; info = NoLineInfo) =
+proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
 
-proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo): PackedToken =
+proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind; info = NoLineInfo): PackedToken =
   parLeToken(pool.tags.getOrIncl($kind), info)
 
-template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info: PackedLineInfo; body: untyped) =
+template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
+                       info: PackedLineInfo; body: untyped) =
   dest.add parLeToken(kind, info)
   body
   dest.addParRi()
 
-proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
+template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: PackedLineInfo; body: untyped) =
+  dest.add parLeToken(kinds[0], info)
+  dest.add parLeToken(kinds[1], info)
+  body
+  dest.addParRi()
+  dest.addParRi()
+
+proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
   dest.add symToken(s, info)
 
-proc copyTree*(dest: var TokenBuf; src: TokenBuf) =
+proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline.} =
   dest.add src
+
+proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline.} =
+  dest.addSubtree src
+
+proc addSymDef*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
+  dest.add symdefToken(s, info)
+
+proc addEmpty*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+  dest.add dotToken(info)
+
+proc addEmpty2*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+  dest.add dotToken(info)
+  dest.add dotToken(info)
+
+proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+  dest.add dotToken(info)
+  dest.add dotToken(info)
+  dest.add dotToken(info)
 
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
