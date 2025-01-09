@@ -35,6 +35,7 @@ Options:
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
+  --silentMake              suppresses make output
   --version                 show the version
   --help                    show this help
 """
@@ -62,6 +63,7 @@ proc handleCmdLine() =
   var cmd = Command.None
   var forceRebuild = false
   var compat = false
+  var silentMake = false
   var useEnv = true
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
@@ -110,6 +112,9 @@ proc handleCmdLine() =
         of "32": config.bits = 32
         of "16": config.bits = 16
         else: quit "invalid value for --bits"
+      of "silentmake":
+        silentMake = true
+        forwardArg = false
       of "ischild":
         # undocumented command line option, by design
         isChild = true
@@ -148,8 +153,8 @@ proc handleCmdLine() =
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
     requiresTool "gear3", "src/gear3/gear3.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
-    buildGraph config, args[0], compat, forceRebuild, commandLineArgs, moduleFlags,
-      (if doRun: DoRun else: DoCompile)
+    buildGraph config, args[0], compat, forceRebuild, silentMake,
+      commandLineArgs, moduleFlags, (if doRun: DoRun else: DoCompile)
 
 when isMainModule:
   handleCmdLine()
