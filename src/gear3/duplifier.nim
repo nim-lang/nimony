@@ -396,52 +396,64 @@ type
 template owningTempDefault(): OwningTemp =
   OwningTemp(active: false, s: NoSymId, info: NoLineInfo)
 
-proc bindToTemp(c: var Context; typ: Cursor; info: PackedLineInfo; kind = VarDecl): OwningTemp =
-  let s = declareSym(c.p[dest.m], kind, c.p[dest.m].strings.getOrIncl("temp"))
+proc bindToTemp(c: var Context; typ: Cursor; info: PackedLineInfo; kind = VarS): OwningTemp =
+  let s = pool.syms.getOrIncl("`tmp." & $c.tmpCounter)
+  inc c.tmpCounter
 
-  let ex = prepare(dest, StmtListExpr, info)
-  copyTreeX dest, c.p[typ.m], typ.t, c.p
-  let st = prepare(dest, StmtList, info)
-  let vr = prepare(dest, VarDecl, info)
-  addSymDef dest, s, info
-  dest.addEmpty2 info # export marker, pragmas
-  copyTreeX dest, c.p[typ.m], typ.t, c.p # type
-  #  copyTree dest, ex # value
+  c.dest.addParLe ExprX, info
+  c.dest.addParLe StmtsS, info
+
+  c.dest.addParLe kind, info
+  addSymDef c.dest, s, info
+  c.dest.addEmpty2 info # export marker, pragmas
+  copyTree c.dest, typ
   # value is filled in by the caller!
-  result = OwningTemp(ex: ex, st: st, vr: vr, s: s, info: info)
+  result = OwningTemp(active: true, s: s, info: info)
 
-proc finishOwningTemp(dest: var Tree; ow: OwningTemp) =
-  if ow.s != SymId(-1):
-    dest.patch ow.vr  # finish the VarDecl
-    dest.patch ow.st  # finish the StmtList
+proc finishOwningTemp(dest: var TokenBuf; ow: OwningTemp) =
+  if ow.active:
+    dest.addParRi() # finish the VarS
+    dest.addParRi()  # finish the StmtsS
     dest.copyIntoSymUse ow.s, ow.info
-    dest.patch ow.ex  # finish the StmtListExpr
+    dest.addParRi()  # finish the StmtListExpr
 
-proc trCall(c: var Context; n: Cursor; e: Expects) =
+proc trCall(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
-  let retType = getType(c.p, n)
+  let retType = getType(c.typeCache, n)
   if hasDestructor(c, retType) and e == WantNonOwner:
-    ow = bindToTemp(c, dest, retType, n.info)
+    ow = bindToTemp(c, retType, n.info)
 
-  var fnType = getType(c.p, n.firstSon)
-  fnType = skipGenericInsts(c.p, fnType, {SkipNilTy, SkipObjectInstantiations})
-  assert c.p[fnType].kind in ProcTyNodes
-  var paramIter = initSonsIter(c.p, ithSon(c.p, fnType, routineParamsPos))
-  var i = 0
-  for ch in sons(dest, n):
+  c.dest.add n
+  inc n # skip `(call)`
+  var fnType = getType(c.typeCache, n)
+  takeTree c.dest, n # skip `fn`
+  assert fnType == "params"
+  inc fnType
+  while n.kind != ParRi:
+    let previousFormalParam = fnType
+    let param = takeLocal(fnType)
+    let pk = param.typ.typeKind
     var e2 = WantNonOwner
-    if hasCurrent(paramIter):
-      if i > 0 and c.p[ithSon(c.p, paramIter.current, localTypePos)].kind == SinkTy: e2 = WantOwner
-      next paramIter, c.p
-    tr c, dest, ch, e2
-    inc i
+    if pk == SinkT:
+      e2 = WantOwner
+    elif pk == VarargsT:
+      # do not advance formal parameter:
+      fnType = previousFormalParam
+    else:
+      skipParRi(fnType)
+    tr c, n, e2
+  wantParRi c.dest, n
   finishOwningTemp dest, ow
 
 proc trRawConstructor(c: var Context; n: Cursor; e: Expects) =
   # Idioms like `echo ["ab", myvar, "xyz"]` are important to translate well.
   let e2 = if e == WillBeOwned: WantOwner else: e
-  for ch in sons(dest, n):
-    tr c, dest, ch, e2
+  c.dest.add n
+  inc n
+  while n.kind != ParRi:
+    tr c, n, e2
+  wantParRi c.dest, n
+
 
 proc trConstructor(c: var Context; typ, ex: Cursor; e: Expects) =
   # Idioms like `echo ["ab", myvar, "xyz"]` are important to translate well.
@@ -450,15 +462,6 @@ proc trConstructor(c: var Context; typ, ex: Cursor; e: Expects) =
     copyTree dest, typ
     for ch in sons(dest, ex):
       tr c, dest, ch, e2
-  when false:
-    var ow = owningTempDefault()
-    if hasDestructor(c, typ) and e == WantNonOwner:
-      ow = bindToTemp(c, dest, FullTypeId(m: tree.id, t: typ), ex.info)
-    copyIntoKind dest, TypedExpr, ex.info:
-      copyTree dest, typ
-      for ch in sons(dest, ex):
-        tr c, dest, ch, WantOwner
-    finishOwningTemp dest, ow
 
 proc trConvExpr(c: var Context; n: Cursor; e: Expects) =
   let (typ, ex) = sons2(tree, n)
@@ -489,8 +492,8 @@ proc genLastRead(c: var Context; n: Cursor; typ: FullTypeId) =
   dest.patch ow.vr # finish the VarDecl
 
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
-  if hookProc.s != SymId(-1):
-    copyIntoKind dest, Call, info:
+  if hookProc != NoSymId:
+    copyIntoKind dest, CallS, info:
       copyIntoSymUse c.p, dest, hookProc, info
       copyIntoKind dest, HiddenAddr, info:
         copyTree dest, n

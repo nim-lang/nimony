@@ -249,7 +249,6 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
         # do not advance formal parameter:
         fnType = previousFormalParam
       else:
-        skip fnType # potential default value
         skipParRi(fnType)
       skip n
     n = orig
