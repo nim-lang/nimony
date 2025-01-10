@@ -75,7 +75,7 @@ proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
 proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
 proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 
-proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupleAt".}
+proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 proc `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
 proc `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =

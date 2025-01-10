@@ -88,7 +88,7 @@ type
     # not in Nim 2:
     mUnpack
     mDefaultObj, mDefaultTup
-    mArrAt, mPat, mTupleAt
+    mArrAt, mPat, mTupAt
     mDeref
 
 declareMatcher parseMagic, TMagic, 1, 1
