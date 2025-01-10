@@ -3727,6 +3727,45 @@ proc semTupleDefault(c: var SemContext; it: var Item) =
   buildDefaultTuple(c, it.typ, info)
   commonType c, it, exprStart, expected
 
+proc semTupAt(c: var SemContext; it: var Item) =
+  # has already been semchecked but we do it again:
+  let exprStart = c.dest.len
+  let expected = it.typ
+  takeToken c, it.n
+  var tup = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, tup
+  var idx = tup.n
+  let idxStart = c.dest.len
+  semConstIntExpr c, idx
+  var idxValue = evalOrdinal(c, cursorAt(c.dest, idxStart))
+  endRead(c.dest)
+  it.n = idx
+  let zero = createXint(0'i64)
+  if idxValue.isNaN or idxValue < zero:
+    shrink c.dest, idxStart
+    c.buildErr it.n.info, "must be a constant expression >= 0"
+    wantParRi c, it.n
+  else:
+    it.typ = tup.typ
+    inc it.typ
+    # navigate to the proper type within the tuple type:
+    let one = createXint(1'i64)
+    while true:
+      if it.typ.kind == ParRi:
+        shrink c.dest, idxStart
+        c.buildErr it.n.info, "tuple index too large"
+        break
+      if idxValue > zero:
+        skip it.typ
+        idxValue = idxValue - one
+      else:
+        break
+    if it.typ.substructureKind == FldS:
+      let fld = asLocal(it.typ)
+      it.typ = fld.typ
+    wantParRi c, it.n
+    commonType c, it, exprStart, expected
+
 proc getDottedIdent(n: var Cursor): string =
   let isError = n.kind == ParLe and n.tagId == ErrT
   if isError:
@@ -4385,6 +4424,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of DotX:
       toplevelGuard c:
         semDot c, it, flags
+    of TupAtX:
+      toplevelGuard c:
+        semTupAt c, it
     of DconvX:
       toplevelGuard c:
         semDconv c, it

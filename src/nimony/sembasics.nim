@@ -470,10 +470,6 @@ proc takeTree*(dest: var TokenBuf; n: var Cursor) =
 proc takeTree*(c: var SemContext; n: var Cursor) =
   takeTree c.dest, n
 
-proc copyTree*(dest: var TokenBuf; n: Cursor) =
-  var n = n
-  takeTree dest, n
-
 # -------------------------------------------------------------
 
 proc wantParRi*(c: var SemContext; n: var Cursor) =
