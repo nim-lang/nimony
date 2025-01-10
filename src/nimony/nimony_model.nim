@@ -386,7 +386,7 @@ proc firstSon*(n: Cursor): Cursor {.inline.} =
 proc hookName*(op: AttachedOp): string =
   case op
   of attachedDestroy: "destroy"
-  of attachedWasMoved: "wasmoved"
+  of attachedWasMoved: "wasMoved"
   of attachedDup: "dup"
   of attachedCopy: "copy"
   of attachedSink: "sink"

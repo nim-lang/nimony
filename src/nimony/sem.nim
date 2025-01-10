@@ -2727,7 +2727,7 @@ proc semHook(c: var SemContext; name: string; beforeParams: int; symId: SymId, i
 proc hookToKind(name: string): HookOp =
   case name
   of "=destroy": hookDtor
-  of "=wasmoved": hookDisarmer
+  of "=wasMoved": hookDisarmer
   of "=trace": hookTracer
   of "=copy": hookCloner
   of "=sink": hookMover
