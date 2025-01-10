@@ -32,7 +32,6 @@ type
 
     breaks: seq[SymId] # how to translate `break`
     continues: seq[SymId] # how to translate `continue`
-    # moduleSyms: HashSet[SymId] # thisModule: ModuleId
     # TODO: add a instID for each forStmt
     tmpId: int # per proc
 
@@ -1287,12 +1286,8 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
     res[destSym] = val
     inc c
   else:
-    # if destSym in e.moduleSyms:
-    #   createAsgn(e, destSym, c, info)
-    # else:
     var typ = local.typ
     createDecl(e, destSym, typ, c, info, "var")
-    # e.moduleSyms.incl destSym
 
 proc getTmpId(e: var EContext): int =
   result = e.tmpId
@@ -1618,8 +1613,6 @@ proc expand*(infile: string) =
 
   var dest = move e.dest
   var c = beginRead(dest)
-
-  echo c
 
   if stmtKind(c) == StmtsS:
     inc c
