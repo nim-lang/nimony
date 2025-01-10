@@ -220,6 +220,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
   or
 
     `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)` # safe for self assignments
+
+  But we should really prefer to call `=copy(x, y)` here for some of these cases.
   ]#
   var n2 = n
   inc n2 # AsgnS
@@ -265,6 +267,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           tr c, n, WillBeOwned
         callWasMoved c, ri
     else:
+      # XXX We should really prefer to simply call `=copy(x, y)` here.
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
         let tmp = tempOfTrArg(c, ri, riType)
@@ -278,86 +281,122 @@ proc trAsgn(c: var Context; n: var Cursor) =
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs)
         copyInto c.dest, n:
-          #tr c, dest, lhs, DontCare
-          # XXX Fixme
-          copyTree c.dest, lhs
-          #callDup c, dest, ri
-          tr c, ri, WantOwner
+          var lhsAsCursor = cursorAt(lhs, 0)
+          tr c, lhsAsCursor, DontCare
+          var n = ri
+          callDup c, n
 
+proc skipParRi*(n: var Cursor) =
+  if n.kind == ParRi:
+    inc n
+  else:
+    error "expected ')', but got: ", n
 
-proc trExplicitDestroy(c: var Context; n: Cursor) =
-  let typ = getType(c.p, n.firstSon)
+proc trExplicitDestroy(c: var Context; n: var Cursor) =
+  let typ = getType(c.typeCache, n.firstSon)
   let info = n.info
   let destructor = getDestructor(c.lifter[], typ, info)
   if destructor == NoSymId:
     # the type has no destructor, there is nothing interesting to do:
     c.dest.addEmpty info
+    inc n
+    skip n
   else:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, destructor, info
       inc n
       tr c, n, DontCare
-    skipParRi n
+  skipParRi n
 
-proc trExplicitDup(c: var Context; n: Cursor; e: Expects) =
-  let typ = getType(c.p, n)
+proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
+  let typ = getType(c.typeCache, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedDup, typ, info)
-  if hookProc.s != SymId(-1):
-    copyIntoKind dest, Call, info:
-      copyIntoSymUse c.p, dest, hookProc, info
-      tr c, dest, n.firstSon, DontCare
+  if hookProc != NoSymId:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      inc n
+      tr c, n, DontCare
   else:
     let e2 = if e == WillBeOwned: WantOwner else: e
-    tr c, dest, n.firstSon, e2
+    inc n
+    tr c, n, e2
+  skipParRi n
 
-proc trOnlyEssentials(c: var Context; n: Cursor) =
-  if isAtom(tree, n):
-    copyTree dest, n
-  else:
+proc trOnlyEssentials(c: var Context; n: var Cursor) =
+  var nested = 0
+  while true:
     case n.kind
-    of EqDestroy: trExplicitDestroy c, dest, n
-    of EqDup: trExplicitDup c, dest, n, DontCare
-    else:
-      for ch in sons(dest, n): trOnlyEssentials c, dest, ch
+    of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
+      c.dest.add n
+      inc n
+    of ParLe:
+      var handled = false
+      if n.exprKind in CallKinds:
+        var n = firstSon n
+        if n.kind == Symbol:
+          case pool.syms[n.symId]
+          of "=dup":
+            trExplicitDup c, n, DontCare
+            handled = true
+          of "=destroy":
+            trExplicitDestroy c, n
+            handled = true
+      if not handled:
+        c.dest.add n
+        inc n
+        inc nested
+    of ParRi:
+      c.dest.add n
+      inc n
+      dec nested
+    if nested == 0: break
 
-proc trProcDecl(c: var Context; n: Cursor) =
-  let r = asRoutine(tree, n)
-  var c2 = Context(p: c.p, lifter: c.lifter, localTypes: c.localTypes)
-  c2.reportLastUse = compilerShouldReport(c.p, r.pragmas, "lastUse")
+proc hasBuiltinPragma(n: Cursor; kind: PragmaKind): bool =
+  result = false
+  var n = n
+  if n.kind == DotToken:
+    discard
+  else:
+    inc n
+    while n.kind != ParRi:
+      if pragmaKind(n) == kind:
+        result = true
+        break
+      skip n
 
-  copyInto(dest, n):
-    copyTree dest, r.name
-    copyTree dest, r.ex
-    copyTree dest, r.pat
-    copyTree dest, r.generics
-    copyTree dest, r.params
-    copyTree dest, r.pragmas
-    copyTree dest, r.exc
-    if r.body.kind == StmtList and r.generics.kind != GenericParams:
-      if hasBuiltinPragma(c.p, r.pragmas, "nodestroy"):
-        trOnlyEssentials c2, dest, r.body
-      else:
-        tr c2, dest, r.body, DontCare
+proc trProcDecl(c: var Context; n: var Cursor) =
+  c.dest.add n
+  var r = takeRoutine(n)
+  copyTree c.dest, r.name
+  copyTree c.dest, r.exported
+  copyTree c.dest, r.pattern
+  copyTree c.dest, r.typevars
+  copyTree c.dest, r.params
+  copyTree c.dest, r.pragmas
+  copyTree c.dest, r.effects
+  if r.body.stmtKind == StmtsS and not isGeneric(r):
+    if hasBuiltinPragma(r.pragmas, NoDestroy):
+      trOnlyEssentials c, r.body
     else:
-      copyTree dest, r.body
+      tr c, r.body, DontCare
+  else:
+    copyTree c.dest, r.body
+  c.dest.addParRi()
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
-  not isTrivial(c.lifter[], FullTypeId(t: typ, m: tree.id))
-
-proc hasDestructor(c: Context; typ: FullTypeId): bool {.inline.} =
   not isTrivial(c.lifter[], typ)
 
 type
   OwningTemp = object
-    ex, st, vr: PatchPos
+    active: bool
     s: SymId
     info: PackedLineInfo
 
 template owningTempDefault(): OwningTemp =
-  OwningTemp(ex: PatchPos(-1), st: PatchPos(-1), vr: PatchPos(-1), s: SymId(-1), info: UnknownLineInfo)
+  OwningTemp(active: false, s: NoSymId, info: NoLineInfo)
 
-proc bindToTemp(c: var Context; typ: FullTypeId; info: PackedLineInfo; kind = VarDecl): OwningTemp =
+proc bindToTemp(c: var Context; typ: Cursor; info: PackedLineInfo; kind = VarDecl): OwningTemp =
   let s = declareSym(c.p[dest.m], kind, c.p[dest.m].strings.getOrIncl("temp"))
 
   let ex = prepare(dest, StmtListExpr, info)
