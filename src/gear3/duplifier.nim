@@ -170,7 +170,8 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLin
     copyIntoSymUse c.dest, destroyProc, info
     copyIntoSymUse c.dest, arg, info
 
-proc tempOfTrArg(c: var Context; n: var Cursor; typ: Cursor): SymId =
+proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
+  var n = n
   let info = n.info
   result = pool.syms.getOrIncl("`lhs." & $c.tmpCounter)
   inc c.tmpCounter
@@ -191,7 +192,7 @@ proc callDup(c: var Context; arg: var Cursor) =
   else:
     tr c, arg, WillBeOwned
 
-proc callWasMoved(c: var Context; arg: var Cursor) =
+proc callWasMoved(c: var Context; arg: Cursor) =
   let typ = getType(c.typeCache, arg)
   let info = arg.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
@@ -234,7 +235,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
   else:
     let isNotFirstAsgn = true # XXX Adapt this once we have "isFirstAsgn" analysis
     var leCopy = le
-    let lhs = evalLeftHandSide(c, leCopy)
+    var lhs = evalLeftHandSide(c, leCopy)
     if constructsValue(ri):
       # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
       if isNotFirstAsgn:
@@ -243,42 +244,45 @@ proc trAsgn(c: var Context; n: var Cursor) =
         copyTree c.dest, lhs
         n = ri
         tr c, n, WillBeOwned
-      wantParRi c.dest, n
     elif isLastRead(c, ri):
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
-        let tmp = tempOfTrArg(c, dest, ri, riType)
-        callWasMoved c, dest, ri
-        callDestroy(c, dest, destructor, lhs)
-        copyInto dest, n:
-          #tr c, dest, lhs, DontCare
-          # XXX Fixme
-          copyTree dest, lhs
-          copyIntoSymUse dest, tmp, ri.info
+        let tmp = tempOfTrArg(c, ri, riType)
+        callWasMoved c, ri
+        callDestroy(c, destructor, lhs)
+        copyInto c.dest, n:
+          var lhsAsCursor = cursorAt(lhs, 0)
+          tr c, lhsAsCursor, DontCare
+          copyIntoSymUse c.dest, tmp, ri.info
+          n = n2
+          skip n # skip right hand side
       else:
         if isNotFirstAsgn:
-          callDestroy(c, dest, destructor, lhs)
-        copyInto dest, n:
-          copyTree dest, lhs
-          tr c, dest, ri, WillBeOwned
-        callWasMoved c, dest, ri
+          callDestroy(c, destructor, lhs)
+        copyInto c.dest, n:
+          copyTree c.dest, lhs
+          var n = ri
+          tr c, n, WillBeOwned
+        callWasMoved c, ri
     else:
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
-        let tmp = tempOfTrArg(c, dest, lhs, riType)
-        copyInto dest, n:
-          tr c, dest, lhs, DontCare
-          callDup c, dest, ri
-        callDestroy(c, dest, destructor, tmp[le].info)
+        let tmp = tempOfTrArg(c, ri, riType)
+        copyInto c.dest, n:
+          var lhsAsCursor = cursorAt(lhs, 0)
+          tr c, lhsAsCursor, DontCare
+          var n = ri
+          callDup c, n
+        callDestroy(c, destructor, tmp, le.info)
       else:
         if isNotFirstAsgn:
-          callDestroy(c, dest, destructor, lhs)
-        copyInto dest, n:
+          callDestroy(c, destructor, lhs)
+        copyInto c.dest, n:
           #tr c, dest, lhs, DontCare
           # XXX Fixme
-          copyTree dest, lhs
+          copyTree c.dest, lhs
           #callDup c, dest, ri
-          tr c, dest, ri, WantOwner
+          tr c, ri, WantOwner
 
 
 proc trExplicitDestroy(c: var Context; n: Cursor) =
@@ -504,7 +508,7 @@ proc trLocal(c: var Context; n: Cursor) =
     else:
       tr c, dest, r.value, WillBeOwned
   if wasMovedArg != noPos:
-    callWasMoved c, dest, wasMovedArg
+    callWasMoved c, wasMovedArg
 
 proc trStmtListExpr(c: var Context; n: Cursor; e: Expects) =
   let (t, s, x) = sons3(tree, n)
