@@ -2709,7 +2709,7 @@ proc semHook(c: var SemContext; name: string; beforeParams: int; symId: SymId, i
   of "=destroy":
     checkTypeHook(c, params, hookDtor, info)
     result = params[0]
-  of "=wasmoved":
+  of "=wasMoved":
     checkTypeHook(c, params, hookDisarmer, info)
     result = params[0]
   of "=trace":
