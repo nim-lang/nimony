@@ -773,7 +773,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX}:
+              ArrAtX, DerefX, TupAtX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -1505,19 +1505,22 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     elif t.typeKind == TupleT:
       var tup = t
       inc tup
+      var i = 0
       while tup.kind != ParRi:
         let field = asLocal(tup)
         if field.name.kind == SymbolDef and sameIdent(field.name.symId, fieldName):
-          c.dest.add symToken(field.name.symId, info)
+          c.dest[exprStart] = parLeToken(TupAtX, info)
+          c.dest.addIntLit(i, info)
           it.typ = field.typ # will be fit later with commonType
           it.kind = FldY
           result = MatchedDotField
           break
         skip tup
+        inc i
       if result != MatchedDotField:
         c.dest.add identToken(fieldName, info)
         c.buildErr info, "undeclared field: " & pool.strings[fieldName]
-      c.dest.add intToken(pool.integers.getOrIncl(0), info)
+        c.dest.add intToken(pool.integers.getOrIncl(0), info)
     else:
       c.dest.add identToken(fieldName, info)
       c.buildErr info, "object type expected"
@@ -3791,6 +3794,13 @@ proc semTupAt(c: var SemContext; it: var Item) =
   takeToken c, it.n
   var tup = Item(n: it.n, typ: c.types.autoType)
   semExpr c, tup
+  if containsGenericParams(tup.typ):
+    # leave as is, probably enough to check tup.typ is a typevar
+    var index = Item(n: tup.n, typ: c.types.autoType)
+    semExpr c, index
+    it.n = index.n
+    wantParRi c, it.n
+    return
   var idx = tup.n
   let idxStart = c.dest.len
   semConstIntExpr c, idx

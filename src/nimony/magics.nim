@@ -88,7 +88,7 @@ type
     # not in Nim 2:
     mUnpack
     mDefaultObj, mDefaultTup
-    mArrAt, mPat
+    mArrAt, mPat, mTupAt
     mDeref
 
 declareMatcher parseMagic, TMagic, 1, 1
@@ -107,6 +107,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mArrGet: res AtX
   of mArrAt: res ArrAtX
   of mPat: res PatX
+  of mTupAt: res TupAtX
   of mAsgn: res AsgnS
   of mAddI, mAddU, mAddF64: res AddX, TypedMagic
   of mSubI, mSubU, mSubF64: res SubX, TypedMagic

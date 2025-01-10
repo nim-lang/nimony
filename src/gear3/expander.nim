@@ -246,6 +246,7 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
   while c.kind != ParRi:
     if c.substructureKind == FldS:
       inc c # skip fld
+      e.offer c.symId
       skip c # skip name
       skip c # skip export marker
       skip c # skip pragmas
@@ -253,6 +254,8 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
       skip c # skip value
       skipParRi e, c
     else:
+      if c.kind == SymbolDef:
+        e.offer c.symId
       genTupleField(e, c, counter)
     inc counter
   wantParRi e, c
@@ -835,6 +838,16 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.add tagToken("at", c.info)
         inc c
         inc nested
+      of TupAtX:
+        e.dest.add tagToken("dot", c.info)
+        inc c # skip tag
+        traverseExpr e, c # tuple
+        expectIntLit e, c
+        e.dest.add symToken(ithTupleField(pool.integers[c.intId]), c.info)
+        inc c # skip index
+        e.dest.addIntLit(0, c.info) # inheritance
+        e.dest.add c # add right paren
+        inc c # skip right paren
       of SufX:
         e.dest.add c
         inc c
