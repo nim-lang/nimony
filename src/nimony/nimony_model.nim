@@ -146,7 +146,7 @@ type
     DefaultTupX = "defaulttup"
     ExprX = "expr" # was nkStmtListExpr in the old Nim
     ArrAtX = "arrat"
-    TupleAtX = "tupat"
+    TupAtX = "tupat"
 
   TypeKind* = enum
     NoType

@@ -773,7 +773,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX, TupleAtX}:
+              ArrAtX, DerefX, TupAtX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -4406,7 +4406,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSubscript c, it
     of ArrAtX, PatX:
       semTypedAt c, it
-    of TupleAtX:
+    of TupAtX:
       semTupleAt c, it
     of UnpackX:
       takeToken c, it.n
