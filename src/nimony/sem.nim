@@ -3734,6 +3734,13 @@ proc semTupAt(c: var SemContext; it: var Item) =
   takeToken c, it.n
   var tup = Item(n: it.n, typ: c.types.autoType)
   semExpr c, tup
+  if containsGenericParams(tup.typ):
+    # leave as is, probably enough to check tup.typ is a typevar
+    var index = Item(n: tup.n, typ: c.types.autoType)
+    semExpr c, index
+    it.n = index.n
+    wantParRi c, it.n
+    return
   var idx = tup.n
   let idxStart = c.dest.len
   semConstIntExpr c, idx
@@ -3911,60 +3918,6 @@ proc semTypedAt(c: var SemContext; it: var Item) =
     it.typ = c.types.charType
   else:
     c.buildErr lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
-  wantParRi c, it.n
-  commonType c, it, beforeExpr, expected
-
-proc semTupleAt(c: var SemContext; it: var Item) =
-  let beforeExpr = c.dest.len
-  let expected = it.typ
-  let info = it.n.info
-  takeToken c, it.n
-  let lhsInfo = it.n.info
-  var lhs = Item(n: it.n, typ: c.types.autoType)
-  semExpr c, lhs
-  it.n = lhs.n
-  let typ = skipModifier(lhs.typ)
-  if containsGenericParams(typ):
-    var index = Item(n: it.n, typ: c.types.autoType)
-    semExpr c, index
-    it.n = index.n
-    wantParRi c, it.n
-    return
-  let beforeIndex = c.dest.len
-  semConstIntExpr c, it.n
-  if typ.typeKind == TupleT:
-    c.dest[beforeExpr] = parLeToken(DotX, info)
-    let index = cursorAt(c.dest, beforeIndex)
-    let (err, indexPos) =
-      if isConstIntValue(index):
-        (false, pool.integers[index.intId])
-      else:
-        (true, 0)
-    endRead(c.dest)
-    if err:
-      discard # semConstIntExpr should give error
-    elif indexPos < 0:
-      c.buildErr info, "negative index for tuple not allowed"
-    else:
-      var tup = typ
-      inc tup # skip tag
-      var i = 0
-      while tup.kind != ParRi:
-        if i == indexPos:
-          let fld = asLocal(tup)
-          var fieldSymBuf = createTokenBuf(1)
-          fieldSymBuf.add symToken(fld.name.symId, info)
-          c.dest.replace cursorAt(fieldSymBuf, 0), beforeIndex
-          c.dest.addIntLit(0, info)
-          it.typ = fld.typ
-          i = -1 # found
-          break
-        skip tup
-        inc i
-      if i >= 0: # not found
-        c.buildErr info, "index " & $indexPos & " is not in tuple " & typeToString(typ) & " of length " & $i
-  else:
-    c.buildErr lhsInfo, "invalid lhs type for tuple index: " & typeToString(typ)
   wantParRi c, it.n
   commonType c, it, beforeExpr, expected
 
