@@ -1537,12 +1537,12 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
         block inner:
           loopBodyStart()
           use x
-          inc x
           if condA:
             break forStmtLabel
           elif condB:
             break inner
           use x
+          inc x
   ]#
   let forStmt = asForStmt(c)
 
