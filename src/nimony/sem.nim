@@ -1459,19 +1459,22 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     elif t.typeKind == TupleT:
       var tup = t
       inc tup
+      var i = 0
       while tup.kind != ParRi:
         let field = asLocal(tup)
         if field.name.kind == SymbolDef and sameIdent(field.name.symId, fieldName):
-          c.dest.add symToken(field.name.symId, info)
+          c.dest[exprStart] = parLeToken(TupAtX, info)
+          c.dest.addIntLit(i, info)
           it.typ = field.typ # will be fit later with commonType
           it.kind = FldY
           result = MatchedDotField
           break
         skip tup
+        inc i
       if result != MatchedDotField:
         c.dest.add identToken(fieldName, info)
         c.buildErr info, "undeclared field: " & pool.strings[fieldName]
-      c.dest.add intToken(pool.integers.getOrIncl(0), info)
+        c.dest.add intToken(pool.integers.getOrIncl(0), info)
     else:
       c.dest.add identToken(fieldName, info)
       c.buildErr info, "object type expected"
