@@ -364,6 +364,58 @@ proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
   dest.add dotToken(info)
   dest.add dotToken(info)
 
+proc takeTree*(dest: var TokenBuf; n: var Cursor) =
+  if n.kind != ParLe:
+    dest.add n
+    inc n
+  else:
+    var nested = 0
+    while true:
+      dest.add n
+      case n.kind
+      of ParLe: inc nested
+      of ParRi:
+        dec nested
+        if nested == 0:
+          inc n
+          break
+      of EofToken:
+        raiseAssert "expected ')', but EOF reached"
+      else: discard
+      inc n
+
+proc sameTrees*(a, b: Cursor): bool =
+  var a = a
+  var b = b
+  var nested = 0
+  let isAtom = a.kind != ParLe
+  while true:
+    if a.kind != b.kind: return false
+    case a.kind
+    of ParLe:
+      if a.tagId != b.tagId: return false
+      inc nested
+    of ParRi:
+      dec nested
+      if nested == 0: return true
+    of Symbol, SymbolDef:
+      if a.symId != b.symId: return false
+    of IntLit:
+      if a.intId != b.intId: return false
+    of UIntLit:
+      if a.uintId != b.uintId: return false
+    of FloatLit:
+      if a.floatId != b.floatId: return false
+    of StringLit, Ident:
+      if a.litId != b.litId: return false
+    of CharLit, UnknownToken:
+      if a.uoperand != b.uoperand: return false
+    of DotToken, EofToken: discard "nothing else to compare"
+    if isAtom: return true
+    inc a
+    inc b
+  return false
+
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
   of FromImportS, ImportS, ExportS, IncludeS, ImportExceptS, TypeS, CommentS, TemplateS:
