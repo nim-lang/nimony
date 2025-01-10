@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata, typeprops
+import nimony_model, decls, programs, semdata, typeprops, xints
 
 type
   Item* = object
@@ -458,6 +458,32 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
     m.error expected(f, a)
   inc f
 
+proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
+  if a.typeKind == ArrayT:
+    var a1 = a
+    var f1 = f
+    inc a1
+    inc f1
+    skip a1
+    skip f1
+    let fLen = lengthOrd(m.context[], f1)
+    let aLen = lengthOrd(m.context[], a1)
+    if fLen.isNaN or aLen.isNaN:
+      # match typevars
+      linearMatch m, f, a
+      expectParRi m, f
+    elif fLen == aLen:
+      inc f
+      inc a
+      linearMatch m, f, a
+      expectParRi m, f
+      skip f
+      expectParRi m, f
+    else:
+      m.error expected(f, a)
+  else:
+    m.error expected(f, a)
+
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
   of Symbol:
@@ -510,7 +536,10 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       skip f
       skip f
       expectParRi m, f
-    of ArrayT, SetT, UncheckedArrayT, OpenArrayT:
+    of ArrayT:
+      var a = skipModifier(arg.typ)
+      matchArrayType m, f, a
+    of SetT, UncheckedArrayT, OpenArrayT:
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
       expectParRi m, f
