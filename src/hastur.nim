@@ -425,6 +425,7 @@ proc handleCmdLine =
 
   case primaryCmd
   of "all":
+    buildNimsem()
     buildNimony()
     buildNifc()
     buildGear3()
