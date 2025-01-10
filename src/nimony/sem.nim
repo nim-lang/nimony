@@ -3949,7 +3949,6 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
       matchTypevars m, candidate, args
       if not m.err:
         # match
-        finishTypevarMatch m, candidate
         c.dest.add symToken(sym, syms.info)
         inc matches
         lastMatch = m

@@ -734,14 +734,6 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.error "routine is not generic"
       return
 
-proc finishTypevarMatch*(m: var Match; fn: FnCandidate) =
-  for v in typeVars(fn.sym):
-    let inf = m.inferred.getOrDefault(v)
-    if inf == default(Cursor):
-      m.error "could not infer type for " & pool.syms[v]
-      break
-    m.typeArgs.addSubtree inf
-
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
@@ -771,7 +763,12 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
 
   # check all type vars have a value:
   if not m.err and fn.kind in RoutineKinds:
-    finishTypevarMatch m, fn
+    for v in typeVars(fn.sym):
+      let inf = m.inferred.getOrDefault(v)
+      if inf == default(Cursor):
+        m.error "could not infer type for " & pool.syms[v]
+        break
+      m.typeArgs.addSubtree inf
 
 proc matchesBool*(m: var Match; t: Cursor) =
   var a = skipModifier(t)
