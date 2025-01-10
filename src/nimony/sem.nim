@@ -1258,18 +1258,20 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
     swap c.dest, lhsBuf
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
-    if lhs.n.kind == Symbol and isRoutine(lhs.kind):
-      let res = tryLoadSym(lhs.n.symId)
+    var maybeRoutine = lhs.n
+    if maybeRoutine.exprKind in {OchoiceX, CchoiceX}:
+      inc maybeRoutine
+    if maybeRoutine.kind == Symbol:
+      let res = tryLoadSym(maybeRoutine.symId)
       assert res.status == LacksNothing
-      if isGeneric(asRoutine(res.decl)):
+      if isRoutine(res.decl.symKind) and isGeneric(asRoutine(res.decl)):
         cs.hasGenericArgs = true
         cs.genericDest = createTokenBuf(16)
         swap c.dest, cs.genericDest
         while cs.fn.n.kind != ParRi:
-          # XXX semLocalType should build `static` types for values
-          discard semLocalType(c, cs.fn.n)
+          semLocalTypeImpl c, cs.fn.n, AllowValues
+        wantParRi c, cs.fn.n
         swap c.dest, cs.genericDest
-        skipParRi cs.fn.n
         it.n = cs.fn.n
         c.dest.addSubtree lhs.n
         cs.fn.typ = lhs.typ
