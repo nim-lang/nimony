@@ -53,6 +53,8 @@ proc error(m: var Match; msg: sink string) =
   if m.err: return # first error is the important one
   m.err = true
   m.error = MatchError(info: m.argInfo, msg: msg, pos: m.pos+1)
+  #writeStackTrace()
+  #echo "ERROR: ", msg
 
 proc addErrorMsg*(dest: var string; m: Match) =
   assert m.err
@@ -263,6 +265,88 @@ proc linearMatch(m: var Match; f, a: var Cursor, leaveLastParRi = true) =
     # only match a single tree/token:
     if nested == 0: break
 
+proc expectParRi(m: var Match; f: var Cursor) =
+  if f.kind == ParRi:
+    inc f
+  else:
+    m.error "BUG: formal type not at end!"
+
+proc extractCallConv(c: var Cursor): CallConv =
+  result = NimcallC
+  if substructureKind(c) == PragmasS:
+    inc c
+    while c.kind != ParRi:
+      let res = callConvKind(c)
+      if res != NoCallConv:
+        result = res
+      skip c
+    inc c
+  elif c.kind == DotToken:
+    inc c
+  else:
+    raiseAssert "BUG: No pragmas found"
+
+proc procTypeMatch(m: var Match; f, a: var Cursor) =
+  if f.typeKind == ProcT:
+    inc f
+    for i in 1..4: skip f
+  if a.typeKind == ProcT:
+    inc a
+    for i in 1..4: skip a
+  var hasParams = 0
+  if f.substructureKind == ParamsS:
+    inc f
+    if f.kind != ParRi: inc hasParams
+  if a.substructureKind == ParamsS:
+    inc a
+    if a.kind != ParRi: inc hasParams, 2
+  if hasParams == 3:
+    while f.kind != ParRi and a.kind != ParRi:
+      var fParam = takeLocal(f)
+      var aParam = takeLocal(a)
+      assert fParam.kind == ParamY
+      assert aParam.kind == ParamY
+      linearMatch m, fParam.typ, aParam.typ
+    if f.kind == ParRi:
+      if a.kind == ParRi:
+        discard "ok"
+        inc a
+      else:
+        m.error "parameter lists do not match"
+        skipToEnd a
+      inc f
+    else:
+      m.error "parameter lists do not match"
+      skipToEnd f
+      skipToEnd a
+  elif hasParams == 2:
+    m.error "parameter lists do not match"
+    skipToEnd a
+  elif hasParams == 1:
+    m.error "parameter lists do not match"
+    skipToEnd f
+
+  # also correct for the DotToken case:
+  inc f
+  inc a
+
+  # match return types:
+  let fret = typeKind f
+  let aret = typeKind a
+  if fret == aret and fret == VoidT:
+    skip f
+    skip a
+  else:
+    linearMatch m, f, a
+  # match calling conventions:
+  let fcc = extractCallConv(f)
+  let acc = extractCallConv(a)
+  if fcc != acc:
+    m.error "calling conventions do not match"
+  skip f # effects
+  skip f # body
+  expectParRi m, f
+
 const
   TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
 
@@ -373,12 +457,6 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   else:
     m.error expected(f, a)
   inc f
-
-proc expectParRi(m: var Match; f: var Cursor) =
-  if f.kind == ParRi:
-    inc f
-  else:
-    m.error "BUG: formal type not at end!"
 
 proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   if a.typeKind == ArrayT:
@@ -538,8 +616,16 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         if a.kind != ParRi:
           # len(a) > len(f)
           m.error expected(fOrig, aOrig)
+    of ProcT:
+      var a = skipModifier(arg.typ)
+      case a.typeKind
+      of NilT:
+        discard "ok"
+        skip f
+      else:
+        procTypeMatch m, f, a
     of NoType, ObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, ProcT, IterT, AutoT, SymKindT, TypeKindT, OrdinalT:
+        ConceptT, DistinctT, StaticT, IterT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error "BUG: unhandled type: " & pool.tags[f.tagId]
   else:
     m.error "BUG: " & expected(f, arg.typ)

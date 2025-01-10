@@ -40,7 +40,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
           if isRoutine(symKind(res.decl)):
             result = res.decl
       else:
-        quit "gear3:could not find symbol: " & pool.syms[n.symId]
+        quit "could not find symbol: " & pool.syms[n.symId]
     of IntLit:
       result = c.builtins.intType
     of UintLit:
@@ -91,7 +91,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      CastX, ConvX, OconvX, HconvX, DconvX, OconstrX:
     result = n.firstSon
-  of ParX:
+  of ParX, EnsureMoveX:
     result = getTypeImpl(c, n.firstSon)
   of NilX:
     result = c.builtins.nilType
@@ -141,6 +141,22 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
+  of TupAtX:
+    var n = n
+    inc n # into tuple
+    var tupType = getTypeImpl(c, n)
+    skip n # skip tuple expression
+    if n.kind == IntLit:
+      var idx = pool.integers[n.intId]
+      inc tupType # into the tuple type
+      while idx > 0:
+        skip tupType
+        dec idx
+      if tupType == "fld":
+        let field = asLocal(tupType)
+        result = field.typ
+      else:
+        result = tupType
   of AconstrX:
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)

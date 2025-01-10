@@ -13,7 +13,7 @@ include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
-  semdata, sembasics, semos, expreval, semborrow, enumtostr
+  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs
 
 import ".." / gear2 / modnames
 
@@ -772,7 +772,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         inc n # skip the SymbolDef
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
-              SizeofX, LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
+              LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
               ArrAtX, DerefX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
@@ -1640,7 +1640,8 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     inc n
     semConstIntExpr(c, n)
     c.dest.addParRi()
-  of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow, NoSideEffect:
+  of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow,
+     NoSideEffect, NoDestroy:
     crucial.flags.incl pk
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     c.dest.addParRi()
@@ -2351,11 +2352,19 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         return
       takeToken c, n
       wantDot c, n # name
+      wantDot c, n # export marker
+      wantDot c, n # pattern
+      wantDot c, n # generics
       let beforeParams = c.dest.len
+      c.openScope()
       semParams c, n
       semLocalTypeImpl c, n, InReturnTypeDecl
       var crucial = default CrucialPragma
       semPragmas c, n, crucial, ProcY
+      wantDot c, n # exceptions
+      wantDot c, n # body
+      # close it here so that pragmas like `requires` can refer to the params:
+      c.closeScope()
       wantParRi c, n
       if crucial.hasVarargs.isValid:
         addVarargsParameter c, beforeParams, crucial.hasVarargs
@@ -2395,6 +2404,13 @@ proc exportMarkerBecomesNifTag(c: var SemContext; insertPos: int; crucial: Cruci
     ]
     c.dest.replace fromBuffer(nifTag), insertPos
 
+proc semLocalValue(c: var SemContext; it: var Item; crucial: CrucialPragma) =
+  if Threadvar in crucial.flags:
+    c.buildErr it.n.info, "a `threadvar` cannot have an init value"
+    skip it.n
+  else:
+    semExpr c, it
+
 proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   let declStart = c.dest.len
   takeToken c, n
@@ -2419,7 +2435,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         withNewScope c:
           semConstExpr c, it # 4
       else:
-        semExpr c, it # 4
+        semLocalValue c, it, crucial # 4
       n = it.n
       insertType c, it.typ, beforeType
     else:
@@ -2433,7 +2449,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
           withNewScope c:
             semConstExpr c, it # 4
         else:
-          semExpr c, it # 4
+          semLocalValue c, it, crucial # 4
         n = it.n
         patchType c, it.typ, beforeType
   else:
@@ -2600,7 +2616,6 @@ proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
         if n.substructureKind == ParamS:
           var local = takeLocal(n)
           result.add local.typ
-          skip n
           skipParRi n
         else:
           break
@@ -2608,6 +2623,7 @@ proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
 
 type
   HookOp = enum
+    hookNone
     hookCloner = "cloner"
     hookTracer = "tracer"
     hookDisarmer = "disarmer"
@@ -2629,6 +2645,8 @@ proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
 proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info: PackedLineInfo) =
   var cond: bool
   case op
+  of hookNone:
+    return
   of hookDtor:
     cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 1
     if not cond:
@@ -2664,6 +2682,8 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
 
   if not cond:
     case op
+    of hookNone:
+      discard
     of hookDtor:
       buildErr c, info, "signature for '=destroy' must be proc[T: object](x: T)"
     of hookTracer:
@@ -2681,7 +2701,7 @@ proc expandHook(c: var SemContext; obj: SymId, symId: SymId, op: HookOp) =
 proc getHookName(symId: SymId): string =
   result = pool.syms[symId]
   extractBasename(result)
-  result = result.normalize
+  #result = result.normalize
 
 proc semHook(c: var SemContext; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): TypeCursor =
   let params = getParamsType(c, beforeParams)
@@ -2689,7 +2709,7 @@ proc semHook(c: var SemContext; name: string; beforeParams: int; symId: SymId, i
   of "=destroy":
     checkTypeHook(c, params, hookDtor, info)
     result = params[0]
-  of "=wasmoved":
+  of "=wasMoved":
     checkTypeHook(c, params, hookDisarmer, info)
     result = params[0]
   of "=trace":
@@ -2704,8 +2724,16 @@ proc semHook(c: var SemContext; name: string; beforeParams: int; symId: SymId, i
   else:
     raiseAssert "unreachable"
 
+proc hookToKind(name: string): HookOp =
+  case name
+  of "=destroy": hookDtor
+  of "=wasMoved": hookDisarmer
+  of "=trace": hookTracer
+  of "=copy": hookCloner
+  of "=sink": hookMover
+  else: hookNone
+
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
-  const hookTable = toTable({"=destroy": hookDtor, "=wasmoved": hookDisarmer, "=trace": hookTracer, "=copy": hookCloner, "=sink": hookMover})
   let info = it.n.info
   let declStart = c.dest.len
   takeToken c, it.n
@@ -2755,12 +2783,12 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
 
-        let name = getHookName(symId)
-        if name in hookTable:
+        let hk = hookToKind(getHookName(symId))
+        if hk != hookNone:
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
           let obj = getObjSymId(c, params[0])
-          expandHook(c, obj, symId, hookTable[name])
+          expandHook(c, obj, symId, hk)
 
       of checkBody:
         if it.n != "stmts":
@@ -2773,18 +2801,16 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close parameter scope
         addReturnResult c, resId, it.n.info
         let name = getHookName(symId)
-        if name in hookTable:
+        let hk = hookToKind(name)
+        if hk != hookNone:
           let objCursor = semHook(c, name, beforeParams, symId, info)
           let obj = getObjSymId(c, objCursor)
 
           if c.routine.inGeneric == 0:
             # because it's a hook for sure
-            expandHook(c, obj, symId, hookTable[name])
+            expandHook(c, obj, symId, hk)
           else:
-            if obj in c.genericHooks:
-              c.genericHooks[obj].add symId
-            else:
-              c.genericHooks[obj] = @[symId]
+            c.genericHooks.mgetOrPut(obj, @[]).add symId
 
       of checkSignatures:
         c.takeTree it.n
@@ -3701,6 +3727,45 @@ proc semTupleDefault(c: var SemContext; it: var Item) =
   buildDefaultTuple(c, it.typ, info)
   commonType c, it, exprStart, expected
 
+proc semTupAt(c: var SemContext; it: var Item) =
+  # has already been semchecked but we do it again:
+  let exprStart = c.dest.len
+  let expected = it.typ
+  takeToken c, it.n
+  var tup = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, tup
+  var idx = tup.n
+  let idxStart = c.dest.len
+  semConstIntExpr c, idx
+  var idxValue = evalOrdinal(c, cursorAt(c.dest, idxStart))
+  endRead(c.dest)
+  it.n = idx
+  let zero = createXint(0'i64)
+  if idxValue.isNaN or idxValue < zero:
+    shrink c.dest, idxStart
+    c.buildErr it.n.info, "must be a constant expression >= 0"
+    wantParRi c, it.n
+  else:
+    it.typ = tup.typ
+    inc it.typ
+    # navigate to the proper type within the tuple type:
+    let one = createXint(1'i64)
+    while true:
+      if it.typ.kind == ParRi:
+        shrink c.dest, idxStart
+        c.buildErr it.n.info, "tuple index too large"
+        break
+      if idxValue > zero:
+        skip it.typ
+        idxValue = idxValue - one
+      else:
+        break
+    if it.typ.substructureKind == FldS:
+      let fld = asLocal(it.typ)
+      it.typ = fld.typ
+    wantParRi c, it.n
+    commonType c, it, exprStart, expected
+
 proc getDottedIdent(n: var Cursor): string =
   let isError = n.kind == ParLe and n.tagId == ErrT
   if isError:
@@ -4144,6 +4209,38 @@ proc semDeref(c: var SemContext; it: var Item) =
     c.buildErr info, "invalid type for deref: " & typeToString(arg.typ)
   commonType c, it, beforeExpr, expected
 
+proc semAddr(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let info = it.n.info
+  let expected = it.typ
+  let beforeArg = c.dest.len
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, arg
+  it.n = arg.n
+  wantParRi c, it.n
+  let a = cursorAt(c.dest, beforeArg)
+  if isAddressable(a):
+    endRead c.dest
+  else:
+    let asStr = toString(a, false)
+    endRead c.dest
+    c.dest.shrink beforeArg
+    c.buildErr info, "invalid expression for `addr` operation: " & asStr
+
+  it.typ = ptrTypeOf(c, arg.typ)
+  commonType c, it, beforeExpr, expected
+
+proc semSizeof(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let expected = it.typ
+  # We don't really have any kind of restrictions on the argument here
+  # and it was semchecked already in overload resolution, so it is fine
+  # to just copy it:
+  takeTree c, it.n
+  it.typ = c.types.intType
+  commonType c, it, beforeExpr, expected
+
 proc whichPass(c: SemContext): PassKind =
   result = if c.phase == SemcheckSignatures: checkSignatures else: checkBody
 
@@ -4313,6 +4410,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       takeToken c, it.n
       semBoolExpr c, it.n
       wantParRi c, it.n
+    of EnsureMoveX:
+      takeToken c, it.n
+      semExpr c, it
+      wantParRi c, it.n
     of ParX:
       inc it.n
       semExpr c, it
@@ -4323,6 +4424,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of DotX:
       toplevelGuard c:
         semDot c, it, flags
+    of TupAtX:
+      toplevelGuard c:
+        semTupAt c, it
     of DconvX:
       toplevelGuard c:
         semDconv c, it
@@ -4383,7 +4487,11 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semStmtsExpr c, it
     of DerefX:
       semDeref c, it
-    of AddrX, SizeofX, KvX,
+    of AddrX:
+      semAddr c, it
+    of SizeofX:
+      semSizeof c, it
+    of KvX,
        RangeX, RangesX,
        OconvX, HconvX,
        CompilesX, TypeofX:

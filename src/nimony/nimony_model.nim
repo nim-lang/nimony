@@ -146,6 +146,8 @@ type
     DefaultTupX = "defaulttup"
     ExprX = "expr" # was nkStmtListExpr in the old Nim
     ArrAtX = "arrat"
+    TupAtX = "tupat" # tup[0] syntax
+    EnsureMoveX = "emove" # note that `move` can be written in standard Nim
 
   TypeKind* = enum
     NoType
@@ -211,6 +213,7 @@ type
     Varargs = "varargs"
     Borrow = "borrow"
     NoSideEffect = "noSideEffect"
+    NoDestroy = "nodestroy"
     Plugin = "plugin"
 
   SubstructureKind* = enum
@@ -242,6 +245,15 @@ type
     MemberC = "member"
     InlineC = "inline"
     NoinlineC = "noinline"
+    NimcallC = "nimcall"
+
+  AttachedOp* = enum
+    attachedDestroy,
+    attachedWasMoved,
+    attachedDup,
+    attachedCopy,
+    attachedSink,
+    attachedTrace
 
 declareMatcher parseStmtKind, StmtKind
 
@@ -309,11 +321,48 @@ const
   RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
   CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX}
 
-proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind; info = NoLineInfo) =
+proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
 
-proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo): PackedToken =
+proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind; info = NoLineInfo): PackedToken =
   parLeToken(pool.tags.getOrIncl($kind), info)
+
+template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
+                       info: PackedLineInfo; body: untyped) =
+  dest.add parLeToken(kind, info)
+  body
+  dest.addParRi()
+
+template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: PackedLineInfo; body: untyped) =
+  dest.add parLeToken(kinds[0], info)
+  dest.add parLeToken(kinds[1], info)
+  body
+  dest.addParRi()
+  dest.addParRi()
+
+proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
+  dest.add symToken(s, info)
+
+proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline.} =
+  dest.add src
+
+proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline.} =
+  dest.addSubtree src
+
+proc addSymDef*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
+  dest.add symdefToken(s, info)
+
+proc addEmpty*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+  dest.add dotToken(info)
+
+proc addEmpty2*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+  dest.add dotToken(info)
+  dest.add dotToken(info)
+
+proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+  dest.add dotToken(info)
+  dest.add dotToken(info)
+  dest.add dotToken(info)
 
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
@@ -329,3 +378,19 @@ proc isDeclarative*(n: Cursor): bool =
         result = true
       else:
         result = false
+
+proc firstSon*(n: Cursor): Cursor {.inline.} =
+  result = n
+  inc result
+
+proc hookName*(op: AttachedOp): string =
+  case op
+  of attachedDestroy: "destroy"
+  of attachedWasMoved: "wasMoved"
+  of attachedDup: "dup"
+  of attachedCopy: "copy"
+  of attachedSink: "sink"
+  of attachedTrace: "trace"
+
+const
+  NoSymId* = SymId(0)
