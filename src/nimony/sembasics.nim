@@ -267,6 +267,13 @@ proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
 proc typeToCursor*(c: var SemContext; start: int): TypeCursor =
   typeToCursor(c, c.dest, start)
 
+proc ptrTypeOf*(c: var SemContext; typ: TypeCursor): TypeCursor =
+  let typeBegin = c.dest.len
+  c.dest.buildTree PtrT, typ.info:
+    c.dest.addSubtree typ
+  result = typeToCursor(c, typeBegin)
+  c.dest.shrink typeBegin
+
 proc declToCursor*(c: var SemContext; s: Sym): LoadResult =
   if knowsSym(s.name) or s.pos == ImportedPos:
     result = tryLoadSym(s.name)
@@ -462,10 +469,6 @@ proc takeTree*(dest: var TokenBuf; n: var Cursor) =
 
 proc takeTree*(c: var SemContext; n: var Cursor) =
   takeTree c.dest, n
-
-proc copyTree*(dest: var TokenBuf; n: Cursor) =
-  var n = n
-  takeTree dest, n
 
 # -------------------------------------------------------------
 

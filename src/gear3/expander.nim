@@ -10,8 +10,9 @@
 import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
-import nifindexes, symparser, treemangler
+import nifindexes, symparser
 import ".." / nimony / [nimony_model, programs, typenav]
+import typekeys
 
 type
   SymbolKey = (SymId, SymId) # (symbol, owner)
@@ -44,86 +45,6 @@ proc error(e: var EContext; msg: string) {.noreturn.} =
   when defined(debug):
     echo getStackTrace()
   quit 1
-
-proc mangleImpl(b: var Mangler; c: var Cursor) =
-  var nested = 0
-  while true:
-    case c.kind
-    of ParLe:
-      let tag {.cursor.} = pool.tags[c.tagId]
-      if tag == "fld":
-        inc c
-        skip c # name
-        skip c # export marker
-        skip c # pragmas
-        mangleImpl b, c # type is interesting
-        skip c # value
-        inc c # ParRi
-      elif tag == "array":
-        b.addTree tag
-        inc c
-        mangleImpl b, c # type is interesting
-        if c.kind == ParLe and c.typeKind == RangeT:
-          inc c # RangeT
-          skip c # type is irrelevant, we care about the length
-          assert c.kind == IntLit
-          let first = pool.integers[c.intId]
-          inc c
-          assert c.kind == IntLit
-          let last = pool.integers[c.intId]
-          inc c
-          inc c # ParRi
-          b.addIntLit(last - first + 1)
-        else:
-          mangleImpl b, c
-        inc nested
-      else:
-        b.addTree(tag)
-        inc nested
-        inc c
-    of ParRi:
-      dec nested
-      b.endTree()
-      inc c
-    of Symbol:
-      b.addSymbol(pool.syms[c.symId])
-      inc c
-    of SymbolDef:
-      b.addSymbolDef(pool.syms[c.symId])
-      inc c
-    of StringLit:
-      b.addStrLit(pool.strings[c.litId])
-      inc c
-    of IntLit:
-      b.addIntLit(pool.integers[c.intId])
-      inc c
-    of UIntLit:
-      b.addUIntLit(pool.uintegers[c.uintId])
-      inc c
-    of FloatLit:
-      b.addFloatLit(pool.floats[c.floatId])
-      inc c
-    of DotToken:
-      b.addEmpty()
-      inc c
-    of CharLit:
-      b.addCharLit(char c.uoperand)
-      inc c
-    of Ident:
-      b.addIdent(pool.strings[c.litId])
-      inc c
-    of UnknownToken:
-      b.addIdent "!unknown!"
-      inc c
-    of EofToken:
-      b.addIdent "!eof!"
-      inc c
-    if nested == 0: break
-
-proc mangle*(c: var Cursor): string =
-  var b = createMangler(30)
-  mangleImpl b, c
-  result = b.extract()
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
   result = e.currentOwner
@@ -383,7 +304,7 @@ proc traverseArrayBody(e: var EContext; c: var Cursor) =
 proc traverseAsNamedType(e: var EContext; c: var Cursor) =
   let info = c.info
   var body = c
-  let key = mangle c
+  let key = takeMangle c
 
   var val = e.newTypes.getOrDefault(key)
   if val == SymId(0):
@@ -575,7 +496,8 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           expectStrLit e, c
           result.externName = pool.strings[c.litId]
           inc c
-        of Nodecl, Selectany, Threadvar, Globalvar, Discardable, NoReturn, Varargs, Borrow, NoSideEffect:
+        of Nodecl, Selectany, Threadvar, Globalvar, Discardable, NoReturn,
+           Varargs, Borrow, NoSideEffect, NoDestroy:
           result.flags.incl pk
           inc c
         of Header:

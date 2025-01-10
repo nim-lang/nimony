@@ -27,9 +27,6 @@ include nifprelude
 
 import nimony_model, programs, decls, typenav, sembasics, reporters
 
-const
-  NoSymId = SymId(0)
-
 type
   Expects = enum
     WantT
@@ -60,7 +57,7 @@ proc wantParRi(c: var Context; n: var Cursor) =
   else:
     error "expected ')', but got: ", n
 
-proc rootOf(c: var Context; n: Cursor): SymId =
+proc rootOf(n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind
@@ -76,6 +73,18 @@ proc rootOf(c: var Context; n: Cursor): SymId =
     result = n.symId
   else:
     result = NoSymId
+
+proc isAddressable*(n: Cursor): bool =
+  ## Addressable means that we can take the address of the expression.
+  let s = rootOf(n)
+  if s != NoSymId:
+    let res = tryLoadSym(s)
+    assert res.status == LacksNothing
+    let local = asLocal(res.decl)
+    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, LetY, ConstY}
+    # Assignments to `ConstY` are prevented later.
+  else:
+    result = false
 
 proc tr(c: var Context; n: var Cursor; e: Expects)
 
@@ -205,7 +214,7 @@ proc trReturn(c: var Context; n: var Cursor) =
   wantParRi c, n
 
 proc mightBeDangerous(c: var Context; n: Cursor) =
-  let root = rootOf(c, n)
+  let root = rootOf(n)
   if root != NoSymId:
     for d in items(c.r.dangerousLocations):
       if d[0] == root:
@@ -350,7 +359,7 @@ proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
     var dangerous = false
     trCall c, ri, e, dangerous
     if dangerous:
-      let s = rootOf(c, le)
+      let s = rootOf(le)
       if s != NoSymId:
         c.r.dangerousLocations.add (s, ri)
   else:
@@ -383,10 +392,6 @@ proc trAsgn(c: var Context; n: var Cursor) =
   else:
     trAsgnRhs c, le, n, e
   wantParRi c, n
-
-proc firstSon*(n: Cursor): Cursor {.inline.} =
-  result = n
-  inc result
 
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # Idea: A variable like `x` does not own its value as it can be read multiple times.
@@ -511,3 +516,4 @@ proc injectDerefs*(n: Cursor): TokenBuf =
   tr(c, n2, WantT)
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
+  result = ensureMove(c.dest)

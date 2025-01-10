@@ -6,6 +6,8 @@
 
 ## expression evaluator for simple constant expressions, not meant to be complete
 
+import std / assertions
+
 include nifprelude
 import nimony_model, decls, programs, xints, semdata
 
@@ -154,7 +156,9 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of IsMainModuleX:
       inc n
       skipParRi n
-      if IsMain in c.c.moduleFlags:
+      if c.c == nil:
+        error "cannot evaluate expression at compile time: " & toString(n, false), n.info
+      elif IsMain in c.c.moduleFlags:
         result = c.getTrueValue()
       else:
         result = c.getFalseValue()
@@ -173,8 +177,8 @@ proc evalExpr*(c: var SemContext, n: var Cursor): TokenBuf =
   result = createTokenBuf(val.span)
   result.addSubtree val
 
-proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
-  var ec = initEvalContext(addr c)
+proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
+  var ec = initEvalContext(c)
   var n0 = n
   let val = eval(ec, n0)
   case val.kind
@@ -194,3 +198,104 @@ proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
       result = createNaN()
   else:
     result = createNaN()
+
+proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
+  evalOrdinal(addr c, n)
+
+type
+  Bounds* = object
+    lo*, hi*: xint
+
+proc enumBounds*(n: Cursor): Bounds =
+  assert n.typeKind == EnumT
+  var n = n
+  inc n # EnumT
+  skip n # Basetype
+  result = Bounds(lo: createNan(), hi: createNaN())
+  while n.kind != ParRi:
+    let enumField = takeLocal(n)
+    let x = evalOrdinal(nil, enumField.val)
+    if isNaN(result.lo) or x < result.lo: result.lo = x
+    if isNaN(result.hi) or x > result.hi: result.hi = x
+
+proc countEnumValues*(n: Cursor): xint =
+  result = createNaN()
+  if n.kind == Symbol:
+    let sym = tryLoadSym(n.symId)
+    if sym.status == LacksNothing:
+      var local = asTypeDecl(sym.decl)
+      if local.kind == TypeY and local.body.typeKind == EnumT:
+        let b = enumBounds(local.body)
+        result = b.hi - b.lo + createXint(1'i64)
+
+proc div8Roundup(a: int64): int64 =
+  if (a and 7) == 0:
+    result = a shr 3
+  else:
+    result = (a shr 3) + 1
+
+proc toTypeImpl*(n: Cursor): Cursor =
+  result = n
+  var counter = 20
+  while counter > 0 and result.kind == Symbol:
+    let sym = tryLoadSym(result.symId)
+    if sym.status == LacksNothing:
+      var local = asTypeDecl(sym.decl)
+      if local.kind == TypeY:
+        result = local.body
+    else:
+      raiseAssert "could not load: " & pool.syms[result.symId]
+
+proc bitsetSizeInBytes*(baseType: Cursor): xint =
+  var baseType = toTypeImpl baseType
+  case baseType.typeKind
+  of IntT, UIntT:
+    let bits = pool.integers[baseType.firstSon.intId]
+    # - 3 because we do `div 8` as a byte has 8 bits:
+    result = createXint(1'i64) shl (bits - 3)
+  of CharT:
+    result = createXint(256'i64 div 8'i64)
+  of BoolT:
+    result = createXint(1'i64)
+  of EnumT:
+    let b = enumBounds(baseType)
+    # XXX We don't use an offset != 0 anymore for set[MyEnum] construction
+    # so we only consider the 'hi' value here:
+    var err = false
+    let m = asSigned(b.hi, err) + 1'i64
+    if err: result = createNaN()
+    else: result = createXint div8Roundup(m)
+  of DistinctT:
+    result = bitsetSizeInBytes(baseType.firstSon)
+  else:
+    result = createNaN()
+
+proc getArrayIndexLen*(index: Cursor): xint =
+  var index = toTypeImpl index
+  case index.typeKind
+  of EnumT:
+    result = countEnumValues(index)
+  of IntT, UIntT:
+    let bits = pool.integers[index.firstSon.intId]
+    result = createXint(1'i64) shl bits
+  of CharT:
+    result = createXint 256'i64
+  of BoolT:
+    result = createXint 2'i64
+  of RangeT:
+    inc index # RangeT
+    skip index # basetype is irrelevant, we care about the length
+    let first = evalOrdinal(nil, index)
+    skip index
+    let last = evalOrdinal(nil, index)
+    result = last - first + createXint(1'i64)
+  else:
+    result = createNaN()
+
+proc getArrayLen*(n: Cursor): xint =
+  # Returns -1 in case of an error.
+  assert n.typeKind == ArrayT
+  var n = n
+  inc n
+  skip n # skip basetype
+  result = getArrayIndexLen(n)
