@@ -10,7 +10,7 @@
 import std / [hashes, os, tables, sets, syncio, times, assertions]
 
 include nifprelude
-import nifindexes, symparser, treemangler
+import nifindexes, symparser, treemangler, typekeys
 import ".." / nimony / [nimony_model, programs, typenav, decls]
 
 type
@@ -32,7 +32,9 @@ type
 
     breaks: seq[SymId] # how to translate `break`
     continues: seq[SymId] # how to translate `continue`
-    moduleSyms: HashSet[SymId] # thisModule: ModuleId
+    # moduleSyms: HashSet[SymId] # thisModule: ModuleId
+    # TODO: add a instID for each forStmt
+    tmpId: int # per proc
 
 proc error(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
   write stdout, "[Error] "
@@ -1254,18 +1256,17 @@ proc createDecl(e: var EContext; destSym: SymId;
   e.dest.addParRi()
 
 proc createAsgn(e: var EContext; destSym: SymId;
-      value: var Cursor; info: PackedLineInfo;) =
+      value: var Cursor; info: PackedLineInfo) =
   e.dest.add tagToken("asgn", info)
   e.dest.add symToken(destSym, info)
   takeTree(e, value)
   e.dest.addParRi()
 
-proc createTupleAccess(e: var EContext; c: var Cursor; lvalue: SymId; i: uint32): TokenBuf =
-  # TODO: info
+proc createTupleAccess(lvalue: SymId; i: int; info: PackedLineInfo): TokenBuf =
   result = createTokenBuf()
-  result.add tagToken("at", c.info)
-  result.add symToken(lvalue, c.info)
-  # result.add toToken(IntLit, i, c.info)
+  result.add parLeToken(TupAtX, info)
+  result.add symToken(lvalue, info)
+  result.addIntLit(i, info)
   result.addParRi()
 
 proc getForVars(forVars: var Cursor): seq[Local] =
@@ -1286,44 +1287,56 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
     res[destSym] = val
     inc c
   else:
-    if destSym in e.moduleSyms:
-      createAsgn(e, destSym, c, info)
-    else:
-      var typ = local.typ
-      createDecl(e, destSym, typ, c, info, "var")
-      e.moduleSyms.incl destSym
+    # if destSym in e.moduleSyms:
+    #   createAsgn(e, destSym, c, info)
+    # else:
+    var typ = local.typ
+    createDecl(e, destSym, typ, c, info, "var")
+    # e.moduleSyms.incl destSym
 
-proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor): Table[SymId, SymId] =
+proc getTmpId(e: var EContext): int =
+  result = e.tmpId
+  inc e.tmpId
+
+proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
 
   var vars = vars
   let forVars = getForVars(vars)
 
   if forVars.len == 1:
-    # c.init.add destSym
     connectSingleExprToLoopVar(e, c, forVars[0], result)
-  # else:
-  #   if c.kind == ParLe and c.exprKind == TupleConstrX:
-  #     var i = 0
-  #     e.loop c:
-  #       connectSingleExprToLoopVar(e, c,  e.forVars[i], result)
-  #   else:
-  #     var dest = createTokenBuf()
-  #     swap(e.dest, dest)
-  #     extract(e, c)
-  #     swap(e.dest, dest)
-  #     let yieldExpr = beginRead(dest)
+  else:
+    if c.kind == ParLe and c.exprKind == TupleConstrX:
+      inc c
+      var i = 0
+      while c.kind != ParRi:
+        connectSingleExprToLoopVar(e, c, forVars[i], result)
+        inc i
+      skipParRi(e, c)
+    else:
+      let tmpId: SymId
+      let info: PackedLineInfo
+      var typ = yieldType
+      if c.kind == Symbol:
+        tmpId = c.symId
+        info = c.info
+        inc c
+      else:
+        tmpId = pool.syms.getOrIncl(":tmp.l." & $e.getTmpId)
+        info = c.info
+        var typ = yieldType
+        createDecl(e, tmpId, typ, c, info, "let")
 
-  #     let tmpId: SymId
-  #     if yieldExpr.kind == Symbol:
-  #       tmpId = yieldExpr.symId
-  #     else:
-  #       tmpId = toSymId("tmp")
-  #       createDecl(e, c, tmpId, dest, "let")
-
-  #     for i in 0..<e.forVars.len:
-  #       let symId = e.forvars[i]
-  #       createDecl(e, c, symId, createTupleAccess(e, c, tmpId, uint32(i)), "let")
+      inc typ # skips tuple
+      for i in 0..<forVars.len:
+        let symId = forvars[i].name.symId
+        var tupBuf = createTupleAccess(tmpId, i, info)
+        var tup = beginRead(tupBuf)
+        var field = takeLocal(typ)
+        var fieldTyp = field.typ
+        inc typ # skips ParRi
+        createDecl(e, symId, fieldTyp, tup, info, "let")
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
   e.dest.add c
@@ -1348,6 +1361,8 @@ proc pop(s: var seq[SymId]): SymId =
   result = s[^1]
   setLen(s, s.len-1)
 
+proc transformForStmt(e: var EContext; c: var Cursor)
+
 proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]; fromForloop = false) =
   case c.kind
   of Symbol:
@@ -1364,7 +1379,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
     of ContinueS:
       transformContinueStmt(e, c)
     of ForS:
-      raiseAssert "todo"
+      transformForStmt(e, c)
     of WhileS:
       e.dest.add c
       inc c
@@ -1372,6 +1387,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
       e.breaks.add SymId(0)
       e.continues.add SymId(0)
       inlineLoopBody(e, c, mapping)
+      wantParRi(e, c)
       discard e.breaks.pop()
       discard e.continues.pop()
     of BlockS:
@@ -1393,11 +1409,15 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
           inlineLoopBody(e, c, mapping)
         wantParRi(e, c)
     else:
-      takeTree(e, c)
+      e.dest.add c
+      inc c
+      e.loop c:
+        inlineLoopBody(e, c, mapping)
   else:
     takeTree(e, c)
 
-proc inlineIteratorBody(e: var EContext; c: var Cursor; forStmt: ForStmt) =
+proc inlineIteratorBody(e: var EContext;
+      c: var Cursor; forStmt: ForStmt; yieldType: Cursor) =
   case c.kind
   of ParLe:
     case c.stmtKind
@@ -1405,31 +1425,39 @@ proc inlineIteratorBody(e: var EContext; c: var Cursor; forStmt: ForStmt) =
       e.dest.add c
       inc c
       while c.kind != ParRi:
-        inlineIteratorBody(e, c, forStmt)
+        inlineIteratorBody(e, c, forStmt, yieldType)
       wantParRi e, c
     of YieldS:
+      e.dest.add tagToken($BlockS, c.info)
+      e.dest.addDotToken()
+      e.dest.add tagToken("stmts", c.info)
+
       let loopBodyHasContinueStmt = hasContinueStmt(forStmt.body)
       if loopBodyHasContinueStmt:
-        let lab = pool.syms.getOrIncl("continueLabel.c")
+        let lab = pool.syms.getOrIncl("continueLabel" & $getTmpId(e))
         e.dest.add tagToken($BlockS, c.info)
         e.dest.add symdefToken(lab, c.info)
+        e.dest.add tagToken("stmts", c.info)
         e.continues.add lab
 
       inc c # skips yield
-      let mapping = createYieldMapping(e, c, forStmt.vars)
+      let mapping = createYieldMapping(e, c, forStmt.vars, yieldType)
       var body = forStmt.body
       inlineLoopBody(e, body, mapping, true)
 
       if loopBodyHasContinueStmt:
         discard e.continues.pop()
+        e.dest.addParRi() # stmts
         e.dest.addParRi()
 
+      e.dest.addParRi()
+      e.dest.addParRi()
       skipParRi(e, c)
     of WhileS:
       e.dest.add c
       inc c
       takeTree(e, c)
-      inlineIteratorBody(e, c, forStmt)
+      inlineIteratorBody(e, c, forStmt, yieldType)
       wantParRi(e, c)
     else:
       takeTree(e, c)
@@ -1457,7 +1485,7 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
       skip params
 
     var body = routine.body
-    inlineIteratorBody(e, body, forStmt)
+    inlineIteratorBody(e, body, forStmt, routine.retType)
 
   else:
     error e, "could not find symbol: " & pool.syms[iterSym]
@@ -1523,7 +1551,7 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
   ]#
   let forStmt = asForStmt(c)
 
-  let lab = pool.syms.getOrIncl("forStmtLabel.c")
+  let lab = pool.syms.getOrIncl("forStmtLabel" & $getTmpId(e))
   e.dest.add tagToken($BlockS, c.info)
   e.dest.add symdefToken(lab, c.info)
   e.dest.add tagToken("stmts", c.info)
@@ -1557,6 +1585,22 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       transformForStmt(e, c)
     of IterS:
       skip(c)
+    of FuncS, ProcS, ConverterS, MethodS:
+      e.dest.add c
+      inc c
+      takeTree(e, c) # name
+      takeTree(e, c) # exported
+      takeTree(e, c) # pattern
+      takeTree(e, c) # typevars
+      takeTree(e, c) # params
+      takeTree(e, c) # retType
+      takeTree(e, c) # pragmas
+      takeTree(e, c) # effects
+      let oldTmpId = e.tmpId
+      e.tmpId = 0
+      transformStmt(e, c)
+      e.tmpId = oldTmpId
+      wantParRi(e, c)
     else:
       takeTree(e, c)
   else:
