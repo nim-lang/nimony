@@ -335,7 +335,9 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
       if n.exprKind in CallKinds:
         var n = firstSon n
         if n.kind == Symbol:
-          case pool.syms[n.symId]
+          var fn = pool.syms[n.symId]
+          extractBasename fn
+          case fn
           of "=dup":
             trExplicitDup c, n, DontCare
             handled = true
@@ -443,9 +445,9 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
       skipParRi(fnType)
     tr c, n, e2
   wantParRi c.dest, n
-  finishOwningTemp dest, ow
+  finishOwningTemp c.dest, ow
 
-proc trRawConstructor(c: var Context; n: Cursor; e: Expects) =
+proc trRawConstructor(c: var Context; n: var Cursor; e: Expects) =
   # Idioms like `echo ["ab", myvar, "xyz"]` are important to translate well.
   let e2 = if e == WillBeOwned: WantOwner else: e
   c.dest.add n
@@ -454,53 +456,44 @@ proc trRawConstructor(c: var Context; n: Cursor; e: Expects) =
     tr c, n, e2
   wantParRi c.dest, n
 
+proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
+  copyInto c.dest, n:
+    takeTree c.dest, n # type
+    tr c, n, e
 
-proc trConstructor(c: var Context; typ, ex: Cursor; e: Expects) =
-  # Idioms like `echo ["ab", myvar, "xyz"]` are important to translate well.
-  let e2 = if e == WillBeOwned: WantOwner else: e
-  copyIntoKind dest, TypedExpr, ex.info:
-    copyTree dest, typ
-    for ch in sons(dest, ex):
-      tr c, dest, ch, e2
-
-proc trConvExpr(c: var Context; n: Cursor; e: Expects) =
-  let (typ, ex) = sons2(tree, n)
-  copyInto dest, n:
-    copyTree dest, typ
-    tr c, dest, ex, e
-
-proc trObjConstr(c: var Context; n: Cursor; e: Expects) =
+proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
   let typ = n.firstSon
   if hasDestructor(c, typ) and e == WantNonOwner:
-    ow = bindToTemp(c, dest, FullTypeId(m: tree.id, t: typ), n.info)
-  copyIntoKind dest, ObjConstr, n.info:
-    copyTree dest, typ
-    for ch in sonsFrom1(tree, n):
-      let (first, second) = sons2(tree, ch)
-      copyIntoKind dest, ch.kind, ch.info:
-        copyTree dest, first
-        tr c, dest, second, WantOwner
-  finishOwningTemp dest, ow
+    ow = bindToTemp(c, typ, n.info)
+  copyInto c.dest, n:
+    takeTree c.dest, n
+    while n.kind != ParRi:
+      assert n.exprKind == KvX
+      copyInto c.dest, n:
+        takeTree c.dest, n
+        tr c, n, WantOwner
+  finishOwningTemp c.dest, ow
 
-proc genLastRead(c: var Context; n: Cursor; typ: FullTypeId) =
+proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
+  let ex = n
   let info = n.info
   # translate it to: `(var tmp = location; wasMoved(location); tmp)`
-  var ow = bindToTemp(c, dest, typ, info, CursorDecl)
-  copyTree dest, n
+  var ow = bindToTemp(c, typ, info, CursorS)
+  takeTree c.dest, n
 
-  dest.patch ow.vr # finish the VarDecl
+  c.dest.addParRi() # finish the VarDecl
 
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
-    copyIntoKind dest, CallS, info:
-      copyIntoSymUse c.p, dest, hookProc, info
-      copyIntoKind dest, HiddenAddr, info:
-        copyTree dest, n
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      copyIntoKind c.dest, HaddrX, info:
+        copyTree c.dest, ex
 
-  dest.patch ow.st # finish the StmtList
-  dest.copyIntoSymUse ow.s, ow.info
-  dest.patch ow.ex # finish the StmtListExpr
+  c.dest.addParRi() # finish the StmtList
+  c.dest.copyIntoSymUse ow.s, ow.info
+  c.dest.addParRi() # finish the StmtListExpr
 
 proc trLocation(c: var Context; n: Cursor; e: Expects) =
   # `x` does not own its value as it can be read multiple times.
