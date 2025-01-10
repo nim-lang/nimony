@@ -1349,7 +1349,15 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
   else:
     resolveOverloads c, it, cs
 
-proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
+proc genericRootSym(td: TypeDecl): SymId =
+  result = td.name.symId
+  if td.typevars.typeKind == InvokeT:
+    var root = td.typevars
+    inc root
+    assert root.kind == Symbol
+    result = root.symId
+
+proc findObjFieldAux(t: Cursor; name: StrId; level = 0): ObjField =
   assert t == "object"
   var n = t
   inc n # skip `(object` token
@@ -1360,9 +1368,10 @@ proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
     if n.kind == SymbolDef and sameIdent(n.symId, name):
       let symId = n.symId
       inc n # skip name
+      let exported = n.kind != DotToken
       skip n # export marker
       skip n # pragmas
-      return ObjField(sym: symId, level: level, typ: n)
+      return ObjField(sym: symId, level: level, typ: n, exported: exported, rootOwner: SymId(0))
     skip n # skip name
     skip n # export marker
     skip n # pragmas
@@ -1377,9 +1386,42 @@ proc findObjField(t: Cursor; name: StrId; level = 0): ObjField =
     if baseType.typeKind == InvokeT:
       inc baseType # get to root symbol
     if baseType.kind == Symbol:
-      result = findObjField(objtypeImpl(baseType.symId), name, level+1)
+      let decl = getTypeSection(baseType.symId)
+      var objType = decl.body
+      # emulate objtypeImpl
+      if objType.typeKind in {RefT, PtrT}:
+        inc objType
+      result = findObjFieldAux(objType, name, level+1)
+      if result.level == level+1:
+        result.rootOwner = genericRootSym(decl)
     else:
       # maybe error
+      result = ObjField(level: -1)
+
+proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; info: PackedLineInfo): ObjField =
+  var impl = decl.body
+  # emulate objtypeImpl
+  if impl.typeKind in {RefT, PtrT}:
+    inc impl
+  result = findObjFieldAux(impl, name)
+  if result.level == 0:
+    result.rootOwner = genericRootSym(decl)
+  if result.level >= 0:
+    # check visibility
+    var visible = false
+    if result.exported:
+      visible = true
+    else:
+      let owner = result.rootOwner
+      if owner == SymId(0):
+        visible = true
+      else:
+        let ownerModule = extractModule(pool.syms[owner])
+        # safe to get this from line info?
+        let currentModule = moduleSuffix(getFile(info), c.g.config.paths)
+        visible = ownerModule == "" or currentModule == "" or ownerModule == currentModule
+    if not visible:
+      # treat as undeclared
       result = ObjField(level: -1)
 
 proc findModuleSymbol(n: Cursor): SymId =
@@ -1432,9 +1474,13 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     if root.typeKind == InvokeT:
       inc root
     if root.kind == Symbol:
-      let objType = objtypeImpl(root.symId)
+      let decl = getTypeSection(root.symId)
+      var objType = decl.body
+      # emulate objtypeImpl
+      if objType.typeKind in {RefT, PtrT}:
+        inc objType
       if objType.typeKind == ObjectT:
-        let field = findObjField(objType, fieldName)
+        let field = findObjFieldConsiderVis(c, decl, fieldName, info)
         if field.level >= 0:
           c.dest.add symToken(field.sym, info)
           c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
@@ -1768,7 +1814,10 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
     takeToken c, n
   else:
     # object fields:
+    let oldScopeKind = c.currentScope.kind
     withNewScope c:
+      # copy toplevel scope status for exported fields
+      c.currentScope.kind = oldScopeKind
       while n.substructureKind == FldS:
         semLocal(c, n, FldY)
   wantParRi c, n
@@ -3299,8 +3348,11 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       takeToken c, n
       isGeneric = false
     else:
+      let oldScopeKind = c.currentScope.kind
       openScope c
       semGenericParams c, n
+      # copy toplevel scope status for exported fields
+      c.currentScope.kind = oldScopeKind
       isGeneric = true
 
     semTypePragmas c, n, beforeExportMarker
@@ -3632,13 +3684,18 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   inc it.n
   it.typ = semLocalType(c, it.n)
   c.dest.shrink exprStart
+  var decl = default(TypeDecl)
   var objType = it.typ
   if objType.typeKind in {RefT, PtrT}:
     inc objType
   if objType.typeKind == InvokeT:
     inc objType
   if objType.kind == Symbol:
-    objType = objtypeImpl(objType.symId)
+    decl = getTypeSection(objType.symId)
+    objType = decl.body
+    # emulate objtypeImpl
+    if objType.typeKind in {RefT, PtrT}:
+      inc objType
     if objType.typeKind != ObjectT:
       c.buildErr info, "expected object type for object constructor"
       return
@@ -3667,9 +3724,9 @@ proc semObjConstr(c: var SemContext, it: var Item) =
             # level is not known but not used either, set it to 0:
             field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
           else:
-            field = findObjField(objType, fieldName)
+            field = findObjFieldConsiderVis(c, decl, fieldName, info)
         else:
-          field = findObjField(objType, fieldName)
+          field = findObjFieldConsiderVis(c, decl, fieldName, info)
         if field.level >= 0:
           if field.sym in setFieldPositions:
             c.buildErr fieldInfo, "field already set: " & pool.strings[fieldName]

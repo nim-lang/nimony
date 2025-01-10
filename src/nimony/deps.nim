@@ -310,7 +310,7 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
   result = "nifcache" / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
 
-proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: bool;
+proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild, silentMake: bool;
     commandLineArgs: string; moduleFlags: set[ModuleFlag]; cmd: Command) =
   let nifler = findTool("nifler")
 
@@ -333,6 +333,8 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild: 
   when defined(windows):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
-  exec "make" & (if forceRebuild: " -B" else: "") & " -f " & quoteShell(makeFilename)
+  exec "make" & (if silentMake: " -s" else: "") &
+    (if forceRebuild: " -B" else: "") &
+    " -f " & quoteShell(makeFilename)
   if cmd == DoRun:
     exec exeFile(c.rootNode.files[0])

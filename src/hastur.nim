@@ -148,7 +148,7 @@ type
 proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
-  of Normal, Tracked: "c"
+  of Normal, Tracked: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
@@ -156,6 +156,15 @@ proc execNimony(cmd: string; cat: Category): (string, int) =
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
   result = "nifcache" / name.addFileExt(ext)
+
+proc removeMakeErrors(output: string): string =
+  result = output.strip
+  for prefix in ["FAILURE:", "make:"]:
+    let lastLine = rfind(result, '\n')
+    if lastLine >= 0 and lastLine + prefix.len < result.len and
+        result[lastLine + 1 .. lastLine + prefix.len] == prefix:
+      result = result[0 .. lastLine].strip
+    else: break
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   inc c.total
@@ -169,11 +178,12 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
   var expectedExitCode = 0
   if msgs.fileExists():
     let msgSpec = readFile(msgs).strip
-    let success = msgSpec == compilerOutput.strip
+    let strippedOutput = removeMakeErrors(compilerOutput)
+    let success = msgSpec == strippedOutput
     if not success:
       if overwrite:
-        writeFile(msgs, compilerOutput)
-      failure c, file, msgSpec, compilerOutput
+        writeFile(msgs, strippedOutput)
+      failure c, file, msgSpec, strippedOutput
     expectedExitCode = if msgSpec.contains(ErrorKeyword): 1 else: 0
   if compilerExitCode != expectedExitCode:
     failure c, file, "compiler exitcode " & $expectedExitCode, compilerOutput & "\nexitcode " & $compilerExitCode
@@ -415,6 +425,7 @@ proc handleCmdLine =
 
   case primaryCmd
   of "all":
+    buildNimsem()
     buildNimony()
     buildNifc()
     buildGear3()
