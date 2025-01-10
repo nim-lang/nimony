@@ -706,16 +706,17 @@ proc collectDefaultValues(f: var Cursor): seq[Item] =
     result.add Item(n: param.val, typ: param.typ)
     skip f
 
-proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
-               explicitTypeVars: Cursor) =
-  assert fn.kind != NoSym or fn.sym == SymId(0)
+proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
   m.tvars = initHashSet[SymId]()
-  m.fn = fn
   if fn.kind in RoutineKinds:
     var e = explicitTypeVars
     for v in typeVars(fn.sym):
       m.tvars.incl v
-      if e.kind != DotToken and e.kind != ParRi:
+      if e.kind == DotToken: discard
+      elif e.kind == ParRi:
+        m.error "missing explicit generic parameter for " & pool.syms[v]
+        break
+      else:
         if matchesConstraint(m, v, e):
           m.inferred[v] = e
         else:
@@ -725,11 +726,19 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
           assert typevar.kind == TypevarY
           m.error concat(typeToString(e), " does not match constraint ", typeToString(typevar.typ))
         skip e
+    if e.kind != DotToken and e.kind != ParRi:
+      m.error "extra generic parameter"
   elif explicitTypeVars.kind != DotToken:
     # aka there are explicit type vars
     if m.tvars.len == 0:
       m.error "routine is not generic"
       return
+
+proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
+               explicitTypeVars: Cursor) =
+  assert fn.kind != NoSym or fn.sym == SymId(0)
+  m.fn = fn
+  matchTypevars m, fn, explicitTypeVars
 
   var f = fn.typ
   assert f == "params"
