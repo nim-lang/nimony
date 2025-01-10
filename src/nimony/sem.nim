@@ -4406,8 +4406,6 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSubscript c, it
     of ArrAtX, PatX:
       semTypedAt c, it
-    of TupAtX:
-      semTupleAt c, it
     of UnpackX:
       takeToken c, it.n
       wantParRi c, it.n
