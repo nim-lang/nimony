@@ -3907,16 +3907,103 @@ proc semIsMainModule(c: var SemContext; it: var Item) =
   it.typ = c.types.boolType
   commonType c, it, beforeExpr, expected
 
+proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool =
+  result = false
+  let info = syms.info
+  let exprStart = c.dest.len
+  # build symchoice first so we can directly add the matching syms:
+  c.dest.add parLeToken(AtX, info)
+  c.dest.add parLeToken(CchoiceX, info)
+  var argBuf = createTokenBuf(16)
+  swap c.dest, argBuf
+  var argRead = it.n
+  while argRead.kind != ParRi:
+    semLocalTypeImpl c, argRead, AllowValues
+  wantParRi c, argRead
+  swap c.dest, argBuf
+  let args = cursorAt(argBuf, 0)
+  var matches = 0
+  var lastMatch = default(Match)
+  var instLastMatch = false
+  var syms = syms
+  var nested = 0
+  while true:
+    # find matching syms
+    case syms.kind
+    of ParLe:
+      if syms.exprKind in {CchoiceX, OchoiceX}:
+        inc nested
+        inc syms
+      else:
+        c.dest.shrink exprStart
+        c.buildErr syms.info, "invalid tag in symchoice: " & pool.tags[syms.tagId]
+        return
+    of ParRi:
+      dec nested
+      inc syms
+    of Symbol:
+      let sym = syms.symId
+      let routine = getProcDecl(sym)
+      let candidate = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
+      var m = Match(fn: candidate)
+      matchTypevars m, candidate, args
+      if not m.err:
+        # match
+        finishTypevarMatch m, candidate
+        c.dest.add symToken(sym, syms.info)
+        inc matches
+        lastMatch = m
+        # mark if routine is suitable for instantiation:
+        instLastMatch = routine.kind notin {TemplateY, MacroY} and routine.exported.kind != ParLe
+      inc syms
+    else:
+      c.dest.shrink exprStart
+      c.buildErr syms.info, "invalid token in symchoice: " & $syms.kind
+      return
+    if nested == 0: break
+  c.dest.addParRi() # close symchoice
+  if matches == 0:
+    c.dest.shrink exprStart
+    result = false
+  elif matches == 1 and c.routine.inGeneric == 0 and instLastMatch:
+    # can instantiate single match
+    c.dest.shrink exprStart
+    # inferred table outlives proc but argsBuf is ephemeral:
+    var inferred = lastMatch.inferred
+    for _, value in inferred.mpairs:
+      c.dest.addSubtree value
+      value = typeToCursor(c, exprStart)
+      c.dest.shrink exprStart
+    let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, inferred, info)
+    c.dest.add symToken(inst.targetSym, info)
+    it.typ = asRoutine(inst.procType).params
+    it.kind = lastMatch.fn.kind
+    it.n = argRead
+    result = true
+  else:
+    # multiple matches, leave as subscript of symchoice
+    c.dest.add argBuf
+    it.n = argRead
+    result = true
+
 proc tryBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item): bool =
   # it.n is after lhs, at args
   result = false
   if lhs.n.kind == Symbol and lhs.kind == TypeY and
-      getTypeSection(lhs.n.symId).typevars == "typevars":
+      isGeneric(getTypeSection(lhs.n.symId)):
     # lhs is a generic type symbol, this is a generic invocation
     # treat it as a type expression to call semInvoke
     semLocalTypeExpr c, it
     return true
-  # XXX also check for proc generic instantiation, including symchoice
+  var maybeRoutine = lhs.n
+  if maybeRoutine.exprKind in {OchoiceX, CchoiceX}:
+    inc maybeRoutine
+  if maybeRoutine.kind == Symbol:
+    let res = tryLoadSym(maybeRoutine.symId)
+    if res.status == LacksNothing and isRoutine(res.decl.symKind):
+      # check for explicit generic routine instantiation
+      result = tryExplicitRoutineInst(c, lhs.n, it)
+      if result: return
 
 proc semBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item) =
   # it.n is after lhs, at args
