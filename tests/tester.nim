@@ -219,6 +219,9 @@ proc testNifGram(overwrite: bool) =
 testNifGram(overwrite)
 
 proc hasturTests(overwrite: bool) =
-  exec "nim c -r src/hastur --overwrite"
+  if overwrite:
+    exec "nim c -r src/hastur --overwrite"
+  else:
+    exec "nim c -r src/hastur"
 
 hasturTests(overwrite)

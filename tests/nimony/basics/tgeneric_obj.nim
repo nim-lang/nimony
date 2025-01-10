@@ -52,6 +52,10 @@ proc `..`*[T, U](a: T, b: U): HSlice[T, U] = discard
 var myarr2: array[0..2, int] = myarr
 myarr2 = [4, 5, 6]
 
+var m3: array[4, int] = [1, 2, 3, 45]
+var x3: array[4..7, int] = m3
+x3 = [2, 3, 4, 5]
+
 proc foo[I, T](x: array[I, T]) = discard
 foo(myarr2)
 
