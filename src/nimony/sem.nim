@@ -2057,8 +2057,9 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
   wantParRi c, n
   if ok and (genericArgs == 0 or magicKind != NoType or
       # structural types are inlined even with generic arguments
-      # XXX cannot instantiate properly if forward declared because typevars are not created in SemcheckTopLevelSyms
-      # maybe they could be declared along with an untyped prepass for the body
+      # XXX does not instantiate properly if structural type is forward declared
+      # because typevar syms are not created in the SemcheckTopLevelSyms phase
+      # maybe  they could be declared and captured in the body with an untyped prepass
       not isNominal(decl.body.typeKind)):
     # we have to be eager in generic type instantiations so that type-checking
     # can do its job properly:

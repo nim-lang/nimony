@@ -1,7 +1,7 @@
 type int* {.magic: Int.}
 
 type
-  Node[T] = ref NodeObj[T] # does not work if defined after NodeObj
+  Node[T] = ref NodeObj[T]
   NodeObj[T] = object
     data: T
     left, right: Node[T]
