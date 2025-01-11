@@ -46,7 +46,7 @@ interprets this `=` as `=bitcopy`.
 import std / assertions
 include nifprelude
 import nifindexes, symparser, treemangler
-import ".." / nimony / [nimony_model, programs, typenav]
+import ".." / nimony / [nimony_model, programs, typenav, decls]
 import lifter
 
 const
@@ -141,7 +141,7 @@ when not defined(nimony):
   proc tr(c: var Context; n: var Cursor)
 
 proc trLocal(c: var Context; n: Cursor) =
-  let r = asLocal(tree, n)
+  let r = asLocal(n)
   copyIntoKind(dest, n.kind, n.info):
     copyTree(dest, r.name)
     copyTree(dest, r.ex)
