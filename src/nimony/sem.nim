@@ -3697,6 +3697,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   c.dest.shrink exprStart
   var decl = default(TypeDecl)
   var objType = it.typ
+  let isGenericObj = containsGenericParams(objType)
   if objType.typeKind in {RefT, PtrT}:
     inc objType
   if objType.typeKind == InvokeT:
@@ -3744,7 +3745,11 @@ proc semObjConstr(c: var SemContext, it: var Item) =
             skip it.n
           else:
             setFieldPositions[field.sym] = fieldStart
-            fieldBuf.add symToken(field.sym, info)
+            if isGenericObj:
+              # do not save generic field sym
+              fieldBuf.add identToken(fieldName, info)
+            else:
+              fieldBuf.add symToken(field.sym, info)
             # maybe add inheritance depth too somehow?
             var val = Item(n: it.n, typ: field.typ)
             swap c.dest, fieldBuf
