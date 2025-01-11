@@ -320,6 +320,7 @@ template `==`*(n: Cursor; s: string): bool = n.kind == ParLe and pool.tags[n.tag
 const
   RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
   CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX}
+  ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
@@ -339,6 +340,15 @@ template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: Pac
   body
   dest.addParRi()
   dest.addParRi()
+
+template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
+  assert n.kind == ParLe
+  dest.add n
+  inc n
+  body
+  wantParRi dest, n
+
+proc isAtom*(n: Cursor): bool {.inline.} = n.kind >= ParLe
 
 proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
   dest.add symToken(s, info)
@@ -363,6 +373,58 @@ proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
   dest.add dotToken(info)
   dest.add dotToken(info)
   dest.add dotToken(info)
+
+proc takeTree*(dest: var TokenBuf; n: var Cursor) =
+  if n.kind != ParLe:
+    dest.add n
+    inc n
+  else:
+    var nested = 0
+    while true:
+      dest.add n
+      case n.kind
+      of ParLe: inc nested
+      of ParRi:
+        dec nested
+        if nested == 0:
+          inc n
+          break
+      of EofToken:
+        raiseAssert "expected ')', but EOF reached"
+      else: discard
+      inc n
+
+proc sameTrees*(a, b: Cursor): bool =
+  var a = a
+  var b = b
+  var nested = 0
+  let isAtom = a.kind != ParLe
+  while true:
+    if a.kind != b.kind: return false
+    case a.kind
+    of ParLe:
+      if a.tagId != b.tagId: return false
+      inc nested
+    of ParRi:
+      dec nested
+      if nested == 0: return true
+    of Symbol, SymbolDef:
+      if a.symId != b.symId: return false
+    of IntLit:
+      if a.intId != b.intId: return false
+    of UIntLit:
+      if a.uintId != b.uintId: return false
+    of FloatLit:
+      if a.floatId != b.floatId: return false
+    of StringLit, Ident:
+      if a.litId != b.litId: return false
+    of CharLit, UnknownToken:
+      if a.uoperand != b.uoperand: return false
+    of DotToken, EofToken: discard "nothing else to compare"
+    if isAtom: return true
+    inc a
+    inc b
+  return false
 
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
@@ -394,3 +456,16 @@ proc hookName*(op: AttachedOp): string =
 
 const
   NoSymId* = SymId(0)
+
+proc hasBuiltinPragma*(n: Cursor; kind: PragmaKind): bool =
+  result = false
+  var n = n
+  if n.kind == DotToken:
+    discard
+  else:
+    inc n
+    while n.kind != ParRi:
+      if pragmaKind(n) == kind:
+        result = true
+        break
+      skip n
