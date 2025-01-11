@@ -55,7 +55,8 @@ proc isLastRead(c: Context; n: Cursor): bool =
   false
 
 const
-  ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX, AconstrX, TupleConstrX}
+  ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX,
+                       AconstrX, TupleConstrX}
 
 proc constructsValue*(n: Cursor): bool =
   var n = n
@@ -72,7 +73,7 @@ proc constructsValue*(n: Cursor): bool =
 
 proc rootOf(n: Cursor): SymId =
   var n = n
-  while n.exprKind in {DotX, TupAtX, AtX}:
+  while n.exprKind in {DotX, TupAtX, AtX, ArrAtX}:
     n = n.firstSon
   if n.kind == Symbol:
     result = n.symId
@@ -105,9 +106,20 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor; e: Expects)
 
+proc wantParRi(dest: var TokenBuf; n: var Cursor) =
+  if n.kind == ParRi:
+    dest.add n
+    inc n
+  else:
+    error "expected ')', but got: ", n
+
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
+  assert n.kind == ParLe
+  c.dest.add n
+  inc n
   while n.kind != ParRi:
-    tr c, n, e
+    tr(c, n, e)
+  wantParRi c.dest, n
 
 proc isResultUsage(n: Cursor): bool {.inline.} =
   result = false
@@ -116,13 +128,6 @@ proc isResultUsage(n: Cursor): bool {.inline.} =
     if res.status == LacksNothing:
       let r = asLocal(res.decl)
       result = r.kind == ResultY
-
-proc wantParRi(dest: var TokenBuf; n: var Cursor) =
-  if n.kind == ParRi:
-    dest.add n
-    inc n
-  else:
-    error "expected ')', but got: ", n
 
 template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   assert n.kind == ParLe
@@ -495,131 +500,140 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
   c.dest.copyIntoSymUse ow.s, ow.info
   c.dest.addParRi() # finish the StmtListExpr
 
-proc trLocation(c: var Context; n: Cursor; e: Expects) =
+proc isAtom(n: Cursor): bool {.inline.} = n.kind >= ParLe
+
+proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # `x` does not own its value as it can be read multiple times.
-  let typ = getType(c.p, n)
+  let typ = getType(c.typeCache, n)
   if e == WantOwner and hasDestructor(c, typ):
     if isLastRead(c, n):
-      genLastRead(c, dest, n, typ)
+      genLastRead(c, n, typ)
     else:
       let info = n.info
       # translate `x` to `=dup(x)`:
       let hookProc = getHook(c.lifter[], attachedDup, typ, info)
-      if hookProc.s != SymId(-1):
-        copyIntoKind dest, Call, info:
-          copyIntoSymUse c.p, dest, hookProc, info
-          if isAtom(tree, n):
-            copyTree dest, n
+      if hookProc != NoSymId:
+        copyIntoKind c.dest, CallS, info:
+          copyIntoSymUse c.dest, hookProc, info
+          if isAtom(n):
+            takeTree c.dest, n
           else:
-            trSons c, dest, n, DontCare
-      elif isAtom(tree, n):
-        copyTree dest, n
+            trSons c, n, DontCare
+      elif isAtom(n):
+        takeTree c.dest, n
       else:
-        trSons c, dest, n, DontCare
-  elif isAtom(tree, n):
-    copyTree dest, n
+        trSons c, n, DontCare
+  elif isAtom(n):
+    takeTree c.dest, n
   else:
-    trSons c, dest, n, DontCare
+    trSons c, n, DontCare
 
-proc trLocal(c: var Context; n: Cursor) =
-  let r = asLocal(tree, n)
-  var wasMovedArg = noPos
-  copyInto(dest, n):
-    copyTree dest, r.name
-    copyTree dest, r.ex
-    copyTree dest, r.pragmas
-    copyTree dest, r.typ
+proc trLocal(c: var Context; n: var Cursor) =
+  c.dest.add n
+  var r = takeLocal(n)
+  copyTree c.dest, r.name
+  copyTree c.dest, r.exported
+  copyTree c.dest, r.pragmas
+  copyTree c.dest, r.typ
 
-    let localType = getType(c.p, r.name)
-    let destructor = getDestructor(c.lifter[], localType, n.info)
-    if destructor.s != SymId(-1):
-      if constructsValue(c.p, r.value):
-        tr c, dest, r.value, WillBeOwned
-      elif isLastRead(c, r.value):
-        tr c, dest, r.value, WillBeOwned
-        wasMovedArg = r.value
-      else:
-        callDup c, dest, r.value
+  let destructor = getDestructor(c.lifter[], r.typ, n.info)
+  if destructor != NoSymId:
+    if constructsValue(r.val):
+      tr c, r.val, WillBeOwned
+      c.dest.addParRi()
+
+    elif isLastRead(c, r.val):
+      tr c, r.val, WillBeOwned
+      c.dest.addParRi()
+      callWasMoved c, r.val
     else:
-      tr c, dest, r.value, WillBeOwned
-  if wasMovedArg != noPos:
-    callWasMoved c, wasMovedArg
+      callDup c, r.val
+      c.dest.addParRi()
+  else:
+    tr c, r.val, WillBeOwned
+    c.dest.addParRi()
 
-proc trStmtListExpr(c: var Context; n: Cursor; e: Expects) =
-  let (t, s, x) = sons3(tree, n)
-  copyInto dest, n:
-    copyTree dest, t
-    tr(c, dest, s, WantNonOwner)
-    tr(c, dest, x, e)
+proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
+  c.dest.add n
+  inc n
+  while n.kind != ParRi:
+    if isLastSon(n):
+      tr(c, n, e)
+    else:
+      tr(c, n, WantNonOwner)
+  wantParRi c.dest, n
 
-proc trEnsureMove(c: var Context; n: Cursor; e: Expects) =
-  let typ = getType(c.p, n)
-  if isLastRead(c, n.firstSon):
+proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
+  let typ = getType(c.typeCache, n)
+  let arg = n.firstSon
+  let info = n.info
+  if isLastRead(c, arg):
     if e == WantOwner and hasDestructor(c, typ):
-      copyInto dest, n:
-        genLastRead(c, dest, n, typ)
+      copyInto c.dest, n:
+        genLastRead(c, n, typ)
     else:
-      copyInto dest, n:
-        tr c, dest, n.firstSon, e
-  elif constructsValue(c.p, n.firstSon):
+      copyInto c.dest, n:
+        tr c, n, e
+  elif constructsValue(arg):
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
-    copyInto dest, n:
-      tr c, dest, n.firstSon, e
+    copyInto c.dest, n:
+      tr c, n, e
   else:
-    produceError dest, n, c.p[tree.m], ["not the last usage of: $1"]
+    let m = "not the last usage of: " & toString(n, false)
+    c.dest.buildTree ErrT, info:
+      c.dest.add strToken(pool.strings.getOrIncl(m), info)
 
-proc tr(c: var Context; n: Cursor; e: Expects) =
-  case n.kind
-  of Call:
-    trCall c, dest, n, e
-  of TypedExpr:
-    let (typ, ex) = sons2(tree, n)
-    if constructsValue(c.p, n):
-      trConstructor c, dest, typ, ex, e
-    else:
-      trSons c, dest, n, DontCare
-  of ConvExpr, CastExpr:
-    trConvExpr c, dest, n, e
-  of ObjConstr:
-    trObjConstr c, dest, n, e
-  of SymUse, ModuleSymUse, FieldAccess, VarFieldAccess, TupleFieldAccess, PtrFieldAccess,
-     PtrVarFieldAccess, RefFieldAccess, RefVarFieldAccess, ArrayAt, ArrayPtrAt:
-    trLocation c, dest, n, e
-  of ReturnStmt:
-    trReturn(c, dest, n)
-  of Asgn, FirstAsgn:
-    trAsgn c, dest, n
-  of VarDecl, LetDecl, ConstDecl, ResultDecl:
-    trLocal c, dest, n
-  of DeclarativeNodes, AtomsExceptSymUse, Pragmas, TemplateDecl, IteratorDecl,
-     UsingStmt, CommentStmt, BindStmt, MixinStmt, ContinueStmt, BreakStmt:
-    copyTree dest, n
-  of ProcDecl, FuncDecl, MacroDecl, MethodDecl, ConverterDecl:
-    trProcDecl c, dest, n
-  of Par:
-    trSons(c, dest, n, e)
-  of StmtListExpr:
-    trStmtListExpr c, dest, n, e
-  of TupleConstr, BracketConstr:
-    trRawConstructor c, dest, n, e
-  of EqDup:
-    trExplicitDup c, dest, n, e
-  of EqDestroy:
-    trExplicitDestroy c, dest, n
-  of EnsureMove:
-    trEnsureMove c, dest, n, e
+proc tr(c: var Context; n: var Cursor; e: Expects) =
+  if n.kind == Symbol:
+    trLocation c, n, e
+  elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit} or isDeclarative(n):
+    takeTree c.dest, n
   else:
-    takeToken c.dest, n
-    while n.kind != ParRi:
-      tr(c, n, WantNonOwner)
-    wantParRi c.dest, n
+    case n.exprKind
+    of CallKinds:
+      trCall c, n, e
+    of ConvKinds, SufX:
+      trConvExpr c, n, e
+    of OconstrX:
+      trObjConstr c, n, e
+    of DotX, AtX, ArrAtX, PatX, TupAtX:
+      trLocation c, n, e
+    of ParX:
+      trSons c, n, e
+    of ExprX:
+      trStmtListExpr c, n, e
+    of EnsureMoveX:
+      trEnsureMove c, n, e
+    of AconstrX, TupleConstrX:
+      trRawConstructor c, n, e
+    of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetX,
+       OchoiceX, CchoiceX, KvX,
+       AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
+       EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, RangeX, RangesX, CompilesX, DeclaredX,
+       DefinedX, HighX, LowX, TypeofX, UnpackX, EnumToStrX, IsMainModuleX, QuotedX,
+       DerefX, HderefX, AddrX, HaddrX:
+      trSons c, n, WantNonOwner
+    of DefaultObjX, DefaultTupX:
+      raiseAssert "nodekind should have been eliminated in sem.nim"
+    of NoExpr:
+      case n.stmtKind
+      of RetS:
+        trReturn c, n
+      of AsgnS:
+        trAsgn c, n
+      of VarS, LetS, ConstS, ResultS, CursorS:
+        trLocal c, n
+      of ProcS, FuncS, ConverterS, MethodS, MacroS:
+        trProcDecl c, n
+      else:
+        trSons c, n, WantNonOwner
 
 proc injectDups*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
-  var c = Context(lifter: lifter, typeCache: createTypeCache())
-
-  result = createTree(p, thisModule)
+  var c = Context(lifter: lifter, typeCache: createTypeCache(),
+    dest: createTokenBuf(400))
+  var n = n
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]
 
