@@ -129,13 +129,6 @@ proc isResultUsage(n: Cursor): bool {.inline.} =
       let r = asLocal(res.decl)
       result = r.kind == ResultY
 
-template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
-  assert n.kind == ParLe
-  dest.add n
-  inc n
-  body
-  wantParRi dest, n
-
 proc trReturn(c: var Context; n: var Cursor) =
   copyInto c.dest, n:
     if isResultUsage(n):
@@ -359,19 +352,6 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc hasBuiltinPragma(n: Cursor; kind: PragmaKind): bool =
-  result = false
-  var n = n
-  if n.kind == DotToken:
-    discard
-  else:
-    inc n
-    while n.kind != ParRi:
-      if pragmaKind(n) == kind:
-        result = true
-        break
-      skip n
-
 proc trProcDecl(c: var Context; n: var Cursor) =
   c.dest.add n
   var r = takeRoutine(n)
@@ -499,8 +479,6 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
   c.dest.addParRi() # finish the StmtList
   c.dest.copyIntoSymUse ow.s, ow.info
   c.dest.addParRi() # finish the StmtListExpr
-
-proc isAtom(n: Cursor): bool {.inline.} = n.kind >= ParLe
 
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # `x` does not own its value as it can be read multiple times.

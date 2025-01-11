@@ -341,6 +341,15 @@ template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: Pac
   dest.addParRi()
   dest.addParRi()
 
+template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
+  assert n.kind == ParLe
+  dest.add n
+  inc n
+  body
+  wantParRi dest, n
+
+proc isAtom*(n: Cursor): bool {.inline.} = n.kind >= ParLe
+
 proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
   dest.add symToken(s, info)
 
@@ -447,3 +456,16 @@ proc hookName*(op: AttachedOp): string =
 
 const
   NoSymId* = SymId(0)
+
+proc hasBuiltinPragma*(n: Cursor; kind: PragmaKind): bool =
+  result = false
+  var n = n
+  if n.kind == DotToken:
+    discard
+  else:
+    inc n
+    while n.kind != ParRi:
+      if pragmaKind(n) == kind:
+        result = true
+        break
+      skip n

@@ -140,64 +140,83 @@ proc trReturn(c: var Context; n: var Cursor) =
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor)
 
-proc trLocal(c: var Context; n: Cursor) =
-  let r = asLocal(n)
-  copyIntoKind(dest, n.kind, n.info):
-    copyTree(dest, r.name)
-    copyTree(dest, r.ex)
-    copyTree(dest, r.pragmas)
-    copyTree(dest, r.typ)
-    let localType = getType(c.p, r.name)
-    let destructor = getDestructor(c.lifter[], localType, n.info)
-    let s = r.name.symId
-    let sk = c.p[tree.m].syms[s].kind
-    if destructor.s != SymId(-1) and sk != CursorDecl:
-      if not c.isTopLevel and sk != ResultDecl:
-        # XXX If we don't free global variables let's at least free temporaries!
-        c.destroyOps.add DestructorOp(destroyProc: destructor, arg: s)
-    tr c, dest, r.value
+proc trLocal(c: var Context; n: var Cursor) =
+  let info = n.info
+  c.dest.add n
+  var r = takeLocal(n)
+  copyTree c.dest, r.name
+  copyTree c.dest, r.exported
+  copyTree c.dest, r.pragmas
+  copyTree c.dest, r.typ
 
-proc trScope(c: var Context; body: Cursor) =
-  copyIntoKind dest, StmtList, body.info:
-    if body.kind == StmtList:
-      for ch in sonsReadOnly(tree, body):
-        tr c, dest, ch
+  tr c, r.val
+  c.dest.addParRi()
+
+  let destructor = getDestructor(c.lifter[], r.typ, info)
+  if destructor != NoSymId and r.kind notin {CursorY, ResultY} and not c.currentScope.isTopLevel:
+    # XXX If we don't free global variables let's at least free temporaries!
+    c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
+
+proc trScope(c: var Context; body: var Cursor) =
+  copyIntoKind c.dest, StmtsS, body.info:
+    if body.stmtKind == StmtsS:
+      inc body
+      while body.kind != ParRi:
+        tr c, body
+      c.dest.addParRi()
+      inc body
     else:
-      tr c, dest, body
-    leaveScope(c, dest)
+      tr c, body
+    leaveScope(c, c.currentScope)
 
-proc registerSinkParameters(c: var Scope; params: Cursor) =
-  for ch in sonsFrom1(tree, params):
-    let r = asLocal(tree, ch)
-    if r.typ.kind == SinkTy:
-      let destructor = getDestructor(c.lifter[], FullTypeId(t: r.typ.firstSon, m: tree.id), ch.info)
-      if destructor.s != SymId(-1):
-        c.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
+proc registerSinkParameters(c: var Context; params: Cursor) =
+  var p = params
+  inc p
+  while p.kind != ParRi:
+    let r = takeLocal(p)
+    if r.typ.typeKind == SinkT:
+      let destructor = getDestructor(c.lifter[], r.typ.firstSon, p.info)
+      if destructor != NoSymId:
+        c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
-proc trProcDecl(c: var Context; n: Cursor) =
-  let r = asRoutine(tree, n)
-  var c2 = createEntryScope(c.p, c.thisModule, c.lifter, r.body, r.body.info)
-  c2.isTopLevel = false
-  copyInto(dest, n):
-    copyTree dest, r.name
-    copyTree dest, r.ex
-    copyTree dest, r.pat
-    copyTree dest, r.generics
-    copyTree dest, r.params
-    copyTree dest, r.pragmas
-    copyTree dest, r.exc
-    if r.body.kind == StmtList and r.generics.kind != GenericParams and
-        not hasBuiltinPragma(c.p, r.pragmas, "nodestroy"):
-      registerSinkParameters(c2, r.params)
-      trScope c2, dest, r.body
+proc trProcDecl(c: var Context; n: var Cursor) =
+  c.dest.add n
+  var r = takeRoutine(n)
+  copyTree c.dest, r.name
+  copyTree c.dest, r.exported
+  copyTree c.dest, r.pattern
+  copyTree c.dest, r.typevars
+  copyTree c.dest, r.params
+  copyTree c.dest, r.pragmas
+  copyTree c.dest, r.effects
+  if r.body.stmtKind == StmtsS and not isGeneric(r):
+    if hasBuiltinPragma(r.pragmas, NoDestroy):
+      copyTree c.dest, r.body
     else:
-      copyTree dest, r.body
+      var s2 = createEntryScope(r.body.info)
+      s2.isTopLevel = false
+      swap c.currentScope, s2
+      registerSinkParameters(c, r.params)
+      trScope c, r.body
+      swap c.currentScope, s2
+  else:
+    copyTree c.dest, r.body
+  c.dest.addParRi()
 
-proc trNestedScope(c: var Context; body: Cursor; kind = Other) =
-  var bodyScope = createNestedScope(kind, c, body.info)
-  trScope bodyScope, dest, body
+proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
+  var bodyScope = createNestedScope(kind, c.currentScope, body.info)
+  swap c.currentScope, bodyScope
+  trScope c, body
+  swap c.currentScope, bodyScope
 
-proc trWhile(c: var Context; n: Cursor) =
+proc wantParRi(dest: var TokenBuf; n: var Cursor) =
+  if n.kind == ParRi:
+    dest.add n
+    inc n
+  else:
+    error "expected ')', but got: ", n
+
+proc trWhile(c: var Context; n: var Cursor) =
   #[ while prop(createsObj())
       was turned into `while (let tmp = createsObj(); prop(tmp))` by  `duplifier.nim`
       already and `to_stmts` did turn it into:
@@ -209,82 +228,87 @@ proc trWhile(c: var Context; n: Cursor) =
       For these reasons we don't have to do anything special with `cond`. The same
       reasoning applies to `if` and `case` statements.
   ]#
-  let (cond, body) = sons2(tree, n)
-  copyInto(dest, n):
-    tr c, dest, cond
-    trNestedScope c, dest, body, WhileOrBlock
+  copyInto(c.dest, n):
+    tr c, n
+    trNestedScope c, n, WhileOrBlock
 
-proc trBlock(c: var Context; n: Cursor) =
-  let (label, body) = sons2(tree, n)
-  let labelId = if label.kind == SymDef: label.symId else: AnonBlock
-  var bodyScope = createNestedScope(WhileOrBlock, c, body.info, labelId)
-  copyInto(dest, n):
-    copyTree dest, label
-    trScope bodyScope, dest, body
+proc trBlock(c: var Context; n: var Cursor) =
+  let label = n.firstSon
+  let labelId = if label.kind == SymbolDef: label.symId else: c.anonBlock
+  var bodyScope = createNestedScope(WhileOrBlock, c.currentScope, n.info, labelId)
+  copyInto(c.dest, n):
+    takeTree c.dest, n
+    swap c.currentScope, bodyScope
+    trScope c, n
+    swap c.currentScope, bodyScope
 
-proc trIf(c: var Context; n: Cursor) =
-  for ch in sons(dest, n):
-    case ch.kind
-    of ElifBranch:
-      let (cond, action) = sons2(tree, ch)
-      copyInto(dest, ch):
-        tr c, dest, cond
-        trNestedScope c, dest, action
-    of ElseBranch:
-      copyInto(dest, ch):
-        trNestedScope c, dest, ch.firstSon
-    else:
-      copyTree dest, ch
-
-proc trCase(c: var Context; n: Cursor) =
-  copyInto(dest, n):
-    tr c, dest, n.firstSon
-    for ch in sonsFrom1(tree, n):
-      case ch.kind
-      of OfBranch:
-        copyInto(dest, ch):
-          let (first, action) = sons2(tree, ch)
-          copyTree dest, first
-          trNestedScope c, dest, action
-      of ElseBranch:
-        copyInto(dest, ch):
-          trNestedScope c, dest, ch.firstSon
+proc trIf(c: var Context; n: var Cursor) =
+  copyInto(c.dest, n):
+    while n.kind != ParRi:
+      case n.substructureKind
+      of ElifS:
+        copyInto(c.dest, n):
+          tr c, n
+          trNestedScope c, n
+      of ElseS:
+        copyInto(c.dest, n):
+          trNestedScope c, n
       else:
-        copyTree dest, ch
+        takeTree c.dest, n
+
+proc trCase(c: var Context; n: var Cursor) =
+  copyInto(c.dest, n):
+    tr c, n
+    while n.kind != ParRi:
+      case n.substructureKind
+      of OfS:
+        copyInto(c.dest, n):
+          takeTree c.dest, n
+          trNestedScope c, n
+      of ElseS:
+        copyInto(c.dest, n):
+          trNestedScope c, n
+      else:
+        takeTree c.dest, n
 
 proc tr(c: var Context; n: var Cursor) =
-  case n.kind
-  of ReturnStmt:
-    trReturn(c, dest, n)
-  of BreakStmt:
-    trBreak(c, dest, n)
-  of IfStmt:
-    trIf c, dest, n
-  of CaseStmt:
-    trCase c, dest, n
-  of BlockStmt:
-    trBlock c, dest, n
-  #of Asgn, FirstAsgn:
-  #  trAsgn c, dest, n
-  of VarDecl, LetDecl, ConstDecl, ResultDecl:
-    trLocal c, dest, n
-  of WhileStmt:
-    trWhile c, dest, n
-  of DeclarativeNodes, Atoms, Pragmas, TemplateDecl, IteratorDecl,
-     UsingStmt, CommentStmt, BindStmt, MixinStmt, ContinueStmt:
-    copyTree dest, n
-  of ProcDecl, FuncDecl, MacroDecl, MethodDecl, ConverterDecl:
-    trProcDecl c, dest, n
+  if isAtom(n) or isDeclarative(n):
+    takeTree c.dest, n
   else:
-    for ch in sons(dest, n):
-      tr(c, dest, ch)
+    case n.stmtKind
+    of RetS:
+      trReturn(c, n)
+    of BreakS:
+      trBreak(c, n)
+    of IfS:
+      trIf c, n
+    of CaseS:
+      trCase c, n
+    of BlockS:
+      trBlock c, n
+    of VarS, LetS, ConstS, ResultS, CursorS:
+      trLocal c, n
+    of WhileS:
+      trWhile c, n
+    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+      trProcDecl c, n
+    else:
+      if n.kind == ParLe:
+        c.dest.add n
+        inc n
+        while n.kind != ParRi:
+          tr(c, n)
+        wantParRi(c.dest, n)
+      else:
+        c.dest.add n
+        inc n
 
 proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
-  var c = Context(currentScope: createEntryScope(p, thisModule, lifter, StartPos, info),
+  var c = Context(currentScope: createEntryScope(n.info),
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
     dest: createTokenBuf(400))
   var n = n
   tr(c, n)
-  leaveScope c, p[result]
-  genMissingHooks lifter[], p[result]
+  leaveScope c, c.currentScope
+  genMissingHooks lifter[]
   result = ensureMove c.dest
