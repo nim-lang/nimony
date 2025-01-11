@@ -43,14 +43,14 @@ interprets this `=` as `=bitcopy`.
 
 ]##
 
+import std / assertions
 include nifprelude
 import nifindexes, symparser, treemangler
 import ".." / nimony / [nimony_model, programs, typenav]
 import lifter
 
 const
-  NoLabel = SymId(-2)
-  AnonBlock = SymId(-3)
+  NoLabel = SymId(0)
 
 type
   ScopeKind = enum
@@ -61,38 +61,41 @@ type
     arg: SymId
 
   Scope = object
-    p: Program
     label: SymId
-    thisModule: ModuleId
-    procStart: Cursor
     kind: ScopeKind
     destroyOps: seq[DestructorOp]
     info: PackedLineInfo
     parent: ptr Scope
-    lifter: ref LiftingCtx
     isTopLevel: bool
 
+  Context = object
+    currentScope: Scope
+    #procStart: Cursor
+    anonBlock: SymId
+    dest: TokenBuf
+    lifter: ref LiftingCtx
+
 proc createNestedScope(kind: ScopeKind; parent: var Scope; info: PackedLineInfo; label = NoLabel): Scope =
-  Scope(p: parent.p, label: label, thisModule: parent.thisModule, procStart: parent.procStart,
-    kind: kind, destroyOps: @[], info: info, parent: addr(parent), lifter: parent.lifter,
+  Scope(label: label,
+    kind: kind, destroyOps: @[], info: info, parent: addr(parent),
     isTopLevel: false)
 
-proc createEntryScope(p: Program; thisModule: ModuleId; lifter: ref LiftingCtx;
-                      procStart: Cursor; info: PackedLineInfo): Scope =
-  Scope(p: p, label: NoLabel, thisModule: thisModule, procStart: procStart,
-    kind: Other, destroyOps: @[], info: info, parent: nil, lifter: lifter,
+proc createEntryScope(info: PackedLineInfo): Scope =
+  Scope(label: NoLabel,
+    kind: Other, destroyOps: @[], info: info, parent: nil,
     isTopLevel: true)
 
-proc callDestroy(c: var Scope; dest: var TokenBuf; destroyProc: SymId; arg: SymId) =
-  copyIntoKind dest, Call, c.info:
-    copyIntoSymUse dest, destroyProc, c.info
-    copyIntoSymUse dest, arg, c.info
+proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId) =
+  let info = c.currentScope.info
+  copyIntoKind c.dest, CallS, info:
+    copyIntoSymUse c.dest, destroyProc, info
+    copyIntoSymUse c.dest, arg, info
 
-proc leaveScope(c: var Scope; dest: var TokenBuf) =
-  for i in countdown(c.destroyOps.high, 0):
-    callDestroy c, dest, c.destroyOps[i].destroyProc, c.destroyOps[i].arg
+proc leaveScope(c: var Context; s: var Scope) =
+  for i in countdown(s.destroyOps.high, 0):
+    callDestroy c, s.destroyOps[i].destroyProc, s.destroyOps[i].arg
 
-proc leaveNamedBlock(c: var Scope; dest: var TokenBuf; label: SymId) =
+proc leaveNamedBlock(c: var Context; label: SymId) =
   #[ Consider:
 
   var x = f()
@@ -100,51 +103,51 @@ proc leaveNamedBlock(c: var Scope; dest: var TokenBuf; label: SymId) =
     break # do we want to destroy x here? No.
 
   ]#
-  var it = addr(c)
+  var it = addr(c.currentScope)
   while it != nil and it.label != label:
-    leaveScope(it[], dest)
+    leaveScope(c, it[])
     it = it.parent
   if it != nil and it.label == label:
-    leaveScope(it[], dest)
+    leaveScope(c, it[])
   else:
-    assert false, "do not know which block to leave"
+    raiseAssert "do not know which block to leave"
 
-proc leaveAnonBlock(c: var Scope; dest: var TokenBuf) =
-  var it = addr(c)
+proc leaveAnonBlock(c: var Context) =
+  var it = addr(c.currentScope)
   while it != nil and it.kind != WhileOrBlock:
-    leaveScope(it[], dest)
+    leaveScope(c, it[])
     it = it.parent
   if it != nil and it.kind == WhileOrBlock:
-    leaveScope(it[], dest)
+    leaveScope(c, it[])
   else:
-    assert false, "do not know which block to leave"
+    raiseAssert "do not know which block to leave"
 
-proc trBreak(c: var Scope; dest: var TokenBuf; n: Cursor) =
+proc trBreak(c: var Context; n: var Cursor) =
   let lab = n.firstSon
-  if lab.kind == SymUse:
-    leaveNamedBlock(c, dest, lab.symId)
+  if lab.kind == Symbol:
+    leaveNamedBlock(c, lab.symId)
   else:
-    leaveAnonBlock(c, dest)
-  copyTree dest, tree, n
+    leaveAnonBlock(c)
+  takeTree c.dest, n
 
-proc trReturn(c: var Scope; dest: var TokenBuf; n: Cursor) =
-  var it = addr(c)
+proc trReturn(c: var Context; n: var Cursor) =
+  var it = addr(c.currentScope)
   while it != nil:
-    leaveScope(it[], dest)
+    leaveScope(c, it[])
     it = it.parent
-  copyTree dest, tree, n
+  takeTree c.dest, n
 
 when not defined(nimony):
-  proc tr(c: var Scope; dest: var TokenBuf; n: Cursor)
+  proc tr(c: var Context; n: var Cursor)
 
-proc trLocal(c: var Scope; dest: var TokenBuf; n: Cursor) =
+proc trLocal(c: var Context; n: Cursor) =
   let r = asLocal(tree, n)
   copyIntoKind(dest, n.kind, n.info):
-    copyTree(dest, tree, r.name)
-    copyTree(dest, tree, r.ex)
-    copyTree(dest, tree, r.pragmas)
-    copyTree(dest, tree, r.typ)
-    let localType = getType(c.p, tree, r.name)
+    copyTree(dest, r.name)
+    copyTree(dest, r.ex)
+    copyTree(dest, r.pragmas)
+    copyTree(dest, r.typ)
+    let localType = getType(c.p, r.name)
     let destructor = getDestructor(c.lifter[], localType, n.info)
     let s = r.name.symId
     let sk = c.p[tree.m].syms[s].kind
@@ -152,15 +155,15 @@ proc trLocal(c: var Scope; dest: var TokenBuf; n: Cursor) =
       if not c.isTopLevel and sk != ResultDecl:
         # XXX If we don't free global variables let's at least free temporaries!
         c.destroyOps.add DestructorOp(destroyProc: destructor, arg: s)
-    tr c, dest, tree, r.value
+    tr c, dest, r.value
 
-proc trScope(c: var Scope; dest: var TokenBuf; body: Cursor) =
+proc trScope(c: var Context; body: Cursor) =
   copyIntoKind dest, StmtList, body.info:
     if body.kind == StmtList:
       for ch in sonsReadOnly(tree, body):
-        tr c, dest, tree, ch
+        tr c, dest, ch
     else:
-      tr c, dest, tree, body
+      tr c, dest, body
     leaveScope(c, dest)
 
 proc registerSinkParameters(c: var Scope; params: Cursor) =
@@ -171,30 +174,30 @@ proc registerSinkParameters(c: var Scope; params: Cursor) =
       if destructor.s != SymId(-1):
         c.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
-proc trProcDecl(c: var Scope; dest: var TokenBuf; n: Cursor) =
+proc trProcDecl(c: var Context; n: Cursor) =
   let r = asRoutine(tree, n)
   var c2 = createEntryScope(c.p, c.thisModule, c.lifter, r.body, r.body.info)
   c2.isTopLevel = false
   copyInto(dest, n):
-    copyTree dest, tree, r.name
-    copyTree dest, tree, r.ex
-    copyTree dest, tree, r.pat
-    copyTree dest, tree, r.generics
-    copyTree dest, tree, r.params
-    copyTree dest, tree, r.pragmas
-    copyTree dest, tree, r.exc
+    copyTree dest, r.name
+    copyTree dest, r.ex
+    copyTree dest, r.pat
+    copyTree dest, r.generics
+    copyTree dest, r.params
+    copyTree dest, r.pragmas
+    copyTree dest, r.exc
     if r.body.kind == StmtList and r.generics.kind != GenericParams and
-        not hasBuiltinPragma(c.p, tree, r.pragmas, "nodestroy"):
-      registerSinkParameters(c2, tree, r.params)
-      trScope c2, dest, tree, r.body
+        not hasBuiltinPragma(c.p, r.pragmas, "nodestroy"):
+      registerSinkParameters(c2, r.params)
+      trScope c2, dest, r.body
     else:
-      copyTree dest, tree, r.body
+      copyTree dest, r.body
 
-proc trNestedScope(c: var Scope; dest: var TokenBuf; body: Cursor; kind = Other) =
+proc trNestedScope(c: var Context; body: Cursor; kind = Other) =
   var bodyScope = createNestedScope(kind, c, body.info)
-  trScope bodyScope, dest, tree, body
+  trScope bodyScope, dest, body
 
-proc trWhile(c: var Scope; dest: var TokenBuf; n: Cursor) =
+proc trWhile(c: var Context; n: Cursor) =
   #[ while prop(createsObj())
       was turned into `while (let tmp = createsObj(); prop(tmp))` by  `duplifier.nim`
       already and `to_stmts` did turn it into:
@@ -208,84 +211,80 @@ proc trWhile(c: var Scope; dest: var TokenBuf; n: Cursor) =
   ]#
   let (cond, body) = sons2(tree, n)
   copyInto(dest, n):
-    tr c, dest, tree, cond
-    trNestedScope c, dest, tree, body, WhileOrBlock
+    tr c, dest, cond
+    trNestedScope c, dest, body, WhileOrBlock
 
-proc trBlock(c: var Scope; dest: var TokenBuf; n: Cursor) =
+proc trBlock(c: var Context; n: Cursor) =
   let (label, body) = sons2(tree, n)
   let labelId = if label.kind == SymDef: label.symId else: AnonBlock
   var bodyScope = createNestedScope(WhileOrBlock, c, body.info, labelId)
   copyInto(dest, n):
-    copyTree dest, tree, label
-    trScope bodyScope, dest, tree, body
+    copyTree dest, label
+    trScope bodyScope, dest, body
 
-proc trIf(c: var Scope; dest: var TokenBuf; n: Cursor) =
-  for ch in sons(dest, tree, n):
+proc trIf(c: var Context; n: Cursor) =
+  for ch in sons(dest, n):
     case ch.kind
     of ElifBranch:
       let (cond, action) = sons2(tree, ch)
       copyInto(dest, ch):
-        tr c, dest, tree, cond
-        trNestedScope c, dest, tree, action
+        tr c, dest, cond
+        trNestedScope c, dest, action
     of ElseBranch:
       copyInto(dest, ch):
-        trNestedScope c, dest, tree, ch.firstSon
+        trNestedScope c, dest, ch.firstSon
     else:
-      copyTree dest, tree, ch
+      copyTree dest, ch
 
-proc trCase(c: var Scope; dest: var TokenBuf; n: Cursor) =
+proc trCase(c: var Context; n: Cursor) =
   copyInto(dest, n):
-    tr c, dest, tree, n.firstSon
+    tr c, dest, n.firstSon
     for ch in sonsFrom1(tree, n):
       case ch.kind
       of OfBranch:
         copyInto(dest, ch):
           let (first, action) = sons2(tree, ch)
-          copyTree dest, tree, first
-          trNestedScope c, dest, tree, action
+          copyTree dest, first
+          trNestedScope c, dest, action
       of ElseBranch:
         copyInto(dest, ch):
-          trNestedScope c, dest, tree, ch.firstSon
+          trNestedScope c, dest, ch.firstSon
       else:
-        copyTree dest, tree, ch
+        copyTree dest, ch
 
-proc tr(c: var Scope; dest: var TokenBuf; n: Cursor) =
+proc tr(c: var Context; n: var Cursor) =
   case n.kind
   of ReturnStmt:
-    trReturn(c, dest, tree, n)
+    trReturn(c, dest, n)
   of BreakStmt:
-    trBreak(c, dest, tree, n)
+    trBreak(c, dest, n)
   of IfStmt:
-    trIf c, dest, tree, n
+    trIf c, dest, n
   of CaseStmt:
-    trCase c, dest, tree, n
+    trCase c, dest, n
   of BlockStmt:
-    trBlock c, dest, tree, n
+    trBlock c, dest, n
   #of Asgn, FirstAsgn:
-  #  trAsgn c, dest, tree, n
+  #  trAsgn c, dest, n
   of VarDecl, LetDecl, ConstDecl, ResultDecl:
-    trLocal c, dest, tree, n
+    trLocal c, dest, n
   of WhileStmt:
-    trWhile c, dest, tree, n
+    trWhile c, dest, n
   of DeclarativeNodes, Atoms, Pragmas, TemplateDecl, IteratorDecl,
      UsingStmt, CommentStmt, BindStmt, MixinStmt, ContinueStmt:
-    copyTree dest, tree, n
+    copyTree dest, n
   of ProcDecl, FuncDecl, MacroDecl, MethodDecl, ConverterDecl:
-    trProcDecl c, dest, tree, n
+    trProcDecl c, dest, n
   else:
-    for ch in sons(dest, tree, n):
-      tr(c, dest, tree, ch)
+    for ch in sons(dest, n):
+      tr(c, dest, ch)
 
-proc injectDestructors*(p: Program; t: TreeId; lifter: ref LiftingCtx): TreeId =
-  let thisModule = p[t].m
-  let info = p[t][StartPos].info
-
-  var c = createEntryScope(p, thisModule, lifter, StartPos, info)
-  result = createTree(p, c.thisModule)
-  p[result].flags.incl dontTouch
-
-  tr(c, p[result], p[t], StartPos)
+proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
+  var c = Context(currentScope: createEntryScope(p, thisModule, lifter, StartPos, info),
+    anonBlock: pool.syms.getOrIncl("`anonblock.0"),
+    dest: createTokenBuf(400))
+  var n = n
+  tr(c, n)
   leaveScope c, p[result]
   genMissingHooks lifter[], p[result]
-  patch p[result], PatchPos(0)
-  p[result].flags.excl dontTouch
+  result = ensureMove c.dest
