@@ -1777,9 +1777,9 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
           typeclassBuf.addParRi()
           typeclassBuf.addParRi()
           replace(c.dest, cursorAt(typeclassBuf, 0), start)
-    else:
+    elif res.status == LacksNothing:
       let typ = asTypeDecl(res.decl)
-      if isGeneric(typ) or typ.body.typeKind in {ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}:
+      if isGeneric(typ) or isNominal(typ.body.typeKind):
         # types that should stay as symbols, see sigmatch.matchSymbol
         discard
       else:
@@ -2055,7 +2055,12 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     semLocalTypeImpl c, n, AllowValues
   swap c.usedTypevars, genericArgs
   wantParRi c, n
-  if (genericArgs == 0 or magicKind != NoType) and ok:
+  if ok and (genericArgs == 0 or magicKind != NoType or
+      # structural types are inlined even with generic arguments
+      # XXX does not instantiate properly if structural type is forward declared
+      # because typevar syms are not created in the SemcheckTopLevelSyms phase
+      # maybe  they could be declared and captured in the body with an untyped prepass
+      not isNominal(decl.body.typeKind)):
     # we have to be eager in generic type instantiations so that type-checking
     # can do its job properly:
     let key = typeToCanon(c.dest, typeStart)
@@ -2113,7 +2118,8 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
         semLocalTypeImpl c, m, InLocalDecl
         return
       let targetSym = newSymId(c, headId)
-      c.instantiatedTypes[key] = targetSym
+      if genericArgs == 0:
+        c.instantiatedTypes[key] = targetSym
       var sub = createTokenBuf(30)
       subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
       c.dest.endRead()
@@ -3691,6 +3697,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   c.dest.shrink exprStart
   var decl = default(TypeDecl)
   var objType = it.typ
+  let isGenericObj = containsGenericParams(objType)
   if objType.typeKind in {RefT, PtrT}:
     inc objType
   if objType.typeKind == InvokeT:
@@ -3738,7 +3745,11 @@ proc semObjConstr(c: var SemContext, it: var Item) =
             skip it.n
           else:
             setFieldPositions[field.sym] = fieldStart
-            fieldBuf.add symToken(field.sym, info)
+            if isGenericObj:
+              # do not save generic field sym
+              fieldBuf.add identToken(fieldName, info)
+            else:
+              fieldBuf.add symToken(field.sym, info)
             # maybe add inheritance depth too somehow?
             var val = Item(n: it.n, typ: field.typ)
             swap c.dest, fieldBuf
