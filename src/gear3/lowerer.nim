@@ -184,7 +184,19 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
     of ContinueS:
       transformContinueStmt(e, c)
     of ForS:
-      transformForStmt(e, c)
+      var forStmtBuf = createTokenBuf()
+      swap e.dest, forStmtBuf
+      e.dest.add c
+      inc c
+      e.breaks.add SymId(0)
+      e.continues.add SymId(0)
+      e.loop(c):
+        inlineLoopBody(e, c, mapping)
+      swap e.dest, forStmtBuf
+      discard e.breaks.pop()
+      discard e.continues.pop()
+      var forCursor = beginRead(forStmtBuf)
+      transformForStmt(e, forCursor)
     of WhileS:
       e.dest.add c
       inc c
