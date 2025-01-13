@@ -16,3 +16,12 @@ Hello, world: 64
 Hello, world: 5
 Hello, world: 25
 Hello, world: 125
+countup start: 0
+countup start: 1
+countup start: 2
+countup start: 3
+countup end: 3
+countup start: 4
+countup end: 4
+countup start: 5
+countup end: 5

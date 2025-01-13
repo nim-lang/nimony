@@ -13,3 +13,18 @@ for i in powers(5):
   let m = i
 
   printf("Hello, world: %ld\n", m)
+
+iterator countup(a, b: int): int =
+  var i = 0
+  while i <= b:
+    yield i     # establish as the for loop variable
+    i = i + 1
+
+for x in countup(1, 5):
+  let m = x
+  printf("countup start: %ld\n", m)
+  if x > 5:
+    break
+  elif x < 3:
+    continue
+  printf("countup end: %ld\n", m)

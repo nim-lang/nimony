@@ -44,6 +44,7 @@ proc hasContinueStmt(c: Cursor): bool =
         inc c
     of ParRi:
       dec nested
+      inc c
     else:
       inc c
 
@@ -152,11 +153,12 @@ proc transformBreakStmt(e: var EContext; c: var Cursor) =
   wantParRi e, c
 
 proc transformContinueStmt(e: var EContext; c: var Cursor) =
-  e.dest.add c
+  e.dest.add tagToken("break", c.info)
   inc c
   if e.continues.len > 0 and e.continues[^1] != SymId(0):
     let lab = e.continues[^1]
     e.dest.add symToken(lab, c.info)
+  inc c # dotToken
   wantParRi e, c
 
 proc pop(s: var seq[SymId]): SymId =
@@ -236,7 +238,7 @@ proc inlineIteratorBody(e: var EContext;
 
       let loopBodyHasContinueStmt = hasContinueStmt(forStmt.body)
       if loopBodyHasContinueStmt:
-        let lab = pool.syms.getOrIncl("continueLabel" & $getTmpId(e))
+        let lab = pool.syms.getOrIncl("continueLabel." & $getTmpId(e))
         e.dest.add tagToken($BlockS, c.info)
         e.dest.add symdefToken(lab, c.info)
         e.dest.add tagToken("stmts", c.info)
@@ -350,7 +352,7 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
   ]#
   let forStmt = asForStmt(c)
 
-  let lab = pool.syms.getOrIncl("forStmtLabel" & $getTmpId(e))
+  let lab = pool.syms.getOrIncl("forStmtLabel." & $getTmpId(e))
   e.dest.add tagToken($BlockS, c.info)
   e.dest.add symdefToken(lab, c.info)
   e.dest.add tagToken("stmts", c.info)
@@ -363,7 +365,6 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
   e.dest.addParRi()
 
   skip c
-
 
 proc transformStmt*(e: var EContext; c: var Cursor) =
   case c.kind
