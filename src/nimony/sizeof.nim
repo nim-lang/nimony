@@ -7,7 +7,7 @@
 import std / [assertions, tables]
 
 include nifprelude
-import nimony_model, decls, programs, xints, semdata
+import nimony_model, decls, programs, xints, semdata, expreval
 
 proc align(address, alignment: int): int {.inline.} =
   result = (address + (alignment - 1)) and not (alignment - 1)
@@ -26,7 +26,7 @@ proc combine(c: var SizeofValue; inner: SizeofValue) =
   c.size = c.size + inner.size
   c.overflow = c.overflow or inner.overflow
 
-proc createSizeofContext(strict: bool): SizeofValue =
+proc createSizeofValue(strict: bool): SizeofValue =
   SizeofValue(size: 0, maxAlign: 1, overflow: false, strict: strict)
 
 proc finish(c: var SizeofValue) =
@@ -81,30 +81,32 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of SinkT, DistinctT:
     getSize c, cache, n.firstSon, ptrSize
   of EnumT:
-    let symId = fromModuleSymUse(p, p[typ.m], typ.t)
-    var c2 = createSizeofContext(c.strict)
-    cacheValue(c2, symId):
-      let s = addr(p[symId])
-      assert s.kind == TypeDecl and hasDeclPos(s[])
-      let (a, lastOrd) = enumBounds(p, p[s.declPos.m], s.declPos.t)
-      if a < 0:
-        update c2, 4, 4 # always int32
+    let (a, lastOrd) = enumBounds(n)
+    if a < 0:
+      update c, 4, 4 # always int32
+    else:
+      if lastOrd < (1 *^ 8):
+        update c2, 1, 1
+      elif lastOrd < (1 *^ 16):
+        update c2, 2, 2
+      elif lastOrd < (1'i64 *^ 32):
+        update c2, 4, 4
       else:
-        if lastOrd < (1 *^ 8):
-          update c2, 1, 1
-        elif lastOrd < (1 *^ 16):
-          update c2, 2, 2
-        elif lastOrd < (1'i64 *^ 32):
-          update c2, 4, 4
-        else:
-          update c2, 8, 8
+        update c2, 8, 8
     combine c, c2
-  of ObjectBody:
+  of ObjectT:
+    var n = n
+    inc n
+    if n.kind != DotToken:
+      getSize(c, cache, n, ptrSize)
+    while n.kind != ParRi:
+
+
     let fieldList = ithSon(p, typ, objectBodyPos)
     for ch in sonsReadonly(p[fieldList.m], fieldList.t):
       getSize c, p, FullTypeId(m: fieldList.m, t: ch), tree, n
   of ArrayTy:
-    var c2 = createSizeofContext(c.strict)
+    var c2 = createSizeofValue(c.strict)
     getSize(c2, p, p.ithSon(typ, 1), tree, n)
     let n = getArrayLen(p[typ.m], typ.t, p)
     if n >= high(int) div c2.size:
@@ -121,7 +123,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       c.overflow = true
     else:
       let symId = fromModuleSymUse(p, p[typ.m], typ.t)
-      var c2 = createSizeofContext(c.strict)
+      var c2 = createSizeofValue(c.strict)
       cacheValue(c2, symId):
         getSize(c2, p, p[symId].declPos, tree, n)
         finish c2
@@ -133,14 +135,14 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       # don't even try to compute the size because alignment etc.
       c.overflow = true
     else:
-      var c2 = createSizeofContext(c.strict)
+      var c2 = createSizeofValue(c.strict)
       for ch in sonsReadonly(p[typ.m], typ.t):
         getSize(c2, p, FullTypeId(m: typ.m, t: ch), tree, n)
       finish c2
       combine c, c2
 
 proc getSize*(p: Program; typ: FullTypeId; strict=false): int =
-  var c = createSizeofContext(strict)
+  var c = createSizeofValue(strict)
   getSize(c, p, typ, p[typ.m], typ.t)
   if not c.overflow:
     result = c.size

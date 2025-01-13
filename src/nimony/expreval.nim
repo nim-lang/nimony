@@ -213,7 +213,7 @@ proc enumBounds*(n: Cursor): Bounds =
   skip n # Basetype
   result = Bounds(lo: createNan(), hi: createNaN())
   while n.kind != ParRi:
-    let enumField = takeLocal(n)
+    let enumField = takeLocal(n, SkipFinalParRi)
     let x = evalOrdinal(nil, enumField.val)
     if isNaN(result.lo) or x < result.lo: result.lo = x
     if isNaN(result.hi) or x > result.hi: result.hi = x

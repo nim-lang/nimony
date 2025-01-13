@@ -115,7 +115,7 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
 proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      templateDecl, args, firstVarargMatch: Cursor;
                      inferred: ptr Table[SymId, Cursor]) =
-  var templ = asRoutine(templateDecl)
+  var templ = asRoutine(templateDecl, SkipInclBody)
 
   if expandPlugin(c, dest, templ, args):
     return

@@ -241,15 +241,13 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
     inc fnType
     while n.kind != ParRi:
       let previousFormalParam = fnType
-      let param = takeLocal(fnType)
+      let param = takeLocal(fnType, SkipFinalParRi)
       let pk = param.typ.typeKind
       if pk in {MutT, OutT}:
         mightBeDangerous(c, n)
       elif pk == VarargsT:
         # do not advance formal parameter:
         fnType = previousFormalParam
-      else:
-        skipParRi(fnType)
       skip n
     n = orig
     recurse()
@@ -291,7 +289,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   while n.kind != ParRi:
     var e = WantT
     let previousFormalParam = fnType
-    let param = takeLocal(fnType)
+    let param = takeLocal(fnType, SkipFinalParRi)
     var pk = param.typ.typeKind
     if pk == MutT:
       var elemType = param.typ
@@ -305,9 +303,6 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
     elif pk == VarargsT:
       # do not advance formal parameter:
       fnType = previousFormalParam
-    else:
-      skip fnType # potential default value
-      skipParRi(fnType)
     tr c, n, e
 
 proc firstArgIsMutable(c: var Context; n: Cursor): bool =

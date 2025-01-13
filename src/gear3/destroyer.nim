@@ -143,7 +143,7 @@ when not defined(nimony):
 proc trLocal(c: var Context; n: var Cursor) =
   let info = n.info
   c.dest.add n
-  var r = takeLocal(n)
+  var r = takeLocal(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pragmas
@@ -173,7 +173,7 @@ proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
   inc p
   while p.kind != ParRi:
-    let r = takeLocal(p)
+    let r = takeLocal(p, SkipFinalParRi)
     if r.typ.typeKind == SinkT:
       let destructor = getDestructor(c.lifter[], r.typ.firstSon, p.info)
       if destructor != NoSymId:
@@ -181,7 +181,7 @@ proc registerSinkParameters(c: var Context; params: Cursor) =
 
 proc trProcDecl(c: var Context; n: var Cursor) =
   c.dest.add n
-  var r = takeRoutine(n)
+  var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pattern

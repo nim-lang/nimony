@@ -6,6 +6,7 @@
 
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
+import std / assertions
 import nifstreams, nifcursors, nimony_model
 
 proc isRoutine*(t: SymKind): bool {.inline.} =
@@ -23,6 +24,11 @@ const
   LocalValuePos* = 4
 
 type
+  SkipMode* = enum
+    SkipExclBody,
+    SkipInclBody,
+    SkipFinalParRi
+
   Local* = object
     kind*: SymKind
     name*: Cursor
@@ -31,7 +37,7 @@ type
     typ*: Cursor
     val*: Cursor
 
-proc takeLocal*(c: var Cursor): Local =
+proc takeLocal*(c: var Cursor; mode: SkipMode): Local =
   let kind = symKind c
   result = Local(kind: kind)
   if isLocal(kind):
@@ -43,13 +49,19 @@ proc takeLocal*(c: var Cursor): Local =
     result.pragmas = c
     skip c
     result.typ = c
-    skip c
-    result.val = c
-    skip c
+    if mode >= SkipInclBody:
+      skip c
+      result.val = c
+      skip c
+      if mode == SkipFinalParRi:
+        if c.kind == ParRi:
+          inc c
+        else:
+          raiseAssert "expected ')' inside (" & $result.kind
 
 proc asLocal*(c: Cursor): Local =
   var c = c
-  result = takeLocal(c)
+  result = takeLocal(c, SkipInclBody)
 
 proc asTypevar*(c: Cursor): Local {.inline.} =
   result = asLocal(c)
@@ -70,7 +82,7 @@ type
 proc isGeneric*(r: Routine): bool {.inline.} =
   r.typevars.substructureKind == TypevarsS
 
-proc takeRoutine*(c: var Cursor): Routine =
+proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
   let kind = symKind c
   result = Routine(kind: kind)
   if isRoutine(kind):
@@ -90,18 +102,24 @@ proc takeRoutine*(c: var Cursor): Routine =
     result.pragmas = c
     skip c
     result.effects = c
-    skip c
-    result.body = c
-    skip c
+    if mode >= SkipInclBody:
+      skip c
+      result.body = c
+      skip c
+      if mode == SkipFinalParRi:
+        if c.kind == ParRi:
+          inc c
+        else:
+          raiseAssert "expected ')' inside (" & $result.kind
 
 const
   TypevarsPos* = 3
   ParamsPos* = 4
   BodyPos* = 8
 
-proc asRoutine*(c: Cursor): Routine =
+proc asRoutine*(c: Cursor; mode = SkipExclBody): Routine =
   var c = c
-  result = takeRoutine(c)
+  result = takeRoutine(c, mode)
 
 type
   TypeDecl* = object

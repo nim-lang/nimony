@@ -54,7 +54,7 @@ proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var n = n
   while n.kind != ParRi:
     if n.substructureKind == FldS:
-      let field = takeLocal(n)
+      let field = takeLocal(n, SkipFinalParRi)
       if field.kind == FldY:
         if not isTrivial(c, field.typ):
           return false
@@ -229,7 +229,7 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
     unravelObj c, n, paramA, paramB
   skip n # inheritance is gone
   while n.kind != ParRi:
-    let r = takeLocal(n)
+    let r = takeLocal(n, SkipFinalParRi)
     assert r.kind == FldY
     # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
     let fieldType = r.typ
@@ -252,7 +252,7 @@ proc unravelTuple(c: var LiftingCtx;
   while n.kind != ParRi:
     var fieldType = n
     if n == $FldS:
-      fieldType = takeLocal(n).typ
+      fieldType = takeLocal(n, SkipFinalParRi).typ
     else:
       skip n
 

@@ -2665,18 +2665,15 @@ proc semBorrow(c: var SemContext; fn: StrId; beforeParams: int) =
   semProcBody c, it
 
 proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
-  if c.dest[paramsAt].kind == DotToken:
-    result = @[]
-  else:
-    result = @[]
+  result = @[]
+  if c.dest[paramsAt].kind != DotToken:
     var n = cursorAt(c.dest, paramsAt)
     if n.substructureKind == ParamsS:
       inc n
       while n.kind != ParRi:
         if n.substructureKind == ParamS:
-          var local = takeLocal(n)
+          var local = takeLocal(n, SkipFinalParRi)
           result.add local.typ
-          skipParRi n
         else:
           break
       endRead(c.dest)
