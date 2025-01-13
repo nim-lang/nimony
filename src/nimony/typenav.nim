@@ -37,8 +37,11 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         if local.kind.isLocal:
           result = local.typ
         else:
-          if isRoutine(symKind(res.decl)):
-            result = res.decl
+          let fn = asRoutine(res.decl)
+          if isRoutine(fn.kind):
+            result = fn.params
+          #if isRoutine(symKind(res.decl)):
+          #  result = res.decl
       else:
         quit "could not find symbol: " & pool.syms[n.symId]
     of IntLit:

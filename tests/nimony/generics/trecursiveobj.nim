@@ -5,9 +5,9 @@ type
 var foo: Foo[int]
 
 type
+  Node[T] = ref NodeObj[T]
   NodeObj[T] = object
     val: T
     left, right: Node[T]
-  Node[T] = ref NodeObj[T]
 
 var node: Node[int]
