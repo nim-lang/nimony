@@ -10,3 +10,12 @@ proc foo =
   var m = [5, 6, 7, 8]
 
 foo()
+
+proc foo2(m: int) =
+  var x = 1
+  var s = (x, 1, 2)
+  let m1 = (m, 6)
+  const y = 12.3
+  let z1 = (y, s, m1)
+
+foo2(12)

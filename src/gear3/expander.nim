@@ -830,6 +830,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       break
 
 proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMode) =
+  var localDecl = c
   let toPatch = e.dest.len
   let vinfo = c.info
   e.add tag, vinfo
@@ -876,6 +877,12 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
     e.dest.shrink toPatch
   if prag.header != StrId(0):
     e.headers.incl prag.header
+
+  if mode != TraverseTopLevel and tag in ["var", "const", "param"] and
+      prag.flags * {Threadvar, Globalvar} == {}: # register local variables
+    var declBuf = createTokenBuf()
+    takeTree(declBuf, localDecl)
+    publish s, declBuf
 
 proc traverseWhile(e: var EContext; c: var Cursor) =
   let info = c.info

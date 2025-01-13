@@ -1,4 +1,4 @@
-import std / [hashes, os, tables, sets, syncio, times, assertions]
+import std / [tables, sets, syncio]
 
 
 include nifprelude
@@ -70,3 +70,23 @@ template loop*(e: var EContext; c: var Cursor; body: untyped) =
       error e, "expected ')', but EOF reached"
     else: discard
     body
+
+proc takeTree*(e: var EContext; n: var Cursor) =
+  if n.kind != ParLe:
+    e.dest.add n
+    inc n
+  else:
+    var nested = 0
+    while true:
+      e.dest.add n
+      case n.kind
+      of ParLe: inc nested
+      of ParRi:
+        dec nested
+        if nested == 0:
+          inc n
+          break
+      of EofToken:
+        error e, "expected ')', but EOF reached"
+      else: discard
+      inc n

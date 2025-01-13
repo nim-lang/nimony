@@ -6,26 +6,6 @@ import std / tables
 import ".." / nimony / [nimony_model, programs, decls]
 
 
-proc takeTree(e: var EContext; n: var Cursor) =
-  if n.kind != ParLe:
-    e.dest.add n
-    inc n
-  else:
-    var nested = 0
-    while true:
-      e.dest.add n
-      case n.kind
-      of ParLe: inc nested
-      of ParRi:
-        dec nested
-        if nested == 0:
-          inc n
-          break
-      of EofToken:
-        error "expected ')', but EOF reached"
-      else: discard
-      inc n
-
 proc hasContinueStmt(c: Cursor): bool =
   var c = c
   var nested = 0
