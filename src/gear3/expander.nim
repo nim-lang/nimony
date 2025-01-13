@@ -7,44 +7,13 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [hashes, os, tables, sets, syncio, times, assertions]
+import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
-import nifindexes, symparser
-import ".." / nimony / [nimony_model, programs, typenav]
 import typekeys
+import ".." / nimony / [nimony_model, programs, typenav]
+import basics, lowerer
 
-type
-  SymbolKey = (SymId, SymId) # (symbol, owner)
-
-  EContext = object
-    dir, main, ext: string
-    dest: TokenBuf
-    declared: HashSet[SymId]
-    requires: seq[SymId]
-    nestedIn: seq[(StmtKind, SymId)]
-    headers: HashSet[StrId]
-    currentOwner: SymId
-    toMangle: Table[SymbolKey, string]
-    strLits: Table[string, SymId]
-    newTypes: Table[string, SymId]
-    pending: TokenBuf
-    typeCache: TypeCache
-
-proc error(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
-  write stdout, "[Error] "
-  write stdout, msg
-  writeLine stdout, toString(c)
-  when defined(debug):
-    echo getStackTrace()
-  quit 1
-
-proc error(e: var EContext; msg: string) {.noreturn.} =
-  write stdout, "[Error] "
-  write stdout, msg
-  when defined(debug):
-    echo getStackTrace()
-  quit 1
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
   result = e.currentOwner
@@ -57,18 +26,6 @@ proc demand(e: var EContext; s: SymId) =
 proc offer(e: var EContext; s: SymId) =
   e.declared.incl s
 
-proc wantParRi(e: var EContext; c: var Cursor) =
-  if c.kind == ParRi:
-    e.dest.add c
-    inc c
-  else:
-    error e, "expected ')', but got: ", c
-
-proc skipParRi(e: var EContext; c: var Cursor) =
-  if c.kind == ParRi:
-    inc c
-  else:
-    error e, "expected ')', but got: ", c
 
 proc skipExportMarker(e: var EContext; c: var Cursor) =
   if c.kind == DotToken:
@@ -107,8 +64,7 @@ proc expectIntLit(e: var EContext; c: var Cursor) =
   if c.kind != IntLit:
     error e, "expected int literal, but got: ", c
 
-proc tagToken(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
-  parLeToken(pool.tags.getOrIncl(tag), info)
+
 
 proc add(e: var EContext; tag: string; info: PackedLineInfo) =
   e.dest.add tagToken(tag, info)
@@ -120,18 +76,6 @@ type
 proc traverseExpr(e: var EContext; c: var Cursor)
 proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll)
 proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMode)
-
-template loop(e: var EContext; c: var Cursor; body: untyped) =
-  while true:
-    case c.kind
-    of ParRi:
-      e.dest.add c
-      inc c
-      break
-    of EofToken:
-      error e, "expected ')', but EOF reached"
-    else: discard
-    body
 
 type
   TypeFlag = enum
@@ -1195,6 +1139,7 @@ proc splitModulePath(s: string): (string, string, string) =
     main.setLen dotPos
   result = (dir, main, ext)
 
+
 proc expand*(infile: string) =
   let (dir, file, ext) = splitModulePath(infile)
   var e = EContext(dir: (if dir.len == 0: getCurrentDir() else: dir), ext: ext, main: file,
@@ -1202,7 +1147,11 @@ proc expand*(infile: string) =
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache())
 
-  var c = setupProgram(infile, infile.changeFileExt ".c.nif", true)
+  var c0 = setupProgram(infile, infile.changeFileExt ".c.nif", true)
+  transformStmt(e, c0)
+
+  var dest = move e.dest
+  var c = beginRead(dest)
 
   if stmtKind(c) == StmtsS:
     inc c

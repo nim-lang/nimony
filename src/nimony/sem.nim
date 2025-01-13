@@ -3271,10 +3271,10 @@ proc semFor(c: var SemContext; it: var Item) =
         var tup = iterCall.typ
         inc tup
         while it.n.kind != ParRi and tup.kind != ParRi:
-          semForLoopVar c, it, tup
+          let field = asLocal(tup)
+          semForLoopVar c, it, field.typ
           skip tup
         if it.n.kind == ParRi:
-          inc it.n
           if tup.kind == ParRi:
             discard "all fine"
           else:
