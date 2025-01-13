@@ -255,14 +255,11 @@ proc inlineIteratorBody(e: var EContext;
       e.dest.addParRi()
       e.dest.addParRi()
       skipParRi(e, c)
-    of WhileS:
+    else:
       e.dest.add c
       inc c
-      takeTree(e, c)
-      inlineIteratorBody(e, c, forStmt, yieldType)
-      wantParRi(e, c)
-    else:
-      takeTree(e, c)
+      e.loop c:
+        inlineIteratorBody(e, c, forStmt, yieldType)
   else:
     takeTree(e, c)
 
