@@ -299,3 +299,41 @@ proc getArrayLen*(n: Cursor): xint =
   inc n
   skip n # skip basetype
   result = getArrayIndexLen(n)
+
+proc evalBitSet*(n, typ: Cursor): seq[uint8] =
+  ## returns @[] if it could not be evaluated.
+  assert n.exprKind == SetX
+  assert typ.typeKind == SetT
+  let size = bitsetSizeInBytes(typ.firstSon)
+  var err = false
+  let s = asSigned(size, err)
+  if err:
+    return @[]
+  result = newSeq[uint8](s)
+  var n = n
+  while n.kind != ParRi:
+    if n.exprKind == RangeX:
+      inc n
+      let xa = evalOrdinal(nil, n)
+      skip n
+      let xb = evalOrdinal(nil, n)
+      skip n
+      if n.kind == ParRi: inc n
+      if not xa.isNaN and not xb.isNaN:
+        var i = asUnsigned(xa, err)
+        let zb = asUnsigned(xb, err)
+        while i <= zb:
+          result[i shr 3] = result[i shr 3] or (1'u8 shl (i.uint8 and 7'u8))
+          inc i
+      else:
+        err = true
+    else:
+      let xa = evalOrdinal(nil, n)
+      skip n
+      if not xa.isNaN:
+        let i = asUnsigned(xa, err)
+        result[i shr 3] = result[i shr 3] or (1'u8 shl (i.uint8 and 7'u8))
+      else:
+        err = true
+  if err:
+    return @[]
