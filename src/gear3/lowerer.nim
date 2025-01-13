@@ -166,6 +166,7 @@ proc pop(s: var seq[SymId]): SymId =
   setLen(s, s.len-1)
 
 proc transformForStmt(e: var EContext; c: var Cursor)
+proc transformStmt*(e: var EContext; c: var Cursor)
 
 proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]; fromForloop = false) =
   case c.kind
@@ -285,8 +286,14 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
 
       skip params
 
+    var bodyBuf = createTokenBuf()
     var body = routine.body
-    inlineIteratorBody(e, body, forStmt, routine.retType)
+    swap(e.dest, bodyBuf)
+    transformStmt(e, body)
+    swap(e.dest, bodyBuf)
+
+    var transformedBody = beginRead(bodyBuf)
+    inlineIteratorBody(e, transformedBody, forStmt, routine.retType)
 
   else:
     error e, "could not find symbol: " & pool.syms[iterSym]
