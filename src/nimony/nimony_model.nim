@@ -215,6 +215,9 @@ type
     NoSideEffect = "noSideEffect"
     NoDestroy = "nodestroy"
     Plugin = "plugin"
+    ByCopy = "bycopy"
+    ByRef = "byref"
+    Inline = "inline"
 
   SubstructureKind* = enum
     NoSub
@@ -243,7 +246,6 @@ type
     ThiscallC = "thiscall"
     NoconvC = "noconv"
     MemberC = "member"
-    InlineC = "inline"
     NoinlineC = "noinline"
     NimcallC = "nimcall"
 
@@ -469,3 +471,6 @@ proc hasBuiltinPragma*(n: Cursor; kind: PragmaKind): bool =
         result = true
         break
       skip n
+
+proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
+  dest.add symToken(s, info)

@@ -49,6 +49,8 @@ The final size and alignment are the size and alignment of the aggregate.
 The stride of the type is the final size rounded up to alignment.
 ]#
 
+proc `<`(x: xint; b: int): bool = x < createXint(b)
+
 proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int) =
   var counter = 20
   var n = n
@@ -76,89 +78,109 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, 1, 1
   of StringT:
     update c, ptrSize*2, ptrSize
-  of RefT, PtrT, MutT, OutT, ProcT, NilT:
+  of RefT, PtrT, MutT, OutT, ProcT, NilT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.firstSon, ptrSize
-  of EnumT:
-    let (a, lastOrd) = enumBounds(n)
-    if a < 0:
+  of EnumT, HoleyEnumT:
+    let b = enumBounds(n)
+    if b.lo < 0:
       update c, 4, 4 # always int32
     else:
-      if lastOrd < (1 *^ 8):
-        update c2, 1, 1
-      elif lastOrd < (1 *^ 16):
-        update c2, 2, 2
-      elif lastOrd < (1'i64 *^ 32):
-        update c2, 4, 4
+      if b.hi < (1 shl 8):
+        update c, 1, 1
+      elif b.hi < (1 shl 16):
+        update c, 2, 2
+      elif b.hi < (1'i64 shl 32):
+        update c, 4, 4
       else:
-        update c2, 8, 8
-    combine c, c2
+        update c, 8, 8
   of ObjectT:
+    if c.strict:
+      # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
+      c.overflow = true
     var n = n
     inc n
-    if n.kind != DotToken:
-      getSize(c, cache, n, ptrSize)
-    while n.kind != ParRi:
-
-
-    let fieldList = ithSon(p, typ, objectBodyPos)
-    for ch in sonsReadonly(p[fieldList.m], fieldList.t):
-      getSize c, p, FullTypeId(m: fieldList.m, t: ch), tree, n
-  of ArrayTy:
     var c2 = createSizeofValue(c.strict)
-    getSize(c2, p, p.ithSon(typ, 1), tree, n)
-    let n = getArrayLen(p[typ.m], typ.t, p)
-    if n >= high(int) div c2.size:
+    if n.kind != DotToken:
+      getSize(c2, cache, n, ptrSize)
+    while n.kind != ParRi:
+      let field = takeLocal(n, SkipFinalParRi)
+      getSize c2, cache, field.typ, ptrSize
+    finish c2
+    combine c, c2
+
+  of ArrayT:
+    var c2 = createSizeofValue(c.strict)
+    getSize(c2, cache, n.firstSon, ptrSize)
+    let al1 = asSigned(getArrayLen(n), c.overflow)
+    if al1 >= high(int) div c2.size:
       c.overflow = true
     else:
-      update c, int(n * c2.size), c2.maxAlign
+      update c, int(al1 * c2.size), c2.maxAlign
       c.overflow = c2.overflow
-  of SetTy:
-    let size = bitsetSizeInBytes(p, typ.firstSon)
-    update c, size, 1
-  of ObjectTy:
+  of SetT:
+    let size0 = bitsetSizeInBytes(n.firstSon)
+    let size1 = asSigned(size0, c.overflow)
+    update c, size1, 1
+  of TupleT:
     if c.strict:
-      # don't even try to compute the size because alignment etc.
+      # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true
-    else:
-      let symId = fromModuleSymUse(p, p[typ.m], typ.t)
-      var c2 = createSizeofValue(c.strict)
-      cacheValue(c2, symId):
-        getSize(c2, p, p[symId].declPos, tree, n)
-        finish c2
-      combine c, c2
-  of TypeDecl:
-    getSize(c, p, ithSon(p, typ, typeBodyPos), tree, n)
-  of TupleTy:
-    if c.strict:
-      # don't even try to compute the size because alignment etc.
-      c.overflow = true
-    else:
-      var c2 = createSizeofValue(c.strict)
-      for ch in sonsReadonly(p[typ.m], typ.t):
-        getSize(c2, p, FullTypeId(m: typ.m, t: ch), tree, n)
-      finish c2
-      combine c, c2
+    var n = n
+    inc n
+    var c2 = createSizeofValue(c.strict)
+    while n.kind != ParRi:
+      if n.substructureKind == FldS:
+        let field = takeLocal(n, SkipFinalParRi)
+        getSize c2, cache, field.typ, ptrSize
+      else:
+        getSize c2, cache, n, ptrSize
+        skip n
+    finish c2
+    combine c, c2
+  of OpenArrayT:
+    update c, ptrSize*2, ptrSize
+  of RangeT:
+    getSize c, cache, n.firstSon, ptrSize
+  of NoType, VoidT, VarargsT, OrT, AndT, NotT,
+     ConceptT, StaticT, IterT, InvokeT, UncheckedArrayT,
+     AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
+    raiseAssert "BUG: valid type kind for sizeof computation: " & $n.typeKind
 
-proc getSize*(p: Program; typ: FullTypeId; strict=false): int =
+proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
   var c = createSizeofValue(strict)
-  getSize(c, p, typ, p[typ.m], typ.t)
+  var cache = initTable[SymId, SizeofValue]()
+  getSize(c, cache, n, ptrSize)
   if not c.overflow:
-    result = c.size
+    result = createXint(c.size)
   else:
-    result = high(int)
+    result = createNaN()
 
-proc typeIsBig*(typ: FullTypeId): bool {.inline.} =
-  let s = getSize(p, typ)
-  result = s > 24
+proc typeIsBig*(n: Cursor; ptrSize: int): bool {.inline.} =
+  let s = getSize(n, ptrSize)
+  result = s > createXint(24'i64)
 
-proc passByConstRef*(p: Program; typ: FullTypeId; tree: Tree; pragmas: NodePos): bool =
-  let k = p[typ].kind
-  #echo typeToString(c.p, typ)
-  if k in {TypeVar, GenericTy, SymKindTy, StaticTy, VarTy, OutTy}:
+proc typeSectionMode(n: Cursor): PragmaKind =
+  var n = n
+  var counter = 20
+  while counter > 0 and n.kind == Symbol:
+    let sym = tryLoadSym(n.symId)
+    if sym.status == LacksNothing:
+      var local = asTypeDecl(sym.decl)
+      if local.kind == TypeY:
+        if hasBuiltinPragma(local.pragmas, ByCopy):
+          return ByCopy
+        elif hasBuiltinPragma(local.pragmas, ByRef):
+          return ByRef
+        n = local.body
+  return NoPragma
+
+proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
+  let k = typ.typeKind
+  if k in {SinkT, MutT, OutT}:
     result = false
-  elif typeIsBig(p, typ) and k != SinkTy:
-    result = not hasBuiltinPragma(p, tree, pragmas, "bycopy")
+  elif typeIsBig(typ, ptrSize):
+    result = not hasBuiltinPragma(pragmas, ByCopy) and typeSectionMode(typ) != ByCopy
   else:
-    result = hasBuiltinPragma(p, tree, pragmas, "byref")
+    result = hasBuiltinPragma(pragmas, ByRef) or typeSectionMode(typ) == ByRef

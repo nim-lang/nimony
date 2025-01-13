@@ -106,13 +106,6 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor; e: Expects)
 
-proc wantParRi(dest: var TokenBuf; n: var Cursor) =
-  if n.kind == ParRi:
-    dest.add n
-    inc n
-  else:
-    error "expected ')', but got: ", n
-
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
   assert n.kind == ParLe
   c.dest.add n

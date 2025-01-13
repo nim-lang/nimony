@@ -207,7 +207,7 @@ type
     lo*, hi*: xint
 
 proc enumBounds*(n: Cursor): Bounds =
-  assert n.typeKind == EnumT
+  assert n.typeKind in {EnumT, HoleyEnumT}
   var n = n
   inc n # EnumT
   skip n # Basetype
@@ -224,7 +224,7 @@ proc countEnumValues*(n: Cursor): xint =
     let sym = tryLoadSym(n.symId)
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
-      if local.kind == TypeY and local.body.typeKind == EnumT:
+      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
         let b = enumBounds(local.body)
         result = b.hi - b.lo + createXint(1'i64)
 
@@ -257,7 +257,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     result = createXint(256'i64 div 8'i64)
   of BoolT:
     result = createXint(1'i64)
-  of EnumT:
+  of EnumT, HoleyEnumT:
     let b = enumBounds(baseType)
     # XXX We don't use an offset != 0 anymore for set[MyEnum] construction
     # so we only consider the 'hi' value here:

@@ -23,6 +23,7 @@ type
   Context = object
     constRefParams: HashSet[SymId]
     dest: TokenBuf
+    ptrSize: int
 
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor)
@@ -30,7 +31,7 @@ when not defined(nimony):
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   var n = params
   while n.kind != ParRi:
-    let p = takeLocal(n)
+    let p = takeLocal(n, SkipFinalParRi)
     if p.name.kind == SymbolDef and passByConstRef(c.p, p.typ):
       c.constRefParams.incl p.name.symId
 
@@ -145,11 +146,7 @@ proc tr(c: var Context; n: var Cursor) =
     for ch in sons(dest, n):
       tr c, dest, ch
 
-proc injectConstParamDerefs*(p: Program; t: TreeId): TreeId =
-  let thisModule = p[t].m
-  var c = Context(p: p)
+proc injectConstParamDerefs*(n: Cursor; ptrSize: int): TokenBuf =
+  var c = Context(dest: createTokenBuf(300), ptrSize: ptrSize)
   result = createTree(p, thisModule)
-  p[result].flags.incl dontTouch
   tr(c, p[result], p[t], StartPos)
-  patch p[result], PatchPos(0)
-  p[result].flags.excl dontTouch

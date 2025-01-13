@@ -209,13 +209,6 @@ proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
   trScope c, body
   swap c.currentScope, bodyScope
 
-proc wantParRi(dest: var TokenBuf; n: var Cursor) =
-  if n.kind == ParRi:
-    dest.add n
-    inc n
-  else:
-    error "expected ')', but got: ", n
-
 proc trWhile(c: var Context; n: var Cursor) =
   #[ while prop(createsObj())
       was turned into `while (let tmp = createsObj(); prop(tmp))` by  `duplifier.nim`
