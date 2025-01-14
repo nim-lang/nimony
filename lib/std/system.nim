@@ -365,3 +365,5 @@ proc default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
 proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
+
+proc addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}

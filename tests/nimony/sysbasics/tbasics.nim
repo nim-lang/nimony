@@ -19,3 +19,15 @@ proc foo2(m: int) =
   let z1 = (y, s, m1)
 
 foo2(12)
+
+proc foo3(x: pointer) =
+  let m = x
+  let s2 = cast[ptr int](x)
+  let s3 = s2[]
+
+block:
+  var s = 2
+  let m = addr s
+  foo3(m)
+  let m2 = cast[pointer](m)
+  foo3(m2)
