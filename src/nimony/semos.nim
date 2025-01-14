@@ -52,7 +52,10 @@ proc nimexec(cmd: string) =
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
   if not fileExists(t) or forceRebuild:
-    nimexec("c -d:release " & src)
+    when not defined(debug):
+      nimexec("c -d:release " & src)
+    else:
+      nimexec("c " & src)
     #moveFile src.changeFileExt(ExeExt), t
 
 proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =

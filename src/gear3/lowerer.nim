@@ -263,7 +263,7 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
   let iterSym = iter.symId
   let res = tryLoadSym(iterSym)
   if res.status == LacksNothing:
-    let routine = asRoutine(res.decl)
+    let routine = asRoutine(res.decl, SkipInclBody)
     var params = routine.params
     inc params # (params
     inc iter # name

@@ -59,9 +59,9 @@ proc takeLocal*(c: var Cursor; mode: SkipMode): Local =
         else:
           raiseAssert "expected ')' inside (" & $result.kind
 
-proc asLocal*(c: Cursor): Local =
+proc asLocal*(c: Cursor; mode = SkipInclBody): Local =
   var c = c
-  result = takeLocal(c, SkipInclBody)
+  result = takeLocal(c, mode)
 
 proc asTypevar*(c: Cursor): Local {.inline.} =
   result = asLocal(c)
