@@ -38,10 +38,14 @@ type
     typeCache: TypeCache
     ptrSize: int
 
+  VarReplacement = object
+    needsDeref: bool
+    sym: SymId
+
   InlineContext* = object
     returnLabel: SymId
     resultSym: SymId
-    newVars: Table[SymId, SymId]
+    newVars: Table[SymId, VarReplacement]
     target: Target
     c: ptr Context
 
@@ -111,6 +115,13 @@ proc newSymId(c: var Context; s: SymId): SymId =
     c.makeLocalSym(name)
   result = pool.syms.getOrIncl(name)
 
+proc addVarReplacement(dest: var TokenBuf; v: VarReplacement; info: PackedLineInfo) =
+  if v.needsDeref:
+    copyIntoKind dest, DerefX, info:
+      dest.addSymUse v.sym, info
+  else:
+    dest.addSymUse v.sym, info
+
 proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   case n.kind
@@ -118,24 +129,24 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
     let id = n.symId
     let freshId = newSymId(c.c[], id)
 
-    c.newVars[id] = freshId
+    c.newVars[id] = VarReplacement(sym: freshId, needsDeref: false)
     dest.addSymDef freshId, info
     inc n
   of Symbol:
     if c.resultSym == n.symId:
       case c.target.kind
       of TargetIsNone:
-        let toReplace = c.newVars.getOrDefault(n.symId, NoSymId)
-        assert toReplace != NoSymId, "cannot find result declaration"
-        dest.addSymUse toReplace, info
+        let toReplace = c.newVars.getOrDefault(n.symId)
+        assert toReplace.sym != NoSymId, "cannot find result declaration"
+        addVarReplacement(dest, toReplace, info)
       of TargetIsSym:
         dest.addSymUse c.target.sym, info
       of TargetIsNode:
         copyTree dest, c.target.pos
     else:
-      let toReplace = c.newVars.getOrDefault(n.symId, NoSymId)
-      if toReplace != NoSymId:
-        dest.addSymUse toReplace, info
+      let toReplace = c.newVars.getOrDefault(n.symId)
+      if toReplace.sym != NoSymId:
+        addVarReplacement(dest, toReplace, info)
       else:
         dest.add n
     inc n
@@ -154,9 +165,9 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
           case c.target.kind
           of TargetIsNone:
             assert c.resultSym != NoSymId
-            let toReplace = c.newVars.getOrDefault(c.resultSym, NoSymId)
-            assert toReplace != NoSymId, "cannot find result declaration"
-            dest.addSymUse toReplace, info
+            let toReplace = c.newVars.getOrDefault(c.resultSym)
+            assert toReplace.sym != NoSymId, "cannot find result declaration"
+            addVarReplacement(dest, toReplace, info)
           of TargetIsSym:
             assert c.target.sym != NoSymId
             dest.addSymUse c.target.sym, info
@@ -207,16 +218,17 @@ proc mapParamToLocal(c: var InlineContext; dest: var TokenBuf; args: var Cursor;
     copyIntoKind dest, LetS, info:
       let id = r.name.symId
       let freshId = newSymId(c.c[], id)
-      c.newVars[id] = freshId
       dest.addSymDef freshId, info
       dest.addDotToken() # not exported
       dest.addDotToken() # no pragmas
       if typeIsBig(r.typ, c.c.ptrSize) and not constructsValue(args):
+        c.newVars[id] = VarReplacement(sym: freshId, needsDeref: true)
         copyIntoKind dest, PtrT, info:
           dest.copyTree(r.typ)
         copyIntoKind dest, AddrX, info:
           tr c.c[], dest, args
       else:
+        c.newVars[id] = VarReplacement(sym: freshId, needsDeref: false)
         dest.copyTree(r.typ)
         tr c.c[], dest, args
 
@@ -251,9 +263,9 @@ proc doInline(outer: var Context; dest: var TokenBuf; procCall: var Cursor; rout
       inlineRoutineBody(c, dest, procBody)
 
   if isStmtListExpr:
-    let toReplace = c.newVars.getOrDefault(c.resultSym, NoSymId)
-    assert toReplace != NoSymId, "cannot find result declaration"
-    dest.addSymUse toReplace, info
+    let toReplace = c.newVars.getOrDefault(c.resultSym)
+    assert toReplace.sym != NoSymId, "cannot find result declaration"
+    addVarReplacement(dest, toReplace, info)
     dest.addParRi()
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =

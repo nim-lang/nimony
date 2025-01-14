@@ -24,7 +24,7 @@ import duplifier
 type
   Context = object
     constRefParams: HashSet[SymId]
-    ptrSize: int
+    ptrSize, tmpCounter: int
     typeCache: TypeCache
 
 when not defined(nimony):
@@ -62,91 +62,75 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # temporary first:
     let argType = getType(c.typeCache, n)
     copyIntoKind dest, ExprX, info:
-      copyIntoKind dest, PtrT, info:
-        copyTree dest, c.p[argType.m], argType.t
-      copyIntoKind dest, StmtList, info:
-        let symId = declareSym(c.p[dest.m], VarDecl, c.p[dest.m].strings.getOrIncl("`constRefTemp"))
-        copyIntoKind dest, VarDecl, info:
+      copyIntoKind dest, StmtsS, info:
+        let symId = pool.syms.getOrIncl("`constRefTemp" & $c.tmpCounter)
+        inc c.tmpCounter
+        copyIntoKind dest, VarS, info:
           addSymDef dest, symId, info
           dest.addEmpty2 info # export marker, pragma
-          copyTree dest, c.p[argType.m], argType.t
+          copyTree dest, argType
           # value:
           tr c, dest, n
-      copyIntoKind dest, HiddenAddr, info:
+      copyIntoKind dest, HaddrX, info:
         dest.addSymUse symId, info
   else:
-    copyIntoKind dest, HiddenAddr, info:
+    copyIntoKind dest, HaddrX, info:
       tr c, dest, n
 
-proc trCallArgs(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var fnType = getType(c.typeCache, n.firstSon)
-  var paramIter = initSonsIter(c.p, ithSon(c.p, fnType, routineParamsPos))
-  var i = 0
-  for ch in sons(dest, n):
-    var wantConstRefT = false
-    if hasCurrent(paramIter):
-      if i > 0:
-        var paramType = ithSon(c.p, paramIter.current, localTypePos)
-        wantConstRefT = passByConstRef(c.p, paramType, c.p[paramIter.current.m],
-                            ithSon(c.p, paramIter.current, localPragmasPos).t)
-      next paramIter, c.p
-    if wantConstRefT:
-      trConstRef c, dest, ch
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  dest.add n
+  inc n # skip `(call)`
+  var fnType = getType(c.typeCache, n)
+  takeTree dest, n # skip `fn`
+  assert fnType == "params"
+  inc fnType
+  while n.kind != ParRi:
+    let previousFormalParam = fnType
+    let param = takeLocal(fnType, SkipFinalParRi)
+    let pk = param.typ.typeKind
+    if pk in {MutT, OutT, LentT}:
+      tr c, dest, n
+    elif pk == VarargsT:
+      # do not advance formal parameter:
+      fnType = previousFormalParam
+      tr c, dest, n
+    elif passByConstRef(param.typ, param.pragmas, c.ptrSize):
+      trConstRef c, dest, n
     else:
-      tr c, dest, ch
-    inc i
-
-proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let t = n.firstSon
-  let argType = FullTypeId(m: tree.id, t: t)
-  let isRef = isRefType(c.p, argType)
-  if isRef:
-    let info = n.info
-    copyIntoKind dest, StmtListExpr, info:
-      copyTree dest, c.p[argType.m], argType.t
-      copyIntoKind dest, StmtList, info:
-        let symId = declareSym(c.p[dest.m], VarDecl, c.p[dest.m].strings.getOrIncl("refConstrTemp"))
-        copyIntoKind dest, VarDecl, info:
-          addSymDef dest, symId, info
-          dest.addEmpty2 info # export marker, pragma
-          copyTree dest, c.p[argType.m], argType.t
-          copyIntoKind dest, NewConstr, info:
-            copyTree dest, c.p[argType.m], argType.t
-        copyIntoKind dest, Asgn, info:
-          copyIntoKind dest, DerefExpr, info:
-            addSymUse dest, symId, info
-          for ch in sons(dest, n):
-            tr c, dest, ch
-      dest.addSymUse symId, info
-  else:
-    for ch in sons(dest, n):
-      tr c, dest, ch
+      tr c, dest, n
+  wantParRi dest, n
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  case n.kind
-  of AtomsExceptSymUse:
-    copyTree dest, n
-  of Call:
-    trCallArgs c, dest, n
-  of SymUse:
-    if c.constRefParams.contains(n.symId):
-      copyIntoKind dest, HiddenDeref, n.info:
-        copyTree dest, n
-    else:
-      copyTree dest, n
-  of DeclarativeNodes, Pragmas, TemplateDecl, IteratorDecl,
-     UsingStmt, CommentStmt, BindStmt, MixinStmt, ContinueStmt, BreakStmt:
-    copyTree dest, n
-  of ProcDecl, FuncDecl, MacroDecl, MethodDecl, ConverterDecl:
-    trProcDecl c, dest, n
-  of ObjConstr:
-    # For `MyRef(a: a)` the C codegen needs to generate `x = malloc(...); *x = MyRef()`
-    trObjConstr c, dest, n
-  else:
-    for ch in sons(dest, n):
-      tr c, dest, ch
+  var nested = 0
+  while true:
+    case n.kind
+    of Symbol:
+      if c.constRefParams.contains(n.symId):
+        copyIntoKind dest, DerefX, n.info:
+          dest.add n
+      else:
+        dest.add n
+      inc n
+    of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
+      dest.add n
+      inc n
+    of ParLe:
+      if n.exprKind in CallKinds:
+        trCall c, dest, n
+      elif n.stmtKind in {ProcS, FuncS, MacroS, MethodS, ConverterS}:
+        trProcDecl c, dest, n
+      else:
+        dest.add n
+        inc n
+        inc nested
+    of ParRi:
+      dest.add n
+      inc n
+      dec nested
+    if nested == 0: break
 
 proc injectConstParamDerefs*(n: Cursor; ptrSize: int): TokenBuf =
-  var c = Context(dest: createTokenBuf(300), ptrSize: ptrSize, typeCache: createTypeCache())
-  result = createTree(p, thisModule)
-  tr(c, p[result], p[t], StartPos)
+  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache())
+  result = createTokenBuf(300)
+  var n = n
+  tr(c, result, n)
