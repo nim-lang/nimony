@@ -495,7 +495,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     if n[0].kind == nkVarTuple:
       let v = n[0]
       c.b.addTree("unpacktup")
-      for i in 0..<v.len:
+      for i in 0..<v.len-1: # ignores typedesc
         c.b.addTree("let")
 
         toNif(v[i], n, c) # name

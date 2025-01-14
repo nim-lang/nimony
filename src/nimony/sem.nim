@@ -3249,6 +3249,23 @@ proc isIterator(c: var SemContext; s: SymId): bool =
   let res = declToCursor(c, sym)
   result = res.status == LacksNothing and res.decl == $IterY
 
+proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
+  # TODO: implements mixed unpacktup and unpackflat: e.g. for i, j, (m, n) in ...
+  var tup = tup
+  inc tup
+  while it.n.kind != ParRi and tup.kind != ParRi:
+    let field = asLocal(tup)
+    semForLoopVar c, it, field.typ
+    skip tup
+  if it.n.kind == ParRi:
+    if tup.kind == ParRi:
+      discard "all fine"
+    else:
+      buildErr c, it.n.info, "too few for loop variables"
+  else:
+    buildErr c, it.n.info, "too many for loop variables"
+    skipToEnd it.n
+
 proc semFor(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
@@ -3268,30 +3285,20 @@ proc semFor(c: var SemContext; it: var Item) =
     of UnpackFlatS:
       takeToken c, it.n
       if iterCall.typ.typeKind == TupleT:
-        var tup = iterCall.typ
-        inc tup
-        while it.n.kind != ParRi and tup.kind != ParRi:
-          let field = asLocal(tup)
-          semForLoopVar c, it, field.typ
-          skip tup
-        if it.n.kind == ParRi:
-          if tup.kind == ParRi:
-            discard "all fine"
-          else:
-            buildErr c, it.n.info, "too few for loop variables"
-        else:
-          buildErr c, it.n.info, "too many for loop variables"
-          skipToEnd it.n
+        semForLoopTupleVar c, it, iterCall.typ
       else:
         semForLoopVar c, it, iterCall.typ
 
       wantParRi c, it.n
     of UnpackTupS:
-      # XXX To implement
-      buildErr c, it.n.info, "`unpacktup` inside `for` not implemented"
-      skip it.n
+      takeToken c, it.n
+      if iterCall.typ.typeKind == TupleT:
+        semForLoopTupleVar c, it, iterCall.typ
+      else:
+        buildErr c, it.n.info, "tuple types expected, but got: " & $iterCall.typ
+      wantParRi c, it.n
     else:
-      buildErr c, it.n.info, "illformed AST: `unpackflat` inside `for` expected"
+      buildErr c, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
 
     if isMacroLike and false:

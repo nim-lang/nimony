@@ -561,7 +561,7 @@ proc toNif*(n, parent: PNode; c: var WContext) =
     if n[0].kind == nkVarTuple:
       let v = n[0]
       c.b.addTree("unpacktuple")
-      for i in 0..<v.len:
+      for i in 0..<v.len-1:
         c.b.addTree("let")
         toNifDecl(v[i], n, c) # name
         c.b.addEmpty 4 # export marker, pragmas, type, value

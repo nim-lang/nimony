@@ -30,4 +30,8 @@ proc bar() =
     let s = i
     let m = j
 
+  for (i, j) in foo(2):
+    let s = i
+    let m = j
+
 bar()
