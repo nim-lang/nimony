@@ -25,7 +25,7 @@
  (proc 5 :foo.0.tbawx6nu81 . . . 9
   (params) . . . 2,1
   (stmts 4
-   (var :x.0 . . ~2,~5
+   (var :x.1 . . ~2,~5
     (array
      (i -1)
      (rangetype
@@ -43,7 +43,7 @@
    (param :m.0 . . ~6,~7,lib/std/system.nim
     (i -1) .)) . . . 2,1
   (stmts 4
-   (var :x.1 . .
+   (var :x.2 . .
     (i -1) 4 +1) 4,1
    (var :s.0 . . 5
     (tuple
@@ -53,7 +53,7 @@
       (i -1) .) 6
      (fld :Field2.0.tbawx6nu81 . .
       (i -1) .)) 4
-    (tup 1 x.1 4 +1 7 +2)) 4,2
+    (tup 1 x.2 4 +1 7 +2)) 4,2
    (let :m1.0 . . 6
     (tuple
      (fld :Field0.1.tbawx6nu81 . . ~8,~10,lib/std/system.nim
@@ -82,4 +82,36 @@
        (fld :Field1.1.tbawx6nu81 . .
         (i -1) .)) .)) 5
     (tup 1 y.0 4 s.0 7 m1.0)))) 4,20
- (call ~4 foo2.0.tbawx6nu81 1 +12))
+ (call ~4 foo2.0.tbawx6nu81 1 +12) ,22
+ (proc 5 :foo3.0.tbawx6nu81 . . . 9
+  (params 1
+   (param :x.0 . . ~6,26,lib/std/system.nim
+    (pointer) .)) . . . 2,1
+  (stmts 4
+   (let :m.2 . . ~2,25,lib/std/system.nim
+    (pointer) 4 x.0) 4,1
+   (let :s2.0 . . 10
+    (ptr ~12,~18,lib/std/system.nim
+     (i -1)) 5
+    (cast 5
+     (ptr ~12,~18,lib/std/system.nim
+      (i -1)) 14 x.0)) 4,2
+   (let :s3.0 . . ~2,~19,lib/std/system.nim
+    (i -1) 5
+    (deref s2.0)))) ,27
+ (block . 2,1
+  (stmts 4
+   (var :s.1 . .
+    (i -1) 4 +2) 4,1
+   (let :m.3 . . 10,~5
+    (ptr ~12,~18,lib/std/system.nim
+     (i -1)) 9
+    (addr s.1)) 4,2
+   (call ~4 foo3.0.tbawx6nu81 1
+    (hconv ~3,18,lib/std/system.nim
+     (pointer) m.3)) 4,3
+   (let :m2.0 . . ~2,17,lib/std/system.nim
+    (pointer) 5
+    (cast ~7,17,lib/std/system.nim
+     (pointer) 14 m.3)) 4,4
+   (call ~4 foo3.0.tbawx6nu81 1 m2.0))))
