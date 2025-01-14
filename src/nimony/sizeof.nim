@@ -108,6 +108,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       let field = takeLocal(n, SkipFinalParRi)
       getSize c2, cache, field.typ, ptrSize
     finish c2
+    if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
 
   of ArrayT:
@@ -119,6 +120,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     else:
       update c, int(al1 * c2.size), c2.maxAlign
       c.overflow = c2.overflow
+    if cacheKey != NoSymId: cache[cacheKey] = c2
+
   of SetT:
     let size0 = bitsetSizeInBytes(n.firstSon)
     let size1 = asSigned(size0, c.overflow)
@@ -138,6 +141,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
         getSize c2, cache, n, ptrSize
         skip n
     finish c2
+    if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
   of OpenArrayT:
     update c, ptrSize*2, ptrSize

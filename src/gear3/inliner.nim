@@ -259,7 +259,7 @@ proc doInline(outer: var Context; dest: var TokenBuf; procCall: var Cursor; rout
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let le = n.firstSon
   var ri = le
-  skip le
+  skip ri
   var routine = default(Routine)
   if shouldInlineCall(c, ri, routine):
     if le.kind == Symbol:
@@ -275,48 +275,58 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
 
 proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let r = asLocal(n)
+  var r = takeLocal(n, SkipFinalParRi)
   var routine = default(Routine)
-  let inlineCall = shouldInlineCall(c, r.value, routine)
+  let inlineCall = shouldInlineCall(c, r.val, routine)
   copyInto dest, n:
     copyTree dest, r.name
-    copyTree dest, r.ex
+    copyTree dest, r.exported
     copyTree dest, r.pragmas
     copyTree dest, r.typ
     if inlineCall:
-      addEmpty dest, r.value.info
+      addEmpty dest, r.val.info
     else:
-      tr c, dest, r.value
+      tr c, dest, r.val
 
   if inlineCall:
-    doInline(c, dest, r.value, routine, Target(kind: TargetIsSym, sym: r.name.symId))
+    doInline(c, dest, r.val, routine, Target(kind: TargetIsSym, sym: r.name.symId))
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  case n.kind
-  of AtomsExceptSymUse:
-    copyTree dest, n
-  of Symbol:
-    addSymUse dest, n.symId, n.info
-  of ProcDecl, FuncDecl, MacroDecl, MethodDecl, ConverterDecl:
-    trProcDecl c, dest, n
-  of Asgn:
-    trAsgn c, dest, n
-  of LetDecl, VarDecl, CursorDecl, ResultDecl:
-    trLocalDecl c, dest, n
-  of CallKinds:
-    var routine = default(Routine)
-    let inlineCall = shouldInlineCall(c, n, routine)
-    if inlineCall:
-      doInline(c, dest, n, routine, Target(kind: TargetIsNone))
-    else:
-      for ch in sons(dest, n):
-        tr c, dest, ch
-  of DeclarativeNodes, Pragmas, TemplateDecl, IteratorDecl,
-     UsingStmt, CommentStmt, BindStmt, MixinStmt, ContinueStmt:
-    copyTree dest, n
-  else:
-    for ch in sons(dest, n):
-      tr c, dest, ch
+  var nested = 0
+  while true:
+    case n.kind
+    of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
+      dest.add n
+      inc n
+    of ParLe:
+      case n.stmtKind
+      of AsgnS:
+        trAsgn c, dest, n
+      of LetS, CursorS, VarS, ResultS:
+        trLocalDecl c, dest, n
+      of ProcS, FuncS, MacroS, MethodS, ConverterS:
+        trProcDecl c, dest, n
+      else:
+        if n.exprKind in CallKinds:
+          var routine = default(Routine)
+          let inlineCall = shouldInlineCall(c, n, routine)
+          if inlineCall:
+            doInline(c, dest, n, routine, Target(kind: TargetIsNone))
+          else:
+            dest.add n
+            inc nested
+            inc n
+        elif isDeclarative(n):
+          takeTree dest, n
+        else:
+          dest.add n
+          inc nested
+          inc n
+    of ParRi:
+      dest.add n
+      dec nested
+      inc n
+    if nested == 0: break
 
 proc inlineCalls*(n: Cursor; thisModuleSuffix: string; ptrSize: int): TokenBuf =
   var c = createInliner(thisModuleSuffix, ptrSize)
