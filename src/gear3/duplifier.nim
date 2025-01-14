@@ -106,13 +106,6 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor; e: Expects)
 
-proc wantParRi(dest: var TokenBuf; n: var Cursor) =
-  if n.kind == ParRi:
-    dest.add n
-    inc n
-  else:
-    error "expected ')', but got: ", n
-
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
   assert n.kind == ParLe
   c.dest.add n
@@ -354,7 +347,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
 
 proc trProcDecl(c: var Context; n: var Cursor) =
   c.dest.add n
-  var r = takeRoutine(n)
+  var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pattern
@@ -418,7 +411,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType
-    let param = takeLocal(fnType)
+    let param = takeLocal(fnType, SkipFinalParRi)
     let pk = param.typ.typeKind
     var e2 = WantNonOwner
     if pk == SinkT:
@@ -426,8 +419,6 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
     elif pk == VarargsT:
       # do not advance formal parameter:
       fnType = previousFormalParam
-    else:
-      skipParRi(fnType)
     tr c, n, e2
   wantParRi c.dest, n
   finishOwningTemp c.dest, ow
@@ -508,7 +499,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
 
 proc trLocal(c: var Context; n: var Cursor) =
   c.dest.add n
-  var r = takeLocal(n)
+  var r = takeLocal(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pragmas

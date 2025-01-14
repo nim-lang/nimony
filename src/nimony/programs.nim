@@ -143,3 +143,10 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   #echo "INPUT IS ", toString(m.buf)
   result = beginRead(m.buf)
   prog.mods[prog.main] = m
+
+proc wantParRi*(dest: var TokenBuf; n: var Cursor) =
+  if n.kind == ParRi:
+    dest.add n
+    inc n
+  else:
+    error "expected ')', but got: ", n

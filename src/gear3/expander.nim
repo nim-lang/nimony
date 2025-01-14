@@ -441,7 +441,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           result.externName = pool.strings[c.litId]
           inc c
         of Nodecl, Selectany, Threadvar, Globalvar, Discardable, NoReturn,
-           Varargs, Borrow, NoSideEffect, NoDestroy:
+           Varargs, Borrow, NoSideEffect, NoDestroy, ByCopy, ByRef, Inline:
           result.flags.incl pk
           inc c
         of Header:
@@ -562,7 +562,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
     e.addKey genPragmas, "selectany", pinfo
 
   if Borrow in prag.flags:
-    e.addKey genPragmas, $InlineC, pinfo
+    e.addKey genPragmas, $Inline, pinfo
   closeGenPragmas e, genPragmas
 
   skip c # miscPos
@@ -570,7 +570,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   # body:
   if isGeneric:
     skip c
-  elif mode != TraverseSig or prag.callConv == InlineC:
+  elif mode != TraverseSig or Inline in prag.flags:
     traverseStmt e, c, TraverseAll
   else:
     e.dest.addDotToken()

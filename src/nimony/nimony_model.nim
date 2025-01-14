@@ -215,6 +215,9 @@ type
     NoSideEffect = "noSideEffect"
     NoDestroy = "nodestroy"
     Plugin = "plugin"
+    ByCopy = "bycopy"
+    ByRef = "byref"
+    Inline = "inline"
 
   SubstructureKind* = enum
     NoSub
@@ -243,7 +246,6 @@ type
     ThiscallC = "thiscall"
     NoconvC = "noconv"
     MemberC = "member"
-    InlineC = "inline"
     NoinlineC = "noinline"
     NimcallC = "nimcall"
 
@@ -441,6 +443,9 @@ proc isDeclarative*(n: Cursor): bool =
       else:
         result = false
 
+proc isCompileTimeType*(n: Cursor): bool {.inline.} =
+  n.typeKind in {TypeKindT, TypedescT, SymKindT, OrT, AndT, NotT, ConceptT, StaticT}
+
 proc firstSon*(n: Cursor): Cursor {.inline.} =
   result = n
   inc result
@@ -469,3 +474,6 @@ proc hasBuiltinPragma*(n: Cursor; kind: PragmaKind): bool =
         result = true
         break
       skip n
+
+proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
+  dest.add symToken(s, info)

@@ -95,7 +95,7 @@ proc getTypeSection*(s: SymId): TypeDecl =
 proc getProcDecl*(s: SymId): Routine =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
-  result = asRoutine(res.decl)
+  result = asRoutine(res.decl, SkipInclBody)
 
 proc isObjectType(s: SymId): bool =
   let impl = objtypeImpl(s)
@@ -302,8 +302,8 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     if a.kind != ParRi: inc hasParams, 2
   if hasParams == 3:
     while f.kind != ParRi and a.kind != ParRi:
-      var fParam = takeLocal(f)
-      var aParam = takeLocal(a)
+      var fParam = takeLocal(f, SkipFinalParRi)
+      var aParam = takeLocal(a, SkipFinalParRi)
       assert fParam.kind == ParamY
       assert aParam.kind == ParamY
       linearMatch m, fParam.typ, aParam.typ

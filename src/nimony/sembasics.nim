@@ -35,9 +35,6 @@ proc considerImportedSymbols(c: var SemContext; name: StrId; info: PackedLineInf
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
 
-proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
-  dest.add symToken(s, info)
-
 proc buildSymChoiceForDot(c: var SemContext; identifier: StrId; info: PackedLineInfo) =
   var count = 0
   let oldLen = c.dest.len

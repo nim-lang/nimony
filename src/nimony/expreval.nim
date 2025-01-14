@@ -207,13 +207,13 @@ type
     lo*, hi*: xint
 
 proc enumBounds*(n: Cursor): Bounds =
-  assert n.typeKind == EnumT
+  assert n.typeKind in {EnumT, HoleyEnumT}
   var n = n
   inc n # EnumT
   skip n # Basetype
   result = Bounds(lo: createNan(), hi: createNaN())
   while n.kind != ParRi:
-    let enumField = takeLocal(n)
+    let enumField = takeLocal(n, SkipFinalParRi)
     let x = evalOrdinal(nil, enumField.val)
     if isNaN(result.lo) or x < result.lo: result.lo = x
     if isNaN(result.hi) or x > result.hi: result.hi = x
@@ -224,7 +224,7 @@ proc countEnumValues*(n: Cursor): xint =
     let sym = tryLoadSym(n.symId)
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
-      if local.kind == TypeY and local.body.typeKind == EnumT:
+      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
         let b = enumBounds(local.body)
         result = b.hi - b.lo + createXint(1'i64)
 
@@ -257,7 +257,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     result = createXint(256'i64 div 8'i64)
   of BoolT:
     result = createXint(1'i64)
-  of EnumT:
+  of EnumT, HoleyEnumT:
     let b = enumBounds(baseType)
     # XXX We don't use an offset != 0 anymore for set[MyEnum] construction
     # so we only consider the 'hi' value here:
@@ -299,3 +299,41 @@ proc getArrayLen*(n: Cursor): xint =
   inc n
   skip n # skip basetype
   result = getArrayIndexLen(n)
+
+proc evalBitSet*(n, typ: Cursor): seq[uint8] =
+  ## returns @[] if it could not be evaluated.
+  assert n.exprKind == SetX
+  assert typ.typeKind == SetT
+  let size = bitsetSizeInBytes(typ.firstSon)
+  var err = false
+  let s = asSigned(size, err)
+  if err:
+    return @[]
+  result = newSeq[uint8](s)
+  var n = n
+  while n.kind != ParRi:
+    if n.exprKind == RangeX:
+      inc n
+      let xa = evalOrdinal(nil, n)
+      skip n
+      let xb = evalOrdinal(nil, n)
+      skip n
+      if n.kind == ParRi: inc n
+      if not xa.isNaN and not xb.isNaN:
+        var i = asUnsigned(xa, err)
+        let zb = asUnsigned(xb, err)
+        while i <= zb:
+          result[i shr 3] = result[i shr 3] or (1'u8 shl (i.uint8 and 7'u8))
+          inc i
+      else:
+        err = true
+    else:
+      let xa = evalOrdinal(nil, n)
+      skip n
+      if not xa.isNaN:
+        let i = asUnsigned(xa, err)
+        result[i shr 3] = result[i shr 3] or (1'u8 shl (i.uint8 and 7'u8))
+      else:
+        err = true
+  if err:
+    return @[]

@@ -118,9 +118,8 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
         let symId = forvars[i].name.symId
         var tupBuf = createTupleAccess(tmpId, i, info)
         var tup = beginRead(tupBuf)
-        var field = takeLocal(typ)
+        var field = takeLocal(typ, SkipFinalParRi)
         var fieldTyp = field.typ
-        inc typ # skips ParRi
         createDecl(e, symId, fieldTyp, tup, info, "let")
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
@@ -266,7 +265,7 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
   let iterSym = iter.symId
   let res = tryLoadSym(iterSym)
   if res.status == LacksNothing:
-    let routine = asRoutine(res.decl)
+    let routine = asRoutine(res.decl, SkipInclBody)
     var params = routine.params
     inc params # (params
     inc iter # name

@@ -13,7 +13,7 @@ include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
-  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs
+  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof
 
 import ".." / gear2 / modnames
 
@@ -1692,7 +1692,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     semConstIntExpr(c, n)
     c.dest.addParRi()
   of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow,
-     NoSideEffect, NoDestroy:
+     NoSideEffect, NoDestroy, ByCopy, ByRef, Inline:
     crucial.flags.incl pk
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     c.dest.addParRi()
@@ -2665,18 +2665,15 @@ proc semBorrow(c: var SemContext; fn: StrId; beforeParams: int) =
   semProcBody c, it
 
 proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
-  if c.dest[paramsAt].kind == DotToken:
-    result = @[]
-  else:
-    result = @[]
+  result = @[]
+  if c.dest[paramsAt].kind != DotToken:
     var n = cursorAt(c.dest, paramsAt)
     if n.substructureKind == ParamsS:
       inc n
       while n.kind != ParRi:
         if n.substructureKind == ParamS:
-          var local = takeLocal(n)
+          var local = takeLocal(n, SkipFinalParRi)
           result.add local.typ
-          skipParRi n
         else:
           break
       endRead(c.dest)
