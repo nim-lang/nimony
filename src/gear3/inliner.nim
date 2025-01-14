@@ -257,7 +257,9 @@ proc doInline(outer: var Context; dest: var TokenBuf; procCall: var Cursor; rout
     dest.addParRi()
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let (le, ri) = sons2(tree, n)
+  let le = n.firstSon
+  var ri = le
+  skip le
   var routine = default(Routine)
   if shouldInlineCall(c, ri, routine):
     if le.kind == Symbol:
@@ -265,12 +267,12 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       doInline(c, dest, ri, routine, Target(kind: TargetIsNode, pos: le))
     else:
       copyInto dest, n:
-        tr c, dest, le
-        doInline(c, dest, ri, routine, Target(kind: TargetIsNone))
+        tr c, dest, n
+        doInline(c, dest, n, routine, Target(kind: TargetIsNone))
   else:
     copyInto dest, n:
-      tr c, dest, le
-      tr c, dest, ri
+      tr c, dest, n
+      tr c, dest, n
 
 proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let r = asLocal(n)
