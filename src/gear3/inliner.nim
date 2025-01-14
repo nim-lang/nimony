@@ -20,8 +20,8 @@
 import std / [tables, assertions]
 include nifprelude
 import ".." / lib / symparser
-import ".." / nimony / [nimony_model, decls, programs, typenav]
-
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
+import duplifier
 
 type
   TargetKind = enum
@@ -35,6 +35,8 @@ type
     thisRoutine: SymId
     thisModuleSuffix: string
     globals, locals: Table[string, int]
+    typeCache: TypeCache
+    ptrSize: int
 
   InlineContext* = object
     returnLabel: SymId
@@ -43,8 +45,9 @@ type
     target: Target
     c: ptr Context
 
-proc createInliner(thisModuleSuffix: string): Context =
-  result = Context(thisRoutine: NoSymId, thisModuleSuffix: thisModuleSuffix)
+proc createInliner(thisModuleSuffix: string; ptrSize: int): Context =
+  result = Context(thisRoutine: NoSymId, thisModuleSuffix: thisModuleSuffix,
+    typeCache: createTypeCache(), ptrSize: ptrSize)
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -75,7 +78,7 @@ proc shouldInlineRoutine(pragmas: Cursor): bool =
 proc shouldInlineCall(c: var Context; n: Cursor; routine: var Routine): bool =
   result = false
   if n.exprKind in CallKinds and c.thisRoutine != NoSymId:
-    var callee = n.firstSon
+    let callee = n.firstSon
     if callee.kind == Symbol:
       let s = tryLoadSym(callee.symId)
       if s.status == LacksNothing:
@@ -188,8 +191,36 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
           while n.kind != ParRi:
             inlineRoutineBody(c, dest, n)
 
+proc mapParamToLocal(c: var InlineContext; dest: var TokenBuf; args: var Cursor; params: var Cursor) =
+  # assign parameters: This also ensures that side effects are executed,
+  # consider: `inlineCall effect(x)` where `inlineCall` does not even use
+  # its first parameter!
+  assert params.kind != DotToken
+  assert params.kind != ParRi
+  let p = params
+  let r = takeLocal(params, SkipFinalParRi)
+  if r.typ.typeKind == VarargsT: params = p
+  if isCompileTimeType(r.typ):
+    skip args # ignore compile-time parameters for inlining purposes
+  else:
+    let info = args.info
+    copyIntoKind dest, LetS, info:
+      let id = r.name.symId
+      let freshId = newSymId(c.c[], id)
+      c.newVars[id] = freshId
+      dest.addSymDef freshId, info
+      dest.addDotToken() # not exported
+      dest.addDotToken() # no pragmas
+      if typeIsBig(r.typ, c.c.ptrSize) and not constructsValue(args):
+        copyIntoKind dest, PtrT, info:
+          dest.copyTree(r.typ)
+        copyIntoKind dest, AddrX, info:
+          tr c.c[], dest, args
+      else:
+        dest.copyTree(r.typ)
+        tr c.c[], dest, args
 
-proc doInline(outer: var Context; dest: var TokenBuf; procCall: Cursor; routine: Routine;
+proc doInline(outer: var Context; dest: var TokenBuf; procCall: var Cursor; routine: Routine;
               target: Target) =
   assert procCall.exprKind in CallKinds
   var c = InlineContext(target: target, resultSym: NoSymId, c: addr outer)
@@ -198,51 +229,26 @@ proc doInline(outer: var Context; dest: var TokenBuf; procCall: Cursor; routine:
 
   var isStmtListExpr = false
   if target.kind == TargetIsNone:
-    let t = getType(procCall)
-    let tk = effectiveKind(t)
-    if tk != VoidT:
+    let t = getType(outer.typeCache, procCall)
+    if t.typeKind != VoidT:
       dest.addParLe ExprX, info
       isStmtListExpr = true
 
   copyIntoKind dest, BlockS, info:
-    c.returnLabel = declareSym(c.inl.p[c.thisModule], LabelDecl, c.inl.p[c.thisModule].strings.getOrIncl("returnLabel"))
+    var labelName = "returnLabel"
+    makeLocalSym outer, labelName
+    c.returnLabel = pool.syms.getOrIncl(labelName)
     dest.addSymDef c.returnLabel, info
 
     copyIntoKind dest, StmtsS, info:
-      var it = initNodePosIter(treec, procCall)
-      next it, treec # skip `fn`
-      for param in sonsFrom1(c.inl.p[routine.m], params):
-        # assign parameters: This also ensures that side effects are executed,
-        # consider: `inlineCall effect(x)` where `inlineCall` does not even use
-        # its first parameter!
-        let r = asLocal(c.inl.p[routine.m], param)
-        let tt = FullTypeId(m: routine.m, t: r.typ)
-        if effectiveKind(c.inl.p, tt) != SymKindTy:
-          copyIntoKind dest, LetDecl, info:
-            assert c.inl.p[routine.m][r.name].kind == SymDef
-            let id = c.inl.p[routine.m][r.name].symId
-            let freshId = copySym(dest, c.inl.p[dest.m], id, c.inl.p[c.inl.body])
-            c.inl.p[c.thisModule].syms[freshId].kind = LetDecl
+      inc procCall # skip `(call`
+      takeTree dest, procCall # `fn`
+      var params = routine.params
+      while procCall.kind != ParRi:
+        mapParamToLocal(c, dest, procCall, params)
 
-            c.newVars[id] = freshId
-            dest.addSymDef freshId, info
-
-            copyTreeX dest, c.inl.p[routine.m], r.ex, c.inl.p
-            copyTreeX dest, c.inl.p[routine.m], r.pragmas, c.inl.p
-            if passByConstRef(c.inl.p, tt, c.inl.p[routine.m], r.pragmas):
-              copyIntoKind dest, PtrTy, info:
-                copyTreeX dest, c.inl.p[routine.m], r.typ, c.inl.p
-                # This empty node here marks the type as `const`, see codegen.nim:
-                #  if hasXsons(tree, typ, 2): f.add ConstKeyword
-                dest.addEmpty info
-            else:
-              copyTreeX dest, c.inl.p[routine.m], r.typ, c.inl.p
-            copyTreeX dest, treec, it.current, c.inl.p
-        next it, treec
-
-      let procBody = ithSon(c.inl.p[routine.m], routine.t, routineBodyPos)
-      #echo "Inlining ", toString(c.inl.p[routine.m], procBody, c.inl.p)
-      inlineRoutineBody(c, dest, c.inl.p[routine.m], procBody, treec)
+      var procBody = routine.body
+      inlineRoutineBody(c, dest, procBody)
 
   if isStmtListExpr:
     let toReplace = c.newVars.getOrDefault(c.resultSym, NoSymId)
@@ -268,18 +274,19 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let r = asLocal(n)
-  let routine = shouldInlineCall(c, r.value)
+  var routine = default(Routine)
+  let inlineCall = shouldInlineCall(c, r.value, routine)
   copyInto dest, n:
     copyTree dest, r.name
     copyTree dest, r.ex
     copyTree dest, r.pragmas
     copyTree dest, r.typ
-    if routine.m != TreeId(-1):
+    if inlineCall:
       addEmpty dest, r.value.info
     else:
       tr c, dest, r.value
 
-  if routine.m != TreeId(-1):
+  if inlineCall:
     doInline(c, dest, r.value, routine, Target(kind: TargetIsSym, sym: r.name.symId))
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -294,9 +301,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trAsgn c, dest, n
   of LetDecl, VarDecl, CursorDecl, ResultDecl:
     trLocalDecl c, dest, n
-  of Call:
-    let routine = shouldInlineCall(c, n)
-    if routine.m != TreeId(-1):
+  of CallKinds:
+    var routine = default(Routine)
+    let inlineCall = shouldInlineCall(c, n, routine)
+    if inlineCall:
       doInline(c, dest, n, routine, Target(kind: TargetIsNone))
     else:
       for ch in sons(dest, n):
@@ -308,8 +316,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     for ch in sons(dest, n):
       tr c, dest, ch
 
-proc inlineCalls*(n: Cursor; thisModuleSuffix: string): TokenBuf =
-  var c = createInliner(thisModuleSuffix)
+proc inlineCalls*(n: Cursor; thisModuleSuffix: string; ptrSize: int): TokenBuf =
+  var c = createInliner(thisModuleSuffix, ptrSize)
   result = createTokenBuf(300)
   var n = n
   tr(c, result, n)
