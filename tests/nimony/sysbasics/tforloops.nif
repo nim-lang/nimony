@@ -87,5 +87,17 @@
      (let :s.2 . . ~4,~23,lib/std/system.nim
       (i -1) 4 i.2) 4,1
      (let :m.3 . . ~4,~24,lib/std/system.nim
-      (i -1) 4 j.2))))) 3,32
+      (i -1) 4 j.2))) 4,4
+   (for 13
+    (call ~3 foo.0.tfo6zftzj1 1 +2)
+    (unpacktup
+     (let 1 :i.3 . . ~2,~26,lib/std/system.nim
+      (i -1) .)
+     (let 4 :j.3 . . ~2,~26,lib/std/system.nim
+      (i -1) .)) ~2,1
+    (stmts 4
+     (let :s.3 . . ~4,~27,lib/std/system.nim
+      (i -1) 4 i.3) 4,1
+     (let :m.4 . . ~4,~28,lib/std/system.nim
+      (i -1) 4 j.3))))) 3,36
  (call ~3 bar.0.tfo6zftzj1))
