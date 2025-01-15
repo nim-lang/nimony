@@ -11,7 +11,7 @@ import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
 import typekeys
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls]
 import basics, lowerer
 
 
@@ -285,9 +285,20 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     e.dest.add c
     inc c
   of Symbol:
-    e.demand c.symId
-    e.dest.add c
-    inc c
+    let s = c.symId
+    let res = tryLoadSym(s)
+    if res.status == LacksNothing:
+      var body = asTypeDecl(res.decl).body
+      if body.typeKind == DistinctT: # skips DistinctT
+        inc body
+        traverseType(e, body, flags)
+        inc c
+      else:
+        e.demand s
+        e.dest.add c
+        inc c
+    else:
+      error e, "could not find symbol: " & pool.syms[s]
   of ParLe:
     case c.typeKind
     of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
