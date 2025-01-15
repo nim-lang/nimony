@@ -3658,15 +3658,25 @@ proc buildObjConstrField(c: var SemContext; field: Local; setFields: Table[SymId
     c.dest.addParRi()
 
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
-  c.dest.addParLe(OconstrX, info)
-  c.dest.addSubtree typ
+  var constrKind = NoExpr
   var objImpl = typ
-  if objImpl.typeKind in {RefT, PtrT}:
+  if objImpl.typeKind == RefT:
+    constrKind = NewOconstrX
     inc objImpl
   if objImpl.typeKind == InvokeT:
     inc objImpl
   if objImpl.kind == Symbol:
     objImpl = objtypeImpl(objImpl.symId)
+    if constrKind == NoExpr:
+      case objImpl.typeKind
+      of RefObjectT:
+        constrKind = NewOconstrX
+      of ObjectT:
+        constrKind = OconstrX
+      else:
+        discard # error
+  c.dest.addParLe(constrKind, info)
+  c.dest.addSubtree typ
   var obj = asObjectDecl(objImpl)
   # same field order as old nim VM: starting with most shallow base type
   while obj.parentType.kind != DotToken:
@@ -4619,7 +4629,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSuf c, it
     of TupleConstrX:
       semTupleConstr c, it
-    of OconstrX:
+    of OconstrX, NewOconstrX:
       semObjConstr c, it
     of DefinedX:
       semDefined c, it

@@ -95,6 +95,7 @@ type
     NegX = "neg"
     SizeofX = "sizeof"
     OconstrX = "obj"
+    NewOconstrX = "newobj"
     TupleConstrX = "tup"
     AconstrX = "arr"
     SetX = "set"
