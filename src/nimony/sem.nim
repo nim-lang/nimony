@@ -4079,6 +4079,8 @@ proc semTypedAt(c: var SemContext; it: var Item) =
     inc it.typ
   of StringT, CstringT:
     it.typ = c.types.charType
+  of SetT:
+    it.typ = c.types.uint8Type
   else:
     c.buildErr lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
   wantParRi c, it.n
