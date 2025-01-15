@@ -578,6 +578,56 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       toNif(n[i], n, c)
     c.b.endTree()
     c.depsEnabled = oldDepsEnabled
+  of nkPragma:
+    if c.depsEnabled:
+      var hasCompile = false
+      for i in 0..<n.len:
+        let child = n[i]
+        case child.kind
+        of nkExprColonExpr:
+          if child[0].kind == nkIdent and child[0].ident.s == "compile":
+            if not hasCompile:
+              c.deps.addTree(nodeKindTranslation(n.kind))
+              hasCompile = true
+
+            let oldLineInfoEnabled = c.lineInfoEnabled
+            c.lineInfoEnabled = false
+            let oldDepsEnabled = c.depsEnabled
+            swap c.b, c.deps
+            c.depsEnabled = false
+
+            c.b.addTree(nodeKindTranslation(child.kind))
+            if child.len == 2:
+              # format (file, obj, customArgs)
+              toNif(child[0], child, c)
+              c.b.addTree("tup")
+              case child[1].kind
+              of nkStrLit:
+                toNif(child[1], child, c)
+                c.b.addStrLit("")
+              of nkTupleConstr:
+                for i in child[1]:
+                  toNif(i, child[1], c)
+              else:
+                discard
+              c.b.addStrLit("")
+              c.b.endTree()
+            c.b.endTree()
+
+            c.depsEnabled = oldDepsEnabled
+            swap c.b, c.deps
+            c.lineInfoEnabled = oldLineInfoEnabled
+        else:
+          discard
+      if hasCompile:
+        c.deps.endTree()
+
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))

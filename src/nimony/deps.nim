@@ -56,6 +56,10 @@ type
     DoCompile, # like `nim c` but with nifler
     DoRun # like `nim run`
 
+  Cfile = object
+    name, obj: string
+    customArgs: string
+
   DepContext = object
     forceRebuild: bool
     cmd: Command
@@ -66,6 +70,7 @@ type
     includeStack: seq[string]
     processedModules: HashSet[string]
     moduleFlags: set[ModuleFlag]
+    toCompile: seq[Cfile]
 
 proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
@@ -170,6 +175,33 @@ proc processFrom(c: var DepContext; it: var Cursor; current: Node) =
       importSingleFile c, f.path, info, current, false
       break
 
+proc processCompile(c: var DepContext; it: var Cursor; current: Node) =
+  var compileObj = CFile()
+  inc it # skips pragmas
+  while it.kind != ParRi:
+    inc it # skips kv
+    inc it # skips compile
+    inc it # skips TupleConstrX
+    # (file, obj, customArgs)
+    let name = pool.strings[it.litId]
+    compileObj.name = absolutePath(name)
+    inc it
+    if compileObj.obj.len == 0:
+      compileObj.obj = name
+    else:
+      compileObj.obj = pool.strings[it.litId]
+    compileObj.obj = splitFile(compileObj.obj).name & ".o"
+
+    inc it
+    compileObj.customArgs = pool.strings[it.litId]
+    inc it
+    inc it # TupleConstrX
+    inc it # kv
+  inc it # pragmas
+
+  c.toCompile.add compileObj
+
+
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   case stmtKind(n)
   of ImportS:
@@ -181,6 +213,8 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   of ExportS:
     discard "ignore `export` statement"
     skip n
+  of PragmasLineS:
+    processCompile c, n, current
   else:
     #echo "IGNORING ", toString(n, false)
     skip n
@@ -259,9 +293,14 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
   # The .exe file depends on all .o files:
   if c.cmd in {DoCompile, DoRun}:
     s.add "\n" & mescape(exeFile(c.rootNode.files[0])) & ":"
+    for cfile in c.toCompile:
+      s.add " " & mescape("nifcache" / cfile.obj)
     for v in c.nodes:
       s.add " " & mescape(objFile(v.files[0]))
     s.add "\n\t$(CC) -o $@ $^"
+
+    for cfile in c.toCompile:
+      s.add "\n" & mescape("nifcache" / cfile.obj) & ": " & mescape(cfile.name) & "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
 
     # The .o files depend on all of their .c files:
     s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"

@@ -51,6 +51,7 @@ type
     DisarmerS = "disarmer"
     MoverS = "mover"
     DtorS = "dtor"
+    PragmasLineS = "pragmas"
 
   SymKind* = enum
     NoSym

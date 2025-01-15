@@ -4572,6 +4572,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         skip it.n
       of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
         takeTree c, it.n
+      of PragmasLineS:
+        takeTree c, it.n
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
