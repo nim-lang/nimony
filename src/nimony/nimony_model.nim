@@ -218,6 +218,7 @@ type
     ByCopy = "bycopy"
     ByRef = "byref"
     Inline = "inline"
+    NoInit = "noinit"
 
   SubstructureKind* = enum
     NoSub
