@@ -8,7 +8,7 @@
 
 import std / [parseopt, sets, strutils, os, assertions, syncio]
 
-import ".." / gear3 / gear3 # only imported to ensure it keeps compiling
+import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import sem, nifconfig, semos, semdata, deps
 
@@ -21,7 +21,7 @@ Usage:
   nimony [options] [command]
 Command:
   c project.nim               compile the full project
-  m file.nim [project.nim]    compile a single Nim module to gear3
+  m file.nim [project.nim]    compile a single Nim module to hexer
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
@@ -151,7 +151,7 @@ proc handleCmdLine() =
     createDir(binDir())
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
-    requiresTool "gear3", "src/gear3/gear3.nim", forceRebuild
+    requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
     buildGraph config, args[0], compat, forceRebuild, silentMake,
       commandLineArgs, moduleFlags, (if doRun: DoRun else: DoCompile)

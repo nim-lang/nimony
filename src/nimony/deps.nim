@@ -275,8 +275,8 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
     s.add "\n%.c: %.c.nif\n\t" & mescape(nifc) & " c --compileOnly $<"
 
     # The .c.nif files depend on all of their .2.nif files:
-    let gear3 = findTool("gear3")
-    s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(gear3) & " $<"
+    let hexer = findTool("hexer")
+    s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(hexer) & " $<"
 
 
   # every semchecked .nif file depends on all of its parsed.nif file
