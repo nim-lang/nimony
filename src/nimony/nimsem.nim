@@ -8,7 +8,7 @@
 
 import std / [parseopt, sets, strutils, os, assertions, syncio]
 
-import ".." / gear3 / gear3 # only imported to ensure it keeps compiling
+import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import sem, nifconfig, semos, semdata
 
@@ -20,7 +20,7 @@ const
 Usage:
   nimsem [options] [command]
 Command:
-  m file.nim [project.nim]    compile a single Nim module to gear3
+  m file.nim [project.nim]    compile a single Nim module to hexer
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation

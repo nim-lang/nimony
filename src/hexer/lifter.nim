@@ -1,6 +1,6 @@
 #
 #
-#           Gear3 Compiler
+#           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
 #    See the file "copying.txt", included in this

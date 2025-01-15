@@ -15,7 +15,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|gear3|nifc]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
@@ -348,15 +348,15 @@ proc buildNifc(showProgress = false) =
   robustMoveFile "src/nifc/" & exe, binDir() / exe
 
 proc buildGear3(showProgress = false) =
-  exec "nim c src/gear3/gear3.nim", showProgress
-  let exe = "gear3".addFileExt(ExeExt)
-  robustMoveFile "src/gear3/" & exe, binDir() / exe
+  exec "nim c src/hexer/hexer.nim", showProgress
+  let exe = "hexer".addFileExt(ExeExt)
+  robustMoveFile "src/hexer/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
 
 proc execGear3(cmd: string) =
-  exec "gear3", cmd
+  exec "hexer", cmd
 
 proc nifctests(overwrite: bool) =
   let t1 = "tests/nifc/selectany/t1.nif"
@@ -381,9 +381,9 @@ proc nifctests(overwrite: bool) =
   execNifc " c -r --linedir:on " & issues
   execNifc " cpp -r --linedir:off " & issues
 
-proc gear3tests(overwrite: bool) =
-  let mod1 = "tests/gear3/mod1"
-  let helloworld = "tests/gear3/gear3_helloworld"
+proc hexertests(overwrite: bool) =
+  let mod1 = "tests/hexer/mod1"
+  let helloworld = "tests/hexer/hexer_helloworld"
   createIndex helloworld & ".nif", false
   createIndex mod1 & ".nif", false
   execGear3 mod1 & ".nif"
@@ -431,7 +431,7 @@ proc handleCmdLine =
     buildGear3()
     nimonytests(overwrite)
     nifctests(overwrite)
-    #gear3tests(overwrite)
+    #hexertests(overwrite)
 
   of "build":
     const showProgress = true
@@ -449,7 +449,7 @@ proc handleCmdLine =
       buildNimony(showProgress)
     of "nifc":
       buildNifc(showProgress)
-    of "gear3":
+    of "hexer":
       buildGear3(showProgress)
     else:
       writeHelp()
@@ -462,9 +462,9 @@ proc handleCmdLine =
     buildNifc()
     nifctests(overwrite)
 
-  of "gear3":
+  of "hexer":
     buildGear3()
-    gear3tests(overwrite)
+    hexertests(overwrite)
   of "test":
     buildNimony()
     buildNifc()

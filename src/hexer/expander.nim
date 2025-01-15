@@ -1,6 +1,6 @@
 #
 #
-#           Gear3 Compiler
+#           Hexer Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "copying.txt", included in this
@@ -1078,7 +1078,7 @@ proc importSymbol(e: var EContext; s: SymId) =
 
 proc writeOutput(e: var EContext) =
   var b = nifbuilder.open(e.dir / e.main & ".c.nif")
-  b.addHeader "gear3", "nifc"
+  b.addHeader "hexer", "nifc"
   b.addTree "stmts"
   for h in e.headers:
     b.withTree "incl":
