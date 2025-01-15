@@ -409,7 +409,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       skip c
       skipParRi e, c
     of VoidT, VarargsT, NilT, ConceptT,
-       IterT, InvokeT:
+       IterT, InvokeT, RefObjectT, PtrObjectT:
       error e, "unimplemented type: ", c
   else:
     error e, "type expected but got: ", c

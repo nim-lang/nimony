@@ -1063,7 +1063,7 @@ proc semObjConstrFromCall(c: var SemContext; it: var Item; cs: CallState) =
   it.typ = objConstr.typ
 
 proc isCastableType(t: TypeCursor): bool =
-  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT, HoleyEnumT}
+  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, RefObjectT, PtrObjectT, NilT, EnumT, HoleyEnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; it: var Item) =
@@ -1481,7 +1481,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       # emulate objtypeImpl
       if objType.typeKind in {RefT, PtrT}:
         inc objType
-      if objType.typeKind == ObjectT:
+      if objType.typeKind in {ObjectT, RefObjectT, PtrObjectT}:
         let field = findObjFieldConsiderVis(c, decl, fieldName, info)
         if field.level >= 0:
           c.dest.add symToken(field.sym, info)
@@ -2381,7 +2381,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           # XXX Check the expression is a symchoice or a sym
           n = it.n
       wantParRi c, n
-    of ObjectT:
+    of ObjectT, RefObjectT, PtrObjectT:
       if tryTypeClass(c, n):
         discard
       elif context != InTypeSection:
@@ -2734,7 +2734,7 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
       if res.decl.symKind == TypeY:
         let typeDecl = asTypeDecl(res.decl)
 
-        if not (classifyType(c, typeDecl.body) == ObjectT):
+        if not (classifyType(c, typeDecl.body) in {ObjectT, RefObjectT, PtrObjectT}):
           cond = false
       else:
         cond = false
@@ -3658,15 +3658,25 @@ proc buildObjConstrField(c: var SemContext; field: Local; setFields: Table[SymId
     c.dest.addParRi()
 
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
-  c.dest.addParLe(OconstrX, info)
-  c.dest.addSubtree typ
+  var constrKind = NoExpr
   var objImpl = typ
-  if objImpl.typeKind in {RefT, PtrT}:
+  if objImpl.typeKind == RefT:
+    constrKind = NewOconstrX
     inc objImpl
   if objImpl.typeKind == InvokeT:
     inc objImpl
   if objImpl.kind == Symbol:
     objImpl = objtypeImpl(objImpl.symId)
+    if constrKind == NoExpr:
+      case objImpl.typeKind
+      of RefObjectT:
+        constrKind = NewOconstrX
+      of ObjectT:
+        constrKind = OconstrX
+      else:
+        discard # error
+  c.dest.addParLe(constrKind, info)
+  c.dest.addSubtree typ
   var obj = asObjectDecl(objImpl)
   # same field order as old nim VM: starting with most shallow base type
   while obj.parentType.kind != DotToken:
@@ -3715,7 +3725,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
     # emulate objtypeImpl
     if objType.typeKind in {RefT, PtrT}:
       inc objType
-    if objType.typeKind != ObjectT:
+    if objType.typeKind notin {ObjectT, RefObjectT, PtrObjectT}:
       c.buildErr info, "expected object type for object constructor"
       return
   var fieldBuf = createTokenBuf(16)
@@ -4468,7 +4478,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           else:
             buildErr c, it.n.info, "expression expected; tag: " & pool.tags[it.n.tag]
             skip it.n
-        of ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT:
+        of ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
@@ -4619,7 +4629,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSuf c, it
     of TupleConstrX:
       semTupleConstr c, it
-    of OconstrX:
+    of OconstrX, NewOconstrX:
       semObjConstr c, it
     of DefinedX:
       semDefined c, it

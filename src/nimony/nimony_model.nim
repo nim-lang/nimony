@@ -95,6 +95,7 @@ type
     NegX = "neg"
     SizeofX = "sizeof"
     OconstrX = "obj"
+    NewOconstrX = "newobj"
     TupleConstrX = "tup"
     AconstrX = "arr"
     SetX = "set"
@@ -152,6 +153,8 @@ type
   TypeKind* = enum
     NoType
     ObjectT = "object"
+    RefObjectT = "refobj"
+    PtrObjectT = "ptrobj"
     TupleT = "tuple"
     EnumT = "enum"
     HoleyEnumT = "onum"
