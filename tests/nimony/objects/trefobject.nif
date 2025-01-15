@@ -1,0 +1,44 @@
+(.nif24)
+,1,tests/nimony/objects/trefobject.nim(stmts 9
+ (type ~4 :Foo.0.trej8andz . . . 2
+  (ref 4 Foo.Obj.0.trej8andz)) 9
+ (type 2 :Foo.Obj.0.trej8andz . . . 6
+  (object . ~13,1
+   (fld :x.0.trej8andz . . 2,5,lib/std/system.nim
+    (i -1) .) ~13,2
+   (fld :parent.0.trej8andz . . 9,~2
+    (ref 4 Foo.Obj.0.trej8andz) .))) 4,4
+ (var :foo.0.trej8andz . . 7,~4
+  (ref 4 Foo.Obj.0.trej8andz) .) 13,6
+ (type ~8 :Node.0.trej8andz . ~4
+  (typevars 1
+   (typevar :T.0.trej8andz . . . .)) . 2
+  (ref 4
+   (at Node.Obj.0.trej8andz T.0.trej8andz))) 13,6
+ (type 2 :Node.Obj.0.trej8andz . ~4
+  (typevars 1
+   (typevar :T.1.trej8andz . . . .)) . 6
+  (object . ~17,1
+   (fld :val.0.trej8andz . . 5 T.1.trej8andz .) ~17,2
+   (fld :left.0.trej8andz . . 13,~2
+    (ref 4
+     (at Node.Obj.0.trej8andz 1,2 T.1.trej8andz)) .) ~11,2
+   (fld :right.0.trej8andz . . 7,~2
+    (ref 4
+     (at Node.Obj.0.trej8andz 1,2 T.1.trej8andz)) .))) 4,10
+ (var :node.0.trej8andz . . 11,~4
+  (ref 4 Node.Obj.1.trej8andz) .) 14,10
+ (type :Node.3.trej8andz .
+  (at Node.0.trej8andz ~10,~4,lib/std/system.nim
+   (i -1)) ~1,~4 . 1,~4
+  (ref 4 Node.Obj.1.trej8andz)) 19,6
+ (type :Node.Obj.1.trej8andz .
+  (at Node.Obj.0.trej8andz ~15,,lib/std/system.nim
+   (i -1)) ~6 .
+  (object . ~17,1
+   (fld :val.1.trej8andz . . 2,~1,lib/std/system.nim
+    (i -1) .) ~17,2
+   (fld :left.1.trej8andz . . 13,~2
+    (ref 4 Node.Obj.1.trej8andz) .) ~11,2
+   (fld :right.1.trej8andz . . 7,~2
+    (ref 4 Node.Obj.1.trej8andz) .))))

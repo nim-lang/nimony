@@ -3347,6 +3347,7 @@ proc semTypePragmas(c: var SemContext; n: var Cursor; beforeExportMarker: int) =
     exportMarkerBecomesNifTag c, beforeExportMarker, crucial
 
 proc semTypeSection(c: var SemContext; n: var Cursor) =
+  let startCursor = n
   let declStart = c.dest.len
   takeToken c, n
   # name, export marker, generic params, pragmas, body
@@ -3355,10 +3356,13 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   wantExportMarker c, n # 1
 
   var isEnumTypeDecl = false
+  var isRefPtrObject = false
+  var refPtrObjectDecl = default(TokenBuf)
 
   if c.phase == SemcheckSignatures or (delayed.status == OkNew and c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
     let prevGeneric = c.routine.inGeneric
+    let beforeGenerics = c.dest.len
     if n.kind == DotToken:
       takeToken c, n
       isGeneric = false
@@ -3379,6 +3383,68 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       if n.typeKind in {EnumT, HoleyEnumT}:
         semEnumType(c, n, delayed.s.name, beforeExportMarker)
         isEnumTypeDecl = true
+      elif n.typeKind in {RefT, PtrT}:
+        var obj = n
+        inc obj
+        if obj.typeKind == ObjectT:
+          isRefPtrObject = true
+
+          # build inner object type declaration:
+          refPtrObjectDecl = createTokenBuf(64)
+          swap c.dest, refPtrObjectDecl
+          var orig = startCursor
+          takeToken c, orig # (type
+          var isGlobal = false
+          let basename = extractBasename(pool.syms[delayed.s.name], isGlobal)
+          var objName = basename & ".Obj"
+          if isGlobal: c.makeGlobalSym(objName)
+          else: c.makeLocalSym(objName)
+          let objSym = pool.syms.getOrIncl(objName)
+          c.dest.add symdefToken(objSym, n.info)
+          skip orig # name
+          takeTree c, orig # exported
+          takeTree c, orig # typevars
+          takeTree c, orig # pragmas
+          assert orig.typeKind == n.typeKind
+          inc orig # (ref/ptr
+          takeTree c, orig # (object)
+          skipParRi orig # ) from ref/ptr
+          wantParRi c, orig # ) from type
+          swap c.dest, refPtrObjectDecl
+
+          # forward decl pass:
+          var forwardDeclBuf = createTokenBuf(64)
+          var forwardDeclPass = cursorAt(refPtrObjectDecl, 0)
+          var phase = SemcheckTopLevelSyms
+          swap c.phase, phase
+          swap c.dest, forwardDeclBuf
+          semTypeSection c, forwardDeclPass
+          swap c.dest, forwardDeclBuf
+          swap c.phase, phase
+          refPtrObjectDecl = forwardDeclBuf
+
+          # build ref/ptr type:
+          takeToken c, n
+          var params = cursorAt(c.dest, beforeGenerics)
+          if params.substructureKind == TypevarsS:
+            inc params
+            var invokeBuf = createTokenBuf(16)
+            invokeBuf.buildTree(InvokeT, n.info):
+              invokeBuf.add symToken(objSym, n.info)
+              while params.kind != ParRi:
+                let typevar = asTypevar(params).name
+                assert typevar.kind == SymbolDef
+                invokeBuf.add symToken(typevar.symId, n.info)
+                skip params
+            endRead(c.dest)
+            c.dest.add invokeBuf
+          else:
+            endRead(c.dest)
+            c.dest.add symToken(objSym, n.info)
+          skip n
+          wantParRi c, n
+        else:
+          semLocalTypeImpl c, n, InTypeSection
       else:
         semLocalTypeImpl c, n, InTypeSection
     if isGeneric:
@@ -3399,6 +3465,10 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     var enumTypeDecl = tryLoadSym(delayed.s.name)
     assert enumTypeDecl.status == LacksNothing
     genEnumToStrProc(c, enumTypeDecl.decl)
+
+  if isRefPtrObject:
+    var objDecl = cursorAt(refPtrObjectDecl, 0)
+    semTypeSection c, objDecl
 
 proc semTypedBinaryArithmetic(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
