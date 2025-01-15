@@ -1692,7 +1692,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     semConstIntExpr(c, n)
     c.dest.addParRi()
   of Nodecl, Selectany, Threadvar, Globalvar, Discardable, Noreturn, Borrow,
-     NoSideEffect, NoDestroy, ByCopy, ByRef, Inline:
+     NoSideEffect, NoDestroy, ByCopy, ByRef, Inline, NoInit:
     crucial.flags.incl pk
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     c.dest.addParRi()
@@ -2341,8 +2341,10 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       semLocalTypeImpl c, n, context
       wantParRi c, n
       let elemType = cursorAt(c.dest, elemTypeStart)
-      # XXX allow unresolved types
-      if not isOrdinalType(elemType, allowEnumWithHoles = true):
+      if containsGenericParams(elemType):
+        # allow
+        c.dest.endRead()
+      elif not isOrdinalType(elemType, allowEnumWithHoles = true):
         c.dest.endRead()
         c.buildErr info, "set element type must be ordinal"
       else:
@@ -3526,8 +3528,9 @@ proc semSetConstr(c: var SemContext, it: var Item) =
       skip elem.n # resem elements?
     else:
       semExpr c, elem
-  # XXX allow unresolved types
-  if not isOrdinalType(elem.typ, allowEnumWithHoles = true):
+  if containsGenericParams(elem.typ):
+    discard
+  elif not isOrdinalType(elem.typ, allowEnumWithHoles = true):
     c.buildErr elemInfo, "set element type must be ordinal"
   #elif elem.typ.typeKind == IntT and c.dest[elemStart].kind == IntLit:
   #  set to range of 0..<DefaultSetElements
@@ -4079,6 +4082,8 @@ proc semTypedAt(c: var SemContext; it: var Item) =
     inc it.typ
   of StringT, CstringT:
     it.typ = c.types.charType
+  of SetT:
+    it.typ = c.types.uint8Type
   else:
     c.buildErr lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
   wantParRi c, it.n

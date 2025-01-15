@@ -11,7 +11,7 @@ import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
 import typekeys
-import ".." / nimony / [nimony_model, programs, typenav]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints]
 import basics, lowerer
 
 
@@ -377,8 +377,28 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       useStringType e, c.info
       inc c
       skipParRi e, c
+    of SetT:
+      let info = c.info
+      inc c
+      let sizeOrig = bitsetSizeInBytes(c)
+      var err = false
+      let size = asSigned(sizeOrig, err)
+      if err:
+        error e, "invalid set element type: ", c
+      else:
+        var arrBuf = createTokenBuf(16)
+        arrBuf.add tagToken("array", info)
+        arrBuf.add tagToken("u", info)
+        arrBuf.addIntLit(8, info)
+        arrBuf.addParRi()
+        arrBuf.addIntLit(size, info)
+        arrBuf.addParRi()
+        var arrCursor = cursorAt(arrBuf, 0)
+        traverseAsNamedType(e, arrCursor)
+      skip c
+      skipParRi e, c
     of VoidT, VarargsT, NilT, ConceptT,
-       IterT, InvokeT, SetT:
+       IterT, InvokeT:
       error e, "unimplemented type: ", c
   else:
     error e, "type expected but got: ", c
@@ -441,7 +461,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           result.externName = pool.strings[c.litId]
           inc c
         of Nodecl, Selectany, Threadvar, Globalvar, Discardable, NoReturn,
-           Varargs, Borrow, NoSideEffect, NoDestroy, ByCopy, ByRef, Inline:
+           Varargs, Borrow, NoSideEffect, NoDestroy, ByCopy, ByRef, Inline, NoInit:
           result.flags.incl pk
           inc c
         of Header:
