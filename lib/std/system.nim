@@ -69,6 +69,7 @@ type
   range*[T]{.magic: "Range".}         ## Generic type to construct range types.
   array*[I, T]{.magic: "Array".}      ## Generic type to construct
                                       ## fixed-length arrays.
+  set*[T]{.magic: "Set".}             ## Generic type to construct bit sets.
 
 proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect.}
 proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
@@ -367,3 +368,6 @@ proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
 proc addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
+
+proc sizeof*[T](x: T): int {.magic: "SizeOf", noSideEffect.}
+proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
