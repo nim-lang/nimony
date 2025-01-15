@@ -519,7 +519,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     c.b.endTree()
 
   of nkRefTy, nkPtrTy:
-    if n[0].kind == nkObjectTy:
+    if n.len == 1 and n[0].kind == nkObjectTy:
       c.section = if n.kind == nkRefTy: "ref" else: "ptr"
       toNif n[0], parent, c
     else:
