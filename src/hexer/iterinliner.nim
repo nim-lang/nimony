@@ -42,12 +42,13 @@ proc createDecl(e: var EContext; destSym: SymId;
   takeTree(e, value)
   e.dest.addParRi()
 
-proc createAsgn(e: var EContext; destSym: SymId;
-      value: var Cursor; info: PackedLineInfo) =
-  e.dest.add tagToken("asgn", info)
-  e.dest.add symToken(destSym, info)
-  takeTree(e, value)
-  e.dest.addParRi()
+when false:
+  proc createAsgn(e: var EContext; destSym: SymId;
+        value: var Cursor; info: PackedLineInfo) =
+    e.dest.add tagToken("asgn", info)
+    e.dest.add symToken(destSym, info)
+    takeTree(e, value)
+    e.dest.addParRi()
 
 proc createTupleAccess(lvalue: SymId; i: int; info: PackedLineInfo): TokenBuf =
   result = createTokenBuf()

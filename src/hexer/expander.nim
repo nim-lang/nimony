@@ -12,7 +12,7 @@ import std / [hashes, os, tables, sets, assertions]
 include nifprelude
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints]
-import basics, lowerer
+import basics, iterinliner
 
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
