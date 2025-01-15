@@ -217,7 +217,7 @@ proc fixupStackOffset(c: var GeneratedCode; j, s: int) =
   of Mem2T, Mem4T:
     let newOffset = pool.integers[c.code[patchPos].intId] + s
     let sid = pool.integers.getOrIncl(newOffset)
-    c.code[patchPos] = toToken(IntLit, sid, NoLineInfo)
+    c.code[patchPos] = intToken(sid, NoLineInfo)
   of Mem3T:
     assert false, "should have been a Mem4T instruction"
   else:
@@ -230,12 +230,12 @@ proc fixupProlog(c: var GeneratedCode) =
   if s > 0:
     # patch the tokens
     # SkipT becomes SubT:
-    c.code[i] = toToken(ParLe, SubT, NoLineInfo)
+    c.code[i] = parLeToken(SubT, NoLineInfo)
     # i+1: (rsp
     # i+2: )
     # i+3: 0
     let sid = pool.integers.getOrIncl(s)
-    c.code[i+3] = toToken(IntLit, sid, NoLineInfo)
+    c.code[i+3] = intToken(sid, NoLineInfo)
     # i+4: )
     # Now also fixup every address that used `rsp` as it's off
     # by the offset
