@@ -16,7 +16,7 @@
   (ref 4 NodeObj.0.tbivahh0m)) 4,8
  (var :x.0.tbivahh0m . . 5,~2
   (ref 4 NodeObj.0.tbivahh0m) 8
-  (obj ~3,~2
+  (newobj ~3,~2
    (ref 4 NodeObj.0.tbivahh0m) 5
    (kv ~5 data.0.tbivahh0m 2 +123) 16
    (kv ~16 left.0.tbivahh0m 2
@@ -27,7 +27,7 @@
   (dot ~1 x.0.tbivahh0m data.0.tbivahh0m +0) 2 +456) 7,10
  (asgn ~6
   (dot ~1 x.0.tbivahh0m left.0.tbivahh0m +0) 6
-  (obj ~4,~4
+  (newobj ~4,~4
    (ref 4 NodeObj.0.tbivahh0m) 5
    (kv ~5 data.0.tbivahh0m 2 +123) 16
    (kv ~16 left.0.tbivahh0m 2
@@ -43,7 +43,7 @@
   (nil)) 4,13
  (var :y.0.tbivahh0m . . 5,~7
   (ref 4 NodeObj.0.tbivahh0m) 8
-  (obj ~3,~7
+  (newobj ~3,~7
    (ref 4 NodeObj.0.tbivahh0m) 5
    (kv ~5 data.0.tbivahh0m 2 +987) 16
    (kv ~16 left.0.tbivahh0m 2
@@ -53,7 +53,7 @@
  (asgn ~6
   (dot ~5
    (dot ~1 x.0.tbivahh0m left.0.tbivahh0m +0) left.0.tbivahh0m +0) 15
-  (obj ~18,~8
+  (newobj ~18,~8
    (ref 4 NodeObj.0.tbivahh0m) 5
    (kv ~5 data.0.tbivahh0m 2 -123) 17
    (kv ~17 left.0.tbivahh0m 2 y.0.tbivahh0m) 27
