@@ -1934,6 +1934,30 @@ proc semConceptType(c: var SemContext; n: var Cursor) =
   wantParRi c, n
   wantParRi c, n
 
+proc buildInnerObjectDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBuf =
+  # build inner object type declaration from full ref/ptr object decl:
+  result = createTokenBuf(64)
+  var n = decl
+  swap c.dest, result
+  takeToken c, n # (type
+  var isGlobal = false
+  let basename = extractBasename(pool.syms[sym], isGlobal)
+  var objName = basename & ".Obj"
+  if isGlobal: c.makeGlobalSym(objName)
+  else: c.makeLocalSym(objName)
+  sym = pool.syms.getOrIncl(objName)
+  c.dest.add symdefToken(sym, n.info)
+  skip n # name
+  takeTree c, n # copy exported (?)
+  takeTree c, n # copy typevars
+  takeTree c, n # copy pragmas
+  assert n.typeKind in {RefT, PtrT}
+  inc n # (ref/ptr
+  takeTree c, n # copy (object)
+  skipParRi n # ) from ref/ptr
+  wantParRi c, n # ) from type
+  swap c.dest, result
+
 proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
                              origin, targetSym: SymId; decl: TypeDecl; args: Cursor) =
   #[
@@ -3357,7 +3381,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
 
   var isEnumTypeDecl = false
   var isRefPtrObject = false
-  var refPtrObjectDecl = default(TokenBuf)
+  var innerObjectDecl = default(TokenBuf)
 
   if c.phase == SemcheckSignatures or (delayed.status == OkNew and c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
@@ -3388,41 +3412,19 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
         inc obj
         if obj.typeKind == ObjectT:
           isRefPtrObject = true
-
           # build inner object type declaration:
-          refPtrObjectDecl = createTokenBuf(64)
-          swap c.dest, refPtrObjectDecl
-          var orig = startCursor
-          takeToken c, orig # (type
-          var isGlobal = false
-          let basename = extractBasename(pool.syms[delayed.s.name], isGlobal)
-          var objName = basename & ".Obj"
-          if isGlobal: c.makeGlobalSym(objName)
-          else: c.makeLocalSym(objName)
-          let objSym = pool.syms.getOrIncl(objName)
-          c.dest.add symdefToken(objSym, n.info)
-          skip orig # name
-          takeTree c, orig # exported
-          takeTree c, orig # typevars
-          takeTree c, orig # pragmas
-          assert orig.typeKind == n.typeKind
-          inc orig # (ref/ptr
-          takeTree c, orig # (object)
-          skipParRi orig # ) from ref/ptr
-          wantParRi c, orig # ) from type
-          swap c.dest, refPtrObjectDecl
-
-          # forward decl pass:
+          var objSym = delayed.s.name
+          innerObjectDecl = buildInnerObjectDecl(c, startCursor, objSym)
+          # perform forward decl pass:
           var forwardDeclBuf = createTokenBuf(64)
-          var forwardDeclPass = cursorAt(refPtrObjectDecl, 0)
+          var forwardDeclPass = cursorAt(innerObjectDecl, 0)
           var phase = SemcheckTopLevelSyms
           swap c.phase, phase
           swap c.dest, forwardDeclBuf
           semTypeSection c, forwardDeclPass
           swap c.dest, forwardDeclBuf
           swap c.phase, phase
-          refPtrObjectDecl = forwardDeclBuf
-
+          innerObjectDecl = forwardDeclBuf
           # build ref/ptr type:
           takeToken c, n
           var params = cursorAt(c.dest, beforeGenerics)
@@ -3467,7 +3469,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     genEnumToStrProc(c, enumTypeDecl.decl)
 
   if isRefPtrObject:
-    var objDecl = cursorAt(refPtrObjectDecl, 0)
+    var objDecl = cursorAt(innerObjectDecl, 0)
     semTypeSection c, objDecl
 
 proc semTypedBinaryArithmetic(c: var SemContext; it: var Item) =
