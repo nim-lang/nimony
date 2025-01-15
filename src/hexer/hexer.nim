@@ -1,6 +1,6 @@
 #
 #
-#           Gear3 Compiler
+#           Hexer Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "copying.txt", included in this
@@ -9,10 +9,10 @@
 
 ##[
 
-Gear 3
+Hexer
 ------
 
-Gear 3 performs backend tasks that need to operate on multiple NIF files at once:
+Hexer performs backend tasks that need to operate on multiple NIF files at once:
 
 - It copies used imported symbols into the current NIF file. As a fix point operation
   until no foreign symbols are left.
@@ -25,7 +25,7 @@ Gear 3 performs backend tasks that need to operate on multiple NIF files at once
 Grammar
 -------
 
-Gear 3 accepts Gear 2's grammar.
+Hexer accepts Gear 2's grammar.
 
 ]##
 
@@ -34,11 +34,11 @@ import expander, lifter, duplifier, destroyer, inliner, constparams
 
 const
   Version = "0.2"
-  Usage = "Gear3 Compiler. Version " & Version & """
+  Usage = "Hexer Compiler. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
 Usage:
-  gear3 [options] [command]
+  hexer [options] [command]
 Command:
   file.nif      expand NIF file to meet NIFC's requirements
 
