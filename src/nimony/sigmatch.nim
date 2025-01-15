@@ -99,7 +99,7 @@ proc getProcDecl*(s: SymId): Routine =
 
 proc isObjectType(s: SymId): bool =
   let impl = objtypeImpl(s)
-  result = impl.typeKind == ObjectT
+  result = impl.typeKind in {ObjectT, RefObjectT, PtrObjectT}
 
 proc isEnumType*(n: Cursor): bool =
   if n.kind == Symbol:
@@ -118,7 +118,7 @@ iterator inheritanceChain(s: SymId): SymId =
   var objbody = objtypeImpl(s)
   while true:
     let od = asObjectDecl(objbody)
-    if od.kind == ObjectT:
+    if od.kind in {ObjectT, RefObjectT, PtrObjectT}:
       var parent = od.parentType
       if parent.typeKind in {RefT, PtrT}:
         inc parent
@@ -628,7 +628,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         skip f
       else:
         procTypeMatch m, f, a
-    of NoType, ObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
+    of NoType, ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IterT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error "BUG: unhandled type: " & pool.tags[f.tagId]
   else:

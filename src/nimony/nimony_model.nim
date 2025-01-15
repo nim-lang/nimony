@@ -152,6 +152,8 @@ type
   TypeKind* = enum
     NoType
     ObjectT = "object"
+    RefObjectT = "refobj"
+    PtrObjectT = "ptrobj"
     TupleT = "tuple"
     EnumT = "enum"
     HoleyEnumT = "onum"
