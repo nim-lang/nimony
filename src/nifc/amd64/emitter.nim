@@ -120,6 +120,8 @@ proc matchAndEmitTag(c: var Context; tag: TagId; asStr: string): bool =
     result = false
 
 proc matchAny(c: var Context): bool =
+  result = false
+
   while true:
     case c.current.kind
     of UnknownToken, DotToken, Ident, Symbol, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
@@ -170,5 +172,5 @@ proc produceAsmCode*(buffer, outp: string) =
   c.current = beginRead(c.input)
   if not genModule(c):
     error(c, "(stmts) expected")
-  endRead(c.input, c.current)
+  endRead(c.input)
   writeFile outp, c.dest

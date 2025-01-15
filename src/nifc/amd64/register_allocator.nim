@@ -99,7 +99,8 @@ proc allocRegsForProc(c: var GeneratedCode; t: Tree; n: NodePos; weights: Table[
      ParC, AndC, OrC, NotC, NegC, OconstrC, AconstrC, KvC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC, BitandC, BitorC, BitxorC, BitnotC,
      EqC, NeqC, LeC, LtC, CastC, ConvC, RangeC, RangesC, IfC, ElifC, ElseC,
-     BreakC, CaseC, OfC, LabC, JmpC, RetC, ParamsC, CallC:
+     BreakC, CaseC, OfC, LabC, JmpC, RetC, ParamsC, CallC, OnErrC, DiscardC,
+     TryC, RaiseC:
     for ch in sons(t, n):
       allocRegsForProc(c, t, ch, weights)
   of DotC, GvarC, TvarC, ConstC, ProcC, FldC,
@@ -107,7 +108,8 @@ proc allocRegsForProc(c: var GeneratedCode; t: Tree; n: NodePos; weights: Table[
      IntC, UIntC, FloatC, CharC, BoolC, VoidC, PtrC, ArrayC, FlexarrayC,
      APtrC, TypeC, CdeclC, StdcallC, SafecallC, SyscallC, FastcallC, ThiscallC,
      NoconvC, MemberC, AttrC, InlineC, NoinlineC, VarargsC, WasC, SelectanyC,
-     PragmasC, AlignC, BitsC, VectorC, ImpC, NodeclC, InclC, SufC, RaisesC, ErrsC:
+     PragmasC, AlignC, BitsC, VectorC, ImpC, NodeclC, InclC, SufC, RaisesC, ErrsC,
+     StaticC, ErrC:
     discard "do not traverse these"
 
 proc allocateVars*(c: var GeneratedCode; t: Tree; n: NodePos) =
