@@ -2,7 +2,7 @@
 ,1,tests/nimony/objects/trefobject.nim(stmts 9
  (type ~4 :Foo.0.trej8andz . . . 2
   (ref 4 Foo.Obj.0.trej8andz)) 9
- (type 2 :Foo.Obj.0.trej8andz . . . 6
+ (type ~4 :Foo.Obj.0.trej8andz . . . 6
   (object . ~13,1
    (fld :x.0.trej8andz . . 2,5,lib/std/system.nim
     (i -1) .) ~13,2
@@ -15,7 +15,7 @@
    (typevar :T.0.trej8andz . . . .)) . 2
   (ref 4
    (at Node.Obj.0.trej8andz T.0.trej8andz))) 13,6
- (type 2 :Node.Obj.0.trej8andz . ~4
+ (type ~8 :Node.Obj.0.trej8andz . ~4
   (typevars 1
    (typevar :T.1.trej8andz . . . .)) . 6
   (object . ~17,1
