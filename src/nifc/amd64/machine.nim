@@ -241,6 +241,9 @@ proc paramOnStack(loc: Location): bool {.inline.} =
   loc.kind == InRegOffset and loc.reg1 == Rsp2
 
 proc allocParamWin64*(a: var RegAllocator; param: AsmSlot): Location =
+  # Fix compile error: Cannot prove that 'result' is initialized.
+  #result = default(Location)
+
   if param.kind == AFloat:
     # see https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170
     # Use XMM0L, XMM1L, XMM2L, and XMM3L.

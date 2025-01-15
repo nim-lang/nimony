@@ -41,21 +41,21 @@ proc jumpToPutInstr(t: TagId): TagId =
   else: NopT
 
 proc emitDataRaw(c: var GeneratedCode; loc: Location) =
-  c.code.add toToken(Symbol, pool.syms.getOrIncl(c.m.lits.strings[loc.data]), NoLineInfo)
+  c.addSym c.m.lits.strings[loc.data], NoLineInfo
 
 proc emitImmediate*(c: var GeneratedCode; ival: int) =
-  c.code.add toToken(IntLit, pool.integers.getOrIncl(ival), NoLineInfo)
+  c.genIntLit ival, NoLineInfo
 
 proc emitLoc*(c: var GeneratedCode; loc: Location) =
   case loc.kind
   of Undef:
     assert false, "location should have been set"
   of ImmediateInt:
-    c.code.add toToken(IntLit, pool.integers.getOrIncl(loc.ival), NoLineInfo)
+    c.genIntLit loc.ival, NoLineInfo
   of ImmediateUInt:
-    c.code.add toToken(UIntLit, pool.uintegers.getOrIncl(loc.uval), NoLineInfo)
+    c.genUIntLit loc.uval, NoLineInfo
   of ImmediateFloat:
-    c.code.add toToken(FloatLit, pool.floats.getOrIncl(loc.fval), NoLineInfo)
+    c.genFloatLit loc.fval, NoLineInfo
   of InReg:
     c.addKeywUnchecked regName(loc.reg1)
   of InRegFp:
@@ -63,7 +63,7 @@ proc emitLoc*(c: var GeneratedCode; loc: Location) =
   of InFlag:
     assert false, "not implemented"
   of JumpMode:
-    c.code.add toToken(Ident, pool.strings.getOrIncl("L." & $loc.label), NoLineInfo)
+    c.addIdent "L." & $loc.label, NoLineInfo
   of InData:
     c.buildTree RelT:
       c.emitDataRaw loc
@@ -75,19 +75,19 @@ proc emitLoc*(c: var GeneratedCode; loc: Location) =
   of InRegOffset:
     c.buildTree Mem2T:
       c.addKeywUnchecked regName(loc.reg1)
-      c.code.add toToken(IntLit, pool.integers.getOrIncl(loc.typ.offset), NoLineInfo)
+      c.genIntLit loc.typ.offset, NoLineInfo
   of InRegRegScaledOffset:
     if loc.typ.offset == 0:
       c.buildTree Mem3T:
         c.addKeywUnchecked regName(loc.reg1)
         c.addKeywUnchecked regName(loc.reg2)
-        c.code.add toToken(IntLit, pool.integers.getOrIncl(loc.typ.size), NoLineInfo)
+        c.genIntLit loc.typ.size, NoLineInfo
     else:
       c.buildTree Mem4T:
         c.addKeywUnchecked regName(loc.reg1)
         c.addKeywUnchecked regName(loc.reg2)
-        c.code.add toToken(IntLit, pool.integers.getOrIncl(loc.typ.size), NoLineInfo)
-        c.code.add toToken(IntLit, pool.integers.getOrIncl(loc.typ.offset), NoLineInfo)
+        c.genIntLit loc.typ.size, NoLineInfo
+        c.genIntLit loc.typ.offset, NoLineInfo
 
 proc genx(c: var GeneratedCode; t: Tree; n: NodePos; dest: var Location)
 

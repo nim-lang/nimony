@@ -61,36 +61,40 @@ proc error(m: Module; msg: string; tree: PackedTree[NifcKind]; n: NodePos) {.nor
 # Atoms
 
 proc genIntLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
-  let i = parseBiggestInt(c.m.lits.strings[litId])
-  let id = pool.integers.getOrIncl(i)
-  c.code.add toToken(IntLit, id, info)
+  c.code.addIntLit parseBiggestInt(c.m.lits.strings[litId]), info
 
 proc genIntLit(c: var GeneratedCode; i: BiggestInt; info: PackedLineInfo) =
-  let id = pool.integers.getOrIncl(i)
-  c.code.add toToken(IntLit, id, info)
+  c.code.addIntLit i, info
 
 proc genIntLit(c: var TokenBuf; i: BiggestInt; info: PackedLineInfo) =
-  let id = pool.integers.getOrIncl(i)
-  c.add toToken(IntLit, id, info)
+  c.addIntLit i, info
 
 proc genUIntLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
   let i = parseBiggestUInt(c.m.lits.strings[litId])
   let id = pool.uintegers.getOrIncl(i)
-  c.code.add toToken(UIntLit, id, info)
+  c.code.add uintToken(id, info)
+
+proc genUIntLit(c: var GeneratedCode; i: BiggestUInt; info: PackedLineInfo) =
+  let id = pool.uintegers.getOrIncl(i)
+  c.code.add uintToken(id, info)
 
 proc genFloatLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
   let i = parseFloat(c.m.lits.strings[litId])
   let id = pool.floats.getOrIncl(i)
-  c.code.add toToken(FloatLit, id, info)
+  c.code.add floatToken(id, info)
+
+proc genFloatLit(c: var GeneratedCode; i: float; info: PackedLineInfo) =
+  let id = pool.floats.getOrIncl(i)
+  c.code.add floatToken(id, info)
 
 proc genCharLit(c: var GeneratedCode; ch: char; info: PackedLineInfo) =
-  c.code.add toToken(CharLit, uint32(ch), info)
+  c.code.add charToken(ch, info)
 
 proc addIdent(c: var GeneratedCode; s: string; info: PackedLineInfo) =
-  c.code.add toToken(Ident, pool.strings.getOrIncl(s), info)
+  c.code.add identToken(pool.strings.getOrIncl(s), info)
 
 proc addEmpty(c: var GeneratedCode; info: PackedLineInfo) =
-  c.code.add toToken(DotToken, 0'u32, info)
+  c.code.add dotToken(info)
 
 proc addKeyw(c: var GeneratedCode; keyw: TagId; info = NoLineInfo) =
   c.code.buildTree keyw, info: discard
@@ -99,13 +103,13 @@ proc addKeywUnchecked(c: var GeneratedCode; keyw: string; info = NoLineInfo) =
   c.code.buildTree pool.tags.getOrIncl(keyw), info: discard
 
 proc addSymDef(c: var TokenBuf; s: string; info: PackedLineInfo) =
-  c.add toToken(SymbolDef, pool.syms.getOrIncl(s), info)
+  c.add symdefToken(pool.syms.getOrIncl(s), info)
 
 proc addStrLit(c: var TokenBuf; s: string; info: PackedLineInfo) =
-  c.add toToken(StringLit, pool.strings.getOrIncl(s), info)
+  c.addStrLit s, info
 
 proc addSym(c: var GeneratedCode; s: string; info: PackedLineInfo) =
-  c.code.add toToken(Symbol, pool.syms.getOrIncl(s), info)
+  c.code.add symToken(pool.syms.getOrIncl(s), info)
 
 proc getLabel(c: var GeneratedCode): Label =
   result = Label(c.labels)
@@ -140,7 +144,7 @@ include ".." / preasm / genpreasm_t
 
 proc genWas(c: var GeneratedCode; t: Tree; ch: NodePos) =
   c.code.buildTree(CommentT, t[ch].info):
-    c.code.add toToken(Ident, pool.strings.getOrIncl(toString(t, ch.firstSon, c.m)), t[ch].info)
+    c.addIdent toString(t, ch.firstSon, c.m), t[ch].info
 
 type
   ProcFlag = enum
