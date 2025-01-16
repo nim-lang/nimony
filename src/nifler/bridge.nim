@@ -149,6 +149,52 @@ proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
     b.addFloatLit u
     b.addStrLit suffix
 
+proc toNif*(n, parent: PNode; c: var TranslationContext)
+
+proc handleCompileDeps(n: PNode, child: PNode; isCall: bool; hasCompile: var bool; c: var TranslationContext) =
+  if child.len > 0 and child[0].kind == nkIdent and
+          child[0].ident.s == "compile":
+    if not hasCompile:
+      c.deps.addTree(nodeKindTranslation(n.kind))
+      hasCompile = true
+
+    let oldLineInfoEnabled = c.lineInfoEnabled
+    c.lineInfoEnabled = false
+    let oldDepsEnabled = c.depsEnabled
+    swap c.b, c.deps
+    c.depsEnabled = false
+
+    c.b.addTree("kv")
+    if isCall:
+      if child.len == 3:
+        toNif(child[0], child, c)
+        c.b.addTree("tup")
+        toNif(child[1], child, c)
+        c.b.addStrLit("")
+        toNif(child[2], child, c)
+        c.b.endTree()
+    elif child.len == 2:
+      # format (file, obj, customArgs)
+      toNif(child[0], child, c)
+      c.b.addTree("tup")
+
+      case child[1].kind
+      of nkStrLit:
+        toNif(child[1], child, c)
+        c.b.addStrLit("")
+      of nkTupleConstr:
+        for i in child[1]:
+          toNif(i, child[1], c)
+      else:
+        discard
+      c.b.addStrLit("")
+      c.b.endTree()
+    c.b.endTree()
+
+    c.depsEnabled = oldDepsEnabled
+    swap c.b, c.deps
+    c.lineInfoEnabled = oldLineInfoEnabled
+
 proc toNif*(n, parent: PNode; c: var TranslationContext) =
   case n.kind
   of nkNone, nkEmpty:
@@ -585,38 +631,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
         let child = n[i]
         case child.kind
         of nkExprColonExpr:
-          if child[0].kind == nkIdent and child[0].ident.s == "compile":
-            if not hasCompile:
-              c.deps.addTree(nodeKindTranslation(n.kind))
-              hasCompile = true
-
-            let oldLineInfoEnabled = c.lineInfoEnabled
-            c.lineInfoEnabled = false
-            let oldDepsEnabled = c.depsEnabled
-            swap c.b, c.deps
-            c.depsEnabled = false
-
-            c.b.addTree(nodeKindTranslation(child.kind))
-            if child.len == 2:
-              # format (file, obj, customArgs)
-              toNif(child[0], child, c)
-              c.b.addTree("tup")
-              case child[1].kind
-              of nkStrLit:
-                toNif(child[1], child, c)
-                c.b.addStrLit("")
-              of nkTupleConstr:
-                for i in child[1]:
-                  toNif(i, child[1], c)
-              else:
-                discard
-              c.b.addStrLit("")
-              c.b.endTree()
-            c.b.endTree()
-
-            c.depsEnabled = oldDepsEnabled
-            swap c.b, c.deps
-            c.lineInfoEnabled = oldLineInfoEnabled
+          handleCompileDeps(n, child, false, hasCompile, c)
+        of nkCallKinds:
+          handleCompileDeps(n, child, true, hasCompile, c)
         else:
           discard
       if hasCompile:
