@@ -23,7 +23,7 @@ proc isComplex(n: Cursor): bool =
     of IntLit, UIntLit, FloatLit, StringLit, CharLit, UnknownToken, EofToken, Ident, Symbol, SymbolDef, DotToken:
       inc n
     of ParLe:
-      if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, StmtsS}:
+      if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, StmtsS, ResultS}:
         return true
       elif n.exprKind == ExprX:
         return true
@@ -147,6 +147,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # -->
   # if cond: a else: (if condB: b else: c)
   let info = n.info
+  let head = n
   var tmp = SymId(0)
 
   if tar.m != IsIgnored:
@@ -167,7 +168,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       var t0 = Target(m: IsEmpty)
       trExpr c, dest, n, t0
 
-      dest.addParLe IfS, info
+      dest.add head
       inc toClose
       inc ifs
 
@@ -248,14 +249,11 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       case n.substructureKind
       of ExceptS:
         copyInto(dest, n):
-          for e in sons(t, ch):
-            if isLastSon(t, ch, e):
-              if tar.m != IsIgnored:
-                trExprInto c, dest, t, e, tmp
-              else:
-                trStmt c, dest, t, e
-            else:
-              copyTree dest, n, e
+          takeTree dest, n # declarations
+          if tar.m != IsIgnored:
+            trExprInto c, dest, n, tmp
+          else:
+            trStmt c, dest, n
       of FinallyS:
         # The `finally` section never produces a value!
         copyInto(dest, n):
@@ -267,31 +265,62 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     tar.t.addSymUse tmp, info
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let (cond, body) = sons2(t, n)
   let info = n.info
-  dest.copyIntoFrom t, n:
-    if isComplex(t, cond):
-      dest.copyInto TrueX, info
-      copyInto dest, StmtsX, info:
+  dest.copyInto n:
+    if isComplex(n):
+      dest.copyIntoKind TrueX, info: discard
+      copyIntoKind dest, StmtsS, info:
         var tar = Target(m: IsEmpty)
-        trExpr c, dest, t, cond, tar
-        dest.copyInto IfX, info:
-          dest.copyInto ElifX, info:
-            dest.copy tar
-            trStmt c, dest, t, body
-          dest.copyInto ElseX, info:
-            dest.copyInto BreakX, info
+        trExpr c, dest, n, tar
+        dest.copyIntoKind IfS, info:
+          dest.copyIntoKind ElifS, info:
+            dest.add tar
+            trStmt c, dest, n
+          dest.copyIntoKind ElseS, info:
+            copyIntoKind dest, StmtsS, info:
+              dest.copyIntoKind BreakS, info: discard
     else:
       var tar = Target(m: IsEmpty)
-      trExpr c, dest, t, cond, tar
-      dest.copy tar
-      trStmt c, dest, t, body
+      trExpr c, dest, n, tar
+      dest.add tar
+      trStmt c, dest, n
+
+proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  var tmp = createTokenBuf(30)
+  copyInto tmp, n:
+    takeTree tmp, n # name
+    takeTree tmp, n # export marker
+    takeTree tmp, n # pragmas
+    takeTree tmp, n # type
+    var v = Target(m: IsEmpty)
+    trExpr c, tmp, n, v
+    tmp.add v
+  dest.add tmp
+
+proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  copyInto dest, n:
+    for i in 0..<BodyPos:
+      takeTree dest, n
+    trStmt c, dest, n
+
+proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  var tmp = SymId(0)
+
+  if tar.m != IsIgnored:
+    tmp = declareTemp(c, dest, n)
+
+  copyInto(dest, n):
+    takeTree dest, n # label or DotToken
+    if tar.m != IsIgnored:
+      trExprInto c, dest, n, tmp
+    else:
+      trStmt c, dest, n
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
     takeTree dest, n
-  of IfS:
+  of IfS, WhenS:
     var tar = Target(m: IsIgnored)
     trIf c, dest, n, tar
   of CaseS:
@@ -313,30 +342,23 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   of WhileS:
     trWhile c, dest, n
-  of AsgnX, CallX:
+  of AsgnS, CallS:
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
-    tar.t.copyIntoFrom t, n:
-      for ch in sons(t, n):
-        trExpr c, dest, t, ch, tar
-    dest.copy tar
-  of LetX, VarX, CursorX, ConstX:
-    var tar = Target(m: IsAppend)
-    for ch in wsons(tar.t, n):
-      if isLastSon(t, n, ch):
-        var v = Target(m: IsEmpty)
-        trExpr c, dest, t, ch, v
-        tar.t.copy v
-      else:
-        tar.t.copyTree t, ch
-    dest.copy tar
-
-  of ProcX:
-    for ch in wsons(dest, n):
-      if isLastSon(t, n, ch):
-        trStmt c, dest, t, ch
-      else:
-        dest.copyTree t, ch
+    tar.t.copyInto n:
+      trExpr c, dest, n, tar
+    dest.add tar
+  of ResultS, LetS, VarS, CursorS, ConstS:
+    trLocal c, dest, n
+  of ProcS, FuncS, MacroS, MethodS, ConverterS:
+    trProc c, dest, n
+  of BlockS:
+    var tar = Target(m: IsIgnored)
+    trBlock c, dest, n, tar
+  of IterS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+     ForS, CmdS, IncludeS, ImportS, FromImportS, ImportExceptS,
+     ExportS, CommentS, ClonerS, TracerS, DisarmerS, MoverS, DtorS:
+    takeTree dest, n
   of StmtsS:
     copyInto(dest, n):
       while n.kind != ParRi:
@@ -348,22 +370,31 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
     takeTree tar.t, n
-  of ExprX:
-    trStmt c, dest, n
-    trExpr c, dest, n, tar
-  of IfX:
-    trIf c, dest, n, tar
-  of CaseX:
-    trCase c, dest, n, tar
-  of TryX:
-    trTry c, dest, n, tar
-  of AndX:
-    trAnd c, dest, n, tar
-  of OrX:
-    trOr c, dest, n, tar
-  else:
-    for ch in wsons(tar.t, n):
-      trExpr c, dest, t, ch, tar
+  of ParLe:
+    case n.exprKind
+    of ExprX:
+      trStmt c, dest, n
+      trExpr c, dest, n, tar
+    of AndX:
+      trAnd c, dest, n, tar
+    of OrX:
+      trOr c, dest, n, tar
+    else:
+      case n.stmtKind
+      of IfS:
+        trIf c, dest, n, tar
+      of CaseS:
+        trCase c, dest, n, tar
+      of TryS:
+        trTry c, dest, n, tar
+      of BlockS:
+        trBlock c, dest, n, tar
+      else:
+        copyInto dest, n:
+          while n.kind != ParRi:
+            trExpr c, dest, n, tar
+  of ParRi:
+    raiseAssert "unexpected ')' inside"
 
 proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)

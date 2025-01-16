@@ -72,6 +72,11 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         var n = n
         inc n
         result = getTypeImpl(c, n)
+      of BlockS:
+        var n = n
+        inc n
+        skip n # label or DotToken
+        result = getTypeImpl(c, n)
       else:
         discard
     else:
