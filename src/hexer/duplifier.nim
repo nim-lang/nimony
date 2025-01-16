@@ -55,7 +55,7 @@ proc isLastRead(c: Context; n: Cursor): bool =
   false
 
 const
-  ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX,
+  ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX, NewOconstrX,
                        AconstrX, TupleConstrX}
 
 proc constructsValue*(n: Cursor): bool =
@@ -565,9 +565,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trCall c, n, e
     of ConvKinds, SufX:
       trConvExpr c, n, e
-    of OconstrX:
+    of OconstrX, NewOconstrX:
       trObjConstr c, n, e
-    of DotX, AtX, ArrAtX, PatX, TupAtX:
+    of DotX, DerefDotX, AtX, ArrAtX, PatX, TupAtX:
       trLocation c, n, e
     of ParX:
       trSons c, n, e

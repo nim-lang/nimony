@@ -280,7 +280,7 @@ proc makeLocalSym*(c: var SemContext; result: var string) =
 
 type
   SymStatus* = enum
-    ErrNoIdent, ErrRedef, OkNew, OkExisting
+    ErrNoIdent, ErrRedef, OkNew, OkExisting, OkExistingFresh
 
   DelayedSym* = object
     status*: SymStatus
@@ -312,11 +312,14 @@ proc declareSym*(c: var SemContext; it: var Item; kind: SymKind): SymStatus =
       result = ErrRedef
     else:
       c.dest.add symdefToken(s.name, info)
-      result = Oknew
+      result = OkNew
     inc it.n
   elif it.n.kind == SymbolDef:
+    if not c.freshSyms.missingOrExcl(it.n.symId):
+      result = OkExistingFresh
+    else:
+      result = OkExisting
     inc it.n
-    result = OkExisting
   else:
     c.buildErr info, "identifier expected"
     result = ErrNoIdent
@@ -347,7 +350,7 @@ proc declareOverloadableSym*(c: var SemContext; it: var Item; kind: SymKind): Sy
       addOverloadable(c.currentScope, lit, s)
       c.dest.add symdefToken(s.name, info)
 
-proc success*(s: SymStatus): bool {.inline.} = s in {OkNew, OkExisting}
+proc success*(s: SymStatus): bool {.inline.} = s in {OkNew, OkExisting, OkExistingFresh}
 proc success*(s: DelayedSym): bool {.inline.} = success s.status
 
 proc handleSymDef*(c: var SemContext; n: var Cursor; kind: SymKind): DelayedSym =
@@ -364,6 +367,7 @@ proc handleSymDef*(c: var SemContext; n: var Cursor; kind: SymKind): DelayedSym 
     discard "ok, and no need to re-add it to the symbol table ... or is there?"
     let status =
       if c.phase == SemcheckBodies and kind in {ParamY, TypevarY}: OkNew
+      elif not c.freshSyms.missingOrExcl(n.symId): OkExistingFresh
       else: OkExisting
 
     let s = Sym(kind: kind, name: n.symId, pos: c.dest.len)

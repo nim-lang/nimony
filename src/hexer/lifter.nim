@@ -85,9 +85,9 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
   let r = asTypeDecl(n)
   assert(not r.isGeneric)
   case r.body.typeKind
-  of PtrT:
+  of PtrT, PtrObjectT:
     result = true
-  of RefT:
+  of RefT, RefObjectT:
     result = false
   of ObjectT:
     result = isTrivialObjectBody(c, r.body)
@@ -104,13 +104,13 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       quit "could not load: " & pool.syms[typ.symId]
 
   case typ.typeKind
-  of IntT, UIntT, FloatT, BoolT, CharT, PtrT,
+  of IntT, UIntT, FloatT, BoolT, CharT, PtrT, PtrObjectT,
      MutT, OutT, SetT,
      EnumT, HoleyEnumT, VoidT, AutoT, SymKindT, ProcT,
      CstringT, PointerT, OrdinalT, OpenArrayT,
      UncheckedArrayT, VarargsT, RangeT, TypedescT:
     result = true
-  of StringT, RefT:
+  of StringT, RefT, RefObjectT:
     result = false
   of SinkT, ArrayT, LentT:
     result = isTrivial(c, typ.firstSon)
@@ -180,9 +180,9 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
 
   let typ = toTypeImpl typ
   case typ.typeKind
-  of PtrT:
+  of PtrT, PtrObjectT:
     raiseAssert "ptr T should have been a 'trivial' type"
-  of ObjectT, DistinctT, TupleT, ArrayT, RefT:
+  of ObjectT, RefObjectT, DistinctT, TupleT, ArrayT, RefT:
     result = requestLifting(c, c.op, typ)
   else:
     result = NoSymId
@@ -425,6 +425,8 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   case typ.typeKind
   of ObjectT:
     unravelObj c, typ, paramA, paramB
+  of RefObjectT, PtrObjectT:
+    discard "unimplemented"
   of DistinctT:
     unravel(c, typ.firstSon, paramA, paramB)
   of TupleT:

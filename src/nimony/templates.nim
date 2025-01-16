@@ -140,3 +140,6 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
       skip f
 
   expandTemplateImpl c, dest, e, templ.body
+
+  for _, newVar in e.newVars:
+    c.freshSyms.incl newVar

@@ -62,7 +62,7 @@ proc rootOf(n: Cursor): SymId =
   while true:
     case n.exprKind
     of DotX, AtX, ArrAtX, ParX:
-      # `PatX` deliberately missing here as it is not protected from mutation
+      # `PatX`, `DerefDotX` deliberately missing here as they are not protected from mutation
       inc n
     of DconvX, OconvX:
       inc n
@@ -104,7 +104,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     case n.exprKind
     of DotX, AtX, ArrAtX, ParX:
       inc n
-    of HderefX, HaddrX, DerefX, AddrX:
+    of HderefX, HaddrX, DerefX, AddrX, DerefDotX:
       inc n
       someIndirection = true
     of DconvX, OconvX, ConvX, CastX:
@@ -187,7 +187,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
     else:
       result = false
   elif n.kind in {StringLit, IntLit, UIntLit, FloatLit, CharLit} or
-       n.exprKind in {SufX, OconstrX, AconstrX}:
+       n.exprKind in {SufX, OconstrX, NewOconstrX, AconstrX}:
     result = true
   else:
     result = false
@@ -465,9 +465,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of CallKinds:
       var disallowDangerous = true
       trCall c, n, e, disallowDangerous
-    of DotX, AtX, ArrAtX, PatX:
+    of DotX, DerefDotX, AtX, ArrAtX, PatX:
       trLocation c, n, e
-    of OconstrX:
+    of OconstrX, NewOconstrX:
       if e notin {WantT, WantTButSkipDeref}:
         buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
         skip n
@@ -492,7 +492,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trReturn(c, n)
       of AsgnS:
         trAsgn c, n
-      of VarS, LetS, ConstS, CursorS:
+      of VarS, LetS, ConstS, CursorS, ResultS:
         trLocal c, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProcDecl c, n

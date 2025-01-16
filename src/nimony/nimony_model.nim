@@ -27,8 +27,10 @@ type
     WhileS = "while"
     ForS = "for"
     CaseS = "case"
+    TryS = "try"
     RetS = "ret"
     YieldS = "yld"
+    RaiseS = "raise"
     ProcS = "proc"
     FuncS = "func"
     IterS = "iterator"
@@ -83,6 +85,7 @@ type
     DerefX = "deref"
     HderefX = "hderef"
     DotX = "dot"
+    DerefDotX = "ddot"
     PatX = "pat"
     ParX = "par"
     AddrX = "addr"
@@ -96,6 +99,7 @@ type
     NegX = "neg"
     SizeofX = "sizeof"
     OconstrX = "obj"
+    NewOconstrX = "newobj"
     TupleConstrX = "tup"
     AconstrX = "arr"
     SetX = "set"
@@ -153,6 +157,8 @@ type
   TypeKind* = enum
     NoType
     ObjectT = "object"
+    RefObjectT = "refobj"
+    PtrObjectT = "ptrobj"
     TupleT = "tuple"
     EnumT = "enum"
     HoleyEnumT = "onum"
@@ -237,6 +243,8 @@ type
     PragmasS = "pragmas"
     UnpackFlatS = "unpackflat"
     UnpackTupS = "unpacktup"
+    ExceptS = "except"
+    FinallyS = "fin"
 
   CallConv* = enum
     NoCallConv

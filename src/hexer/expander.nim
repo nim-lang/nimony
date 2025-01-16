@@ -12,7 +12,7 @@ import std / [hashes, os, tables, sets, assertions]
 include nifprelude
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls]
-import basics, iterinliner
+import basics, iterinliner, xelim
 
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
@@ -409,7 +409,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       skip c
       skipParRi e, c
     of VoidT, VarargsT, NilT, ConceptT,
-       IterT, InvokeT:
+       IterT, InvokeT, RefObjectT, PtrObjectT:
       error e, "unimplemented type: ", c
   else:
     error e, "type expected but got: ", c
@@ -834,6 +834,15 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.addIntLit(0, c.info) # inheritance
         e.dest.add c # add right paren
         inc c # skip right paren
+      of DerefDotX:
+        e.dest.add tagToken("dot", c.info)
+        e.dest.add tagToken("deref", c.info)
+        inc c # skip tag
+        traverseExpr e, c
+        e.dest.addParRi()
+        traverseExpr e, c
+        traverseExpr e, c
+        wantParRi e, c
       of SufX:
         e.dest.add c
         inc c
@@ -1073,6 +1082,8 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of CaseS: traverseCase e, c
     of YieldS, ForS:
       error e, "BUG: not eliminated: ", c
+    of TryS, RaiseS:
+      error e, "BUG: not implemented: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
     of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS, ExportS, CommentS, IterS:

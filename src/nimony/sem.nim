@@ -393,6 +393,10 @@ type
     newVars: Table[SymId, SymId]
     params: ptr Table[SymId, Cursor]
 
+proc addFreshSyms(c: var SemContext, sc: var SubsContext) =
+  for _, newVar in sc.newVars:
+    c.freshSyms.incl newVar
+
 proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Cursor) =
   var nested = 0
   var n = body
@@ -458,6 +462,7 @@ proc subsGenericType(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
     dest.copyTree decl.pragmas
     var sc = SubsContext(params: addr req.inferred)
     subs(c, dest, sc, decl.body)
+    addFreshSyms(c, sc)
 
 proc subsGenericProc(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
   let info = req.requestFrom[^1]
@@ -478,6 +483,7 @@ proc subsGenericProc(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
     subs(c, dest, sc, decl.effects)
     subs(c, dest, sc, decl.pragmas)
     subs(c, dest, sc, decl.body)
+    addFreshSyms(c, sc)
 
 template withFromInfo(req: InstRequest; body: untyped) =
   let oldLen = c.instantiatedFrom.len
@@ -896,6 +902,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       subs(c, signature, sc, decl.retType)
       subs(c, signature, sc, decl.pragmas)
       subs(c, signature, sc, decl.effects)
+      addFreshSyms(c, sc)
       signature.addDotToken() # no body
 
     result = ProcInstance(targetSym: targetSym, procType: cursorAt(signature, 0),
@@ -1063,7 +1070,7 @@ proc semObjConstrFromCall(c: var SemContext; it: var Item; cs: CallState) =
   it.typ = objConstr.typ
 
 proc isCastableType(t: TypeCursor): bool =
-  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NilT, EnumT, HoleyEnumT}
+  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, RefObjectT, PtrObjectT, NilT, EnumT, HoleyEnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; it: var Item) =
@@ -1471,7 +1478,9 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
   else:
     let t = skipModifier(lhs.typ)
     var root = t
+    var doDeref = false # maybe arbitrary number of derefs for compat mode
     if root.typeKind in {RefT, PtrT}:
+      doDeref = true
       inc root
     if root.typeKind == InvokeT:
       inc root
@@ -1480,10 +1489,13 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       var objType = decl.body
       # emulate objtypeImpl
       if objType.typeKind in {RefT, PtrT}:
+        doDeref = true
         inc objType
-      if objType.typeKind == ObjectT:
+      if objType.typeKind in {ObjectT, RefObjectT, PtrObjectT}:
         let field = findObjFieldConsiderVis(c, decl, fieldName, info)
         if field.level >= 0:
+          if doDeref or objType.typeKind in {RefObjectT, PtrObjectT}:
+            c.dest[exprStart] = parLeToken(DerefDotX, info)
           c.dest.add symToken(field.sym, info)
           c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
           it.typ = field.typ # will be fit later with commonType
@@ -1969,6 +1981,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf; info: Packed
     if err == 0:
       var sc = SubsContext(params: addr inferred)
       subs(c, dest, sc, decl.body)
+      addFreshSyms(c, sc)
     elif err == 1:
       dest.buildLocalErr info, "too few generic arguments provided"
     else:
@@ -2381,7 +2394,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           # XXX Check the expression is a symchoice or a sym
           n = it.n
       wantParRi c, n
-    of ObjectT:
+    of ObjectT, RefObjectT, PtrObjectT:
       if tryTypeClass(c, n):
         discard
       elif context != InTypeSection:
@@ -2734,7 +2747,7 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
       if res.decl.symKind == TypeY:
         let typeDecl = asTypeDecl(res.decl)
 
-        if not (classifyType(c, typeDecl.body) == ObjectT):
+        if not (classifyType(c, typeDecl.body) in {ObjectT, RefObjectT, PtrObjectT}):
           cond = false
       else:
         cond = false
@@ -3049,7 +3062,7 @@ proc semAsgn(c: var SemContext; it: var Item) =
   case it.n.exprKind
   of AtX:
     semSubscriptAsgn c, it, info
-  of DotX:
+  of DotX, DerefDotX:
     semDotAsgn c, it, info
   else:
     c.dest.addParLe(AsgnS, info)
@@ -3123,6 +3136,29 @@ proc semIf(c: var SemContext; it: var Item) =
     takeToken c, it.n
     withNewScope c:
       semStmtBranch c, it
+    wantParRi c, it.n
+  wantParRi c, it.n
+  if typeKind(it.typ) == AutoT:
+    producesVoid c, info, it.typ
+
+proc semTry(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  takeToken c, it.n
+  withNewScope c:
+    semStmtBranch c, it
+  while it.n.substructureKind == ExceptS:
+    takeToken c, it.n
+    # XXX Implement `e as Type` properly!
+    var exc = Item(n: it.n, typ: c.types.autoType)
+    semExpr c, exc
+    it.n = exc.n
+    withNewScope c:
+      semStmtBranch c, it
+    wantParRi c, it.n
+  if it.n.substructureKind == FinallyS:
+    takeToken c, it.n
+    withNewScope c:
+      semStmt c, it.n
     wantParRi c, it.n
   wantParRi c, it.n
   if typeKind(it.typ) == AutoT:
@@ -3328,6 +3364,24 @@ proc semReturn(c: var SemContext; it: var Item) =
   wantParRi c, it.n
   producesNoReturn c, info, it.typ
 
+proc semRaise(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  takeToken c, it.n
+  if c.routine.kind == NoSym:
+    buildErr c, it.n.info, "`raise` only allowed within a routine"
+  if it.n.kind == DotToken:
+    takeToken c, it.n
+  else:
+    var a = Item(n: it.n, typ: c.routine.returnType)
+    # `return` within a template refers to the caller, so
+    # we allow any type here:
+    if c.routine.kind == TemplateY:
+      a.typ = c.types.autoType
+    semExpr c, a
+    it.n = a.n
+  wantParRi c, it.n
+  producesNoReturn c, info, it.typ
+
 proc semYield(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
@@ -3358,7 +3412,9 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
 
   var isEnumTypeDecl = false
 
-  if c.phase == SemcheckSignatures or (delayed.status == OkNew and c.phase != SemcheckTopLevelSyms):
+  if c.phase == SemcheckSignatures or
+      (delayed.status in {OkNew, OkExistingFresh} and
+        c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
     let prevGeneric = c.routine.inGeneric
     if n.kind == DotToken:
@@ -3658,15 +3714,25 @@ proc buildObjConstrField(c: var SemContext; field: Local; setFields: Table[SymId
     c.dest.addParRi()
 
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
-  c.dest.addParLe(OconstrX, info)
-  c.dest.addSubtree typ
+  var constrKind = NoExpr
   var objImpl = typ
-  if objImpl.typeKind in {RefT, PtrT}:
+  if objImpl.typeKind == RefT:
+    constrKind = NewOconstrX
     inc objImpl
   if objImpl.typeKind == InvokeT:
     inc objImpl
   if objImpl.kind == Symbol:
     objImpl = objtypeImpl(objImpl.symId)
+    if constrKind == NoExpr:
+      case objImpl.typeKind
+      of RefObjectT:
+        constrKind = NewOconstrX
+      of ObjectT:
+        constrKind = OconstrX
+      else:
+        discard # error
+  c.dest.addParLe(constrKind, info)
+  c.dest.addSubtree typ
   var obj = asObjectDecl(objImpl)
   # same field order as old nim VM: starting with most shallow base type
   while obj.parentType.kind != DotToken:
@@ -3715,7 +3781,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
     # emulate objtypeImpl
     if objType.typeKind in {RefT, PtrT}:
       inc objType
-    if objType.typeKind != ObjectT:
+    if objType.typeKind notin {ObjectT, RefObjectT, PtrObjectT}:
       c.buildErr info, "expected object type for object constructor"
       return
   var fieldBuf = createTokenBuf(16)
@@ -4468,7 +4534,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           else:
             buildErr c, it.n.info, "expression expected; tag: " & pool.tags[it.n.tag]
             skip it.n
-        of ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT:
+        of ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
@@ -4567,6 +4633,12 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ForS:
         toplevelGuard c:
           semFor c, it
+      of TryS:
+        toplevelGuard c:
+          semTry c, it
+      of RaiseS:
+        toplevelGuard c:
+          semRaise c, it
       of ExportS, CommentS:
         # XXX ignored for now
         skip it.n
@@ -4598,7 +4670,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of CallX, CmdX, CallStrLitX, InfixX, PrefixX:
       toplevelGuard c:
         semCall c, it
-    of DotX:
+    of DotX, DerefDotX:
       toplevelGuard c:
         semDot c, it, flags
     of TupAtX:
@@ -4621,7 +4693,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSuf c, it
     of TupleConstrX:
       semTupleConstr c, it
-    of OconstrX:
+    of OconstrX, NewOconstrX:
       semObjConstr c, it
     of DefinedX:
       semDefined c, it

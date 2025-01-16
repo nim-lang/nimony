@@ -54,6 +54,31 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       result = c.builtins.floatType
     of StringLit:
       result = c.builtins.stringType
+    of ParLe:
+      case stmtKind(n)
+      of IfS:
+        var n = n
+        inc n
+        inc n # skip `elif`
+        skip n # skip condition
+        result = getTypeImpl(c, n)
+      of CaseS:
+        var n = n
+        inc n # skip `case`
+        inc n # skip `of`
+        skip n # skip set
+        result = getTypeImpl(c, n)
+      of TryS:
+        var n = n
+        inc n
+        result = getTypeImpl(c, n)
+      of BlockS:
+        var n = n
+        inc n
+        skip n # label or DotToken
+        result = getTypeImpl(c, n)
+      else:
+        discard
     else:
       discard
   of AtX, PatX, ArrAtX:
@@ -92,13 +117,13 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   of SizeofX:
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
-     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX:
+     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX:
     result = n.firstSon
   of ParX, EnsureMoveX:
     result = getTypeImpl(c, n.firstSon)
   of NilX:
     result = c.builtins.nilType
-  of DotX:
+  of DotX, DerefDotX:
     result = n
     skip result # obj
     result = getTypeImpl(c, result) # typeof(obj.field) == typeof field
