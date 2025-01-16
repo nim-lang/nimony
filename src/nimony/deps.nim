@@ -300,7 +300,9 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
     s.add "\n\t$(CC) -o $@ $^"
 
     for cfile in c.toCompile:
-      s.add "\n" & mescape("nifcache" / cfile.obj) & ": " & mescape(cfile.name) & "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
+      s.add "\n" & mescape("nifcache" / cfile.obj) & ": " & mescape(cfile.name) &
+            "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
+            cfile.customArgs & " $< -o $@"
 
     # The .o files depend on all of their .c files:
     s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
