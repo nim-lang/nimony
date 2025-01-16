@@ -58,7 +58,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       var it {.cursor.} = c.current
       while it != nil:
         let res = it.locals.getOrDefault(n.symId)
-        if res == default(Cursor):
+        if res != default(Cursor):
           return res
         it = it.parent
       let res = tryLoadSym(n.symId)
