@@ -393,6 +393,10 @@ type
     newVars: Table[SymId, SymId]
     params: ptr Table[SymId, Cursor]
 
+proc addFreshSyms(c: var SemContext, sc: var SubsContext) =
+  for _, newVar in sc.newVars:
+    c.freshSyms.incl newVar
+
 proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Cursor) =
   var nested = 0
   var n = body
@@ -458,6 +462,7 @@ proc subsGenericType(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
     dest.copyTree decl.pragmas
     var sc = SubsContext(params: addr req.inferred)
     subs(c, dest, sc, decl.body)
+    addFreshSyms(c, sc)
 
 proc subsGenericProc(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
   let info = req.requestFrom[^1]
@@ -478,6 +483,7 @@ proc subsGenericProc(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
     subs(c, dest, sc, decl.effects)
     subs(c, dest, sc, decl.pragmas)
     subs(c, dest, sc, decl.body)
+    addFreshSyms(c, sc)
 
 template withFromInfo(req: InstRequest; body: untyped) =
   let oldLen = c.instantiatedFrom.len
@@ -896,6 +902,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       subs(c, signature, sc, decl.retType)
       subs(c, signature, sc, decl.pragmas)
       subs(c, signature, sc, decl.effects)
+      addFreshSyms(c, sc)
       signature.addDotToken() # no body
 
     result = ProcInstance(targetSym: targetSym, procType: cursorAt(signature, 0),
@@ -1969,6 +1976,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf; info: Packed
     if err == 0:
       var sc = SubsContext(params: addr inferred)
       subs(c, dest, sc, decl.body)
+      addFreshSyms(c, sc)
     elif err == 1:
       dest.buildLocalErr info, "too few generic arguments provided"
     else:
@@ -3358,7 +3366,9 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
 
   var isEnumTypeDecl = false
 
-  if c.phase == SemcheckSignatures or (delayed.status == OkNew and c.phase != SemcheckTopLevelSyms):
+  if c.phase == SemcheckSignatures or
+      (delayed.status in {OkNew, OkExistingFresh} and
+        c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
     let prevGeneric = c.routine.inGeneric
     if n.kind == DotToken:
