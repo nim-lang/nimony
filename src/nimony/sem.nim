@@ -1461,8 +1461,8 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
                    info: PackedLineInfo; flags: set[SemFlag]): DotExprState =
   let exprStart = c.dest.len
   let expected = it.typ
+  let dotTagPos = c.dest.len
   c.dest.addParLe(DotX, info)
-  let beforeLhs = c.dest.len
   c.dest.addSubtree lhs.n
   result = FailedDot
   if fieldName == StrId(0):
@@ -1489,8 +1489,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
         let field = findObjFieldConsiderVis(c, decl, fieldName, info)
         if field.level >= 0:
           if doDeref or objType.typeKind in {RefObjectT, PtrObjectT}:
-            c.dest.insert [parLeToken(HderefX, lhs.n.info)], beforeLhs
-            c.dest.addParRi()
+            c.dest[dotTagPos] = parLeToken(DerefDotX, info)
           c.dest.add symToken(field.sym, info)
           c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
           it.typ = field.typ # will be fit later with commonType
@@ -3056,7 +3055,7 @@ proc semAsgn(c: var SemContext; it: var Item) =
   case it.n.exprKind
   of AtX:
     semSubscriptAsgn c, it, info
-  of DotX:
+  of DotX, DerefDotX:
     semDotAsgn c, it, info
   else:
     c.dest.addParLe(AsgnS, info)
@@ -4613,7 +4612,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of CallX, CmdX, CallStrLitX, InfixX, PrefixX:
       toplevelGuard c:
         semCall c, it
-    of DotX:
+    of DotX, DerefDotX:
       toplevelGuard c:
         semDot c, it, flags
     of TupAtX:

@@ -82,6 +82,7 @@ type
     DerefX = "deref"
     HderefX = "hderef"
     DotX = "dot"
+    DerefDotX = "ddot"
     PatX = "pat"
     ParX = "par"
     AddrX = "addr"
