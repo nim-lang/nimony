@@ -27,8 +27,10 @@ type
     WhileS = "while"
     ForS = "for"
     CaseS = "case"
+    TryS = "try"
     RetS = "ret"
     YieldS = "yld"
+    RaiseS = "raise"
     ProcS = "proc"
     FuncS = "func"
     IterS = "iterator"
@@ -236,6 +238,8 @@ type
     PragmasS = "pragmas"
     UnpackFlatS = "unpackflat"
     UnpackTupS = "unpacktup"
+    ExceptS = "except"
+    FinallyS = "fin"
 
   CallConv* = enum
     NoCallConv
