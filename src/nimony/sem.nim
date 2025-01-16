@@ -19,7 +19,7 @@ import ".." / gear2 / modnames
 
 # ------------------ include/import handling ------------------------
 
-proc semStmt(c: var SemContext; n: var Cursor)
+proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool)
 
 proc typeMismatch(c: var SemContext; info: PackedLineInfo; got, expected: TypeCursor) =
   c.buildErr info, "type mismatch: got: " & typeToString(got) & " but wanted: " & typeToString(expected)
@@ -211,7 +211,7 @@ proc semInclude(c: var SemContext; it: var Item) =
         c.includeStack.add f2
         #c.m.includes.add f2
         var n = cursorAt(buf, 0)
-        semStmt(c, n)
+        semStmt(c, n, false)
         c.includeStack.setLen c.includeStack.len - 1
       else:
         var m = ""
@@ -649,16 +649,19 @@ proc semConstExpr(c: var SemContext; it: var Item) =
 proc semStmtsExprImpl(c: var SemContext; it: var Item) =
   while it.n.kind != ParRi:
     if not isLastSon(it.n):
-      semStmt c, it.n
+      semStmt c, it.n, false
     else:
       semExpr c, it
   wantParRi c, it.n
 
-proc semStmtsExpr(c: var SemContext; it: var Item) =
+proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
   let before = c.dest.len
   takeToken c, it.n
   semStmtsExprImpl c, it
-  let kind = if classifyType(c, it.typ) == VoidT: $StmtsS else: $ExprX
+  let kind =
+    if classifyType(c, it.typ) == VoidT:
+      (if isNewScope: $ScopeS else: $StmtsS)
+    else: $ExprX
   c.dest[before] = parLeToken(pool.tags.getOrIncl(kind), c.dest[before].info)
 
 proc semProcBody(c: var SemContext; itB: var Item) =
@@ -688,7 +691,7 @@ proc semProcBody(c: var SemContext; itB: var Item) =
       c.dest.addParRi()
   itB.n = it.n
 
-proc semStmt(c: var SemContext; n: var Cursor) =
+proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
   let info = n.info
   var it = Item(n: n, typ: c.types.autoType)
   let exPos = c.dest.len
@@ -1581,7 +1584,7 @@ proc semWhile(c: var SemContext; it: var Item) =
   semBoolExpr c, it.n
   inc c.routine.inLoop
   withNewScope c:
-    semStmt c, it.n
+    semStmt c, it.n, true
   dec c.routine.inLoop
   wantParRi c, it.n
   producesVoid c, info, it.typ
@@ -1600,7 +1603,7 @@ proc semBlock(c: var SemContext; it: var Item) =
       c.addSym delayed
       publish c, delayed.s.name, declStart
 
-    semStmt c, it.n
+    semStmt c, it.n, true
   dec c.routine.inBlock
 
   wantParRi c, it.n
@@ -3098,14 +3101,14 @@ proc semDiscard(c: var SemContext; it: var Item) =
   wantParRi c, it.n
   producesVoid c, info, it.typ
 
-proc semStmtBranch(c: var SemContext; it: var Item) =
+proc semStmtBranch(c: var SemContext; it: var Item; isNewScope: bool) =
   # handle statements that could be expressions
   case classifyType(c, it.typ)
   of AutoT:
     semExpr c, it
   of VoidT:
     # performs discard check:
-    semStmt c, it.n
+    semStmt c, it.n, isNewScope
   else:
     var ex = Item(n: it.n, typ: it.typ)
     let start = c.dest.len
@@ -3128,14 +3131,14 @@ proc semIf(c: var SemContext; it: var Item) =
       takeToken c, it.n
       semBoolExpr c, it.n
       withNewScope c:
-        semStmtBranch c, it
+        semStmtBranch c, it, true
       wantParRi c, it.n
   else:
     buildErr c, it.n.info, "illformed AST: `elif` inside `if` expected"
   if it.n.substructureKind == ElseS:
     takeToken c, it.n
     withNewScope c:
-      semStmtBranch c, it
+      semStmtBranch c, it, true
     wantParRi c, it.n
   wantParRi c, it.n
   if typeKind(it.typ) == AutoT:
@@ -3145,7 +3148,7 @@ proc semTry(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
   withNewScope c:
-    semStmtBranch c, it
+    semStmtBranch c, it, true
   while it.n.substructureKind == ExceptS:
     takeToken c, it.n
     # XXX Implement `e as Type` properly!
@@ -3153,12 +3156,12 @@ proc semTry(c: var SemContext; it: var Item) =
     semExpr c, exc
     it.n = exc.n
     withNewScope c:
-      semStmtBranch c, it
+      semStmtBranch c, it, true
     wantParRi c, it.n
   if it.n.substructureKind == FinallyS:
     takeToken c, it.n
     withNewScope c:
-      semStmt c, it.n
+      semStmt c, it.n, true
     wantParRi c, it.n
   wantParRi c, it.n
   if typeKind(it.typ) == AutoT:
@@ -3249,14 +3252,14 @@ proc semCase(c: var SemContext; it: var Item) =
       takeToken c, it.n
       semCaseOfValue c, it, selector.typ, seen
       withNewScope c:
-        semStmtBranch c, it
+        semStmtBranch c, it, true
       wantParRi c, it.n
   else:
     buildErr c, it.n.info, "illformed AST: `of` inside `case` expected"
   if it.n.substructureKind == ElseS:
     takeToken c, it.n
     withNewScope c:
-      semStmtBranch c, it
+      semStmtBranch c, it, true
     wantParRi c, it.n
   wantParRi c, it.n
   if typeKind(it.typ) == AutoT:
@@ -3340,7 +3343,7 @@ proc semFor(c: var SemContext; it: var Item) =
       takeTree c.dest, it.n # don't touch the body
     else:
       inc c.routine.inLoop
-      semStmt c, it.n
+      semStmt c, it.n, true
       dec c.routine.inLoop
 
   wantParRi c, it.n
@@ -4585,7 +4588,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ConstS:
         toplevelGuard c:
           semLocal c, it, ConstY
-      of StmtsS: semStmtsExpr c, it
+      of StmtsS: semStmtsExpr c, it, false
+      of ScopeS: semStmtsExpr c, it, true
       of BreakS:
         toplevelGuard c:
           semBreak c, it
@@ -4731,7 +4735,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of HighX:
       semHigh c, it
     of ExprX:
-      semStmtsExpr c, it
+      semStmtsExpr c, it, false
     of DerefX:
       semDeref c, it
     of AddrX:
@@ -4792,7 +4796,7 @@ proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   var n = n
   takeToken c, n
   while n.kind != ParRi:
-    semStmt c, n
+    semStmt c, n, false
   wantParRi c, n
   result = move c.dest
 
@@ -4865,7 +4869,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   c.phase = SemcheckBodies
   takeToken c, n
   while n.kind != ParRi:
-    semStmt c, n
+    semStmt c, n, false
   instantiateGenerics c
   for _, val in mpairs(c.instantiatedTypes):
     let s = fetchSym(c, val)

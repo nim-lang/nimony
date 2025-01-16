@@ -11,15 +11,39 @@
 
 include nifprelude
 
+import std/tables
 import nimony_model, builtintypes, decls, programs
 
 type
+  TypeScope* {.acyclic.} = ref object
+    locals: Table[SymId, Cursor]
+    parent: TypeScope
+
   TypeCache* = object
     builtins*: BuiltinTypes
     mem: seq[TokenBuf]
+    current: TypeScope
 
 proc createTypeCache*(): TypeCache =
   TypeCache(builtins: createBuiltinTypes())
+
+proc registerLocal*(c: var TypeCache; s: SymId; typ: Cursor) =
+  c.current.locals[s] = typ
+
+proc openScope*(c: var TypeCache) =
+  c.current = TypeScope(locals: initTable[SymId, Cursor](), parent: c.current)
+
+proc closeScope*(c: var TypeCache) =
+  c.current = c.current.parent
+
+proc registerParams*(c: var TypeCache; routine: SymId; params: Cursor) =
+  if params.kind == ParLe:
+    var p = params
+    inc p
+    while p.kind != ParRi:
+      let r = takeLocal(p, SkipFinalParRi)
+      registerLocal(c, r.name.symId, r.typ)
+  c.current.locals[routine] = params
 
 proc firstSon(n: Cursor): Cursor {.inline.} =
   result = n
@@ -31,6 +55,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   of NoExpr:
     case n.kind
     of Symbol:
+      var it {.cursor.} = c.current
+      while it != nil:
+        let res = it.locals.getOrDefault(n.symId)
+        if res == default(Cursor):
+          return res
+        it = it.parent
       let res = tryLoadSym(n.symId)
       if res.status == LacksNothing:
         let local = asLocal(res.decl)

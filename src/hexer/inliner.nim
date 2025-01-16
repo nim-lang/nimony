@@ -57,6 +57,7 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  c.typeCache.openScope()
   dest.add n
   var r = takeRoutine(n, SkipExclBody)
   let oldThisRoutine = c.thisRoutine
@@ -66,6 +67,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyTree dest, r.pattern
   copyTree dest, r.typevars
   copyTree dest, r.params
+  c.typeCache.registerParams(r.name.symId, r.params)
   copyTree dest, r.pragmas
   copyTree dest, r.effects
   skip n # effects
@@ -75,6 +77,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeTree dest, n
   dest.wantParRi(n)
   c.thisRoutine = oldThisRoutine
+  c.typeCache.closeScope()
 
 proc shouldInlineRoutine(pragmas: Cursor): bool =
   hasBuiltinPragma(pragmas, Inline)
@@ -295,6 +298,7 @@ proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyTree dest, r.exported
     copyTree dest, r.pragmas
     copyTree dest, r.typ
+    c.typeCache.registerLocal(r.name.symId, r.typ)
     if inlineCall:
       addEmpty dest, r.val.info
     else:
@@ -318,6 +322,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trLocalDecl c, dest, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProcDecl c, dest, n
+      of ScopeS:
+        c.typeCache.openScope()
+        dest.add n
+        inc n
+        while n.kind != ParRi:
+          tr c, dest, n
+        c.typeCache.closeScope()
       else:
         if n.exprKind in CallKinds:
           var routine = default(Routine)
@@ -342,7 +353,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc inlineCalls*(n: Cursor; thisModuleSuffix: string; ptrSize: int): TokenBuf =
   var c = createInliner(thisModuleSuffix, ptrSize)
+  c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
   tr(c, result, n)
   #result = lowerExprs(p, result)
+  c.typeCache.closeScope()

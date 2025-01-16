@@ -40,6 +40,7 @@ proc rememberConstRefParams(c: var Context; params, pragmas: Cursor) =
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = takeRoutine(n, SkipFinalParRi)
   var c2 = Context(ptrSize: c.ptrSize, typeCache: createTypeCache())
+  c2.typeCache.openScope()
   copyInto(dest, n):
     copyTree dest, r.name
     copyTree dest, r.exported
@@ -50,9 +51,11 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyTree dest, r.effects
     if r.body.stmtKind == StmtsS and not isGeneric(r):
       rememberConstRefParams c2, r.params, r.pragmas
+      c2.typeCache.registerParams(r.name.symId, r.params)
       tr c2, dest, r.body
     else:
       copyTree dest, r.body
+  c2.typeCache.closeScope()
 
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -100,6 +103,27 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
   wantParRi dest, n
 
+proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let head = n
+  var r = takeLocal(n, SkipFinalParRi)
+  dest.add head
+  dest.add r.name
+  dest.add r.exported
+  dest.add r.pragmas
+  dest.add r.typ
+  tr c, dest, r.val
+  c.typeCache.registerLocal(r.name.symId, r.typ)
+  dest.addParRi()
+
+proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  c.typeCache.openScope()
+  dest.add n
+  inc n
+  while n.kind != ParRi:
+    tr c, dest, n
+  wantParRi dest, n
+  c.typeCache.closeScope()
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var nested = 0
   while true:
@@ -117,12 +141,18 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ParLe:
       if n.exprKind in CallKinds:
         trCall c, dest, n
-      elif n.stmtKind in {ProcS, FuncS, MacroS, MethodS, ConverterS}:
-        trProcDecl c, dest, n
       else:
-        dest.add n
-        inc n
-        inc nested
+        case n.stmtKind
+        of ProcS, FuncS, MacroS, MethodS, ConverterS:
+          trProcDecl c, dest, n
+        of CursorS, LetS, VarS, ConstS, ResultS:
+          trLocal c, dest, n
+        of ScopeS:
+          trScope c, dest, n
+        else:
+          dest.add n
+          inc n
+          inc nested
     of ParRi:
       dest.add n
       inc n
@@ -131,6 +161,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc injectConstParamDerefs*(n: Cursor; ptrSize: int): TokenBuf =
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache())
+  c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
   tr(c, result, n)
+  c.typeCache.closeScope()

@@ -288,9 +288,11 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tmp = createTokenBuf(30)
   copyInto tmp, n:
+    let name = n.symId
     takeTree tmp, n # name
     takeTree tmp, n # export marker
     takeTree tmp, n # pragmas
+    c.typeCache.registerLocal(name, n)
     takeTree tmp, n # type
     var v = Target(m: IsEmpty)
     trExpr c, tmp, n, v
@@ -298,10 +300,16 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add tmp
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  c.typeCache.openScope()
   copyInto dest, n:
+    var sym = SymId(0)
     for i in 0..<BodyPos:
+      if i == 0: sym = n.symId
+      elif i == ParamsPos:
+        c.typeCache.registerParams(sym, n)
       takeTree dest, n
     trStmt c, dest, n
+  c.typeCache.closeScope()
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   var tmp = SymId(0)
@@ -359,6 +367,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
      ForS, CmdS, IncludeS, ImportS, FromImportS, ImportExceptS,
      ExportS, CommentS, ClonerS, TracerS, DisarmerS, MoverS, DtorS:
     takeTree dest, n
+  of ScopeS:
+    c.typeCache.openScope()
+    copyInto(dest, n):
+      while n.kind != ParRi:
+        trStmt c, dest, n
+    c.typeCache.closeScope()
   of StmtsS:
     copyInto(dest, n):
       while n.kind != ParRi:

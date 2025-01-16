@@ -356,10 +356,13 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
+    c.typeCache.openScope()
+    c.typeCache.registerParams(r.name.symId, r.params)
     if hasBuiltinPragma(r.pragmas, NoDestroy):
       trOnlyEssentials c, r.body
     else:
       tr c, r.body, DontCare
+    c.typeCache.closeScope()
   else:
     copyTree c.dest, r.body
   c.dest.addParRi()
@@ -504,6 +507,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   copyTree c.dest, r.exported
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.typ
+  c.typeCache.registerLocal(r.name.symId, r.typ)
 
   let destructor = getDestructor(c.lifter[], r.typ, n.info)
   if destructor != NoSymId:
@@ -596,14 +600,20 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trLocal c, n
       of ProcS, FuncS, ConverterS, MethodS, MacroS:
         trProcDecl c, n
+      of ScopeS:
+        c.typeCache.openScope()
+        trSons c, n, WantNonOwner
+        c.typeCache.closeScope()
       else:
         trSons c, n, WantNonOwner
 
 proc injectDups*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
     dest: createTokenBuf(400))
+  c.typeCache.openScope()
   var n = n
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]
 
+  c.typeCache.closeScope()
   result = ensureMove(c.dest)
