@@ -151,6 +151,20 @@ proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
 
 proc toNif*(n, parent: PNode; c: var TranslationContext)
 
+proc compilePathToNif(n, parent: PNode; info: TLineInfo; c: var TranslationContext) =
+  var modulePath = toFullPath(c.conf, info.fileIndex)
+  case n.kind
+  of nkStrLit, nkRStrLit, nkTripleStrLit:
+    let cfile = n.strVal
+    if isAbsolute(cfile):
+      toNif(n, parent, c)
+    else:
+      var path = parentDir(modulePath) / cfile
+      relLineInfo(n, parent, c)
+      c.b.addStrLit(path)
+  else:
+    toNif(n, parent, c)
+
 proc handleCompileDeps(n: PNode, child: PNode; isCall: bool; hasCompile: var bool; c: var TranslationContext) =
   if child.len > 0 and child[0].kind == nkIdent and
           child[0].ident.s == "compile":
@@ -169,7 +183,7 @@ proc handleCompileDeps(n: PNode, child: PNode; isCall: bool; hasCompile: var boo
       if child.len == 3:
         toNif(child[0], child, c)
         c.b.addTree("tup")
-        toNif(child[1], child, c)
+        compilePathToNif(child[1], child, n.info, c)
         c.b.addStrLit("")
         toNif(child[2], child, c)
         c.b.endTree()
@@ -179,12 +193,14 @@ proc handleCompileDeps(n: PNode, child: PNode; isCall: bool; hasCompile: var boo
       c.b.addTree("tup")
 
       case child[1].kind
-      of nkStrLit:
-        toNif(child[1], child, c)
+      of nkStrLit, nkRStrLit, nkTripleStrLit:
+        compilePathToNif(child[1], child, n.info, c)
         c.b.addStrLit("")
       of nkTupleConstr:
-        for i in child[1]:
-          toNif(i, child[1], c)
+        let tup = child[1]
+        if tup.len == 2:
+          compilePathToNif(tup[0], tup, n.info, c)
+          toNif(tup[1], tup, c)
       else:
         discard
       c.b.addStrLit("")

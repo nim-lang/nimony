@@ -184,7 +184,7 @@ proc processCompile(c: var DepContext; it: var Cursor; current: Node) =
     inc it # skips TupleConstrX
     # (file, obj, customArgs)
     let name = pool.strings[it.litId]
-    compileObj.name = absolutePath(name)
+    compileObj.name = name
     inc it
     if compileObj.obj.len == 0:
       compileObj.obj = name
