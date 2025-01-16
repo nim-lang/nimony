@@ -9,13 +9,6 @@ proc mi_realloc(pt: pointer, size: csize_t): pointer {.importc: "mi_realloc".}
 proc mi_free(p: pointer) {.importc: "mi_free".}
 
 
-proc reallocImpl(p: pointer, newSize: int): pointer =
-  
-
-proc realloc0Impl(p: pointer, oldSize, newSize: Natural): pointer =
-  result = realloc(p, newSize.csize_t)
-
-
 proc alloc*(size: int): pointer =
   result = mi_malloc(size.csize_t)
 
