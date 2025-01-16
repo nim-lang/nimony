@@ -1,4 +1,4 @@
-{.compile("vendor/mimalloc/src/static.c", "-Ivendor/mimalloc/include").}
+{.compile("../../../vendor/mimalloc/src/static.c", "-Ivendor/mimalloc/include").}
 
 type
   csize_t* {.importc: "size_t", nodecl.} = uint
