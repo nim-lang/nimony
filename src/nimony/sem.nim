@@ -1462,6 +1462,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
   let exprStart = c.dest.len
   let expected = it.typ
   c.dest.addParLe(DotX, info)
+  let beforeLhs = c.dest.len
   c.dest.addSubtree lhs.n
   result = FailedDot
   if fieldName == StrId(0):
@@ -1471,7 +1472,9 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
   else:
     let t = skipModifier(lhs.typ)
     var root = t
+    var doDeref = false # maybe arbitrary number of derefs for compat mode
     if root.typeKind in {RefT, PtrT}:
+      doDeref = true
       inc root
     if root.typeKind == InvokeT:
       inc root
@@ -1480,10 +1483,14 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       var objType = decl.body
       # emulate objtypeImpl
       if objType.typeKind in {RefT, PtrT}:
+        doDeref = true
         inc objType
       if objType.typeKind in {ObjectT, RefObjectT, PtrObjectT}:
         let field = findObjFieldConsiderVis(c, decl, fieldName, info)
         if field.level >= 0:
+          if doDeref or objType.typeKind in {RefObjectT, PtrObjectT}:
+            c.dest.insert [parLeToken(HderefX, lhs.n.info)], beforeLhs
+            c.dest.addParRi()
           c.dest.add symToken(field.sym, info)
           c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
           it.typ = field.typ # will be fit later with commonType

@@ -24,9 +24,11 @@
    (kv ~28 right.0.tbivahh0m 2
     (nil)))) 7,9
  (asgn ~6
-  (dot ~1 x.0.tbivahh0m data.0.tbivahh0m +0) 2 +456) 7,10
+  (dot ~1
+   (hderef x.0.tbivahh0m) data.0.tbivahh0m +0) 2 +456) 7,10
  (asgn ~6
-  (dot ~1 x.0.tbivahh0m left.0.tbivahh0m +0) 6
+  (dot ~1
+   (hderef x.0.tbivahh0m) left.0.tbivahh0m +0) 6
   (newobj ~4,~4
    (ref 4 NodeObj.0.tbivahh0m) 5
    (kv ~5 data.0.tbivahh0m 2 +123) 16
@@ -35,11 +37,14 @@
    (kv ~28 right.0.tbivahh0m 2
     (nil)))) 8,11
  (asgn ~7
-  (dot ~1 x.0.tbivahh0m right.0.tbivahh0m +0) 2
+  (dot ~1
+   (hderef x.0.tbivahh0m) right.0.tbivahh0m +0) 2
   (nil)) 13,12
  (asgn ~7
   (dot ~5
-   (dot ~1 x.0.tbivahh0m left.0.tbivahh0m +0) right.0.tbivahh0m +0) 2
+   (hderef
+    (dot ~1
+     (hderef x.0.tbivahh0m) left.0.tbivahh0m +0)) right.0.tbivahh0m +0) 2
   (nil)) 4,13
  (var :y.0.tbivahh0m . . 5,~7
   (ref 4 NodeObj.0.tbivahh0m) 8
@@ -52,7 +57,9 @@
     (nil)))) 12,14
  (asgn ~6
   (dot ~5
-   (dot ~1 x.0.tbivahh0m left.0.tbivahh0m +0) left.0.tbivahh0m +0) 15
+   (hderef
+    (dot ~1
+     (hderef x.0.tbivahh0m) left.0.tbivahh0m +0)) left.0.tbivahh0m +0) 15
   (newobj ~18,~8
    (ref 4 NodeObj.0.tbivahh0m) 5
    (kv ~5 data.0.tbivahh0m 2 -123) 17
