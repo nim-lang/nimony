@@ -379,8 +379,8 @@ proc declareResult(c: var SemContext; info: PackedLineInfo): SymId =
 
 # -------------------- generics ---------------------------------
 
-proc newSymId(c: var SemContext; s: SymId; overrideGlobal = false): SymId =
-  var isGlobal = overrideGlobal and c.currentScope.kind == ToplevelScope
+proc newSymId(c: var SemContext; s: SymId): SymId =
+  var isGlobal = false
   var name = extractBasename(pool.syms[s], isGlobal)
   if isGlobal:
     c.makeGlobalSym(name)
@@ -417,7 +417,7 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
           dest.add n # keep Symbol as it was
     of SymbolDef:
       let s = n.symId
-      let newDef = newSymId(c, s, overrideGlobal = true)
+      let newDef = newSymId(c, s)
       sc.newVars[s] = newDef
       dest.add symdefToken(newDef, n.info)
     of ParLe:

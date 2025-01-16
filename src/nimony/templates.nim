@@ -41,7 +41,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
             dest.add body # keep Symbol as it was
     of SymbolDef:
       let s = body.symId
-      let newDef = newSymId(c, s, overrideGlobal = true)
+      let newDef = newSymId(c, s)
       e.newVars[s] = newDef
       dest.add symdefToken(newDef, body.info)
     of StringLit, CharLit, IntLit, UIntLit, FloatLit:
