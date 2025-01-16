@@ -823,6 +823,15 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.addIntLit(0, c.info) # inheritance
         e.dest.add c # add right paren
         inc c # skip right paren
+      of DerefDotX:
+        e.dest.add tagToken("dot", c.info)
+        e.dest.add tagToken("deref", c.info)
+        inc c # skip tag
+        traverseExpr e, c
+        e.dest.addParRi()
+        traverseExpr e, c
+        traverseExpr e, c
+        wantParRi e, c
       of SufX:
         e.dest.add c
         inc c

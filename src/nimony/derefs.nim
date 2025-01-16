@@ -62,7 +62,7 @@ proc rootOf(n: Cursor): SymId =
   while true:
     case n.exprKind
     of DotX, AtX, ArrAtX, ParX:
-      # `PatX` deliberately missing here as it is not protected from mutation
+      # `PatX`, `DerefDotX` deliberately missing here as they are not protected from mutation
       inc n
     of DconvX, OconvX:
       inc n
@@ -104,7 +104,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     case n.exprKind
     of DotX, AtX, ArrAtX, ParX:
       inc n
-    of HderefX, HaddrX, DerefX, AddrX:
+    of HderefX, HaddrX, DerefX, AddrX, DerefDotX:
       inc n
       someIndirection = true
     of DconvX, OconvX, ConvX, CastX:
@@ -465,7 +465,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of CallKinds:
       var disallowDangerous = true
       trCall c, n, e, disallowDangerous
-    of DotX, AtX, ArrAtX, PatX:
+    of DotX, DerefDotX, AtX, ArrAtX, PatX:
       trLocation c, n, e
     of OconstrX, NewOconstrX:
       if e notin {WantT, WantTButSkipDeref}:

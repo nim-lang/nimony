@@ -567,7 +567,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trConvExpr c, n, e
     of OconstrX, NewOconstrX:
       trObjConstr c, n, e
-    of DotX, AtX, ArrAtX, PatX, TupAtX:
+    of DotX, DerefDotX, AtX, ArrAtX, PatX, TupAtX:
       trLocation c, n, e
     of ParX:
       trSons c, n, e

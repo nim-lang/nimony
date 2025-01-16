@@ -98,7 +98,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = getTypeImpl(c, n.firstSon)
   of NilX:
     result = c.builtins.nilType
-  of DotX:
+  of DotX, DerefDotX:
     result = n
     skip result # obj
     result = getTypeImpl(c, result) # typeof(obj.field) == typeof field
