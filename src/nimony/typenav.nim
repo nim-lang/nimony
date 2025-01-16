@@ -117,7 +117,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   of SizeofX:
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
-     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX:
+     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX:
     result = n.firstSon
   of ParX, EnsureMoveX:
     result = getTypeImpl(c, n.firstSon)

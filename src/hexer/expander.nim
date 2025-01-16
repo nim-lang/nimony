@@ -11,8 +11,8 @@ import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
 import typekeys
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints]
-import basics, lowerer, xelim
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls]
+import basics, iterinliner, xelim
 
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
@@ -285,9 +285,20 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     e.dest.add c
     inc c
   of Symbol:
-    e.demand c.symId
-    e.dest.add c
-    inc c
+    let s = c.symId
+    let res = tryLoadSym(s)
+    if res.status == LacksNothing:
+      var body = asTypeDecl(res.decl).body
+      if body.typeKind == DistinctT: # skips DistinctT
+        inc body
+        traverseType(e, body, flags)
+        inc c
+      else:
+        e.demand s
+        e.dest.add c
+        inc c
+    else:
+      error e, "could not find symbol: " & pool.syms[s]
   of ParLe:
     case c.typeKind
     of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
@@ -398,7 +409,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       skip c
       skipParRi e, c
     of VoidT, VarargsT, NilT, ConceptT,
-       IterT, InvokeT:
+       IterT, InvokeT, RefObjectT, PtrObjectT:
       error e, "unimplemented type: ", c
   else:
     error e, "type expected but got: ", c

@@ -70,7 +70,7 @@ proc analyseVarUsages(c: var Context; t: Tree; n: NodePos) =
     for ch in sons(t, n):
       analyseVarUsages(c, t, ch)
     c.closeScope()
-  of CallC:
+  of CallC, OnErrC:
     # XXX Special case `cold` procs like `raiseIndexError` in order
     # to produce better code for the common case.
     for ch in sons(t, n):
@@ -148,7 +148,7 @@ proc analyseVarUsages(c: var Context; t: Tree; n: NodePos) =
   of ParC, AndC, OrC, NotC, NegC, OconstrC, AconstrC, KvC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC, BitandC, BitorC, BitxorC, BitnotC,
      EqC, NeqC, LeC, LtC, CastC, ConvC, RangeC, RangesC, IfC, ElifC, ElseC,
-     BreakC, CaseC, OfC, LabC, JmpC, RetC, ParamsC:
+     BreakC, CaseC, OfC, LabC, JmpC, RetC, ParamsC, DiscardC, TryC:
     for ch in sons(t, n):
       analyseVarUsages(c, t, ch)
   of ProcC, FldC,
@@ -156,7 +156,8 @@ proc analyseVarUsages(c: var Context; t: Tree; n: NodePos) =
      IntC, UIntC, FloatC, CharC, BoolC, VoidC, PtrC, ArrayC, FlexarrayC,
      APtrC, TypeC, CdeclC, StdcallC, SafecallC, SyscallC, FastcallC, ThiscallC,
      NoconvC, MemberC, AttrC, InlineC, NoinlineC, VarargsC, WasC, SelectanyC,
-     PragmasC, AlignC, BitsC, VectorC, ImpC, NodeclC, InclC, SufC, RaiseC, ErrsC:
+     PragmasC, AlignC, BitsC, VectorC, ImpC, NodeclC, InclC, SufC, RaiseC, ErrsC,
+     RaisesC, ErrC, StaticC:
     discard "do not traverse these"
 
 proc analyseVarUsages*(t: Tree; n: NodePos): ProcBodyProps =
