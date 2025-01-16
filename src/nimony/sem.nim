@@ -3141,6 +3141,29 @@ proc semIf(c: var SemContext; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, info, it.typ
 
+proc semTry(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  takeToken c, it.n
+  withNewScope c:
+    semStmtBranch c, it
+  while it.n.substructureKind == ExceptS:
+    takeToken c, it.n
+    # XXX Implement `e as Type` properly!
+    var exc = Item(n: it.n, typ: c.types.autoType)
+    semExpr c, exc
+    it.n = exc.n
+    withNewScope c:
+      semStmtBranch c, it
+    wantParRi c, it.n
+  if it.n.substructureKind == FinallyS:
+    takeToken c, it.n
+    withNewScope c:
+      semStmt c, it.n
+    wantParRi c, it.n
+  wantParRi c, it.n
+  if typeKind(it.typ) == AutoT:
+    producesVoid c, info, it.typ
+
 proc semWhen(c: var SemContext; it: var Item) =
   let start = c.dest.len
   let info = it.n.info
@@ -3328,6 +3351,24 @@ proc semReturn(c: var SemContext; it: var Item) =
   takeToken c, it.n
   if c.routine.kind == NoSym:
     buildErr c, it.n.info, "`return` only allowed within a routine"
+  if it.n.kind == DotToken:
+    takeToken c, it.n
+  else:
+    var a = Item(n: it.n, typ: c.routine.returnType)
+    # `return` within a template refers to the caller, so
+    # we allow any type here:
+    if c.routine.kind == TemplateY:
+      a.typ = c.types.autoType
+    semExpr c, a
+    it.n = a.n
+  wantParRi c, it.n
+  producesNoReturn c, info, it.typ
+
+proc semRaise(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  takeToken c, it.n
+  if c.routine.kind == NoSym:
+    buildErr c, it.n.info, "`raise` only allowed within a routine"
   if it.n.kind == DotToken:
     takeToken c, it.n
   else:
@@ -4592,6 +4633,12 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ForS:
         toplevelGuard c:
           semFor c, it
+      of TryS:
+        toplevelGuard c:
+          semTry c, it
+      of RaiseS:
+        toplevelGuard c:
+          semRaise c, it
       of ExportS, CommentS:
         # XXX ignored for now
         skip it.n

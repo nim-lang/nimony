@@ -12,7 +12,7 @@ import std / [hashes, os, tables, sets, assertions]
 include nifprelude
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls]
-import basics, iterinliner
+import basics, iterinliner, xelim
 
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
@@ -1071,6 +1071,8 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of CaseS: traverseCase e, c
     of YieldS, ForS:
       error e, "BUG: not eliminated: ", c
+    of TryS, RaiseS:
+      error e, "BUG: not implemented: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
     of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS, ExportS, CommentS, IterS:
