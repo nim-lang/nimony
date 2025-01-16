@@ -357,7 +357,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trBlock c, dest, n, tar
   of IterS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
      ForS, CmdS, IncludeS, ImportS, FromImportS, ImportExceptS,
-     ExportS, CommentS, ClonerS, TracerS, DisarmerS, MoverS, DtorS:
+     ExportS, CommentS, ClonerS, TracerS, DisarmerS, MoverS, DtorS,
+     PragmasLineS:
     takeTree dest, n
   of StmtsS:
     copyInto(dest, n):
