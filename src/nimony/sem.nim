@@ -1461,7 +1461,6 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
                    info: PackedLineInfo; flags: set[SemFlag]): DotExprState =
   let exprStart = c.dest.len
   let expected = it.typ
-  let dotTagPos = c.dest.len
   c.dest.addParLe(DotX, info)
   c.dest.addSubtree lhs.n
   result = FailedDot
@@ -1489,7 +1488,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
         let field = findObjFieldConsiderVis(c, decl, fieldName, info)
         if field.level >= 0:
           if doDeref or objType.typeKind in {RefObjectT, PtrObjectT}:
-            c.dest[dotTagPos] = parLeToken(DerefDotX, info)
+            c.dest[exprStart] = parLeToken(DerefDotX, info)
           c.dest.add symToken(field.sym, info)
           c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
           it.typ = field.typ # will be fit later with commonType
