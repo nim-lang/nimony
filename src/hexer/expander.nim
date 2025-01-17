@@ -286,6 +286,11 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     inc c
   of Symbol:
     let s = c.symId
+    let ext = maybeMangle(e, s)
+    if ext.len != 0:
+      e.dest.addSymUse pool.syms.getOrIncl(ext), c.info
+      inc c
+      return
     let res = tryLoadSym(s)
     if res.status == LacksNothing:
       var body = asTypeDecl(res.decl).body
@@ -525,14 +530,7 @@ proc closeGenPragmas(e: var EContext; g: GenPragmas) =
     e.dest.addDotToken()
 
 proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
-  # namePos* = 0
-  # patternPos* = 1    # empty except for term rewriting macros
-  # genericParamsPos* = 2
-  # paramsPos* = 3
-  # resultPos* = 4
-  # pragmasPos* = 5
-  # miscPos* = 6  # used for undocumented and hacky stuff
-  # bodyPos* = 7       # position of body; use rodread.getBody() instead!
+  e.openMangleScope()
   var dst = createTokenBuf(50)
   swap e.dest, dst
   #let toPatch = e.dest.len
@@ -587,7 +585,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
 
   var genPragmas = openGenPragmas()
   if prag.externName.len > 0:
-    e.toMangle[(s, oldOwner)] = prag.externName & ".c"
+    e.registerMangleInParent(s, prag.externName & ".c")
     e.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
   if Selectany in prag.flags:
     e.addKey genPragmas, "selectany", pinfo
@@ -615,6 +613,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   if prag.header != StrId(0):
     e.headers.incl prag.header
   discard setOwner(e, oldOwner)
+  e.closeMangleScope()
 
 proc traverseTypeDecl(e: var EContext; c: var Cursor) =
   var dst = createTokenBuf(50)
@@ -856,7 +855,11 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       e.offer c.symId
       inc c
     of Symbol:
-      e.dest.add c
+      let ext = maybeMangle(e, c.symId)
+      if ext.len != 0:
+        e.dest.addSymUse pool.syms.getOrIncl(ext), c.info
+      else:
+        e.dest.add c
       e.demand c.symId
       inc c
     of StringLit:
@@ -886,7 +889,7 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   var genPragmas = openGenPragmas()
 
   if prag.externName.len > 0:
-    e.toMangle[(s, e.currentOwner)] = prag.externName & ".c"
+    e.registerMangle(s, prag.externName & ".c")
     e.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
 
   if Threadvar in prag.flags:
@@ -901,6 +904,7 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   closeGenPragmas e, genPragmas
 
   var nodecl = prag.flags.contains(Nodecl)
+  e.typeCache.registerLocal(s, c)
   if tag == "param" and typeKind(c) == VarargsT:
     skip c
     nodecl = true
@@ -1039,16 +1043,29 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
         inc c
         e.loop c:
           traverseStmt e, c, mode
+    of ScopeS:
+      e.openMangleScope()
+      if mode == TraverseTopLevel:
+        inc c
+        while c.kind notin {EofToken, ParRi}:
+          traverseStmt e, c, mode
+        skipParRi e, c
+      else:
+        e.dest.add c
+        inc c
+        e.loop c:
+          traverseStmt e, c, mode
+      e.closeMangleScope()
     of VarS, LetS, CursorS, ResultS:
       traverseLocal e, c, (if e.nestedIn[^1][0] == StmtsS and mode in {TraverseTopLevel, TraverseSig}: "gvar" else: "var"), mode
     of ConstS:
       traverseLocal e, c, "const", mode
-    of CmdS:
+    of CmdS, CallS:
       e.dest.add tagToken("call", c.info)
       inc c
       e.loop c:
         traverseExpr e, c
-    of EmitS, AsgnS, RetS, CallS:
+    of EmitS, AsgnS, RetS:
       e.dest.add c
       inc c
       e.loop c:
@@ -1131,22 +1148,14 @@ proc writeOutput(e: var EContext) =
       b.addIdent(pool.strings[c.litId])
     of Symbol:
       let owner = ownerStack[^1][0]
-      let key = (c.symId, owner)
-      let val = e.toMangle.getOrDefault(key)
+      let val = e.maybeMangle(c.symId)
       if val.len > 0:
         b.addSymbol(val)
       else:
         b.addSymbol(pool.syms[c.symId])
-    of IntLit:
-      b.addIntLit(pool.integers[c.intId])
-    of UIntLit:
-      b.addUIntLit(pool.uintegers[c.uintId])
-    of FloatLit:
-      b.addFloatLit(pool.floats[c.floatId])
     of SymbolDef:
       let owner = ownerStack[^1][0]
-      let key = (c.symId, owner)
-      let val = e.toMangle.getOrDefault(key)
+      let val = e.maybeMangle(c.symId)
       if val.len > 0:
         b.addSymbolDef(val)
       else:
@@ -1154,6 +1163,12 @@ proc writeOutput(e: var EContext) =
       if nextIsOwner >= 0:
         ownerStack.add (c.symId, nextIsOwner)
         nextIsOwner = -1
+    of IntLit:
+      b.addIntLit(pool.integers[c.intId])
+    of UIntLit:
+      b.addUIntLit(pool.uintegers[c.uintId])
+    of FloatLit:
+      b.addFloatLit(pool.floats[c.floatId])
     of CharLit:
       b.addCharLit char(c.uoperand)
     of StringLit:
@@ -1195,6 +1210,7 @@ proc expand*(infile: string) =
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache())
+  e.openMangleScope()
 
   var c0 = setupProgram(infile, infile.changeFileExt ".c.nif", true)
   transformStmt(e, c0)
@@ -1220,6 +1236,7 @@ proc expand*(infile: string) =
     inc i
   skipParRi e, c
   writeOutput e
+  e.closeMangleScope()
 
 when isMainModule:
   echo splitModulePath("/abc/def/name.4.nif")

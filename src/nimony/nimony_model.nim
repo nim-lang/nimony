@@ -12,6 +12,7 @@ type
   StmtKind* = enum
     NoStmt
     StmtsS = "stmts"
+    ScopeS = "scope" # to make it easier for the backend phases to get the scoping right
     VarS = "var"
     LetS = "let"
     CursorS = "cursor"

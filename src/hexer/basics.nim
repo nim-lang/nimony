@@ -1,11 +1,12 @@
 import std / [tables, sets, syncio]
 
-
 include nifprelude
 import ".." / nimony / [nimony_model, typenav]
 
 type
-  SymbolKey* = (SymId, SymId) # (symbol, owner)
+  MangleScope* {.acyclic.} = ref object
+    tab: Table[SymId, string]
+    parent: MangleScope
 
   EContext* = object
     dir*, main*, ext*: string
@@ -15,7 +16,7 @@ type
     nestedIn*: seq[(StmtKind, SymId)]
     headers*: HashSet[StrId]
     currentOwner*: SymId
-    toMangle*: Table[SymbolKey, string]
+    toMangle*: MangleScope
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]
     pending*: TokenBuf
@@ -26,6 +27,28 @@ type
     # TODO: add a instID for each forStmt
     tmpId*: int # per proc
 
+proc openMangleScope*(e: var EContext) =
+  e.toMangle = MangleScope(tab: initTable[SymId, string](), parent: e.toMangle)
+  e.typeCache.openScope()
+
+proc closeMangleScope*(e: var EContext) =
+  e.toMangle = e.toMangle.parent
+  e.typeCache.closeScope()
+
+proc registerMangle*(e: var EContext; s: SymId; ext: string) =
+  e.toMangle.tab[s] = ext
+
+proc registerMangleInParent*(e: var EContext; s: SymId; ext: string) =
+  e.toMangle.parent.tab[s] = ext
+
+proc maybeMangle*(e: var EContext; s: SymId): string =
+  var it {.cursor.} = e.toMangle
+  while it != nil:
+    result = it.tab.getOrDefault(s)
+    if result != "":
+      return result
+    it = it.parent
+  return ""
 
 proc error*(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
   write stdout, "[Error] "
@@ -72,21 +95,4 @@ template loop*(e: var EContext; c: var Cursor; body: untyped) =
     body
 
 proc takeTree*(e: var EContext; n: var Cursor) =
-  if n.kind != ParLe:
-    e.dest.add n
-    inc n
-  else:
-    var nested = 0
-    while true:
-      e.dest.add n
-      case n.kind
-      of ParLe: inc nested
-      of ParRi:
-        dec nested
-        if nested == 0:
-          inc n
-          break
-      of EofToken:
-        error e, "expected ')', but EOF reached"
-      else: discard
-      inc n
+  takeTree e.dest, n

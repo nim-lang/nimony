@@ -44,7 +44,7 @@ type
   Context = object
     dest: TokenBuf
     r: CurrentRoutine
-    cache: TypeCache
+    typeCache: TypeCache
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
@@ -119,7 +119,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       let fn = n
       skip n # skip the `fn`
       if n.kind != ParRi:
-        var fnType = getType(c.cache, fn)
+        var fnType = getType(c.typeCache, fn)
         assert fnType == "params"
         inc fnType
         let firstParam = asLocal(fnType)
@@ -235,7 +235,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   elif n.exprKind in CallKinds:
     inc n # skip `(call)`
     let orig = n
-    var fnType = getType(c.cache, n)
+    var fnType = getType(c.typeCache, n)
     skip n # skip `fn`
     assert fnType == "params"
     inc fnType
@@ -255,6 +255,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
     recurse()
 
 proc trProcDecl(c: var Context; n: var Cursor) =
+  c.typeCache.openScope()
   takeToken c, n
   var isGeneric = false
   var r = CurrentRoutine(returnType: WantT)
@@ -262,6 +263,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     if i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsS
     if i == ParamsPos:
+      c.typeCache.registerParams(n.symId, n)
       var params = n
       inc params
       let firstParam = asLocal(params)
@@ -281,6 +283,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
       checkForDangerousLocations c, body
     swap c.r, r
     wantParRi c, n
+  c.typeCache.closeScope()
 
 proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   var fnType = fnType
@@ -318,7 +321,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
   let callExpr = n
   takeToken c, n
-  let fnType = getType(c.cache, n)
+  let fnType = getType(c.typeCache, n)
   assert fnType == "params"
   var retType = fnType
   skip retType
@@ -389,7 +392,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
 
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # Idea: A variable like `x` does not own its value as it can be read multiple times.
-  let typ = getType(c.cache, n)
+  let typ = getType(c.typeCache, n)
   let k = typ.typeKind
   if k in {MutT, OutT}:
     if e notin {WantT, WantTButSkipDeref}:
@@ -422,6 +425,7 @@ proc trLocal(c: var Context; n: var Cursor) =
     takeTree c.dest, n
   let typ = n
   takeTree c.dest, n
+  c.typeCache.registerLocal(name.symId, typ)
   let e = if typ.typeKind in {OutT, MutT}: WantVarT else: WantT
   trAsgnRhs c, name, n, e
   wantParRi c, n
@@ -442,7 +446,7 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     assert n.exprKind == KvX
     takeToken c, n
     takeTree c.dest, n # key
-    let fieldType = getType(c.cache, n)
+    let fieldType = getType(c.typeCache, n)
     let e = if fieldType.typeKind in {MutT, OutT}: WantVarT else: WantT
     tr c, n, e
   wantParRi c, n
@@ -496,6 +500,10 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trLocal c, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProcDecl c, n
+      of ScopeS:
+        c.typeCache.openScope()
+        trSons c, n, WantT
+        c.typeCache.closeScope()
       else:
         if isDeclarative(n):
           takeTree c.dest, n
@@ -503,11 +511,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
           trSons c, n, WantT
 
 proc injectDerefs*(n: Cursor): TokenBuf =
-  var c = Context(cache: createTypeCache(),
+  var c = Context(typeCache: createTypeCache(),
     r: CurrentRoutine(returnType: WantT, firstParam: NoSymId), dest: TokenBuf())
+  c.typeCache.openScope()
   var n2 = n
   var n3 = n
   tr(c, n2, WantT)
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
+  c.typeCache.closeScope()
   result = ensureMove(c.dest)
