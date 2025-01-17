@@ -471,7 +471,13 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
             error e, "expected string literal or ident, but got: ", c
           result.flags.incl Nodecl
           inc c
-        of ImportC, ImportCpp, ExportC, Plugin:
+        of ImportC, ImportCpp:
+          inc c
+          expectStrLit e, c
+          result.externName = pool.strings[c.litId]
+          result.flags.incl pk
+          inc c
+        of ExportC, Plugin:
           inc c
           expectStrLit e, c
           result.externName = pool.strings[c.litId]
@@ -484,6 +490,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
           expectStrLit e, c
           result.header = c.litId
+          result.flags.incl Nodecl
           inc c
         of Align:
           inc c
@@ -608,6 +615,10 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   swap dst, e.dest
   if Nodecl in prag.flags or isGeneric:
     discard "do not add to e.dest"
+  elif prag.flags * {ImportC, ImportCpp} != {}:
+    e.dest.add tagToken("imp", c.info)
+    e.dest.add dst
+    e.dest.addParRi()
   else:
     e.dest.add dst
   if prag.header != StrId(0):
