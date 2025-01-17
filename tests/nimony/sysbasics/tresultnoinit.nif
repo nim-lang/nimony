@@ -1,14 +1,14 @@
 (.nif24)
 ,1,tests/nimony/sysbasics/tresultnoinit.nim(stmts
  (proc 5 :foo.0.tremd49gb1 . . . 8
-  (params) 4,6,lib/std/system.nim
+  (params) 4
   (i -1) 16
   (pragmas 2
    (noinit)) . 29
   (stmts
    (result :result.0 .
     (pragmas
-     (noinit)) ~25,6,lib/std/system.nim
+     (noinit)) ~25
     (i -1) .)
    (discard .) ~29
    (ret result.0))))
