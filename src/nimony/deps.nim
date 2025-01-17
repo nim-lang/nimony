@@ -241,11 +241,14 @@ proc mescape(p: string): string =
     "]": "\\]"
   })
 
-proc generateMakefile(c: DepContext; commandLineArgs: string): string =
-  var s = ""
-  s.add "# Auto-generated Makefile\n"
-  s.add "\n.PHONY: all\n"
-  s.add ".SECONDARY:\n" # don't delete intermediate files
+const makefileHeader = """
+# Auto-generated Makefile
+.PHONY: all
+.SECONDARY:
+  """ # don't delete intermediate files
+
+proc generateFinalMakefile(c: DepContext): string =
+  var s = makefileHeader
   let dest =
     case c.cmd
     of DoCheck:
@@ -278,6 +281,11 @@ proc generateMakefile(c: DepContext; commandLineArgs: string): string =
     let hexer = findTool("hexer")
     s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(hexer) & " $<"
 
+  result = "nifcache" / c.rootNode.files[0].modname & ".final.makefile"
+  writeFile result, s
+
+proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
+  var s = makefileHeader
 
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
@@ -328,13 +336,16 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild, 
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
-  let makeFilename = generateMakefile(c, commandLineArgs)
+  let makeFilename = generateFrontendMakefile(c, commandLineArgs)
+  let makeFinalFilename = generateFinalMakefile(c)
   #echo "run with: make -f ", makeFilename
   when defined(windows):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
-  exec "make" & (if silentMake: " -s" else: "") &
+  let makeCommand = "make" & (if silentMake: " -s" else: "") &
     (if forceRebuild: " -B" else: "") &
-    " -f " & quoteShell(makeFilename)
+    " -f "
+  exec makeCommand & quoteShell(makeFilename)
+  exec makeCommand & quoteShell(makeFinalFilename)
   if cmd == DoRun:
     exec exeFile(c.rootNode.files[0])
