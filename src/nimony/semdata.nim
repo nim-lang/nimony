@@ -19,6 +19,7 @@ type
     kind*: SymKind
     inGeneric*, inLoop*, inBlock*: int
     returnType*: TypeCursor
+    pragmas*: set[PragmaKind]
     resId*: SymId
     parent*: SemRoutine
 
