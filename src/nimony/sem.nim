@@ -138,7 +138,7 @@ proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
               return true
             skip decl
     result = false
-  of RetS, BreakS, ContinueS: # XXX also `raise`
+  of RetS, BreakS, ContinueS, RaiseS:
     result = true
   else:
     result = false
