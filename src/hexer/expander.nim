@@ -585,7 +585,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
 
   var genPragmas = openGenPragmas()
   if prag.externName.len > 0:
-    e.registerMangle(s, prag.externName & ".c")
+    e.registerMangleInParent(s, prag.externName & ".c")
     e.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
   if Selectany in prag.flags:
     e.addKey genPragmas, "selectany", pinfo

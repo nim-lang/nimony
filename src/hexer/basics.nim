@@ -38,6 +38,9 @@ proc closeMangleScope*(e: var EContext) =
 proc registerMangle*(e: var EContext; s: SymId; ext: string) =
   e.toMangle.tab[s] = ext
 
+proc registerMangleInParent*(e: var EContext; s: SymId; ext: string) =
+  e.toMangle.parent.tab[s] = ext
+
 proc maybeMangle*(e: var EContext; s: SymId): string =
   var it {.cursor.} = e.toMangle
   while it != nil:
