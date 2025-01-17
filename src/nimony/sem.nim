@@ -1762,10 +1762,11 @@ proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
       inc n # skip the SymbolDef
       if n.kind == ParLe:
         # ^ export marker position has a `(`? If so, it is a magic!
-        c.dest[c.dest.len-1] = n.load
+        let info = c.dest[c.dest.len-1].info
+        c.dest[c.dest.len-1] = withLineInfo(n.load, info)
         inc n
         while true:
-          c.dest.add n
+          c.dest.add withLineInfo(n.load, info)
           if n.kind == ParRi: break
           inc n
 
@@ -2932,10 +2933,11 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
     let typeStart = c.dest.len
-    c.dest.buildTree TypedescT, it.n.info:
+    let info = c.dest[c.dest.len-1].info
+    c.dest.buildTree TypedescT, info:
       let symStart = c.dest.len
-      c.dest.add symToken(s.name, it.n.info)
-      semTypeSym c, s, it.n.info, symStart, InLocalDecl
+      c.dest.add symToken(s.name, info)
+      semTypeSym c, s, info, symStart, InLocalDecl
     it.typ = typeToCursor(c, typeStart)
     c.dest.shrink typeStart
     commonType c, it, start, expected

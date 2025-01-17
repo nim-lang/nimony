@@ -44,6 +44,10 @@ proc addToken[L](tree: var seq[PackedToken]; kind: TokenKind; id: L; info: Packe
 proc copyKeepLineInfo*(dest: var PackedToken; src: PackedToken) {.inline.} =
   dest.x = src.x
 
+proc withLineInfo*(n: PackedToken; info: PackedLineInfo): PackedToken {.inline.} =
+  result = n
+  result.info = info
+
 type
   StrId* = distinct uint32
   SymId* = distinct uint32

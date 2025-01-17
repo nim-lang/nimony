@@ -6,7 +6,7 @@
    (magic 7 Int)) .) 10,3
  (type ~8 :NodeObj.0.tbivahh0m . . . 2
   (object . ~8,1
-   (fld :data.0.tbivahh0m . . 1,~4
+   (fld :data.0.tbivahh0m . . 6
     (i -1) .) ~8,2
    (fld :left.0.tbivahh0m . . 5,1
     (ref 4 NodeObj.0.tbivahh0m) .) ~2,2

@@ -1,7 +1,7 @@
 (.nif24)
 ,1,tests/nimony/sysbasics/tbasics.nim(stmts 8,1
  (type ~6 :Array.0.tbawx6nu81 . . . 7
-  (array ~11,5,lib/std/system.nim
+  (array 4
    (i -1)
    (rangetype
     (i -1) +0 +4))) 4,3
@@ -12,12 +12,12 @@
     (i -1) +0 +2)) 4
   (arr 1 +1 4 +2 7 +3)) 4,4
  (var :s2.0.tbawx6nu81 . . 11,~3
-  (array ~11,5,lib/std/system.nim
+  (array 4
    (i -1)
    (rangetype
     (i -1) +0 +4)) .) 4,5
  (var :s3.0.tbawx6nu81 . . 11,~4
-  (array ~11,5,lib/std/system.nim
+  (array 4
    (i -1)
    (rangetype
     (i -1) +0 +4)) 12
@@ -40,7 +40,7 @@
  (call ~3 foo.0.tbawx6nu81) ,13
  (proc 5 :foo2.0.tbawx6nu81 . . . 9
   (params 1
-   (param :m.0 . . ~6,~7,lib/std/system.nim
+   (param :m.0 . . 3
     (i -1) .)) . . . 2,1
   (stmts 4
    (var :x.2 . .
@@ -56,7 +56,7 @@
     (tup 1 x.2 4 +1 7 +2)) 4,2
    (let :m1.0 . . 6
     (tuple
-     (fld :Field0.1.tbawx6nu81 . . ~8,~10,lib/std/system.nim
+     (fld :Field0.1.tbawx6nu81 . . 1,~3
       (i -1) .) 3
      (fld :Field1.1.tbawx6nu81 . .
       (i -1) .)) 5
@@ -77,7 +77,7 @@
         (i -1) .)) .) 6
      (fld :Field2.1.tbawx6nu81 . . ~6,~2
       (tuple
-       (fld :Field0.1.tbawx6nu81 . . ~8,~10,lib/std/system.nim
+       (fld :Field0.1.tbawx6nu81 . . 1,~3
         (i -1) .) 3
        (fld :Field1.1.tbawx6nu81 . .
         (i -1) .)) .)) 5
@@ -85,18 +85,18 @@
  (call ~4 foo2.0.tbawx6nu81 1 +12) ,22
  (proc 5 :foo3.0.tbawx6nu81 . . . 9
   (params 1
-   (param :x.0 . . ~6,26,lib/std/system.nim
+   (param :x.0 . . 3
     (pointer) .)) . . . 2,1
   (stmts 4
-   (let :m.2 . . ~2,25,lib/std/system.nim
+   (let :m.2 . . 7,~1
     (pointer) 4 x.0) 4,1
    (let :s2.0 . . 10
-    (ptr ~12,~18,lib/std/system.nim
+    (ptr 4
      (i -1)) 5
     (cast 5
-     (ptr ~12,~18,lib/std/system.nim
+     (ptr 4
       (i -1)) 14 x.0)) 4,2
-   (let :s3.0 . . ~2,~19,lib/std/system.nim
+   (let :s3.0 . . 14,~1
     (i -1) 5
     (deref s2.0)))) ,27
  (block . 2,1
@@ -104,14 +104,14 @@
    (var :s.1 . .
     (i -1) 4 +2) 4,1
    (let :m.3 . . 10,~5
-    (ptr ~12,~18,lib/std/system.nim
+    (ptr 4
      (i -1)) 9
     (addr s.1)) 4,2
    (call ~4 foo3.0.tbawx6nu81 1
-    (hconv ~3,18,lib/std/system.nim
+    (hconv 6,~8
      (pointer) m.3)) 4,3
-   (let :m2.0 . . ~2,17,lib/std/system.nim
+   (let :m2.0 . . 7,~9
     (pointer) 5
-    (cast ~7,17,lib/std/system.nim
+    (cast 5
      (pointer) 14 m.3)) 4,4
    (call ~4 foo3.0.tbawx6nu81 1 m2.0))))
