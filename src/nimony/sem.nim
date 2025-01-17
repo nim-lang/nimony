@@ -369,8 +369,13 @@ proc declareResult(c: var SemContext; info: PackedLineInfo): SymId =
     buildTree c.dest, ResultS, info:
       c.dest.add symdefToken(result, info) # name
       c.dest.addDotToken() # export marker
-      c.dest.addDotToken() # pragmas
-      # XXX ^ pragma should be `.noinit` if the proc decl has it
+      if NoInit in c.routine.pragmas:
+        c.dest.add parLeToken(PragmasS, info)
+        c.dest.add parLeToken(NoInit, info)
+        c.dest.addParRi()
+        c.dest.addParRi()
+      else:
+        c.dest.addDotToken() # pragmas
       c.dest.copyTree(c.routine.returnType) # type
       c.dest.addDotToken() # value
     publish c, result, declStart
@@ -2836,6 +2841,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     c.routine.returnType = semReturnType(c, it.n)
     var crucial = default CrucialPragma
     semPragmas c, it.n, crucial, kind
+    c.routine.pragmas = crucial.flags
     if crucial.hasVarargs.isValid:
       addVarargsParameter c, beforeParams, crucial.hasVarargs
     if crucial.magic.len > 0:
