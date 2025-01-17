@@ -31,3 +31,6 @@ block:
   foo3(m)
   let m2 = cast[pointer](m)
   foo3(m2)
+
+
+let sInfo = instantiationInfo(-1, false)

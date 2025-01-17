@@ -153,6 +153,7 @@ type
     ArrAtX = "arrat"
     TupAtX = "tupat" # tup[0] syntax
     EnsureMoveX = "emove" # note that `move` can be written in standard Nim
+    InstantiationInfoX = "instantiationinfo"
 
   TypeKind* = enum
     NoType

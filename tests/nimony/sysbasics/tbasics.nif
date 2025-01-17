@@ -114,4 +114,10 @@
     (pointer) 5
     (cast 5
      (pointer) 14 m.3)) 4,4
-   (call ~4 foo3.0.tbawx6nu81 1 m2.0))))
+   (call ~4 foo3.0.tbawx6nu81 1 m2.0))) 4,35
+ (let :sInfo.0.tbawx6nu81 . . 25
+  (tuple
+   (string)
+   (i -1)
+   (i -1)) 25
+  (tup "tests/nimony/sysbasics/tbasics.nim" +36 +29)))

@@ -8,7 +8,7 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
+import std / [os, tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -787,7 +787,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX, TupAtX}:
+              ArrAtX, DerefX, TupAtX, InstantiationInfoX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -3930,6 +3930,48 @@ proc semTupAt(c: var SemContext; it: var Item) =
     wantParRi c, it.n
     commonType c, it, exprStart, expected
 
+proc semInstantiationInfo(c: var SemContext, it: var Item) =
+  let info = it.n.info
+  let expected = it.typ
+  let exprStart = c.dest.len
+
+  c.dest.addParLe(TupleConstrX, info)
+  inc it.n
+
+  # TODO: info stack
+  let idx: xint = evalOrdinal(c, it.n)
+  if idx.isNaN:
+    c.buildErr it.n.info, "cannot evaluate at compile time: " & toString(it.n)
+  skip it.n
+  let useFullPaths = evalOrdinal(c, it.n)
+  if useFullPaths.isNaN:
+    c.buildErr it.n.info, "cannot evaluate at compile time: " & toString(it.n)
+  skip it.n
+
+  let (file, line, col) = unpack(pool.man, info)
+
+  let filename: string
+  if useFullPaths == createXint(1'i64):
+    filename = absolutePath(pool.files[file])
+  else:
+    filename = pool.files[file]
+  c.dest.addStrLit filename, info
+  c.dest.addIntLit line, info
+  c.dest.addIntLit col, info
+
+  wantParRi c, it.n
+
+  let typeStart = c.dest.len
+
+  c.dest.buildTree TupleT, info:
+    c.dest.addSubtree c.types.stringType
+    c.dest.addSubtree c.types.intType
+    c.dest.addSubtree c.types.intType
+
+  it.typ = typeToCursor(c, typeStart)
+  c.dest.shrink typeStart
+  commonType c, it, exprStart, expected
+
 proc getDottedIdent(n: var Cursor): string =
   let isError = n.kind == ParLe and n.tagId == ErrT
   if isError:
@@ -4738,6 +4780,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semObjDefault c, it
     of DefaultTupX:
       semTupleDefault c, it
+    of InstantiationInfoX:
+      semInstantiationInfo c, it
     of LowX:
       semLow c, it
     of HighX:
