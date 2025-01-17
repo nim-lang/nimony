@@ -499,7 +499,7 @@ template withFromInfo(req: InstRequest; body: untyped) =
 
 type
   TypeDeclContext = enum
-    InLocalDecl, InTypeSection, InObjectDecl, InParamDecl, InInheritanceDecl, InReturnTypeDecl, AllowValues,
+    InLocalDecl, InTypeSection, InReturnTypeDecl, AllowValues,
     InGenericConstraint
 
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext)
@@ -1848,16 +1848,16 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
         semLocal(c, n, FldY)
   wantParRi c, n
 
-proc semTupleFieldType(c: var SemContext; elemType: var Cursor; context: TypeDeclContext; i: int) =
+proc semTupleFieldType(c: var SemContext; elemType: var Cursor; i: int) =
   c.dest.add parLeToken(pool.tags.getOrIncl($FldS), elemType.info) # start field
   c.dest.add identToken(pool.strings.getOrIncl("Field" & $i), elemType.info)
   c.dest.addDotToken() # export marker
   c.dest.addDotToken() # pragmas
-  semLocalTypeImpl c, elemType, context
+  semLocalTypeImpl c, elemType, InLocalDecl
   c.dest.addDotToken() # value
   c.dest.addParRi() # end field
 
-proc semTupleType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
+proc semTupleType(c: var SemContext; n: var Cursor) =
   c.dest.add parLeToken(TupleT, n.info)
   inc n
   # tuple fields:
@@ -1867,7 +1867,7 @@ proc semTupleType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
       if n.substructureKind == FldS:
         semLocal(c, n, FldY)
       else:
-        semTupleFieldType(c, n, context, i)
+        semTupleFieldType(c, n, i)
         inc i
   wantParRi c, n
 
@@ -2204,7 +2204,7 @@ proc addVarargsParameter(c: var SemContext; paramsAt: int; info: PackedLineInfo)
 proc semArrayType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   takeToken c, n
-  semLocalTypeImpl c, n, context
+  semLocalTypeImpl c, n, InLocalDecl
   # index type, possibilities are:
   # 1. length as integer
   # 2. range expression i.e. `a..b`
@@ -2259,7 +2259,7 @@ proc semArrayType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
 
 proc semRangeType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   takeToken c, n
-  semLocalTypeImpl c, n, context
+  semLocalTypeImpl c, n, InLocalDecl
   var valuesBuf = createTokenBuf(4)
   swap c.dest, valuesBuf
   semLocalTypeImpl c, n, AllowValues
@@ -2315,7 +2315,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         semLocalTypeImpl c, n, context
         skipParRi n
       elif exprKind(n) == TupleConstrX:
-        semTupleType(c, n, context)
+        semTupleType c, n
       elif isOrExpr(n):
         c.dest.addParLe(OrT, info)
         inc n # tag
@@ -2353,14 +2353,14 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       if tryTypeClass(c, n):
         return
       takeToken c, n
-      semLocalTypeImpl c, n, context
+      semLocalTypeImpl c, n, InLocalDecl
       wantParRi c, n
     of SetT:
       if tryTypeClass(c, n):
         return
       takeToken c, n
       let elemTypeStart = c.dest.len
-      semLocalTypeImpl c, n, context
+      semLocalTypeImpl c, n, InLocalDecl
       wantParRi c, n
       let elemType = cursorAt(c.dest, elemTypeStart)
       if containsGenericParams(elemType):
@@ -2382,7 +2382,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     of TupleT:
       if tryTypeClass(c, n):
         return
-      semTupleType c, n, context
+      semTupleType c, n
     of ArrayT:
       if tryTypeClass(c, n):
         return
@@ -2394,7 +2394,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     of VarargsT:
       takeToken c, n
       if n.kind != ParRi:
-        semLocalTypeImpl c, n, context
+        semLocalTypeImpl c, n, InLocalDecl
         if n.kind == DotToken:
           takeToken c, n
         else:
@@ -2429,7 +2429,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         skip n
       else:
         takeToken c, n
-        semLocalTypeImpl c, n, context
+        semLocalTypeImpl c, n, InLocalDecl
         wantParRi c, n
     of ProcT, IterT:
       if tryTypeClass(c, n):
@@ -3698,7 +3698,7 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
   typ.addParRi()
   let typeStart = c.dest.len
   var t = typ.cursorAt(0)
-  semTupleType(c, t, InLocalDecl)
+  semTupleType c, t
   it.typ = typeToCursor(c, typeStart)
   c.dest.shrink typeStart
   commonType c, it, exprStart, origExpected
