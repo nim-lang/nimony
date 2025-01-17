@@ -33,48 +33,48 @@
  (proc 5 :\2B.0.tte6j7czy
   (add -3) . . 9
   (params 1
-   (param :x.0 . . ~8,~18
+   (param :x.0 . . 6
     (i -1) .) 4
-   (param :y.0 . . ~11,~18
-    (i -1) .)) 2,~18
+   (param :y.0 . . 3
+    (i -1) .)) 13
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,21
  (template 9 :plus.0.tte6j7czy . . . 13
   (params 1
-   (param :x.1 . . ~12,~20
+   (param :x.1 . . 6
     (i -1) .) 4
-   (param :y.1 . . ~15,~20
-    (i -1) .)) 2,~20
+   (param :y.1 . . 3
+    (i -1) .)) 13
   (i -1) . . 32
   (stmts 2
-   (add ~32,~20
+   (add ~14
     (i -1) ~2 x.1 2 y.1))) ,23
  (proc 5 :foo.0.tte6j7czy . . . 8
   (params 1
-   (param :x.2 . . ~7,~22
+   (param :x.2 . . 3
     (i -1) .) 9
-   (param :y.2 . . ~15,~19
-    (string) .)) 2,~22
+   (param :y.2 . . 3
+    (string) .)) 21
   (i -1) . . 2,1
   (stmts 4
-   (result :result.0 . . ~4,~23
+   (result :result.0 . . 10,~5
     (i -1) .) 4
    (var :x.4 . .
     (string) 4 "abc") 7,1
    (asgn ~7 result.0 23,~4
     (expr 2
-     (add ~32,~20
+     (add ~14
       (i -1) ~18,4 +4 ~2
       (expr 2
-       (add ~32,~20
+       (add ~14
         (i -1) ~10,4 +2 ~7,4 +89))))) 2,2
    (asgn ~2 x.4 2 "34") ~2,~1
    (ret result.0))) ,28
  (proc 5 :overloaded.0.tte6j7czy . . . 15
   (params) . . . 2,1
   (stmts 4
-   (let :someInt.0 . . ~4,~28
+   (let :someInt.0 . . 7,~10
     (i -1) 13
     (add
      (i -1) 1 +23 5 +90)) ,1
@@ -90,25 +90,25 @@
   (typevars 1
    (typevar :T.2.tte6j7czy . . . .)) 16
   (params 1
-   (param :x.3 . . ~15,~33
+   (param :x.3 . . 3
     (i -1) .)) 10 T.2.tte6j7czy . . 30
   (stmts 1
-   (conv 1 T.2.tte6j7czy 1 x.3))) 4,36
+   (conv ~1 T.2.tte6j7czy 1 x.3))) 4,36
  (let :val.0.tte6j7czy . .
   (i -1) 6 +123) ,37
  (discard 30,~3
   (expr 1
-   (conv ~26,~2
+   (conv ~18,3
     (u -1) ~12,3 val.0.tte6j7czy))) 19,13
  (type :MyGeneric.1.tte6j7czy .
-  (at MyGeneric.0.tte6j7czy ~17,~12
+  (at MyGeneric.0.tte6j7czy 1
    (i -1)) ~4,~4 . ~2,~4
   (object . ~13,1
-   (fld :x.1.tte6j7czy . . ~2,~9
+   (fld :x.1.tte6j7czy . . 16,3
     (i -1) .))) 18,14
  (type :MyGeneric.2.tte6j7czy .
-  (at MyGeneric.0.tte6j7czy ~16,~11
+  (at MyGeneric.0.tte6j7czy 1
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
-   (fld :x.2.tte6j7czy . . ~2,~7
+   (fld :x.2.tte6j7czy . . 15,4
     (f +64) .))))

@@ -113,14 +113,14 @@
     (ddot ~6 result.1 data.1.tge0lah6v +0) 2 data.2) ~2,~1
    (ret result.1))) 12,8
  (type :Node.4.tge0lah6v .
-  (at Node.0.tge0lah6v ~7,~8
+  (at Node.0.tge0lah6v 1
    (i -1)) ~2,~5 . ,~5
   (ref 11 NodeObj.1.tge0lah6v)) 23,3
  (type :NodeObj.1.tge0lah6v .
-  (at NodeObj.0.tge0lah6v ~18,~3
+  (at NodeObj.0.tge0lah6v ~10,5
    (i -1)) ~10,1 . ~8,1
   (object . ~11,1
-   (fld :data.1.tge0lah6v . . 1,~5
+   (fld :data.1.tge0lah6v . . 9,3
     (i -1) .) ~11,2
    (fld :left.1.tge0lah6v . . 8,~3
     (ref 11 NodeObj.1.tge0lah6v) .) ~5,2

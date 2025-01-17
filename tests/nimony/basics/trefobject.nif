@@ -6,7 +6,7 @@
    (magic 7 Int)) .) 9,2
  (type ~4 :Foo.0.treb3udid . . . 6
   (refobj . ~13,1
-   (fld :x.0.treb3udid . . 3,~3
+   (fld :x.0.treb3udid . . 3
     (i -1) .) ~13,2
    (fld :parent.0.treb3udid . . 8 Foo.0.treb3udid .))) 4,6
  (var :foo.0.treb3udid . . 5 Foo.0.treb3udid .) 13,8
@@ -21,10 +21,10 @@
     (at ~4 Node.0.treb3udid 1 T.0.treb3udid) .))) 4,12
  (var :node.0.treb3udid . . 10 Node.1.treb3udid .) 14,12
  (type :Node.1.treb3udid .
-  (at Node.0.treb3udid ~9,~12
+  (at Node.0.treb3udid 1
    (i -1)) ~1,~4 . 5,~4
   (refobj . ~17,1
-   (fld :val.1.treb3udid . . 3,~9
+   (fld :val.1.treb3udid . . 13,3
     (i -1) .) ~17,2
    (fld :left.1.treb3udid . . 17 Node.1.treb3udid .) ~11,2
    (fld :right.1.treb3udid . . 11 Node.1.treb3udid .))))

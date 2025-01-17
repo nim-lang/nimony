@@ -7,7 +7,7 @@
  (proc 5 :defined.0.tdetxkbxo
   (defined) . . 12
   (params 1
-   (param :x.0 . . ~8,~2
+   (param :x.0 . . 3
     (untyped) .)) . 25
   (pragmas 2
    (magic 7 Defined)) . .) 4,4
