@@ -68,7 +68,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
     var name = v
     extractBasename(name)
     let nameId = pool.strings.getOrIncl(name)
-    # check that the converter is imported, slow but better to be slow here than anywhere else:
+    # check that the converter is imported, slow but better to be slow here:
     if nameId in importTab and module in importTab[nameId]:
       let key = pool.syms.getOrIncl(k)
       let val = pool.syms.getOrIncl(v)
