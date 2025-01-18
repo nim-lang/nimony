@@ -49,6 +49,7 @@ proc load*(suffix: string): NifModule =
 
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
+                    converters: var Table[SymId, SymId];
                     marker: var PackedSet[StrId]; negateMarker: bool) =
   let m = load(suffix)
   for k, _ in m.index.public:
@@ -63,6 +64,10 @@ proc loadInterface*(suffix: string; iface: var Iface;
     if not symMarked:
       # mark that this module contains the identifier `strId`:
       importTab.mgetOrPut(strId, @[]).add(module)
+  for k, v in m.index.converters:
+    let key = pool.syms.getOrIncl(k)
+    let val = pool.syms.getOrIncl(v)
+    converters[key] = val
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):

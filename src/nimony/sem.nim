@@ -249,7 +249,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
     publish moduleSym, moduleDecl
     var module = ImportedModule()
     var marker = mode.list
-    loadInterface suffix, module.iface, moduleSym, c.importTab,
+    loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters,
       marker, negateMarker = mode.kind == FromImport
     c.importedModules[moduleSym] = module
 
@@ -2854,6 +2854,16 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       skip it.n
 
     publishSignature c, symId, declStart
+    var converterRoot = SymId(0)
+    if kind == ConverterY:
+      converterRoot = nominalRoot(c.routine.returnType)
+      if converterRoot == SymId(0):
+        buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
+      else:
+        c.converters[converterRoot] = symId
+        if pass == checkBody and c.dest[beforeExportMarker].kind != DotToken:
+          # don't register instances
+          c.converterIndexMap.add((converterRoot, symId))
     if it.n.kind != DotToken:
       case pass
       of checkGenericInst:
@@ -4796,7 +4806,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
   #b.addRaw toString(c.dest)
   #b.close()
   writeFile outfile, "(.nif24)\n" & toString(c.dest)
-  createIndex outfile, true, c.hookIndexMap
+  createIndex outfile, true, IndexSections(hooks: c.hookIndexMap, converters: c.converterIndexMap)
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n == "stmts"

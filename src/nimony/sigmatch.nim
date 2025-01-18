@@ -635,7 +635,11 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     m.error "BUG: " & expected(f, arg.typ)
 
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
+  let fOrig = f
   singleArgImpl(m, f, arg)
+  if m.err:
+    # try converter
+    discard
   if not m.err:
     m.useArg arg # since it was a match, copy it
     while m.opened > 0:

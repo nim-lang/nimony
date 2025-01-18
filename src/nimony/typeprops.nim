@@ -1,3 +1,4 @@
+import std/assertions
 include nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
 
@@ -200,3 +201,27 @@ proc lengthOrd*(c: var SemContext; typ: TypeCursor): xint =
   let last = lastOrd(c, typ)
   if last.isNaN: return last
   result = last - first + createXint(1.uint64)
+
+proc nominalRoot*(t: TypeCursor): SymId =
+  result = SymId(0)
+  var t = t
+  while true:
+    case t.kind
+    of Symbol:
+      let res = tryLoadSym(t.symId)
+      assert res.status == LacksNothing
+      if res.decl.symKind == TypeY:
+        return t.symId
+      else:
+        # includes typevar case
+        break
+    of ParLe:
+      case t.typeKind
+      of MutT, OutT, LentT, SinkT, StaticT, TypedescT:
+        inc t
+      of InvokeT:
+        inc t
+      else:
+        break
+    else:
+      break
