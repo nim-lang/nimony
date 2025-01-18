@@ -1,3 +1,4 @@
 --define:nimPreviewSlimSystem
 --warningAsError:Uninit
 --warningAsError:ProveInit
+--experimental:strictdefs
