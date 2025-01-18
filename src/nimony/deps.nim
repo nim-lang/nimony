@@ -289,7 +289,7 @@ proc generateFinalMakefile(c: DepContext): string =
     for cfile in buildList:
       s.add "\n" & mescape("nifcache" / cfile.obj) & ": " & mescape(cfile.name) &
             "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
-            cfile.customArgs & " $< -o $@"
+            mescape(cfile.customArgs) & " $< -o $@"
 
     # The .o files depend on all of their .c files:
     s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
