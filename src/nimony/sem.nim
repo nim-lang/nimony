@@ -2854,16 +2854,15 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       skip it.n
 
     publishSignature c, symId, declStart
-    var converterRoot = SymId(0)
     if kind == ConverterY:
-      converterRoot = nominalRoot(c.routine.returnType)
-      if converterRoot == SymId(0):
+      let root = nominalRoot(c.routine.returnType)
+      if root == SymId(0):
         buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
       else:
-        c.converters.mgetOrPut(converterRoot, @[]).add(symId)
+        c.converters.mgetOrPut(root, @[]).add(symId)
         if pass == checkBody and c.dest[beforeExportMarker].kind != DotToken:
           # don't register instances
-          c.converterIndexMap.add((converterRoot, symId))
+          c.converterIndexMap.add((root, symId))
     if it.n.kind != DotToken:
       case pass
       of checkGenericInst:
