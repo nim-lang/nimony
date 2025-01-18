@@ -634,6 +634,43 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   else:
     m.error "BUG: " & expected(f, arg.typ)
 
+proc tryConverter(m: var Match; conv: SymId; f: Cursor; arg: Item) =
+  let res = tryLoadSym(conv)
+  assert res.status == LacksNothing
+  var fn = asRoutine(res.decl)
+  assert fn.kind == ConverterY
+  var src = fn.params
+  inc src
+  src = asLocal(src).typ
+  let srcStart = m.args.len
+  let srcCost = m.intCosts
+  singleArgImpl(m, src, arg) # XXX this infers the converter typevars for the entire candidate, probably a source of bugs in nim, maybe #19517?
+  if m.err: return
+  if srcCost != m.intCosts:
+    # cannot be conversion match
+    m.err = true
+    return
+  var dest = fn.retType
+  var callBuf = createTokenBuf(16) # dummy call node to use for matching dest type
+  let callTokens = [
+    parLeToken(CallX, arg.n.info), # HiddenCallConv
+    symToken(conv, arg.n.info)
+  ]
+  for tok in callTokens: callBuf.add tok
+  callBuf.addSubtree arg.n
+  callBuf.addParRi()
+  let destCosts = (m.intCosts, m.inheritanceCosts)
+  var destArg = Item(n: cursorAt(callBuf, 0), typ: dest)
+  var fMatch = f
+  singleArgImpl(m, fMatch, destArg)
+  if m.err: return
+  if destCosts != (m.intCosts, m.inheritanceCosts):
+    # cannot be subtype or conversion match
+    m.err = true
+    return
+  m.args.insert callTokens, srcStart # XXX instantiate generics in sem
+  inc m.opened
+
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
   let fOrig = f
   singleArgImpl(m, f, arg)
@@ -643,7 +680,15 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
     if root != SymId(0):
       let converters = m.context.converters.getOrDefault(root)
       if converters.len != 0:
-        discard
+        let oldErr = m.error
+        for conv in converters:
+          m.err = false
+          tryConverter(m, conv, fOrig, arg)
+          if not m.err:
+            # converter matched
+            break
+        if m.err:
+          m.error = oldErr
   if not m.err:
     m.useArg arg # since it was a match, copy it
     while m.opened > 0:
