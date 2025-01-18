@@ -650,7 +650,7 @@ proc tryConverter(m: var Match; conv: SymId; f: Cursor; arg: Item) =
     # cannot be conversion match
     m.err = true
     return
-  var dest = fn.retType
+  var dest = fn.retType # XXX nim also instantiates this
   var callBuf = createTokenBuf(16) # dummy call node to use for matching dest type
   let callTokens = [
     parLeToken(CallX, arg.n.info), # HiddenCallConv
