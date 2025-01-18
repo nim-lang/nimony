@@ -644,7 +644,7 @@ proc tryConverter(m: var Match; conv: SymId; f: Cursor; arg: Item) =
   src = asLocal(src).typ
   let srcStart = m.args.len
   let srcCost = m.intCosts
-  singleArgImpl(m, src, arg) # XXX this infers the converter typevars for the entire candidate, probably a source of bugs in nim, maybe #19517?
+  singleArgImpl(m, src, arg) # XXX this infers the converter typevars for the entire candidate, probably a source of bugs in nim, maybe #4554, #19517
   if m.err: return
   if srcCost != m.intCosts:
     # cannot be conversion match
