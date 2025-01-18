@@ -2860,7 +2860,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       if converterRoot == SymId(0):
         buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
       else:
-        c.converters[converterRoot] = symId
+        c.converters.mgetOrPut(converterRoot, @[]).add(converterRoot)
         if pass == checkBody and c.dest[beforeExportMarker].kind != DotToken:
           # don't register instances
           c.converterIndexMap.add((converterRoot, symId))

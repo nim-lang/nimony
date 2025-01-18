@@ -639,7 +639,11 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
   singleArgImpl(m, f, arg)
   if m.err:
     # try converter
-    discard
+    let root = nominalRoot(fOrig)
+    if root != SymId(0):
+      let converters = m.context.converters.getOrDefault(root)
+      if converters.len != 0:
+        discard
   if not m.err:
     m.useArg arg # since it was a match, copy it
     while m.opened > 0:
