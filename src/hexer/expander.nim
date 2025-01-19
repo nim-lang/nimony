@@ -502,6 +502,8 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           expectIntLit e, c
           result.bits = c.intId
           inc c
+        of Requires, Ensures:
+          skip c
         skipParRi e, c
       else:
         error e, "unknown pragma: ", c

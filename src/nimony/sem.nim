@@ -1665,6 +1665,18 @@ proc patchType(c: var SemContext; typ: TypeCursor; patchPosition: int) =
   let t = skipModifier(typ)
   c.dest.replace t, patchPosition
 
+proc semProposition(c: var SemContext; n: var Cursor; kind: PragmaKind) =
+  withNewScope c:
+    if kind == Ensures:
+      discard declareResult(c, n.info)
+    let start = c.dest.len
+    semBoolExpr c, n
+    # XXX More checking here: Expression can only use parameters and `result`
+    # and consts. Function calls are not allowed either. The grammar is:
+    # atom ::= const | param | result
+    # arith ::= atom | arith `+` arith | arith `-` arith | arith `*` arith | arith `/` arith # etc.
+    # expr ::= arith | expr `and` expr | expr `or` expr | `not` expr
+
 type
   CrucialPragma* = object
     magic: string
@@ -1722,6 +1734,15 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     c.dest.addParRi()
     inc n
+  of Requires, Ensures:
+    crucial.flags.incl pk
+    c.dest.add n
+    inc n
+    if n.kind != ParRi:
+      semProposition c, n, pk
+    else:
+      buildErr c, n.info, "`requires`/`ensures` pragma takes a bool expression"
+    c.dest.addParRi()
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   if n.kind == DotToken:

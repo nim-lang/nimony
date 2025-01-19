@@ -226,6 +226,8 @@ type
     ByRef = "byref"
     Inline = "inline"
     NoInit = "noinit"
+    Requires = "requires"
+    Ensures = "ensures"
 
   SubstructureKind* = enum
     NoSub
