@@ -225,7 +225,7 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
 proc parseCategory(path: string): Category =
   case path
   of "track": Tracked
-  of "basics": Basics
+  of "nosystem": Basics
   else: Normal
 
 proc findCategory(path: string): Category =
@@ -347,7 +347,7 @@ proc buildNifc(showProgress = false) =
   let exe = "nifc".addFileExt(ExeExt)
   robustMoveFile "src/nifc/" & exe, binDir() / exe
 
-proc buildGear3(showProgress = false) =
+proc buildHexer(showProgress = false) =
   exec "nim c src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
@@ -355,7 +355,7 @@ proc buildGear3(showProgress = false) =
 proc execNifc(cmd: string) =
   exec "nifc", cmd
 
-proc execGear3(cmd: string) =
+proc execHexer(cmd: string) =
   exec "hexer", cmd
 
 proc nifctests(overwrite: bool) =
@@ -386,8 +386,8 @@ proc hexertests(overwrite: bool) =
   let helloworld = "tests/hexer/hexer_helloworld"
   createIndex helloworld & ".nif", false
   createIndex mod1 & ".nif", false
-  execGear3 mod1 & ".nif"
-  execGear3 helloworld & ".nif"
+  execHexer mod1 & ".nif"
+  execHexer helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
 proc handleCmdLine =
@@ -428,7 +428,7 @@ proc handleCmdLine =
     buildNimsem()
     buildNimony()
     buildNifc()
-    buildGear3()
+    buildHexer()
     nimonytests(overwrite)
     nifctests(overwrite)
     #hexertests(overwrite)
@@ -441,7 +441,7 @@ proc handleCmdLine =
       buildNimsem(showProgress)
       buildNimony(showProgress)
       buildNifc(showProgress)
-      buildGear3(showProgress)
+      buildHexer(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -450,7 +450,7 @@ proc handleCmdLine =
     of "nifc":
       buildNifc(showProgress)
     of "hexer":
-      buildGear3(showProgress)
+      buildHexer(showProgress)
     else:
       writeHelp()
     removeDir "nifcache"
@@ -463,7 +463,7 @@ proc handleCmdLine =
     nifctests(overwrite)
 
   of "hexer":
-    buildGear3()
+    buildHexer()
     hexertests(overwrite)
   of "test":
     buildNimony()
