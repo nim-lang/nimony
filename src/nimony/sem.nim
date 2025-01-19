@@ -4017,7 +4017,7 @@ proc semDeclared(c: var SemContext; it: var Item) =
   else:
     let isDeclared = isDeclared(c, nameId)
     let beforeExpr = c.dest.len
-    c.dest.addParLe(if isDeclared: TrueX else: FalseX, it.n.info)
+    c.dest.addParLe(if isDeclared: TrueX else: FalseX, info)
     c.dest.addParRi()
     let expected = it.typ
     it.typ = c.types.boolType
