@@ -96,5 +96,8 @@ type
     meta*: MetaInfo
     genericHooks*: Table[SymId, seq[SymId]]
     hookIndexMap*: Table[string, seq[(SymId, SymId)]]
+    converters*: Table[SymId, seq[SymId]]
+    converterIndexMap*: seq[(SymId, SymId)]
+    instantiateType*: proc (c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf

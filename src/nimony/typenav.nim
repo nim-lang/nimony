@@ -128,7 +128,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       skip n
       if n.kind == ParRi:
         result = getTypeImpl(c, prev)
-  of CallX, CallStrLitX, InfixX, PrefixX, CmdX:
+  of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX:
     result = getTypeImpl(c, n.firstSon)
     if isRoutine(symKind(result)):
       let routine = asRoutine(result)
