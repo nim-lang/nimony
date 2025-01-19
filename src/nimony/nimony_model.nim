@@ -54,6 +54,7 @@ type
     DisarmerS = "disarmer"
     MoverS = "mover"
     DtorS = "dtor"
+    PragmasLineS = "pragmas"
 
   SymKind* = enum
     NoSym
@@ -226,6 +227,8 @@ type
     ByRef = "byref"
     Inline = "inline"
     NoInit = "noinit"
+    Requires = "requires"
+    Ensures = "ensures"
 
   SubstructureKind* = enum
     NoSub

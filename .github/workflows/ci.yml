@@ -113,6 +113,10 @@ jobs:
         if: runner.os == 'Windows'
         run: winget install ezwinports.make --disable-interactivity --accept-source-agreements
 
+      - name: System Info (Windows)
+        if: runner.os == 'Windows'
+        run: "gcc -v"
+
       # - name: Restore Nim from cache
       #   if: >
       #     steps.nim-compiler-cache.outputs.cache-hit != 'true' &&

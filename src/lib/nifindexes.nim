@@ -102,6 +102,7 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
 type IndexSections* = object
   hooks*: Table[string, seq[(SymId, SymId)]]
   converters*: seq[(SymId, SymId)]
+  toBuild*: TokenBuf
 
 proc getSection(tag: TagId; values: seq[(SymId, SymId)]; symToOffsetMap: Table[SymId, int]): TokenBuf =
   let KvT = registerTag "kv"
@@ -206,6 +207,14 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
     content.add toString(converterSectionBuf)
     content.add "\n"
 
+  let buildT = registerTag "build"
+  var buildBuf = createTokenBuf()
+  buildBuf.addParLe buildT
+  buildBuf.add toBuild
+  buildBuf.addParRi
+  content.add toString(buildBuf)
+  content.add "\n"
+
   if buildChecksum:
     var checksum = newSha1State()
     processForChecksum(checksum, buf)
@@ -218,7 +227,7 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
     writeFile(indexName, content)
 
 proc createIndex*(infile: string; buildChecksum: bool) =
-  createIndex(infile, buildChecksum, IndexSections(hooks: initTable[string, seq[(SymId, SymId)]]()))
+  createIndex(infile, buildChecksum, IndexSections(hooks: initTable[string, seq[(SymId, SymId)]](), toBuild: default(TokenBuf)))
 
 type
   NifIndexEntry* = object
@@ -228,6 +237,7 @@ type
     public*, private*: Table[string, NifIndexEntry]
     hooks*: Table[string, Table[string, NifIndexEntry]]
     converters*: Table[string, string] # map of dest types to converter symbols
+    toBuild*: seq[(string, string, string)]
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsoluteOffset = false) =
   let KvT = registerTag "kv"
@@ -357,6 +367,23 @@ proc readIndex*(indexName: string): NifIndex =
       readSymbolSection(s, result.converters)
       t = next(s)
 
+    let BuildT = registerTag "build"
+    if t.tag == BuildT:
+      t = next(s)
+      while t.kind != EofToken and t.kind != ParRi:
+        # tup
+        t = next(s)
+        assert t.kind == StringLit
+        let typ = pool.strings[t.litId]
+        t = next(s)
+        assert t.kind == StringLit
+        let path = pool.strings[t.litId]
+        t = next(s)
+        assert t.kind == StringLit
+        let args = pool.strings[t.litId]
+        result.toBuild.add (typ, path, args)
+        t = next(s)
+        t = next(s)
   else:
     assert false, "expected 'index' tag"
 

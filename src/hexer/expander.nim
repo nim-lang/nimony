@@ -502,6 +502,8 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           expectIntLit e, c
           result.bits = c.intId
           inc c
+        of Requires, Ensures:
+          skip c
         skipParRi e, c
       else:
         error e, "unknown pragma: ", c
@@ -1108,9 +1110,9 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       skip c
     of TypeS:
       traverseTypeDecl e, c
-    of ContinueS, WhenS:
+    of ContinueS, WhenS, ClonerS, TracerS, DisarmerS, MoverS, DtorS:
       error e, "unreachable: ", c
-    of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
+    of PragmasLineS:
       skip c
   else:
     error e, "statement expected, but got: ", c

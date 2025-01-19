@@ -1665,6 +1665,18 @@ proc patchType(c: var SemContext; typ: TypeCursor; patchPosition: int) =
   let t = skipModifier(typ)
   c.dest.replace t, patchPosition
 
+proc semProposition(c: var SemContext; n: var Cursor; kind: PragmaKind) =
+  withNewScope c:
+    if kind == Ensures:
+      discard declareResult(c, n.info)
+    let start = c.dest.len
+    semBoolExpr c, n
+    # XXX More checking here: Expression can only use parameters and `result`
+    # and consts. Function calls are not allowed either. The grammar is:
+    # atom ::= const | param | result
+    # arith ::= atom | arith `+` arith | arith `-` arith | arith `*` arith | arith `/` arith # etc.
+    # expr ::= arith | expr `and` expr | expr `or` expr | `not` expr
+
 type
   CrucialPragma* = object
     magic: string
@@ -1722,6 +1734,15 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     c.dest.addParRi()
     inc n
+  of Requires, Ensures:
+    crucial.flags.incl pk
+    c.dest.add n
+    inc n
+    if n.kind != ParRi:
+      semProposition c, n, pk
+    else:
+      buildErr c, n.info, "`requires`/`ensures` pragma takes a bool expression"
+    c.dest.addParRi()
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   if n.kind == DotToken:
@@ -4517,6 +4538,45 @@ template procGuard(c: var SemContext; body: untyped) =
   else:
     c.takeTree it.n
 
+proc semPragmasLine(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  inc it.n
+  while it.n.kind == ParLe and it.n.stmtKind in {CallS, CmdS}:
+    inc it.n
+    if it.n.kind == Ident and pool.strings[it.n.litId] == "build":
+      inc it.n
+      var args = newSeq[string]()
+      while it.n.kind != ParRi:
+        if it.n.kind != StringLit:
+          buildErr c, it.n.info, "expected `string` but got: " & toString(it.n)
+
+        args.add pool.strings[it.n.litId]
+        inc it.n
+
+      skipParRi it.n
+
+      if args.len != 2 and args.len != 3:
+        buildErr c, it.n.info, "build expected 2 or 3 parameters"
+
+      let fileId = getFileId(pool.man, info)
+      let dir = absoluteParentDir(pool.files[fileId])
+
+      let compileType = args[0]
+      let name = args[1].replace("${path}", dir).toAbsolutePath(dir)
+      let customArgs = if args.len == 3: args[2].replace("${path}", dir) else: ""
+
+      if not fileExists2(name):
+        buildErr c, it.n.info, "cannot find: " & name
+
+      c.toBuild.buildTree TupleConstrX, info:
+        c.toBuild.addStrLit compileType, info
+        c.toBuild.addStrLit name, info
+        c.toBuild.addStrLit customArgs, info
+    else:
+      buildErr c, it.n.info, "unsupported pragmas"
+
+  skipParRi it.n
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -4665,6 +4725,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         skip it.n
       of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
         takeTree c, it.n
+      of PragmasLineS:
+        semPragmasLine c, it
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
@@ -4805,7 +4867,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
   #b.addRaw toString(c.dest)
   #b.close()
   writeFile outfile, "(.nif24)\n" & toString(c.dest)
-  createIndex outfile, true, IndexSections(hooks: c.hookIndexMap, converters: c.converterIndexMap)
+  createIndex outfile, true, IndexSections(hooks: c.hookIndexMap, converters: c.converterIndexMap, toBuild: c.toBuild)
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n == "stmts"
