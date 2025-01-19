@@ -149,6 +149,7 @@ proc handleCmdLine() =
   of FullProject:
     createDir("nifcache")
     createDir(binDir())
+    exec "git submodule update --init"
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
     requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
