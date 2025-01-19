@@ -2,7 +2,7 @@
 
 (GENERATOR Module
 
-(COM "This grammar reflects the fact that we produce NASM code.")
+(COM "This grammar reflects the fact that we produce GAS code in intel syntax.")
 
 (RULE :Directive (global SYMBOL (DO "nl")))
 
