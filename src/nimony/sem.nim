@@ -4116,6 +4116,7 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
       let routine = getProcDecl(sym)
       let candidate = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
       var m = createMatch(addr c)
+      m.fn = candidate
       matchTypevars m, candidate, args
       if not m.err:
         # match
