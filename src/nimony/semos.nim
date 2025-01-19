@@ -35,6 +35,18 @@ proc binDir*(): string =
 proc toolDir*(f: string): string =
   result = binDir() / f
 
+proc absoluteParentDir*(f: string): string =
+  result = f.absolutePath().parentDir()
+
+proc fileExists2*(f: string): bool =
+  result = os.fileExists(f)
+
+proc toAbsolutePath*(f: string, dir: string): string =
+  if f.isAbsolute:
+    result = f
+  else:
+    result = dir / f
+
 proc findTool*(name: string): string =
   assert not name.isAbsolute
   let exe = name.addFileExt(ExeExt)

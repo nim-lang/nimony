@@ -8,7 +8,7 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils, os]
+import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -4529,16 +4529,13 @@ proc semPragmasLine(c: var SemContext; it: var Item) =
         buildErr c, it.n.info, "build expected 2 or 3 parameters"
 
       let fileId = getFileId(pool.man, info)
-      let fullPath = absolutePath(pool.files[fileId])
-      let dir = parentDir(fullPath)
+      let dir = absoluteParentDir(pool.files[fileId])
 
       let compileType = args[0]
-      var name = args[1].replace("${path}", dir)
+      let name = args[1].replace("${path}", dir).toAbsolutePath(dir)
       let customArgs = if args.len == 3: args[2].replace("${path}", dir) else: ""
-      if not name.isAbsolute:
-        name = dir / name
 
-      if not fileExists(name):
+      if not fileExists2(name):
         buildErr c, it.n.info, "cannot find: " & name
 
       c.toBuild.buildTree TupleConstrX, info:
