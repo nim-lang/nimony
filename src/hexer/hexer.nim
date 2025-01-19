@@ -30,7 +30,7 @@ Hexer accepts Gear 2's grammar.
 ]##
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import expander, lifter, duplifier, destroyer, inliner, constparams
+import nifcgen, lifter, duplifier, destroyer, inliner, constparams
 
 const
   Version = "0.2"
