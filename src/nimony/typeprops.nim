@@ -229,7 +229,14 @@ proc nominalRoot*(t: TypeCursor): SymId =
       let res = tryLoadSym(t.symId)
       assert res.status == LacksNothing
       if res.decl.symKind == TypeY:
-        return t.symId
+        let decl = asTypeDecl(res.decl)
+        if decl.typevars.typeKind == InvokeT:
+          var root = decl.typevars
+          inc root
+          assert root.kind == Symbol
+          return root.symId
+        else:
+          return t.symId
       else:
         # includes typevar case
         break

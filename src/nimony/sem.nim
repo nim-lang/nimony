@@ -146,6 +146,12 @@ proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
 proc isNoReturn(n: Cursor): bool {.inline.} =
   result = implicitlyDiscardable(n, noreturnOnly = true)
 
+proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item])
+
+template emptyNode(): Cursor =
+  # XXX find a better solution for this
+  c.types.voidType
+
 proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCursor) =
   if typeKind(expected) == AutoT:
     return
@@ -154,7 +160,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
     return
 
   let info = it.n.info
-  var m = createMatch(addr c)
+  var m = createMatch(addr c, matchConverters = true)
   var arg = Item(n: cursorAt(c.dest, argBegin), typ: it.typ)
   if typeKind(arg.typ) == VoidT and isNoReturn(arg.n):
     # noreturn allowed in expression context
@@ -167,7 +173,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
     c.typeMismatch info, it.typ, expected
   else:
     shrink c.dest, argBegin
-    c.dest.add m.args
+    addArgsInstConverters(c, m, [Item(n: emptyNode(), typ: arg.typ)])
     it.typ = expected
 
 proc producesVoid(c: var SemContext; info: PackedLineInfo; dest: var Cursor) =
@@ -523,9 +529,10 @@ proc instantiateType(c: var SemContext; typ: Cursor; bindings: Table[SymId, Curs
   var sc = SubsContext(params: addr bindings)
   subs(c, dest, sc, typ)
   var sub = beginRead(dest)
-  let start = c.dest.len
+  var instDest = createTokenBuf(30)
+  swap c.dest, instDest
   result = semLocalType(c, sub)
-  c.dest.shrink start
+  swap c.dest, instDest
 
 type
   PassKind = enum checkSignatures, checkBody, checkGenericInst, checkConceptProc
@@ -721,10 +728,6 @@ proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
       buildErr c, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
   n = it.n
 
-template emptyNode(): Cursor =
-  # XXX find a better solution for this
-  c.types.voidType
-
 template skipToLocalType(n) =
   inc n # skip ParLe
   inc n # skip name
@@ -891,7 +894,7 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
 
 proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCandidates; args: openArray[Item], genericArgs: Cursor) =
   for candidate in candidates.a:
-    m.add createMatch(addr c)
+    m.add createMatch(addr c, matchConverters = true)
     sigmatch(m[^1], candidate, args, genericArgs)
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
@@ -1150,6 +1153,45 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
 proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
+proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
+  if not m.genericConverter:
+    c.dest.add m.args
+  else:
+    m.args.addParRi()
+    var arg = beginRead(m.args)
+    var i = 0
+    while arg.kind != ParRi:
+      var nested = 0
+      while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
+        takeToken c, arg
+        inc nested
+      if arg.exprKind == HcallX:
+        let convInfo = arg.info
+        takeToken c, arg
+        inc nested
+        if arg.kind == Symbol:
+          let sym = arg.symId
+          takeToken c, arg
+          let res = tryLoadSym(sym)
+          if res.status == LacksNothing and res.decl.symKind == ConverterY:
+            let routine = asRoutine(res.decl)
+            if isGeneric(routine):
+              let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
+              var convMatch = createMatch(addr c, matchConverters = false)
+              sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode()
+              # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
+              assert not convMatch.err
+              let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
+              c.dest[c.dest.len-1].setSymId inst.targetSym
+      while true:
+        case arg.kind
+        of ParLe: inc nested
+        of ParRi: dec nested
+        else: discard
+        takeToken c, arg
+        if nested == 0: break
+      inc i
+
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
@@ -1164,7 +1206,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         let sym = f.symId
         let s = fetchSym(c, sym)
         let candidate = FnCandidate(kind: s.kind, sym: sym, typ: fetchType(c, f, s))
-        m.add createMatch(addr c)
+        m.add createMatch(addr c, matchConverters = true)
         sigmatch(m[^1], candidate, cs.args, genericArgs)
       else:
         buildErr c, cs.fn.n.info, "`choice` node does not contain `symbol`"
@@ -1184,7 +1226,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     # Keep in mind that proc vars are a thing:
     let sym = if cs.fn.n.kind == Symbol: cs.fn.n.symId else: SymId(0)
     let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: cs.fn.typ)
-    m.add createMatch(addr c)
+    m.add createMatch(addr c, matchConverters = true)
     sigmatch(m[^1], candidate, cs.args, genericArgs)
     considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
   let idx = pickBestMatch(c, m)
@@ -1193,43 +1235,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     c.dest.add cs.callNode
     let finalFn = m[idx].fn
     let isMagic = c.addFn(finalFn, cs.fn.n, cs.args)
-    if m[idx].genericConverter:
-      m[idx].args.addParRi()
-      var arg = beginRead(m[idx].args)
-      var i = 0
-      while arg.kind != ParRi:
-        var nested = 0
-        while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
-          takeToken c, arg
-          inc nested
-        if arg.exprKind == HcallX:
-          let convInfo = arg.info
-          takeToken c, arg
-          inc nested
-          if arg.kind == Symbol:
-            let sym = arg.symId
-            takeToken c, arg
-            let res = tryLoadSym(sym)
-            if res.status == LacksNothing and res.decl.symKind == ConverterY:
-              let routine = asRoutine(res.decl)
-              if isGeneric(routine):
-                let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
-                var convMatch = createMatch(addr c)
-                convMatch.disallowConverter = true
-                sigmatch convMatch, conv, [Item(n: arg, typ: cs.args[i].typ)], emptyNode() # could also use cs.args[i] directly
-                assert not convMatch.err
-                let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
-                c.dest[c.dest.len-1].setSymId inst.targetSym
-        while true:
-          case arg.kind
-          of ParLe: inc nested
-          of ParRi: dec nested
-          else: discard
-          takeToken c, arg
-          if nested == 0: break
-        inc i
-    else:
-      c.dest.add m[idx].args
+    addArgsInstConverters(c, m[idx], cs.args)
     wantParRi c, it.n
 
     if finalFn.kind == TemplateY:
@@ -4109,7 +4115,7 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
       let sym = syms.symId
       let routine = getProcDecl(sym)
       let candidate = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
-      var m = Match(fn: candidate)
+      var m = createMatch(addr c)
       matchTypevars m, candidate, args
       if not m.err:
         # match

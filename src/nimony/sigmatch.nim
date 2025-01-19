@@ -39,10 +39,11 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    disallowConverter*: bool
+    matchConverters*: bool
     genericConverter*: bool
 
-proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
+proc createMatch*(context: ptr SemContext; matchConverters = false): Match =
+  Match(context: context, matchConverters: matchConverters, firstVarargPosition: -1)
 
 proc concat(a: varargs[string]): string =
   result = a[0]
@@ -681,7 +682,7 @@ proc tryConverter(m: var Match; conv: SymId; f: Cursor; arg: Item) =
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
   let fOrig = f
   singleArgImpl(m, f, arg)
-  if m.err and not m.disallowConverter:
+  if m.err and m.matchConverters:
     # try converter
     let root = nominalRoot(fOrig)
     if root != SymId(0):
