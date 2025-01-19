@@ -1,20 +1,20 @@
 (.nif24)
-,1,tests/nimony/basics/tbool.nim(stmts 26
- (type ~21 :bool.0.tbojn1uzv
+,1,tests/nimony/nosystem/tbool.nim(stmts 26
+ (type ~21 :bool.0.tbokvwxm9
   (bool) . ~16
   (pragmas 2
    (magic 7 Bool)) 2
   (enum
    (u +8) ~18,1
-   (efld ~8 :false.0.tbojn1uzv
+   (efld ~8 :false.0.tbokvwxm9
     (false) .
     (bool)
     (tup +0 "false")) ~8,1
-   (efld ~7 :true.0.tbojn1uzv
+   (efld ~7 :true.0.tbokvwxm9
     (true) .
     (bool)
     (tup +1 "true")))) 5
- (proc :dollar`.bool.0.tbojn1uzv x . .
+ (proc :dollar`.bool.0.tbokvwxm9 x . .
   (params
    (param :e.0 . .
     (bool) .))
@@ -34,6 +34,6 @@
      (stmts
       (ret "true"))))
    (ret result.0))) 4,3
- (let :x.0.tbojn1uzv . . 1,~3
+ (let :x.0.tbokvwxm9 . . 1,~3
   (bool) 10
   (true)))
