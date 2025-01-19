@@ -518,6 +518,15 @@ proc instantiateGenericType(c: var SemContext; req: InstRequest) =
     var n = beginRead(dest)
     semTypeSection c, n
 
+proc instantiateType(c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor =
+  var dest = createTokenBuf(30)
+  var sc = SubsContext(params: addr bindings)
+  subs(c, dest, sc, typ)
+  var sub = beginRead(dest)
+  let start = c.dest.len
+  result = semLocalType(c, sub)
+  c.dest.shrink start
+
 type
   PassKind = enum checkSignatures, checkBody, checkGenericInst, checkConceptProc
 
@@ -947,24 +956,6 @@ proc getFnIdent(c: var SemContext): StrId =
   result = getIdent(n)
   endRead(c.dest)
 
-proc containsGenericParams(n: TypeCursor): bool =
-  var n = n
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol:
-      let res = tryLoadSym(n.symId)
-      if res.status == LacksNothing and res.decl == $TypevarY:
-        return true
-    of ParLe:
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    if nested == 0: break
-    inc n
-  return false
-
 type
   DotExprState = enum
     MatchedDotField ## matched a dot field, i.e. result is a dot expression
@@ -1202,7 +1193,43 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     c.dest.add cs.callNode
     let finalFn = m[idx].fn
     let isMagic = c.addFn(finalFn, cs.fn.n, cs.args)
-    c.dest.add m[idx].args
+    if m[idx].genericConverter:
+      m[idx].args.addParRi()
+      var arg = beginRead(m[idx].args)
+      var i = 0
+      while arg.kind != ParRi:
+        var nested = 0
+        while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
+          takeToken c, arg
+          inc nested
+        if arg.exprKind == HcallX:
+          let convInfo = arg.info
+          takeToken c, arg
+          inc nested
+          if arg.kind == Symbol:
+            let sym = arg.symId
+            takeToken c, arg
+            let res = tryLoadSym(sym)
+            if res.status == LacksNothing and res.decl.symKind == ConverterY:
+              let routine = asRoutine(res.decl)
+              if isGeneric(routine):
+                let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
+                var convMatch = createMatch(addr c)
+                convMatch.disallowConverter = true
+                sigmatch convMatch, conv, [Item(n: arg, typ: cs.args[i].typ)], emptyNode() # could also use cs.args[i] directly
+                assert not convMatch.err
+                let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
+                c.dest[c.dest.len-1].setSymId inst.targetSym
+        while true:
+          case arg.kind
+          of ParLe: inc nested
+          of ParRi: dec nested
+          else: discard
+          takeToken c, arg
+          if nested == 0: break
+        inc i
+    else:
+      c.dest.add m[idx].args
     wantParRi c, it.n
 
     if finalFn.kind == TemplateY:
@@ -4748,7 +4775,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       inc it.n
       semExpr c, it
       skipParRi it.n
-    of CallX, CmdX, CallStrLitX, InfixX, PrefixX:
+    of CallX, CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
       toplevelGuard c:
         semCall c, it
     of DotX, DerefDotX:
@@ -4928,7 +4955,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     phase: SemcheckTopLevelSyms,
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
-    canSelfExec: canSelfExec)
+    canSelfExec: canSelfExec,
+    instantiateType: instantiateType)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
   # XXX could add self module symbol here
 

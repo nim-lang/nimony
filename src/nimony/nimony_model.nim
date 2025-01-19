@@ -132,6 +132,7 @@ type
     CallStrLitX = "callstrlit"
     InfixX = "infix"
     PrefixX = "prefix"
+    HcallX = "hcall" # hidden converter call
     CmdX = "cmd"
     InfX = "inf"
     NegInfX = "neginf"
@@ -334,7 +335,7 @@ template `==`*(n: Cursor; s: string): bool = n.kind == ParLe and pool.tags[n.tag
 
 const
   RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
-  CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX}
+  CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX, HcallX}
   ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo) =

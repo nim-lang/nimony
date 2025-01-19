@@ -202,6 +202,24 @@ proc lengthOrd*(c: var SemContext; typ: TypeCursor): xint =
   if last.isNaN: return last
   result = last - first + createXint(1.uint64)
 
+proc containsGenericParams*(n: TypeCursor): bool =
+  var n = n
+  var nested = 0
+  while true:
+    case n.kind
+    of Symbol:
+      let res = tryLoadSym(n.symId)
+      if res.status == LacksNothing and res.decl == $TypevarY:
+        return true
+    of ParLe:
+      inc nested
+    of ParRi:
+      dec nested
+    else: discard
+    if nested == 0: break
+    inc n
+  return false
+
 proc nominalRoot*(t: TypeCursor): SymId =
   result = SymId(0)
   var t = t

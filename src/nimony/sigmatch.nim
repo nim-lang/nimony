@@ -39,6 +39,8 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
+    disallowConverter*: bool
+    genericConverter*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -644,16 +646,20 @@ proc tryConverter(m: var Match; conv: SymId; f: Cursor; arg: Item) =
   src = asLocal(src).typ
   let srcStart = m.args.len
   let srcCost = m.intCosts
-  singleArgImpl(m, src, arg) # XXX this infers the converter typevars for the entire candidate, probably a source of bugs in nim, maybe #4554, #19517
+  let startBindings = m.inferred
+  singleArgImpl(m, src, arg)
   if m.err: return
   if srcCost != m.intCosts:
     # cannot be conversion match
     m.err = true
     return
-  var dest = fn.retType # XXX nim also instantiates this
+  var dest = fn.retType
+  if m.inferred.len != 0 and containsGenericParams(dest):
+    dest = m.context.instantiateType(m.context[], dest, m.inferred)
+  m.inferred = startBindings
   var callBuf = createTokenBuf(16) # dummy call node to use for matching dest type
   let callTokens = [
-    parLeToken(CallX, arg.n.info), # HiddenCallConv
+    parLeToken(HcallX, arg.n.info),
     symToken(conv, arg.n.info)
   ]
   for tok in callTokens: callBuf.add tok
@@ -668,13 +674,14 @@ proc tryConverter(m: var Match; conv: SymId; f: Cursor; arg: Item) =
     # cannot be subtype or conversion match
     m.err = true
     return
-  m.args.insert callTokens, srcStart # XXX instantiate generics in sem
+  m.args.insert callTokens, srcStart
   inc m.opened
+  if isGeneric(fn): m.genericConverter = true
 
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
   let fOrig = f
   singleArgImpl(m, f, arg)
-  if m.err:
+  if m.err and not m.disallowConverter:
     # try converter
     let root = nominalRoot(fOrig)
     if root != SymId(0):

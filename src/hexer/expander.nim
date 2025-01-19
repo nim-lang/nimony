@@ -814,7 +814,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         inc nested
       of TupleConstrX:
         traverseTupleConstr e, c
-      of CmdX, CallStrLitX, InfixX, PrefixX:
+      of CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
         e.dest.add tagToken("call", c.info)
         inc c
         inc nested
