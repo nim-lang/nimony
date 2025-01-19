@@ -210,7 +210,7 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
   let buildT = registerTag "build"
   var buildBuf = createTokenBuf()
   buildBuf.addParLe buildT
-  buildBuf.add toBuild
+  buildBuf.add sections.toBuild
   buildBuf.addParRi
   content.add toString(buildBuf)
   content.add "\n"
