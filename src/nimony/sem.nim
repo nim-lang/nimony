@@ -1342,6 +1342,80 @@ proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = Re
     semExpr(c, cs.fn, {KeepMagics, AllowUndeclared})
     fnName = getFnIdent(c)
     it.n = cs.fn.n
+    if fnName != StrId(0) and source notin {SubscriptCall, SubscriptAsgnCall}:
+      let reconstruct =
+        case pool.strings[fnName]
+        of "[]": SubscriptCall
+        of "[]=": SubscriptAsgnCall
+        else: RegularCall
+      if reconstruct != RegularCall and
+          (c.dest[0].kind == Ident or cursorAt(c.dest, 0) == $OchoiceX):
+        # if this is an open call to `[]` or `[]=`, try it as a builtin first
+        var subscript = Item(n: it.n, typ: c.types.autoType)
+        inc subscript.n # tag
+        var subscriptLhsBuf = createTokenBuf(4)
+        swap c.dest, subscriptLhsBuf
+        var subscriptLhs = Item(n: subscript.n, typ: c.types.autoType)
+        semExpr c, subscriptLhs, {KeepMagics}
+        swap c.dest, subscriptLhsBuf
+        let afterSubscriptLhs = subscriptLhs.n
+        subscriptLhs.n = cursorAt(subscriptLhsBuf, 0)
+        var assignmentValue = default(Cursor)
+        var assignmentSubscriptArgs = default(TokenBuf)
+        case reconstruct
+        of SubscriptCall:
+          subscript.n = afterSubscriptLhs
+        of SubscriptAsgnCall:
+          # the arguments given to tryBuiltinSubscript need to be
+          # the arguments of the call except the last one
+          # so build a new buffer to be read
+          assignmentSubscriptArgs = createTokenBuf(16)
+          var currentArg = afterSubscriptLhs
+          var lastArg = currentArg
+          while true:
+            skip currentArg
+            if currentArg.kind == ParRi:
+              assignmentSubscriptArgs.add currentArg
+              break
+            assignmentSubscriptArgs.addSubtree lastArg
+            lastArg = currentArg
+          subscript.n = cursorAt(assignmentSubscriptArgs, 0)
+          assignmentValue = lastArg
+        else: discard
+        var subscriptBuf = createTokenBuf(8)
+        swap c.dest, subscriptBuf
+        let builtin = tryBuiltinSubscript(c, subscript, subscriptLhs)
+        swap c.dest, subscriptBuf
+        if builtin:
+          case reconstruct
+          of SubscriptCall:
+            it.n = subscript.n
+            c.dest.add subscriptBuf
+          of SubscriptAsgnCall:
+            # subscript part was builtin, build regular assignment
+            c.dest.addParLe(AsgnS, cs.callNode.info)
+            c.dest.add subscriptBuf
+            var val = Item(n: assignmentValue, typ: subscript.typ)
+            semExpr c, val
+            it.n = val.n
+            wantParRi c, it.n
+            producesVoid c, cs.callNode.info, it.typ
+          else: discard
+          return
+        else:
+          # regular call, add lhs as first argument
+          cs.source = reconstruct
+          it.n = afterSubscriptLhs
+          let lhsIndex = c.dest.len
+          c.dest.addSubtree subscriptLhs.n
+          argIndexes.add lhsIndex
+          # scope extension: If the type is Typevar and it has attached
+          # a concept, use the concepts symbols too:
+          if subscriptLhs.typ.kind == Symbol:
+            maybeAddConceptMethods c, fnName, subscriptLhs.typ.symId, cs.candidates
+          # lhs.n escapes here, but is not read and will be set by argIndexes:
+          cs.args.add subscriptLhs
+      else: discard
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
   while it.n.kind != ParRi:
