@@ -437,12 +437,12 @@ proc trLocal(c: var Context; n: var Cursor) =
   wantParRi c, n
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
+  takeToken c, n
   while n.kind != ParRi:
     if isLastSon(n):
       tr c, n, outerE
     else:
       tr c, n, WantT
-    inc n
   wantParRi c, n
 
 proc trObjConstr(c: var Context; n: var Cursor) =
