@@ -273,8 +273,10 @@ type
 declareMatcher parseStmtKind, StmtKind
 
 proc stmtKind*(c: Cursor): StmtKind {.inline.} =
-  assert c.kind == ParLe
-  parseStmtKind pool.tags[tag(c)]
+  if c.kind == ParLe:
+    result = parseStmtKind pool.tags[tag(c)]
+  else:
+    result = NoStmt
 
 declareMatcher parsePragmaKind, PragmaKind
 

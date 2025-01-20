@@ -15,10 +15,8 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n = n
   elimForLoops(c, n)
 
-  when false:
-    var dest = move c.dest
-    var c = beginRead(dest)
+  var dest = move c.dest
+  var c = beginRead(dest)
 
-    result = lowerExprs(n, moduleSuffix)
-  else:
-    result = move c.dest
+  result = lowerExprs(c, moduleSuffix)
+  endRead(dest)
