@@ -12,7 +12,20 @@
 Hexer
 ------
 
-Hexer performs backend tasks that need to operate on multiple NIF files at once:
+Hexer is our middle-end. It transforms Nimony code into NIFC code. This requires
+multiple different steps.
+
+- Iterator inlining.
+- Lambda lifting.
+- Inject dups.
+- Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct).
+- Inject destructors.
+- Map builtins like new and + to "compiler procs".
+- Translate exception handling.
+
+
+NIFC generation
+~~~~~~~~~~~~~~~
 
 - It copies used imported symbols into the current NIF file. As a fix point operation
   until no foreign symbols are left.
@@ -25,7 +38,7 @@ Hexer performs backend tasks that need to operate on multiple NIF files at once:
 Grammar
 -------
 
-Hexer accepts Gear 2's grammar.
+Hexer accepts Nimony's grammar.
 
 ]##
 
