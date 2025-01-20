@@ -390,8 +390,13 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   of ParLe:
     case n.exprKind
     of ExprX:
-      trStmt c, dest, n
-      trExpr c, dest, n, tar
+      inc n
+      while n.kind != ParRi:
+        if not isLastSon(n):
+          trStmt c, dest, n
+        else:
+          trExpr c, dest, n, tar
+      skipParRi n
     of AndX:
       trAnd c, dest, n, tar
     of OrX:
