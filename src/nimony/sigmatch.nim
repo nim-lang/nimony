@@ -370,13 +370,7 @@ proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
     m.error concat(typeToString(a), " does not match constraint ", typeToString(typeImpl typeVar))
 
 proc useArg(m: var Match; arg: Item) =
-  var usedDeref = false
-  if arg.typ.typeKind in {MutT, LentT, OutT} and m.skippedMod notin {MutT, LentT, OutT}:
-    m.args.addParLe HderefX, arg.n.info
-    usedDeref = true
   m.args.addSubtree arg.n
-  if usedDeref:
-    m.args.addParRi()
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item)
 
@@ -498,8 +492,6 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         inc a
       else:
         m.skippedMod = f.typeKind
-        m.args.addParLe HaddrX, m.argInfo
-        inc m.opened
       inc f
       singleArgImpl m, f, Item(n: arg.n, typ: a)
       expectParRi m, f

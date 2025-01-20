@@ -89,9 +89,13 @@ proc isAddressable*(n: Cursor): bool =
 proc tr(c: var Context; n: var Cursor; e: Expects)
 
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
-  takeToken c, n
-  while n.kind != ParRi: tr c, n, e
-  wantParRi c, n
+  if n.kind != ParLe:
+    takeToken c, n
+  else:
+    takeToken c, n
+    while n.kind != ParRi:
+      tr c, n, e
+    wantParRi c, n
 
 proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   # --------------------------------------------------------------------------
@@ -257,13 +261,14 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
 proc trProcDecl(c: var Context; n: var Cursor) =
   c.typeCache.openScope()
   takeToken c, n
+  let symId = n.symId
   var isGeneric = false
   var r = CurrentRoutine(returnType: WantT)
   for i in 0..<BodyPos:
     if i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsS
     if i == ParamsPos:
-      c.typeCache.registerParams(n.symId, n)
+      c.typeCache.registerParams(symId, n)
       var params = n
       inc params
       let firstParam = asLocal(params)
@@ -323,6 +328,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   takeToken c, n
   let fnType = getType(c.typeCache, n)
   assert fnType == "params"
+  takeToken c, n
   var retType = fnType
   skip retType
   if retType.typeKind == MutT:
