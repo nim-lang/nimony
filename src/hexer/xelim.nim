@@ -27,8 +27,10 @@ proc isComplex(n: Cursor): bool =
         return true
       elif n.exprKind == ExprX:
         return true
+      inc n
       inc nested
     of ParRi:
+      inc n
       dec nested
     if nested == 0: break
   return false
@@ -268,7 +270,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.copyInto n:
-    if isComplex(n.firstSon):
+    if isComplex(n):
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
         var tar = Target(m: IsEmpty)
