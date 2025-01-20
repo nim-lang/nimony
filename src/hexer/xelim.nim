@@ -354,7 +354,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
-      trExpr c, dest, n, tar
+      while n.kind != ParRi:
+        trExpr c, dest, n, tar
     dest.add tar
   of ResultS, LetS, VarS, CursorS, ConstS:
     trLocal c, dest, n
