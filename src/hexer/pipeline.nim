@@ -18,4 +18,5 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var dest = move c.dest
   var c = beginRead(dest)
 
-  result = lowerExprs(n, moduleSuffix)
+  result = lowerExprs(c, moduleSuffix)
+  endRead(dest)

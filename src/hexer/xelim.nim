@@ -413,6 +413,13 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
 
 proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+  c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
-  trStmt c, result, n
+  assert n.stmtKind == StmtsS, $n.kind
+  result.add n
+  inc n
+  while n.kind != ParRi:
+    trStmt c, result, n
+  result.addParRi()
+  c.typeCache.closeScope()
