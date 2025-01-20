@@ -166,6 +166,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     case n.substructureKind
     of ElifS:
       var t0 = Target(m: IsEmpty)
+      inc n
       trExpr c, dest, n, t0
 
       dest.add head
@@ -174,11 +175,11 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
       copyIntoKind dest, ElifS, info:
         dest.add t0
-        copyIntoKind dest, StmtsS, info:
-          if tar.m != IsIgnored:
-            trExprInto c, dest, n, tmp
-          else:
-            trStmt c, dest, n
+        #copyIntoKind dest, StmtsS, info:
+        if tar.m != IsIgnored:
+          trExprInto c, dest, n, tmp
+        else:
+          trStmt c, dest, n
       skipParRi n
     of ElseS:
       inc n
@@ -302,10 +303,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   copyInto dest, n:
-    var sym = SymId(0)
+    let sym = n.symId
     for i in 0..<BodyPos:
-      if i == 0: sym = n.symId
-      elif i == ParamsPos:
+      if i == ParamsPos:
         c.typeCache.registerParams(sym, n)
       takeTree dest, n
     trStmt c, dest, n
@@ -327,6 +327,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
+    assert n.kind != ParRi
     takeTree dest, n
   of IfS, WhenS:
     var tar = Target(m: IsIgnored)
