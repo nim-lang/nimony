@@ -382,16 +382,22 @@ proc trAsgn(c: var Context; n: var Cursor) =
   if isResultUsage(le):
     e = c.r.returnType
     if e == WantVarTResult:
+      tr c, n, e
       if not validBorrowsFrom(c, n):
         err = InvalidBorrow
+    else:
+      tr c, n, e
   elif borrowsFromReadonly(c, n):
     err = LocationIsConst
-  tr c, n, e
+  else:
+    tr c, n, e
   case err
   of InvalidBorrow:
     buildLocalErr c.dest, n.info, "cannot borrow from " & toString(n, false)
   of LocationIsConst:
     buildLocalErr c.dest, n.info, "cannot mutate expression " & toString(n, false)
+    tr c, n, e
+    tr c, n, e
   else:
     trAsgnRhs c, le, n, e
   wantParRi c, n
