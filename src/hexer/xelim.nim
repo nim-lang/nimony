@@ -416,4 +416,3 @@ proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
   result = createTokenBuf(300)
   var n = n
   trStmt c, result, n
-
