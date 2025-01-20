@@ -4949,6 +4949,14 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
       c.dest.copyTree res.decl
   instantiateGenericHooks c
   wantParRi c, n
+
+  if reportErrors(c) == 0:
+    var final = move c.dest
+    var finalBuf = beginRead(final)
+    c.dest = injectDerefs(finalBuf)
+  else:
+    quit 1
+
   if reportErrors(c) == 0:
     writeOutput c, outfile
   else:

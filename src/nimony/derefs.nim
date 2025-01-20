@@ -89,9 +89,13 @@ proc isAddressable*(n: Cursor): bool =
 proc tr(c: var Context; n: var Cursor; e: Expects)
 
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
-  takeToken c, n
-  while n.kind != ParRi: tr c, n, e
-  wantParRi c, n
+  if n.kind != ParLe:
+    takeToken c, n
+  else:
+    takeToken c, n
+    while n.kind != ParRi:
+      tr c, n, e
+    wantParRi c, n
 
 proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   # --------------------------------------------------------------------------
@@ -257,13 +261,14 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
 proc trProcDecl(c: var Context; n: var Cursor) =
   c.typeCache.openScope()
   takeToken c, n
+  let symId = n.symId
   var isGeneric = false
   var r = CurrentRoutine(returnType: WantT)
   for i in 0..<BodyPos:
     if i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsS
     if i == ParamsPos:
-      c.typeCache.registerParams(n.symId, n)
+      c.typeCache.registerParams(symId, n)
       var params = n
       inc params
       let firstParam = asLocal(params)
@@ -323,6 +328,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   takeToken c, n
   let fnType = getType(c.typeCache, n)
   assert fnType == "params"
+  takeToken c, n
   var retType = fnType
   skip retType
   if retType.typeKind == MutT:
@@ -376,16 +382,22 @@ proc trAsgn(c: var Context; n: var Cursor) =
   if isResultUsage(le):
     e = c.r.returnType
     if e == WantVarTResult:
+      tr c, n, e
       if not validBorrowsFrom(c, n):
         err = InvalidBorrow
+    else:
+      tr c, n, e
   elif borrowsFromReadonly(c, n):
     err = LocationIsConst
-  tr c, n, e
+  else:
+    tr c, n, e
   case err
   of InvalidBorrow:
     buildLocalErr c.dest, n.info, "cannot borrow from " & toString(n, false)
   of LocationIsConst:
     buildLocalErr c.dest, n.info, "cannot mutate expression " & toString(n, false)
+    tr c, n, e
+    tr c, n, e
   else:
     trAsgnRhs c, le, n, e
   wantParRi c, n
@@ -431,12 +443,12 @@ proc trLocal(c: var Context; n: var Cursor) =
   wantParRi c, n
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
+  takeToken c, n
   while n.kind != ParRi:
     if isLastSon(n):
       tr c, n, outerE
     else:
       tr c, n, WantT
-    inc n
   wantParRi c, n
 
 proc trObjConstr(c: var Context; n: var Cursor) =
@@ -449,6 +461,7 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     let fieldType = getType(c.typeCache, n)
     let e = if fieldType.typeKind in {MutT, OutT}: WantVarT else: WantT
     tr c, n, e
+    wantParRi c, n
   wantParRi c, n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
