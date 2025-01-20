@@ -455,6 +455,7 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     let fieldType = getType(c.typeCache, n)
     let e = if fieldType.typeKind in {MutT, OutT}: WantVarT else: WantT
     tr c, n, e
+    wantParRi c, n
   wantParRi c, n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
