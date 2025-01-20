@@ -267,7 +267,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.copyInto n:
-    if isComplex(n):
+    if isComplex(n.firstSon):
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
         var tar = Target(m: IsEmpty)
@@ -405,7 +405,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       of BlockS:
         trBlock c, dest, n, tar
       else:
-        copyInto dest, n:
+        copyInto tar.t, n:
           while n.kind != ParRi:
             trExpr c, dest, n, tar
   of ParRi:
@@ -423,3 +423,4 @@ proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
     trStmt c, result, n
   result.addParRi()
   c.typeCache.closeScope()
+  #echo "PRODUCED: ", result.toString(false)
