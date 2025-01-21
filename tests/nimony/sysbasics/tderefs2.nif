@@ -18,9 +18,59 @@
   (stmts 4
    (var :s.0 . .
     (i -1) 4 +12) 4,1
-   (let :x.1 . . 12,~5
+   (let :x.4 . . 12,~5
     (i -1) 5
     (hderef
      (call ~1 g.0.tdexr7cz81 1
       (haddr s.0)))))) 3,7
- (call ~3 foo.0.tdexr7cz81))
+ (call ~3 foo.0.tdexr7cz81) ,10
+ (proc 5 :g1.0.tdexr7cz81 . . . 7
+  (params 1
+   (param :x.1 . . 3
+    (mut 4
+     (i -1)) .)) 14
+  (mut 4
+   (i -1)) . . 2,1
+  (stmts 7
+   (result :result.1 . . 1,~11
+    (mut 4
+     (i -1)) .) 7
+   (asgn ~7 result.1 2 x.1) ~2,~1
+   (ret result.1))) ,13
+ (proc 5 :g2.0.tdexr7cz81 . . . 7
+  (params 1
+   (param :x.2 . . 3
+    (mut 4
+     (i -1)) .)) 14
+  (mut 4
+   (i -1)) . . 2,1
+  (stmts 7
+   (result :result.2 . . 1,~14
+    (mut 4
+     (i -1)) .) 7
+   (asgn ~7 result.2 2 x.2) ~2,~1
+   (ret result.2))) ,19
+ (proc 5 :foo1.0.tdexr7cz81 . . . 9
+  (params 1
+   (param :x.3 . . 3
+    (i -1) .)) . . . 2,1
+  (stmts 4
+   (var :x.5 . . 7,~1
+    (i -1) 4 x.3) 4,1
+   (var :s.1 . . 12,~11
+    (i -1) 6
+    (hderef
+     (call ~2 g1.0.tdexr7cz81 1
+      (haddr x.5)))) 4,2
+   (let :y.0 . . 12,~9
+    (i -1) 6
+    (hderef
+     (call ~2 g2.0.tdexr7cz81 1
+      (haddr s.1)))) 4,3
+   (let :n.0 . . 12,~10
+    (i -1) 6
+    (hderef
+     (call ~2 g2.0.tdexr7cz81 3
+      (call ~2 g1.0.tdexr7cz81 1
+       (haddr x.5))))))) 4,26
+ (call ~4 foo1.0.tdexr7cz81 1 +12))
