@@ -14,10 +14,6 @@ import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls]
 import basics, pipeline
 
-type
-  ExprFlag = enum
-    efKeepStringLit
-
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
   result = e.currentOwner
@@ -77,7 +73,7 @@ type
   TraverseMode = enum
     TraverseAll, TraverseSig, TraverseTopLevel
 
-proc traverseExpr(e: var EContext; c: var Cursor; flags: set[ExprFlag] = {})
+proc traverseExpr(e: var EContext; c: var Cursor)
 proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll)
 proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMode)
 
@@ -771,7 +767,7 @@ proc traverseTupleConstr(e: var EContext; c: var Cursor) =
     e.dest.addParRi() # "kv"
   wantParRi e, c
 
-proc traverseExpr(e: var EContext; c: var Cursor; flags: set[ExprFlag] = {}) =
+proc traverseExpr(e: var EContext; c: var Cursor) =
   var nested = 0
   while true:
     case c.kind
@@ -862,7 +858,9 @@ proc traverseExpr(e: var EContext; c: var Cursor; flags: set[ExprFlag] = {}) =
         e.dest.add c
         inc c
         traverseExpr e, c
-        traverseExpr e, c, {efKeepStringLit}
+        assert c.kind == StringLit
+        e.dest.add c
+        inc c
         inc nested
       else:
         e.dest.add c
@@ -888,10 +886,7 @@ proc traverseExpr(e: var EContext; c: var Cursor; flags: set[ExprFlag] = {}) =
       e.demand c.symId
       inc c
     of StringLit:
-      if efKeepStringLit in flags:
-        e.dest.add c
-      else:
-        genStringLit e, c
+      genStringLit e, c
       inc c
     of UnknownToken, DotToken, Ident, CharLit, IntLit, UIntLit, FloatLit:
       e.dest.add c
@@ -1097,7 +1092,11 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       e.dest.add c
       inc c
       e.loop c:
-        traverseExpr e, c, {efKeepStringLit}
+        if c.kind == StringLit:
+          e.dest.add c
+          inc c
+        else: 
+          traverseExpr e, c
     of AsgnS, RetS:
       e.dest.add c
       inc c
