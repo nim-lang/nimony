@@ -12,7 +12,7 @@
 (RULE :DataValue (OR STRINGLITERAL INTLIT UINTLIT FLOATLIT))
 (RULE :DataKey (OR DataValue (times INTLIT DataValue)) (DO "nl"))
 (RULE :DataDecl SYMBOLDEF ":" (DO "nl") (ONE_OR_MANY (OR
-  (ascii ".ascii " DataKey)
+  (string ".string " DataKey)
   (byte ".byte " DataKey)
   (word ".2byte " DataKey)
   (long ".4byte " DataKey)

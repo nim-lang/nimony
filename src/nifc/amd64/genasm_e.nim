@@ -459,7 +459,7 @@ proc genStrLit(c: var GeneratedCode; s: string; info: PackedLineInfo; dest: var 
     symId = "str." & $id
     c.data.buildTree RodataT, info:
       c.data.addSymDef symId, info
-      c.data.buildTree AsciiT, info:
+      c.data.buildTree StringT, info:
         c.data.addStrLit s, info
       c.data.buildTree ByteT, info:
         c.data.genIntLit 0, info

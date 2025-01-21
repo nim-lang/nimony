@@ -7,7 +7,7 @@ const
   TextT* = TagId(4)
   ExternT* = TagId(5)
   TimesT* = TagId(6)
-  AsciiT* = TagId(7)
+  StringT* = TagId(7)
   ByteT* = TagId(8)
   WordT* = TagId(9)
   LongT* = TagId(10)
@@ -136,7 +136,7 @@ proc registerTags*() =
   registerTag "text", TextT
   registerTag "extern", ExternT
   registerTag "times", TimesT
-  registerTag "ascii", AsciiT
+  registerTag "string", StringT
   registerTag "byte", ByteT
   registerTag "word", WordT
   registerTag "long", LongT
