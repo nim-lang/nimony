@@ -151,7 +151,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             inferred: var Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance
 
-proc tryConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
+proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
 
 template emptyNode(): Cursor =
   # XXX find a better solution for this
@@ -177,7 +177,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
   if m.err:
     # try converter
     var convMatch = default(Match)
-    if tryConverter(c, convMatch, expected, arg):
+    if tryConverterMatch(c, convMatch, expected, arg):
       shrink c.dest, argBegin
       c.dest.add parLeToken(HcallX, info)
       c.dest.add symToken(convMatch.fn.sym, info)
@@ -1210,12 +1210,13 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         if nested == 0: break
       inc i
 
-proc tryConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
+proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
+  ## looks for a converter from `arg` to `f`, returns `true` if found and
+  ## sets `convMatch` to the match to the converter
   result = false
   let root = nominalRoot(f)
   if root == SymId(0): return
   let converters = c.converters.getOrDefault(root)
-  var isGeneric = false
   var convMatches: seq[Match] = @[]
   for conv in items converters:
     # f(a)
@@ -1234,10 +1235,11 @@ proc tryConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: I
     sigmatch(inputMatch, candidate, [arg], emptyNode())
     if classifyMatch(inputMatch) notin {EqualMatch, GenericMatch, SubtypeMatch}:
       continue
+    # use inputMatch.returnType here so the caller doesn't have to instantiate it again:
     if inputMatch.inferred.len != 0 and containsGenericParams(inputMatch.returnType):
       inputMatch.returnType = instantiateType(c, inputMatch.returnType, inputMatch.inferred)
     let dest = inputMatch.returnType
-    var callBuf = createTokenBuf(16)
+    var callBuf = createTokenBuf(16) # dummy call node to use for matching dest type
     callBuf.add parLeToken(HcallX, arg.n.info)
     callBuf.add symToken(conv, arg.n.info)
     callBuf.add inputMatch.args
@@ -1299,9 +1301,10 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     var matchAdded = false
     let L = m.len
     for mi in 0 ..< L:
+      if not m[mi].err: continue
       var newMatch = createMatch(addr c)
-      var newArgBufs: seq[TokenBuf] = @[]
       var newArgs: seq[Item] = @[]
+      var newArgBufs: seq[TokenBuf] = @[] # to keep alive
       var param = m[mi].fn.typ
       inc param
       var ai = 0
@@ -1312,7 +1315,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         let f = asLocal(param).typ
         var arg = cs.args[ai]
         var convMatch = default(Match)
-        if tryConverter(c, convMatch, f, arg):
+        if tryConverterMatch(c, convMatch, f, arg):
           anyConverters = true
           var argBuf = createTokenBuf(16)
           argBuf.add parLeToken(HcallX, arg.n.info)
@@ -1332,7 +1335,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         sigmatch(newMatch, m[mi].fn, newArgs, genericArgs)
         m.add newMatch
         matchAdded = true
-    if matchAdded:
+    if matchAdded: # m.len != L
       idx = pickBestMatch(c, m)
 
   if idx >= 0:
@@ -3019,7 +3022,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       if root == SymId(0):
         buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
       else:
-        if pass == checkSignatures:
+        if pass == checkSignatures: # to prevent duplicates, could also use a set
           c.converters.mgetOrPut(root, @[]).add(symId)
         if pass == checkBody and c.dest[beforeExportMarker].kind != DotToken:
           # don't register instances

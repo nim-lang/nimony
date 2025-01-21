@@ -41,8 +41,7 @@ type
     firstVarargPosition*: int
     genericConverter*: bool
 
-proc createMatch*(context: ptr SemContext): Match =
-  Match(context: context, firstVarargPosition: -1)
+proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
 proc concat(a: varargs[string]): string =
   result = a[0]
