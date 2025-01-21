@@ -504,6 +504,8 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
         of Requires, Ensures:
           skip c
+        of BuildP, EmitP:
+          raiseAssert "unreachable"
         skipParRi e, c
       else:
         error e, "unknown pragma: ", c
@@ -1086,7 +1088,16 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       inc c
       e.loop c:
         traverseExpr e, c
-    of EmitS, AsgnS, RetS:
+    of EmitS:
+      e.dest.add c
+      inc c
+      e.loop c:
+        if c.kind == StringLit:
+          e.dest.add c
+          inc c
+        else: 
+          traverseExpr e, c
+    of AsgnS, RetS:
       e.dest.add c
       inc c
       e.loop c:

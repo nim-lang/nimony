@@ -229,6 +229,8 @@ type
     NoInit = "noinit"
     Requires = "requires"
     Ensures = "ensures"
+    BuildP = "build"
+    EmitP = "emit"
 
   SubstructureKind* = enum
     NoSub
