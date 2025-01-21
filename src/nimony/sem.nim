@@ -146,9 +146,12 @@ proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
 proc isNoReturn(n: Cursor): bool {.inline.} =
   result = implicitlyDiscardable(n, noreturnOnly = true)
 
-proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item])
+proc requestRoutineInstance(c: var SemContext; origin: SymId;
+                            typeArgs: TokenBuf;
+                            inferred: var Table[SymId, Cursor];
+                            info: PackedLineInfo): ProcInstance
 
-proc tryConverter(c: var SemContext; m: var Match; f: TypeCursor, finalArg: var Item; buf: var TokenBuf): bool
+proc tryConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
 
 template emptyNode(): Cursor =
   # XXX find a better solution for this
@@ -173,18 +176,22 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
   endRead(c.dest)
   if m.err:
     # try converter
-    var newMatch = createMatch(addr c)
-    var newArg = arg
-    var buf = default(TokenBuf)
-    if tryConverter(c, newMatch, expected, newArg, buf):
-      typematch newMatch, expected, newArg
-      if not newMatch.err:
-        m = newMatch
-  if m.err:
-    c.typeMismatch info, it.typ, expected
+    var convMatch = default(Match)
+    if tryConverter(c, convMatch, expected, arg):
+      shrink c.dest, argBegin
+      c.dest.add parLeToken(HcallX, info)
+      c.dest.add symToken(convMatch.fn.sym, info)
+      if convMatch.genericConverter:
+        let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
+        c.dest[c.dest.len-1].setSymId inst.targetSym
+      c.dest.add convMatch.args
+      c.dest.addParRi()
+      it.typ = expected
+    else:
+      c.typeMismatch info, it.typ, expected
   else:
     shrink c.dest, argBegin
-    addArgsInstConverters(c, m, [Item(n: emptyNode(), typ: arg.typ)])
+    c.dest.add m.args
     it.typ = expected
 
 proc producesVoid(c: var SemContext; info: PackedLineInfo; dest: var Cursor) =
@@ -1203,13 +1210,13 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         if nested == 0: break
       inc i
 
-proc tryConverter(c: var SemContext; m: var Match; f: TypeCursor, finalArg: var Item; buf: var TokenBuf): bool =
+proc tryConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
   result = false
-  let arg = finalArg
   let root = nominalRoot(f)
   if root == SymId(0): return
   let converters = c.converters.getOrDefault(root)
   var isGeneric = false
+  var convMatches: seq[Match] = @[]
   for conv in items converters:
     # f(a)
     # --> f(conv(a)) ?
@@ -1219,38 +1226,34 @@ proc tryConverter(c: var SemContext; m: var Match; f: TypeCursor, finalArg: var 
     assert res.status == LacksNothing
     var fn = asRoutine(res.decl)
     assert fn.kind == ConverterY
-    let retType = fn.retType
-    var inputType = fn.params
-    inc inputType
-    inputType = asLocal(inputType).typ
 
-    var convMatch = createMatch(addr c)
+    var inputMatch = createMatch(addr c)
+    let candidate = FnCandidate(kind: fn.kind, sym: conv, typ: fn.params)
 
     # first match the input argument of `conv` so that the unification algorithm works as expected:
-    typematch(convMatch, inputType, arg)
-    if classifyMatch(convMatch) notin {EqualMatch, GenericMatch, SubtypeMatch}:
+    sigmatch(inputMatch, candidate, [arg], emptyNode())
+    if classifyMatch(inputMatch) notin {EqualMatch, GenericMatch, SubtypeMatch}:
       continue
-    var dest = retType
-    if convMatch.inferred.len != 0 and containsGenericParams(dest):
-      dest = instantiateType(c, dest, convMatch.inferred)
+    if inputMatch.inferred.len != 0 and containsGenericParams(inputMatch.returnType):
+      inputMatch.returnType = instantiateType(c, inputMatch.returnType, inputMatch.inferred)
+    let dest = inputMatch.returnType
     var callBuf = createTokenBuf(16)
     callBuf.add parLeToken(HcallX, arg.n.info)
     callBuf.add symToken(conv, arg.n.info)
-    callBuf.addSubtree arg.n
+    callBuf.add inputMatch.args
     callBuf.addParRi()
     var newArg = Item(n: beginRead(callBuf), typ: dest)
     var fMatch = f
-    typematch(convMatch, fMatch, newArg)
-    if classifyMatch(convMatch) in {EqualMatch, GenericMatch}:
-      if result:
-        finalArg = arg
-        return false
-      result = true
-      finalArg = newArg
-      buf = callBuf
-      if isGeneric(fn): isGeneric = true
-  if isGeneric:
-    m.genericConverter = true
+    var destMatch = createMatch(addr c)
+    typematch(destMatch, fMatch, newArg)
+    if classifyMatch(destMatch) in {EqualMatch, GenericMatch}:
+      if isGeneric(fn):
+        inputMatch.genericConverter = true
+      convMatches.add inputMatch
+  let idx = pickBestMatch(c, convMatches)
+  if idx >= 0:
+    result = true
+    convMatch = convMatches[idx]
 
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
@@ -1297,8 +1300,8 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     let L = m.len
     for mi in 0 ..< L:
       var newMatch = createMatch(addr c)
+      var newArgBufs: seq[TokenBuf] = @[]
       var newArgs: seq[Item] = @[]
-      var argBufs: seq[TokenBuf] = @[]
       var param = m[mi].fn.typ
       inc param
       var ai = 0
@@ -1308,11 +1311,19 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         if ai >= cs.args.len: break
         let f = asLocal(param).typ
         var arg = cs.args[ai]
-        var buf = default(TokenBuf)
-        if tryConverter(c, newMatch, f, arg, buf):
+        var convMatch = default(Match)
+        if tryConverter(c, convMatch, f, arg):
           anyConverters = true
-          argBufs.add buf
-          newArgs.add arg
+          var argBuf = createTokenBuf(16)
+          argBuf.add parLeToken(HcallX, arg.n.info)
+          argBuf.add symToken(convMatch.fn.sym, arg.n.info)
+          if convMatch.genericConverter:
+            # instantiate after match
+            newMatch.genericConverter = true
+          argBuf.add convMatch.args
+          argBuf.addParRi()
+          newArgs.add Item(n: beginRead(argBuf), typ: convMatch.returnType)
+          newArgBufs.add argBuf
         else:
           newArgs.add arg
         skip param
