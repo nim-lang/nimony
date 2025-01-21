@@ -39,11 +39,10 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    matchConverters*: bool
     genericConverter*: bool
 
-proc createMatch*(context: ptr SemContext; matchConverters = false): Match =
-  Match(context: context, matchConverters: matchConverters, firstVarargPosition: -1)
+proc createMatch*(context: ptr SemContext): Match =
+  Match(context: context, firstVarargPosition: -1)
 
 proc concat(a: varargs[string]): string =
   result = a[0]
@@ -629,66 +628,8 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   else:
     m.error "BUG: " & expected(f, arg.typ)
 
-proc tryConverter(m: var Match; conv: SymId; f: Cursor; arg: Item) =
-  let res = tryLoadSym(conv)
-  assert res.status == LacksNothing
-  var fn = asRoutine(res.decl)
-  assert fn.kind == ConverterY
-  var src = fn.params
-  inc src
-  src = asLocal(src).typ
-  let srcStart = m.args.len
-  let srcCost = m.intCosts
-  let startBindings = m.inferred
-  singleArgImpl(m, src, arg)
-  if m.err: return
-  if srcCost != m.intCosts:
-    # cannot be conversion match
-    m.err = true
-    return
-  var dest = fn.retType
-  if m.inferred.len != 0 and containsGenericParams(dest):
-    dest = m.context.instantiateType(m.context[], dest, m.inferred)
-  m.inferred = startBindings
-  var callBuf = createTokenBuf(16) # dummy call node to use for matching dest type
-  let callTokens = [
-    parLeToken(HcallX, arg.n.info),
-    symToken(conv, arg.n.info)
-  ]
-  for tok in callTokens: callBuf.add tok
-  callBuf.addSubtree arg.n
-  callBuf.addParRi()
-  let destCosts = (m.intCosts, m.inheritanceCosts)
-  var destArg = Item(n: cursorAt(callBuf, 0), typ: dest)
-  var fMatch = f
-  singleArgImpl(m, fMatch, destArg)
-  if m.err: return
-  if destCosts != (m.intCosts, m.inheritanceCosts):
-    # cannot be subtype or conversion match
-    m.err = true
-    return
-  m.args.insert callTokens, srcStart
-  inc m.opened
-  if isGeneric(fn): m.genericConverter = true
-
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
-  let fOrig = f
   singleArgImpl(m, f, arg)
-  if m.err and m.matchConverters:
-    # try converter
-    let root = nominalRoot(fOrig)
-    if root != SymId(0):
-      let converters = m.context.converters.getOrDefault(root)
-      if converters.len != 0:
-        let oldErr = m.error
-        for conv in converters:
-          m.err = false
-          tryConverter(m, conv, fOrig, arg)
-          if not m.err:
-            # converter matched
-            break
-        if m.err:
-          m.error = oldErr
   if not m.err:
     m.useArg arg # since it was a match, copy it
     while m.opened > 0:
@@ -703,11 +644,24 @@ type
   TypeRelation* = enum
     NoMatch
     ConvertibleMatch
+    SubtypeMatch
     GenericMatch
     EqualMatch
 
 proc usesConversion*(m: Match): bool {.inline.} =
   result = abs(m.inheritanceCosts) + m.intCosts > 0
+
+proc classifyMatch*(m: Match): TypeRelation {.inline.} =
+  if m.err:
+    return NoMatch
+  if m.intCosts != 0:
+    return ConvertibleMatch
+  if m.inheritanceCosts != 0:
+    return SubtypeMatch
+  if m.inferred.len != 0:
+    # maybe a better way to track this
+    return GenericMatch
+  result = EqualMatch
 
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
   var i = 0
