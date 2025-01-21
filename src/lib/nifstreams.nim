@@ -32,6 +32,16 @@ template soperand*(n: PackedToken): int32 = cast[int32](uoperand(n))
 template toX(k: TokenKind; operand: uint32): uint32 =
   uint32(k) or (operand shl TokenKindBits)
 
+proc int32Token*(operand: int32; info: PackedLineInfo): PackedToken =
+  PackedToken(x: toX(UnknownToken, cast[uint32](operand)), info: info)
+
+proc patchInt32Token*(n: var PackedToken; operand: int32) =
+  n.x = toX(UnknownToken, cast[uint32](operand))
+
+proc getInt32*(n: PackedToken): int32 =
+  assert n.kind == UnknownToken
+  result = n.soperand
+
 proc toToken[L](kind: TokenKind; id: L; info: PackedLineInfo): PackedToken {.inline.} =
   PackedToken(x: toX(kind, uint32(id)), info: info)
 
