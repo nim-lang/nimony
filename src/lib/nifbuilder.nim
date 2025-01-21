@@ -232,9 +232,9 @@ proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
     b.buf.addLine line
   of LineInfoFile:
     addSep b
-    b.buf.addLineIgnoreZero col
+    b.buf.addLine col
     b.buf.add ','
-    b.buf.addLineIgnoreZero line
+    b.buf.addLine line
     b.buf.add ','
     for c in file:
       if c.needsEscape:

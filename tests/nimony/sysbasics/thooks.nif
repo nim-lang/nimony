@@ -1,5 +1,5 @@
 (.nif24)
-,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
+0,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
  (type ~13 :MyObjectBase.0.tho8gh7q4 . . . 2
   (object . ~13,1
    (fld :x.0.tho8gh7q4 . . 6
