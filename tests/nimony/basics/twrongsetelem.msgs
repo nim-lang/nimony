@@ -1,2 +1,0 @@
-tests/nimony/basics/twrongsetelem.nim(1, 10) Error: set element type must be ordinal
-tests/nimony/basics/twrongsetelem.nim(2, 10) Error: type (u +64) is too large to be a set element type

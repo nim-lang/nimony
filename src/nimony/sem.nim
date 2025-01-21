@@ -1776,6 +1776,8 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`requires`/`ensures` pragma takes a bool expression"
     c.dest.addParRi()
+  of EmitP, BuildP:
+    buildErr c, n.info, "pragma not supported"
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   if n.kind == DotToken:
@@ -3150,8 +3152,16 @@ proc semAsgn(c: var SemContext; it: var Item) =
 
 proc semEmit(c: var SemContext; it: var Item) =
   let info = it.n.info
-  takeToken c, it.n
-  while it.n.kind != ParRi:
+  c.dest.add parLeToken(pool.tags.getOrIncl($EmitS), info)
+  inc it.n
+  if it.n.exprKind == AconstrX:
+    inc it.n
+    while it.n.kind != ParRi:
+      var a = Item(n: it.n, typ: c.types.autoType)
+      semExpr c, a
+      it.n = a.n
+    skipParRi it.n
+  else:
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, a
     it.n = a.n
@@ -4059,7 +4069,7 @@ proc semDeclared(c: var SemContext; it: var Item) =
   else:
     let isDeclared = isDeclared(c, nameId)
     let beforeExpr = c.dest.len
-    c.dest.addParLe(if isDeclared: TrueX else: FalseX, it.n.info)
+    c.dest.addParLe(if isDeclared: TrueX else: FalseX, info)
     c.dest.addParRi()
     let expected = it.typ
     it.typ = c.types.boolType
@@ -4572,42 +4582,49 @@ template procGuard(c: var SemContext; body: untyped) =
   else:
     c.takeTree it.n
 
+proc semPragmaLine(c: var SemContext; it: var Item; info: PackedLineInfo) =
+  inc it.n
+  case it.n.pragmaKind:
+  of BuildP:
+    inc it.n
+    var args = newSeq[string]()
+    while it.n.kind != ParRi:
+      if it.n.kind != StringLit:
+        buildErr c, it.n.info, "expected `string` but got: " & toString(it.n)
+
+      args.add pool.strings[it.n.litId]
+      inc it.n
+
+    skipParRi it.n
+
+    if args.len != 2 and args.len != 3:
+      buildErr c, it.n.info, "build expected 2 or 3 parameters"
+
+    let fileId = getFileId(pool.man, info)
+    let dir = absoluteParentDir(pool.files[fileId])
+
+    let compileType = args[0]
+    let name = args[1].replace("${path}", dir).toAbsolutePath(dir)
+    let customArgs = if args.len == 3: args[2].replace("${path}", dir) else: ""
+
+    if not fileExists2(name):
+      buildErr c, it.n.info, "cannot find: " & name
+
+    c.toBuild.buildTree TupleConstrX, info:
+      c.toBuild.addStrLit compileType, info
+      c.toBuild.addStrLit name, info
+      c.toBuild.addStrLit customArgs, info
+  of EmitP:
+    semEmit c, it
+  else:
+    buildErr c, it.n.info, "unsupported pragmas"
+
 proc semPragmasLine(c: var SemContext; it: var Item) =
   let info = it.n.info
   inc it.n
-  while it.n.kind == ParLe and it.n.stmtKind in {CallS, CmdS}:
-    inc it.n
-    if it.n.kind == Ident and pool.strings[it.n.litId] == "build":
-      inc it.n
-      var args = newSeq[string]()
-      while it.n.kind != ParRi:
-        if it.n.kind != StringLit:
-          buildErr c, it.n.info, "expected `string` but got: " & toString(it.n)
-
-        args.add pool.strings[it.n.litId]
-        inc it.n
-
-      skipParRi it.n
-
-      if args.len != 2 and args.len != 3:
-        buildErr c, it.n.info, "build expected 2 or 3 parameters"
-
-      let fileId = getFileId(pool.man, info)
-      let dir = absoluteParentDir(pool.files[fileId])
-
-      let compileType = args[0]
-      let name = args[1].replace("${path}", dir).toAbsolutePath(dir)
-      let customArgs = if args.len == 3: args[2].replace("${path}", dir) else: ""
-
-      if not fileExists2(name):
-        buildErr c, it.n.info, "cannot find: " & name
-
-      c.toBuild.buildTree TupleConstrX, info:
-        c.toBuild.addStrLit compileType, info
-        c.toBuild.addStrLit name, info
-        c.toBuild.addStrLit customArgs, info
-    else:
-      buildErr c, it.n.info, "unsupported pragmas"
+  while it.n.kind == ParLe and (it.n.stmtKind in {CallS, CmdS} or
+            it.n.exprKind == KvX):
+    semPragmaLine c, it, info
 
   skipParRi it.n
 
@@ -4717,9 +4734,6 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of AsgnS:
         toplevelGuard c:
           semAsgn c, it
-      of EmitS:
-        toplevelGuard c:
-          semEmit c, it
       of DiscardS:
         toplevelGuard c:
           semDiscard c, it
@@ -4759,8 +4773,11 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         skip it.n
       of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
         takeTree c, it.n
+      of EmitS:
+        raiseAssert "unreachable"
       of PragmasLineS:
-        semPragmasLine c, it
+        toplevelGuard c:
+          semPragmasLine c, it
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
@@ -4993,6 +5010,14 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
       c.dest.copyTree res.decl
   instantiateGenericHooks c
   wantParRi c, n
+
+  if reportErrors(c) == 0:
+    var final = move c.dest
+    var finalBuf = beginRead(final)
+    c.dest = injectDerefs(finalBuf)
+  else:
+    quit 1
+
   if reportErrors(c) == 0:
     writeOutput c, outfile
   else:

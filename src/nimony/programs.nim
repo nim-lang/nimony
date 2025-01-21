@@ -127,7 +127,7 @@ proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 proc publish*(s: SymId; buf: sink TokenBuf) =
   prog.mem[s] = buf
 
-proc splitModulePath(s: string): (string, string, string) =
+proc splitModulePath*(s: string): (string, string, string) =
   var (dir, main, ext) = splitFile(s)
   let dotPos = find(main, '.')
   if dotPos >= 0:

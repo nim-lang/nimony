@@ -1,5 +1,5 @@
 (.nif24)
-,1,tests/nimony/basics/twhen.nim(stmts 2,3
+0,1,tests/nimony/nosystem/twhen.nim(stmts 2,3
  (stmts
   (discard 8 "good")) 2,10
  (stmts
@@ -8,7 +8,7 @@
   (discard 8 "good")) 2,20
  (stmts
   (discard 8 "good")) ,28
- (proc 5 :not.0.twh0750pd
+ (proc 5 :not.0.twho7opw81
   (not) . . 11
   (params 1
    (param :x.0 . . 3

@@ -1,0 +1,128 @@
+(.nif24)
+0,1,tests/nimony/nosystem/tgenericbinarytree.nim(stmts 5
+ (type :int.0.tge70unlm
+  (i -1) . 5
+  (pragmas 2
+   (magic 7 Int)) .) 10,3
+ (type ~8 :Node.0.tge70unlm . ~4
+  (typevars 1
+   (typevar :T.0.tge70unlm . . . .)) . 2
+  (ref 11
+   (at ~7 NodeObj.0.tge70unlm 1 T.0.tge70unlm))) 13,4
+ (type ~11 :NodeObj.0.tge70unlm . ~4
+  (typevars 1
+   (typevar :T.1.tge70unlm . . . .)) . 2
+  (object . ~11,1
+   (fld :data.0.tge70unlm . . 6 T.1.tge70unlm .) ~11,2
+   (fld :left.0.tge70unlm . . 8,~3
+    (ref 11
+     (at ~7 NodeObj.0.tge70unlm ~1,3 T.1.tge70unlm)) .) ~5,2
+   (fld :right.0.tge70unlm . . 2,~3
+    (ref 11
+     (at ~7 NodeObj.0.tge70unlm ~1,3 T.1.tge70unlm)) .))) 4,8
+ (var :x.0.tge70unlm . . 8,~5
+  (ref 11 NodeObj.1.tge70unlm) 13
+  (newobj ~5,~5
+   (ref 11 NodeObj.1.tge70unlm) 5
+   (kv ~5 data.1.tge70unlm 2 +123) 16
+   (kv ~16 left.1.tge70unlm 2
+    (nil)) 28
+   (kv ~28 right.1.tge70unlm 2
+    (nil)))) 7,9
+ (asgn ~6
+  (ddot ~1 x.0.tge70unlm data.1.tge70unlm +0) 2 +456) 7,10
+ (asgn ~6
+  (ddot ~1 x.0.tge70unlm left.1.tge70unlm +0) 11
+  (newobj ~6,~7
+   (ref 11 NodeObj.1.tge70unlm) 5
+   (kv ~5 data.1.tge70unlm 2 +123) 16
+   (kv ~16 left.1.tge70unlm 2
+    (nil)) 28
+   (kv ~28 right.1.tge70unlm 2
+    (nil)))) 8,11
+ (asgn ~7
+  (ddot ~1 x.0.tge70unlm right.1.tge70unlm +0) 2
+  (nil)) 13,12
+ (asgn ~7
+  (ddot ~5
+   (ddot ~1 x.0.tge70unlm left.1.tge70unlm +0) right.1.tge70unlm +0) 2
+  (nil)) 4,13
+ (var :y.0.tge70unlm . . 8,~10
+  (ref 11 NodeObj.1.tge70unlm) 13
+  (newobj ~5,~10
+   (ref 11 NodeObj.1.tge70unlm) 5
+   (kv ~5 data.1.tge70unlm 2 +987) 16
+   (kv ~16 left.1.tge70unlm 2
+    (nil)) 28
+   (kv ~28 right.1.tge70unlm 2
+    (nil)))) 12,14
+ (asgn ~6
+  (ddot ~5
+   (ddot ~1 x.0.tge70unlm left.1.tge70unlm +0) left.1.tge70unlm +0) 11
+  (newobj ~11,~11
+   (ref 11 NodeObj.1.tge70unlm) 5
+   (kv ~5 data.1.tge70unlm 2 -123) 17
+   (kv ~17 left.1.tge70unlm 2 y.0.tge70unlm) 27
+   (kv ~27 right.1.tge70unlm 2 y.0.tge70unlm))) ,16
+ (proc 5 :foo.0.tge70unlm . . 8
+  (typevars 1
+   (typevar :T.2.tge70unlm . . . .)) 11
+  (params 1
+   (param :data.0 . . 6 T.2.tge70unlm .)) 12,~13
+  (ref 11
+   (at ~7 NodeObj.0.tge70unlm ~7,13 T.2.tge70unlm)) . . 2,1
+  (stmts 7
+   (result :result.0 . . 3,~14
+    (ref 11
+     (at ~7 NodeObj.0.tge70unlm ~7,13 T.2.tge70unlm)) .) 7
+   (asgn ~7 result.0 9
+    (newobj ~6,~14
+     (ref 11
+      (at ~7 NodeObj.0.tge70unlm ~7,13 T.2.tge70unlm)) 5
+     (kv ~5 data 2 data.0) 17
+     (kv ~17 left 2
+      (nil)) 29
+     (kv ~29 right 2
+      (nil)))) 12,1
+   (asgn ~6
+    (ddot ~6 result.0 data.0.tge70unlm +0) 2 data.0) ~2,~1
+   (ret result.0))) 4,19
+ (let :a.0.tge70unlm . . 8,~16
+  (ref 11 NodeObj.1.tge70unlm) 7
+  (call ~3 foo.1.tge70unlm 1 +123)) 2,20
+ (asgn ~2 x.0.tge70unlm 2 a.0.tge70unlm) 11,19
+ (proc :foo.1.tge70unlm . ~11,~3 .
+  (at foo.0.tge70unlm
+   (i -1)) ,~3
+  (params 1
+   (param :data.2 . .
+    (i -1) .)) 1,~16
+  (ref 11 NodeObj.1.tge70unlm) ~11,~3 . ~11,~3 . ~9,~2
+  (stmts 7
+   (result :result.1 . . 3,~14
+    (ref 11 NodeObj.1.tge70unlm) .) 7
+   (asgn ~7 result.1 9
+    (newobj ~6,~14
+     (ref 11 NodeObj.1.tge70unlm) 5
+     (kv ~5 data.1.tge70unlm 2 data.2) 17
+     (kv ~17 left.1.tge70unlm 2
+      (nil)) 29
+     (kv ~29 right.1.tge70unlm 2
+      (nil)))) 12,1
+   (asgn ~6
+    (ddot ~6 result.1 data.1.tge70unlm +0) 2 data.2) ~2,~1
+   (ret result.1))) 12,8
+ (type :Node.4.tge70unlm .
+  (at Node.0.tge70unlm 1
+   (i -1)) ~2,~5 . ,~5
+  (ref 11 NodeObj.1.tge70unlm)) 23,3
+ (type :NodeObj.1.tge70unlm .
+  (at NodeObj.0.tge70unlm ~10,5
+   (i -1)) ~10,1 . ~8,1
+  (object . ~11,1
+   (fld :data.1.tge70unlm . . 9,3
+    (i -1) .) ~11,2
+   (fld :left.1.tge70unlm . . 8,~3
+    (ref 11 NodeObj.1.tge70unlm) .) ~5,2
+   (fld :right.1.tge70unlm . . 2,~3
+    (ref 11 NodeObj.1.tge70unlm) .))))

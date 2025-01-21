@@ -12,7 +12,7 @@ import std / [hashes, os, tables, sets, assertions]
 include nifprelude
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls]
-import basics, iterinliner, xelim
+import basics, pipeline
 
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
@@ -504,6 +504,8 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
         of Requires, Ensures:
           skip c
+        of BuildP, EmitP:
+          raiseAssert "unreachable"
         skipParRi e, c
       else:
         error e, "unknown pragma: ", c
@@ -844,6 +846,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         traverseExpr e, c
         traverseExpr e, c
         wantParRi e, c
+      of HAddrX, AddrX:
+        e.dest.add tagToken("addr", c.info)
+        inc c
+        inc nested
+      of HderefX, DerefX:
+        e.dest.add tagToken("deref", c.info)
+        inc c
+        inc nested
       of SufX:
         e.dest.add c
         inc c
@@ -1078,7 +1088,16 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       inc c
       e.loop c:
         traverseExpr e, c
-    of EmitS, AsgnS, RetS:
+    of EmitS:
+      e.dest.add c
+      inc c
+      e.loop c:
+        if c.kind == StringLit:
+          e.dest.add c
+          inc c
+        else: 
+          traverseExpr e, c
+    of AsgnS, RetS:
       e.dest.add c
       inc c
       e.loop c:
@@ -1208,14 +1227,6 @@ proc writeOutput(e: var EContext) =
   b.endTree()
   b.close()
 
-proc splitModulePath(s: string): (string, string, string) =
-  var (dir, main, ext) = splitFile(s)
-  let dotPos = find(main, '.')
-  if dotPos >= 0:
-    ext = substr(main, dotPos) & ext
-    main.setLen dotPos
-  result = (dir, main, ext)
-
 
 proc expand*(infile: string) =
   let (dir, file, ext) = splitModulePath(infile)
@@ -1226,9 +1237,8 @@ proc expand*(infile: string) =
   e.openMangleScope()
 
   var c0 = setupProgram(infile, infile.changeFileExt ".c.nif", true)
-  transformStmt(e, c0)
+  var dest = transform(e, c0, file)
 
-  var dest = move e.dest
   var c = beginRead(dest)
 
   if stmtKind(c) == StmtsS:
