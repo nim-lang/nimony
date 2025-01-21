@@ -15,6 +15,7 @@ proc genEmitStmt(c: var GeneratedCode; t: Tree; n: NodePos) =
       c.add c.m.lits.strings[t[ch].litId]
     else:
       genx c, t, ch
+  c.add NewLine
 
 proc genStmt(c: var GeneratedCode; t: Tree; n: NodePos)
 

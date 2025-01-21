@@ -14,6 +14,10 @@ import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls]
 import basics, pipeline
 
+type
+  ExprFlag = enum
+    efKeepStringLit
+
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
   result = e.currentOwner
@@ -73,7 +77,7 @@ type
   TraverseMode = enum
     TraverseAll, TraverseSig, TraverseTopLevel
 
-proc traverseExpr(e: var EContext; c: var Cursor)
+proc traverseExpr(e: var EContext; c: var Cursor; flags: set[ExprFlag] = {})
 proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll)
 proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMode)
 
@@ -504,6 +508,8 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
         of Requires, Ensures:
           skip c
+        of BuildP, EmitP:
+          raiseAssert "unreachable"
         skipParRi e, c
       else:
         error e, "unknown pragma: ", c
@@ -765,7 +771,7 @@ proc traverseTupleConstr(e: var EContext; c: var Cursor) =
     e.dest.addParRi() # "kv"
   wantParRi e, c
 
-proc traverseExpr(e: var EContext; c: var Cursor) =
+proc traverseExpr(e: var EContext; c: var Cursor; flags: set[ExprFlag] = {}) =
   var nested = 0
   while true:
     case c.kind
@@ -848,9 +854,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.add c
         inc c
         traverseExpr e, c
-        assert c.kind == StringLit
-        e.dest.add c
-        inc c
+        traverseExpr e, c, {efKeepStringLit}
         inc nested
       else:
         e.dest.add c
@@ -876,7 +880,10 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       e.demand c.symId
       inc c
     of StringLit:
-      genStringLit e, c
+      if efKeepStringLit in flags:
+        e.dest.add c
+      else:
+        genStringLit e, c
       inc c
     of UnknownToken, DotToken, Ident, CharLit, IntLit, UIntLit, FloatLit:
       e.dest.add c
@@ -1078,7 +1085,12 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       inc c
       e.loop c:
         traverseExpr e, c
-    of EmitS, AsgnS, RetS:
+    of EmitS:
+      e.dest.add c
+      inc c
+      e.loop c:
+        traverseExpr e, c, {efKeepStringLit}
+    of AsgnS, RetS:
       e.dest.add c
       inc c
       e.loop c:
