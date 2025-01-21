@@ -89,9 +89,13 @@ proc isAddressable*(n: Cursor): bool =
 proc tr(c: var Context; n: var Cursor; e: Expects)
 
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
-  takeToken c, n
-  while n.kind != ParRi: tr c, n, e
-  wantParRi c, n
+  if n.kind != ParLe:
+    takeToken c, n
+  else:
+    takeToken c, n
+    while n.kind != ParRi:
+      tr c, n, e
+    wantParRi c, n
 
 proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   # --------------------------------------------------------------------------
@@ -257,20 +261,23 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
 proc trProcDecl(c: var Context; n: var Cursor) =
   c.typeCache.openScope()
   takeToken c, n
+  let symId = n.symId
   var isGeneric = false
   var r = CurrentRoutine(returnType: WantT)
   for i in 0..<BodyPos:
     if i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsS
     if i == ParamsPos:
-      c.typeCache.registerParams(n.symId, n)
+      c.typeCache.registerParams(symId, n)
       var params = n
       inc params
       let firstParam = asLocal(params)
       if firstParam.kind == ParamY:
         r.firstParam = firstParam.name.symId
         r.firstParamKind = firstParam.typ.typeKind
-        if r.firstParamKind in {MutT, OutT}: r.returnType = WantVarTResult
+
+    if i == ResultPos and n.typeKind in {MutT, OutT}:
+      r.returnType = WantVarTResult
     takeTree c.dest, n
   if isGeneric:
     takeTree c.dest, n
@@ -320,16 +327,22 @@ proc firstArgIsMutable(c: var Context; n: Cursor): bool =
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
   let callExpr = n
+
+  var callBuf = createTokenBuf()
+
+  swap c.dest, callBuf
   takeToken c, n
   let fnType = getType(c.typeCache, n)
   assert fnType == "params"
+  takeToken c, n
   var retType = fnType
   skip retType
+
+  var needHderef = false
   if retType.typeKind == MutT:
     if e == WantT:
-      c.dest.addParLe(HderefX, n.info)
+      needHderef = true
       trCallArgs(c, n, fnType)
-      c.dest.addParRi()
     elif e in {WantVarTResult, WantTButSkipDeref} or firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
     elif not dangerous:
@@ -350,6 +363,14 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   else:
     trCallArgs(c, n, fnType)
   wantParRi c, n
+
+  swap c.dest, callBuf
+  if needHderef:
+    c.dest.addParLe(HderefX, info)
+    c.dest.add callBuf
+    c.dest.addParRi()
+  else:
+    c.dest.add callBuf
 
 proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
   if ri.exprKind in CallKinds:
@@ -376,16 +397,22 @@ proc trAsgn(c: var Context; n: var Cursor) =
   if isResultUsage(le):
     e = c.r.returnType
     if e == WantVarTResult:
+      tr c, n, e
       if not validBorrowsFrom(c, n):
         err = InvalidBorrow
+    else:
+      tr c, n, e
   elif borrowsFromReadonly(c, n):
     err = LocationIsConst
-  tr c, n, e
+  else:
+    tr c, n, e
   case err
   of InvalidBorrow:
     buildLocalErr c.dest, n.info, "cannot borrow from " & toString(n, false)
   of LocationIsConst:
     buildLocalErr c.dest, n.info, "cannot mutate expression " & toString(n, false)
+    tr c, n, e
+    tr c, n, e
   else:
     trAsgnRhs c, le, n, e
   wantParRi c, n
@@ -431,12 +458,12 @@ proc trLocal(c: var Context; n: var Cursor) =
   wantParRi c, n
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
+  takeToken c, n
   while n.kind != ParRi:
     if isLastSon(n):
       tr c, n, outerE
     else:
       tr c, n, WantT
-    inc n
   wantParRi c, n
 
 proc trObjConstr(c: var Context; n: var Cursor) =
@@ -449,6 +476,7 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     let fieldType = getType(c.typeCache, n)
     let e = if fieldType.typeKind in {MutT, OutT}: WantVarT else: WantT
     tr c, n, e
+    wantParRi c, n
   wantParRi c, n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
