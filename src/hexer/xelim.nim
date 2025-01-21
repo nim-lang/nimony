@@ -26,9 +26,19 @@ proc isComplex(n: Cursor): bool =
       if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, StmtsS, ResultS}:
         return true
       elif n.exprKind == ExprX:
-        return true
-      inc n
-      inc nested
+        inc n
+        let inner = n
+        skip n
+        if n.kind == ParRi:
+          # ExprX with exactly one son might be harmless:
+          if isComplex(inner):
+            return true
+        else:
+          # More than one son is always complex:
+          return true
+      else:
+        inc n
+        inc nested
     of ParRi:
       inc n
       dec nested
@@ -193,6 +203,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     else:
       # Bug: just copy the thing around
       takeTree dest, n
+  skipParRi n
 
   while toClose > 0:
     dest.addParRi()
@@ -326,6 +337,9 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
     else:
       trStmt c, dest, n
 
+  #if tar.m != IsIgnored:
+  #  tar.t.addSymUse tmp, info
+
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
@@ -433,3 +447,8 @@ proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
   result.addParRi()
   c.typeCache.closeScope()
   #echo "PRODUCED: ", result.toString(false)
+
+when isMainModule:
+  let n = setupProgram("debug.txt", "debug.out")
+  let r = lowerExprs(n, "main")
+  echo r.toString(false)

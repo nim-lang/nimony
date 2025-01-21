@@ -1,7 +1,7 @@
 import basics
 include nifprelude
 
-import std / tables
+import std / [assertions, tables]
 
 import ".." / nimony / [nimony_model, programs, decls]
 
