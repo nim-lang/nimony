@@ -275,7 +275,9 @@ proc trProcDecl(c: var Context; n: var Cursor) =
       if firstParam.kind == ParamY:
         r.firstParam = firstParam.name.symId
         r.firstParamKind = firstParam.typ.typeKind
-        if r.firstParamKind in {MutT, OutT}: r.returnType = WantVarTResult
+
+    if i == ResultPos and n.typeKind in {MutT, OutT}:
+      r.returnType = WantVarTResult
     takeTree c.dest, n
   if isGeneric:
     takeTree c.dest, n
