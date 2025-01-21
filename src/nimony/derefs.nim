@@ -325,17 +325,22 @@ proc firstArgIsMutable(c: var Context; n: Cursor): bool =
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
   let callExpr = n
+
+  var callBuf = createTokenBuf()
+
+  swap c.dest, callBuf
   takeToken c, n
   let fnType = getType(c.typeCache, n)
   assert fnType == "params"
   takeToken c, n
   var retType = fnType
   skip retType
+
+  var needHderef = false
   if retType.typeKind == MutT:
     if e == WantT:
-      c.dest.addParLe(HderefX, n.info)
+      needHderef = true
       trCallArgs(c, n, fnType)
-      c.dest.addParRi()
     elif e in {WantVarTResult, WantTButSkipDeref} or firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
     elif not dangerous:
@@ -356,6 +361,14 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   else:
     trCallArgs(c, n, fnType)
   wantParRi c, n
+
+  swap c.dest, callBuf
+  if needHderef:
+    c.dest.addParLe(HderefX, info)
+    c.dest.add callBuf
+    c.dest.addParRi()
+  else:
+    c.dest.add callBuf
 
 proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
   if ri.exprKind in CallKinds:

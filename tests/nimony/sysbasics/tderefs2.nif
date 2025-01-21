@@ -1,0 +1,26 @@
+(.nif24)
+,1,tests/nimony/sysbasics/tderefs2.nim(stmts
+ (proc 5 :g.0.tdexr7cz81 . . . 6
+  (params 1
+   (param :x.0 . . 3
+    (mut 4
+     (i -1)) .)) 14
+  (mut 4
+   (i -1)) . . 2,1
+  (stmts 7
+   (result :result.0 . . 1,~1
+    (mut 4
+     (i -1)) .) 7
+   (asgn ~7 result.0 2 x.0) ~2,~1
+   (ret result.0))) ,3
+ (proc 5 :foo.0.tdexr7cz81 . . . 9
+  (params) . . . 2,1
+  (stmts 4
+   (var :s.0 . .
+    (i -1) 4 +12) 4,1
+   (let :x.1 . . 12,~5
+    (i -1) 5
+    (hderef
+     (call ~1 g.0.tdexr7cz81 1
+      (haddr s.0)))))) 3,7
+ (call ~3 foo.0.tdexr7cz81))
