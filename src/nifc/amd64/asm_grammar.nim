@@ -131,8 +131,8 @@ proc genDataDecl(c: var Context): bool =
     var or4 = false
     block or5:
       var kw6 = false
-      if isTag(c, AsciiT):
-        emit(c, ".ascii ")
+      if isTag(c, StringT):
+        emit(c, ".string ")
         if not genDataKey(c):
           error(c, "DataKey expected")
           break or5
