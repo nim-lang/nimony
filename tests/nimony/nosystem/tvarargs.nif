@@ -92,8 +92,7 @@
     (expr
      (cmd
       (ochoice write.0.tvah6culb write.1.tvah6culb) 6 stdout.0.tvah6culb 14 x.3))) ,2
-   (cmd write.0.tvah6culb 6
-    (haddr stdout.0.tvah6culb) 14 '\0A'))) 4,31
+   (cmd write.0.tvah6culb 6 stdout.0.tvah6culb 14 '\0A'))) 4,31
  (var :someVar.0.tvah6culb . .
   (string) 10 "") 2,27
  (stmts 2,1
@@ -107,8 +106,7 @@
    (cmd write.1.tvah6culb 6
     (haddr stdout.0.tvah6culb) 15,5 "b")) ,2
   (cmd write.0.tvah6culb 6
-   (haddr
-    (haddr stdout.0.tvah6culb)) 14 '\0A')) 2,27
+   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,27
  (stmts 2,1
   (stmts
    (cmd write.1.tvah6culb 6
@@ -117,16 +115,13 @@
    (cmd write.0.tvah6culb 6
     (haddr stdout.0.tvah6culb) 8,7 'c')) ,2
   (cmd write.0.tvah6culb 6
-   (haddr
-    (haddr stdout.0.tvah6culb)) 14 '\0A')) 2,27
+   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,27
  (stmts ,2
   (cmd write.0.tvah6culb 6
-   (haddr
-    (haddr stdout.0.tvah6culb)) 14 '\0A')) 2,27
+   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,27
  (stmts 2,1
   (stmts
    (cmd write.1.tvah6culb 6
     (haddr stdout.0.tvah6culb) 1,11 someVar.0.tvah6culb)) ,2
   (cmd write.0.tvah6culb 6
-   (haddr
-    (haddr stdout.0.tvah6culb)) 14 '\0A')))
+   (haddr stdout.0.tvah6culb) 14 '\0A')))

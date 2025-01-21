@@ -844,6 +844,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         traverseExpr e, c
         traverseExpr e, c
         wantParRi e, c
+      of HAddrX, AddrX:
+        e.dest.add tagToken("addr", c.info)
+        inc c
+        inc nested
+      of HderefX, DerefX:
+        e.dest.add tagToken("deref", c.info)
+        inc c
+        inc nested
       of SufX:
         e.dest.add c
         inc c

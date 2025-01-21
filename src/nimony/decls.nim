@@ -115,6 +115,7 @@ proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
 const
   TypevarsPos* = 3
   ParamsPos* = 4
+  ResultPos* = 5
   BodyPos* = 8
 
 proc asRoutine*(c: Cursor; mode = SkipExclBody): Routine =
