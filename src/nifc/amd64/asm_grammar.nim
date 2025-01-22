@@ -9,7 +9,7 @@ proc genDirective(c: var Context): bool =
     var before1 = save(c)
   var kw2 = false
   if isTag(c, GlobalT):
-    emitTag(c, "global")
+    emit(c, ".global ")
     if not lookupSym(c):
       error(c, "SYMBOL expected")
       return false
