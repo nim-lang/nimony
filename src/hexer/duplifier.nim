@@ -172,15 +172,19 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     copyTree c.dest, typ
     tr c, n, WillBeOwned
 
-proc callDup(c: var Context; arg: var Cursor; typ: Cursor) =
-  let info = arg.info
-  let hookProc = getHook(c.lifter[], attachedDup, typ, info)
-  if hookProc != NoSymId and arg.kind != StringLit:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      tr c, arg, WillBeOwned
+proc callDup(c: var Context; arg: var Cursor) =
+  let typ = getType(c.typeCache, arg)
+  if typ.typeKind == NilT:
+    tr c, arg, DontCare
   else:
-    tr c, arg, WillBeOwned
+    let info = arg.info
+    let hookProc = getHook(c.lifter[], attachedDup, typ, info)
+    if hookProc != NoSymId and arg.kind != StringLit:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        tr c, arg, WillBeOwned
+    else:
+      tr c, arg, WillBeOwned
 
 proc callWasMoved(c: var Context; arg: Cursor) =
   let typ = getType(c.typeCache, arg)
@@ -265,7 +269,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
           var n = ri
-          callDup c, n, leType
+          callDup c, n
         callDestroy(c, destructor, tmp, le.info)
       else:
         if isNotFirstAsgn:
@@ -274,7 +278,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
           n = ri
-          callDup c, n, leType
+          callDup c, n
 
 proc skipParRi*(n: var Cursor) =
   if n.kind == ParRi:
@@ -520,7 +524,7 @@ proc trLocal(c: var Context; n: var Cursor) =
       c.dest.addParRi()
       callWasMoved c, r.val
     else:
-      callDup c, r.val, r.typ
+      callDup c, r.val
       c.dest.addParRi()
   else:
     tr c, r.val, WillBeOwned
