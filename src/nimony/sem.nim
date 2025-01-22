@@ -146,6 +146,17 @@ proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
 proc isNoReturn(n: Cursor): bool {.inline.} =
   result = implicitlyDiscardable(n, noreturnOnly = true)
 
+proc requestRoutineInstance(c: var SemContext; origin: SymId;
+                            typeArgs: TokenBuf;
+                            inferred: var Table[SymId, Cursor];
+                            info: PackedLineInfo): ProcInstance
+
+proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
+
+template emptyNode(): Cursor =
+  # XXX find a better solution for this
+  c.types.voidType
+
 proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCursor) =
   if typeKind(expected) == AutoT:
     return
@@ -164,7 +175,20 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
     typematch m, expected, arg
   endRead(c.dest)
   if m.err:
-    c.typeMismatch info, it.typ, expected
+    # try converter
+    var convMatch = default(Match)
+    if tryConverterMatch(c, convMatch, expected, arg):
+      shrink c.dest, argBegin
+      c.dest.add parLeToken(HcallX, info)
+      c.dest.add symToken(convMatch.fn.sym, info)
+      if convMatch.genericConverter:
+        let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
+        c.dest[c.dest.len-1].setSymId inst.targetSym
+      c.dest.add convMatch.args
+      c.dest.addParRi()
+      it.typ = expected
+    else:
+      c.typeMismatch info, it.typ, expected
   else:
     shrink c.dest, argBegin
     c.dest.add m.args
@@ -249,7 +273,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
     publish moduleSym, moduleDecl
     var module = ImportedModule()
     var marker = mode.list
-    loadInterface suffix, module.iface, moduleSym, c.importTab,
+    loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters,
       marker, negateMarker = mode.kind == FromImport
     c.importedModules[moduleSym] = module
 
@@ -518,6 +542,16 @@ proc instantiateGenericType(c: var SemContext; req: InstRequest) =
     var n = beginRead(dest)
     semTypeSection c, n
 
+proc instantiateType(c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor =
+  var dest = createTokenBuf(30)
+  var sc = SubsContext(params: addr bindings)
+  subs(c, dest, sc, typ)
+  var sub = beginRead(dest)
+  var instDest = createTokenBuf(30)
+  swap c.dest, instDest
+  result = semLocalType(c, sub)
+  swap c.dest, instDest
+
 type
   PassKind = enum checkSignatures, checkBody, checkGenericInst, checkConceptProc
 
@@ -711,10 +745,6 @@ proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
     if not discardable:
       buildErr c, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
   n = it.n
-
-template emptyNode(): Cursor =
-  # XXX find a better solution for this
-  c.types.voidType
 
 template skipToLocalType(n) =
   inc n # skip ParLe
@@ -947,24 +977,6 @@ proc getFnIdent(c: var SemContext): StrId =
   result = getIdent(n)
   endRead(c.dest)
 
-proc containsGenericParams(n: TypeCursor): bool =
-  var n = n
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol:
-      let res = tryLoadSym(n.symId)
-      if res.status == LacksNothing and res.decl == $TypevarY:
-        return true
-    of ParLe:
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    if nested == 0: break
-    inc n
-  return false
-
 type
   DotExprState = enum
     MatchedDotField ## matched a dot field, i.e. result is a dot expression
@@ -1159,6 +1171,92 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
 proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
+proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
+  if not m.genericConverter:
+    c.dest.add m.args
+  else:
+    m.args.addParRi()
+    var arg = beginRead(m.args)
+    var i = 0
+    while arg.kind != ParRi:
+      var nested = 0
+      while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
+        takeToken c, arg
+        inc nested
+      if arg.exprKind == HcallX:
+        let convInfo = arg.info
+        takeToken c, arg
+        inc nested
+        if arg.kind == Symbol:
+          let sym = arg.symId
+          takeToken c, arg
+          let res = tryLoadSym(sym)
+          if res.status == LacksNothing and res.decl.symKind == ConverterY:
+            let routine = asRoutine(res.decl)
+            if isGeneric(routine):
+              let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
+              var convMatch = createMatch(addr c)
+              sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode()
+              # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
+              assert not convMatch.err
+              let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
+              c.dest[c.dest.len-1].setSymId inst.targetSym
+      while true:
+        case arg.kind
+        of ParLe: inc nested
+        of ParRi: dec nested
+        else: discard
+        takeToken c, arg
+        if nested == 0: break
+      inc i
+
+proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
+  ## looks for a converter from `arg` to `f`, returns `true` if found and
+  ## sets `convMatch` to the match to the converter
+  result = false
+  let root = nominalRoot(f)
+  if root == SymId(0): return
+  let converters = c.converters.getOrDefault(root)
+  var convMatches: seq[Match] = @[]
+  for conv in items converters:
+    # f(a)
+    # --> f(conv(a)) ?
+    # conv's return type must match `f`.
+    # conv's input type must match `a`.
+    let res = tryLoadSym(conv)
+    assert res.status == LacksNothing
+    var fn = asRoutine(res.decl)
+    assert fn.kind == ConverterY
+
+    var inputMatch = createMatch(addr c)
+    let candidate = FnCandidate(kind: fn.kind, sym: conv, typ: fn.params)
+
+    # first match the input argument of `conv` so that the unification algorithm works as expected:
+    sigmatch(inputMatch, candidate, [arg], emptyNode())
+    if classifyMatch(inputMatch) notin {EqualMatch, GenericMatch, SubtypeMatch}:
+      continue
+    # use inputMatch.returnType here so the caller doesn't have to instantiate it again:
+    if inputMatch.inferred.len != 0 and containsGenericParams(inputMatch.returnType):
+      inputMatch.returnType = instantiateType(c, inputMatch.returnType, inputMatch.inferred)
+    let dest = inputMatch.returnType
+    var callBuf = createTokenBuf(16) # dummy call node to use for matching dest type
+    callBuf.add parLeToken(HcallX, arg.n.info)
+    callBuf.add symToken(conv, arg.n.info)
+    callBuf.add inputMatch.args
+    callBuf.addParRi()
+    var newArg = Item(n: beginRead(callBuf), typ: dest)
+    var fMatch = f
+    var destMatch = createMatch(addr c)
+    typematch(destMatch, fMatch, newArg)
+    if classifyMatch(destMatch) in {EqualMatch, GenericMatch}:
+      if isGeneric(fn):
+        inputMatch.genericConverter = true
+      convMatches.add inputMatch
+  let idx = pickBestMatch(c, convMatches)
+  if idx >= 0:
+    result = true
+    convMatch = convMatches[idx]
+
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
@@ -1196,13 +1294,55 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     m.add createMatch(addr c)
     sigmatch(m[^1], candidate, cs.args, genericArgs)
     considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
-  let idx = pickBestMatch(c, m)
+  var idx = pickBestMatch(c, m)
+
+  if idx < 0:
+    # try converters
+    var matchAdded = false
+    let L = m.len
+    for mi in 0 ..< L:
+      if not m[mi].err: continue
+      var newMatch = createMatch(addr c)
+      var newArgs: seq[Item] = @[]
+      var newArgBufs: seq[TokenBuf] = @[] # to keep alive
+      var param = m[mi].fn.typ
+      inc param
+      var ai = 0
+      var anyConverters = false
+      while param.kind != ParRi:
+        # varargs not handled yet
+        if ai >= cs.args.len: break
+        let f = asLocal(param).typ
+        var arg = cs.args[ai]
+        var convMatch = default(Match)
+        if tryConverterMatch(c, convMatch, f, arg):
+          anyConverters = true
+          var argBuf = createTokenBuf(16)
+          argBuf.add parLeToken(HcallX, arg.n.info)
+          argBuf.add symToken(convMatch.fn.sym, arg.n.info)
+          if convMatch.genericConverter:
+            # instantiate after match
+            newMatch.genericConverter = true
+          argBuf.add convMatch.args
+          argBuf.addParRi()
+          newArgs.add Item(n: beginRead(argBuf), typ: convMatch.returnType)
+          newArgBufs.add argBuf
+        else:
+          newArgs.add arg
+        skip param
+        inc ai
+      if anyConverters:
+        sigmatch(newMatch, m[mi].fn, newArgs, genericArgs)
+        m.add newMatch
+        matchAdded = true
+    if matchAdded: # m.len != L
+      idx = pickBestMatch(c, m)
 
   if idx >= 0:
     c.dest.add cs.callNode
     let finalFn = m[idx].fn
     let isMagic = c.addFn(finalFn, cs.fn.n, cs.args)
-    c.dest.add m[idx].args
+    addArgsInstConverters(c, m[idx], cs.args)
     wantParRi c, it.n
 
     if finalFn.kind == TemplateY:
@@ -2877,6 +3017,16 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       skip it.n
 
     publishSignature c, symId, declStart
+    if kind == ConverterY:
+      let root = nominalRoot(c.routine.returnType)
+      if root == SymId(0):
+        buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
+      else:
+        if pass == checkSignatures: # to prevent duplicates, could also use a set
+          c.converters.mgetOrPut(root, @[]).add(symId)
+        if pass == checkBody and c.dest[beforeExportMarker].kind != DotToken:
+          # don't register instances
+          c.converterIndexMap.add((root, symId))
     if it.n.kind != DotToken:
       case pass
       of checkGenericInst:
@@ -4083,7 +4233,8 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
       let sym = syms.symId
       let routine = getProcDecl(sym)
       let candidate = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
-      var m = Match(fn: candidate)
+      var m = createMatch(addr c)
+      m.fn = candidate
       matchTypevars m, candidate, args
       if not m.err:
         # match
@@ -4756,7 +4907,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       inc it.n
       semExpr c, it
       skipParRi it.n
-    of CallX, CmdX, CallStrLitX, InfixX, PrefixX:
+    of CallX, CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
       toplevelGuard c:
         semCall c, it
     of DotX, DerefDotX:
@@ -4875,7 +5026,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
   #b.addRaw toString(c.dest)
   #b.close()
   writeFile outfile, "(.nif24)\n" & toString(c.dest)
-  createIndex outfile, true, c.hookIndexMap, c.toBuild
+  createIndex outfile, true, IndexSections(hooks: c.hookIndexMap, converters: c.converterIndexMap, toBuild: c.toBuild)
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n == "stmts"

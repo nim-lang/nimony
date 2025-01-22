@@ -39,6 +39,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
+    genericConverter*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -642,11 +643,24 @@ type
   TypeRelation* = enum
     NoMatch
     ConvertibleMatch
+    SubtypeMatch
     GenericMatch
     EqualMatch
 
 proc usesConversion*(m: Match): bool {.inline.} =
   result = abs(m.inheritanceCosts) + m.intCosts > 0
+
+proc classifyMatch*(m: Match): TypeRelation {.inline.} =
+  if m.err:
+    return NoMatch
+  if m.intCosts != 0:
+    return ConvertibleMatch
+  if m.inheritanceCosts != 0:
+    return SubtypeMatch
+  if m.inferred.len != 0:
+    # maybe a better way to track this
+    return GenericMatch
+  result = EqualMatch
 
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
   var i = 0
