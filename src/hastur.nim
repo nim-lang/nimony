@@ -167,6 +167,7 @@ proc removeMakeErrors(output: string): string =
     else: break
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
+  #echo "TESTING ", file
   inc c.total
   var nimonycmd = (if cat == Basics: "--noSystem " else: "") & "--isMain"
   if cat == Tracked:
