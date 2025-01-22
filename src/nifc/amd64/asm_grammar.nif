@@ -4,7 +4,7 @@
 
 (COM "This grammar reflects the fact that we produce GAS code in intel syntax.")
 
-(RULE :Directive (global SYMBOL (DO "nl")))
+(RULE :Directive (global ".global " SYMBOL (DO "nl")))
 
 (RULE :Code (text ".section .text" (DO "nl")  SYMBOLDEF ":" (DO "nl") (ONE_OR_MANY Instruction)) (DO "nl"))
 (RULE :ExternDecl (extern SYMBOLDEF (DO "nl")))
