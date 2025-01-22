@@ -172,8 +172,7 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     copyTree c.dest, typ
     tr c, n, WillBeOwned
 
-proc callDup(c: var Context; arg: var Cursor) =
-  let typ = getType(c.typeCache, arg)
+proc callDup(c: var Context; arg: var Cursor; typ: Cursor) =
   let info = arg.info
   let hookProc = getHook(c.lifter[], attachedDup, typ, info)
   if hookProc != NoSymId and arg.kind != StringLit:
@@ -219,8 +218,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
   let le = n2
   skip n2
   let ri = n2
-  let riType = getType(c.typeCache, ri)
-  let destructor = getDestructor(c.lifter[], riType, n.info)
+  let leType = getType(c.typeCache, le)
+  let destructor = getDestructor(c.lifter[], leType, n.info)
   if destructor == NoSymId:
     # the type has no destructor, there is nothing interesting to do:
     trSons c, n, DontCare
@@ -240,7 +239,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     elif isLastRead(c, ri):
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
-        let tmp = tempOfTrArg(c, ri, riType)
+        let tmp = tempOfTrArg(c, ri, leType)
         callWasMoved c, ri
         callDestroy(c, destructor, lhs)
         copyInto c.dest, n:
@@ -261,12 +260,12 @@ proc trAsgn(c: var Context; n: var Cursor) =
       # XXX We should really prefer to simply call `=copy(x, y)` here.
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
-        let tmp = tempOfTrArg(c, ri, riType)
+        let tmp = tempOfTrArg(c, ri, leType)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
           var n = ri
-          callDup c, n
+          callDup c, n, leType
         callDestroy(c, destructor, tmp, le.info)
       else:
         if isNotFirstAsgn:
@@ -274,8 +273,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
-          var n = ri
-          callDup c, n
+          n = ri
+          callDup c, n, leType
 
 proc skipParRi*(n: var Cursor) =
   if n.kind == ParRi:
@@ -353,6 +352,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   copyTree c.dest, r.pattern
   copyTree c.dest, r.typevars
   copyTree c.dest, r.params
+  copyTree c.dest, r.retType
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
@@ -520,7 +520,7 @@ proc trLocal(c: var Context; n: var Cursor) =
       c.dest.addParRi()
       callWasMoved c, r.val
     else:
-      callDup c, r.val
+      callDup c, r.val, r.typ
       c.dest.addParRi()
   else:
     tr c, r.val, WillBeOwned
@@ -561,7 +561,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
     trLocation c, n, e
-  elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit} or isDeclarative(n):
+  elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit, FloatLit, DotToken} or isDeclarative(n):
     takeTree c.dest, n
   else:
     case n.exprKind

@@ -47,8 +47,8 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
   false
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
-  # XXX to implement somehow
-  SymId(0)
+  const systemSuffix = "sys9azlf"
+  result = pool.syms.getOrIncl(name & ".0." & systemSuffix)
 
 proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var n = n
@@ -117,7 +117,9 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   of ObjectT:
     result = isTrivialObjectBody(c, typ)
   of TupleT:
-    result = isTrivialForFields(c, typ)
+    var tup = typ
+    inc tup
+    result = isTrivialForFields(c, tup)
   of NoType, NilT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, IterT, InvokeT,
      TypeKindT, UntypedT, TypedT:
     raiseAssert "bug here"
