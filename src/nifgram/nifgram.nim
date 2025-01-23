@@ -227,8 +227,9 @@ proc compileKeyw(c: var Context; it: string): string =
       if c.inMatch == 0:
         ind c
         c.outp.add "error(" & c.args & ", " & escape(errmsg) & ")"
-      ind c
-      c.outp.add c.leaveBlock
+      else:
+        ind c
+        c.outp.add c.leaveBlock
       dec c.nesting
 
   ind c
