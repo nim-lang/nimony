@@ -144,11 +144,12 @@ type
     Basics, # basic tests: These are processed with --noSystem
     Tracked # tracked tests: These are processed and can contain "track info"
             # for line, col, filename extraction (useful for nimsuggest-like tests)
+    Compat # compatibility mode tests
 
 proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
-  of Normal, Tracked: "c --silentMake"
+  of Normal, Tracked, Compat: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
@@ -169,9 +170,15 @@ proc removeMakeErrors(output: string): string =
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   #echo "TESTING ", file
   inc c.total
-  var nimonycmd = (if cat == Basics: "--noSystem " else: "") & "--isMain"
-  if cat == Tracked:
+  var nimonycmd = "--isMain"
+  case cat
+  of Normal: discard
+  of Basics:
+    nimonycmd.add " --noSystem"
+  of Tracked:
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
+  of Compat:
+    nimonycmd.add " --compat"
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file), cat)
 
   let msgs = file.changeFileExt(".msgs")
@@ -227,6 +234,7 @@ proc parseCategory(path: string): Category =
   case path
   of "track": Tracked
   of "nosystem": Basics
+  of "compat": Compat
   else: Normal
 
 proc findCategory(path: string): Category =

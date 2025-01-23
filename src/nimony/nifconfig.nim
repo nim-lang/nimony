@@ -15,6 +15,7 @@ type
     defines*: HashSet[string]
     paths*, nimblePaths*: seq[string]
     bits*: int
+    compat*: bool
 
 proc parseConfig(c: Cursor; result: var NifConfig) =
   var c = c
@@ -46,6 +47,11 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
         inc c
         if c.kind == IntLit:
           result.bits = pool.integers[c.intId]
+          inc c
+      of "compat":
+        inc c
+        if c.kind == IntLit:
+          result.compat = bool(pool.integers[c.intId])
           inc c
       else:
         inc c

@@ -128,7 +128,10 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   for value in values:
     let (key, sym) = value
     result.buildTree KvT, NoLineInfo:
-      result.add symToken(key, NoLineInfo)
+      if key == SymId(0):
+        result.add dotToken(NoLineInfo)
+      else:
+        result.add symToken(key, NoLineInfo)
       result.add symToken(sym, NoLineInfo)
 
   result.addParRi()
@@ -297,6 +300,8 @@ proc readSymbolSection(s: var Stream; tab: var Table[string, string]) =
           key = pool.syms[t.symId]
         elif t.kind == Ident:
           key = pool.strings[t.litId]
+        elif t.kind == DotToken:
+          key = "."
         else:
           raiseAssert "invalid (kv) construct: symbol expected"
         t = next(s) # skip Symbol
