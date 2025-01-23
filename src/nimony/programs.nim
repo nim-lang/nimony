@@ -30,7 +30,8 @@ proc newNifModule(infile: string): NifModule =
   result.buf = fromStream(result.stream)
 
 proc suffixToNif*(suffix: string): string {.inline.} =
-  prog.dir / suffix & prog.ext
+  # always imported from semchecked files
+  prog.dir / suffix & ".2.nif"
 
 proc needsRecompile*(dep, output: string): bool =
   result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)

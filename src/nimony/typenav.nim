@@ -130,9 +130,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         result = getTypeImpl(c, prev)
   of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX:
     result = getTypeImpl(c, n.firstSon)
-    if isRoutine(symKind(result)):
-      let routine = asRoutine(result)
-      result = routine.retType
+    if result.kind == ParLe and result.substructureKind == ParamsS:
+      skip result # skip "params"
+      # return retType
     elif typeKind(result) in {IterT, ProcT}:
       inc result
       inc result # dot token

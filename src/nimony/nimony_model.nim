@@ -368,7 +368,7 @@ template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   body
   wantParRi dest, n
 
-proc isAtom*(n: Cursor): bool {.inline.} = n.kind >= ParLe
+proc isAtom*(n: Cursor): bool {.inline.} = n.kind < ParLe
 
 proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
   dest.add symToken(s, info)
