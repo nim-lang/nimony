@@ -1215,8 +1215,10 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
   ## sets `convMatch` to the match to the converter
   result = false
   let root = nominalRoot(f)
-  if root == SymId(0): return
-  let converters = c.converters.getOrDefault(root)
+  if root == SymId(0) and not c.g.config.compat: return
+  var converters = c.converters.getOrDefault(root)
+  if root != SymId(0) and c.g.config.compat:
+    converters.add c.converters.getOrDefault(SymId(0))
   var convMatches: seq[Match] = @[]
   for conv in items converters:
     # f(a)
@@ -3019,7 +3021,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     publishSignature c, symId, declStart
     if kind == ConverterY:
       let root = nominalRoot(c.routine.returnType)
-      if root == SymId(0):
+      if root == SymId(0) and not c.g.config.compat:
         buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
       else:
         if pass == checkSignatures: # to prevent duplicates, could also use a set

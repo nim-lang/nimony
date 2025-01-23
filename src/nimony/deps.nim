@@ -343,11 +343,11 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
   result = "nifcache" / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
 
-proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild, silentMake: bool;
+proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs: string; moduleFlags: set[ModuleFlag]; cmd: Command) =
   let nifler = findTool("nifler")
 
-  if compat:
+  if config.compat:
     let cfgNif = "nifcache" / moduleSuffix(project, []) & ".cfg.nif"
     exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
       quoteShell(cfgNif)

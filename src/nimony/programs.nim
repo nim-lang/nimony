@@ -70,7 +70,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
     let nameId = pool.strings.getOrIncl(name)
     # check that the converter is imported, slow but better to be slow here:
     if nameId in importTab and module in importTab[nameId]:
-      let key = pool.syms.getOrIncl(k)
+      let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
       let val = pool.syms.getOrIncl(v)
       converters.mgetOrPut(key, @[]).add(val)
 
