@@ -309,7 +309,7 @@ proc `$`*(c: Cursor): string = toString(c, false)
 template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
   dest.add parLeToken(tag, info)
   body
-  dest.add parRiToken()
+  dest.add parRiToken(NoLineInfo)
 
 proc parLeTokenUnchecked*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -317,7 +317,7 @@ proc parLeTokenUnchecked*(tag: string; info: PackedLineInfo): PackedToken {.inli
 template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInfo; body: untyped) =
   dest.add parLeTokenUnchecked(tag, info)
   body
-  dest.add parRiToken()
+  dest.add parRiToken(NoLineInfo)
 
 proc parse*(r: var Stream; dest: var TokenBuf;
             parentInfo: PackedLineInfo) =

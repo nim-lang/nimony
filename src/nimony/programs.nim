@@ -135,6 +135,41 @@ proc splitModulePath*(s: string): (string, string, string) =
     main.setLen dotPos
   result = (dir, main, ext)
 
+const
+  SystemModuleSuffix = "sys9azlf"
+
+proc publishStringType() =
+  let symId = pool.syms.getOrIncl("string.0." & SystemModuleSuffix)
+  let aId = pool.syms.getOrIncl("a.0." & SystemModuleSuffix)
+  let iId = pool.syms.getOrIncl("i.0." & SystemModuleSuffix)
+  let exportMarker = pool.strings.getOrIncl("x")
+  var str = createTokenBuf(10)
+  str.copyIntoUnchecked "type", NoLineInfo:
+    str.add symdefToken(symId, NoLineInfo)
+    str.add identToken(exportMarker, NoLineInfo)
+    str.addDotToken() # pragmas
+    str.addDotToken() # generic parameters
+    str.copyIntoUnchecked "object", NoLineInfo:
+      str.addDotToken() # inherits from nothing
+      str.copyIntoUnchecked "fld", NoLineInfo:
+        str.add symdefToken(aId, NoLineInfo)
+        str.addDotToken() # export marker
+        str.addDotToken() # pragmas
+        # type is `ptr UncheckedArray[char]`
+        str.copyIntoUnchecked "ptr", NoLineInfo:
+          str.copyIntoUnchecked "uarray", NoLineInfo:
+            str.copyIntoUnchecked "c", NoLineInfo: discard
+
+      str.copyIntoUnchecked "fld", NoLineInfo:
+        str.add symdefToken(iId, NoLineInfo)
+        str.addDotToken() # export marker
+        str.addDotToken() # pragmas
+        str.copyIntoUnchecked "i", NoLineInfo:
+          str.add intToken(pool.integers.getOrIncl(-1), NoLineInfo)
+        str.addDotToken() # default value
+
+  publish symId, str
+
 proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   let (dir, file, _) = splitModulePath(infile)
   let (_, _, ext) = splitModulePath(outfile)
@@ -153,6 +188,7 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   #echo "INPUT IS ", toString(m.buf)
   result = beginRead(m.buf)
   prog.mods[prog.main] = m
+  publishStringType()
 
 proc wantParRi*(dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParRi:
