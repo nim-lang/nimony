@@ -608,6 +608,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.openScope()
         trSons c, n, WantNonOwner
         c.typeCache.closeScope()
+      of BreakS, ContinueS:
+        takeTree c.dest, n
       else:
         trSons c, n, WantNonOwner
 
