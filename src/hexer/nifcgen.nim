@@ -1135,10 +1135,13 @@ proc importSymbol(e: var EContext; s: SymId) =
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
     var c = res.decl
-    e.dest.add tagToken("imp", c.info)
-    traverseStmt e, c, TraverseSig
-    e.dest.addDotToken()
-    e.dest.addParRi()
+    if c.stmtKind == TypeS:
+      traverseTypeDecl e, c
+    else:
+      e.dest.add tagToken("imp", c.info)
+      traverseStmt e, c, TraverseSig
+      e.dest.addDotToken()
+      e.dest.addParRi()
   else:
     error e, "could not find symbol: " & pool.syms[s]
 
