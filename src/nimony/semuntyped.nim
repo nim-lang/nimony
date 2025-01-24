@@ -198,9 +198,39 @@ proc addLocalDecl(c: var UntypedCtx, n: Cursor, k: SymKind; nameStart: int) =
       else:
         c.c.dest.replace(newName, nameStart)
   else:
-    var name = asLocal(n).name
+    var name = local.name
     let ident = getIdent(name)
     c.inject(ident)
+
+proc addBareDecl(c: var UntypedCtx, n: Cursor, k: SymKind, nameStart: int) =
+  if c.mode == UntypedTemplate:
+    var newNameBuf = createTokenBuf(4)
+    swap c.c.dest, newNameBuf
+    var name = n
+    let hasParam = getIdentReplaceParams(c, name)
+    swap c.c.dest, newNameBuf
+    var newName = cursorAt(newNameBuf, 0)
+    if not hasParam:
+      let info = newName.info
+      if newName.kind != Symbol and not (newName.kind == Ident and pool.strings[newName.litId] == "_"):
+        var ident = pool.strings[getIdent(newName)]
+        makeLocalSym(c.c[], ident)
+        let s = Sym(kind: k, name: pool.syms.getOrIncl(ident),
+                    pos: c.c.dest.len)
+        let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
+        c.c[].addSym(delayed)
+        newNameBuf = createTokenBuf(1)
+        newNameBuf.add symdefToken(s.name, info)
+        c.c.dest.replace(cursorAt(newNameBuf, 0), nameStart)
+    else:
+      c.c.dest.replace(newName, nameStart)
+  else:
+    var name = n
+    let ident = getIdent(name)
+    c.inject(ident)
+
+proc semTemplSymbol(c: var UntypedCtx, n: var Cursor, s: SymId; isField, isAmbiguous: bool) =
+  discard
 
 when false:
   proc semTemplSymbol(c: var TemplCtx, n: var Cursor, s: SymId; isField, isAmbiguous: bool) =
@@ -321,11 +351,28 @@ when false:
     # close scope for parameters
     closeScope(c)
 
-proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
+proc semTemplBody(c: var UntypedCtx; n: var Cursor)
+
+proc semTemplPragmas(c: var UntypedCtx; n: var Cursor) =
+  takeTree c.c[], n
+
+proc semTemplType(c: var UntypedCtx; n: var Cursor) =
   raiseAssert("unimplemented")
 
 proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
   raiseAssert("unimplemented")
+
+proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
+  let orig = n
+  takeToken c.c[], n
+  let nameStart = c.c.dest.len
+  takeTree c.c[], n # name
+  addLocalDecl(c, orig, k, nameStart)
+  takeTree c.c[], n # exported
+  semTemplPragmas c, n # pragmas
+  semTemplType c, n # type
+  semTemplBody c, n # value
+  wantParRi c.c[], n
 
 proc semTemplRoutineDecl(c: var UntypedCtx; n: var Cursor; k: SymKind) =
   raiseAssert("unimplemented")
@@ -359,11 +406,8 @@ proc semTemplBody(c: var UntypedCtx; n: var Cursor) =
       elif contains(c.toMixin, n.litId):
         let tag = c.c.dest[start]
         if tag.kind == Symbol:
-          var ochoiceBuf = createTokenBuf(4)
-          ochoiceBuf.addParLe(OchoiceX, tag.info)
-          ochoiceBuf.add tag
-          ochoicebuf.addParRi()
-          replace(c.c.dest, cursorAt(ochoiceBuf, 0), start)
+          c.c.dest.shrink start
+          discard buildSymChoice(c.c[], n.litId, n.info, FindAll)
         elif tag.kind == ParLe and pool.tags[tag.tagId] == $CchoiceX:
           c.c.dest[start] = parLeToken(OchoiceX, tag.info)
       elif firstSym in c.gensyms and c.noGenSym == 0:
@@ -453,12 +497,15 @@ proc semTemplBody(c: var UntypedCtx; n: var Cursor) =
         closeScope c
         wantParRi c.c[], n
       of BlockS:
+        let orig = n
         takeToken c.c[], n
         openScope c
         if n.kind == DotToken:
           takeToken c.c[], n
         else:
-          raiseAssert("unimplemented")
+          let nameStart = c.c.dest.len
+          takeTree c.c[], n
+          addBareDecl(c, orig, LabelY, nameStart)
         semTemplBody c, n
         closeScope c
         wantParRi c.c[], n
@@ -500,9 +547,14 @@ proc semTemplBody(c: var UntypedCtx; n: var Cursor) =
             result = semTemplBodySons(c, result)
           else:
             result = semTemplBodySons(c, n)
-      else:
+      of NoStmt:
         # XXX type expressions
-        raiseAssert("unimplemented")
+        discard
+      else:
+        takeToken c.c[], n
+        while n.kind != ParRi:
+          semTemplBody c, n
+        wantParRi c.c[], n
     of NilX:
       takeTree c.c[], n
     of AtX:
