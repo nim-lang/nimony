@@ -157,7 +157,8 @@ proc publishStringType() =
         # type is `ptr UncheckedArray[char]`
         str.copyIntoUnchecked "ptr", NoLineInfo:
           str.copyIntoUnchecked "uarray", NoLineInfo:
-            str.copyIntoUnchecked "c", NoLineInfo: discard
+            str.copyIntoUnchecked "c", NoLineInfo:
+              str.add intToken(pool.integers.getOrIncl(8), NoLineInfo)
 
       str.copyIntoUnchecked "fld", NoLineInfo:
         str.add symdefToken(iId, NoLineInfo)
