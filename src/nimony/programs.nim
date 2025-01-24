@@ -6,7 +6,7 @@
 
 import std / [syncio, os, tables, times, packedsets]
 include nifprelude
-import nifindexes, symparser, reporters
+import nifindexes, symparser, reporters, builtintypes
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
@@ -135,11 +135,8 @@ proc splitModulePath*(s: string): (string, string, string) =
     main.setLen dotPos
   result = (dir, main, ext)
 
-const
-  SystemModuleSuffix = "sys9azlf"
-
 proc publishStringType() =
-  let symId = pool.syms.getOrIncl("string.0." & SystemModuleSuffix)
+  let symId = pool.syms.getOrIncl(StringName)
   let aId = pool.syms.getOrIncl("a.0." & SystemModuleSuffix)
   let iId = pool.syms.getOrIncl("i.0." & SystemModuleSuffix)
   let exportMarker = pool.strings.getOrIncl("x")
@@ -188,7 +185,7 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   #echo "INPUT IS ", toString(m.buf)
   result = beginRead(m.buf)
   prog.mods[prog.main] = m
-  publishStringType()
+  #publishStringType()
 
 proc wantParRi*(dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParRi:

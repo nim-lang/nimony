@@ -20,14 +20,22 @@ type
 proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
 
+const
+  SystemModuleSuffix* = "sys9azlf"
+  StringName* = "string.0." & SystemModuleSuffix
+
 proc createBuiltinTypes*(): BuiltinTypes =
   result = BuiltinTypes(mem: createTokenBuf(30))
 
   result.mem.add tagToken"auto" # 0
   result.mem.addParRi() # 1
 
-  result.mem.add tagToken"string" # 2
-  result.mem.addParRi() # 3
+  when true:
+    result.mem.add symToken(pool.syms.getOrIncl(StringName), NoLineInfo) # 2
+    result.mem.addDotToken() # 3
+  else:
+    result.mem.add tagToken"string" # 2
+    result.mem.addParRi() # 3
 
   result.mem.add tagToken"bool" # 4
   result.mem.addParRi() # 5
