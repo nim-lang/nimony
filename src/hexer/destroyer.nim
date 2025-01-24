@@ -207,7 +207,7 @@ proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
   var oldScope = move c.currentScope
   c.currentScope = createNestedScope(kind, oldScope, body.info)
   trScope c, body
-  swap(c.currentScope, oldScope)
+  swap c.currentScope, oldScope
 
 proc trWhile(c: var Context; n: var Cursor) =
   #[ while prop(createsObj())
