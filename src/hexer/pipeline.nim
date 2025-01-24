@@ -9,7 +9,7 @@
 
 include nifprelude
 
-import basics, iterinliner, xelim, duplifier, lifter
+import basics, iterinliner, xelim, duplifier, lifter, destroyer
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n = n
@@ -22,11 +22,15 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n1 = injectDups(c0, ctx)
   endRead(n0)
 
-  shrink(n1, n1.len-1)
-  n1.add ctx[].dest
-  n1.addParRi()
+  var c1 = beginRead(n1)
 
-  var c = beginRead(n1)
-
-  result = lowerExprs(c, moduleSuffix)
+  var n2 = lowerExprs(c1, moduleSuffix)
   endRead(n1)
+
+  var c2 = beginRead(n2)
+  result = injectDestructors(c2, ctx)
+  endRead(n2)
+
+  shrink(result, result.len-1)
+  result.add move(ctx[].dest)
+  result.addParRi()
