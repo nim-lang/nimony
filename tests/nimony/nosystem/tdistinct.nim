@@ -3,7 +3,10 @@ type
   int* {.magic: Int.}
   bool* {.magic: Bool.}
   char* {.magic: Char.}
-  string* {.magic: String.}
+  UncheckedArray* {.magic: UncheckedArray.}
+  string* = object
+    a: ptr UncheckedArray[char]
+    i: int
 
   int8* {.magic: Int8.}
 

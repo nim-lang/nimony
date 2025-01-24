@@ -6,7 +6,11 @@ type
   cstring* {.magic: Cstring.}   ## Built-in cstring (*compatible string*) type.
   pointer* {.magic: Pointer.}   ## Built-in pointer type, use the `addr`
                                 ## operator to get a pointer to a variable.
-  string* {.magic: String.}
+  char* {.magic: Char.}
+  UncheckedArray* {.magic: UncheckedArray.}
+  string* = object
+    a: ptr UncheckedArray[char]
+    i: int
 
 proc `+`*(x, y: int): int {.magic: "AddI".}
 proc `-`*(x, y: int): int {.magic: "SubI".}

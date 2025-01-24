@@ -12,14 +12,22 @@
   (c +8) . 6
   (pragmas 2
    (magic 7 Char)) .) 2,4
- (type :string.0.tdiuhv8dm
-  (string) . 8
+ (type :UncheckedArray.0.tdiuhv8dm
+  (uarray) . 16
   (pragmas 2
-   (magic 7 String)) .) 2,6
+   (magic 7 UncheckedArray)) .) 10,5
+ (type ~8 :string.0.tdiuhv8dm x . . 2
+  (object . ~8,1
+   (fld :a.0.tdiuhv8dm . . 3
+    (ptr 18
+     (uarray 1
+      (c +8))) .) ~8,2
+   (fld :i.0.tdiuhv8dm . . 3
+    (i -1) .))) 2,9
  (type :int8.0.tdiuhv8dm
   (i +8) . 6
   (pragmas 2
-   (magic 7 Int8)) .) ,8
+   (magic 7 Int8)) .) ,11
  (proc 5 :\2B.0.tdiuhv8dm
   (add -3) . . 9
   (params 1
@@ -29,7 +37,7 @@
     (i -1) .)) 13
   (i -1) 26
   (pragmas 2
-   (magic 7 "AddI")) . .) ,9
+   (magic 7 "AddI")) . .) ,12
  (proc 5 :\2D.0.tdiuhv8dm
   (sub -3) . . 9
   (params 1
@@ -39,7 +47,7 @@
     (i -1) .)) 13
   (i -1) 26
   (pragmas 2
-   (magic 7 "SubI")) . .) ,11
+   (magic 7 "SubI")) . .) ,14
  (proc 5 :<=.0.tdiuhv8dm
   (le -3) . . 10
   (params 1
@@ -49,10 +57,10 @@
     (i -1) .)) 13
   (bool) 28
   (pragmas 2
-   (magic 7 "LeI")) . .) 9,15
+   (magic 7 "LeI")) . .) 9,18
  (type ~7 :VarId.0.tdiuhv8dm x . . 2
   (distinct 9
-   (i -1))) ,17
+   (i -1))) ,20
  (proc 5 :\2B.1.tdiuhv8dm x . . 9
   (params 1
    (param :x.3 . . 6 VarId.0.tdiuhv8dm .) 4
@@ -62,15 +70,15 @@
   (stmts
    (ret
     (dconv 6 VarId.0.tdiuhv8dm
-     (add 7,~9
+     (add ~2,~13
       (i -1)
       (dconv 11,~2
        (i -1) x.3)
       (dconv 11,~2
-       (i -1) y.3)))))) 4,24
- (var :x.0.tdiuhv8dm . . 3 VarId.0.tdiuhv8dm .) 2,26
+       (i -1) y.3)))))) 4,27
+ (var :x.0.tdiuhv8dm . . 3 VarId.0.tdiuhv8dm .) 2,29
  (asgn ~2 x.0.tdiuhv8dm 4
-  (infix \2B.1.tdiuhv8dm ~2 x.0.tdiuhv8dm 2 x.0.tdiuhv8dm)) 4,28
+  (infix \2B.1.tdiuhv8dm ~2 x.0.tdiuhv8dm 2 x.0.tdiuhv8dm)) 4,31
  (let :y.0.tdiuhv8dm . . 4
   (i +8) 8
   (conv ~4

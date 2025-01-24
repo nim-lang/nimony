@@ -3,7 +3,11 @@ type
   int* {.magic: Int.}         ## Default integer type; bitwidth depends on
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
-  string* {.magic: String.}
+  char* {.magic: Char.}
+  UncheckedArray* {.magic: UncheckedArray.}
+  string* = object
+    a: ptr UncheckedArray[char]
+    i: int
 
   array* [Index, T] {.magic: Array.}
 
