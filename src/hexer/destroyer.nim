@@ -163,7 +163,6 @@ proc trScope(c: var Context; body: var Cursor) =
       inc body
       while body.kind != ParRi:
         tr c, body
-      c.dest.addParRi()
       inc body
     else:
       tr c, body
@@ -187,6 +186,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   copyTree c.dest, r.pattern
   copyTree c.dest, r.typevars
   copyTree c.dest, r.params
+  copyTree c.dest, r.retType
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
@@ -204,10 +204,10 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   c.dest.addParRi()
 
 proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
-  var bodyScope = createNestedScope(kind, c.currentScope, body.info)
-  swap c.currentScope, bodyScope
+  var oldScope = move c.currentScope
+  c.currentScope = createNestedScope(kind, oldScope, body.info)
   trScope c, body
-  swap c.currentScope, bodyScope
+  swap(c.currentScope, oldScope)
 
 proc trWhile(c: var Context; n: var Cursor) =
   #[ while prop(createsObj())
@@ -228,12 +228,12 @@ proc trWhile(c: var Context; n: var Cursor) =
 proc trBlock(c: var Context; n: var Cursor) =
   let label = n.firstSon
   let labelId = if label.kind == SymbolDef: label.symId else: c.anonBlock
-  var bodyScope = createNestedScope(WhileOrBlock, c.currentScope, n.info, labelId)
+  var oldScope = move c.currentScope
+  c.currentScope = createNestedScope(WhileOrBlock, oldScope, n.info, labelId)
   copyInto(c.dest, n):
     takeTree c.dest, n
-    swap c.currentScope, bodyScope
     trScope c, n
-    swap c.currentScope, bodyScope
+    swap c.currentScope, oldScope
 
 proc trIf(c: var Context; n: var Cursor) =
   copyInto(c.dest, n):
@@ -297,7 +297,7 @@ proc tr(c: var Context; n: var Cursor) =
         inc n
 
 proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
-  var c = Context(currentScope: createEntryScope(n.info),
+  var c = Context(lifter: lifter, currentScope: createEntryScope(n.info),
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
     dest: createTokenBuf(400))
   var n = n
