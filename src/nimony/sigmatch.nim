@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata, typeprops, xints
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes
 
 type
   Item* = object
@@ -479,6 +479,10 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   else:
     m.error expected(f, a)
 
+proc isStringType(a: Cursor): bool {.inline.} =
+  result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)
+  #a.typeKind == StringT: StringT now unused!
+
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
   of Symbol:
@@ -541,7 +545,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       if a.typeKind == NilT:
         discard "ok"
         inc f
-      elif a.typeKind == StringT and arg.n.kind == StringLit:
+      elif isStringType(a) and arg.n.kind == StringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
