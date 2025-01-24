@@ -371,3 +371,5 @@ proc addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 proc sizeof*[T](x: T): int {.magic: "SizeOf", noSideEffect.}
 proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
+
+include "system/setops"

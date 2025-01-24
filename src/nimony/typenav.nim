@@ -138,15 +138,17 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       inc result # dot token
       skip result # parameters
   of FalseX, TrueX, AndX, OrX, NotX, DefinedX, DeclaredX, IsMainModuleX, EqX, NeqX, LeX, LtX,
+     EqSetX, LeSetX, LtSetX, InSetX,
      CompilesX:
     result = c.builtins.boolType
   of NegX, NegInfX, NanX, InfX:
     result = c.builtins.floatType
   of EnumToStrX, DefaultObjX, DefaultTupX:
     result = c.builtins.stringType
-  of SizeofX:
+  of SizeofX, CardSetX:
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
+     PlusSetX, MinusSetX, MulSetX, XorSetX,
      CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX:
     result = n.firstSon
   of ParX, EnsureMoveX:

@@ -4738,6 +4738,59 @@ proc semPragmasLine(c: var SemContext; it: var Item) =
 
   skipParRi it.n
 
+proc semInclExcl(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let typeStart = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  let typ = typeToCursor(c, typeStart)
+  var op = Item(n: it.n, typ: typ)
+  semExpr c, op
+  if op.typ.typeKind == SetT:
+    inc op.typ
+  else:
+    c.buildErr info, "expected set type"
+  semExpr c, op
+  it.n = op.n
+  wantParRi c, it.n
+  producesVoid c, info, it.typ
+
+proc semInSet(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let typeStart = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  let typ = typeToCursor(c, typeStart)
+  var op = Item(n: it.n, typ: typ)
+  semExpr c, op
+  if op.typ.typeKind == SetT:
+    inc op.typ
+  else:
+    c.buildErr info, "expected set type"
+  semExpr c, op
+  it.n = op.n
+  wantParRi c, it.n
+  let expected = it.typ
+  it.typ = c.types.boolType
+  commonType c, it, beforeExpr, expected
+
+proc semCardSet(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let typeStart = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  let typ = typeToCursor(c, typeStart)
+  var op = Item(n: it.n, typ: typ)
+  semExpr c, op
+  it.n = op.n
+  wantParRi c, it.n
+  let expected = it.typ
+  it.typ = c.types.intType
+  commonType c, it, beforeExpr, expected
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -4888,6 +4941,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of PragmasLineS:
         toplevelGuard c:
           semPragmasLine c, it
+      of InclSetS, ExclSetS:
+        toplevelGuard c:
+          semInclExcl c, it
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
@@ -4921,12 +4977,16 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of DconvX:
       toplevelGuard c:
         semDconv c, it
-    of EqX, NeqX, LeX, LtX:
+    of EqX, NeqX, LeX, LtX, EqSetX, LeSetX, LtSetX:
       semCmp c, it
-    of AshrX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX:
+    of AshrX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, PlusSetX, MinusSetX, MulSetX, XorSetX:
       semTypedBinaryArithmetic c, it
     of BitnotX, NegX:
       semTypedUnaryArithmetic c, it
+    of InSetX:
+      semInSet c, it
+    of CardSetX:
+      semCardSet c, it
     of AconstrX:
       semArrayConstr c, it
     of SetX:

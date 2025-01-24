@@ -367,7 +367,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   of WhileS:
     trWhile c, dest, n
-  of AsgnS, CallS:
+  of AsgnS, CallS, InclSetS, ExclSetS:
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
