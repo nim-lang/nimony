@@ -136,9 +136,11 @@ proc splitModulePath*(s: string): (string, string, string) =
   result = (dir, main, ext)
 
 proc publishStringType() =
+  # This logic is not strictly necessary for "system.nim" itself, but
+  # for modules that emulate system via --isSystem.
   let symId = pool.syms.getOrIncl(StringName)
-  let aId = pool.syms.getOrIncl("a.0." & SystemModuleSuffix)
-  let iId = pool.syms.getOrIncl("i.0." & SystemModuleSuffix)
+  let aId = pool.syms.getOrIncl(StringAField)
+  let iId = pool.syms.getOrIncl(StringIField)
   let exportMarker = pool.strings.getOrIncl("x")
   var str = createTokenBuf(10)
   str.copyIntoUnchecked "type", NoLineInfo:

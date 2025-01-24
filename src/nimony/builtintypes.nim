@@ -23,6 +23,8 @@ proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inl
 const
   SystemModuleSuffix* = "sys9azlf"
   StringName* = "string.0." & SystemModuleSuffix
+  StringAField* = "a.0." & SystemModuleSuffix
+  StringIField* = "i.0." & SystemModuleSuffix
 
 proc createBuiltinTypes*(): BuiltinTypes =
   result = BuiltinTypes(mem: createTokenBuf(30))
