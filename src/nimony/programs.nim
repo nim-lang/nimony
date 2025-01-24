@@ -159,6 +159,7 @@ proc publishStringType() =
           str.copyIntoUnchecked "uarray", NoLineInfo:
             str.copyIntoUnchecked "c", NoLineInfo:
               str.add intToken(pool.integers.getOrIncl(8), NoLineInfo)
+        str.addDotToken() # default value
 
       str.copyIntoUnchecked "fld", NoLineInfo:
         str.add symdefToken(iId, NoLineInfo)
