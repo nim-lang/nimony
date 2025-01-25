@@ -588,6 +588,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetX,
        OchoiceX, CchoiceX, KvX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
+       PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX,
        EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, RangeX, RangesX, CompilesX, DeclaredX,
        DefinedX, HighX, LowX, TypeofX, UnpackX, EnumToStrX, IsMainModuleX, QuotedX,
        DerefX, HderefX, AddrX, HaddrX:

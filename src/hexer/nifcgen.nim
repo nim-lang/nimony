@@ -837,6 +837,8 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.addIntLit(0, c.info) # inheritance
         e.dest.add c # add right paren
         inc c # skip right paren
+      of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
+        raiseAssert("unimplemented")
       of DerefDotX:
         e.dest.add tagToken("dot", c.info)
         e.dest.add tagToken("deref", c.info)
@@ -1120,7 +1122,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of CaseS: traverseCase e, c
     of YieldS, ForS:
       error e, "BUG: not eliminated: ", c
-    of TryS, RaiseS:
+    of TryS, RaiseS, InclSetS, ExclSetS:
       error e, "BUG: not implemented: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
