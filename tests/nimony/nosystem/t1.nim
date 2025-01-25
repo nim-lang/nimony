@@ -5,7 +5,7 @@ type
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
   char* {.magic: Char.}
-  UncheckedArray* {.magic: UncheckedArray.}
+  UncheckedArray*[T] {.magic: UncheckedArray.}
   string* = object
     a: ptr UncheckedArray[char]
     i: int

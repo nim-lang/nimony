@@ -1272,9 +1272,11 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       if f.kind == Symbol:
         let sym = f.symId
         let s = fetchSym(c, sym)
-        let candidate = FnCandidate(kind: s.kind, sym: sym, typ: fetchType(c, f, s))
-        m.add createMatch(addr c)
-        sigmatch(m[^1], candidate, cs.args, genericArgs)
+        let typ = fetchType(c, f, s)
+        if typ.substructureKind == ParamsS:
+          let candidate = FnCandidate(kind: s.kind, sym: sym, typ: typ)
+          m.add createMatch(addr c)
+          sigmatch(m[^1], candidate, cs.args, genericArgs)
       else:
         buildErr c, cs.fn.n.info, "`choice` node does not contain `symbol`"
       inc f
@@ -1292,10 +1294,12 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   else:
     # Keep in mind that proc vars are a thing:
     let sym = if cs.fn.n.kind == Symbol: cs.fn.n.symId else: SymId(0)
-    let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: cs.fn.typ)
-    m.add createMatch(addr c)
-    sigmatch(m[^1], candidate, cs.args, genericArgs)
-    considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
+    let typ = cs.fn.typ
+    if typ.substructureKind == ParamsS:
+      let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ)
+      m.add createMatch(addr c)
+      sigmatch(m[^1], candidate, cs.args, genericArgs)
+      considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
   var idx = pickBestMatch(c, m)
 
   if idx < 0:
@@ -1308,6 +1312,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       var newArgs: seq[Item] = @[]
       var newArgBufs: seq[TokenBuf] = @[] # to keep alive
       var param = m[mi].fn.typ
+      assert param == "params"
       inc param
       var ai = 0
       var anyConverters = false

@@ -17,7 +17,7 @@
       (mul
        (i -1) ~1 i.0 1 i.0)) ,2
      (yld 9
-      (mul 20,257,lib/std/system.nim
+      (mul 20,267,lib/std/system.nim
        (i +64) ~2
        (mul
         (i -1) ~1 i.0 1 i.0) 1 i.0)) 2,3
@@ -76,7 +76,7 @@
     (hconv 11,~16
      (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
    (if 3
-    (elif 11,680,lib/std/system.nim
+    (elif 11,690,lib/std/system.nim
      (expr 2,1
       (lt
        (i -1) 9,26,tests/nimony/sysbasics/tforloops1.nim +5 5,26,tests/nimony/sysbasics/tforloops1.nim x.0)) ~1,1
@@ -123,7 +123,7 @@
       (mul ~1,~9
        (i -1) ~1 i.4 1 i.4)) ,2
      (yld 9
-      (mul 20,257,lib/std/system.nim
+      (mul 20,267,lib/std/system.nim
        (i +64) ~2
        (mul ~1,~10
         (i -1) ~1 i.4 1 i.4) 1 i.4)))))) 4,43
