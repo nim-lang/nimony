@@ -588,6 +588,7 @@ type
     PreferIterators
     AllowUndeclared
     AllowModuleSym
+    InTypeContext
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
@@ -1003,6 +1004,7 @@ type
     dest, genericDest: TokenBuf
     args: seq[Item]
     hasGenericArgs: bool
+    flags: set[SemFlag]
     candidates: FnCandidates
     source: TransformedCallSource
       ## type of expression the call was transformed from
@@ -1368,7 +1370,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       endRead(c.dest)
       c.dest.shrink cs.beforeCall
       var magicExpr = Item(n: cursorAt(magicExprBuf, 0), typ: it.typ)
-      semExpr c, magicExpr
+      semExpr c, magicExpr, cs.flags
       it.typ = magicExpr.typ
     elif c.routine.inGeneric == 0 and m[idx].inferred.len > 0 and isMagic == NonMagicCall:
       var matched = m[idx]
@@ -1399,12 +1401,13 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     buildCallSource errored, cs
     buildErr c, cs.callNode.info, errorMsg, cursorAt(errored, 0)
 
-proc semCall(c: var SemContext; it: var Item; source: TransformedCallSource = RegularCall) =
+proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
   var cs = CallState(
     beforeCall: c.dest.len,
     callNode: it.n.load(),
     dest: createTokenBuf(16),
-    source: source
+    source: source,
+    flags: {InTypeContext}*flags
   )
   inc it.n
   swap c.dest, cs.dest
@@ -1727,7 +1730,7 @@ proc semDot(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     callBuf.addSubtree lhs.n # add lhs as first argument
     callBuf.addParRi()
     var call = Item(n: cursorAt(callBuf, 0), typ: expected)
-    semCall c, call, DotCall
+    semCall c, call, flags, DotCall
     it.typ = call.typ
 
 proc semWhile(c: var SemContext; it: var Item) =
@@ -2460,6 +2463,37 @@ proc isOrExpr(n: Cursor): bool =
     let name = getIdent(n)
     result = name != StrId(0) and pool.strings[name] == "|"
 
+proc semTypeofForType(c: var SemContext; n: var Cursor) =
+  let beforeExpr = c.dest.len
+  inc n # typeof
+  var it = Item(n: n, typ: c.types.autoType)
+  semExpr c, it
+  n = it.n
+  c.dest.shrink beforeExpr
+  var t = it.typ
+  if t.typeKind == TypedescT:
+    inc t
+  c.dest.addSubtree t
+  skipParRi n
+
+proc semTypeofForExpr(c: var SemContext; it: var Item; flags: set[SemFlag]) =
+  let beforeExpr = c.dest.len
+  inc it.n # typeof
+  semExpr c, it
+  var t = it.typ
+  if t.typeKind == TypedescT: inc t
+  c.dest.shrink beforeExpr
+  if InTypeContext notin flags:
+    c.dest.addParLe(TypedescT, t.info)
+    c.dest.addSubtree t
+    c.dest.addParRi()
+  else:
+    c.dest.addSubtree t
+  it.typ = typeToCursor(c, beforeExpr)
+  #echo "CAME HERE! ", typeToString(t), " ", c.phase
+  #writeStackTrace()
+  skipParRi it.n
+
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   case n.kind
@@ -2476,15 +2510,16 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
   of ParLe:
     case typeKind(n)
     of NoType:
-      if exprKind(n) == QuotedX:
+      let xkind = exprKind(n)
+      if xkind == QuotedX:
         let start = c.dest.len
         let s = semQuoted(c, n)
         semTypeSym c, s, info, start, context
-      elif exprKind(n) == ParX:
+      elif xkind == ParX:
         inc n
         semLocalTypeImpl c, n, context
         skipParRi n
-      elif exprKind(n) == TupleConstrX:
+      elif xkind == TupleConstrX:
         semTupleType c, n
       elif isOrExpr(n):
         c.dest.addParLe(OrT, info)
@@ -2502,10 +2537,16 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           else:
             semLocalTypeImpl c, n, context
         c.dest.addParRi()
+      elif xkind == TypeofX:
+        semTypeofForType c, n
       elif context == AllowValues:
         # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
         var it = Item(n: n, typ: c.types.autoType)
         semExpr c, it
+        n = it.n
+      elif xkind in CallKinds:
+        var it = Item(n: n, typ: c.types.autoType)
+        semExpr c, it, {InTypeContext}
         n = it.n
       elif false and isRangeExpr(n):
         # a..b, interpret as range type but only without AllowValues
@@ -3199,7 +3240,7 @@ proc semSubscriptAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
     callBuf.addParRi()
     skipParRi it.n # end assignment
     var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
-    semCall c, call, SubscriptAsgnCall
+    semCall c, call, {}, SubscriptAsgnCall
     it.typ = call.typ
 
 proc semDotAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
@@ -3243,7 +3284,7 @@ proc semDotAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
     callBuf.addParRi()
     skipParRi it.n
     var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
-    semCall c, call, DotAsgnCall
+    semCall c, call, {}, DotAsgnCall
     # XXX original compiler also checks if the call fails and tries a dotcall for the LHS
     it.typ = call.typ
 
@@ -3900,7 +3941,7 @@ proc callDefault(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
   callBuf.addSubtree typ
   callBuf.addParRi()
   var it = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
-  semCall c, it
+  semCall c, it, {}
 
 proc buildObjConstrField(c: var SemContext; field: Local; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
   let fieldSym = field.name.symId
@@ -4315,7 +4356,7 @@ proc semBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item) =
   callBuf.addParRi()
   skipParRi it.n
   var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
-  semCall c, call, SubscriptCall
+  semCall c, call, {}, SubscriptCall
   it.typ = call.typ
 
 proc semSubscript(c: var SemContext; it: var Item) =
@@ -4841,7 +4882,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           semContinue c, it
       of CallS, CmdS:
         toplevelGuard c:
-          semCall c, it
+          semCall c, it, flags
       of IncludeS: semInclude c, it
       of ImportS: semImport c, it
       of ImportExceptS: semImportExcept c, it
@@ -4916,7 +4957,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       skipParRi it.n
     of CallX, CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
       toplevelGuard c:
-        semCall c, it
+        semCall c, it, flags
     of DotX, DerefDotX:
       toplevelGuard c:
         semDot c, it, flags
@@ -4967,7 +5008,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semCast c, it
     of NilX:
       semNil c, it
-    of ConvX:
+    of ConvX, HconvX:
       semConv c, it
     of EnumToStrX:
       semEnumToStr c, it
@@ -4987,10 +5028,12 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semAddr c, it
     of SizeofX:
       semSizeof c, it
+    of TypeofX:
+      semTypeofForExpr c, it, flags
     of KvX,
        RangeX, RangesX,
-       OconvX, HconvX,
-       CompilesX, TypeofX:
+       OconvX,
+       CompilesX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)
       takeToken c, it.n

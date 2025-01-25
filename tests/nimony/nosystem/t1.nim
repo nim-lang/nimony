@@ -5,10 +5,12 @@ type
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
   char* {.magic: Char.}
-  UncheckedArray*[T] {.magic: UncheckedArray.}
-  string* = object
-    a: ptr UncheckedArray[char]
-    i: int
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
   Color* = enum
     red = 0, blue = 1
