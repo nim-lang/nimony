@@ -809,7 +809,13 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
   elif a.intCosts > b.intCosts:
     result = SecondWins
   else:
-    result = NobodyWins
+    let diff = a.inferred.len - b.inferred.len
+    if diff < 0:
+      result = FirstWins
+    elif diff > 0:
+      result = SecondWins
+    else:
+      result = NobodyWins
 
 # How to implement named parameters: In a preprocessing step
 # The signature is matched against the named parameters. The
