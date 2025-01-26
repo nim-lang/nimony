@@ -20,9 +20,31 @@ type
     sym*: SymId
     typ*: Cursor
 
+  MatchErrorKind* = enum
+    InvalidMatch
+    InvalidRematch
+    ConstraintMismatch
+    FormalTypeNotAtEndBug
+    FormalParamsMismatch
+    CallConvMismatch
+    UnavailableSubtypeRelation
+    NotImplementedConcept
+    ImplicitConversionNotMutable
+    UnhandledTypeBug
+    MismatchBug
+    MissingExplicitGenericParameter
+    ExtraGenericParameter
+    RoutineIsNotGeneric
+    CouldNotInferTypeVar
+    TooManyArguments
+    TooFewArguments
+
   MatchError* = object
     info: PackedLineInfo
-    msg: string
+    #msg: string
+    kind: MatchErrorKind
+    typeVar: SymId
+    expected, got: TypeCursor
     pos: int
 
   Match* = object
@@ -50,23 +72,68 @@ proc concat(a: varargs[string]): string =
 proc typeToString*(n: Cursor): string =
   result = toString(n, false)
 
-proc error(m: var Match; msg: sink string) =
+proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   if m.err: return # first error is the important one
   m.err = true
-  m.error = MatchError(info: m.argInfo, msg: msg, pos: m.pos+1)
+  m.error = MatchError(info: m.argInfo, kind: k,
+                       expected: expected, got: got, pos: m.pos+1)
   #writeStackTrace()
   #echo "ERROR: ", msg
 
+proc error0(m: var Match; k: MatchErrorKind) =
+  if m.err: return # first error is the important one
+  m.err = true
+  m.error = MatchError(info: m.argInfo, kind: k, pos: m.pos+1)
+
+proc getErrorMsg(m: Match): string =
+  case m.error.kind
+  of InvalidMatch:
+    concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
+  of InvalidRematch:
+    concat("Could not match again: ", pool.syms[m.error.typeVar], " expected ",
+      typeToString(m.error.expected), " but got ", typeToString(m.error.got))
+  of ConstraintMismatch:
+    concat(typeToString(m.error.got), " does not match constraint ",
+      typeToString(m.error.expected))
+  of FormalTypeNotAtEndBug:
+    "BUG: formal type not at end!"
+  of FormalParamsMismatch:
+    "parameter lists do not match"
+  of CallConvMismatch:
+    "calling conventions do not match"
+  of UnavailableSubtypeRelation:
+    "subtype relation not available for `out` parameters"
+  of NotImplementedConcept:
+    "'concept' is not implemented"
+  of ImplicitConversionNotMutable:
+    concat("implicit conversion to ", typeToString(m.error.expected), " is not mutable")
+  of UnhandledTypeBug:
+    concat("BUG: unhandled type: ", pool.tags[m.error.expected.tagId])
+  of MismatchBug:
+    concat("BUG: expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
+  of MissingExplicitGenericParameter:
+    concat("missing explicit generic parameter for ", pool.syms[m.error.typeVar])
+  of ExtraGenericParameter:
+    "extra generic parameter"
+  of RoutineIsNotGeneric:
+    "routine is not generic"
+  of CouldNotInferTypeVar:
+    concat("could not infer type for ", pool.syms[m.error.typeVar])
+  of TooManyArguments:
+    "too many arguments"
+  of TooFewArguments:
+    "too few arguments"
+
 proc addErrorMsg*(dest: var string; m: Match) =
   assert m.err
-  dest.add "[" & $(m.error.pos) & "] " & m.error.msg
+  dest.add "[" & $(m.error.pos) & "] " & getErrorMsg(m)
 
 proc addErrorMsg*(dest: var TokenBuf; m: Match) =
   assert m.err
   dest.addParLe ErrT, m.argInfo
   dest.addDotToken()
   let str = "For type " & typeToString(m.fn.typ) & " mismatch at position\n" &
-    "[" & $(m.pos+1) & "] " & m.error.msg
+    "[" & $(m.pos+1) & "] " & getErrorMsg(m)
   dest.addStrLit str
   dest.addParRi()
 
@@ -240,7 +307,7 @@ proc linearMatch(m: var Match; f, a: var Cursor, leaveLastParRi = true) =
         skip a
         continue
       else:
-        m.error concat(typeToString(a), " does not match constraint ", typeToString(f))
+        m.error(ConstraintMismatch, f, a)
         break
     elif f.kind == a.kind:
       case f.kind
@@ -248,18 +315,18 @@ proc linearMatch(m: var Match; f, a: var Cursor, leaveLastParRi = true) =
           DotToken, Ident, Symbol, SymbolDef,
           StringLit, CharLit, IntLit, UIntLit, FloatLit:
         if f.uoperand != a.uoperand:
-          m.error expected(fOrig, aOrig)
+          m.error(InvalidMatch, fOrig, aOrig)
           break
       of ParLe:
         if f.uoperand != a.uoperand:
-          m.error expected(fOrig, aOrig)
+          m.error(InvalidMatch, fOrig, aOrig)
           break
         inc nested
       of ParRi:
         if nested == ord(leaveLastParRi): break
         dec nested
     else:
-      m.error expected(fOrig, aOrig)
+      m.error(InvalidMatch, fOrig, aOrig)
       break
     inc f
     inc a
@@ -270,7 +337,7 @@ proc expectParRi(m: var Match; f: var Cursor) =
   if f.kind == ParRi:
     inc f
   else:
-    m.error "BUG: formal type not at end!"
+    m.error FormalTypeNotAtEndBug, f, f
 
 proc extractCallConv(c: var Cursor): CallConv =
   result = NimcallC
@@ -313,18 +380,18 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
         discard "ok"
         inc a
       else:
-        m.error "parameter lists do not match"
+        m.error FormalParamsMismatch, f, a
         skipToEnd a
       inc f
     else:
-      m.error "parameter lists do not match"
+      m.error FormalParamsMismatch, f, a
       skipToEnd f
       skipToEnd a
   elif hasParams == 2:
-    m.error "parameter lists do not match"
+    m.error FormalParamsMismatch, f, a
     skipToEnd a
   elif hasParams == 1:
-    m.error "parameter lists do not match"
+    m.error FormalParamsMismatch, f, a
     skipToEnd f
 
   # also correct for the DotToken case:
@@ -343,7 +410,7 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   let fcc = extractCallConv(f)
   let acc = extractCallConv(a)
   if fcc != acc:
-    m.error "calling conventions do not match"
+    m.error CallConvMismatch, f, a
   skip f # effects
   skip f # body
   expectParRi m, f
@@ -363,12 +430,12 @@ proc commonType(f, a: Cursor): Cursor =
 proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
   let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:
-    m.error concat("could not match again: ", pool.syms[typeVar], "; expected ",
-      typeToString(f), " but got ", typeToString(a))
+    m.error InvalidRematch, f, a
+    m.error.typeVar = typeVar
   elif matchesConstraint(m, typeVar, com):
     m.inferred[typeVar] = skipModifier(com)
   else:
-    m.error concat(typeToString(a), " does not match constraint ", typeToString(typeImpl typeVar))
+    m.error ConstraintMismatch, typeImpl(typeVar), a
 
 proc useArg(m: var Match; arg: Item) =
   m.args.addSubtree arg.n
@@ -384,10 +451,10 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
     elif matchesConstraint(m, fs, a):
       m.inferred[fs] = a
     else:
-      m.error concat(typeToString(a), " does not match constraint ", typeToString(f))
+      m.error ConstraintMismatch, f, a
   elif isObjectType(fs):
     if a.kind != Symbol:
-      m.error expected(f, a)
+      m.error InvalidMatch, f, a
     elif a.symId == fs:
       discard "direct match, no annotation required"
     else:
@@ -405,11 +472,11 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
           break
         inc diff
       if diff != 0:
-        m.error expected(f, a)
+        m.error InvalidMatch, f, a
       elif m.skippedMod == OutT:
-        m.error "subtype relation not available for `out` parameters"
+        m.error UnavailableSubtypeRelation, f, a
   elif isConcept(fs):
-    m.error "'concept' is not implemented"
+    m.error NotImplementedConcept, f, a
   else:
     # fast check that works for aliases too:
     if a.kind == Symbol and a.symId == fs:
@@ -417,7 +484,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
     else:
       var impl = typeImpl(fs)
       if impl.kind == ParLe and impl.tagId == ErrT:
-        m.error expected(f, a)
+        m.error InvalidMatch, f, a
       else:
         singleArgImpl(m, impl, arg)
 
@@ -433,7 +500,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   if f.tag == a.tag:
     inc a
   else:
-    m.error expected(f, a)
+    m.error InvalidMatch, f, a
     return
   let forig = f
   inc f
@@ -443,14 +510,14 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   elif cmp > 0:
     # f has more bits than a, great!
     if m.skippedMod in {MutT, OutT}:
-      m.error "implicit conversion to " & typeToString(forig) & " is not mutable"
+      m.error ImplicitConversionNotMutable, forig, forig
     else:
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
       inc m.intCosts
       inc m.opened
   else:
-    m.error expected(f, a)
+    m.error InvalidMatch, f, a
   inc f
 
 proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
@@ -475,9 +542,9 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
       skip f
       expectParRi m, f
     else:
-      m.error expected(f, a)
+      m.error InvalidMatch, f, a
   else:
-    m.error expected(f, a)
+    m.error InvalidMatch, f, a
 
 proc isStringType*(a: Cursor): bool {.inline.} =
   result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)
@@ -509,7 +576,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of BoolT:
       var a = skipModifier(arg.typ)
       if a.typeKind != fk:
-        m.error expected(f, a)
+        m.error InvalidMatch, f, a
       inc f
       expectParRi m, f
     of InvokeT:
@@ -524,7 +591,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         if t.typevars.typeKind == InvokeT:
           linearMatch m, f, t.typevars
         else:
-          m.error expected(f, a)
+          m.error InvalidMatch, f, a
       else:
         linearMatch m, f, a
       expectParRi m, f
@@ -600,7 +667,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       let aOrig = arg.typ
       var a = aOrig
       if a.typeKind != TupleT:
-        m.error expected(fOrig, aOrig)
+        m.error InvalidMatch, fOrig, aOrig
         skip f
       else:
         # skip tags:
@@ -609,7 +676,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         while f.kind != ParRi:
           if a.kind == ParRi:
             # len(f) > len(a)
-            m.error expected(fOrig, aOrig)
+            m.error InvalidMatch, fOrig, aOrig
           # only the type of the field is important:
           var ffld = asLocal(f).typ
           var afld = asLocal(a).typ
@@ -619,7 +686,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
           skip a
         if a.kind != ParRi:
           # len(a) > len(f)
-          m.error expected(fOrig, aOrig)
+          m.error InvalidMatch, fOrig, aOrig
     of ProcT:
       var a = skipModifier(arg.typ)
       case a.typeKind
@@ -630,9 +697,9 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         procTypeMatch m, f, a
     of NoType, ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IterT, AutoT, SymKindT, TypeKindT, OrdinalT:
-      m.error "BUG: unhandled type: " & pool.tags[f.tagId]
+      m.error UnhandledTypeBug, f, f
   else:
-    m.error "BUG: " & expected(f, arg.typ)
+    m.error MismatchBug, f, arg.typ
 
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
   singleArgImpl(m, f, arg)
@@ -731,7 +798,8 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.tvars.incl v
       if e.kind == DotToken: discard
       elif e.kind == ParRi:
-        m.error "missing explicit generic parameter for " & pool.syms[v]
+        m.error.typeVar = v
+        m.error0 MissingExplicitGenericParameter
         break
       else:
         if matchesConstraint(m, v, e):
@@ -741,14 +809,14 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
           assert res.status == LacksNothing
           var typevar = asTypevar(res.decl)
           assert typevar.kind == TypevarY
-          m.error concat(typeToString(e), " does not match constraint ", typeToString(typevar.typ))
+          m.error ConstraintMismatch, typevar.typ, e
         skip e
     if e.kind != DotToken and e.kind != ParRi:
-      m.error "extra generic parameter"
+      m.error0 ExtraGenericParameter
   elif explicitTypeVars.kind != DotToken:
     # aka there are explicit type vars
     if m.tvars.len == 0:
-      m.error "routine is not generic"
+      m.error0 RoutineIsNotGeneric
       return
 
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
@@ -764,7 +832,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
 
   if m.pos < args.len:
     # not all arguments where used, error:
-    m.error "too many arguments"
+    m.error0 TooManyArguments
   elif f.kind != ParRi:
     # use default values for these parameters, but this needs to be done
     # properly with generics etc. so we use a helper `args` seq and pretend
@@ -772,7 +840,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     let moreArgs = collectDefaultValues(f)
     sigmatchLoop m, f, moreArgs
     if f.kind != ParRi:
-      m.error "too few arguments"
+      m.error0 TooFewArguments
 
   if f.kind == ParRi:
     inc f
@@ -783,16 +851,10 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     for v in typeVars(fn.sym):
       let inf = m.inferred.getOrDefault(v)
       if inf == default(Cursor):
-        m.error "could not infer type for " & pool.syms[v]
+        m.error.typeVar = v
+        m.error0 CouldNotInferTypeVar
         break
       m.typeArgs.addSubtree inf
-
-proc matchesBool*(m: var Match; t: Cursor) =
-  var a = skipModifier(t)
-  if a.typeKind == BoolT:
-    inc a
-    if a.kind == ParRi: return
-  m.error concat("expected: 'bool' but got: ", typeToString(t))
 
 type
   DisambiguationResult* = enum
