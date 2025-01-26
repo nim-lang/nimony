@@ -20,12 +20,17 @@ type
 
 type
   char* {.magic: Char.}         ## Built-in 8 bit character type (unsigned).
-  string* {.magic: String.}     ## Built-in string type.
   cstring* {.magic: Cstring.}   ## Built-in cstring (*compatible string*) type.
   pointer* {.magic: Pointer.}   ## Built-in pointer type, use the `addr`
                                 ## operator to get a pointer to a variable.
 
   typedesc*[T] {.magic: TypeDesc.} ## Meta type to denote a type description.
+  UncheckedArray*[T] {.magic: UncheckedArray.} ## Built-in unchecked array type.
+
+type
+  string* = object ## Built-in string type.
+    a: ptr UncheckedArray[char]
+    i: int
 
 type # we need to start a new type section here, so that ``0`` can have a type
   bool* {.magic: "Bool".} = enum ## Built-in boolean type.

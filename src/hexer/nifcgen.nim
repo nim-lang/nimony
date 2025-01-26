@@ -11,7 +11,7 @@ import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
 import typekeys
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes]
 import basics, pipeline
 
 
@@ -137,13 +137,8 @@ proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}
 
   wantParRi e, c
 
-const
-  NimStringName = "NimStr.0.sys"
-  StringField = "s.0.sys"
-  LengthField = "len.0.sys"
-
 proc genStringType(e: var EContext; info: PackedLineInfo) =
-  let s = pool.syms.getOrIncl(NimStringName)
+  let s = pool.syms.getOrIncl(StringName)
   e.dest.add tagToken("type", info)
   e.dest.add symdefToken(s, info)
   e.offer s
@@ -153,7 +148,7 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
   e.dest.addDotToken()
 
   e.dest.add tagToken("fld", info)
-  let strField = pool.syms.getOrIncl(StringField)
+  let strField = pool.syms.getOrIncl(StringAField)
   e.dest.add symdefToken(strField, info)
   e.offer strField
   e.dest.addDotToken()
@@ -165,7 +160,7 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
   e.dest.addParRi() # "fld"
 
   e.dest.add tagToken("fld", info)
-  let lenField = pool.syms.getOrIncl(LengthField)
+  let lenField = pool.syms.getOrIncl(StringIField)
   e.dest.add symdefToken(lenField, info)
   e.offer lenField
   e.dest.addDotToken()
@@ -178,7 +173,7 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
   e.dest.addParRi() # "type"
 
 proc useStringType(e: var EContext; info: PackedLineInfo) =
-  let s = pool.syms.getOrIncl(NimStringName)
+  let s = pool.syms.getOrIncl(StringName)
   e.dest.add symToken(s, info)
 
 proc traverseTupleBody(e: var EContext; c: var Cursor) =
@@ -389,10 +384,6 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         traverseEnumField(e, c, flags)
 
       wantParRi e, c
-    of StringT:
-      useStringType e, c.info
-      inc c
-      skipParRi e, c
     of SetT:
       let info = c.info
       inc c
@@ -502,7 +493,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           expectIntLit e, c
           result.bits = c.intId
           inc c
-        of Requires, Ensures:
+        of Requires, Ensures, StringP:
           skip c
         of BuildP, EmitP:
           raiseAssert "unreachable"
@@ -710,19 +701,19 @@ proc genStringLit(e: var EContext; c: Cursor) =
     e.pending.addParRi()
 
     # type:
-    e.pending.add symToken(pool.syms.getOrIncl(NimStringName), info)
+    e.pending.add symToken(pool.syms.getOrIncl(StringName), info)
     # value:
     e.pending.add tagToken("oconstr", info)
-    e.pending.add symToken(pool.syms.getOrIncl(NimStringName), info)
+    e.pending.add symToken(pool.syms.getOrIncl(StringName), info)
 
     e.pending.add parLeToken(KvX, info)
-    let strField = pool.syms.getOrIncl(StringField)
+    let strField = pool.syms.getOrIncl(StringAField)
     e.pending.add symToken(strField, info)
     e.pending.addStrLit(s)
     e.pending.addParRi() # "kv"
 
     e.pending.add parLeToken(KvX, info)
-    let lenField = pool.syms.getOrIncl(LengthField)
+    let lenField = pool.syms.getOrIncl(StringIField)
     e.pending.add symToken(lenField, info)
     # length also contains the "isConst" flag:
     e.pending.addIntLit(s.len * 2 + 1, info)
@@ -1097,7 +1088,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
         if c.kind == StringLit:
           e.dest.add c
           inc c
-        else: 
+        else:
           traverseExpr e, c
     of AsgnS, RetS:
       e.dest.add c
@@ -1142,10 +1133,13 @@ proc importSymbol(e: var EContext; s: SymId) =
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
     var c = res.decl
-    e.dest.add tagToken("imp", c.info)
-    traverseStmt e, c, TraverseSig
-    e.dest.addDotToken()
-    e.dest.addParRi()
+    if c.stmtKind == TypeS:
+      traverseTypeDecl e, c
+    else:
+      e.dest.add tagToken("imp", c.info)
+      traverseStmt e, c, TraverseSig
+      e.dest.addDotToken()
+      e.dest.addParRi()
   else:
     error e, "could not find symbol: " & pool.syms[s]
 
@@ -1245,7 +1239,7 @@ proc expand*(infile: string) =
 
   if stmtKind(c) == StmtsS:
     inc c
-    genStringType e, c.info
+    #genStringType e, c.info
     while c.kind != ParRi:
       traverseStmt e, c, TraverseTopLevel
     e.dest.add e.pending

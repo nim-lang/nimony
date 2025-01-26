@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata, typeprops, xints
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes
 
 type
   Item* = object
@@ -479,6 +479,13 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   else:
     m.error expected(f, a)
 
+proc isStringType*(a: Cursor): bool {.inline.} =
+  result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)
+  #a.typeKind == StringT: StringT now unused!
+
+proc isSomeStringType*(a: Cursor): bool {.inline.} =
+  result = a.typeKind == CstringT or isStringType(a)
+
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
   of Symbol:
@@ -499,7 +506,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of IntT, UIntT, FloatT, CharT:
       matchIntegralType m, f, arg
       expectParRi m, f
-    of BoolT, StringT:
+    of BoolT:
       var a = skipModifier(arg.typ)
       if a.typeKind != fk:
         m.error expected(f, a)
@@ -541,7 +548,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       if a.typeKind == NilT:
         discard "ok"
         inc f
-      elif a.typeKind == StringT and arg.n.kind == StringLit:
+      elif isStringType(a) and arg.n.kind == StringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
@@ -805,7 +812,13 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
   elif a.intCosts > b.intCosts:
     result = SecondWins
   else:
-    result = NobodyWins
+    let diff = a.inferred.len - b.inferred.len
+    if diff < 0:
+      result = FirstWins
+    elif diff > 0:
+      result = SecondWins
+    else:
+      result = NobodyWins
 
 # How to implement named parameters: In a preprocessing step
 # The signature is matched against the named parameters. The

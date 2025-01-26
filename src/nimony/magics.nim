@@ -162,7 +162,6 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mFloat128: res FloatT, 128
   of mBool: res BoolT
   of mChar: res CharT, 8
-  of mString: res StringT
   of mTypeDesc: res TypedescT
   of mVoidType: res VoidT
   of mUnpack: res UnpackX
@@ -185,6 +184,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mIncl: res InclSetS, TypedMagic
   of mExcl: res ExclSetS, TypedMagic
   of mEnsureMove: res EnsureMoveX
+  of mUncheckedArray: res UncheckedArrayT
   else: ("", 0)
 
 when isMainModule:

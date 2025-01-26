@@ -21,6 +21,7 @@ Commands:
   nifc                 run NIFC tests.
   test <file>          run test <file>.
   record <file> <tout> track the results to make it part of the test suite.
+  clean                remove all generated files.
 
 Arguments are forwarded to the Nimony compiler.
 
@@ -493,6 +494,9 @@ proc handleCmdLine =
         record inp, outp, flags, cat
     else:
       quit "`record` takes two arguments"
+  of "clean":
+    removeDir "nifcache"
+    removeDir "bin"
   else:
     quit "invalid command: " & primaryCmd
 

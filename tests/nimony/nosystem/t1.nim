@@ -4,7 +4,13 @@ type
   int* {.magic: Int.}         ## Default integer type; bitwidth depends on
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
-  string* {.magic: String.}
+  char* {.magic: Char.}
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
   Color* = enum
     red = 0, blue = 1

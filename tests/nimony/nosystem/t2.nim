@@ -3,7 +3,12 @@ type
   int* {.magic: Int.}         ## Default integer type; bitwidth depends on
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
-  string* {.magic: String.}
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 
 proc `+`*(x, y: int): int {.magic: "AddI".}

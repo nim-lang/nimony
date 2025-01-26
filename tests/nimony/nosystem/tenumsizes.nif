@@ -13,11 +13,9 @@
     (tup +3 "a3")))) 5
  (proc :dollar`.A.0.tene657oj x . .
   (params
-   (param :e.0 . . A.0.tene657oj .))
-  (string) . .
+   (param :e.0 . . A.0.tene657oj .)) string.0.sys9azlf . .
   (stmts 4
-   (result :result.0 . .
-    (string) .) 4
+   (result :result.0 . . string.0.sys9azlf .) 4
    (case e.0 ~7,1
     (of
      (set a0.0.tene657oj)
@@ -49,11 +47,9 @@
     (tup +5 "b3")))) 5,2
  (proc :dollar`.B.0.tene657oj x . .
   (params
-   (param :e.1 . . B.0.tene657oj .))
-  (string) . .
+   (param :e.1 . . B.0.tene657oj .)) string.0.sys9azlf . .
   (stmts 4
-   (result :result.1 . .
-    (string) .) 4
+   (result :result.1 . . string.0.sys9azlf .) 4
    (case e.1 ~2,1
     (of
      (set ~5 b0.0.tene657oj)
@@ -85,11 +81,9 @@
     (tup +30001 "c3")))) 5,4
  (proc :dollar`.C.0.tene657oj x . .
   (params
-   (param :e.2 . . C.0.tene657oj .))
-  (string) . .
+   (param :e.2 . . C.0.tene657oj .)) string.0.sys9azlf . .
   (stmts 4
-   (result :result.2 . .
-    (string) .) 4
+   (result :result.2 . . string.0.sys9azlf .) 4
    (case e.2 ~7,1
     (of
      (set c0.0.tene657oj)

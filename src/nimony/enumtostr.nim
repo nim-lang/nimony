@@ -82,8 +82,7 @@ proc genEnumToStrProc*(c: var SemContext; typeDecl: var Cursor) =
   c.dest.addParRi() # param
   c.dest.addParRi() # params
 
-  c.dest.add c.types.stringType
-  c.dest.addParRi()
+  c.dest.addSubtree c.types.stringType
 
   c.dest.addDotToken()
   c.dest.addDotToken()

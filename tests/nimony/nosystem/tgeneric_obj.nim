@@ -3,11 +3,17 @@ type
   int* {.magic: Int.}         ## Default integer type; bitwidth depends on
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
-  string* {.magic: String.}
+  char* {.magic: Char.}
   uint8* {.magic: UInt8.}
 
   set*[T] {.magic: Set.}
   array* [Index, T] {.magic: Array.}
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 var myset: set[uint8]
 var myarr: array[3, int]

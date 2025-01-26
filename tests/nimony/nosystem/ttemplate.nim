@@ -3,9 +3,15 @@ type
   int* {.magic: Int.}         ## Default integer type; bitwidth depends on
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
-  string* {.magic: String.}
+  char* {.magic: Char.}
 
   array* [Index, T] {.magic: Array.}
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 type
   MyGeneric[T] = object

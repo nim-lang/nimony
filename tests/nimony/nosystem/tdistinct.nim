@@ -3,9 +3,14 @@ type
   int* {.magic: Int.}
   bool* {.magic: Bool.}
   char* {.magic: Char.}
-  string* {.magic: String.}
 
   int8* {.magic: Int8.}
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 proc `+`*(x, y: int): int {.magic: "AddI".}
 proc `-`*(x, y: int): int {.magic: "SubI".}
