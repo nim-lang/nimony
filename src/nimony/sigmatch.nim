@@ -20,9 +20,14 @@ type
     sym*: SymId
     typ*: Cursor
 
+  MatchErrorKind* = enum
+    InvalidMatch
+    InvalidRematch
+
   MatchError* = object
     info: PackedLineInfo
-    msg: string
+    #msg: string
+    expected, got: TypeCursor
     pos: int
 
   Match* = object
@@ -50,10 +55,11 @@ proc concat(a: varargs[string]): string =
 proc typeToString*(n: Cursor): string =
   result = toString(n, false)
 
-proc error(m: var Match; msg: sink string) =
+proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   if m.err: return # first error is the important one
   m.err = true
-  m.error = MatchError(info: m.argInfo, msg: msg, pos: m.pos+1)
+  m.error = MatchError(info: m.argInfo, kind: k,
+                       expected: expected, got: got, pos: m.pos+1)
   #writeStackTrace()
   #echo "ERROR: ", msg
 
