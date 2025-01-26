@@ -4,14 +4,16 @@ type
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
   char* {.magic: Char.}
-  UncheckedArray* {.magic: UncheckedArray.}
-  string* = object
-    a: ptr UncheckedArray[char]
-    i: int
   uint8* {.magic: UInt8.}
 
   set*[T] {.magic: Set.}
   array* [Index, T] {.magic: Array.}
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 var myset: set[uint8]
 var myarr: array[3, int]

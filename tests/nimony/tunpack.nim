@@ -7,10 +7,13 @@ type
   pointer* {.magic: Pointer.}   ## Built-in pointer type, use the `addr`
                                 ## operator to get a pointer to a variable.
   char* {.magic: Char.}
-  UncheckedArray* {.magic: UncheckedArray.}
-  string* = object
-    a: ptr UncheckedArray[char]
-    i: int
+
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 proc `+`*(x, y: int): int {.magic: "AddI".}
 proc `-`*(x, y: int): int {.magic: "SubI".}

@@ -6,10 +6,12 @@ proc use*(x: int) = discard
 
 type
   char* {.magic: Char.}
-  UncheckedArray* {.magic: UncheckedArray.}
-  string* = object
-    a: ptr UncheckedArray[char]
-    i: int
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 proc useOverloaded*(x: string) = discard
 proc useOverloaded*(x: int) = discard

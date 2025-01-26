@@ -4,12 +4,14 @@ type
                               ## architecture, but is always the same as a pointer.
   float* {.magic: Float.}
   char* {.magic: Char.}
-  UncheckedArray* {.magic: UncheckedArray.}
-  string* = object
-    a: ptr UncheckedArray[char]
-    i: int
 
   array* [Index, T] {.magic: Array.}
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 type
   MyGeneric[T] = object
