@@ -479,9 +479,12 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   else:
     m.error expected(f, a)
 
-proc isStringType(a: Cursor): bool {.inline.} =
+proc isStringType*(a: Cursor): bool {.inline.} =
   result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)
   #a.typeKind == StringT: StringT now unused!
+
+proc isSomeStringType*(a: Cursor): bool {.inline.} =
+  result = a.typeKind == CstringT or isStringType(a)
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
@@ -503,7 +506,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of IntT, UIntT, FloatT, CharT:
       matchIntegralType m, f, arg
       expectParRi m, f
-    of BoolT, StringT:
+    of BoolT:
       var a = skipModifier(arg.typ)
       if a.typeKind != fk:
         m.error expected(f, a)

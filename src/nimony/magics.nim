@@ -162,7 +162,6 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mFloat128: res FloatT, 128
   of mBool: res BoolT
   of mChar: res CharT, 8
-  of mString: res StringT
   of mTypeDesc: res TypedescT
   of mVoidType: res VoidT
   of mUnpack: res UnpackX

@@ -177,7 +177,6 @@ type
     LentT = "lent"
     SinkT = "sink"
     #FlexarrayT = "flexarray"
-    StringT = "string"
     VarargsT = "varargs"
     NilT = "nilt"
     OrT = "or"
@@ -232,6 +231,7 @@ type
     Ensures = "ensures"
     BuildP = "build"
     EmitP = "emit"
+    StringP = "string"
 
   SubstructureKind* = enum
     NoSub

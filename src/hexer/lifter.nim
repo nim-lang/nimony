@@ -110,7 +110,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
      CstringT, PointerT, OrdinalT, OpenArrayT,
      UncheckedArrayT, VarargsT, RangeT, TypedescT:
     result = true
-  of StringT, RefT, RefObjectT:
+  of RefT, RefObjectT:
     result = false
   of SinkT, ArrayT, LentT:
     result = isTrivial(c, typ.firstSon)

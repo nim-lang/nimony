@@ -384,10 +384,6 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         traverseEnumField(e, c, flags)
 
       wantParRi e, c
-    of StringT:
-      useStringType e, c.info
-      inc c
-      skipParRi e, c
     of SetT:
       let info = c.info
       inc c
@@ -497,7 +493,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           expectIntLit e, c
           result.bits = c.intId
           inc c
-        of Requires, Ensures:
+        of Requires, Ensures, StringP:
           skip c
         of BuildP, EmitP:
           raiseAssert "unreachable"

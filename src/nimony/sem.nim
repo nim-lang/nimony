@@ -642,7 +642,7 @@ proc semConstStrExpr(c: var SemContext; n: var Cursor) =
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
   n = it.n
-  if classifyType(c, it.typ) != StringT:
+  if not isStringType(it.typ):
     buildErr c, it.n.info, "expected `string` but got: " & typeToString(it.typ)
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
@@ -1021,7 +1021,6 @@ proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
 proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo) =
   const
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT}
-    StringTypes = {StringT, CstringT}
 
   var srcType = skipModifier(arg.typ)
 
@@ -1032,7 +1031,7 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
   let srcBase = skipDistinct(srcType, isDistinct)
 
   if (destBase.typeKind in IntegralTypes and srcBase.typeKind in IntegralTypes) or
-     (destBase.typeKind in StringTypes and srcBase.typeKind in StringTypes) or
+     (destBase.isSomeStringType and srcBase.isSomeStringType) or
      (destBase.containsGenericParams or srcBase.containsGenericParams):
     discard "ok"
     # XXX Add hderef here somehow
@@ -1893,7 +1892,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`requires`/`ensures` pragma takes a bool expression"
     c.dest.addParRi()
-  of EmitP, BuildP:
+  of EmitP, BuildP, StringP:
     buildErr c, n.info, "pragma not supported"
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
@@ -2556,7 +2555,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       else:
         c.buildErr info, "not a type", n
         skip n
-    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT,
+    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NilT, AutoT,
         SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
       takeTree c, n
     of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT,
@@ -4387,7 +4386,7 @@ proc semTypedAt(c: var SemContext; it: var Item) =
   of ArrayT:
     it.typ = typ
     inc it.typ
-  of StringT, CstringT:
+  of CstringT:
     it.typ = c.types.charType
   of SetT:
     it.typ = c.types.uint8Type
@@ -4824,7 +4823,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
           skip it.n
-        of IntT, FloatT, CharT, BoolT, UIntT, VoidT, StringT, NilT, AutoT, SymKindT,
+        of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NilT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangeT, VarargsT, ProcT, IterT, UntypedT, TypedT,
             CstringT, PointerT, TypeKindT, OrdinalT, OpenArrayT:

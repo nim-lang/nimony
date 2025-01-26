@@ -76,8 +76,6 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
-  of StringT:
-    update c, ptrSize*2, ptrSize
   of RefT, PtrT, MutT, OutT, ProcT, NilT, CstringT, PointerT, LentT, RefObjectT, PtrObjectT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
