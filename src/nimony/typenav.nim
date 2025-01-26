@@ -130,23 +130,25 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         result = getTypeImpl(c, prev)
   of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX:
     result = getTypeImpl(c, n.firstSon)
-    if isRoutine(symKind(result)):
-      let routine = asRoutine(result)
-      result = routine.retType
+    if result.kind == ParLe and result.substructureKind == ParamsS:
+      skip result # skip "params"
+      # return retType
     elif typeKind(result) in {IterT, ProcT}:
       inc result
       inc result # dot token
       skip result # parameters
   of FalseX, TrueX, AndX, OrX, NotX, DefinedX, DeclaredX, IsMainModuleX, EqX, NeqX, LeX, LtX,
+     EqSetX, LeSetX, LtSetX, InSetX,
      CompilesX:
     result = c.builtins.boolType
   of NegX, NegInfX, NanX, InfX:
     result = c.builtins.floatType
   of EnumToStrX, DefaultObjX, DefaultTupX:
     result = c.builtins.stringType
-  of SizeofX:
+  of SizeofX, CardSetX:
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
+     PlusSetX, MinusSetX, MulSetX, XorSetX,
      CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX:
     result = n.firstSon
   of ParX, EnsureMoveX:

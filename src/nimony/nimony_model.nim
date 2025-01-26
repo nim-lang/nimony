@@ -55,6 +55,8 @@ type
     MoverS = "mover"
     DtorS = "dtor"
     PragmasLineS = "pragmas"
+    InclSetS = "incl"
+    ExclSetS = "excl"
 
   SymKind* = enum
     NoSym
@@ -154,6 +156,15 @@ type
     ExprX = "expr" # was nkStmtListExpr in the old Nim
     ArrAtX = "arrat"
     TupAtX = "tupat" # tup[0] syntax
+    PlusSetX = "plusset"
+    MinusSetX = "minusset"
+    MulSetX = "mulset"
+    XorSetX = "xorset"
+    EqSetX = "eqset"
+    LeSetX = "leset"
+    LtSetX = "ltset"
+    InSetX = "inset"
+    CardSetX = "card"
     EnsureMoveX = "emove" # note that `move` can be written in standard Nim
 
   TypeKind* = enum
@@ -368,7 +379,7 @@ template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   body
   wantParRi dest, n
 
-proc isAtom*(n: Cursor): bool {.inline.} = n.kind >= ParLe
+proc isAtom*(n: Cursor): bool {.inline.} = n.kind < ParLe
 
 proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
   dest.add symToken(s, info)
