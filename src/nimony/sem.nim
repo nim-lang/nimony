@@ -4055,7 +4055,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
             swap c.dest, fieldBuf
             it.n = val.n
         else:
-          c.buildErr fieldInfo, "undeclared field: " & pool.strings[fieldName]
+          c.buildErr fieldInfo, "undeclared field: '" & pool.strings[fieldName] & "' for type " & typeToString(it.typ)
           skip it.n
       fieldBuf.addParRi()
       skipParRi it.n
