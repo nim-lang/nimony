@@ -23,8 +23,7 @@
   (typedesc 1 T.1.t2er4ggt1) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,9
- (type ~8 :string.0.t2er4ggt1 x . . 8
-  (call ~6 typeof 1 "")) ,12
+ (type ~8 :string.0.t2er4ggt1 x . . string.0.sys9azlf) ,12
  (proc 5 :\2B.0.t2er4ggt1
   (add -3) . . 9
   (params 1
