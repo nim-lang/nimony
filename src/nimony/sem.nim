@@ -1894,7 +1894,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     inc n
   of Requires, Ensures:
     crucial.flags.incl pk
-    c.dest.add n
+    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     inc n
     if n.kind != ParRi:
       semProposition c, n, pk
