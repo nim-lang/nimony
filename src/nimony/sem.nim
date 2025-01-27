@@ -1491,6 +1491,44 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     semExpr(c, cs.fn, {KeepMagics, AllowUndeclared})
     fnName = getFnIdent(c)
     it.n = cs.fn.n
+  if fnName in c.unoverloadableMagics:
+    # transform call early before semchecking arguments
+    var syms = beginRead(c.dest)
+    var magic = NoExpr
+    var nested = 0
+    while true:
+      case syms.kind
+      of Symbol:
+        let res = tryLoadSym(syms.sym)
+        if res.status == LacksNothing:
+          var n = res.decl
+          inc n # skip the symbol kind
+          if n.kind == SymbolDef:
+            inc n # skip the SymbolDef
+            if n.kind == ParLe:
+              magic = n.exprKind
+              if magic != NoExpr: break
+      of ParLe:
+        if syms.exprKind notin {OchoiceX, CchoiceX}: break
+        inc nested
+      of ParRi:
+        dec nested
+      else: break
+      if nested == 0: break
+      inc syms
+    endRead(c.dest)
+    if magic != NoExpr:
+      swap c.dest, cs.dest
+      # keep args after if they were produced by dotcall:
+      cs.dest.replace [parLeToken(magic, cs.callNode.info)], 0
+      while it.n.kind != ParRi:
+        # add all args in call:
+        takeTree cs.dest, it.n
+      wantParRi cs.dest, it.n
+      var magicCall = Item(n: beginRead(cs.dest), typ: it.typ)
+      semExpr c, magicCall, flags
+      it.typ = magicCall.typ
+      return
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
   while it.n.kind != ParRi:
@@ -5197,6 +5235,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec)
+  for magic in ["typeof", "compiles"]:
+    c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
   # XXX could add self module symbol here
 
