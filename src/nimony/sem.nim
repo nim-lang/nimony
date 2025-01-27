@@ -1519,9 +1519,13 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     endRead(c.dest)
     if magic != NoExpr:
       swap c.dest, cs.dest
-      let nifTag = [parLeToken(magic, cs.callNode.info)]
-      # keep args after if they were produced by dotcall:
-      cs.dest.replace fromBuffer(nifTag), 0
+      let nifTag = parLeToken(magic, cs.callNode.info)
+      if cs.args.len != 0:
+        # keep args after if they were produced by dotcall:
+        cs.dest.replace fromBuffer([nifTag]), 0
+      else:
+        cs.dest.shrink 0
+        cs.dest.add nifTag
       while it.n.kind != ParRi:
         # add all args in call:
         takeTree cs.dest, it.n
