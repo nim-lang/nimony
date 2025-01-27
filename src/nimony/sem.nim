@@ -2545,16 +2545,16 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         c.dest.addParRi()
       elif xkind == TypeofX:
         semTypeofForType c, n
-      elif xkind in CallKinds:
-        var it = Item(n: n, typ: c.types.autoType)
-        semExpr c, it, {InTypeContext}
-        n = it.n
       elif context == AllowValues:
         let start = c.dest.len
         var it = Item(n: n, typ: c.types.autoType)
         semExpr c, it
         n = it.n
         exprToType c, it.typ, start, context, info
+      elif xkind in CallKinds:
+        var it = Item(n: n, typ: c.types.autoType)
+        semExpr c, it, {InTypeContext}
+        n = it.n
       elif false and isRangeExpr(n):
         # a..b, interpret as range type but only without AllowValues
         # to prevent conflict with HSlice
