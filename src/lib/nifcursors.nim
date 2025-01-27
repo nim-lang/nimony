@@ -221,6 +221,11 @@ template buildTree*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: 
   body
   dest.add parRiToken(info)
 
+template buildTree*(dest: var TokenBuf; tag: string; info: PackedLineInfo; body: untyped) =
+  dest.add parLeToken(pool.tags.getOrIncl(tag), info)
+  body
+  dest.add parRiToken(info)
+
 proc addParLe*(dest: var TokenBuf; tag: TagId; info = NoLineInfo) =
   dest.add parLeToken(tag, info)
 
@@ -235,6 +240,9 @@ proc addStrLit*(dest: var TokenBuf; s: string; info = NoLineInfo) =
 
 proc addIntLit*(dest: var TokenBuf; i: BiggestInt; info = NoLineInfo) =
   dest.add intToken(pool.integers.getOrIncl(i), info)
+
+proc addUintLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
+  dest.add uintToken(pool.uintegers.getOrIncl(i), info)
 
 proc span*(c: Cursor): int =
   result = 0

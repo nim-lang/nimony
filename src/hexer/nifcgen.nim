@@ -69,6 +69,11 @@ proc expectIntLit(e: var EContext; c: var Cursor) =
 proc add(e: var EContext; tag: string; info: PackedLineInfo) =
   e.dest.add tagToken(tag, info)
 
+proc addUintType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
+  buf.add tagToken("u", info)
+  buf.addIntLit(bits, info)
+  buf.addParRi()
+
 type
   TraverseMode = enum
     TraverseAll, TraverseSig, TraverseTopLevel
@@ -393,15 +398,21 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       if err:
         error e, "invalid set element type: ", c
       else:
-        var arrBuf = createTokenBuf(16)
-        arrBuf.add tagToken("array", info)
-        arrBuf.add tagToken("u", info)
-        arrBuf.addIntLit(8, info)
-        arrBuf.addParRi()
-        arrBuf.addIntLit(size, info)
-        arrBuf.addParRi()
-        var arrCursor = cursorAt(arrBuf, 0)
-        traverseAsNamedType(e, arrCursor)
+        case size
+        of 1, 2, 4, 8:
+          e.dest.add tagToken("u", info)
+          e.dest.addIntLit(size * 8, info)
+          e.dest.addParRi()
+        else:
+          var arrBuf = createTokenBuf(16)
+          arrBuf.add tagToken("array", info)
+          arrBuf.add tagToken("u", info)
+          arrBuf.addIntLit(8, info)
+          arrBuf.addParRi()
+          arrBuf.addIntLit(size, info)
+          arrBuf.addParRi()
+          var arrCursor = cursorAt(arrBuf, 0)
+          traverseAsNamedType(e, arrCursor)
       skip c
       skipParRi e, c
     of VoidT, VarargsT, NilT, ConceptT,
@@ -758,6 +769,103 @@ proc traverseTupleConstr(e: var EContext; c: var Cursor) =
     e.dest.addParRi() # "kv"
   wantParRi e, c
 
+proc genSetOp(e: var EContext; c: var Cursor) =
+  let info = c.info
+  let kind = c.exprKind
+  inc c
+  let typ = c
+  if typ.typeKind != SetT:
+    error e, "expected set type for set op", c
+  var baseType = typ
+  inc baseType
+  var argsBuf = createTokenBuf(16)
+  swap e.dest, argsBuf
+  let typeStart = e.dest.len
+  traverseType e, c
+  let aStart = e.dest.len
+  traverseExpr e, c
+  let bStart = e.dest.len
+  traverseExpr e, c
+  swap e.dest, argsBuf
+  skipParRi e, c
+  let cType = cursorAt(argsBuf, typeStart)
+  let a = cursorAt(argsBuf, aStart)
+  let b = cursorAt(argsBuf, bStart)
+  var err = false
+  let size = asSigned(bitsetSizeInBytes(baseType), err)
+  assert not err
+  # XXX AST of a and b are copied more than once, maybe ensure it is moved to a temp if necessary
+  case size
+  of 1, 2, 4, 8:
+    case kind
+    of CardSetX:
+      # XXX needs countBits compilerproc
+      raiseAssert("unimplemented")
+    of LtSetX:
+      e.dest.buildTree $AndX, info:
+        e.dest.buildTree $EqX, info:
+          e.dest.buildTree $BitAndX, info:
+            e.dest.addSubtree cType
+            e.dest.addSubtree a
+            e.dest.buildTree $BitNotX, info:
+              e.dest.addSubtree cType
+              e.dest.addSubtree b
+          e.dest.addIntLit(0, info)
+        e.dest.buildTree $NeqX, info:
+          e.dest.addSubtree a
+          e.dest.addSubtree b
+    of LeSetX:
+      e.dest.buildTree $EqX, info:
+        e.dest.buildTree $BitAndX, info:
+          e.dest.addSubtree cType
+          e.dest.addSubtree a
+          e.dest.buildTree $BitNotX, info:
+            e.dest.addSubtree cType
+            e.dest.addSubtree b
+        e.dest.addIntLit(0, info)
+    of EqSetX:
+      e.dest.buildTree $EqX, info:
+        e.dest.addSubtree a
+        e.dest.addSubtree b
+    of MulSetX:
+      e.dest.buildTree $BitAndX, info:
+        e.dest.addSubtree cType
+        e.dest.addSubtree a
+        e.dest.addSubtree b
+    of PlusSetX:
+      e.dest.buildTree $BitOrX, info:
+        e.dest.addSubtree cType
+        e.dest.addSubtree a
+        e.dest.addSubtree b
+    of XorSetX:
+      e.dest.buildTree $BitXorX, info:
+        e.dest.addSubtree cType
+        e.dest.addSubtree a
+        e.dest.addSubtree b
+    of InSetX:
+      let mask = size * 8 - 1
+      e.dest.buildTree $NeqX, info:
+        e.dest.buildTree $BitAndX, info:
+          e.dest.addSubtree cType
+          e.dest.addSubtree a
+          e.dest.buildTree $ShlX, info:
+            e.dest.addSubtree cType
+            e.dest.buildTree $CastX, info:
+              e.dest.addSubtree cType
+              e.dest.addIntLit(1, info)
+            e.dest.buildTree $BitAndX, info:
+              e.dest.addUintType(-1, info)
+              e.dest.buildTree $CastX, info:
+                e.dest.addUintType(-1, info)
+                e.dest.addSubtree b
+              e.dest.addUintLit(uint64(mask), info)
+        e.dest.addUintLit(0, info)
+    else:
+      raiseAssert("unreachable")
+  else:
+    # XXX temp generation required here for `for` loops
+    raiseAssert("unimplemented")
+
 proc traverseExpr(e: var EContext; c: var Cursor) =
   var nested = 0
   while true:
@@ -829,7 +937,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.add c # add right paren
         inc c # skip right paren
       of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
-        raiseAssert("unimplemented")
+        genSetOp e, c
       of DerefDotX:
         e.dest.add tagToken("dot", c.info)
         e.dest.add tagToken("deref", c.info)
@@ -1039,6 +1147,89 @@ proc traverseCase(e: var EContext; c: var Cursor) =
       error e, "expected (of) or (else) but got: ", c
   wantParRi e, c
 
+proc genInclExcl(e: var EContext; c: var Cursor) =
+  let info = c.info
+  let kind = c.stmtKind
+  inc c
+  let typ = c
+  if typ.typeKind != SetT:
+    error e, "expected set type for incl/excl", c
+  var baseType = typ
+  inc baseType
+  var argsBuf = createTokenBuf(16)
+  swap e.dest, argsBuf
+  let typeStart = e.dest.len
+  traverseType e, c
+  let aStart = e.dest.len
+  traverseExpr e, c
+  let bStart = e.dest.len
+  traverseExpr e, c
+  swap e.dest, argsBuf
+  skipParRi e, c
+  let cType = cursorAt(argsBuf, typeStart)
+  let a = cursorAt(argsBuf, aStart)
+  let b = cursorAt(argsBuf, bStart)
+  var err = false
+  let size = asSigned(bitsetSizeInBytes(baseType), err)
+  assert not err
+  # XXX AST of a and b are copied more than once, maybe ensure it is moved to a temp if necessary
+  case size
+  of 1, 2, 4, 8:
+    let mask = size * 8 - 1
+    e.dest.buildTree "asgn", info:
+      e.dest.addSubtree a
+      if kind == InclSetS:
+        e.dest.add tagToken($BitOrX, info)
+        e.dest.addSubtree cType
+        e.dest.addSubtree a
+      else:
+        e.dest.add tagToken($BitAndX, info)
+        e.dest.addSubtree cType
+        e.dest.addSubtree a
+        e.dest.add tagToken($BitNotX, info)
+        e.dest.addSubtree cType
+      e.dest.buildTree $ShlX, info:
+        e.dest.addSubtree cType
+        e.dest.buildTree $CastX, info:
+          e.dest.addSubtree cType
+          e.dest.addIntLit(1, info)
+        e.dest.buildTree $BitAndX, info:
+          e.dest.addUintType(-1, info)
+          e.dest.addSubtree b
+          e.dest.addIntLit(mask, info)
+      if kind == InclSetS:
+        e.dest.addParRi() # bitor
+      else:
+        e.dest.addParRi() # bitand
+        e.dest.addParRi() # bitnot
+  else:
+    template addLhs() =
+      e.dest.buildTree "at", info:
+        e.dest.addSubtree a
+        e.dest.buildTree $ShrX, info:
+          e.dest.addUintType(-1, info)
+          e.dest.buildTree $CastX, info:
+            e.dest.addUintType(-1, info)
+            e.dest.addParRi()
+            e.dest.addSubtree b
+          e.dest.addIntLit(3)
+    e.dest.buildTree "asgn", info:
+      addLhs()
+      e.dest.buildTree (if kind == InclSetS: $BitOrX else: $BitAndX), info:
+        addLhs()
+        if kind == ExclSetS:
+          e.dest.add tagToken($BitNotX, info)
+          e.dest.addUintType(8, info)
+        e.dest.buildTree $ShlX, info:
+          e.dest.addUintType(8, info)
+          e.dest.addUintLit(1, info)
+          e.dest.buildTree $BitAndX, info:
+            e.dest.addUintType(-1, info)
+            e.dest.addSubtree b
+            e.dest.addUintLit(7, info)
+        if kind == ExclSetS:
+          e.dest.addParRi()
+
 proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
   case c.kind
   of DotToken:
@@ -1113,8 +1304,10 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of CaseS: traverseCase e, c
     of YieldS, ForS:
       error e, "BUG: not eliminated: ", c
-    of TryS, RaiseS, InclSetS, ExclSetS:
+    of TryS, RaiseS:
       error e, "BUG: not implemented: ", c
+    of InclSetS, ExclSetS:
+      genInclExcl e, c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
     of MacroS, TemplateS, IncludeS, ImportS, FromImportS, ImportExceptS, ExportS, CommentS, IterS:
