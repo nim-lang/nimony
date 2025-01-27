@@ -27,6 +27,6 @@ proc threadOutOfMem*(): bool = missingBytes > 0
 
 var oomHandler: proc (size: int) {.nimcall.} = continueAfterOutOfMem
 
-proc setOomHandler*(handler: proc (size: int) {.nimcall.}) {.exportc, inline.} =
+proc setOomHandler*(handler: proc (size: int) {.nimcall.}) {.inline.} =
   # XXX needs atomic store here
   oomHandler = handler

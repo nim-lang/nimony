@@ -1818,7 +1818,7 @@ proc semProposition(c: var SemContext; n: var Cursor; kind: PragmaKind) =
   withNewScope c:
     if kind == Ensures:
       discard declareResult(c, n.info)
-    let start = c.dest.len
+    #let start = c.dest.len
     semBoolExpr c, n
     # XXX More checking here: Expression can only use parameters and `result`
     # and consts. Function calls are not allowed either. The grammar is:

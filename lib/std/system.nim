@@ -378,3 +378,5 @@ proc sizeof*[T](x: T): int {.magic: "SizeOf", noSideEffect.}
 proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
 
 include "system/setops"
+
+#include "system/stringimpl"
