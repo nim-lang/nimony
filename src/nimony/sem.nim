@@ -1815,16 +1815,25 @@ proc patchType(c: var SemContext; typ: TypeCursor; patchPosition: int) =
   c.dest.replace t, patchPosition
 
 proc semProposition(c: var SemContext; n: var Cursor; kind: PragmaKind) =
-  withNewScope c:
-    if kind == Ensures:
-      discard declareResult(c, n.info)
-    #let start = c.dest.len
-    semBoolExpr c, n
-    # XXX More checking here: Expression can only use parameters and `result`
-    # and consts. Function calls are not allowed either. The grammar is:
-    # atom ::= const | param | result
-    # arith ::= atom | arith `+` arith | arith `-` arith | arith `*` arith | arith `/` arith # etc.
-    # expr ::= arith | expr `and` expr | expr `or` expr | `not` expr
+  let prevPhase = c.phase
+  if prevPhase == SemcheckTopLevelSyms:
+    takeTree c, n
+  else:
+    c.phase = SemcheckBodies
+    withNewScope c:
+      if kind == Ensures:
+        c.dest.add parLeToken(ExprX, n.info)
+        discard declareResult(c, n.info)
+      #let start = c.dest.len
+      semBoolExpr c, n
+      if kind == Ensures:
+        c.dest.addParRi()
+      # XXX More checking here: Expression can only use parameters and `result`
+      # and consts. Function calls are not allowed either. The grammar is:
+      # atom ::= const | param | result
+      # arith ::= atom | arith `+` arith | arith `-` arith | arith `*` arith | arith `/` arith # etc.
+      # expr ::= arith | expr `and` expr | expr `or` expr | `not` expr
+    c.phase = prevPhase
 
 type
   CrucialPragma* = object
