@@ -1954,6 +1954,8 @@ proc exprToType(c: var SemContext; exprType: Cursor; start: int; context: TypeDe
     inc base
     c.dest.addSubtree base
   # otherwise, is a static value
+  elif context != AllowValues:
+    c.buildErr info, "not a type"
 
 proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; context: TypeDeclContext) =
   if s.kind in {TypeY, TypevarY}:
@@ -1988,23 +1990,13 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         c.dest.shrink c.dest.len-1
         var t = typ.body
         semLocalTypeImpl c, t, context
-  elif context == AllowValues:
+  else:
     # non type symbol, treat as expression
     var dummyBuf = createTokenBuf(1)
     dummyBuf.add dotToken(info)
     var it = Item(n: cursorAt(dummyBuf, 0), typ: c.types.autoType)
     semExprSym c, it, s, start, {}
     exprToType c, it.typ, start, context, info
-  elif s.kind != NoSym:
-    var orig = createTokenBuf(1)
-    orig.add c.dest[c.dest.len-1]
-    c.dest.shrink c.dest.len-1
-    c.buildErr info, "type name expected, but got: " & pool.syms[s.name], cursorAt(orig, 0)
-  else:
-    var orig = createTokenBuf(1)
-    orig.add c.dest[c.dest.len-1]
-    c.dest.shrink c.dest.len-1
-    c.buildErr info, "unknown type name", cursorAt(orig, 0)
 
 proc semParams(c: var SemContext; n: var Cursor)
 proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind)
@@ -2469,32 +2461,16 @@ proc isOrExpr(n: Cursor): bool =
     let name = getIdent(n)
     result = name != StrId(0) and pool.strings[name] == "|"
 
-proc semTypeofForType(c: var SemContext; n: var Cursor) =
-  let beforeExpr = c.dest.len
-  inc n # typeof
-  var it = Item(n: n, typ: c.types.autoType)
-  semExpr c, it
-  n = it.n
-  c.dest.shrink beforeExpr
-  var t = it.typ
-  if t.typeKind == TypedescT:
-    inc t
-  c.dest.addSubtree t
-  skipParRi n
-
-proc semTypeofForExpr(c: var SemContext; it: var Item; flags: set[SemFlag]) =
+proc semTypeof(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   inc it.n # typeof
   semExpr c, it
   var t = it.typ
   if t.typeKind == TypedescT: inc t
   c.dest.shrink beforeExpr
-  if InTypeContext notin flags:
-    c.dest.addParLe(TypedescT, t.info)
-    c.dest.addSubtree t
-    c.dest.addParRi()
-  else:
-    c.dest.addSubtree t
+  c.dest.addParLe(TypedescT, t.info)
+  c.dest.addSubtree t
+  c.dest.addParRi()
   it.typ = typeToCursor(c, beforeExpr)
   #echo "CAME HERE! ", typeToString(t), " ", c.phase
   #writeStackTrace()
@@ -2545,12 +2521,6 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         c.dest.addParRi()
       elif xkind == TypeofX:
         semTypeofForType c, n
-      elif context == AllowValues:
-        let start = c.dest.len
-        var it = Item(n: n, typ: c.types.autoType)
-        semExpr c, it
-        n = it.n
-        exprToType c, it.typ, start, context, info
       elif xkind in CallKinds:
         var it = Item(n: n, typ: c.types.autoType)
         semExpr c, it, {InTypeContext}
@@ -2561,8 +2531,11 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         # disabled for now, array types special case range expressions
         semRangeTypeFromExpr c, n, info
       else:
-        c.buildErr info, "not a type", n
-        skip n
+        let start = c.dest.len
+        var it = Item(n: n, typ: c.types.autoType)
+        semExpr c, it
+        n = it.n
+        exprToType c, it.typ, start, context, info
     of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NilT, AutoT,
         SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
       takeTree c, n
@@ -2679,15 +2652,11 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       c.buildErr info, "not a type", n
       inc n
   else:
-    if context == AllowValues:
-      let start = c.dest.len
-      var it = Item(n: n, typ: c.types.autoType)
-      semExpr c, it
-      n = it.n
-      exprToType c, it.typ, start, context, info
-    else:
-      c.buildErr info, "not a type", n
-      inc n
+    let start = c.dest.len
+    var it = Item(n: n, typ: c.types.autoType)
+    semExpr c, it
+    n = it.n
+    exprToType c, it.typ, start, context, info
 
 proc exportMarkerBecomesNifTag(c: var SemContext; insertPos: int; crucial: CrucialPragma) =
   assert crucial.magic.len > 0
