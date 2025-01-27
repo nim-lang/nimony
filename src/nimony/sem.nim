@@ -1947,6 +1947,14 @@ proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
           if n.kind == ParRi: break
           inc n
 
+proc exprToType(c: var SemContext; exprType: Cursor; start: int; context: TypeDeclContext; info: PackedLineInfo) =
+  if exprType.typeKind == TypedescT:
+    c.dest.shrink start
+    var base = exprType
+    inc base
+    c.dest.addSubtree base
+  # otherwise, is a static value
+
 proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; context: TypeDeclContext) =
   if s.kind in {TypeY, TypevarY}:
     let res = tryLoadSym(s.name)
@@ -1982,11 +1990,11 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         semLocalTypeImpl c, t, context
   elif context == AllowValues:
     # non type symbol, treat as expression
-    # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
     var dummyBuf = createTokenBuf(1)
     dummyBuf.add dotToken(info)
     var it = Item(n: cursorAt(dummyBuf, 0), typ: c.types.autoType)
     semExprSym c, it, s, start, {}
+    exprToType c, it.typ, start, context, info
   elif s.kind != NoSym:
     var orig = createTokenBuf(1)
     orig.add c.dest[c.dest.len-1]
@@ -2177,7 +2185,6 @@ proc isRangeExpr(n: Cursor): bool =
   result = name != StrId(0) and pool.strings[name] == ".."
 
 proc addRangeValues(c: var SemContext; n: var Cursor) =
-  # XXX AllowValues refactor would need this to handle StaticT/UnresolvedT
   var err: bool = false
   let first = asSigned(evalOrdinal(c, n), err)
   if err:
@@ -2538,15 +2545,16 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         c.dest.addParRi()
       elif xkind == TypeofX:
         semTypeofForType c, n
-      elif context == AllowValues:
-        # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
-        var it = Item(n: n, typ: c.types.autoType)
-        semExpr c, it
-        n = it.n
       elif xkind in CallKinds:
         var it = Item(n: n, typ: c.types.autoType)
         semExpr c, it, {InTypeContext}
         n = it.n
+      elif context == AllowValues:
+        let start = c.dest.len
+        var it = Item(n: n, typ: c.types.autoType)
+        semExpr c, it
+        n = it.n
+        exprToType c, it.typ, start, context, info
       elif false and isRangeExpr(n):
         # a..b, interpret as range type but only without AllowValues
         # to prevent conflict with HSlice
@@ -2672,10 +2680,11 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       inc n
   else:
     if context == AllowValues:
-      # XXX should skip TypedescT and become StaticT/UnresolvedT otherwise
+      let start = c.dest.len
       var it = Item(n: n, typ: c.types.autoType)
       semExpr c, it
       n = it.n
+      exprToType c, it.typ, start, context, info
     else:
       c.buildErr info, "not a type", n
       inc n
