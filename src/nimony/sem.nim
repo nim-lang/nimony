@@ -1371,15 +1371,19 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       var magicExpr = Item(n: cursorAt(magicExprBuf, 0), typ: it.typ)
       semExpr c, magicExpr, cs.flags
       it.typ = magicExpr.typ
-    elif c.routine.inGeneric == 0 and m[idx].inferred.len > 0 and isMagic == NonMagicCall:
+    elif c.routine.inGeneric == 0 and m[idx].inferred.len > 0:
       var matched = m[idx]
-      let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
-      c.dest[cs.beforeCall+1].setSymId inst.targetSym
-      var instReturnType = createTokenBuf(16)
-      swap c.dest, instReturnType
-      var subsReturnType = inst.returnType
-      let returnType = semReturnType(c, subsReturnType)
-      swap c.dest, instReturnType
+      let returnType: Cursor
+      if isMagic == NonMagicCall:
+        let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
+        c.dest[cs.beforeCall+1].setSymId inst.targetSym
+        var instReturnType = createTokenBuf(16)
+        swap c.dest, instReturnType
+        var subsReturnType = inst.returnType
+        returnType = semReturnType(c, subsReturnType)
+        swap c.dest, instReturnType
+      else:
+        returnType = instantiateType(c, matched.returnType, matched.inferred)
       typeofCallIs c, it, cs.beforeCall, returnType
     else:
       typeofCallIs c, it, cs.beforeCall, m[idx].returnType
