@@ -27,8 +27,7 @@
   (typedesc 1 T.1.tvah6culb) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,9
- (type ~8 :string.0.tvah6culb x . . 8
-  (call ~6 typeof 1 "")) ,11
+ (type ~8 :string.0.tvah6culb x . . string.0.sys9azlf) ,11
  (proc 5 :\2B.0.tvah6culb
   (add -3) . . 9
   (params 1

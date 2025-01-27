@@ -44,8 +44,7 @@
   (typedesc 1 T.3.tge7jvqqk1) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,14
- (type ~8 :string.0.tge7jvqqk1 x . . 8
-  (call ~6 typeof 1 "")) 4,16
+ (type ~8 :string.0.tge7jvqqk1 x . . string.0.sys9azlf) 4,16
  (var :myset.0.tge7jvqqk1 . . 10
   (sett 1
    (u +8)) .) 4,17
