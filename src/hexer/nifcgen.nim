@@ -866,6 +866,26 @@ proc genSetOp(e: var EContext; c: var Cursor) =
     # XXX temp generation required here for `for` loops
     raiseAssert("unimplemented")
 
+proc genSetConstr(e: var EContext; c: var Cursor) =
+  let info = c.info
+  var typ = e.typeCache.getType(c)
+  var bytes = evalBitSet(c, typ)
+  case bytes.len
+  of 0:
+    # not constant
+    # XXX also needs temps
+    raiseAssert("unimplemented")
+  of 1, 2, 4, 8:
+    # hopefully this is correct?
+    bytes.setLen(8)
+    e.dest.addUintLit(cast[ptr uint64](addr bytes[0])[], info)
+    skip c
+  else:
+    e.dest.add tagToken("aconstr", info)
+    traverseType e, typ
+    for b in bytes:
+      e.dest.addUintLit(b, info)
+
 proc traverseExpr(e: var EContext; c: var Cursor) =
   var nested = 0
   while true:
@@ -915,6 +935,8 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         inc nested
       of TupleConstrX:
         traverseTupleConstr e, c
+      of SetX:
+        genSetConstr e, c
       of CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
         e.dest.add tagToken("call", c.info)
         inc c

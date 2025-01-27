@@ -1,0 +1,12 @@
+type Foo = enum
+  A, B, C, D, E, F
+
+var s, s1: set[Foo]
+s = {A..D}
+s1 = {A..C}
+discard s1 < s
+let y = s1 * s
+let z: set[Foo] = y
+discard y == {A..C}
+discard z == {A..C}
+discard s1 <= s

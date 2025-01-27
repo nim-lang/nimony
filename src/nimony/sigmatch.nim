@@ -88,7 +88,14 @@ proc error0(m: var Match; k: MatchErrorKind) =
 proc getErrorMsg(m: Match): string =
   case m.error.kind
   of InvalidMatch:
-    concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
+    var s = concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
+    if false:
+      for a, b in m.inferred:
+        s.add("\n")
+        s.add(pool.syms[a])
+        s.add(": ")
+        s.add(typeToString(b))
+    s
   of InvalidRematch:
     concat("Could not match again: ", pool.syms[m.error.typeVar], " expected ",
       typeToString(m.error.expected), " but got ", typeToString(m.error.got))
@@ -287,7 +294,7 @@ proc isTypevar(s: SymId): bool =
   let typevar = asTypevar(res.decl)
   result = typevar.kind == TypevarY
 
-proc linearMatch(m: var Match; f, a: var Cursor, leaveLastParRi = true) =
+proc linearMatch(m: var Match; f, a: var Cursor) =
   let fOrig = f
   let aOrig = a
   var nested = 0
@@ -298,9 +305,10 @@ proc linearMatch(m: var Match; f, a: var Cursor, leaveLastParRi = true) =
       if m.inferred.contains(fs):
         # rematch?
         var prev = m.inferred[fs]
-        linearMatch(m, prev, a, leaveLastParRi = false)
+        linearMatch(m, prev, a)
         inc f
         if m.err: break
+        continue
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
@@ -323,7 +331,7 @@ proc linearMatch(m: var Match; f, a: var Cursor, leaveLastParRi = true) =
           break
         inc nested
       of ParRi:
-        if nested == ord(leaveLastParRi): break
+        if nested == 0: break
         dec nested
     else:
       m.error(InvalidMatch, fOrig, aOrig)
@@ -533,12 +541,10 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
     if fLen.isNaN or aLen.isNaN:
       # match typevars
       linearMatch m, f, a
-      expectParRi m, f
     elif fLen == aLen:
       inc f
       inc a
       linearMatch m, f, a
-      expectParRi m, f
       skip f
       expectParRi m, f
     else:
@@ -594,7 +600,6 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
           m.error InvalidMatch, f, a
       else:
         linearMatch m, f, a
-      expectParRi m, f
     of RangeT:
       # for now acts the same as base type
       var a = skipModifier(arg.typ)
@@ -609,36 +614,37 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of SetT, UncheckedArrayT, OpenArrayT:
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
-      expectParRi m, f
     of CstringT:
       var a = skipModifier(arg.typ)
       if a.typeKind == NilT:
         discard "ok"
         inc f
+        expectParRi m, f
       elif isStringType(a) and arg.n.kind == StringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
         inc m.intCosts
         inc f
+        expectParRi m, f
       else:
         linearMatch m, f, a
-      expectParRi m, f
     of PointerT:
       var a = skipModifier(arg.typ)
       case a.typeKind
       of NilT:
         discard "ok"
         inc f
+        expectParRi m, f
       of PtrT:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
         inc m.intCosts
         inc f
+        expectParRi m, f
       else:
         linearMatch m, f, a
-      expectParRi m, f
     of PtrT, RefT:
       var a = skipModifier(arg.typ)
       case a.typeKind
@@ -646,14 +652,13 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         discard "ok"
         inc f
         skip f
+        expectParRi m, f
       else:
         linearMatch m, f, a
-      expectParRi m, f
     of TypedescT:
       # do not skip modifier
       var a = arg.typ
       linearMatch m, f, a
-      expectParRi m, f
     of VarargsT:
       discard "do not even advance f here"
       if m.firstVarargPosition < 0:
