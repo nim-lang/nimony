@@ -1000,6 +1000,7 @@ type
     beforeCall: int
     fn: Item
     fnKind: SymKind
+    fnName: StrId
     callNode: PackedToken
     dest, genericDest: TokenBuf
     args: seq[Item]
@@ -1393,6 +1394,13 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     var errorMsg: string
     if idx == -2:
       errorMsg = "ambiguous call"
+    elif cs.source in {DotCall, DotAsgnCall} and cs.fnName != StrId(0):
+      errorMsg = "undeclared field: '"
+      errorMsg.add pool.strings[cs.fnName]
+      errorMsg.add "'"
+      if cs.args.len != 0: # just to be safe
+        errorMsg.add " for type "
+        errorMsg.add typeToString(cs.args[0].typ)
     elif m.len > 0:
       errorMsg = "Type mismatch at [position]"
       for i in 0..<m.len:
@@ -1415,7 +1423,6 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
   inc it.n
   swap c.dest, cs.dest
   cs.fn = Item(n: it.n, typ: c.types.autoType)
-  var fnName = StrId(0)
   var argIndexes: seq[int] = @[]
   if cs.fn.n.exprKind == AtX:
     inc cs.fn.n # skip tag
@@ -1444,10 +1451,10 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
         c.dest.addSubtree lhs.n
         cs.fn.typ = lhs.typ
         cs.fn.kind = lhs.kind
-        fnName = getFnIdent(c)
+        cs.fnName = getFnIdent(c)
     if not cs.hasGenericArgs:
       semBuiltinSubscript(c, cs.fn, lhs)
-      fnName = getFnIdent(c)
+      cs.fnName = getFnIdent(c)
       it.n = cs.fn.n
   elif cs.fn.n.exprKind == DotX:
     let dotStart = c.dest.len
@@ -1480,20 +1487,20 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       # sem b:
       cs.fn = Item(n: fieldNameCursor, typ: c.types.autoType)
       semExpr c, cs.fn, {KeepMagics, AllowUndeclared}
-      fnName = getFnIdent(c)
+      cs.fnName = getFnIdent(c)
       # add a as argument:
       let lhsIndex = c.dest.len
       c.dest.addSubtree lhs.n
       argIndexes.add lhsIndex
       # scope extension: If the type is Typevar and it has attached
       # a concept, use the concepts symbols too:
-      if fnName != StrId(0) and lhs.typ.kind == Symbol:
-        maybeAddConceptMethods c, fnName, lhs.typ.symId, cs.candidates
+      if cs.fnName != StrId(0) and lhs.typ.kind == Symbol:
+        maybeAddConceptMethods c, cs.fnName, lhs.typ.symId, cs.candidates
       # lhs.n escapes here, but is not read and will be set by argIndexes:
       cs.args.add lhs
   else:
     semExpr(c, cs.fn, {KeepMagics, AllowUndeclared})
-    fnName = getFnIdent(c)
+    cs.fnName = getFnIdent(c)
     it.n = cs.fn.n
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
@@ -1505,8 +1512,8 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       skipSemCheck = true
     # scope extension: If the type is Typevar and it has attached
     # a concept, use the concepts symbols too:
-    if fnName != StrId(0) and arg.typ.kind == Symbol:
-      maybeAddConceptMethods c, fnName, arg.typ.symId, cs.candidates
+    if cs.fnName != StrId(0) and arg.typ.kind == Symbol:
+      maybeAddConceptMethods c, cs.fnName, arg.typ.symId, cs.candidates
     it.n = arg.n
     cs.args.add arg
   assert cs.args.len == argIndexes.len
@@ -1664,10 +1671,8 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
           result = MatchedDotField
         else:
           c.dest.add identToken(fieldName, info)
-          c.buildErr info, "undeclared field: " & pool.strings[fieldName]
       else:
         c.dest.add identToken(fieldName, info)
-        c.buildErr info, "object type expected"
     elif lhs.kind == ModuleY:
       # this is a qualified identifier, i.e. module.name
       # consider matched even if undeclared
@@ -1694,11 +1699,9 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
         inc i
       if result != MatchedDotField:
         c.dest.add identToken(fieldName, info)
-        c.buildErr info, "undeclared field: " & pool.strings[fieldName]
         c.dest.add intToken(pool.integers.getOrIncl(0), info)
     else:
       c.dest.add identToken(fieldName, info)
-      c.buildErr info, "object type expected"
   c.dest.addParRi()
   if result == MatchedDotField:
     commonType c, it, exprStart, expected
