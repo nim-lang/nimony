@@ -598,6 +598,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
           linearMatch m, f, t.typevars
         else:
           m.error InvalidMatch, f, a
+          skip f
       else:
         linearMatch m, f, a
     of RangeT:
