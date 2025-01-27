@@ -25,6 +25,9 @@ proc capacity*(s: string): int =
 proc `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
   s.i = EmptyI
 
+proc `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
+  if isAllocated(s): dealloc(s.a)
+
 template safeCopyMem(dest: var string; src: string; len, allocated: int) =
   if dest.a != nil:
     copyMem dest.a, src.a, len
@@ -32,9 +35,6 @@ template safeCopyMem(dest: var string; src: string; len, allocated: int) =
   else:
     oomHandler allocated
     dest.i = EmptyI
-
-proc `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
-  if isAllocated(s): dealloc(s.a)
 
 proc `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, nodestroy.} =
   if dest.a == src.a:
@@ -167,10 +167,10 @@ proc shrink*(s: var string; newLen: int) =
   elif newLen < s.len:
     s.i = newLen shl LenShift or (s.i and IsStaticMask)
 
-proc `[]=`*(s: var string; i: int; c: char) {.requires: (i < s.len and i >= 0), inline.} =
+proc `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
   s.a[i] = c
 
-proc `[]`*(s: string; i: int): char {.requires: (i < s.len and i >= 0), inline.} = s.a[i]
+proc `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.} = s.a[i]
 
 proc substr*(s: string; first, last: int): string =
   let len = s.len
