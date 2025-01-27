@@ -379,11 +379,9 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     if f.kind == ParRi:
       if a.kind == ParRi:
         discard "ok"
-        inc a
       else:
         m.error FormalParamsMismatch, f, a
         skipToEnd a
-      inc f
     else:
       m.error FormalParamsMismatch, f, a
       skipToEnd f

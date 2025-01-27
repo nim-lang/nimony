@@ -1568,7 +1568,7 @@ proc findObjFieldAux(t: Cursor; name: StrId; level = 0): ObjField =
       # maybe error
       result = ObjField(level: -1)
 
-proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; info: PackedLineInfo): ObjField =
+proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId): ObjField =
   var impl = decl.body
   # emulate objtypeImpl
   if impl.typeKind in {RefT, PtrT}:
@@ -1587,9 +1587,7 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; inf
         visible = true
       else:
         let ownerModule = extractModule(pool.syms[owner])
-        # safe to get this from line info?
-        let currentModule = moduleSuffix(getFile(info), c.g.config.paths)
-        visible = ownerModule == "" or currentModule == "" or ownerModule == currentModule
+        visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
     if not visible:
       # treat as undeclared
       result = ObjField(level: -1)
@@ -1653,7 +1651,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
         doDeref = true
         inc objType
       if objType.typeKind in {ObjectT, RefObjectT, PtrObjectT}:
-        let field = findObjFieldConsiderVis(c, decl, fieldName, info)
+        let field = findObjFieldConsiderVis(c, decl, fieldName)
         if field.level >= 0:
           if doDeref or objType.typeKind in {RefObjectT, PtrObjectT}:
             c.dest[exprStart] = parLeToken(DerefDotX, info)
@@ -1819,16 +1817,25 @@ proc patchType(c: var SemContext; typ: TypeCursor; patchPosition: int) =
   c.dest.replace t, patchPosition
 
 proc semProposition(c: var SemContext; n: var Cursor; kind: PragmaKind) =
-  withNewScope c:
-    if kind == Ensures:
-      discard declareResult(c, n.info)
-    let start = c.dest.len
-    semBoolExpr c, n
-    # XXX More checking here: Expression can only use parameters and `result`
-    # and consts. Function calls are not allowed either. The grammar is:
-    # atom ::= const | param | result
-    # arith ::= atom | arith `+` arith | arith `-` arith | arith `*` arith | arith `/` arith # etc.
-    # expr ::= arith | expr `and` expr | expr `or` expr | `not` expr
+  let prevPhase = c.phase
+  if prevPhase != SemcheckBodies:
+    takeTree c, n
+  else:
+    c.phase = SemcheckBodies
+    withNewScope c:
+      if kind == Ensures:
+        c.dest.add parLeToken(ExprX, n.info)
+        discard declareResult(c, n.info)
+      #let start = c.dest.len
+      semBoolExpr c, n
+      if kind == Ensures:
+        c.dest.addParRi()
+      # XXX More checking here: Expression can only use parameters and `result`
+      # and consts. Function calls are not allowed either. The grammar is:
+      # atom ::= const | param | result
+      # arith ::= atom | arith `+` arith | arith `-` arith | arith `*` arith | arith `/` arith # etc.
+      # expr ::= arith | expr `and` expr | expr `or` expr | `not` expr
+    c.phase = prevPhase
 
 type
   CrucialPragma* = object
@@ -1889,7 +1896,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     inc n
   of Requires, Ensures:
     crucial.flags.incl pk
-    c.dest.add n
+    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
     inc n
     if n.kind != ParRi:
       semProposition c, n, pk
@@ -4031,9 +4038,9 @@ proc semObjConstr(c: var SemContext, it: var Item) =
             # level is not known but not used either, set it to 0:
             field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
           else:
-            field = findObjFieldConsiderVis(c, decl, fieldName, info)
+            field = findObjFieldConsiderVis(c, decl, fieldName)
         else:
-          field = findObjFieldConsiderVis(c, decl, fieldName, info)
+          field = findObjFieldConsiderVis(c, decl, fieldName)
         if field.level >= 0:
           if field.sym in setFieldPositions:
             c.buildErr fieldInfo, "field already set: " & pool.strings[fieldName]

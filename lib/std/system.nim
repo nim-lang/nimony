@@ -369,6 +369,9 @@ template default*[T: ref](x: typedesc[T]): T = T(nil)
 proc default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 proc default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
+proc defined*(x: untyped): bool {.magic: Defined.}
+proc declared*(x: untyped): bool {.magic: Declared.}
+
 proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
@@ -378,3 +381,5 @@ proc sizeof*[T](x: T): int {.magic: "SizeOf", noSideEffect.}
 proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
 
 include "system/setops"
+
+#include "system/stringimpl"
