@@ -4701,6 +4701,7 @@ proc semAddr(c: var SemContext; it: var Item) =
     endRead c.dest
     c.dest.shrink beforeArg
     c.buildErr info, "invalid expression for `addr` operation: " & asStr
+    c.dest.addParRi()
 
   it.typ = ptrTypeOf(c, arg.typ)
   commonType c, it, beforeExpr, expected
