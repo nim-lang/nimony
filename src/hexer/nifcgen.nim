@@ -276,13 +276,15 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
 
 proc traverseParams(e: var EContext; c: var Cursor)
 
-proc traversePartialProcType(e: var EContext; c: var Cursor) =
+proc traverseProcType(e: var EContext; c: var Cursor) =
   e.dest.add tagToken("proc", c.info)
   # This is really stupid...
   e.dest.addDotToken() # name
   e.dest.addDotToken() # export marker
   e.dest.addDotToken() # pattern
   e.dest.addDotToken() # type vars
+  inc c # proc
+  for i in 0..<4: skip c
   traverseParams e, c
   # copy pragmas:
   e.dest.takeTree c
@@ -318,12 +320,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       error e, "could not find symbol: " & pool.syms[s]
   of ParLe:
     case c.typeKind
-    of NoType:
-      if c.substructureKind == ParamsS:
-        traversePartialProcType e, c
-      else:
-        error e, "type expected but got: ", c
-    of OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
+    of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
       error e, "type expected but got: ", c
     of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
@@ -335,10 +332,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.loop c:
         traverseType e, c, {IsPointerOf}
     of ProcT:
-      e.dest.add c
-      inc c
-      e.loop c:
-        traverseType e, c
+      traverseProcType e, c
     of ArrayT, OpenArrayT:
       traverseAsNamedType e, c
     of RangeT:
