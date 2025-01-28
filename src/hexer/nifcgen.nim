@@ -240,6 +240,68 @@ proc traverseArrayBody(e: var EContext; c: var Cursor) =
     traverseExpr e, c
   wantParRi e, c
 
+type
+  CollectedPragmas = object
+    externName: string
+    flags: set[PragmaKind]
+    align, bits: IntId
+    header: StrId
+    callConv: CallConv
+
+proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas
+
+type
+  GenPragmas = object
+    opened: bool
+
+proc openGenPragmas(): GenPragmas = GenPragmas(opened: false)
+
+proc maybeOpen(e: var EContext; g: var GenPragmas; info: PackedLineInfo) {.inline.} =
+  if not g.opened:
+    g.opened = true
+    e.dest.add tagToken("pragmas", info)
+
+proc addKey(e: var EContext; g: var GenPragmas; key: string; info: PackedLineInfo) =
+  maybeOpen e, g, info
+  e.dest.add tagToken(key, info)
+  e.dest.addParRi()
+
+proc addKeyVal(e: var EContext; g: var GenPragmas; key: string; val: PackedToken; info: PackedLineInfo) =
+  maybeOpen e, g, info
+  e.dest.add tagToken(key, info)
+  e.dest.add val
+  e.dest.addParRi()
+
+proc closeGenPragmas(e: var EContext; g: GenPragmas) =
+  if g.opened:
+    e.dest.addParRi()
+  else:
+    e.dest.addDotToken()
+
+proc traverseParams(e: var EContext; c: var Cursor)
+
+proc traverseProcTypeBody(e: var EContext; c: var Cursor) =
+  e.dest.add tagToken("proctype", c.info)
+  # This is really stupid...
+  e.dest.addDotToken() # name
+  inc c # proc
+  # name, export marker, pattern, type vars:
+  for i in 0..<4: skip c
+  traverseParams e, c
+
+  let pinfo = c.info
+  let prag = parsePragmas(e, c)
+  var genPragmas = openGenPragmas()
+  if prag.callConv != NoCallConv:
+    let name = if prag.callConv == NimcallC: "fastcall" else: $prag.callConv
+    e.addKey genPragmas, name, pinfo
+  closeGenPragmas e, genPragmas
+
+  # ignore, effects and body:
+  skip c
+  skip c
+  wantParRi e, c
+
 proc traverseAsNamedType(e: var EContext; c: var Cursor) =
   let info = c.info
   var body = c
@@ -265,6 +327,8 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
       traverseArrayBody e, body
     of OpenArrayT:
       traverseOpenArrayBody e, body
+    of ProcT:
+      traverseProcTypeBody e, body
     else:
       error e, "expected tuple or array, but got: ", body
     e.dest.addParRi() # "type"
@@ -273,25 +337,6 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
     e.pending.add buf
   # regardless of what we had to do, we still need to add the typename:
   e.dest.add symToken(val, info)
-
-proc traverseParams(e: var EContext; c: var Cursor)
-
-proc traverseProcType(e: var EContext; c: var Cursor) =
-  e.dest.add tagToken("proc", c.info)
-  # This is really stupid...
-  e.dest.addDotToken() # name
-  e.dest.addDotToken() # export marker
-  e.dest.addDotToken() # pattern
-  e.dest.addDotToken() # type vars
-  inc c # proc
-  for i in 0..<4: skip c
-  traverseParams e, c
-  # copy pragmas:
-  e.dest.takeTree c
-  # ignore, effects and body:
-  skip c
-  skip c
-  wantParRi e, c
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   case c.kind
@@ -331,9 +376,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       inc c
       e.loop c:
         traverseType e, c, {IsPointerOf}
-    of ProcT:
-      traverseProcType e, c
-    of ArrayT, OpenArrayT:
+    of ArrayT, OpenArrayT, ProcT:
       traverseAsNamedType e, c
     of RangeT:
       # skip to base type
@@ -442,14 +485,6 @@ proc traverseParams(e: var EContext; c: var Cursor) =
   # the result type
   traverseType e, c
 
-type
-  CollectedPragmas = object
-    externName: string
-    flags: set[PragmaKind]
-    align, bits: IntId
-    header: StrId
-    callConv: CallConv
-
 proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
   result = default(CollectedPragmas)
   if c.kind == DotToken:
@@ -513,6 +548,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
         of Requires, Ensures, StringP:
           skip c
+          continue
         of BuildP, EmitP:
           raiseAssert "unreachable"
         skipParRi e, c
@@ -520,34 +556,6 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
         error e, "unknown pragma: ", c
   else:
     error e, "(pragmas) or '.' expected, but got: ", c
-
-type
-  GenPragmas = object
-    opened: bool
-
-proc openGenPragmas(): GenPragmas = GenPragmas(opened: false)
-
-proc maybeOpen(e: var EContext; g: var GenPragmas; info: PackedLineInfo) {.inline.} =
-  if not g.opened:
-    g.opened = true
-    e.dest.add tagToken("pragmas", info)
-
-proc addKey(e: var EContext; g: var GenPragmas; key: string; info: PackedLineInfo) =
-  maybeOpen e, g, info
-  e.dest.add tagToken(key, info)
-  e.dest.addParRi()
-
-proc addKeyVal(e: var EContext; g: var GenPragmas; key: string; val: PackedToken; info: PackedLineInfo) =
-  maybeOpen e, g, info
-  e.dest.add tagToken(key, info)
-  e.dest.add val
-  e.dest.addParRi()
-
-proc closeGenPragmas(e: var EContext; g: GenPragmas) =
-  if g.opened:
-    e.dest.addParRi()
-  else:
-    e.dest.addDotToken()
 
 proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   e.openMangleScope()
@@ -604,6 +612,9 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   let oldOwner = setOwner(e, s)
 
   var genPragmas = openGenPragmas()
+  if prag.callConv != NoCallConv:
+    let name = if prag.callConv == NimcallC: "fastcall" else: $prag.callConv
+    e.addKey genPragmas, name, pinfo
   if prag.externName.len > 0:
     e.registerMangleInParent(s, prag.externName & ".c")
     e.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
@@ -866,13 +877,25 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         inc c
         inc nested
       of SufX:
-        e.dest.add c
-        inc c
-        traverseExpr e, c
-        assert c.kind == StringLit
-        e.dest.add c
-        inc c
-        inc nested
+        var suf = c
+        inc suf
+        let arg = suf
+        skip suf
+        assert suf.kind == StringLit
+        if arg.kind == StringLit and pool.strings[suf.litId] == "R":
+          # cstring conversion
+          inc c
+          e.dest.add c # add string lit directly
+          inc c # arg
+          inc c # suf
+          skipParRi e, c
+        else:
+          e.dest.add c
+          inc c
+          traverseExpr e, c
+          e.dest.add c
+          inc c
+          wantParRi e, c
       else:
         e.dest.add c
         inc c

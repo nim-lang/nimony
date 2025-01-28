@@ -84,11 +84,14 @@ proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 proc `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
 proc `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
+proc `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
   (x[i]) = elem
 template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
   (x[i]) = elem
 template `[]=`*(x: cstring, i: int; elem: char) =
+  (x[i]) = elem
+template `[]=`*[T](x: ptr UncheckedArray[T], i: int; elem: T) =
   (x[i]) = elem
 
 proc `[]`*[T](x: ptr T): var T {.magic: "Deref", noSideEffect.}
@@ -333,6 +336,34 @@ proc `<`*(x, y: float): bool {.magic: "LtF64", noSideEffect.}
 
 proc `==`*(x, y: float32): bool {.magic: "EqF64", noSideEffect.}
 proc `==`*(x, y: float): bool {.magic: "EqF64", noSideEffect.}
+
+proc min*(x, y: int8): int8 {.noSideEffect, inline.} =
+  if x <= y: x else: y
+proc min*(x, y: int16): int16 {.noSideEffect, inline.} =
+  if x <= y: x else: y
+proc min*(x, y: int32): int32 {.noSideEffect, inline.} =
+  if x <= y: x else: y
+proc min*(x, y: int64): int64 {.noSideEffect, inline.} =
+  ## The minimum value of two integers.
+  if x <= y: x else: y
+proc min*(x, y: float32): float32 {.noSideEffect, inline.} =
+  if x <= y or y != y: x else: y
+proc min*(x, y: float): float {.noSideEffect, inline.} =
+  if x <= y or y != y: x else: y
+
+proc max*(x, y: int8): int8 {.noSideEffect, inline.} =
+  if y <= x: x else: y
+proc max*(x, y: int16): int16 {.noSideEffect, inline.} =
+  if y <= x: x else: y
+proc max*(x, y: int32): int32 {.noSideEffect, inline.} =
+  if y <= x: x else: y
+proc max*(x, y: int64): int64 {.noSideEffect, inline.} =
+  ## The maximum value of two integers.
+  if y <= x: x else: y
+proc max*(x, y: float32): float32 {.noSideEffect, inline.} =
+  if y <= x or y != y: x else: y
+proc max*(x, y: float): float {.noSideEffect, inline.} =
+  if y <= x or y != y: x else: y
 
 template `!=`*(x, y: untyped): untyped =
   ## Unequals operator. This is a shorthand for `not (x == y)`.

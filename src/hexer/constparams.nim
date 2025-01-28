@@ -83,7 +83,7 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add n
   inc n # skip `(call)`
-  var fnType = getType(c.typeCache, n)
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree dest, n # skip `fn`
   assert fnType == "params"
   inc fnType

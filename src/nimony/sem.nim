@@ -585,6 +585,7 @@ proc instantiateGenericHooks(c: var SemContext) =
 type
   SemFlag = enum
     KeepMagics
+    FindOverloads
     PreferIterators
     AllowUndeclared
     AllowModuleSym
@@ -1296,7 +1297,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   else:
     # Keep in mind that proc vars are a thing:
     let sym = if cs.fn.n.kind == Symbol: cs.fn.n.symId else: SymId(0)
-    let typ = cs.fn.typ
+    let typ = skipProcTypeToParams(cs.fn.typ)
     if typ.substructureKind == ParamsS:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ)
       m.add createMatch(addr c)
@@ -1313,7 +1314,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       var newMatch = createMatch(addr c)
       var newArgs: seq[Item] = @[]
       var newArgBufs: seq[TokenBuf] = @[] # to keep alive
-      var param = m[mi].fn.typ
+      var param = skipProcTypeToParams(m[mi].fn.typ)
       assert param == "params"
       inc param
       var ai = 0
@@ -1429,7 +1430,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
     swap c.dest, lhsBuf
-    semExpr c, lhs, {KeepMagics, AllowUndeclared}
+    semExpr c, lhs, {KeepMagics, AllowUndeclared} # don't consider all overloads
     swap c.dest, lhsBuf
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
@@ -1476,7 +1477,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     skipParRi cs.fn.n
     it.n = cs.fn.n
     # now interpret the dot expression:
-    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared})
+    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared, FindOverloads})
     if dotState == FailedDot or
         # also ignore non-proc fields:
         (dotState == MatchedDotField and cs.fn.typ.typeKind != ProcT):
@@ -1486,7 +1487,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       c.dest.shrink dotStart
       # sem b:
       cs.fn = Item(n: fieldNameCursor, typ: c.types.autoType)
-      semExpr c, cs.fn, {KeepMagics, AllowUndeclared}
+      semExpr c, cs.fn, {KeepMagics, AllowUndeclared, FindOverloads}
       cs.fnName = getFnIdent(c)
       # add a as argument:
       let lhsIndex = c.dest.len
@@ -1499,7 +1500,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       # lhs.n escapes here, but is not read and will be set by argIndexes:
       cs.args.add lhs
   else:
-    semExpr(c, cs.fn, {KeepMagics, AllowUndeclared})
+    semExpr(c, cs.fn, {KeepMagics, AllowUndeclared, FindOverloads})
     cs.fnName = getFnIdent(c)
     it.n = cs.fn.n
   cs.fnKind = cs.fn.kind
@@ -1842,6 +1843,7 @@ proc semProposition(c: var SemContext; n: var Cursor; kind: PragmaKind) =
 
 type
   CrucialPragma* = object
+    sym: SymId
     magic: string
     bits: int
     hasVarargs: PackedLineInfo
@@ -1876,10 +1878,17 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       buildErr c, n.info, "`magic` pragma takes a string literal"
     c.dest.addParRi()
   of ImportC, ImportCpp, ExportC, Header, Plugin:
-    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
+    let info = n.info
+    c.dest.add parLeToken(pool.tags.getOrIncl($pk), info)
     inc n
     if n.kind != ParRi:
       semConstStrExpr c, n
+    elif crucial.sym != SymId(0):
+      var name = pool.syms[crucial.sym]
+      extractBasename name
+      c.dest.add strToken(pool.strings.getOrIncl(name), info)
+    else:
+      c.buildErr info, "invalid import/export symbol"
     c.dest.addParRi()
   of Align, Bits:
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
@@ -1925,10 +1934,13 @@ proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; ki
   else:
     buildErr c, n.info, "expected '.' or 'pragmas'"
 
-proc semIdentImpl(c: var SemContext; n: var Cursor; ident: StrId): Sym =
+proc semIdentImpl(c: var SemContext; n: var Cursor; ident: StrId; flags: set[SemFlag]): Sym =
+  let mode =
+    if FindOverloads in flags: FindAll
+    else: InnerMost
   let insertPos = c.dest.len
   let info = n.info
-  let count = buildSymChoice(c, ident, info, InnerMost)
+  let count = buildSymChoice(c, ident, info, mode)
   if count == 1:
     let sym = c.dest[insertPos+1].symId
     c.dest.shrink insertPos
@@ -1937,13 +1949,13 @@ proc semIdentImpl(c: var SemContext; n: var Cursor; ident: StrId): Sym =
   else:
     result = Sym(kind: if count == 0: NoSym else: CchoiceY)
 
-proc semIdent(c: var SemContext; n: var Cursor): Sym =
-  result = semIdentImpl(c, n, n.litId)
+proc semIdent(c: var SemContext; n: var Cursor; flags: set[SemFlag]): Sym =
+  result = semIdentImpl(c, n, n.litId, flags)
   inc n
 
-proc semQuoted(c: var SemContext; n: var Cursor): Sym =
+proc semQuoted(c: var SemContext; n: var Cursor; flags: set[SemFlag]): Sym =
   let nameId = unquote(n)
-  result = semIdentImpl(c, n, nameId)
+  result = semIdentImpl(c, n, nameId, flags)
 
 proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
   if res.status == LacksNothing:
@@ -2510,7 +2522,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
   case n.kind
   of Ident:
     let start = c.dest.len
-    let s = semIdent(c, n)
+    let s = semIdent(c, n, {})
     semTypeSym c, s, info, start, context
   of Symbol:
     let start = c.dest.len
@@ -2524,7 +2536,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       let xkind = exprKind(n)
       if xkind == QuotedX:
         let start = c.dest.len
-        let s = semQuoted(c, n)
+        let s = semQuoted(c, n, {})
         semTypeSym c, s, info, start, context
       elif xkind == ParX:
         inc n
@@ -2704,7 +2716,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   let delayed = handleSymDef(c, n, kind) # 0
   let beforeExportMarker = c.dest.len
   wantExportMarker c, n # 1
-  var crucial = default CrucialPragma
+  var crucial = CrucialPragma(sym: delayed.s.name)
   semPragmas c, n, crucial, kind # 2
   if crucial.magic.len > 0:
     exportMarkerBecomesNifTag c, beforeExportMarker, crucial
@@ -2776,7 +2788,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   let delayed = handleSymDef(c, n, EfldY) # 0
   let beforeExportMarker = c.dest.len
   wantExportMarker c, n # 1
-  var crucial = default CrucialPragma
+  var crucial = CrucialPragma(sym: delayed.s.name)
   semPragmas c, n, crucial, EfldY # 2
   if state.isBoolType and crucial.magic.len == 0:
     # bool type, set magic to fields if unset
@@ -3043,7 +3055,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     let beforeParams = c.dest.len
     semParams c, it.n
     c.routine.returnType = semReturnType(c, it.n)
-    var crucial = default CrucialPragma
+    var crucial = CrucialPragma(sym: symId)
     semPragmas c, it.n, crucial, kind
     c.routine.pragmas = crucial.flags
     if crucial.hasVarargs.isValid:
@@ -3628,8 +3640,8 @@ proc semYield(c: var SemContext; it: var Item) =
   wantParRi c, it.n
   producesVoid c, info, it.typ
 
-proc semTypePragmas(c: var SemContext; n: var Cursor; beforeExportMarker: int) =
-  var crucial = default CrucialPragma
+proc semTypePragmas(c: var SemContext; n: var Cursor; sym: SymId; beforeExportMarker: int) =
+  var crucial = CrucialPragma(sym: sym)
   semPragmas c, n, crucial, TypeY # 2
   if crucial.magic.len > 0:
     exportMarkerBecomesNifTag c, beforeExportMarker, crucial
@@ -3660,7 +3672,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       c.currentScope.kind = oldScopeKind
       isGeneric = true
 
-    semTypePragmas c, n, beforeExportMarker
+    semTypePragmas c, n, delayed.s.name, beforeExportMarker
 
     # body:
     if n.kind == DotToken:
@@ -3676,7 +3688,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
   else:
     c.takeTree n # generics
-    semTypePragmas c, n, beforeExportMarker
+    semTypePragmas c, n, delayed.s.name, beforeExportMarker
     c.takeTree n # body
 
   c.addSym delayed
@@ -4374,9 +4386,11 @@ proc semTypedAt(c: var SemContext; it: var Item) =
   var index = Item(n: it.n, typ: c.types.autoType)
   semExpr c, index
   it.n = index.n
-  let typ = skipModifier(lhs.typ)
+  var typ = skipModifier(lhs.typ)
+  if typ.typeKind == PtrT:
+    inc typ
   case typ.typeKind
-  of ArrayT:
+  of ArrayT, UncheckedArrayT:
     it.typ = typ
     inc it.typ
   of CstringT:
@@ -4844,7 +4858,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     literal c, it, c.types.charType
   of Ident:
     let start = c.dest.len
-    let s = semIdent(c, it.n)
+    let s = semIdent(c, it.n, flags)
     semExprSym c, it, s, start, flags
   of Symbol:
     let start = c.dest.len
@@ -4855,7 +4869,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     case exprKind(it.n)
     of QuotedX:
       let start = c.dest.len
-      let s = semQuoted(c, it.n)
+      let s = semQuoted(c, it.n, flags)
       semExprSym c, it, s, start, flags
     of NoExpr:
       case stmtKind(it.n)
@@ -4988,14 +5002,22 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of InfX, NegInfX, NanX:
       literalB c, it, c.types.floatType
     of AndX, OrX:
+      let start = c.dest.len
       takeToken c, it.n
       semBoolExpr c, it.n
       semBoolExpr c, it.n
       wantParRi c, it.n
+      let expected = it.typ
+      it.typ = c.types.boolType
+      commonType c, it, start, expected
     of NotX:
+      let start = c.dest.len
       takeToken c, it.n
       semBoolExpr c, it.n
       wantParRi c, it.n
+      let expected = it.typ
+      it.typ = c.types.boolType
+      commonType c, it, start, expected
     of EnsureMoveX:
       takeToken c, it.n
       semExpr c, it
