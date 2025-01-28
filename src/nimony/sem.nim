@@ -1843,6 +1843,7 @@ proc semProposition(c: var SemContext; n: var Cursor; kind: PragmaKind) =
 
 type
   CrucialPragma* = object
+    sym: SymId
     magic: string
     bits: int
     hasVarargs: PackedLineInfo
@@ -1877,10 +1878,17 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       buildErr c, n.info, "`magic` pragma takes a string literal"
     c.dest.addParRi()
   of ImportC, ImportCpp, ExportC, Header, Plugin:
-    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
+    let info = n.info
+    c.dest.add parLeToken(pool.tags.getOrIncl($pk), info)
     inc n
     if n.kind != ParRi:
       semConstStrExpr c, n
+    elif crucial.sym != SymId(0):
+      var name = pool.syms[crucial.sym]
+      extractBasename name
+      c.dest.add strToken(pool.strings.getOrIncl(name), info)
+    else:
+      c.buildErr info, "invalid import/export symbol"
     c.dest.addParRi()
   of Align, Bits:
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
@@ -2708,7 +2716,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   let delayed = handleSymDef(c, n, kind) # 0
   let beforeExportMarker = c.dest.len
   wantExportMarker c, n # 1
-  var crucial = default CrucialPragma
+  var crucial = CrucialPragma(sym: delayed.s.name)
   semPragmas c, n, crucial, kind # 2
   if crucial.magic.len > 0:
     exportMarkerBecomesNifTag c, beforeExportMarker, crucial
@@ -2780,7 +2788,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   let delayed = handleSymDef(c, n, EfldY) # 0
   let beforeExportMarker = c.dest.len
   wantExportMarker c, n # 1
-  var crucial = default CrucialPragma
+  var crucial = CrucialPragma(sym: delayed.s.name)
   semPragmas c, n, crucial, EfldY # 2
   if state.isBoolType and crucial.magic.len == 0:
     # bool type, set magic to fields if unset
@@ -3047,7 +3055,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     let beforeParams = c.dest.len
     semParams c, it.n
     c.routine.returnType = semReturnType(c, it.n)
-    var crucial = default CrucialPragma
+    var crucial = CrucialPragma(sym: symId)
     semPragmas c, it.n, crucial, kind
     c.routine.pragmas = crucial.flags
     if crucial.hasVarargs.isValid:
@@ -3632,8 +3640,8 @@ proc semYield(c: var SemContext; it: var Item) =
   wantParRi c, it.n
   producesVoid c, info, it.typ
 
-proc semTypePragmas(c: var SemContext; n: var Cursor; beforeExportMarker: int) =
-  var crucial = default CrucialPragma
+proc semTypePragmas(c: var SemContext; n: var Cursor; sym: SymId; beforeExportMarker: int) =
+  var crucial = CrucialPragma(sym: sym)
   semPragmas c, n, crucial, TypeY # 2
   if crucial.magic.len > 0:
     exportMarkerBecomesNifTag c, beforeExportMarker, crucial
@@ -3664,7 +3672,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       c.currentScope.kind = oldScopeKind
       isGeneric = true
 
-    semTypePragmas c, n, beforeExportMarker
+    semTypePragmas c, n, delayed.s.name, beforeExportMarker
 
     # body:
     if n.kind == DotToken:
@@ -3680,7 +3688,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
   else:
     c.takeTree n # generics
-    semTypePragmas c, n, beforeExportMarker
+    semTypePragmas c, n, delayed.s.name, beforeExportMarker
     c.takeTree n # body
 
   c.addSym delayed
