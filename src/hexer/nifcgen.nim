@@ -877,13 +877,25 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         inc c
         inc nested
       of SufX:
-        e.dest.add c
-        inc c
-        traverseExpr e, c
-        assert c.kind == StringLit
-        e.dest.add c
-        inc c
-        inc nested
+        var suf = c
+        inc suf
+        let arg = suf
+        skip suf
+        assert suf.kind == StringLit
+        if arg.kind == StringLit and pool.strings[suf.litId] == "R":
+          # cstring conversion
+          inc c
+          e.dest.add c # add string lit directly
+          inc c # arg
+          inc c # suf
+          skipParRi e, c
+        else:
+          e.dest.add c
+          inc c
+          traverseExpr e, c
+          e.dest.add c
+          inc c
+          wantParRi e, c
       else:
         e.dest.add c
         inc c

@@ -413,4 +413,4 @@ proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
 
 include "system/setops"
 
-include "system/stringimpl"
+#include "system/stringimpl"
