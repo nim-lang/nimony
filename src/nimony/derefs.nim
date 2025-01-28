@@ -57,13 +57,18 @@ proc wantParRi(c: var Context; n: var Cursor) =
   else:
     error "expected ')', but got: ", n
 
-proc rootOf(n: Cursor): SymId =
+proc rootOf(n: Cursor; allowIndirection = false): SymId =
   var n = n
   while true:
     case n.exprKind
     of DotX, AtX, ArrAtX, ParX:
-      # `PatX`, `DerefDotX` deliberately missing here as they are not protected from mutation
       inc n
+    of PatX, DerefDotX:
+      # not protected from mutation
+      if allowIndirection:
+        inc n
+      else:
+        break
     of DconvX, OconvX:
       inc n
       skip n # skip the type
@@ -76,7 +81,7 @@ proc rootOf(n: Cursor): SymId =
 
 proc isAddressable*(n: Cursor): bool =
   ## Addressable means that we can take the address of the expression.
-  let s = rootOf(n)
+  let s = rootOf(n, allowIndirection = true)
   if s != NoSymId:
     let res = tryLoadSym(s)
     assert res.status == LacksNothing

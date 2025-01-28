@@ -1296,7 +1296,9 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   else:
     # Keep in mind that proc vars are a thing:
     let sym = if cs.fn.n.kind == Symbol: cs.fn.n.symId else: SymId(0)
-    let typ = cs.fn.typ
+    var typ = cs.fn.typ
+    if typ.typeKind == ProcT:
+      skipToParams typ
     if typ.substructureKind == ParamsS:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ)
       m.add createMatch(addr c)
@@ -4374,9 +4376,11 @@ proc semTypedAt(c: var SemContext; it: var Item) =
   var index = Item(n: it.n, typ: c.types.autoType)
   semExpr c, index
   it.n = index.n
-  let typ = skipModifier(lhs.typ)
+  var typ = skipModifier(lhs.typ)
+  if typ.typeKind == PtrT:
+    inc typ
   case typ.typeKind
-  of ArrayT:
+  of ArrayT, UncheckedArrayT:
     it.typ = typ
     inc it.typ
   of CstringT:
@@ -4988,14 +4992,22 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of InfX, NegInfX, NanX:
       literalB c, it, c.types.floatType
     of AndX, OrX:
+      let start = c.dest.len
       takeToken c, it.n
       semBoolExpr c, it.n
       semBoolExpr c, it.n
       wantParRi c, it.n
+      let expected = it.typ
+      it.typ = c.types.boolType
+      commonType c, it, start, expected
     of NotX:
+      let start = c.dest.len
       takeToken c, it.n
       semBoolExpr c, it.n
       wantParRi c, it.n
+      let expected = it.typ
+      it.typ = c.types.boolType
+      commonType c, it, start, expected
     of EnsureMoveX:
       takeToken c, it.n
       semExpr c, it
