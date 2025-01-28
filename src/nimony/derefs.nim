@@ -128,7 +128,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       let fn = n
       skip n # skip the `fn`
       if n.kind != ParRi:
-        var fnType = getType(c.typeCache, fn)
+        var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
         assert fnType == "params"
         inc fnType
         let firstParam = asLocal(fnType)
@@ -244,7 +244,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   elif n.exprKind in CallKinds:
     inc n # skip `(call)`
     let orig = n
-    var fnType = getType(c.typeCache, n)
+    var fnType = skipProcTypeToParams(getType(c.typeCache, n))
     skip n # skip `fn`
     assert fnType == "params"
     inc fnType
@@ -298,7 +298,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
-  var fnType = fnType
+  var fnType = skipProcTypeToParams(fnType)
   assert fnType == "params"
   inc fnType
   while n.kind != ParRi:
@@ -337,7 +337,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
 
   swap c.dest, callBuf
   takeToken c, n
-  let fnType = getType(c.typeCache, n)
+  let fnType = skipProcTypeToParams(getType(c.typeCache, n))
   assert fnType == "params"
   takeToken c, n
   var retType = fnType

@@ -134,7 +134,6 @@ proc makeAllocated(s: var string; newLen: int) =
 
 proc add*(s: var string; part: string) =
   let len = s.len
-  discard part.len
   let newLen = len + part.len
   if not isAllocated(s):
     makeAllocated s, newLen

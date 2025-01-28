@@ -412,7 +412,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
 
   c.dest.add n
   inc n # skip `(call)`
-  var fnType = getType(c.typeCache, n)
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree c.dest, n # skip `fn`
   assert fnType == "params"
   inc fnType
