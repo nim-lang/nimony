@@ -29,7 +29,7 @@ proc `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
   if isAllocated(s): dealloc(s.a)
 
 template safeCopyMem(dest: var string; src: string; len, allocated: int) =
-  if dest.a != StrData(nil):
+  if dest.a != nil:
     copyMem dest.a, src.a, len
     dest.i = len shl LenShift
   else:
@@ -62,7 +62,7 @@ proc `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
   if isAllocated(s):
     let len = s.len
     result = string(a: cast[StrData](alloc(len)), i: s.i)
-    if result.a != StrData(nil):
+    if result.a != nil:
       copyMem result.a, s.a, len
     else:
       oomHandler len
@@ -86,7 +86,7 @@ proc ensureTerminatingZero*(s: var string) =
     else:
       let newCap = len+1
       let a = cast[StrData](realloc(s.a, newCap))
-      if a != StrData(nil):
+      if a != nil:
         a[len] = '\0'
         s.a = a
       else:
@@ -97,7 +97,7 @@ proc ensureTerminatingZero*(s: var string) =
   else:
     let newCap = len+1
     let a = cast[StrData](alloc(newCap))
-    if a != StrData(nil):
+    if a != nil:
       copyMem a, s.a, len
       a[len] = '\0'
       s.a = a
@@ -116,7 +116,7 @@ proc growImpl(s: var string; newLen: int) =
   if newLen > cap:
     let newCap = max(newLen, cap + (cap shr 1))
     s.a = cast[StrData](realloc(s.a, newCap))
-    if s.a != StrData(nil):
+    if s.a != nil:
       s.i = newLen shl LenShift
     else:
       oomHandler newCap
@@ -126,7 +126,7 @@ proc makeAllocated(s: var string; newLen: int) =
   let len = s.len
   let newCap = max(newLen, len + (len shr 1))
   s.a = cast[StrData](alloc(newCap))
-  if s.a != StrData(nil):
+  if s.a != nil:
     s.i = newLen shl LenShift
   else:
     oomHandler newCap
@@ -139,7 +139,7 @@ proc add*(s: var string; part: string) =
     makeAllocated s, newLen
   else:
     growImpl s, newLen
-  if s.a != StrData(nil):
+  if s.a != nil:
     copyMem addr(s.a[len]), part.a, part.len
 
 proc add*(s: var string; c: char) =
@@ -148,7 +148,7 @@ proc add*(s: var string; c: char) =
     makeAllocated s, newLen
   else:
     growImpl s, newLen
-  if s.a != StrData(nil):
+  if s.a != nil:
     s.a[newLen-1] = c
 
 proc setLen*(s: var string; newLen: int) =
@@ -182,7 +182,7 @@ proc substr*(s: string; first, last: int): string =
     let newLen = l - f
     if isAllocated(s):
       result = string(a: cast[StrData](alloc(newLen)), i: newLen shl LenShift or (s.i and IsStaticMask))
-      if result.a != StrData(nil):
+      if result.a != nil:
         copyMem result.a, addr s.a[f], newLen
       else:
         oomHandler newLen
@@ -221,7 +221,7 @@ proc prepareMutation*(s: var string) =
   if not isAllocated(s):
     let len = s.len
     let a = cast[StrData](alloc(len))
-    if a != StrData(nil):
+    if a != nil:
       copyMem a, s.a, len
       s.i = len shl LenShift
     else:
