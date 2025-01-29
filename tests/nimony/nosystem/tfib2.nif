@@ -104,7 +104,8 @@
     (else 2,1
      (stmts 7
       (asgn ~7 result.0 11
-       (infix \2B ~6
+       (add ~6,~21
+        (i -1) ~6
         (call ~3 fib.0.tfitjdpcx 2
          (infix \2D ~1 a.1 1 +1)) 5
         (call ~3 fib.0.tfitjdpcx 2
