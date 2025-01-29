@@ -121,9 +121,9 @@ proc `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inli
 proc `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline.} =
   (s.data[i]) = elem
 
-proc `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len), inline.} = s.data[int i]
+proc `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} = s.data[int i]
 
-proc `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len), inline.} =
+proc `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint), inline.} =
   (s.data[int i]) = elem
 
 proc `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =

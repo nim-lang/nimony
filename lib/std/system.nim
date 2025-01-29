@@ -76,6 +76,9 @@ type
                                       ## fixed-length arrays.
   set*[T]{.magic: "Set".}             ## Generic type to construct bit sets.
 
+type sink*[T]{.magic: "Sink".}
+type lent*[T]{.magic: "Lent".}
+
 proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect.}
 proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
 proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}

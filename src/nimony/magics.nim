@@ -90,6 +90,7 @@ type
     mDefaultObj, mDefaultTup
     mArrAt, mPat, mTupAt
     mDeref
+    mSink, mLent # were mBuiltinType
 
 declareMatcher parseMagic, TMagic, 1, 1
 
@@ -185,6 +186,8 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mExcl: res ExclSetS, TypedMagic
   of mEnsureMove: res EnsureMoveX
   of mUncheckedArray: res UncheckedArrayT
+  of mSink: res SinkT
+  of mLent: res LentT
   else: ("", 0)
 
 when isMainModule:

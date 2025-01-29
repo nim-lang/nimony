@@ -1067,11 +1067,27 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
       else:
         c.typeMismatch info, arg.typ, destType
 
+proc semLocalTypeExpr(c: var SemContext, it: var Item)
+
 proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
   let beforeExpr = c.dest.len
   let info = cs.callNode.info
   var destType = cs.fn.typ
   if destType.typeKind == TypedescT: inc destType
+  if destType.typeKind in {SinkT, LentT} and cs.args[0].typ.typeKind == TypedescT:
+    var nullary = destType
+    inc nullary
+    if nullary.kind == ParRi:
+      # sink T/lent T call
+      var typeBuf = createTokenBuf(16)
+      typeBuf.add destType
+      typeBuf.addSubtree cs.args[0].n
+      typeBuf.addParRi()
+      var item = Item(n: beginRead(typeBuf), typ: it.typ)
+      semLocalTypeExpr(c, item)
+      wantParRi c, it.n
+      it.typ = item.typ
+      return
   c.dest.add parLeToken(ConvX, info)
   c.dest.copyTree destType
   semConvArg(c, destType, cs.args[0], info)
@@ -1373,10 +1389,10 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       var magicExpr = Item(n: cursorAt(magicExprBuf, 0), typ: it.typ)
       semExpr c, magicExpr, cs.flags
       it.typ = magicExpr.typ
-    elif c.routine.inGeneric == 0 and m[idx].inferred.len > 0:
+    elif m[idx].inferred.len > 0:
       var matched = m[idx]
       let returnType: Cursor
-      if isMagic == NonMagicCall:
+      if isMagic == NonMagicCall and c.routine.inGeneric == 0:
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
         c.dest[cs.beforeCall+1].setSymId inst.targetSym
         var instReturnType = createTokenBuf(16)
@@ -2275,7 +2291,8 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     let kind = head.typeKind
     endRead(c.dest)
     if kind in {ArrayT, RangeT, VarargsT,
-      PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT}:
+      PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT,
+      SinkT, LentT}:
       # magics that can be invoked
       magicKind = kind
       ok = true
@@ -2333,7 +2350,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
           else:
             # error?
             discard
-        of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT:
+        of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT, SinkT, LentT:
           # unary invocations
           magicExpr.takeTree args
           skipParRi args
