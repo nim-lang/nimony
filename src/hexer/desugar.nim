@@ -1,4 +1,4 @@
-## Removes abstractions like set ops and ref object constructors.
+# removes abstractions like set ops and ref object constructors
 
 import std / [assertions]
 include nifprelude
@@ -110,14 +110,10 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     case size
     of 1, 2, 4, 8:
-      dest.add tagToken("u", info)
-      dest.addIntLit(size * 8, info)
-      dest.addParRi()
+      dest.addUintType(size * 8, info)
     else:
       dest.add tagToken("array", info)
-      dest.add tagToken("u", info)
-      dest.addIntLit(8, info)
-      dest.addParRi()
+      dest.addUintType(8, info)
       dest.addIntLit(size, info)
       dest.addParRi()
   skip n
