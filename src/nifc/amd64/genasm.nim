@@ -105,9 +105,6 @@ proc addKeywUnchecked(c: var GeneratedCode; keyw: string; info = NoLineInfo) =
 proc addSymDef(c: var TokenBuf; s: string; info: PackedLineInfo) =
   c.add symdefToken(pool.syms.getOrIncl(s), info)
 
-proc addStrLit(c: var TokenBuf; s: string; info: PackedLineInfo) =
-  c.addStrLit s, info
-
 proc addSym(c: var GeneratedCode; s: string; info: PackedLineInfo) =
   c.code.add symToken(pool.syms.getOrIncl(s), info)
 
