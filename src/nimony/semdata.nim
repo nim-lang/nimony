@@ -100,3 +100,4 @@ type
     converterIndexMap*: seq[(SymId, SymId)]
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
+    unoverloadableMagics*: HashSet[StrId]
