@@ -1401,7 +1401,10 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         returnType = semReturnType(c, subsReturnType)
         swap c.dest, instReturnType
       else:
-        returnType = instantiateType(c, matched.returnType, matched.inferred)
+        if matched.returnType.kind == DotToken:
+          returnType = matched.returnType
+        else:
+          returnType = instantiateType(c, matched.returnType, matched.inferred)
       typeofCallIs c, it, cs.beforeCall, returnType
     else:
       typeofCallIs c, it, cs.beforeCall, m[idx].returnType
