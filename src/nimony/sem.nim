@@ -1563,7 +1563,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     semExpr(c, cs.fn, {KeepMagics, AllowUndeclared, FindOverloads})
     cs.fnName = getFnIdent(c)
     it.n = cs.fn.n
-  if c.g.config.compat and fnName in c.unoverloadableMagics:
+  if c.g.config.compat and cs.fnName in c.unoverloadableMagics:
     # transform call early before semchecking arguments
     let syms = beginRead(c.dest)
     let magic = findMagicInSyms(syms)
