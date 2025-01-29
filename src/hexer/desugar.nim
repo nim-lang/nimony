@@ -10,10 +10,9 @@ type
     counter: int
     typeCache: TypeCache
     thisModuleSuffix: string
+    tempUseBufStack: seq[TokenBuf]
 
-proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
-  let info = n.info
-  let typ = getType(c.typeCache, n)
+proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): SymId =
   let s = "`desugar." & $c.counter & "." & c.thisModuleSuffix
   inc c.counter
   result = pool.syms.getOrIncl(s)
@@ -23,6 +22,43 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
     dest.addDotToken()
     copyTree dest, typ # type
     dest.addDotToken() # value
+
+proc needsTemp(n: Cursor): bool =
+  case n.kind
+  of Symbol, IntLit, UIntLit, FloatLit, CharLit, StringLit:
+    result = false
+  of ParLe:
+    var n = n
+    case n.exprKind
+    of NilX, FalseX, TrueX, InfX, NegInfX, NanX, SizeofX:
+      result = false
+    of ExprX:
+      inc n
+      let first = n
+      skip n
+      if n.kind == ParRi:
+        # single element expr
+        result = needsTemp(first)
+      else:
+        result = true
+    of SufX:
+      inc n
+      result = needsTemp(n)
+    of DconvX:
+      inc n
+      skip n
+      result = needsTemp(n)
+    of AtX, PatX, ArrAtX, TupAtX, DotX, DerefDotX, ParX, AddrX, HaddrX:
+      inc n
+      while n.kind != ParRi:
+        if needsTemp(n):
+          return true
+        skip n
+      result = false
+    else:
+      result = true
+  else:
+    result = true
 
 proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
@@ -87,6 +123,46 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skip n
   skipParRi n
 
+proc maybeLiftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor;
+    inExprs: var bool; info: PackedLineInfo): Cursor =
+  if needsTemp(n):
+    if not inExprs:
+      dest.add parLeToken(ExprX, info)
+      inExprs = true
+      c.tempUseBufStack.add createTokenBuf(8)
+    let tmp = declareTemp(c, dest, typ, n.info)
+    copyIntoKind dest, AsgnS, n.info:
+      dest.add symToken(tmp, n.info)
+      dest.addSubtree n
+    let symStart = c.tempUseBufStack[^1].len
+    c.tempUseBufStack[^1].add symToken(tmp, n.info)
+    result = cursorAt(c.tempUseBufStack[^1], symStart)
+  else:
+    result = n
+
+proc maybeLiftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor;
+    inExprs: var bool; info: PackedLineInfo): Cursor =
+  if needsTemp(n):
+    if not inExprs:
+      dest.add parLeToken(ExprX, info)
+      inExprs = true
+      c.tempUseBufStack.add createTokenBuf(4)
+    var ptrTypeBuf = createTokenBuf(8)
+    copyIntoKind ptrTypeBuf, PtrT, typ.info:
+      ptrTypeBuf.addSubtree typ
+    let ptrType = beginRead(ptrTypeBuf)
+    let tmp = declareTemp(c, dest, ptrType, n.info)
+    copyIntoKind dest, AsgnS, n.info:
+      dest.add symToken(tmp, n.info)
+      copyIntoKind dest, AddrX, n.info:
+        dest.addSubtree n
+    let derefStart = c.tempUseBufStack[^1].len
+    copyIntoKind c.tempUseBufStack[^1], DerefX, n.info:
+      c.tempUseBufStack[^1].add symToken(tmp, n.info)
+    result = cursorAt(c.tempUseBufStack[^1], derefStart)
+  else:
+    result = n
+
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let kind = n.exprKind
@@ -107,12 +183,13 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   swap dest, argsBuf
   skipParRi n
   let cType = cursorAt(argsBuf, typeStart)
-  let a = cursorAt(argsBuf, aStart)
-  let b = cursorAt(argsBuf, bStart)
+  var inExpr = false
+  # XXX probably lift temp for both if either one needs it, i.e. (n, (n = 123; n))
+  let a = maybeLiftTemp(c, dest, cursorAt(argsBuf, aStart), typ, inExpr, info)
+  let b = maybeLiftTemp(c, dest, cursorAt(argsBuf, bStart), typ, inExpr, info)
   var err = false
   let size = asSigned(bitsetSizeInBytes(baseType), err)
   assert not err
-  # XXX AST of a and b are copied more than once, maybe ensure it is moved to a temp if necessary
   case size
   of 1, 2, 4, 8:
     case kind
@@ -159,6 +236,13 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSubtree cType
         dest.addSubtree a
         dest.addSubtree b
+    of MinusSetX:
+      copyIntoKind dest, BitAndX, info:
+        dest.addSubtree cType
+        dest.addSubtree a
+        copyIntoKind dest, BitNotX, info:
+          dest.addSubtree cType
+          dest.addSubtree b
     of XorSetX:
       copyIntoKind dest, BitXorX, info:
         dest.addSubtree cType
@@ -186,8 +270,11 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       raiseAssert("unreachable")
   else:
-    # XXX temp generation required here for `for` loops
+    # XXX implement
     raiseAssert("unimplemented")
+  if inExpr:
+    dest.addParRi()
+    c.tempUseBufStack.shrink(c.tempUseBufStack.len-1)
 
 proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -196,7 +283,7 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case bytes.len
   of 0:
     # not constant
-    # XXX also needs temps
+    # XXX implement
     raiseAssert("unimplemented")
   of 1, 2, 4, 8:
     # hopefully this is correct?
@@ -229,12 +316,13 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   swap dest, argsBuf
   skipParRi n
   let cType = cursorAt(argsBuf, typeStart)
-  let a = cursorAt(argsBuf, aStart)
-  let b = cursorAt(argsBuf, bStart)
+  var inExpr = false
+  # XXX probably lift temp for both if either one needs it, i.e. (n, (n = 123; n))
+  let a = maybeLiftTempAddr(c, dest, cursorAt(argsBuf, aStart), typ, inExpr, info)
+  let b = maybeLiftTemp(c, dest, cursorAt(argsBuf, bStart), typ, inExpr, info)
   var err = false
   let size = asSigned(bitsetSizeInBytes(baseType), err)
   assert not err
-  # XXX AST of a and b are copied more than once, maybe ensure it is moved to a temp if necessary
   case size
   of 1, 2, 4, 8:
     let mask = size * 8 - 1
@@ -291,6 +379,9 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.addUintLit(7, info)
         if kind == ExclSetS:
           dest.addParRi()
+  if inExpr:
+    dest.addParRi()
+    c.tempUseBufStack.shrink(c.tempUseBufStack.len-1)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind

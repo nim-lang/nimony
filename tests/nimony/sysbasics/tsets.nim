@@ -9,4 +9,5 @@ let y = s1 * s
 let z: set[Foo] = y
 discard y == {A..C}
 discard z == {A..C}
+discard s - s1 == {D}
 discard s1 <= s
