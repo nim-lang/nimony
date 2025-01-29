@@ -123,45 +123,29 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skip n
   skipParRi n
 
-proc maybeLiftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor;
-    inExprs: var bool; info: PackedLineInfo): Cursor =
-  if needsTemp(n):
-    if not inExprs:
-      dest.add parLeToken(ExprX, info)
-      inExprs = true
-      c.tempUseBufStack.add createTokenBuf(8)
-    let tmp = declareTemp(c, dest, typ, n.info)
-    copyIntoKind dest, AsgnS, n.info:
-      dest.add symToken(tmp, n.info)
-      dest.addSubtree n
-    let symStart = c.tempUseBufStack[^1].len
-    c.tempUseBufStack[^1].add symToken(tmp, n.info)
-    result = cursorAt(c.tempUseBufStack[^1], symStart)
-  else:
-    result = n
+proc liftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: PackedLineInfo): Cursor =
+  let tmp = declareTemp(c, dest, typ, n.info)
+  copyIntoKind dest, AsgnS, n.info:
+    dest.add symToken(tmp, n.info)
+    dest.addSubtree n
+  c.tempUseBufStack.add createTokenBuf(4)
+  c.tempUseBufStack[^1].add symToken(tmp, n.info)
+  result = beginRead(c.tempUseBufStack[^1])
 
-proc maybeLiftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor;
-    inExprs: var bool; info: PackedLineInfo): Cursor =
-  if needsTemp(n):
-    if not inExprs:
-      dest.add parLeToken(ExprX, info)
-      inExprs = true
-      c.tempUseBufStack.add createTokenBuf(4)
-    var ptrTypeBuf = createTokenBuf(8)
-    copyIntoKind ptrTypeBuf, PtrT, typ.info:
-      ptrTypeBuf.addSubtree typ
-    let ptrType = beginRead(ptrTypeBuf)
-    let tmp = declareTemp(c, dest, ptrType, n.info)
-    copyIntoKind dest, AsgnS, n.info:
-      dest.add symToken(tmp, n.info)
-      copyIntoKind dest, AddrX, n.info:
-        dest.addSubtree n
-    let derefStart = c.tempUseBufStack[^1].len
-    copyIntoKind c.tempUseBufStack[^1], DerefX, n.info:
-      c.tempUseBufStack[^1].add symToken(tmp, n.info)
-    result = cursorAt(c.tempUseBufStack[^1], derefStart)
-  else:
-    result = n
+proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: PackedLineInfo): Cursor =
+  var ptrTypeBuf = createTokenBuf(8)
+  copyIntoKind ptrTypeBuf, PtrT, typ.info:
+    ptrTypeBuf.addSubtree typ
+  let ptrType = beginRead(ptrTypeBuf)
+  let tmp = declareTemp(c, dest, ptrType, n.info)
+  copyIntoKind dest, AsgnS, n.info:
+    dest.add symToken(tmp, n.info)
+    copyIntoKind dest, AddrX, n.info:
+      dest.addSubtree n
+  c.tempUseBufStack.add createTokenBuf(4)
+  copyIntoKind c.tempUseBufStack[^1], DerefX, n.info:
+    c.tempUseBufStack[^1].add symToken(tmp, n.info)
+  result = beginRead(c.tempUseBufStack[^1])
 
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -183,10 +167,20 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   swap dest, argsBuf
   skipParRi n
   let cType = cursorAt(argsBuf, typeStart)
-  var inExpr = false
-  # XXX probably lift temp for both if either one needs it, i.e. (n, (n = 123; n))
-  let a = maybeLiftTemp(c, dest, cursorAt(argsBuf, aStart), typ, inExpr, info)
-  let b = maybeLiftTemp(c, dest, cursorAt(argsBuf, bStart), typ, inExpr, info)
+  let aOrig = cursorAt(argsBuf, aStart)
+  let bOrig = cursorAt(argsBuf, bStart)
+  let useTemp = needsTemp(aOrig) or needsTemp(bOrig)
+  let oldBufStackLen = c.tempUseBufStack.len
+  let a: Cursor
+  let b: Cursor
+  if useTemp:
+    dest.add parLeToken(ExprX, info)
+    # lift both so (n, (n = 123; n)) works
+    a = liftTemp(c, dest, aOrig, typ, info)
+    b = liftTemp(c, dest, bOrig, typ, info)
+  else:
+    a = aOrig
+    b = bOrig
   var err = false
   let size = asSigned(bitsetSizeInBytes(baseType), err)
   assert not err
@@ -272,9 +266,9 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     # XXX implement
     raiseAssert("unimplemented")
-  if inExpr:
+  if useTemp:
     dest.addParRi()
-    c.tempUseBufStack.shrink(c.tempUseBufStack.len-1)
+    c.tempUseBufStack.shrink(oldBufStackLen)
 
 proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -316,10 +310,20 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   swap dest, argsBuf
   skipParRi n
   let cType = cursorAt(argsBuf, typeStart)
-  var inExpr = false
-  # XXX probably lift temp for both if either one needs it, i.e. (n, (n = 123; n))
-  let a = maybeLiftTempAddr(c, dest, cursorAt(argsBuf, aStart), typ, inExpr, info)
-  let b = maybeLiftTemp(c, dest, cursorAt(argsBuf, bStart), typ, inExpr, info)
+  let aOrig = cursorAt(argsBuf, aStart)
+  let bOrig = cursorAt(argsBuf, bStart)
+  let useTemp = needsTemp(aOrig) or needsTemp(bOrig)
+  let oldBufStackLen = c.tempUseBufStack.len
+  let a: Cursor
+  let b: Cursor
+  if useTemp:
+    dest.add parLeToken(ExprX, info)
+    # lift both so (n, (n = 123; n)) works
+    a = liftTempAddr(c, dest, aOrig, typ, info)
+    b = liftTemp(c, dest, bOrig, typ, info)
+  else:
+    a = aOrig
+    b = bOrig
   var err = false
   let size = asSigned(bitsetSizeInBytes(baseType), err)
   assert not err
@@ -379,9 +383,9 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.addUintLit(7, info)
         if kind == ExclSetS:
           dest.addParRi()
-  if inExpr:
+  if useTemp:
     dest.addParRi()
-    c.tempUseBufStack.shrink(c.tempUseBufStack.len-1)
+    c.tempUseBufStack.shrink(oldBufStackLen)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
