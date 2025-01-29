@@ -585,7 +585,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       var a = skipModifier(arg.typ)
       if a.kind == Symbol:
         var t = getTypeSection(a.symId)
-        if t.typevars.typeKind == InvokeT:
+        if t.kind == TypeY and t.typevars.typeKind == InvokeT:
           linearMatch m, f, t.typevars
         else:
           m.error InvalidMatch, f, a
