@@ -88,14 +88,7 @@ proc error0(m: var Match; k: MatchErrorKind) =
 proc getErrorMsg(m: Match): string =
   case m.error.kind
   of InvalidMatch:
-    var s = concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
-    if false:
-      for a, b in m.inferred:
-        s.add("\n")
-        s.add(pool.syms[a])
-        s.add(": ")
-        s.add(typeToString(b))
-    s
+    concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
   of InvalidRematch:
     concat("Could not match again: ", pool.syms[m.error.typeVar], " expected ",
       typeToString(m.error.expected), " but got ", typeToString(m.error.got))
