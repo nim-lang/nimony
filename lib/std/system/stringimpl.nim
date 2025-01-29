@@ -4,42 +4,39 @@ include memory
 
 type
   StrData = ptr UncheckedArray[char]
-  StrImpl* = object
-    a: StrData # can be nil for OutOfMem
-    i: int
 
 const
-  Empti = 1 # length==0 and not allocated; name is NOT a typo
+  EmptyI = 1 # length==0 and not allocated
   LenShift = 1
   IsStaticMask = 1
 
-proc len*(s: StrImpl): int {.inline.} =
+proc len*(s: string): int {.inline, ensures: (0 <= result).} =
   result = s.i shr LenShift
 
-proc high*(s: StrImpl): int {.inline.} = len(s)-1
+proc high*(s: string): int {.inline.} = len(s)-1
 
-proc cap(s: StrImpl): int {.inline.} = allocatedSize(s.a)
+proc cap(s: string): int {.inline.} = allocatedSize(s.a)
 
-template isAllocated(s: StrImpl): bool = (s.i and IsStaticMask) == 0
+template isAllocated(s: string): bool = (s.i and IsStaticMask) == 0
 
-proc capacity*(s: StrImpl): int =
+proc capacity*(s: string): int =
   result = if isAllocated(s): s.cap else: 0
 
-proc `=wasMoved`*(s: var StrImpl) {.exportc: "nimStrWasMoved", inline.} =
-  s.i = Empti
+proc `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
+  s.i = EmptyI
 
-template safeCopyMem(dest: var StrImpl; src: StrImpl; len, allocated: int) =
+proc `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
+  if isAllocated(s): dealloc(s.a)
+
+template safeCopyMem(dest: var string; src: string; len, allocated: int) =
   if dest.a != nil:
     copyMem dest.a, src.a, len
     dest.i = len shl LenShift
   else:
     oomHandler allocated
-    dest.i = Empti
+    dest.i = EmptyI
 
-proc `=destroy`*(s: StrImpl) {.exportc: "nimStrDestroy", inline.} =
-  if isAllocated(s): dealloc(s.a)
-
-proc `=copy`*(dest: var StrImpl; src: StrImpl) {.exportc: "nimStrCopy", inline, nodestroy.} =
+proc `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, nodestroy.} =
   if dest.a == src.a:
     return
   let len = src.len
@@ -61,26 +58,26 @@ proc `=copy`*(dest: var StrImpl; src: StrImpl) {.exportc: "nimStrCopy", inline, 
   else:
     dest = src
 
-proc `=dup`*(s: StrImpl): StrImpl {.exportc: "nimStrDup", inline, nodestroy.} =
+proc `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
   if isAllocated(s):
     let len = s.len
-    result = StrImpl(a: cast[StrData](alloc(len)), i: s.i)
+    result = string(a: cast[StrData](alloc(len)), i: s.i)
     if result.a != nil:
       copyMem result.a, s.a, len
     else:
       oomHandler len
-      result.i = Empti
+      result.i = EmptyI
   else:
     result = s
 
-proc borrowCStringUnsafe*(s: cstring; len: int): StrImpl =
+proc borrowCStringUnsafe*(s: cstring; len: int): string =
   ## Creates a Nim string from a `cstring` by borrowing the
   ## underlying storage. You have to ensure the `cstring` lives
   ## long enough for this to be safe! If in doubt,
   ## use `fromCString` instead.
-  StrImpl(a: cast[StrData](s), i: (len shl LenShift) or IsStaticMask)
+  string(a: cast[StrData](s), i: (len shl LenShift) or IsStaticMask)
 
-proc ensureTerminatingZero*(s: var StrImpl) =
+proc ensureTerminatingZero*(s: var string) =
   let len = s.len
   if isAllocated(s):
     let cap = s.cap
@@ -96,7 +93,7 @@ proc ensureTerminatingZero*(s: var StrImpl) =
         oomHandler newCap
         # ensure zero termination anyway:
         s.a = cast[StrData](cstring"")
-        s.i = Empti
+        s.i = EmptyI
   else:
     let newCap = len+1
     let a = cast[StrData](alloc(newCap))
@@ -108,13 +105,13 @@ proc ensureTerminatingZero*(s: var StrImpl) =
       oomHandler newCap
       # ensure zero termination anyway:
       s.a = cast[StrData](cstring"")
-      s.i = Empti
+      s.i = EmptyI
 
-proc toCString*(s: var StrImpl): cstring =
+proc toCString*(s: var string): cstring =
   ensureTerminatingZero(s)
   result = cast[cstring](s.a)
 
-proc growImpl(s: var StrImpl; newLen: int) =
+proc growImpl(s: var string; newLen: int) =
   let cap = s.cap
   if newLen > cap:
     let newCap = max(newLen, cap + (cap shr 1))
@@ -123,9 +120,9 @@ proc growImpl(s: var StrImpl; newLen: int) =
       s.i = newLen shl LenShift
     else:
       oomHandler newCap
-      s.i = Empti
+      s.i = EmptyI
 
-proc makeAllocated(s: var StrImpl; newLen: int) =
+proc makeAllocated(s: var string; newLen: int) =
   let len = s.len
   let newCap = max(newLen, len + (len shr 1))
   s.a = cast[StrData](alloc(newCap))
@@ -133,9 +130,9 @@ proc makeAllocated(s: var StrImpl; newLen: int) =
     s.i = newLen shl LenShift
   else:
     oomHandler newCap
-    s.i = Empti
+    s.i = EmptyI
 
-proc add*(s: var StrImpl; part: StrImpl) =
+proc add*(s: var string; part: string) =
   let len = s.len
   let newLen = len + part.len
   if not isAllocated(s):
@@ -145,7 +142,7 @@ proc add*(s: var StrImpl; part: StrImpl) =
   if s.a != nil:
     copyMem addr(s.a[len]), part.a, part.len
 
-proc add*(s: var StrImpl; c: char) =
+proc add*(s: var string; c: char) =
   let newLen = s.len+1
   if not isAllocated(s):
     makeAllocated s, newLen
@@ -154,7 +151,7 @@ proc add*(s: var StrImpl; c: char) =
   if s.a != nil:
     s.a[newLen-1] = c
 
-proc setLen*(s: var StrImpl; newLen: int) =
+proc setLen*(s: var string; newLen: int) =
   let len = s.len
   if newLen < len:
     s.i = newLen shl LenShift or (s.i and IsStaticMask)
@@ -164,46 +161,46 @@ proc setLen*(s: var StrImpl; newLen: int) =
     else:
       growImpl s, newLen
 
-proc shrink*(s: var StrImpl; newLen: int) =
+proc shrink*(s: var string; newLen: int) =
   if newLen < 0:
     s.i = s.i and IsStaticMask
   elif newLen < s.len:
     s.i = newLen shl LenShift or (s.i and IsStaticMask)
 
-proc `[]=`*(s: var StrImpl; i: int; c: char) {.requires: (i < s.len and i >= 0), inline.} =
+proc `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
   s.a[i] = c
 
-proc `[]`*(s: StrImpl; i: int): char {.requires: (i < s.len and i >= 0), inline.} = s.a[i]
+proc `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.} = s.a[i]
 
-proc substr*(s: StrImpl; first, last: int): StrImpl =
+proc substr*(s: string; first, last: int): string =
   let len = s.len
   let f = if first >= 0 and first < len: first else: 0
   let l = if last >= 0 and last < len: last+1 else: len
   if l <= f:
-    result = StrImpl(a: cast[StrData](cstring""), i: Empti)
+    result = string(a: cast[StrData](cstring""), i: EmptyI)
   else:
     let newLen = l - f
     if isAllocated(s):
-      result = StrImpl(a: cast[StrData](alloc(newLen)), i: newLen shl LenShift or (s.i and IsStaticMask))
+      result = string(a: cast[StrData](alloc(newLen)), i: newLen shl LenShift or (s.i and IsStaticMask))
       if result.a != nil:
         copyMem result.a, addr s.a[f], newLen
       else:
         oomHandler newLen
-        result.i = Empti
+        result.i = EmptyI
     else:
       # slices into data we don't own anyway can be done without copy:
-      result = StrImpl(a: cast[StrData](addr s.a[f]), i: newLen shl LenShift or (s.i and IsStaticMask))
+      result = string(a: cast[StrData](addr s.a[f]), i: newLen shl LenShift or (s.i and IsStaticMask))
 
-proc substr*(s: StrImpl; first = 0): StrImpl =
+proc substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
 
-proc `==`*(a, b: StrImpl): bool =
+proc `==`*(a, b: string): bool =
   if a.len == b.len:
     result = cmpMem(a.a, b.a, a.len) == 0
   else:
     result = false
 
-proc cmpStrings(a, b: StrImpl): int =
+proc cmpStrings(a, b: string): int =
   let alen = a.len
   let blen = b.len
   let minlen = min(alen, blen)
@@ -214,13 +211,13 @@ proc cmpStrings(a, b: StrImpl): int =
   else:
     result = alen - blen
 
-proc `<=`*(a, b: StrImpl): bool {.inline.} =
+proc `<=`*(a, b: string): bool {.inline.} =
   cmpStrings(a, b) <= 0
 
-proc `<`*(a, b: StrImpl): bool {.inline.} =
+proc `<`*(a, b: string): bool {.inline.} =
   cmpStrings(a, b) < 0
 
-proc prepareMutation*(s: var StrImpl) =
+proc prepareMutation*(s: var string) =
   if not isAllocated(s):
     let len = s.len
     let a = cast[StrData](alloc(len))
@@ -229,5 +226,5 @@ proc prepareMutation*(s: var StrImpl) =
       s.i = len shl LenShift
     else:
       oomHandler len
-      s.i = Empti
+      s.i = EmptyI
     s.a = a # also do this for `a == nil`

@@ -304,6 +304,10 @@ proc toString*(b: Cursor; produceLineInfo = true): string =
   let counter = span(b)
   result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, counter-1), produceLineInfo)
 
+proc toStringDebug*(b: Cursor; produceLineInfo = true): string =
+  let L = if b.kind == ParLe: 1 else: 0
+  result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, L), produceLineInfo)
+
 proc `$`*(c: Cursor): string = toString(c, false)
 
 template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =

@@ -123,7 +123,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     tar.t.addSymUse tmp, info
     skipParRi n
   else:
-    copyInto dest, n:
+    copyInto tar.t, n:
       trExpr c, dest, n, tar
       trExpr c, dest, n, tar
 
@@ -150,7 +150,7 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     tar.t.addSymUse tmp, info
     skipParRi n
   else:
-    copyInto dest, n:
+    copyInto tar.t, n:
       trExpr c, dest, n, tar
       trExpr c, dest, n, tar
 
@@ -309,7 +309,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.typeCache.registerLocal(name, n)
     takeTree tmp, n # type
     var v = Target(m: IsEmpty)
-    trExpr c, tmp, n, v
+    trExpr c, dest, n, v
     tmp.add v
   dest.add tmp
 
