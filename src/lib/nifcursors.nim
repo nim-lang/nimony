@@ -221,11 +221,6 @@ template buildTree*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: 
   body
   dest.add parRiToken(info)
 
-template buildTree*(dest: var TokenBuf; tag: string; info: PackedLineInfo; body: untyped) =
-  dest.add parLeToken(pool.tags.getOrIncl(tag), info)
-  body
-  dest.add parRiToken(info)
-
 proc addParLe*(dest: var TokenBuf; tag: TagId; info = NoLineInfo) =
   dest.add parLeToken(tag, info)
 
