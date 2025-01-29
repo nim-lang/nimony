@@ -340,6 +340,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
       genSetOp(c, dest, n)
     of NewOconstrX:
+      # XXX `new`
       raiseAssert("unimplemented")
     of TypeofX:
       takeTree dest, n
