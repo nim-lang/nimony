@@ -1,0 +1,7 @@
+(.nif24)
+(stmts
+ (incl "testcarry.h")
+ (gvar :cary.mangled . CArray.c .)
+ (discard
+  (at
+   cary.mangled +0)))

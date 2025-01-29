@@ -13,7 +13,7 @@ import std / [assertions, syncio, tables, sets, intsets, formatfloat, strutils, 
 from std / os import changeFileExt, splitFile, extractFilename
 
 import .. / lib / [bitabs, packedtrees, lineinfos]
-import mangler, nifc_model, cprelude, noptions
+import mangler, nifc_model, cprelude, noptions, typenav
 
 type
   Token = distinct uint32
