@@ -452,15 +452,21 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       if err:
         error e, "invalid set element type: ", c
       else:
-        var arrBuf = createTokenBuf(16)
-        arrBuf.add tagToken("array", info)
-        arrBuf.add tagToken("u", info)
-        arrBuf.addIntLit(8, info)
-        arrBuf.addParRi()
-        arrBuf.addIntLit(size, info)
-        arrBuf.addParRi()
-        var arrCursor = cursorAt(arrBuf, 0)
-        traverseAsNamedType(e, arrCursor)
+        case size
+        of 1, 2, 4, 8:
+          e.dest.add tagToken("u", info)
+          e.dest.addIntLit(size * 8, info)
+          e.dest.addParRi()
+        else:
+          var arrBuf = createTokenBuf(16)
+          arrBuf.add tagToken("array", info)
+          arrBuf.add tagToken("u", info)
+          arrBuf.addIntLit(8, info)
+          arrBuf.addParRi()
+          arrBuf.addIntLit(size, info)
+          arrBuf.addParRi()
+          var arrCursor = cursorAt(arrBuf, 0)
+          traverseAsNamedType(e, arrCursor)
       skip c
       skipParRi e, c
     of VoidT, VarargsT, NilT, ConceptT,
@@ -857,8 +863,6 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.addIntLit(0, c.info) # inheritance
         e.dest.add c # add right paren
         inc c # skip right paren
-      of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
-        raiseAssert("unimplemented")
       of DerefDotX:
         e.dest.add tagToken("dot", c.info)
         e.dest.add tagToken("deref", c.info)
@@ -896,6 +900,8 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
           e.dest.add c
           inc c
           wantParRi e, c
+      of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
+        error e, "BUG: not eliminated: ", c
       else:
         e.dest.add c
         inc c
@@ -1152,9 +1158,9 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of BlockS: traverseBlock e, c
     of IfS: traverseIf e, c
     of CaseS: traverseCase e, c
-    of YieldS, ForS:
+    of YieldS, ForS, InclSetS, ExclSetS:
       error e, "BUG: not eliminated: ", c
-    of TryS, RaiseS, InclSetS, ExclSetS:
+    of TryS, RaiseS:
       error e, "BUG: not implemented: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode

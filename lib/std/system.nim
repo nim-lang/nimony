@@ -273,6 +273,8 @@ proc `==`*(x, y: char): bool {.magic: "EqCh", noSideEffect.}
   ## Checks for equality between two `char` variables.
 proc `==`*(x, y: bool): bool {.magic: "EqB", noSideEffect.}
   ## Checks for equality between two `bool` variables.
+proc `==`*[T](x, y: set[T]): bool {.magic: "EqSet", noSideEffect.}
+  ## Checks for equality between two variables of type `set`.
 
 proc `==`*[T](x, y: ref T): bool {.magic: "EqRef", noSideEffect.}
   ## Checks that two `ref` variables refer to the same item.
@@ -288,6 +290,12 @@ proc `<=`*(x, y: char): bool {.magic: "LeCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
   ## before `y` (uppercase letters come before lowercase letters).
 
+proc `<=`*[T](x, y: set[T]): bool {.magic: "LeSet", noSideEffect.}
+  ## Returns true if `x` is a subset of `y`.
+  ##
+  ## A subset `x` has all of its members in `y` and `y` doesn't necessarily
+  ## have more members than `x`. That is, `x` can be equal to `y`.
+
 proc `<=`*(x, y: bool): bool {.magic: "LeB", noSideEffect.}
 proc `<=`*[T](x, y: ref T): bool {.magic: "LePtr", noSideEffect.}
 proc `<=`*(x, y: pointer): bool {.magic: "LePtr", noSideEffect.}
@@ -300,6 +308,12 @@ proc `<`*(x, y: string): bool {.magic: "LtStr", noSideEffect.}
 proc `<`*(x, y: char): bool {.magic: "LtCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
   ## before `y` (uppercase letters come before lowercase letters).
+
+proc `<`*[T](x, y: set[T]): bool {.magic: "LtSet", noSideEffect.}
+  ## Returns true if `x` is a strict or proper subset of `y`.
+  ##
+  ## A strict or proper subset `x` has all of its members in `y` but `y` has
+  ## more elements than `y`.
 
 proc `==`*(x, y: int8): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int16): bool {.magic: "EqI", noSideEffect.}

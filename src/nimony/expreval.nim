@@ -214,7 +214,9 @@ proc enumBounds*(n: Cursor): Bounds =
   result = Bounds(lo: createNan(), hi: createNaN())
   while n.kind != ParRi:
     let enumField = takeLocal(n, SkipFinalParRi)
-    let x = evalOrdinal(nil, enumField.val)
+    var val = enumField.val
+    inc val # skip tuple tag
+    let x = evalOrdinal(nil, val)
     if isNaN(result.lo) or x < result.lo: result.lo = x
     if isNaN(result.hi) or x > result.hi: result.hi = x
 
@@ -311,6 +313,7 @@ proc evalBitSet*(n, typ: Cursor): seq[uint8] =
     return @[]
   result = newSeq[uint8](s)
   var n = n
+  inc n # skip set tag
   while n.kind != ParRi:
     if n.exprKind == RangeX:
       inc n
