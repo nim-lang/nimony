@@ -1400,6 +1400,47 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     buildCallSource errored, cs
     buildErr c, cs.callNode.info, errorMsg, cursorAt(errored, 0)
 
+proc findMagicInSyms(syms: Cursor): ExprKind =
+  var syms = syms
+  result = NoExpr
+  var nested = 0
+  while true:
+    case syms.kind
+    of Symbol:
+      let res = tryLoadSym(syms.symId)
+      if res.status == LacksNothing:
+        var n = res.decl
+        inc n # skip the symbol kind
+        if n.kind == SymbolDef:
+          inc n # skip the SymbolDef
+          if n.kind == ParLe:
+            result = n.exprKind
+            if result != NoExpr: break
+    of ParLe:
+      if syms.exprKind notin {OchoiceX, CchoiceX}: break
+      inc nested
+    of ParRi:
+      dec nested
+    else: break
+    if nested == 0: break
+    inc syms
+
+proc unoverloadableMagicCall(c: var SemContext; it: var Item; cs: var CallState; magic: ExprKind) =
+  let nifTag = parLeToken(magic, cs.callNode.info)
+  if cs.args.len != 0:
+    # keep args after if they were produced by dotcall:
+    cs.dest.replace fromBuffer([nifTag]), 0
+  else:
+    cs.dest.shrink 0
+    cs.dest.add nifTag
+  while it.n.kind != ParRi:
+    # add all args in call:
+    takeTree cs.dest, it.n
+  wantParRi cs.dest, it.n
+  var magicCall = Item(n: beginRead(cs.dest), typ: it.typ)
+  semExpr c, magicCall, cs.flags
+  it.typ = magicCall.typ
+
 proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
   var cs = CallState(
     beforeCall: c.dest.len,
@@ -1491,48 +1532,14 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     semExpr(c, cs.fn, {KeepMagics, AllowUndeclared})
     fnName = getFnIdent(c)
     it.n = cs.fn.n
-  if fnName in c.unoverloadableMagics:
+  if c.g.config.compat and fnName in c.unoverloadableMagics:
     # transform call early before semchecking arguments
-    var syms = beginRead(c.dest)
-    var magic = NoExpr
-    var nested = 0
-    while true:
-      case syms.kind
-      of Symbol:
-        let res = tryLoadSym(syms.symId)
-        if res.status == LacksNothing:
-          var n = res.decl
-          inc n # skip the symbol kind
-          if n.kind == SymbolDef:
-            inc n # skip the SymbolDef
-            if n.kind == ParLe:
-              magic = n.exprKind
-              if magic != NoExpr: break
-      of ParLe:
-        if syms.exprKind notin {OchoiceX, CchoiceX}: break
-        inc nested
-      of ParRi:
-        dec nested
-      else: break
-      if nested == 0: break
-      inc syms
+    let syms = beginRead(c.dest)
+    let magic = findMagicInSyms(syms)
     endRead(c.dest)
     if magic != NoExpr:
       swap c.dest, cs.dest
-      let nifTag = parLeToken(magic, cs.callNode.info)
-      if cs.args.len != 0:
-        # keep args after if they were produced by dotcall:
-        cs.dest.replace fromBuffer([nifTag]), 0
-      else:
-        cs.dest.shrink 0
-        cs.dest.add nifTag
-      while it.n.kind != ParRi:
-        # add all args in call:
-        takeTree cs.dest, it.n
-      wantParRi cs.dest, it.n
-      var magicCall = Item(n: beginRead(cs.dest), typ: it.typ)
-      semExpr c, magicCall, flags
-      it.typ = magicCall.typ
+      unoverloadableMagicCall(c, it, cs, magic)
       return
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
