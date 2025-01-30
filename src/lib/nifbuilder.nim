@@ -132,7 +132,8 @@ proc addSymbolImpl(b: var Builder; s: string) {.inline.} =
       b.put c
     for i in 1..<s.len:
       let c = s[i]
-      if c.needsEscape:
+      # Symbols imported from C can have a space like "struct foo".
+      if c == ' ' or c.needsEscape:
         b.escape c
       else:
         b.put c

@@ -84,6 +84,16 @@ type
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {})
 
+type
+  CollectedPragmas = object
+    externName: string
+    flags: set[PragmaKind]
+    align, bits: IntId
+    header: StrId
+    callConv: CallConv
+
+proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas
+
 proc traverseField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   e.dest.add c # fld
   inc c
@@ -95,8 +105,12 @@ proc traverseField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
 
   skipExportMarker e, c
 
-  skip c # pragmas
-  e.dest.addDotToken()
+  let prag = parsePragmas(e, c)
+
+  e.dest.addDotToken() # adds pragmas
+
+  if prag.externName.len > 0:
+    e.registerMangle(s, prag.externName & ".c")
 
   traverseType e, c, flags
 
@@ -239,16 +253,6 @@ proc traverseArrayBody(e: var EContext; c: var Cursor) =
     # should not be possible, but assume length anyway
     traverseExpr e, c
   wantParRi e, c
-
-type
-  CollectedPragmas = object
-    externName: string
-    flags: set[PragmaKind]
-    align, bits: IntId
-    header: StrId
-    callConv: CallConv
-
-proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas
 
 type
   GenPragmas = object
@@ -689,6 +693,8 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
 
   e.dest.addDotToken() # adds pragmas
 
+  if prag.externName.len > 0:
+    e.registerMangle(s, prag.externName & ".c")
   if isGeneric:
     skip c
   else:
