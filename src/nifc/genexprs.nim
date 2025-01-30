@@ -82,6 +82,8 @@ proc genLvalue(c: var GeneratedCode; t: Tree; n: NodePos) =
     let (a, i) = sons2(t, n)
     genx c, t, a
     let tyArr = getType(c.m, t, a)
+    if tyArr.isError:
+      error c.m, "cannot get the type of ", t, a
     let litId = t[tyArr.rawPos].litId
     if not c.m.lits.strings[litId].isImportC:
       c.add Dot

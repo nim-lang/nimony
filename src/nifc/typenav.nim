@@ -9,7 +9,7 @@
 import std / [strutils, tables, assertions]
 import bitabs, packedtrees
 
-import nifc_model
+import nifc_model, mangler
 
 type
   TypeDesc* {.acyclic.} = object
@@ -84,7 +84,11 @@ proc getType*(m: var Module; t: Tree; n: NodePos): TypeDesc =
     if d.pos != NodePos(0):
       result = getType(m, t, d.pos)
     else:
-      result = errorType()
+      # importC types are not defined
+      if m.lits.strings[t[n].litId].isImportC:
+        result = TypeDesc(p: n)
+      else:
+        result = errorType()
   of ProcC:
     result = TypeDesc(p: n)
   of GvarC, TvarC, ConstC, VarC:
