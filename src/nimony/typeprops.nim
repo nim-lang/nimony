@@ -220,7 +220,7 @@ proc containsGenericParams*(n: TypeCursor): bool =
     inc n
   return false
 
-proc nominalRoot*(t: TypeCursor): SymId =
+proc nominalRoot*(t: TypeCursor, allowTypevar = false): SymId =
   result = SymId(0)
   var t = t
   while true:
@@ -237,8 +237,9 @@ proc nominalRoot*(t: TypeCursor): SymId =
           return root.symId
         else:
           return t.symId
+      elif allowTypevar and res.decl.symKind == TypevarY:
+        return t.symId
       else:
-        # includes typevar case
         break
     of ParLe:
       case t.typeKind

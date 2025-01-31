@@ -856,6 +856,7 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
     endRead(c.dest)
     endRead(c.dest)
     shrink c.dest, beforeCall
+    expandedInto.addParRi() # extra token so final `inc` doesn't break
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
     semExpr c, a
     it.typ = a.typ
@@ -1555,8 +1556,10 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       argIndexes.add lhsIndex
       # scope extension: If the type is Typevar and it has attached
       # a concept, use the concepts symbols too:
-      if cs.fnName != StrId(0) and lhs.typ.kind == Symbol:
-        maybeAddConceptMethods c, cs.fnName, lhs.typ.symId, cs.candidates
+      if cs.fnName != StrId(0):
+        let root = nominalRoot(lhs.typ, allowTypevar = true)
+        if root != SymId(0):
+          maybeAddConceptMethods c, cs.fnName, root, cs.candidates
       # lhs.n escapes here, but is not read and will be set by argIndexes:
       cs.args.add lhs
   else:
@@ -1582,8 +1585,10 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       skipSemCheck = true
     # scope extension: If the type is Typevar and it has attached
     # a concept, use the concepts symbols too:
-    if cs.fnName != StrId(0) and arg.typ.kind == Symbol:
-      maybeAddConceptMethods c, cs.fnName, arg.typ.symId, cs.candidates
+    if cs.fnName != StrId(0):
+      let root = nominalRoot(arg.typ, allowTypevar = true)
+      if root != SymId(0):
+        maybeAddConceptMethods c, cs.fnName, root, cs.candidates
     it.n = arg.n
     cs.args.add arg
   assert cs.args.len == argIndexes.len
