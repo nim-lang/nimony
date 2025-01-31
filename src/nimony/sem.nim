@@ -5057,8 +5057,6 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ExportS, CommentS:
         # XXX ignored for now
         skip it.n
-      of ClonerS, TracerS, DisarmerS, MoverS, DtorS:
-        takeTree c, it.n
       of EmitS:
         raiseAssert "unreachable"
       of PragmasLineS:
