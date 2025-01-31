@@ -509,8 +509,8 @@ proc subsGenericProc(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
     var sc = SubsContext(params: addr req.inferred)
     subs(c, dest, sc, decl.params)
     subs(c, dest, sc, decl.retType)
-    subs(c, dest, sc, decl.effects)
     subs(c, dest, sc, decl.pragmas)
+    subs(c, dest, sc, decl.effects)
     subs(c, dest, sc, decl.body)
     addFreshSyms(c, sc)
 
