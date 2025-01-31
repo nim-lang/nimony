@@ -829,7 +829,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
           inc n
           if n.kind == IntLit:
             if pool.integers[n.intId] == TypedMagic:
-              c.dest.addSubtree args[0].typ
+              c.dest.addSubtree skipModifier(args[0].typ)
             else:
               c.dest.add n
             inc n
