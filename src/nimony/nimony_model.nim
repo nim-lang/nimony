@@ -353,6 +353,7 @@ const
   RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
   CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX, HcallX}
   ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
+  TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
