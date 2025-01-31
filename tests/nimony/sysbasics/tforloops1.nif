@@ -60,31 +60,30 @@
     (le 13,~2
      (i -1) ~2 i.2 3 b.0) 2,1
     (stmts
-     (yld 6 i.2) 2,1
-     (asgn ~2 i.2 4
-      (add 13,~4
-       (i -1) ~2 i.2 2 +1)))))) 4,22
+     (yld 6 i.2) ,1
+     (cmd inc.0.tfo6yv57p 4
+      (haddr i.2)))))) 4,22
  (for 12
   (call ~7 countup.0.tfo6yv57p 1 +1 4 +5)
   (unpackflat
-   (let :x.0 . . 9,~6
+   (let :x.1 . . 9,~6
     (i -1) .)) ~2,1
   (stmts 4
    (let :m.1 . . 7,~7
-    (i -1) 4 x.0) 6,1
+    (i -1) 4 x.1) 6,1
    (call ~6 printf.0.tfo6yv57p 1
     (hconv 11,~16
      (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
    (if 3
-    (elif 11,786,lib/std/system.nim
+    (elif 11,830,lib/std/system.nim
      (expr 2,1
       (lt
-       (i -1) 9,26,tests/nimony/sysbasics/tforloops1.nim +5 5,26,tests/nimony/sysbasics/tforloops1.nim x.0)) ~1,1
+       (i -1) 9,26,tests/nimony/sysbasics/tforloops1.nim +5 5,26,tests/nimony/sysbasics/tforloops1.nim x.1)) ~1,1
      (stmts
       (break .))) 5,2
     (elif 2
      (lt 4,~11
-      (i -1) ~2 x.0 2 +3) ~3,1
+      (i -1) ~2 x.1 2 +3) ~3,1
      (stmts
       (continue .)))) 6,6
    (call ~6 printf.0.tfo6yv57p 1
@@ -102,10 +101,9 @@
     (le
      (i -1) ~2 i.3 3 n.1) 2,1
     (stmts
-     (yld 6 i.3) 2,1
-     (asgn ~2 i.3 4
-      (add
-       (i -1) ~2 i.3 2 +1)))))) ,37
+     (yld 6 i.3) ,1
+     (cmd inc.0.tfo6yv57p 4
+      (haddr i.3)))))) ,37
  (iterator 9 :powers2.0.tfo6yv57p . . . 16
   (params 1
    (param :n.2 . . 3
@@ -172,4 +170,21 @@
       (hconv 9,~47
        (cstring) "Hello, world\3A %ld\0A") 25
       (add ~25,~6
-       (i -1) ~1 m.2 1 n.3)))))))
+       (i -1) ~1 m.2 1 n.3)))))) 4,20
+ (proc :inc.0.tfo6yv57p . 5,551,lib/std/system.nim .
+  (at inc.1.sys9azlf 19,~4
+   (i -1)) 26,551,lib/std/system.nim
+  (params 1
+   (param :x.2 . . 3
+    (mut 23,17,tests/nimony/sysbasics/tforloops1.nim
+     (i -1)) .)) 5,551,lib/std/system.nim . 37,551,lib/std/system.nim
+  (pragmas 2
+   (inline)) 5,551,lib/std/system.nim . 7,553,lib/std/system.nim
+  (stmts 2
+   (asgn ~2
+    (hderef x.2) 4
+    (add 23,17,tests/nimony/sysbasics/tforloops1.nim
+     (i -1) ~2
+     (hderef x.2) 3
+     (conv 23,17,tests/nimony/sysbasics/tforloops1.nim
+      (i -1) 1 +1))))))

@@ -313,7 +313,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let a: Cursor
   let b: Cursor
   if useTemp:
-    dest.add parLeToken(ExprX, info)
+    dest.add parLeToken(StmtsS, info)
     # lift both so (n, (n = 123; n)) works
     a = liftTempAddr(c, dest, aOrig, typ, info)
     b = liftTemp(c, dest, bOrig, typ, info)
