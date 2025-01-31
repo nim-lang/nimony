@@ -81,8 +81,12 @@ proc genLvalue(c: var GeneratedCode; t: Tree; n: NodePos) =
   of AtC:
     let (a, i) = sons2(t, n)
     genx c, t, a
-    c.add Dot
-    c.add "a"
+    let tyArr = getType(c.m, t, a)
+    if tyArr.isError:
+      error c.m, "cannot get the type of ", t, a
+    if not c.m.isImportC(tyArr):
+      c.add Dot
+      c.add "a"
     c.add BracketLe
     genx c, t, i
     c.add BracketRi
