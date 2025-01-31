@@ -75,6 +75,14 @@ proc makePtrType(m: var Module; typ: TypeDesc): TypeDesc =
   result = atomType(m.lits, PtrC)
   result.down = TypeDescRef(p: typ.p, a: typ.a, down: typ.down)
 
+proc isImportC*(m: Module; typ: TypeDesc): bool =
+  assert m.code.kind(typ) == Sym
+  let litId = if typ.p != NodePos(0):
+                m.code[typ.rawPos].litId
+              else:
+                typ.a.litId
+  m.lits.strings[litId].isImportC
+
 proc getType*(m: var Module; t: Tree; n: NodePos): TypeDesc =
   case t[n].kind
   of Empty, Ident, SymDef, Err:
