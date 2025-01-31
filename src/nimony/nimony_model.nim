@@ -161,6 +161,12 @@ type
     InSetX = "inset"
     CardSetX = "card"
     EnsureMoveX = "emove" # note that `move` can be written in standard Nim
+    DestroyX = "destroy"
+    DupX = "dup"
+    CopyX = "copy"
+    WasMovedX = "wasmoved"
+    SinkHookX = "sinkh"
+    TraceX = "trace"
 
   TypeKind* = enum
     NoType

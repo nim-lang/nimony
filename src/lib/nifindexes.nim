@@ -202,7 +202,7 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
 
     content.add toString(hookSectionBuf)
     content.add "\n"
-  
+
   if sections.converters.len != 0:
     let ConverterT = registerTag "converter"
     let converterSectionBuf = getSymbolSection(ConverterT, sections.converters)
@@ -290,7 +290,6 @@ proc readSymbolSection(s: var Stream; tab: var Table[string, string]) =
   var t = next(s)
   var nested = 1
   while t.kind != EofToken:
-    let info = t.info
     if t.kind == ParLe:
       inc nested
       if t.tagId == KvT:

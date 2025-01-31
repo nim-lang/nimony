@@ -232,6 +232,10 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
+  of DestroyX, CopyX, WasMovedX, SinkHookX, TraceX:
+    result = c.builtins.voidType
+  of DupX:
+    result = getTypeImpl(c, n.firstSon)
   of SufX:
     var n = n
     inc n # tag

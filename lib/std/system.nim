@@ -428,6 +428,13 @@ proc addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 proc sizeof*[T](x: T): int {.magic: "SizeOf", noSideEffect.}
 proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
 
+proc `=destroy`*[T](x: T) {.magic: "Destroy", noSideEffect.}
+proc `=dup`*[T](x: T): T {.magic: "Dup", noSideEffect.}
+proc `=copy`*[T](dest: var T; src: T) {.magic: "Copy", noSideEffect.}
+proc `=wasMoved`*[T](x: var T) {.magic: "WasMoved", noSideEffect.}
+proc `=sink`*[T](dest: var T; src: T) {.magic: "SinkHook", noSideEffect.}
+proc `=trace`*[T](x: var T; env: pointer) {.magic: "Trace", noSideEffect.}
+
 include "system/setops"
 
 #include "system/stringimpl"
