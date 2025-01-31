@@ -254,17 +254,15 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
 proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
-    result = true
     inc f
-  elif a.kind == Symbol:
+    return true
+  if a.kind == Symbol:
     let res = tryLoadSym(a.symId)
     assert res.status == LacksNothing
     if res.decl.symKind == TypevarY:
       var typevar = asTypevar(res.decl)
-      result = matchesConstraint(m, f, typevar.typ)
-    elif res.decl.symKind == TypeY:
-      result = matchesConstraintAux(m, f, a)
-  elif f.kind == Symbol:
+      return matchesConstraint(m, f, typevar.typ)
+  if f.kind == Symbol:
     let res = tryLoadSym(f.symId)
     assert res.status == LacksNothing
     var typeImpl = asTypeDecl(res.decl)

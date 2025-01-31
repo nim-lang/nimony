@@ -695,6 +695,8 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
 
   if prag.externName.len > 0:
     e.registerMangle(s, prag.externName & ".c")
+  if c.typeKind in TypeclassKinds:
+    isGeneric = true
   if isGeneric:
     skip c
   else:
