@@ -317,6 +317,54 @@ proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
     tr c, n, e2
   skipParRi n
 
+proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
+  let typ = getType(c.typeCache, n)
+  let info = n.info
+  let hookProc = getHook(c.lifter[], op, typ, info)
+  if hookProc != NoSymId:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      inc n
+      while n.kind != ParRi:
+        tr c, n, DontCare
+      wantParRi c.dest, n
+  else:
+    c.dest.addParLe AsgnS, info
+    inc n
+    tr c, n, DontCare
+    tr c, n, DontCare
+    wantParRi c.dest, n
+
+proc trExplicitWasMoved(c: var Context; n: var Cursor) =
+  let typ = getType(c.typeCache, n)
+  let info = n.info
+  let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
+  if hookProc != NoSymId:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      inc n
+      tr c, n, DontCare
+  else:
+    inc n
+    tr c, n, DontCare
+    skipParRi n
+
+proc trExplicitTrace(c: var Context; n: var Cursor) =
+  let typ = getType(c.typeCache, n)
+  let info = n.info
+  let hookProc = getHook(c.lifter[], attachedTrace, typ, info)
+  if hookProc != NoSymId:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      inc n
+      tr c, n, DontCare
+      tr c, n, DontCare
+  else:
+    inc n
+    tr c, n, DontCare
+    tr c, n, DontCare
+    skipParRi n
+
 proc trOnlyEssentials(c: var Context; n: var Cursor) =
   var nested = 0
   while true:
@@ -325,20 +373,20 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
       c.dest.add n
       inc n
     of ParLe:
-      var handled = false
-      if n.exprKind in CallKinds:
-        var n = firstSon n
-        if n.kind == Symbol:
-          var fn = pool.syms[n.symId]
-          extractBasename fn
-          case fn
-          of "=dup":
-            trExplicitDup c, n, DontCare
-            handled = true
-          of "=destroy":
-            trExplicitDestroy c, n
-            handled = true
-      if not handled:
+      case n.exprKind
+      of DestroyX:
+        trExplicitDestroy c, n
+      of DupX:
+        trExplicitDup c, n, DontCare
+      of CopyX:
+        trExplicitCopy c, n, attachedCopy
+      of SinkHookX:
+        trExplicitCopy c, n, attachedSink
+      of WasMovedX:
+        trExplicitWasMoved c, n
+      of TraceX:
+        trExplicitTrace c, n
+      else:
         c.dest.add n
         inc n
         inc nested
