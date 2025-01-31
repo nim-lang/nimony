@@ -265,19 +265,19 @@ type
   Decable = concept
     proc `-`(x, y: Self): Self
 
-template inc*[T: Incable, V: Ordinal](x: var T, y: V) =
+proc inc*[T: Incable, V: Ordinal](x: var T, y: V) {.inline.} =
   ## Increments the ordinal `x` by `y`.
   x = x + T(y)
 
-template dec*[T: Decable, V: Ordinal](x: var T, y: V) =
+proc dec*[T: Decable, V: Ordinal](x: var T, y: V) {.inline.} =
   ## Decrements the ordinal `x` by `y`.
   x = x - T(y)
 
-template inc*[T: Incable](x: var T) =
+proc inc*[T: Incable](x: var T) {.inline.} =
   # workaround for no default params
   x = x + T(1)
 
-template dec*[T: Decable](x: var T) =
+proc dec*[T: Decable](x: var T) {.inline.} =
   # workaround for no default params
   x = x - T(1)
 
