@@ -259,6 +259,28 @@ proc `-`*(x, y: float): float {.magic: "SubF64", noSideEffect.}
 proc `*`*(x, y: float): float {.magic: "MulF64", noSideEffect.}
 proc `/`*(x, y: float): float {.magic: "DivF64", noSideEffect.}
 
+type
+  Incable = concept
+    proc `+`(x, y: Self): Self
+  Decable = concept
+    proc `-`(x, y: Self): Self
+
+template inc*[T: Incable, V: Ordinal](x: var T, y: V) =
+  ## Increments the ordinal `x` by `y`.
+  x = x + T(y)
+
+template dec*[T: Decable, V: Ordinal](x: var T, y: V) =
+  ## Decrements the ordinal `x` by `y`.
+  x = x - T(y)
+
+template inc*[T: Incable](x: var T) =
+  # workaround for no default params
+  x = x + T(1)
+
+template dec*[T: Decable](x: var T) =
+  # workaround for no default params
+  x = x - T(1)
+
 # comparison operators:
 proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
   ## Checks whether values within the *same enum* have the same underlying value.

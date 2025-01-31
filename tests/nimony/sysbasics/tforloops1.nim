@@ -18,7 +18,7 @@ iterator countup(a, b: int): int =
   var i = a
   while i <= b:
     yield i     # establish as the for loop variable
-    i = i + 1
+    inc i
 
 for x in countup(1, 5):
   let m = x
@@ -33,7 +33,7 @@ iterator countup2(n: int): int =
   var i = 0
   while i <= n:
     yield i
-    i = i + 1
+    inc i
 
 iterator powers2(n: int): int =
   for i in countup2(n):
