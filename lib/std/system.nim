@@ -112,11 +112,11 @@ proc dec*[T, V#[: Ordinal]#](x: T, y: V) {.magic: "Dec", noSideEffect.}
 
 template inc*[T#[: Ordinal]#](x: T) =
   # workaround for no default params
-  inc[T, T](x, T(1))
+  inc x, 1
 
 template dec*[T#[: Ordinal]#](x: T) =
   # workaround for no default params
-  dec[T, T](x, T(1))
+  dec x, 1
 
 # integer calculations:
 proc `+`*(x: int8): int8 {.magic: "UnaryPlusI", noSideEffect.}
