@@ -104,6 +104,20 @@ template `[]=`*[T](x: ptr T, val: T) =
 template `[]=`*[T](x: ref T, val: T) =
   (x[]) = val
 
+proc inc*[T, V#[: Ordinal]#](x: T, y: V) {.magic: "Inc", noSideEffect.}
+  ## Increments the ordinal `x` by `y`.
+
+proc dec*[T, V#[: Ordinal]#](x: T, y: V) {.magic: "Dec", noSideEffect.}
+  ## Decrements the ordinal `x` by `y`.
+
+template inc*[T#[: Ordinal]#](x: T) =
+  # workaround for no default params
+  inc[T, T](x, T(1))
+
+template dec*[T#[: Ordinal]#](x: T) =
+  # workaround for no default params
+  dec[T, T](x, T(1))
+
 # integer calculations:
 proc `+`*(x: int8): int8 {.magic: "UnaryPlusI", noSideEffect.}
 proc `+`*(x: int16): int16 {.magic: "UnaryPlusI", noSideEffect.}

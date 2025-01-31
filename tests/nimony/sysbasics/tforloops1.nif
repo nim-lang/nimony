@@ -17,7 +17,7 @@
       (mul
        (i -1) ~1 i.0 1 i.0)) ,2
      (yld 9
-      (mul 20,279,lib/std/system.nim
+      (mul 20,307,lib/std/system.nim
        (i +64) ~2
        (mul
         (i -1) ~1 i.0 1 i.0) 1 i.0)) 2,3
@@ -60,10 +60,12 @@
     (le 13,~2
      (i -1) ~2 i.2 3 b.0) 2,1
     (stmts
-     (yld 6 i.2) 2,1
-     (asgn ~2 i.2 4
-      (add 13,~4
-       (i -1) ~2 i.2 2 +1)))))) 4,22
+     (yld 6 i.2) 11,227,lib/std/system.nim
+     (stmts 9
+      (inc 23,17,tests/nimony/sysbasics/tforloops1.nim
+       (i -1) 8,21,tests/nimony/sysbasics/tforloops1.nim i.2 5
+       (conv 23,17,tests/nimony/sysbasics/tforloops1.nim
+        (i -1) 1 +1))))))) 4,22
  (for 12
   (call ~7 countup.0.tfo6yv57p 1 +1 4 +5)
   (unpackflat
@@ -76,7 +78,7 @@
     (hconv 11,~16
      (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
    (if 3
-    (elif 11,786,lib/std/system.nim
+    (elif 11,814,lib/std/system.nim
      (expr 2,1
       (lt
        (i -1) 9,26,tests/nimony/sysbasics/tforloops1.nim +5 5,26,tests/nimony/sysbasics/tforloops1.nim x.0)) ~1,1
@@ -102,10 +104,12 @@
     (le
      (i -1) ~2 i.3 3 n.1) 2,1
     (stmts
-     (yld 6 i.3) 2,1
-     (asgn ~2 i.3 4
-      (add
-       (i -1) ~2 i.3 2 +1)))))) ,37
+     (yld 6 i.3) 11,227,lib/std/system.nim
+     (stmts 9
+      (inc
+       (i -1) 8,36,tests/nimony/sysbasics/tforloops1.nim i.3 5
+       (conv
+        (i -1) 1 +1))))))) ,37
  (iterator 9 :powers2.0.tfo6yv57p . . . 16
   (params 1
    (param :n.2 . . 3
@@ -123,7 +127,7 @@
       (mul ~1,~9
        (i -1) ~1 i.4 1 i.4)) ,2
      (yld 9
-      (mul 20,279,lib/std/system.nim
+      (mul 20,307,lib/std/system.nim
        (i +64) ~2
        (mul ~1,~10
         (i -1) ~1 i.4 1 i.4) 1 i.4)))))) 4,43

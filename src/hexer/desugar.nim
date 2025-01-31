@@ -313,7 +313,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let a: Cursor
   let b: Cursor
   if useTemp:
-    dest.add parLeToken(ExprX, info)
+    dest.add parLeToken(StmtsS, info)
     # lift both so (n, (n = 123; n)) works
     a = liftTempAddr(c, dest, aOrig, typ, info)
     b = liftTemp(c, dest, bOrig, typ, info)
@@ -383,6 +383,44 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
 
+proc genIncDec(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  let kind = n.stmtKind
+  inc n
+  let typ = n
+  skip n
+  var argsBuf = createTokenBuf(16)
+  swap dest, argsBuf
+  let aStart = dest.len
+  tr(c, dest, n)
+  let bStart = dest.len
+  tr(c, dest, n)
+  swap dest, argsBuf
+  skipParRi n
+  let aOrig = cursorAt(argsBuf, aStart)
+  let bOrig = cursorAt(argsBuf, bStart)
+  let useTemp = needsTemp(aOrig) or needsTemp(bOrig)
+  let oldBufStackLen = c.tempUseBufStack.len
+  let a: Cursor
+  let b: Cursor
+  if useTemp:
+    dest.add parLeToken(StmtsS, info)
+    # lift both so (n, (n = 123; n)) works
+    a = liftTempAddr(c, dest, aOrig, typ, info)
+    b = liftTemp(c, dest, bOrig, typ, info)
+  else:
+    a = aOrig
+    b = bOrig
+  copyIntoKind dest, AsgnS, info:
+    dest.addSubtree a
+    copyIntoKind dest, if kind == IncS: AddX else: SubX, info:
+      dest.addSubtree typ
+      dest.addSubtree a
+      dest.addSubtree b
+  if useTemp:
+    dest.addParRi()
+    c.tempUseBufStack.shrink(oldBufStackLen)
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -399,6 +437,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trSons(c, dest, n)
         else:
           trSons(c, dest, n)
+      of IncS, DecS:
+        genIncDec(c, dest, n)
       of InclSetS, ExclSetS:
         genInclExcl(c, dest, n)
       of CaseS:

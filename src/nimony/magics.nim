@@ -174,6 +174,8 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mDefaultObj: res DefaultObjX
   of mDefaultTup: res DefaultTupX
   of mOpenArray: res OpenArrayT
+  of mInc: res IncS, TypedMagic
+  of mDec: res DecS, TypedMagic
   of mPlusSet: res PlusSetX, TypedMagic
   of mMinusSet: res MinusSetX, TypedMagic
   of mMulSet: res MulSetX, TypedMagic

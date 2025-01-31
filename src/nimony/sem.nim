@@ -4885,6 +4885,20 @@ proc semPragmasLine(c: var SemContext; it: var Item) =
 
   skipParRi it.n
 
+proc semIncDec(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let typeStart = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  let typ = typeToCursor(c, typeStart)
+  var op = Item(n: it.n, typ: typ)
+  semExpr c, op
+  semExpr c, op
+  it.n = op.n
+  wantParRi c, it.n
+  producesVoid c, info, it.typ
+
 proc semInclExcl(c: var SemContext; it: var Item) =
   let info = it.n.info
   let beforeExpr = c.dest.len
@@ -5086,6 +5100,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of PragmasLineS:
         toplevelGuard c:
           semPragmasLine c, it
+      of IncS, DecS:
+        toplevelGuard c:
+          semIncDec c, it
       of InclSetS, ExclSetS:
         toplevelGuard c:
           semInclExcl c, it

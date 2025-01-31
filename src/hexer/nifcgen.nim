@@ -1164,7 +1164,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of BlockS: traverseBlock e, c
     of IfS: traverseIf e, c
     of CaseS: traverseCase e, c
-    of YieldS, ForS, InclSetS, ExclSetS:
+    of YieldS, ForS, IncS, DecS, InclSetS, ExclSetS:
       error e, "BUG: not eliminated: ", c
     of TryS, RaiseS:
       error e, "BUG: not implemented: ", c

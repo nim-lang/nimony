@@ -50,6 +50,8 @@ type
     ExportS = "export"
     CommentS = "comment"
     PragmasLineS = "pragmas"
+    IncS = "inc"
+    DecS = "dec"
     InclSetS = "incl"
     ExclSetS = "excl"
 
