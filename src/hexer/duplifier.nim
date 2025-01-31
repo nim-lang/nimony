@@ -619,8 +619,18 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     case n.exprKind
     of CallKinds:
       trCall c, n, e
-    of DestroyX, DupX, CopyX, WasMovedX, SinkHookX, TraceX:
-      trSons c, n, DontCare
+    of DestroyX:
+      trExplicitDestroy c, n
+    of DupX:
+      trExplicitDup c, n, e
+    of CopyX:
+      trExplicitCopy c, n, attachedCopy
+    of WasMovedX:
+      trExplicitWasMoved c, n
+    of SinkHookX:
+      trExplicitCopy c, n, attachedSink
+    of TraceX:
+      trExplicitTrace c, n
     of ConvKinds, SufX:
       trConvExpr c, n, e
     of OconstrX, NewOconstrX:
