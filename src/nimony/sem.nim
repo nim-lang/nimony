@@ -4750,6 +4750,30 @@ proc semHigh(c: var SemContext; it: var Item) =
   it.typ = typ
   commonType c, it, beforeExpr, expected
 
+proc semVoidHook(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let expected = it.typ
+  takeTree c, it.n
+  it.typ = c.types.autoType
+  semExpr c, it
+  if it.n.kind != ParRi:
+    # hook has 2nd argument:
+    it.typ = c.types.autoType
+    semExpr c, it
+  wantParRi c, it.n
+  it.typ = c.types.voidType
+  commonType c, it, beforeExpr, expected
+
+proc semDupHook(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let expected = it.typ
+  takeTree c, it.n
+  it.typ = c.types.autoType
+  semExpr c, it
+  wantParRi c, it.n
+  it.typ = skipModifier(it.typ)
+  commonType c, it, beforeExpr, expected
+
 proc semDeref(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   let info = it.n.info
@@ -5173,6 +5197,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSizeof c, it
     of TypeofX:
       semTypeof c, it
+    of DestroyX, CopyX, WasMovedX, SinkHookX, TraceX:
+      semVoidHook c, it
+    of DupX:
+      semDupHook c, it
     of KvX,
        RangeX, RangesX,
        OconvX,

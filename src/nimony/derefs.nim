@@ -484,6 +484,13 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     wantParRi c, n
   wantParRi c, n
 
+proc trVarHook(c: var Context; n: var Cursor) =
+  takeToken c, n
+  tr c, n, WantVarT
+  if n.kind != ParRi:
+    tr c, n, WantT
+  wantParRi c, n
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
@@ -516,6 +523,10 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trSons c, n, WantT
     of ParX:
       trSons c, n, e
+    of CopyX, WasMovedX, SinkHookX, TraceX:
+      trVarHook c, n
+    of DupX, DestroyX:
+      trSons c, n, WantT
     of HconvX, ConvX, CastX:
       if e notin {WantT, WantTButSkipDeref}:
         buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"

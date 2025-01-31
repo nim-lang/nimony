@@ -90,7 +90,8 @@ type
     mDefaultObj, mDefaultTup
     mArrAt, mPat, mTupAt
     mDeref
-    mSink, mLent # were mBuiltinType
+    mSink, mLent, # were mBuiltinType
+    mSinkHook, mCopy
 
 declareMatcher parseMagic, TMagic, 1, 1
 
@@ -188,6 +189,12 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mUncheckedArray: res UncheckedArrayT
   of mSink: res SinkT
   of mLent: res LentT
+  of mDestroy: res DestroyX
+  of mSinkHook: res SinkHookX
+  of mDup: res DupX
+  of mCopy: res CopyX
+  of mWasMoved: res WasMovedX
+  of mTrace: res TraceX
   else: ("", 0)
 
 when isMainModule:
