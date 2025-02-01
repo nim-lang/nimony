@@ -1967,11 +1967,13 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       return
     # Header pragma extra
     if pk == Header:
-      let strID = c.dest[c.dest.len - 1].litId
-      let name = addr pool.strings[strID]
+      let idx = c.dest.len - 1
+      let token = c.dest[idx]
       # Replace ${path} to absolute path
       let fileId = getFileId(pool.man, info)
-      name[] = replaceSubs(name[], "${path}", pool.files[fileId])
+      var name = pool.strings[token.litId]
+      name = replaceSubs(name, "${path}", pool.files[fileId])
+      c.dest[idx] = strToken(pool.strings.getOrIncl(name), token.info)
     # Finalize expression
     c.dest.addParRi()
   of Align, Bits:
