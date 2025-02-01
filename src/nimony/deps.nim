@@ -271,6 +271,9 @@ proc generateFinalMakefile(c: DepContext): string =
       ""
     of DoCompile, DoRun:
       exeFile(c.rootNode.files[0])
+
+  # Absolute path of root node module
+  s.add "\nROOT_PATH = " & absoluteParentDir(c.rootNode.files[0].nimFile)
   s.add "\nall: " & mescape dest
 
   # The .exe file depends on all .o files:
@@ -288,11 +291,11 @@ proc generateFinalMakefile(c: DepContext): string =
 
     for cfile in buildList:
       s.add "\n" & mescape("nifcache" / cfile.obj) & ": " & mescape(cfile.name) &
-            "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
+            "\n\t$(CC) -c $(CFLAGS) -I$(ROOT_PATH) $(CPPFLAGS) " &
             mescape(cfile.customArgs) & " $< -o $@"
 
     # The .o files depend on all of their .c files:
-    s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
+    s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) -I$(ROOT_PATH) $(CPPFLAGS) $< -o $@"
 
     # entry point is special:
     let nifc = findTool("nifc")
