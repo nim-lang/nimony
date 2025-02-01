@@ -120,6 +120,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       inc n
       skip n # skip the type
     of ExprX:
+      inc n
       while true:
         if isLastSon(n): break
         skip n
