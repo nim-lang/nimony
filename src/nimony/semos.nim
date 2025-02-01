@@ -6,6 +6,7 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
+from strutils import replace, contains
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
 import ".." / lib / nifchecksums
@@ -46,6 +47,16 @@ proc toAbsolutePath*(f: string, dir: string): string =
     result = f
   else:
     result = dir / f
+
+proc replaceSubs*(f: string, pattern, dir: string): string =
+  if not f.contains(pattern):
+    return f
+  # Unpack to an absolute path
+  var abs = absolutePath(dir)
+  if os.fileExists(abs):
+    abs = parentDir(abs)
+  # Replace found patterns by the absolute path
+  result = f.replace(pattern, abs).normalizedPath()
 
 proc findTool*(name: string): string =
   assert not name.isAbsolute
