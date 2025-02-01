@@ -412,14 +412,6 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   skip f # body
   expectParRi m, f
 
-const
-  TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
-
-proc skipModifier*(a: Cursor): Cursor =
-  result = a
-  if result.kind == ParLe and result.typeKind in TypeModifiers:
-    inc result
-
 proc commonType(f, a: Cursor): Cursor =
   # XXX Refine
   result = a

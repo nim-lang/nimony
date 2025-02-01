@@ -508,3 +508,11 @@ proc hasBuiltinPragma*(n: Cursor; kind: PragmaKind): bool =
 
 proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   dest.add symToken(s, info)
+
+const
+  TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
+
+proc skipModifier*(a: Cursor): Cursor =
+  result = a
+  if result.kind == ParLe and result.typeKind in TypeModifiers:
+    inc result
