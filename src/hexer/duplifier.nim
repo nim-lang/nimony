@@ -286,8 +286,11 @@ proc skipParRi*(n: var Cursor) =
   else:
     error "expected ')', but got: ", n
 
+proc getHookType(c: var Context; n: Cursor): Cursor =
+  result = skipModifier(getType(c.typeCache, n.firstSon))
+
 proc trExplicitDestroy(c: var Context; n: var Cursor) =
-  let typ = getType(c.typeCache, n.firstSon)
+  let typ = getHookType(c, n)
   let info = n.info
   let destructor = getDestructor(c.lifter[], typ, info)
   if destructor == NoSymId:
@@ -303,7 +306,7 @@ proc trExplicitDestroy(c: var Context; n: var Cursor) =
   skipParRi n
 
 proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
-  let typ = getType(c.typeCache, n)
+  let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedDup, typ, info)
   if hookProc != NoSymId:
@@ -318,7 +321,7 @@ proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
   skipParRi n
 
 proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
-  let typ = getType(c.typeCache, n)
+  let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], op, typ, info)
   if hookProc != NoSymId:
@@ -336,7 +339,7 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
     wantParRi c.dest, n
 
 proc trExplicitWasMoved(c: var Context; n: var Cursor) =
-  let typ = getType(c.typeCache, n)
+  let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
@@ -346,11 +349,11 @@ proc trExplicitWasMoved(c: var Context; n: var Cursor) =
       tr c, n, DontCare
   else:
     inc n
-    tr c, n, DontCare
+    skip n
     skipParRi n
 
 proc trExplicitTrace(c: var Context; n: var Cursor) =
-  let typ = getType(c.typeCache, n)
+  let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedTrace, typ, info)
   if hookProc != NoSymId:
@@ -361,8 +364,8 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
       tr c, n, DontCare
   else:
     inc n
-    tr c, n, DontCare
-    tr c, n, DontCare
+    skip n
+    skip n
     skipParRi n
 
 proc trOnlyEssentials(c: var Context; n: var Cursor) =
