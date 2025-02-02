@@ -34,12 +34,15 @@ proc codeListing(c: TokenBuf, start = 0; last = -1): string =
   var i = start
   var b = nifbuilder.open(1000)
   while i <= last:
-    if i in jumpTargets: b.addRaw("L" & $i & ":\n")
+    if i in jumpTargets:
+      b.addTree "lab"
+      b.addSymbolDef("L" & $i)
+      b.endTree()
     case c[i].kind
     of GotoInstr:
-      b.addRaw "goto L"
-      b.addRaw $(i+c[i].getInt32())
-      b.addRaw "\n"
+      b.addTree "goto"
+      b.addIdent "L" & $(i+c[i].getInt32())
+      b.endTree()
     of Symbol:
       b.addSymbol pool.syms[c[i].symId]
     of SymbolDef:
@@ -163,3 +166,32 @@ proc tr(c: var ControlFlow; n: var Cursor) =
       c.dest.addParRi()
       inc n
 
+proc toControlflow*(n: Cursor): TokenBuf =
+  var c = ControlFlow()
+  assert n.stmtKind == StmtsS
+  var n = n
+  c.dest.add n
+  inc n
+  while n.kind != ParRi:
+    tr c, n
+  c.dest.addParRi()
+  result = ensureMove c.dest
+
+when isMainModule:
+  proc test(s: string) =
+    var input = parse(s)
+    var cf = toControlflow(beginRead(input))
+    echo codeListing(cf)
+
+  test """(stmts
+(if (elif (eq +1 +1) (call echo "true")))
+
+(if
+  (elif (eq +1 +1) (call echo "true"))
+  (elif (eq +2 +3) (call echo "elif"))
+  (else (call echo "false"))
+)
+
+(while (eq +1 +1) (call echo "while"))
+)
+"""
