@@ -24,6 +24,7 @@ type
 const
   TokenKindBits = 4'u32
   TokenKindMask = (1'u32 shl TokenKindBits) - 1'u32
+  ExcessK = 1'i32 shl (32 - TokenKindBits - 1)
 
 template kind*(n: PackedToken): TokenKind = cast[TokenKind](n.x and TokenKindMask)
 template uoperand*(n: PackedToken): uint32 = (n.x shr TokenKindBits)
@@ -33,14 +34,17 @@ template toX(k: TokenKind; operand: uint32): uint32 =
   uint32(k) or (operand shl TokenKindBits)
 
 proc int32Token*(operand: int32; info: PackedLineInfo): PackedToken =
-  PackedToken(x: toX(UnknownToken, cast[uint32](operand)), info: info)
+  let arg = operand + ExcessK
+  PackedToken(x: toX(UnknownToken, cast[uint32](arg)), info: info)
 
 proc patchInt32Token*(n: var PackedToken; operand: int32) =
-  n.x = toX(UnknownToken, cast[uint32](operand))
+  let arg = operand + ExcessK
+  n.x = toX(UnknownToken, cast[uint32](arg))
 
 proc getInt32*(n: PackedToken): int32 =
   assert n.kind == UnknownToken
-  result = n.soperand
+  let arg = n.soperand
+  result = arg - ExcessK
 
 proc toToken[L](kind: TokenKind; id: L; info: PackedLineInfo): PackedToken {.inline.} =
   PackedToken(x: toX(kind, uint32(id)), info: info)

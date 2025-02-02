@@ -46,7 +46,7 @@ proc codeListing(c: TokenBuf, start = 0; last = -1): string =
     of SymbolDef:
       b.addSymbolDef pool.syms[c[i].symId]
     of EofToken:
-      b.addRaw "\n <unexptected EOF>\n"
+      b.addRaw "\n<unexptected EOF>\n"
     of DotToken: b.addEmpty
     of Ident: b.addIdent pool.strings[c[i].litId]
     of StringLit: b.addStrLit pool.strings[c[i].litId]
@@ -137,6 +137,8 @@ proc tr(c: var ControlFlow; n: var Cursor) =
       trIf(c, n)
     of WhileS:
       trWhile(c, n)
+    of BreakS, ForS, ContinueS, RetS, RaiseS:
+      raiseAssert "not implemented"
     else:
       # Replace copyTree with recursive transformation
       c.dest.add n
