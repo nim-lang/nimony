@@ -19,8 +19,6 @@ type
   Label = distinct int
   ControlFlow = object
     dest: TokenBuf
-    nextLabel: int
-    toPatch: seq[(Label, int)] # (label, position to patch)
 
 proc codeListing(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
@@ -62,86 +60,68 @@ proc codeListing(c: TokenBuf, start = 0; last = -1): string =
   if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
   result = b.extract()
 
-proc genLabel(c: var ControlFlow): Label =
-  result = Label(c.nextLabel)
-  inc c.nextLabel
+proc genLabel(c: ControlFlow): Label = Label(c.dest.len)
+
+proc jmpBack(c: var ControlFlow, p: Label; info: PackedLineInfo) =
+  c.dest.add int32Token(p.int32 - c.dest.len.int32, info)
+
+proc jmpForw(c: var ControlFlow; info: PackedLineInfo): Label =
+  result = Label(c.dest.len)
+  c.dest.add int32Token(0, info) # destination will be patched later
 
 proc patch(c: var ControlFlow; p: Label) =
-  # Find all positions to patch for this label and write the current position
-  let target = c.dest.len
-  for i in 0..<c.toPatch.len:
-    if c.toPatch[i][0].int == p.int:
-      c.dest[c.toPatch[i][1]].patchInt32Token(int32(target - c.toPatch[i][1]))
-
-proc addGoto(c: var ControlFlow; target: Label; info: PackedLineInfo) =
-  c.toPatch.add((target, c.dest.len))
-  c.dest.add int32Token(0, info) # Will be patched later
-
-proc addLabelDef(c: var ControlFlow; l: Label; info: PackedLineInfo) =
-  c.patch(l)
+  # patch with current index
+  c.dest[p.int].patchInt32Token int32(c.dest.len - p.int)
 
 proc tr(c: var ControlFlow; n: var Cursor)
-
-proc trIf(c: var ControlFlow; n: var Cursor) =
-  let info = n.info
-  inc n # skip if header
-
-  while true:
-    let afterBranch = c.genLabel()
-
-    let k = n.substructureKind
-    if k == ElifS:
-      inc n
-      let thenLabel = c.genLabel()
-
-      # Generate if with goto
-      c.dest.addParLe(IfS, info)
-      tr(c, n) # transform condition
-      c.addGoto(thenLabel, info)
-      c.addGoto(afterBranch, info)
-      c.dest.addParRi()
-
-      # Generate then branch
-      c.addLabelDef(thenLabel, info)
-      tr(c, n) # transform then body
-      c.addGoto(afterBranch, info)
-      skipParRi n
-    elif k == ElseS:
-      # Transform else body
-      inc n
-      tr(c, n)
-      skipParRi n
-      break
-    else:
-      break
-
-    c.addLabelDef(afterBranch, info)
-  skipParRi n
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   inc n
 
   let loopStart = c.genLabel()
-  let loopBody = c.genLabel()
-  let afterLoop = c.genLabel()
-
-  c.addLabelDef(loopStart, info)
 
   # Generate if with goto
   c.dest.addParLe(IfS, info)
   tr(c, n) # transform condition
-  c.addGoto(loopBody, info)
-  c.addGoto(afterLoop, info)
+  let loopBody = c.jmpForw(info)
+  let afterLoop = c.jmpForw(info)
   c.dest.addParRi()
 
   # Generate loop body
-  c.addLabelDef(loopBody, info)
+  c.patch loopBody
   tr(c, n) # transform body
-  c.addGoto(loopStart, info)
+  c.jmpBack(loopStart, info)
 
-  c.addLabelDef(afterLoop, info)
+  c.patch afterLoop
   skipParRi n
+
+proc trIf(c: var ControlFlow; n: var Cursor) =
+  var endings: seq[Label] = @[]
+  inc n # if
+  while true:
+    let info = n.info
+    let k = n.substructureKind
+    if k == ElifS:
+      inc n
+      c.dest.addParLe(IfS, info)
+      tr c, n # condition
+      let thenSection = c.jmpForw(info)
+      let elseSection = c.jmpForw(info)
+      c.dest.addParRi()
+      c.patch thenSection
+      tr c, n # action
+      c.patch elseSection
+      skipParRi n
+    elif k == ElseS:
+      inc n
+      tr c, n
+      skipParRi n
+    else:
+      break
+  skipParRi n
+  for i in countdown(endings.high, 0):
+    c.patch(endings[i])
 
 proc tr(c: var ControlFlow; n: var Cursor) =
   case n.kind
