@@ -75,23 +75,17 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
-    let name = n.symId
-    takeTree dest, n # name
-    takeTree dest, n # export marker
-    takeTree dest, n # pragmas
-    c.typeCache.registerLocal(name, n)
-    takeTree dest, n # type
+    c.typeCache.takeLocalHeader(dest, n)
     tr(c, dest, n)
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   copyInto dest, n:
-    let sym = n.symId
-    for i in 0..<BodyPos:
-      if i == ParamsPos:
-        c.typeCache.registerParams(sym, n)
+    let isConcrete = c.typeCache.takeRoutineHeader(dest, n)
+    if isConcrete:
+      tr(c, dest, n)
+    else:
       takeTree dest, n
-    tr(c, dest, n)
   c.typeCache.closeScope()
 
 proc addUintType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
