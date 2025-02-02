@@ -457,6 +457,12 @@ proc `=wasMoved`*[T](x: var T) {.magic: "WasMoved", noSideEffect.}
 proc `=sink`*[T](dest: var T; src: T) {.magic: "SinkHook", noSideEffect.}
 proc `=trace`*[T](x: var T; env: pointer) {.magic: "Trace", noSideEffect.}
 
+proc ensureMove*[T](x: T): T {.magic: "EnsureMove", noSideEffect.}
+
+proc move*[T](x: var T): T {.nodestroy, inline, noSideEffect.} =
+  result = x
+  `=wasMoved`(x)
+
 include "system/setops"
 
 #include "system/stringimpl"
