@@ -223,6 +223,10 @@ proc litId*(n: PackedToken): StrId {.inline.} =
   assert n.kind in {Ident, StringLit}
   StrId(n.uoperand)
 
+proc charLit*(n: PackedToken): char {.inline.} =
+  assert n.kind == CharLit
+  char(n.uoperand)
+
 proc symId*(n: PackedToken): SymId {.inline.} =
   assert n.kind in {Symbol, SymbolDef}
   SymId(n.uoperand)

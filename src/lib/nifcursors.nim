@@ -36,6 +36,8 @@ proc info*(c: Cursor): PackedLineInfo {.inline.} = c.load.info
 proc litId*(c: Cursor): StrId {.inline.} = nifstreams.litId(c.load)
 proc symId*(c: Cursor): SymId {.inline.} = nifstreams.symId(c.load)
 
+proc charLit*(c: Cursor): char {.inline.} = nifstreams.charLit(c.load)
+
 proc intId*(c: Cursor): IntId {.inline.} = nifstreams.intId(c.load)
 proc uintId*(c: Cursor): UIntId {.inline.} = nifstreams.uintId(c.load)
 proc floatId*(c: Cursor): FloatId {.inline.} = nifstreams.floatId(c.load)
