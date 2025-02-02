@@ -9,10 +9,9 @@ proc genDirective(c: var Context): bool =
     var before1 = save(c)
   var kw2 = false
   if isTag(c, GlobalT):
-    emitTag(c, "global")
+    emit(c, ".global ")
     if not lookupSym(c):
       error(c, "SYMBOL expected")
-      return false
     nl(c)
     kw2 = matchParRi(c)
   if not kw2: return false
@@ -30,7 +29,6 @@ proc genCode(c: var Context): bool =
     var sym3 = declareSym(c)
     if not success(sym3):
       error(c, "SYMBOLDEF expected")
-      return false
     emit(c, ":")
     nl(c)
     var om4 = false
@@ -41,7 +39,6 @@ proc genCode(c: var Context): bool =
         om4 = true
     if not om4:
       error(c, "invalid Code")
-      return false
     kw2 = matchParRi(c)
   if not kw2: return false
   nl(c)
@@ -59,7 +56,6 @@ proc genExternDecl(c: var Context): bool =
     var sym3 = declareSym(c)
     if not success(sym3):
       error(c, "SYMBOLDEF expected")
-      return false
     nl(c)
     kw2 = matchParRi(c)
   if not kw2: return false
@@ -102,10 +98,8 @@ proc genDataKey(c: var Context): bool =
       emitTag(c, "times")
       if not matchIntLit(c):
         error(c, "INTLIT expected")
-        break or3
       if not genDataValue(c):
         error(c, "DataValue expected")
-        break or3
       kw4 = matchParRi(c)
     if kw4:
       or2 = true
@@ -131,11 +125,10 @@ proc genDataDecl(c: var Context): bool =
     var or4 = false
     block or5:
       var kw6 = false
-      if isTag(c, AsciiT):
-        emit(c, ".ascii ")
+      if isTag(c, StringT):
+        emit(c, ".string ")
         if not genDataKey(c):
           error(c, "DataKey expected")
-          break or5
         kw6 = matchParRi(c)
       if kw6:
         or4 = true
@@ -145,7 +138,6 @@ proc genDataDecl(c: var Context): bool =
         emit(c, ".byte ")
         if not genDataKey(c):
           error(c, "DataKey expected")
-          break or5
         kw7 = matchParRi(c)
       if kw7:
         or4 = true
@@ -155,7 +147,6 @@ proc genDataDecl(c: var Context): bool =
         emit(c, ".2byte ")
         if not genDataKey(c):
           error(c, "DataKey expected")
-          break or5
         kw8 = matchParRi(c)
       if kw8:
         or4 = true
@@ -165,7 +156,6 @@ proc genDataDecl(c: var Context): bool =
         emit(c, ".4byte ")
         if not genDataKey(c):
           error(c, "DataKey expected")
-          break or5
         kw9 = matchParRi(c)
       if kw9:
         or4 = true
@@ -175,7 +165,6 @@ proc genDataDecl(c: var Context): bool =
         emit(c, ".8byte ")
         if not genDataKey(c):
           error(c, "DataKey expected")
-          break or5
         kw10 = matchParRi(c)
       if kw10:
         or4 = true
@@ -205,7 +194,6 @@ proc genData(c: var Context): bool =
         break
     if not zm3:
       error(c, "invalid Data")
-      return false
     kw2 = matchParRi(c)
   if not kw2: return false
   nl(c)
@@ -228,7 +216,6 @@ proc genRodata(c: var Context): bool =
         break
     if not zm3:
       error(c, "invalid Rodata")
-      return false
     kw2 = matchParRi(c)
   if not kw2: return false
   nl(c)
@@ -277,7 +264,6 @@ proc genModule(c: var Context): bool =
         break
     if not zm3:
       error(c, "invalid Module")
-      return false
     kw2 = matchParRi(c)
   if not kw2: return false
   when declared(handleModule):
@@ -423,7 +409,6 @@ proc genPrimary(c: var Context): bool =
       emit(c, "[rip+")
       if not lookupSym(c):
         error(c, "SYMBOL expected")
-        break or3
       emit(c, "]")
       kw4 = matchParRi(c)
     if kw4:
@@ -434,7 +419,6 @@ proc genPrimary(c: var Context): bool =
       emit(c, "fs:[")
       if not lookupSym(c):
         error(c, "SYMBOL expected")
-        break or3
       emit(c, "@TPOFF]")
       kw5 = matchParRi(c)
     if kw5:
@@ -464,7 +448,6 @@ proc genExpr(c: var Context): bool =
       emit(c, "[")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       emit(c, "]")
       kw4 = matchParRi(c)
     if kw4:
@@ -475,11 +458,9 @@ proc genExpr(c: var Context): bool =
       emit(c, "[")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       emit(c, "+")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       emit(c, "]")
       kw5 = matchParRi(c)
     if kw5:
@@ -490,15 +471,12 @@ proc genExpr(c: var Context): bool =
       emit(c, "[")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       emit(c, "+")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       emit(c, "*")
       if not matchIntLit(c):
         error(c, "INTLIT expected")
-        break or3
       emit(c, "]")
       kw6 = matchParRi(c)
     if kw6:
@@ -509,19 +487,15 @@ proc genExpr(c: var Context): bool =
       emit(c, "[")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       emit(c, "+")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       emit(c, "*")
       if not matchIntLit(c):
         error(c, "INTLIT expected")
-        break or3
       emit(c, "+")
       if not matchIntLit(c):
         error(c, "INTLIT expected")
-        break or3
       emit(c, "]")
       kw7 = matchParRi(c)
     if kw7:
@@ -532,7 +506,6 @@ proc genExpr(c: var Context): bool =
       emit(c, "BYTE PTR ")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       kw8 = matchParRi(c)
     if kw8:
       or2 = true
@@ -542,7 +515,6 @@ proc genExpr(c: var Context): bool =
       emit(c, "WORD PTR ")
       if not genPrimary(c):
         error(c, "Primary expected")
-        break or3
       kw9 = matchParRi(c)
     if kw9:
       or2 = true
@@ -570,11 +542,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "mov")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw4 = matchParRi(c)
     if kw4:
       or2 = true
@@ -584,11 +554,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "movapd")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw5 = matchParRi(c)
     if kw5:
       or2 = true
@@ -598,11 +566,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "movsd")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw6 = matchParRi(c)
     if kw6:
       or2 = true
@@ -612,11 +578,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "lea")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw7 = matchParRi(c)
     if kw7:
       or2 = true
@@ -626,11 +590,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "add")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw8 = matchParRi(c)
     if kw8:
       or2 = true
@@ -640,11 +602,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "sub")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw9 = matchParRi(c)
     if kw9:
       or2 = true
@@ -654,11 +614,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "mul")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw10 = matchParRi(c)
     if kw10:
       or2 = true
@@ -668,11 +626,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "imul")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw11 = matchParRi(c)
     if kw11:
       or2 = true
@@ -682,11 +638,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "div")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw12 = matchParRi(c)
     if kw12:
       or2 = true
@@ -696,11 +650,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "idiv")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw13 = matchParRi(c)
     if kw13:
       or2 = true
@@ -710,11 +662,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "xor")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw14 = matchParRi(c)
     if kw14:
       or2 = true
@@ -724,11 +674,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "or")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw15 = matchParRi(c)
     if kw15:
       or2 = true
@@ -738,11 +686,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "and")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw16 = matchParRi(c)
     if kw16:
       or2 = true
@@ -752,11 +698,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "shl")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw17 = matchParRi(c)
     if kw17:
       or2 = true
@@ -766,11 +710,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "shr")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw18 = matchParRi(c)
     if kw18:
       or2 = true
@@ -780,11 +722,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "sal")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw19 = matchParRi(c)
     if kw19:
       or2 = true
@@ -794,11 +734,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "sar")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw20 = matchParRi(c)
     if kw20:
       or2 = true
@@ -808,11 +746,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "addsd")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw21 = matchParRi(c)
     if kw21:
       or2 = true
@@ -822,11 +758,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "subsd")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw22 = matchParRi(c)
     if kw22:
       or2 = true
@@ -836,11 +770,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "mulsd")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw23 = matchParRi(c)
     if kw23:
       or2 = true
@@ -850,11 +782,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "divsd")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw24 = matchParRi(c)
     if kw24:
       or2 = true
@@ -864,7 +794,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "push")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw25 = matchParRi(c)
     if kw25:
       or2 = true
@@ -874,7 +803,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "pop")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw26 = matchParRi(c)
     if kw26:
       or2 = true
@@ -884,7 +812,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "inc")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw27 = matchParRi(c)
     if kw27:
       or2 = true
@@ -894,7 +821,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "dec")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw28 = matchParRi(c)
     if kw28:
       or2 = true
@@ -904,7 +830,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "neg")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw29 = matchParRi(c)
     if kw29:
       or2 = true
@@ -914,7 +839,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "not")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw30 = matchParRi(c)
     if kw30:
       or2 = true
@@ -924,11 +848,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "cmp")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw31 = matchParRi(c)
     if kw31:
       or2 = true
@@ -938,11 +860,9 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "test")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       emit(c, ", ")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw32 = matchParRi(c)
     if kw32:
       or2 = true
@@ -952,7 +872,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "call")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw33 = matchParRi(c)
     if kw33:
       or2 = true
@@ -963,7 +882,6 @@ proc genInstruction(c: var Context): bool =
       var sym35 = declareSym(c)
       if not success(sym35):
         error(c, "SYMBOLDEF expected")
-        break or3
       emit(c, ":")
       kw34 = matchParRi(c)
     if kw34:
@@ -975,7 +893,6 @@ proc genInstruction(c: var Context): bool =
       var sym37 = declareSym(c)
       if not success(sym37):
         error(c, "SYMBOLDEF expected")
-        break or3
       emit(c, ":")
       kw36 = matchParRi(c)
     if kw36:
@@ -986,7 +903,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "sete")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw38 = matchParRi(c)
     if kw38:
       or2 = true
@@ -996,7 +912,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "seta")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw39 = matchParRi(c)
     if kw39:
       or2 = true
@@ -1006,7 +921,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setae")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw40 = matchParRi(c)
     if kw40:
       or2 = true
@@ -1016,7 +930,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setb")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw41 = matchParRi(c)
     if kw41:
       or2 = true
@@ -1026,7 +939,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setbe")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw42 = matchParRi(c)
     if kw42:
       or2 = true
@@ -1036,7 +948,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setg")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw43 = matchParRi(c)
     if kw43:
       or2 = true
@@ -1046,7 +957,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setge")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw44 = matchParRi(c)
     if kw44:
       or2 = true
@@ -1056,7 +966,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setl")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw45 = matchParRi(c)
     if kw45:
       or2 = true
@@ -1066,7 +975,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setle")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw46 = matchParRi(c)
     if kw46:
       or2 = true
@@ -1076,7 +984,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setz")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw47 = matchParRi(c)
     if kw47:
       or2 = true
@@ -1086,7 +993,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setc")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw48 = matchParRi(c)
     if kw48:
       or2 = true
@@ -1096,7 +1002,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "seto")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw49 = matchParRi(c)
     if kw49:
       or2 = true
@@ -1106,7 +1011,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "sets")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw50 = matchParRi(c)
     if kw50:
       or2 = true
@@ -1116,7 +1020,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setp")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw51 = matchParRi(c)
     if kw51:
       or2 = true
@@ -1126,7 +1029,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setne")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw52 = matchParRi(c)
     if kw52:
       or2 = true
@@ -1136,7 +1038,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setna")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw53 = matchParRi(c)
     if kw53:
       or2 = true
@@ -1146,7 +1047,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setnae")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw54 = matchParRi(c)
     if kw54:
       or2 = true
@@ -1156,7 +1056,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setnb")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw55 = matchParRi(c)
     if kw55:
       or2 = true
@@ -1166,7 +1065,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setnbe")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw56 = matchParRi(c)
     if kw56:
       or2 = true
@@ -1176,7 +1074,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setng")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw57 = matchParRi(c)
     if kw57:
       or2 = true
@@ -1186,7 +1083,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setnge")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw58 = matchParRi(c)
     if kw58:
       or2 = true
@@ -1196,7 +1092,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setnl")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw59 = matchParRi(c)
     if kw59:
       or2 = true
@@ -1206,7 +1101,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setnle")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw60 = matchParRi(c)
     if kw60:
       or2 = true
@@ -1216,7 +1110,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "setnz")
       if not genExpr(c):
         error(c, "Expr expected")
-        break or3
       kw61 = matchParRi(c)
     if kw61:
       or2 = true
@@ -1226,7 +1119,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jmp")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw62 = matchParRi(c)
     if kw62:
       or2 = true
@@ -1236,7 +1128,6 @@ proc genInstruction(c: var Context): bool =
       emit(c, "jmp")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw63 = matchParRi(c)
     if kw63:
       or2 = true
@@ -1246,7 +1137,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "je")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw64 = matchParRi(c)
     if kw64:
       or2 = true
@@ -1256,7 +1146,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jne")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw65 = matchParRi(c)
     if kw65:
       or2 = true
@@ -1266,7 +1155,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jz")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw66 = matchParRi(c)
     if kw66:
       or2 = true
@@ -1276,7 +1164,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jnz")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw67 = matchParRi(c)
     if kw67:
       or2 = true
@@ -1286,7 +1173,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jg")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw68 = matchParRi(c)
     if kw68:
       or2 = true
@@ -1296,7 +1182,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jng")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw69 = matchParRi(c)
     if kw69:
       or2 = true
@@ -1306,7 +1191,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jge")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw70 = matchParRi(c)
     if kw70:
       or2 = true
@@ -1316,7 +1200,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jnge")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw71 = matchParRi(c)
     if kw71:
       or2 = true
@@ -1326,7 +1209,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "ja")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw72 = matchParRi(c)
     if kw72:
       or2 = true
@@ -1336,7 +1218,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jna")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw73 = matchParRi(c)
     if kw73:
       or2 = true
@@ -1346,7 +1227,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jae")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw74 = matchParRi(c)
     if kw74:
       or2 = true
@@ -1356,7 +1236,6 @@ proc genInstruction(c: var Context): bool =
       emitTag(c, "jnae")
       if not genLabel(c):
         error(c, "Label expected")
-        break or3
       kw75 = matchParRi(c)
     if kw75:
       or2 = true
@@ -1369,7 +1248,6 @@ proc genInstruction(c: var Context): bool =
       emit(c, "")
       if not matchAny(c):
         error(c, "ANY expected")
-        break or3
       kw76 = matchParRi(c)
     if kw76:
       or2 = true
@@ -1396,7 +1274,6 @@ proc genInstruction(c: var Context): bool =
           break or79
       if not or78:
         error(c, "invalid Instruction")
-        break or3
       kw77 = matchParRi(c)
     if kw77:
       or2 = true

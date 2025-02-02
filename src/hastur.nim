@@ -21,6 +21,7 @@ Commands:
   nifc                 run NIFC tests.
   test <file>          run test <file>.
   record <file> <tout> track the results to make it part of the test suite.
+  clean                remove all generated files.
 
 Arguments are forwarded to the Nimony compiler.
 
@@ -144,11 +145,12 @@ type
     Basics, # basic tests: These are processed with --noSystem
     Tracked # tracked tests: These are processed and can contain "track info"
             # for line, col, filename extraction (useful for nimsuggest-like tests)
+    Compat # compatibility mode tests
 
 proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
-  of Normal, Tracked: "c --silentMake"
+  of Normal, Tracked, Compat: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
@@ -167,10 +169,17 @@ proc removeMakeErrors(output: string): string =
     else: break
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
+  #echo "TESTING ", file
   inc c.total
-  var nimonycmd = (if cat == Basics: "--noSystem " else: "") & "--isMain"
-  if cat == Tracked:
+  var nimonycmd = "--isMain"
+  case cat
+  of Normal: discard
+  of Basics:
+    nimonycmd.add " --noSystem"
+  of Tracked:
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
+  of Compat:
+    nimonycmd.add " --compat"
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file), cat)
 
   let msgs = file.changeFileExt(".msgs")
@@ -225,7 +234,8 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
 proc parseCategory(path: string): Category =
   case path
   of "track": Tracked
-  of "basics": Basics
+  of "nosystem": Basics
+  of "compat": Compat
   else: Normal
 
 proc findCategory(path: string): Category =
@@ -347,7 +357,7 @@ proc buildNifc(showProgress = false) =
   let exe = "nifc".addFileExt(ExeExt)
   robustMoveFile "src/nifc/" & exe, binDir() / exe
 
-proc buildGear3(showProgress = false) =
+proc buildHexer(showProgress = false) =
   exec "nim c src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
@@ -355,7 +365,7 @@ proc buildGear3(showProgress = false) =
 proc execNifc(cmd: string) =
   exec "nifc", cmd
 
-proc execGear3(cmd: string) =
+proc execHexer(cmd: string) =
   exec "hexer", cmd
 
 proc nifctests(overwrite: bool) =
@@ -386,8 +396,8 @@ proc hexertests(overwrite: bool) =
   let helloworld = "tests/hexer/hexer_helloworld"
   createIndex helloworld & ".nif", false
   createIndex mod1 & ".nif", false
-  execGear3 mod1 & ".nif"
-  execGear3 helloworld & ".nif"
+  execHexer mod1 & ".nif"
+  execHexer helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
 proc handleCmdLine =
@@ -428,7 +438,7 @@ proc handleCmdLine =
     buildNimsem()
     buildNimony()
     buildNifc()
-    buildGear3()
+    buildHexer()
     nimonytests(overwrite)
     nifctests(overwrite)
     #hexertests(overwrite)
@@ -441,7 +451,7 @@ proc handleCmdLine =
       buildNimsem(showProgress)
       buildNimony(showProgress)
       buildNifc(showProgress)
-      buildGear3(showProgress)
+      buildHexer(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -450,7 +460,7 @@ proc handleCmdLine =
     of "nifc":
       buildNifc(showProgress)
     of "hexer":
-      buildGear3(showProgress)
+      buildHexer(showProgress)
     else:
       writeHelp()
     removeDir "nifcache"
@@ -463,7 +473,7 @@ proc handleCmdLine =
     nifctests(overwrite)
 
   of "hexer":
-    buildGear3()
+    buildHexer()
     hexertests(overwrite)
   of "test":
     buildNimony()
@@ -484,6 +494,9 @@ proc handleCmdLine =
         record inp, outp, flags, cat
     else:
       quit "`record` takes two arguments"
+  of "clean":
+    removeDir "nifcache"
+    removeDir "bin"
   else:
     quit "invalid command: " & primaryCmd
 

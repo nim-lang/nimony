@@ -1,0 +1,10 @@
+(.nif24)
+0,1,tests/nimony/sysbasics/temits.nim(stmts 2
+ (emit 6 "int s = 12;") ,2
+ (proc 5 :foo.0.temqwhg6j . . . 9
+  (params) . . . 2,1
+  (stmts 4
+   (var :s.0 . .
+    (i -1) 4 +12) 2,1
+   (emit 7 s.0 10 " = " 17 +3 20 ";"))) 3,6
+ (call ~3 foo.0.temqwhg6j))

@@ -6,7 +6,14 @@ type
   cstring* {.magic: Cstring.}   ## Built-in cstring (*compatible string*) type.
   pointer* {.magic: Pointer.}   ## Built-in pointer type, use the `addr`
                                 ## operator to get a pointer to a variable.
-  string* {.magic: String.}
+  char* {.magic: Char.}
+
+  typedesc*[T] {.magic: TypeDesc.}
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+
+type
+  string* = typeof("")
 
 proc `+`*(x, y: int): int {.magic: "AddI".}
 proc `-`*(x, y: int): int {.magic: "SubI".}

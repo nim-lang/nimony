@@ -1,0 +1,20 @@
+(.nif24)
+0,1,tests/nimony/nosystem/twhen.nim(stmts 2,3
+ (stmts
+  (discard 8 "good")) 2,10
+ (stmts
+  (discard 8 "good")) 2,13
+ (stmts
+  (discard 8 "good")) 2,20
+ (stmts
+  (discard 8 "good")) ,28
+ (proc 5 :not.0.twho7opw81
+  (not) . . 11
+  (params 1
+   (param :x.0 . . 3
+    (bool) .)) 11
+  (bool) 27
+  (pragmas 2
+   (magic 7 Not)) . .) 2,33
+ (stmts
+  (discard 8 "good")))

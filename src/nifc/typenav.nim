@@ -9,7 +9,7 @@
 import std / [strutils, tables, assertions]
 import bitabs, packedtrees
 
-import nifc_model
+import nifc_model, mangler
 
 type
   TypeDesc* {.acyclic.} = object
@@ -75,6 +75,14 @@ proc makePtrType(m: var Module; typ: TypeDesc): TypeDesc =
   result = atomType(m.lits, PtrC)
   result.down = TypeDescRef(p: typ.p, a: typ.a, down: typ.down)
 
+proc isImportC*(m: Module; typ: TypeDesc): bool =
+  assert m.code.kind(typ) == Sym
+  let litId = if typ.p != NodePos(0):
+                m.code[typ.rawPos].litId
+              else:
+                typ.a.litId
+  m.lits.strings[litId].isImportC
+
 proc getType*(m: var Module; t: Tree; n: NodePos): TypeDesc =
   case t[n].kind
   of Empty, Ident, SymDef, Err:
@@ -84,7 +92,11 @@ proc getType*(m: var Module; t: Tree; n: NodePos): TypeDesc =
     if d.pos != NodePos(0):
       result = getType(m, t, d.pos)
     else:
-      result = errorType()
+      # importC types are not defined
+      if m.lits.strings[t[n].litId].isImportC:
+        result = TypeDesc(p: n)
+      else:
+        result = errorType()
   of ProcC:
     result = TypeDesc(p: n)
   of GvarC, TvarC, ConstC, VarC:

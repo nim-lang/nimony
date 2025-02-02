@@ -2,9 +2,9 @@
 
 (GENERATOR Module
 
-(COM "This grammar reflects the fact that we produce NASM code.")
+(COM "This grammar reflects the fact that we produce GAS code in intel syntax.")
 
-(RULE :Directive (global SYMBOL (DO "nl")))
+(RULE :Directive (global ".global " SYMBOL (DO "nl")))
 
 (RULE :Code (text ".section .text" (DO "nl")  SYMBOLDEF ":" (DO "nl") (ONE_OR_MANY Instruction)) (DO "nl"))
 (RULE :ExternDecl (extern SYMBOLDEF (DO "nl")))
@@ -12,7 +12,7 @@
 (RULE :DataValue (OR STRINGLITERAL INTLIT UINTLIT FLOATLIT))
 (RULE :DataKey (OR DataValue (times INTLIT DataValue)) (DO "nl"))
 (RULE :DataDecl SYMBOLDEF ":" (DO "nl") (ONE_OR_MANY (OR
-  (ascii ".ascii " DataKey)
+  (string ".string " DataKey)
   (byte ".byte " DataKey)
   (word ".2byte " DataKey)
   (long ".4byte " DataKey)

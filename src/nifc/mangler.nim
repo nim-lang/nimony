@@ -19,8 +19,11 @@ proc escape(result: var string; c: char) {.inline.} =
   result.add HexChars[n and 0xF]
   result.add 'Q'
 
+proc isImportC*(s: string): bool =
+  s.len > 2 and s[s.len-2] == '.' and s[s.len-1] == 'c'
+
 proc mangle*(s: string): string =
-  if s.len > 2 and s[s.len-2] == '.' and s[s.len-1] == 'c':
+  if s.isImportC:
     result = substr(s, 0, s.len-3)
   else:
     var i = 0

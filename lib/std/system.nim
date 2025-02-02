@@ -20,12 +20,17 @@ type
 
 type
   char* {.magic: Char.}         ## Built-in 8 bit character type (unsigned).
-  string* {.magic: String.}     ## Built-in string type.
   cstring* {.magic: Cstring.}   ## Built-in cstring (*compatible string*) type.
   pointer* {.magic: Pointer.}   ## Built-in pointer type, use the `addr`
                                 ## operator to get a pointer to a variable.
 
   typedesc*[T] {.magic: TypeDesc.} ## Meta type to denote a type description.
+  UncheckedArray*[T] {.magic: UncheckedArray.} ## Built-in unchecked array type.
+
+type
+  string* = object ## Built-in string type.
+    a: ptr UncheckedArray[char]
+    i: int
 
 type # we need to start a new type section here, so that ``0`` can have a type
   bool* {.magic: "Bool".} = enum ## Built-in boolean type.
@@ -71,6 +76,9 @@ type
                                       ## fixed-length arrays.
   set*[T]{.magic: "Set".}             ## Generic type to construct bit sets.
 
+type sink*[T]{.magic: "Sink".}
+type lent*[T]{.magic: "Lent".}
+
 proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect.}
 proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
 proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
@@ -79,11 +87,14 @@ proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 proc `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
 proc `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
+proc `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
   (x[i]) = elem
 template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
   (x[i]) = elem
 template `[]=`*(x: cstring, i: int; elem: char) =
+  (x[i]) = elem
+template `[]=`*[T](x: ptr UncheckedArray[T], i: int; elem: T) =
   (x[i]) = elem
 
 proc `[]`*[T](x: ptr T): var T {.magic: "Deref", noSideEffect.}
@@ -248,6 +259,28 @@ proc `-`*(x, y: float): float {.magic: "SubF64", noSideEffect.}
 proc `*`*(x, y: float): float {.magic: "MulF64", noSideEffect.}
 proc `/`*(x, y: float): float {.magic: "DivF64", noSideEffect.}
 
+type
+  Incable = concept
+    proc `+`(x, y: Self): Self
+  Decable = concept
+    proc `-`(x, y: Self): Self
+
+proc inc*[T: Incable, V: Ordinal](x: var T, y: V) {.inline.} =
+  ## Increments the ordinal `x` by `y`.
+  x = x + T(y)
+
+proc dec*[T: Decable, V: Ordinal](x: var T, y: V) {.inline.} =
+  ## Decrements the ordinal `x` by `y`.
+  x = x - T(y)
+
+proc inc*[T: Incable](x: var T) {.inline.} =
+  # workaround for no default params
+  x = x + T(1)
+
+proc dec*[T: Decable](x: var T) {.inline.} =
+  # workaround for no default params
+  x = x - T(1)
+
 # comparison operators:
 proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
   ## Checks whether values within the *same enum* have the same underlying value.
@@ -262,6 +295,8 @@ proc `==`*(x, y: char): bool {.magic: "EqCh", noSideEffect.}
   ## Checks for equality between two `char` variables.
 proc `==`*(x, y: bool): bool {.magic: "EqB", noSideEffect.}
   ## Checks for equality between two `bool` variables.
+proc `==`*[T](x, y: set[T]): bool {.magic: "EqSet", noSideEffect.}
+  ## Checks for equality between two variables of type `set`.
 
 proc `==`*[T](x, y: ref T): bool {.magic: "EqRef", noSideEffect.}
   ## Checks that two `ref` variables refer to the same item.
@@ -277,6 +312,12 @@ proc `<=`*(x, y: char): bool {.magic: "LeCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
   ## before `y` (uppercase letters come before lowercase letters).
 
+proc `<=`*[T](x, y: set[T]): bool {.magic: "LeSet", noSideEffect.}
+  ## Returns true if `x` is a subset of `y`.
+  ##
+  ## A subset `x` has all of its members in `y` and `y` doesn't necessarily
+  ## have more members than `x`. That is, `x` can be equal to `y`.
+
 proc `<=`*(x, y: bool): bool {.magic: "LeB", noSideEffect.}
 proc `<=`*[T](x, y: ref T): bool {.magic: "LePtr", noSideEffect.}
 proc `<=`*(x, y: pointer): bool {.magic: "LePtr", noSideEffect.}
@@ -289,6 +330,12 @@ proc `<`*(x, y: string): bool {.magic: "LtStr", noSideEffect.}
 proc `<`*(x, y: char): bool {.magic: "LtCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
   ## before `y` (uppercase letters come before lowercase letters).
+
+proc `<`*[T](x, y: set[T]): bool {.magic: "LtSet", noSideEffect.}
+  ## Returns true if `x` is a strict or proper subset of `y`.
+  ##
+  ## A strict or proper subset `x` has all of its members in `y` but `y` has
+  ## more elements than `y`.
 
 proc `==`*(x, y: int8): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int16): bool {.magic: "EqI", noSideEffect.}
@@ -329,6 +376,34 @@ proc `<`*(x, y: float): bool {.magic: "LtF64", noSideEffect.}
 proc `==`*(x, y: float32): bool {.magic: "EqF64", noSideEffect.}
 proc `==`*(x, y: float): bool {.magic: "EqF64", noSideEffect.}
 
+proc min*(x, y: int8): int8 {.noSideEffect, inline.} =
+  if x <= y: x else: y
+proc min*(x, y: int16): int16 {.noSideEffect, inline.} =
+  if x <= y: x else: y
+proc min*(x, y: int32): int32 {.noSideEffect, inline.} =
+  if x <= y: x else: y
+proc min*(x, y: int64): int64 {.noSideEffect, inline.} =
+  ## The minimum value of two integers.
+  if x <= y: x else: y
+proc min*(x, y: float32): float32 {.noSideEffect, inline.} =
+  if x <= y or y != y: x else: y
+proc min*(x, y: float): float {.noSideEffect, inline.} =
+  if x <= y or y != y: x else: y
+
+proc max*(x, y: int8): int8 {.noSideEffect, inline.} =
+  if y <= x: x else: y
+proc max*(x, y: int16): int16 {.noSideEffect, inline.} =
+  if y <= x: x else: y
+proc max*(x, y: int32): int32 {.noSideEffect, inline.} =
+  if y <= x: x else: y
+proc max*(x, y: int64): int64 {.noSideEffect, inline.} =
+  ## The maximum value of two integers.
+  if y <= x: x else: y
+proc max*(x, y: float32): float32 {.noSideEffect, inline.} =
+  if y <= x or y != y: x else: y
+proc max*(x, y: float): float {.noSideEffect, inline.} =
+  if y <= x or y != y: x else: y
+
 template `!=`*(x, y: untyped): untyped =
   ## Unequals operator. This is a shorthand for `not (x == y)`.
   not (x == y)
@@ -364,6 +439,9 @@ template default*[T: ref](x: typedesc[T]): T = T(nil)
 proc default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 proc default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
+proc defined*(x: untyped): bool {.magic: Defined.}
+proc declared*(x: untyped): bool {.magic: Declared.}
+
 proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
@@ -371,3 +449,14 @@ proc addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 proc sizeof*[T](x: T): int {.magic: "SizeOf", noSideEffect.}
 proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
+
+proc `=destroy`*[T](x: T) {.magic: "Destroy", noSideEffect.}
+proc `=dup`*[T](x: T): T {.magic: "Dup", noSideEffect.}
+proc `=copy`*[T](dest: var T; src: T) {.magic: "Copy", noSideEffect.}
+proc `=wasMoved`*[T](x: var T) {.magic: "WasMoved", noSideEffect.}
+proc `=sink`*[T](dest: var T; src: T) {.magic: "SinkHook", noSideEffect.}
+proc `=trace`*[T](x: var T; env: pointer) {.magic: "Trace", noSideEffect.}
+
+include "system/setops"
+
+#include "system/stringimpl"

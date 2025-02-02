@@ -90,6 +90,8 @@ type
     mDefaultObj, mDefaultTup
     mArrAt, mPat, mTupAt
     mDeref
+    mSink, mLent, # were mBuiltinType
+    mSinkHook, mCopy
 
 declareMatcher parseMagic, TMagic, 1, 1
 
@@ -162,7 +164,6 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mFloat128: res FloatT, 128
   of mBool: res BoolT
   of mChar: res CharT, 8
-  of mString: res StringT
   of mTypeDesc: res TypedescT
   of mVoidType: res VoidT
   of mUnpack: res UnpackX
@@ -173,7 +174,27 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mDefaultObj: res DefaultObjX
   of mDefaultTup: res DefaultTupX
   of mOpenArray: res OpenArrayT
+  of mPlusSet: res PlusSetX, TypedMagic
+  of mMinusSet: res MinusSetX, TypedMagic
+  of mMulSet: res MulSetX, TypedMagic
+  of mXorSet: res XorSetX, TypedMagic
+  of mEqSet: res EqSetX, TypedMagic
+  of mLeSet: res LeSetX, TypedMagic
+  of mLtSet: res LtSetX, TypedMagic
+  of mInSet: res InSetX, TypedMagic
+  of mCard: res CardSetX, TypedMagic
+  of mIncl: res InclSetS, TypedMagic
+  of mExcl: res ExclSetS, TypedMagic
   of mEnsureMove: res EnsureMoveX
+  of mUncheckedArray: res UncheckedArrayT
+  of mSink: res SinkT
+  of mLent: res LentT
+  of mDestroy: res DestroyX
+  of mSinkHook: res SinkHookX
+  of mDup: res DupX
+  of mCopy: res CopyX
+  of mWasMoved: res WasMovedX
+  of mTrace: res TraceX
   else: ("", 0)
 
 when isMainModule:

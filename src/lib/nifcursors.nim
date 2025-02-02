@@ -236,6 +236,9 @@ proc addStrLit*(dest: var TokenBuf; s: string; info = NoLineInfo) =
 proc addIntLit*(dest: var TokenBuf; i: BiggestInt; info = NoLineInfo) =
   dest.add intToken(pool.integers.getOrIncl(i), info)
 
+proc addUintLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
+  dest.add uintToken(pool.uintegers.getOrIncl(i), info)
+
 proc span*(c: Cursor): int =
   result = 0
   var c = c
@@ -304,12 +307,16 @@ proc toString*(b: Cursor; produceLineInfo = true): string =
   let counter = span(b)
   result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, counter-1), produceLineInfo)
 
+proc toStringDebug*(b: Cursor; produceLineInfo = true): string =
+  let L = if b.kind == ParLe: 1 else: 0
+  result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, L), produceLineInfo)
+
 proc `$`*(c: Cursor): string = toString(c, false)
 
 template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
   dest.add parLeToken(tag, info)
   body
-  dest.add parRiToken()
+  dest.add parRiToken(NoLineInfo)
 
 proc parLeTokenUnchecked*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -317,7 +324,7 @@ proc parLeTokenUnchecked*(tag: string; info: PackedLineInfo): PackedToken {.inli
 template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInfo; body: untyped) =
   dest.add parLeTokenUnchecked(tag, info)
   body
-  dest.add parRiToken()
+  dest.add parRiToken(NoLineInfo)
 
 proc parse*(r: var Stream; dest: var TokenBuf;
             parentInfo: PackedLineInfo) =

@@ -1,0 +1,21 @@
+(.nif24)
+(stmts
+ (incl "testcarry.h")
+ (gvar :cary.mangled . CArray.c .)
+ (discard
+  (at
+   cary.mangled +0))
+ (gvar :caryInStruct.mangled . struct\20CStruct.c .)
+ (discard
+  (at
+   (dot caryInStruct.mangled field.c +0) +0))
+ (gvar :caryInStruct2.mangled . struct\20CStruct2.c .)
+ (discard
+  (at
+   (dot
+    (dot caryInStruct2.mangled cs.c +0) field.c +0) +0))
+ (discard
+  (at
+   (dot
+    (at
+     (dot caryInStruct2.mangled cs2.c +0) +1) field.c +0) +2)))

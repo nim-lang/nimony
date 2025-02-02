@@ -1,3 +1,4 @@
+import std/assertions
 include nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
 
@@ -200,3 +201,53 @@ proc lengthOrd*(c: var SemContext; typ: TypeCursor): xint =
   let last = lastOrd(c, typ)
   if last.isNaN: return last
   result = last - first + createXint(1.uint64)
+
+proc containsGenericParams*(n: TypeCursor): bool =
+  var n = n
+  var nested = 0
+  while true:
+    case n.kind
+    of Symbol:
+      let res = tryLoadSym(n.symId)
+      if res.status == LacksNothing and res.decl == $TypevarY:
+        return true
+    of ParLe:
+      inc nested
+    of ParRi:
+      dec nested
+    else: discard
+    if nested == 0: break
+    inc n
+  return false
+
+proc nominalRoot*(t: TypeCursor, allowTypevar = false): SymId =
+  result = SymId(0)
+  var t = t
+  while true:
+    case t.kind
+    of Symbol:
+      let res = tryLoadSym(t.symId)
+      assert res.status == LacksNothing
+      if res.decl.symKind == TypeY:
+        let decl = asTypeDecl(res.decl)
+        if decl.typevars.typeKind == InvokeT:
+          var root = decl.typevars
+          inc root
+          assert root.kind == Symbol
+          return root.symId
+        else:
+          return t.symId
+      elif allowTypevar and res.decl.symKind == TypevarY:
+        return t.symId
+      else:
+        break
+    of ParLe:
+      case t.typeKind
+      of MutT, OutT, LentT, SinkT, StaticT, TypedescT:
+        inc t
+      of InvokeT:
+        inc t
+      else:
+        break
+    else:
+      break

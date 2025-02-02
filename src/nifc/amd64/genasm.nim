@@ -105,9 +105,6 @@ proc addKeywUnchecked(c: var GeneratedCode; keyw: string; info = NoLineInfo) =
 proc addSymDef(c: var TokenBuf; s: string; info: PackedLineInfo) =
   c.add symdefToken(pool.syms.getOrIncl(s), info)
 
-proc addStrLit(c: var TokenBuf; s: string; info: PackedLineInfo) =
-  c.addStrLit s, info
-
 proc addSym(c: var GeneratedCode; s: string; info: PackedLineInfo) =
   c.code.add symToken(pool.syms.getOrIncl(s), info)
 
@@ -325,38 +322,73 @@ proc generateAsm*(inp, outp: string) =
   produceAsmCode f, outp
 
 when isMainModule:
+  # How to test following code:
+  # Uncomment registerTags() in produceAsmCode proc in emitter.nim.
+  # Produce foobar.s with: nim c -r genasm.nim
+  # Assemble and link it with: goo -o foobar foobar.s
+
   const
-    TestCode = """(.nif24)
-(stmts
-(text :main.c
- (mov
-  (rbx) +12)
- (mov
+    CallPrintf = when defined(windows): """
+ (lea
   (rcx)
   (rel str.1))
- (mov
+ (lea
   (rdx)
   (rel str.2))
- (call
-  (rel printf.c))
- (mov
+ (call printf.c)
+ (lea
   (rcx)
   (rel str.3))
  (mov
   (rdx) +12)
- (call
-  (rel printf.c))
- (mov
+ (call printf.c)
+ (lea
   (rcx)
   (rel str.3))
  (mov
   (rdx)
   (rbx))
- (call
-  (rel printf.c))
+ (call printf.c)"""
+                 else: """
+ (lea
+  (rdi)
+  (rel str.1))
+ (lea
+  (rsi)
+  (rel str.2))
+ (call printf.c)
+ (lea
+  (rdi)
+  (rel str.3))
+ (mov
+  (rsi) +12)
+ (call printf.c)
+ (lea
+  (rdi)
+  (rel str.3))
+ (mov
+  (rsi)
+  (rbx))
+ (call printf.c)"""
+
+    TestCode = """(.nif24)
+(stmts
+(rodata
+  :str.1 (string "str.1 %s\0A")
+  :str.2 (string "str.2 ")
+  :str.3 (string "str.3 value=%d\0A") )
+(global main.c)
+(text :main.c
+ (push (rbp))
+ (mov (rbp) (rsp))
+ (mov
+  (rbx) +12) """ & CallPrintf & """
  (mov
   (rax) +0)
  (jmp L.0)
- (lab :L.0)))"""
+ (lab :L.0)
+ (mov (rsp) (rbp))
+ (pop (rbx))
+ (ret)))"""
 
-  produceAsmCode TestCode, "foobar.asm"
+  produceAsmCode TestCode, "foobar.s"

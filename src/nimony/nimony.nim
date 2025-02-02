@@ -62,7 +62,6 @@ proc handleCmdLine() =
   var args: seq[string] = @[]
   var cmd = Command.None
   var forceRebuild = false
-  var compat = false
   var silentMake = false
   var useEnv = true
   var doRun = false
@@ -95,7 +94,7 @@ proc handleCmdLine() =
       of "run", "r":
         doRun = true
         forwardArg = false
-      of "compat": compat = true
+      of "compat": config.compat = true
       of "path", "p": config.paths.add val
       of "define", "d": config.defines.incl val
       of "noenv": useEnv = false
@@ -149,11 +148,12 @@ proc handleCmdLine() =
   of FullProject:
     createDir("nifcache")
     createDir(binDir())
+    exec "git submodule update --init"
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
     requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
-    buildGraph config, args[0], compat, forceRebuild, silentMake,
+    buildGraph config, args[0], forceRebuild, silentMake,
       commandLineArgs, moduleFlags, (if doRun: DoRun else: DoCompile)
 
 when isMainModule:

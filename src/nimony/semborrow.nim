@@ -21,10 +21,14 @@ proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
     if n.kind == Symbol:
       let section = getTypeSection(n.symId)
       if section.kind == TypeY:
+        let s = n
         n = section.body
         if n.typeKind == DistinctT:
           isDistinct = true
           inc n
+        elif n.typeKind == ObjectT:
+          n = s
+          break
       inc i
     else:
       break

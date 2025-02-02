@@ -174,14 +174,17 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
 
 proc callDup(c: var Context; arg: var Cursor) =
   let typ = getType(c.typeCache, arg)
-  let info = arg.info
-  let hookProc = getHook(c.lifter[], attachedDup, typ, info)
-  if hookProc != NoSymId and arg.kind != StringLit:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      tr c, arg, WillBeOwned
+  if typ.typeKind == NilT:
+    tr c, arg, DontCare
   else:
-    tr c, arg, WillBeOwned
+    let info = arg.info
+    let hookProc = getHook(c.lifter[], attachedDup, typ, info)
+    if hookProc != NoSymId and arg.kind != StringLit:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        tr c, arg, WillBeOwned
+    else:
+      tr c, arg, WillBeOwned
 
 proc callWasMoved(c: var Context; arg: Cursor) =
   let typ = getType(c.typeCache, arg)
@@ -219,8 +222,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
   let le = n2
   skip n2
   let ri = n2
-  let riType = getType(c.typeCache, ri)
-  let destructor = getDestructor(c.lifter[], riType, n.info)
+  let leType = getType(c.typeCache, le)
+  let destructor = getDestructor(c.lifter[], leType, n.info)
   if destructor == NoSymId:
     # the type has no destructor, there is nothing interesting to do:
     trSons c, n, DontCare
@@ -240,7 +243,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     elif isLastRead(c, ri):
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
-        let tmp = tempOfTrArg(c, ri, riType)
+        let tmp = tempOfTrArg(c, ri, leType)
         callWasMoved c, ri
         callDestroy(c, destructor, lhs)
         copyInto c.dest, n:
@@ -261,7 +264,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
       # XXX We should really prefer to simply call `=copy(x, y)` here.
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
-        let tmp = tempOfTrArg(c, ri, riType)
+        let tmp = tempOfTrArg(c, ri, leType)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
@@ -274,7 +277,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
-          var n = ri
+          n = ri
           callDup c, n
 
 proc skipParRi*(n: var Cursor) =
@@ -283,8 +286,11 @@ proc skipParRi*(n: var Cursor) =
   else:
     error "expected ')', but got: ", n
 
+proc getHookType(c: var Context; n: Cursor): Cursor =
+  result = skipModifier(getType(c.typeCache, n.firstSon))
+
 proc trExplicitDestroy(c: var Context; n: var Cursor) =
-  let typ = getType(c.typeCache, n.firstSon)
+  let typ = getHookType(c, n)
   let info = n.info
   let destructor = getDestructor(c.lifter[], typ, info)
   if destructor == NoSymId:
@@ -300,7 +306,7 @@ proc trExplicitDestroy(c: var Context; n: var Cursor) =
   skipParRi n
 
 proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
-  let typ = getType(c.typeCache, n)
+  let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedDup, typ, info)
   if hookProc != NoSymId:
@@ -314,6 +320,54 @@ proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
     tr c, n, e2
   skipParRi n
 
+proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
+  let typ = getHookType(c, n)
+  let info = n.info
+  let hookProc = getHook(c.lifter[], op, typ, info)
+  if hookProc != NoSymId:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      inc n
+      while n.kind != ParRi:
+        tr c, n, DontCare
+      wantParRi c.dest, n
+  else:
+    c.dest.addParLe AsgnS, info
+    inc n
+    tr c, n, DontCare
+    tr c, n, DontCare
+    wantParRi c.dest, n
+
+proc trExplicitWasMoved(c: var Context; n: var Cursor) =
+  let typ = getHookType(c, n)
+  let info = n.info
+  let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
+  if hookProc != NoSymId:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      inc n
+      tr c, n, DontCare
+  else:
+    inc n
+    skip n
+    skipParRi n
+
+proc trExplicitTrace(c: var Context; n: var Cursor) =
+  let typ = getHookType(c, n)
+  let info = n.info
+  let hookProc = getHook(c.lifter[], attachedTrace, typ, info)
+  if hookProc != NoSymId:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      inc n
+      tr c, n, DontCare
+      tr c, n, DontCare
+  else:
+    inc n
+    skip n
+    skip n
+    skipParRi n
+
 proc trOnlyEssentials(c: var Context; n: var Cursor) =
   var nested = 0
   while true:
@@ -322,20 +376,20 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
       c.dest.add n
       inc n
     of ParLe:
-      var handled = false
-      if n.exprKind in CallKinds:
-        var n = firstSon n
-        if n.kind == Symbol:
-          var fn = pool.syms[n.symId]
-          extractBasename fn
-          case fn
-          of "=dup":
-            trExplicitDup c, n, DontCare
-            handled = true
-          of "=destroy":
-            trExplicitDestroy c, n
-            handled = true
-      if not handled:
+      case n.exprKind
+      of DestroyX:
+        trExplicitDestroy c, n
+      of DupX:
+        trExplicitDup c, n, DontCare
+      of CopyX:
+        trExplicitCopy c, n, attachedCopy
+      of SinkHookX:
+        trExplicitCopy c, n, attachedSink
+      of WasMovedX:
+        trExplicitWasMoved c, n
+      of TraceX:
+        trExplicitTrace c, n
+      else:
         c.dest.add n
         inc n
         inc nested
@@ -353,6 +407,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   copyTree c.dest, r.pattern
   copyTree c.dest, r.typevars
   copyTree c.dest, r.params
+  copyTree c.dest, r.retType
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
@@ -408,7 +463,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
 
   c.dest.add n
   inc n # skip `(call)`
-  var fnType = getType(c.typeCache, n)
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree c.dest, n # skip `fn`
   assert fnType == "params"
   inc fnType
@@ -561,12 +616,24 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
     trLocation c, n, e
-  elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit} or isDeclarative(n):
+  elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit, FloatLit, DotToken} or isDeclarative(n):
     takeTree c.dest, n
   else:
     case n.exprKind
     of CallKinds:
       trCall c, n, e
+    of DestroyX:
+      trExplicitDestroy c, n
+    of DupX:
+      trExplicitDup c, n, e
+    of CopyX:
+      trExplicitCopy c, n, attachedCopy
+    of WasMovedX:
+      trExplicitWasMoved c, n
+    of SinkHookX:
+      trExplicitCopy c, n, attachedSink
+    of TraceX:
+      trExplicitTrace c, n
     of ConvKinds, SufX:
       trConvExpr c, n, e
     of OconstrX, NewOconstrX:
@@ -584,6 +651,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetX,
        OchoiceX, CchoiceX, KvX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
+       PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX,
        EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, RangeX, RangesX, CompilesX, DeclaredX,
        DefinedX, HighX, LowX, TypeofX, UnpackX, EnumToStrX, IsMainModuleX, QuotedX,
        DerefX, HderefX, AddrX, HaddrX:
@@ -604,6 +672,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.openScope()
         trSons c, n, WantNonOwner
         c.typeCache.closeScope()
+      of BreakS, ContinueS:
+        takeTree c.dest, n
       else:
         trSons c, n, WantNonOwner
 

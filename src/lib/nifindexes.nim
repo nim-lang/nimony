@@ -99,8 +99,44 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
     else:
       inc n
 
-proc createIndex*(infile: string; buildChecksum: bool;
-    hookIndexMap: Table[string, seq[(SymId, SymId)]]) =
+type IndexSections* = object
+  hooks*: Table[string, seq[(SymId, SymId)]]
+  converters*: seq[(SymId, SymId)]
+  toBuild*: TokenBuf
+
+proc getSection(tag: TagId; values: seq[(SymId, SymId)]; symToOffsetMap: Table[SymId, int]): TokenBuf =
+  let KvT = registerTag "kv"
+
+  result = default(TokenBuf)
+  result.addParLe tag
+
+  for value in values:
+    let (key, sym) = value
+    let offset = symToOffsetMap[sym]
+    result.buildTree KvT, NoLineInfo:
+      result.add symToken(key, NoLineInfo)
+      result.add intToken(pool.integers.getOrIncl(offset), NoLineInfo)
+
+  result.addParRi()
+
+proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
+  let KvT = registerTag "kv"
+
+  result = default(TokenBuf)
+  result.addParLe tag
+
+  for value in values:
+    let (key, sym) = value
+    result.buildTree KvT, NoLineInfo:
+      if key == SymId(0):
+        result.add dotToken(NoLineInfo)
+      else:
+        result.add symToken(key, NoLineInfo)
+      result.add symToken(sym, NoLineInfo)
+
+  result.addParRi()
+
+proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) =
   let PublicT = registerTag "public"
   let PrivateT = registerTag "private"
   let KvT = registerTag "kv"
@@ -160,22 +196,27 @@ proc createIndex*(infile: string; buildChecksum: bool;
   content.add toString(private)
   content.add "\n"
 
-  for (key, values) in hookIndexMap.pairs:
-    var hookSectionBuf = default(TokenBuf)
+  for (key, values) in sections.hooks.pairs:
     let tag = registerTag(key)
-    hookSectionBuf.addParLe tag
-
-    for value in values:
-      let (obj, sym) = value
-      let offset = symToOffsetMap[sym]
-      hookSectionBuf.buildTree KvT, NoLineInfo:
-        hookSectionBuf.add symToken(obj, NoLineInfo)
-        hookSectionBuf.add intToken(pool.integers.getOrIncl(offset), NoLineInfo)
-
-    hookSectionBuf.addParRi()
+    let hookSectionBuf = getSection(tag, values, symToOffsetMap)
 
     content.add toString(hookSectionBuf)
     content.add "\n"
+
+  if sections.converters.len != 0:
+    let ConverterT = registerTag "converter"
+    let converterSectionBuf = getSymbolSection(ConverterT, sections.converters)
+
+    content.add toString(converterSectionBuf)
+    content.add "\n"
+
+  let buildT = registerTag "build"
+  var buildBuf = createTokenBuf()
+  buildBuf.addParLe buildT
+  buildBuf.add sections.toBuild
+  buildBuf.addParRi
+  content.add toString(buildBuf)
+  content.add "\n"
 
   if buildChecksum:
     var checksum = newSha1State()
@@ -189,7 +230,7 @@ proc createIndex*(infile: string; buildChecksum: bool;
     writeFile(indexName, content)
 
 proc createIndex*(infile: string; buildChecksum: bool) =
-  createIndex(infile, buildChecksum, initTable[string, seq[(SymId, SymId)]]())
+  createIndex(infile, buildChecksum, IndexSections(hooks: initTable[string, seq[(SymId, SymId)]](), toBuild: default(TokenBuf)))
 
 type
   NifIndexEntry* = object
@@ -198,6 +239,8 @@ type
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
     hooks*: Table[string, Table[string, NifIndexEntry]]
+    converters*: Table[string, string] # map of dest types to converter symbols
+    toBuild*: seq[(string, string, string)]
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsoluteOffset = false) =
   let KvT = registerTag "kv"
@@ -242,6 +285,50 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsolu
       assert false, "expected (kv) construct"
       #t = next(s)
 
+proc readSymbolSection(s: var Stream; tab: var Table[string, string]) =
+  let KvT = registerTag "kv"
+  var t = next(s)
+  var nested = 1
+  while t.kind != EofToken:
+    if t.kind == ParLe:
+      inc nested
+      if t.tagId == KvT:
+        t = next(s)
+        var key: string
+        if t.kind == Symbol:
+          key = pool.syms[t.symId]
+        elif t.kind == Ident:
+          key = pool.strings[t.litId]
+        elif t.kind == DotToken:
+          key = "."
+        else:
+          raiseAssert "invalid (kv) construct: symbol expected"
+        t = next(s) # skip Symbol
+        var value: string
+        if t.kind == Symbol:
+          value = pool.syms[t.symId]
+        elif t.kind == Ident:
+          value = pool.strings[t.litId]
+        else:
+          raiseAssert "invalid (kv) construct: symbol expected"
+        t = next(s) # skip value symbol
+        tab[key] = value
+        if t.kind == ParRi:
+          t = next(s)
+          dec nested
+        else:
+          assert false, "invalid (kv) construct: ')' expected"
+      else:
+        assert false, "expected (kv) construct"
+    elif t.kind == ParRi:
+      dec nested
+      if nested == 0:
+        break
+      t = next(s)
+    else:
+      assert false, "expected (kv) construct"
+      #t = next(s)
+
 proc readIndex*(indexName: string): NifIndex =
   var s = nifstreams.open(indexName)
   let res = processDirectives(s.r)
@@ -258,6 +345,8 @@ proc readIndex*(indexName: string): NifIndex =
   let DtorT = registerTag "dtor"
 
   let hookSet = toHashSet([ClonerT, TracerT, DisarmerT, MoverT, DtorT])
+
+  let ConverterT = registerTag "converter"
 
   result = default(NifIndex)
   var t = next(s)
@@ -278,7 +367,27 @@ proc readIndex*(indexName: string): NifIndex =
       result.hooks[tagName] = initTable[string, NifIndexEntry]()
       readSection(s, result.hooks[tagName])
       t = next(s)
+    if t.tag == ConverterT:
+      readSymbolSection(s, result.converters)
+      t = next(s)
 
+    let BuildT = registerTag "build"
+    if t.tag == BuildT:
+      t = next(s)
+      while t.kind != EofToken and t.kind != ParRi:
+        # tup
+        t = next(s)
+        assert t.kind == StringLit
+        let typ = pool.strings[t.litId]
+        t = next(s)
+        assert t.kind == StringLit
+        let path = pool.strings[t.litId]
+        t = next(s)
+        assert t.kind == StringLit
+        let args = pool.strings[t.litId]
+        result.toBuild.add (typ, path, args)
+        t = next(s)
+        t = next(s)
   else:
     assert false, "expected 'index' tag"
 

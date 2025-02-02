@@ -29,7 +29,7 @@ type
     op: AttachedOp
 
   LiftingCtx* = object
-    dest: TokenBuf
+    dest*: TokenBuf
     op: AttachedOp
     info: PackedLineInfo
     requests: seq[GenHookRequest]
@@ -47,8 +47,8 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
   false
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
-  # XXX to implement somehow
-  SymId(0)
+  const systemSuffix = "sys9azlf"
+  result = pool.syms.getOrIncl(name & ".0." & systemSuffix)
 
 proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var n = n
@@ -110,14 +110,16 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
      CstringT, PointerT, OrdinalT, OpenArrayT,
      UncheckedArrayT, VarargsT, RangeT, TypedescT:
     result = true
-  of StringT, RefT, RefObjectT:
+  of RefT, RefObjectT:
     result = false
   of SinkT, ArrayT, LentT:
     result = isTrivial(c, typ.firstSon)
   of ObjectT:
     result = isTrivialObjectBody(c, typ)
   of TupleT:
-    result = isTrivialForFields(c, typ)
+    var tup = typ
+    inc tup
+    result = isTrivialForFields(c, tup)
   of NoType, NilT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, IterT, InvokeT,
      TypeKindT, UntypedT, TypedT:
     raiseAssert "bug here"
@@ -178,12 +180,13 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   if isTrivial(c, typ):
     return NoSymId
 
+  let orig = typ
   let typ = toTypeImpl typ
   case typ.typeKind
   of PtrT, PtrObjectT:
     raiseAssert "ptr T should have been a 'trivial' type"
   of ObjectT, RefObjectT, DistinctT, TupleT, ArrayT, RefT:
-    result = requestLifting(c, c.op, typ)
+    result = requestLifting(c, c.op, orig)
   else:
     result = NoSymId
 
@@ -523,12 +526,17 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
 
     let a = toTypeImpl typ
     copyIntoKind(c.dest, StmtsS, c.info):
-      maybeAddResultDecl c, paramA, typ
-      if a.typeKind == RefT:
-        unravelRef(c, typ, paramTreeA, paramTreeB)
-      else:
-        unravel(c, typ, paramTreeA, paramTreeB)
+      when true: # TODO: implement
+        maybeAddResultDecl c, paramA, typ
+        c.dest.addDotToken()
         maybeAddReturn c, paramA
+      else:
+        maybeAddResultDecl c, paramA, typ
+        if a.typeKind == RefT:
+          unravelRef(c, typ, paramTreeA, paramTreeB)
+        else:
+          unravel(c, typ, paramTreeA, paramTreeB)
+          maybeAddReturn c, paramA
 
 proc genMissingHooks*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:

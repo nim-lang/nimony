@@ -5,7 +5,7 @@ type
     len: int
     data: ptr UncheckedArray[T]
 
-proc cap[T](s: seq[T]): int {.inline.} =
+proc capInBytes[T](s: seq[T]): int {.inline.} =
   result = if s.data != nil: allocatedSize(s.data) else: 0
 
 proc `=destroy`*[T](s: seq[T]) =
@@ -20,7 +20,10 @@ proc `=wasMoved`*[T](s: var seq[T]) {.inline.} =
   s.len = 0
   s.data = nil
 
-proc newSeq*[T](size: int): seq[T] {.nodestroy.} =
+type HasDefault* = concept
+  proc default(_: typedesc[Self]): Self
+
+proc newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
   if size == 0:
     result = seq[T](len: size, data: nil)
   else:
@@ -70,17 +73,18 @@ proc `=dup`*[T](a: seq[T]): seq[T] {.nodestroy.} =
     (result.data[i]) = `=dup`(a.data[i])
     inc i
 
-proc recalcCap(oldCap, addedSize: int): int {.inline.} =
+proc recalcCap(oldCap, addedElements: int): int {.inline.} =
   result = oldCap + (oldCap shr 1)
-  if result < oldCap + addedSize:
-    result = oldCap + addedSize
+  if result < oldCap + addedElements:
+    result = oldCap + addedElements
 
-proc resize[T](dest: var seq[T]; addedSize: int) {.nodestroy.} =
-  let newCap = recalcCap(dest.cap, addedSize)
+proc resize[T](dest: var seq[T]; addedElements: int) {.nodestroy.} =
+  let oldCap = dest.capInBytes div sizeof(T)
+  let newCap = recalcCap(oldCap, addedElements)
   let memSize = newCap * sizeof(T)
   dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
-  if result.data == nil:
-    result.len = 0
+  if dest.data == nil:
+    dest.len = 0
     oomHandler memSize
 
 proc `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
@@ -90,12 +94,13 @@ proc `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
     while i < dest.len:
       `=destroy`(dest.data[i])
       inc i
-  elif dest.cap < src.len:
-    let newCap = recalcCap(dest.cap, src.len - dest.cap)
+  elif dest.capInBytes < src.len * sizeof(T):
+    let oldCap = dest.capInBytes div sizeof(T)
+    let newCap = recalcCap(oldCap, src.len - oldCap)
     let memSize = newCap * sizeof(T)
     dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
-    if result.data == nil:
-      result.len = 0
+    if dest.data == nil:
+      dest.len = 0
       oomHandler memSize
       return
   dest.len = src.len
@@ -106,7 +111,7 @@ proc `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
 
 proc add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
   let L = s.len
-  if s.cap <= L:
+  if s.capInBytes <= L * sizeof(T):
     resize s, 1
     if s.data == nil: return
   inc s.len
@@ -119,9 +124,9 @@ proc `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inli
 proc `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline.} =
   (s.data[i]) = elem
 
-proc `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len), inline.} = s.data[int i]
+proc `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} = s.data[int i]
 
-proc `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len), inline.} =
+proc `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint), inline.} =
   (s.data[int i]) = elem
 
 proc `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
@@ -152,7 +157,7 @@ proc shrink*[T](s: var seq[T]; newLen: int) =
   s.len = newLen
 
 proc growUnsafe*[T](s: var seq[T]; newLen: int) =
-  if s.cap <= newLen:
+  if s.capInBytes <= newLen * sizeof(T):
     resize s, newLen - s.len
     if s.data == nil: return
   s.len = newLen

@@ -1,0 +1,6 @@
+[submodule "vendor/mimalloc"]
+	path = vendor/mimalloc
+	url = https://github.com/nim-lang/mimalloc
+[submodule "vendor/errorcodes"]
+	path = vendor/errorcodes
+	url = https://github.com/nim-lang/errorcodes

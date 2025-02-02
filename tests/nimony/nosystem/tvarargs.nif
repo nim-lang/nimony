@@ -1,0 +1,137 @@
+(.nif24)
+0,2,tests/nimony/nosystem/tvarargs.nim(stmts 2,1
+ (type :int.0.tvah6culb
+  (i -1) . 5
+  (pragmas 2
+   (magic 7 Int)) .) 2,2
+ (type :bool.0.tvah6culb
+  (bool) . 6
+  (pragmas 2
+   (magic 7 Bool)) .) 2,3
+ (type :char.0.tvah6culb
+  (c +8) . 6
+  (pragmas 2
+   (magic 7 Char)) .) 2,4
+ (type :typedesc.0.tvah6culb
+  (typedesc) 9
+  (typevars 1
+   (typevar :T.0.tvah6culb . . . .)) 13
+  (pragmas 2
+   (magic 7 TypeDesc)) .) ,6
+ (proc 5 :typeof.0.tvah6culb
+  (typeof) . 12
+  (typevars 1
+   (typevar :T.1.tvah6culb . . . .)) 15
+  (params 1
+   (param :x.0 . . 3 T.1.tvah6culb .)) 16
+  (typedesc 1 T.1.tvah6culb) 35
+  (pragmas 2
+   (magic 7 TypeOf)) . .) 10,9
+ (type ~8 :string.0.tvah6culb x . . string.0.sys9azlf) ,11
+ (proc 5 :\2B.0.tvah6culb
+  (add -3) . . 9
+  (params 1
+   (param :x.1 . . 6
+    (i -1) .) 4
+   (param :y.0 . . 3
+    (i -1) .)) 13
+  (i -1) 26
+  (pragmas 2
+   (magic 7 "AddI")) . .) ,12
+ (proc 5 :\2D.0.tvah6culb
+  (sub -3) . . 9
+  (params 1
+   (param :x.2 . . 6
+    (i -1) .) 4
+   (param :y.1 . . 3
+    (i -1) .)) 13
+  (i -1) 26
+  (pragmas 2
+   (magic 7 "SubI")) . .) ,14
+ (proc 5 :<=.0.tvah6culb
+  (le -3) . . 10
+  (params 1
+   (param :x.3 . . 6
+    (i -1) .) 4
+   (param :y.2 . . 3
+    (i -1) .)) 13
+  (bool) 28
+  (pragmas 2
+   (magic 7 "LeI")) . .) 8,17
+ (type ~6 :File.0.tvah6culb x . . 2
+  (object . .)) 4,19
+ (var :stdout.0.tvah6culb . . 8 File.0.tvah6culb .) ,21
+ (proc 5 :write.0.tvah6culb . . . 10
+  (params 1
+   (param :f.0 . . 3
+    (mut 4 File.0.tvah6culb) .) 14
+   (param :c.0 . . 3
+    (c +8) .)) . . . 35
+  (stmts
+   (discard .))) ,22
+ (proc 5 :write.1.tvah6culb . . . 10
+  (params 1
+   (param :f.1 . . 3
+    (mut 4 File.0.tvah6culb) .) 14
+   (param :s.0 . . string.0.sys9azlf .)) . . . 37
+  (stmts
+   (discard .))) ,24
+ (cmd write.0.tvah6culb 6
+  (haddr stdout.0.tvah6culb) 14 '\0A') 2,27
+ (type :untyped.0.tvah6culb
+  (untyped) . 9
+  (pragmas 2
+   (magic 7 Expr)) .) ,29
+ (iterator 9 :unpack.0.tvah6culb
+  (unpack) . . 15
+  (params) 4
+  (untyped) 27
+  (pragmas 2
+   (magic 7 Unpack)) . .) ,31
+ (template 9 :echo.0.tvah6culb x . . 14
+  (params 5
+   (param :vanon.0 . .
+    (varargs) .)) . 17
+  (pragmas 2
+   (varargs)) . 2,1
+  (stmts 4
+   (for 11
+    (unpack)
+    (unpackflat
+     (let :x.4 . . ~2,~3
+      (untyped) .)) ~2,1
+    (expr
+     (cmd
+      (ochoice write.0.tvah6culb write.1.tvah6culb) 6 stdout.0.tvah6culb 14 x.4))) ,2
+   (cmd write.0.tvah6culb 6 stdout.0.tvah6culb 14 '\0A'))) 4,36
+ (var :someVar.0.tvah6culb . . string.0.sys9azlf 10 "") 2,32
+ (stmts 2,1
+  (stmts
+   (cmd write.1.tvah6culb 6
+    (haddr stdout.0.tvah6culb) 1,5 "a")) 2,1
+  (stmts
+   (cmd write.1.tvah6culb 6
+    (haddr stdout.0.tvah6culb) 6,5 someVar.0.tvah6culb)) 2,1
+  (stmts
+   (cmd write.1.tvah6culb 6
+    (haddr stdout.0.tvah6culb) 15,5 "b")) ,2
+  (cmd write.0.tvah6culb 6
+   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,32
+ (stmts 2,1
+  (stmts
+   (cmd write.1.tvah6culb 6
+    (haddr stdout.0.tvah6culb) 1,7 "xzy")) 2,1
+  (stmts
+   (cmd write.0.tvah6culb 6
+    (haddr stdout.0.tvah6culb) 8,7 'c')) ,2
+  (cmd write.0.tvah6culb 6
+   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,32
+ (stmts ,2
+  (cmd write.0.tvah6culb 6
+   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,32
+ (stmts 2,1
+  (stmts
+   (cmd write.1.tvah6culb 6
+    (haddr stdout.0.tvah6culb) 1,11 someVar.0.tvah6culb)) ,2
+  (cmd write.0.tvah6culb 6
+   (haddr stdout.0.tvah6culb) 14 '\0A')))

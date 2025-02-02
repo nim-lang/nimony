@@ -128,25 +128,27 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       skip n
       if n.kind == ParRi:
         result = getTypeImpl(c, prev)
-  of CallX, CallStrLitX, InfixX, PrefixX, CmdX:
+  of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX:
     result = getTypeImpl(c, n.firstSon)
-    if isRoutine(symKind(result)):
-      let routine = asRoutine(result)
-      result = routine.retType
+    if result.kind == ParLe and result.substructureKind == ParamsS:
+      skip result # skip "params"
+      # return retType
     elif typeKind(result) in {IterT, ProcT}:
       inc result
       inc result # dot token
       skip result # parameters
   of FalseX, TrueX, AndX, OrX, NotX, DefinedX, DeclaredX, IsMainModuleX, EqX, NeqX, LeX, LtX,
+     EqSetX, LeSetX, LtSetX, InSetX,
      CompilesX:
     result = c.builtins.boolType
   of NegX, NegInfX, NanX, InfX:
     result = c.builtins.floatType
   of EnumToStrX, DefaultObjX, DefaultTupX:
     result = c.builtins.stringType
-  of SizeofX:
+  of SizeofX, CardSetX:
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
+     PlusSetX, MinusSetX, MulSetX, XorSetX,
      CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX:
     result = n.firstSon
   of ParX, EnsureMoveX:
@@ -230,6 +232,10 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
+  of DestroyX, CopyX, WasMovedX, SinkHookX, TraceX:
+    result = c.builtins.voidType
+  of DupX:
+    result = getTypeImpl(c, n.firstSon)
   of SufX:
     var n = n
     inc n # tag
@@ -255,3 +261,21 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
 proc getType*(c: var TypeCache; n: Cursor): Cursor =
   getTypeImpl c, n
 
+proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor): bool =
+  # returns false if the routine is generic
+  result = true # assume it is concrete
+  let sym = n.symId
+  for i in 0..<BodyPos:
+    if i == ParamsPos:
+      c.registerParams(sym, n)
+    elif i == TypeVarsPos:
+      result = n.substructureKind != TypevarsS
+    takeTree dest, n
+
+proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor) =
+  let name = n.symId
+  takeTree dest, n # name
+  takeTree dest, n # export marker
+  takeTree dest, n # pragmas
+  c.registerLocal(name, n)
+  takeTree dest, n # type

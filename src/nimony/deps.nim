@@ -15,7 +15,7 @@
 ]#
 
 import std/[os, tables, sets, syncio, assertions, strutils, times]
-import semos, nifconfig, nimony_model
+import semos, nifconfig, nimony_model, nifindexes
 import ".." / gear2 / modnames, semdata
 
 include nifprelude
@@ -247,6 +247,20 @@ const makefileHeader = """
 .SECONDARY:
   """ # don't delete intermediate files
 
+type
+  CFile = tuple
+    name, obj, customArgs: string
+
+proc toBuildList(c: DepContext): seq[CFile] =
+  result = @[]
+  for v in c.nodes:
+    let index = readIndex(mescape(indexFile(v.files[0])))
+    for i in index.toBuild:
+      let path = i[1]
+      let obj = splitFile(path).name & ".o"
+      let customArgs = i[2]
+      result.add (path, obj, customArgs)
+
 proc generateFinalMakefile(c: DepContext): string =
   var s = makefileHeader
   let dest =
@@ -261,10 +275,21 @@ proc generateFinalMakefile(c: DepContext): string =
 
   # The .exe file depends on all .o files:
   if c.cmd in {DoCompile, DoRun}:
+    let buildList = toBuildList(c)
+
     s.add "\n" & mescape(exeFile(c.rootNode.files[0])) & ":"
+
+    for cfile in buildList:
+      s.add " " & mescape("nifcache" / cfile.obj)
+
     for v in c.nodes:
       s.add " " & mescape(objFile(v.files[0]))
     s.add "\n\t$(CC) -o $@ $^"
+
+    for cfile in buildList:
+      s.add "\n" & mescape("nifcache" / cfile.obj) & ": " & mescape(cfile.name) &
+            "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
+            mescape(cfile.customArgs) & " $< -o $@"
 
     # The .o files depend on all of their .c files:
     s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
@@ -318,11 +343,11 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
   result = "nifcache" / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
 
-proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild, silentMake: bool;
+proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs: string; moduleFlags: set[ModuleFlag]; cmd: Command) =
   let nifler = findTool("nifler")
 
-  if compat:
+  if config.compat:
     let cfgNif = "nifcache" / moduleSuffix(project, []) & ".cfg.nif"
     exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
       quoteShell(cfgNif)
@@ -337,7 +362,6 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild, 
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
   let makeFilename = generateFrontendMakefile(c, commandLineArgs)
-  let makeFinalFilename = generateFinalMakefile(c)
   #echo "run with: make -f ", makeFilename
   when defined(windows):
     putEnv("CC", "gcc")
@@ -346,6 +370,8 @@ proc buildGraph*(config: sink NifConfig; project: string; compat, forceRebuild, 
     (if forceRebuild: " -B" else: "") &
     " -f "
   exec makeCommand & quoteShell(makeFilename)
+
+  let makeFinalFilename = generateFinalMakefile(c)
   exec makeCommand & quoteShell(makeFinalFilename)
   if cmd == DoRun:
     exec exeFile(c.rootNode.files[0])

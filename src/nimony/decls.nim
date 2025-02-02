@@ -19,6 +19,15 @@ proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol
   t in {ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}
 
+proc skipProcTypeToParams*(t: Cursor): Cursor =
+  result = t
+  if result.typeKind == ProcT:
+    inc result # skip ParLe
+    skip result # skip name
+    skip result # skip export marker
+    skip result # skip pattern
+    skip result # skip generics
+
 const
   LocalTypePos* = 3
   LocalValuePos* = 4
@@ -115,6 +124,7 @@ proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
 const
   TypevarsPos* = 3
   ParamsPos* = 4
+  ResultPos* = 5
   BodyPos* = 8
 
 proc asRoutine*(c: Cursor; mode = SkipExclBody): Routine =

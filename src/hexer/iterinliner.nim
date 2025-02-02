@@ -1,7 +1,7 @@
 import basics
 include nifprelude
 
-import std / tables
+import std / [assertions, tables]
 
 import ".." / nimony / [nimony_model, programs, decls]
 
@@ -148,7 +148,7 @@ proc pop(s: var seq[SymId]): SymId =
   setLen(s, s.len-1)
 
 proc transformForStmt(e: var EContext; c: var Cursor)
-proc transformStmt*(e: var EContext; c: var Cursor)
+proc transformStmt(e: var EContext; c: var Cursor)
 
 proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]; fromForloop = false) =
   case c.kind
@@ -367,7 +367,7 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
 
   skip c
 
-proc transformStmt*(e: var EContext; c: var Cursor) =
+proc transformStmt(e: var EContext; c: var Cursor) =
   case c.kind
   of DotToken:
     e.dest.add c
@@ -406,3 +406,6 @@ proc transformStmt*(e: var EContext; c: var Cursor) =
       takeTree(e, c)
   else:
     takeTree(e, c)
+
+proc elimForLoops*(e: var EContext; c: var Cursor) =
+  transformStmt(e, c)

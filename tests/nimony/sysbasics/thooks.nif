@@ -1,5 +1,5 @@
 (.nif24)
-,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
+0,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
  (type ~13 :MyObjectBase.0.tho8gh7q4 . . . 2
   (object . ~13,1
    (fld :x.0.tho8gh7q4 . . 6
@@ -100,7 +100,7 @@
   (stmts 4
    (var :obj.0 . . 13 MyObject.1.tho8gh7q4 .) 4,2
    (var :obj2.0 . . 14 MyObject.2.tho8gh7q4 .) 10,4
-   (call 1 =destroy.2.tho8gh7q4 1 obj.0) 4,6
+   (destroy 1 obj.0) 4,6
    (var :objbase.0 . . 9 MyObjectBase.0.tho8gh7q4 .) 4,7
    (var :objbase2.0 . . 10 MyObjectBase.0.tho8gh7q4 .) 10,8
    (call 1 =destroy.0.tho8gh7q4 1 objbase2.0) 10,9
@@ -116,22 +116,13 @@
   (stmts
    (discard .))) 4,52
  (var :obj.0.tho8gh7q4 . . 13 MyObject.1.tho8gh7q4 .) 12,53
- (call 1 =checkHook.1.tho8gh7q4 1 obj.0.tho8gh7q4) 12,40
- (proc :=destroy.2.tho8gh7q4 . ~12,~8 .
-  (at =destroy.1.tho8gh7q4 8,~4
-   (i -1) 13,~4
-   (f +64)) 9,~8
-  (params 1
-   (param :x.14 . . 11 MyObject.1.tho8gh7q4 .)) ~12,~8 . ~12,~8 . ~12,~8 . ~10,~7
-  (stmts 4
-   (let :x.15 . . 4,~31
-    (i -1) 4 +12))) 12,53
+ (call 1 =checkHook.1.tho8gh7q4 1 obj.0.tho8gh7q4) 12,53
  (proc :=checkHook.1.tho8gh7q4 . ~12,~4 .
   (at =checkHook.0.tho8gh7q4 8,~17
    (i -1) 13,~17
    (f +64)) 11,~4
   (params 1
-   (param :x.16 . . 12 MyObject.1.tho8gh7q4 .)) ~12,~4 . ~12,~4 . ~12,~4 . ~10,~3
+   (param :x.13 . . 12 MyObject.1.tho8gh7q4 .)) ~12,~4 . ~12,~4 . ~12,~4 . ~10,~3
   (stmts
    (discard .))) 19,36
  (type :MyObject.1.tho8gh7q4 .
@@ -157,10 +148,10 @@
    (i -1) 25,14
    (f +64)) 22
   (params 1
-   (param :x.24 . . 3
+   (param :x.22 . . 3
     (mut 12 MyObject.1.tho8gh7q4) .)) . . . 2,1
   (stmts 4
-   (let :x.25 . . 4,~21
+   (let :x.23 . . 4,~21
     (i -1) 4 +12) 4,1
    (let :y.9 . . 4,~22
     (i -1) 4 +4))) ,26
@@ -169,7 +160,7 @@
    (i -1) 25,10
    (f +64)) 18
   (params 1
-   (param :x.26 . . 3
+   (param :x.24 . . 3
     (mut 12 MyObject.1.tho8gh7q4) .) 24
    (param :y.10 . . 11 MyObject.1.tho8gh7q4 .)) . . . 2,1
   (stmts
@@ -179,11 +170,20 @@
    (i -1) 25,7
    (f +64)) 18
   (params 1
-   (param :x.27 . . 3
+   (param :x.25 . . 3
     (mut 12 MyObject.1.tho8gh7q4) .) 24
    (param :y.11 . . 11 MyObject.1.tho8gh7q4 .)) . . . 2,1
   (stmts
-   (discard .))) ,22
+   (discard .))) ,32
+ (proc :=destroy.2.tho8gh7q4 . .
+  (at =destroy.1.tho8gh7q4 20,4
+   (i -1) 25,4
+   (f +64)) 21
+  (params 1
+   (param :x.26 . . 11 MyObject.1.tho8gh7q4 .)) . . . 2,1
+  (stmts 4
+   (let :x.27 . . 4,~31
+    (i -1) 4 +12))) ,22
  (proc :=wasMoved.3.tho8gh7q4 . .
   (at =wasMoved.1.tho8gh7q4 21,16
    (f +64) 28,16

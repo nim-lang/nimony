@@ -6,7 +6,7 @@
 
 import std / [syncio, os, tables, times, packedsets]
 include nifprelude
-import nifindexes, symparser, reporters
+import nifindexes, symparser, reporters, builtintypes
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
@@ -30,7 +30,8 @@ proc newNifModule(infile: string): NifModule =
   result.buf = fromStream(result.stream)
 
 proc suffixToNif*(suffix: string): string {.inline.} =
-  prog.dir / suffix & prog.ext
+  # always imported from semchecked files
+  prog.dir / suffix & ".2.nif"
 
 proc needsRecompile*(dep, output: string): bool =
   result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)
@@ -49,6 +50,7 @@ proc load*(suffix: string): NifModule =
 
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
+                    converters: var Table[SymId, seq[SymId]];
                     marker: var PackedSet[StrId]; negateMarker: bool) =
   let m = load(suffix)
   for k, _ in m.index.public:
@@ -63,6 +65,15 @@ proc loadInterface*(suffix: string; iface: var Iface;
     if not symMarked:
       # mark that this module contains the identifier `strId`:
       importTab.mgetOrPut(strId, @[]).add(module)
+  for k, v in m.index.converters:
+    var name = v
+    extractBasename(name)
+    let nameId = pool.strings.getOrIncl(name)
+    # check that the converter is imported, slow but better to be slow here:
+    if nameId in importTab and module in importTab[nameId]:
+      let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
+      let val = pool.syms.getOrIncl(v)
+      converters.mgetOrPut(key, @[]).add(val)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):
@@ -117,13 +128,49 @@ proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 proc publish*(s: SymId; buf: sink TokenBuf) =
   prog.mem[s] = buf
 
-proc splitModulePath(s: string): (string, string, string) =
+proc splitModulePath*(s: string): (string, string, string) =
   var (dir, main, ext) = splitFile(s)
   let dotPos = find(main, '.')
   if dotPos >= 0:
     ext = substr(main, dotPos) & ext
     main.setLen dotPos
   result = (dir, main, ext)
+
+proc publishStringType() =
+  # This logic is not strictly necessary for "system.nim" itself, but
+  # for modules that emulate system via --isSystem.
+  let symId = pool.syms.getOrIncl(StringName)
+  let aId = pool.syms.getOrIncl(StringAField)
+  let iId = pool.syms.getOrIncl(StringIField)
+  let exportMarker = pool.strings.getOrIncl("x")
+  var str = createTokenBuf(10)
+  str.copyIntoUnchecked "type", NoLineInfo:
+    str.add symdefToken(symId, NoLineInfo)
+    str.add identToken(exportMarker, NoLineInfo)
+    str.addDotToken() # pragmas
+    str.addDotToken() # generic parameters
+    str.copyIntoUnchecked "object", NoLineInfo:
+      str.addDotToken() # inherits from nothing
+      str.copyIntoUnchecked "fld", NoLineInfo:
+        str.add symdefToken(aId, NoLineInfo)
+        str.addDotToken() # export marker
+        str.addDotToken() # pragmas
+        # type is `ptr UncheckedArray[char]`
+        str.copyIntoUnchecked "ptr", NoLineInfo:
+          str.copyIntoUnchecked "uarray", NoLineInfo:
+            str.copyIntoUnchecked "c", NoLineInfo:
+              str.add intToken(pool.integers.getOrIncl(8), NoLineInfo)
+        str.addDotToken() # default value
+
+      str.copyIntoUnchecked "fld", NoLineInfo:
+        str.add symdefToken(iId, NoLineInfo)
+        str.addDotToken() # export marker
+        str.addDotToken() # pragmas
+        str.copyIntoUnchecked "i", NoLineInfo:
+          str.add intToken(pool.integers.getOrIncl(-1), NoLineInfo)
+        str.addDotToken() # default value
+
+  publish symId, str
 
 proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   let (dir, file, _) = splitModulePath(infile)
@@ -143,6 +190,7 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   #echo "INPUT IS ", toString(m.buf)
   result = beginRead(m.buf)
   prog.mods[prog.main] = m
+  publishStringType()
 
 proc wantParRi*(dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParRi:

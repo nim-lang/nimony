@@ -132,7 +132,8 @@ proc addSymbolImpl(b: var Builder; s: string) {.inline.} =
       b.put c
     for i in 1..<s.len:
       let c = s[i]
-      if c.needsEscape:
+      # Symbols imported from C can have a space like "struct foo".
+      if c == ' ' or c.needsEscape:
         b.escape c
       else:
         b.put c
@@ -232,9 +233,9 @@ proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
     b.buf.addLine line
   of LineInfoFile:
     addSep b
-    b.buf.addLineIgnoreZero col
+    b.buf.addLine col
     b.buf.add ','
-    b.buf.addLineIgnoreZero line
+    b.buf.addLine line
     b.buf.add ','
     for c in file:
       if c.needsEscape:

@@ -49,11 +49,9 @@ type
     ImportExceptS = "importexcept"
     ExportS = "export"
     CommentS = "comment"
-    ClonerS = "cloner"
-    TracerS = "tracer"
-    DisarmerS = "disarmer"
-    MoverS = "mover"
-    DtorS = "dtor"
+    PragmasLineS = "pragmas"
+    InclSetS = "incl"
+    ExclSetS = "excl"
 
   SymKind* = enum
     NoSym
@@ -131,6 +129,7 @@ type
     CallStrLitX = "callstrlit"
     InfixX = "infix"
     PrefixX = "prefix"
+    HcallX = "hcall" # hidden converter call
     CmdX = "cmd"
     InfX = "inf"
     NegInfX = "neginf"
@@ -152,7 +151,22 @@ type
     ExprX = "expr" # was nkStmtListExpr in the old Nim
     ArrAtX = "arrat"
     TupAtX = "tupat" # tup[0] syntax
+    PlusSetX = "plusset"
+    MinusSetX = "minusset"
+    MulSetX = "mulset"
+    XorSetX = "xorset"
+    EqSetX = "eqset"
+    LeSetX = "leset"
+    LtSetX = "ltset"
+    InSetX = "inset"
+    CardSetX = "card"
     EnsureMoveX = "emove" # note that `move` can be written in standard Nim
+    DestroyX = "destroy"
+    DupX = "dup"
+    CopyX = "copy"
+    WasMovedX = "wasmoved"
+    SinkHookX = "sinkh"
+    TraceX = "trace"
 
   TypeKind* = enum
     NoType
@@ -175,7 +189,6 @@ type
     LentT = "lent"
     SinkT = "sink"
     #FlexarrayT = "flexarray"
-    StringT = "string"
     VarargsT = "varargs"
     NilT = "nilt"
     OrT = "or"
@@ -226,6 +239,11 @@ type
     ByRef = "byref"
     Inline = "inline"
     NoInit = "noinit"
+    Requires = "requires"
+    Ensures = "ensures"
+    BuildP = "build"
+    EmitP = "emit"
+    StringP = "string"
 
   SubstructureKind* = enum
     NoSub
@@ -270,8 +288,10 @@ type
 declareMatcher parseStmtKind, StmtKind
 
 proc stmtKind*(c: Cursor): StmtKind {.inline.} =
-  assert c.kind == ParLe
-  parseStmtKind pool.tags[tag(c)]
+  if c.kind == ParLe:
+    result = parseStmtKind pool.tags[tag(c)]
+  else:
+    result = NoStmt
 
 declareMatcher parsePragmaKind, PragmaKind
 
@@ -331,8 +351,9 @@ template `==`*(n: Cursor; s: string): bool = n.kind == ParLe and pool.tags[n.tag
 
 const
   RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
-  CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX}
+  CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX, HcallX}
   ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
+  TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
@@ -360,7 +381,7 @@ template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   body
   wantParRi dest, n
 
-proc isAtom*(n: Cursor): bool {.inline.} = n.kind >= ParLe
+proc isAtom*(n: Cursor): bool {.inline.} = n.kind < ParLe
 
 proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
   dest.add symToken(s, info)
@@ -487,3 +508,11 @@ proc hasBuiltinPragma*(n: Cursor; kind: PragmaKind): bool =
 
 proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   dest.add symToken(s, info)
+
+const
+  TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
+
+proc skipModifier*(a: Cursor): Cursor =
+  result = a
+  if result.kind == ParLe and result.typeKind in TypeModifiers:
+    inc result

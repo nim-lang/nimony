@@ -25,6 +25,7 @@ Command:
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
   -p, --path:PATH           add PATH to the search path
+  --compat                  turn on compatibility mode
   --noenv                   do not read configuration from `NIM_*`
                             environment variables
   --isSystem                passed module is a `system.nim` module
@@ -76,6 +77,7 @@ proc handleCmdLine() =
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "forcebuild", "f": forceRebuild = true
+      of "compat": config.compat = true
       of "path", "p": config.paths.add val
       of "define", "d": config.defines.incl val
       of "noenv": useEnv = false
