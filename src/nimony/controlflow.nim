@@ -75,6 +75,48 @@ proc patch(c: var ControlFlow; p: Label) =
 
 proc tr(c: var ControlFlow; n: var Cursor)
 
+proc trAnd(c: var ControlFlow; n: var Cursor) =
+  let info = n.info
+  inc n
+  c.dest.addParLe(IfS, info)
+  tr c, n
+  # (if (first condition) (goto L1) (goto L1))
+  # (lab :L1) (second condition) (goto End))
+  # (lab :L2) (false)
+  # (lab :End)
+  let l1 = c.jmpForw(info)
+  let l2 = c.jmpForw(info)
+  c.dest.addParRi()
+  c.patch l1
+  tr c, n
+  let lend = c.jmpForw(info)
+  c.patch l2
+  c.dest.addParLe(FalseX, info)
+  c.dest.addParRi()
+  skipParRi n
+  c.patch lend
+
+proc trOr(c: var ControlFlow; n: var Cursor) =
+  let info = n.info
+  inc n
+  c.dest.addParLe(IfS, info)
+  tr c, n
+  # (if (first condition) (goto L1) (goto L1))
+  # (lab :L1) (true) (goto End))
+  # (lab :L2) (second condition)
+  # (lab :End)
+  let l1 = c.jmpForw(info)
+  let l2 = c.jmpForw(info)
+  c.dest.addParRi()
+  c.patch l1
+  c.dest.addParLe(TrueX, info)
+  c.dest.addParRi()
+  let lend = c.jmpForw(info)
+  c.patch l2
+  tr c, n
+  skipParRi n
+  c.patch lend
+
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   inc n
@@ -140,13 +182,19 @@ proc tr(c: var ControlFlow; n: var Cursor) =
     of BreakS, ForS, ContinueS, RetS, RaiseS:
       raiseAssert "not implemented"
     else:
-      # Replace copyTree with recursive transformation
-      c.dest.add n
-      inc n
-      while n.kind != ParRi:
-        tr(c, n)
-      c.dest.addParRi()
-      inc n
+      case n.exprKind
+      of AndX:
+        trAnd(c, n)
+      of OrX:
+        trOr(c, n)
+      else:
+        # Replace copyTree with recursive transformation
+        c.dest.add n
+        inc n
+        while n.kind != ParRi:
+          tr(c, n)
+        c.dest.addParRi()
+        inc n
 
 proc toControlflow*(n: Cursor): TokenBuf =
   var c = ControlFlow()
@@ -170,10 +218,13 @@ when isMainModule:
 
 (if
   (elif (eq +1 +1) (call echo "true"))
-  (elif (eq +2 +3) (call echo "elif"))
+  (elif (and (eq +2 +3) (eq +4 +5)) (call echo "elif"))
   (else (call echo "false"))
 )
 
 (while (eq +1 +1) (call echo "while"))
+
+(while (or (eq +1 +1) (eq +4 +5)) (call echo "while 2"))
 )
+
 """
