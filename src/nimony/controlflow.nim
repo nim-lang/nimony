@@ -78,7 +78,7 @@ proc tr(c: var ControlFlow; n: var Cursor)
 proc trAnd(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   inc n
-  c.dest.addParLe(IfS, info)
+  c.dest.addParLe(IteF, info)
   tr c, n
   # (if (first condition) (goto L1) (goto L1))
   # (lab :L1) (second condition) (goto End))
@@ -91,15 +91,14 @@ proc trAnd(c: var ControlFlow; n: var Cursor) =
   tr c, n
   let lend = c.jmpForw(info)
   c.patch l2
-  c.dest.addParLe(FalseX, info)
-  c.dest.addParRi()
+  c.dest.addParPair(FalseX, info)
   skipParRi n
   c.patch lend
 
 proc trOr(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   inc n
-  c.dest.addParLe(IfS, info)
+  c.dest.addParLe(IteF, info)
   tr c, n
   # (if (first condition) (goto L1) (goto L1))
   # (lab :L1) (true) (goto End))
@@ -109,8 +108,7 @@ proc trOr(c: var ControlFlow; n: var Cursor) =
   let l2 = c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
-  c.dest.addParLe(TrueX, info)
-  c.dest.addParRi()
+  c.dest.addParPair(TrueX, info)
   let lend = c.jmpForw(info)
   c.patch l2
   tr c, n
@@ -124,7 +122,7 @@ proc trWhile(c: var ControlFlow; n: var Cursor) =
   let loopStart = c.genLabel()
 
   # Generate if with goto
-  c.dest.addParLe(IfS, info)
+  c.dest.addParLe(IteF, info)
   tr(c, n) # transform condition
   let loopBody = c.jmpForw(info)
   let afterLoop = c.jmpForw(info)
@@ -146,7 +144,7 @@ proc trIf(c: var ControlFlow; n: var Cursor) =
     let k = n.substructureKind
     if k == ElifS:
       inc n
-      c.dest.addParLe(IfS, info)
+      c.dest.addParLe(IteF, info)
       tr c, n # condition
       let thenSection = c.jmpForw(info)
       let elseSection = c.jmpForw(info)

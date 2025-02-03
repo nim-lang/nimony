@@ -264,6 +264,13 @@ type
     ExceptS = "except"
     FinallyS = "fin"
 
+  ControlFlowKind* = enum
+    NoControlFlow
+    IteF = "ite" # if-then-else
+    GraphF = "graph" # disjoint subgraph annotation
+    # Note: `goto` instruction is mapped to UnknownToken and labels
+    # are implicit targets of goto instructions.
+
   CallConv* = enum
     NoCallConv
     CdeclC = "cdecl"
@@ -347,6 +354,14 @@ proc symKind*(c: Cursor): SymKind {.inline.} =
   else:
     result = NoSym
 
+declareMatcher parseControlFlowKind, ControlFlowKind
+
+proc cfKind*(c: Cursor): ControlFlowKind {.inline.} =
+  if c.kind == ParLe:
+    result = parseControlFlowKind pool.tags[tag(c)]
+  else:
+    result = NoControlFlow
+
 template `==`*(n: Cursor; s: string): bool = n.kind == ParLe and pool.tags[n.tagId] == s
 
 const
@@ -355,8 +370,13 @@ const
   ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
 
-proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind; info = NoLineInfo) =
+proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind;
+               info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
+
+proc addParPair*(dest: var TokenBuf; kind: PragmaKind|ExprKind; info = NoLineInfo) =
+  dest.add parLeToken(pool.tags.getOrIncl($kind), info)
+  dest.addParRi()
 
 proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind; info = NoLineInfo): PackedToken =
   parLeToken(pool.tags.getOrIncl($kind), info)
