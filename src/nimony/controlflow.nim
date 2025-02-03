@@ -94,6 +94,18 @@ proc trExpr(c: var ControlFlow; n: var Cursor)
 proc trStmt(c: var ControlFlow; n: var Cursor)
 
 type
+  Target = SymId
+
+proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: Target) =
+  if tar != SymId(0):
+    c.dest.addParLe(AsgnS, n.info)
+    c.dest.addSymUse tar, n.info
+    trExpr c, n
+    c.dest.addParRi()
+  else:
+    trStmt c, n
+
+type
   FixupList = seq[Label]
 
 proc trCondOp2(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
@@ -235,7 +247,7 @@ proc trWhile(c: var ControlFlow; n: var Cursor) =
   skipParRi n
   c.currentBlock = c.currentBlock.parent
 
-proc trBlock(c: var ControlFlow; n: var Cursor) =
+proc trBlock(c: var ControlFlow; n: var Cursor; tar: Target) =
   inc n
   let thisBlock = BlockOrLoop(kind: IsBlock, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
@@ -246,7 +258,7 @@ proc trBlock(c: var ControlFlow; n: var Cursor) =
     inc n
   else:
     raiseAssert "invalid block statement"
-  trStmt c, n
+  trStmtOrExpr c, n, tar
   for brk in thisBlock.breakInstrs: c.patch brk
   skipParRi n
   c.currentBlock = c.currentBlock.parent
@@ -269,7 +281,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
   skipParRi n
   it.breakInstrs.add c.jmpForw(n.info)
 
-proc trIf(c: var ControlFlow; n: var Cursor) =
+proc trIf(c: var ControlFlow; n: var Cursor; tar: Target) =
   var endings: seq[Label] = @[]
   inc n # if
   while true:
@@ -281,13 +293,13 @@ proc trIf(c: var ControlFlow; n: var Cursor) =
       var fjmp: seq[Label] = @[]
       trIte c, n, tjmp, fjmp # condition
       for t in tjmp: c.patch t
-      trStmt c, n # action
+      trStmtOrExpr c, n, tar # action
       endings.add c.jmpForw(info)
       for f in fjmp: c.patch f
       skipParRi n
     elif k == ElseS:
       inc n
-      trStmt c, n
+      trStmtOrExpr c, n, tar
       skipParRi n
     else:
       break
@@ -387,11 +399,11 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
   c.currentBlock = c.currentBlock.parent
   c.typeCache.closeScope()
 
-proc trTry(c: var ControlFlow; n: var Cursor) =
+proc trTry(c: var ControlFlow; n: var Cursor; tar: Target) =
   var thisBlock = BlockOrLoop(kind: IsTryStmt, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
   inc n
-  trStmt c, n
+  trStmtOrExpr c, n, tar
   let tryEnd = c.jmpForw(n.info)
   for ret in thisBlock.breakInstrs: c.patch ret
   thisBlock.breakInstrs.shrink 0
@@ -400,7 +412,7 @@ proc trTry(c: var ControlFlow; n: var Cursor) =
   while n.substructureKind == ExceptS:
     inc n
     takeTree c.dest, n # copy (except e as Type)
-    trStmt c, n
+    trStmtOrExpr c, n, tar
     exceptEnds.add c.jmpForw(n.info)
     skipParRi n
 
@@ -417,6 +429,7 @@ proc trTry(c: var ControlFlow; n: var Cursor) =
   skipParRi n
 
 proc trRaise(c: var ControlFlow; n: var Cursor) =
+  # we map `raise x` to `currexc = x; return`.
   c.dest.addParLe(AsgnS, n.info)
   inc n
   c.dest.addSymUse pool.syms.getOrIncl("currexc.0.sys"), n.info
@@ -491,7 +504,7 @@ proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType:
     fjmp.add nextAttemptB
   inc n
 
-proc trCase(c: var ControlFlow; n: var Cursor) =
+proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
   let info = n.info
   inc n
   let selectorType = c.typeCache.getType(n)
@@ -517,13 +530,13 @@ proc trCase(c: var ControlFlow; n: var Cursor) =
     var fjmp: FixupList = @[]
     trCaseSet c, n, selector, selectorType, tjmp, fjmp
     for t in tjmp: c.patch t
-    trStmt c, n
+    trStmtOrExpr c, n, tar
     endings.add c.jmpForw(n.info)
     for f in fjmp: c.patch f
     skipParRi n
   if n.substructureKind == ElseS:
     inc n
-    trStmt c, n
+    trStmtOrExpr c, n, tar
     skipParRi n
   skipParRi n
   for e in endings: c.patch e
@@ -534,9 +547,9 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of NoStmt:
     trExpr c, n
   of IfS:
-    trIf(c, n)
+    trIf c, n, default(Target)
   of WhileS:
-    trWhile(c, n)
+    trWhile c, n
   of StmtsS:
     inc n
     while n.kind != ParRi:
@@ -562,15 +575,15 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of VarS, LetS, CursorS, ConstS:
     trLocal c, n
   of BlockS:
-    trBlock c, n
+    trBlock c, n, default(Target)
   of ForS:
     trFor c, n
   of AsgnS:
     trAsgn c, n
   of CaseS:
-    trCase c, n
+    trCase c, n, default(Target)
   of TryS:
-    trTry c, n
+    trTry c, n, default(Target)
   of RaiseS:
     trRaise c, n
   of IterS, ProcS, FuncS, MacroS, ConverterS, MethodS:
@@ -587,11 +600,11 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of WhenS:
     raiseAssert "`when` statement should have been eliminated"
 
-proc openTempVar(c: var ControlFlow; typ: Cursor; info: PackedLineInfo): TempVar =
-  result = TempVar(c.nextVar)
+proc openTempVar(c: var ControlFlow; typ: Cursor; info: PackedLineInfo): SymId =
+  result = pool.syms.getOrIncl("`cf" & $c.nextVar)
   inc c.nextVar
   c.dest.addParLe LetS, info
-  c.defineTemp result, info
+  c.dest.addSymDef result, info
   c.dest.addEmpty2 info # no export marker, no pragmas
   c.dest.copyTree typ
 
@@ -610,7 +623,35 @@ proc trStmtListExpr(c: var ControlFlow; n: var Cursor) =
   skipParRi n
   for i in 0 ..< fullExpr.len:
     c.dest.add fullExpr[i]
-  c.useTemp temp, info
+  c.dest.addSymUse temp, info
+
+type
+  ControlFlowAsExprKind = enum
+    IfExpr, CaseExpr, TryExpr, BlockExpr
+
+proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAsExprKind) =
+  let typ = c.typeCache.getType(n)
+  let info = n.info
+
+  let fullExpr = rollbackToStmtBegin c
+
+  let tar = openTempVar(c, typ, info)
+  c.dest.addDotToken()
+  c.dest.addParRi() # close temp var declaration
+
+  case kind
+  of IfExpr:
+    trIf c, n, tar
+  of CaseExpr:
+    trCase c, n, tar
+  of TryExpr:
+    trTry c, n, tar
+  of BlockExpr:
+    trBlock c, n, tar
+
+  for i in 0 ..< fullExpr.len:
+    c.dest.add fullExpr[i]
+  c.dest.addSymUse tar, info
 
 proc trExpr(c: var ControlFlow; n: var Cursor) =
   case n.kind
@@ -629,12 +670,22 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
     of ExprX:
       trStmtListExpr c, n
     else:
-      c.dest.add n
-      inc n
-      while n.kind != ParRi:
-        trExpr c, n
-      c.dest.addParRi()
-      inc n
+      case n.stmtKind
+      of IfS:
+        trIfCaseTryBlockExpr c, n, IfExpr
+      of CaseS:
+        trIfCaseTryBlockExpr c, n, CaseExpr
+      of TryS:
+        trIfCaseTryBlockExpr c, n, TryExpr
+      of BlockS:
+        trIfCaseTryBlockExpr c, n, BlockExpr
+      else:
+        c.dest.add n
+        inc n
+        while n.kind != ParRi:
+          trExpr c, n
+        c.dest.addParRi()
+        inc n
 
 proc toControlflow*(n: Cursor): TokenBuf =
   var c = ControlFlow(typeCache: createTypeCache())
@@ -695,10 +746,12 @@ when isMainModule:
   """
 
   const CaseTest = """(stmts
-    (let :my.var . . (i -1) .)
-    (case my.var
-      (of (set +0 +1 +2 (range +5 +15) +80) (call echo "match"))
-      (else (call echo "no match"))
+    (let :other.var . . (i -1) +12)
+    (let :my.var . . (i -1)
+      (case other.var
+        (of (set +0 +1 +2 (range +5 +15) +80) +1)
+        (else +0)
+    )
     )
   )"""
 
