@@ -436,6 +436,31 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of WhenS:
     raiseAssert "`when` statement should have been eliminated"
 
+proc openTempVar(c: var ControlFlow; typ: Cursor; info: PackedLineInfo): TempVar =
+  result = TempVar(c.nextVar)
+  inc c.nextVar
+  c.dest.addParLe LetS, info
+  c.defineTemp result, info
+  c.dest.addEmpty2 info # no export marker, no pragmas
+  c.dest.copyTree typ
+
+proc trStmtListExpr(c: var ControlFlow; n: var Cursor) =
+  let typ = c.typeCache.getType(n)
+  let info = n.info
+  inc n
+  let fullExpr = rollbackToStmtBegin c
+  while n.kind != ParRi:
+    if isLastSon(n): break
+    trStmt c, n
+
+  let temp = openTempVar(c, typ, info)
+  trExpr c, n
+  c.dest.addParRi() # close temp var declaration
+  skipParRi n
+  for i in 0 ..< fullExpr.len:
+    c.dest.add fullExpr[i]
+  c.useTemp temp, info
+
 proc trExpr(c: var ControlFlow; n: var Cursor) =
   case n.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StringLit, CharLit,
@@ -451,10 +476,8 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
     of OrX:
       trStandaloneAndOr(c, n, OrX)
     of ExprX:
-      raiseAssert "to implement"
-      #trStmtListExpr c, n
+      trStmtListExpr c, n
     else:
-      # Replace copyTree with recursive transformation
       c.dest.add n
       inc n
       while n.kind != ParRi:
@@ -500,6 +523,7 @@ when isMainModule:
 """
   const NotTest = """(stmts
   (if (elif (not (eq +1 +1)) (call echo "true")))
+  (call echo (expr (stmts (call side.effect)) +3))
 )
 """
 
