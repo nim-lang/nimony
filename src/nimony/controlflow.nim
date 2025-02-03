@@ -17,8 +17,11 @@ const
 
 type
   Label = distinct int
+  TempVar = distinct int
   ControlFlow = object
     dest: TokenBuf
+    stmtBegin: int
+    nextVar: int
 
 proc codeListing(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
@@ -73,47 +76,167 @@ proc patch(c: var ControlFlow; p: Label) =
   # patch with current index
   c.dest[p.int].patchInt32Token int32(c.dest.len - p.int)
 
-proc tr(c: var ControlFlow; n: var Cursor)
+proc trExpr(c: var ControlFlow; n: var Cursor)
+proc trStmt(c: var ControlFlow; n: var Cursor)
 
-proc trAnd(c: var ControlFlow; n: var Cursor) =
+type
+  FixupList = seq[Label]
+
+proc trCondOp2(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
+  # Handles the `b` part of `a and b` or `a or b`. Simply translates it
+  # to `(ite b tjmp fjmp)`.
   let info = n.info
-  inc n
   c.dest.addParLe(IteF, info)
-  tr c, n
-  # (if (first condition) (goto L1) (goto L1))
-  # (lab :L1) (second condition) (goto End))
-  # (lab :L2) (false)
-  # (lab :End)
+  trExpr c, n # second condition
+  tjmp.add c.jmpForw(info)
+  fjmp.add c.jmpForw(info)
+  c.dest.addParRi()
+  skipParRi n
+
+proc trAnd(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
+  # (ite (first-condition) L1 fjmp)
+  # (lab :L1) (ite second-condition tjmp fjmp)
+  let info = n.info
+  c.dest.addParLe(IteF, info)
+  inc n
+  trExpr c, n # first-condition
   let l1 = c.jmpForw(info)
-  let l2 = c.jmpForw(info)
+  fjmp.add c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
-  tr c, n
-  let lend = c.jmpForw(info)
-  c.patch l2
-  c.dest.addParPair(FalseX, info)
-  skipParRi n
-  c.patch lend
+  trCondOp2 c, n, tjmp, fjmp
 
-proc trOr(c: var ControlFlow; n: var Cursor) =
+proc trOr(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
+  # (ite (first-condition) tjmp L1)
+  # (lab :L1) (ite second-condition tjmp fjmp)
   let info = n.info
-  inc n
   c.dest.addParLe(IteF, info)
-  tr c, n
-  # (if (first condition) (goto L1) (goto L1))
-  # (lab :L1) (true) (goto End))
-  # (lab :L2) (second condition)
-  # (lab :End)
+  inc n
+  trExpr c, n # first-condition
+  tjmp.add c.jmpForw(info)
   let l1 = c.jmpForw(info)
-  let l2 = c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
-  c.dest.addParPair(TrueX, info)
+  trCondOp2 c, n, tjmp, fjmp
+
+proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
+  case n.exprKind
+  of AndX:
+    trAnd(c, n, tjmp, fjmp)
+  of OrX:
+    trOr(c, n, tjmp, fjmp)
+  of NotX:
+    # reverse the jump targets:
+    trIte c, n, fjmp, tjmp
+  of ParX:
+    inc n
+    trIte c, n, tjmp, fjmp
+    skipParRi n
+  else:
+    # cannot exploit a special case here:
+    let info = n.info
+    c.dest.addParLe(IteF, info)
+    trExpr c, n
+    tjmp.add c.jmpForw(info)
+    fjmp.add c.jmpForw(info)
+    c.dest.addParRi()
+
+proc defineTemp(c: var ControlFlow; tmp: TempVar; info: PackedLineInfo) =
+  c.dest.addSymDef pool.syms.getOrIncl("`cf." & $int(tmp)), info
+
+proc useTemp(c: var ControlFlow; tmp: TempVar; info: PackedLineInfo) =
+  c.dest.copyIntoSymUse pool.syms.getOrIncl("`cf." & $int(tmp)), info
+
+proc declareBool(c: var ControlFlow; info: PackedLineInfo): TempVar =
+  result = TempVar(c.nextVar)
+  inc c.nextVar
+  c.dest.addParLe VarS, info
+  c.defineTemp result, info
+  c.dest.addEmpty2 info # no export marker, no pragmas
+  c.dest.addParPair(BoolT, info)
+  c.dest.addDotToken() # no value
+  c.dest.addParRi()
+
+proc rollbackToStmtBegin(c: var ControlFlow): TokenBuf =
+  result = createTokenBuf(40)
+  for i in c.stmtBegin ..< c.dest.len:
+    result.add c.dest[i]
+  c.dest.shrink c.stmtBegin
+
+proc trStandaloneAndOr(c: var ControlFlow; n: var Cursor; opc: ExprKind) =
+  assert opc == AndX or opc == OrX
+  # The control flow graph has no `and`/`or` operators and we might already be in deeply
+  # nested expression based code here. The solution is to "repair" the AST:
+  # `(call (add x (add y z)) (and a b)` is rewritten to
+  # `(var :tmp (bool)) (asgn tmp a) (ite tmp L1 L2)
+  # L1: (asgn tmp b)
+  # L2:
+  # (call (add x (add y z)) tmp)`.
+  # For this we stored the beginning of the stmt in `c.stmtBegin`.
+  let fullExpr = rollbackToStmtBegin c
+  let info = n.info
+  let temp = declareBool(c, info)
+  var tjmp: seq[Label] = @[]
+  var fjmp: seq[Label] = @[]
+  trIte c, n, tjmp, fjmp
+  for t in tjmp:
+    c.patch t
+  c.dest.copyIntoKind(AsgnS, info):
+    c.useTemp temp, info
+    c.dest.addParPair TrueX, info
   let lend = c.jmpForw(info)
-  c.patch l2
-  tr c, n
-  skipParRi n
+  # patch the false jump targets:
+  for f in fjmp:
+    c.patch f
+  c.dest.copyIntoKind(AsgnS, info):
+    c.useTemp temp, info
+    c.dest.addParPair FalseX, info
   c.patch lend
+
+  for i in 0 ..< fullExpr.len:
+    c.dest.add fullExpr[i]
+  c.useTemp temp, info
+
+when false:
+  proc trAnd(c: var ControlFlow; n: var Cursor) =
+    let info = n.info
+    inc n
+    c.dest.addParLe(IteF, info)
+    tr c, n
+    # (if (first condition) (goto L1) (goto L2))
+    # (lab :L1) (second condition) (goto End))
+    # (lab :L2) (false)
+    # (lab :End)
+    let l1 = c.jmpForw(info)
+    let l2 = c.jmpForw(info)
+    c.dest.addParRi()
+    c.patch l1
+    tr c, n
+    let lend = c.jmpForw(info)
+    c.patch l2
+    c.dest.addParPair(FalseX, info)
+    skipParRi n
+    c.patch lend
+
+  proc trOr(c: var ControlFlow; n: var Cursor) =
+    let info = n.info
+    inc n
+    c.dest.addParLe(IteF, info)
+    tr c, n
+    # (if (first condition) (goto L1) (goto L2))
+    # (lab :L1) (true) (goto End))
+    # (lab :L2) (second condition)
+    # (lab :End)
+    let l1 = c.jmpForw(info)
+    let l2 = c.jmpForw(info)
+    c.dest.addParRi()
+    c.patch l1
+    c.dest.addParPair(TrueX, info)
+    let lend = c.jmpForw(info)
+    c.patch l2
+    tr c, n
+    skipParRi n
+    c.patch lend
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
@@ -122,18 +245,17 @@ proc trWhile(c: var ControlFlow; n: var Cursor) =
   let loopStart = c.genLabel()
 
   # Generate if with goto
-  c.dest.addParLe(IteF, info)
-  tr(c, n) # transform condition
-  let loopBody = c.jmpForw(info)
-  let afterLoop = c.jmpForw(info)
-  c.dest.addParRi()
+  var tjmp: seq[Label] = @[]
+  var fjmp: seq[Label] = @[]
+  trIte c, n, tjmp, fjmp # transform condition
 
-  # Generate loop body
-  c.patch loopBody
-  tr(c, n) # transform body
+  # loop body is about to begin:
+  for t in tjmp: c.patch t
+
+  trStmt(c, n) # transform body
   c.jmpBack(loopStart, info)
 
-  c.patch afterLoop
+  for f in fjmp: c.patch f
   skipParRi n
 
 proc trIf(c: var ControlFlow; n: var Cursor) =
@@ -144,18 +266,17 @@ proc trIf(c: var ControlFlow; n: var Cursor) =
     let k = n.substructureKind
     if k == ElifS:
       inc n
-      c.dest.addParLe(IteF, info)
-      tr c, n # condition
-      let thenSection = c.jmpForw(info)
-      let elseSection = c.jmpForw(info)
-      c.dest.addParRi()
-      c.patch thenSection
-      tr c, n # action
-      c.patch elseSection
+      var tjmp: seq[Label] = @[]
+      var fjmp: seq[Label] = @[]
+      trIte c, n, tjmp, fjmp # condition
+      for t in tjmp: c.patch t
+      trStmt c, n # action
+      endings.add c.jmpForw(info)
+      for f in fjmp: c.patch f
       skipParRi n
     elif k == ElseS:
       inc n
-      tr c, n
+      trStmt c, n
       skipParRi n
     else:
       break
@@ -163,7 +284,24 @@ proc trIf(c: var ControlFlow; n: var Cursor) =
   for i in countdown(endings.high, 0):
     c.patch(endings[i])
 
-proc tr(c: var ControlFlow; n: var Cursor) =
+proc trStmt(c: var ControlFlow; n: var Cursor) =
+  c.stmtBegin = c.dest.len
+  case n.stmtKind
+  of IfS:
+    trIf(c, n)
+  of WhileS:
+    trWhile(c, n)
+  of StmtsS:
+    inc n
+    while n.kind != ParRi:
+      trStmt c, n
+    inc n
+  of BreakS, ForS, ContinueS, RetS, RaiseS:
+    raiseAssert "not implemented"
+  else:
+    trExpr c, n
+
+proc trExpr(c: var ControlFlow; n: var Cursor) =
   case n.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StringLit, CharLit,
      Ident, DotToken, EofToken, UnknownToken:
@@ -172,27 +310,19 @@ proc tr(c: var ControlFlow; n: var Cursor) =
   of ParRi:
     raiseAssert "unreachable"
   of ParLe:
-    case n.stmtKind
-    of IfS:
-      trIf(c, n)
-    of WhileS:
-      trWhile(c, n)
-    of BreakS, ForS, ContinueS, RetS, RaiseS:
-      raiseAssert "not implemented"
+    case n.exprKind
+    of AndX:
+      trStandaloneAndOr(c, n, AndX)
+    of OrX:
+      trStandaloneAndOr(c, n, OrX)
     else:
-      case n.exprKind
-      of AndX:
-        trAnd(c, n)
-      of OrX:
-        trOr(c, n)
-      else:
-        # Replace copyTree with recursive transformation
-        c.dest.add n
-        inc n
-        while n.kind != ParRi:
-          tr(c, n)
-        c.dest.addParRi()
-        inc n
+      # Replace copyTree with recursive transformation
+      c.dest.add n
+      inc n
+      while n.kind != ParRi:
+        trExpr c, n
+      c.dest.addParRi()
+      inc n
 
 proc toControlflow*(n: Cursor): TokenBuf =
   var c = ControlFlow()
@@ -201,7 +331,7 @@ proc toControlflow*(n: Cursor): TokenBuf =
   c.dest.add n
   inc n
   while n.kind != ParRi:
-    tr c, n
+    trStmt c, n
   c.dest.addParRi()
   result = ensureMove c.dest
 
