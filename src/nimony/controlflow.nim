@@ -370,9 +370,13 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
     let isConcrete = takeRoutineHeader(c.typeCache, c.dest, n)
     if isConcrete:
+      c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
     else:
       takeTree c.dest, n
+    for ret in thisProc.breakInstrs: c.patch ret
+    if isConcrete:
+      c.dest.addParRi() # StmtsS
   c.currentBlock = c.currentBlock.parent
   c.typeCache.closeScope()
 
@@ -526,6 +530,13 @@ when isMainModule:
   (call echo (expr (stmts (call side.effect)) +3))
 )
 """
+  const ReturnTest = """(stmts
+  (proc :my.proc . . . (params (param :i.0 .. (i -1) .))
+    (i -1) . . (stmts (result :res.0 . . (i -1) .) (ret +1)))
+  (call my.proc +3)
+  )
+  """
 
   #test BasicTest
-  test NotTest
+  #test NotTest
+  test ReturnTest

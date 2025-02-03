@@ -269,6 +269,7 @@ type
     IteF = "ite" # if-then-else
     GraphF = "graph" # disjoint subgraph annotation
     ForBindF = "forbind" # bindings for a `for` loop but the loop itself is mapped to gotos
+    KillF = "kill" # (kill some.var) # some.var is about to disappear (scope exit)
     # Note: `goto` instruction is mapped to UnknownToken and labels
     # are implicit targets of goto instructions.
 
