@@ -268,6 +268,7 @@ type
     NoControlFlow
     IteF = "ite" # if-then-else
     GraphF = "graph" # disjoint subgraph annotation
+    ForBindF = "forbind" # bindings for a `for` loop but the loop itself is mapped to gotos
     # Note: `goto` instruction is mapped to UnknownToken and labels
     # are implicit targets of goto instructions.
 
@@ -399,7 +400,8 @@ template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   dest.add n
   inc n
   body
-  wantParRi dest, n
+  dest.addParRi()
+  skipParRi n
 
 proc isAtom*(n: Cursor): bool {.inline.} = n.kind < ParLe
 

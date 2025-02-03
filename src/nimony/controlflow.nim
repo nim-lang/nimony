@@ -10,7 +10,7 @@
 import std/[assertions, intsets]
 include nifprelude
 
-import nimony_model, sembasics
+import nimony_model, sembasics, typenav
 
 const
   GotoInstr = InlineInt
@@ -18,10 +18,22 @@ const
 type
   Label = distinct int
   TempVar = distinct int
+  BlockKind = enum
+    IsRoutine
+    IsLoop
+    IsBlock
+  BlockOrLoop {.acyclic.} = ref object
+    kind: BlockKind
+    sym: SymId # block label or for a routine its `result` symbol
+    parent: BlockOrLoop
+    breakInstrs: seq[Label]
+    contInstrs: seq[Label]
   ControlFlow = object
     dest: TokenBuf
     stmtBegin: int
     nextVar: int
+    currentBlock: BlockOrLoop
+    typeCache: TypeCache
 
 proc codeListing(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
@@ -197,66 +209,61 @@ proc trStandaloneAndOr(c: var ControlFlow; n: var Cursor; opc: ExprKind) =
     c.dest.add fullExpr[i]
   c.useTemp temp, info
 
-when false:
-  proc trAnd(c: var ControlFlow; n: var Cursor) =
-    let info = n.info
-    inc n
-    c.dest.addParLe(IteF, info)
-    tr c, n
-    # (if (first condition) (goto L1) (goto L2))
-    # (lab :L1) (second condition) (goto End))
-    # (lab :L2) (false)
-    # (lab :End)
-    let l1 = c.jmpForw(info)
-    let l2 = c.jmpForw(info)
-    c.dest.addParRi()
-    c.patch l1
-    tr c, n
-    let lend = c.jmpForw(info)
-    c.patch l2
-    c.dest.addParPair(FalseX, info)
-    skipParRi n
-    c.patch lend
-
-  proc trOr(c: var ControlFlow; n: var Cursor) =
-    let info = n.info
-    inc n
-    c.dest.addParLe(IteF, info)
-    tr c, n
-    # (if (first condition) (goto L1) (goto L2))
-    # (lab :L1) (true) (goto End))
-    # (lab :L2) (second condition)
-    # (lab :End)
-    let l1 = c.jmpForw(info)
-    let l2 = c.jmpForw(info)
-    c.dest.addParRi()
-    c.patch l1
-    c.dest.addParPair(TrueX, info)
-    let lend = c.jmpForw(info)
-    c.patch l2
-    tr c, n
-    skipParRi n
-    c.patch lend
-
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   inc n
-
+  let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisBlock
   let loopStart = c.genLabel()
 
   # Generate if with goto
   var tjmp: seq[Label] = @[]
-  var fjmp: seq[Label] = @[]
-  trIte c, n, tjmp, fjmp # transform condition
+  trIte c, n, tjmp, thisBlock.breakInstrs # transform condition
 
   # loop body is about to begin:
   for t in tjmp: c.patch t
 
   trStmt(c, n) # transform body
+  for cont in thisBlock.contInstrs: c.patch cont
   c.jmpBack(loopStart, info)
 
-  for f in fjmp: c.patch f
+  for f in thisBlock.breakInstrs: c.patch f
   skipParRi n
+  c.currentBlock = c.currentBlock.parent
+
+proc trBlock(c: var ControlFlow; n: var Cursor) =
+  inc n
+  let thisBlock = BlockOrLoop(kind: IsBlock, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisBlock
+  if n.kind == SymbolDef:
+    thisBlock.sym = n.symId
+    inc n
+  elif n.kind == DotToken:
+    inc n
+  else:
+    raiseAssert "invalid block statement"
+  trStmt c, n
+  for brk in thisBlock.breakInstrs: c.patch brk
+  skipParRi n
+  c.currentBlock = c.currentBlock.parent
+
+proc trReturn(c: var ControlFlow; n: var Cursor) =
+  var it {.cursor.} = c.currentBlock
+  while it != nil and it.kind != IsRoutine:
+    it = it.parent
+  if it == nil:
+    raiseAssert "return outside of routine"
+  inc n # skip `(ret`
+  if (n.kind == Symbol and n.symId == it.sym) or (n.kind == DotToken):
+    discard "do not generate `result = result`"
+    inc n
+  else:
+    c.dest.addParLe(AsgnS, n.info)
+    c.dest.addSymUse it.sym, n.info
+    trExpr c, n
+    c.dest.addParRi()
+  skipParRi n
+  it.breakInstrs.add c.jmpForw(n.info)
 
 proc trIf(c: var ControlFlow; n: var Cursor) =
   var endings: seq[Label] = @[]
@@ -284,9 +291,97 @@ proc trIf(c: var ControlFlow; n: var Cursor) =
   for i in countdown(endings.high, 0):
     c.patch(endings[i])
 
+proc trBreak(c: var ControlFlow; n: var Cursor) =
+  var it {.cursor.} = c.currentBlock
+  inc n
+  if n.kind == DotToken:
+    if it != nil:
+      it.breakInstrs.add c.jmpForw(n.info)
+    else:
+      raiseAssert "break outside of loop"
+    inc n
+  elif n.kind == Symbol:
+    let lab = n.symId
+    while it != nil and it.sym != lab:
+      if it.kind == IsRoutine:
+        # we cannot cross routine boundaries!
+        raiseAssert "could not find label"
+      it = it.parent
+    if it != nil:
+      it.breakInstrs.add c.jmpForw(n.info)
+    else:
+      raiseAssert "could not find label"
+    inc n
+  else:
+    raiseAssert "invalid break statement"
+  skipParRi n
+
+proc trContinue(c: var ControlFlow; n: var Cursor) =
+  var it {.cursor.} = c.currentBlock
+  inc n
+  if n.kind == DotToken:
+    if it != nil:
+      it.contInstrs.add c.jmpForw(n.info)
+    else:
+      raiseAssert "continue outside of loop"
+    inc n
+  else:
+    raiseAssert "invalid continue statement"
+  skipParRi n
+
+proc trFor(c: var ControlFlow; n: var Cursor) =
+  let info = n.info
+  let loopStart = c.jmpForw(info)
+  c.dest.addParLe(ForBindF, info)
+  inc n
+  # iterator call:
+  trExpr c, n
+  # bindings:
+  takeTree c.dest, n
+  c.dest.addParRi()
+  # loop body:
+  let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisBlock
+  trStmt c, n
+  skipParRi n
+  for cont in thisBlock.contInstrs: c.patch cont
+  c.jmpBack(loopStart, info)
+  for brk in thisBlock.breakInstrs: c.patch brk
+  c.currentBlock = c.currentBlock.parent
+
+proc trResult(c: var ControlFlow; n: var Cursor) =
+  copyInto c.dest, n:
+    if c.currentBlock.kind == IsRoutine:
+      c.currentBlock.sym = n.symId
+    takeLocalHeader c.typeCache, c.dest, n
+    trExpr c, n
+
+proc trLocal(c: var ControlFlow; n: var Cursor) =
+  copyInto c.dest, n:
+    takeLocalHeader c.typeCache, c.dest, n
+    trExpr c, n
+
+proc trProc(c: var ControlFlow; n: var Cursor) =
+  let thisProc = BlockOrLoop(kind: IsRoutine, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisProc
+  copyInto c.dest, n:
+    let isConcrete = takeRoutineHeader(c.typeCache, c.dest, n)
+    if isConcrete:
+      trStmt c, n
+    else:
+      takeTree c.dest, n
+  c.currentBlock = c.currentBlock.parent
+
+proc trAsgn(c: var ControlFlow; n: var Cursor) =
+  copyInto c.dest, n:
+    trExpr c, n
+    trExpr c, n
+
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   c.stmtBegin = c.dest.len
   case n.stmtKind
+  of NoStmt:
+    trExpr c, n
   of IfS:
     trIf(c, n)
   of WhileS:
@@ -296,10 +391,46 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     while n.kind != ParRi:
       trStmt c, n
     inc n
-  of BreakS, ForS, ContinueS, RetS, RaiseS:
+  of ScopeS:
+    c.dest.add n
+    inc n
+    c.typeCache.openScope()
+    while n.kind != ParRi:
+      trStmt c, n
+    c.dest.addParRi()
+    inc n
+    c.typeCache.closeScope()
+  of BreakS:
+    trBreak c, n
+  of ContinueS:
+    trContinue c, n
+  of RetS:
+    trReturn c, n
+  of ResultS:
+    trResult c, n
+  of VarS, LetS, CursorS, ConstS:
+    trLocal c, n
+  of BlockS:
+    trBlock c, n
+  of ForS:
+    trFor c, n
+  of AsgnS:
+    trAsgn c, n
+  of RaiseS, CaseS, TryS:
     raiseAssert "not implemented"
-  else:
-    trExpr c, n
+  of IterS, ProcS, FuncS, MacroS, ConverterS, MethodS:
+    trProc c, n
+  of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromImportS, ImportExceptS, PragmasLineS:
+    takeTree c.dest, n
+  of YieldS, DiscardS, CallS, CmdS, InclSetS, ExclSetS:
+    c.dest.add n
+    inc n
+    while n.kind != ParRi:
+      trExpr c, n
+    c.dest.addParRi()
+    inc n
+  of WhenS:
+    raiseAssert "`when` statement should have been eliminated"
 
 proc trExpr(c: var ControlFlow; n: var Cursor) =
   case n.kind
@@ -315,6 +446,9 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
       trStandaloneAndOr(c, n, AndX)
     of OrX:
       trStandaloneAndOr(c, n, OrX)
+    of ExprX:
+      raiseAssert "to implement"
+      #trStmtListExpr c, n
     else:
       # Replace copyTree with recursive transformation
       c.dest.add n
@@ -325,7 +459,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
       inc n
 
 proc toControlflow*(n: Cursor): TokenBuf =
-  var c = ControlFlow()
+  var c = ControlFlow(typeCache: createTypeCache())
   assert n.stmtKind == StmtsS
   var n = n
   c.dest.add n
@@ -342,17 +476,17 @@ when isMainModule:
     echo codeListing(cf)
 
   test """(stmts
-(if (elif (eq +1 +1) (call echo "true")))
+(if (elif (eq +11 +11) (call echo "true")))
 
 (if
-  (elif (eq +1 +1) (call echo "true"))
+  (elif (eq +12 +12) (call echo "true"))
   (elif (and (eq +2 +3) (eq +4 +5)) (call echo "elif"))
   (else (call echo "false"))
 )
 
-(while (eq +1 +1) (call echo "while"))
+(while (eq +13 +13) (call echo "while"))
 
-(while (or (eq +1 +1) (eq +4 +5)) (call echo "while 2"))
+(while (or (eq +9 +9) (eq +4 +5)) (call echo "while 2"))
 )
 
 """
