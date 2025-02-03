@@ -1969,9 +1969,8 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     if pk == Header:
       let idx = c.dest.len - 1
       let tok = c.dest[idx]
-      # Replace ${path} to absolute path
-      let fileId = getFileId(pool.man, info)
-      let name = replaceSubs(pool.strings[tok.litId], "${path}", pool.files[fileId])
+      var name = replaceSubs(pool.strings[tok.litId], info.getFile(), c.g.config)
+      name = name.toRelativePath(c.g.config.nifcachePath)
       c.dest[idx] = strToken(pool.strings.getOrIncl(name), tok.info)
     # Finalize expression
     c.dest.addParRi()
@@ -4873,16 +4872,18 @@ proc semPragmaLine(c: var SemContext; it: var Item; info: PackedLineInfo) =
     if args.len != 2 and args.len != 3:
       buildErr c, it.n.info, "build expected 2 or 3 parameters"
 
-    let fileId = getFileId(pool.man, info)
-    let dir = absoluteParentDir(pool.files[fileId])
+    # XXX: makefile is executed parent to nifcachePath
+    let nifcacheDir = absoluteParentDir(c.g.config.nifcachePath)
+    let currentDir = absoluteParentDir(info.getFile)
 
+    # Extract build pragma arguments
     let compileType = args[0]
-    # Replace ${path} to absolute path
-    let name = replaceSubs(args[1], "${path}", dir).toAbsolutePath(dir)
-    let customArgs = if args.len == 3: replaceSubs(args[2], "${path}", dir) else: ""
+    var name = replaceSubs(args[1], currentDir, c.g.config).toAbsolutePath(currentDir)
+    let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
 
     if not fileExists2(name):
       buildErr c, it.n.info, "cannot find: " & name
+    name = name.toRelativePath(nifcacheDir)
 
     c.toBuild.buildTree TupleConstrX, info:
       c.toBuild.addStrLit compileType, info

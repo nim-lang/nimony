@@ -6,7 +6,7 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
-from strutils import replace, contains
+from std / strutils import multiReplace
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
 import ".." / lib / nifchecksums
@@ -42,21 +42,17 @@ proc absoluteParentDir*(f: string): string =
 proc fileExists2*(f: string): bool =
   result = os.fileExists(f)
 
-proc toAbsolutePath*(f: string, dir: string): string =
-  if f.isAbsolute:
-    result = f
-  else:
-    result = dir / f
+proc toAbsolutePath*(f: string): string =
+  if f.isAbsolute: return f
+  result = os.absolutePath(f)
 
-proc replaceSubs*(f: string, pattern, dir: string): string =
-  if not f.contains(pattern):
-    return f
-  # Unpack to an absolute path
-  var abs = absolutePath(dir)
-  if os.fileExists(abs):
-    abs = parentDir(abs)
-  # Replace found patterns by the absolute path
-  result = f.replace(pattern, abs).normalizedPath()
+proc toAbsolutePath*(f: string, dir: string): string =
+  if f.isAbsolute: return f
+  result = normalizedPath(dir / f)
+
+proc toRelativePath*(f: string, dir: string): string =
+  if not f.isAbsolute: return f
+  result = f.relativePath(dir)
 
 proc findTool*(name: string): string =
   assert not name.isAbsolute
@@ -224,6 +220,18 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     skip n
     hasError = true
 
+proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
+  # Unpack Current File to Absolute
+  let nifcache = config.nifcachePath
+  var path = absolutePath(currentFile)
+  if os.fileExists(path):
+    path = parentDir(path)
+  # Replace matches with paths
+  path = fmt.multiReplace(
+    ("${path}", path),
+    ("${nifcache}", nifcache))
+  result = path.normalizedPath()
+
 # ------------------ include/import handling ------------------------
 
 proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
@@ -241,7 +249,7 @@ proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
     nifstreams.close(stream)
 
 proc getFile*(info: PackedLineInfo): string =
-  let (fid, _, _) = unpack(pool.man, info)
+  let fid = unpack(pool.man, info)[0]
   result = pool.files[fid]
 
 proc selfExec*(c: var SemContext; file: string; moreArgs: string) =

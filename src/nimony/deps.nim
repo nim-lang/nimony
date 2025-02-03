@@ -251,6 +251,11 @@ type
   CFile = tuple
     name, obj, customArgs: string
 
+proc rootPath(c: DepContext): string =
+  # XXX: makefile is executed parent to nifcachePath
+  result = absoluteParentDir(c.rootNode.files[0].nimFile)
+  result = relativePath(result, parentDir c.config.nifcachePath)
+
 proc toBuildList(c: DepContext): seq[CFile] =
   result = @[]
   for v in c.nodes:
@@ -273,7 +278,7 @@ proc generateFinalMakefile(c: DepContext): string =
       exeFile(c.rootNode.files[0])
 
   # Absolute path of root node module
-  s.add "\nROOT_PATH = " & absoluteParentDir(c.rootNode.files[0].nimFile)
+  s.add "\nROOT_PATH = " & rootPath(c)
   s.add "\nall: " & mescape dest
 
   # The .exe file depends on all .o files:
