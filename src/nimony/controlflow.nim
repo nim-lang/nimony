@@ -364,6 +364,7 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
 proc trProc(c: var ControlFlow; n: var Cursor) =
   let thisProc = BlockOrLoop(kind: IsRoutine, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisProc
+  c.typeCache.openScope()
   copyInto c.dest, n:
     let isConcrete = takeRoutineHeader(c.typeCache, c.dest, n)
     if isConcrete:
@@ -371,6 +372,7 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
     else:
       takeTree c.dest, n
   c.currentBlock = c.currentBlock.parent
+  c.typeCache.closeScope()
 
 proc trAsgn(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
@@ -461,12 +463,14 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
 proc toControlflow*(n: Cursor): TokenBuf =
   var c = ControlFlow(typeCache: createTypeCache())
   assert n.stmtKind == StmtsS
+  c.typeCache.openScope()
   var n = n
   c.dest.add n
   inc n
   while n.kind != ParRi:
     trStmt c, n
   c.dest.addParRi()
+  c.typeCache.closeScope()
   result = ensureMove c.dest
 
 when isMainModule:
@@ -487,6 +491,8 @@ when isMainModule:
 (while (eq +13 +13) (call echo "while"))
 
 (while (or (eq +9 +9) (eq +4 +5)) (call echo "while 2"))
+
+(let :my.var . . (i -1) (call echo.0 "abc" (and (eq +5 -5) (eq +6 -6))))
 )
 
 """
