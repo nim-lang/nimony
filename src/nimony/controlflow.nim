@@ -139,7 +139,9 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     trOr(c, n, tjmp, fjmp)
   of NotX:
     # reverse the jump targets:
+    inc n
     trIte c, n, fjmp, tjmp
+    skipParRi n
   of ParX:
     inc n
     trIte c, n, tjmp, fjmp
@@ -479,7 +481,7 @@ when isMainModule:
     var cf = toControlflow(beginRead(input))
     echo codeListing(cf)
 
-  test """(stmts
+  const BasicTest = """(stmts
 (if (elif (eq +11 +11) (call echo "true")))
 
 (if
@@ -496,3 +498,10 @@ when isMainModule:
 )
 
 """
+  const NotTest = """(stmts
+  (if (elif (not (eq +1 +1)) (call echo "true")))
+)
+"""
+
+  #test BasicTest
+  test NotTest
