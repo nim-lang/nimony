@@ -22,6 +22,8 @@ type
     IsRoutine
     IsLoop
     IsBlock
+    IsTryStmt
+    IsFinally
   BlockOrLoop {.acyclic.} = ref object
     kind: BlockKind
     sym: SymId # block label or for a routine its `result` symbol
@@ -251,7 +253,7 @@ proc trBlock(c: var ControlFlow; n: var Cursor) =
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
-  while it != nil and it.kind != IsRoutine:
+  while it != nil and it.kind notin {IsRoutine, IsTryStmt, IsFinally}:
     it = it.parent
   if it == nil:
     raiseAssert "return outside of routine"
@@ -297,6 +299,11 @@ proc trBreak(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
   inc n
   if n.kind == DotToken:
+    while it != nil and it.kind notin {IsLoop, IsBlock}:
+      if it.kind == IsRoutine:
+        # we cannot cross routine boundaries!
+        raiseAssert "break outside of loop"
+      it = it.parent
     if it != nil:
       it.breakInstrs.add c.jmpForw(n.info)
     else:
@@ -380,6 +387,50 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
   c.currentBlock = c.currentBlock.parent
   c.typeCache.closeScope()
 
+proc trTry(c: var ControlFlow; n: var Cursor) =
+  var thisBlock = BlockOrLoop(kind: IsTryStmt, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisBlock
+  inc n
+  trStmt c, n
+  let tryEnd = c.jmpForw(n.info)
+  for ret in thisBlock.breakInstrs: c.patch ret
+  thisBlock.breakInstrs.shrink 0
+
+  var exceptEnds: seq[Label] = @[]
+  while n.substructureKind == ExceptS:
+    inc n
+    takeTree c.dest, n # copy (except e as Type)
+    trStmt c, n
+    exceptEnds.add c.jmpForw(n.info)
+    skipParRi n
+
+  for exceptEnd in exceptEnds: c.patch exceptEnd
+  c.patch tryEnd
+  # Inside a `finally` `return` really means `return` again:
+  c.currentBlock = c.currentBlock.parent
+
+  if n.substructureKind == FinallyS:
+    inc n
+    trStmt c, n
+    skipParRi n
+
+  skipParRi n
+
+proc trRaise(c: var ControlFlow; n: var Cursor) =
+  c.dest.addParLe(AsgnS, n.info)
+  inc n
+  c.dest.addSymUse pool.syms.getOrIncl("currexc.0.sys"), n.info
+  trExpr c, n
+  c.dest.addParRi()
+  skipParRi n
+  var it {.cursor.} = c.currentBlock
+  while it != nil and it.kind notin {IsRoutine, IsTryStmt, IsFinally}:
+    it = it.parent
+  if it == nil:
+    raiseAssert "raise outside of routine"
+  else:
+    it.breakInstrs.add c.jmpForw(n.info)
+
 proc trAsgn(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
     trExpr c, n
@@ -424,8 +475,12 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trFor c, n
   of AsgnS:
     trAsgn c, n
-  of RaiseS, CaseS, TryS:
+  of CaseS:
     raiseAssert "not implemented"
+  of TryS:
+    trTry c, n
+  of RaiseS:
+    trRaise c, n
   of IterS, ProcS, FuncS, MacroS, ConverterS, MethodS:
     trProc c, n
   of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromImportS, ImportExceptS, PragmasLineS:
@@ -534,6 +589,13 @@ when isMainModule:
   (proc :my.proc . . . (params (param :i.0 .. (i -1) .))
     (i -1) . . (stmts (result :res.0 . . (i -1) .) (ret +1)))
   (call my.proc +3)
+  (try
+    (stmts (call echo "try"))
+    (except (as :e.0 Type)
+      (stmts (call echo "except")))
+    (fin
+      (stmts (call echo "finally"))
+    )
   )
   """
 
