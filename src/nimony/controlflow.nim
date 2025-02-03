@@ -436,6 +436,67 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
     trExpr c, n
     trExpr c, n
 
+proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
+               tjmp, fjmp: var FixupList) =
+  assert n.exprKind == SetX
+  inc n
+  var nextAttempt = Label(-1)
+  while n.kind != ParRi:
+    if nextAttempt.int >= 0:
+      c.patch nextAttempt
+    if n.exprKind == RangeX:
+      raiseAssert "not implemented"
+    else:
+      c.dest.addParLe(IteF, n.info)
+      c.dest.addParLe(EqX, n.info)
+      c.dest.copyTree selectorType
+      c.dest.addSymUse selector, n.info
+      trExpr c, n
+      c.dest.addParRi() # EqX
+      tjmp.add c.jmpForw(n.info)
+      nextAttempt = c.jmpForw(n.info)
+      c.dest.addParRi() # IteF
+  if nextAttempt.int >= 0:
+    fjmp.add nextAttempt
+  inc n
+
+proc trCase(c: var ControlFlow; n: var Cursor) =
+  let info = n.info
+  inc n
+  let selectorType = c.typeCache.getType(n)
+  let simpleSelector = n.kind == Symbol
+  var selector: SymId
+  if simpleSelector:
+    selector = n.symId
+    inc n
+  else:
+    selector = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    inc c.nextVar
+    c.dest.addParLe VarS, info
+    c.dest.addSymDef selector, info
+    c.dest.addEmpty2 info # no export marker, no pragmas
+    c.dest.copyTree selectorType
+    trExpr c, n
+    c.dest.addParRi()
+
+  var endings: FixupList = @[]
+  while n.substructureKind == OfS:
+    inc n
+    var tjmp: FixupList = @[]
+    var fjmp: FixupList = @[]
+    trCaseSet c, n, selector, selectorType, tjmp, fjmp
+    for t in tjmp: c.patch t
+    trStmt c, n
+    endings.add c.jmpForw(n.info)
+    for f in fjmp: c.patch f
+    skipParRi n
+  if n.substructureKind == ElseS:
+    inc n
+    trStmt c, n
+    skipParRi n
+  skipParRi n
+  for e in endings: c.patch e
+
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   c.stmtBegin = c.dest.len
   case n.stmtKind
@@ -476,7 +537,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of AsgnS:
     trAsgn c, n
   of CaseS:
-    raiseAssert "not implemented"
+    trCase c, n
   of TryS:
     trTry c, n
   of RaiseS:
@@ -588,17 +649,30 @@ when isMainModule:
   const ReturnTest = """(stmts
   (proc :my.proc . . . (params (param :i.0 .. (i -1) .))
     (i -1) . . (stmts (result :res.0 . . (i -1) .) (ret +1)))
-  (call my.proc +3)
+  (call my.proc +3))
+  """
+
+  const TryTest =  """(stmts
   (try
-    (stmts (call echo "try"))
+    (stmts (call echo "try") (raise some.exc))
     (except (as :e.0 Type)
       (stmts (call echo "except")))
     (fin
       (stmts (call echo "finally"))
     )
-  )
+  ))
   """
+
+  const CaseTest = """(stmts
+    (let :my.var . . (i -1) .)
+    (case my.var
+      (of (set +0 +1 +2) (call echo "match"))
+      (else (call echo "no match"))
+    )
+  )"""
 
   #test BasicTest
   #test NotTest
-  test ReturnTest
+  #test ReturnTest
+  #test TryTest
+  test CaseTest
