@@ -441,11 +441,40 @@ proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType:
   assert n.exprKind == SetX
   inc n
   var nextAttempt = Label(-1)
+  var nextAttemptB = Label(-1)
   while n.kind != ParRi:
     if nextAttempt.int >= 0:
       c.patch nextAttempt
+      nextAttempt = Label(-1)
+    if nextAttemptB.int >= 0:
+      c.patch nextAttemptB
+      nextAttemptB = Label(-1)
+
     if n.exprKind == RangeX:
-      raiseAssert "not implemented"
+      inc n
+
+      c.dest.addParLe(IteF, n.info)
+      c.dest.addParLe(LeX, n.info)
+      c.dest.copyTree selectorType
+      trExpr c, n
+      c.dest.addSymUse selector, n.info
+      c.dest.addParRi() # LeX
+      let trange = c.jmpForw(n.info)
+      nextAttemptB = c.jmpForw(n.info)
+      c.dest.addParRi() # IteF
+      c.patch trange
+
+      c.dest.addParLe(IteF, n.info)
+      c.dest.addParLe(LeX, n.info)
+      c.dest.copyTree selectorType
+      c.dest.addSymUse selector, n.info
+      trExpr c, n
+      c.dest.addParRi() # LeX
+      tjmp.add c.jmpForw(n.info)
+      nextAttempt = c.jmpForw(n.info)
+      c.dest.addParRi() # IteF
+
+      skipParRi n
     else:
       c.dest.addParLe(IteF, n.info)
       c.dest.addParLe(EqX, n.info)
@@ -458,6 +487,8 @@ proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType:
       c.dest.addParRi() # IteF
   if nextAttempt.int >= 0:
     fjmp.add nextAttempt
+  if nextAttemptB.int >= 0:
+    fjmp.add nextAttemptB
   inc n
 
 proc trCase(c: var ControlFlow; n: var Cursor) =
@@ -666,7 +697,7 @@ when isMainModule:
   const CaseTest = """(stmts
     (let :my.var . . (i -1) .)
     (case my.var
-      (of (set +0 +1 +2) (call echo "match"))
+      (of (set +0 +1 +2 (range +5 +15) +80) (call echo "match"))
       (else (call echo "no match"))
     )
   )"""
