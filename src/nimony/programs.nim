@@ -198,3 +198,9 @@ proc wantParRi*(dest: var TokenBuf; n: var Cursor) =
     inc n
   else:
     error "expected ')', but got: ", n
+
+proc skipParRi*(n: var Cursor) =
+  if n.kind == ParRi:
+    inc n
+  else:
+    error "expected ')', but got: ", n

@@ -280,12 +280,6 @@ proc trAsgn(c: var Context; n: var Cursor) =
           n = ri
           callDup c, n
 
-proc skipParRi*(n: var Cursor) =
-  if n.kind == ParRi:
-    inc n
-  else:
-    error "expected ')', but got: ", n
-
 proc getHookType(c: var Context; n: Cursor): Cursor =
   result = skipModifier(getType(c.typeCache, n.firstSon))
 
