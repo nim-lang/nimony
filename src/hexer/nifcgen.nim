@@ -1184,6 +1184,20 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
   else:
     error e, "statement expected, but got: ", c
 
+proc transformInlineRoutines(e: var EContext; c: var Cursor) =
+  var swapped = createTokenBuf()
+  swap e.dest, swapped
+
+  var toTransform = createTokenBuf()
+  toTransform.copyIntoKind StmtsS, c.info:
+    takeTree(toTransform, c)
+  var c0 = beginRead(toTransform)
+  var dest = transform(e, c0, e.main)
+  c = beginRead(dest)
+  inc c # skips (stmts
+
+  swap e.dest, swapped
+
 proc importSymbol(e: var EContext; s: SymId) =
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
@@ -1195,18 +1209,7 @@ proc importSymbol(e: var EContext; s: SymId) =
         var pragmas = asRoutine(c).pragmas
         let prag = parsePragmas(e, pragmas)
         if Inline in prag.flags:
-          var swapped = createTokenBuf()
-          swap e.dest, swapped
-
-          var toTransform = createTokenBuf()
-          toTransform.copyIntoKind StmtsS, c.info:
-            takeTree(toTransform, c)
-          var c0 = beginRead(toTransform)
-          var dest = transform(e, c0, e.main)
-          c = beginRead(dest)
-          inc c # skips (stmts
-
-          swap e.dest, swapped
+          transformInlineRoutines(e, c)
 
       e.dest.add tagToken("imp", c.info)
       traverseStmt e, c, TraverseSig
