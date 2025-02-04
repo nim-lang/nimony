@@ -428,12 +428,6 @@ proc wantParRi*(c: var SemContext; n: var Cursor) =
   else:
     error "expected ')', but got: ", n
 
-proc skipParRi*(n: var Cursor) =
-  if n.kind == ParRi:
-    inc n
-  else:
-    error "expected ')', but got: ", n
-
 proc takeToken*(c: var SemContext; n: var Cursor) {.inline.} =
   c.dest.add n
   inc n

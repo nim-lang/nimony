@@ -42,19 +42,12 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var c2 = Context(ptrSize: c.ptrSize, typeCache: createTypeCache())
   c2.typeCache.openScope()
   copyInto(dest, n):
-    copyTree dest, r.name
-    copyTree dest, r.exported
-    copyTree dest, r.pattern
-    copyTree dest, r.typeVars
-    copyTree dest, r.params
-    copyTree dest, r.pragmas
-    copyTree dest, r.effects
-    if r.body.stmtKind == StmtsS and not isGeneric(r):
+    let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
+    if isConcrete:
       rememberConstRefParams c2, r.params, r.pragmas
-      c2.typeCache.registerParams(r.name.symId, r.params)
-      tr c2, dest, r.body
+      tr c2, dest, n
     else:
-      copyTree dest, r.body
+      takeTree dest, n
   c2.typeCache.closeScope()
 
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -104,16 +97,9 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   wantParRi dest, n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let head = n
-  var r = takeLocal(n, SkipFinalParRi)
-  dest.add head
-  dest.add r.name
-  dest.add r.exported
-  dest.add r.pragmas
-  dest.add r.typ
-  tr c, dest, r.val
-  c.typeCache.registerLocal(r.name.symId, r.typ)
-  dest.addParRi()
+  copyInto dest, n:
+    c.typeCache.takeLocalHeader(dest, n)
+    tr(c, dest, n)
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()

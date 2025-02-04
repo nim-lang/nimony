@@ -73,6 +73,8 @@ proc handleCmdLine() =
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
   var isChild = false
+  var passC = ""
+  var passL = ""
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -120,6 +122,12 @@ proc handleCmdLine() =
         # undocumented command line option, by design
         isChild = true
         forwardArg = false
+      of "passc":
+        passC = val
+        forwardArg = false
+      of "passl":
+        passL = val
+        forwardArg = false
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
@@ -156,7 +164,8 @@ proc handleCmdLine() =
     requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
     buildGraph config, args[0], forceRebuild, silentMake,
-      commandLineArgs, moduleFlags, (if doRun: DoRun else: DoCompile)
+      commandLineArgs, moduleFlags, (if doRun: DoRun else: DoCompile),
+      passC, passL
 
 when isMainModule:
   handleCmdLine()

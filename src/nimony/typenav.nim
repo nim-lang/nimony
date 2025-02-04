@@ -95,6 +95,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       of CaseS:
         var n = n
         inc n # skip `case`
+        skip n # skip selector
         inc n # skip `of`
         skip n # skip set
         result = getTypeImpl(c, n)
@@ -261,3 +262,21 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
 proc getType*(c: var TypeCache; n: Cursor): Cursor =
   getTypeImpl c, n
 
+proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor): bool =
+  # returns false if the routine is generic
+  result = true # assume it is concrete
+  let sym = n.symId
+  for i in 0..<BodyPos:
+    if i == ParamsPos:
+      c.registerParams(sym, n)
+    elif i == TypeVarsPos:
+      result = n.substructureKind != TypevarsS
+    takeTree dest, n
+
+proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor) =
+  let name = n.symId
+  takeTree dest, n # name
+  takeTree dest, n # export marker
+  takeTree dest, n # pragmas
+  c.registerLocal(name, n)
+  takeTree dest, n # type

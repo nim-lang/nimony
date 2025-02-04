@@ -120,6 +120,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       inc n
       skip n # skip the type
     of ExprX:
+      inc n
       while true:
         if isLastSon(n): break
         skip n
@@ -414,6 +415,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
   case err
   of InvalidBorrow:
     buildLocalErr c.dest, n.info, "cannot borrow from " & toString(n, false)
+    skip n
   of LocationIsConst:
     buildLocalErr c.dest, n.info, "cannot mutate expression " & toString(n, false)
     tr c, n, e

@@ -2,3 +2,5 @@
 --warningAsError:Uninit
 --warningAsError:ProveInit
 --experimental:strictDefs
+--warning:StdPrefix
+--warningAsError:StdPrefix

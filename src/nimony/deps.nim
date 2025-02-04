@@ -266,7 +266,7 @@ proc toBuildList(c: DepContext): seq[CFile] =
       let customArgs = i[2]
       result.add (path, obj, customArgs)
 
-proc generateFinalMakefile(c: DepContext): string =
+proc generateFinalMakefile(c: DepContext; passC, passL: string): string =
   var s = makefileHeader
   let dest =
     case c.cmd
@@ -279,6 +279,8 @@ proc generateFinalMakefile(c: DepContext): string =
 
   # Absolute path of root node module
   s.add "\nROOT_PATH = " & rootPath(c)
+  if passC.len != 0:
+    s.add "\nCFLAGS += " & mescape(passC)
   s.add "\nall: " & mescape dest
 
   # The .exe file depends on all .o files:
@@ -293,6 +295,8 @@ proc generateFinalMakefile(c: DepContext): string =
     for v in c.nodes:
       s.add " " & mescape(objFile(v.files[0]))
     s.add "\n\t$(CC) -o $@ $^"
+    if passL.len != 0:
+      s.add " " & mescape(passL)
 
     for cfile in buildList:
       s.add "\n" & mescape("nifcache" / cfile.obj) & ": " & mescape(cfile.name) &
@@ -352,7 +356,7 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
   writeFile result, s
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
-    commandLineArgs: string; moduleFlags: set[ModuleFlag]; cmd: Command) =
+    commandLineArgs: string; moduleFlags: set[ModuleFlag]; cmd: Command; passC, passL: string) =
   let nifler = findTool("nifler")
 
   if config.compat:
@@ -379,7 +383,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     " -f "
   exec makeCommand & quoteShell(makeFilename)
 
-  let makeFinalFilename = generateFinalMakefile(c)
+  let makeFinalFilename = generateFinalMakefile(c, passC, passL)
   exec makeCommand & quoteShell(makeFinalFilename)
   if cmd == DoRun:
     exec exeFile(c.rootNode.files[0])
