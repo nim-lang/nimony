@@ -4758,7 +4758,7 @@ proc semHigh(c: var SemContext; it: var Item) =
 proc semVoidHook(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   let expected = it.typ
-  takeTree c, it.n
+  takeToken c, it.n
   it.typ = c.types.autoType
   semExpr c, it
   if it.n.kind != ParRi:
@@ -4772,7 +4772,7 @@ proc semVoidHook(c: var SemContext; it: var Item) =
 proc semDupHook(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   let expected = it.typ
-  takeTree c, it.n
+  takeToken c, it.n
   it.typ = c.types.autoType
   semExpr c, it
   wantParRi c, it.n
