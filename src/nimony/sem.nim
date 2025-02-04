@@ -711,10 +711,17 @@ proc semProcBody(c: var SemContext; itB: var Item) =
   var it = Item(n: itB.n, typ: c.types.autoType)
   semStmtsExprImpl c, it
   if c.routine.kind == TemplateY:
-    if c.routine.returnType.typeKind == UntypedT:
+    case c.routine.returnType.typeKind
+    of UntypedT:
       discard "ok"
-    else:
+    of VoidT:
       typecheck(c, info, it.typ, c.routine.returnType)
+    else:
+      # uses closing paren of (stmts:
+      c.dest.insert [parLeToken(pool.tags.getOrIncl($ExprX), info)], beforeBodyPos
+      commonType c, it, beforeBodyPos, c.routine.returnType
+      # now add closing paren
+      c.dest.addParRi()
   elif classifyType(c, it.typ) == VoidT:
     discard "ok"
   else:
@@ -1727,22 +1734,27 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       inc root
     if root.kind == Symbol:
       let decl = getTypeSection(root.symId)
-      var objType = decl.body
-      # emulate objtypeImpl
-      if objType.typeKind in {RefT, PtrT}:
-        doDeref = true
-        inc objType
-      if objType.typeKind in {ObjectT, RefObjectT, PtrObjectT}:
-        let field = findObjFieldConsiderVis(c, decl, fieldName)
-        if field.level >= 0:
-          if doDeref or objType.typeKind in {RefObjectT, PtrObjectT}:
-            c.dest[exprStart] = parLeToken(DerefDotX, info)
-          c.dest.add symToken(field.sym, info)
-          c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
-          it.typ = field.typ # will be fit later with commonType
-          it.kind = FldY
-          result = MatchedDotField
+      if decl.kind == TypeY:
+        var objType = decl.body
+        # emulate objtypeImpl
+        if objType.typeKind in {RefT, PtrT}:
+          doDeref = true
+          inc objType
+        if objType.typeKind in {ObjectT, RefObjectT, PtrObjectT}:
+          let field = findObjFieldConsiderVis(c, decl, fieldName)
+          if field.level >= 0:
+            if doDeref or objType.typeKind in {RefObjectT, PtrObjectT}:
+              c.dest[exprStart] = parLeToken(DerefDotX, info)
+            c.dest.add symToken(field.sym, info)
+            c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
+            it.typ = field.typ # will be fit later with commonType
+            it.kind = FldY
+            result = MatchedDotField
+          else:
+            c.dest.add identToken(fieldName, info)
         else:
+          # typevars reach here, maybe return untyped state
+          # though probably better to fail if this is a call, i.e. `x.int`
           c.dest.add identToken(fieldName, info)
       else:
         c.dest.add identToken(fieldName, info)
@@ -2324,6 +2336,10 @@ proc semRangeTypeFromExpr(c: var SemContext; n: var Cursor; info: PackedLineInfo
   addRangeValues c, values
   wantParRi c, n
 
+const InvocableTypeMagics = {ArrayT, RangeT, VarargsT,
+  PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT,
+  SinkT, LentT}
+
 proc semInvoke(c: var SemContext; n: var Cursor) =
   let typeStart = c.dest.len
   let info = n.info
@@ -2348,9 +2364,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     let head = cursorAt(c.dest, typeStart+1)
     let kind = head.typeKind
     endRead(c.dest)
-    if kind in {ArrayT, RangeT, VarargsT,
-      PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT,
-      SinkT, LentT}:
+    if kind in InvocableTypeMagics:
       # magics that can be invoked
       magicKind = kind
       ok = true
@@ -4401,14 +4415,30 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
     it.n = argRead
     result = true
 
+proc isSinglePar(n: Cursor): bool =
+  var n = n
+  inc n
+  result = n.kind == ParRi
+
 proc tryBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item): bool =
   # it.n is after lhs, at args
   result = false
-  if lhs.n.kind == Symbol and lhs.kind == TypeY and
-      isGeneric(getTypeSection(lhs.n.symId)):
+  if (lhs.n.kind == Symbol and lhs.kind == TypeY and
+        isGeneric(getTypeSection(lhs.n.symId))) or
+      (lhs.n.typeKind in InvocableTypeMagics and isSinglePar(lhs.n)):
+    let start = c.dest.len
     # lhs is a generic type symbol, this is a generic invocation
     # treat it as a type expression to call semInvoke
-    semLocalTypeExpr c, it
+    var typeExpr = createTokenBuf(16)
+    typeExpr.addParLe(AtX, lhs.n.info)
+    typeExpr.addSubtree lhs.n
+    while it.n.kind != ParRi:
+      takeTree typeExpr, it.n
+    skipParRi it.n
+    typeExpr.addParRi()
+    var typeItem = Item(n: beginRead(typeExpr), typ: it.typ)
+    semLocalTypeExpr c, typeItem
+    it.typ = typeItem.typ
     return true
   var maybeRoutine = lhs.n
   if maybeRoutine.exprKind in {OchoiceX, CchoiceX}:
@@ -4737,7 +4767,15 @@ proc semLow(c: var SemContext; it: var Item) =
     c.dest.shrink beforeExpr
     buildLowValue(c, typ, info)
   let expected = it.typ
-  it.typ = typ
+  var resultType = typ
+  if resultType.typeKind == ArrayT:
+    inc resultType # skip tag, get to range type
+    skip resultType # skip element type, get to range type
+    if resultType.typeKind == RangeT:
+      inc resultType # skip range tag, get to base type
+  elif resultType.typeKind == RangeT:
+    inc resultType # skip tag, get to base type
+  it.typ = resultType
   commonType c, it, beforeExpr, expected
 
 proc semHigh(c: var SemContext; it: var Item) =
@@ -4752,7 +4790,15 @@ proc semHigh(c: var SemContext; it: var Item) =
     c.dest.shrink beforeExpr
     buildHighValue(c, typ, info)
   let expected = it.typ
-  it.typ = typ
+  var resultType = typ
+  if resultType.typeKind == ArrayT:
+    inc resultType # skip tag
+    skip resultType # skip element type, get to range type
+    if resultType.typeKind == RangeT:
+      inc resultType # skip range tag, get to base type
+  elif resultType.typeKind == RangeT:
+    inc resultType # skip tag, get to base type
+  it.typ = resultType
   commonType c, it, beforeExpr, expected
 
 proc semVoidHook(c: var SemContext; it: var Item) =

@@ -5,3 +5,5 @@ type
   FooArray = array[Len, int]
 
 var b: FooArray
+if b.len == Len:
+  discard
