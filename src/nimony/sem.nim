@@ -4844,6 +4844,12 @@ template procGuard(c: var SemContext; body: untyped) =
   else:
     c.takeTree it.n
 
+template constGuard(c: var SemContext; body: untyped) =
+  if c.phase in {SemcheckSignatures, SemcheckBodies}:
+    body
+  else:
+    c.takeTree it.n
+
 proc semPragmaLine(c: var SemContext; it: var Item; info: PackedLineInfo) =
   inc it.n
   case it.n.pragmaKind:
@@ -5029,7 +5035,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         toplevelGuard c:
           semLocal c, it, ResultY
       of ConstS:
-        toplevelGuard c:
+        constGuard c:
           semLocal c, it, ConstY
       of StmtsS: semStmtsExpr c, it, false
       of ScopeS: semStmtsExpr c, it, true
