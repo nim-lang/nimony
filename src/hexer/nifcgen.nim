@@ -908,6 +908,17 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
           e.dest.add c
           inc c
           wantParRi e, c
+      of AshrX:
+        e.dest.add tagToken("shr", c.info)
+        inc c
+        traverseType(e, c)
+        e.dest.copyIntoKind CastX, c.info:
+          e.dest.addSubTree e.typeCache.builtins.intType
+          traverseExpr e, c
+        e.dest.copyIntoKind CastX, c.info:
+          e.dest.addSubTree e.typeCache.builtins.uintType
+          traverseExpr e, c
+        wantParRi e, c
       of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
         error e, "BUG: not eliminated: ", c
       else:
