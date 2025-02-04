@@ -148,7 +148,14 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
   result = Cursor(p: addr b.data[i], rem: b.len-i)
 
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
-  result = (cast[int](c) - cast[int](b.data)) div sizeof(PackedToken)
+  result = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
+
+proc cursorToPosition*(base, c: Cursor): int {.inline.} =
+  let c = cast[int](c.p)
+  let base = cast[int](base.p)
+  assert c >= base
+  result = (c - base) div sizeof(PackedToken)
+  assert result < 1_000_000
 
 proc add*(result: var TokenBuf; c: Cursor) =
   result.add c.load

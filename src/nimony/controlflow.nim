@@ -541,6 +541,14 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
   skipParRi n
   for e in endings: c.patch e
 
+proc trCall(c: var ControlFlow; n: var Cursor) =
+  c.dest.add n
+  inc n
+  while n.kind != ParRi:
+    trExpr c, n
+  c.dest.addParRi()
+  inc n
+
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   c.stmtBegin = c.dest.len
   case n.stmtKind
@@ -590,7 +598,9 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trProc c, n
   of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromImportS, ImportExceptS, PragmasLineS:
     takeTree c.dest, n
-  of YieldS, DiscardS, CallS, CmdS, InclSetS, ExclSetS:
+  of CallS, CmdS:
+    trCall c, n
+  of YieldS, DiscardS, InclSetS, ExclSetS:
     c.dest.add n
     inc n
     while n.kind != ParRi:
@@ -653,6 +663,14 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
     c.dest.add fullExpr[i]
   c.dest.addSymUse tar, info
 
+proc trExprLoop(c: var ControlFlow; n: var Cursor) =
+  c.dest.add n
+  inc n
+  while n.kind != ParRi:
+    trExpr c, n
+  c.dest.addParRi()
+  inc n
+
 proc trExpr(c: var ControlFlow; n: var Cursor) =
   case n.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StringLit, CharLit,
@@ -669,7 +687,27 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
       trStandaloneAndOr(c, n, OrX)
     of ExprX:
       trStmtListExpr c, n
-    else:
+    of CallKinds:
+      trCall c, n
+    of ArrAtX, TupAtX, AtX, DerefX, HderefX, DotX, DerefDotX, PatX:
+      # in anticipation of special casing:
+      trExprLoop c, n
+    of AddrX, HaddrX:
+      trExprLoop c, n
+    of QuotedX, ParX,
+       NilX, FalseX, TrueX, NotX, NegX, OconstrX, NewOconstrX, TupleConstrX,
+       AconstrX, SetX, OchoiceX, CchoiceX, KvX, AddX, SubX, MulX, DivX, ModX,
+       ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
+       CastX, ConvX, OconvX, HconvX, DconvX, InfX, NegInfX, NanX, SufX, RangeX, RangesX,
+       UnpackX, EnumToStrX,
+       IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
+       MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX, EnsureMoveX,
+       DestroyX, DupX, CopyX, WasMovedX, SinkHookX, TraceX:
+      trExprLoop c, n
+    of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX:
+      # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
+      takeTree c.dest, n
+    of NoExpr:
       case n.stmtKind
       of IfS:
         trIfCaseTryBlockExpr c, n, IfExpr
@@ -680,12 +718,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
       of BlockS:
         trIfCaseTryBlockExpr c, n, BlockExpr
       else:
-        c.dest.add n
-        inc n
-        while n.kind != ParRi:
-          trExpr c, n
-        c.dest.addParRi()
-        inc n
+        trExprLoop c, n
 
 proc toControlflow*(n: Cursor): TokenBuf =
   var c = ControlFlow(typeCache: createTypeCache())
@@ -758,5 +791,5 @@ when isMainModule:
   #test BasicTest
   #test NotTest
   #test ReturnTest
-  #test TryTest
-  test CaseTest
+  test TryTest
+  #test CaseTest
