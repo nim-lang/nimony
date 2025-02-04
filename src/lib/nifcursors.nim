@@ -36,6 +36,8 @@ proc info*(c: Cursor): PackedLineInfo {.inline.} = c.load.info
 proc litId*(c: Cursor): StrId {.inline.} = nifstreams.litId(c.load)
 proc symId*(c: Cursor): SymId {.inline.} = nifstreams.symId(c.load)
 
+proc charLit*(c: Cursor): char {.inline.} = nifstreams.charLit(c.load)
+
 proc intId*(c: Cursor): IntId {.inline.} = nifstreams.intId(c.load)
 proc uintId*(c: Cursor): UIntId {.inline.} = nifstreams.uintId(c.load)
 proc floatId*(c: Cursor): FloatId {.inline.} = nifstreams.floatId(c.load)
@@ -146,7 +148,14 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
   result = Cursor(p: addr b.data[i], rem: b.len-i)
 
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
-  result = (cast[int](c) - cast[int](b.data)) div sizeof(PackedToken)
+  result = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
+
+proc cursorToPosition*(base, c: Cursor): int {.inline.} =
+  let c = cast[int](c.p)
+  let base = cast[int](base.p)
+  assert c >= base
+  result = (c - base) div sizeof(PackedToken)
+  assert result < 1_000_000
 
 proc add*(result: var TokenBuf; c: Cursor) =
   result.add c.load
@@ -333,6 +342,12 @@ proc parse*(r: var Stream; dest: var TokenBuf;
     let tok = r.next()
     dest.add tok
     if tok.kind == EofToken: break
+
+proc parse*(input: string): TokenBuf =
+  # For testing purposes only:
+  var r = nifstreams.openFromBuffer(input)
+  result = createTokenBuf(100)
+  parse(r, result, NoLineInfo)
 
 proc isLastSon*(n: Cursor): bool =
   var n = n

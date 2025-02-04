@@ -316,12 +316,11 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   copyInto dest, n:
-    let sym = n.symId
-    for i in 0..<BodyPos:
-      if i == ParamsPos:
-        c.typeCache.registerParams(sym, n)
+    let isConcrete = takeRoutineHeader(c.typeCache, dest, n)
+    if isConcrete:
+      trStmt c, dest, n
+    else:
       takeTree dest, n
-    trStmt c, dest, n
   c.typeCache.closeScope()
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =

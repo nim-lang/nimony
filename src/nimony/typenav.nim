@@ -95,6 +95,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       of CaseS:
         var n = n
         inc n # skip `case`
+        skip n # skip selector
         inc n # skip `of`
         skip n # skip set
         result = getTypeImpl(c, n)
