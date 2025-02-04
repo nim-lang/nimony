@@ -1193,10 +1193,15 @@ proc transformInlineRoutines(e: var EContext; c: var Cursor) =
     takeTree(toTransform, c)
   var c0 = beginRead(toTransform)
   var dest = transform(e, c0, e.main)
-  c = beginRead(dest)
-  inc c # skips (stmts
+  var c1 = beginRead(dest)
+  inc c1 # skips (stmts
 
   swap e.dest, swapped
+
+  e.dest.add tagToken("imp", c1.info)
+  traverseStmt e, c1, TraverseSig
+  e.dest.addDotToken()
+  e.dest.addParRi()
 
 proc importSymbol(e: var EContext; s: SymId) =
   let res = tryLoadSym(s)
@@ -1210,6 +1215,7 @@ proc importSymbol(e: var EContext; s: SymId) =
         let prag = parsePragmas(e, pragmas)
         if Inline in prag.flags:
           transformInlineRoutines(e, c)
+          return
 
       e.dest.add tagToken("imp", c.info)
       traverseStmt e, c, TraverseSig
