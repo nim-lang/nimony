@@ -463,6 +463,15 @@ proc move*[T](x: var T): T {.nodestroy, inline, noSideEffect.} =
   result = x
   `=wasMoved`(x)
 
+template len*[I, T](x: typedesc[array[I, T]]): int =
+  ## Returns the length of an array type.
+  ## This is roughly the same as `high(T)-low(T)+1`.
+  high(array[I, T]).int - low(array[I, T]).int + 1
+template len*[I, T](x: array[I, T]): int =
+  ## Returns the length of an array.
+  ## This is roughly the same as `high(T)-low(T)+1`.
+  len(array[I, T])
+
 include "system/setops"
 
 #include "system/stringimpl"
