@@ -56,6 +56,8 @@ proc handleCmdLine() =
   var useEnv = true
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
+  # XXX: harcoded relative nifcache path for now
+  config.nifcachePath = toAbsolutePath("nifcache")
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""

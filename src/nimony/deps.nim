@@ -251,6 +251,11 @@ type
   CFile = tuple
     name, obj, customArgs: string
 
+proc rootPath(c: DepContext): string =
+  # XXX: makefile is executed parent to nifcachePath
+  result = absoluteParentDir(c.rootNode.files[0].nimFile)
+  result = relativePath(result, parentDir c.config.nifcachePath)
+
 proc toBuildList(c: DepContext): seq[CFile] =
   result = @[]
   for v in c.nodes:
@@ -272,6 +277,8 @@ proc generateFinalMakefile(c: DepContext; passC, passL: string): string =
     of DoCompile, DoRun:
       exeFile(c.rootNode.files[0])
 
+  # Absolute path of root node module
+  s.add "\nROOT_PATH = " & rootPath(c)
   if passC.len != 0:
     s.add "\nCFLAGS += " & mescape(passC)
   s.add "\nall: " & mescape dest
@@ -297,7 +304,7 @@ proc generateFinalMakefile(c: DepContext; passC, passL: string): string =
             mescape(cfile.customArgs) & " $< -o $@"
 
     # The .o files depend on all of their .c files:
-    s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) $< -o $@"
+    s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) -I$(ROOT_PATH) $(CPPFLAGS) $< -o $@"
 
     # entry point is special:
     let nifc = findTool("nifc")

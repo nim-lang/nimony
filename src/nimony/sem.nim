@@ -1975,6 +1975,16 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       c.dest.add strToken(pool.strings.getOrIncl(name), info)
     else:
       c.buildErr info, "invalid import/export symbol"
+      c.dest.addParRi()
+      return
+    # Header pragma extra
+    if pk == Header:
+      let idx = c.dest.len - 1
+      let tok = c.dest[idx]
+      var name = replaceSubs(pool.strings[tok.litId], info.getFile(), c.g.config)
+      name = name.toRelativePath(c.g.config.nifcachePath)
+      c.dest[idx] = strToken(pool.strings.getOrIncl(name), tok.info)
+    # Finalize expression
     c.dest.addParRi()
   of Align, Bits:
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
@@ -4913,15 +4923,18 @@ proc semPragmaLine(c: var SemContext; it: var Item; info: PackedLineInfo) =
     if args.len != 2 and args.len != 3:
       buildErr c, it.n.info, "build expected 2 or 3 parameters"
 
-    let fileId = getFileId(pool.man, info)
-    let dir = absoluteParentDir(pool.files[fileId])
+    # XXX: makefile is executed parent to nifcachePath
+    let nifcacheDir = absoluteParentDir(c.g.config.nifcachePath)
+    let currentDir = absoluteParentDir(info.getFile)
 
+    # Extract build pragma arguments
     let compileType = args[0]
-    let name = args[1].replace("${path}", dir).toAbsolutePath(dir)
-    let customArgs = if args.len == 3: args[2].replace("${path}", dir) else: ""
+    var name = replaceSubs(args[1], currentDir, c.g.config).toAbsolutePath(currentDir)
+    let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
 
     if not fileExists2(name):
       buildErr c, it.n.info, "cannot find: " & name
+    name = name.toRelativePath(nifcacheDir)
 
     c.toBuild.buildTree TupleConstrX, info:
       c.toBuild.addStrLit compileType, info
