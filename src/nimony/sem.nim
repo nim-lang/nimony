@@ -4426,7 +4426,6 @@ proc tryBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item): bool =
   if (lhs.n.kind == Symbol and lhs.kind == TypeY and
         isGeneric(getTypeSection(lhs.n.symId))) or
       (lhs.n.typeKind in InvocableTypeMagics and isSinglePar(lhs.n)):
-    let start = c.dest.len
     # lhs is a generic type symbol, this is a generic invocation
     # treat it as a type expression to call semInvoke
     var typeExpr = createTokenBuf(16)
