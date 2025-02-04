@@ -5,8 +5,12 @@
 # distribution, for details about the copyright.
 
 # For the line information we use 32 bits. They are used as follows:
-# Bit 0 (AsideBit): If we have inline line information or not. If not, the
-# remaining 31 bits are used as an index into a seq[(FileId, int, int)].
+# Bit 0 (AsideBit): If we have inline line information or not.
+# If inline line information is not used bit 1 is 0 and
+# remaining 30 bits are used as an index into a seq[(FileId, int, int)].
+# If bit 1 is 1 then the remaining 30 bits are can store an arbitrary payload.
+# This "payload" mechanism is used to attach a token/node to its original index.
+# It is used to combine a control flow graph with its original tree-like structure.
 #
 # We use 10 bits for the "file ID", this means a program can consist of as much
 # as 1024 different files. (If it uses more files than that, the overflow bit
@@ -55,18 +59,29 @@ proc pack*(m: var LineInfoManager; file: FileId; line, col: int32): PackedLineIn
     result = PackedLineInfo((file.uint32 shl 1'u32) or (line shl uint32(AsideBit + FileBits)) or
       (col shl uint32(AsideBit + FileBits + LineBits)))
   else:
-    result = PackedLineInfo((m.aside.len shl 1) or AsideBit)
+    result = PackedLineInfo((m.aside.len shl 2) or AsideBit)
     m.aside.add (file, line, col)
 
-proc unpack*(m: LineInfoManager; i: PackedLineInfo): (FileId, int32, int32) =
-  let i = i.uint32
+proc isPayload*(i: PackedLineInfo): bool {.inline.} =
+  result = (i.uint32 and 3'u32) == 3'u32
+
+proc unpack*(m: LineInfoManager; info: PackedLineInfo): (FileId, int32, int32) =
+  let i = info.uint32
   if (i and 1'u32) == 0'u32:
     # inline representation:
     result = (FileId((i shr 1'u32) and FileMax.uint32),
       int32((i shr uint32(AsideBit + FileBits)) and LineMax.uint32),
       int32((i shr uint32(AsideBit + FileBits + LineBits)) and ColMax.uint32))
   else:
-    result = m.aside[int(i shr 1'u32)]
+    assert(not isPayload(info))
+    result = m.aside[int(i shr 2'u32)]
+
+proc getPayload*(i: PackedLineInfo): uint32 {.inline.} =
+  assert isPayload(i)
+  result = i.uint32 shr 2'u32
+
+proc toPayload*(val: uint32): PackedLineInfo {.inline.} =
+  result = PackedLineInfo((val shl 2'u32) or 3'u32)
 
 proc getFileId*(m: LineInfoManager; i: PackedLineInfo): FileId =
   result = unpack(m, i)[0]
@@ -78,8 +93,13 @@ when isMainModule:
   for i in 0'i32..<16388'i32:
     for col in 0'i32..<100'i32:
       let packed = pack(m, FileId(1023), i, col)
+      assert(not isPayload(packed))
       let u = unpack(m, packed)
       assert u[0] == FileId(1023)
       assert u[1] == i
       assert u[2] == col
   echo m.aside.len
+
+  let i = toPayload(8000u32)
+  assert isPayload(i)
+  assert getPayload(i) == 8000u32
