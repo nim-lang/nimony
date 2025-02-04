@@ -911,12 +911,24 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       of AshrX:
         e.dest.add tagToken("shr", c.info)
         inc c
+        var bits = -1'i64
+        if c.typeKind in {IntT, UIntT}:
+          var bitsToken = c
+          inc bitsToken
+          bits = pool.integers[bitsToken.intId]
+        else:
+          #error e, "expected int/uint type for ashr, got: ", c
+          discard
         traverseType(e, c)
         e.dest.copyIntoKind CastX, c.info:
-          e.dest.addSubTree e.typeCache.builtins.intType
+          e.dest.add tagToken("i", c.info)
+          e.dest.addIntLit(bits, c.info)
+          e.dest.addParRi()
           traverseExpr e, c
         e.dest.copyIntoKind CastX, c.info:
-          e.dest.addSubTree e.typeCache.builtins.uintType
+          e.dest.add tagToken("u", c.info)
+          e.dest.addIntLit(bits, c.info)
+          e.dest.addParRi()
           traverseExpr e, c
         wantParRi e, c
       of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
