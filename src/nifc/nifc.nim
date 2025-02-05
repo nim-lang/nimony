@@ -79,7 +79,6 @@ proc handleCmdLine() =
     s.config.cCompiler = ccCLang
   else:
     s.config.cCompiler = ccGcc
-  s.config.nifcacheDir = "nifcache"
 
   for kind, key, val in getopt():
     case kind
@@ -153,7 +152,8 @@ proc handleCmdLine() =
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
 
-  createDir(s.config.nifcacheDir)
+  if len(s.config.nifcacheDir) > 0:
+    createDir(s.config.nifcacheDir)
   if actionTable.len != 0:
     for action in actionTable.keys:
       case action

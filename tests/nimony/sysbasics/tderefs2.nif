@@ -1,5 +1,5 @@
 (.nif24)
-0,1,tests/nimony/sysbasics/tderefs2.nim(stmts
+0,1,../tests/nimony/sysbasics/tderefs2.nim(stmts
  (proc 5 :g.0.tdexr7cz81 . . . 6
   (params 1
    (param :x.0 . . 3

@@ -1,5 +1,5 @@
 (.nif24)
-,2,tests/nimony/tunpack.nim(stmts 2,1
+,2,../tests/nimony/tunpack.nim(stmts 2,1
  (type :int.0.tun857qmo1 
   (i -1) . 5
   (pragmas 2

@@ -1,5 +1,5 @@
 (.nif24)
-0,1,tests/nimony/nosystem/twhen.nim(stmts 2,3
+0,1,../tests/nimony/nosystem/twhen.nim(stmts 2,3
  (stmts
   (discard 8 "good")) 2,10
  (stmts

@@ -1,5 +1,5 @@
 (.nif24)
-0,1,tests/nimony/sysbasics/tforloops.nim(stmts 4
+0,1,../tests/nimony/sysbasics/tforloops.nim(stmts 4
  (var :globalX.0.tfo6zftzj1 . .
   (i -1) 10 +12) ,2
  (iterator 9 :foo.0.tfo6zftzj1 . . . 12

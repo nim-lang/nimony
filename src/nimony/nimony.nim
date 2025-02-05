@@ -28,6 +28,7 @@ Options:
   -p, --path:PATH           add PATH to the search path
   -f, --forcebuild          force a rebuild
   -r, --run                 also run the compiled program
+  --nifcache:PATH           set nifcache workspace path
   --compat                  turn on compatibility mode
   --noenv                   do not read configuration from `NIM_*`
                             environment variables
@@ -47,8 +48,8 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
                          commandLineArgs: string; forceRebuild: bool) =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, config.paths)
-  let src = "nifcache" / name & ".1.nif"
-  let dest = "nifcache" / name & ".2.nif"
+  let src = name & ".1.nif"
+  let dest = name & ".2.nif"
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
@@ -67,8 +68,6 @@ proc handleCmdLine() =
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
-  # XXX: harcoded relative nifcache path for now
-  config.nifcachePath = toAbsolutePath("nifcache")
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
@@ -101,6 +100,9 @@ proc handleCmdLine() =
       of "compat": config.compat = true
       of "path", "p": config.paths.add val
       of "define", "d": config.defines.incl val
+      of "nifcache":
+        config.nifcachePath = toAbsolutePath(val)
+        forwardArg = false
       of "noenv": useEnv = false
       of "nosystem": moduleFlags.incl SkipSystem
       of "issystem":
@@ -135,34 +137,54 @@ proc handleCmdLine() =
           commandLineArgs.add ":" & quoteShell(val)
 
     of cmdEnd: assert false, "cannot happen"
+
   if args.len == 0:
     quit "too few command line arguments"
   elif args.len > 2 - int(cmd == FullProject):
     quit "too many command line arguments"
+
+  # configure default nifcache path
+  if len(config.nifcachePath) == 0:
+    if isChild: config.nifcachePath = getCurrentDir()
+    else: config.nifcachePath = toAbsolutePath("nifcache")
+  # make main file relative to nifcache
+  args[0] = absolutePath(args[0]).normalizedPath()
+    .relativePath(config.nifcachePath)
+
   if useEnv:
     let nimPath = getEnv("NIMPATH")
     for entry in split(nimPath, PathSep):
       if entry.strip != "":
         config.paths.add entry
+  # fundamental compiler path
+  config.paths.add compilerDir()
+
   case cmd
   of None:
     quit "command missing"
   of SingleModule:
     if not isChild:
-      createDir("nifcache")
       createDir(binDir())
+      createDir(config.nifcachePath)
+      # prepare required tools
+      setCurrentDir(compilerDir())
       requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
       requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+      setCurrentDir(config.nifcachePath)
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
-    createDir("nifcache")
     createDir(binDir())
+    createDir(config.nifcachePath)
+    # prepare required tools
+    setCurrentDir(compilerDir())
     exec "git submodule update --init"
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
     requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+    # compile full project modules
+    setCurrentDir(config.nifcachePath)
     buildGraph config, args[0], forceRebuild, silentMake,
       commandLineArgs, moduleFlags, (if doRun: DoRun else: DoCompile),
       passC, passL

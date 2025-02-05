@@ -1,5 +1,5 @@
 (.nif24)
-0,2,tests/nimony/nosystem/tcstring.nim(stmts 2,1
+0,2,../tests/nimony/nosystem/tcstring.nim(stmts 2,1
  (type :int.0.tcsj45p9m
   (i -1) . 5
   (pragmas 2
@@ -60,5 +60,5 @@
    (suf "abc" "R"))) 4,20
  (var :zz.0.tcsj45p9m . . 4
   (cstring)
-  (hconv 8,22,tests/nimony/nosystem/tcstring.nim
-   (cstring) 18,22,tests/nimony/nosystem/tcstring.nim "xzy")))
+  (hconv 8,22,../tests/nimony/nosystem/tcstring.nim
+   (cstring) 18,22,../tests/nimony/nosystem/tcstring.nim "xzy")))

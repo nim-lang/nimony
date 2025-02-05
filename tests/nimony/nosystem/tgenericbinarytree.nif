@@ -1,5 +1,5 @@
 (.nif24)
-0,1,tests/nimony/nosystem/tgenericbinarytree.nim(stmts 5
+0,1,../tests/nimony/nosystem/tgenericbinarytree.nim(stmts 5
  (type :int.0.tge70unlm
   (i -1) . 5
   (pragmas 2

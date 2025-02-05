@@ -25,6 +25,13 @@ proc stdlibFile*(f: string): string =
   else:
     result = appDir / "lib" / f
 
+proc compilerDir*(): string =
+  let appDir = getAppDir()
+  let (head, tail) = splitPath(appDir)
+  if tail == "bin":
+    return head
+  else: return tail
+
 proc binDir*(): string =
   let appDir = getAppDir()
   let (_, tail) = splitPath(appDir)
@@ -58,6 +65,10 @@ proc findTool*(name: string): string =
   assert not name.isAbsolute
   let exe = name.addFileExt(ExeExt)
   result = toolDir(exe)
+
+proc findTool*(name: string, config: NifConfig): string =
+  result = findTool(name).normalizedPath()
+  result = toRelativePath(result, config.nifcachePath)
 
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
@@ -237,7 +248,7 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
 proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, paths)
-  let src = "nifcache" / name & ".1.nif"
+  let src = name & ".1.nif"
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 
@@ -264,10 +275,10 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nimfile, exefile: st
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string) =
   let p = splitFile(pluginName)
-  let basename = "nifcache" / p.name & "_" & computeChecksum(input)
+  let basename = p.name & "_" & computeChecksum(input)
   let inputFile = basename & ".in.nif"
   let outputFile = basename & ".out.nif"
-  let pluginExe = "nifcache" / p.name.addFileExt(ExeExt)
+  let pluginExe = p.name.addFileExt(ExeExt)
   if not fileExists(pluginExe):
     compilePlugin(c, info, pluginName, pluginExe)
   if fileExists(inputFile) and readFile(inputFile) == input:

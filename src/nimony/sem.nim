@@ -5040,18 +5040,14 @@ proc semPragmaLine(c: var SemContext; it: var Item; info: PackedLineInfo) =
     if args.len != 2 and args.len != 3:
       buildErr c, it.n.info, "build expected 2 or 3 parameters"
 
-    # XXX: makefile is executed parent to nifcachePath
-    let nifcacheDir = absoluteParentDir(c.g.config.nifcachePath)
-    let currentDir = absoluteParentDir(info.getFile)
-
-    # Extract build pragma arguments
     let compileType = args[0]
+    let currentDir = absoluteParentDir(info.getFile)
     var name = replaceSubs(args[1], currentDir, c.g.config).toAbsolutePath(currentDir)
     let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
 
     if not fileExists2(name):
       buildErr c, it.n.info, "cannot find: " & name
-    name = name.toRelativePath(nifcacheDir)
+    name = name.toRelativePath(c.g.config.nifcachePath)
 
     c.toBuild.buildTree TupleConstrX, info:
       c.toBuild.addStrLit compileType, info

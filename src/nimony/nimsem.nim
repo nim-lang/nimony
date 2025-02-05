@@ -56,8 +56,7 @@ proc handleCmdLine() =
   var useEnv = true
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
-  # XXX: harcoded relative nifcache path for now
-  config.nifcachePath = toAbsolutePath("nifcache")
+  config.nifcachePath = getCurrentDir()
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
@@ -105,11 +104,15 @@ proc handleCmdLine() =
     of cmdEnd: assert false, "cannot happen"
   if args.len != 3:
     quit "want exactly 3 command line arguments"
+
   if useEnv:
     let nimPath = getEnv("NIMPATH")
     for entry in split(nimPath, PathSep):
       if entry.strip != "":
         config.paths.add entry
+  # fundamental compiler path
+  config.paths.add compilerDir()
+
   case cmd
   of None:
     quit "command missing"

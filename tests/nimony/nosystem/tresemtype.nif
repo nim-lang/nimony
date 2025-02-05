@@ -1,5 +1,5 @@
 (.nif24)
-0,3,tests/nimony/nosystem/tresemtype.nim(stmts
+0,3,../tests/nimony/nosystem/tresemtype.nim(stmts
  (proc 5 :foo.0.treckpe1i1 . . 8
   (typevars 1
    (typevar :T.0.treckpe1i1 . . . .)) 11

@@ -64,9 +64,9 @@ proc closeAll*(r: var RContext) =
 proc openNifModule*(r: var RContext; modname: string) =
   if r.modules.hasKey(modname): return
   if r.thisModule.len == 0: r.thisModule = modname
-  let filename = "nifcache/" & modname & ".nif"
+  let filename = modname & ".nif"
   r.modules[modname] = RModule(
-    index: readIndex("nifcache/" & modname & ".idx.nif"),
+    index: readIndex(modname & ".idx.nif"),
     s: nifstreams.open(filename)
   )
 

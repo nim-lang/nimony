@@ -135,8 +135,9 @@ proc markersToCmdLine(s: seq[LineInfo]): string =
   for x in items(s):
     result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
 
-proc execLocal(exe, cmd: string): (string, int) =
-  let bin = "bin" / exe.addFileExt(ExeExt)
+proc execLocal(exe, cmd: string, binFolder = true): (string, int) =
+  var bin = exe.addFileExt(ExeExt)
+  if binFolder: bin = "bin" / bin
   result = osproc.execCmdEx(bin & " " & cmd)
 
 type
@@ -278,8 +279,8 @@ proc exec(cmd: string; showProgress = false) =
     if exitCode != 0:
       quit "FAILURE " & cmd & "\n" & s
 
-proc exec(exe, cmd: string) =
-  let (s, exitCode) = execLocal(exe, cmd)
+proc exec(exe, cmd: string, binFolder = true) =
+  let (s, exitCode) = execLocal(exe, cmd, binFolder)
   if exitCode != 0:
     quit "FAILURE " & cmd & "\n" & s
 
@@ -363,42 +364,50 @@ proc buildHexer(showProgress = false) =
   robustMoveFile "src/hexer/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
-  exec "nifc", cmd
+  exec "../bin/nifc", cmd, binFolder=false
 
 proc execHexer(cmd: string) =
-  exec "hexer", cmd
+  exec "../bin/hexer", cmd, binFolder=false
 
 proc nifctests(overwrite: bool) =
-  let t1 = "tests/nifc/selectany/t1.nif"
-  let t2 = "tests/nifc/selectany/t2.nif"
-  let t3 = "tests/nifc/selectany/t3.nif"
-  execNifc " c -r " & t1 & " " & t2 & " " & t3
-  let app = "tests/nifc/app.c.nif"
-  execNifc " c -r " & app
+  let root = getCurrentDir()
+  setCurrentDir(root / "nifcache")
+  block testing:
+    let t1 = "../tests/nifc/selectany/t1.nif"
+    let t2 = "../tests/nifc/selectany/t2.nif"
+    let t3 = "../tests/nifc/selectany/t3.nif"
+    execNifc " c -r " & t1 & " " & t2 & " " & t3
+    let app = "../tests/nifc/app.c.nif"
+    execNifc " c -r " & app
 
-  let hello = "tests/nifc/hello.nif"
-  execNifc " c -r " & hello
-  execNifc " c -r --opt:speed " & hello
-  execNifc " c -r --opt:size " & hello
-  # TEST CPP
-  execNifc " cpp -r " & hello
-  execNifc " cpp -r --opt:speed " & hello
+    let hello = "../tests/nifc/hello.nif"
+    execNifc " c -r " & hello
+    execNifc " c -r --opt:speed " & hello
+    execNifc " c -r --opt:size " & hello
+    # TEST CPP
+    execNifc " cpp -r " & hello
+    execNifc " cpp -r --opt:speed " & hello
 
-  let tryIssues = "tests/nifc/try.nif"
-  execNifc " cpp -r " & tryIssues
+    let tryIssues = "../tests/nifc/try.nif"
+    execNifc " cpp -r " & tryIssues
 
-  let issues = "tests/nifc/issues.nif"
-  execNifc " c -r --linedir:on " & issues
-  execNifc " cpp -r --linedir:off " & issues
+    let issues = "../tests/nifc/issues.nif"
+    execNifc " c -r --linedir:on " & issues
+    execNifc " cpp -r --linedir:off " & issues
+  setCurrentDir(root)
 
 proc hexertests(overwrite: bool) =
-  let mod1 = "tests/hexer/mod1"
-  let helloworld = "tests/hexer/hexer_helloworld"
-  createIndex helloworld & ".nif", false
-  createIndex mod1 & ".nif", false
-  execHexer mod1 & ".nif"
-  execHexer helloworld & ".nif"
-  execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
+  let root = getCurrentDir()
+  setCurrentDir(root / "nifcache")
+  block testing:
+    let mod1 = "../tests/hexer/mod1"
+    let helloworld = "../tests/hexer/hexer_helloworld"
+    createIndex helloworld & ".nif", false
+    createIndex mod1 & ".nif", false
+    execHexer mod1 & ".nif"
+    execHexer helloworld & ".nif"
+    execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
+  setCurrentDir(root)
 
 proc handleCmdLine =
   var primaryCmd = ""

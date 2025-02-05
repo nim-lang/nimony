@@ -1,5 +1,5 @@
 (.nif24)
-0,2,tests/nimony/nosystem/tforloop.nim(stmts 2,1
+0,2,../tests/nimony/nosystem/tforloop.nim(stmts 2,1
  (type :int.0.tfov349y21
   (i -1) . 5
   (pragmas 2
