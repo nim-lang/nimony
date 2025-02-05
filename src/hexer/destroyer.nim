@@ -63,10 +63,10 @@ type
   Scope = object
     label: SymId
     kind: ScopeKind
+    isTopLevel: bool
     destroyOps: seq[DestructorOp]
     info: PackedLineInfo
     parent: ptr Scope
-    isTopLevel: bool
 
   Context = object
     currentScope: Scope
