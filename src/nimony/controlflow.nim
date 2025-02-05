@@ -37,7 +37,7 @@ type
     currentBlock: BlockOrLoop
     typeCache: TypeCache
 
-proc codeListing(c: TokenBuf, start = 0; last = -1): string =
+proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
   # first iteration: compute all necessary labels:
   var jumpTargets = initIntSet()

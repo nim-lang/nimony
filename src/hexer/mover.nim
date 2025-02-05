@@ -13,21 +13,24 @@ import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, controlflow, programs]
 
+const
+  PayloadOffset = 1'u32 # so that we don't use 0 as a payload
+
 proc prepare(buf: var TokenBuf): seq[PackedLineInfo] =
   result = newSeq[PackedLineInfo](buf.len)
   for i in 0..<buf.len:
     result[i] = buf[i].info
-    buf[i].info = toPayload(i.uint32)
+    buf[i].info = toPayload(i.uint32 + PayloadOffset)
 
 proc restore(buf: var TokenBuf; infos: seq[PackedLineInfo]) =
   for i in 0..<buf.len:
     buf[i].info = infos[i]
 
 proc isMarked(n: Cursor): bool {.inline.} =
-  result = n.info == NoLineInfo
+  result = n.info == toPayload(0'u32)
 
 proc doMark(n: Cursor) {.inline.} =
-  n.setInfo(NoLineInfo)
+  n.setInfo(toPayload(0'u32))
 
 proc testOrSetMark(n: Cursor): bool {.inline.} =
   if isMarked(n):
@@ -151,7 +154,7 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var PackedLineI
 proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var PackedLineInfo): bool =
   var n = default Cursor
   otherUsage = NoLineInfo
-  if not findStart(c, toPayload(idx), n):
+  if not findStart(c, toPayload(idx + PayloadOffset), n):
     return true
   # we are interested in what comes after this node:
   let x = n
@@ -174,9 +177,10 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo): b
   assert idx >= 0
   var cf = toControlflow(beginRead buf)
   freeze cf
+  #echo "CF IS ", codeListing(cf)
   result = isLastReadImpl(cf, idx.uint32, otherUsage)
   if otherUsage.isPayload:
-    otherUsage = oldInfos[otherUsage.getPayload]
+    otherUsage = oldInfos[otherUsage.getPayload - PayloadOffset]
   endRead buf
   restore(buf, oldInfos)
 
@@ -199,14 +203,15 @@ when isMainModule:
       inc result
     raiseAssert "BUG: no 'ensureMove' found"
 
-  proc test(s: string) =
+  proc test(s: string; expected: bool) =
     var input = parse(s)
     var otherUsage = NoLineInfo
     let n = findX(beginRead(input))
     let res = isLastUse(n, input, otherUsage)
-    echo res
+    if res != expected:
+      echo "FAILED Test case: ", s
 
-  const BasicTest = """(stmts
+  const BasicTest1 = """(stmts
   (let :my.var . . (array (i +8) +6) .)
   (var :i.0 . . (i -1) +0)
   (asgn (arrat my.var i.0) +56)
@@ -217,4 +222,24 @@ when isMainModule:
   )
   """
 
-  test BasicTest
+  const BasicTest2 = """(stmts
+  (let :my.var . . (array (i +8) +6) .)
+  (var :i.0 . . (i -1) +0)
+  (asgn (arrat my.var i.0) +56)
+
+  (discard (emove my.var))
+
+  )
+  """
+
+  #test BasicTest1, false
+  #test BasicTest2, true
+
+  const LoopTest = """(stmts
+    (var :my.var . . (array (i +8) +6) .)
+    (while (true)
+      (discard (emove my.var))
+    )
+
+  )"""
+  test LoopTest, false
