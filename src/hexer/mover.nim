@@ -156,9 +156,11 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var PackedLineInfo): b
   # we are interested in what comes after this node:
   let x = n
   skip n
+  while n.kind == ParRi: inc n
   var pcs = @[n]
   while pcs.len > 0:
     let pc = pcs.pop()
+    #echo "Looking at: ", toString(pc, false)
     if not isMarked(pc):
       if not singlePath(pc, x, pcs, otherUsage):
         return false
@@ -186,6 +188,7 @@ when isMainModule:
       case result.kind
       of ParLe:
         if result.exprKind == EnsureMoveX:
+          inc result
           return result
         inc nested
       of ParRi:
