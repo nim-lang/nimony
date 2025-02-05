@@ -759,7 +759,8 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
       trExprLoop c, n
     of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
-      takeTree c.dest, n
+      c.dest.addDotToken()
+      skip n
     of NoExpr:
       case n.stmtKind
       of IfS:

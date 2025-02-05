@@ -36,13 +36,45 @@ proc testOrSetMark(n: Cursor): bool {.inline.} =
     doMark(n)
     result = false
 
+proc rootOf(n: Cursor): SymId =
+  var n = n
+  while true:
+    case n.exprKind
+    of DotX, TupAtX, AtX, ArrAtX, DerefX, AddrX, HderefX, HaddrX:
+      inc n
+    of ConvKinds:
+      inc n
+      skip n # type part
+    else:
+      break
+  if n.kind == Symbol:
+    result = n.symId
+  else:
+    result = NoSymId
+
 proc containsUsage(tree: var Cursor; x: Cursor): bool =
   result = false # TODO
   skip tree
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
-  result = false # TODO
-  skip tree
+  let r = rootOf(x)
+  # scan loop also correct for `r == NoSymId`:
+  var nested = 0
+  result = false
+  while true:
+    case tree.kind
+    of Symbol:
+      if tree.symId == r:
+        # MUST continue here as we must `skip tree` properly
+        result = true
+    of ParLe:
+      inc nested
+    of ParRi:
+      dec nested
+    else:
+      discard
+    inc tree
+    if nested == 0: break
 
 proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): bool =
   for i in 0..<c.len:
@@ -73,6 +105,7 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var PackedLineI
       if nested == 0:
         raiseAssert "BUG: unpaired ')'"
       dec nested
+      inc pc
     of Symbol:
       if x.kind == Symbol and pc.symId == x.symId:
         otherUsage = pc.info
@@ -142,3 +175,40 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo): b
   if otherUsage.isPayload:
     otherUsage = oldInfos[otherUsage.getPayload]
   restore(buf, oldInfos)
+
+when isMainModule:
+  proc findX(n: Cursor): Cursor =
+    result = n
+    var nested = 0
+    while true:
+      case result.kind
+      of ParLe:
+        if result.exprKind == EnsureMoveX:
+          return result
+        inc nested
+      of ParRi:
+        dec nested
+      else:
+        discard
+      if nested == 0: break
+      inc result
+    raiseAssert "BUG: no 'ensureMove' found"
+
+  proc test(s: string) =
+    var input = parse(s)
+    var otherUsage = NoLineInfo
+    let n = findX(beginRead(input))
+    let res = isLastUse(n, input, otherUsage)
+    echo res
+
+  const BasicTest = """(stmts
+  (let :my.var . . (array (i +8) +6) .)
+  (var :i.0 . . (i -1) +0)
+  (asgn (arrat my.var i.0) +56)
+
+  (emove my.var)
+
+  )
+  """
+
+  test BasicTest
