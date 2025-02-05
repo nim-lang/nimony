@@ -56,8 +56,20 @@ proc rootOf(n: Cursor): SymId =
     result = NoSymId
 
 proc containsUsage(tree: var Cursor; x: Cursor): bool =
-  result = false # TODO
-  skip tree
+  result = false
+  var nested = 0
+  while true:
+    if sameTrees(tree, x):
+      result = true
+    case tree.kind
+    of ParLe:
+      inc nested
+    of ParRi:
+      dec nested
+    else:
+      discard
+    inc tree
+    if nested == 0: break
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
   let r = rootOf(x)
@@ -89,6 +101,7 @@ proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): bool =
 proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bool =
   var nested = 0
   var pc = pc
+  let root = rootOf(x)
   while true:
     case pc.kind
     of GotoInstr:
@@ -114,7 +127,12 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
         otherUsage = pc
         return false
       inc pc
-    of SymbolDef, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    of SymbolDef:
+      if root != NoSymId and pc.symId == root:
+        # found the definition, so it gets a new value:
+        break
+      inc pc
+    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
       inc pc
     of ParLe:
       if pc.cfKind == IteF:
@@ -132,7 +150,7 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
         pc = b
       elif pc.stmtKind == AsgnS:
         inc pc
-        if sameTrees(pc, x):
+        if (pc.kind == Symbol and pc.symId == root) or sameTrees(pc, x):
           # the path leads to a redefinition of 's' --> sink 's'.
           break
         skip pc # skip left-hand-side
@@ -245,3 +263,12 @@ when isMainModule:
 
   )"""
   test LoopTest, false
+
+  const LoopTestB = """(stmts
+    (while (true) (stmts
+      (var :my.var . . (array (i +8) +6) .)
+      (discard (emove my.var))
+    ))
+
+  )"""
+  test LoopTestB, true
