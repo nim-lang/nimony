@@ -444,10 +444,63 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
   else:
     it.breakInstrs.add c.jmpForw(n.info)
 
+proc isComplexLhs(n: Cursor): bool =
+  var n = n
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.exprKind in CallKinds+{PatX, ArrAtX}:
+        return true
+      inc nested
+    of ParRi:
+      dec nested
+    else: discard
+    if nested == 0: break
+    inc n
+  return false
+
 proc trAsgn(c: var ControlFlow; n: var Cursor) =
+  # Problem: Analysis of left-hand-side of assignments always is more complex
+  # because of things like `obj.field[f(a, b, c)] = value` which contain simple
+  # usages of `a, b, c`. Thus we break these into two statements:
+  # obj.a.b.c.s[i] = value --> let tmp = addr(obj.a.b.c.s[i]); tmp[] = value
+  # This works more reliably when we already eliminated the ExprX things, so we
+  # do it afterwards:
+  let asgnBegin = c.dest.len
+  let info = n.info
   copyInto c.dest, n:
+    let typ = c.typeCache.getType(n) # we might need it later
     trExpr c, n
     trExpr c, n
+  let lhs = cursorAt(c.dest, asgnBegin+1)
+  if isComplexLhs(lhs):
+    var stmts = createTokenBuf(40)
+
+    let tmp = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    inc c.nextVar
+    stmts.addParLe LetS, info
+    stmts.addSymDef tmp, info
+    stmts.addEmpty2 info # no export marker, no pragmas
+    stmts.copyIntoKind PtrT, info:
+      stmts.copyTree typ
+    stmts.copyIntoKind AddrX, info:
+      stmts.copyTree lhs
+    stmts.addParRi()
+
+    var rhs = lhs
+    skip rhs
+
+    stmts.copyIntoKind AsgnS, info:
+      stmts.copyIntoKind DerefX, info:
+        stmts.addSymUse tmp, info
+      stmts.copyTree rhs
+
+    endRead c.dest
+    c.dest.shrink asgnBegin
+    c.dest.add stmts
+  else:
+    endRead c.dest
 
 proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
                tjmp, fjmp: var FixupList) =
@@ -789,8 +842,21 @@ when isMainModule:
     )
   )"""
 
+  const AsgnTest = """(stmts
+  (proc :my.proc . . . (params (param :i.0 .. (i -1) .))
+    (i -1) . . (stmts (result :res.0 . . (i -1) .) (ret +1)))
+
+  (let :my.var . . (array (i +8) +6) .)
+  (var :i.0 . . (i -1) +0)
+  (asgn (arrat my.var i.0) +56)
+
+  (asgn i.0 +1)
+  )
+  """
+
   #test BasicTest
   #test NotTest
   #test ReturnTest
-  test TryTest
+  #test TryTest
   #test CaseTest
+  test AsgnTest
