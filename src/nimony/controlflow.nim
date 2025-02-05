@@ -650,7 +650,8 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of IterS, ProcS, FuncS, MacroS, ConverterS, MethodS:
     trProc c, n
   of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromImportS, ImportExceptS, PragmasLineS:
-    takeTree c.dest, n
+    c.dest.addDotToken()
+    skip n
   of CallS, CmdS:
     trCall c, n
   of YieldS, DiscardS, InclSetS, ExclSetS:

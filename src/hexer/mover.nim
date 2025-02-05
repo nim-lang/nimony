@@ -148,25 +148,47 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
         if not isMarked(a):
           pcs.add a
         pc = b
-      elif pc.stmtKind == AsgnS:
-        inc pc
-        if (pc.kind == Symbol and pc.symId == root) or sameTrees(pc, x):
-          # the path leads to a redefinition of 's' --> sink 's'.
-          break
-        skip pc # skip left-hand-side
-        # right-hand-side is a simple use expression:
-        if containsUsage(pc, x):
-          # only partially writes to 's' --> can't sink 's', so this def reads 's'
-          # or maybe writes to 's' --> can't sink 's'
-          otherUsage = pc
-          return false
-        skipParRi pc
-      elif pc.stmtKind == RetS:
-        break
       else:
-        if containsRoot(pc, x):
-          otherUsage = pc
-          return false
+        case pc.stmtKind
+        of AsgnS:
+          inc pc
+          if (pc.kind == Symbol and pc.symId == root) or sameTrees(pc, x):
+            # the path leads to a redefinition of 's' --> sink 's'.
+            break
+          skip pc # skip left-hand-side
+          # right-hand-side is a simple use expression:
+          if containsUsage(pc, x):
+            # only partially writes to 's' --> can't sink 's', so this def reads 's'
+            # or maybe writes to 's' --> can't sink 's'
+            otherUsage = pc
+            return false
+          skipParRi pc
+        of RetS:
+          break
+        of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
+          inc pc
+          inc nested
+        of VarS, LetS, CursorS, ResultS, ConstS:
+          inc pc
+          if root != NoSymId and pc.kind == SymbolDef and pc.symId == root:
+            # found the definition, so it gets a new value:
+            break
+          skip pc # name
+          skip pc # export marker
+          skip pc # pragmas
+          skip pc # type
+          inc nested
+          # proceed with its value here
+        of NoStmt, CallS, CmdS, DiscardS, EmitS, InclSetS, ExclSetS:
+          if containsRoot(pc, x):
+            otherUsage = pc
+            return false
+        of IfS, WhenS, WhileS, ForS, CaseS, TryS, YieldS, RaiseS, ExportS,
+           IncludeS, ImportS, FromImportS, ImportExceptS, CommentS, PragmasLineS:
+          raiseAssert "BUG: statement not eliminated: " & $pc.stmtKind
+        of ProcS, FuncS, IterS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
+          # declarative junk we don't care about:
+          skip pc
   return true
 
 proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
