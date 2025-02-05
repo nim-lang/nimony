@@ -32,13 +32,14 @@ when not defined(nimony):
 
 proc rememberConstRefParams(c: var Context; params, pragmas: Cursor) =
   var n = params
+  inc n # skips (params
   while n.kind != ParRi:
     let r = takeLocal(n, SkipFinalParRi)
     if r.name.kind == SymbolDef and passByConstRef(r.typ, pragmas, c.ptrSize):
       c.constRefParams.incl r.name.symId
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var r = takeRoutine(n, SkipFinalParRi)
+  var r = asRoutine(n)
   var c2 = Context(ptrSize: c.ptrSize, typeCache: createTypeCache())
   c2.typeCache.openScope()
   copyInto(dest, n):
@@ -135,6 +136,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trLocal c, dest, n
         of ScopeS:
           trScope c, dest, n
+        of TemplateS:
+          takeTree dest, n
         else:
           dest.add n
           inc n

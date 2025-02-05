@@ -9,7 +9,7 @@
 
 include nifprelude
 
-import basics, iterinliner, desugar, xelim, duplifier, lifter, destroyer
+import basics, iterinliner, desugar, xelim, duplifier, lifter, destroyer, constparams
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n = n
@@ -21,20 +21,25 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n1 = desugar(c0, moduleSuffix)
   endRead(n0)
 
-  var c1 = beginRead(n1)
-  let ctx = createLiftingCtx()
-  var n2 = injectDups(c1, ctx)
+  var c2 = beginRead(n1)
+  var n2 = injectConstParamDerefs(c2, 8)
   endRead(n1)
 
-  var c2 = beginRead(n2)
-
-  var n3 = lowerExprs(c2, moduleSuffix)
+  var c3 = beginRead(n2)
+  let ctx = createLiftingCtx()
+  var n3 = injectDups(c3, ctx)
   endRead(n2)
 
-  var c3 = beginRead(n3)
-  result = injectDestructors(c3, ctx)
+  var c4 = beginRead(n3)
+  var n4 = lowerExprs(c4, moduleSuffix)
   endRead(n3)
 
-  shrink(result, result.len-1)
-  result.add move(ctx[].dest)
-  result.addParRi()
+  var c5 = beginRead(n4)
+  var n5 = injectDestructors(c5, ctx)
+  endRead(n4)
+
+  shrink(n5, n5.len-1)
+  n5.add move(ctx[].dest)
+  n5.addParRi()
+
+  result = move n5
