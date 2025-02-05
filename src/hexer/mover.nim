@@ -158,7 +158,7 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var PackedLineInfo): b
   skip n
   var pcs = @[n]
   while pcs.len > 0:
-    var pc = pcs.pop()
+    let pc = pcs.pop()
     if not isMarked(pc):
       if not singlePath(pc, x, pcs, otherUsage):
         return false
@@ -170,10 +170,12 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo): b
   let oldInfos = prepare(buf)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
-  var cf = toControlflow(n)
+  var cf = toControlflow(beginRead buf)
+  freeze cf
   result = isLastReadImpl(cf, idx.uint32, otherUsage)
   if otherUsage.isPayload:
     otherUsage = oldInfos[otherUsage.getPayload]
+  endRead buf
   restore(buf, oldInfos)
 
 when isMainModule:
@@ -206,7 +208,8 @@ when isMainModule:
   (var :i.0 . . (i -1) +0)
   (asgn (arrat my.var i.0) +56)
 
-  (emove my.var)
+  (discard (emove my.var))
+  (call use my.var)
 
   )
   """
