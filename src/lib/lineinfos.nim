@@ -41,6 +41,7 @@ type
   FileId* = distinct uint32
 
 proc `==`*(a, b: FileId): bool {.borrow.}
+proc `==`*(a, b: PackedLineInfo): bool {.borrow.}
 
 type
   LineInfoManager* = object

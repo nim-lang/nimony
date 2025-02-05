@@ -32,6 +32,7 @@ proc load*(c: Cursor): PackedToken {.inline.} = c.p[]
 proc kind*(c: Cursor): TokenKind {.inline.} = c.load.kind
 
 proc info*(c: Cursor): PackedLineInfo {.inline.} = c.load.info
+proc setInfo*(c: Cursor; info: PackedLineInfo) {.inline.} = c.p[].info = info
 
 proc litId*(c: Cursor): StrId {.inline.} = nifstreams.litId(c.load)
 proc symId*(c: Cursor): SymId {.inline.} = nifstreams.symId(c.load)
@@ -48,6 +49,8 @@ proc tag*(c: Cursor): TagId {.inline.} = nifstreams.tag(c.load)
 proc uoperand*(c: Cursor): uint32 {.inline.} = nifstreams.uoperand(c.load)
 proc soperand*(c: Cursor): int32 {.inline.} = nifstreams.soperand(c.load)
 
+proc getInt28*(c: Cursor): int32 {.inline.} = nifstreams.getInt28(c.load)
+
 proc inc*(c: var Cursor) {.inline.} =
   assert c.rem > 0
   c.p = cast[ptr PackedToken](cast[uint](c.p) + sizeof(PackedToken).uint)
@@ -56,6 +59,11 @@ proc inc*(c: var Cursor) {.inline.} =
 proc unsafeDec*(c: var Cursor) {.inline.} =
   c.p = cast[ptr PackedToken](cast[uint](c.p) - sizeof(PackedToken).uint)
   inc c.rem
+
+proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
+  result = Cursor(
+     p: cast[ptr PackedToken](cast[uint](c.p) + diff.uint * sizeof(PackedToken).uint),
+     rem: c.rem - diff)
 
 proc skip*(c: var Cursor) =
   if c.kind == ParLe:
@@ -145,6 +153,11 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
   if b.readers == 0: freeze(b)
   inc b.readers
+  result = Cursor(p: addr b.data[i], rem: b.len-i)
+
+proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
+  assert i >= 0 and i < b.len
+  assert(not isMutable(b))
   result = Cursor(p: addr b.data[i], rem: b.len-i)
 
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =

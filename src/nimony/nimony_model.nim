@@ -376,7 +376,7 @@ proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|Subs
                info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
 
-proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind; info = NoLineInfo) =
+proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
   dest.addParRi()
 

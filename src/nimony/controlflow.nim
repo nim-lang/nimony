@@ -10,10 +10,10 @@
 import std/[assertions, intsets]
 include nifprelude
 
-import nimony_model, sembasics, typenav
+import nimony_model, programs, typenav
 
 const
-  GotoInstr = InlineInt
+  GotoInstr* = InlineInt
 
 type
   Label = distinct int
@@ -44,7 +44,7 @@ proc codeListing(c: TokenBuf, start = 0; last = -1): string =
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
   for i in start..last:
     if c[i].kind == GotoInstr:
-      jumpTargets.incl(i+c[i].getInt32)
+      jumpTargets.incl(i+c[i].getInt28)
   # second iteration: generate string representation:
   var i = start
   var b = nifbuilder.open(1000)
@@ -56,7 +56,7 @@ proc codeListing(c: TokenBuf, start = 0; last = -1): string =
     case c[i].kind
     of GotoInstr:
       b.addTree "goto"
-      b.addIdent "L" & $(i+c[i].getInt32())
+      b.addIdent "L" & $(i+c[i].getInt28())
       b.endTree()
     of Symbol:
       b.addSymbol pool.syms[c[i].symId]
@@ -80,15 +80,15 @@ proc codeListing(c: TokenBuf, start = 0; last = -1): string =
 proc genLabel(c: ControlFlow): Label = Label(c.dest.len)
 
 proc jmpBack(c: var ControlFlow, p: Label; info: PackedLineInfo) =
-  c.dest.add int32Token(p.int32 - c.dest.len.int32, info)
+  c.dest.add int28Token(p.int32 - c.dest.len.int32, info)
 
 proc jmpForw(c: var ControlFlow; info: PackedLineInfo): Label =
   result = Label(c.dest.len)
-  c.dest.add int32Token(0, info) # destination will be patched later
+  c.dest.add int28Token(0, info) # destination will be patched later
 
 proc patch(c: var ControlFlow; p: Label) =
   # patch with current index
-  c.dest[p.int].patchInt32Token int32(c.dest.len - p.int)
+  c.dest[p.int].patchInt28Token int32(c.dest.len - p.int)
 
 proc trExpr(c: var ControlFlow; n: var Cursor)
 proc trStmt(c: var ControlFlow; n: var Cursor)
@@ -108,10 +108,9 @@ proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: Target) =
 type
   FixupList = seq[Label]
 
-proc trCondOp2(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
+proc trCondOp2(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList; info: PackedLineInfo) =
   # Handles the `b` part of `a and b` or `a or b`. Simply translates it
   # to `(ite b tjmp fjmp)`.
-  let info = n.info
   c.dest.addParLe(IteF, info)
   trExpr c, n # second condition
   tjmp.add c.jmpForw(info)
@@ -130,7 +129,7 @@ proc trAnd(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   fjmp.add c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
-  trCondOp2 c, n, tjmp, fjmp
+  trCondOp2 c, n, tjmp, fjmp, info
 
 proc trOr(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   # (ite (first-condition) tjmp L1)
@@ -143,7 +142,7 @@ proc trOr(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   let l1 = c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
-  trCondOp2 c, n, tjmp, fjmp
+  trCondOp2 c, n, tjmp, fjmp, info
 
 proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   case n.exprKind
@@ -162,7 +161,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     skipParRi n
   else:
     # cannot exploit a special case here:
-    let info = n.info
+    let info = NoLineInfo
     c.dest.addParLe(IteF, info)
     trExpr c, n
     tjmp.add c.jmpForw(info)
@@ -391,6 +390,7 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
     if isConcrete:
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
+      c.dest.addParPair RetS, NoLineInfo
     else:
       takeTree c.dest, n
     for ret in thisProc.breakInstrs: c.patch ret
@@ -729,6 +729,7 @@ proc toControlflow*(n: Cursor): TokenBuf =
   inc n
   while n.kind != ParRi:
     trStmt c, n
+  c.dest.addParPair RetS, NoLineInfo
   c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove c.dest

@@ -33,15 +33,15 @@ template soperand*(n: PackedToken): int32 = cast[int32](uoperand(n))
 template toX(k: TokenKind; operand: uint32): uint32 =
   uint32(k) or (operand shl TokenKindBits)
 
-proc int32Token*(operand: int32; info: PackedLineInfo): PackedToken =
+proc int28Token*(operand: int32; info: PackedLineInfo): PackedToken =
   let arg = operand + ExcessK
   PackedToken(x: toX(UnknownToken, cast[uint32](arg)), info: info)
 
-proc patchInt32Token*(n: var PackedToken; operand: int32) =
+proc patchInt28Token*(n: var PackedToken; operand: int32) =
   let arg = operand + ExcessK
   n.x = toX(UnknownToken, cast[uint32](arg))
 
-proc getInt32*(n: PackedToken): int32 =
+proc getInt28*(n: PackedToken): int32 =
   assert n.kind == UnknownToken
   let arg = n.soperand
   result = arg - ExcessK
