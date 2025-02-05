@@ -65,6 +65,9 @@ proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
      p: cast[ptr PackedToken](cast[uint](c.p) + diff.uint * sizeof(PackedToken).uint),
      rem: c.rem - diff)
 
+proc cursorIsNil*(c: Cursor): bool {.inline.} =
+  result = c.p == nil
+
 proc skip*(c: var Cursor) =
   if c.kind == ParLe:
     var nested = 0

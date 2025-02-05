@@ -86,7 +86,7 @@ proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): bool =
       return true
   return false
 
-proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var PackedLineInfo): bool =
+proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bool =
   var nested = 0
   var pc = pc
   while true:
@@ -111,7 +111,7 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var PackedLineI
       inc pc
     of Symbol:
       if x.kind == Symbol and pc.symId == x.symId:
-        otherUsage = pc.info
+        otherUsage = pc
         return false
       inc pc
     of SymbolDef, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
@@ -120,7 +120,7 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var PackedLineI
       if pc.cfKind == IteF:
         inc pc
         if containsUsage(pc, x):
-          otherUsage = pc.info
+          otherUsage = pc
           return false
         # now 2 goto instructions follow:
         let a = pc +! pc.getInt28
@@ -140,20 +140,19 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var PackedLineI
         if containsUsage(pc, x):
           # only partially writes to 's' --> can't sink 's', so this def reads 's'
           # or maybe writes to 's' --> can't sink 's'
-          otherUsage = pc.info
+          otherUsage = pc
           return false
         skipParRi pc
       elif pc.stmtKind == RetS:
         break
       else:
         if containsRoot(pc, x):
-          otherUsage = pc.info
+          otherUsage = pc
           return false
   return true
 
-proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var PackedLineInfo): bool =
+proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
   var n = default Cursor
-  otherUsage = NoLineInfo
   if not findStart(c, toPayload(idx + PayloadOffset), n):
     return true
   # we are interested in what comes after this node:
@@ -178,11 +177,14 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo): b
   var cf = toControlflow(beginRead buf)
   freeze cf
   #echo "CF IS ", codeListing(cf)
-  result = isLastReadImpl(cf, idx.uint32, otherUsage)
-  if otherUsage.isPayload:
-    otherUsage = oldInfos[otherUsage.getPayload - PayloadOffset]
+  var other = default Cursor
+  result = isLastReadImpl(cf, idx.uint32, other)
   endRead buf
   restore(buf, oldInfos)
+  if other.cursorIsNil:
+    otherUsage = NoLineInfo
+  else:
+    otherUsage = other.info
 
 when isMainModule:
   proc findX(n: Cursor): Cursor =
@@ -232,8 +234,8 @@ when isMainModule:
   )
   """
 
-  #test BasicTest1, false
-  #test BasicTest2, true
+  test BasicTest1, false
+  test BasicTest2, true
 
   const LoopTest = """(stmts
     (var :my.var . . (array (i +8) +6) .)
