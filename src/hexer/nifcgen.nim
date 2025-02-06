@@ -81,6 +81,7 @@ type
   TypeFlag = enum
     IsTypeBody
     IsPointerOf
+    IsNodecl
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {})
 
@@ -381,7 +382,10 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.loop c:
         traverseType e, c, {IsPointerOf}
     of ArrayT, OpenArrayT, ProcT:
-      traverseAsNamedType e, c
+      if IsNodecl in flags:
+        traverseArrayBody e, c
+      else:
+        traverseAsNamedType e, c
     of RangeT:
       # skip to base type
       inc c
@@ -700,7 +704,7 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
   if isGeneric:
     skip c
   else:
-    traverseType e, c, {IsTypeBody}
+    traverseType e, c, {IsTypeBody} + (if Nodecl in prag.flags: {IsNodecl} else: {})
   wantParRi e, c
   swap dst, e.dest
   if Nodecl in prag.flags or isGeneric:
