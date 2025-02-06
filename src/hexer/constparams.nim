@@ -136,7 +136,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trLocal c, dest, n
         of ScopeS:
           trScope c, dest, n
-        of TemplateS:
+        of TemplateS, TypeS:
           takeTree dest, n
         else:
           dest.add n
