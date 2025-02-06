@@ -488,7 +488,7 @@ proc checkIntLitRange(context: ptr SemContext; f: Cursor; intLit: Cursor): bool 
   if f.typeKind == FloatT:
     result = true
   else:
-    let i = createXint(pool.integers[intLit.litId])
+    let i = createXint(pool.integers[intLit.intId])
     result = i >= firstOrd(context[], f) and i <= lastOrd(context[], f)
 
 proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
