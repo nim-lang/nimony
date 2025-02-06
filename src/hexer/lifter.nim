@@ -120,7 +120,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     var tup = typ
     inc tup
     result = isTrivialForFields(c, tup)
-  of NoType, NilT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, IterT, InvokeT,
+  of NoType, ErrorType, NilT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, IterT, InvokeT,
      TypeKindT, UntypedT, TypedT:
     raiseAssert "bug here"
 

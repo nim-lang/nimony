@@ -170,6 +170,7 @@ type
 
   TypeKind* = enum
     NoType
+    ErrorType = "err"
     ObjectT = "object"
     RefObjectT = "refobj"
     PtrObjectT = "ptrobj"

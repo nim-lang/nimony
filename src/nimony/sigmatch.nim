@@ -682,7 +682,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         skip f
       else:
         procTypeMatch m, f, a
-    of NoType, ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
+    of NoType, ErrorType, ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IterT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
