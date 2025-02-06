@@ -2070,14 +2070,19 @@ proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
           inc n
 
 proc exprToType(c: var SemContext; exprType: Cursor; start: int; context: TypeDeclContext; info: PackedLineInfo) =
-  if exprType.typeKind == TypedescT:
+  case exprType.typeKind
+  of TypedescT:
     c.dest.shrink start
     var base = exprType
     inc base
     c.dest.addSubtree base
-  # otherwise, is a static value
-  elif context != AllowValues:
-    c.buildErr info, "not a type"
+  of ErrorType, AutoT:
+    # propagate error
+    discard
+  else:
+    # otherwise, is a static value
+    if context != AllowValues:
+      c.buildErr info, "not a type"
 
 proc semTypeExpr(c: var SemContext; n: var Cursor; context: TypeDeclContext; info: PackedLineInfo) =
   # expression needs to be fully evaluated, switch to body phase
@@ -2775,6 +2780,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         addVarargsParameter c, beforeParams, crucial.hasVarargs
     of InvokeT:
       semInvoke c, n
+    of ErrorType:
+      takeTree c, n
   of DotToken:
     if context in {InReturnTypeDecl, InGenericConstraint}:
       takeToken c, n
@@ -3132,7 +3139,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   let info = it.n.info
   let declStart = c.dest.len
   takeToken c, it.n
-  let symId = declareOverloadableSym(c, it, kind)
+  let (symId, status) = declareOverloadableSym(c, it, kind)
 
   let beforeExportMarker = c.dest.len
   wantExportMarker c, it.n
@@ -3150,6 +3157,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
 
   try:
     c.openScope() # open parameter scope
+    let beforeGenericParams = c.dest.len
     semGenericParams c, it.n
     let beforeParams = c.dest.len
     semParams c, it.n
@@ -3168,16 +3176,21 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       skip it.n
 
     publishSignature c, symId, declStart
-    if kind == ConverterY:
+    if kind == ConverterY and status in {OkNew, OkExistingFresh}:
       let root = nominalRoot(c.routine.returnType)
       if root == SymId(0) and not c.g.config.compat:
+        var errBuf = createTokenBuf(16)
+        swap c.dest, errBuf
         buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
+        swap c.dest, errBuf
+        c.dest.insert errBuf, declStart
       else:
-        if pass == checkSignatures: # to prevent duplicates, could also use a set
-          c.converters.mgetOrPut(root, @[]).add(symId)
-        if pass == checkBody and c.dest[beforeExportMarker].kind != DotToken:
-          # don't register instances
-          c.converterIndexMap.add((root, symId))
+        c.converters.mgetOrPut(root, @[]).add(symId)
+        if c.dest[beforeExportMarker].kind != DotToken:
+          # exported
+          if c.dest[beforeGenericParams].kind != $InvokeT:
+            # don't register instances
+            c.converterIndexMap.add((root, symId))
     if it.n.kind != DotToken:
       case pass
       of checkGenericInst:
@@ -5039,11 +5052,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of NoStmt:
         case typeKind(it.n)
         of NoType:
-          if pool.tags[it.n.tag] == "err":
-            c.takeTree it.n
-          else:
-            buildErr c, it.n.info, "expression expected; tag: " & pool.tags[it.n.tag]
-            skip it.n
+          buildErr c, it.n.info, "expression expected; tag: " & pool.tags[it.n.tag]
+          skip it.n
+        of ErrorType:
+          c.takeTree it.n
         of ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
           skip it.n

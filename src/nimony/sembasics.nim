@@ -303,49 +303,44 @@ proc symToIdent*(s: SymId): StrId =
 
 proc declareSym*(c: var SemContext; it: var Item; kind: SymKind): SymStatus =
   let info = it.n.info
-  if it.n.kind == Ident:
-    let lit = it.n.litId
-    let s = Sym(kind: kind, name: identToSym(c, lit, kind),
-                pos: c.dest.len)
-    if addNonOverloadable(c.currentScope, lit, s) == Conflict:
-      c.buildErr info, "attempt to redeclare: " & pool.strings[lit]
-      result = ErrRedef
-    else:
-      c.dest.add symdefToken(s.name, info)
-      result = OkNew
-    inc it.n
-  elif it.n.kind == SymbolDef:
+  if it.n.kind == SymbolDef:
     if not c.freshSyms.missingOrExcl(it.n.symId):
       result = OkExistingFresh
     else:
       result = OkExisting
     inc it.n
   else:
-    c.buildErr info, "identifier expected"
-    result = ErrNoIdent
+    let lit = getIdent(it.n)
+    if lit == StrId(0):
+      c.buildErr info, "identifier expected"
+      result = ErrNoIdent
+    else:
+      let s = Sym(kind: kind, name: identToSym(c, lit, kind),
+                  pos: c.dest.len)
+      if addNonOverloadable(c.currentScope, lit, s) == Conflict:
+        c.buildErr info, "attempt to redeclare: " & pool.strings[lit]
+        result = ErrRedef
+      else:
+        c.dest.add symdefToken(s.name, info)
+        result = OkNew
 
-proc declareOverloadableSym*(c: var SemContext; it: var Item; kind: SymKind): SymId =
+proc declareOverloadableSym*(c: var SemContext; it: var Item; kind: SymKind): (SymId, SymStatus) =
   let info = it.n.info
-  if it.n.kind == Ident:
-    let lit = it.n.litId
-    result = identToSym(c, lit, kind)
-    let s = Sym(kind: kind, name: result,
-                pos: c.dest.len)
-    addOverloadable(c.currentScope, lit, s)
-    c.dest.add symdefToken(s.name, info)
-    inc it.n
-  elif it.n.kind == SymbolDef:
-    result = it.n.symId
+  if it.n.kind == SymbolDef:
+    var status = OkExisting
+    if not c.freshSyms.missingOrExcl(it.n.symId):
+      status = OkExistingFresh
+    result = (it.n.symId, status)
     c.dest.add it.n
     inc it.n
   else:
     let lit = getIdent(it.n)
     if lit == StrId(0):
       c.buildErr info, "identifier expected"
-      result = SymId(0)
+      result = (SymId(0), ErrNoIdent)
     else:
-      result = identToSym(c, lit, kind)
-      let s = Sym(kind: kind, name: result,
+      result = (identToSym(c, lit, kind), OkNew)
+      let s = Sym(kind: kind, name: result[0],
                   pos: c.dest.len)
       addOverloadable(c.currentScope, lit, s)
       c.dest.add symdefToken(s.name, info)
