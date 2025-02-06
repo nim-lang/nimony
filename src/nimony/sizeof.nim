@@ -72,7 +72,10 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of IntT, UIntT, FloatT:
     let n = n.firstSon
     assert n.kind == IntLit
-    let s = pool.integers[n.intId] div 8
+    let s = if pool.integers[n.intId] != -1:
+        pool.integers[n.intId] div 8
+      else:
+        ptrSize
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
@@ -102,6 +105,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     var c2 = createSizeofValue(c.strict)
     if n.kind != DotToken:
       getSize(c2, cache, n, ptrSize)
+    skip n
     while n.kind != ParRi:
       let field = takeLocal(n, SkipFinalParRi)
       getSize c2, cache, field.typ, ptrSize
@@ -182,7 +186,7 @@ proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
   let k = typ.typeKind
   if k in {SinkT, MutT, OutT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, IterT, InvokeT, UncheckedArrayT,
-     AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT, NoType}:
+     AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT}:
     result = false
   elif typeIsBig(typ, ptrSize):
     result = not hasBuiltinPragma(pragmas, ByCopy) and typeSectionMode(typ) != ByCopy
