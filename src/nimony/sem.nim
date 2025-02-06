@@ -1930,7 +1930,7 @@ proc semProposition(c: var SemContext; n: var Cursor; kind: PragmaKind) =
 type
   CrucialPragma* = object
     sym: SymId
-    magic, cName: string
+    magic, externName: string
     bits: int
     hasVarargs: PackedLineInfo
     flags: set[PragmaKind]
@@ -1968,18 +1968,19 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     let info = n.info
     c.dest.add parLeToken(pool.tags.getOrIncl($pk), info)
     inc n
+    let strPos = c.dest.len
     if n.kind != ParRi:
       semConstStrExpr c, n
     elif crucial.sym != SymId(0):
       var name = pool.syms[crucial.sym]
       extractBasename name
       c.dest.add strToken(pool.strings.getOrIncl(name), info)
-      if pk in {ImportC, ImportCpp, ExportC}:
-        crucial.cName = name
     else:
       c.buildErr info, "invalid import/export symbol"
       c.dest.addParRi()
       return
+    if pk in {ImportC, ImportCpp, ExportC} and c.dest[strPos].kind == StringLit:
+      crucial.externName = pool.strings[c.dest[strPos].litId]
     # Header pragma extra
     if pk == Header:
       let idx = c.dest.len - 1
@@ -3749,13 +3750,23 @@ proc semTypePragmas(c: var SemContext; n: var Cursor; sym: SymId; beforeExportMa
     exportMarkerBecomesNifTag c, beforeExportMarker, result
 
 proc fitTypeToPragmas(c: var SemContext; pragmas: CrucialPragma; typeStart: int) =
-  if {ImportC, ImportCpp, ExportC} * pragmas.flags != {}:
+  if {ImportC, ImportCpp} * pragmas.flags != {}:
     let typ = cursorAt(c.dest, typeStart)
     if isNominal(typ.typeKind):
       # ok
       endRead(c.dest)
+    elif typ.typeKind in {IntT, UintT}:
+      let info = typ.info
+      endRead(c.dest)
+      let kind = if ImportC in pragmas.flags: ImportC else: ImportCpp
+      var tokens = [
+        parLeToken(pool.tags.getOrIncl($kind), info),
+        strToken(pool.strings.getOrIncl(pragmas.externName), info),
+        parRiToken(info)
+      ]
+      c.dest.insert fromBuffer(tokens), typeStart+2
     else:
-      let err = "cannot import/export type " & typeToString(typ)
+      let err = "cannot import type " & typeToString(typ)
       let info = typ.info
       endRead(c.dest)
       c.buildErr info, err

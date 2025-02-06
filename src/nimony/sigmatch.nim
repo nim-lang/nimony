@@ -508,6 +508,8 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   else:
     m.error InvalidMatch, f, a
   inc f
+  while f.pragmaKind in {ImportC, ImportCpp}:
+    skip f
 
 proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   if a.typeKind == ArrayT:

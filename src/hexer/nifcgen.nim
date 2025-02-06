@@ -371,7 +371,22 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     case c.typeKind
     of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
       error e, "type expected but got: ", c
-    of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymKindT:
+    of IntT, UIntT:
+      let start = e.dest.len
+      e.dest.add c
+      inc c
+      e.dest.add c
+      inc c
+      if c.kind != ParRi and c.pragmaKind in {ImportC, ImportCpp}:
+        e.dest.shrink start
+        inc c
+        e.dest.addSymUse pool.syms.getOrIncl(pool.strings[c.litId] & ".c"), c.info
+        inc c
+        skipParRi e, c
+        skipParRi e, c
+      else:
+        wantParRi e, c
+    of FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
         e.dest.add c
         inc c
