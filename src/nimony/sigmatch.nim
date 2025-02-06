@@ -484,9 +484,19 @@ proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
   else:
     result = -1
 
+proc inTypeRange(context: ptr SemContext; f: Cursor; val: int64): bool =
+  if f.typeKind == FloatT:
+    result = true
+  else:
+    let i = createXint(val)
+    result = i >= firstOrd(context[], f) and i <= lastOrd(context[], f)
+
 proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   var a = skipModifier(arg.typ)
-  if f.tag == a.tag:
+  let isLiteral = f.typeKind != CharT and
+    arg.n.kind == IntLit and sameTrees(a, m.context.types.intType)
+  let sameTag = f.tag == a.tag
+  if sameTag or isLiteral:
     inc a
   else:
     m.error InvalidMatch, f, a
@@ -494,9 +504,9 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   let forig = f
   inc f
   let cmp = cmpTypeBits(m.context, f, a)
-  if cmp == 0:
+  if cmp == 0 and sameTag:
     discard "same types"
-  elif cmp > 0:
+  elif cmp > 0 or (isLiteral and inTypeRange(m.context, forig, pool.integers[arg.n.intId])):
     # f has more bits than a, great!
     if m.skippedMod in {MutT, OutT}:
       m.error ImplicitConversionNotMutable, forig, forig
