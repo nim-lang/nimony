@@ -9,7 +9,30 @@
 
 include nifprelude
 
+import ".." / nimony / [nimony_model, programs, decls]
 import basics, iterinliner, desugar, xelim, duplifier, lifter, destroyer, constparams
+
+proc publishHooks*(n: var Cursor) =
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      case n.stmtKind
+      of ProcS, FuncS, MacroS, MethodS, ConverterS:
+        let decl = asRoutine(n)
+        var dest = createTokenBuf()
+        takeTree(dest, n)
+        let sym = decl.name.symId
+        publish sym, dest
+      else:
+        inc n
+        inc nested
+    of ParRi:
+      inc n
+      dec nested
+    else:
+      inc n
+    if nested == 0: break
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n = n
@@ -22,24 +45,30 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   endRead(n0)
 
   var c2 = beginRead(n1)
-  var n2 = injectConstParamDerefs(c2, 8)
+  let ctx = createLiftingCtx()
+  var n2 = injectDups(c2, ctx)
   endRead(n1)
 
   var c3 = beginRead(n2)
-  let ctx = createLiftingCtx()
-  var n3 = injectDups(c3, ctx)
+  var n3 = lowerExprs(c3, moduleSuffix)
   endRead(n2)
 
   var c4 = beginRead(n3)
-  var n4 = lowerExprs(c4, moduleSuffix)
+  var n4 = injectDestructors(c4, ctx)
   endRead(n3)
 
-  var c5 = beginRead(n4)
-  var n5 = injectDestructors(c5, ctx)
-  endRead(n4)
+  shrink(n4, n4.len-1)
 
-  shrink(n5, n5.len-1)
-  n5.add move(ctx[].dest)
-  n5.addParRi()
+  if ctx[].dest.len > 0:
+    var hookCursor = beginRead(ctx[].dest)
+    publishHooks hookCursor
+    endRead(ctx[].dest)
+
+  n4.add move(ctx[].dest)
+  n4.addParRi()
+
+  var c5 = beginRead(n4)
+  var n5 = injectConstParamDerefs(c5, 8)
+  endRead(n4)
 
   result = move n5
