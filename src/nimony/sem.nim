@@ -3188,7 +3188,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.converters.mgetOrPut(root, @[]).add(symId)
         if c.dest[beforeExportMarker].kind != DotToken:
           # exported
-          if c.dest[beforeGenericParams].kind != $InvokeT:
+          if not (c.dest[beforeGenericParams].kind == ParLe and
+              pool.tags[c.dest[beforeGenericParams].tagId] == $InvokeT):
             # don't register instances
             c.converterIndexMap.add((root, symId))
     if it.n.kind != DotToken:
