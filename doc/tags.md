@@ -1,4 +1,4 @@
-| Name                 | Enum suffixes               |   Description |
+| Name                 | Enums                       |   Description |
 |----------------------|-----------------------------|---------------|
 | err                  | C, X                        | indicates an error |
 | suf                  | C, X                        | literal with suffix annotation |

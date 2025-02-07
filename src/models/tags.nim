@@ -2,237 +2,237 @@
 
 const
   TagData* = [
-    ("err", 2),
-    ("suf", 3),
-    ("at", 4),
-    ("deref", 5),
-    ("dot", 6),
-    ("pat", 7),
-    ("par", 8),
-    ("addr", 9),
-    ("nil", 10),
-    ("inf", 11),
-    ("neginf", 12),
-    ("nan", 13),
-    ("false", 14),
-    ("true", 15),
-    ("and", 16),
-    ("or", 17),
-    ("not", 18),
-    ("neg", 19),
-    ("sizeof", 20),
-    ("alignof", 21),
-    ("offsetof", 22),
-    ("oconstr", 23),
-    ("aconstr", 24),
-    ("kv", 25),
-    ("add", 26),
-    ("sub", 27),
-    ("mul", 28),
-    ("div", 29),
-    ("mod", 30),
-    ("shr", 31),
-    ("shl", 32),
-    ("bitand", 33),
-    ("bitor", 34),
-    ("bitxor", 35),
-    ("bitnot", 36),
-    ("eq", 37),
-    ("neq", 38),
-    ("le", 39),
-    ("lt", 40),
-    ("cast", 41),
-    ("conv", 42),
-    ("call", 43),
-    ("range", 44),
-    ("ranges", 45),
-    ("gvar", 46),
-    ("tvar", 47),
-    ("var", 48),
-    ("param", 49),
-    ("const", 50),
-    ("result", 51),
-    ("let", 52),
-    ("cursor", 53),
-    ("emit", 54),
-    ("asgn", 55),
-    ("scope", 56),
-    ("if", 57),
-    ("elif", 58),
-    ("else", 59),
-    ("break", 60),
-    ("while", 61),
-    ("case", 62),
-    ("of", 63),
-    ("lab", 64),
-    ("jmp", 65),
-    ("ret", 66),
-    ("stmts", 67),
-    ("params", 68),
-    ("proc", 69),
-    ("fld", 70),
-    ("union", 71),
-    ("object", 72),
-    ("efld", 73),
-    ("enum", 74),
-    ("proctype", 75),
-    ("atomic", 76),
-    ("ro", 77),
-    ("restrict", 78),
-    ("i", 79),
-    ("u", 80),
-    ("f", 81),
-    ("c", 82),
-    ("bool", 83),
-    ("void", 84),
-    ("ptr", 85),
-    ("array", 86),
-    ("flexarray", 87),
-    ("aptr", 88),
-    ("type", 89),
-    ("cdecl", 90),
-    ("stdcall", 91),
-    ("safecall", 92),
-    ("syscall", 93),
-    ("fastcall", 94),
-    ("thiscall", 95),
-    ("noconv", 96),
-    ("member", 97),
-    ("inline", 98),
-    ("noinline", 99),
-    ("attr", 100),
-    ("varargs", 101),
-    ("was", 102),
-    ("selectany", 103),
-    ("pragmas", 104),
-    ("align", 105),
-    ("bits", 106),
-    ("vector", 107),
-    ("imp", 108),
-    ("nodecl", 109),
-    ("incl", 110),
-    ("discard", 111),
-    ("try", 112),
-    ("raise", 113),
-    ("onerr", 114),
-    ("raises", 115),
-    ("errs", 116),
-    ("static", 117)
+    ("err", 1),
+    ("suf", 2),
+    ("at", 3),
+    ("deref", 4),
+    ("dot", 5),
+    ("pat", 6),
+    ("par", 7),
+    ("addr", 8),
+    ("nil", 9),
+    ("inf", 10),
+    ("neginf", 11),
+    ("nan", 12),
+    ("false", 13),
+    ("true", 14),
+    ("and", 15),
+    ("or", 16),
+    ("not", 17),
+    ("neg", 18),
+    ("sizeof", 19),
+    ("alignof", 20),
+    ("offsetof", 21),
+    ("oconstr", 22),
+    ("aconstr", 23),
+    ("kv", 24),
+    ("add", 25),
+    ("sub", 26),
+    ("mul", 27),
+    ("div", 28),
+    ("mod", 29),
+    ("shr", 30),
+    ("shl", 31),
+    ("bitand", 32),
+    ("bitor", 33),
+    ("bitxor", 34),
+    ("bitnot", 35),
+    ("eq", 36),
+    ("neq", 37),
+    ("le", 38),
+    ("lt", 39),
+    ("cast", 40),
+    ("conv", 41),
+    ("call", 42),
+    ("range", 43),
+    ("ranges", 44),
+    ("gvar", 45),
+    ("tvar", 46),
+    ("var", 47),
+    ("param", 48),
+    ("const", 49),
+    ("result", 50),
+    ("let", 51),
+    ("cursor", 52),
+    ("emit", 53),
+    ("asgn", 54),
+    ("scope", 55),
+    ("if", 56),
+    ("elif", 57),
+    ("else", 58),
+    ("break", 59),
+    ("while", 60),
+    ("case", 61),
+    ("of", 62),
+    ("lab", 63),
+    ("jmp", 64),
+    ("ret", 65),
+    ("stmts", 66),
+    ("params", 67),
+    ("proc", 68),
+    ("fld", 69),
+    ("union", 70),
+    ("object", 71),
+    ("efld", 72),
+    ("enum", 73),
+    ("proctype", 74),
+    ("atomic", 75),
+    ("ro", 76),
+    ("restrict", 77),
+    ("i", 78),
+    ("u", 79),
+    ("f", 80),
+    ("c", 81),
+    ("bool", 82),
+    ("void", 83),
+    ("ptr", 84),
+    ("array", 85),
+    ("flexarray", 86),
+    ("aptr", 87),
+    ("type", 88),
+    ("cdecl", 89),
+    ("stdcall", 90),
+    ("safecall", 91),
+    ("syscall", 92),
+    ("fastcall", 93),
+    ("thiscall", 94),
+    ("noconv", 95),
+    ("member", 96),
+    ("inline", 97),
+    ("noinline", 98),
+    ("attr", 99),
+    ("varargs", 100),
+    ("was", 101),
+    ("selectany", 102),
+    ("pragmas", 103),
+    ("align", 104),
+    ("bits", 105),
+    ("vector", 106),
+    ("imp", 107),
+    ("nodecl", 108),
+    ("incl", 109),
+    ("discard", 110),
+    ("try", 111),
+    ("raise", 112),
+    ("onerr", 113),
+    ("raises", 114),
+    ("errs", 115),
+    ("static", 116)
   ]
 const
-  ErrTagId* = 2
-  SufTagId* = 3
-  AtTagId* = 4
-  DerefTagId* = 5
-  DotTagId* = 6
-  PatTagId* = 7
-  ParTagId* = 8
-  AddrTagId* = 9
-  NilTagId* = 10
-  InfTagId* = 11
-  NeginfTagId* = 12
-  NanTagId* = 13
-  FalseTagId* = 14
-  TrueTagId* = 15
-  AndTagId* = 16
-  OrTagId* = 17
-  NotTagId* = 18
-  NegTagId* = 19
-  SizeofTagId* = 20
-  AlignofTagId* = 21
-  OffsetofTagId* = 22
-  OconstrTagId* = 23
-  AconstrTagId* = 24
-  KvTagId* = 25
-  AddTagId* = 26
-  SubTagId* = 27
-  MulTagId* = 28
-  DivTagId* = 29
-  ModTagId* = 30
-  ShrTagId* = 31
-  ShlTagId* = 32
-  BitandTagId* = 33
-  BitorTagId* = 34
-  BitxorTagId* = 35
-  BitnotTagId* = 36
-  EqTagId* = 37
-  NeqTagId* = 38
-  LeTagId* = 39
-  LtTagId* = 40
-  CastTagId* = 41
-  ConvTagId* = 42
-  CallTagId* = 43
-  RangeTagId* = 44
-  RangesTagId* = 45
-  GvarTagId* = 46
-  TvarTagId* = 47
-  VarTagId* = 48
-  ParamTagId* = 49
-  ConstTagId* = 50
-  ResultTagId* = 51
-  LetTagId* = 52
-  CursorTagId* = 53
-  EmitTagId* = 54
-  AsgnTagId* = 55
-  ScopeTagId* = 56
-  IfTagId* = 57
-  ElifTagId* = 58
-  ElseTagId* = 59
-  BreakTagId* = 60
-  WhileTagId* = 61
-  CaseTagId* = 62
-  OfTagId* = 63
-  LabTagId* = 64
-  JmpTagId* = 65
-  RetTagId* = 66
-  StmtsTagId* = 67
-  ParamsTagId* = 68
-  ProcTagId* = 69
-  FldTagId* = 70
-  UnionTagId* = 71
-  ObjectTagId* = 72
-  EfldTagId* = 73
-  EnumTagId* = 74
-  ProctypeTagId* = 75
-  AtomicTagId* = 76
-  RoTagId* = 77
-  RestrictTagId* = 78
-  ITagId* = 79
-  UTagId* = 80
-  FTagId* = 81
-  CTagId* = 82
-  BoolTagId* = 83
-  VoidTagId* = 84
-  PtrTagId* = 85
-  ArrayTagId* = 86
-  FlexarrayTagId* = 87
-  AptrTagId* = 88
-  TypeTagId* = 89
-  CdeclTagId* = 90
-  StdcallTagId* = 91
-  SafecallTagId* = 92
-  SyscallTagId* = 93
-  FastcallTagId* = 94
-  ThiscallTagId* = 95
-  NoconvTagId* = 96
-  MemberTagId* = 97
-  InlineTagId* = 98
-  NoinlineTagId* = 99
-  AttrTagId* = 100
-  VarargsTagId* = 101
-  WasTagId* = 102
-  SelectanyTagId* = 103
-  PragmasTagId* = 104
-  AlignTagId* = 105
-  BitsTagId* = 106
-  VectorTagId* = 107
-  ImpTagId* = 108
-  NodeclTagId* = 109
-  InclTagId* = 110
-  DiscardTagId* = 111
-  TryTagId* = 112
-  RaiseTagId* = 113
-  OnerrTagId* = 114
-  RaisesTagId* = 115
-  ErrsTagId* = 116
-  StaticTagId* = 117
+  ErrTagId* = 1
+  SufTagId* = 2
+  AtTagId* = 3
+  DerefTagId* = 4
+  DotTagId* = 5
+  PatTagId* = 6
+  ParTagId* = 7
+  AddrTagId* = 8
+  NilTagId* = 9
+  InfTagId* = 10
+  NeginfTagId* = 11
+  NanTagId* = 12
+  FalseTagId* = 13
+  TrueTagId* = 14
+  AndTagId* = 15
+  OrTagId* = 16
+  NotTagId* = 17
+  NegTagId* = 18
+  SizeofTagId* = 19
+  AlignofTagId* = 20
+  OffsetofTagId* = 21
+  OconstrTagId* = 22
+  AconstrTagId* = 23
+  KvTagId* = 24
+  AddTagId* = 25
+  SubTagId* = 26
+  MulTagId* = 27
+  DivTagId* = 28
+  ModTagId* = 29
+  ShrTagId* = 30
+  ShlTagId* = 31
+  BitandTagId* = 32
+  BitorTagId* = 33
+  BitxorTagId* = 34
+  BitnotTagId* = 35
+  EqTagId* = 36
+  NeqTagId* = 37
+  LeTagId* = 38
+  LtTagId* = 39
+  CastTagId* = 40
+  ConvTagId* = 41
+  CallTagId* = 42
+  RangeTagId* = 43
+  RangesTagId* = 44
+  GvarTagId* = 45
+  TvarTagId* = 46
+  VarTagId* = 47
+  ParamTagId* = 48
+  ConstTagId* = 49
+  ResultTagId* = 50
+  LetTagId* = 51
+  CursorTagId* = 52
+  EmitTagId* = 53
+  AsgnTagId* = 54
+  ScopeTagId* = 55
+  IfTagId* = 56
+  ElifTagId* = 57
+  ElseTagId* = 58
+  BreakTagId* = 59
+  WhileTagId* = 60
+  CaseTagId* = 61
+  OfTagId* = 62
+  LabTagId* = 63
+  JmpTagId* = 64
+  RetTagId* = 65
+  StmtsTagId* = 66
+  ParamsTagId* = 67
+  ProcTagId* = 68
+  FldTagId* = 69
+  UnionTagId* = 70
+  ObjectTagId* = 71
+  EfldTagId* = 72
+  EnumTagId* = 73
+  ProctypeTagId* = 74
+  AtomicTagId* = 75
+  RoTagId* = 76
+  RestrictTagId* = 77
+  ITagId* = 78
+  UTagId* = 79
+  FTagId* = 80
+  CTagId* = 81
+  BoolTagId* = 82
+  VoidTagId* = 83
+  PtrTagId* = 84
+  ArrayTagId* = 85
+  FlexarrayTagId* = 86
+  AptrTagId* = 87
+  TypeTagId* = 88
+  CdeclTagId* = 89
+  StdcallTagId* = 90
+  SafecallTagId* = 91
+  SyscallTagId* = 92
+  FastcallTagId* = 93
+  ThiscallTagId* = 94
+  NoconvTagId* = 95
+  MemberTagId* = 96
+  InlineTagId* = 97
+  NoinlineTagId* = 98
+  AttrTagId* = 99
+  VarargsTagId* = 100
+  WasTagId* = 101
+  SelectanyTagId* = 102
+  PragmasTagId* = 103
+  AlignTagId* = 104
+  BitsTagId* = 105
+  VectorTagId* = 106
+  ImpTagId* = 107
+  NodeclTagId* = 108
+  InclTagId* = 109
+  DiscardTagId* = 110
+  TryTagId* = 111
+  RaiseTagId* = 112
+  OnerrTagId* = 113
+  RaisesTagId* = 114
+  ErrsTagId* = 115
+  StaticTagId* = 116

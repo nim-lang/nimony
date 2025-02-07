@@ -75,12 +75,12 @@ proc writeTagsFile(output: string; data: seq[(string, int)]) =
     f.writeLine "  " & toNimName(d[0], "TagId") & "* = " & $d[1]
 
 proc genTags(inp: File) =
-  var i = -1
+  var i = -2
   var enumDecls = default(array[EnumList, string])
   var tags: seq[(string, int)] = @[]
   for line in lines(inp):
     inc i
-    if i <= 1: continue # skip header
+    if i <= 0: continue # skip header
     var parts = line.split("|")
     if parts.len == 0: continue
     if parts.len != 5:
@@ -97,8 +97,9 @@ proc genTags(inp: File) =
         let enumVal = toNimName(tagName, toSuffix(e)[0])
         enumDecls[e].add enumVal
         enumDecls[e].add " = (" & $i & ", " & escape(tagName) & ")"
-        enumDecls[e].add "  ## "
-        enumDecls[e].add parts[3].strip
+        enumDecls[e].add "  ##"
+        if desc.len > 0:
+          enumDecls[e].add " " & desc
 
   writeTagsFile "src/models/tags.nim", tags
 
