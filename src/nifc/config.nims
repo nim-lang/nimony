@@ -1,2 +1,1 @@
---stylecheck:error
 --experimental:strictdefs
