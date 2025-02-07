@@ -316,7 +316,7 @@ proc generateFinalMakefile(c: DepContext; passC, passL: string): string =
 
     # The .c.nif files depend on all of their .2.nif files:
     let hexer = findTool("hexer")
-    s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(hexer) & " $<"
+    s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(hexer) & " --bits:" & $c.config.bits & " $<"
 
   result = "nifcache" / c.rootNode.files[0].modname & ".final.makefile"
   writeFile result, s

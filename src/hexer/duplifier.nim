@@ -650,7 +650,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        DefinedX, HighX, LowX, TypeofX, UnpackX, EnumtostrX, IsmainmoduleX, QuotedX,
        DerefX, HderefX, AddrX, HaddrX, AlignofX, OffsetofX, ErrX:
       trSons c, n, WantNonOwner
-    of DefaultobjX, DefaulttupX:
+    of DefaultobjX, DefaulttupX, BracketX, CurlyX:
       raiseAssert "nodekind should have been eliminated in sem.nim"
     of NoExpr:
       case n.stmtKind

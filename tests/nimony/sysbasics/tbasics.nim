@@ -31,3 +31,14 @@ block:
   foo3(m)
   let m2 = cast[pointer](m)
   foo3(m2)
+
+type
+  Foo1314 = object
+    a, b, c, d, e: int
+
+
+proc foo1314(x: Foo1314) =
+  let s = x.a
+
+var a = Foo1314()
+foo1314(a)

@@ -23,6 +23,8 @@
 | offsetof             | C, X | `offsetof` operation |
 | oconstr              | C, X | object constructor |
 | aconstr              | C, X | array constructor |
+| bracket              | X | untyped array constructor |
+| curly                | X | untyped set constructor |
 | kv                   | SU | key-value pair |
 | add                  | C, X | |
 | sub | C, X | |

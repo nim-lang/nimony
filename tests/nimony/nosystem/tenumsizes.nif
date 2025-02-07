@@ -18,19 +18,19 @@
    (result :result.0 . . string.0.sys9azlf .) 4
    (case e.0 ~7,1
     (of
-     (set a0.0.tene657oj)
+     (ranges a0.0.tene657oj)
      (stmts
       (ret "a0"))) ~3,1
     (of
-     (set a1.0.tene657oj)
+     (ranges a1.0.tene657oj)
      (stmts
       (ret "a1"))) 1,1
     (of
-     (set a2.0.tene657oj)
+     (ranges a2.0.tene657oj)
      (stmts
       (ret "a2"))) 5,1
     (of
-     (set a3.0.tene657oj)
+     (ranges a3.0.tene657oj)
      (stmts
       (ret "a3"))))
    (ret result.0))) 7,2
@@ -52,19 +52,19 @@
    (result :result.1 . . string.0.sys9azlf .) 4
    (case e.1 ~2,1
     (of
-     (set ~5 b0.0.tene657oj)
+     (ranges ~5 b0.0.tene657oj)
      (stmts
       (ret "b0"))) 2,1
     (of
-     (set b1.0.tene657oj)
+     (ranges b1.0.tene657oj)
      (stmts
       (ret "b1"))) 6,1
     (of
-     (set b2.0.tene657oj)
+     (ranges b2.0.tene657oj)
      (stmts
       (ret "b2"))) 15,1
     (of
-     (set ~5 b3.0.tene657oj)
+     (ranges ~5 b3.0.tene657oj)
      (stmts
       (ret "b3"))))
    (ret result.1))) 7,4
@@ -86,19 +86,19 @@
    (result :result.2 . . string.0.sys9azlf .) 4
    (case e.2 ~7,1
     (of
-     (set c0.0.tene657oj)
+     (ranges c0.0.tene657oj)
      (stmts
       (ret "c0"))) ~3,1
     (of
-     (set c1.0.tene657oj)
+     (ranges c1.0.tene657oj)
      (stmts
       (ret "c1"))) 6,1
     (of
-     (set ~5 c2.0.tene657oj)
+     (ranges ~5 c2.0.tene657oj)
      (stmts
       (ret "c2"))) 14,1
     (of
-     (set c3.0.tene657oj)
+     (ranges c3.0.tene657oj)
      (stmts
       (ret "c3"))))
    (ret result.2))))

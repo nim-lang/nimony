@@ -276,7 +276,7 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip n
   else:
     dest.addParLe(AconstrX, info)
-    #trSetType(c, dest, typ)
+    trSetType(c, dest, typ)
     for b in bytes:
       dest.addUintLit(b, info)
 

@@ -11,7 +11,7 @@ import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
 import typekeys
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof]
 import basics, pipeline
 
 
@@ -498,6 +498,25 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   else:
     error e, "type expected but got: ", c
 
+proc maybeByConstRef(e: var EContext; c: var Cursor) =
+  let param = asLocal(c)
+  if passByConstRef(param.typ, param.pragmas, e.bits div 8):
+    var paramBuf = createTokenBuf()
+    paramBuf.add tagToken("param", c.info)
+    paramBuf.add param.name
+    paramBuf.add param.exported
+    paramBuf.add param.pragmas
+    copyIntoKind paramBuf, PtrT, param.typ.info:
+      paramBuf.add param.typ
+    paramBuf.addDotToken()
+    paramBuf.addParRi()
+    var paramCursor = beginRead(paramBuf)
+    traverseLocal(e, paramCursor, "param", TraverseSig)
+    endRead(paramBuf)
+    skip c
+  else:
+    traverseLocal(e, c, "param", TraverseSig)
+
 proc traverseParams(e: var EContext; c: var Cursor) =
   if c.kind == DotToken:
     e.dest.add c
@@ -508,7 +527,7 @@ proc traverseParams(e: var EContext; c: var Cursor) =
     loop e, c:
       if c.symKind != ParamY:
         error e, "expected (param) but got: ", c
-      traverseLocal(e, c, "param", TraverseSig)
+      maybeByConstRef(e, c)
   else:
     error e, "expected (params) but got: ", c
   # the result type
@@ -592,6 +611,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   var dst = createTokenBuf(50)
   swap e.dest, dst
   #let toPatch = e.dest.len
+
   let vinfo = c.info
   e.add "proc", vinfo
   inc c
@@ -859,9 +879,8 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         skipParRi(e, c)
       of AconstrX:
         e.dest.add tagToken("aconstr", c.info)
-        var arrayType = e.typeCache.getType(c)
         inc c
-        e.traverseType(arrayType, {})
+        traverseType(e, c)
         inc nested
       of OconstrX:
         e.dest.add tagToken("oconstr", c.info)
@@ -951,7 +970,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
           e.dest.addParRi()
           traverseExpr e, c
         wantParRi e, c
-      of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
+      of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, BracketX, CurlyX:
         error e, "BUG: not eliminated: ", c
       else:
         e.dest.add c
@@ -1118,7 +1137,7 @@ proc traverseCase(e: var EContext; c: var Cursor) =
     of OfU:
       e.dest.add c
       inc c
-      if c.kind == ParLe and c.exprKind == SetX:
+      if c.kind == ParLe and c.substructureKind == RangesU:
         inc c
         e.add "ranges", c.info
         while c.kind != ParRi:
@@ -1267,9 +1286,14 @@ proc importSymbol(e: var EContext; s: SymId) =
   else:
     error e, "could not find symbol: " & pool.syms[s]
 
-proc writeOutput(e: var EContext) =
+proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
   var b = nifbuilder.open(e.dir / e.main & ".c.nif")
   b.addHeader "hexer", "nifc"
+  var stack: seq[PackedLineInfo] = @[]
+  if rootInfo.isValid:
+    stack.add rootInfo
+    var (file, line, col) = unpack(pool.man, rootInfo)
+    b.addLineInfo(col, line, pool.files[file])
   b.addTree "stmts"
   for h in e.headers:
     b.withTree "incl":
@@ -1278,7 +1302,6 @@ proc writeOutput(e: var EContext) =
   var c = beginRead(e.dest)
   var ownerStack = @[(SymId(0), -1)]
 
-  var stack: seq[PackedLineInfo] = @[]
   var nested = 0
   var nextIsOwner = -1
   for n in 0 ..< e.dest.len:
@@ -1348,18 +1371,21 @@ proc writeOutput(e: var EContext) =
   b.close()
 
 
-proc expand*(infile: string) =
+proc expand*(infile: string, bits: int) =
   let (dir, file, ext) = splitModulePath(infile)
   var e = EContext(dir: (if dir.len == 0: getCurrentDir() else: dir), ext: ext, main: file,
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
-    typeCache: createTypeCache())
+    typeCache: createTypeCache(),
+    bits: bits
+    )
   e.openMangleScope()
 
   var c0 = setupProgram(infile, infile.changeFileExt ".c.nif", true)
   var dest = transform(e, c0, file)
 
   var c = beginRead(dest)
+  let rootInfo = c.info
 
   if stmtKind(c) == StmtsS:
     inc c
@@ -1378,7 +1404,7 @@ proc expand*(infile: string) =
       importSymbol(e, imp)
     inc i
   skipParRi e, c
-  writeOutput e
+  writeOutput e, rootInfo
   e.closeMangleScope()
 
 when isMainModule:

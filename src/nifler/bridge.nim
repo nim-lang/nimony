@@ -30,9 +30,9 @@ proc nodeKindTranslation(k: TNodeKind): string =
   of nkExprColonExpr: "kv"
   of nkPar: "par"
   of nkObjConstr: "obj"
-  of nkCurly: "set"
+  of nkCurly: "curly"
   of nkCurlyExpr: "curlyx"
-  of nkBracket: "arr"
+  of nkBracket: "bracket"
   of nkBracketExpr: "at"
   of nkPragmaBlock, nkPragmaExpr: "pragmax"
   of nkDotExpr: "dot"
@@ -342,7 +342,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
   of nkOfBranch:
     relLineInfo(n, parent, c)
     c.b.addTree("of")
-    c.b.addTree("set")
+    c.b.addTree("ranges")
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
     c.b.endTree()

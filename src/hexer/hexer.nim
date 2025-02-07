@@ -56,6 +56,7 @@ Command:
   file.nif      expand NIF file to meet NIFC's requirements
 
 Options:
+  --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --version                 show the version
   --help                    show this help
 """
@@ -65,12 +66,19 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 proc handleCmdLine*() =
   var files: seq[string] = @[]
+  var bits = sizeof(int) * 8
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
       files.add key
     of cmdLongOption, cmdShortOption:
       case normalize(key)
+      of "bits":
+        case val
+        of "64": bits = 64
+        of "32": bits = 32
+        of "16": bits = 16
+        else: quit "invalid value for --bits"
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       else: writeHelp()
@@ -80,7 +88,7 @@ proc handleCmdLine*() =
   elif files.len == 0:
     writeHelp()
   else:
-    expand files[0]
+    expand files[0], bits
 
 when isMainModule:
   handleCmdLine()

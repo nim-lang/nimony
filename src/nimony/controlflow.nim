@@ -502,9 +502,9 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   else:
     endRead c.dest
 
-proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
+proc trCaseRanges(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
                tjmp, fjmp: var FixupList) =
-  assert n.exprKind == SetX
+  assert n.exprKind == RangesX
   inc n
   var nextAttempt = Label(-1)
   var nextAttemptB = Label(-1)
@@ -581,7 +581,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
     inc n
     var tjmp: FixupList = @[]
     var fjmp: FixupList = @[]
-    trCaseSet c, n, selector, selectorType, tjmp, fjmp
+    trCaseRanges c, n, selector, selectorType, tjmp, fjmp
     for t in tjmp: c.patch t
     trStmtOrExpr c, n, tar
     endings.add c.jmpForw(n.info)
@@ -756,7 +756,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
        UnpackX, EnumToStrX,
        IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX, EnsureMoveX,
-       DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX:
+       DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX, BracketX, CurlyX:
       trExprLoop c, n
     of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:

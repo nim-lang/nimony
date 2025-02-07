@@ -314,6 +314,7 @@ proc evalBitSet*(n, typ: Cursor): seq[uint8] =
   result = newSeq[uint8](s)
   var n = n
   inc n # skip set tag
+  skip n # skip set type
   while n.kind != ParRi:
     if n.substructureKind == RangeU:
       inc n

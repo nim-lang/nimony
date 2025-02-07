@@ -22,12 +22,12 @@
    (result :result.0 . . string.0.sys9azlf .) 23
    (case e.0 ~18,1
     (of
-     (set ~8
+     (ranges ~8
       (false))
      (stmts
       (ret "false"))) ~8,1
     (of
-     (set ~7
+     (ranges ~7
       (true))
      (stmts
       (ret "true"))))
