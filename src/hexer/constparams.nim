@@ -30,12 +30,12 @@ type
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
-proc rememberConstRefParams(c: var Context; params, pragmas: Cursor) =
+proc rememberConstRefParams(c: var Context; params: Cursor) =
   var n = params
   inc n # skips (params
   while n.kind != ParRi:
     let r = takeLocal(n, SkipFinalParRi)
-    if r.name.kind == SymbolDef and passByConstRef(r.typ, pragmas, c.ptrSize):
+    if r.name.kind == SymbolDef and passByConstRef(r.typ, r.pragmas, c.ptrSize):
       c.constRefParams.incl r.name.symId
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -45,7 +45,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto(dest, n):
     let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
     if isConcrete:
-      rememberConstRefParams c2, r.params, r.pragmas
+      rememberConstRefParams c2, r.params
       tr c2, dest, n
     else:
       takeTree dest, n
