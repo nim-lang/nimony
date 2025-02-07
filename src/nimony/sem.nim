@@ -3904,9 +3904,12 @@ proc semBracket(c: var SemContext, it: var Item) =
     # empty array
     if it.typ.typeKind in {AutoT, VoidT}:
       buildErr c, it.n.info, "empty array needs a specified type"
+    else:
+      c.dest.addSubtree it.typ
     wantParRi c, it.n
     return
 
+  let typeInsertPos = c.dest.len
   var elem = Item(n: it.n, typ: c.types.autoType)
   case it.typ.typeKind
   of ArrayT: # , SeqT, OpenArrayT
@@ -3935,6 +3938,7 @@ proc semBracket(c: var SemContext, it: var Item) =
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
   c.dest.shrink typeStart
+  c.dest.insert it.typ, typeInsertPos
   commonType c, it, exprStart, expected
 
 proc semCurly(c: var SemContext, it: var Item) =
@@ -3946,8 +3950,12 @@ proc semCurly(c: var SemContext, it: var Item) =
     # empty set
     if it.typ.typeKind in {AutoT, VoidT}:
       buildErr c, it.n.info, "empty set needs a specified type"
+    else:
+      c.dest.addSubtree it.typ
     wantParRi c, it.n
     return
+
+  let typeInsertPos = c.dest.len
   var elem = Item(n: it.n, typ: c.types.autoType)
   case it.typ.typeKind
   of SetT:
@@ -3991,6 +3999,7 @@ proc semCurly(c: var SemContext, it: var Item) =
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
   c.dest.shrink typeStart
+  c.dest.insert it.typ, typeInsertPos
   commonType c, it, exprStart, expected
 
 proc semArrayConstr(c: var SemContext; it: var Item) =
