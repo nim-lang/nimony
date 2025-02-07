@@ -11,7 +11,7 @@ import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
 import typekeys
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof]
 import basics, pipeline
 
 
@@ -283,16 +283,17 @@ proc closeGenPragmas(e: var EContext; g: GenPragmas) =
   else:
     e.dest.addDotToken()
 
-proc traverseParams(e: var EContext; c: var Cursor)
+proc traverseParams(e: var EContext; c: var Cursor; pragmas: Cursor)
 
 proc traverseProcTypeBody(e: var EContext; c: var Cursor) =
+  let procDecl = asRoutine(c)
   e.dest.add tagToken("proctype", c.info)
   # This is really stupid...
   e.dest.addDotToken() # name
   inc c # proc
   # name, export marker, pattern, type vars:
   for i in 0..<4: skip c
-  traverseParams e, c
+  traverseParams e, c, procDecl.pragmas
 
   let pinfo = c.info
   let prag = parsePragmas(e, c)
@@ -498,7 +499,26 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   else:
     error e, "type expected but got: ", c
 
-proc traverseParams(e: var EContext; c: var Cursor) =
+proc maybeByConstRef(e: var EContext; c: var Cursor; pragmas: Cursor) =
+  let param = asLocal(c)
+  if passByConstRef(param.typ, pragmas, sizeof(int)):
+    var paramBuf = createTokenBuf()
+    paramBuf.add tagToken("param", c.info)
+    paramBuf.add param.name
+    paramBuf.add param.exported
+    paramBuf.add param.pragmas
+    copyIntoKind paramBuf, PtrT, param.typ.info:
+      paramBuf.add param.typ
+    paramBuf.add param.val # TODO: default parameters haven't been implemented yet
+    paramBuf.addParRi()
+    var paramCursor = beginRead(paramBuf)
+    traverseLocal(e, paramCursor, "param", TraverseSig)
+    endRead(paramBuf)
+    skip c
+  else:
+    traverseLocal(e, c, "param", TraverseSig)
+
+proc traverseParams(e: var EContext; c: var Cursor; pragmas: Cursor) =
   if c.kind == DotToken:
     e.dest.add c
     inc c
@@ -508,7 +528,7 @@ proc traverseParams(e: var EContext; c: var Cursor) =
     loop e, c:
       if c.substructureKind != ParamS:
         error e, "expected (param) but got: ", c
-      traverseLocal(e, c, "param", TraverseSig)
+      maybeByConstRef(e, c, pragmas)
   else:
     error e, "expected (params) but got: ", c
   # the result type
@@ -591,6 +611,9 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   var dst = createTokenBuf(50)
   swap e.dest, dst
   #let toPatch = e.dest.len
+
+  let procDecl = asRoutine(c)
+
   let vinfo = c.info
   e.add "proc", vinfo
   inc c
@@ -633,7 +656,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
     inc c
     skip c # skip return type
   else:
-    traverseParams e, c
+    traverseParams e, c, procDecl.pragmas
 
   let pinfo = c.info
   let prag = parsePragmas(e, c)
