@@ -46,7 +46,7 @@ type
     ConvC = (45, "conv")  ## type conversion
     CallC = (46, "call")  ## call operation
 
-proc rawTagIsNifcExpr*(raw: uint32): bool =
+proc rawTagIsNifcExpr*(raw: uint32): bool {.inline.} =
   raw <= 255'u32 and raw.uint8 in {1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 24'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 46'u8}
 
 type
@@ -81,7 +81,7 @@ type
     RaiseS = (140, "raise")  ## `raise` statement
     OnerrS = (141, "onerr")  ## error handling statement
 
-proc rawTagIsNifcStmt*(raw: uint32): bool =
+proc rawTagIsNifcStmt*(raw: uint32): bool {.inline.} =
   raw <= 255'u32 and raw.uint8 in {50'u8, 51'u8, 52'u8, 54'u8, 61'u8, 68'u8, 73'u8, 74'u8, 75'u8, 76'u8, 81'u8, 84'u8, 85'u8, 87'u8, 88'u8, 89'u8, 91'u8, 128'u8, 130'u8, 133'u8, 134'u8, 135'u8, 136'u8, 137'u8, 138'u8, 139'u8, 140'u8, 141'u8}
 
 type
@@ -103,7 +103,7 @@ type
     FlexarrayT = (108, "flexarray")  ## `flexarray` type constructor
     AptrT = (109, "aptr")  ## "pointer to array of" type constructor
 
-proc rawTagIsNifcType*(raw: uint32): bool =
+proc rawTagIsNifcType*(raw: uint32): bool {.inline.} =
   raw >= 92'u32 and raw <= 109'u32 and raw != 97'u32 and raw != 98'u32 and raw != 99'u32
 
 type
@@ -122,7 +122,7 @@ type
     AttrU = (120, "attr")  ## general attribute annoation
     PragmasU = (124, "pragmas")  ## begin of pragma section
 
-proc rawTagIsNifcOther*(raw: uint32): bool =
+proc rawTagIsNifcOther*(raw: uint32): bool {.inline.} =
   raw <= 255'u32 and raw.uint8 in {28'u8, 48'u8, 49'u8, 53'u8, 58'u8, 59'u8, 60'u8, 78'u8, 79'u8, 86'u8, 120'u8, 124'u8}
 
 type
@@ -141,7 +141,7 @@ type
     ErrsP = (143, "errs")  ## proc annotation
     StaticP = (144, "static")  ## `static` type or annotation
 
-proc rawTagIsNifcPragma*(raw: uint32): bool =
+proc rawTagIsNifcPragma*(raw: uint32): bool {.inline.} =
   raw <= 255'u32 and raw.uint8 in {118'u8, 119'u8, 121'u8, 122'u8, 123'u8, 125'u8, 126'u8, 127'u8, 129'u8, 142'u8, 143'u8, 144'u8}
 
 type
@@ -151,6 +151,6 @@ type
     RoQ = (98, "ro")  ## `readonly` (= `const`) type qualifier for NIFC
     RestrictQ = (99, "restrict")  ## type qualifier for NIFC
 
-proc rawTagIsNifcTypeQualifier*(raw: uint32): bool =
+proc rawTagIsNifcTypeQualifier*(raw: uint32): bool {.inline.} =
   raw >= 97'u32 and raw <= 99'u32
 

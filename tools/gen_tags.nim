@@ -73,7 +73,7 @@ proc writeClassifier(f: File; e: EnumList; fields: seq[EnumField]) =
       for h in prev + 1..f.value - 1:
         holes.add h
     prev = f.value
-  f.write "\n\nproc rawTagIs" & $e & "*(raw: uint32): bool ="
+  f.write "\n\nproc rawTagIs" & $e & "*(raw: uint32): bool {.inline.} ="
   if holes.len <= 3:
     f.write "\n  raw >= " & $first & "'u32 and raw <= " & $last & "'u32"
     for h in holes:
