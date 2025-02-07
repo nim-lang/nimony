@@ -509,7 +509,7 @@ proc maybeByConstRef(e: var EContext; c: var Cursor; pragmas: Cursor) =
     paramBuf.add param.pragmas
     copyIntoKind paramBuf, PtrT, param.typ.info:
       paramBuf.add param.typ
-    paramBuf.add param.val # TODO: default parameters haven't been implemented yet
+    paramBuf.add param.val
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
     traverseLocal(e, paramCursor, "param", TraverseSig)
