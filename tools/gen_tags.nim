@@ -1,5 +1,5 @@
 
-import std / [strutils, sequtils]
+import std / [strutils, sets, sequtils]
 
 proc toNimName(s: string; suffix: string): string =
   s[0].toUpperAscii & s.substr(1) & suffix
@@ -8,7 +8,7 @@ type
   EnumList = enum
     CallConv,
     NifcExpr, NifcStmt, NifcType, NifcOther, NifcPragma, NifcTypeQualifier,
-    NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym,
+    NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym, ControlFlowKind,
     NifIndex
 
 proc toSuffix(e: EnumList): (string, string) =
@@ -26,6 +26,7 @@ proc toSuffix(e: EnumList): (string, string) =
   of NimonyOther: ("U", "NoSub")
   of NimonyPragma: ("P", "NoPragma")
   of NimonySym: ("Y", "NoSym")
+  of ControlFlowKind: ("F", "NoControlFlow")
   of NifIndex: ("Idx", "NoIndexTag")
 
 proc shortcutToEnumList(shortcut: string): set[EnumList] =
@@ -40,11 +41,13 @@ proc shortcutToEnumList(shortcut: string): set[EnumList] =
   of "SC": {NifcStmt}
   of "SU": {NifcOther, NimonyOther}
   of "SUC": {NifcOther}
+  of "SUN": {NimonyOther}
   of "TQC": {NifcTypeQualifier}
   of "TC": {NifcType}
   of "TN": {NimonyType}
   of "IX": {NifIndex}
   of "Y": {NimonySym}
+  of "G": {ControlFlowKind}
   else: raiseAssert "unknown enum descriptor: " & shortcut
 
 const
@@ -78,6 +81,7 @@ proc genTags(inp: File) =
   var i = -2
   var enumDecls = default(array[EnumList, string])
   var tags: seq[(string, int)] = @[]
+  var knownTags = initHashSet[string]()
   for line in lines(inp):
     inc i
     if i <= 0: continue # skip header
@@ -86,6 +90,8 @@ proc genTags(inp: File) =
     if parts.len != 5:
       quit "WRONG LINE: " & line
     let tagName = parts[1].strip()
+    if knownTags.containsOrIncl(tagName):
+      quit "DUPLICATE TAG: " & tagName
     tags.add (tagName, i)
 
     let desc = parts[3].strip()
@@ -105,7 +111,7 @@ proc genTags(inp: File) =
 
   writeModel "src/models/callconv", enumDecls, CallConv, CallConv
   writeModel "src/models/nifc", enumDecls, NifcExpr, NifcTypeQualifier
-  writeModel "src/models/nimony", enumDecls, NimonyExpr, NimonySym
+  writeModel "src/models/nimony", enumDecls, NimonyExpr, ControlFlowKind
   writeModel "src/models/nifindex", enumDecls, NifIndex, NifIndex
 
 proc main =

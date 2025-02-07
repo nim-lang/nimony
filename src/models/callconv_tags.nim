@@ -3,11 +3,11 @@
 type
   CallConv* = enum
     NoCallConv
-    Cdecl = (89, "cdecl")  ## `cdecl` calling convention
-    Stdcall = (90, "stdcall")  ## `stdcall` calling convention
-    Safecall = (91, "safecall")  ## `safecall` calling convention
-    Syscall = (92, "syscall")  ## `syscall` calling convention
-    Fastcall = (93, "fastcall")  ## `fastcall` calling convention
-    Thiscall = (94, "thiscall")  ## `thiscall` calling convention
-    Noconv = (95, "noconv")  ## no explicit calling convention
-    Member = (96, "member")  ## `member` calling convention
+    Cdecl = (104, "cdecl")  ## `cdecl` calling convention
+    Stdcall = (105, "stdcall")  ## `stdcall` calling convention
+    Safecall = (106, "safecall")  ## `safecall` calling convention
+    Syscall = (107, "syscall")  ## `syscall` calling convention
+    Fastcall = (108, "fastcall")  ## `fastcall` calling convention
+    Thiscall = (109, "thiscall")  ## `thiscall` calling convention
+    Noconv = (110, "noconv")  ## no explicit calling convention
+    Member = (111, "member")  ## `member` calling convention

@@ -1,8 +1,8 @@
 | Name                 | Enums                       |   Description |
 |----------------------|-----------------------------|---------------|
-| err                  | C, X                        | indicates an error |
+| err                  | C, X, TN                    | indicates an error |
 | suf                  | C, X                        | literal with suffix annotation |
-| at                   | C, X | array indexing operation |
+| at                   | C, X, TN | array indexing operation |
 | deref                | C, X | pointer deref operation |
 | dot                  | C, X | object field selection |
 | pat                  | C, X | pointer indexing operation |
@@ -15,9 +15,9 @@
 | false                | C, X | boolean `false` value |
 | true                 | C, X | boolean `true` value |
 | and                  | C, X | boolean `and` operation |
-| or                   | C, X | boolean `or` operation |
-| not                  | C, X | boolean `not` operation |
-| neg                  | C, X | negation operation |
+| or                   | C, X, TN | boolean `or` operation |
+| not                  | C, X, TN | boolean `not` operation |
+| neg                  | C, X, TN | negation operation |
 | sizeof               | C, X | `sizeof` operation |
 | alignof              | C, X | `alignof` operation |
 | offsetof             | C, X | `offsetof` operation |
@@ -41,7 +41,8 @@
 | lt | C, X | |
 | cast | C, X | |
 | conv | C, X | type conversion |
-| call | C, X | call operation |
+| call | C, X, SN | call operation |
+| cmd | SN | command operation |
 | range | SU | `(range a b)` construct |
 | ranges | SU | |
 | gvar | SC | global variable declaration |
@@ -52,26 +53,41 @@
 | result | Y, SN | result variable declaration |
 | let | Y, SN | let variable declaration |
 | cursor | Y, SN | cursor variable declaration |
-| emit | SC, SN | emit statement |
+| typevar | Y, SU | type variable declaration |
+| efld | Y, SU | enum field declaration |
+| fld | SU, Y | field declaration |
+| proc | SC, SN, Y | proc declaration |
+| func | SN, Y | function declaration |
+| iterator | SN, Y | iterator declaration |
+| converter | SN, Y | converter declaration |
+| method | SN, Y | method declaration |
+| macro | SN, Y | macro declaration |
+| template | SN, Y | template declaration |
+| type | SC, SN, Y | type declaration |
+| block | SN, Y | block declaration |
+| module | SN, Y | module declaration |
+| cchoice | SN, Y | closed choice |
+| emit | SC, SN, PN | emit statement |
 | asgn | SC, SN | assignment statement |
 | scope | SC, SN | explicit scope annotation, like `stmts` |
 | if | SC, SN | if statement header |
+| when | SN | when statement header |
 | elif | SU | pair of (condition, action) |
 | else | SU | `else` action |
 | break | SC, SN | `break` statement |
+| continue | SN | `continue` statement |
+| for | SN | for statement |
 | while | SC, SN | `while` statement |
 | case | SC, SN | `case` statement |
 | of | SU | `of` branch within a `case` statement |
 | lab | SC | label, target of a `jmp` instruction |
 | jmp | SC | jump/goto instruction |
 | ret | SC, SN | `return` instruction |
+| yld | SN | yield statement |
 | stmts | SC, SN | list of statements |
 | params | TC, TN | list of proc parameters, also used as a "proc type" |
-| proc | SC, SN, Y | proc declaration |
-| fld | SU | field declaration |
 | union | TC | union declaration |
 | object | TC, TN | object type declaration |
-| efld | SU | enum field declaration |
 | enum | TC, TN | enum type declaration |
 | proctype | TC, TN | proc type declaration (soon obsolete, use params instead) |
 | atomic | TQC | `atomic` type qualifier for NIFC |
@@ -81,13 +97,12 @@
 | u | TC, TN | `uint` builtin type |
 | f | TC, TN | `float` builtin type |
 | c | TC, TN | `char` builtin type |
-| bool | TC | `bool` builtin type |
-| void | TC | `void` return type |
+| bool | TC, TN | `bool` builtin type |
+| void | TC, TN | `void` return type |
 | ptr | TC, TN | `ptr` type contructor |
 | array | TC, TN | `array` type constructor |
 | flexarray | TC | `flexarray` type constructor |
 | aptr | TC | "pointer to array of" type constructor |
-| type | SC, SN | `type` declaration statement |
 | cdecl | CC | `cdecl` calling convention |
 | stdcall | CC | `stdcall` calling convention |
 | safecall | CC | `safecall` calling convention |
@@ -99,20 +114,81 @@
 | inline | PP | `inline` proc annotation |
 | noinline | PP | `noinline` proc annotation |
 | attr | SUC | general attribute annoation |
-| varargs | PP | `varargs` proc annotation |
+| varargs | PP, TN | `varargs` proc annotation |
 | was | PC | |
 | selectany | PP | |
-| pragmas | SU | begin of pragma section |
+| pragmas | SU, SN | begin of pragma section |
 | align | PC | |
 | bits | PC | |
 | vector | PC | |
 | imp | SC | import declaration |
 | nodecl | P | `nodecl` annotation |
-| incl | SC | `#include` statement |
+| incl | SC, SN | `#include` statement or `incl` set operation |
+| excl | SN | `excl` set operation |
+| include | SN | `include` statement |
+| import | SC, SN | `import` statement |
+| from | SC, SN | `from` statement |
+| importexcept | SC, SN | `importexcept` statement |
+| export | SC, SN | `export` statement |
+| comment | SC, SN | `comment` statement |
 | discard | SC, SN | `discard` statement |
 | try | SC, SN | `try` statement |
 | raise | SC, SN | `raise` statement |
 | onerr | SC | error handling statement |
 | raises | PP | proc annotation |
 | errs | PPC | proc annotation |
-| static | PC | `static` annotation |
+| static | PC, TN | `static` type or annotation |
+| ite | G | if-then-else |
+| graph | G | disjoint subgraph annotation |
+| forbind | G | bindings for a `for` loop but the loop itself is mapped to gotos |
+| kill | G | some.var is about to disappear (scope exit) |
+| unpackflat | SUN | unpack into flat variable list |
+| unpacktup | SUN | unpack tuple |
+| except | SUN | except subsection |
+| fin | SUN | finally subsection |
+| refobj | TN | `ref object` type |
+| ptrobj | TN | `ptr object` type |
+| tuple | TN | `tuple` type |
+| onum | TN | enum with holes type |
+| ref | TN | `ref` type |
+| mut | TN | `mut` type |
+| out | TN | `out` type |
+| lent | TN | `lent` type |
+| sink | TN | `sink` type |
+| nilt | TN | `nilt` type |
+| concept | TN | `concept` type |
+| distinct | TN | `distinct` type |
+| itertype | TN | `itertype` type |
+| rangetype | TN | `rangetype` type |
+| uarray | TN | `uarray` type |
+| openarray | TN | `openarray` type |
+| sett | TN | `sett` type |
+| auto | TN | `auto` type |
+| symkind | TN | `symkind` type |
+| typekind | TN | `typekind` type |
+| typedesc | TN | `typedesc` type |
+| untyped | TN | `untyped` type |
+| typed | TN | `typed` type |
+| cstring | TN | `cstring` type |
+| pointer | TN | `pointer` type |
+| ordinal | TN | `ordinal` type |
+| magic | PN | `magic` pragma |
+| importc | PN | `importc` pragma |
+| importcpp | PN | `importcpp` pragma |
+| exportc | PN | `exportc` pragma |
+| header | PN | `header` pragma |
+| threadvar | PN | `threadvar` pragma |
+| global | PN | `global` pragma |
+| discardable | PN | `discardable` pragma |
+| noreturn | PN | `noreturn` pragma |
+| borrow | PN | `borrow` pragma |
+| noSideEffect | PN | `noSideEffect` pragma |
+| nodestroy | PN | `nodestroy` pragma |
+| plugin | PN | `plugin` pragma |
+| bycopy | PN | `bycopy` pragma |
+| byref | PN | `byref` pragma |
+| noinit | PN | `noinit` pragma |
+| requires | PN | `requires` pragma |
+| ensures | PN | `ensures` pragma |
+| build | PN | `build` pragma |
+| string | PN | `string` pragma |
