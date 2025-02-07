@@ -3431,7 +3431,7 @@ proc semEmit(c: var SemContext; it: var Item) =
   let info = it.n.info
   c.dest.add parLeToken(pool.tags.getOrIncl($EmitS), info)
   inc it.n
-  if it.n.exprKind == AconstrX:
+  if it.n.exprKind == BracketX:
     inc it.n
     while it.n.kind != ParRi:
       var a = Item(n: it.n, typ: c.types.autoType)
@@ -3569,7 +3569,7 @@ proc semWhen(c: var SemContext; it: var Item) =
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
-  if it.n == "set":
+  if it.n == "ranges":
     takeToken c, it.n
     while it.n.kind != ParRi:
       let info = it.n.info
@@ -3595,7 +3595,7 @@ proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
           buildErr c, info, "value already handled"
     wantParRi c, it.n
   else:
-    buildErr c, it.n.info, "`set` within `of` expected"
+    buildErr c, it.n.info, "`curly` within `of` expected"
     skip it.n
 
 proc semCase(c: var SemContext; it: var Item) =
@@ -3895,16 +3895,21 @@ proc semTypedUnaryArithmetic(c: var SemContext; it: var Item) =
   wantParRi c, it.n
   commonType c, it, beforeExpr, typ
 
-proc semArrayConstr(c: var SemContext, it: var Item) =
+proc semBracket(c: var SemContext, it: var Item) =
   let exprStart = c.dest.len
-  takeToken c, it.n
+  let info = it.n.info
+  inc it.n
+  c.dest.addParLe(AconstrX, info)
   if it.n.kind == ParRi:
     # empty array
     if it.typ.typeKind in {AutoT, VoidT}:
       buildErr c, it.n.info, "empty array needs a specified type"
+    else:
+      c.dest.addSubtree it.typ
     wantParRi c, it.n
     return
 
+  let typeInsertPos = c.dest.len
   var elem = Item(n: it.n, typ: c.types.autoType)
   case it.typ.typeKind
   of ArrayT: # , SeqT, OpenArrayT
@@ -3933,17 +3938,24 @@ proc semArrayConstr(c: var SemContext, it: var Item) =
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
   c.dest.shrink typeStart
+  c.dest.insert it.typ, typeInsertPos
   commonType c, it, exprStart, expected
 
-proc semSetConstr(c: var SemContext, it: var Item) =
+proc semCurly(c: var SemContext, it: var Item) =
   let exprStart = c.dest.len
-  takeToken c, it.n
+  let info = it.n.info
+  inc it.n
+  c.dest.addParLe(SetX, info)
   if it.n.kind == ParRi:
     # empty set
     if it.typ.typeKind in {AutoT, VoidT}:
       buildErr c, it.n.info, "empty set needs a specified type"
+    else:
+      c.dest.addSubtree it.typ
     wantParRi c, it.n
     return
+
+  let typeInsertPos = c.dest.len
   var elem = Item(n: it.n, typ: c.types.autoType)
   case it.typ.typeKind
   of SetT:
@@ -3987,7 +3999,45 @@ proc semSetConstr(c: var SemContext, it: var Item) =
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
   c.dest.shrink typeStart
+  c.dest.insert it.typ, typeInsertPos
   commonType c, it, exprStart, expected
+
+proc semArrayConstr(c: var SemContext; it: var Item) =
+  let start = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  takeToken c, it.n
+  it.typ = semLocalType(c, it.n)
+  # XXX type length not enforced
+  var elem = Item(n: it.n, typ: c.types.autoType)
+  if it.typ.typeKind == ArrayT:
+    elem.typ = it.typ
+    inc elem.typ
+  else:
+    c.buildErr info, "expected array type for array constructor, got: " & typeToString(it.typ)
+  while elem.n.kind != ParRi:
+    semExpr c, elem
+  it.n = elem.n
+  wantParRi c, it.n
+  commonType c, it, start, expected
+
+proc semSetConstr(c: var SemContext; it: var Item) =
+  let start = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  takeToken c, it.n
+  it.typ = semLocalType(c, it.n)
+  var elem = Item(n: it.n, typ: c.types.autoType)
+  if it.typ.typeKind == SetT:
+    elem.typ = it.typ
+    inc elem.typ
+  else:
+    c.buildErr info, "expected set type for set constructor, got: " & typeToString(it.typ)
+  while elem.n.kind != ParRi:
+    semExpr c, elem
+  it.n = elem.n
+  wantParRi c, it.n
+  commonType c, it, start, expected
 
 proc semSuf(c: var SemContext, it: var Item) =
   let exprStart = c.dest.len
@@ -5250,6 +5300,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semInSet c, it
     of CardSetX:
       semCardSet c, it
+    of BracketX:
+      semBracket c, it
+    of CurlyX:
+      semCurly c, it
     of AconstrX:
       semArrayConstr c, it
     of SetX:

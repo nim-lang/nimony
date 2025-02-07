@@ -194,7 +194,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
             hasError = true
         if suffix.len == 0:
           hasError = true
-    of ParX, AconstrX:
+    of ParX, AconstrX, BracketX:
       inc n
       if n.kind != ParRi:
         while n.kind != ParRi:

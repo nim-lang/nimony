@@ -99,6 +99,8 @@ type
     OconstrX = "obj"
     NewOconstrX = "newobj"
     TupleConstrX = "tup"
+    BracketX = "bracket"
+    CurlyX = "curly"
     AconstrX = "arr"
     SetX = "set"
     OchoiceX = "ochoice"
