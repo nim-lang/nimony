@@ -63,7 +63,7 @@ proc rootOf(n: Cursor; allowIndirection = false): SymId =
     case n.exprKind
     of DotX, AtX, ArrAtX, ParX:
       inc n
-    of PatX, DerefDotX:
+    of PatX, DdotX:
       # not protected from mutation
       if allowIndirection:
         inc n
@@ -113,7 +113,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     case n.exprKind
     of DotX, AtX, ArrAtX, ParX:
       inc n
-    of HderefX, HaddrX, DerefX, AddrX, DerefDotX:
+    of HderefX, HaddrX, DerefX, AddrX, DdotX:
       inc n
       someIndirection = true
     of DconvX, OconvX, ConvX, CastX:
@@ -272,7 +272,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   var r = CurrentRoutine(returnType: WantT)
   for i in 0..<BodyPos:
     if i == TypevarsPos:
-      isGeneric = n.substructureKind == TypevarsS
+      isGeneric = n.substructureKind == TypevarsU
     if i == ParamsPos:
       c.typeCache.registerParams(symId, n)
       var params = n
@@ -477,7 +477,7 @@ proc trObjConstr(c: var Context; n: var Cursor) =
   takeToken c, n
   takeTree c.dest, n # type
   while n.kind != ParRi:
-    assert n.exprKind == KvX
+    assert n.substructureKind == KvU
     takeToken c, n
     takeTree c.dest, n # key
     let fieldType = getType(c.typeCache, n)
@@ -511,7 +511,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of CallKinds:
       var disallowDangerous = true
       trCall c, n, e, disallowDangerous
-    of DotX, DerefDotX, AtX, ArrAtX, PatX:
+    of DotX, DdotX, AtX, ArrAtX, PatX:
       trLocation c, n, e
     of OconstrX, NewOconstrX:
       if e notin {WantT, WantTButSkipDeref}:
@@ -525,7 +525,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trSons c, n, WantT
     of ParX:
       trSons c, n, e
-    of CopyX, WasMovedX, SinkHookX, TraceX:
+    of CopyX, WasMovedX, SinkhX, TraceX:
       trVarHook c, n
     of DupX, DestroyX:
       trSons c, n, WantT

@@ -60,7 +60,7 @@ proc createTupleAccess(lvalue: SymId; i: int; info: PackedLineInfo): TokenBuf =
 proc getForVars(e: var EContext, forVars: Cursor): seq[Local] =
   result = @[]
   var forVars = forVars
-  if forVars.substructureKind notin {UnpackFlatS, UnpackTupS}:
+  if forVars.substructureKind notin {UnpackflatU, UnpacktupU}:
     error e, "`unpackflat` or `unpacktup` expected, but got: ", forVars
   inc forVars # unpackflat
   while forVars.kind != ParRi:
@@ -226,7 +226,7 @@ proc inlineIteratorBody(e: var EContext;
       while c.kind != ParRi:
         inlineIteratorBody(e, c, forStmt, yieldType)
       wantParRi e, c
-    of YieldS:
+    of YldS:
       e.dest.add tagToken($BlockS, c.info)
       e.dest.addDotToken()
       e.dest.add tagToken("stmts", c.info)
@@ -384,7 +384,7 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       takeTree(e, c)
     of ForS:
       transformForStmt(e, c)
-    of IterS:
+    of IteratorS:
       skip(c)
     of FuncS, ProcS, ConverterS, MethodS:
       e.dest.add c

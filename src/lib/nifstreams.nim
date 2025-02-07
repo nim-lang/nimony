@@ -93,19 +93,19 @@ proc hash*(x: UIntId): Hash {.borrow.}
 proc hash*(x: FloatId): Hash {.borrow.}
 proc hash*(x: TagId): Hash {.borrow.}
 
+import ".." / models / tags
+
 const
-  Suffixed* = TagId(1)
-  ErrT* = TagId(2)
+  Suffixed* = TagId SufTagId
+  ErrT* = TagId ErrTagId
 
-proc createLiterals*(): Literals =
+proc createLiterals(data: openArray[(string, int)]): Literals =
   result = default(Literals)
-  let t = result.tags.getOrIncl("suf")
-  assert t == Suffixed
+  for d in data:
+    let t = result.tags.getOrIncl(d[0])
+    assert t.int == d[1]
 
-  let t2 = result.tags.getOrIncl("err")
-  assert t2 == ErrT
-
-var pool* = createLiterals()
+var pool* = createLiterals(TagData)
 
 proc identToken*(s: StrId; info: PackedLineInfo): PackedToken {.inline.} =
   toToken(Ident, s, info)
@@ -138,11 +138,9 @@ proc charToken*(ch: char; info: PackedLineInfo): PackedToken {.inline.} =
 proc strToken*(id: StrId; info: PackedLineInfo): PackedToken {.inline.} =
   toToken(StringLit, id, info)
 
-proc registerTag*(tag: string; expected: TagId) =
+proc registerTag*(tag: string): TagId =
   ## Mostly useful for code generators like Nifgram.
-  let t = pool.tags.getOrIncl(tag)
-  assert t == expected, "tag " & tag & " expected Id " & $expected.uint32 &
-      " but it is already of value " & $t.uint32
+  result = pool.tags.getOrIncl(tag)
 
 template copyInto*(dest: var seq[PackedToken]; tag: TagId; info: PackedLineInfo; body: untyped) =
   dest.addToken ParLe, tag, info

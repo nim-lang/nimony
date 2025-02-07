@@ -17,9 +17,9 @@ import ".." / gear2 / modnames
 
 # -------------- symbol lookups -------------------------------------
 
-template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind;
+template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind|NimonyOther;
                     info: PackedLineInfo; body: untyped) =
-  dest.add parLeToken(pool.tags.getOrIncl($kind), info)
+  dest.add parLeToken(pool.tags.getOrIncl($kind), info) # XXX Optimize this to a `cast`
   body
   dest.addParRi()
 
@@ -42,7 +42,7 @@ proc buildSymChoiceForDot(c: var SemContext; identifier: StrId; info: PackedLine
     var it = c.currentScope
     while it != nil:
       for sym in it.tab.getOrDefault(identifier):
-        if sym.kind in {ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IterY, TypeY}:
+        if sym.kind in {ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY}:
           c.dest.addSymUse sym, info
           inc count
       it = it.up
@@ -54,7 +54,7 @@ proc buildSymChoiceForDot(c: var SemContext; identifier: StrId; info: PackedLine
     c.dest.add identToken(identifier, info)
 
 proc isNonOverloadable(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, CursorY, LabelY}
+  t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, CursorY, BlockY}
 
 proc buildSymChoiceForSelfModule(c: var SemContext;
                                  identifier: StrId; info: PackedLineInfo) =

@@ -174,7 +174,7 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
 
 proc callDup(c: var Context; arg: var Cursor) =
   let typ = getType(c.typeCache, arg)
-  if typ.typeKind == NilT:
+  if typ.typeKind == NiltT:
     tr c, arg, DontCare
   else:
     let info = arg.info
@@ -377,7 +377,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
         trExplicitDup c, n, DontCare
       of CopyX:
         trExplicitCopy c, n, attachedCopy
-      of SinkHookX:
+      of SinkhX:
         trExplicitCopy c, n, attachedSink
       of WasMovedX:
         trExplicitWasMoved c, n
@@ -407,7 +407,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   if r.body.stmtKind == StmtsS and not isGeneric(r):
     c.typeCache.openScope()
     c.typeCache.registerParams(r.name.symId, r.params)
-    if hasBuiltinPragma(r.pragmas, NoDestroy):
+    if hasBuiltinPragma(r.pragmas, NodestroyP):
       trOnlyEssentials c, r.body
     else:
       tr c, r.body, DontCare
@@ -459,7 +459,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree c.dest, n # skip `fn`
-  assert fnType == "params"
+  assert fnType.typeKind == ParamsT
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType
@@ -497,7 +497,7 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   copyInto c.dest, n:
     takeTree c.dest, n
     while n.kind != ParRi:
-      assert n.exprKind == KvX
+      assert n.substructureKind == KvU
       copyInto c.dest, n:
         takeTree c.dest, n
         tr c, n, WantOwner
@@ -624,7 +624,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trExplicitCopy c, n, attachedCopy
     of WasMovedX:
       trExplicitWasMoved c, n
-    of SinkHookX:
+    of SinkhX:
       trExplicitCopy c, n, attachedSink
     of TraceX:
       trExplicitTrace c, n
@@ -632,25 +632,25 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trConvExpr c, n, e
     of OconstrX, NewOconstrX:
       trObjConstr c, n, e
-    of DotX, DerefDotX, AtX, ArrAtX, PatX, TupAtX:
+    of DotX, DdotX, AtX, ArrAtX, PatX, TupAtX:
       trLocation c, n, e
     of ParX:
       trSons c, n, e
     of ExprX:
       trStmtListExpr c, n, e
-    of EnsureMoveX:
+    of EmoveX:
       trEnsureMove c, n, e
     of AconstrX, TupleConstrX:
       trRawConstructor c, n, e
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetX,
-       OchoiceX, CchoiceX, KvX,
+       OchoiceX, CchoiceX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
-       PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX,
-       EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, RangeX, RangesX, CompilesX, DeclaredX,
-       DefinedX, HighX, LowX, TypeofX, UnpackX, EnumToStrX, IsMainModuleX, QuotedX,
-       DerefX, HderefX, AddrX, HaddrX:
+       PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX,
+       EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, CompilesX, DeclaredX,
+       DefinedX, HighX, LowX, TypeofX, UnpackX, EnumtostrX, IsmainmoduleX, QuotedX,
+       DerefX, HderefX, AddrX, HaddrX, AlignofX, OffsetofX, ErrX:
       trSons c, n, WantNonOwner
-    of DefaultObjX, DefaultTupX, BracketX, CurlyX:
+    of DefaultobjX, DefaulttupX, BracketX, CurlyX:
       raiseAssert "nodekind should have been eliminated in sem.nim"
     of NoExpr:
       case n.stmtKind

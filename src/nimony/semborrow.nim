@@ -52,7 +52,7 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
 
   ]#
   var n = signature
-  assert n == $ParamsS
+  assert n.typeKind == ParamsT
   inc n
   result = createTokenBuf(10)
   result.add parLeToken(StmtsS, info)

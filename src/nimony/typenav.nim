@@ -111,7 +111,15 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       else:
         discard
     else:
-      discard
+      case n.substructureKind
+      of RangesU, RangeU:
+        result = getTypeImpl(c, n.firstSon)
+      of KvU:
+        var n = n
+        inc n # skip "kv"
+        skip n # skip key
+        result = getTypeImpl(c, n)
+      else: discard
   of AtX, PatX, ArrAtX:
     result = getTypeImpl(c, n.firstSon)
     case typeKind(result)
@@ -131,32 +139,32 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         result = getTypeImpl(c, prev)
   of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX:
     result = getTypeImpl(c, n.firstSon)
-    if result.kind == ParLe and result.substructureKind == ParamsS:
+    if result.kind == ParLe and result.typeKind == ParamsT:
       skip result # skip "params"
       # return retType
-    elif typeKind(result) in {IterT, ProcT}:
+    elif typeKind(result) in {IteratorT, ProctypeT}:
       inc result
       inc result # dot token
       skip result # parameters
-  of FalseX, TrueX, AndX, OrX, NotX, DefinedX, DeclaredX, IsMainModuleX, EqX, NeqX, LeX, LtX,
-     EqSetX, LeSetX, LtSetX, InSetX,
+  of FalseX, TrueX, AndX, OrX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
+     EqsetX, LesetX, LtsetX, InsetX,
      CompilesX:
     result = c.builtins.boolType
   of NegX, NegInfX, NanX, InfX:
     result = c.builtins.floatType
   of EnumToStrX, DefaultObjX, DefaultTupX:
     result = c.builtins.stringType
-  of SizeofX, CardSetX:
+  of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
      CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX, AconstrX, SetX:
     result = n.firstSon
-  of ParX, EnsureMoveX:
+  of ParX, EmoveX:
     result = getTypeImpl(c, n.firstSon)
   of NilX:
     result = c.builtins.nilType
-  of DotX, DerefDotX:
+  of DotX, DdotX:
     result = n
     skip result # obj
     result = getTypeImpl(c, result) # typeof(obj.field) == typeof field
@@ -166,15 +174,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       inc result
     else:
       result = c.builtins.autoType # still an error
-  of RangesX, RangeX:
-    result = getTypeImpl(c, n.firstSon)
-  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX:
+  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX, ErrX:
     discard "keep the error type"
-  of KvX:
-    var n = n
-    inc n # skip "kv"
-    skip n # skip key
-    result = getTypeImpl(c, n)
   of AddrX, HaddrX:
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
@@ -187,7 +188,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
-    buf.add parLeToken(SetT, n.info)
+    buf.add parLeToken(SettT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
     c.mem.add buf
@@ -235,7 +236,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
-  of DestroyX, CopyX, WasMovedX, SinkHookX, TraceX:
+  of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
     result = c.builtins.voidType
   of DupX:
     result = getTypeImpl(c, n.firstSon)
@@ -272,7 +273,7 @@ proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor): bo
     if i == ParamsPos:
       c.registerParams(sym, n)
     elif i == TypeVarsPos:
-      result = n.substructureKind != TypevarsS
+      result = n.substructureKind != TypevarsU
     takeTree dest, n
 
 proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor) =

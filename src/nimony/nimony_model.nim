@@ -6,289 +6,12 @@
 
 import std / assertions
 include nifprelude
-import stringviews, keymatcher
+import stringviews
+
+import ".." / models / [nimony_tags, callconv_tags]
+export nimony_tags, callconv_tags
 
 type
-  StmtKind* = enum
-    NoStmt
-    StmtsS = "stmts"
-    ScopeS = "scope" # to make it easier for the backend phases to get the scoping right
-    VarS = "var"
-    LetS = "let"
-    CursorS = "cursor"
-    ResultS = "result"
-    ConstS = "const"
-    EmitS = "emit"
-    AsgnS = "asgn"
-    BlockS = "block"
-    IfS = "if"
-    WhenS = "when"
-    BreakS = "break"
-    ContinueS = "continue"
-    WhileS = "while"
-    ForS = "for"
-    CaseS = "case"
-    TryS = "try"
-    RetS = "ret"
-    YieldS = "yld"
-    RaiseS = "raise"
-    ProcS = "proc"
-    FuncS = "func"
-    IterS = "iterator"
-    ConverterS = "converter"
-    MethodS = "method"
-    MacroS = "macro"
-    TemplateS = "template"
-    TypeS = "type"
-    CallS = "call"
-    CmdS = "cmd"
-    DiscardS = "discard"
-    IncludeS = "include"
-    ImportS = "import"
-    FromImportS = "from"
-    ImportExceptS = "importexcept"
-    ExportS = "export"
-    CommentS = "comment"
-    PragmasLineS = "pragmas"
-    InclSetS = "incl"
-    ExclSetS = "excl"
-
-  SymKind* = enum
-    NoSym
-    VarY = "var"
-    LetY = "let"
-    CursorY = "cursor"
-    ResultY = "result"
-    ConstY = "const"
-    ParamY = "param"
-    TypevarY = "typevar"
-    EfldY = "efld"
-    FldY = "fld"
-    ProcY = "proc"
-    FuncY = "func"
-    IterY = "iterator"
-    ConverterY = "converter"
-    MethodY = "method"
-    MacroY = "macro"
-    TemplateY = "template"
-    TypeY = "type"
-    LabelY = "block"
-    ModuleY = "module"
-    CchoiceY = "cchoice"
-
-  ExprKind* = enum
-    NoExpr
-    QuotedX = "quoted"
-    AtX = "at"
-    DerefX = "deref"
-    HderefX = "hderef"
-    DotX = "dot"
-    DerefDotX = "ddot"
-    PatX = "pat"
-    ParX = "par"
-    AddrX = "addr"
-    HaddrX = "haddr"
-    NilX = "nil"
-    FalseX = "false"
-    TrueX = "true"
-    AndX = "and"
-    OrX = "or"
-    NotX = "not"
-    NegX = "neg"
-    SizeofX = "sizeof"
-    OconstrX = "obj"
-    NewOconstrX = "newobj"
-    TupleConstrX = "tup"
-    BracketX = "bracket"
-    CurlyX = "curly"
-    AconstrX = "arr"
-    SetX = "set"
-    OchoiceX = "ochoice"
-    CchoiceX = "cchoice"
-    KvX = "kv"
-    AddX = "add"
-    SubX = "sub"
-    MulX = "mul"
-    DivX = "div"
-    ModX = "mod"
-    ShrX = "shr"
-    ShlX = "shl"
-    AshrX = "ashr"
-    BitandX = "bitand"
-    BitorX = "bitor"
-    BitxorX = "bitxor"
-    BitnotX = "bitnot"
-    EqX = "eq"
-    NeqX = "neq"
-    LeX = "le"
-    LtX = "lt"
-    CastX = "cast"
-    ConvX = "conv"
-    OconvX = "oconv" # object conversion
-    HconvX = "hconv" # hidden basic type conversion
-    DconvX = "dconv" # conversion between `distinct` types
-    CallX = "call"
-    CallStrLitX = "callstrlit"
-    InfixX = "infix"
-    PrefixX = "prefix"
-    HcallX = "hcall" # hidden converter call
-    CmdX = "cmd"
-    InfX = "inf"
-    NegInfX = "neginf"
-    NanX = "nan"
-    SufX = "suf"
-    RangeX = "range"
-    RangesX = "ranges"
-    CompilesX = "compiles"
-    DeclaredX = "declared"
-    DefinedX = "defined"
-    HighX = "high"
-    LowX = "low"
-    TypeofX = "typeof"
-    UnpackX = "unpack"
-    EnumToStrX = "enumtostr"
-    IsMainModuleX = "ismainmodule"
-    DefaultObjX = "defaultobj"
-    DefaultTupX = "defaulttup"
-    ExprX = "expr" # was nkStmtListExpr in the old Nim
-    ArrAtX = "arrat"
-    TupAtX = "tupat" # tup[0] syntax
-    PlusSetX = "plusset"
-    MinusSetX = "minusset"
-    MulSetX = "mulset"
-    XorSetX = "xorset"
-    EqSetX = "eqset"
-    LeSetX = "leset"
-    LtSetX = "ltset"
-    InSetX = "inset"
-    CardSetX = "card"
-    EnsureMoveX = "emove" # note that `move` can be written in standard Nim
-    DestroyX = "destroy"
-    DupX = "dup"
-    CopyX = "copy"
-    WasMovedX = "wasmoved"
-    SinkHookX = "sinkh"
-    TraceX = "trace"
-
-  TypeKind* = enum
-    NoType
-    ErrorType = "err"
-    ObjectT = "object"
-    RefObjectT = "refobj"
-    PtrObjectT = "ptrobj"
-    TupleT = "tuple"
-    EnumT = "enum"
-    HoleyEnumT = "onum"
-    IntT = "i"
-    UIntT = "u"
-    FloatT = "f"
-    CharT = "c"
-    BoolT = "bool"
-    VoidT = "void"
-    PtrT = "ptr"
-    RefT = "ref"
-    MutT = "mut"
-    OutT = "out"
-    LentT = "lent"
-    SinkT = "sink"
-    #FlexarrayT = "flexarray"
-    VarargsT = "varargs"
-    NilT = "nilt"
-    OrT = "or"
-    AndT = "and"
-    NotT = "not"
-    ConceptT = "concept"
-    DistinctT = "distinct"
-    StaticT = "static"
-    ProcT = "proctype"
-    IterT = "itertype"
-    InvokeT = "at" # might not be the best idea to do it this way...
-    ArrayT = "array"
-    RangeT = "rangetype"
-    UncheckedArrayT = "uarray"
-    OpenArrayT = "openarray"
-    SetT = "sett"
-    AutoT = "auto"
-    SymKindT = "symkind"
-    TypeKindT = "typekind"
-    TypedescT = "typedesc"
-    UntypedT = "untyped"
-    TypedT = "typed"
-    CstringT = "cstring"
-    PointerT = "pointer"
-    OrdinalT = "ordinal"
-
-  PragmaKind* = enum
-    NoPragma
-    Magic = "magic"
-    ImportC = "importc"
-    ImportCpp = "importcpp"
-    ExportC = "exportc"
-    Nodecl = "nodecl"
-    Header = "header"
-    Align = "align"
-    Bits = "bits"
-    Selectany = "selectany"
-    Threadvar = "threadvar"
-    Globalvar = "global"
-    Discardable = "discardable"
-    NoReturn = "noreturn"
-    Varargs = "varargs"
-    Borrow = "borrow"
-    NoSideEffect = "noSideEffect"
-    NoDestroy = "nodestroy"
-    Plugin = "plugin"
-    ByCopy = "bycopy"
-    ByRef = "byref"
-    Inline = "inline"
-    NoInit = "noinit"
-    Requires = "requires"
-    Ensures = "ensures"
-    BuildP = "build"
-    EmitP = "emit"
-    StringP = "string"
-
-  SubstructureKind* = enum
-    NoSub
-    ElifS = "elif"
-    ElseS = "else"
-    OfS = "of"
-    ParamS = "param"
-    ParamsS = "params"
-    FldS = "fld"
-    EfldS = "efld"
-    AtomicS = "atomic"
-    TypevarsS = "typevars"
-    RoS = "ro"
-    RestrictS = "restrict"
-    PragmasS = "pragmas"
-    UnpackFlatS = "unpackflat"
-    UnpackTupS = "unpacktup"
-    ExceptS = "except"
-    FinallyS = "fin"
-
-  ControlFlowKind* = enum
-    NoControlFlow
-    IteF = "ite" # if-then-else
-    GraphF = "graph" # disjoint subgraph annotation
-    ForBindF = "forbind" # bindings for a `for` loop but the loop itself is mapped to gotos
-    KillF = "kill" # (kill some.var) # some.var is about to disappear (scope exit)
-    # Note: `goto` instruction is mapped to UnknownToken and labels
-    # are implicit targets of goto instructions.
-
-  CallConv* = enum
-    NoCallConv
-    CdeclC = "cdecl"
-    StdcallC = "stdcall"
-    SafecallC = "safecall"
-    SyscallC = "syscall"
-    FastcallC = "fastcall"
-    ThiscallC = "thiscall"
-    NoconvC = "noconv"
-    MemberC = "member"
-    NoinlineC = "noinline"
-    NimcallC = "nimcall"
-
   AttachedOp* = enum
     attachedDestroy,
     attachedWasMoved,
@@ -297,87 +20,120 @@ type
     attachedSink,
     attachedTrace
 
-declareMatcher parseStmtKind, StmtKind
-
-proc stmtKind*(c: Cursor): StmtKind {.inline.} =
-  if c.kind == ParLe:
-    result = parseStmtKind pool.tags[tag(c)]
+proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
+  if c.kind == ParLe and rawTagIsNimonyStmt(tag(c).uint32):
+    result = cast[NimonyStmt](tag(c))
   else:
     result = NoStmt
 
-declareMatcher parsePragmaKind, PragmaKind
-
-proc pragmaKind*(c: Cursor): PragmaKind {.inline.} =
+proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   if c.kind == ParLe:
-    result = parsePragmaKind pool.tags[tag(c)]
+    let tagId = c.tagId.uint32
+    if rawTagIsNimonyPragma(tagId):
+      result = cast[NimonyPragma](tagId)
+    else:
+      result = NoPragma
   elif c.kind == Ident:
-    result = parsePragmaKind pool.strings[c.litId]
+    let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
+    if rawTagIsNimonyPragma(tagId.uint32):
+      result = cast[NimonyPragma](tagId)
+    else:
+      result = NoPragma
   else:
     result = NoPragma
 
-declareMatcher parseSubstructureKind, SubstructureKind
-
-proc substructureKind*(c: Cursor): SubstructureKind {.inline.} =
-  if c.kind == ParLe:
-    result = parseSubstructureKind pool.tags[tag(c)]
+proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
+  if c.kind == ParLe and rawTagIsNimonyOther(tag(c).uint32):
+    result = cast[NimonyOther](tag(c))
   else:
     result = NoSub
 
-declareMatcher parseTypeKind, TypeKind
-
-proc typeKind*(c: Cursor): TypeKind {.inline.} =
+proc typeKind*(c: Cursor): NimonyType {.inline.} =
   if c.kind == ParLe:
-    result = parseTypeKind pool.tags[tag(c)]
+    if rawTagIsNimonyType(tag(c).uint32):
+      result = cast[NimonyType](tag(c))
+    else:
+      result = NoType
   elif c.kind == DotToken:
     result = VoidT
   else:
     result = NoType
 
-declareMatcher parseCallConvKind, CallConv
-
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
   if c.kind == ParLe:
-    result = parseCallConvKind pool.tags[tag(c)]
+    if rawTagIsCallConv(tag(c).uint32):
+      result = cast[CallConv](tag(c))
+    else:
+      result = NoCallConv
   elif c.kind == Ident:
-    result = parseCallConvKind pool.strings[c.litId]
+    let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
+    if rawTagIsCallConv(tagId.uint32):
+      result = cast[CallConv](tagId)
+    else:
+      result = NoCallConv
   else:
     result = NoCallConv
 
-declareMatcher parseExprKind, ExprKind
-
-proc exprKind*(c: Cursor): ExprKind {.inline.} =
+proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
   if c.kind == ParLe:
-    result = parseExprKind pool.tags[tag(c)]
+    if rawTagIsNimonyExpr(tag(c).uint32):
+      result = cast[NimonyExpr](tag(c))
+    else:
+      result = NoExpr
   else:
     result = NoExpr
 
-declareMatcher parseSymKind, SymKind
-
-proc symKind*(c: Cursor): SymKind {.inline.} =
+proc symKind*(c: Cursor): NimonySym {.inline.} =
   if c.kind == ParLe:
-    result = parseSymKind pool.tags[tag(c)]
+    if rawTagIsNimonySym(tag(c).uint32):
+      result = cast[NimonySym](tag(c))
+    else:
+      result = NoSym
   else:
     result = NoSym
 
-declareMatcher parseControlFlowKind, ControlFlowKind
-
 proc cfKind*(c: Cursor): ControlFlowKind {.inline.} =
   if c.kind == ParLe:
-    result = parseControlFlowKind pool.tags[tag(c)]
+    if rawTagIsControlFlowKind(tag(c).uint32):
+      result = cast[ControlFlowKind](tag(c))
+    else:
+      result = NoControlFlow
   else:
     result = NoControlFlow
 
 template `==`*(n: Cursor; s: string): bool = n.kind == ParLe and pool.tags[n.tagId] == s
 
+# Outdated aliases:
+type
+  SymKind* = NimonySym
+  ExprKind* = NimonyExpr
+  StmtKind* = NimonyStmt
+  SubstructureKind* = NimonyOther
+  PragmaKind* = NimonyPragma
+  TypeKind* = NimonyType
+
 const
-  RoutineKinds* = {ProcY, FuncY, IterY, TemplateY, MacroY, ConverterY, MethodY}
-  CallKinds* = {CallX, CallStrLitX, CmdX, PrefixX, InfixX, HcallX}
+  IntT* = IT
+  UIntT* = UT
+  FloatT* = FT
+  CharT* = CT
+  UncheckedArrayT* = UarrayT
+  HoleyEnumT* = OnumT
+  InvokeT* = AtT
+  TupleconstrX* = TupX
+  OconstrX* = ObjX
+  AconstrX* = ArrX
+  NewOconstrX* = NewObjX
+
+const
+  RoutineKinds* = {ProcY, FuncY, IteratorY, TemplateY, MacroY, ConverterY, MethodY}
+  CallKinds* = {CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX}
   ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind;
                info = NoLineInfo) =
-  dest.add parLeToken(pool.tags.getOrIncl($kind), info)
+  dest.add parLeToken(pool.tags.getOrIncl($kind), info) # XXX Optimize this into a `cast`!
 
 proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
@@ -487,11 +243,11 @@ proc sameTrees*(a, b: Cursor): bool =
 
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
-  of FromImportS, ImportS, ExportS, IncludeS, ImportExceptS, TypeS, CommentS, TemplateS:
+  of FromS, ImportS, ExportS, IncludeS, ImportExceptS, TypeS, CommentS, TemplateS:
     result = true
   else:
     case n.substructureKind
-    of PragmasS, TypevarsS:
+    of PragmasU, TypevarsU:
       result = true
     else:
       case n.exprKind

@@ -30,7 +30,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
         b.addTree tag
         inc c
         mangleImpl b, c # type is interesting
-        if c.kind == ParLe and c.typeKind == RangeT:
+        if c.kind == ParLe and c.typeKind == RangetypeT:
           inc c # RangeT
           skip c # type is irrelevant, we care about the length
           assert c.kind == IntLit

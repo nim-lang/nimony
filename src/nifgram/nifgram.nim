@@ -759,18 +759,14 @@ when isMainModule:
       t.writeLine "# ORIGINAL FILE: " & (when defined(windows): inp.replace('\\', '/') else: inp)
 
       t.writeLine("import nifstreams")
-      t.writeLine("\nconst")
-      var i = 3
+      t.writeLine("\nvar")
       try:
         for tag, _ in pairs foundTags:
-          t.writeLine "  ", tagAsNimIdent(tag), "* = TagId(", i, ")"
-          inc i
+          t.writeLine "  ", tagAsNimIdent(tag), "*: TagId"
 
-        i = 3
         t.writeLine("\nproc registerTags*() =")
         for tag, _ in pairs foundTags:
-          t.writeLine "  registerTag ", escape(tag), ", ", tagAsNimIdent(tag)
-          inc i
+          t.writeLine "  " & tagAsNimIdent(tag) & " = registerTag ", escape(tag)
 
       finally:
         t.close()

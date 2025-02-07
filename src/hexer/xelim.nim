@@ -111,13 +111,13 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     var aa = Target(m: IsEmpty)
     trExpr c, dest, n, aa
     copyIntoKind dest, IfS, info:
-      copyIntoKind dest, ElifS, info:
+      copyIntoKind dest, ElifU, info:
         dest.add aa                # if x
         copyIntoKind dest, StmtsS, info:
           copyIntoKind dest, AsgnS, info: # tmp = true
             dest.addSymUse tmp, info
             copyIntoKind dest, TrueX, info: discard
-      copyIntoKind dest, ElseS, info:
+      copyIntoKind dest, ElseU, info:
         copyIntoKind dest, StmtsS, info:
           trExprInto c, dest, n, tmp # tmp = y
     tar.t.addSymUse tmp, info
@@ -137,11 +137,11 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     var aa = Target(m: IsEmpty)
     trExpr c, dest, n, aa
     copyIntoKind dest, IfS, info:
-      copyIntoKind dest, ElifS, info:
+      copyIntoKind dest, ElifU, info:
         dest.add aa                # if x
         copyIntoKind dest, StmtsS, info:
           trExprInto c, dest, n, tmp # tmp = y
-      copyIntoKind dest, ElseS, info:
+      copyIntoKind dest, ElseU, info:
         copyIntoKind dest, StmtsS, info:
           # tmp = false
           copyIntoKind dest, AsgnS, info:
@@ -170,13 +170,13 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   inc n
   while n.kind != ParRi:
     if ifs >= 1:
-      dest.addParLe ElseS, info
+      dest.addParLe ElseU, info
       dest.addParLe StmtsS, info
       inc toClose, 2
 
     let info = n.info
     case n.substructureKind
-    of ElifS:
+    of ElifU:
       var t0 = Target(m: IsEmpty)
       inc n
       trExpr c, dest, n, t0
@@ -185,7 +185,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       inc toClose
       inc ifs
 
-      copyIntoKind dest, ElifS, info:
+      copyIntoKind dest, ElifU, info:
         dest.add t0
         #copyIntoKind dest, StmtsS, info:
         if tar.m != IsIgnored:
@@ -193,7 +193,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         else:
           trStmt c, dest, n
       skipParRi n
-    of ElseS:
+    of ElseU:
       inc n
       if tar.m != IsIgnored:
         trExprInto c, dest, n, tmp
@@ -226,14 +226,14 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   dest.add t0
   while n.kind != ParRi:
     case n.substructureKind
-    of OfS:
+    of OfU:
       copyInto(dest, n):
         takeTree dest, n # choices
         if tar.m != IsIgnored:
           trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
-    of ElseS:
+    of ElseU:
       copyInto(dest, n):
         if tar.m != IsIgnored:
           trExprInto c, dest, n, tmp
@@ -261,14 +261,14 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
     while n.kind != ParRi:
       case n.substructureKind
-      of ExceptS:
+      of ExceptU:
         copyInto(dest, n):
           takeTree dest, n # declarations
           if tar.m != IsIgnored:
             trExprInto c, dest, n, tmp
           else:
             trStmt c, dest, n
-      of FinallyS:
+      of FinU:
         # The `finally` section never produces a value!
         copyInto(dest, n):
           trStmt c, dest, n
@@ -287,10 +287,10 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
         var tar = Target(m: IsEmpty)
         trExpr c, dest, n, tar
         dest.copyIntoKind IfS, info:
-          dest.copyIntoKind ElifS, info:
+          dest.copyIntoKind ElifU, info:
             dest.add tar
             trStmt c, dest, n
-          dest.copyIntoKind ElseS, info:
+          dest.copyIntoKind ElseU, info:
             copyIntoKind dest, StmtsS, info:
               dest.copyIntoKind BreakS, info: discard
     else:
@@ -354,7 +354,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsIgnored)
     trTry c, dest, n, tar
 
-  of RetS, DiscardS, RaiseS, YieldS:
+  of RetS, DiscardS, RaiseS, YldS:
     var tar = Target(m: IsEmpty)
     let head = n
     inc n
@@ -366,7 +366,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   of WhileS:
     trWhile c, dest, n
-  of AsgnS, CallS, InclSetS, ExclSetS:
+  of AsgnS, CallS, InclS, ExclS:
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
@@ -380,10 +380,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of BlockS:
     var tar = Target(m: IsIgnored)
     trBlock c, dest, n, tar
-  of IterS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-     ForS, CmdS, IncludeS, ImportS, FromImportS, ImportExceptS,
+  of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+     ForS, CmdS, IncludeS, ImportS, FromS, ImportExceptS,
      ExportS, CommentS,
-     PragmasLineS:
+     PragmasS:
     takeTree dest, n
   of ScopeS:
     c.typeCache.openScope()

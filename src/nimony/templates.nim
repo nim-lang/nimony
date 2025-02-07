@@ -49,7 +49,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
     of ParLe:
       let forStmt = asForStmt(body)
       if forStmt.kind == ForS and forStmt.iter.exprKind == UnpackX:
-        assert forStmt.vars.substructureKind == UnpackFlatS
+        assert forStmt.vars.substructureKind == UnpackflatU
         var arg = e.firstVarargMatch
         var fv = forStmt.vars
         inc fv
@@ -94,7 +94,7 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
   if p.kind != ParLe:
     return false
   while p.kind != ParRi:
-    if p.pragmaKind == Plugin:
+    if p.pragmaKind == PluginP:
       inc p
       if p.kind == StringLit:
         var b = createTokenBuf(30)

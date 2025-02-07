@@ -79,7 +79,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
-  of RefT, PtrT, MutT, OutT, ProcT, NilT, CstringT, PointerT, LentT, RefObjectT, PtrObjectT:
+  of RefT, PtrT, MutT, OutT, ProctypeT, NiltT, CstringT, PointerT, LentT, RefobjT, PtrobjT, ParamsT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.firstSon, ptrSize
@@ -124,7 +124,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       c.overflow = c2.overflow
     if cacheKey != NoSymId: cache[cacheKey] = c2
 
-  of SetT:
+  of SettT:
     let size0 = bitsetSizeInBytes(n.firstSon)
     let size1 = asSigned(size0, c.overflow)
     update c, size1, 1
@@ -136,7 +136,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     inc n
     var c2 = createSizeofValue(c.strict)
     while n.kind != ParRi:
-      if n.substructureKind == FldS:
+      if n.substructureKind == FldU:
         let field = takeLocal(n, SkipFinalParRi)
         getSize c2, cache, field.typ, ptrSize
       else:
@@ -147,10 +147,10 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     combine c, c2
   of OpenArrayT:
     update c, ptrSize*2, ptrSize
-  of RangeT:
+  of RangetypeT:
     getSize c, cache, n.firstSon, ptrSize
-  of NoType, ErrorType, VoidT, VarargsT, OrT, AndT, NotT,
-     ConceptT, StaticT, IterT, InvokeT, UncheckedArrayT,
+  of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
+     ConceptT, StaticT, IteratorT, InvokeT, UncheckedArrayT, ItertypeT,
      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
     raiseAssert "BUG: valid type kind for sizeof computation: " & $n.typeKind
 
@@ -175,10 +175,10 @@ proc typeSectionMode(n: Cursor): PragmaKind =
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
       if local.kind == TypeY:
-        if hasBuiltinPragma(local.pragmas, ByCopy):
-          return ByCopy
-        elif hasBuiltinPragma(local.pragmas, ByRef):
-          return ByRef
+        if hasBuiltinPragma(local.pragmas, BycopyP):
+          return BycopyP
+        elif hasBuiltinPragma(local.pragmas, ByrefP):
+          return ByrefP
         n = local.body
   return NoPragma
 
@@ -188,6 +188,6 @@ proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
      TypeKindT, UntypedT, VarargsT}:
     result = false
   elif typeIsBig(typ, ptrSize):
-    result = not hasBuiltinPragma(pragmas, ByCopy) and typeSectionMode(typ) != ByCopy
+    result = not hasBuiltinPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
   else:
-    result = hasBuiltinPragma(pragmas, ByRef) or typeSectionMode(typ) == ByRef
+    result = hasBuiltinPragma(pragmas, ByrefP) or typeSectionMode(typ) == ByrefP
