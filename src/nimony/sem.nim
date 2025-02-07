@@ -16,6 +16,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof
 
 import ".." / gear2 / modnames
+import ".." / models / tags
 
 # ------------------ include/import handling ------------------------
 
@@ -701,9 +702,9 @@ proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
   semStmtsExprImpl c, it
   let kind =
     if classifyType(c, it.typ) == VoidT:
-      (if isNewScope: $ScopeS else: $StmtsS)
-    else: $ExprX
-  c.dest[before] = parLeToken(pool.tags.getOrIncl(kind), c.dest[before].info)
+      (if isNewScope: ScopeTagId else: StmtsTagId)
+    else: ExprTagId
+  c.dest[before] = parLeToken(TagId(kind), c.dest[before].info)
 
 proc semProcBody(c: var SemContext; itB: var Item) =
   let beforeBodyPos = c.dest.len
@@ -718,7 +719,7 @@ proc semProcBody(c: var SemContext; itB: var Item) =
       typecheck(c, info, it.typ, c.routine.returnType)
     else:
       # uses closing paren of (stmts:
-      c.dest.insert [parLeToken(pool.tags.getOrIncl($ExprX), info)], beforeBodyPos
+      c.dest.insert [parLeToken(ExprX, info)], beforeBodyPos
       commonType c, it, beforeBodyPos, c.routine.returnType
       # now add closing paren
       c.dest.addParRi()
@@ -726,14 +727,14 @@ proc semProcBody(c: var SemContext; itB: var Item) =
     discard "ok"
   else:
     # uses closing paren of (stmts:
-    c.dest.insert [parLeToken(pool.tags.getOrIncl($ExprX), info)], beforeBodyPos
+    c.dest.insert [parLeToken(ExprX, info)], beforeBodyPos
     commonType c, it, beforeBodyPos, c.routine.returnType
     # now add closing paren
     c.dest.addParRi()
     # transform `expr` to `result = expr`:
     if c.routine.resId != SymId(0):
       var prefix = [
-        parLeToken(pool.tags.getOrIncl($AsgnS), info),
+        parLeToken(AsgnS, info),
         symToken(c.routine.resId, info)]
       c.dest.insert prefix, beforeBodyPos
       c.dest.addParRi()
@@ -1940,7 +1941,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
   case pk
   of NoPragma:
     if kind.isRoutine and (let cc = callConvKind(n); cc != NoCallConv):
-      c.dest.add parLeToken(pool.tags.getOrIncl($cc), n.info)
+      c.dest.addParLe(cc, n.info)
       inc n
       c.dest.addParRi()
     else:
@@ -1949,7 +1950,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       c.dest.addParRi()
       #skip n
   of MagicP:
-    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
+    c.dest.add parLeToken(MagicP, n.info)
     inc n
     if n.kind in {StringLit, Ident}:
       let m = parseMagic(pool.strings[n.litId])
@@ -1966,7 +1967,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
   of ImportcP, ImportcppP, ExportcP, HeaderP, PluginP:
     crucial.flags.incl pk
     let info = n.info
-    c.dest.add parLeToken(pool.tags.getOrIncl($pk), info)
+    c.dest.add parLeToken(pk, info)
     inc n
     let strPos = c.dest.len
     if n.kind != ParRi:
@@ -1991,24 +1992,24 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     # Finalize expression
     c.dest.addParRi()
   of AlignP, BitsP:
-    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
+    c.dest.add parLeToken(pk, n.info)
     inc n
     semConstIntExpr(c, n)
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP:
     crucial.flags.incl pk
-    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
+    c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
   of VarargsP:
     crucial.hasVarargs = n.info
-    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
+    c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
   of RequiresP, EnsuresP:
     crucial.flags.incl pk
-    c.dest.add parLeToken(pool.tags.getOrIncl($pk), n.info)
+    c.dest.add parLeToken(pk, n.info)
     inc n
     if n.kind != ParRi:
       semProposition c, n, pk
@@ -2927,7 +2928,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   if n.kind == DotToken:
     # empty value
     let info = c.dest[declStart].info
-    c.dest.add parLeToken(pool.tags.getOrIncl($TupleConstrX), info)
+    c.dest.add parLeToken(TupleConstrX, info)
     c.addXint state.thisValue, info
     c.dest.add strToken(delayed.lit, info)
     c.dest.addParRi()
@@ -2947,13 +2948,13 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
       var valueCursor = n
       let fieldValue = eval(ec, valueCursor)
       if fieldValue.kind == StringLit:
-        c.dest.add parLeToken(pool.tags.getOrIncl($TupleConstrX), n.info)
+        c.dest.add parLeToken(TupleConstrX, n.info)
         c.addXint state.thisValue, n.info
         c.dest.add fieldValue
         c.dest.addParRi()
         n = valueCursor
       else:
-        c.dest.add parLeToken(pool.tags.getOrIncl($TupleConstrX), n.info)
+        c.dest.add parLeToken(TupleConstrX, n.info)
         let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
         if explicitValue != state.thisValue:
           state.hasHole = true
@@ -3435,7 +3436,7 @@ proc semAsgn(c: var SemContext; it: var Item) =
 
 proc semEmit(c: var SemContext; it: var Item) =
   let info = it.n.info
-  c.dest.add parLeToken(pool.tags.getOrIncl($EmitS), info)
+  c.dest.add parLeToken(EmitS, info)
   inc it.n
   if it.n.exprKind == BracketX:
     inc it.n
@@ -4687,7 +4688,7 @@ proc semEnumToStr(c: var SemContext; it: var Item) =
   let dollorName = "dollar`." & typeName
   let dollorSymId = pool.syms.getOrIncl(dollorName)
   shrink c.dest, beforeExpr
-  c.dest.add parLeToken(pool.tags.getOrIncl($CallX), info)
+  c.dest.add parLeToken(CallX, info)
   c.dest.add symToken(dollorSymId, info)
   c.dest.add exprTokenBuf
   c.dest.addParRi()
