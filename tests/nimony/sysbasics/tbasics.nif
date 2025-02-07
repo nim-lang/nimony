@@ -10,7 +10,11 @@
    (i -1)
    (rangetype
     (i -1) +0 +2)) 4
-  (arr 1 +1 4 +2 7 +3)) 4,4
+  (arr ~4
+   (array
+    (i -1)
+    (rangetype
+     (i -1) +0 +2)) 1 +1 4 +2 7 +3)) 4,4
  (var :s2.0.tbawx6nu81 . . 11,~3
   (array 4
    (i -1)
@@ -21,7 +25,11 @@
    (i -1)
    (rangetype
     (i -1) +0 +4)) 12
-  (arr 1 +1 4 +2 7 +3 10 +4 13 +5)) ,7
+  (arr ~1,~4
+   (array 4
+    (i -1)
+    (rangetype
+     (i -1) +0 +4)) 1 +1 4 +2 7 +3 10 +4 13 +5)) ,7
  (proc 5 :foo.0.tbawx6nu81 . . . 9
   (params) . . . 2,1
   (stmts 4
@@ -30,13 +38,21 @@
      (i -1)
      (rangetype
       (i -1) +0 +2)) 19
-    (arr 1 +5 4 +6 7 +7)) 4,1
+    (arr ~21,~5
+     (array
+      (i -1)
+      (rangetype
+       (i -1) +0 +2)) 1 +5 4 +6 7 +7)) 4,1
    (var :m.1 . .
     (array
      (i -1)
      (rangetype
       (i -1) +0 +3)) 4
-    (arr 1 +5 4 +6 7 +7 10 +8)))) 3,11
+    (arr ~4
+     (array
+      (i -1)
+      (rangetype
+       (i -1) +0 +3)) 1 +5 4 +6 7 +7 10 +8)))) 3,11
  (call ~3 foo.0.tbawx6nu81) ,13
  (proc 5 :foo2.0.tbawx6nu81 . . . 9
   (params 1

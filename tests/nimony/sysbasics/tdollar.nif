@@ -16,15 +16,15 @@
    (result :result.0 . . string.0.sys9azlf .) 9
    (case e.0 ~7,1
     (of
-     (set Red1.0.tdoqc0e0v)
+     (ranges Red1.0.tdoqc0e0v)
      (stmts
       (ret "Red1"))) ~1,1
     (of
-     (set Blue1.0.tdoqc0e0v)
+     (ranges Blue1.0.tdoqc0e0v)
      (stmts
       (ret "Blue1"))) 6,1
     (of
-     (set Green1.0.tdoqc0e0v)
+     (ranges Green1.0.tdoqc0e0v)
      (stmts
       (ret "Green1"))))
    (ret result.0))) ,5

@@ -4008,6 +4008,7 @@ proc semArrayConstr(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
   it.typ = semLocalType(c, it.n)
+  # XXX type length not enforced
   var elem = Item(n: it.n, typ: c.types.autoType)
   if it.typ.typeKind == ArrayT:
     elem.typ = it.typ
