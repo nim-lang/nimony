@@ -3569,7 +3569,7 @@ proc semWhen(c: var SemContext; it: var Item) =
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
-  if it.n == "curly":
+  if it.n == "ranges":
     takeToken c, it.n
     while it.n.kind != ParRi:
       let info = it.n.info

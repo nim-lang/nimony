@@ -502,9 +502,9 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   else:
     endRead c.dest
 
-proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
+proc trCaseRanges(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
                tjmp, fjmp: var FixupList) =
-  assert n.exprKind == CurlyX
+  assert n.exprKind == RangesX
   inc n
   var nextAttempt = Label(-1)
   var nextAttemptB = Label(-1)
@@ -581,7 +581,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
     inc n
     var tjmp: FixupList = @[]
     var fjmp: FixupList = @[]
-    trCaseSet c, n, selector, selectorType, tjmp, fjmp
+    trCaseRanges c, n, selector, selectorType, tjmp, fjmp
     for t in tjmp: c.patch t
     trStmtOrExpr c, n, tar
     endings.add c.jmpForw(n.info)

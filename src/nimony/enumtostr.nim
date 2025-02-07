@@ -22,7 +22,7 @@ proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId, enumSy
     let enumDeclInfo = enumDecl.info
     c.dest.add tagToken("of", enumDeclInfo)
 
-    c.dest.add tagToken("curly", enumDeclInfo)
+    c.dest.add tagToken("ranges", enumDeclInfo)
 
     inc enumDecl
     let symId = enumDecl.symId

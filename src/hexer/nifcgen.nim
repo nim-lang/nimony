@@ -1116,7 +1116,7 @@ proc traverseCase(e: var EContext; c: var Cursor) =
     of OfS:
       e.dest.add c
       inc c
-      if c.kind == ParLe and pool.tags[c.tag] == $CurlyX:
+      if c.kind == ParLe and pool.tags[c.tag] == $RangesX:
         inc c
         e.add "ranges", c.info
         while c.kind != ParRi:
