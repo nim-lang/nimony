@@ -150,7 +150,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
-     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX:
+     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX, AconstrX, SetX:
     result = n.firstSon
   of ParX, EnsureMoveX:
     result = getTypeImpl(c, n.firstSon)
@@ -183,7 +183,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
-  of SetX:
+  of CurlyX:
+    # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
     buf.add parLeToken(SetT, n.info)
@@ -218,14 +219,15 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         result = field.typ
       else:
         result = tupType
-  of AconstrX:
+  of BracketX:
+    # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
     buf.add parLeToken(ArrayT, n.info)
     buf.addSubtree elemType
     var n = n
     var arrayLen = 0
-    inc n # skips AconstrX
+    inc n # skips BracketX
     while n.kind != ParRi:
       skip n
       inc arrayLen

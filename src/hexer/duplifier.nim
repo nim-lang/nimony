@@ -640,7 +640,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trStmtListExpr c, n, e
     of EnsureMoveX:
       trEnsureMove c, n, e
-    of AconstrX, TupleConstrX:
+    of AconstrX, TupleConstrX, BracketX, CurlyX:
       trRawConstructor c, n, e
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetX,
        OchoiceX, CchoiceX, KvX,

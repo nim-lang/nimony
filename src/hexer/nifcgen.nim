@@ -858,9 +858,8 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         skipParRi(e, c)
       of AconstrX:
         e.dest.add tagToken("aconstr", c.info)
-        var arrayType = e.typeCache.getType(c)
         inc c
-        e.traverseType(arrayType, {})
+        traverseType(e, c)
         inc nested
       of OconstrX:
         e.dest.add tagToken("oconstr", c.info)
@@ -950,7 +949,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
           e.dest.addParRi()
           traverseExpr e, c
         wantParRi e, c
-      of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
+      of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX, BracketX, CurlyX:
         error e, "BUG: not eliminated: ", c
       else:
         e.dest.add c
@@ -1117,7 +1116,7 @@ proc traverseCase(e: var EContext; c: var Cursor) =
     of OfS:
       e.dest.add c
       inc c
-      if c.kind == ParLe and pool.tags[c.tag] == $SetX:
+      if c.kind == ParLe and pool.tags[c.tag] == $CurlyX:
         inc c
         e.add "ranges", c.info
         while c.kind != ParRi:

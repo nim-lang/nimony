@@ -504,7 +504,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
 
 proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
                tjmp, fjmp: var FixupList) =
-  assert n.exprKind == SetX
+  assert n.exprKind == CurlyX
   inc n
   var nextAttempt = Label(-1)
   var nextAttemptB = Label(-1)
@@ -756,7 +756,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
        UnpackX, EnumToStrX,
        IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX, EnsureMoveX,
-       DestroyX, DupX, CopyX, WasMovedX, SinkHookX, TraceX:
+       DestroyX, DupX, CopyX, WasMovedX, SinkHookX, TraceX, BracketX, CurlyX:
       trExprLoop c, n
     of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
