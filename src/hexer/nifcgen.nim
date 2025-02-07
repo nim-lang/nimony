@@ -1266,9 +1266,14 @@ proc importSymbol(e: var EContext; s: SymId) =
   else:
     error e, "could not find symbol: " & pool.syms[s]
 
-proc writeOutput(e: var EContext) =
+proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
   var b = nifbuilder.open(e.dir / e.main & ".c.nif")
   b.addHeader "hexer", "nifc"
+  var stack: seq[PackedLineInfo] = @[]
+  if rootInfo.isValid:
+    stack.add rootInfo
+    var (file, line, col) = unpack(pool.man, rootInfo)
+    b.addLineInfo(col, line, pool.files[file])
   b.addTree "stmts"
   for h in e.headers:
     b.withTree "incl":
@@ -1277,7 +1282,6 @@ proc writeOutput(e: var EContext) =
   var c = beginRead(e.dest)
   var ownerStack = @[(SymId(0), -1)]
 
-  var stack: seq[PackedLineInfo] = @[]
   var nested = 0
   var nextIsOwner = -1
   for n in 0 ..< e.dest.len:
@@ -1359,6 +1363,7 @@ proc expand*(infile: string) =
   var dest = transform(e, c0, file)
 
   var c = beginRead(dest)
+  let rootInfo = c.info
 
   if stmtKind(c) == StmtsS:
     inc c
@@ -1377,7 +1382,7 @@ proc expand*(infile: string) =
       importSymbol(e, imp)
     inc i
   skipParRi e, c
-  writeOutput e
+  writeOutput e, rootInfo
   e.closeMangleScope()
 
 when isMainModule:
