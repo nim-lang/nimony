@@ -66,7 +66,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 proc handleCmdLine*() =
   var files: seq[string] = @[]
-  var bits = sizeof(int)
+  var bits = sizeof(int) * 8
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
