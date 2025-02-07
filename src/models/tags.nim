@@ -193,7 +193,52 @@ const
     ("requires", 189),
     ("ensures", 190),
     ("build", 191),
-    ("string", 192)
+    ("string", 192),
+    ("quoted", 193),
+    ("hderef", 194),
+    ("ddot", 195),
+    ("haddr", 196),
+    ("newoconstr", 197),
+    ("tupleconstr", 198),
+    ("set", 199),
+    ("ashr", 200),
+    ("oconv", 201),
+    ("hconv", 202),
+    ("dconv", 203),
+    ("callstrlit", 204),
+    ("infix", 205),
+    ("prefix", 206),
+    ("hcall", 207),
+    ("compiles", 208),
+    ("declared", 209),
+    ("defined", 210),
+    ("high", 211),
+    ("low", 212),
+    ("typeof", 213),
+    ("unpack", 214),
+    ("enumtostr", 215),
+    ("ismainmodule", 216),
+    ("defaultobj", 217),
+    ("defaulttup", 218),
+    ("expr", 219),
+    ("arrat", 220),
+    ("tupat", 221),
+    ("plusset", 222),
+    ("minusset", 223),
+    ("mulset", 224),
+    ("xorset", 225),
+    ("eqset", 226),
+    ("leset", 227),
+    ("ltset", 228),
+    ("inset", 229),
+    ("card", 230),
+    ("emove", 231),
+    ("destroy", 232),
+    ("dup", 233),
+    ("copy", 234),
+    ("wasmoved", 235),
+    ("sinkh", 236),
+    ("trace", 237)
   ]
 const
   ErrTagId* = 1
@@ -388,3 +433,48 @@ const
   EnsuresTagId* = 190
   BuildTagId* = 191
   StringTagId* = 192
+  QuotedTagId* = 193
+  HderefTagId* = 194
+  DdotTagId* = 195
+  HaddrTagId* = 196
+  NewoconstrTagId* = 197
+  TupleconstrTagId* = 198
+  SetTagId* = 199
+  AshrTagId* = 200
+  OconvTagId* = 201
+  HconvTagId* = 202
+  DconvTagId* = 203
+  CallstrlitTagId* = 204
+  InfixTagId* = 205
+  PrefixTagId* = 206
+  HcallTagId* = 207
+  CompilesTagId* = 208
+  DeclaredTagId* = 209
+  DefinedTagId* = 210
+  HighTagId* = 211
+  LowTagId* = 212
+  TypeofTagId* = 213
+  UnpackTagId* = 214
+  EnumtostrTagId* = 215
+  IsmainmoduleTagId* = 216
+  DefaultobjTagId* = 217
+  DefaulttupTagId* = 218
+  ExprTagId* = 219
+  ArratTagId* = 220
+  TupatTagId* = 221
+  PlussetTagId* = 222
+  MinussetTagId* = 223
+  MulsetTagId* = 224
+  XorsetTagId* = 225
+  EqsetTagId* = 226
+  LesetTagId* = 227
+  LtsetTagId* = 228
+  InsetTagId* = 229
+  CardTagId* = 230
+  EmoveTagId* = 231
+  DestroyTagId* = 232
+  DupTagId* = 233
+  CopyTagId* = 234
+  WasmovedTagId* = 235
+  SinkhTagId* = 236
+  TraceTagId* = 237

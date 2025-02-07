@@ -192,3 +192,48 @@
 | ensures | PN | `ensures` pragma |
 | build | PN | `build` pragma |
 | string | PN | `string` pragma |
+| quoted | X | name in backticks |
+| hderef | X | hidden pointer deref operation |
+| ddot | X | deref dot |
+| haddr | X | hidden address of operation |
+| newoconstr | X | new object constructor |
+| tupleconstr | X | tuple constructor |
+| set | X | set constructor |
+| ashr | X | |
+| oconv | X | object conversion |
+| hconv | X | hidden basic type conversion |
+| dconv | X | conversion between `distinct` types |
+| callstrlit | X | |
+| infix | X | |
+| prefix | X | |
+| hcall | X | hidden converter call |
+| compiles | X | |
+| declared | X | |
+| defined | X | |
+| high | X | |
+| low | X | |
+| typeof | X | |
+| unpack | X | |
+| enumtostr | X | |
+| ismainmodule | X | |
+| defaultobj | X | |
+| defaulttup | X | |
+| expr | X | |
+| arrat | X | |
+| tupat | X | |
+| plusset | X | |
+| minusset | X | |
+| mulset | X | |
+| xorset | X | |
+| eqset | X | |
+| leset | X | |
+| ltset | X | |
+| inset | X | |
+| card | X | |
+| emove | X | |
+| destroy | X | |
+| dup | X | |
+| copy | X | |
+| wasmoved | X | |
+| sinkh | X | |
+| trace | X | |
