@@ -61,11 +61,39 @@ type
     desc: string
   EnumImpls = array[EnumList, seq[EnumField]]
 
+proc writeClassifier(f: File; e: EnumList; fields: seq[EnumField]) =
+  var first = -1
+  var last = -1
+  var prev = -1
+  var holes: seq[int] = @[]
+  for f in fields:
+    if first < 0: first = f.value
+    if last < f.value: last = f.value
+    if prev >= 0 and f.value != prev + 1:
+      for h in prev + 1..f.value - 1:
+        holes.add h
+    prev = f.value
+  f.write "\n\nproc rawTagIs" & $e & "*(raw: uint32): bool ="
+  if holes.len <= 3:
+    f.write "\n  raw >= " & $first & "'u32 and raw <= " & $last & "'u32"
+    for h in holes:
+      f.write " and raw != " & $h & "'u32"
+    f.write "\n"
+  else:
+    f.write "\n  raw <= 255'u32 and raw.uint8 in {"
+    var i = 0
+    for field in fields:
+      if i > 0: f.write ", "
+      assert field.value >= 0 and field.value <= 255
+      f.write $field.value & "'u8"
+      inc i
+    f.write "}\n"
+
 proc writeModel(basename: string; data: EnumImpls; first, last: EnumList) =
   let f = open(basename & "_tags.nim", fmWrite)
   f.writeLine Header
-  f.write "type"
   for e in first..last:
+    f.write "\ntype"
     f.write "\n  " & $e & "* = enum"
     f.write "\n    " & toSuffix(e)[1]
     for field in data[e]:
@@ -73,6 +101,7 @@ proc writeModel(basename: string; data: EnumImpls; first, last: EnumList) =
       f.write " = (" & $field.value & ", " & field.tag & ")"
       if field.desc.len > 0:
         f.write "  ## " & field.desc
+    writeClassifier(f, e, data[e])
   f.write "\n"
 
 proc writeTagsFile(output: string; data: seq[(string, int)]) =
