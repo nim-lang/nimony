@@ -131,16 +131,16 @@ const
   ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
 
-proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind;
+proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv;
                info = NoLineInfo) =
-  dest.add parLeToken(pool.tags.getOrIncl($kind), info) # XXX Optimize this into a `cast`!
+  dest.add parLeToken(cast[TagId](kind), info)
 
 proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind; info = NoLineInfo) =
-  dest.add parLeToken(pool.tags.getOrIncl($kind), info)
+  dest.add parLeToken(cast[TagId](kind), info)
   dest.addParRi()
 
 proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind; info = NoLineInfo): PackedToken =
-  parLeToken(pool.tags.getOrIncl($kind), info)
+  parLeToken(cast[TagId](kind), info)
 
 template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
                        info: PackedLineInfo; body: untyped) =

@@ -5,6 +5,6 @@ type
   NifIndex* = enum
     NoIndexTag
 
-proc rawTagIsNifIndex*(raw: uint32): bool =
+proc rawTagIsNifIndex*(raw: uint32): bool {.inline.} =
   raw >= -1'u32 and raw <= -1'u32
 

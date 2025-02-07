@@ -19,7 +19,7 @@ import ".." / gear2 / modnames
 
 template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind|NimonyOther;
                     info: PackedLineInfo; body: untyped) =
-  dest.add parLeToken(pool.tags.getOrIncl($kind), info) # XXX Optimize this to a `cast`
+  dest.add parLeToken(cast[TagId](kind), info)
   body
   dest.addParRi()
 

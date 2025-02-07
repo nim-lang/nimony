@@ -13,6 +13,6 @@ type
     Noconv = (116, "noconv")  ## no explicit calling convention
     Member = (117, "member")  ## `member` calling convention
 
-proc rawTagIsCallConv*(raw: uint32): bool =
+proc rawTagIsCallConv*(raw: uint32): bool {.inline.} =
   raw >= 110'u32 and raw <= 117'u32
 
