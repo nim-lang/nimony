@@ -190,7 +190,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
-    if hasBuiltinPragma(r.pragmas, NoDestroy):
+    if hasBuiltinPragma(r.pragmas, NodestroyP):
       copyTree c.dest, r.body
     else:
       var s2 = createEntryScope(r.body.info)
@@ -239,11 +239,11 @@ proc trIf(c: var Context; n: var Cursor) =
   copyInto(c.dest, n):
     while n.kind != ParRi:
       case n.substructureKind
-      of ElifS:
+      of ElifU:
         copyInto(c.dest, n):
           tr c, n
           trNestedScope c, n
-      of ElseS:
+      of ElseU:
         copyInto(c.dest, n):
           trNestedScope c, n
       else:
@@ -254,11 +254,11 @@ proc trCase(c: var Context; n: var Cursor) =
     tr c, n
     while n.kind != ParRi:
       case n.substructureKind
-      of OfS:
+      of OfU:
         copyInto(c.dest, n):
           takeTree c.dest, n
           trNestedScope c, n
-      of ElseS:
+      of ElseU:
         copyInto(c.dest, n):
           trNestedScope c, n
       else:

@@ -39,7 +39,7 @@ proc isOrdinalType*(typ: TypeCursor; allowEnumWithHoles: bool = false): bool =
       result = isOrdinalType(decl.body, allowEnumWithHoles)
   of ParLe:
     case typ.typeKind
-    of IntT, UIntT, CharT, BoolT, RangeT:
+    of IntT, UIntT, CharT, BoolT, RangetypeT:
       result = true
     of InvokeT:
       # check base type
@@ -95,7 +95,7 @@ proc firstOrd*(c: var SemContext; typ: TypeCursor): xint =
       else: result = createNaN()
     of UIntT, CharT, BoolT:
       result = zero()
-    of RangeT:
+    of RangetypeT:
       var first = typ
       inc first # tag
       skip first # base type
@@ -171,7 +171,7 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       of 32: result = createXint high(uint32).uint64
       of 64: result = createXint high(uint64)
       else: result = createNaN()
-    of RangeT:
+    of RangetypeT:
       var last = typ
       inc last # tag
       skip last # base type

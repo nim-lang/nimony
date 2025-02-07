@@ -120,8 +120,8 @@
 | was | PC | |
 | selectany | PP | |
 | pragmas | SU, SN | begin of pragma section |
-| align | PC | |
-| bits | PC | |
+| align | PP | |
+| bits | PP | |
 | vector | PC | |
 | imp | SC | import declaration |
 | nodecl | P | `nodecl` annotation |

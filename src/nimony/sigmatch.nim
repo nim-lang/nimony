@@ -167,7 +167,7 @@ proc getProcDecl*(s: SymId): Routine =
 
 proc isObjectType(s: SymId): bool =
   let impl = objtypeImpl(s)
-  result = impl.typeKind in {ObjectT, RefObjectT, PtrObjectT}
+  result = impl.typeKind in {ObjectT, RefobjT, PtrobjT}
 
 proc isEnumType*(n: Cursor): bool =
   if n.kind == Symbol:
@@ -186,7 +186,7 @@ iterator inheritanceChain(s: SymId): SymId =
   var objbody = objtypeImpl(s)
   while true:
     let od = asObjectDecl(objbody)
-    if od.kind in {ObjectT, RefObjectT, PtrObjectT}:
+    if od.kind in {ObjectT, RefobjT, PtrobjT}:
       var parent = od.parentType
       if parent.typeKind in {RefT, PtrT}:
         inc parent
@@ -339,8 +339,8 @@ proc expectParRi(m: var Match; f: var Cursor) =
     m.error FormalTypeNotAtEndBug, f, f
 
 proc extractCallConv(c: var Cursor): CallConv =
-  result = NimcallC
-  if substructureKind(c) == PragmasS:
+  result = Fastcall
+  if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
       let res = callConvKind(c)
@@ -354,17 +354,17 @@ proc extractCallConv(c: var Cursor): CallConv =
     raiseAssert "BUG: No pragmas found"
 
 proc procTypeMatch(m: var Match; f, a: var Cursor) =
-  if f.typeKind == ProcT:
+  if f.typeKind == ProctypeT:
     inc f
     for i in 1..4: skip f
-  if a.typeKind == ProcT:
+  if a.typeKind == ProctypeT:
     inc a
     for i in 1..4: skip a
   var hasParams = 0
-  if f.substructureKind == ParamsS:
+  if f.typeKind == ParamsT:
     inc f
     if f.kind != ParRi: inc hasParams
-  if a.substructureKind == ParamsS:
+  if a.typeKind == ParamsT:
     inc a
     if a.kind != ParRi: inc hasParams, 2
   if hasParams == 3:
@@ -518,7 +518,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   else:
     m.error InvalidMatch, f, a
   inc f
-  while f.pragmaKind in {ImportC, ImportCpp}:
+  while f.pragmaKind in {ImportcP, ImportcppP}:
     skip f
 
 proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
@@ -594,7 +594,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
           skip f
       else:
         linearMatch m, f, a
-    of RangeT:
+    of RangetypeT:
       # for now acts the same as base type
       var a = skipModifier(arg.typ)
       inc f # skip to base type
@@ -605,12 +605,12 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of ArrayT:
       var a = skipModifier(arg.typ)
       matchArrayType m, f, a
-    of SetT, UncheckedArrayT, OpenArrayT:
+    of SettT, UncheckedArrayT, OpenArrayT:
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
     of CstringT:
       var a = skipModifier(arg.typ)
-      if a.typeKind == NilT:
+      if a.typeKind == NiltT:
         discard "ok"
         inc f
         expectParRi m, f
@@ -626,7 +626,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of PointerT:
       var a = skipModifier(arg.typ)
       case a.typeKind
-      of NilT:
+      of NiltT:
         discard "ok"
         inc f
         expectParRi m, f
@@ -642,7 +642,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of PtrT, RefT:
       var a = skipModifier(arg.typ)
       case a.typeKind
-      of NilT:
+      of NiltT:
         discard "ok"
         inc f
         skip f
@@ -686,16 +686,16 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         if a.kind != ParRi:
           # len(a) > len(f)
           m.error InvalidMatch, fOrig, aOrig
-    of ProcT:
+    of ProctypeT, ParamsT:
       var a = skipModifier(arg.typ)
       case a.typeKind
-      of NilT:
+      of NiltT:
         discard "ok"
         skip f
       else:
         procTypeMatch m, f, a
-    of NoType, ErrorType, ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NilT, OrT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, IterT, AutoT, SymKindT, TypeKindT, OrdinalT:
+    of NoType, ErrT, ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NiltT, OrT, AndT, NotT,
+        ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
@@ -772,7 +772,7 @@ iterator typeVars(fn: SymId): SymId =
     inc c # skip routine tag
     for i in 1..3:
       skip c # name, export marker, pattern
-    if c.substructureKind == TypevarsS:
+    if c.substructureKind == TypevarsU:
       inc c
       while c.kind != ParRi:
         if c.symKind == TypeVarY:

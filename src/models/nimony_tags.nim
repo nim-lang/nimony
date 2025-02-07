@@ -229,6 +229,8 @@ type
     NoinlineP = (115, "noinline")  ## `noinline` proc annotation
     VarargsP = (117, "varargs")  ## `varargs` proc annotation
     SelectanyP = (119, "selectany")
+    AlignP = (121, "align")
+    BitsP = (122, "bits")
     NodeclP = (125, "nodecl")  ## `nodecl` annotation
     RaisesP = (138, "raises")  ## proc annotation
     MagicP = (175, "magic")  ## `magic` pragma
@@ -253,7 +255,7 @@ type
     StringP = (194, "string")  ## `string` pragma
 
 proc rawTagIsNimonyPragma*(raw: uint32): bool =
-  raw <= 255'u32 and raw.uint8 in {69'u8, 114'u8, 115'u8, 117'u8, 119'u8, 125'u8, 138'u8, 175'u8, 176'u8, 177'u8, 178'u8, 179'u8, 180'u8, 181'u8, 182'u8, 183'u8, 184'u8, 185'u8, 186'u8, 187'u8, 188'u8, 189'u8, 190'u8, 191'u8, 192'u8, 193'u8, 194'u8}
+  raw <= 255'u32 and raw.uint8 in {69'u8, 114'u8, 115'u8, 117'u8, 119'u8, 121'u8, 122'u8, 125'u8, 138'u8, 175'u8, 176'u8, 177'u8, 178'u8, 179'u8, 180'u8, 181'u8, 182'u8, 183'u8, 184'u8, 185'u8, 186'u8, 187'u8, 188'u8, 189'u8, 190'u8, 191'u8, 192'u8, 193'u8, 194'u8}
 
 type
   NimonySym* = enum

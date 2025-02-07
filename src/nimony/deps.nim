@@ -141,7 +141,7 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
       inc x
       var y = x
       skip y
-      if y.substructureKind == PragmasS:
+      if y.substructureKind == PragmasU:
         inc y
         if y.kind == Ident and pool.strings[y.litId] == "cyclic":
           continue
@@ -176,7 +176,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     processImport c, n, current
   of IncludeS, ImportExceptS:
     processInclude c, n, current
-  of FromImportS:
+  of FromS:
     processFrom c, n, current
   of ExportS:
     discard "ignore `export` statement"

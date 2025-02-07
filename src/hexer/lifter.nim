@@ -53,7 +53,7 @@ proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
 proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var n = n
   while n.kind != ParRi:
-    if n.substructureKind == FldS:
+    if n.substructureKind == FldU:
       let field = takeLocal(n, SkipFinalParRi)
       if field.kind == FldY:
         if not isTrivial(c, field.typ):
@@ -85,9 +85,9 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
   let r = asTypeDecl(n)
   assert(not r.isGeneric)
   case r.body.typeKind
-  of PtrT, PtrObjectT:
+  of PtrT, PtrobjT:
     result = true
-  of RefT, RefObjectT:
+  of RefT, RefobjT:
     result = false
   of ObjectT:
     result = isTrivialObjectBody(c, r.body)
@@ -104,13 +104,14 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       quit "could not load: " & pool.syms[typ.symId]
 
   case typ.typeKind
-  of IntT, UIntT, FloatT, BoolT, CharT, PtrT, PtrObjectT,
-     MutT, OutT, SetT,
-     EnumT, HoleyEnumT, VoidT, AutoT, SymKindT, ProcT,
+  of IntT, UIntT, FloatT, BoolT, CharT, PtrT, PtrobjT,
+     MutT, OutT, SettT,
+     EnumT, HoleyEnumT, VoidT, AutoT, SymKindT, ProctypeT,
      CstringT, PointerT, OrdinalT, OpenArrayT,
-     UncheckedArrayT, VarargsT, RangeT, TypedescT:
+     UncheckedArrayT, VarargsT, RangetypeT, TypedescT,
+     ParamsT:
     result = true
-  of RefT, RefObjectT:
+  of RefT, RefobjT:
     result = false
   of SinkT, ArrayT, LentT:
     result = isTrivial(c, typ.firstSon)
@@ -120,8 +121,8 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     var tup = typ
     inc tup
     result = isTrivialForFields(c, tup)
-  of NoType, ErrorType, NilT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, IterT, InvokeT,
-     TypeKindT, UntypedT, TypedT:
+  of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
+     TypeKindT, UntypedT, TypedT, IteratorT, ItertypeT:
     raiseAssert "bug here"
 
 # Phase 2: Do the lifting
@@ -183,9 +184,9 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   let orig = typ
   let typ = toTypeImpl typ
   case typ.typeKind
-  of PtrT, PtrObjectT:
+  of PtrT, PtrobjT:
     raiseAssert "ptr T should have been a 'trivial' type"
-  of ObjectT, RefObjectT, DistinctT, TupleT, ArrayT, RefT:
+  of ObjectT, RefobjT, DistinctT, TupleT, ArrayT, RefT:
     result = requestLifting(c, c.op, orig)
   else:
     result = NoSymId
@@ -254,7 +255,7 @@ proc unravelTuple(c: var LiftingCtx;
   var idx = 0
   while n.kind != ParRi:
     var fieldType = n
-    if n == $FldS:
+    if n.substructureKind == FldU:
       fieldType = takeLocal(n, SkipFinalParRi).typ
     else:
       skip n
@@ -350,12 +351,12 @@ proc refcountOf(c: var LiftingCtx; x: TokenBuf) =
 
 proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
   c.dest.addParLe IfS, c.info
-  c.dest.addParLe ElifS, c.info
+  c.dest.addParLe ElifU, c.info
 
   copyTree c.dest, paramA
   copyIntoKinds c.dest, [StmtsS, IfS], c.info:
     # here we know that `x` is not nil:
-    copyIntoKind c.dest, ElifS, c.info:
+    copyIntoKind c.dest, ElifU, c.info:
       copyIntoKind c.dest, EqX, c.info:
         addIntType c
         copyIntoKind c.dest, CallS, c.info:
@@ -377,7 +378,7 @@ proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor
 
 proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
   c.dest.addParLe IfS, c.info
-  c.dest.copyIntoKind ElifS, c.info:
+  c.dest.copyIntoKind ElifU, c.info:
     copyTree c.dest, x
     copyIntoKind c.dest, StmtsS, c.info:
       copyIntoKind c.dest, CallS, c.info:
@@ -428,8 +429,8 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   case typ.typeKind
   of ObjectT:
     unravelObj c, typ, paramA, paramB
-  of RefObjectT, PtrObjectT:
-    discard "unimplemented"
+  of RefobjT, PtrobjT:
+    raiseAssert "unravel: unimplemented"
   of DistinctT:
     unravel(c, typ.firstSon, paramA, paramB)
   of TupleT:
@@ -441,7 +442,7 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
     maybeCallHook c, fn, paramA, paramB
 
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
-  copyIntoKind(c.dest, ParamS, c.info):
+  copyIntoKind(c.dest, ParamY, c.info):
     addSymDef c.dest, param, c.info
     c.dest.addEmpty2 c.info # export marker, pragmas
     copyIntoKind(c.dest, modifier, c.info):
@@ -449,7 +450,7 @@ proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modi
     c.dest.addEmpty c.info # value
 
 proc addParam(c: var LiftingCtx; param: SymId; typ: TypeCursor) =
-  copyIntoKind(c.dest, ParamS, c.info):
+  copyIntoKind(c.dest, ParamY, c.info):
     addSymDef c.dest, param, c.info
     c.dest.addEmpty2 c.info # export marker, pragmas
     copyTree c.dest, typ
@@ -489,7 +490,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     addSymDef c.dest, sym, c.info
     c.dest.addEmpty3 c.info # export marker, pattern, generics
 
-    c.dest.addParLe ParamsS, c.info
+    c.dest.addParLe ParamsT, c.info
     case c.op
     of attachedDestroy:
       addParam c, paramA, typ
@@ -510,7 +511,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       c.dest.addEmpty() # void return type
     of attachedTrace:
       addParamWithModifier c, paramA, typ, MutT
-      copyIntoKind(c.dest, ParamS, c.info):
+      copyIntoKind(c.dest, ParamY, c.info):
         addSymDef c.dest, paramB, c.info
         c.dest.addEmpty2 c.info # export marker, pragmas
         copyIntoKind(c.dest, PointerT, c.info): discard
@@ -520,7 +521,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       c.dest.addEmpty() # void return type
 
     copyIntoKind c.dest, PragmasS, c.info:
-      copyIntoKind c.dest, NoDestroy, c.info: discard
+      copyIntoKind c.dest, NodestroyP, c.info: discard
 
     c.dest.addEmpty c.info # exc
 
