@@ -500,7 +500,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
 
 proc maybeByConstRef(e: var EContext; c: var Cursor) =
   let param = asLocal(c)
-  if passByConstRef(param.typ, param.pragmas, sizeof(int)):
+  if passByConstRef(param.typ, param.pragmas, e.bits):
     var paramBuf = createTokenBuf()
     paramBuf.add tagToken("param", c.info)
     paramBuf.add param.name
@@ -1370,12 +1370,14 @@ proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
   b.close()
 
 
-proc expand*(infile: string) =
+proc expand*(infile: string, bits: int) =
   let (dir, file, ext) = splitModulePath(infile)
   var e = EContext(dir: (if dir.len == 0: getCurrentDir() else: dir), ext: ext, main: file,
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
-    typeCache: createTypeCache())
+    typeCache: createTypeCache(),
+    bits: bits
+    )
   e.openMangleScope()
 
   var c0 = setupProgram(infile, infile.changeFileExt ".c.nif", true)

@@ -21,6 +21,7 @@ type
     newTypes*: Table[string, SymId]
     pending*: TokenBuf
     typeCache*: TypeCache
+    bits*: int
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`

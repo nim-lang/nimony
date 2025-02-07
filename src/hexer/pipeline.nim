@@ -68,7 +68,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   n4.addParRi()
 
   var c5 = beginRead(n4)
-  var n5 = injectConstParamDerefs(c5, sizeof(int))
+  var n5 = injectConstParamDerefs(c5, c.bits)
   endRead(n4)
 
   result = move n5
