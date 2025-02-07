@@ -120,6 +120,9 @@ const
   UncheckedArrayT* = UarrayT
   HoleyEnumT* = OnumT
   InvokeT* = AtT
+  TupleconstrX* = TupX
+  OconstrX* = ObjX
+  AconstrX* = ArrX
 
 const
   RoutineKinds* = {ProcY, FuncY, IteratorY, TemplateY, MacroY, ConverterY, MethodY}

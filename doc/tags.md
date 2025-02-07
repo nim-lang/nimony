@@ -21,8 +21,10 @@
 | sizeof               | C, X | `sizeof` operation |
 | alignof              | C, X | `alignof` operation |
 | offsetof             | C, X | `offsetof` operation |
-| oconstr              | C, X | object constructor |
-| aconstr              | C, X | array constructor |
+| oconstr              | C | object constructor |
+| obj                  | X | object constructor |
+| aconstr              | C | array constructor |
+| arr                  | X | array constructor |
 | bracket              | X | untyped array constructor |
 | curly                | X | untyped set constructor |
 | kv                   | SU | key-value pair |
@@ -201,7 +203,7 @@
 | ddot | X | deref dot |
 | haddr | X | hidden address of operation |
 | newoconstr | X | new object constructor |
-| tupleconstr | X | tuple constructor |
+| tup | X | tuple constructor |
 | set | X | set constructor |
 | ashr | X | |
 | oconv | X | object conversion |
