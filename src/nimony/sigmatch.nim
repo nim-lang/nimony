@@ -56,7 +56,7 @@ type
     skippedMod: TypeKind
     argInfo: PackedLineInfo
     pos, opened: int
-    inheritanceCosts, intCosts: int
+    inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
     returnType*: Cursor
     context: ptr SemContext
     error: MatchError
@@ -513,7 +513,14 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
     else:
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
-      inc m.intCosts
+      if isIntLit:
+        if f.typeKind == FloatT:
+          inc m.convCosts
+        else:
+          inc m.intLitCosts
+      else:
+        # sameKind is true
+        inc m.intConvCosts
       inc m.opened
   else:
     m.error InvalidMatch, f, a
@@ -618,7 +625,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
-        inc m.intCosts
+        inc m.convCosts
         inc f
         expectParRi m, f
       else:
@@ -634,7 +641,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
-        inc m.intCosts
+        inc m.convCosts
         inc f
         expectParRi m, f
       else:
@@ -715,19 +722,25 @@ proc typematch*(m: var Match; formal: Cursor; arg: Item) =
 type
   TypeRelation* = enum
     NoMatch
+    IntLitMatch
+    IntConvMatch
     ConvertibleMatch
     SubtypeMatch
     GenericMatch
     EqualMatch
 
 proc usesConversion*(m: Match): bool {.inline.} =
-  result = abs(m.inheritanceCosts) + m.intCosts > 0
+  result = abs(m.inheritanceCosts) + m.intLitCosts + m.intConvCosts + m.convCosts > 0
 
 proc classifyMatch*(m: Match): TypeRelation {.inline.} =
   if m.err:
     return NoMatch
-  if m.intCosts != 0:
+  if m.convCosts != 0:
     return ConvertibleMatch
+  if m.intConvCosts != 0:
+    return IntConvMatch
+  if m.intLitCosts != 0:
+    return IntLitMatch
   if m.inheritanceCosts != 0:
     return SubtypeMatch
   if m.inferred.len != 0:
@@ -864,13 +877,21 @@ type
 proc cmpMatches*(a, b: Match): DisambiguationResult =
   assert not a.err
   assert not b.err
-  if a.inheritanceCosts < b.inheritanceCosts:
+  if a.convCosts < b.convCosts:
+    result = FirstWins
+  elif a.convCosts > b.convCosts:
+    result = SecondWins
+  elif a.intConvCosts < b.intConvCosts:
+    result = FirstWins
+  elif a.intConvCosts > b.intConvCosts:
+    result = SecondWins
+  elif a.intLitCosts < b.intLitCosts:
+    result = FirstWins
+  elif a.intLitCosts > b.intLitCosts:
+    result = SecondWins
+  elif a.inheritanceCosts < b.inheritanceCosts:
     result = FirstWins
   elif a.inheritanceCosts > b.inheritanceCosts:
-    result = SecondWins
-  elif a.intCosts < b.intCosts:
-    result = FirstWins
-  elif a.intCosts > b.intCosts:
     result = SecondWins
   else:
     let diff = a.inferred.len - b.inferred.len
