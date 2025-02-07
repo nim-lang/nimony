@@ -184,9 +184,8 @@ proc typeSectionMode(n: Cursor): PragmaKind =
 
 proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
   let k = typ.typeKind
-  if k in {SinkT, MutT, OutT, VoidT, VarargsT, OrT, AndT, NotT,
-     ConceptT, StaticT, IterT, InvokeT, UncheckedArrayT,
-     AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT}:
+  if k in {SinkT, MutT, OutT,
+     TypeKindT, UntypedT, VarargsT}:
     result = false
   elif typeIsBig(typ, ptrSize):
     result = not hasBuiltinPragma(pragmas, ByCopy) and typeSectionMode(typ) != ByCopy
