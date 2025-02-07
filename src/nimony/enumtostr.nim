@@ -13,7 +13,7 @@ import decls, nimony_model, semdata, sembasics
 proc tagToken(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
 
-proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId: SymId) =
+proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId, enumSymId: SymId) =
   c.dest.add tagToken("case", enumDecl.info)
   c.dest.add symToken(symId, enumDecl.info)
   inc enumDecl # skips enum
@@ -22,7 +22,7 @@ proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId: SymId)
     let enumDeclInfo = enumDecl.info
     c.dest.add tagToken("of", enumDeclInfo)
 
-    c.dest.add tagToken("set", enumDeclInfo)
+    c.dest.add tagToken("ranges", enumDeclInfo)
 
     inc enumDecl
     let symId = enumDecl.symId
@@ -89,7 +89,7 @@ proc genEnumToStrProc*(c: var SemContext; typeDecl: var Cursor) =
 
   c.dest.add tagToken("stmts", enumSymInfo)
   var body = decl.body
-  genEnumToStrProcCase(c, body, paramSymId)
+  genEnumToStrProcCase(c, body, paramSymId, enumSymId)
   c.dest.addParRi() # stmts
 
   c.dest.addParRi() # proc

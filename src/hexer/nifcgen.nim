@@ -81,6 +81,7 @@ type
   TypeFlag = enum
     IsTypeBody
     IsPointerOf
+    IsNodecl
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {})
 
@@ -369,9 +370,24 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       error e, "could not find symbol: " & pool.syms[s]
   of ParLe:
     case c.typeKind
-    of NoType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
+    of NoType, ErrorType, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
       error e, "type expected but got: ", c
-    of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymKindT:
+    of IntT, UIntT:
+      let start = e.dest.len
+      e.dest.add c
+      inc c
+      e.dest.add c
+      inc c
+      if c.kind != ParRi and c.pragmaKind in {ImportC, ImportCpp}:
+        e.dest.shrink start
+        inc c
+        e.dest.addSymUse pool.syms.getOrIncl(pool.strings[c.litId] & ".c"), c.info
+        inc c
+        skipParRi e, c
+        skipParRi e, c
+      else:
+        wantParRi e, c
+    of FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
         e.dest.add c
         inc c
@@ -381,7 +397,10 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.loop c:
         traverseType e, c, {IsPointerOf}
     of ArrayT, OpenArrayT, ProcT:
-      traverseAsNamedType e, c
+      if IsNodecl in flags:
+        traverseArrayBody e, c
+      else:
+        traverseAsNamedType e, c
     of RangeT:
       # skip to base type
       inc c
@@ -700,7 +719,7 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
   if isGeneric:
     skip c
   else:
-    traverseType e, c, {IsTypeBody}
+    traverseType e, c, {IsTypeBody} + (if Nodecl in prag.flags: {IsNodecl} else: {})
   wantParRi e, c
   swap dst, e.dest
   if Nodecl in prag.flags or isGeneric:
@@ -839,9 +858,8 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         skipParRi(e, c)
       of AconstrX:
         e.dest.add tagToken("aconstr", c.info)
-        var arrayType = e.typeCache.getType(c)
         inc c
-        e.traverseType(arrayType, {})
+        traverseType(e, c)
         inc nested
       of OconstrX:
         e.dest.add tagToken("oconstr", c.info)
@@ -931,7 +949,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
           e.dest.addParRi()
           traverseExpr e, c
         wantParRi e, c
-      of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
+      of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX, BracketX, CurlyX:
         error e, "BUG: not eliminated: ", c
       else:
         e.dest.add c
@@ -1098,7 +1116,7 @@ proc traverseCase(e: var EContext; c: var Cursor) =
     of OfS:
       e.dest.add c
       inc c
-      if c.kind == ParLe and pool.tags[c.tag] == $SetX:
+      if c.kind == ParLe and pool.tags[c.tag] == $RangesX:
         inc c
         e.add "ranges", c.info
         while c.kind != ParRi:
@@ -1247,9 +1265,14 @@ proc importSymbol(e: var EContext; s: SymId) =
   else:
     error e, "could not find symbol: " & pool.syms[s]
 
-proc writeOutput(e: var EContext) =
+proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
   var b = nifbuilder.open(e.dir / e.main & ".c.nif")
   b.addHeader "hexer", "nifc"
+  var stack: seq[PackedLineInfo] = @[]
+  if rootInfo.isValid:
+    stack.add rootInfo
+    var (file, line, col) = unpack(pool.man, rootInfo)
+    b.addLineInfo(col, line, pool.files[file])
   b.addTree "stmts"
   for h in e.headers:
     b.withTree "incl":
@@ -1258,7 +1281,6 @@ proc writeOutput(e: var EContext) =
   var c = beginRead(e.dest)
   var ownerStack = @[(SymId(0), -1)]
 
-  var stack: seq[PackedLineInfo] = @[]
   var nested = 0
   var nextIsOwner = -1
   for n in 0 ..< e.dest.len:
@@ -1340,6 +1362,7 @@ proc expand*(infile: string) =
   var dest = transform(e, c0, file)
 
   var c = beginRead(dest)
+  let rootInfo = c.info
 
   if stmtKind(c) == StmtsS:
     inc c
@@ -1358,7 +1381,7 @@ proc expand*(infile: string) =
       importSymbol(e, imp)
     inc i
   skipParRi e, c
-  writeOutput e
+  writeOutput e, rootInfo
   e.closeMangleScope()
 
 when isMainModule:

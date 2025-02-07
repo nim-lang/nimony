@@ -149,7 +149,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, ptrSize*2, ptrSize
   of RangeT:
     getSize c, cache, n.firstSon, ptrSize
-  of NoType, VoidT, VarargsT, OrT, AndT, NotT,
+  of NoType, ErrorType, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, IterT, InvokeT, UncheckedArrayT,
      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
     raiseAssert "BUG: valid type kind for sizeof computation: " & $n.typeKind

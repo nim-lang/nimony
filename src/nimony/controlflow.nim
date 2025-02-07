@@ -10,10 +10,10 @@
 import std/[assertions, intsets]
 include nifprelude
 
-import nimony_model, sembasics, typenav
+import nimony_model, programs, typenav
 
 const
-  GotoInstr = InlineInt
+  GotoInstr* = InlineInt
 
 type
   Label = distinct int
@@ -37,14 +37,14 @@ type
     currentBlock: BlockOrLoop
     typeCache: TypeCache
 
-proc codeListing(c: TokenBuf, start = 0; last = -1): string =
+proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
   # first iteration: compute all necessary labels:
   var jumpTargets = initIntSet()
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
   for i in start..last:
     if c[i].kind == GotoInstr:
-      jumpTargets.incl(i+c[i].getInt32)
+      jumpTargets.incl(i+c[i].getInt28)
   # second iteration: generate string representation:
   var i = start
   var b = nifbuilder.open(1000)
@@ -56,7 +56,7 @@ proc codeListing(c: TokenBuf, start = 0; last = -1): string =
     case c[i].kind
     of GotoInstr:
       b.addTree "goto"
-      b.addIdent "L" & $(i+c[i].getInt32())
+      b.addIdent "L" & $(i+c[i].getInt28())
       b.endTree()
     of Symbol:
       b.addSymbol pool.syms[c[i].symId]
@@ -80,15 +80,15 @@ proc codeListing(c: TokenBuf, start = 0; last = -1): string =
 proc genLabel(c: ControlFlow): Label = Label(c.dest.len)
 
 proc jmpBack(c: var ControlFlow, p: Label; info: PackedLineInfo) =
-  c.dest.add int32Token(p.int32 - c.dest.len.int32, info)
+  c.dest.add int28Token(p.int32 - c.dest.len.int32, info)
 
 proc jmpForw(c: var ControlFlow; info: PackedLineInfo): Label =
   result = Label(c.dest.len)
-  c.dest.add int32Token(0, info) # destination will be patched later
+  c.dest.add int28Token(0, info) # destination will be patched later
 
 proc patch(c: var ControlFlow; p: Label) =
   # patch with current index
-  c.dest[p.int].patchInt32Token int32(c.dest.len - p.int)
+  c.dest[p.int].patchInt28Token int32(c.dest.len - p.int)
 
 proc trExpr(c: var ControlFlow; n: var Cursor)
 proc trStmt(c: var ControlFlow; n: var Cursor)
@@ -108,10 +108,9 @@ proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: Target) =
 type
   FixupList = seq[Label]
 
-proc trCondOp2(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
+proc trCondOp2(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList; info: PackedLineInfo) =
   # Handles the `b` part of `a and b` or `a or b`. Simply translates it
   # to `(ite b tjmp fjmp)`.
-  let info = n.info
   c.dest.addParLe(IteF, info)
   trExpr c, n # second condition
   tjmp.add c.jmpForw(info)
@@ -130,7 +129,7 @@ proc trAnd(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   fjmp.add c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
-  trCondOp2 c, n, tjmp, fjmp
+  trCondOp2 c, n, tjmp, fjmp, info
 
 proc trOr(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   # (ite (first-condition) tjmp L1)
@@ -143,7 +142,7 @@ proc trOr(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   let l1 = c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
-  trCondOp2 c, n, tjmp, fjmp
+  trCondOp2 c, n, tjmp, fjmp, info
 
 proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   case n.exprKind
@@ -162,7 +161,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     skipParRi n
   else:
     # cannot exploit a special case here:
-    let info = n.info
+    let info = NoLineInfo
     c.dest.addParLe(IteF, info)
     trExpr c, n
     tjmp.add c.jmpForw(info)
@@ -391,6 +390,7 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
     if isConcrete:
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
+      c.dest.addParPair RetS, NoLineInfo
     else:
       takeTree c.dest, n
     for ret in thisProc.breakInstrs: c.patch ret
@@ -444,14 +444,67 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
   else:
     it.breakInstrs.add c.jmpForw(n.info)
 
-proc trAsgn(c: var ControlFlow; n: var Cursor) =
-  copyInto c.dest, n:
-    trExpr c, n
-    trExpr c, n
+proc isComplexLhs(n: Cursor): bool =
+  var n = n
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.exprKind in CallKinds+{PatX, ArrAtX}:
+        return true
+      inc nested
+    of ParRi:
+      dec nested
+    else: discard
+    if nested == 0: break
+    inc n
+  return false
 
-proc trCaseSet(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
+proc trAsgn(c: var ControlFlow; n: var Cursor) =
+  # Problem: Analysis of left-hand-side of assignments always is more complex
+  # because of things like `obj.field[f(a, b, c)] = value` which contain simple
+  # usages of `a, b, c`. Thus we break these into two statements:
+  # obj.a.b.c.s[i] = value --> let tmp = addr(obj.a.b.c.s[i]); tmp[] = value
+  # This works more reliably when we already eliminated the ExprX things, so we
+  # do it afterwards:
+  let asgnBegin = c.dest.len
+  let info = n.info
+  copyInto c.dest, n:
+    let typ = c.typeCache.getType(n) # we might need it later
+    trExpr c, n
+    trExpr c, n
+  let lhs = cursorAt(c.dest, asgnBegin+1)
+  if isComplexLhs(lhs):
+    var stmts = createTokenBuf(40)
+
+    let tmp = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    inc c.nextVar
+    stmts.addParLe LetS, info
+    stmts.addSymDef tmp, info
+    stmts.addEmpty2 info # no export marker, no pragmas
+    stmts.copyIntoKind PtrT, info:
+      stmts.copyTree typ
+    stmts.copyIntoKind AddrX, info:
+      stmts.copyTree lhs
+    stmts.addParRi()
+
+    var rhs = lhs
+    skip rhs
+
+    stmts.copyIntoKind AsgnS, info:
+      stmts.copyIntoKind DerefX, info:
+        stmts.addSymUse tmp, info
+      stmts.copyTree rhs
+
+    endRead c.dest
+    c.dest.shrink asgnBegin
+    c.dest.add stmts
+  else:
+    endRead c.dest
+
+proc trCaseRanges(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
                tjmp, fjmp: var FixupList) =
-  assert n.exprKind == SetX
+  assert n.exprKind == RangesX
   inc n
   var nextAttempt = Label(-1)
   var nextAttemptB = Label(-1)
@@ -528,7 +581,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
     inc n
     var tjmp: FixupList = @[]
     var fjmp: FixupList = @[]
-    trCaseSet c, n, selector, selectorType, tjmp, fjmp
+    trCaseRanges c, n, selector, selectorType, tjmp, fjmp
     for t in tjmp: c.patch t
     trStmtOrExpr c, n, tar
     endings.add c.jmpForw(n.info)
@@ -597,7 +650,8 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of IterS, ProcS, FuncS, MacroS, ConverterS, MethodS:
     trProc c, n
   of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromImportS, ImportExceptS, PragmasLineS:
-    takeTree c.dest, n
+    c.dest.addDotToken()
+    skip n
   of CallS, CmdS:
     trCall c, n
   of YieldS, DiscardS, InclSetS, ExclSetS:
@@ -702,11 +756,12 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
        UnpackX, EnumToStrX,
        IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX, EnsureMoveX,
-       DestroyX, DupX, CopyX, WasMovedX, SinkHookX, TraceX:
+       DestroyX, DupX, CopyX, WasMovedX, SinkHookX, TraceX, BracketX, CurlyX:
       trExprLoop c, n
     of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
-      takeTree c.dest, n
+      c.dest.addDotToken()
+      skip n
     of NoExpr:
       case n.stmtKind
       of IfS:
@@ -729,6 +784,7 @@ proc toControlflow*(n: Cursor): TokenBuf =
   inc n
   while n.kind != ParRi:
     trStmt c, n
+  c.dest.addParPair RetS, NoLineInfo
   c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove c.dest
@@ -788,8 +844,21 @@ when isMainModule:
     )
   )"""
 
+  const AsgnTest = """(stmts
+  (proc :my.proc . . . (params (param :i.0 .. (i -1) .))
+    (i -1) . . (stmts (result :res.0 . . (i -1) .) (ret +1)))
+
+  (let :my.var . . (array (i +8) +6) .)
+  (var :i.0 . . (i -1) +0)
+  (asgn (arrat my.var i.0) +56)
+
+  (asgn i.0 +1)
+  )
+  """
+
   #test BasicTest
   #test NotTest
   #test ReturnTest
-  test TryTest
+  #test TryTest
   #test CaseTest
+  test AsgnTest

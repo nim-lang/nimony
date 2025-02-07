@@ -99,6 +99,8 @@ type
     OconstrX = "obj"
     NewOconstrX = "newobj"
     TupleConstrX = "tup"
+    BracketX = "bracket"
+    CurlyX = "curly"
     AconstrX = "arr"
     SetX = "set"
     OchoiceX = "ochoice"
@@ -170,6 +172,7 @@ type
 
   TypeKind* = enum
     NoType
+    ErrorType = "err"
     ObjectT = "object"
     RefObjectT = "refobj"
     PtrObjectT = "ptrobj"
@@ -376,7 +379,7 @@ proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|Subs
                info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
 
-proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind; info = NoLineInfo) =
+proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind; info = NoLineInfo) =
   dest.add parLeToken(pool.tags.getOrIncl($kind), info)
   dest.addParRi()
 
