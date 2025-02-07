@@ -14,10 +14,10 @@
 | nan                  | C, X | NaN floating point value |
 | false                | C, X | boolean `false` value |
 | true                 | C, X | boolean `true` value |
-| and                  | C, X | boolean `and` operation |
+| and                  | C, X, TN | boolean `and` operation |
 | or                   | C, X, TN | boolean `or` operation |
 | not                  | C, X, TN | boolean `not` operation |
-| neg                  | C, X, TN | negation operation |
+| neg                  | C, X | negation operation |
 | sizeof               | C, X | `sizeof` operation |
 | alignof              | C, X | `alignof` operation |
 | offsetof             | C, X | `offsetof` operation |
@@ -42,7 +42,7 @@
 | cast | C, X | |
 | conv | C, X | type conversion |
 | call | C, X, SN | call operation |
-| cmd | SN | command operation |
+| cmd | SN, X | command operation |
 | range | SU | `(range a b)` construct |
 | ranges | SU | |
 | gvar | SC | global variable declaration |
@@ -58,15 +58,16 @@
 | fld | SU, Y | field declaration |
 | proc | SC, SN, Y | proc declaration |
 | func | SN, Y | function declaration |
-| iterator | SN, Y | iterator declaration |
+| iterator | SN, Y, TN | iterator declaration |
 | converter | SN, Y | converter declaration |
 | method | SN, Y | method declaration |
 | macro | SN, Y | macro declaration |
 | template | SN, Y | template declaration |
 | type | SC, SN, Y | type declaration |
 | block | SN, Y | block declaration |
-| module | SN, Y | module declaration |
-| cchoice | SN, Y | closed choice |
+| module | Y | module declaration |
+| cchoice | X, Y | closed choice |
+| ochoice | X | open choice |
 | emit | SC, SN, PN | emit statement |
 | asgn | SC, SN | assignment statement |
 | scope | SC, SN | explicit scope annotation, like `stmts` |
@@ -74,6 +75,7 @@
 | when | SN | when statement header |
 | elif | SU | pair of (condition, action) |
 | else | SU | `else` action |
+| typevars | SUN | type variable/generic parameters |
 | break | SC, SN | `break` statement |
 | continue | SN | `continue` statement |
 | for | SN | for statement |

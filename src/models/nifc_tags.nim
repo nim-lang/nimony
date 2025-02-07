@@ -58,53 +58,53 @@ type
     ConstS = (50, "const")  ## const variable declaration
     ProcS = (57, "proc")  ## proc declaration
     TypeS = (64, "type")  ## type declaration
-    EmitS = (68, "emit")  ## emit statement
-    AsgnS = (69, "asgn")  ## assignment statement
-    ScopeS = (70, "scope")  ## explicit scope annotation, like `stmts`
-    IfS = (71, "if")  ## if statement header
-    BreakS = (75, "break")  ## `break` statement
-    WhileS = (78, "while")  ## `while` statement
-    CaseS = (79, "case")  ## `case` statement
-    LabS = (81, "lab")  ## label, target of a `jmp` instruction
-    JmpS = (82, "jmp")  ## jump/goto instruction
-    RetS = (83, "ret")  ## `return` instruction
-    StmtsS = (85, "stmts")  ## list of statements
-    ImpS = (122, "imp")  ## import declaration
-    InclS = (124, "incl")  ## `#include` statement or `incl` set operation
-    ImportS = (127, "import")  ## `import` statement
-    FromS = (128, "from")  ## `from` statement
-    ImportexceptS = (129, "importexcept")  ## `importexcept` statement
-    ExportS = (130, "export")  ## `export` statement
-    CommentS = (131, "comment")  ## `comment` statement
-    DiscardS = (132, "discard")  ## `discard` statement
-    TryS = (133, "try")  ## `try` statement
-    RaiseS = (134, "raise")  ## `raise` statement
-    OnerrS = (135, "onerr")  ## error handling statement
+    EmitS = (69, "emit")  ## emit statement
+    AsgnS = (70, "asgn")  ## assignment statement
+    ScopeS = (71, "scope")  ## explicit scope annotation, like `stmts`
+    IfS = (72, "if")  ## if statement header
+    BreakS = (77, "break")  ## `break` statement
+    WhileS = (80, "while")  ## `while` statement
+    CaseS = (81, "case")  ## `case` statement
+    LabS = (83, "lab")  ## label, target of a `jmp` instruction
+    JmpS = (84, "jmp")  ## jump/goto instruction
+    RetS = (85, "ret")  ## `return` instruction
+    StmtsS = (87, "stmts")  ## list of statements
+    ImpS = (124, "imp")  ## import declaration
+    InclS = (126, "incl")  ## `#include` statement or `incl` set operation
+    ImportS = (129, "import")  ## `import` statement
+    FromS = (130, "from")  ## `from` statement
+    ImportexceptS = (131, "importexcept")  ## `importexcept` statement
+    ExportS = (132, "export")  ## `export` statement
+    CommentS = (133, "comment")  ## `comment` statement
+    DiscardS = (134, "discard")  ## `discard` statement
+    TryS = (135, "try")  ## `try` statement
+    RaiseS = (136, "raise")  ## `raise` statement
+    OnerrS = (137, "onerr")  ## error handling statement
 
 proc rawTagIsNifcStmt*(raw: uint32): bool =
-  raw <= 255'u32 and raw.uint8 in {46'u8, 47'u8, 48'u8, 50'u8, 57'u8, 64'u8, 68'u8, 69'u8, 70'u8, 71'u8, 75'u8, 78'u8, 79'u8, 81'u8, 82'u8, 83'u8, 85'u8, 122'u8, 124'u8, 127'u8, 128'u8, 129'u8, 130'u8, 131'u8, 132'u8, 133'u8, 134'u8, 135'u8}
+  raw <= 255'u32 and raw.uint8 in {46'u8, 47'u8, 48'u8, 50'u8, 57'u8, 64'u8, 69'u8, 70'u8, 71'u8, 72'u8, 77'u8, 80'u8, 81'u8, 83'u8, 84'u8, 85'u8, 87'u8, 124'u8, 126'u8, 129'u8, 130'u8, 131'u8, 132'u8, 133'u8, 134'u8, 135'u8, 136'u8, 137'u8}
 
 type
   NifcType* = enum
     NoNifcType
-    ParamsT = (86, "params")  ## list of proc parameters, also used as a "proc type"
-    UnionT = (87, "union")  ## union declaration
-    ObjectT = (88, "object")  ## object type declaration
-    EnumT = (89, "enum")  ## enum type declaration
-    ProctypeT = (90, "proctype")  ## proc type declaration (soon obsolete, use params instead)
-    IT = (94, "i")  ## `int` builtin type
-    UT = (95, "u")  ## `uint` builtin type
-    FT = (96, "f")  ## `float` builtin type
-    CT = (97, "c")  ## `char` builtin type
-    BoolT = (98, "bool")  ## `bool` builtin type
-    VoidT = (99, "void")  ## `void` return type
-    PtrT = (100, "ptr")  ## `ptr` type contructor
-    ArrayT = (101, "array")  ## `array` type constructor
-    FlexarrayT = (102, "flexarray")  ## `flexarray` type constructor
-    AptrT = (103, "aptr")  ## "pointer to array of" type constructor
+    ParamsT = (88, "params")  ## list of proc parameters, also used as a "proc type"
+    UnionT = (89, "union")  ## union declaration
+    ObjectT = (90, "object")  ## object type declaration
+    EnumT = (91, "enum")  ## enum type declaration
+    ProctypeT = (92, "proctype")  ## proc type declaration (soon obsolete, use params instead)
+    IT = (96, "i")  ## `int` builtin type
+    UT = (97, "u")  ## `uint` builtin type
+    FT = (98, "f")  ## `float` builtin type
+    CT = (99, "c")  ## `char` builtin type
+    BoolT = (100, "bool")  ## `bool` builtin type
+    VoidT = (101, "void")  ## `void` return type
+    PtrT = (102, "ptr")  ## `ptr` type contructor
+    ArrayT = (103, "array")  ## `array` type constructor
+    FlexarrayT = (104, "flexarray")  ## `flexarray` type constructor
+    AptrT = (105, "aptr")  ## "pointer to array of" type constructor
 
 proc rawTagIsNifcType*(raw: uint32): bool =
-  raw >= 86'u32 and raw <= 103'u32 and raw != 91'u32 and raw != 92'u32 and raw != 93'u32
+  raw >= 88'u32 and raw <= 105'u32 and raw != 93'u32 and raw != 94'u32 and raw != 95'u32
 
 type
   NifcOther* = enum
@@ -116,41 +116,41 @@ type
     TypevarU = (54, "typevar")  ## type variable declaration
     EfldU = (55, "efld")  ## enum field declaration
     FldU = (56, "fld")  ## field declaration
-    ElifU = (73, "elif")  ## pair of (condition, action)
-    ElseU = (74, "else")  ## `else` action
-    OfU = (80, "of")  ## `of` branch within a `case` statement
-    AttrU = (114, "attr")  ## general attribute annoation
-    PragmasU = (118, "pragmas")  ## begin of pragma section
+    ElifU = (74, "elif")  ## pair of (condition, action)
+    ElseU = (75, "else")  ## `else` action
+    OfU = (82, "of")  ## `of` branch within a `case` statement
+    AttrU = (116, "attr")  ## general attribute annoation
+    PragmasU = (120, "pragmas")  ## begin of pragma section
 
 proc rawTagIsNifcOther*(raw: uint32): bool =
-  raw <= 255'u32 and raw.uint8 in {24'u8, 44'u8, 45'u8, 49'u8, 54'u8, 55'u8, 56'u8, 73'u8, 74'u8, 80'u8, 114'u8, 118'u8}
+  raw <= 255'u32 and raw.uint8 in {24'u8, 44'u8, 45'u8, 49'u8, 54'u8, 55'u8, 56'u8, 74'u8, 75'u8, 82'u8, 116'u8, 120'u8}
 
 type
   NifcPragma* = enum
     NoNifcPragma
-    InlineP = (112, "inline")  ## `inline` proc annotation
-    NoinlineP = (113, "noinline")  ## `noinline` proc annotation
-    VarargsP = (115, "varargs")  ## `varargs` proc annotation
-    WasP = (116, "was")
-    SelectanyP = (117, "selectany")
-    AlignP = (119, "align")
-    BitsP = (120, "bits")
-    VectorP = (121, "vector")
-    NodeclP = (123, "nodecl")  ## `nodecl` annotation
-    RaisesP = (136, "raises")  ## proc annotation
-    ErrsP = (137, "errs")  ## proc annotation
-    StaticP = (138, "static")  ## `static` type or annotation
+    InlineP = (114, "inline")  ## `inline` proc annotation
+    NoinlineP = (115, "noinline")  ## `noinline` proc annotation
+    VarargsP = (117, "varargs")  ## `varargs` proc annotation
+    WasP = (118, "was")
+    SelectanyP = (119, "selectany")
+    AlignP = (121, "align")
+    BitsP = (122, "bits")
+    VectorP = (123, "vector")
+    NodeclP = (125, "nodecl")  ## `nodecl` annotation
+    RaisesP = (138, "raises")  ## proc annotation
+    ErrsP = (139, "errs")  ## proc annotation
+    StaticP = (140, "static")  ## `static` type or annotation
 
 proc rawTagIsNifcPragma*(raw: uint32): bool =
-  raw <= 255'u32 and raw.uint8 in {112'u8, 113'u8, 115'u8, 116'u8, 117'u8, 119'u8, 120'u8, 121'u8, 123'u8, 136'u8, 137'u8, 138'u8}
+  raw <= 255'u32 and raw.uint8 in {114'u8, 115'u8, 117'u8, 118'u8, 119'u8, 121'u8, 122'u8, 123'u8, 125'u8, 138'u8, 139'u8, 140'u8}
 
 type
   NifcTypeQualifier* = enum
     NoQualifier
-    AtomicQ = (91, "atomic")  ## `atomic` type qualifier for NIFC
-    RoQ = (92, "ro")  ## `readonly` (= `const`) type qualifier for NIFC
-    RestrictQ = (93, "restrict")  ## type qualifier for NIFC
+    AtomicQ = (93, "atomic")  ## `atomic` type qualifier for NIFC
+    RoQ = (94, "ro")  ## `readonly` (= `const`) type qualifier for NIFC
+    RestrictQ = (95, "restrict")  ## type qualifier for NIFC
 
 proc rawTagIsNifcTypeQualifier*(raw: uint32): bool =
-  raw >= 91'u32 and raw <= 93'u32
+  raw >= 93'u32 and raw <= 95'u32
 

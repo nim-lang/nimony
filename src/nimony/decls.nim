@@ -10,18 +10,18 @@ import std / assertions
 import nifstreams, nifcursors, nimony_model
 
 proc isRoutine*(t: SymKind): bool {.inline.} =
-  t in {ProcY, FuncY, IterY, MacroY, TemplateY, ConverterY, MethodY}
+  t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
 
 proc isLocal*(t: SymKind): bool {.inline.} =
   t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, FldY, EfldY}
 
 proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol
-  t in {ObjectT, RefObjectT, PtrObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT}
+  t in {ObjectT, RefobjT, PtrobjT, EnumT, OnumT, DistinctT, ConceptT}
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   result = t
-  if result.typeKind == ProcT:
+  if result.typeKind == ProctypeT:
     inc result # skip ParLe
     skip result # skip name
     skip result # skip export marker
@@ -89,7 +89,7 @@ type
     body*: Cursor
 
 proc isGeneric*(r: Routine): bool {.inline.} =
-  r.typevars.substructureKind == TypevarsS
+  r.typevars.substructureKind == TypevarsU
 
 proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
   let kind = symKind c
@@ -141,7 +141,7 @@ type
     body*: Cursor
 
 proc isGeneric*(r: TypeDecl): bool {.inline.} =
-  r.typevars.substructureKind == TypevarsS
+  r.typevars.substructureKind == TypevarsU
 
 proc asTypeDecl*(c: Cursor): TypeDecl =
   var c = c
@@ -169,7 +169,7 @@ proc asObjectDecl*(c: Cursor): ObjectDecl =
   var c = c
   let kind = typeKind c
   result = ObjectDecl(kind: kind)
-  if kind in {ObjectT, RefObjectT, PtrObjectT}:
+  if kind in {ObjectT, RefobjT, PtrobjT}:
     inc c
     result.parentType = c
     skip c
@@ -185,7 +185,7 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
   var c = c
   let kind = typeKind c
   result = EnumDecl(kind: kind)
-  if kind in {EnumT, HoleyEnumT}:
+  if kind in {EnumT, OnumT}:
     inc c
     result.baseType = c
     skip c

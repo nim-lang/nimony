@@ -48,7 +48,7 @@ proc needsTemp(n: Cursor): bool =
       inc n
       skip n
       result = needsTemp(n)
-    of AtX, PatX, ArrAtX, TupAtX, DotX, DerefDotX, ParX, AddrX, HaddrX:
+    of AtX, PatX, ArrAtX, TupAtX, DotX, DdotX, ParX, AddrX, HaddrX:
       inc n
       while n.kind != ParRi:
         if needsTemp(n):
@@ -142,7 +142,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.exprKind
   inc n
   let typ = n
-  if typ.typeKind != SetT:
+  if typ.typeKind != SettT:
     error "expected set type for set op", n
   var baseType = typ
   inc baseType
@@ -177,7 +177,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case size
   of 1, 2, 4, 8:
     case kind
-    of CardSetX:
+    of CardX:
       # XXX needs countBits compilerproc
       raiseAssert("unimplemented")
     of LtSetX:
@@ -285,7 +285,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.stmtKind
   inc n
   let typ = n
-  if typ.typeKind != SetT:
+  if typ.typeKind != SettT:
     error "expected set type for incl/excl", n
   var baseType = typ
   inc baseType
@@ -322,7 +322,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let mask = size * 8 - 1
     copyIntoKind dest, AsgnS, info:
       dest.addSubtree a
-      if kind == InclSetS:
+      if kind == InclS:
         dest.addParLe(BitOrX, info)
         dest.addSubtree cType
         dest.addSubtree a
@@ -341,7 +341,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addUintType(-1, info)
           dest.addSubtree b
           dest.addIntLit(mask, info)
-      if kind == InclSetS:
+      if kind == InclS:
         dest.addParRi() # bitor
       else:
         dest.addParRi() # bitand
@@ -359,9 +359,9 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addIntLit(3)
     copyIntoKind dest, AsgnS, info:
       addLhs()
-      copyIntoKind dest, if kind == InclSetS: BitOrX else: BitAndX, info:
+      copyIntoKind dest, if kind == InclS: BitOrX else: BitAndX, info:
         addLhs()
-        if kind == ExclSetS:
+        if kind == ExclS:
           dest.addParLe BitNotX, info
           dest.addUintType(8, info)
         copyIntoKind dest, ShlX, info:
@@ -371,7 +371,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.addUintType(-1, info)
             dest.addSubtree b
             dest.addUintLit(7, info)
-        if kind == ExclSetS:
+        if kind == ExclS:
           dest.addParRi()
   if useTemp:
     dest.addParRi()
@@ -387,19 +387,19 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       case n.stmtKind
       of NoStmt:
         case n.typeKind
-        of SetT:
+        of SettT:
           #trSetType(c, dest, n)
           # leave this to nifcgen
           trSons(c, dest, n)
         else:
           trSons(c, dest, n)
-      of InclSetS, ExclSetS:
+      of InclS, ExclS:
         genInclExcl(c, dest, n)
       of CaseS:
         copyInto dest, n:
           while n.kind != ParRi:
             case n.substructureKind
-            of OfS:
+            of OfU:
               copyInto dest, n:
                 takeTree dest, n # keep set constructor
                 tr(c, dest, n)
@@ -409,10 +409,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trLocal c, dest, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProc c, dest, n
-      of IterS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-        ForS, CmdS, IncludeS, ImportS, FromImportS, ImportExceptS,
+      of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+        ForS, CmdS, IncludeS, ImportS, FromS, ImportExceptS,
         ExportS, CommentS,
-        PragmasLineS:
+        PragmasS:
         takeTree dest, n
       of ScopeS:
         c.typeCache.openScope()
@@ -422,7 +422,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trSons(c, dest, n)
     of SetX:
       genSetConstr(c, dest, n)
-    of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX:
+    of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
       genSetOp(c, dest, n)
     of NewOconstrX:
       # XXX `new`

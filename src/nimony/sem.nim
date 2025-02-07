@@ -5307,7 +5307,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSizeof c, it
     of TypeofX:
       semTypeof c, it
-    of DestroyX, CopyX, WasMovedX, SinkHookX, TraceX:
+    of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
       semVoidHook c, it
     of DupX:
       semDupHook c, it

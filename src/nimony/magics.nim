@@ -137,8 +137,8 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mHigh: res HighX
   of mEnumToStr: res EnumToStrX
   of mArray: res ArrayT
-  of mRange: res RangeT
-  of mSet: res SetT
+  of mRange: res RangetypeT
+  of mSet: res SettT
   of mVarargs: res VarargsT
   of mRef: res RefT
   of mPtr: res PtrT
@@ -147,7 +147,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mVoid: res VoidT
   of mTuple: res TupleT
   of mOrdinal: res OrdinalT
-  of mIterableType: res IterT
+  of mIterableType: res IteratorT
   of mInt: res IntT, -1
   of mInt8: res IntT, 8
   of mInt16: res IntT, 16
@@ -182,15 +182,15 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mLeSet: res LeSetX, TypedMagic
   of mLtSet: res LtSetX, TypedMagic
   of mInSet: res InSetX, TypedMagic
-  of mCard: res CardSetX, TypedMagic
-  of mIncl: res InclSetS, TypedMagic
-  of mExcl: res ExclSetS, TypedMagic
-  of mEnsureMove: res EnsureMoveX
+  of mCard: res CardX, TypedMagic
+  of mIncl: res InclS, TypedMagic
+  of mExcl: res ExclS, TypedMagic
+  of mEnsureMove: res EmoveX
   of mUncheckedArray: res UncheckedArrayT
   of mSink: res SinkT
   of mLent: res LentT
   of mDestroy: res DestroyX
-  of mSinkHook: res SinkHookX
+  of mSinkHook: res SinkhX
   of mDup: res DupX
   of mCopy: res CopyX
   of mWasMoved: res WasMovedX

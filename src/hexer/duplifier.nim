@@ -377,7 +377,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
         trExplicitDup c, n, DontCare
       of CopyX:
         trExplicitCopy c, n, attachedCopy
-      of SinkHookX:
+      of SinkhX:
         trExplicitCopy c, n, attachedSink
       of WasMovedX:
         trExplicitWasMoved c, n
@@ -624,7 +624,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trExplicitCopy c, n, attachedCopy
     of WasMovedX:
       trExplicitWasMoved c, n
-    of SinkHookX:
+    of SinkhX:
       trExplicitCopy c, n, attachedSink
     of TraceX:
       trExplicitTrace c, n

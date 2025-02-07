@@ -525,7 +525,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trSons c, n, WantT
     of ParX:
       trSons c, n, e
-    of CopyX, WasMovedX, SinkHookX, TraceX:
+    of CopyX, WasMovedX, SinkhX, TraceX:
       trVarHook c, n
     of DupX, DestroyX:
       trSons c, n, WantT

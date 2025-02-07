@@ -73,7 +73,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     result = c.error(msg, info)
   template propagateError(r: Cursor): Cursor =
     let val = r
-    if val.kind == ParLe and val.tagId == ErrT:
+    if val.kind == ParLe and val.tagId == nifstreams.ErrT:
       return val
     else:
       val
@@ -284,8 +284,8 @@ proc getArrayIndexLen*(index: Cursor): xint =
     result = createXint 256'i64
   of BoolT:
     result = createXint 2'i64
-  of RangeT:
-    inc index # RangeT
+  of RangetypeT:
+    inc index # RangetypeT
     skip index # basetype is irrelevant, we care about the length
     let first = evalOrdinal(nil, index)
     skip index
@@ -305,7 +305,7 @@ proc getArrayLen*(n: Cursor): xint =
 proc evalBitSet*(n, typ: Cursor): seq[uint8] =
   ## returns @[] if it could not be evaluated.
   assert n.exprKind == SetX
-  assert typ.typeKind == SetT
+  assert typ.typeKind == SettT
   let size = bitsetSizeInBytes(typ.firstSon)
   var err = false
   let s = asSigned(size, err)
@@ -315,7 +315,7 @@ proc evalBitSet*(n, typ: Cursor): seq[uint8] =
   var n = n
   inc n # skip set tag
   while n.kind != ParRi:
-    if n.exprKind == RangeX:
+    if n.substructureKind == RangeU:
       inc n
       let xa = evalOrdinal(nil, n)
       skip n
