@@ -204,7 +204,7 @@ const
     ("hderef", 200),
     ("ddot", 201),
     ("haddr", 202),
-    ("newoconstr", 203),
+    ("newobj", 203),
     ("tup", 204),
     ("set", 205),
     ("ashr", 206),
@@ -449,7 +449,7 @@ const
   HderefTagId* = 200
   DdotTagId* = 201
   HaddrTagId* = 202
-  NewoconstrTagId* = 203
+  NewobjTagId* = 203
   TupTagId* = 204
   SetTagId* = 205
   AshrTagId* = 206

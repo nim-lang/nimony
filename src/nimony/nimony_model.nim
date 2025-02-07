@@ -123,6 +123,7 @@ const
   TupleconstrX* = TupX
   OconstrX* = ObjX
   AconstrX* = ArrX
+  NewOconstrX* = NewObjX
 
 const
   RoutineKinds* = {ProcY, FuncY, IteratorY, TemplateY, MacroY, ConverterY, MethodY}

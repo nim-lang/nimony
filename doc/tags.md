@@ -202,7 +202,7 @@
 | hderef | X | hidden pointer deref operation |
 | ddot | X | deref dot |
 | haddr | X | hidden address of operation |
-| newoconstr | X | new object constructor |
+| newobj | X | new object constructor |
 | tup | X | tuple constructor |
 | set | X | set constructor |
 | ashr | X | |

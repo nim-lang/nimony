@@ -54,7 +54,7 @@ type
     HderefX = (200, "hderef")  ## hidden pointer deref operation
     DdotX = (201, "ddot")  ## deref dot
     HaddrX = (202, "haddr")  ## hidden address of operation
-    NewoconstrX = (203, "newoconstr")  ## new object constructor
+    NewobjX = (203, "newobj")  ## new object constructor
     TupX = (204, "tup")  ## tuple constructor
     SetX = (205, "set")  ## set constructor
     AshrX = (206, "ashr")
