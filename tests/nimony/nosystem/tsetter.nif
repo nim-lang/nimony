@@ -5,7 +5,7 @@
   (pragmas 2
    (magic 7 Int)) .) 9,2
  (type ~4 :Foo.0.tseyic8ua1 . . . 2
-  (object . .)) ,4
+  (object .)) ,4
  (proc 5 :bar=.0.tseyic8ua1 . . . 11
   (params 1
    (param :x.0 . . 3 Foo.0.tseyic8ua1 .) 9

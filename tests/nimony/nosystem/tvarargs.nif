@@ -59,7 +59,7 @@
   (pragmas 2
    (magic 7 "LeI")) . .) 8,17
  (type ~6 :File.0.tvah6culb x . . 2
-  (object . .)) 4,19
+  (object .)) 4,19
  (var :stdout.0.tvah6culb . . 8 File.0.tvah6culb .) ,21
  (proc 5 :write.0.tvah6culb . . . 10
   (params 1
