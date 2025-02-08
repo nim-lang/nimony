@@ -238,6 +238,9 @@ proc handleNumber(r: var Reader; result: var Token) =
         # ignore the suffix 'u'
 
 proc handleLineInfo(r: var Reader; result: var Token) =
+  proc integerOutOfRangeError() {.noinline, noreturn.} =
+    raise newException(ValueError, "Parsed integer outside of valid range")
+
   useCpuRegisters:
     var col = 0
     var negative = false
@@ -247,9 +250,14 @@ proc handleLineInfo(r: var Reader; result: var Token) =
     while p < eof and ^p in Digits:
       let c = ord(^p) - ord('0')
       if col >= (low(int) + c) div 10:
-        col = col * 10 + c
+        col = col * 10 - c
+      else:
+        integerOutOfRangeError()
       inc p
-    if negative: col = -col
+    if not negative:
+      if col == low(int):
+        integerOutOfRangeError()
+      col = -col
 
     var line = 0
     negative = false
@@ -262,9 +270,14 @@ proc handleLineInfo(r: var Reader; result: var Token) =
       while p < eof and ^p in Digits:
         let c = ord(^p) - ord('0')
         if line >= (low(int) + c) div 10:
-          line = line * 10 + c
+          line = line * 10 - c
+        else:
+          integerOutOfRangeError()
         inc p
-      if negative: line = -line
+      if not negative:
+        if line == low(int):
+          integerOutOfRangeError()
+        line = -line
 
     result.pos = FilePos(col: col.int32, line: line.int32)
 
