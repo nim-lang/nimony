@@ -6,7 +6,7 @@
    (rangetype
     (i -1) +0 +2)) 14
   (arr ~14
-   (array 15,3,tests/nimony/nosystem/deps/modexcept.nim
+   (array 15,3,../tests/nimony/nosystem/deps/modexcept.nim
     (i -1)
     (rangetype
      (i -1) +0 +2)) 1 exceptB.0.modvx9hpf 10 fromA.0.modepjal 17 fromC.0.modepjal)) 4,5

@@ -1,5 +1,5 @@
 (.nif24)
-0,1,tests/nimony/sysbasics/tintlitmatch.nim(stmts
+0,1,../tests/nimony/sysbasics/tintlitmatch.nim(stmts
  (proc 5 :foo.0.tin4pj0od1 . . . 8
   (params 1
    (param :x.0 . . 3
@@ -38,19 +38,19 @@
  (discard 10
   (eq ~3,~4
    (i +32) ~2
-   (hconv 22,685,lib/std/system.nim
+   (hconv 22,685,../lib/std/system.nim
     (i +64) x.0.tin4pj0od1) 3 y.0.tin4pj0od1)) ,14
  (discard 10
   (eq ~3,~4
    (i -1) ~2 y.0.tin4pj0od1 6
-   (hconv 22,685,lib/std/system.nim
+   (hconv 22,685,../lib/std/system.nim
     (i +64)
     (conv 1
      (i +32) ~3 +123)))) ,15
  (discard 18
   (eq ~1,~1
    (i +32) ~7
-   (hconv 22,685,lib/std/system.nim
+   (hconv 22,685,../lib/std/system.nim
     (i +64)
     (conv 6,~1
      (i +32) ~3 +123)) 3 y.0.tin4pj0od1)) ,16
@@ -73,17 +73,17 @@
    (i +32) ~7
    (conv 6,~6
     (i +32) ~3 +123) 3
-   (hconv 22,683,lib/std/system.nim
+   (hconv 22,683,../lib/std/system.nim
     (i +32) +123))) ,21
  (discard 12
   (eq
    (i -1) ~4
-   (hconv 22,683,lib/std/system.nim
+   (hconv 22,683,../lib/std/system.nim
     (i +32) +123) 6
    (conv ~1,~7
     (i +32) ~3 +123))) ,22
  (discard 10
   (eq ~3,~13
    (i +32) ~2 x.0.tin4pj0od1 3
-   (hconv 22,683,lib/std/system.nim
+   (hconv 22,683,../lib/std/system.nim
     (i +32) +123))))
