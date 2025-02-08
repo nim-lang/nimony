@@ -605,6 +605,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    echo "in kind ", n.kind
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
