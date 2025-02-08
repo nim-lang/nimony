@@ -239,7 +239,7 @@ proc handleNumber(r: var Reader; result: var Token) =
 
 proc handleLineInfo(r: var Reader; result: var Token) =
   proc integerOutOfRangeError() {.noinline, noreturn.} =
-    raise newException(ValueError, "Parsed integer outside of valid range")
+    quit "Parsed integer outside of valid range"
 
   useCpuRegisters:
     var col = 0
