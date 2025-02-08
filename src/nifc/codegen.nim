@@ -12,7 +12,7 @@
 import std / [assertions, syncio, tables, sets, intsets, formatfloat, strutils, packedsets]
 from std / os import changeFileExt, splitFile, extractFilename
 
-import .. / lib / [bitabs, packedtrees, lineinfos]
+include ".." / lib / nifprelude
 import mangler, nifc_model, cprelude, noptions, typenav
 
 type
@@ -144,10 +144,10 @@ proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
     else:
       write f, c.tokens[x]
 
-proc error(m: Module; msg: string; tree: PackedTree[NifcKind]; n: NodePos) {.noreturn.} =
+proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
   write stdout, "[Error] "
   write stdout, msg
-  writeLine stdout, toString(tree, n, m)
+  writeLine stdout, toString(n, m)
   when defined(debug):
     echo getStackTrace()
   quit 1

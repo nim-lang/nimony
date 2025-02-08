@@ -3,7 +3,7 @@
 
 type
   NifcExpr* = enum
-    NoNifcExpr
+    NoExpr
     ErrC = (1, "err")  ## indicates an error
     SufC = (2, "suf")  ## literal with suffix annotation
     AtC = (3, "at")  ## array indexing operation
@@ -51,7 +51,7 @@ proc rawTagIsNifcExpr*(raw: uint32): bool {.inline.} =
 
 type
   NifcStmt* = enum
-    NoNifcStmt
+    NoStmt
     GvarS = (50, "gvar")  ## global variable declaration
     TvarS = (51, "tvar")  ## thread local variable declaration
     VarS = (52, "var")  ## variable declaration
@@ -86,7 +86,7 @@ proc rawTagIsNifcStmt*(raw: uint32): bool {.inline.} =
 
 type
   NifcType* = enum
-    NoNifcType
+    NoType
     ParamsT = (92, "params")  ## list of proc parameters, also used as a "proc type"
     UnionT = (93, "union")  ## union declaration
     ObjectT = (94, "object")  ## object type declaration
@@ -108,7 +108,7 @@ proc rawTagIsNifcType*(raw: uint32): bool {.inline.} =
 
 type
   NifcOther* = enum
-    NoNifcSubstructure
+    NoSub
     KvU = (28, "kv")  ## key-value pair
     RangeU = (48, "range")  ## `(range a b)` construct
     RangesU = (49, "ranges")
@@ -127,7 +127,7 @@ proc rawTagIsNifcOther*(raw: uint32): bool {.inline.} =
 
 type
   NifcPragma* = enum
-    NoNifcPragma
+    NoPragma
     InlineP = (118, "inline")  ## `inline` proc annotation
     NoinlineP = (119, "noinline")  ## `noinline` proc annotation
     VarargsP = (121, "varargs")  ## `varargs` proc annotation
@@ -153,4 +153,20 @@ type
 
 proc rawTagIsNifcTypeQualifier*(raw: uint32): bool {.inline.} =
   raw >= 97'u32 and raw <= 99'u32
+
+type
+  NifcSym* = enum
+    NoSym
+    GvarY = (50, "gvar")  ## global variable declaration
+    TvarY = (51, "tvar")  ## thread local variable declaration
+    VarY = (52, "var")  ## variable declaration
+    ParamY = (53, "param")  ## parameter declaration
+    ConstY = (54, "const")  ## const variable declaration
+    EfldY = (59, "efld")  ## enum field declaration
+    FldY = (60, "fld")  ## field declaration
+    ProcY = (61, "proc")  ## proc declaration
+    LabY = (87, "lab")  ## label, target of a `jmp` instruction
+
+proc rawTagIsNifcSym*(raw: uint32): bool {.inline.} =
+  raw <= 255'u32 and raw.uint8 in {50'u8, 51'u8, 52'u8, 53'u8, 54'u8, 59'u8, 60'u8, 61'u8, 87'u8}
 

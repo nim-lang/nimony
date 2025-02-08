@@ -49,18 +49,18 @@
 | cmd | SN, X | command operation |
 | range | SU | `(range a b)` construct |
 | ranges | SU | |
-| gvar | SC | global variable declaration |
-| tvar | SC | thread local variable declaration |
-| var | SC, SN, Y | variable declaration |
-| param | SU, Y | parameter declaration |
-| const | SC, SN, Y | const variable declaration |
+| gvar | SC, Z | global variable declaration |
+| tvar | SC, Z | thread local variable declaration |
+| var | SC, SN, Y, Z | variable declaration |
+| param | SU, Y, Z | parameter declaration |
+| const | SC, SN, Y, Z | const variable declaration |
 | result | Y, SN | result variable declaration |
 | let | Y, SN | let variable declaration |
 | cursor | Y, SN | cursor variable declaration |
 | typevar | Y, SU | type variable declaration |
-| efld | Y, SU | enum field declaration |
-| fld | SU, Y | field declaration |
-| proc | SC, SN, Y | proc declaration |
+| efld | Y, Z, SU | enum field declaration |
+| fld | SU, Y, Z | field declaration |
+| proc | SC, SN, Y, Z | proc declaration |
 | func | SN, Y | function declaration |
 | iterator | SN, Y, TN | iterator declaration |
 | converter | SN, Y | converter declaration |
@@ -86,7 +86,7 @@
 | while | SC, SN | `while` statement |
 | case | SC, SN | `case` statement |
 | of | SU | `of` branch within a `case` statement |
-| lab | SC | label, target of a `jmp` instruction |
+| lab | SC, Z | label, target of a `jmp` instruction |
 | jmp | SC | jump/goto instruction |
 | ret | SC, SN | `return` instruction |
 | yld | SN | yield statement |
