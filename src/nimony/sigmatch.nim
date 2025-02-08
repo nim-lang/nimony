@@ -49,7 +49,7 @@ type
 
   Match* = object
     inferred*: Table[SymId, Cursor]
-    tvars*: HashSet[SymId]
+    tvars: HashSet[SymId]
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
@@ -57,6 +57,7 @@ type
     argInfo: PackedLineInfo
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
+    missingGenerics*: int
     returnType*: Cursor
     context: ptr SemContext
     error: MatchError
@@ -882,14 +883,18 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     m.returnType = f # return type follows the parameters in the token stream
 
   # check all type vars have a value:
-  if false and not m.err and fn.kind in RoutineKinds:
+  if not m.err and fn.kind in RoutineKinds:
     for v in typeVars(fn.sym):
       let inf = m.inferred.getOrDefault(v)
       if inf == default(Cursor):
-        m.error.typeVar = v
-        m.error0 CouldNotInferTypeVar
-        break
-      m.typeArgs.addSubtree inf
+        if false:
+          m.error.typeVar = v
+          m.error0 CouldNotInferTypeVar
+          break
+        else:
+          inc m.missingGenerics
+      else:
+        m.typeArgs.addSubtree inf
 
 type
   DisambiguationResult* = enum
@@ -917,7 +922,7 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
   elif a.inheritanceCosts > b.inheritanceCosts:
     result = SecondWins
   else:
-    let diff = a.inferred.len - b.inferred.len
+    let diff = (a.inferred.len + a.missingGenerics) - (b.inferred.len + b.missingGenerics)
     if diff < 0:
       result = FirstWins
     elif diff > 0:

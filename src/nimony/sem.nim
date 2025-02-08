@@ -1407,12 +1407,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     addArgsInstConverters(c, m[idx], cs.args)
     wantParRi c, it.n
 
-    var missingInfers = false
-    for tv in m[idx].tvars:
-      if tv notin m[idx].inferred:
-        missingInfers = true
-        break
-    if missingInfers:
+    if m[idx].missingGenerics > 0:
       var errDest = createTokenBuf(16)
       swap c.dest, errDest
       buildErr c, cs.callNode.info, "missing generic params", cursorAt(errDest, cs.beforeCall)
