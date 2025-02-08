@@ -149,12 +149,17 @@ proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
     b.addFloatLit u
     b.addStrLit suffix
 
-proc toNif*(n, parent: PNode; c: var TranslationContext) =
+proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   case n.kind
-  of nkNone, nkEmpty:
+  of nkNone:
     writeStackTrace()
-    assert false
     c.b.addEmpty 1
+  of nkEmpty:
+    if allowEmpty:
+      c.b.addEmpty 1
+    else:
+      writeStackTrace()
+      assert false
   of nkNilLit:
     relLineInfo(n, parent, c)
     c.b.addRaw "(nil)"
@@ -241,7 +246,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     else:
       c.b.addEmpty
 
-    toNif(n[1], n, c) # generics
+    toNif(n[1], n, c, allowEmpty = true) # generics
 
     if pragma != nil:
       toNif(pragma, n, c)
@@ -249,7 +254,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       c.b.addEmpty
 
     for i in 2..<n.len:
-      toNif(n[i], n, c)
+      toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
 
   of nkTypeSection:
@@ -277,7 +282,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       toNif(n[i], n, c)
     c.b.endTree()
     # put return type outside of `(params)`:
-    toNif(n[0], n, c)
+    toNif(n[0], n, c, allowEmpty = true)
   of nkGenericParams:
     c.section = "typevar"
     relLineInfo(n, parent, c)
@@ -322,14 +327,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       else:
         c.b.addEmpty
 
-      toNif(n[last-1], n[i], c) # type
+      toNif(n[last-1], n[i], c, allowEmpty = true) # type
 
-      toNif(n[last], n[i], c) # value
+      toNif(n[last], n[i], c, allowEmpty = true) # value
       c.b.endTree()
   of nkDo:
     relLineInfo(n, parent, c)
     c.b.addTree("paramsAndBody")
-    toNif(n[paramsPos], n, c)
+    toNif(n[paramsPos], n, c, allowEmpty = true)
     toNif(n[bodyPos], n, c)
     c.b.endTree()
   of nkOfInherit:
@@ -466,7 +471,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       c.b.addEmpty
 
     for i in 1..<n.len:
-      toNif(n[i], n, c)
+      toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
 
   of nkVarTuple:
@@ -541,7 +546,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     relLineInfo(n, parent, c)
     c.b.addTree(kind)
     for i in 0..<n.len-3:
-      toNif(n[i], n, c)
+      toNif(n[i], n, c, allowEmpty = true)
     # n.len-3: pragmas: must be empty (it is deprecated anyway)
     if n.len == 0:
       # object typeclass, has no children
@@ -555,8 +560,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       let last {.cursor.} = n[n.len-1]
       if last.kind == nkRecList:
         for child in last:
-          toNif(child, n, c)
-      else:
+          if child.kind != nkEmpty:
+            toNif(child, n, c)
+      elif last.kind != nkEmpty:
         toNif(last, n, c)
     c.b.endTree()
 
