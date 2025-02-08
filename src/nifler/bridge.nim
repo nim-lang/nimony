@@ -54,7 +54,7 @@ proc nodeKindTranslation(k: TNodeKind): string =
   of nkTableConstr: "tab"
   of nkStmtListType, nkStmtListExpr, nkStmtList, nkRecList, nkArgList: "stmts"
   of nkBlockStmt, nkBlockExpr, nkBlockType: "block"
-  of nkStaticStmt: "static"
+  of nkStaticStmt: "staticstmt"
   of nkBind, nkBindStmt: "bind"
   of nkMixinStmt: "mixin"
   of nkAddr: "addr"
@@ -89,16 +89,16 @@ proc nodeKindTranslation(k: TNodeKind): string =
   of nkObjectTy: "object"
   of nkTupleTy, nkTupleClassTy: "tuple"
   of nkTypeClassTy: "concept"
-  of nkStaticTy: "staticTy"
+  of nkStaticTy: "static"
   of nkRefTy: "ref"
   of nkPtrTy: "ptr"
   of nkVarTy: "mut"
   of nkDistinctTy: "distinct"
-  of nkIteratorTy: "iterTy"
+  of nkIteratorTy: "itertype"
   of nkEnumTy: "enum"
   #of nkEnumFieldDef: EnumFieldDecl
   of nkTupleConstr: "tup"
-  of nkOutTy: "outTy"
+  of nkOutTy: "out"
   else: "<error>"
 
 type
@@ -149,9 +149,12 @@ proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
     b.addFloatLit u
     b.addStrLit suffix
 
-proc toNif*(n, parent: PNode; c: var TranslationContext) =
+proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   case n.kind
-  of nkNone, nkEmpty:
+  of nkNone:
+    assert false, "unexpected nkNone"
+  of nkEmpty:
+    assert allowEmpty, "unexpected nkEmpty"
     c.b.addEmpty 1
   of nkNilLit:
     relLineInfo(n, parent, c)
@@ -239,7 +242,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     else:
       c.b.addEmpty
 
-    toNif(n[1], n, c) # generics
+    toNif(n[1], n, c, allowEmpty = true) # generics
 
     if pragma != nil:
       toNif(pragma, n, c)
@@ -247,7 +250,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       c.b.addEmpty
 
     for i in 2..<n.len:
-      toNif(n[i], n, c)
+      toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
 
   of nkTypeSection:
@@ -275,7 +278,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       toNif(n[i], n, c)
     c.b.endTree()
     # put return type outside of `(params)`:
-    toNif(n[0], n, c)
+    toNif(n[0], n, c, allowEmpty = true)
   of nkGenericParams:
     c.section = "typevar"
     relLineInfo(n, parent, c)
@@ -320,14 +323,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       else:
         c.b.addEmpty
 
-      toNif(n[last-1], n[i], c) # type
+      toNif(n[last-1], n[i], c, allowEmpty = true) # type
 
-      toNif(n[last], n[i], c) # value
+      toNif(n[last], n[i], c, allowEmpty = true) # value
       c.b.endTree()
   of nkDo:
     relLineInfo(n, parent, c)
     c.b.addTree("paramsAndBody")
-    toNif(n[paramsPos], n, c)
+    toNif(n[paramsPos], n, c, allowEmpty = true)
     toNif(n[bodyPos], n, c)
     c.b.endTree()
   of nkOfInherit:
@@ -363,9 +366,12 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       c.b.addEmpty
     c.b.endTree()
 
-  of nkProcTy:
+  of nkProcTy, nkIteratorTy:
     relLineInfo(n, parent, c)
-    c.b.addTree("proctype")
+    if n.kind == nkProcTy:
+      c.b.addTree("proctype")
+    else:
+      c.b.addTree("itertype")
 
     c.b.addEmpty 4 # 0: name
     # 1: export marker
@@ -464,7 +470,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       c.b.addEmpty
 
     for i in 1..<n.len:
-      toNif(n[i], n, c)
+      toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
 
   of nkVarTuple:
@@ -539,7 +545,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
     relLineInfo(n, parent, c)
     c.b.addTree(kind)
     for i in 0..<n.len-3:
-      toNif(n[i], n, c)
+      toNif(n[i], n, c, allowEmpty = true)
     # n.len-3: pragmas: must be empty (it is deprecated anyway)
     if n.len == 0:
       # object typeclass, has no children
@@ -549,12 +555,12 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
         c.b.addTree "err"
         c.b.endTree()
 
-      toNif(n[n.len-2], n, c)
+      toNif(n[n.len-2], n, c, allowEmpty = true)
       let last {.cursor.} = n[n.len-1]
       if last.kind == nkRecList:
         for child in last:
           toNif(child, n, c)
-      else:
+      elif last.kind != nkEmpty:
         toNif(last, n, c)
     c.b.endTree()
 
@@ -594,6 +600,13 @@ proc toNif*(n, parent: PNode; c: var TranslationContext) =
       toNif(n[i], n, c)
     c.b.endTree()
     c.depsEnabled = oldDepsEnabled
+  of nkDiscardStmt, nkBreakStmt, nkContinueStmt, nkReturnStmt, nkRaiseStmt,
+      nkBlockStmt, nkBlockExpr, nkBlockType, nkTypeClassTy, nkAsmStmt:
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c, allowEmpty = true)
+    c.b.endTree()
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
