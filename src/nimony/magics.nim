@@ -138,7 +138,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mEnumToStr: res EnumToStrX
   of mArray: res ArrayT
   of mRange: res RangetypeT
-  of mSet: res SettT
+  of mSet: res SetT
   of mVarargs: res VarargsT
   of mRef: res RefT
   of mPtr: res PtrT

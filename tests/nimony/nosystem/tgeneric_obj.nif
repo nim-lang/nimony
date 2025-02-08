@@ -17,7 +17,7 @@
   (pragmas 2
    (magic 7 UInt8)) .) 2,7
  (type :set.0.tge7jvqqk1
-  (sett) 4
+  (set) 4
   (typevars 1
    (typevar :T.0.tge7jvqqk1 . . . .)) 8
   (pragmas 2
@@ -46,7 +46,7 @@
    (magic 7 TypeOf)) . .) 10,14
  (type ~8 :string.0.tge7jvqqk1 x . . string.0.sys9azlf) 4,16
  (var :myset.0.tge7jvqqk1 . . 10
-  (sett 1
+  (set 1
    (u +8)) .) 4,17
  (var :myarr.0.tge7jvqqk1 . . 12
   (array 4
@@ -57,8 +57,8 @@
   (u +8) 5
   (suf +3u "u8")) 6,19
  (asgn ~6 myset.0.tge7jvqqk1 2
-  (set 6,~3
-   (sett 1
+  (setconstr 6,~3
+   (set 1
     (u +8)) 1
    (suf +1u "u8") 7 u8.0.tge7jvqqk1 11
    (suf +5u "u8") 17

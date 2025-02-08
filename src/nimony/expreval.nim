@@ -304,8 +304,8 @@ proc getArrayLen*(n: Cursor): xint =
 
 proc evalBitSet*(n, typ: Cursor): seq[uint8] =
   ## returns @[] if it could not be evaluated.
-  assert n.exprKind == SetX
-  assert typ.typeKind == SettT
+  assert n.exprKind == SetConstrX
+  assert typ.typeKind == SetT
   let size = bitsetSizeInBytes(typ.firstSon)
   var err = false
   let s = asSigned(size, err)
