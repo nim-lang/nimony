@@ -370,9 +370,12 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.addEmpty
     c.b.endTree()
 
-  of nkProcTy:
+  of nkProcTy, nkIteratorTy:
     relLineInfo(n, parent, c)
-    c.b.addTree("proctype")
+    if n.kind == nkProcTy:
+      c.b.addTree("proctype")
+    else:
+      c.b.addTree("itertype")
 
     c.b.addEmpty 4 # 0: name
     # 1: export marker
@@ -602,7 +605,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
     c.depsEnabled = oldDepsEnabled
-  of nkBreakStmt, nkDiscardStmt, nkRaiseStmt, nkAsmStmt, nkBlockStmt, nkBlockExpr, nkBlockType, nkTypeClassTy, nkProcTy, nkIteratorTy:
+  of nkBreakStmt, nkDiscardStmt, nkRaiseStmt, nkAsmStmt, nkBlockStmt, nkBlockExpr, nkBlockType, nkTypeClassTy:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
     for i in 0..<n.len:
