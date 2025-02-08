@@ -54,7 +54,7 @@ proc nodeKindTranslation(k: TNodeKind): string =
   of nkTableConstr: "tab"
   of nkStmtListType, nkStmtListExpr, nkStmtList, nkRecList, nkArgList: "stmts"
   of nkBlockStmt, nkBlockExpr, nkBlockType: "block"
-  of nkStaticStmt: "static"
+  of nkStaticStmt: "staticstmt"
   of nkBind, nkBindStmt: "bind"
   of nkMixinStmt: "mixin"
   of nkAddr: "addr"
@@ -89,16 +89,16 @@ proc nodeKindTranslation(k: TNodeKind): string =
   of nkObjectTy: "object"
   of nkTupleTy, nkTupleClassTy: "tuple"
   of nkTypeClassTy: "concept"
-  of nkStaticTy: "staticTy"
+  of nkStaticTy: "static"
   of nkRefTy: "ref"
   of nkPtrTy: "ptr"
   of nkVarTy: "mut"
   of nkDistinctTy: "distinct"
-  of nkIteratorTy: "iterTy"
+  of nkIteratorTy: "itertype"
   of nkEnumTy: "enum"
   #of nkEnumFieldDef: EnumFieldDecl
   of nkTupleConstr: "tup"
-  of nkOutTy: "outTy"
+  of nkOutTy: "out"
   else: "<error>"
 
 type
@@ -152,14 +152,10 @@ proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
 proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   case n.kind
   of nkNone:
-    writeStackTrace()
-    c.b.addEmpty 1
+    assert false, "unexpected nkNone"
   of nkEmpty:
-    if allowEmpty:
-      c.b.addEmpty 1
-    else:
-      writeStackTrace()
-      assert false
+    assert allowEmpty, "unexpected nkEmpty"
+    c.b.addEmpty 1
   of nkNilLit:
     relLineInfo(n, parent, c)
     c.b.addRaw "(nil)"
@@ -563,8 +559,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       let last {.cursor.} = n[n.len-1]
       if last.kind == nkRecList:
         for child in last:
-          if child.kind != nkEmpty:
-            toNif(child, n, c)
+          toNif(child, n, c)
       elif last.kind != nkEmpty:
         toNif(last, n, c)
     c.b.endTree()
@@ -616,8 +611,6 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
     for i in 0..<n.len:
-      if n[i].kind == nkEmpty:
-        echo "in kind ", n.kind
       toNif(n[i], n, c)
     c.b.endTree()
 
