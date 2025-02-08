@@ -1422,7 +1422,9 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     skipParRi it.n
     var errorMsg: string
     if idx == -2:
-      errorMsg = "ambiguous call"
+      errorMsg = "ambiguous call: '"
+      errorMsg.add pool.strings[cs.fnName]
+      errorMsg.add "'"
     elif cs.source in {DotCall, DotAsgnCall} and cs.fnName != StrId(0):
       errorMsg = "undeclared field: '"
       errorMsg.add pool.strings[cs.fnName]
@@ -1436,7 +1438,9 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         errorMsg.add "\n"
         addErrorMsg errorMsg, m[i]
     else:
-      errorMsg = "undeclared identifier"
+      errorMsg = "undeclared identifier: '"
+      errorMsg.add pool.strings[cs.fnName]
+      errorMsg.add "'"
     var errored = createTokenBuf(4)
     buildCallSource errored, cs
     buildErr c, cs.callNode.info, errorMsg, cursorAt(errored, 0)
