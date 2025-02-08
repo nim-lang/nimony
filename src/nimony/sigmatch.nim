@@ -299,11 +299,13 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
         linearMatch(m, prev, a)
         inc f
         if m.err: break
+        if nested == 0: break
         continue
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
         skip a
+        if nested == 0: break
         continue
       else:
         m.error(ConstraintMismatch, f, a)
@@ -713,14 +715,15 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
     var m2 = createMatch(m.context)
     var realType = arg.typ
     inc realType
-    linearMatch(m2, realType, f2)
+    var realTypeMatch = realType
+    linearMatch(m2, realTypeMatch, f2)
     if not m.err:
       if not m2.err:
         var realArg = arg.n
         assert realArg.tagId == ErrT
         inc realArg
         m.args.addParLe(SpecX, realArg.info)
-        m.args.add m.context.instantiateType(m.context[], realType, m2.inferred)
+        m.args.addSubtree m.context.instantiateType(m.context[], realType, m2.inferred)
         m.args.addSubtree realArg
         m.args.addParRi()
         m.specArg = true
@@ -879,7 +882,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     m.returnType = f # return type follows the parameters in the token stream
 
   # check all type vars have a value:
-  if not m.err and fn.kind in RoutineKinds:
+  if false and not m.err and fn.kind in RoutineKinds:
     for v in typeVars(fn.sym):
       let inf = m.inferred.getOrDefault(v)
       if inf == default(Cursor):

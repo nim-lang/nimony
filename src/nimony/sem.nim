@@ -591,6 +591,7 @@ type
     AllowUndeclared
     AllowModuleSym
     InTypeContext
+    InferReturnType
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
@@ -1199,6 +1200,8 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
 proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
+proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
+
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
   if not (m.genericConverter or m.specArg):
     c.dest.add m.args
@@ -1229,6 +1232,18 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
               assert not convMatch.err
               let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
               c.dest[c.dest.len-1].setSymId inst.targetSym
+      elif arg.exprKind == SpecX:
+        let specInfo = arg.info
+        inc arg
+        var specCall = Item(typ: arg, n: arg)
+        skip specCall.n
+        let start = c.dest.len
+        semCall c, specCall, {InferReturnType}
+        arg = specCall.n
+        skipParRi arg
+        if nested == 0:
+          inc i
+          continue
       while true:
         case arg.kind
         of ParLe: inc nested
@@ -1304,6 +1319,12 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         if typ.typeKind == ParamsT:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: typ)
           m.add createMatch(addr c)
+          if InferReturnType in cs.flags and it.typ.typeKind != AutoT:
+            var infer = createMatch(addr c)
+            var returnType = typ
+            skip returnType
+            typematch(infer, returnType, Item(typ: it.typ, n: emptyNode()))
+            m[^1].inferred = infer.inferred
           sigmatch(m[^1], candidate, cs.args, genericArgs)
       else:
         buildErr c, cs.fn.n.info, "`choice` node does not contain `symbol`"
@@ -1326,6 +1347,12 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     if typ.typeKind == ParamsT:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ)
       m.add createMatch(addr c)
+      if InferReturnType in cs.flags and it.typ.typeKind != AutoT:
+        var infer = createMatch(addr c)
+        var returnType = typ
+        skip returnType
+        typematch(infer, returnType, Item(typ: it.typ, n: emptyNode()))
+        m[^1].inferred = infer.inferred
       sigmatch(m[^1], candidate, cs.args, genericArgs)
       considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
   var idx = pickBestMatch(c, m)
@@ -1514,7 +1541,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     callNode: it.n.load(),
     dest: createTokenBuf(16),
     source: source,
-    flags: {InTypeContext}*flags
+    flags: {InTypeContext, InferReturnType} * flags
   )
   inc it.n
   swap c.dest, cs.dest
