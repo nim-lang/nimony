@@ -129,21 +129,23 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
         if not progress: break
   of UnknownToken:
     copyInto m.code, ErrT, currentInfo:
-      m.code.addAtom StrLit, pool.strings.getOrIncl(decodeStr t), currentInfo
+      m.code.addStrLit decodeStr(t), currentInfo
   of DotToken:
-    m.code.addAtom Empty, 0'u32, currentInfo
+    m.code.addDotToken()
   of Ident:
-    m.code.addAtom Ident, pool.strings.getOrIncl(decodeStr t), currentInfo
+    m.code.addIdent decodeStr(t), currentInfo
   of Symbol:
-    m.code.addAtom Sym, pool.strings.getOrIncl(decodeStr t), currentInfo
+    m.code.add symToken(pool.syms.getOrIncl(decodeStr t), currentInfo)
   of SymbolDef:
     # Remember where to find this symbol:
-    let litId = pool.strings.getOrIncl(decodeStr t)
-    let pos = NodePos(int(m.code.currentPos) - 1)
-    m.defs[litId] = Definition(pos: pos, kind: m.code[pos].kind)
-    m.code.addAtom SymDef, litId, currentInfo
+    let litId = pool.syms.getOrIncl(decodeStr t)
+    let pos = m.code.len - 1
+    let n = cursorAt(m.code, pos)
+    m.defs[litId] = Definition(pos: pos, kind: n.symKind)
+    endRead(m.code)
+    m.code.add symdefToken(litId, currentInfo)
   of StringLit:
-    m.code.addAtom StrLit, pool.strings.getOrIncl(decodeStr t), currentInfo
+    m.code.addStrLit decodeStr(t), currentInfo
   of CharLit:
     m.code.addAtom CharLit, uint32 decodeChar(t), currentInfo
   of IntLit:

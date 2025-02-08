@@ -249,8 +249,8 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
               copyIntoKind dest, CastX, info:
                 dest.addUintType(-1, info)
                 dest.addSubtree b
-              dest.addUintLit(uint64(mask), info)
-        dest.addUintLit(0, info)
+              dest.addUIntLit(uint64(mask), info)
+        dest.addUIntLit(0, info)
     else:
       raiseAssert("unreachable")
   else:
@@ -272,13 +272,13 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of 1, 2, 4, 8:
     # hopefully this is correct?
     bytes.setLen(8)
-    dest.addUintLit(cast[ptr uint64](addr bytes[0])[], info)
+    dest.addUIntLit(cast[ptr uint64](addr bytes[0])[], info)
     skip n
   else:
     dest.addParLe(AconstrX, info)
     trSetType(c, dest, typ)
     for b in bytes:
-      dest.addUintLit(b, info)
+      dest.addUIntLit(b, info)
 
 proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -366,11 +366,11 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addUintType(8, info)
         copyIntoKind dest, ShlX, info:
           dest.addUintType(8, info)
-          dest.addUintLit(1, info)
+          dest.addUIntLit(1, info)
           copyIntoKind dest, BitAndX, info:
             dest.addUintType(-1, info)
             dest.addSubtree b
-            dest.addUintLit(7, info)
+            dest.addUIntLit(7, info)
         if kind == ExclS:
           dest.addParRi()
   if useTemp:

@@ -261,8 +261,11 @@ proc addStrLit*(dest: var TokenBuf; s: string; info = NoLineInfo) =
 proc addIntLit*(dest: var TokenBuf; i: BiggestInt; info = NoLineInfo) =
   dest.add intToken(pool.integers.getOrIncl(i), info)
 
-proc addUintLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
+proc addUIntLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
   dest.add uintToken(pool.uintegers.getOrIncl(i), info)
+
+proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
+  dest.add identToken(pool.strings.getOrIncl(s), info)
 
 proc span*(c: Cursor): int =
   result = 0
