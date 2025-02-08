@@ -556,7 +556,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
         c.b.addTree "err"
         c.b.endTree()
 
-      toNif(n[n.len-2], n, c)
+      toNif(n[n.len-2], n, c, allowEmpty = true)
       let last {.cursor.} = n[n.len-1]
       if last.kind == nkRecList:
         for child in last:
