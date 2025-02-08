@@ -11,3 +11,8 @@ discard y == {A..C}
 discard z == {A..C}
 discard s - s1 == {D}
 discard s1 <= s
+
+template resem() =
+  s = {A, C..E, F}
+
+resem()
