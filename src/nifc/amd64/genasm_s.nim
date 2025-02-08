@@ -213,12 +213,12 @@ proc fixupStackOffset(c: var GeneratedCode; j, s: int) =
     if c.code[patchPos].kind == IntLit and c.code[patchPos+1].kind == ParRi:
       break
     inc patchPos
-  case c.code[k].tag
-  of Mem2T, Mem4T:
+  let t = c.code[k].tag
+  if t == Mem2T or t == Mem4T:
     let newOffset = pool.integers[c.code[patchPos].intId] + s
     let sid = pool.integers.getOrIncl(newOffset)
     c.code[patchPos] = intToken(sid, NoLineInfo)
-  of Mem3T:
+  elif t == Mem3T:
     assert false, "should have been a Mem4T instruction"
   else:
     assert false, "inspect this case"

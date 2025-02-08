@@ -10,34 +10,32 @@
 # included from genpreasm.nim
 
 proc opposite(t: TagId): TagId =
-  case t
-  of JeT: JneT
-  of JneT: JeT
-  of JzT: JnzT
-  of JnzT: JzT
-  of JgT: JngT
-  of JgeT: JngeT
-  of JngeT: JgeT
-  of JaT: JnaT
-  of JnaT: JaT
-  of JaeT: JnaeT
-  of JnaeT: JaeT
+  if t == JeT: JneT
+  elif t == JneT: JeT
+  elif t == JzT: JnzT
+  elif t == JnzT: JzT
+  elif t == JgT: JngT
+  elif t == JgeT: JngeT
+  elif t == JngeT: JgeT
+  elif t == JaT: JnaT
+  elif t == JnaT: JaeT
+  elif t == JaeT: JnaeT
+  elif t == JnaeT: JaT
   else: NopT
 
 proc jumpToPutInstr(t: TagId): TagId =
   # negation is not a bug here!
-  case t
-  of JeT: SetneT
-  of JneT: SeteT
-  of JzT: SetnzT
-  of JnzT: SetzT
-  of JgT: SetngT
-  of JgeT: SetngeT
-  of JngeT: SetgeT
-  of JaT: SetnaT
-  of JnaT: SetaT
-  of JaeT: SetnaeT
-  of JnaeT: SetaeT
+  if t == JeT: SetneT
+  elif t == JneT: SeteT
+  elif t == JzT: SetnzT
+  elif t == JnzT: SetzT
+  elif t == JgT: SetngT
+  elif t == JgeT: SetngeT
+  elif t == JngeT: SetgeT
+  elif t == JaT: SetnaT
+  elif t == JnaT: SetaT
+  elif t == JaeT: SetnaeT
+  elif t == JnaeT: SetaeT
   else: NopT
 
 proc emitDataRaw(c: var GeneratedCode; loc: Location) =
@@ -238,7 +236,7 @@ proc genCall(c: var GeneratedCode; t: Tree; n: NodePos; dest: var Location) =
 const
   AddrTyp = AsmSlot(kind: AInt, size: WordSize, align: WordSize, offset: 0)
 
-from math import isPowerOfTwo
+from std / math import isPowerOfTwo
 
 proc genMulImm(c: var GeneratedCode; dest: Location; imm: int) =
   if isPowerOfTwo(imm):

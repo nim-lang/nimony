@@ -11,7 +11,7 @@
 
 import std / [assertions, syncio, formatfloat]
 import nifreader, nifstreams, nifcursors, bitabs, lineinfos
-from strutils import escape
+from std / strutils import escape
 
 import asm_model
 import ".." / mangler
