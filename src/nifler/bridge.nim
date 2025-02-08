@@ -152,6 +152,8 @@ proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
 proc toNif*(n, parent: PNode; c: var TranslationContext) =
   case n.kind
   of nkNone, nkEmpty:
+    writeStackTrace()
+    assert false
     c.b.addEmpty 1
   of nkNilLit:
     relLineInfo(n, parent, c)
