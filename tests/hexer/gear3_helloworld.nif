@@ -10,7 +10,7 @@
       (i -1) .)))
 
   (type ~9 :EmptyObj.0.tesg7afhq1 . . . 2
-    (object . .))
+    (object .))
 
  (type ~6 :Color.0.tesg7afhq1 . . . 2
   (enum (u +8) ,1

@@ -605,7 +605,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
     c.depsEnabled = oldDepsEnabled
-  of nkBreakStmt, nkDiscardStmt, nkRaiseStmt, nkAsmStmt, nkBlockStmt, nkBlockExpr, nkBlockType, nkTypeClassTy:
+  of nkDiscardStmt, nkBreakStmt, nkContinueStmt, nkReturnStmt, nkRaiseStmt,
+      nkBlockStmt, nkBlockExpr, nkBlockType, nkTypeClassTy, nkAsmStmt:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
     for i in 0..<n.len:
