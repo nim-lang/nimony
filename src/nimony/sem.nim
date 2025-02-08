@@ -1200,7 +1200,7 @@ proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
-  if not m.genericConverter:
+  if not (m.genericConverter or m.specArg):
     c.dest.add m.args
   else:
     m.args.addParRi()
@@ -1380,7 +1380,26 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     addArgsInstConverters(c, m[idx], cs.args)
     wantParRi c, it.n
 
-    if finalFn.kind == TemplateY:
+    var missingInfers = false
+    for tv in m[idx].tvars:
+      if tv notin m[idx].inferred:
+        missingInfers = true
+        break
+    if missingInfers:
+      var errDest = createTokenBuf(16)
+      swap c.dest, errDest
+      buildErr c, cs.callNode.info, "missing generic params", cursorAt(errDest, cs.beforeCall)
+      endRead(errDest)
+      swap c.dest, errDest
+      c.dest.shrink cs.beforeCall
+      c.dest.add errDest
+      let typeStart = c.dest.len
+      c.dest.buildTree UnderspecT, cs.callNode.info:
+        c.dest.addSubtree m[idx].returnType
+      let typ = typeToCursor(c, typeStart)
+      c.dest.shrink typeStart
+      typeofCallIs c, it, cs.beforeCall, typ
+    elif finalFn.kind == TemplateY:
       typeofCallIs c, it, cs.beforeCall, m[idx].returnType
       if c.templateInstCounter <= MaxNestedTemplates:
         inc c.templateInstCounter
@@ -2795,7 +2814,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         addVarargsParameter c, beforeParams, crucial.hasVarargs
     of InvokeT:
       semInvoke c, n
-    of ErrT:
+    of ErrT, UnderspecT:
       takeTree c, n
     of ItertypeT:
       c.buildErr info, "itertype not supported"
@@ -5156,7 +5175,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of NoType:
           buildErr c, it.n.info, "expression expected; tag: " & pool.tags[it.n.tag]
           skip it.n
-        of ErrT:
+        of ErrT, UnderspecT:
           c.takeTree it.n
         of ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
@@ -5388,7 +5407,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semVoidHook c, it
     of DupX:
       semDupHook c, it
-    of ErrX:
+    of ErrX, SpecX:
       takeTree c, it.n
     of OconvX,
        CompilesX, AlignofX, OffsetofX:
@@ -5496,6 +5515,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec)
+  c.instantiateType = instantiateType
   for magic in ["typeof", "compiles"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)

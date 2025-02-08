@@ -49,7 +49,7 @@ type
 
   Match* = object
     inferred*: Table[SymId, Cursor]
-    tvars: HashSet[SymId]
+    tvars*: HashSet[SymId]
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
@@ -61,7 +61,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*: bool
+    genericConverter*, specArg*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -702,18 +702,38 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       else:
         procTypeMatch m, f, a
     of NoType, ErrT, ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NiltT, OrT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
+        ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT, UnderspecT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
 
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
-  singleArgImpl(m, f, arg)
-  if not m.err:
-    m.useArg arg # since it was a match, copy it
-    while m.opened > 0:
-      m.args.addParRi()
-      dec m.opened
+  if arg.typ.typeKind == UnderspecT:
+    var f2 = m.context.instantiateType(m.context[], f, m.inferred)
+    var m2 = createMatch(m.context)
+    var realType = arg.typ
+    inc realType
+    linearMatch(m2, realType, f2)
+    if not m.err:
+      if not m2.err:
+        var realArg = arg.n
+        assert realArg.tagId == ErrT
+        inc realArg
+        m.args.addParLe(SpecX, realArg.info)
+        m.args.add m.context.instantiateType(m.context[], realType, m2.inferred)
+        m.args.addSubtree realArg
+        m.args.addParRi()
+        m.specArg = true
+      else:
+        m.err = true
+        m.error = m2.error
+  else:
+    singleArgImpl(m, f, arg)
+    if not m.err:
+      m.useArg arg # since it was a match, copy it
+      while m.opened > 0:
+        m.args.addParRi()
+        dec m.opened
 
 proc typematch*(m: var Match; formal: Cursor; arg: Item) =
   var f = formal

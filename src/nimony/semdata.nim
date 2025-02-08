@@ -101,3 +101,4 @@ type
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     unoverloadableMagics*: HashSet[StrId]
+    instantiateType*: proc (c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor

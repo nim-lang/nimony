@@ -370,7 +370,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       error e, "could not find symbol: " & pool.syms[s]
   of ParLe:
     case c.typeKind
-    of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
+    of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT, UnderspecT:
       error e, "type expected but got: ", c
     of IntT, UIntT:
       let start = e.dest.len

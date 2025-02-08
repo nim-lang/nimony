@@ -243,3 +243,5 @@
 | wasmoved | X | |
 | sinkh | X | |
 | trace | X | |
+| underspec | TN | |
+| spec | X | |

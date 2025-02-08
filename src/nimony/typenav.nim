@@ -174,7 +174,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       inc result
     else:
       result = c.builtins.autoType # still an error
-  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX, ErrX:
+  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX, ErrX, SpecX:
     discard "keep the error type"
   of AddrX, HaddrX:
     let elemType = getTypeImpl(c, n.firstSon)
