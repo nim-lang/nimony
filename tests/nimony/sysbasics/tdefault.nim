@@ -43,3 +43,8 @@ proc genericProc[T](x: T): GenericObj[T] =
   result = GenericObj[T](x: x)
   result.x = x
 generic = genericProc(456)
+
+type EmptyObj = object
+let empty = EmptyObj()
+type EmptyGenericObj[T] = object
+let emptyGeneric = EmptyGenericObj[int]()

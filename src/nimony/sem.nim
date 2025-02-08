@@ -1316,7 +1316,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
     semConvFromCall c, it, cs
     return
-  elif cs.fn.kind == TypeY and cs.args.len == 0:
+  elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 0:
     semObjConstrFromCall c, it, cs
     return
   else:
@@ -4208,15 +4208,17 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymI
     let parent = asObjectDecl(parentImpl)
     obj.parentType = parent.parentType
     var currentField = parent.firstField
+    if currentField.kind != DotToken:
+      while currentField.kind != ParRi:
+        let field = asLocal(currentField)
+        buildObjConstrField(c, field, setFields, info)
+        skip currentField
+  var currentField = obj.firstField
+  if currentField.kind != DotToken:
     while currentField.kind != ParRi:
       let field = asLocal(currentField)
       buildObjConstrField(c, field, setFields, info)
       skip currentField
-  var currentField = obj.firstField
-  while currentField.kind != ParRi:
-    let field = asLocal(currentField)
-    buildObjConstrField(c, field, setFields, info)
-    skip currentField
   c.dest.addParRi()
 
 proc semObjConstr(c: var SemContext, it: var Item) =
