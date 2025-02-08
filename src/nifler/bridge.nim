@@ -602,11 +602,18 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
     c.depsEnabled = oldDepsEnabled
+  of nkBreakStmt, nkDiscardStmt, nkRaiseStmt, nkAsmStmt, nkBlockStmt, nkBlockExpr, nkBlockType, nkTypeClassTy, nkProcTy, nkIteratorTy:
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c, allowEmpty = true)
+    c.b.endTree()
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
-    echo "in kind ", n.kind
     for i in 0..<n.len:
+      if n[i].kind == nkEmpty:
+        echo "in kind ", n.kind
       toNif(n[i], n, c)
     c.b.endTree()
 
