@@ -135,7 +135,7 @@ proc defineLabel(c: var GeneratedCode; lab: Label; info: PackedLineInfo; opc = L
 
 # Type graph
 
-include ".." / preasm / genpreasm_t
+include genpreasm_t
 
 # Procs
 

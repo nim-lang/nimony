@@ -11,7 +11,6 @@
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import codegen, noptions, mangler, cprelude
-import preasm / genpreasm
 
 when defined(windows):
   import bat
@@ -29,7 +28,7 @@ const
 Usage:
   nifc [options] [command] [arguments]
 Command:
-  c|cpp|p|n file.nif [file2.nif]    convert NIF files to C|C++|PreASM|ASM
+  c|cpp|n file.nif [file2.nif]    convert NIF files to C|C++|ASM
 
 Options:
   -r, --run                 run the makefile and the compiled program
@@ -98,13 +97,6 @@ proc handleCmdLine() =
         currentAction = atNative
         if not hasKey(actionTable, atNative):
           actionTable[atNative] = @[]
-      of "p":
-        if args.len == 0:
-          quit "command takes a filename"
-        else:
-          for inp in items args:
-            let outp = changeFileExt(inp, ".preasm")
-            generatePreAsm inp, outp, s.bits
       else:
         case currentAction
         of atC:
