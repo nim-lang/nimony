@@ -168,7 +168,7 @@
 | rangetype | TN | `rangetype` type |
 | uarray | TN | `uarray` type |
 | openarray | TN | `openarray` type |
-| sett | TN | `sett` type |
+| set | TN | `set` type |
 | auto | TN | `auto` type |
 | symkind | TN | `symkind` type |
 | typekind | TN | `typekind` type |
@@ -204,7 +204,7 @@
 | haddr | X | hidden address of operation |
 | newobj | X | new object constructor |
 | tup | X | tuple constructor |
-| set | X | set constructor |
+| setconstr | X | set constructor |
 | ashr | X | |
 | oconv | X | object conversion |
 | hconv | X | hidden basic type conversion |

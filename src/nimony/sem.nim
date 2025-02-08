@@ -2116,7 +2116,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         let magic = cursorAt(c.dest, start).typeKind
         endRead(c.dest)
         # magic types that are just symbols and not in the syntax:
-        if magic in {ArrayT, SettT, RangetypeT}:
+        if magic in {ArrayT, SetT, RangetypeT}:
           var typeclassBuf = createTokenBuf(4)
           typeclassBuf.addParLe(TypeKindT, info)
           typeclassBuf.addParLe(magic, info)
@@ -2357,7 +2357,7 @@ proc semRangeTypeFromExpr(c: var SemContext; n: var Cursor; info: PackedLineInfo
   wantParRi c, n
 
 const InvocableTypeMagics = {ArrayT, RangetypeT, VarargsT,
-  PtrT, RefT, UncheckedArrayT, SettT, StaticT, TypedescT,
+  PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT,
   SinkT, LentT}
 
 proc semInvoke(c: var SemContext; n: var Cursor) =
@@ -2442,7 +2442,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
           else:
             # error?
             discard
-        of PtrT, RefT, UncheckedArrayT, SettT, StaticT, TypedescT, SinkT, LentT:
+        of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT, SinkT, LentT:
           # unary invocations
           magicExpr.takeTree args
           skipParRi args
@@ -2686,7 +2686,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       takeToken c, n
       semLocalTypeImpl c, n, InLocalDecl
       wantParRi c, n
-    of SettT:
+    of SetT:
       if tryTypeClass(c, n):
         return
       takeToken c, n
@@ -3952,7 +3952,7 @@ proc semCurly(c: var SemContext, it: var Item) =
   let exprStart = c.dest.len
   let info = it.n.info
   inc it.n
-  c.dest.addParLe(SetX, info)
+  c.dest.addParLe(SetConstrX, info)
   if it.n.kind == ParRi:
     # empty set
     if it.typ.typeKind in {AutoT, VoidT}:
@@ -3965,7 +3965,7 @@ proc semCurly(c: var SemContext, it: var Item) =
   let typeInsertPos = c.dest.len
   var elem = Item(n: it.n, typ: c.types.autoType)
   case it.typ.typeKind
-  of SettT:
+  of SetT:
     var t = it.typ
     inc t
     elem.typ = t
@@ -4001,7 +4001,7 @@ proc semCurly(c: var SemContext, it: var Item) =
   it.n = elem.n
   wantParRi c, it.n
   let typeStart = c.dest.len
-  c.dest.buildTree SettT, it.n.info:
+  c.dest.buildTree SetT, it.n.info:
     c.dest.addSubtree elem.typ
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
@@ -4035,7 +4035,7 @@ proc semSetConstr(c: var SemContext; it: var Item) =
   takeToken c, it.n
   it.typ = semLocalType(c, it.n)
   var elem = Item(n: it.n, typ: c.types.autoType)
-  if it.typ.typeKind == SettT:
+  if it.typ.typeKind == SetT:
     elem.typ = it.typ
     inc elem.typ
   else:
@@ -4608,7 +4608,7 @@ proc semTypedAt(c: var SemContext; it: var Item) =
     inc it.typ
   of CstringT:
     it.typ = c.types.charType
-  of SettT:
+  of SetT:
     it.typ = c.types.uint8Type
   else:
     c.buildErr lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
@@ -5062,7 +5062,7 @@ proc semInclExcl(c: var SemContext; it: var Item) =
   let typ = typeToCursor(c, typeStart)
   var op = Item(n: it.n, typ: typ)
   semExpr c, op
-  if op.typ.typeKind == SettT:
+  if op.typ.typeKind == SetT:
     inc op.typ
   else:
     c.buildErr info, "expected set type"
@@ -5080,7 +5080,7 @@ proc semInSet(c: var SemContext; it: var Item) =
   let typ = typeToCursor(c, typeStart)
   var op = Item(n: it.n, typ: typ)
   semExpr c, op
-  if op.typ.typeKind == SettT:
+  if op.typ.typeKind == SetT:
     inc op.typ
   else:
     c.buildErr info, "expected set type"
@@ -5146,7 +5146,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           buildErr c, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymKindT,
-            PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SettT, StaticT, TypedescT,
+            PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangetypeT, VarargsT, ProctypeT, IteratorT, UntypedT, TypedT,
             CstringT, PointerT, TypeKindT, OrdinalT, OpenArrayT, ParamsT, ItertypeT:
           # every valid local type expression
@@ -5313,7 +5313,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semCurly c, it
     of AconstrX:
       semArrayConstr c, it
-    of SetX:
+    of SetConstrX:
       semSetConstr c, it
     of SufX:
       semSuf c, it

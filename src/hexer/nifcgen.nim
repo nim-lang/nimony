@@ -466,7 +466,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         traverseEnumField(e, c, flags)
 
       wantParRi e, c
-    of SettT:
+    of SetT:
       let info = c.info
       inc c
       let sizeOrig = bitsetSizeInBytes(c)
@@ -970,7 +970,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
           e.dest.addParRi()
           traverseExpr e, c
         wantParRi e, c
-      of NewOconstrX, SetX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, BracketX, CurlyX:
+      of NewOconstrX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, BracketX, CurlyX:
         error e, "BUG: not eliminated: ", c
       else:
         e.dest.add c

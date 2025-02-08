@@ -56,7 +56,7 @@ type
     HaddrX = (202, "haddr")  ## hidden address of operation
     NewobjX = (203, "newobj")  ## new object constructor
     TupX = (204, "tup")  ## tuple constructor
-    SetX = (205, "set")  ## set constructor
+    SetconstrX = (205, "setconstr")  ## set constructor
     AshrX = (206, "ashr")
     OconvX = (207, "oconv")  ## object conversion
     HconvX = (208, "hconv")  ## hidden basic type conversion
@@ -186,7 +186,7 @@ type
     RangetypeT = (166, "rangetype")  ## `rangetype` type
     UarrayT = (167, "uarray")  ## `uarray` type
     OpenarrayT = (168, "openarray")  ## `openarray` type
-    SettT = (169, "sett")  ## `sett` type
+    SetT = (169, "set")  ## `set` type
     AutoT = (170, "auto")  ## `auto` type
     SymkindT = (171, "symkind")  ## `symkind` type
     TypekindT = (172, "typekind")  ## `typekind` type

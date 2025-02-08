@@ -105,7 +105,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
 
   case typ.typeKind
   of IntT, UIntT, FloatT, BoolT, CharT, PtrT, PtrobjT,
-     MutT, OutT, SettT,
+     MutT, OutT, SetT,
      EnumT, HoleyEnumT, VoidT, AutoT, SymKindT, ProctypeT,
      CstringT, PointerT, OrdinalT, OpenArrayT,
      UncheckedArrayT, VarargsT, RangetypeT, TypedescT,

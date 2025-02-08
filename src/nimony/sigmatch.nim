@@ -612,7 +612,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of ArrayT:
       var a = skipModifier(arg.typ)
       matchArrayType m, f, a
-    of SettT, UncheckedArrayT, OpenArrayT:
+    of SetT, UncheckedArrayT, OpenArrayT:
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
     of CstringT:

@@ -642,7 +642,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trEnsureMove c, n, e
     of AconstrX, TupleConstrX:
       trRawConstructor c, n, e
-    of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetX,
+    of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetConstrX,
        OchoiceX, CchoiceX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
        PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX,

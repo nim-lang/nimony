@@ -158,7 +158,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
-     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX, AconstrX, SetX:
+     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX, AconstrX, SetConstrX:
     result = n.firstSon
   of ParX, EmoveX:
     result = getTypeImpl(c, n.firstSon)
@@ -188,7 +188,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.firstSon)
     var buf = createTokenBuf(4)
-    buf.add parLeToken(SettT, n.info)
+    buf.add parLeToken(SetT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
     c.mem.add buf

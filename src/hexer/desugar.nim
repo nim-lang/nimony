@@ -142,7 +142,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.exprKind
   inc n
   let typ = n
-  if typ.typeKind != SettT:
+  if typ.typeKind != SetT:
     error "expected set type for set op", n
   var baseType = typ
   inc baseType
@@ -285,7 +285,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.stmtKind
   inc n
   let typ = n
-  if typ.typeKind != SettT:
+  if typ.typeKind != SetT:
     error "expected set type for incl/excl", n
   var baseType = typ
   inc baseType
@@ -387,7 +387,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       case n.stmtKind
       of NoStmt:
         case n.typeKind
-        of SettT:
+        of SetT:
           #trSetType(c, dest, n)
           # leave this to nifcgen
           trSons(c, dest, n)
@@ -420,7 +420,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         c.typeCache.closeScope()
       else:
         trSons(c, dest, n)
-    of SetX:
+    of SetConstrX:
       genSetConstr(c, dest, n)
     of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
       genSetOp(c, dest, n)

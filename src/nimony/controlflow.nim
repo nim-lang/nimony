@@ -750,7 +750,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
       trExprLoop c, n
     of QuotedX, ParX,
        NilX, FalseX, TrueX, NotX, NegX, OconstrX, NewOconstrX, TupleConstrX,
-       AconstrX, SetX, OchoiceX, CchoiceX, KvX, AddX, SubX, MulX, DivX, ModX,
+       AconstrX, SetConstrX, OchoiceX, CchoiceX, KvX, AddX, SubX, MulX, DivX, ModX,
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
        CastX, ConvX, OconvX, HconvX, DconvX, InfX, NegInfX, NanX, SufX, RangeX, RangesX,
        UnpackX, EnumToStrX,

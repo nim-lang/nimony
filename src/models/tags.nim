@@ -170,7 +170,7 @@ const
     ("rangetype", 166),
     ("uarray", 167),
     ("openarray", 168),
-    ("sett", 169),
+    ("set", 169),
     ("auto", 170),
     ("symkind", 171),
     ("typekind", 172),
@@ -206,7 +206,7 @@ const
     ("haddr", 202),
     ("newobj", 203),
     ("tup", 204),
-    ("set", 205),
+    ("setconstr", 205),
     ("ashr", 206),
     ("oconv", 207),
     ("hconv", 208),
@@ -415,7 +415,7 @@ const
   RangetypeTagId* = 166
   UarrayTagId* = 167
   OpenarrayTagId* = 168
-  SettTagId* = 169
+  SetTagId* = 169
   AutoTagId* = 170
   SymkindTagId* = 171
   TypekindTagId* = 172
@@ -451,7 +451,7 @@ const
   HaddrTagId* = 202
   NewobjTagId* = 203
   TupTagId* = 204
-  SetTagId* = 205
+  SetconstrTagId* = 205
   AshrTagId* = 206
   OconvTagId* = 207
   HconvTagId* = 208

@@ -124,7 +124,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       c.overflow = c2.overflow
     if cacheKey != NoSymId: cache[cacheKey] = c2
 
-  of SettT:
+  of SetT:
     let size0 = bitsetSizeInBytes(n.firstSon)
     let size1 = asSigned(size0, c.overflow)
     update c, size1, 1
