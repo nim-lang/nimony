@@ -3985,7 +3985,10 @@ proc semCurly(c: var SemContext, it: var Item) =
         semExpr c, elem
       inc elem.n # right paren of call
     elif elem.n.substructureKind == RangeU:
-      skip elem.n # resem elements? XXX Bug here
+      takeToken c, elem.n
+      semExpr c, elem
+      semExpr c, elem
+      wantParRi c, elem.n
     else:
       semExpr c, elem
   if containsGenericParams(elem.typ):
@@ -4041,7 +4044,13 @@ proc semSetConstr(c: var SemContext; it: var Item) =
   else:
     c.buildErr info, "expected set type for set constructor, got: " & typeToString(it.typ)
   while elem.n.kind != ParRi:
-    semExpr c, elem
+    if elem.n.substructureKind == RangeU:
+      takeToken c, elem.n
+      semExpr c, elem
+      semExpr c, elem
+      wantParRi c, elem.n
+    else:
+      semExpr c, elem
   it.n = elem.n
   wantParRi c, it.n
   commonType c, it, start, expected
