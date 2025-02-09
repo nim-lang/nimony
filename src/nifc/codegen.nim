@@ -217,7 +217,7 @@ type
   ProcFlag = enum
     isSelectAny, isVarargs
 
-proc genProcPragmas(c: var GeneratedCode; t: Tree; n: NodePos;
+proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
                     flags: var set[ProcFlag]) =
   # ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) |
   #               (selectany) | Attribute | (raises) | (errs)
@@ -241,18 +241,18 @@ proc genProcPragmas(c: var GeneratedCode; t: Tree; n: NodePos;
       else:
         error c.m, "invalid proc pragma: ", t, ch
   else:
-    error c.m, "expected proc pragmas but got: ", t, n
+    error c.m, "expected proc pragmas but got: ", n
 
-proc genSymDef(c: var GeneratedCode; t: Tree; n: NodePos): string =
+proc genSymDef(c: var GeneratedCode; n: var Cursor): string =
   if t[n].kind == SymDef:
     let lit = t[n].litId
     result = mangle(c.m.lits.strings[lit])
     c.add result
   else:
     result = ""
-    error c.m, "expected SymbolDef but got: ", t, n
+    error c.m, "expected SymbolDef but got: ", n
 
-proc genParamPragmas(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
   # ProcPragma ::= (was Identifier) | Attribute
   if t[n].kind == Empty:
     discard
@@ -266,9 +266,9 @@ proc genParamPragmas(c: var GeneratedCode; t: Tree; n: NodePos) =
       else:
         error c.m, "invalid pragma: ", t, ch
   else:
-    error c.m, "expected pragmas but got: ", t, n
+    error c.m, "expected pragmas but got: ", n
 
-proc genParam(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genParam(c: var GeneratedCode; n: var Cursor) =
   let d = asParamDecl(t, n)
   if t[d.name].kind == SymDef:
     let lit = t[d.name].litId
@@ -276,9 +276,9 @@ proc genParam(c: var GeneratedCode; t: Tree; n: NodePos) =
     genType c, t, d.typ, name
     genParamPragmas c, t, d.pragmas
   else:
-    error c.m, "expected SymbolDef but got: ", t, n
+    error c.m, "expected SymbolDef but got: ", n
 
-proc genVarPragmas(c: var GeneratedCode; t: Tree; n: NodePos): NifcKind =
+proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcKind =
   result = Empty
   if t[n].kind == Empty:
     discard
@@ -296,7 +296,7 @@ proc genVarPragmas(c: var GeneratedCode; t: Tree; n: NodePos): NifcKind =
       else:
         error c.m, "invalid pragma: ", t, ch
   else:
-    error c.m, "expected pragmas but got: ", t, n
+    error c.m, "expected pragmas but got: ", n
 
 proc genCLineDir(c: var GeneratedCode; t: Tree; info: PackedLineInfo) =
   if optLineDir in c.m.config.options:
@@ -350,7 +350,7 @@ proc isLiteral(t: Tree; n: NodePos): bool =
   else:
     result = false
 
-proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern = false) =
+proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
   let d = asVarDecl(t, n)
   genCLineDir(c, t, info(t, n))
   if t[d.name].kind == SymDef:
@@ -385,12 +385,12 @@ proc genVarDecl(c: var GeneratedCode; t: Tree; n: NodePos; vk: VarKind; toExtern
     else:
       c.add Semicolon
   else:
-    error c.m, "expected SymbolDef but got: ", t, n
+    error c.m, "expected SymbolDef but got: ", n
 
 include genstmts
 
 
-proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
+proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   let signatureBegin = c.code.len
   let prc = asProcDecl(t, n)
 
@@ -471,7 +471,7 @@ proc genProcDecl(c: var GeneratedCode; t: Tree; n: NodePos; isExtern: bool) =
     if isSelectAny in flags:
       genRoutineGuardEnd(c)
 
-proc genInclude(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genInclude(c: var GeneratedCode; n: var Cursor) =
   let lit = t[n.firstSon].litId
   let headerAsStr {.cursor.} = c.m.lits.strings[lit]
   let header = c.tokens.getOrIncl(headerAsStr)
@@ -489,16 +489,16 @@ proc genInclude(c: var GeneratedCode; t: Tree; n: NodePos) =
 
     c.includes.add Token NewLine
 
-proc genImp(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genImp(c: var GeneratedCode; n: var Cursor) =
   let arg = n.firstSon
   case t[arg].kind
   of ProcC: genProcDecl c, t, arg, true
   of VarC, GvarC, TvarC, ConstC:
     genVar c, t, arg, true
   else:
-    error c.m, "expected declaration for `imp` but got: ", t, n
+    error c.m, "expected declaration for `imp` but got: ", n
 
-proc genNodecl(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genNodecl(c: var GeneratedCode; n: var Cursor) =
   let signatureBegin = c.code.len
   let arg = n.firstSon
   case t[arg].kind
@@ -506,36 +506,36 @@ proc genNodecl(c: var GeneratedCode; t: Tree; n: NodePos) =
   of VarC: genStmt c, t, arg
   of ConstC: genStmt c, t, arg
   else:
-    error c.m, "expected declaration for `nodecl` but got: ", t, n
+    error c.m, "expected declaration for `nodecl` but got: ", n
   c.code.setLen signatureBegin
 
-proc genToplevel(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   # ExternDecl ::= (imp ProcDecl | VarDecl | ConstDecl)
   # Include ::= (incl StringLiteral)
   # TopLevelConstruct ::= ExternDecl | ProcDecl | VarDecl | ConstDecl |
   #                       TypeDecl | Include | EmitStmt
   case t[n].kind
-  of ImpC: genImp c, t, n
-  of NodeclC: genNodecl c, t, n
-  of InclC: genInclude c, t, n
-  of ProcC: genProcDecl c, t, n, false
-  of VarC, GvarC, TvarC: genStmt c, t, n
-  of ConstC: genStmt c, t, n
+  of ImpC: genImp c, n
+  of NodeclC: genNodecl c, n
+  of InclC: genInclude c, n
+  of ProcC: genProcDecl c, n, false
+  of VarC, GvarC, TvarC: genStmt c, n
+  of ConstC: genStmt c, n
   of DiscardC, AsgnC, ScopeC, IfC,
       WhileC, CaseC, LabC, JmpC, TryC, RaiseC, CallC, OnErrC:
     moveToInitSection:
-      genStmt c, t, n
+      genStmt c, n
   of TypeC: discard "handled in a different pass"
-  of EmitC: genEmitStmt c, t, n
+  of EmitC: genEmitStmt c, n
   else:
-    error c.m, "expected top level construct but got: ", t, n
+    error c.m, "expected top level construct but got: ", n
 
-proc traverseCode(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc traverseCode(c: var GeneratedCode; n: var Cursor) =
   case t[n].kind
   of StmtsC:
     for ch in sons(t, n): genToplevel(c, t, ch)
   else:
-    error c.m, "expected `stmts` but got: ", t, n
+    error c.m, "expected `stmts` but got: ", n
 
   when false:
     var i = NodePos(0)

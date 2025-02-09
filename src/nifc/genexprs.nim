@@ -9,7 +9,7 @@
 
 # included from codegen.nim
 
-proc genx(c: var GeneratedCode; t: Tree; n: NodePos)
+proc genx(c: var GeneratedCode; n: var Cursor)
 
 template typedBinOp(opr) =
   let (typ, a, b) = sons3(t, n)
@@ -35,7 +35,7 @@ template cmpOp(opr) =
 template unOp(opr) =
   c.add ParLe
   c.add opr
-  genx c, t, n.firstSon
+  genx c, n.firstSon
   c.add ParRi
 
 template typedUnOp(opr) =
@@ -48,9 +48,9 @@ template typedUnOp(opr) =
   genx c, t, a
   c.add ParRi
 
-proc genCall(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genCall(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, t, info(t, n))
-  genx c, t, n.firstSon
+  genx c, n.firstSon
   c.add ParLe
   var i = 0
   for ch in sonsFromX(t, n):
@@ -59,7 +59,7 @@ proc genCall(c: var GeneratedCode; t: Tree; n: NodePos) =
     inc i
   c.add ParRi
 
-proc genCallCanRaise(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, t, info(t, n))
   genx c, t, ithSon(t, n, 1)
   c.add ParLe
@@ -70,7 +70,7 @@ proc genCallCanRaise(c: var GeneratedCode; t: Tree; n: NodePos) =
     inc i
   c.add ParRi
 
-proc genLvalue(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case t[n].kind
   of Sym:
     let lit = t[n].litId
@@ -120,14 +120,14 @@ proc genLvalue(c: var GeneratedCode; t: Tree; n: NodePos) =
       c.flags.incl gfHasError
     c.add ErrToken
   else:
-    error c.m, "expected expression but got: ", t, n
+    error c.m, "expected expression but got: ", n
 
-proc objConstrType(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc objConstrType(c: var GeneratedCode; n: var Cursor) =
   # C99 is strange, it requires (T){} for struct construction but not for
   # consts.
   if c.inSimpleInit == 0:
     c.add ParLe
-    genType(c, t, n)
+    genType(c, n)
     c.add ParRi
 
 proc suffixToType(c: var GeneratedCode; t: Tree; suffix: NodePos) =
@@ -164,7 +164,7 @@ proc suffixConv(c: var GeneratedCode; t: Tree; value: NodePos, suffix: NodePos) 
   genx c, t, value
   c.add ParRi
 
-proc genx(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc genx(c: var GeneratedCode; n: var Cursor) =
   case t[n].kind
   of IntLit:
     genIntLit c, t[n].litId
@@ -250,7 +250,7 @@ proc genx(c: var GeneratedCode; t: Tree; n: NodePos) =
     let name = mangle(c.m.lits.strings[lit])
     c.add name
     c.add ParRi
-  of CallC: genCall c, t, n
+  of CallC: genCall c, n
   of AddC: typedBinOp " + "
   of SubC: typedBinOp " - "
   of MulC: typedBinOp " * "
@@ -279,6 +279,6 @@ proc genx(c: var GeneratedCode; t: Tree; n: NodePos) =
     else:
       suffixConv(c, t, value, suffix)
   of OnErrC:
-    genCallCanRaise c, t, n
+    genCallCanRaise c, n
   else:
-    genLvalue c, t, n
+    genLvalue c, n
