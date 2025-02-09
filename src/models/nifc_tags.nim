@@ -69,20 +69,20 @@ type
     JmpS = (88, "jmp")  ## jump/goto instruction
     RetS = (89, "ret")  ## `return` instruction
     StmtsS = (91, "stmts")  ## list of statements
-    ImpS = (128, "imp")  ## import declaration
-    InclS = (130, "incl")  ## `#include` statement or `incl` set operation
-    ImportS = (133, "import")  ## `import` statement
-    FromS = (134, "from")  ## `from` statement
-    ImportexceptS = (135, "importexcept")  ## `importexcept` statement
-    ExportS = (136, "export")  ## `export` statement
-    CommentS = (137, "comment")  ## `comment` statement
-    DiscardS = (138, "discard")  ## `discard` statement
-    TryS = (139, "try")  ## `try` statement
-    RaiseS = (140, "raise")  ## `raise` statement
-    OnerrS = (141, "onerr")  ## error handling statement
+    ImpS = (129, "imp")  ## import declaration
+    InclS = (131, "incl")  ## `#include` statement or `incl` set operation
+    ImportS = (134, "import")  ## `import` statement
+    FromS = (135, "from")  ## `from` statement
+    ImportexceptS = (136, "importexcept")  ## `importexcept` statement
+    ExportS = (137, "export")  ## `export` statement
+    CommentS = (138, "comment")  ## `comment` statement
+    DiscardS = (139, "discard")  ## `discard` statement
+    TryS = (140, "try")  ## `try` statement
+    RaiseS = (141, "raise")  ## `raise` statement
+    OnerrS = (142, "onerr")  ## error handling statement
 
 proc rawTagIsNifcStmt*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {50'u8, 51'u8, 52'u8, 54'u8, 61'u8, 68'u8, 73'u8, 74'u8, 75'u8, 76'u8, 81'u8, 84'u8, 85'u8, 87'u8, 88'u8, 89'u8, 91'u8, 128'u8, 130'u8, 133'u8, 134'u8, 135'u8, 136'u8, 137'u8, 138'u8, 139'u8, 140'u8, 141'u8}
+  raw <= 255'u32 and raw.uint8 in {50'u8, 51'u8, 52'u8, 54'u8, 61'u8, 68'u8, 73'u8, 74'u8, 75'u8, 76'u8, 81'u8, 84'u8, 85'u8, 87'u8, 88'u8, 89'u8, 91'u8, 129'u8, 131'u8, 134'u8, 135'u8, 136'u8, 137'u8, 138'u8, 139'u8, 140'u8, 141'u8, 142'u8}
 
 type
   NifcType* = enum
@@ -119,30 +119,30 @@ type
     ElifU = (78, "elif")  ## pair of (condition, action)
     ElseU = (79, "else")  ## `else` action
     OfU = (86, "of")  ## `of` branch within a `case` statement
-    AttrU = (120, "attr")  ## general attribute annoation
-    PragmasU = (124, "pragmas")  ## begin of pragma section
+    AttrU = (121, "attr")  ## general attribute annoation
+    PragmasU = (125, "pragmas")  ## begin of pragma section
 
 proc rawTagIsNifcOther*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {28'u8, 48'u8, 49'u8, 53'u8, 58'u8, 59'u8, 60'u8, 78'u8, 79'u8, 86'u8, 120'u8, 124'u8}
+  raw <= 255'u32 and raw.uint8 in {28'u8, 48'u8, 49'u8, 53'u8, 58'u8, 59'u8, 60'u8, 78'u8, 79'u8, 86'u8, 121'u8, 125'u8}
 
 type
   NifcPragma* = enum
-    NoPragma
-    InlineP = (118, "inline")  ## `inline` proc annotation
-    NoinlineP = (119, "noinline")  ## `noinline` proc annotation
-    VarargsP = (121, "varargs")  ## `varargs` proc annotation
-    WasP = (122, "was")
-    SelectanyP = (123, "selectany")
-    AlignP = (125, "align")
-    BitsP = (126, "bits")
-    VectorP = (127, "vector")
-    NodeclP = (129, "nodecl")  ## `nodecl` annotation
-    RaisesP = (142, "raises")  ## proc annotation
-    ErrsP = (143, "errs")  ## proc annotation
-    StaticP = (144, "static")  ## `static` type or annotation
+    NoNifcPragma
+    InlineP = (119, "inline")  ## `inline` proc annotation
+    NoinlineP = (120, "noinline")  ## `noinline` proc annotation
+    VarargsP = (122, "varargs")  ## `varargs` proc annotation
+    WasP = (123, "was")
+    SelectanyP = (124, "selectany")
+    AlignP = (126, "align")
+    BitsP = (127, "bits")
+    VectorP = (128, "vector")
+    NodeclP = (130, "nodecl")  ## `nodecl` annotation
+    RaisesP = (143, "raises")  ## proc annotation
+    ErrsP = (144, "errs")  ## proc annotation
+    StaticP = (145, "static")  ## `static` type or annotation
 
 proc rawTagIsNifcPragma*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {118'u8, 119'u8, 121'u8, 122'u8, 123'u8, 125'u8, 126'u8, 127'u8, 129'u8, 142'u8, 143'u8, 144'u8}
+  raw <= 255'u32 and raw.uint8 in {119'u8, 120'u8, 122'u8, 123'u8, 124'u8, 126'u8, 127'u8, 128'u8, 130'u8, 143'u8, 144'u8, 145'u8}
 
 type
   NifcTypeQualifier* = enum

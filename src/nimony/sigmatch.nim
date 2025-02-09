@@ -296,15 +296,13 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
       if m.inferred.contains(fs):
         # rematch?
         var prev = m.inferred[fs]
-        linearMatch(m, prev, a)
+        linearMatch(m, prev, a) # skips a
         inc f
         if m.err: break
-        continue
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
         skip a
-        continue
       else:
         m.error(ConstraintMismatch, f, a)
         break
@@ -324,11 +322,11 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
       of ParRi:
         if nested == 0: break
         dec nested
+      inc f
+      inc a
     else:
       m.error(InvalidMatch, fOrig, aOrig)
       break
-    inc f
-    inc a
     # only match a single tree/token:
     if nested == 0: break
 

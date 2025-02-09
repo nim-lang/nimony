@@ -6,7 +6,7 @@
 
 ## Parse NIF into a packed tree representation.
 
-import std / [hashes, tables, assertions]
+import std / [hashes, tables, assertions, strutils]
 include "../lib" / nifprelude
 import noptions
 import ".." / models / [nifc_tags, callconv_tags, tags]
@@ -147,15 +147,15 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
   of StringLit:
     m.code.addStrLit decodeStr(t), currentInfo
   of CharLit:
-    m.code.addAtom CharLit, uint32 decodeChar(t), currentInfo
+    m.code.add charToken(decodeChar(t), currentInfo)
   of IntLit:
     # we keep numbers as strings because we typically don't do anything with them
     # but to pass them as they are to the C code.
-    m.code.addAtom IntLit, pool.strings.getOrIncl(decodeStr t), currentInfo
+    m.code.addIntLit parseBiggestInt(decodeStr t), currentInfo
   of UIntLit:
-    m.code.addAtom UIntLit, pool.strings.getOrIncl(decodeStr t), currentInfo
+    m.code.addUIntLit parseBiggestUInt(decodeStr t), currentInfo
   of FloatLit:
-    m.code.addAtom FloatLit, pool.strings.getOrIncl(decodeStr t), currentInfo
+    m.code.add floatToken(pool.floats.getOrIncl(parseFloat(decodeStr t)), currentInfo)
 
 proc parse*(r: var Reader): Module =
   # empirically, (size div 7) is a good estimate for the number of nodes
@@ -179,52 +179,85 @@ proc load*(filename: string): Module =
 
 # Read helpers:
 
-template elementType*(types: TypeGraph; n: NodePos): NodePos = n.firstSon
+proc firstSon*(n: Cursor): Cursor {.inline.} =
+  result = n
+  inc result
+
+template elementType*(n: Cursor): Cursor = n.firstSon
 
 type
   TypeDecl* = object
-    name*, pragmas*, body*: NodePos
+    name*, pragmas*, body*: Cursor
 
-proc asTypeDecl*(types: TypeGraph; n: NodePos): TypeDecl =
-  assert types[n].kind == TypeC
-  let (a, b, c) = sons3(types, n)
-  TypeDecl(name: a, pragmas: b, body: c)
+proc asTypeDecl*(n: Cursor): TypeDecl =
+  assert n.stmtKind == TypeS
+  var n = n.firstSon
+  result = TypeDecl(name: n)
+  skip n
+  result.pragmas = n
+  skip n
+  result.body = n
 
 type
   FieldDecl* = object
-    name*, pragmas*, typ*: NodePos
+    name*, pragmas*, typ*: Cursor
 
-proc asFieldDecl*(types: TypeGraph; n: NodePos): FieldDecl =
-  assert types[n].kind == FldC
-  let (a, b, c) = sons3(types, n)
-  FieldDecl(name: a, pragmas: b, typ: c)
+proc asFieldDecl*(n: Cursor): FieldDecl =
+  assert n.substructureKind == FldU
+  var n = n.firstSon
+  result = FieldDecl(name: n)
+  skip n
+  result.pragmas = n
+  skip n
+  result.typ = n
 
 type
   ParamDecl* = object
-    name*, pragmas*, typ*: NodePos
+    name*, pragmas*, typ*: Cursor
 
-proc asParamDecl*(types: TypeGraph; n: NodePos): ParamDecl =
-  assert types[n].kind == ParamC
-  let (a, b, c) = sons3(types, n)
-  ParamDecl(name: a, pragmas: b, typ: c)
+proc asParamDecl*(n: Cursor): ParamDecl =
+  assert n.substructureKind == ParamU
+  var n = n.firstSon
+  result = ParamDecl(name: n)
+  skip n
+  result.pragmas = n
+  skip n
+  result.typ = n
+
 
 type
   ProcType* = object
-    params*, returnType*, pragmas*: NodePos
+    params*, returnType*, pragmas*: Cursor
 
-proc asProcType*(types: TypeGraph; n: NodePos): ProcType =
-  assert types[n].kind in {ProctypeC, ProcC}
-  let (_, a, b, c) = sons4(types, n)
-  ProcType(params: a, returnType: b, pragmas: c)
+proc asProcType*(n: Cursor): ProcType =
+  var n = n
+  if n.substructureKind == ParamsU:
+    discard
+  else:
+    assert n.stmtKind == ProcS or n.typeKind == ProctypeT
+    inc n # skip the name
+  result = ProcType(params: n)
+  skip n
+  result.returnType = n
+  skip n
+  result.pragmas = n
 
 type
   ProcDecl* = object
-    name*, params*, returnType*, pragmas*, body*: NodePos
+    name*, params*, returnType*, pragmas*, body*: Cursor
 
-proc asProcDecl*(t: Tree; n: NodePos): ProcDecl =
-  assert t[n].kind == ProcC
-  let (a, b, c, d, e) = sons5(t, n)
-  ProcDecl(name: a, params: b, returnType: c, pragmas: d, body: e)
+proc asProcDecl*(n: Cursor): ProcDecl =
+  assert n.stmtKind == ProcS
+  var n = n.firstSon
+  result = ProcDecl(name: n)
+  skip n
+  result.params = n
+  skip n
+  result.returnType = n
+  skip n
+  result.pragmas = n
+  skip n
+  result.body = n
 
 type
   VarDecl* = object

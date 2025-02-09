@@ -1316,7 +1316,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
     semConvFromCall c, it, cs
     return
-  elif cs.fn.kind == TypeY and cs.args.len == 0:
+  elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 0:
     semObjConstrFromCall c, it, cs
     return
   else:
@@ -1422,10 +1422,14 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     skipParRi it.n
     var errorMsg: string
     if idx == -2:
-      errorMsg = "ambiguous call"
+      errorMsg = "ambiguous call: '"
+      if cs.fnName != StrId(0):
+        errorMsg.add pool.strings[cs.fnName]
+      errorMsg.add "'"
     elif cs.source in {DotCall, DotAsgnCall} and cs.fnName != StrId(0):
       errorMsg = "undeclared field: '"
-      errorMsg.add pool.strings[cs.fnName]
+      if cs.fnName != StrId(0):
+        errorMsg.add pool.strings[cs.fnName]
       errorMsg.add "'"
       if cs.args.len != 0: # just to be safe
         errorMsg.add " for type "
@@ -1436,7 +1440,10 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         errorMsg.add "\n"
         addErrorMsg errorMsg, m[i]
     else:
-      errorMsg = "undeclared identifier"
+      errorMsg = "undeclared identifier: '"
+      if cs.fnName != StrId(0):
+        errorMsg.add pool.strings[cs.fnName]
+      errorMsg.add "'"
     var errored = createTokenBuf(4)
     buildCallSource errored, cs
     buildErr c, cs.callNode.info, errorMsg, cursorAt(errored, 0)
@@ -4201,15 +4208,17 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymI
     let parent = asObjectDecl(parentImpl)
     obj.parentType = parent.parentType
     var currentField = parent.firstField
+    if currentField.kind != DotToken:
+      while currentField.kind != ParRi:
+        let field = asLocal(currentField)
+        buildObjConstrField(c, field, setFields, info)
+        skip currentField
+  var currentField = obj.firstField
+  if currentField.kind != DotToken:
     while currentField.kind != ParRi:
       let field = asLocal(currentField)
       buildObjConstrField(c, field, setFields, info)
       skip currentField
-  var currentField = obj.firstField
-  while currentField.kind != ParRi:
-    let field = asLocal(currentField)
-    buildObjConstrField(c, field, setFields, info)
-    skip currentField
   c.dest.addParRi()
 
 proc semObjConstr(c: var SemContext, it: var Item) =

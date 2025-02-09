@@ -117,6 +117,7 @@
 | thiscall | CC | `thiscall` calling convention |
 | noconv | CC | no explicit calling convention |
 | member  | CC | `member` calling convention |
+| nimcall | CC | `nimcall` calling convention |
 | inline | PP | `inline` proc annotation |
 | noinline | PP | `noinline` proc annotation |
 | attr | SUC | general attribute annoation |

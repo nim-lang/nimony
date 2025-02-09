@@ -662,7 +662,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   let oldOwner = setOwner(e, s)
 
   var genPragmas = openGenPragmas()
-  if prag.callConv != NoCallConv:
+  if prag.callConv != NoCallConv and prag.callConv != Nimcall:
     let name = $prag.callConv
     e.addKey genPragmas, name, pinfo
   if prag.externName.len > 0:
