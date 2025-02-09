@@ -11,6 +11,34 @@ include "../lib" / nifprelude
 import noptions
 import ".." / models / [nifc_tags, callconv_tags, tags]
 
+type
+  Definition* = object
+    pos*: int
+    kind*: NifcSym
+
+  Module* = object
+    code*: TokenBuf
+    types*: seq[int]
+    defs*: Table[SymId, Definition]
+    filename*: string
+    config*: ConfigRef
+    mem*: seq[TokenBuf] # for intermediate results such as computed types
+    builtinTypes*: Table[string, Cursor]
+
+proc bug*(msg: string) =
+  when defined(debug):
+    writeStackTrace()
+    quit "BUG: " & msg
+
+proc skipParRi*(n: var Cursor) =
+  # XXX: Give NIFC some better error reporting.
+  if n.kind == ParRi:
+    inc n
+  else:
+    when defined(debug):
+      writeStackTrace()
+    quit "expected ')', but got: " & $n.kind
+
 proc stmtKind*(c: Cursor): NifcStmt {.inline.} =
   if c.kind == ParLe and rawTagIsNifcStmt(tag(c).uint32):
     result = cast[NifcStmt](tag(c))
@@ -83,19 +111,6 @@ proc symKind*(c: Cursor): NifcSym {.inline.} =
   else:
     result = NoSym
 
-
-type
-  Definition* = object
-    pos*: int
-    kind*: NifcSym
-
-  Module* = object
-    code*: TokenBuf
-    types*: seq[int]
-    defs*: Table[SymId, Definition]
-    filename*: string
-    config*: ConfigRef
-
 proc tracebackTypeC*(n: Cursor): Cursor =
   assert n.typeKind in {ObjectT, UnionT, ArrayT}
   result = n
@@ -149,8 +164,6 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
   of CharLit:
     m.code.add charToken(decodeChar(t), currentInfo)
   of IntLit:
-    # we keep numbers as strings because we typically don't do anything with them
-    # but to pass them as they are to the C code.
     m.code.addIntLit parseBiggestInt(decodeStr t), currentInfo
   of UIntLit:
     m.code.addUIntLit parseBiggestUInt(decodeStr t), currentInfo
@@ -189,7 +202,7 @@ type
   TypeDecl* = object
     name*, pragmas*, body*: Cursor
 
-proc asTypeDecl*(n: Cursor): TypeDecl =
+proc asTypeDeclImpl(n: var Cursor): TypeDecl =
   assert n.stmtKind == TypeS
   var n = n.firstSon
   result = TypeDecl(name: n)
@@ -198,40 +211,52 @@ proc asTypeDecl*(n: Cursor): TypeDecl =
   skip n
   result.body = n
 
+proc asTypeDecl*(n: Cursor): TypeDecl =
+  var n = n
+  asTypeDeclImpl(n)
+
+proc takeTypeDecl*(n: var Cursor): TypeDecl =
+  result = asTypeDeclImpl(n)
+  skip n # skip body
+  skipParRi n
+
 type
   FieldDecl* = object
     name*, pragmas*, typ*: Cursor
 
-proc asFieldDecl*(n: Cursor): FieldDecl =
+proc takeFieldDecl*(n: var Cursor): FieldDecl =
   assert n.substructureKind == FldU
-  var n = n.firstSon
+  inc n
   result = FieldDecl(name: n)
   skip n
   result.pragmas = n
   skip n
   result.typ = n
+  skip n
+  skipParRi n
 
 type
   ParamDecl* = object
     name*, pragmas*, typ*: Cursor
 
-proc asParamDecl*(n: Cursor): ParamDecl =
+proc takeParamDecl*(n: var Cursor): ParamDecl =
   assert n.substructureKind == ParamU
-  var n = n.firstSon
+  inc n
   result = ParamDecl(name: n)
   skip n
   result.pragmas = n
   skip n
   result.typ = n
+  skip n
+  skipParRi n
 
 
 type
   ProcType* = object
     params*, returnType*, pragmas*: Cursor
 
-proc asProcType*(n: Cursor): ProcType =
-  var n = n
-  if n.substructureKind == ParamsU:
+proc takeProcType*(n: var Cursor): ProcType =
+  if n.typeKind == ParamsT:
     discard
   else:
     assert n.stmtKind == ProcS or n.typeKind == ProctypeT
@@ -241,14 +266,16 @@ proc asProcType*(n: Cursor): ProcType =
   result.returnType = n
   skip n
   result.pragmas = n
+  skip n
+  skipParRi n
 
 type
   ProcDecl* = object
     name*, params*, returnType*, pragmas*, body*: Cursor
 
-proc asProcDecl*(n: Cursor): ProcDecl =
+proc takeProcDecl*(n: var Cursor): ProcDecl =
   assert n.stmtKind == ProcS
-  var n = n.firstSon
+  inc n
   result = ProcDecl(name: n)
   skip n
   result.params = n
@@ -258,12 +285,22 @@ proc asProcDecl*(n: Cursor): ProcDecl =
   result.pragmas = n
   skip n
   result.body = n
+  skip n
+  skipParRi n
 
 type
   VarDecl* = object
-    name*, pragmas*, typ*, value*: NodePos
+    name*, pragmas*, typ*, value*: Cursor
 
-proc asVarDecl*(t: Tree; n: NodePos): VarDecl =
-  assert t[n].kind in {GvarC, TvarC, VarC, ConstC}
-  let (a, b, c, d) = sons4(t, n)
-  VarDecl(name: a, pragmas: b, typ: c, value: d)
+proc takeVarDecl*(n: var Cursor): VarDecl =
+  assert n.stmtKind in {GvarS, TvarS, VarS, ConstS}
+  inc n
+  result = VarDecl(name: n)
+  skip n
+  result.pragmas = n
+  skip n
+  result.typ = n
+  skip n
+  result.value = n
+  skip n
+  skipParRi n

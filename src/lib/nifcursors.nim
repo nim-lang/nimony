@@ -362,10 +362,9 @@ proc parse*(r: var Stream; dest: var TokenBuf;
     dest.add tok
     if tok.kind == EofToken: break
 
-proc parse*(input: string): TokenBuf =
-  # For testing purposes only:
+proc parse*(input: string; sizeHint = 100): TokenBuf =
   var r = nifstreams.openFromBuffer(input)
-  result = createTokenBuf(100)
+  result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 
 proc isLastSon*(n: Cursor): bool =
