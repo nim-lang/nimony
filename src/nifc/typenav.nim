@@ -119,20 +119,12 @@ proc getType*(m: var Module; n: Cursor): Cursor =
           inc result # token
           skip result # skip the name
           skip result # skip the pragmas
+        elif n.substructureKind == EfldU:
+          # skip to its outer Enum declaration which is its type:
+          result = n
+          unsafeDec result
+          while result.typeKind != EnumT: unsafeDec result
         else:
           bug "typenav: cannot get type of construct: " & $n.stmtKind
-  of EfldC:
-    # skip to its outer Enum declaration which is its type:
-    var i = int(n)
-    while i > 0 and t[NodePos(i)].kind != EnumC: dec i
-    result = typeFromPos NodePos(i)
-  of AsgnC, RetC, BreakC, WhileC, StmtsC, KvC,
-     RangeC, RangesC, EmitC, IfC, ElifC, ElseC, CaseC,
-     OfC, LabC, JmpC,  ParamsC, UnionC, ObjectC, EnumC,
-     ProctypeC, AtomicC, RoC, RestrictC, IntC, UIntC, FloatC, CharC, BoolC,
-     VoidC, PtrC, ArrayC, FlexarrayC, APtrC, TypeC, CdeclC,
-     StdcallC, SafecallC, SyscallC, FastcallC, ThiscallC, NoconvC, MemberC,
-     AttrC, InlineC, NoinlineC, VarargsC, WasC, SelectanyC,
-     PragmasC, AlignC, BitsC, VectorC, ImpC, NodeclC, InclC, ScopeC, DiscardC,
-     TryC, RaiseC, OnErrC, RaisesC, ErrsC, StaticC:
-    result = errorType()
+  else:
+    result = createIntegralType(m, "(err)")

@@ -147,15 +147,15 @@ proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
 proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
   write stdout, "[Error] "
   write stdout, msg
-  writeLine stdout, toString(n, m)
+  writeLine stdout, toString(n, false)
   when defined(debug):
     echo getStackTrace()
   quit 1
 
 # Atoms
 
-proc genIntLit(c: var GeneratedCode; litId: StrId) =
-  let i = parseBiggestInt(c.m.lits.strings[litId])
+proc genIntLit(c: var GeneratedCode; litId: IntId) =
+  let i = pool.integers[litId]
   if i > low(int32) and i <= high(int32):
     c.add $i
   elif i == low(int32):
@@ -168,8 +168,8 @@ proc genIntLit(c: var GeneratedCode; litId: StrId) =
   else:
     c.add "(IL64(-9223372036854775807) - IL64(1))"
 
-proc genUIntLit(c: var GeneratedCode; litId: StrId) =
-  let i = parseBiggestUInt(c.m.lits.strings[litId])
+proc genUIntLit(c: var GeneratedCode; litId: UIntId) =
+  let i = pool.uintegers[litId]
   if i <= high(uint32):
     c.add $i
     c.add "u"
@@ -179,18 +179,18 @@ proc genUIntLit(c: var GeneratedCode; litId: StrId) =
 
 # Type graph
 
-const
-  CallingConvToStr: array[CdeclC..NoinlineC, string] = [
-    "N_CDECL",
-    "N_STDCALL", "N_SAFECALL",
-    "N_SYSCALL", # this is probably not correct for all platforms,
-                 # but one can #define it to what one wants
-    "N_FASTCALL",
-    "N_THISCALL",
-    "N_NOCONV",
-    "N_NOCONV", #ccMember is N_NOCONV
-    "N_INLINE", "N_NOINLINE"
-    ]
+proc callingConvToStr(cc: CallConv): string =
+  case cc
+  of NoCallConv: ""
+  of Cdecl: "N_CDECL"
+  of Stdcall: "N_STDCALL"
+  of Safecall: "N_SAFECALL"
+  of Syscall: "N_SYSCALL"
+  of Fastcall: "N_FASTCALL"
+  of Thiscall: "N_THISCALL"
+  of Noconv: "N_NOCONV"
+  of Member: "N_NOCONV"
+  of Nimcall: "N_FASTCALL"
 
 include gentypes
 

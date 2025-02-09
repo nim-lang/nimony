@@ -26,10 +26,10 @@ type
     mem*: seq[TokenBuf] # for intermediate results such as computed types
     builtinTypes*: Table[string, Cursor]
 
-proc bug*(msg: string) =
+proc bug*(msg: string) {.noreturn.} =
   when defined(debug):
     writeStackTrace()
-    quit "BUG: " & msg
+  quit "BUG: " & msg
 
 proc skipParRi*(n: var Cursor) =
   # XXX: Give NIFC some better error reporting.
