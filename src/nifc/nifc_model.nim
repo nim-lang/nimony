@@ -10,6 +10,7 @@ import std / [hashes, tables, assertions, strutils]
 include "../lib" / nifprelude
 import noptions
 import ".." / models / [nifc_tags, callconv_tags, tags]
+export nifc_tags, callconv_tags
 
 type
   Definition* = object
@@ -189,6 +190,9 @@ proc load*(filename: string): Module =
   result = parse(r)
   result.filename = filename
   r.close
+
+proc parLeToken*(t: NifcType; info = NoLineInfo): PackedToken =
+  result = parLeToken(TagId(t), info)
 
 # Read helpers:
 

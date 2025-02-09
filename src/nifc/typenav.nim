@@ -32,7 +32,7 @@ proc getType*(m: var Module; n: Cursor): Cursor =
       result = getType(m, m.code.cursorAt(d.pos))
     else:
       # importC types are not defined
-      result = n
+      result = createIntegralType(m, "(err)")
   of ParRi:
     bug "typenav: unexpected ParRi"
   of IntLit:
@@ -41,7 +41,7 @@ proc getType*(m: var Module; n: Cursor): Cursor =
     result = createIntegralType(m, "(u -1)")
   of FloatLit:
     result = createIntegralType(m, "(f 64)")
-  of StrLit: result = createIntegralType(m, "(aptr (c 8))")
+  of StringLit: result = createIntegralType(m, "(aptr (c 8))")
   of CharLit: result = createIntegralType(m, "(c 8)")
   of ParLe:
     case n.exprKind
@@ -50,45 +50,59 @@ proc getType*(m: var Module; n: Cursor): Cursor =
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrC:
       result = createIntegralType(m, "(bool)")
     of CallC:
-      let procType = getType(m, t, n.firstSon)
-      if procType.p != NodePos(0):
-        assert t[procType.p].kind == ProcC
-        result = typeFromPos asProcDecl(t, n).returnType
+      var procType = getType(m, n.firstSon)
+      if procType.typeKind == ProctypeT or procType.symKind == ProcY:
+        inc procType
+        skip procType # name
+      if procType.typeKind == ParamsT:
+        result = procType
+        skip result # skip the parameters, return type follows!
       else:
-        result = procType # propagate error
+        result = createIntegralType(m, "(err)")
     of AtC, PatC:
-      let (a, _) = sons2(t, n)
-      let arrayType = getType(m, t, a)
-      result = elemType(t, arrayType)
+      let a = n.firstSon
+      let arrayType = getType(m, a)
+      result = arrayType
+      inc result # (arr ...)
     of DotC:
-      let (_, fld, _) = sons3(t, n)
-      result = getType(m, t, fld)
+      var a = n.firstSon
+      skip a # skip the object
+      let fld = a
+      result = getType(m, fld)
     of DerefC:
-      let x = getType(m, t, n.firstSon)
-      assert kind(t, x) == PtrC
-      result = elemType(t, x)
+      let x = getType(m, n.firstSon)
+      assert x.typeKind == PtrT
+      result = x.firstSon
     of AddrC:
-      let x = getType(m, t, n.firstSon)
-      result = makePtrType(m, x)
+      let x = getType(m, n.firstSon)
+      var buf = createTokenBuf(4)
+      buf.add parLeToken(PtrT, x.info)
+      buf.addSubtree x
+      buf.addParRi()
+      result = cursorAt(buf, 0)
+      m.mem.add ensureMove buf
     of ConvC, CastC, AconstrC, OconstrC:
-      result = typeFromPos n.firstSon
+      result = n.firstSon
+    of NegC, AddC, SubC, MulC, DivC, ModC, ShrC, ShlC, BitandC, BitorC, BitxorC, BitnotC:
+      result = n.firstSon
     of ParC:
-      result = getType(m, t, n.firstSon)
+      result = getType(m, n.firstSon)
     of NilC:
-      result = makePtrType(m, createIntegralType(m.lits, VoidC, ""))
+      result = createIntegralType(m, "(ptr (void))")
     of SufC:
-      result = errorType()
-      let (_, suffix) = sons2(t, n)
-      let s = m.lits.strings[t[suffix].litId]
+      result = createIntegralType(m, "(err)")
+      var a = n.firstSon
+      skip a
+      let s = pool.strings[a.litId]
       if s.len > 0:
         if s[0] == 'i':
-          result = createIntegralType(m.lits, IntC, s.substr(1))
+          result = createIntegralType(m, "(i " & s.substr(1) & ")")
         elif s[0] == 'u':
-          result = createIntegralType(m.lits, UIntC, s.substr(1))
+          result = createIntegralType(m, "(u " & s.substr(1) & ")")
         elif s[0] == 'f':
-          result = createIntegralType(m.lits, FloatC, s.substr(1))
+          result = createIntegralType(m, "(f " & s.substr(1) & ")")
 
-    else:
+    of NoExpr:
       case n.stmtKind
       of ProcS:
         result = n
@@ -112,9 +126,6 @@ proc getType*(m: var Module; n: Cursor): Cursor =
     var i = int(n)
     while i > 0 and t[NodePos(i)].kind != EnumC: dec i
     result = typeFromPos NodePos(i)
-  of NegC, AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
-     BitandC, BitorC, BitxorC, BitnotC:
-    result = typeFromPos n.firstSon
   of AsgnC, RetC, BreakC, WhileC, StmtsC, KvC,
      RangeC, RangesC, EmitC, IfC, ElifC, ElseC, CaseC,
      OfC, LabC, JmpC,  ParamsC, UnionC, ObjectC, EnumC,
