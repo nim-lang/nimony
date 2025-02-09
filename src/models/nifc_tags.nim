@@ -127,7 +127,7 @@ proc rawTagIsNifcOther*(raw: uint32): bool {.inline.} =
 
 type
   NifcPragma* = enum
-    NoNifcPragma
+    NoPragma
     InlineP = (119, "inline")  ## `inline` proc annotation
     NoinlineP = (120, "noinline")  ## `noinline` proc annotation
     VarargsP = (122, "varargs")  ## `varargs` proc annotation
