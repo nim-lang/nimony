@@ -10,11 +10,13 @@
 # included from codegen.nim
 
 proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
-  for ch in sons(t, n):
-    if t[ch].kind == StrLit:
-      c.add c.m.lits.strings[t[ch].litId]
+  inc n
+  while n.kind != ParRi:
+    if n.kind == StringLit:
+      c.add pool.strings[n.litId]
     else:
-      genx c, t, ch
+      genx c, n
+  inc n # ParRi
   c.add NewLine
 
 proc genStmt(c: var GeneratedCode; n: var Cursor)
@@ -22,7 +24,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor)
 proc genIf(c: var GeneratedCode; t: Tree; ifStmt: NodePos) =
   var hasElse = false
   var hasElif = false
-  for n in sons(t, ifStmt):
+  for n in sons(ifStmt):
     case t[n].kind
     of ElifC:
       if hasElse:
@@ -31,11 +33,11 @@ proc genIf(c: var GeneratedCode; t: Tree; ifStmt: NodePos) =
         if hasElif:
           c.add ElseKeyword
         c.add IfKeyword
-        let (cond, action) = sons2(t, n)
-        c.genx t, cond
+        let (cond, action) = sons2(n)
+        c.genx cond
         c.add ParRi
         c.add CurlyLe
-        genStmt c, t, action
+        genStmt c, action
         c.add CurlyRi
       hasElif = true
     of ElseC:
@@ -50,24 +52,25 @@ proc genIf(c: var GeneratedCode; t: Tree; ifStmt: NodePos) =
     else:
       error c.m, "`if` expects `elif` or `else` but got: ", n
   if not hasElif and not hasElse:
-    error c.m, "`if` expects `elif` or `else` but got: ", t, ifStmt
+    error c.m, "`if` expects `elif` or `else` but got: ", ifStmt
 
 proc genWhile(c: var GeneratedCode; n: var Cursor) =
-  let (cond, body) = sons2(t, n)
+  inc n
   c.add WhileKeyword
   c.add ParLe
-  c.genx t, cond
+  c.genx n
   c.add ParRi
   c.add CurlyLe
-  c.genStmt t, body
+  c.genStmt n
   c.add CurlyRi
+  skipParRi n
 
 proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
-  let (actions, onerr, final) = sons3(t, n)
+  let (actions, onerr, final) = sons3(n)
 
   c.add TryKeyword
   c.add CurlyLe
-  c.genStmt(t, actions)
+  c.genStmt(actions)
   c.add CurlyRi
 
   c.add CatchKeyword
@@ -76,23 +79,23 @@ proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
   c.add Space
   c.add CurlyLe
   if t[onerr].kind != Empty:
-    c.genStmt(t, onerr)
+    c.genStmt(onerr)
   c.add CurlyRi
 
   if t[final].kind != Empty:
     c.add CurlyLe
-    c.genStmt(t, final)
+    c.genStmt(final)
     c.add CurlyRi
 
 proc genScope(c: var GeneratedCode; n: var Cursor) =
   c.add CurlyLe
-  for ch in sons(t, n):
-    c.genStmt t, ch
+  for ch in sons(n):
+    c.genStmt ch
   c.add CurlyRi
 
 proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
   if t[n].kind in {IntLit, UIntLit, CharLit, Sym, TrueC, FalseC}:
-    c.genx t, n
+    c.genx n
   else:
     error c.m, "expected valid `of` value but got: ", n
 
@@ -101,15 +104,15 @@ proc genCaseCond(c: var GeneratedCode; n: var Cursor) =
   # BranchRange ::= BranchValue | (range BranchValue BranchValue)
   # BranchRanges ::= (ranges BranchRange+)
   if t[n].kind == RangesC:
-    for ch in sons(t, n):
+    for ch in sons(n):
       c.add CaseKeyword
       if t[ch].kind == RangeC:
-        let (a, b) = sons2(t, ch)
-        genBranchValue c, t, a
+        let (a, b) = sons2(ch)
+        genBranchValue c, a
         c.add " ... "
-        genBranchValue c, t, b
+        genBranchValue c, b
       else:
-        genBranchValue c, t, ch
+        genBranchValue c, ch
       c.add ":"
       c.add NewLine
   else:
@@ -142,22 +145,22 @@ proc genSwitch(c: var GeneratedCode; t: Tree; caseStmt: NodePos) =
   c.add SwitchKeyword
   c.add ParLe
   let selector = caseStmt.firstSon
-  c.genx t, selector
+  c.genx selector
   c.add ParRi
   c.add CurlyLe
 
   var hasElse = false
   var hasElif = false
-  for n in sonsFromX(t, caseStmt):
+  for n in sonsFromX(caseStmt):
     case t[n].kind
     of OfC:
       if hasElse:
         error c.m, "no `of` allowed after `else` but got: ", n
       else:
-        let (cond, action) = sons2(t, n)
-        c.genCaseCond t, cond
+        let (cond, action) = sons2(n)
+        c.genCaseCond cond
         c.add CurlyLe
-        genStmt c, t, action
+        genStmt c, action
         c.add CurlyRi
         c.add BreakKeyword
         c.add Semicolon
@@ -177,7 +180,7 @@ proc genSwitch(c: var GeneratedCode; t: Tree; caseStmt: NodePos) =
     else:
       error c.m, "`case` expects `of` or `else` but got: ", n
   if not hasElif and not hasElse:
-    error c.m, "`case` expects `of` or `else` but got: ", t, caseStmt
+    error c.m, "`case` expects `of` or `else` but got: ", caseStmt
   c.add CurlyRi
 
 proc genVar(c: var GeneratedCode; n: var Cursor; toExtern = false) =
@@ -202,7 +205,7 @@ proc genOnError(c: var GeneratedCode; n: var Cursor) =
   c.add ParRi
   c.add Space
   c.add CurlyLe
-  c.genStmt(t, n)
+  c.genStmt(n)
   c.add CurlyRi
 
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
@@ -210,8 +213,8 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of Empty:
     discard
   of StmtsC:
-    for ch in sons(t, n):
-      genStmt(c, t, ch)
+    for ch in sons(n):
+      genStmt(c, ch)
   of ScopeC:
     genScope c, n
   of CallC:
@@ -219,18 +222,18 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     c.add Semicolon
   of VarC, GvarC, TvarC, ConstC:
     genVar c, n
-    let value = ithSon(t, n, 3)
+    let value = ithSon(n, 3)
     if t[value].kind == OnErrC and
         t[value.firstSon].kind != Empty:
-      genOnError(c, t, value.firstSon)
+      genOnError(c, value.firstSon)
   of EmitC:
     genEmitStmt c, n
   of AsgnC:
-    genCLineDir(c, t, info(t, n))
-    let (dest, src) = sons2(t, n)
-    genLvalue c, t, dest
+    genCLineDir(c, info(n))
+    let (dest, src) = sons2(n)
+    genLvalue c, dest
     c.add AsgnOpr
-    genx c, t, src
+    genx c, src
     c.add Semicolon
   of IfC: genIf c, n
   of WhileC: genWhile c, n
@@ -244,11 +247,11 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     c.add ReturnKeyword
     if t[n.firstSon].kind != Empty:
       c.add Space
-      c.genx t, n.firstSon
+      c.genx n.firstSon
     c.add Semicolon
   of DiscardC:
     c.add DiscardToken
-    c.genx t, n.firstSon
+    c.genx n.firstSon
     c.add Semicolon
   of TryC:
     genTryCpp(c, n)
@@ -256,7 +259,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     c.add ThrowKeyword
     if t[n.firstSon].kind != Empty:
       c.add Space
-      c.genx t, n.firstSon
+      c.genx n.firstSon
     c.add Semicolon
   of OnErrC:
     genCallCanRaise c, n

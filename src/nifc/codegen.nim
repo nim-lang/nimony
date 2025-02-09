@@ -201,7 +201,7 @@ template emitData(t: Token) = c.data.add t
 template emitData(t: PredefinedToken) = c.data.add Token(t)
 
 proc genStrLit(c: var GeneratedCode; litId: StrId): Token =
-  let cstr = makeCString(c.m.lits.strings[litId])
+  let cstr = makeCString(pool.strings[litId])
   result = c.tokens.getOrIncl cstr
 
 proc inclHeader(c: var GeneratedCode, name: string) =
@@ -224,7 +224,7 @@ proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
   if t[n].kind == Empty:
     discard
   elif t[n].kind == PragmasC:
-    for ch in sons(t, n):
+    for ch in sons(n):
       case t[ch].kind
       of CallingConventions, InlineC, NoinlineC:
         discard "already handled"
@@ -235,18 +235,18 @@ proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
       of AttrC:
         discard "already handled"
       of WasC:
-        c.add "/* " & toString(t, ch.firstSon, c.m) & " */"
+        c.add "/* " & toString(ch.firstSon, c.m) & " */"
       of ErrsC, RaisesC:
         discard
       else:
-        error c.m, "invalid proc pragma: ", t, ch
+        error c.m, "invalid proc pragma: ", ch
   else:
     error c.m, "expected proc pragmas but got: ", n
 
 proc genSymDef(c: var GeneratedCode; n: var Cursor): string =
-  if t[n].kind == SymDef:
-    let lit = t[n].litId
-    result = mangle(c.m.lits.strings[lit])
+  if n.kind == SymbolDef:
+    let lit = n.symId
+    result = mangle(pool.syms[lit])
     c.add result
   else:
     result = ""
@@ -257,24 +257,24 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
   if t[n].kind == Empty:
     discard
   elif t[n].kind == PragmasC:
-    for ch in sons(t, n):
+    for ch in sons(n):
       case t[ch].kind
       of AttrC:
         c.add " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & "))"
       of WasC:
-        c.add "/* " & toString(t, ch.firstSon, c.m) & " */"
+        c.add "/* " & toString(ch.firstSon, c.m) & " */"
       else:
-        error c.m, "invalid pragma: ", t, ch
+        error c.m, "invalid pragma: ", ch
   else:
     error c.m, "expected pragmas but got: ", n
 
 proc genParam(c: var GeneratedCode; n: var Cursor) =
-  let d = asParamDecl(t, n)
+  let d = asParamDecl(n)
   if t[d.name].kind == SymDef:
     let lit = t[d.name].litId
     let name = mangle(c.m.lits.strings[lit])
-    genType c, t, d.typ, name
-    genParamPragmas c, t, d.pragmas
+    genType c, d.typ, name
+    genParamPragmas c, d.pragmas
   else:
     error c.m, "expected SymbolDef but got: ", n
 
@@ -283,18 +283,18 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcKind =
   if t[n].kind == Empty:
     discard
   elif t[n].kind == PragmasC:
-    for ch in sons(t, n):
+    for ch in sons(n):
       case t[ch].kind
       of AlignC:
-        c.add " NIM_ALIGN(" & toString(t, ch.firstSon, c.m) & ")"
+        c.add " NIM_ALIGN(" & toString(ch.firstSon, c.m) & ")"
       of AttrC:
         c.add " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & "))"
       of WasC:
-        c.add "/* " & toString(t, ch.firstSon, c.m) & " */"
+        c.add "/* " & toString(ch.firstSon, c.m) & " */"
       of StaticC:
         result = StaticC
       else:
-        error c.m, "invalid pragma: ", t, ch
+        error c.m, "invalid pragma: ", ch
   else:
     error c.m, "expected pragmas but got: ", n
 
@@ -338,21 +338,21 @@ proc isLiteral(t: Tree; n: NodePos): bool =
     result = true
   of AconstrC:
     result = true
-    for ch in sonsFromX(t, n):
-      if not isLiteral(t, ch):
+    for ch in sonsFromX(n):
+      if not isLiteral(ch):
         return false
   of OconstrC:
     result = true
-    for ch in sonsFromX(t, n):
-      let (_, value) = sons2(t, ch)
-      if not isLiteral(t, value):
+    for ch in sonsFromX(n):
+      let (_, value) = sons2(ch)
+      if not isLiteral(value):
         return false
   else:
     result = false
 
 proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
-  let d = asVarDecl(t, n)
-  genCLineDir(c, t, info(t, n))
+  let d = asVarDecl(n)
+  genCLineDir(c, info(n))
   if t[d.name].kind == SymDef:
     let lit = t[d.name].litId
     let name = mangle(c.m.lits.strings[lit])
@@ -364,22 +364,22 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       c.add ConstKeyword
     if vk == IsThreadlocal:
       c.add "__thread "
-    genType c, t, d.typ, name
-    let vis = genVarPragmas(c, t, d.pragmas)
+    genType c, d.typ, name
+    let vis = genVarPragmas(c, d.pragmas)
     if vis == StaticC:
       c.code.insert(Token(StaticKeyword), beforeDecl)
     if t[d.value].kind != Empty:
-      if vk == IsGlobal and not isLiteral(t, d.value):
+      if vk == IsGlobal and not isLiteral(d.value):
         c.add Semicolon
         moveToInitSection:
           c.add name
           c.add AsgnOpr
-          genx c, t, d.value
+          genx c, d.value
           c.add Semicolon
       else:
         c.add AsgnOpr
         if vk != IsLocal: inc c.inSimpleInit
-        genx c, t, d.value
+        genx c, d.value
         if vk != IsLocal: dec c.inSimpleInit
         c.add Semicolon
     else:
@@ -392,7 +392,7 @@ include genstmts
 
 proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   let signatureBegin = c.code.len
-  let prc = asProcDecl(t, n)
+  let prc = asProcDecl(n)
 
   if isExtern:
     c.add ExternKeyword
@@ -400,7 +400,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   var lastCallConv = Empty
   var lastAttrString = ""
   if t[prc.pragmas].kind == PragmasC:
-    for ch in sons(t, prc.pragmas):
+    for ch in sons(prc.pragmas):
       case t[ch].kind
       of CallingConventions, InlineC, NoinlineC:
         lastCallConv = t[ch].kind
@@ -418,30 +418,30 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     if t[prc.returnType].kind == Empty:
       c.add "void"
     else:
-      genType c, t, prc.returnType
+      genType c, prc.returnType
     c.add Comma
     c.add lastAttrString
-    name = genSymDef(c, t, prc.name)
+    name = genSymDef(c, prc.name)
     c.add ParRi
   else:
     if t[prc.returnType].kind == Empty:
       c.add "void"
     else:
-      genType c, t, prc.returnType
+      genType c, prc.returnType
     c.add Space
     c.add lastAttrString
-    name = genSymDef(c, t, prc.name)
+    name = genSymDef(c, prc.name)
 
   var flags: set[ProcFlag] = {}
-  genProcPragmas c, t, prc.pragmas, flags
+  genProcPragmas c, prc.pragmas, flags
 
   c.add ParLe
 
   var params = 0
   if t[prc.params].kind != Empty:
-    for ch in sons(t, prc.params):
+    for ch in sons(prc.params):
       if params > 0: c.add Comma
-      genParam c, t, ch
+      genParam c, ch
       inc params
 
   if isVarargs in flags:
@@ -466,14 +466,15 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     if isSelectAny in flags:
       genRoutineGuardBegin(c, name)
     c.add CurlyLe
-    genStmt c, t, prc.body
+    genStmt c, prc.body
     c.add CurlyRi
     if isSelectAny in flags:
       genRoutineGuardEnd(c)
 
 proc genInclude(c: var GeneratedCode; n: var Cursor) =
-  let lit = t[n.firstSon].litId
-  let headerAsStr {.cursor.} = c.m.lits.strings[lit]
+  inc n
+  let lit = n.litId
+  let headerAsStr {.cursor.} = pool.strings[lit]
   let header = c.tokens.getOrIncl(headerAsStr)
   if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
     if headerAsStr[0] == '#':
@@ -488,25 +489,28 @@ proc genInclude(c: var GeneratedCode; n: var Cursor) =
       c.includes.add Token(DoubleQuote)
 
     c.includes.add Token NewLine
+  skipParRi n
 
 proc genImp(c: var GeneratedCode; n: var Cursor) =
-  let arg = n.firstSon
-  case t[arg].kind
-  of ProcC: genProcDecl c, t, arg, true
-  of VarC, GvarC, TvarC, ConstC:
-    genVar c, t, arg, true
+  inc n
+  case n.stmtKind
+  of ProcS: genProcDecl c, n, true
+  of VarS, GvarS, TvarS, ConstS:
+    genVar c, n, true
   else:
     error c.m, "expected declaration for `imp` but got: ", n
+  skipParRi n
 
 proc genNodecl(c: var GeneratedCode; n: var Cursor) =
   let signatureBegin = c.code.len
-  let arg = n.firstSon
-  case t[arg].kind
-  of ProcC: genProcDecl c, t, arg, false
-  of VarC: genStmt c, t, arg
-  of ConstC: genStmt c, t, arg
+  inc n
+  case n.stmtKind
+  of ProcS: genProcDecl c, n, false
+  of VarS: genStmt c, n
+  of ConstS: genStmt c, n
   else:
     error c.m, "expected declaration for `nodecl` but got: ", n
+  skipParRi n
   c.code.setLen signatureBegin
 
 proc genToplevel(c: var GeneratedCode; n: var Cursor) =
@@ -514,42 +518,29 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   # Include ::= (incl StringLiteral)
   # TopLevelConstruct ::= ExternDecl | ProcDecl | VarDecl | ConstDecl |
   #                       TypeDecl | Include | EmitStmt
-  case t[n].kind
-  of ImpC: genImp c, n
-  of NodeclC: genNodecl c, n
-  of InclC: genInclude c, n
-  of ProcC: genProcDecl c, n, false
-  of VarC, GvarC, TvarC: genStmt c, n
-  of ConstC: genStmt c, n
-  of DiscardC, AsgnC, ScopeC, IfC,
-      WhileC, CaseC, LabC, JmpC, TryC, RaiseC, CallC, OnErrC:
+  case n.stmtKind
+  of ImpS: genImp c, n
+  of NodeclS: genNodecl c, n
+  of InclS: genInclude c, n
+  of ProcS: genProcDecl c, n, false
+  of VarS, GvarS, TvarS: genStmt c, n
+  of ConstS: genStmt c, n
+  of DiscardS, AsgnS, ScopeS, IfS,
+      WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnErrS:
     moveToInitSection:
       genStmt c, n
-  of TypeC: discard "handled in a different pass"
-  of EmitC: genEmitStmt c, n
+  of TypeS: discard "handled in a different pass"
+  of EmitS: genEmitStmt c, n
   else:
     error c.m, "expected top level construct but got: ", n
 
 proc traverseCode(c: var GeneratedCode; n: var Cursor) =
-  case t[n].kind
-  of StmtsC:
-    for ch in sons(t, n): genToplevel(c, t, ch)
+  if n.stmtKind == StmtsS:
+    inc n
+    while n.kind != ParRi: genToplevel(c, n)
+    # missing `inc n` here is intentional
   else:
     error c.m, "expected `stmts` but got: ", n
-
-  when false:
-    var i = NodePos(0)
-    while i.int < c.m.code.len:
-      let oldLen = c.code.len
-      let moveToInitSection = false # c.m.code[NodePos(i)].kind notin AllowedInToplevelC
-
-      gen c, c.m.code, NodePos(i)
-      next c.m.code, i
-
-      if moveToInitSection:
-        for i in oldLen ..< c.code.len:
-          c.init.add c.code[i]
-        setLen c.code, oldLen
 
 proc writeLineDir(f: var CppFile, c: var GeneratedCode) =
   for id in items(c.fileIds):

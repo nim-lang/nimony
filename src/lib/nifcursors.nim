@@ -173,6 +173,9 @@ proc cursorToPosition*(base, c: Cursor): int {.inline.} =
   result = (c - base) div sizeof(PackedToken)
   assert result < 1_000_000
 
+proc toUniqueId*(c: Cursor): int {.inline.} =
+  result = cast[int](c.p)
+
 proc add*(result: var TokenBuf; c: Cursor) =
   result.add c.load
 

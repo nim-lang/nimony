@@ -12,61 +12,68 @@
 proc genx(c: var GeneratedCode; n: var Cursor)
 
 template typedBinOp(opr) =
-  let (typ, a, b) = sons3(t, n)
+  inc n
   c.add ParLe
   c.add ParLe
-  genType c, t, typ
+  genType c, n
   c.add ParRi
   c.add ParLe
-  genx c, t, a
+  genx c, n
   c.add opr
-  genx c, t, b
+  genx c, n
   c.add ParRi
   c.add ParRi
+  skipParRi n
 
 template cmpOp(opr) =
-  let (a, b) = sons2(t, n)
+  inc n
   c.add ParLe
-  genx c, t, a
+  genx c, n
   c.add opr
-  genx c, t, b
+  genx c, n
   c.add ParRi
+  skipParRi n
 
 template unOp(opr) =
+  inc n
   c.add ParLe
   c.add opr
-  genx c, n.firstSon
+  genx c, n
   c.add ParRi
+  skipParRi n
 
 template typedUnOp(opr) =
-  let (typ, a) = sons2(t, n)
+  inc n
   c.add ParLe
   c.add ParLe
-  genType c, t, typ
+  genType c, n
   c.add ParRi
   c.add opr
-  genx c, t, a
+  genx c, n
   c.add ParRi
+  skipParRi n
 
 proc genCall(c: var GeneratedCode; n: var Cursor) =
-  genCLineDir(c, t, info(t, n))
-  genx c, n.firstSon
+  genCLineDir(c, info(n))
+  inc n
+  genx c, n
   c.add ParLe
   var i = 0
-  for ch in sonsFromX(t, n):
+  while n.kind != ParRi:
     if i > 0: c.add Comma
-    genx c, t, ch
+    genx c, n
     inc i
   c.add ParRi
+  skipParRi n
 
 proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
-  genCLineDir(c, t, info(t, n))
-  genx c, t, ithSon(t, n, 1)
+  genCLineDir(c, info(n))
+  genx c, ithSon(n, 1)
   c.add ParLe
   var i = 0
-  for ch in sonsFromX(t, n, 2):
+  for ch in sonsFromX(n, 2):
     if i > 0: c.add Comma
-    genx c, t, ch
+    genx c, ch
     inc i
   c.add ParRi
 
@@ -79,36 +86,36 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
     c.requestedSyms.incl name
   of DerefC: unOp "*"
   of AtC:
-    let (a, i) = sons2(t, n)
-    genx c, t, a
-    let tyArr = getType(c.m, t, a)
+    let (a, i) = sons2(n)
+    genx c, a
+    let tyArr = getType(c.m, a)
     if tyArr.isError:
-      error c.m, "cannot get the type of ", t, a
+      error c.m, "cannot get the type of ", a
     if not c.m.isImportC(tyArr):
       c.add Dot
       c.add "a"
     c.add BracketLe
-    genx c, t, i
+    genx c, i
     c.add BracketRi
   of PatC:
-    let (a, i) = sons2(t, n)
-    genx c, t, a
+    let (a, i) = sons2(n)
+    genx c, a
     c.add BracketLe
-    genx c, t, i
+    genx c, i
     c.add BracketRi
   of DotC:
-    let (obj, fld, inheritance) = sons3(t, n)
+    let (obj, fld, inheritance) = sons3(n)
     let inhs {.cursor.} = c.m.lits.strings[t[inheritance].litId]
     if inhs != "0":
       var inh = parseInt(inhs)
-      genx c, t, obj
+      genx c, obj
       while inh > 0:
         c.add ".Q"
         dec inh
     else:
-      genx c, t, obj
+      genx c, obj
     c.add Dot
-    genx c, t, fld
+    genx c, fld
   of ErrC:
     if {gfMainModule, gfHasError} * c.flags == {}:
       moveToDataSection:
@@ -159,9 +166,9 @@ proc suffixToType(c: var GeneratedCode; t: Tree; suffix: NodePos) =
 proc suffixConv(c: var GeneratedCode; t: Tree; value: NodePos, suffix: NodePos) =
   c.add ParLe
   c.add ParLe
-  suffixToType c, t, suffix
+  suffixToType c, suffix
   c.add ParRi
-  genx c, t, value
+  genx c, value
   c.add ParRi
 
 proc genx(c: var GeneratedCode; n: var Cursor) =
@@ -191,60 +198,60 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
   of NanC:
     c.add "NAN"
   of AconstrC:
-    c.objConstrType(t, n.firstSon)
+    c.objConstrType(n.firstSon)
     c.add CurlyLe
     c.add ".a = "
     c.add CurlyLe
     var i = 0
-    for ch in sonsFromX(t, n):
+    for ch in sonsFromX(n):
       if i > 0: c.add Comma
-      c.genx t, ch
+      c.genx ch
       inc i
     c.add CurlyRi
     c.add CurlyRi
   of OconstrC:
-    c.objConstrType(t, n.firstSon)
+    c.objConstrType(n.firstSon)
     c.add CurlyLe
     var i = 0
-    for ch in sonsFromX(t, n):
+    for ch in sonsFromX(n):
       if i > 0: c.add Comma
       if t[ch].kind == OconstrC:
         # inheritance
         c.add Dot
         c.add "Q"
         c.add AsgnOpr
-        c.genx t, ch
+        c.genx ch
       else:
-        let (k, v) = sons2(t, ch)
+        let (k, v) = sons2(ch)
         c.add Dot
-        c.genx t, k
+        c.genx k
         c.add AsgnOpr
-        c.genx t, v
+        c.genx v
       inc i
     c.add CurlyRi
   of ParC:
     let arg = n.firstSon
     c.add ParLe
-    genx c, t, arg
+    genx c, arg
     c.add ParRi
   of AddrC: unOp "&"
   of SizeofC:
     let arg = n.firstSon
     c.add "sizeof"
     c.add ParLe
-    genType c, t, arg
+    genType c, arg
     c.add ParRi
   of AlignofC:
     let arg = n.firstSon
     c.add "NIM_ALIGNOF"
     c.add ParLe
-    genType c, t, arg
+    genType c, arg
     c.add ParRi
   of OffsetofC:
-    let (typ, mem) = sons2(t, n)
+    let (typ, mem) = sons2(n)
     c.add "offsetof"
     c.add ParLe
-    genType c, t, typ
+    genType c, typ
     c.add Comma
     let lit = t[mem].litId
     let name = mangle(c.m.lits.strings[lit])
@@ -273,11 +280,11 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
   of CastC: typedUnOp ""
   of ConvC: typedUnOp ""
   of SufC:
-    let (value, suffix) = sons2(t, n)
+    let (value, suffix) = sons2(n)
     if t[value].kind == StrLit:
-      genx c, t, value
+      genx c, value
     else:
-      suffixConv(c, t, value, suffix)
+      suffixConv(c, value, suffix)
   of OnErrC:
     genCallCanRaise c, n
   else:
