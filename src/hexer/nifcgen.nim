@@ -503,11 +503,11 @@ proc maybeByConstRef(e: var EContext; c: var Cursor) =
   if passByConstRef(param.typ, param.pragmas, e.bits div 8):
     var paramBuf = createTokenBuf()
     paramBuf.add tagToken("param", c.info)
-    paramBuf.addSubtree param.name
-    paramBuf.addSubtree param.exported
-    paramBuf.addSubtree param.pragmas
+    paramBuf.add param.name
+    paramBuf.add param.exported
+    paramBuf.add param.pragmas
     copyIntoKind paramBuf, PtrT, param.typ.info:
-      paramBuf.addSubtree param.typ
+      paramBuf.add param.typ
     paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
