@@ -278,6 +278,8 @@ proc takeProcType*(n: var Cursor): ProcType =
   skip n
   result.pragmas = n
   skip n
+  if n.kind == DotToken:
+    inc n
   skipParRi n
 
 type

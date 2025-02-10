@@ -57,7 +57,8 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
       o.forwardedDecls.add parent, TypedefStruct
     else:
       if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
-        traverseObjectBody(m, o, ch)
+         var viaPointer = false
+         recordDependencyImpl m, o, ch, ch.firstSon, viaPointer
       o.ordered.add tracebackTypeC(ch), TypedefStruct
   else:
     if ch.kind == Symbol:
@@ -72,7 +73,7 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
           error m, "undeclared symbol: ", ch
       else:
         var n = readonlyCursorAt(m.code, def.pos)
-        let decl = takeTypeDecl(n)
+        let decl = asTypeDecl(n)
         if not containsOrIncl(o.lookedAtBodies, decl.name.symId):
           recordDependencyImpl m, o, n, decl.body, viaPointer
     else:
@@ -84,14 +85,18 @@ proc recordDependency(m: Module; o: var TypeOrder; parent, child: Cursor) =
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor) =
   var n = t
-  while n.kind != ParRi:
-    if n.kind == Symbol:
-      # inheritance
-      recordDependency m, o, t, n
-      inc n
-    elif n.substructureKind == FldU:
-      let decl = takeFieldDecl(n)
-      recordDependency m, o, t, decl.typ
+  inc n
+  if n.kind == Symbol:
+    # inheritance
+    recordDependency m, o, t, n
+    inc n
+  elif n.kind == DotToken:
+    inc n
+  else:
+    error m, "expected `Symbol` or `.` for inheritance but got: ", n
+  while n.substructureKind == FldU:
+    let decl = takeFieldDecl(n)
+    recordDependency m, o, t, decl.typ
 
 proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor) =
   var n = t
@@ -107,8 +112,7 @@ proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor) =
 proc traverseTypes(m: Module; o: var TypeOrder) =
   for ch in m.types:
     let n = readonlyCursorAt(m.code, ch)
-    var nn = n
-    let decl = takeTypeDecl(nn)
+    let decl = asTypeDecl(n)
     let t = decl.body
     case t.typeKind
     of ObjectT:
@@ -118,7 +122,7 @@ proc traverseTypes(m: Module; o: var TypeOrder) =
       traverseObjectBody m, o, t
       o.ordered.add n, TypedefUnion
     of ArrayT:
-      traverseObjectBody m, o, t
+      recordDependency m, o, t, t.firstSon
       o.ordered.add n, TypedefStruct
     of ProctypeT:
       traverseProctypeBody m, o, t
