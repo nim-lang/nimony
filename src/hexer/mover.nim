@@ -179,14 +179,14 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
           skip pc # type
           inc nested
           # proceed with its value here
-        of NoStmt, CallS, CmdS, DiscardS, EmitS, InclSetS, ExclSetS:
+        of NoStmt, CallS, CmdS, DiscardS, EmitS, InclS, ExclS:
           if containsRoot(pc, x):
             otherUsage = pc
             return false
-        of IfS, WhenS, WhileS, ForS, CaseS, TryS, YieldS, RaiseS, ExportS,
-           IncludeS, ImportS, FromImportS, ImportExceptS, CommentS, PragmasLineS:
+        of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
+           IncludeS, ImportS, FromS, ImportExceptS, CommentS, PragmasS:
           raiseAssert "BUG: statement not eliminated: " & $pc.stmtKind
-        of ProcS, FuncS, IterS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
+        of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
           # declarative junk we don't care about:
           skip pc
   return true

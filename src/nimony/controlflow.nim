@@ -286,7 +286,7 @@ proc trIf(c: var ControlFlow; n: var Cursor; tar: Target) =
   while true:
     let info = n.info
     let k = n.substructureKind
-    if k == ElifS:
+    if k == ElifU:
       inc n
       var tjmp: seq[Label] = @[]
       var fjmp: seq[Label] = @[]
@@ -296,7 +296,7 @@ proc trIf(c: var ControlFlow; n: var Cursor; tar: Target) =
       endings.add c.jmpForw(info)
       for f in fjmp: c.patch f
       skipParRi n
-    elif k == ElseS:
+    elif k == ElseU:
       inc n
       trStmtOrExpr c, n, tar
       skipParRi n
@@ -409,7 +409,7 @@ proc trTry(c: var ControlFlow; n: var Cursor; tar: Target) =
   thisBlock.breakInstrs.shrink 0
 
   var exceptEnds: seq[Label] = @[]
-  while n.substructureKind == ExceptS:
+  while n.substructureKind == ExceptU:
     inc n
     takeTree c.dest, n # copy (except e as Type)
     trStmtOrExpr c, n, tar
@@ -421,7 +421,7 @@ proc trTry(c: var ControlFlow; n: var Cursor; tar: Target) =
   # Inside a `finally` `return` really means `return` again:
   c.currentBlock = c.currentBlock.parent
 
-  if n.substructureKind == FinallyS:
+  if n.substructureKind == FinU:
     inc n
     trStmt c, n
     skipParRi n
@@ -504,7 +504,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
 
 proc trCaseRanges(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
                tjmp, fjmp: var FixupList) =
-  assert n.exprKind == RangesX
+  assert n.substructureKind == RangesU
   inc n
   var nextAttempt = Label(-1)
   var nextAttemptB = Label(-1)
@@ -516,7 +516,7 @@ proc trCaseRanges(c: var ControlFlow; n: var Cursor; selector: SymId; selectorTy
       c.patch nextAttemptB
       nextAttemptB = Label(-1)
 
-    if n.exprKind == RangeX:
+    if n.substructureKind == RangeU:
       inc n
 
       c.dest.addParLe(IteF, n.info)
@@ -577,7 +577,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
     c.dest.addParRi()
 
   var endings: FixupList = @[]
-  while n.substructureKind == OfS:
+  while n.substructureKind == OfU:
     inc n
     var tjmp: FixupList = @[]
     var fjmp: FixupList = @[]
@@ -587,7 +587,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
     endings.add c.jmpForw(n.info)
     for f in fjmp: c.patch f
     skipParRi n
-  if n.substructureKind == ElseS:
+  if n.substructureKind == ElseU:
     inc n
     trStmtOrExpr c, n, tar
     skipParRi n
@@ -647,14 +647,14 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trTry c, n, default(Target)
   of RaiseS:
     trRaise c, n
-  of IterS, ProcS, FuncS, MacroS, ConverterS, MethodS:
+  of IteratorS, ProcS, FuncS, MacroS, ConverterS, MethodS:
     trProc c, n
-  of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromImportS, ImportExceptS, PragmasLineS:
+  of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromS, ImportExceptS, PragmasS:
     c.dest.addDotToken()
     skip n
   of CallS, CmdS:
     trCall c, n
-  of YieldS, DiscardS, InclSetS, ExclSetS:
+  of YldS, DiscardS, InclS, ExclS:
     c.dest.add n
     inc n
     while n.kind != ParRi:
@@ -743,25 +743,27 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
       trStmtListExpr c, n
     of CallKinds:
       trCall c, n
-    of ArrAtX, TupAtX, AtX, DerefX, HderefX, DotX, DerefDotX, PatX:
+    of ArrAtX, TupAtX, AtX, DerefX, HderefX, DotX, DdotX, PatX:
       # in anticipation of special casing:
       trExprLoop c, n
     of AddrX, HaddrX:
       trExprLoop c, n
     of QuotedX, ParX,
        NilX, FalseX, TrueX, NotX, NegX, OconstrX, NewOconstrX, TupleConstrX,
-       AconstrX, SetConstrX, OchoiceX, CchoiceX, KvX, AddX, SubX, MulX, DivX, ModX,
+       AconstrX, SetConstrX, OchoiceX, CchoiceX, AddX, SubX, MulX, DivX, ModX,
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
-       CastX, ConvX, OconvX, HconvX, DconvX, InfX, NegInfX, NanX, SufX, RangeX, RangesX,
+       CastX, ConvX, OconvX, HconvX, DconvX, InfX, NegInfX, NanX, SufX,
        UnpackX, EnumToStrX,
        IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
-       MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardSetX, EnsureMoveX,
+       MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX, BracketX, CurlyX:
       trExprLoop c, n
-    of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX:
+    of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       c.dest.addDotToken()
       skip n
+    of ErrX:
+      trExprLoop c, n
     of NoExpr:
       case n.stmtKind
       of IfS:
