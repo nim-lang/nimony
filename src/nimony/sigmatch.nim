@@ -725,19 +725,17 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
         skip fIndex # skip element type
         let fLen = lengthOrd(m.context[], fIndex)
         if fLen.isNaN:
-          var aIndex = arg.n
-          inc aIndex # skip constructor tag
-          if aIndex.typeKind == ArrayT:
-            inc aIndex # skip tag
-            skip aIndex # skip element type
-            # original type cursor may be deleted after instantiation, hoist it:
-            var buf = createTokenBuf(8)
-            buf.addSubtree aIndex
-            aIndex = typeToCursor(m.context[], buf, 0)
-            linearMatch(m, fIndex, aIndex)
-          else:
-            # constructor did not build array type for some reason, assume error
-            m.error(InvalidMatch, f, aIndex)
+          # create index type to match to
+          var buf = createTokenBuf(8)
+          let info = arg.n.info
+          buf.addParLe(RangetypeT, info)
+          buf.addSubtree m.context.types.intType
+          buf.addIntLit(0, info)
+          buf.addIntLit(-1, info)
+          buf.addParRi()
+          # hoist it in case it gets inferred:
+          var aIndex = typeToCursor(m.context[], buf, 0)
+          linearMatch(m, fIndex, aIndex)
         elif fLen != zero():
           m.error(InvalidMatch, f, arg.typ)
       inc m.inheritanceCosts
@@ -749,7 +747,8 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
         m.args.takeTree f
         m.args.addParRi()
     else:
-      m.error(InvalidMatch, f, arg.typ)
+      # match against `auto`, untyped/varargs should still match
+      singleArgImpl(m, f, arg)
     return
   singleArgImpl(m, f, arg)
   if not m.err:

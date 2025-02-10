@@ -3930,14 +3930,8 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     # empty array
     if it.typ.typeKind == AutoT:
       if AllowEmpty in flags:
-        # keep it.typ as auto, but build array[0..-1, auto] in the expression
-        c.dest.buildTree ArrayT, info:
-          c.dest.addSubtree it.typ
-          c.dest.addParLe(RangetypeT, info)
-          c.dest.addSubtree c.types.intType
-          c.dest.addIntLit(0, info)
-          c.dest.addIntLit(-1, info)
-          c.dest.addParRi()
+        # keep it.typ as auto
+        c.dest.addSubtree it.typ
       else:
         buildErr c, it.n.info, "empty array needs a specified type"
     else:
@@ -3986,9 +3980,8 @@ proc semCurly(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     # empty set
     if it.typ.typeKind == AutoT:
       if AllowEmpty in flags:
-        # keep it.typ as auto, but build set[auto] in the expression
-        c.dest.buildTree SetT, it.n.info:
-          c.dest.addSubtree it.typ
+        # keep it.typ as auto
+        c.dest.addSubtree it.typ
       else:
         buildErr c, it.n.info, "empty set needs a specified type"
     else:

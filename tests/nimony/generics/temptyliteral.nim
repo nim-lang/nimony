@@ -8,9 +8,11 @@ genericArr(123, [])
 genericIndexArr([])
 genericElemArr(123, [])
 
-proc concreteSet(arr: set[int8]) = discard
-proc genericSet[T](x: T, arr: set[T]) = discard
+type Enum = enum a, b, c
+proc concreteSet(arr: set[Enum]) = discard
+proc genericSet[T](x: set[T], arr: set[T]) = discard
 
 concreteSet({})
-genericSet(123'i8, {})
+var x: set[Enum] = {}
+genericSet(x, {})
 
