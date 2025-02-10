@@ -1311,9 +1311,12 @@ proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
       var fileAsStr = ""
       if stack.len > 0:
         let (pfile, pline, pcol) = unpack(pool.man, stack[^1])
-        line = line - pline
-        col = col - pcol
         if file != pfile: fileAsStr = pool.files[file]
+        if fileAsStr.len == 0:
+          line = line - pline
+          col = col - pcol
+      else:
+        fileAsStr = pool.files[file]
       b.addLineInfo(col, line, fileAsStr)
 
     case c.kind
