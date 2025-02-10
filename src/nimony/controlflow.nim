@@ -595,7 +595,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
   for e in endings: c.patch e
 
 proc trCall(c: var ControlFlow; n: var Cursor) =
-  c.dest.add n
+  c.dest.addToken n
   inc n
   while n.kind != ParRi:
     trExpr c, n
@@ -617,7 +617,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
       trStmt c, n
     inc n
   of ScopeS:
-    c.dest.add n
+    c.dest.addToken n
     inc n
     c.typeCache.openScope()
     while n.kind != ParRi:
@@ -655,7 +655,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of CallS, CmdS:
     trCall c, n
   of YieldS, DiscardS, InclSetS, ExclSetS:
-    c.dest.add n
+    c.dest.addToken n
     inc n
     while n.kind != ParRi:
       trExpr c, n
@@ -718,7 +718,7 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
   c.dest.addSymUse tar, info
 
 proc trExprLoop(c: var ControlFlow; n: var Cursor) =
-  c.dest.add n
+  c.dest.addToken n
   inc n
   while n.kind != ParRi:
     trExpr c, n
@@ -729,7 +729,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
   case n.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StringLit, CharLit,
      Ident, DotToken, EofToken, UnknownToken:
-    c.dest.add n
+    c.dest.addToken n
     inc n
   of ParRi:
     raiseAssert "unreachable"
@@ -780,7 +780,7 @@ proc toControlflow*(n: Cursor): TokenBuf =
   assert n.stmtKind == StmtsS
   c.typeCache.openScope()
   var n = n
-  c.dest.add n
+  c.dest.addToken n
   inc n
   while n.kind != ParRi:
     trStmt c, n
