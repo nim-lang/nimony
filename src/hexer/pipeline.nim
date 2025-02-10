@@ -50,33 +50,25 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   endRead(n1)
 
   var c3 = beginRead(n2)
-  var n3 = lowerExprs(c3, moduleSuffix)
+  var n3 = injectDestructors(c3, ctx)
   endRead(n2)
 
-  var c4 = beginRead(n3)
-  var n4 = injectDestructors(c4, ctx)
-  endRead(n3)
-
-  shrink(n4, n4.len-1)
+  shrink(n3, n3.len-1)
 
   if ctx[].dest.len > 0:
     var hookCursor = beginRead(ctx[].dest)
     publishHooks hookCursor
     endRead(ctx[].dest)
 
-  n4.add move(ctx[].dest)
-  n4.addParRi()
+  n3.add move(ctx[].dest)
+  n3.addParRi()
 
-  var needsXelimAgain = false
+  var c4 = beginRead(n3)
+  var n4 = injectConstParamDerefs(c4, c.bits div 8)
+  endRead(n3)
 
   var c5 = beginRead(n4)
-  var n5 = injectConstParamDerefs(c5, c.bits div 8, needsXelimAgain)
+  var n5 = lowerExprs(c5, moduleSuffix)
   endRead(n4)
 
-  if needsXelimAgain:
-    var c6 = beginRead(n5)
-    var n6 = lowerExprs(c6, moduleSuffix)
-    endRead(n5)
-    result = move n6
-  else:
-    result = move n5
+  result = move n5
