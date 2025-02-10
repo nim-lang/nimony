@@ -329,17 +329,16 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
     error c.m, "expected pragmas but got: ", n
 
 proc genCLineDir(c: var GeneratedCode; info: PackedLineInfo) =
-  if optLineDir in c.m.config.options:
-    let (id, line, _) = unpack(c.m.lits.man, info)
-    if c.m.lits.files.hasId(id):
-      let name = "FX_" & $(int id)
-      c.add LineDirKeyword
-      c.add $line
-      c.add Space
-      c.add name
-      c.add NewLine
+  if optLineDir in c.m.config.options and info.isValid:
+    let (id, line, _) = unpack(pool.man, info)
+    let name = "FX_" & $(int id)
+    c.add LineDirKeyword
+    c.add $line
+    c.add Space
+    c.add name
+    c.add NewLine
 
-      c.fileIds.incl id
+    c.fileIds.incl id
 
 template moveToDataSection(body: untyped) =
   let oldLen = c.code.len
