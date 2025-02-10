@@ -244,7 +244,6 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isB
     while n.kind != ParRi:
       c.add getNumberQualifier(c, n)
       skip n
-      skipParRi n
     atom(c, typeName, name)
     inc n
   else:
@@ -420,14 +419,19 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
         c.genType base
         c.add ParRi
         case n.kind
-        of IntLit: c.genIntLit n.intId
-        of UIntLit: c.genUIntLit n.uintId
+        of IntLit:
+          c.genIntLit n.intId
+          inc n
+        of UIntLit:
+          c.genUIntLit n.uintId
+          inc n
         else:
           error c.m, "expected `Number` but got: ", n
         c.add ParRi
         c.add NewLine
       else:
         error c.m, "expected `SymbolDef` but got: ", n
+      skipParRi n
     else:
       error c.m, "expected `efld` but got: ", n
   inc n # ParRi

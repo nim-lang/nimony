@@ -521,6 +521,7 @@ proc genInclude(c: var GeneratedCode; n: var Cursor) =
   let lit = n.litId
   let headerAsStr {.cursor.} = pool.strings[lit]
   let header = c.tokens.getOrIncl(headerAsStr)
+  inc n
   if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
     if headerAsStr[0] == '#':
       discard "skip the #include keyword"
