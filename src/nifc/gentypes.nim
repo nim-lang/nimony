@@ -255,6 +255,8 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isB
     inc n
     while n.kind != ParRi:
       c.add getNumberQualifier(c, n)
+      skip n
+    skipParRi n
     atom(c, s, name)
 
 proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string) =
