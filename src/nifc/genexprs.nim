@@ -132,6 +132,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
         c.add Semicolon
       c.flags.incl gfHasError
     c.add ErrToken
+    skip n
   else:
     error c.m, "expected expression but got: ", n
 

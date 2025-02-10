@@ -24,7 +24,7 @@
   )
   )
 
-  
+
   (type :MyObject4.m .
   (object . (fld :a1 . (i +32 (atomic)))
     (fld :a2 . (i +64 (atomic)))
@@ -49,7 +49,7 @@
 
   (proc :foo.if . . . (stmts
     (const :x.c . (i +32) (suf +12 "i32"))
-    (if (elif (eq x.c +1) (call assert.c (eq x.c +1))) 
+    (if (elif (eq x.c +1) (call assert.c (eq x.c +1)))
         (elif (eq x.c +3) (call assert.c (eq x.c +3)))
         (else (call assert.c (eq x.c +12)))
     )
@@ -67,7 +67,7 @@
   (proc :foo.while . . . (stmts
     (var :x.c . (i +32 (atomic)) (suf +12 "i32"))
     (while (not (lt x.c +8))
-       (stmts 
+       (stmts
           (asgn x.c
             (sub (i +32) x.c +1)
           )
@@ -158,8 +158,8 @@
     (call assert.c (eq (sizeof MyObject2.m) +24))
     (call assert.c (eq (alignof (i +32)) +4))
     (call assert.c (eq (alignof MyObject2.m) +8))
-    (call assert.c (eq (offsetof MyObject2.m a2) +8))
-    (call assert.c (eq (offsetof MyObject2.m a3) +16))
+    (call assert.c (eq (offsetof MyObject2.m a2.c) +8))
+    (call assert.c (eq (offsetof MyObject2.m a3.c) +16))
     (call assert.c (eq (sizeof MyObject.aligned) +8))
   ))
 

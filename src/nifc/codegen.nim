@@ -446,6 +446,8 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
         lastAttrString = "__attribute__((" & pool.strings[p.litId] & ")) "
         inc p
         skipParRi p
+      of ErrsP:
+        skip p
       else:
         if p.callConvKind != NoCallConv:
           lastCallConv = p.callConvKind
@@ -486,7 +488,6 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       if params > 0: c.add Comma
       genParam c, p
       inc params
-      skip p
     skipParRi p
 
   if isVarargs in flags:
