@@ -4118,7 +4118,7 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
         c.buildErr it.n.info, "expected field name for named tuple constructor"
       else:
         takeToken c, it.n
-        typ.add it.n # add name
+        typ.addSubtree it.n # add name
         takeToken c, it.n
     else:
       typ.add identToken(pool.strings.getOrIncl("Field" & $i), it.n.info)
