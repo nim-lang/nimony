@@ -743,7 +743,7 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
         if containsGenericParams(f): # maybe restrict to params of this routine
           m.genericEmpty = true
         let start = m.args.len
-        m.args.add arg.n # copy tag
+        m.args.add arg.n.load # copy tag
         m.args.takeTree f
         m.args.addParRi()
     else:
