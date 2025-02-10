@@ -108,14 +108,6 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         inc n
         skip n # label or DotToken
         result = getTypeImpl(c, n)
-      of StmtsS:
-        var n = n
-        inc n # skip "stmts"
-        while n.kind != ParRi:
-          let prev = n
-          skip n
-          if n.kind == ParRi:
-            result = getTypeImpl(c, prev)
       else:
         discard
     else:
