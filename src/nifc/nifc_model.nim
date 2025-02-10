@@ -215,7 +215,7 @@ type
 
 proc asTypeDeclImpl(n: var Cursor): TypeDecl =
   assert n.stmtKind == TypeS
-  var n = n.firstSon
+  inc n
   result = TypeDecl(name: n)
   skip n
   result.pragmas = n
@@ -271,7 +271,9 @@ proc takeProcType*(n: var Cursor): ProcType =
     discard
   else:
     assert n.stmtKind == ProcS or n.typeKind == ProctypeT
-    inc n # skip the name
+    inc n # into (proctype ...)
+    skip n # skip the name
+  assert n.typeKind == ParamsT or n.kind == DotToken
   result = ProcType(params: n)
   skip n
   result.returnType = n
