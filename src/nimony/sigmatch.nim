@@ -61,7 +61,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*: bool
+    genericConverter*, genericEmpty*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -705,7 +705,52 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   else:
     m.error MismatchBug, f, arg.typ
 
+proc isEmptyLiteral*(n: Cursor): bool =
+  result = n.exprKind in {AconstrX, SetConstrX}
+  if result:
+    var n = n
+    inc n # tag
+    skip n # type
+    result = n.kind == ParRi
+
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
+  if arg.typ.typeKind == AutoT and isEmptyLiteral(arg.n):
+    if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
+        (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
+      # could also handle case where `f` is a typevar
+      if arg.n.exprKind == AconstrX:
+        # need to match index type
+        var fIndex = f
+        inc fIndex # skip tag
+        skip fIndex # skip element type
+        let fLen = lengthOrd(m.context[], fIndex)
+        if fLen.isNaN:
+          var aIndex = arg.n
+          inc aIndex # skip constructor tag
+          if aIndex.typeKind == ArrayT:
+            inc aIndex # skip tag
+            skip aIndex # skip element type
+            # original type cursor may be deleted after instantiation, hoist it:
+            var buf = createTokenBuf(8)
+            buf.addSubtree aIndex
+            aIndex = typeToCursor(m.context[], buf, 0)
+            linearMatch(m, fIndex, aIndex)
+          else:
+            # constructor did not build array type for some reason, assume error
+            m.error(InvalidMatch, f, aIndex)
+        elif fLen != zero():
+          m.error(InvalidMatch, f, arg.typ)
+      inc m.inheritanceCosts
+      if not m.err:
+        if containsGenericParams(f): # maybe restrict to params of this routine
+          m.genericEmpty = true
+        let start = m.args.len
+        m.args.add arg.n # copy tag
+        m.args.takeTree f
+        m.args.addParRi()
+    else:
+      m.error(InvalidMatch, f, arg.typ)
+    return
   singleArgImpl(m, f, arg)
   if not m.err:
     m.useArg arg # since it was a match, copy it
