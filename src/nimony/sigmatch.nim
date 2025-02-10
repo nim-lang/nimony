@@ -713,42 +713,45 @@ proc isEmptyLiteral*(n: Cursor): bool =
     skip n # type
     result = n.kind == ParRi
 
+proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
+  if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
+      (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
+    # could also handle case where `f` is a typevar
+    if arg.n.exprKind == AconstrX:
+      # need to match index type
+      var fIndex = f
+      inc fIndex # skip tag
+      skip fIndex # skip element type
+      let fLen = lengthOrd(m.context[], fIndex)
+      if fLen.isNaN:
+        # create index type to match to
+        var buf = createTokenBuf(8)
+        let info = arg.n.info
+        buf.addParLe(RangetypeT, info)
+        buf.addSubtree m.context.types.intType
+        buf.addIntLit(0, info)
+        buf.addIntLit(-1, info)
+        buf.addParRi()
+        # hoist it in case it gets inferred:
+        var aIndex = typeToCursor(m.context[], buf, 0)
+        linearMatch(m, fIndex, aIndex)
+      elif fLen != zero():
+        m.error(InvalidMatch, f, arg.typ)
+    inc m.inheritanceCosts
+    if not m.err:
+      if containsGenericParams(f): # maybe restrict to params of this routine
+        m.genericEmpty = true
+      let start = m.args.len
+      m.args.add arg.n.load # copy tag
+      m.args.takeTree f
+      m.args.addParRi()
+  else:
+    # match against `auto`, untyped/varargs should still match
+    singleArgImpl(m, f, arg)
+
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
   if arg.typ.typeKind == AutoT and isEmptyLiteral(arg.n):
-    if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
-        (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
-      # could also handle case where `f` is a typevar
-      if arg.n.exprKind == AconstrX:
-        # need to match index type
-        var fIndex = f
-        inc fIndex # skip tag
-        skip fIndex # skip element type
-        let fLen = lengthOrd(m.context[], fIndex)
-        if fLen.isNaN:
-          # create index type to match to
-          var buf = createTokenBuf(8)
-          let info = arg.n.info
-          buf.addParLe(RangetypeT, info)
-          buf.addSubtree m.context.types.intType
-          buf.addIntLit(0, info)
-          buf.addIntLit(-1, info)
-          buf.addParRi()
-          # hoist it in case it gets inferred:
-          var aIndex = typeToCursor(m.context[], buf, 0)
-          linearMatch(m, fIndex, aIndex)
-        elif fLen != zero():
-          m.error(InvalidMatch, f, arg.typ)
-      inc m.inheritanceCosts
-      if not m.err:
-        if containsGenericParams(f): # maybe restrict to params of this routine
-          m.genericEmpty = true
-        let start = m.args.len
-        m.args.add arg.n.load # copy tag
-        m.args.takeTree f
-        m.args.addParRi()
-    else:
-      # match against `auto`, untyped/varargs should still match
-      singleArgImpl(m, f, arg)
+    matchEmptyContainer(m, f, arg)
     return
   singleArgImpl(m, f, arg)
   if not m.err:
