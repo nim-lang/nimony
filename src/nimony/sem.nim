@@ -185,6 +185,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       if convMatch.genericConverter:
         let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
         c.dest[c.dest.len-1].setSymId inst.targetSym
+      # ignore genericEmpty case, probably environment is generic
       c.dest.add convMatch.args
       c.dest.addParRi()
       it.typ = expected
@@ -590,6 +591,7 @@ type
     PreferIterators
     AllowUndeclared
     AllowModuleSym
+    AllowEmpty
     InTypeContext
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
@@ -1200,7 +1202,7 @@ proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
-  if not m.genericConverter:
+  if not (m.genericConverter or m.genericEmpty):
     c.dest.add m.args
   else:
     m.args.addParRi()
@@ -1211,7 +1213,17 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
       while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
         takeToken c, arg
         inc nested
-      if arg.exprKind == HcallX:
+      if m.genericEmpty and isEmptyLiteral(arg):
+        takeToken c, arg
+        inc nested
+        if containsGenericParams(arg):
+          let start = c.dest.len
+          c.dest.addSubtree instantiateType(c, arg, m.inferred)
+          skip arg
+        else:
+          takeTree c, arg
+        # leave ParRi token to while loop below
+      elif arg.exprKind == HcallX:
         let convInfo = arg.info
         takeToken c, arg
         inc nested
@@ -1595,7 +1607,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
   while it.n.kind != ParRi:
     var arg = Item(n: it.n, typ: c.types.autoType)
     argIndexes.add c.dest.len
-    semExpr c, arg
+    semExpr c, arg, {AllowEmpty}
     if arg.typ.typeKind == UntypedT:
       skipSemCheck = true
     # scope extension: If the type is Typevar and it has attached
@@ -3909,15 +3921,19 @@ proc semTypedUnaryArithmetic(c: var SemContext; it: var Item) =
   wantParRi c, it.n
   commonType c, it, beforeExpr, typ
 
-proc semBracket(c: var SemContext, it: var Item) =
+proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   let exprStart = c.dest.len
   let info = it.n.info
   inc it.n
   c.dest.addParLe(AconstrX, info)
   if it.n.kind == ParRi:
     # empty array
-    if it.typ.typeKind in {AutoT, VoidT}:
-      buildErr c, it.n.info, "empty array needs a specified type"
+    if it.typ.typeKind == AutoT:
+      if AllowEmpty in flags:
+        # keep it.typ as auto
+        c.dest.addSubtree it.typ
+      else:
+        buildErr c, it.n.info, "empty array needs a specified type"
     else:
       c.dest.addSubtree it.typ
     wantParRi c, it.n
@@ -3955,15 +3971,19 @@ proc semBracket(c: var SemContext, it: var Item) =
   c.dest.insert it.typ, typeInsertPos
   commonType c, it, exprStart, expected
 
-proc semCurly(c: var SemContext, it: var Item) =
+proc semCurly(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   let exprStart = c.dest.len
   let info = it.n.info
   inc it.n
   c.dest.addParLe(SetConstrX, info)
   if it.n.kind == ParRi:
     # empty set
-    if it.typ.typeKind in {AutoT, VoidT}:
-      buildErr c, it.n.info, "empty set needs a specified type"
+    if it.typ.typeKind == AutoT:
+      if AllowEmpty in flags:
+        # keep it.typ as auto
+        c.dest.addSubtree it.typ
+      else:
+        buildErr c, it.n.info, "empty set needs a specified type"
     else:
       c.dest.addSubtree it.typ
     wantParRi c, it.n
@@ -5326,9 +5346,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of CardX:
       semCardSet c, it
     of BracketX:
-      semBracket c, it
+      semBracket c, it, flags
     of CurlyX:
-      semCurly c, it
+      semCurly c, it, flags
     of AconstrX:
       semArrayConstr c, it
     of SetConstrX:
