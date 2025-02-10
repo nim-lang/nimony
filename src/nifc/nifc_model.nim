@@ -183,6 +183,7 @@ proc parse*(r: var Reader): Module =
   let nodeCount = r.fileSize div 7
   result = Module(code: createTokenBuf(nodeCount))
   discard parse(r, result, NoLineInfo)
+  freeze(result.code)
 
 proc load*(filename: string): Module =
   var r = nifreader.open(filename)
