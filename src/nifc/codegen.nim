@@ -581,7 +581,9 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
       WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnErrS:
     moveToInitSection:
       genStmt c, n
-  of TypeS: discard "handled in a different pass"
+  of TypeS:
+    discard "handled in a different pass"
+    skip n
   of EmitS: genEmitStmt c, n
   else:
     if n.pragmaKind == NodeclP:

@@ -153,6 +153,7 @@ proc genGoto(c: var GeneratedCode; n: var Cursor) =
     c.add GotoKeyword
     c.add name
     c.add Semicolon
+    inc n
   else:
     error c.m, "expected Symbol but got: ", n
   skipParRi n
