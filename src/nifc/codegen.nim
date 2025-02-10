@@ -423,30 +423,41 @@ include genstmts
 
 proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   let signatureBegin = c.code.len
-  let prc = asProcDecl(n)
+  var prc = takeProcDecl(n)
 
   if isExtern:
     c.add ExternKeyword
 
-  var lastCallConv = Empty
+  var lastCallConv = NoCallConv
   var lastAttrString = ""
-  if t[prc.pragmas].kind == PragmasC:
-    for ch in sons(prc.pragmas):
-      case t[ch].kind
-      of CallingConventions, InlineC, NoinlineC:
-        lastCallConv = t[ch].kind
-      of AttrC:
-        lastAttrString = "__attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & ")) "
+  if prc.pragmas.kind == ParLe:
+    var p = prc.pragmas.firstSon
+    while p.kind != ParRi:
+      case p.pragmaKind
+      of InlineP:
+        c.add StaticKeyword
+        c.add "inline "
+        skip p
+      of NoinlineP:
+        c.add "N_NOINLINE "
+        skip p
+      of AttrP:
+        inc p
+        lastAttrString = "__attribute__((" & pool.strings[p.litId] & ")) "
+        inc p
+        skipParRi p
       else:
-        discard
+        if p.callConvKind != NoCallConv:
+          lastCallConv = p.callConvKind
+          skip p
+        else:
+          error c.m, "invalid pragma: ", p
 
   let name: string
-  if lastCallConv != Empty:
-    if lastCallConv == InlineC:
-      c.add StaticKeyword
-    c.add CallingConvToStr[lastCallConv]
+  if lastCallConv != NoCallConv:
+    c.add callingConvToStr(lastCallConv)
     c.add ParLe
-    if t[prc.returnType].kind == Empty:
+    if prc.returnType.kind == DotToken:
       c.add "void"
     else:
       genType c, prc.returnType
@@ -455,7 +466,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     name = genSymDef(c, prc.name)
     c.add ParRi
   else:
-    if t[prc.returnType].kind == Empty:
+    if prc.returnType.kind == DotToken:
       c.add "void"
     else:
       genType c, prc.returnType
@@ -469,11 +480,14 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   c.add ParLe
 
   var params = 0
-  if t[prc.params].kind != Empty:
-    for ch in sons(prc.params):
+  if prc.params.kind != DotToken:
+    var p = prc.params.firstSon
+    while p.kind != ParRi:
       if params > 0: c.add Comma
-      genParam c, ch
+      genParam c, p
       inc params
+      skip p
+    skipParRi p
 
   if isVarargs in flags:
     if params > 0: c.add Comma
@@ -526,8 +540,15 @@ proc genImp(c: var GeneratedCode; n: var Cursor) =
   inc n
   case n.stmtKind
   of ProcS: genProcDecl c, n, true
-  of VarS, GvarS, TvarS, ConstS:
-    genVar c, n, true
+  of VarS:
+    # XXX Disallow this: You can only import global variables!
+    genVar c, n, IsGlobal, true
+  of GvarS:
+    genVar c, n, IsGlobal, true
+  of TvarS:
+    genVar c, n, IsThreadlocal, true
+  of ConstS:
+    genVar c, n, IsConst, true
   else:
     error c.m, "expected declaration for `imp` but got: ", n
   skipParRi n
@@ -551,7 +572,6 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   #                       TypeDecl | Include | EmitStmt
   case n.stmtKind
   of ImpS: genImp c, n
-  of NodeclS: genNodecl c, n
   of InclS: genInclude c, n
   of ProcS: genProcDecl c, n, false
   of VarS, GvarS, TvarS: genStmt c, n
@@ -563,7 +583,10 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   of TypeS: discard "handled in a different pass"
   of EmitS: genEmitStmt c, n
   else:
-    error c.m, "expected top level construct but got: ", n
+    if n.pragmaKind == NodeclP:
+      genNodecl c, n
+    else:
+      error c.m, "expected top level construct but got: ", n
 
 proc traverseCode(c: var GeneratedCode; n: var Cursor) =
   if n.stmtKind == StmtsS:
@@ -576,7 +599,7 @@ proc traverseCode(c: var GeneratedCode; n: var Cursor) =
 proc writeLineDir(f: var CppFile, c: var GeneratedCode) =
   for id in items(c.fileIds):
     let name = "FX_" & $(int id)
-    let def = "#define " & name & " \"" & c.m.lits.files[id] & "\""
+    let def = "#define " & name & " \"" & pool.files[id] & "\""
     write f, def
     write f, "\n"
 
@@ -588,10 +611,11 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   var co = TypeOrder()
   traverseTypes(c.m, co)
 
-  generateTypes(c, c.m.code, co)
+  generateTypes(c, co)
   let typeDecls = move c.code
 
-  traverseCode c, c.m.code, StartPos
+  var n = beginRead(c.m.code)
+  traverseCode c, n
   var f = CppFile(f: open(outp, fmWrite))
   f.write "#define NIM_INTBITS " & $s.bits & "\n"
   f.write Prelude

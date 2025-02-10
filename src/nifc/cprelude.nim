@@ -251,11 +251,11 @@ typedef NU8 NU;
 #define N_INLINE_PTR(rettype, name) rettype (*name)
 
 #if defined(__GNUC__) || defined(__ICC__)
-#  define N_NOINLINE(rettype, name) rettype __attribute__((__noinline__)) name
+#  define N_NOINLINE __attribute__((__noinline__))
 #elif defined(_MSC_VER)
-#  define N_NOINLINE(rettype, name) __declspec(noinline) rettype name
+#  define N_NOINLINE __declspec(noinline)
 #else
-#  define N_NOINLINE(rettype, name) rettype name
+#  define N_NOINLINE
 #endif
 
 #define N_NOINLINE_PTR(rettype, name) rettype (*name)
