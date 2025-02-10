@@ -14,6 +14,7 @@ proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
   while n.kind != ParRi:
     if n.kind == StringLit:
       c.add pool.strings[n.litId]
+      inc n
     else:
       genx c, n
   inc n # ParRi
@@ -307,13 +308,11 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     c.add Semicolon
     skipParRi n
   of OnErrS:
-    inc n
+    var onErrAction = n
+    inc onErrAction
     genCallCanRaise c, n
     c.add Semicolon
-    if n.kind != DotToken:
-      genOnError(c, n)
-    else:
-      inc n
-    skipParRi n
+    if onErrAction.kind != DotToken:
+      genOnError(c, onErrAction)
   of ProcS, TypeS, ImpS, InclS:
     error c.m, "expected statement but got: ", n
