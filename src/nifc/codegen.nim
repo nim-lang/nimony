@@ -360,31 +360,32 @@ type
   VarKind = enum
     IsLocal, IsGlobal, IsThreadlocal, IsConst
 
-proc isLiteral(t: Tree; n: NodePos): bool =
-  case t[n].kind
-  of IntLit, UIntLit, FloatLit,
-      CharLit, StrLit, FalseC, TrueC, InfC, NegInfC, NanC, SufC:
+proc isLiteral(n: var Cursor): bool =
+  case n.kind
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit:
     result = true
-  of AconstrC:
-    result = true
-    for ch in sonsFromX(n):
-      if not isLiteral(ch):
-        return false
-  of OconstrC:
-    result = true
-    for ch in sonsFromX(n):
-      let (_, value) = sons2(ch)
-      if not isLiteral(value):
-        return false
+    inc n
   else:
-    result = false
+    case n.exprKind
+    of FalseC, TrueC, InfC, NegInfC, NanC, SufC:
+      result = true
+      skip n
+    of AconstrC, OconstrC:
+      result = true
+      inc n
+      skip n # type
+      while n.kind != ParRi:
+        if not isLiteral(n): return false
+      skipParRi n
+    else:
+      result = false
 
 proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
-  let d = asVarDecl(n)
   genCLineDir(c, info(n))
-  if t[d.name].kind == SymDef:
-    let lit = t[d.name].litId
-    let name = mangle(c.m.lits.strings[lit])
+  var d = takeVarDecl(n)
+  if d.name.kind == SymbolDef:
+    let lit = d.name.symId
+    let name = mangle(pool.syms[lit])
     let beforeDecl = c.code.len
     if toExtern:
       c.add ExternKeyword
@@ -395,10 +396,11 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       c.add "__thread "
     genType c, d.typ, name
     let vis = genVarPragmas(c, d.pragmas)
-    if vis == StaticC:
+    if vis == StaticP:
       c.code.insert(Token(StaticKeyword), beforeDecl)
-    if t[d.value].kind != Empty:
-      if vk == IsGlobal and not isLiteral(d.value):
+    if d.value.kind != DotToken:
+      var value = d.value
+      if vk == IsGlobal and not isLiteral(value):
         c.add Semicolon
         moveToInitSection:
           c.add name
@@ -414,7 +416,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     else:
       c.add Semicolon
   else:
-    error c.m, "expected SymbolDef but got: ", n
+    error c.m, "expected SymbolDef but got: ", d.name
 
 include genstmts
 

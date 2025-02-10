@@ -52,6 +52,7 @@ proc rawTagIsNifcExpr*(raw: uint32): bool {.inline.} =
 type
   NifcStmt* = enum
     NoStmt
+    CallS = (46, "call")  ## call operation
     GvarS = (50, "gvar")  ## global variable declaration
     TvarS = (51, "tvar")  ## thread local variable declaration
     VarS = (52, "var")  ## variable declaration
@@ -71,18 +72,13 @@ type
     StmtsS = (91, "stmts")  ## list of statements
     ImpS = (129, "imp")  ## import declaration
     InclS = (131, "incl")  ## `#include` statement or `incl` set operation
-    ImportS = (134, "import")  ## `import` statement
-    FromS = (135, "from")  ## `from` statement
-    ImportexceptS = (136, "importexcept")  ## `importexcept` statement
-    ExportS = (137, "export")  ## `export` statement
-    CommentS = (138, "comment")  ## `comment` statement
     DiscardS = (139, "discard")  ## `discard` statement
     TryS = (140, "try")  ## `try` statement
     RaiseS = (141, "raise")  ## `raise` statement
     OnerrS = (142, "onerr")  ## error handling statement
 
 proc rawTagIsNifcStmt*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {50'u8, 51'u8, 52'u8, 54'u8, 61'u8, 68'u8, 73'u8, 74'u8, 75'u8, 76'u8, 81'u8, 84'u8, 85'u8, 87'u8, 88'u8, 89'u8, 91'u8, 129'u8, 131'u8, 134'u8, 135'u8, 136'u8, 137'u8, 138'u8, 139'u8, 140'u8, 141'u8, 142'u8}
+  raw <= 255'u32 and raw.uint8 in {46'u8, 50'u8, 51'u8, 52'u8, 54'u8, 61'u8, 68'u8, 73'u8, 74'u8, 75'u8, 76'u8, 81'u8, 84'u8, 85'u8, 87'u8, 88'u8, 89'u8, 91'u8, 129'u8, 131'u8, 139'u8, 140'u8, 141'u8, 142'u8}
 
 type
   NifcType* = enum

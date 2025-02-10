@@ -45,7 +45,7 @@
 | lt | C, X | |
 | cast | C, X | |
 | conv | C, X | type conversion |
-| call | C, X, SN | call operation |
+| call | C, X, SC, SN | call operation |
 | cmd | SN, X | command operation |
 | range | SU | `(range a b)` construct |
 | ranges | SU | |
@@ -133,11 +133,11 @@
 | incl | SC, SN | `#include` statement or `incl` set operation |
 | excl | SN | `excl` set operation |
 | include | SN | `include` statement |
-| import | SC, SN | `import` statement |
-| from | SC, SN | `from` statement |
-| importexcept | SC, SN | `importexcept` statement |
-| export | SC, SN | `export` statement |
-| comment | SC, SN | `comment` statement |
+| import | SN | `import` statement |
+| from | SN | `from` statement |
+| importexcept | SN | `importexcept` statement |
+| export | SN | `export` statement |
+| comment | SN | `comment` statement |
 | discard | SC, SN | `discard` statement |
 | try | SC, SN | `try` statement |
 | raise | SC, SN | `raise` statement |
