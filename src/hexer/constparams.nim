@@ -60,7 +60,7 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let argType = getType(c.typeCache, n)
     copyIntoKind dest, ExprX, info:
       copyIntoKind dest, StmtsS, info:
-        let symId = pool.syms.getOrIncl("`constRefTemp" & $c.tmpCounter)
+        let symId = pool.syms.getOrIncl("`constRefTemp." & $c.tmpCounter)
         inc c.tmpCounter
         copyIntoKind dest, VarS, info:
           addSymDef dest, symId, info
