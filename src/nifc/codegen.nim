@@ -145,6 +145,11 @@ proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
       write f, c.tokens[x]
 
 proc error(m: Module; msg: string; tree: PackedTree[NifcKind]; n: NodePos) {.noreturn.} =
+  let info = tree[n].info
+  if info.isValid:
+    let (file, line, col) = unpack(m.lits.man, info)
+    write stdout, m.lits.files[file]
+    write stdout, "(" & $line & ", " & $(col+1) & ")"
   write stdout, "[Error] "
   write stdout, msg
   writeLine stdout, toString(tree, n, m)
