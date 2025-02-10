@@ -1111,7 +1111,7 @@ proc semObjConstrFromCall(c: var SemContext; it: var Item; cs: CallState) =
   skipParRi it.n
   var objBuf = createTokenBuf()
   objBuf.add parLeToken(OconstrX, cs.callNode.info)
-  objBuf.add cs.fn.n
+  objBuf.addSubtree cs.fn.n
   objBuf.addParRi()
   var objConstr = Item(n: cursorAt(objBuf, 0), typ: it.typ)
   semObjConstr c, objConstr
@@ -1825,7 +1825,7 @@ proc semDot(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     c.dest.shrink exprStart
     var callBuf = createTokenBuf(16)
     callBuf.addParLe(CallX, info)
-    callBuf.add fieldNameCursor
+    callBuf.addSubtree fieldNameCursor
     callBuf.addSubtree lhs.n # add lhs as first argument
     callBuf.addParRi()
     var call = Item(n: cursorAt(callBuf, 0), typ: expected)
@@ -4118,7 +4118,7 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
         c.buildErr it.n.info, "expected field name for named tuple constructor"
       else:
         takeToken c, it.n
-        typ.add it.n # add name
+        typ.addSubtree it.n # add name
         takeToken c, it.n
     else:
       typ.add identToken(pool.strings.getOrIncl("Field" & $i), it.n.info)

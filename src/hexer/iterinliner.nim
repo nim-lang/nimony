@@ -130,6 +130,7 @@ proc transformBreakStmt(e: var EContext; c: var Cursor) =
     let lab = e.breaks[^1]
     e.dest.add symToken(lab, c.info)
   else:
+    assert c.kind in {DotToken, Symbol}
     e.dest.add c
   inc c
   wantParRi e, c
