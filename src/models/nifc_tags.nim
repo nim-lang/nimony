@@ -119,17 +119,17 @@ type
     ElifU = (78, "elif")  ## pair of (condition, action)
     ElseU = (79, "else")  ## `else` action
     OfU = (86, "of")  ## `of` branch within a `case` statement
-    AttrU = (121, "attr")  ## general attribute annoation
     PragmasU = (125, "pragmas")  ## begin of pragma section
 
 proc rawTagIsNifcOther*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {28'u8, 48'u8, 49'u8, 53'u8, 58'u8, 59'u8, 60'u8, 78'u8, 79'u8, 86'u8, 121'u8, 125'u8}
+  raw <= 255'u32 and raw.uint8 in {28'u8, 48'u8, 49'u8, 53'u8, 58'u8, 59'u8, 60'u8, 78'u8, 79'u8, 86'u8, 125'u8}
 
 type
   NifcPragma* = enum
     NoPragma
     InlineP = (119, "inline")  ## `inline` proc annotation
     NoinlineP = (120, "noinline")  ## `noinline` proc annotation
+    AttrP = (121, "attr")  ## general attribute annoation
     VarargsP = (122, "varargs")  ## `varargs` proc annotation
     WasP = (123, "was")
     SelectanyP = (124, "selectany")
@@ -142,7 +142,7 @@ type
     StaticP = (145, "static")  ## `static` type or annotation
 
 proc rawTagIsNifcPragma*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {119'u8, 120'u8, 122'u8, 123'u8, 124'u8, 126'u8, 127'u8, 128'u8, 130'u8, 143'u8, 144'u8, 145'u8}
+  raw <= 255'u32 and raw.uint8 in {119'u8, 120'u8, 121'u8, 122'u8, 123'u8, 124'u8, 126'u8, 127'u8, 128'u8, 130'u8, 143'u8, 144'u8, 145'u8}
 
 type
   NifcTypeQualifier* = enum

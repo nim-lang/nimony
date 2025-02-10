@@ -120,7 +120,7 @@
 | nimcall | CC | `nimcall` calling convention |
 | inline | PP | `inline` proc annotation |
 | noinline | PP | `noinline` proc annotation |
-| attr | SUC | general attribute annoation |
+| attr | PC | general attribute annoation |
 | varargs | PP, TN | `varargs` proc annotation |
 | was | PC | |
 | selectany | PP | |

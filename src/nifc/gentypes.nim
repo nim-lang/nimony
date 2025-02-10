@@ -128,190 +128,232 @@ proc traverseTypes(m: Module; o: var TypeOrder) =
     else: discard
 
 template integralBits(t: Cursor): string =
-  case pool.integers[t.intId]
+  let res = pool.integers[t.intId]
+  case res
   of -1:
     ""
   else: # 8, 16, 32, 64 etc.
     $res
 
-proc genProcTypePragma(c: var GeneratedCode; n: var Cursor; isVarargs: var bool) =
+proc genProcTypePragma(c: var GeneratedCode; n: Cursor; isVarargs: var bool) =
   # ProcTypePragma ::= CallingConvention | (varargs) | Attribute
-  case types[n].kind
-  of CallingConventions:
-    discard "already handled"
-  of VarargsC:
+  case n.pragmaKind
+  of VarargsP:
     isVarargs = true
-  of AttrC:
-    c.add " __attribute__((" & toString(n.firstSon, c.m) & "))"
+  of AttrP:
+    c.add " __attribute__((" & toString(n.firstSon, false) & "))"
   else:
-    error c.m, "invalid proc type pragma: ", n
+    if n.callConvKind != NoCallConv:
+      discard "already handled"
+    else:
+      error c.m, "invalid proc type pragma: ", n
 
 proc genProcTypePragmas(c: var GeneratedCode; n: var Cursor; isVarargs: var bool) =
-  if types[n].kind == Empty: return
-  if types[n].kind == PragmasC:
-    for ch in sons(n):
-      genProcTypePragma(c, ch, isVarargs)
+  if n.kind == DotToken:
+    inc n
+  elif n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      genProcTypePragma(c, n, isVarargs)
+      skip n
+    inc n
   else:
     error c.m, "expected proc type pragmas but got: ", n
 
-proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var string) =
+proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) =
   # CommonPragma ::= (align Number) | (was Identifier) | Attribute
   # FieldPragma ::= CommonPragma | (bits Number)
-  if types[n].kind == Empty: return
-  if types[n].kind == PragmasC:
-    for ch in sons(n):
-      case types[ch].kind
-      of AlignC:
-        c.add " NIM_ALIGN(" & toString(ch.firstSon, c.m) & ")"
-      of WasC:
-        c.add "/* " & toString(ch.firstSon, c.m) & " */"
-      of AttrC:
-        c.add " __attribute__((" & toString(ch.firstSon, c.m) & "))"
-      of BitsC:
-        bits = toString(ch.firstSon, c.m)
+  if n.kind == DotToken:
+    inc n
+  elif n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind
+      of AlignP:
+        inc n
+        c.add " NIM_ALIGN(" & $pool.integers[n.intId] & ")"
+        skip n
+        skipParRi n
+      of WasP:
+        inc n
+        c.add "/* " & toString(n, false) & " */"
+        skip n
+        skipParRi n
+      of AttrP:
+        inc n
+        c.add " __attribute__((" & toString(n, false) & "))"
+        skip n
+        skipParRi n
+      of BitsP:
+        inc n
+        bits = pool.integers[n.intId]
+        skip n
+        skipParRi n
       else:
-        error c.m, "invalid proc type pragma: ", ch
+        error c.m, "invalid proc type pragma: ", n
+    inc n
   else:
     error c.m, "expected field pragmas but got: ", n
 
-proc getNumberQualifier(c: var GeneratedCode; t: TypeId): string =
-  case types[t].kind
-  of RoC:
+proc getNumberQualifier(c: var GeneratedCode; n: Cursor): string =
+  case n.typeQual
+  of RoQ:
     result = "const "
-  of AtomicC:
+  of AtomicQ:
     if c.m.config.backend == backendC:
       result = "_Atomic "
     else:
       # TODO: cpp doesn't support _Atomic
       result = ""
-  else:
-    raiseAssert "unreachable: " & $types[t].kind
+  of RestrictQ, NoQualifier:
+    error c.m, "expected number qualifier but got: ", n
 
-proc getPtrQualifier(c: var GeneratedCode; t: TypeId): string =
-  case types[t].kind
-  of RoC:
+proc getPtrQualifier(c: var GeneratedCode; n: Cursor): string =
+  case n.typeQual
+  of RoQ:
     result = "const "
-  of AtomicC:
+  of AtomicQ:
     if c.m.config.backend == backendC:
       result = "_Atomic "
     else:
       # TODO: cpp doesn't support _Atomic
       result = ""
-  of RestrictC:
+  of RestrictQ:
     result = "restrict "
-  else:
-    raiseAssert "unreachable: " & $types[t].kind
+  of NoQualifier:
+    error c.m, "expected pointer qualifier but got: ", n
 
-proc genType(c: var GeneratedCode; t: TypeId; name = "")
+proc genType(c: var GeneratedCode; n: var Cursor; name = "")
 
 template maybeAddName(c: var GeneratedCode; name: string) =
   if name != "":
     c.add Space
     c.add name
 
-template atom(c: var GeneratedCode; s: string; name: string) =
+template atom(c: var GeneratedCode; s, name: string) =
   c.add s
   maybeAddName(c, name)
 
-proc atomNumber(c: var GeneratedCode, t: TypeId, typeName: string, name: string, isBool = false) =
+proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isBool = false) =
   if isBool:
-    for son in sons(t):
-      c.add getNumberQualifier(c, son)
+    inc n
+    while n.kind != ParRi:
+      c.add getNumberQualifier(c, n)
+      skip n
+      skipParRi n
     atom(c, typeName, name)
+    inc n
   else:
-    var i = 0
     var s = ""
-    for son in sons(t):
-      if i == 0:
-        s = typeName & types.integralBits(son)
-      else:
-        c.add getNumberQualifier(c, son)
-      inc i
+    inc n
+    assert n.kind == IntLit
+    s = typeName & integralBits(n)
+    inc n
+    while n.kind != ParRi:
+      c.add getNumberQualifier(c, n)
     atom(c, s, name)
 
-proc atomPointer(c: var GeneratedCode, t: TypeId; name: string) =
-  var i = 0
-  for son in sons(t):
-    if i == 0:
-      discard
-    else:
-      c.add getPtrQualifier(c, son)
-    inc i
-  genType c, elementType(t)
+proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string) =
+  inc n
+  var elem = n
+  skip n # element type
+  while n.kind != ParRi:
+    c.add getPtrQualifier(c, n)
+    skip n
+  inc n # ParRi
+  genType c, elem
   c.add Star
   maybeAddName(c, name)
 
-proc genType(c: var GeneratedCode; t: TypeId; name = "") =
-  case types[t].kind
-  of VoidC: atom(c, "void", name)
-  of IntC:
-    atomNumber(c, t, "NI", name)
-  of UIntC:
-    atomNumber(c, t, "NU", name)
-  of FloatC:
-    atomNumber(c, t, "NF", name)
-  of BoolC:
-    atomNumber(c, t, "NB8", name, isBool = true)
-  of CharC:
-    atomNumber(c, t, "NC", name)
-  of Sym:
-    atom(c, mangle(c.m.lits.strings[types[t].litId]), name)
-  of PtrC, APtrC:
-    atomPointer(c, t, name)
-  of FlexarrayC:
-    genType c, elementType(t)
-    maybeAddName(c, name)
-    c.add BracketLe
-    c.add BracketRi
-  of ProctypeC:
-    let decl = asProcType(t)
-    var lastCallConv = Empty
-    if types[decl.pragmas].kind == PragmasC:
-      for ch in sons(decl.pragmas):
-        case types[ch].kind
-        of CallingConventions:
-          lastCallConv = types[ch].kind
-        else:
-          discard
-    var isVarargs = false
-    if lastCallConv != Empty:
-      c.add CallingConvToStr[lastCallConv]
-      c.add "_PTR"
-      c.add ParLe
-      if types[decl.returnType].kind == Empty:
-        c.add "void"
-      else:
-        genType c, decl.returnType
-      c.add Comma
-      genProcTypePragmas c, decl.pragmas, isVarargs
-      maybeAddName(c, name)
-      c.add ParRi
-    else:
-      if types[decl.returnType].kind == Empty:
-        c.add "void"
-      else:
-        genType c, decl.returnType
-      c.add Space
-      c.add ParLe
-      genProcTypePragmas c, decl.pragmas, isVarargs
-      c.add Star # "(*fn)"
-      maybeAddName(c, name)
-      c.add ParRi
+proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
+  let decl = takeProcType(n)
+  var lastCallConv = NoCallConv
+  if decl.pragmas.kind == ParLe:
+    var p = decl.pragmas.firstSon
+    while p.kind != ParRi:
+      let cc = p.callConvKind
+      if cc != NoCallConv:
+        lastCallConv = cc
+      skip p
+  var isVarargs = false
+  if lastCallConv != NoCallConv:
+    c.add callingConvToStr(lastCallConv)
+    c.add "_PTR"
     c.add ParLe
-    var i = 0
-    for ch in sons(decl.params):
-      let param = asParamDecl(ch)
+    if decl.returnType.kind == DotToken:
+      c.add "void"
+    else:
+      var ret = decl.returnType
+      genType c, ret
+    c.add Comma
+    var pragmas = decl.pragmas
+    genProcTypePragmas c, pragmas, isVarargs
+    maybeAddName(c, name)
+    c.add ParRi
+  else:
+    if decl.returnType.kind == DotToken:
+      c.add "void"
+    else:
+      var ret = decl.returnType
+      genType c, ret
+    c.add Space
+    c.add ParLe
+    var pragmas = decl.pragmas
+    genProcTypePragmas c, pragmas, isVarargs
+    c.add Star # "(*fn)"
+    maybeAddName(c, name)
+    c.add ParRi
+  c.add ParLe
+  var i = 0
+  if decl.params.kind == ParLe:
+    var p = decl.params.firstSon
+    while p.kind != ParRi:
+      var param = takeParamDecl(p)
       if i > 0: c.add Comma
       genType c, param.typ
       inc i
-    if isVarargs:
-      if i > 0: c.add Comma
-      c.add "..."
-    if i == 0:
-      c.add "void"
-    c.add ParRi
-  else:
-    error c.m, "node is not a type: ", t
+
+  if isVarargs:
+    if i > 0: c.add Comma
+    c.add "..."
+  if i == 0:
+    c.add "void"
+  c.add ParRi
+
+proc genType(c: var GeneratedCode; n: var Cursor; name = "") =
+  case n.typeKind
+  of VoidT:
+    atom(c, "void", name)
+    skip n
+  of IT:
+    atomNumber(c, n, "NI", name)
+  of UT:
+    atomNumber(c, n, "NU", name)
+  of FT:
+    atomNumber(c, n, "NF", name)
+  of BoolT:
+    atomNumber(c, n, "NB8", name, isBool = true)
+  of CT:
+    atomNumber(c, n, "NC", name)
+  of NoType:
+    if n.kind == Symbol:
+      atom(c, mangle(pool.syms[n.symId]), name)
+      inc n
+    else:
+      error c.m, "node is not a type: ", n
+  of PtrT, APtrT:
+    atomPointer(c, n, name)
+  of FlexarrayT:
+    inc n
+    genType c, n
+    maybeAddName(c, name)
+    c.add BracketLe
+    c.add BracketRi
+    skipParRi n
+  of ProctypeT:
+    genProcType(c, n, name)
+  of ParamsT, UnionT, ObjectT, EnumT, ArrayT:
+    error c.m, "nominal type not allowed here: ", n
 
 proc mangleField(c: var GeneratedCode; n: Cursor): string =
   if n.kind in {Symbol, SymbolDef}:

@@ -79,6 +79,12 @@ proc typeKind*(c: Cursor): NifcType {.inline.} =
   else:
     result = NoType
 
+proc typeQual*(c: Cursor): NifcTypeQualifier {.inline.} =
+  if c.kind == ParLe and rawTagIsNifcTypeQualifier(tag(c).uint32):
+    result = cast[NifcTypeQualifier](tag(c))
+  else:
+    result = NoQualifier
+
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
   if c.kind == ParLe:
     if rawTagIsCallConv(tag(c).uint32):
