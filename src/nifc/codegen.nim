@@ -91,7 +91,7 @@ type
     tokens: BiTable[Token, string]
     inSimpleInit: int
     headerFile: seq[Token]
-    generatedTypes: IntSet
+    generatedTypes: HashSet[SymId]
     requestedSyms: HashSet[string]
     flags: set[GenFlag]
 
@@ -221,29 +221,41 @@ proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
                     flags: var set[ProcFlag]) =
   # ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) |
   #               (selectany) | Attribute | (raises) | (errs)
-  if t[n].kind == Empty:
-    discard
-  elif t[n].kind == PragmasC:
-    for ch in sons(n):
-      case t[ch].kind
-      of CallingConventions, InlineC, NoinlineC:
+  if n.kind == DotToken:
+    inc n
+  elif n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind
+      of NoPragma, AlignP, BitsP, VectorP, NodeclP, StaticP:
+        if n.callConvKind != NoCallConv:
+          skip n
+        else:
+          error c.m, "invalid proc pragma: ", n
+      of InlineP, NoinlineP:
         discard "already handled"
-      of VarargsC:
+        skip n
+      of VarargsP:
         flags.incl isVarargs
-      of SelectanyC:
+        skip n
+      of SelectanyP:
         flags.incl isSelectAny
-      of AttrC:
+        skip n
+      of AttrP:
         discard "already handled"
-      of WasC:
-        c.add "/* " & toString(ch.firstSon, c.m) & " */"
-      of ErrsC, RaisesC:
-        discard
-      else:
-        error c.m, "invalid proc pragma: ", ch
+        skip n
+      of WasP:
+        inc n
+        c.add "/* " & toString(n, false) & " */"
+        skip n
+        skipParRi n
+      of ErrsP, RaisesP:
+        skip n
+    inc n # ParRi
   else:
     error c.m, "expected proc pragmas but got: ", n
 
-proc genSymDef(c: var GeneratedCode; n: var Cursor): string =
+proc genSymDef(c: var GeneratedCode; n: Cursor): string =
   if n.kind == SymbolDef:
     let lit = n.symId
     result = mangle(pool.syms[lit])
@@ -254,51 +266,69 @@ proc genSymDef(c: var GeneratedCode; n: var Cursor): string =
 
 proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
   # ProcPragma ::= (was Identifier) | Attribute
-  if t[n].kind == Empty:
-    discard
-  elif t[n].kind == PragmasC:
-    for ch in sons(n):
-      case t[ch].kind
-      of AttrC:
-        c.add " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & "))"
-      of WasC:
-        c.add "/* " & toString(ch.firstSon, c.m) & " */"
+  if n.kind == DotToken:
+    inc n
+  elif n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind
+      of AttrP:
+        inc n
+        c.add " __attribute__((" & pool.strings[n.litId] & "))"
+        inc n
+        skipParRi n
+      of WasP:
+        inc n
+        c.add "/* " & toString(n, false) & " */"
+        skip n
+        skipParRi n
       else:
-        error c.m, "invalid pragma: ", ch
+        error c.m, "invalid pragma: ", n
+    inc n # ParRi
   else:
     error c.m, "expected pragmas but got: ", n
 
 proc genParam(c: var GeneratedCode; n: var Cursor) =
-  let d = asParamDecl(n)
-  if t[d.name].kind == SymDef:
-    let lit = t[d.name].litId
-    let name = mangle(c.m.lits.strings[lit])
+  var d = takeParamDecl(n)
+  if d.name.kind == SymbolDef:
+    let name = mangle(pool.syms[d.name.symId])
     genType c, d.typ, name
     genParamPragmas c, d.pragmas
   else:
-    error c.m, "expected SymbolDef but got: ", n
+    error c.m, "expected SymbolDef but got: ", d.name
 
-proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcKind =
-  result = Empty
-  if t[n].kind == Empty:
-    discard
-  elif t[n].kind == PragmasC:
-    for ch in sons(n):
-      case t[ch].kind
-      of AlignC:
-        c.add " NIM_ALIGN(" & toString(ch.firstSon, c.m) & ")"
-      of AttrC:
-        c.add " __attribute__((" & c.m.lits.strings[t[ch.firstSon].litId] & "))"
-      of WasC:
-        c.add "/* " & toString(ch.firstSon, c.m) & " */"
-      of StaticC:
-        result = StaticC
+proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
+  result = NoPragma
+  if n.kind == DotToken:
+    inc n
+  elif n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind
+      of AlignP:
+        inc n
+        c.add " NIM_ALIGN(" & $pool.integers[n.intId] & ")"
+        inc n
+        skipParRi n
+      of AttrP:
+        inc n
+        c.add " __attribute__((" & pool.strings[n.litId] & "))"
+        skip n
+        skipParRi n
+      of WasP:
+        inc n
+        c.add "/* " & toString(n, false) & " */"
+        skip n
+        skipParRi n
+      of StaticP:
+        result = StaticP
       else:
-        error c.m, "invalid pragma: ", ch
+        error c.m, "invalid pragma: ", n
+    inc n # ParRi
   else:
     error c.m, "expected pragmas but got: ", n
 
-proc genCLineDir(c: var GeneratedCode; t: Tree; info: PackedLineInfo) =
+proc genCLineDir(c: var GeneratedCode; info: PackedLineInfo) =
   if optLineDir in c.m.config.options:
     let (id, line, _) = unpack(c.m.lits.man, info)
     if c.m.lits.files.hasId(id):

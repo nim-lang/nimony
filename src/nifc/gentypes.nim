@@ -362,63 +362,75 @@ proc mangleField(c: var GeneratedCode; n: Cursor): string =
     result = "InvalidFieldName"
     error c.m, "field name must be a SymDef, but got: ", n
 
-proc genObjectOrUnionBody(c: var GeneratedCode; n: Cursor) =
-  for x in sons(n):
-    case types[x].kind
-    of FldC:
-      let decl = asFieldDecl(x)
+proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  if n.kind == DotToken:
+    inc n
+  elif n.kind == Symbol:
+    genType c, n, "Q"
+    c.add Semicolon
+  else:
+    error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
+
+  while n.kind != ParRi:
+    if n.substructureKind == FldU:
+      var decl = takeFieldDecl(n)
       let f = mangleField(c, decl.name)
-      var bits = ""
+      var bits = 0'i64
       genFieldPragmas c, decl.pragmas, bits
       genType c, decl.typ, f
-      if bits.len > 0:
+      if bits > 0:
         c.add " : "
-        c.add bits
+        c.add $bits
       c.add Semicolon
-    of Sym:
-      genType c, x, "Q"
-      c.add Semicolon
-    else: discard
+    else:
+      error c.m, "expected `fld` but got: ", n
+  inc n # ParRi
 
-proc genEnumDecl(c: var GeneratedCode; n: Cursor; name: string) =
+proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
   # (efld SymbolDef Expr)
   # EnumDecl ::= (enum Type EnumFieldDecl+)
-  let baseType = n.firstSon
+  inc n
   c.add TypedefKeyword
-  c.genType t, baseType
+  let baseType = n
+  c.genType n
   c.add Space
   c.add name
   c.add Semicolon
   c.add NewLine
 
-  for ch in sonsFromX(t, n):
-    if t[ch].kind == EfldC:
-      let (a, b) = sons2(t, ch)
-      if t[a].kind == SymDef:
-        let enumFieldName = mangle(c.m.lits.strings[t[a].litId])
+  while n.kind != ParRi:
+    if n.substructureKind == EfldU:
+      inc n
+      if n.kind == SymbolDef:
+        let enumFieldName = mangle(pool.syms[n.symId])
+        inc n
         c.add "#define "
         c.add enumFieldName
         c.add Space
         c.add ParLe
         c.add ParLe
-        c.genType t, baseType
+        var base = baseType
+        c.genType base
         c.add ParRi
-        case t[b].kind
-        of IntLit: c.genIntLit t[b].litId
-        of UIntLit: c.genUIntLit t[b].litId
+        case n.kind
+        of IntLit: c.genIntLit n.intId
+        of UIntLit: c.genUIntLit n.uintId
         else:
-          error c.m, "expected `Number` but got: ", t, a
+          error c.m, "expected `Number` but got: ", n
         c.add ParRi
         c.add NewLine
       else:
-        error c.m, "expected `SymbolDef` but got: ", t, a
+        error c.m, "expected `SymbolDef` but got: ", n
     else:
-      error c.m, "expected `efld` but got: ", t, ch
+      error c.m, "expected `efld` but got: ", n
+  inc n # ParRi
 
 proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
   for (d, declKeyword) in o.forwardedDecls.s:
-    let decl = asTypeDecl(d)
-    let s = mangle(c.m.lits.strings[types[decl.name].litId])
+    var n = d
+    let decl = takeTypeDecl(n)
+    let s = mangle(pool.syms[decl.name.symId])
     c.add declKeyword
     c.add s
     c.add Space
@@ -426,26 +438,29 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
     c.add Semicolon
 
   for (d, declKeyword) in o.ordered.s:
-    let decl = asTypeDecl(d)
-    let litId = types[decl.name].litId
-    if not c.generatedTypes.containsOrIncl(litId.int):
-      let s = mangle(c.m.lits.strings[litId])
-      case types[decl.body].kind
-      of ArrayC:
+    var n = d
+    var decl = takeTypeDecl(n)
+    if not c.generatedTypes.containsOrIncl(decl.name.symId):
+      let s = mangle(pool.syms[decl.name.symId])
+      case decl.body.typeKind
+      of ArrayT:
         c.add declKeyword
         c.add CurlyLe
-        let (elem, size) = sons2(decl.body)
-        genType c, elem, "a"
+        var n = decl.body.firstSon
+        genType c, n, "a"
         c.add BracketLe
-        c.genIntLit types[size].litId
+        case n.kind
+        of IntLit: c.genIntLit n.intId
+        of UIntLit: c.genUIntLit n.uintId
+        else: error c.m, "array size must be an int literal, but got: ", n
         c.add BracketRi
         c.add Semicolon
         c.add CurlyRi
         c.add s
         c.add Semicolon
-      of EnumC:
+      of EnumT:
         genEnumDecl c, decl.body, s
-      of ProctypeC:
+      of ProctypeT:
         c.add TypedefKeyword
         genType c, decl.body, s
         c.add Semicolon
