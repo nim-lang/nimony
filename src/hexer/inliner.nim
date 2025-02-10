@@ -58,7 +58,7 @@ when not defined(nimony):
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
-  dest.add n
+  dest.addToken n
   var r = takeRoutine(n, SkipExclBody)
   let oldThisRoutine = c.thisRoutine
   c.thisRoutine = r.name.symId
@@ -151,10 +151,10 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
       if toReplace.sym != NoSymId:
         addVarReplacement(dest, toReplace, info)
       else:
-        dest.add n
+        dest.addToken n
     inc n
   of Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-    dest.add n
+    dest.addToken n
     inc n
   of ParRi:
     raiseAssert "unhandled ')' in inliner.nim"
@@ -312,7 +312,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while true:
     case n.kind
     of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-      dest.add n
+      dest.addToken n
       inc n
     of ParLe:
       case n.stmtKind
@@ -324,7 +324,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trProcDecl c, dest, n
       of ScopeS:
         c.typeCache.openScope()
-        dest.add n
+        dest.addToken n
         inc n
         while n.kind != ParRi:
           tr c, dest, n
@@ -336,17 +336,17 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if inlineCall:
             doInline(c, dest, n, routine, Target(kind: TargetIsNone))
           else:
-            dest.add n
+            dest.addToken n
             inc nested
             inc n
         elif isDeclarative(n):
           takeTree dest, n
         else:
-          dest.add n
+          dest.addToken n
           inc nested
           inc n
     of ParRi:
-      dest.add n
+      dest.addToken n
       dec nested
       inc n
     if nested == 0: break

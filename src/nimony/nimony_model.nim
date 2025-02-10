@@ -157,7 +157,7 @@ template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: Pac
 
 template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   assert n.kind == ParLe
-  dest.add n
+  dest.addToken n
   inc n
   body
   dest.addParRi()
@@ -191,12 +191,12 @@ proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
 
 proc takeTree*(dest: var TokenBuf; n: var Cursor) =
   if n.kind != ParLe:
-    dest.add n
+    dest.addToken n
     inc n
   else:
     var nested = 0
     while true:
-      dest.add n
+      dest.addToken n
       case n.kind
       of ParLe: inc nested
       of ParRi:

@@ -72,7 +72,7 @@ proc tagToken*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
 
 proc wantParRi*(e: var EContext; c: var Cursor) =
   if c.kind == ParRi:
-    e.dest.add c
+    e.dest.addToken c
     inc c
   else:
     error e, "expected ')', but got: ", c
@@ -87,7 +87,7 @@ template loop*(e: var EContext; c: var Cursor; body: untyped) =
   while true:
     case c.kind
     of ParRi:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       break
     of EofToken:

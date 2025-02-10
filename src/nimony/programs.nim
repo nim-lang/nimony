@@ -194,7 +194,7 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
 
 proc wantParRi*(dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParRi:
-    dest.add n
+    dest.addToken n
     inc n
   else:
     error "expected ')', but got: ", n

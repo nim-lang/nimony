@@ -173,7 +173,7 @@ proc cursorToPosition*(base, c: Cursor): int {.inline.} =
   result = (c - base) div sizeof(PackedToken)
   assert result < 1_000_000
 
-proc add*(result: var TokenBuf; c: Cursor) =
+proc addToken*(result: var TokenBuf; c: Cursor) =
   result.add c.load
 
 proc addSubtree*(result: var TokenBuf; c: Cursor) =
@@ -222,7 +222,7 @@ proc add*(dest: var TokenBuf; src: TokenBuf) =
 
 proc fromCursor*(c: Cursor): TokenBuf =
   result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*4)), len: 0, cap: 4)
-  result.add c
+  result.addToken c
 
 proc fromStream*(s: var Stream): TokenBuf =
   result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*4)), len: 0, cap: 4)

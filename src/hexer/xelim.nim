@@ -181,7 +181,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       inc n
       trExpr c, dest, n, t0
 
-      dest.add head
+      dest.addToken head
       inc toClose
       inc ifs
 
@@ -359,7 +359,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let head = n
     inc n
     trExpr c, dest, n, tar
-    dest.add head
+    dest.addToken head
     dest.add tar
     dest.addParRi()
     skipParRi n
@@ -439,7 +439,7 @@ proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
   result = createTokenBuf(300)
   var n = n
   assert n.stmtKind == StmtsS, $n.kind
-  result.add n
+  result.addToken n
   inc n
   while n.kind != ParRi:
     trStmt c, result, n

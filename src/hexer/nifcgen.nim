@@ -96,7 +96,7 @@ type
 proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas
 
 proc traverseField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
-  e.dest.add c # fld
+  e.dest.addToken c # fld
   inc c
 
   expectSymdef(e, c)
@@ -131,7 +131,7 @@ proc genTupleField(e: var EContext; typ: var Cursor; counter: int) =
   e.dest.addParRi() # "fld"
 
 proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
-  e.dest.add c # efld
+  e.dest.addToken c # efld
   inc c
 
   expectSymdef(e, c)
@@ -236,7 +236,7 @@ proc traverseOpenArrayBody(e: var EContext; c: var Cursor) =
   skipParRi e, c
 
 proc traverseArrayBody(e: var EContext; c: var Cursor) =
-  e.dest.add c
+  e.dest.addToken c
   inc c
   traverseType e, c
   if c.typeKind == RangetypeT:
@@ -346,7 +346,7 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   case c.kind
   of DotToken:
-    e.dest.add c
+    e.dest.addToken c
     inc c
   of Symbol:
     let s = c.symId
@@ -364,7 +364,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         inc c
       else:
         e.demand s
-        e.dest.add c
+        e.dest.addToken c
         inc c
     else:
       error e, "could not find symbol: " & pool.syms[s]
@@ -374,9 +374,9 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       error e, "type expected but got: ", c
     of IntT, UIntT:
       let start = e.dest.len
-      e.dest.add c
+      e.dest.addToken c
       inc c
-      e.dest.add c
+      e.dest.addToken c
       inc c
       if c.kind != ParRi and c.pragmaKind in {ImportcP, ImportcppP}:
         e.dest.shrink start
@@ -389,7 +389,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         wantParRi e, c
     of FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
-        e.dest.add c
+        e.dest.addToken c
         inc c
     of PtrT, RefT, MutT, OutT, LentT:
       e.dest.add tagToken("ptr", c.info)
@@ -438,10 +438,10 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
     of TupleT:
       traverseAsNamedType e, c
     of ObjectT:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       if c.kind == DotToken:
-        e.dest.add c
+        e.dest.addToken c
         inc c
       else:
         # inherited symbol
@@ -450,7 +450,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         e.demand s
 
       if c.kind == DotToken:
-        e.dest.add c
+        e.dest.addToken c
         inc c
       else:
         while c.substructureKind == FldU:
@@ -503,11 +503,11 @@ proc maybeByConstRef(e: var EContext; c: var Cursor) =
   if passByConstRef(param.typ, param.pragmas, e.bits div 8):
     var paramBuf = createTokenBuf()
     paramBuf.add tagToken("param", c.info)
-    paramBuf.add param.name
-    paramBuf.add param.exported
-    paramBuf.add param.pragmas
+    paramBuf.addSubtree param.name
+    paramBuf.addSubtree param.exported
+    paramBuf.addSubtree param.pragmas
     copyIntoKind paramBuf, PtrT, param.typ.info:
-      paramBuf.add param.typ
+      paramBuf.addSubtree param.typ
     paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
@@ -519,10 +519,10 @@ proc maybeByConstRef(e: var EContext; c: var Cursor) =
 
 proc traverseParams(e: var EContext; c: var Cursor) =
   if c.kind == DotToken:
-    e.dest.add c
+    e.dest.addToken c
     inc c
   elif c.kind == ParLe and c.typeKind == ParamsT:
-    e.dest.add c
+    e.dest.addToken c
     inc c
     loop e, c:
       if c.symKind != ParamY:
@@ -849,7 +849,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     of ParLe:
       case c.exprKind
       of EqX, NeqX, LeX, LtX:
-        e.dest.add c
+        e.dest.addToken c
         inc c
         var skipped = createTokenBuf()
         swap skipped, e.dest
@@ -857,7 +857,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         swap skipped, e.dest
         inc nested
       of CastX:
-        e.dest.add c
+        e.dest.addToken c
         inc c
         traverseType(e, c)
         traverseExpr(e, c)
@@ -908,7 +908,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.add symToken(ithTupleField(pool.integers[c.intId]), c.info)
         inc c # skip index
         e.dest.addIntLit(0, c.info) # inheritance
-        e.dest.add c # add right paren
+        e.dest.addToken c # add right paren
         inc c # skip right paren
       of DdotX:
         e.dest.add tagToken("dot", c.info)
@@ -936,15 +936,15 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         if arg.kind == StringLit and pool.strings[suf.litId] == "R":
           # cstring conversion
           inc c
-          e.dest.add c # add string lit directly
+          e.dest.addToken c # add string lit directly
           inc c # arg
           inc c # suf
           skipParRi e, c
         else:
-          e.dest.add c
+          e.dest.addToken c
           inc c
           traverseExpr e, c
-          e.dest.add c
+          e.dest.addToken c
           inc c
           wantParRi e, c
       of AshrX:
@@ -973,18 +973,18 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       of NewOconstrX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, BracketX, CurlyX:
         error e, "BUG: not eliminated: ", c
       else:
-        e.dest.add c
+        e.dest.addToken c
         inc c
         inc nested
     of ParRi:
-      e.dest.add c
+      e.dest.addToken c
       dec nested
       if nested == 0:
         inc c
         break
       inc c
     of SymbolDef:
-      e.dest.add c
+      e.dest.addToken c
       e.offer c.symId
       inc c
     of Symbol:
@@ -992,14 +992,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       if ext.len != 0:
         e.dest.addSymUse pool.syms.getOrIncl(ext), c.info
       else:
-        e.dest.add c
+        e.dest.addToken c
       e.demand c.symId
       inc c
     of StringLit:
       genStringLit e, c
       inc c
     of UnknownToken, DotToken, Ident, CharLit, IntLit, UIntLit, FloatLit:
-      e.dest.add c
+      e.dest.addToken c
       inc c
 
     if nested == 0:
@@ -1064,7 +1064,7 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
 proc traverseWhile(e: var EContext; c: var Cursor) =
   let info = c.info
   e.nestedIn.add (WhileS, SymId(0))
-  e.dest.add c
+  e.dest.addToken c
   inc c
   traverseExpr e, c
   traverseStmt e, c
@@ -1113,29 +1113,29 @@ proc traverseBreak(e: var EContext; c: var Cursor) =
 
 proc traverseIf(e: var EContext; c: var Cursor) =
   # (if cond (.. then ..) (.. else ..))
-  e.dest.add c
+  e.dest.addToken c
   inc c
   while c.kind == ParLe and c.substructureKind == ElifU:
-    e.dest.add c
+    e.dest.addToken c
     inc c # skips '(elif'
     traverseExpr e, c
     traverseStmt e, c
     wantParRi e, c
   if c.kind == ParLe and c.substructureKind == ElseU:
-    e.dest.add c
+    e.dest.addToken c
     inc c
     traverseStmt e, c
     wantParRi e, c
   wantParRi e, c
 
 proc traverseCase(e: var EContext; c: var Cursor) =
-  e.dest.add c
+  e.dest.addToken c
   inc c
   traverseExpr e, c
   while c.kind != ParRi:
     case c.substructureKind
     of OfU:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       if c.kind == ParLe and c.substructureKind == RangesU:
         inc c
@@ -1148,7 +1148,7 @@ proc traverseCase(e: var EContext; c: var Cursor) =
       traverseStmt e, c
       wantParRi e, c
     of ElseU:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       traverseStmt e, c
       wantParRi e, c
@@ -1159,7 +1159,7 @@ proc traverseCase(e: var EContext; c: var Cursor) =
 proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
   case c.kind
   of DotToken:
-    e.dest.add c
+    e.dest.addToken c
     inc c
   of ParLe:
     case c.stmtKind
@@ -1172,7 +1172,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
           traverseStmt e, c, mode
         skipParRi e, c
       else:
-        e.dest.add c
+        e.dest.addToken c
         inc c
         e.loop c:
           traverseStmt e, c, mode
@@ -1184,7 +1184,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
           traverseStmt e, c, mode
         skipParRi e, c
       else:
-        e.dest.add c
+        e.dest.addToken c
         inc c
         e.loop c:
           traverseStmt e, c, mode
@@ -1199,16 +1199,16 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       e.loop c:
         traverseExpr e, c
     of EmitS:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       e.loop c:
         if c.kind == StringLit:
-          e.dest.add c
+          e.dest.addToken c
           inc c
         else:
           traverseExpr e, c
     of AsgnS, RetS:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       e.loop c:
         traverseExpr e, c
@@ -1220,7 +1220,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
         inc c
         skipParRi e, c
       else:
-        e.dest.add discardToken
+        e.dest.addToken discardToken
         traverseExpr e, c
         wantParRi e, c
     of BreakS: traverseBreak e, c

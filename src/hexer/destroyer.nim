@@ -142,7 +142,7 @@ when not defined(nimony):
 
 proc trLocal(c: var Context; n: var Cursor) =
   let info = n.info
-  c.dest.add n
+  c.dest.addToken n
   var r = takeLocal(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -179,7 +179,7 @@ proc registerSinkParameters(c: var Context; params: Cursor) =
         c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
 proc trProcDecl(c: var Context; n: var Cursor) =
-  c.dest.add n
+  c.dest.addToken n
   var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -287,13 +287,13 @@ proc tr(c: var Context; n: var Cursor) =
       trProcDecl c, n
     else:
       if n.kind == ParLe:
-        c.dest.add n
+        c.dest.addToken n
         inc n
         while n.kind != ParRi:
           tr(c, n)
         wantParRi(c.dest, n)
       else:
-        c.dest.add n
+        c.dest.addToken n
         inc n
 
 proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =

@@ -124,13 +124,13 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
         createDecl(e, symId, fieldTyp, tup, info, "let")
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
-  e.dest.add c
+  e.dest.addToken c
   inc c
   if c.kind == DotToken and e.breaks.len > 0 and e.breaks[^1] != SymId(0):
     let lab = e.breaks[^1]
     e.dest.add symToken(lab, c.info)
   else:
-    e.dest.add c
+    e.dest.addToken c
   inc c
   wantParRi e, c
 
@@ -157,7 +157,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
     if mapping.hasKey(s):
       e.dest.add symToken(mapping[s], c.info)
     else:
-      e.dest.add c
+      e.dest.addToken c
     inc c
   of ParLe:
     case c.stmtKind
@@ -168,7 +168,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
     of ForS:
       var forStmtBuf = createTokenBuf()
       swap e.dest, forStmtBuf
-      e.dest.add c
+      e.dest.addToken c
       inc c
       e.breaks.add SymId(0)
       e.continues.add SymId(0)
@@ -180,7 +180,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
       var forCursor = beginRead(forStmtBuf)
       transformForStmt(e, forCursor)
     of WhileS:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       takeTree(e, c)
       e.breaks.add SymId(0)
@@ -190,7 +190,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
       discard e.breaks.pop()
       discard e.continues.pop()
     of BlockS:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       e.breaks.add SymId(0)
       inlineLoopBody(e, c, mapping)
@@ -202,13 +202,13 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
           inlineLoopBody(e, c, mapping)
         skipParRi(e, c)
       else:
-        e.dest.add c
+        e.dest.addToken c
         inc c
         while c.kind != ParRi:
           inlineLoopBody(e, c, mapping)
         wantParRi(e, c)
     else:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       e.loop c:
         inlineLoopBody(e, c, mapping)
@@ -221,7 +221,7 @@ proc inlineIteratorBody(e: var EContext;
   of ParLe:
     case c.stmtKind
     of StmtsS:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       while c.kind != ParRi:
         inlineIteratorBody(e, c, forStmt, yieldType)
@@ -253,7 +253,7 @@ proc inlineIteratorBody(e: var EContext;
       e.dest.addParRi()
       skipParRi(e, c)
     else:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       e.loop c:
         inlineIteratorBody(e, c, forStmt, yieldType)
@@ -370,12 +370,12 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
 proc transformStmt(e: var EContext; c: var Cursor) =
   case c.kind
   of DotToken:
-    e.dest.add c
+    e.dest.addToken c
     inc c
   of ParLe:
     case c.stmtKind
     of StmtsS:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       while c.kind notin {EofToken, ParRi}:
         transformStmt(e, c)
@@ -387,7 +387,7 @@ proc transformStmt(e: var EContext; c: var Cursor) =
     of IteratorS:
       skip(c)
     of FuncS, ProcS, ConverterS, MethodS:
-      e.dest.add c
+      e.dest.addToken c
       inc c
       takeTree(e, c) # name
       takeTree(e, c) # exported

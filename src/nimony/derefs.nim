@@ -47,12 +47,12 @@ type
     typeCache: TypeCache
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
-  c.dest.add n
+  c.dest.addToken n
   inc n
 
 proc wantParRi(c: var Context; n: var Cursor) =
   if n.kind == ParRi:
-    c.dest.add n
+    c.dest.addToken n
     inc n
   else:
     error "expected ')', but got: ", n

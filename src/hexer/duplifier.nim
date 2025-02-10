@@ -108,7 +108,7 @@ when not defined(nimony):
 
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
   assert n.kind == ParLe
-  c.dest.add n
+  c.dest.addToken n
   inc n
   while n.kind != ParRi:
     tr(c, n, e)
@@ -367,7 +367,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
   while true:
     case n.kind
     of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
-      c.dest.add n
+      c.dest.addToken n
       inc n
     of ParLe:
       case n.exprKind
@@ -384,17 +384,17 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
       of TraceX:
         trExplicitTrace c, n
       else:
-        c.dest.add n
+        c.dest.addToken n
         inc n
         inc nested
     of ParRi:
-      c.dest.add n
+      c.dest.addToken n
       inc n
       dec nested
     if nested == 0: break
 
 proc trProcDecl(c: var Context; n: var Cursor) =
-  c.dest.add n
+  c.dest.addToken n
   var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -455,7 +455,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   if hasDestructor(c, retType) and e == WantNonOwner:
     ow = bindToTemp(c, retType, n.info)
 
-  c.dest.add n
+  c.dest.addToken n
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree c.dest, n # skip `fn`
@@ -478,7 +478,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
 proc trRawConstructor(c: var Context; n: var Cursor; e: Expects) =
   # Idioms like `echo ["ab", myvar, "xyz"]` are important to translate well.
   let e2 = if e == WillBeOwned: WantOwner else: e
-  c.dest.add n
+  c.dest.addToken n
   inc n
   while n.kind != ParRi:
     tr c, n, e2
@@ -550,7 +550,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
     trSons c, n, DontCare
 
 proc trLocal(c: var Context; n: var Cursor) =
-  c.dest.add n
+  c.dest.addToken n
   var r = takeLocal(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -576,7 +576,7 @@ proc trLocal(c: var Context; n: var Cursor) =
     c.dest.addParRi()
 
 proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
-  c.dest.add n
+  c.dest.addToken n
   inc n
   while n.kind != ParRi:
     if isLastSon(n):

@@ -23,7 +23,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
   while true:
     case body.kind
     of UnknownToken, EofToken, DotToken, Ident:
-      dest.add body
+      dest.addToken body
     of Symbol:
       let s = body.symId
       let arg = e.formalParams.getOrDefault(s)
@@ -38,14 +38,14 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           if tv != default(Cursor):
             dest.addSubtree tv
           else:
-            dest.add body # keep Symbol as it was
+            dest.addToken body # keep Symbol as it was
     of SymbolDef:
       let s = body.symId
       let newDef = newSymId(c, s)
       e.newVars[s] = newDef
       dest.add symdefToken(newDef, body.info)
     of StringLit, CharLit, IntLit, UIntLit, FloatLit:
-      dest.add body
+      dest.addToken body
     of ParLe:
       let forStmt = asForStmt(body)
       if forStmt.kind == ForS and forStmt.iter.exprKind == UnpackX:
@@ -80,10 +80,10 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           skip body
           unsafeDec body
       else:
-        dest.add body
+        dest.addToken body
         inc nested
     of ParRi:
-      dest.add body
+      dest.addToken body
       dec nested
       if nested == 0: break
     if isAtom: break

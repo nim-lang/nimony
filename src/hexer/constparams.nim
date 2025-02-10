@@ -75,7 +75,7 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  dest.add n
+  dest.addToken n
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree dest, n # skip `fn`
@@ -104,7 +104,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
-  dest.add n
+  dest.addToken n
   inc n
   while n.kind != ParRi:
     tr c, dest, n
@@ -118,12 +118,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of Symbol:
       if c.constRefParams.contains(n.symId):
         copyIntoKind dest, DerefX, n.info:
-          dest.add n
+          dest.addToken n
       else:
-        dest.add n
+        dest.addToken n
       inc n
     of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-      dest.add n
+      dest.addToken n
       inc n
     of ParLe:
       if n.exprKind in CallKinds:
@@ -139,11 +139,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of TemplateS, TypeS:
           takeTree dest, n
         else:
-          dest.add n
+          dest.addToken n
           inc n
           inc nested
     of ParRi:
-      dest.add n
+      dest.addToken n
       inc n
       dec nested
     if nested == 0: break

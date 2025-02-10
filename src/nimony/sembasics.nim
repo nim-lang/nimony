@@ -331,7 +331,7 @@ proc declareOverloadableSym*(c: var SemContext; it: var Item; kind: SymKind): (S
     if not c.freshSyms.missingOrExcl(it.n.symId):
       status = OkExistingFresh
     result = (it.n.symId, status)
-    c.dest.add it.n
+    c.dest.addToken it.n
     inc it.n
   else:
     let lit = getIdent(it.n)
@@ -367,7 +367,7 @@ proc handleSymDef*(c: var SemContext; n: var Cursor; kind: SymKind): DelayedSym 
 
     let s = Sym(kind: kind, name: n.symId, pos: c.dest.len)
     result = DelayedSym(status: status, lit: symToIdent(s.name), s: s, info: info)
-    c.dest.add n
+    c.dest.addToken n
     inc n
   elif n.kind == DotToken:
     var name = "`anon"
@@ -418,18 +418,18 @@ proc takeTree*(c: var SemContext; n: var Cursor) =
 
 proc wantParRi*(c: var SemContext; n: var Cursor) =
   if n.kind == ParRi:
-    c.dest.add n
+    c.dest.addToken n
     inc n
   else:
     error "expected ')', but got: ", n
 
 proc takeToken*(c: var SemContext; n: var Cursor) {.inline.} =
-  c.dest.add n
+  c.dest.addToken n
   inc n
 
 proc wantDot*(c: var SemContext; n: var Cursor) =
   if n.kind == DotToken:
-    c.dest.add n
+    c.dest.addToken n
     inc n
   else:
     buildErr c, n.info, "expected '.'"

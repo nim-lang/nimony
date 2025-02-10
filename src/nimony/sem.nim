@@ -433,7 +433,7 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
   while true:
     case n.kind
     of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
-      dest.add n
+      dest.addToken n
     of Symbol:
       let s = n.symId
       let arg = sc.params[].getOrDefault(s)
@@ -444,17 +444,17 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
         if nv != SymId(0):
           dest.add symToken(nv, n.info)
         else:
-          dest.add n # keep Symbol as it was
+          dest.addToken n # keep Symbol as it was
     of SymbolDef:
       let s = n.symId
       let newDef = newSymId(c, s)
       sc.newVars[s] = newDef
       dest.add symdefToken(newDef, n.info)
     of ParLe:
-      dest.add n
+      dest.addToken n
       inc nested
     of ParRi:
-      dest.add n
+      dest.addToken n
       dec nested
     if nested == 0: break
     inc n
@@ -839,7 +839,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
             if pool.integers[n.intId] == TypedMagic:
               c.dest.addSubtree skipModifier(args[0].typ)
             else:
-              c.dest.add n
+              c.dest.addToken n
             inc n
           if n.kind != ParRi:
             error "broken `magic`: expected ')', but got: ", n
@@ -1089,7 +1089,7 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
     if nullary.kind == ParRi:
       # sink T/lent T call
       var typeBuf = createTokenBuf(16)
-      typeBuf.add destType
+      typeBuf.addToken destType
       typeBuf.addSubtree cs.args[0].n
       typeBuf.addParRi()
       var item = Item(n: beginRead(typeBuf), typ: it.typ)
@@ -1111,7 +1111,7 @@ proc semObjConstrFromCall(c: var SemContext; it: var Item; cs: CallState) =
   skipParRi it.n
   var objBuf = createTokenBuf()
   objBuf.add parLeToken(OconstrX, cs.callNode.info)
-  objBuf.add cs.fn.n
+  objBuf.addToken cs.fn.n
   objBuf.addParRi()
   var objConstr = Item(n: cursorAt(objBuf, 0), typ: it.typ)
   semObjConstr c, objConstr
@@ -1825,7 +1825,7 @@ proc semDot(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     c.dest.shrink exprStart
     var callBuf = createTokenBuf(16)
     callBuf.addParLe(CallX, info)
-    callBuf.add fieldNameCursor
+    callBuf.addToken fieldNameCursor
     callBuf.addSubtree lhs.n # add lhs as first argument
     callBuf.addParRi()
     var call = Item(n: cursorAt(callBuf, 0), typ: expected)
@@ -1892,13 +1892,13 @@ proc semContinue(c: var SemContext; it: var Item) =
 
 proc wantExportMarker(c: var SemContext; n: var Cursor) =
   if n.kind == DotToken:
-    c.dest.add n
+    c.dest.addToken n
     inc n
   elif n.kind == Ident and pool.strings[n.litId] == "x":
     if c.currentScope.kind != ToplevelScope:
       buildErr c, n.info, "only toplevel declarations can be exported"
     else:
-      c.dest.add n
+      c.dest.addToken n
     inc n
   elif n.kind == ParLe:
     # export marker could have been turned into a NIF tag
@@ -2643,7 +2643,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
   of Symbol:
     let start = c.dest.len
     let s = fetchSym(c, n.symId)
-    c.dest.add n
+    c.dest.addToken n
     inc n
     semTypeSym c, s, info, start, context
   of ParLe:
@@ -2942,7 +2942,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
     inc n
   else:
     if n.kind == ParLe and n.exprKind == TupleConstrX:
-      c.dest.add n
+      c.dest.addToken n
       inc n
       let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
       if explicitValue != state.thisValue:
@@ -2957,7 +2957,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
       if fieldValue.kind == StringLit:
         c.dest.add parLeToken(TupleConstrX, n.info)
         c.addXint state.thisValue, n.info
-        c.dest.add fieldValue
+        c.dest.addToken fieldValue
         c.dest.addParRi()
         n = valueCursor
       else:
@@ -4118,7 +4118,7 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
         c.buildErr it.n.info, "expected field name for named tuple constructor"
       else:
         takeToken c, it.n
-        typ.add it.n # add name
+        typ.addToken it.n # add name
         takeToken c, it.n
     else:
       typ.add identToken(pool.strings.getOrIncl("Field" & $i), it.n.info)
@@ -4251,7 +4251,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
       c.buildErr it.n.info, "expected key/value pair in object constructor"
     else:
       let fieldStart = fieldBuf.len
-      fieldBuf.add it.n
+      fieldBuf.addToken it.n
       inc it.n
       let fieldInfo = it.n.info
       let fieldNameCursor = it.n
