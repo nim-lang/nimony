@@ -294,7 +294,7 @@ proc generateFinalMakefile(c: DepContext; passC, passL: string): string =
 
     for v in c.nodes:
       s.add " " & mescape(objFile(v.files[0]))
-    s.add "\n\t$(CC) -o $@ $^ -lmimalloc"
+    s.add "\n\t$(CC) -o $@ $^"
     if passL.len != 0:
       s.add " " & mescape(passL)
 
