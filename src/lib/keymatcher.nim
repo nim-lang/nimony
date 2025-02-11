@@ -8,14 +8,9 @@
 ## This produces a binary tree search that is faster than
 ## hashing as hashing requires 2 passes over the string.
 
-# We split the set of strings into 2 sets of roughly the same size.
-# The condition used for splitting is a (position, char) tuple.
-# Every string of length > position for which s[position] <= char is in one
-# set else it is in the other set.
-
 import std / [macros, assertions]
 
-import stringviews
+import stringviews, stringtrees
 
 proc strAtLe(s: StringView; idx: int; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
@@ -23,98 +18,20 @@ proc strAtLe(s: StringView; idx: int; ch: char): bool {.inline.} =
 proc strAtLe(s: string; idx: int; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
 
-type
-  Key = (string, string) # 2nd component is the enum field name as a string
-
-func addUnique*[T](s: var seq[T]; x: T) =
-  for y in items(s):
-    if y == x: return
-  s.add x
-
-proc splitValue(a: openArray[Key]; position: int): (char, float) =
-  var cand: seq[char] = @[]
-  for t in items a:
-    if t[0].len > position: cand.addUnique t[0][position]
-
-  result = ('\0', -1.0)
-  for disc in items cand:
-    var hits = 0
-    for t in items a:
-      if t[0].len > position and t[0][position] <= disc:
-        inc hits
-    # the split is the better, the more `hits` is close to `a.len / 2`:
-    let grade = 100000.0 - abs(hits.float - a.len.float / 2.0)
-    if grade > result[1]:
-      result = (disc, grade)
-
-proc tryAllPositions(a: openArray[Key]): (char, int) =
-  var m = 0
-  for t in items a:
-    m = max(m, t[0].len)
-
-  result = ('\0', -1)
-  var best = -1.0
-  for i in 0 ..< m:
-    let current = splitValue(a, i)
-    if current[1] > best:
-      best = current[1]
-      result = (current[0], i)
-
-type
-  SearchKind = enum
-    LinearSearch, SplitSearch
-  SearchResult* = object
-    case kind: SearchKind
-    of LinearSearch:
-      a: seq[Key]
-    of SplitSearch:
-      span: int
-      best: (char, int)
-
-proc emitLinearSearch(a: openArray[Key]; dest: var seq[SearchResult]) =
-  var d = SearchResult(kind: LinearSearch, a: @[])
-  for x in a: d.a.add x
-  dest.add d
-
-proc split(a: openArray[Key]; dest: var seq[SearchResult]) =
-  if a.len <= 2:
-    emitLinearSearch a, dest
-  else:
-    let best = tryAllPositions(a)
-    var groupA: seq[Key] = @[]
-    var groupB: seq[Key] = @[]
-    for t in items a:
-      if t[0].len > best[1] and t[0][best[1]] <= best[0]:
-        groupA.add t
-      else:
-        groupB.add t
-    if groupA.len == 0 or groupB.len == 0:
-      emitLinearSearch a, dest
-    else:
-      let toPatch = dest.len
-      dest.add SearchResult(kind: SplitSearch, span: 1, best: best)
-      split groupA, dest
-      split groupB, dest
-      let dist = dest.len - toPatch
-      assert dist > 0
-      dest[toPatch].span = dist
-
-proc decodeSolution(dest: NimNode; s: seq[SearchResult]; i: int;
+proc decodeSolution(dest: NimNode; s: seq[SearchNode]; i: int;
                     selector: NimNode) =
   case s[i].kind
-  of SplitSearch:
-    let thenA = i+1
-    let elseA = thenA + (if s[thenA].kind == LinearSearch: 1 else: s[thenA].span)
-    let best = s[i].best
+  of ForkedSearch:
+    let f = forked(s, i)
 
     var cond = newTree(nnkIfStmt)
     var elifBranch = newTree(nnkElifBranch)
-    elifBranch.add newCall(bindSym"strAtLe", selector, newLit(best[1]), newLit(best[0]))
+    elifBranch.add newCall(bindSym"strAtLe", selector, newLit(f.best[1]), newLit(f.best[0]))
 
-    decodeSolution elifBranch, s, thenA, selector
+    decodeSolution elifBranch, s, f.thenA, selector
 
     var elseBranch = newTree(nnkElse)
-    decodeSolution elseBranch, s, elseA, selector
+    decodeSolution elseBranch, s, f.elseA, selector
 
     cond.add elifBranch
     cond.add elseBranch
@@ -122,7 +39,7 @@ proc decodeSolution(dest: NimNode; s: seq[SearchResult]; i: int;
 
   of LinearSearch:
     var cond = newTree(nnkIfStmt)
-    for x in s[i].a:
+    for x in s[i].choices:
       var elifBranch = newTree(nnkElifBranch)
       elifBranch.add newCall(bindSym"==", selector, newLit(x[0]))
       var action = newTree(nnkStmtList, newTree(nnkReturnStmt, ident(x[1])))
@@ -131,8 +48,7 @@ proc decodeSolution(dest: NimNode; s: seq[SearchResult]; i: int;
     dest.add cond
 
 proc genMatcher(body, selector: NimNode; a: openArray[Key]) =
-  var solution: seq[SearchResult] = @[]
-  split a, solution
+  let solution = createSearchTree a
   decodeSolution body, solution, 0, selector
 
 macro declareMatcher*(name: untyped; e: typedesc; start: static[int] = 1;
