@@ -470,7 +470,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       of ErrsP, RaisesP:
         skip p
       of WasP:
-        genWasPragma c, n
+        genWasPragma c, p
       else:
         if p.callConvKind != NoCallConv:
           lastCallConv = p.callConvKind
