@@ -29,7 +29,7 @@ proc getType*(m: var Module; n: Cursor): Cursor =
   of Symbol:
     let d = m.defs.getOrDefault(n.symId)
     if d.pos != 0:
-      result = getType(m, m.code.cursorAt(d.pos))
+      result = getType(m, m.src.cursorAt(d.pos))
     else:
       # importC types are not defined
       result = createIntegralType(m, "(err)")

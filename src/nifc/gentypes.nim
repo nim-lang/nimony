@@ -72,7 +72,7 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
         else:
           error m, "undeclared symbol: ", ch
       else:
-        var n = readonlyCursorAt(m.code, def.pos)
+        var n = readonlyCursorAt(m.src, def.pos)
         let decl = asTypeDecl(n)
         if not containsOrIncl(o.lookedAtBodies, decl.name.symId):
           recordDependencyImpl m, o, n, decl.body, viaPointer
@@ -111,7 +111,7 @@ proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor) =
 
 proc traverseTypes(m: Module; o: var TypeOrder) =
   for ch in m.types:
-    let n = readonlyCursorAt(m.code, ch)
+    let n = readonlyCursorAt(m.src, ch)
     let decl = asTypeDecl(n)
     let t = decl.body
     case t.typeKind

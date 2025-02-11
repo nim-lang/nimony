@@ -18,7 +18,7 @@ type
     kind*: NifcSym
 
   Module* = object
-    code*: TokenBuf
+    src*: TokenBuf
     types*: seq[int]
     defs*: Table[SymId, Definition]
     filename*: string
@@ -144,46 +144,46 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
   of ParLe:
     let tag = pool.tags.getOrIncl(decodeStr t)
     if tag.uint32 == TypeTagId:
-      m.types.add m.code.len
-    copyInto(m.code, tag, currentInfo):
+      m.types.add m.src.len
+    copyInto(m.src, tag, currentInfo):
       while true:
         let progress = parse(r, m, currentInfo)
         if not progress: break
   of UnknownToken:
-    copyInto m.code, ErrT, currentInfo:
-      m.code.addStrLit decodeStr(t), currentInfo
+    copyInto m.src, ErrT, currentInfo:
+      m.src.addStrLit decodeStr(t), currentInfo
   of DotToken:
-    m.code.addDotToken()
+    m.src.addDotToken()
   of Ident:
-    m.code.addIdent decodeStr(t), currentInfo
+    m.src.addIdent decodeStr(t), currentInfo
   of Symbol:
-    m.code.add symToken(pool.syms.getOrIncl(decodeStr t), currentInfo)
+    m.src.add symToken(pool.syms.getOrIncl(decodeStr t), currentInfo)
   of SymbolDef:
     # Remember where to find this symbol:
     let litId = pool.syms.getOrIncl(decodeStr t)
-    let pos = m.code.len - 1
-    let n = cursorAt(m.code, pos)
+    let pos = m.src.len - 1
+    let n = cursorAt(m.src, pos)
     m.defs[litId] = Definition(pos: pos, kind: n.symKind)
-    endRead(m.code)
-    m.code.add symdefToken(litId, currentInfo)
+    endRead(m.src)
+    m.src.add symdefToken(litId, currentInfo)
   of StringLit:
-    m.code.addStrLit decodeStr(t), currentInfo
+    m.src.addStrLit decodeStr(t), currentInfo
   of CharLit:
-    m.code.add charToken(decodeChar(t), currentInfo)
+    m.src.add charToken(decodeChar(t), currentInfo)
   of IntLit:
-    m.code.addIntLit parseBiggestInt(decodeStr t), currentInfo
+    m.src.addIntLit parseBiggestInt(decodeStr t), currentInfo
   of UIntLit:
-    m.code.addUIntLit parseBiggestUInt(decodeStr t), currentInfo
+    m.src.addUIntLit parseBiggestUInt(decodeStr t), currentInfo
   of FloatLit:
-    m.code.add floatToken(pool.floats.getOrIncl(parseFloat(decodeStr t)), currentInfo)
+    m.src.add floatToken(pool.floats.getOrIncl(parseFloat(decodeStr t)), currentInfo)
 
 proc parse*(r: var Reader): Module =
   # empirically, (size div 7) is a good estimate for the number of nodes
   # in the file:
   let nodeCount = r.fileSize div 7
-  result = Module(code: createTokenBuf(nodeCount))
+  result = Module(src: createTokenBuf(nodeCount))
   discard parse(r, result, NoLineInfo)
-  freeze(result.code)
+  freeze(result.src)
 
 proc load*(filename: string): Module =
   var r = nifreader.open(filename)
