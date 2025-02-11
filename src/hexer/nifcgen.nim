@@ -298,7 +298,7 @@ proc traverseProcTypeBody(e: var EContext; c: var Cursor) =
   let prag = parsePragmas(e, c)
   var genPragmas = openGenPragmas()
   if prag.callConv != NoCallConv:
-    let name = $prag.callConv
+    let name = if prag.callConv == Nimcall: $Fastcall else: $prag.callConv
     e.addKey genPragmas, name, pinfo
   closeGenPragmas e, genPragmas
 
