@@ -9,106 +9,119 @@
 
 # included from codegen.nim
 
-proc genx(c: var GeneratedCode; t: Tree; n: NodePos)
+proc genx(c: var GeneratedCode; n: var Cursor)
 
-template typedBinOp(opr) =
-  let (typ, a, b) = sons3(t, n)
+proc typedBinOp(c: var GeneratedCode; n: var Cursor; opr: string) =
+  inc n
   c.add ParLe
   c.add ParLe
-  genType c, t, typ
+  genType c, n
   c.add ParRi
   c.add ParLe
-  genx c, t, a
+  genx c, n
   c.add opr
-  genx c, t, b
+  genx c, n
   c.add ParRi
   c.add ParRi
+  skipParRi n
 
-template cmpOp(opr) =
-  let (a, b) = sons2(t, n)
+proc cmpOp(c: var GeneratedCode; n: var Cursor; opr: string) =
+  inc n
   c.add ParLe
-  genx c, t, a
+  genx c, n
   c.add opr
-  genx c, t, b
+  genx c, n
   c.add ParRi
+  skipParRi n
 
-template unOp(opr) =
+proc unOp(c: var GeneratedCode; n: var Cursor; opr: string) =
+  inc n
   c.add ParLe
   c.add opr
-  genx c, t, n.firstSon
+  genx c, n
   c.add ParRi
+  skipParRi n
 
-template typedUnOp(opr) =
-  let (typ, a) = sons2(t, n)
+proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
+  inc n
   c.add ParLe
   c.add ParLe
-  genType c, t, typ
+  genType c, n
   c.add ParRi
   c.add opr
-  genx c, t, a
+  genx c, n
   c.add ParRi
+  skipParRi n
 
-proc genCall(c: var GeneratedCode; t: Tree; n: NodePos) =
-  genCLineDir(c, t, info(t, n))
-  genx c, t, n.firstSon
+proc genCall(c: var GeneratedCode; n: var Cursor) =
+  genCLineDir(c, info(n))
+  inc n
+  genx c, n
   c.add ParLe
   var i = 0
-  for ch in sonsFromX(t, n):
+  while n.kind != ParRi:
     if i > 0: c.add Comma
-    genx c, t, ch
+    genx c, n
     inc i
   c.add ParRi
+  skipParRi n
 
-proc genCallCanRaise(c: var GeneratedCode; t: Tree; n: NodePos) =
-  genCLineDir(c, t, info(t, n))
-  genx c, t, ithSon(t, n, 1)
+proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
+  genCLineDir(c, info(n))
+  inc n
+  skip n # skip error action
+  genx c, n
   c.add ParLe
   var i = 0
-  for ch in sonsFromX(t, n, 2):
+  while n.kind != ParRi:
     if i > 0: c.add Comma
-    genx c, t, ch
+    genx c, n
     inc i
   c.add ParRi
+  skipParRi n
 
-proc genLvalue(c: var GeneratedCode; t: Tree; n: NodePos) =
-  case t[n].kind
-  of Sym:
-    let lit = t[n].litId
-    let name = mangle(c.m.lits.strings[lit])
-    c.add name
-    c.requestedSyms.incl name
-  of DerefC: unOp "*"
+proc genLvalue(c: var GeneratedCode; n: var Cursor) =
+  case n.exprKind
+  of NoExpr:
+    if n.kind == Symbol:
+      let name = mangle(pool.syms[n.symId])
+      c.add name
+      c.requestedSyms.incl name
+      inc n
+    else:
+      error c.m, "expected expression but got: ", n
+  of DerefC: unOp c, n, "*"
   of AtC:
-    let (a, i) = sons2(t, n)
-    genx c, t, a
-    let tyArr = getType(c.m, t, a)
-    if tyArr.isError:
-      error c.m, "cannot get the type of ", t, a
-    if not c.m.isImportC(tyArr):
+    inc n
+    let arrType = getType(c.m, n)
+    genx c, n
+    if not c.m.isImportC(arrType):
       c.add Dot
       c.add "a"
     c.add BracketLe
-    genx c, t, i
+    genx c, n
     c.add BracketRi
+    skipParRi n
   of PatC:
-    let (a, i) = sons2(t, n)
-    genx c, t, a
+    inc n
+    genx c, n
     c.add BracketLe
-    genx c, t, i
+    genx c, n
     c.add BracketRi
+    skipParRi n
   of DotC:
-    let (obj, fld, inheritance) = sons3(t, n)
-    let inhs {.cursor.} = c.m.lits.strings[t[inheritance].litId]
-    if inhs != "0":
-      var inh = parseInt(inhs)
-      genx c, t, obj
-      while inh > 0:
-        c.add ".Q"
-        dec inh
-    else:
-      genx c, t, obj
+    inc n
+    genx c, n
+    var fld = n
+    skip n
+    var inh = pool.integers[n.intId]
+    inc n
+    while inh > 0:
+      c.add ".Q"
+      dec inh
     c.add Dot
-    genx c, t, fld
+    genx c, fld
+    skipParRi n
   of ErrC:
     if {gfMainModule, gfHasError} * c.flags == {}:
       moveToDataSection:
@@ -119,19 +132,22 @@ proc genLvalue(c: var GeneratedCode; t: Tree; n: NodePos) =
         c.add Semicolon
       c.flags.incl gfHasError
     c.add ErrToken
+    skip n
   else:
-    error c.m, "expected expression but got: ", t, n
+    error c.m, "expected expression but got: ", n
 
-proc objConstrType(c: var GeneratedCode; t: Tree; n: NodePos) =
+proc objConstrType(c: var GeneratedCode; n: var Cursor) =
   # C99 is strange, it requires (T){} for struct construction but not for
   # consts.
   if c.inSimpleInit == 0:
     c.add ParLe
-    genType(c, t, n)
+    genType c, n
     c.add ParRi
+  else:
+    skip n
 
-proc suffixToType(c: var GeneratedCode; t: Tree; suffix: NodePos) =
-  case c.m.lits.strings[t[suffix].litId]
+proc suffixToType(c: var GeneratedCode; suffix: Cursor) =
+  case pool.strings[suffix.litId]
   of "i64":
     c.add "NI64"
   of "i32":
@@ -156,129 +172,160 @@ proc suffixToType(c: var GeneratedCode; t: Tree; suffix: NodePos) =
     # TODO: f128?
     quit "unsupported suffix"
 
-proc suffixConv(c: var GeneratedCode; t: Tree; value: NodePos, suffix: NodePos) =
+proc suffixConv(c: var GeneratedCode; value, suffix: Cursor) =
   c.add ParLe
   c.add ParLe
-  suffixToType c, t, suffix
+  suffixToType c, suffix
   c.add ParRi
-  genx c, t, value
+  var value = value
+  genx c, value
   c.add ParRi
 
-proc genx(c: var GeneratedCode; t: Tree; n: NodePos) =
-  case t[n].kind
-  of IntLit:
-    genIntLit c, t[n].litId
-  of UIntLit:
-    genUIntLit c, t[n].litId
-  of FloatLit:
-    c.add c.m.lits.strings[t[n].litId]
-  of CharLit:
-    let ch = t[n].uoperand
-    var s = "'"
-    toCChar char(ch), s
-    s.add "'"
-    c.add s
-  of FalseC: c.add "NIM_FALSE"
-  of TrueC: c.add "NIM_TRUE"
-  of StrLit:
-    c.add makeCString(c.m.lits.strings[t[n].litId])
+proc genx(c: var GeneratedCode; n: var Cursor) =
+  case n.exprKind
+  of NoExpr:
+    case n.kind
+    of IntLit:
+      genIntLit c, n.intId
+      inc n
+    of UIntLit:
+      genUIntLit c, n.uintId
+      inc n
+    of FloatLit:
+      c.add $pool.floats[n.floatId]
+      inc n
+    of CharLit:
+      let ch = n.charLit
+      var s = "'"
+      toCChar ch, s
+      s.add "'"
+      c.add s
+      inc n
+    of StringLit:
+      c.add makeCString(pool.strings[n.litId])
+      inc n
+    else:
+      genLvalue c, n
+  of FalseC:
+    c.add "NIM_FALSE"
+    skip n
+  of TrueC:
+    c.add "NIM_TRUE"
+    skip n
   of NilC:
     c.add NullPtr
+    skip n
   of InfC:
     c.add "INF"
+    skip n
   of NegInfC:
     c.add "-INF"
+    skip n
   of NanC:
     c.add "NAN"
+    skip n
   of AconstrC:
-    c.objConstrType(t, n.firstSon)
+    inc n
+    c.objConstrType(n)
     c.add CurlyLe
     c.add ".a = "
     c.add CurlyLe
     var i = 0
-    for ch in sonsFromX(t, n):
+    while n.kind != ParRi:
       if i > 0: c.add Comma
-      c.genx t, ch
+      c.genx n
       inc i
     c.add CurlyRi
     c.add CurlyRi
+    skipParRi n
   of OconstrC:
-    c.objConstrType(t, n.firstSon)
+    inc n
+    c.objConstrType(n)
     c.add CurlyLe
     var i = 0
-    for ch in sonsFromX(t, n):
+    while n.kind != ParRi:
       if i > 0: c.add Comma
-      if t[ch].kind == OconstrC:
+      if n.exprKind == OconstrC:
         # inheritance
         c.add Dot
         c.add "Q"
         c.add AsgnOpr
-        c.genx t, ch
+        c.genx n
       else:
-        let (k, v) = sons2(t, ch)
+        assert n.substructureKind == KvU
+        inc n
         c.add Dot
-        c.genx t, k
+        c.genx n
         c.add AsgnOpr
-        c.genx t, v
+        c.genx n
+        skipParRi n
       inc i
     c.add CurlyRi
+    skipParRi n
   of ParC:
-    let arg = n.firstSon
     c.add ParLe
-    genx c, t, arg
+    inc n
+    genx c, n
     c.add ParRi
-  of AddrC: unOp "&"
+    skipParRi n
+  of AddrC: unOp c, n, "&"
   of SizeofC:
-    let arg = n.firstSon
     c.add "sizeof"
     c.add ParLe
-    genType c, t, arg
+    inc n
+    genType c, n
     c.add ParRi
+    skipParRi n
   of AlignofC:
-    let arg = n.firstSon
     c.add "NIM_ALIGNOF"
     c.add ParLe
-    genType c, t, arg
+    inc n
+    genType c, n
     c.add ParRi
+    skipParRi n
   of OffsetofC:
-    let (typ, mem) = sons2(t, n)
+    inc n
     c.add "offsetof"
     c.add ParLe
-    genType c, t, typ
+    genType c, n
     c.add Comma
-    let lit = t[mem].litId
-    let name = mangle(c.m.lits.strings[lit])
+    let name = mangle(pool.syms[n.symId])
+    inc n
     c.add name
     c.add ParRi
-  of CallC: genCall c, t, n
-  of AddC: typedBinOp " + "
-  of SubC: typedBinOp " - "
-  of MulC: typedBinOp " * "
-  of DivC: typedBinOp " / "
-  of ModC: typedBinOp " % "
-  of ShlC: typedBinOp " << "
-  of ShrC: typedBinOp " >> "
-  of BitandC: typedBinOp " & "
-  of BitorC: typedBinOp " | "
-  of BitxorC: typedBinOp " ^ "
-  of BitnotC: typedUnOp " ~ "
-  of AndC: cmpOp " && "
-  of OrC: cmpOp " || "
-  of NotC: unOp "!"
-  of NegC: typedUnOp "-"
-  of EqC: cmpOp " == "
-  of NeqC: cmpOp " != "
-  of LeC: cmpOp " <= "
-  of LtC: cmpOp " < "
-  of CastC: typedUnOp ""
-  of ConvC: typedUnOp ""
+    skipParRi n
+  of CallC: genCall c, n
+  of AddC: typedBinOp c, n, " + "
+  of SubC: typedBinOp c, n, " - "
+  of MulC: typedBinOp c, n, " * "
+  of DivC: typedBinOp c, n, " / "
+  of ModC: typedBinOp c, n, " % "
+  of ShlC: typedBinOp c, n, " << "
+  of ShrC: typedBinOp c, n, " >> "
+  of BitandC: typedBinOp c, n, " & "
+  of BitorC: typedBinOp c, n, " | "
+  of BitxorC: typedBinOp c, n, " ^ "
+  of BitnotC: typedUnOp c, n, " ~ "
+  of AndC: cmpOp c, n, " && "
+  of OrC: cmpOp c, n, " || "
+  of NotC: unOp c, n, "!"
+  of NegC: typedUnOp c, n, "-"
+  of EqC: cmpOp c, n, " == "
+  of NeqC: cmpOp c, n, " != "
+  of LeC: cmpOp c, n, " <= "
+  of LtC: cmpOp c, n, " < "
+  of CastC: typedUnOp c, n, ""
+  of ConvC: typedUnOp c, n, ""
   of SufC:
-    let (value, suffix) = sons2(t, n)
-    if t[value].kind == StrLit:
-      genx c, t, value
+    inc n
+    var value = n
+    skip n
+    let suffix = n
+    skip n
+    skipParRi n
+    if value.kind == StringLit:
+      genx c, value
     else:
-      suffixConv(c, t, value, suffix)
-  of OnErrC:
-    genCallCanRaise c, t, n
-  else:
-    genLvalue c, t, n
+      suffixConv c, value, suffix
+  of ErrC, AtC, DerefC, DotC, PatC:
+    genLvalue c, n

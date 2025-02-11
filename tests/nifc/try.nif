@@ -3,9 +3,10 @@
   (incl "<assert.h>")
   (incl "<stdio.h>")
 
-  (proc :foo.c . . .
+  (proc :foo.c . . . (stmts
     (asgn (err) (true))
     (call assert.c (err))
+  )
   )
 
 

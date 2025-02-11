@@ -9,65 +9,73 @@
 
 # included from codegen.nim
 
-proc genEmitStmt(c: var GeneratedCode; t: Tree; n: NodePos) =
-  for ch in sons(t, n):
-    if t[ch].kind == StrLit:
-      c.add c.m.lits.strings[t[ch].litId]
+proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  while n.kind != ParRi:
+    if n.kind == StringLit:
+      c.add pool.strings[n.litId]
+      inc n
     else:
-      genx c, t, ch
+      genx c, n
+  inc n # ParRi
   c.add NewLine
 
-proc genStmt(c: var GeneratedCode; t: Tree; n: NodePos)
-
-proc genIf(c: var GeneratedCode; t: Tree; ifStmt: NodePos) =
+proc genIf(c: var GeneratedCode; n: var Cursor) =
   var hasElse = false
   var hasElif = false
-  for n in sons(t, ifStmt):
-    case t[n].kind
-    of ElifC:
+  inc n
+  let first = n
+  while n.kind != ParRi:
+    case n.substructureKind
+    of ElifU:
       if hasElse:
-        error c.m, "no `elif` allowed after `else` but got: ", t, n
+        error c.m, "no `elif` allowed after `else` but got: ", n
       else:
         if hasElif:
           c.add ElseKeyword
         c.add IfKeyword
-        let (cond, action) = sons2(t, n)
-        c.genx t, cond
+        inc n
+        c.genx n
         c.add ParRi
         c.add CurlyLe
-        genStmt c, t, action
+        genStmt c, n
         c.add CurlyRi
+        skipParRi n
       hasElif = true
-    of ElseC:
+    of ElseU:
       hasElse = true
       if not hasElif:
-        error c.m, "no `elif` before `else` but got: ", t, n
+        error c.m, "no `elif` before `else` but got: ", n
       else:
         c.add ElseKeyword
         c.add CurlyLe
-        genStmt c, t, n.firstSon
+        inc n
+        genStmt c, n
         c.add CurlyRi
+        skipParRi n
     else:
-      error c.m, "`if` expects `elif` or `else` but got: ", t, n
+      error c.m, "`if` expects `elif` or `else` but got: ", n
+  skipParRi n
   if not hasElif and not hasElse:
-    error c.m, "`if` expects `elif` or `else` but got: ", t, ifStmt
+    error c.m, "`if` expects `elif` or `else` but got: ", first
 
-proc genWhile(c: var GeneratedCode; t: Tree; n: NodePos) =
-  let (cond, body) = sons2(t, n)
+proc genWhile(c: var GeneratedCode; n: var Cursor) =
+  inc n
   c.add WhileKeyword
   c.add ParLe
-  c.genx t, cond
+  c.genx n
   c.add ParRi
   c.add CurlyLe
-  c.genStmt t, body
+  c.genStmt n
   c.add CurlyRi
+  skipParRi n
 
-proc genTryCpp(c: var GeneratedCode; t: Tree; n: NodePos) =
-  let (actions, onerr, final) = sons3(t, n)
+proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
+  inc n
 
   c.add TryKeyword
   c.add CurlyLe
-  c.genStmt(t, actions)
+  c.genStmt n
   c.add CurlyRi
 
   c.add CatchKeyword
@@ -75,193 +83,221 @@ proc genTryCpp(c: var GeneratedCode; t: Tree; n: NodePos) =
   c.add ParRi
   c.add Space
   c.add CurlyLe
-  if t[onerr].kind != Empty:
-    c.genStmt(t, onerr)
-  c.add CurlyRi
-
-  if t[final].kind != Empty:
-    c.add CurlyLe
-    c.genStmt(t, final)
-    c.add CurlyRi
-
-proc genScope(c: var GeneratedCode; t: Tree; n: NodePos) =
-  c.add CurlyLe
-  for ch in sons(t, n):
-    c.genStmt t, ch
-  c.add CurlyRi
-
-proc genBranchValue(c: var GeneratedCode; t: Tree; n: NodePos) =
-  if t[n].kind in {IntLit, UIntLit, CharLit, Sym, TrueC, FalseC}:
-    c.genx t, n
+  if n.kind != DotToken:
+    c.genStmt n
   else:
-    error c.m, "expected valid `of` value but got: ", t, n
+    inc n
+  c.add CurlyRi
 
-proc genCaseCond(c: var GeneratedCode; t: Tree; n: NodePos) =
+  if n.kind != DotToken:
+    c.add CurlyLe
+    c.genStmt n
+    c.add CurlyRi
+  else:
+    inc n
+  skipParRi n
+
+proc genScope(c: var GeneratedCode; n: var Cursor) =
+  c.add CurlyLe
+  inc n
+  while n.kind != ParRi:
+    c.genStmt n
+  skipParRi n
+  c.add CurlyRi
+
+proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
+  if n.kind in {IntLit, UIntLit, CharLit, Symbol} or n.exprKind in {TrueC, FalseC}:
+    c.genx n
+  else:
+    error c.m, "expected valid `of` value but got: ", n
+
+proc genCaseCond(c: var GeneratedCode; n: var Cursor) =
   # BranchValue ::= Number | CharLiteral | Symbol | (true) | (false)
   # BranchRange ::= BranchValue | (range BranchValue BranchValue)
   # BranchRanges ::= (ranges BranchRange+)
-  if t[n].kind == RangesC:
-    for ch in sons(t, n):
-      c.add CaseKeyword
-      if t[ch].kind == RangeC:
-        let (a, b) = sons2(t, ch)
-        genBranchValue c, t, a
+  if n.substructureKind == RangesU:
+    inc n
+    c.add CaseKeyword
+    while n.kind != ParRi:
+      if n.substructureKind == RangeU:
+        inc n
+        genBranchValue c, n
         c.add " ... "
-        genBranchValue c, t, b
+        genBranchValue c, n
+        skipParRi n
       else:
-        genBranchValue c, t, ch
+        genBranchValue c, n
       c.add ":"
       c.add NewLine
+    skipParRi n
   else:
-    error c.m, "no `ranges` expected but got: ", t, n
+    error c.m, "`ranges` expected but got: ", n
 
-proc genLabel(c: var GeneratedCode; t: Tree; n: NodePos) =
-  let dname = n.firstSon
-  if t[dname].kind == SymDef:
-    let lit = t[dname].litId
-    let name = mangle(c.m.lits.strings[lit])
+proc genLabel(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  if n.kind == SymbolDef:
+    let name = mangle(pool.syms[n.symId])
     c.add name
     c.add Colon
     c.add Semicolon
+    inc n
   else:
-    error c.m, "expected SymbolDef but got: ", t, n
+    error c.m, "expected SymbolDef but got: ", n
+  skipParRi n
 
-proc genGoto(c: var GeneratedCode; t: Tree; n: NodePos) =
-  let dname = n.firstSon
-  if t[dname].kind == Sym:
-    let lit = t[dname].litId
-    let name = mangle(c.m.lits.strings[lit])
+proc genGoto(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  if n.kind == Symbol:
+    let name = mangle(pool.syms[n.symId])
     c.add GotoKeyword
     c.add name
     c.add Semicolon
+    inc n
   else:
-    error c.m, "expected Symbol but got: ", t, n
+    error c.m, "expected Symbol but got: ", n
+  skipParRi n
 
-proc genSwitch(c: var GeneratedCode; t: Tree; caseStmt: NodePos) =
+proc genSwitch(c: var GeneratedCode; n: var Cursor) =
   # (case Expr (of BranchRanges StmtList)* (else StmtList)?) |
   c.add SwitchKeyword
   c.add ParLe
-  let selector = caseStmt.firstSon
-  c.genx t, selector
+  inc n
+  let first = n
+  c.genx n
   c.add ParRi
   c.add CurlyLe
 
   var hasElse = false
   var hasElif = false
-  for n in sonsFromX(t, caseStmt):
-    case t[n].kind
-    of OfC:
+  while n.kind != ParRi:
+    case n.substructureKind
+    of OfU:
       if hasElse:
-        error c.m, "no `of` allowed after `else` but got: ", t, n
+        error c.m, "no `of` allowed after `else` but got: ", n
       else:
-        let (cond, action) = sons2(t, n)
-        c.genCaseCond t, cond
+        inc n
+        c.genCaseCond n
         c.add CurlyLe
-        genStmt c, t, action
+        genStmt c, n
         c.add CurlyRi
         c.add BreakKeyword
         c.add Semicolon
+        skipParRi n
       hasElif = true
-    of ElseC:
+    of ElseU:
       hasElse = true
       if not hasElif:
-        error c.m, "no `of` before `else` but got: ", t, n
+        error c.m, "no `of` before `else` but got: ", n
       else:
         c.add DefaultKeyword
         c.add NewLine
         c.add CurlyLe
-        genStmt c, t, n.firstSon
+        inc n
+        genStmt c, n
+        skipParRi n
         c.add CurlyRi
         c.add BreakKeyword
         c.add Semicolon
     else:
-      error c.m, "`case` expects `of` or `else` but got: ", t, n
+      error c.m, "`case` expects `of` or `else` but got: ", n
   if not hasElif and not hasElse:
-    error c.m, "`case` expects `of` or `else` but got: ", t, caseStmt
+    error c.m, "`case` expects `of` or `else` but got: ", first
   c.add CurlyRi
+  skipParRi n
 
-proc genVar(c: var GeneratedCode; t: Tree; n: NodePos; toExtern = false) =
-  case t[n].kind
-  of VarC:
-    genVarDecl c, t, n, IsLocal, toExtern
-  of GvarC:
+proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
+  case vk
+  of IsLocal:
+    genVarDecl c, n, IsLocal, toExtern
+  of IsGlobal:
     moveToDataSection:
-      genVarDecl c, t, n, IsGlobal, toExtern
-  of TvarC:
+      genVarDecl c, n, IsGlobal, toExtern
+  of IsThreadlocal:
     moveToDataSection:
-      genVarDecl c, t, n, IsThreadlocal, toExtern
-  of ConstC:
+      genVarDecl c, n, IsThreadlocal, toExtern
+  of IsConst:
     moveToDataSection:
-      genVarDecl c, t, n, IsConst, toExtern
-  else:
-    quit "unreachable"
+      genVarDecl c, n, IsConst, toExtern
 
-proc genOnError(c: var GeneratedCode; t: Tree; n: NodePos) =
-  c.add IfKeyword
-  c.add ErrToken
-  c.add ParRi
-  c.add Space
-  c.add CurlyLe
-  c.genStmt(t, n)
-  c.add CurlyRi
-
-proc genStmt(c: var GeneratedCode; t: Tree; n: NodePos) =
-  case t[n].kind
-  of Empty:
-    discard
-  of StmtsC:
-    for ch in sons(t, n):
-      genStmt(c, t, ch)
-  of ScopeC:
-    genScope c, t, n
-  of CallC:
-    genCall c, t, n
+proc genStmt(c: var GeneratedCode; n: var Cursor) =
+  case n.stmtKind
+  of NoStmt:
+    if n.kind == DotToken:
+      inc n
+    else:
+      error c.m, "expected statement but got: ", n
+  of StmtsS:
+    inc n
+    while n.kind != ParRi:
+      genStmt(c, n)
+    inc n # ParRi
+  of ScopeS:
+    genScope c, n
+  of CallS:
+    genCall c, n
     c.add Semicolon
-  of VarC, GvarC, TvarC, ConstC:
-    genVar c, t, n
-    let value = ithSon(t, n, 3)
-    if t[value].kind == OnErrC and
-        t[value.firstSon].kind != Empty:
-      genOnError(c, t, value.firstSon)
-  of EmitC:
-    genEmitStmt c, t, n
-  of AsgnC:
-    genCLineDir(c, t, info(t, n))
-    let (dest, src) = sons2(t, n)
-    genLvalue c, t, dest
+  of VarS:
+    genVar c, n, IsLocal
+  of GvarS:
+    genVar c, n, IsGlobal
+  of TvarS:
+    genVar c, n, IsThreadlocal
+  of ConstS:
+    genVar c, n, IsConst
+  of EmitS:
+    genEmitStmt c, n
+  of AsgnS:
+    genCLineDir(c, info(n))
+    inc n
+    genLvalue c, n
     c.add AsgnOpr
-    genx c, t, src
+    genx c, n
     c.add Semicolon
-  of IfC: genIf c, t, n
-  of WhileC: genWhile c, t, n
-  of BreakC:
+    skipParRi n
+  of IfS: genIf c, n
+  of WhileS: genWhile c, n
+  of BreakS:
+    inc n
     c.add BreakKeyword
     c.add Semicolon
-  of CaseC: genSwitch c, t, n
-  of LabC: genLabel c, t, n
-  of JmpC: genGoto c, t, n
-  of RetC:
+    skipParRi n
+  of CaseS: genSwitch c, n
+  of LabS: genLabel c, n
+  of JmpS: genGoto c, n
+  of RetS:
     c.add ReturnKeyword
-    if t[n.firstSon].kind != Empty:
+    inc n
+    if n.kind != DotToken:
       c.add Space
-      c.genx t, n.firstSon
+      c.genx n
+    else:
+      inc n
     c.add Semicolon
-  of DiscardC:
+    skipParRi n
+  of DiscardS:
+    inc n
     c.add DiscardToken
-    c.genx t, n.firstSon
+    c.genx n
     c.add Semicolon
-  of TryC:
-    genTryCpp(c, t, n)
-  of RaiseC:
+    skipParRi n
+  of TryS:
+    genTryCpp c, n
+  of RaiseS:
     c.add ThrowKeyword
-    if t[n.firstSon].kind != Empty:
+    inc n
+    if n.kind != DotToken:
       c.add Space
-      c.genx t, n.firstSon
+      c.genx n
+    else:
+      inc n
     c.add Semicolon
-  of OnErrC:
-    genCallCanRaise c, t, n
+    skipParRi n
+  of OnErrS:
+    var onErrAction = n
+    inc onErrAction
+    genCallCanRaise c, n
     c.add Semicolon
-    if t[n.firstSon].kind != Empty:
-      genOnError(c, t, n.firstSon)
-  else:
-    error c.m, "expected statement but got: ", t, n
+    if onErrAction.kind != DotToken:
+      genOnError(c, onErrAction)
+  of ProcS, TypeS, ImpS, InclS:
+    error c.m, "expected statement but got: ", n

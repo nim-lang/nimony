@@ -1046,7 +1046,7 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   if mode != TraverseSig:
     traverseExpr e, c
   else:
-    e.dest.addDotToken()
+    # Parameter decls in NIFC have no dot token for the default value!
     skip c
   wantParRi e, c
   if nodecl:
@@ -1261,7 +1261,6 @@ proc transformInlineRoutines(e: var EContext; c: var Cursor) =
 
   e.dest.add tagToken("imp", c1.info)
   traverseStmt e, c1, TraverseSig
-  e.dest.addDotToken()
   e.dest.addParRi()
 
 proc importSymbol(e: var EContext; s: SymId) =
@@ -1280,7 +1279,6 @@ proc importSymbol(e: var EContext; s: SymId) =
 
       e.dest.add tagToken("imp", c.info)
       traverseStmt e, c, TraverseSig
-      e.dest.addDotToken()
       e.dest.addParRi()
   else:
     error e, "could not find symbol: " & pool.syms[s]

@@ -173,6 +173,9 @@ proc cursorToPosition*(base, c: Cursor): int {.inline.} =
   result = (c - base) div sizeof(PackedToken)
   assert result < 1_000_000
 
+proc toUniqueId*(c: Cursor): int {.inline.} =
+  result = cast[int](c.p)
+
 proc add*(result: var TokenBuf; c: Cursor) =
   result.add c.load
 
@@ -261,8 +264,11 @@ proc addStrLit*(dest: var TokenBuf; s: string; info = NoLineInfo) =
 proc addIntLit*(dest: var TokenBuf; i: BiggestInt; info = NoLineInfo) =
   dest.add intToken(pool.integers.getOrIncl(i), info)
 
-proc addUintLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
+proc addUIntLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
   dest.add uintToken(pool.uintegers.getOrIncl(i), info)
+
+proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
+  dest.add identToken(pool.strings.getOrIncl(s), info)
 
 proc span*(c: Cursor): int =
   result = 0
@@ -359,10 +365,9 @@ proc parse*(r: var Stream; dest: var TokenBuf;
     dest.add tok
     if tok.kind == EofToken: break
 
-proc parse*(input: string): TokenBuf =
-  # For testing purposes only:
+proc parse*(input: string; sizeHint = 100): TokenBuf =
   var r = nifstreams.openFromBuffer(input)
-  result = createTokenBuf(100)
+  result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 
 proc isLastSon*(n: Cursor): bool =

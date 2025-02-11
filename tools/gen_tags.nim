@@ -7,19 +7,20 @@ proc toNimName(s: string; suffix: string): string =
 type
   EnumList = enum
     CallConv,
-    NifcExpr, NifcStmt, NifcType, NifcOther, NifcPragma, NifcTypeQualifier,
+    NifcExpr, NifcStmt, NifcType, NifcOther, NifcPragma, NifcTypeQualifier, NifcSym,
     NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym, ControlFlowKind,
     NifIndex
 
 proc toSuffix(e: EnumList): (string, string) =
   case e
   of CallConv: ("", "NoCallConv")
-  of NifcExpr: ("C", "NoNifcExpr")
-  of NifcStmt: ("S", "NoNifcStmt")
-  of NifcType: ("T", "NoNifcType")
-  of NifcOther: ("U", "NoNifcSubstructure")
-  of NifcPragma: ("P", "NoNifcPragma")
+  of NifcExpr: ("C", "NoExpr")
+  of NifcStmt: ("S", "NoStmt")
+  of NifcType: ("T", "NoType")
+  of NifcOther: ("U", "NoSub")
+  of NifcPragma: ("P", "NoPragma")
   of NifcTypeQualifier: ("Q", "NoQualifier")
+  of NifcSym: ("Y", "NoSym")
   of NimonyExpr: ("X", "NoExpr")
   of NimonyStmt: ("S", "NoStmt")
   of NimonyType: ("T", "NoType")
@@ -48,6 +49,7 @@ proc shortcutToEnumList(shortcut: string): set[EnumList] =
   of "IX": {NifIndex}
   of "Y": {NimonySym}
   of "G": {ControlFlowKind}
+  of "Z": {NifcSym}
   else: raiseAssert "unknown enum descriptor: " & shortcut
 
 const
@@ -151,7 +153,7 @@ proc genTags(inp: File) =
   writeTagsFile "src/models/tags.nim", tags
 
   writeModel "src/models/callconv", enumDecls, CallConv, CallConv
-  writeModel "src/models/nifc", enumDecls, NifcExpr, NifcTypeQualifier
+  writeModel "src/models/nifc", enumDecls, NifcExpr, NifcSym
   writeModel "src/models/nimony", enumDecls, NimonyExpr, ControlFlowKind
   writeModel "src/models/nifindex", enumDecls, NifIndex, NifIndex
 

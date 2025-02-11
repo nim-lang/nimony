@@ -45,22 +45,22 @@
 | lt | C, X | |
 | cast | C, X | |
 | conv | C, X | type conversion |
-| call | C, X, SN | call operation |
+| call | C, X, SC, SN | call operation |
 | cmd | SN, X | command operation |
 | range | SU | `(range a b)` construct |
 | ranges | SU | |
-| gvar | SC | global variable declaration |
-| tvar | SC | thread local variable declaration |
-| var | SC, SN, Y | variable declaration |
-| param | SU, Y | parameter declaration |
-| const | SC, SN, Y | const variable declaration |
+| gvar | SC, Z | global variable declaration |
+| tvar | SC, Z | thread local variable declaration |
+| var | SC, SN, Y, Z | variable declaration |
+| param | SU, Y, Z | parameter declaration |
+| const | SC, SN, Y, Z | const variable declaration |
 | result | Y, SN | result variable declaration |
 | let | Y, SN | let variable declaration |
 | cursor | Y, SN | cursor variable declaration |
 | typevar | Y, SU | type variable declaration |
-| efld | Y, SU | enum field declaration |
-| fld | SU, Y | field declaration |
-| proc | SC, SN, Y | proc declaration |
+| efld | Y, Z, SU | enum field declaration |
+| fld | SU, Y, Z | field declaration |
+| proc | SC, SN, Y, Z | proc declaration |
 | func | SN, Y | function declaration |
 | iterator | SN, Y, TN | iterator declaration |
 | converter | SN, Y | converter declaration |
@@ -86,7 +86,7 @@
 | while | SC, SN | `while` statement |
 | case | SC, SN | `case` statement |
 | of | SU | `of` branch within a `case` statement |
-| lab | SC | label, target of a `jmp` instruction |
+| lab | SC, Z | label, target of a `jmp` instruction |
 | jmp | SC | jump/goto instruction |
 | ret | SC, SN | `return` instruction |
 | yld | SN | yield statement |
@@ -120,7 +120,7 @@
 | nimcall | CC | `nimcall` calling convention |
 | inline | PP | `inline` proc annotation |
 | noinline | PP | `noinline` proc annotation |
-| attr | SUC | general attribute annoation |
+| attr | PC | general attribute annoation |
 | varargs | PP, TN | `varargs` proc annotation |
 | was | PC | |
 | selectany | PP | |
@@ -133,11 +133,11 @@
 | incl | SC, SN | `#include` statement or `incl` set operation |
 | excl | SN | `excl` set operation |
 | include | SN | `include` statement |
-| import | SC, SN | `import` statement |
-| from | SC, SN | `from` statement |
-| importexcept | SC, SN | `importexcept` statement |
-| export | SC, SN | `export` statement |
-| comment | SC, SN | `comment` statement |
+| import | SN | `import` statement |
+| from | SN | `from` statement |
+| importexcept | SN | `importexcept` statement |
+| export | SN | `export` statement |
+| comment | SN | `comment` statement |
 | discard | SC, SN | `discard` statement |
 | try | SC, SN | `try` statement |
 | raise | SC, SN | `raise` statement |
