@@ -122,7 +122,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
     c.add Dot
     genx c, fld
     skipParRi n
-  of ErrC:
+  of ErrvC:
     if {gfMainModule, gfHasError} * c.flags == {}:
       moveToDataSection:
         c.add ExternKeyword
@@ -327,5 +327,5 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       genx c, value
     else:
       suffixConv c, value, suffix
-  of ErrC, AtC, DerefC, DotC, PatC:
+  of ErrvC, AtC, DerefC, DotC, PatC:
     genLvalue c, n

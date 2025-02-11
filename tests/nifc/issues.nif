@@ -233,16 +233,16 @@
   ))
 
   (proc :foo.error.stmts . . (pragmas (errs)) (stmts
-    (asgn (err) (true))
-    (call assert.c (err))
-    (asgn (err) (false))
+    (asgn (errv) (true))
+    (call assert.c (errv))
+    (asgn (errv) (false))
   )
   )
 
   (proc :foo.error.exprs . (i +32) (pragmas (errs)) (stmts
-    (asgn (err) (true))
-    (call assert.c (err))
-    (asgn (err) (false))
+    (asgn (errv) (true))
+    (call assert.c (errv))
+    (asgn (errv) (false))
     (ret +3)
   )
   )

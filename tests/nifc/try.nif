@@ -4,8 +4,8 @@
   (incl "<stdio.h>")
 
   (proc :foo.c . . . (stmts
-    (asgn (err) (true))
-    (call assert.c (err))
+    (asgn (errv) (true))
+    (call assert.c (errv))
   )
   )
 
