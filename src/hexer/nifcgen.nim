@@ -508,6 +508,7 @@ proc maybeByConstRef(e: var EContext; c: var Cursor) =
     paramBuf.addSubtree param.pragmas
     copyIntoKind paramBuf, PtrT, param.typ.info:
       paramBuf.addSubtree param.typ
+    paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
     traverseLocal(e, paramCursor, "param", TraverseSig)
@@ -1260,7 +1261,6 @@ proc transformInlineRoutines(e: var EContext; c: var Cursor) =
 
   e.dest.add tagToken("imp", c1.info)
   traverseStmt e, c1, TraverseSig
-  e.dest.addDotToken()
   e.dest.addParRi()
 
 proc importSymbol(e: var EContext; s: SymId) =
@@ -1279,7 +1279,6 @@ proc importSymbol(e: var EContext; s: SymId) =
 
       e.dest.add tagToken("imp", c.info)
       traverseStmt e, c, TraverseSig
-      e.dest.addDotToken()
       e.dest.addParRi()
   else:
     error e, "could not find symbol: " & pool.syms[s]
