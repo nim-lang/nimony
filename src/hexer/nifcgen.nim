@@ -12,7 +12,8 @@ import std / [hashes, os, tables, sets, assertions]
 include nifprelude
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof]
-import basics, pipeline
+from ".." / nimony / sigmatch import isSomeStringType
+import basics, pipeline, stringcases
 
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
@@ -1130,7 +1131,19 @@ proc traverseIf(e: var EContext; c: var Cursor) =
     wantParRi e, c
   wantParRi e, c
 
+proc traverseStringCase(e: var EContext; c: var Cursor): bool =
+  var n = c
+  inc n
+  let selectorType = getType(e.typeCache, c)
+  if isSomeStringType(selectorType):
+    transformStringCase(e, c)
+    result = true
+  else:
+    result = false
+
 proc traverseCase(e: var EContext; c: var Cursor) =
+  if traverseStringCase(e, c):
+    return
   e.dest.add c
   inc c
   traverseExpr e, c
