@@ -327,6 +327,7 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
         skipParRi n
       of StaticP:
         result = StaticP
+        skip n
       else:
         error c.m, "invalid pragma: ", n
     inc n # ParRi
