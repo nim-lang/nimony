@@ -367,7 +367,7 @@ type
 
 proc isLiteral(n: var Cursor): bool =
   case n.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit, DotToken:
     result = true
     inc n
   else:
@@ -403,11 +403,13 @@ proc genVarInitValue(c: var GeneratedCode; n: var Cursor) =
   elif n.stmtKind == OnErrS:
     var onErrAction = n
     inc onErrAction
+    c.add AsgnOpr
     genCallCanRaise c, n
     c.add Semicolon
     if onErrAction.kind != DotToken:
       genOnError(c, onErrAction)
   else:
+    c.add AsgnOpr
     genx c, n
     c.add Semicolon
 
@@ -438,7 +440,6 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     var value = d.value
     if vk == IsGlobal and not isLiteral(value):
       c.init.add c.tokens.getOrIncl(name)
-      c.init.add Token(AsgnOpr)
       for i in beforeInit ..< c.code.len:
         c.init.add c.code[i]
       setLen c.code, beforeInit
