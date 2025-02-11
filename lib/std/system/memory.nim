@@ -1,10 +1,19 @@
 include mimalloc
 
+type
+  cint {.importc: "int", nodecl.} = int32
+
 proc allocFixed*(size: int): pointer {.importc.}
 proc deallocFixed*(p: pointer) {.importc.}
 
-proc copyMem(dest, src: pointer; size: int) {.importc: "memcpy", header: "<string.h>".}
-proc cmpMem(a, b: pointer; size: int): int {.importc: "memcmp", header: "<string.h>".}
+proc c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
+proc c_memcmp(a, b: pointer; size: csize_t): cint {.importc: "memcmp", header: "<string.h>".}
+
+proc copyMem(dest, src: pointer; size: int) {.inline.} =
+  c_memcpy(dest, src, csize_t size)
+
+proc cmpMem(a, b: pointer; size: int): int {.inline.} =
+  result = c_memcmp(a, b, csize_t size)
 
 var
   missingBytes {.threadvar.}: int
