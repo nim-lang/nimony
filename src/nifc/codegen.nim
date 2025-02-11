@@ -474,7 +474,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
         lastAttrString = "__attribute__((" & pool.strings[p.litId] & ")) "
         inc p
         skipParRi p
-      of ErrsP, RaisesP:
+      of ErrsP, RaisesP, VarargsP, SelectanyP:
         skip p
       of WasP:
         genWasPragma c, p
