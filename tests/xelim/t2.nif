@@ -1,8 +1,0 @@
-(.nif24)
-(stmts
-  (let :x.1 ... (if (elif (and (gt +4 +5) (expr (call echo "after and") (le +2 +3))) (call bar)) (else
-    (if (elif cond "action") (else "abc"))
-  )))
-  (while (expr (call echo "hi\00") (lt +4 +5)) (call echo "body"))
-  (var :x.3 ... (try (expr (call echo "abc") +3) (except (as :e E.t) +90) (fin (call echo "90")) ))
-)
