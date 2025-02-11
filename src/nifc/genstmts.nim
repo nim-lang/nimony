@@ -20,8 +20,6 @@ proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
   inc n # ParRi
   c.add NewLine
 
-proc genStmt(c: var GeneratedCode; n: var Cursor)
-
 proc genIf(c: var GeneratedCode; n: var Cursor) =
   var hasElse = false
   var hasElif = false
@@ -220,19 +218,6 @@ proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) 
   of IsConst:
     moveToDataSection:
       genVarDecl c, n, IsConst, toExtern
-  #  let value = ithSon(n, 3)
-  #  if t[value].kind == OnErrC and
-  #      t[value.firstSon].kind != Empty:
-  #    genOnError(c, value.firstSon)
-
-proc genOnError(c: var GeneratedCode; n: var Cursor) =
-  c.add IfKeyword
-  c.add ErrToken
-  c.add ParRi
-  c.add Space
-  c.add CurlyLe
-  c.genStmt n
-  c.add CurlyRi
 
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
   case n.stmtKind

@@ -380,6 +380,32 @@ proc isLiteral(n: var Cursor): bool =
     else:
       result = false
 
+proc genStmt(c: var GeneratedCode; n: var Cursor)
+
+proc genOnError(c: var GeneratedCode; n: var Cursor) =
+  c.add IfKeyword
+  c.add ErrToken
+  c.add ParRi
+  c.add Space
+  c.add CurlyLe
+  c.genStmt n
+  c.add CurlyRi
+
+proc genVarInitValue(c: var GeneratedCode; n: var Cursor) =
+  if n.kind == DotToken:
+    inc n
+    c.add Semicolon
+  elif n.stmtKind == OnErrS:
+    var onErrAction = n
+    inc onErrAction
+    genCallCanRaise c, n
+    c.add Semicolon
+    if onErrAction.kind != DotToken:
+      genOnError(c, onErrAction)
+  else:
+    genx c, n
+    c.add Semicolon
+
 proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
   genCLineDir(c, info(n))
   var d = takeVarDecl(n)
@@ -398,22 +424,19 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     let vis = genVarPragmas(c, d.pragmas)
     if vis == StaticP:
       c.code.insert(Token(StaticKeyword), beforeDecl)
-    if d.value.kind != DotToken:
-      var value = d.value
-      if vk == IsGlobal and not isLiteral(value):
-        c.add Semicolon
-        moveToInitSection:
-          c.add name
-          c.add AsgnOpr
-          genx c, d.value
-          c.add Semicolon
-      else:
-        c.add AsgnOpr
-        if vk != IsLocal: inc c.inSimpleInit
-        genx c, d.value
-        if vk != IsLocal: dec c.inSimpleInit
-        c.add Semicolon
-    else:
+    let beforeInit = c.code.len
+
+    if vk != IsLocal: inc c.inSimpleInit
+    genVarInitValue c, d.value
+    if vk != IsLocal: dec c.inSimpleInit
+
+    var value = d.value
+    if vk == IsGlobal and not isLiteral(value):
+      c.init.add c.tokens.getOrIncl(name)
+      c.init.add Token(AsgnOpr)
+      for i in beforeInit ..< c.code.len:
+        c.init.add c.code[i]
+      setLen c.code, beforeInit
       c.add Semicolon
   else:
     error c.m, "expected SymbolDef but got: ", d.name
