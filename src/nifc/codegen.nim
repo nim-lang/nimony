@@ -149,7 +149,7 @@ proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
   if info.isValid:
     let (file, line, col) = unpack(pool.man, info)
     write stdout, pool.files[file]
-    write stdout, "(" & $line & ", " & $(col+1) & ")"
+    write stdout, "(" & $line & ", " & $(col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
   writeLine stdout, toString(n, false)
@@ -250,10 +250,7 @@ proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
         discard "already handled"
         skip n
       of WasP:
-        inc n
-        c.add "/* " & toString(n, false) & " */"
-        skip n
-        skipParRi n
+        genWasPragma c, n
       of ErrsP, RaisesP:
         skip n
     inc n # ParRi
@@ -283,10 +280,7 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
         inc n
         skipParRi n
       of WasP:
-        inc n
-        c.add "/* " & toString(n, false) & " */"
-        skip n
-        skipParRi n
+        genWasPragma c, n
       else:
         error c.m, "invalid pragma: ", n
     inc n # ParRi
@@ -321,10 +315,7 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
         skip n
         skipParRi n
       of WasP:
-        inc n
-        c.add "/* " & toString(n, false) & " */"
-        skip n
-        skipParRi n
+        genWasPragma c, n
       of StaticP:
         result = StaticP
         skip n
@@ -476,8 +467,10 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
         lastAttrString = "__attribute__((" & pool.strings[p.litId] & ")) "
         inc p
         skipParRi p
-      of ErrsP:
+      of ErrsP, RaisesP:
         skip p
+      of WasP:
+        genWasPragma c, n
       else:
         if p.callConvKind != NoCallConv:
           lastCallConv = p.callConvKind

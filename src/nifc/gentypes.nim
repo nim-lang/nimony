@@ -164,6 +164,12 @@ proc genProcTypePragmas(c: var GeneratedCode; n: var Cursor; isVarargs: var bool
   else:
     error c.m, "expected proc type pragmas but got: ", n
 
+proc genWasPragma(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  c.add "/* " & toString(n, false) & " */"
+  skip n
+  skipParRi n
+
 proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) =
   # CommonPragma ::= (align Number) | (was Identifier) | Attribute
   # FieldPragma ::= CommonPragma | (bits Number)
@@ -179,10 +185,7 @@ proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) 
         skip n
         skipParRi n
       of WasP:
-        inc n
-        c.add "/* " & toString(n, false) & " */"
-        skip n
-        skipParRi n
+        genWasPragma c, n
       of AttrP:
         inc n
         c.add " __attribute__((" & toString(n, false) & "))"
