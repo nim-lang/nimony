@@ -67,8 +67,16 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   n4.add move(ctx[].dest)
   n4.addParRi()
 
+  var needsXelimAgain = false
+
   var c5 = beginRead(n4)
-  var n5 = injectConstParamDerefs(c5, c.bits div 8)
+  var n5 = injectConstParamDerefs(c5, c.bits div 8, needsXelimAgain)
   endRead(n4)
 
-  result = move n5
+  if needsXelimAgain:
+    var c6 = beginRead(n5)
+    var n6 = lowerExprs(c6, moduleSuffix)
+    endRead(n5)
+    result = move n6
+  else:
+    result = move n5

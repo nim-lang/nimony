@@ -101,3 +101,49 @@ type
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     unoverloadableMagics*: HashSet[StrId]
+
+proc typeToCanon*(buf: TokenBuf; start: int): string =
+  result = ""
+  for i in start..<buf.len:
+    case buf[i].kind
+    of ParLe:
+      result.add '('
+      result.addInt buf[i].tagId.int
+    of ParRi: result.add ')'
+    of Ident, StringLit:
+      result.add ' '
+      result.addInt buf[i].litId.int
+    of UnknownToken: result.add " unknown"
+    of EofToken: result.add " eof"
+    of DotToken: result.add '.'
+    of Symbol, SymbolDef:
+      result.add " s"
+      result.addInt buf[i].symId.int
+    of CharLit:
+      result.add " c"
+      result.addInt buf[i].uoperand.int
+    of IntLit:
+      result.add " i"
+      result.addInt buf[i].intId.int
+    of UIntLit:
+      result.add " u"
+      result.addInt buf[i].uintId.int
+    of FloatLit:
+      result.add " f"
+      result.addInt buf[i].floatId.int
+
+proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
+  let key = typeToCanon(buf, start)
+  if c.typeMem.hasKey(key):
+    result = cursorAt(c.typeMem[key], 0)
+  else:
+    var newBuf = createTokenBuf(buf.len - start)
+    for i in start..<buf.len:
+      newBuf.add buf[i]
+    # make resilient against crashes:
+    #if newBuf.len == 0: newBuf.add dotToken(NoLineInfo)
+    result = cursorAt(newBuf, 0)
+    c.typeMem[key] = newBuf
+
+proc typeToCursor*(c: var SemContext; start: int): TypeCursor =
+  typeToCursor(c, c.dest, start)

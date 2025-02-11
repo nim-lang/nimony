@@ -279,6 +279,8 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trSetType(c, dest, typ)
     for b in bytes:
       dest.addUIntLit(b, info)
+    dest.addParRi()
+    skip n
 
 proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info

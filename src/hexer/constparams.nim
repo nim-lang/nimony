@@ -26,6 +26,7 @@ type
     constRefParams: HashSet[SymId]
     ptrSize, tmpCounter: int
     typeCache: TypeCache
+    needsXelim: bool
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -58,9 +59,10 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # We cannot take the address of a literal so we have to copy it to a
     # temporary first:
     let argType = getType(c.typeCache, n)
+    c.needsXelim = true
     copyIntoKind dest, ExprX, info:
       copyIntoKind dest, StmtsS, info:
-        let symId = pool.syms.getOrIncl("`constRefTemp" & $c.tmpCounter)
+        let symId = pool.syms.getOrIncl("`constRefTemp." & $c.tmpCounter)
         inc c.tmpCounter
         copyIntoKind dest, VarS, info:
           addSymDef dest, symId, info
@@ -148,10 +150,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc injectConstParamDerefs*(n: Cursor; ptrSize: int): TokenBuf =
-  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache())
+proc injectConstParamDerefs*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
+  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
   tr(c, result, n)
   c.typeCache.closeScope()
+  needsXelim = c.needsXelim

@@ -145,6 +145,11 @@ proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
       write f, c.tokens[x]
 
 proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
+  let info = n.info
+  if info.isValid:
+    let (file, line, col) = unpack(pool.man, info)
+    write stdout, pool.files[file]
+    write stdout, "(" & $line & ", " & $(col+1) & ")"
   write stdout, "[Error] "
   write stdout, msg
   writeLine stdout, toString(n, false)

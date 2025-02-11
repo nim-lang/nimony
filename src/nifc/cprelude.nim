@@ -162,6 +162,13 @@ typedef NU8 NU;
 #endif
 
 
+/* ------------ ignore typical warnings in Nim-generated files ------------- */
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic ignored "-Wswitch-bool"
+#endif
+
+
+
 /* ------------------------------------------------------------------- */
 #ifdef  __cplusplus
 #  define NIM_EXTERNC extern "C"

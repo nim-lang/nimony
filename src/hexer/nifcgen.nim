@@ -503,11 +503,11 @@ proc maybeByConstRef(e: var EContext; c: var Cursor) =
   if passByConstRef(param.typ, param.pragmas, e.bits div 8):
     var paramBuf = createTokenBuf()
     paramBuf.add tagToken("param", c.info)
-    paramBuf.add param.name
-    paramBuf.add param.exported
-    paramBuf.add param.pragmas
+    paramBuf.addSubtree param.name
+    paramBuf.addSubtree param.exported
+    paramBuf.addSubtree param.pragmas
     copyIntoKind paramBuf, PtrT, param.typ.info:
-      paramBuf.add param.typ
+      paramBuf.addSubtree param.typ
     paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
@@ -908,8 +908,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.add symToken(ithTupleField(pool.integers[c.intId]), c.info)
         inc c # skip index
         e.dest.addIntLit(0, c.info) # inheritance
-        e.dest.add c # add right paren
-        inc c # skip right paren
+        wantParRi e, c
       of DdotX:
         e.dest.add tagToken("dot", c.info)
         e.dest.add tagToken("deref", c.info)
@@ -1311,9 +1310,12 @@ proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
       var fileAsStr = ""
       if stack.len > 0:
         let (pfile, pline, pcol) = unpack(pool.man, stack[^1])
-        line = line - pline
-        col = col - pcol
         if file != pfile: fileAsStr = pool.files[file]
+        if fileAsStr.len == 0:
+          line = line - pline
+          col = col - pcol
+      else:
+        fileAsStr = pool.files[file]
       b.addLineInfo(col, line, fileAsStr)
 
     case c.kind
