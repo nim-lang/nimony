@@ -1,6 +1,6 @@
 | Name                 | Enums                       |   Description |
 |----------------------|-----------------------------|---------------|
-| err                  | C, X, TN                    | indicates an error |
+| err                  | X, TN                       | indicates an error |
 | suf                  | C, X                        | literal with suffix annotation |
 | at                   | C, X, TN | array indexing operation |
 | deref                | C, X | pointer deref operation |
@@ -244,3 +244,4 @@
 | wasmoved | X | |
 | sinkh | X | |
 | trace | X | |
+| errv | C | error flag for `NIFC` |

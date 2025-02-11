@@ -245,7 +245,8 @@ const
     ("copy", 241),
     ("wasmoved", 242),
     ("sinkh", 243),
-    ("trace", 244)
+    ("trace", 244),
+    ("errv", 245)
   ]
 const
   ErrTagId* = 1
@@ -492,3 +493,4 @@ const
   WasmovedTagId* = 242
   SinkhTagId* = 243
   TraceTagId* = 244
+  ErrvTagId* = 245

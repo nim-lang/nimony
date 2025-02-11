@@ -7,7 +7,7 @@
              (at Expr Expr)
              (dot Expr SYMBOL INTLIT)
              (pat Expr Expr)
-             (err)
+             (errv)
              ))
 
 (RULE :Call (call (ONE_OR_MANY Expr)))

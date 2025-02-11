@@ -4,7 +4,6 @@
 type
   NifcExpr* = enum
     NoExpr
-    ErrC = (1, "err")  ## indicates an error
     SufC = (2, "suf")  ## literal with suffix annotation
     AtC = (3, "at")  ## array indexing operation
     DerefC = (4, "deref")  ## pointer deref operation
@@ -45,9 +44,10 @@ type
     CastC = (44, "cast")
     ConvC = (45, "conv")  ## type conversion
     CallC = (46, "call")  ## call operation
+    ErrvC = (245, "errv")  ## error flag for `NIFC`
 
 proc rawTagIsNifcExpr*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 24'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 46'u8}
+  raw <= 255'u32 and raw.uint8 in {2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 24'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 46'u8, 245'u8}
 
 type
   NifcStmt* = enum

@@ -69,7 +69,7 @@ proc matchLvalue(c: var Context; it: var Item): bool =
     if kw7:
       or2 = true
       break or3
-    if isTag(c, it, ErrT):
+    if isTag(c, it, ErrvT):
       or2 = true
       break or3
   if not or2: return false

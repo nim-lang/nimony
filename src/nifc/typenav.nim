@@ -47,7 +47,7 @@ proc getType*(m: var Module; n: Cursor): Cursor =
     case n.exprKind
     of SizeofC, AlignofC, OffsetofC: result = createIntegralType(m, "(i 8)")
     of InfC, NegInfC, NanC: result = createIntegralType(m, "(f 64)")
-    of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrC:
+    of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC:
       result = createIntegralType(m, "(bool)")
     of CallC:
       var procType = getType(m, n.firstSon)
