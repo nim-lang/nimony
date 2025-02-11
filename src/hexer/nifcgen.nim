@@ -508,7 +508,6 @@ proc maybeByConstRef(e: var EContext; c: var Cursor) =
     paramBuf.addSubtree param.pragmas
     copyIntoKind paramBuf, PtrT, param.typ.info:
       paramBuf.addSubtree param.typ
-    paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
     traverseLocal(e, paramCursor, "param", TraverseSig)
@@ -1046,7 +1045,7 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   if mode != TraverseSig:
     traverseExpr e, c
   else:
-    e.dest.addDotToken()
+    # Parameter decls in NIFC have no dot token for the default value!
     skip c
   wantParRi e, c
   if nodecl:
