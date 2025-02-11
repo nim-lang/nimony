@@ -367,12 +367,18 @@ proc isLiteral(n: var Cursor): bool =
     of FalseC, TrueC, InfC, NegInfC, NanC, SufC:
       result = true
       skip n
-    of AconstrC, OconstrC:
+    of AconstrC, OconstrC, CastC, ConvC:
       result = true
       inc n
       skip n # type
       while n.kind != ParRi:
-        if not isLiteral(n): return false
+        if n.substructureKind == KvU:
+          inc n
+          skip n # key
+          if not isLiteral(n): return false
+          skipParRi n
+        else:
+          if not isLiteral(n): return false
       skipParRi n
     else:
       result = false
@@ -425,12 +431,13 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       c.code.insert(Token(StaticKeyword), beforeDecl)
     let beforeInit = c.code.len
 
-    if vk != IsLocal: inc c.inSimpleInit
-    genVarInitValue c, d.value
-    if vk != IsLocal: dec c.inSimpleInit
-
     var value = d.value
-    if vk == IsGlobal and not isLiteral(value):
+    let mustMoveToInit = vk == IsGlobal and not isLiteral(value)
+    if vk != IsLocal or mustMoveToInit: inc c.inSimpleInit
+    genVarInitValue c, d.value
+    if vk != IsLocal or mustMoveToInit: dec c.inSimpleInit
+
+    if mustMoveToInit:
       c.init.add c.tokens.getOrIncl(name)
       for i in beforeInit ..< c.code.len:
         c.init.add c.code[i]
