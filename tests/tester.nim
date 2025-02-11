@@ -39,26 +39,7 @@ proc withExt(f, ext: string): string =
   if not fileExists(result):
     fatal "cannot find output file " & result
 
-proc testXelim(overwrite: bool) =
-  exec "nim c src/xelim/xelim"
-  var toRemove: seq[string] = @[]
-  for k, f in walkDir("tests/xelim"):
-    if f.endsWith(".nif") and not f.endsWith(".xelim.nif") and not f.endsWith(".expected.nif"):
-      exec ("src" / "xelim" / "xelim").addFileExt(ExeExt) & " " & f
-      let r = f.withExt(".xelim.nif")
-      let e = f.withExt(".expected.nif")
-      if not os.sameFileContent(r, e):
-        if overwrite:
-          moveFile(r, e)
-        else:
-          fatal "files have not the same content: " & e & " " & r
-      else:
-        toRemove.add r
-  for rem in toRemove:
-    removeFile rem
-
 let overwrite = os.paramCount() > 0 and os.paramStr(1) == "--overwrite"
-testXelim(overwrite)
 
 proc testIndexer(overwrite: bool) =
   exec "nim c src/lib/nifindexes"
