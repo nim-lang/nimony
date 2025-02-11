@@ -1,16 +1,16 @@
 
-proc alloc*(size: int): pointer {.importc.}
-proc dealloc*(p: pointer) {.importc.}
-proc realloc*(p: pointer; size: int): pointer {.importc.}
+proc alloc*(size: int): pointer {.importc: "mi_malloc", header: "<mimalloc.h>".}
+proc dealloc*(p: pointer) {.importc: "mi_free", header: "<mimalloc.h>".}
+proc realloc*(p: pointer; size: int): pointer {.importc: "mi_realloc", header: "<mimalloc.h>".}
 
 
 proc allocFixed*(size: int): pointer {.importc.}
 proc deallocFixed*(p: pointer) {.importc.}
 
-proc copyMem(dest, src: pointer; size: int) {.importc.}
-proc cmpMem(a, b: pointer; size: int): int {.importc.}
+proc copyMem(dest, src: pointer; size: int) {.importc: "memcpy", header: "<string.h>".}
+proc cmpMem(a, b: pointer; size: int): int {.importc: "memcmp", header: "<string.h>".}
 
-proc allocatedSize*(p: pointer): int {.importc.}
+proc allocatedSize*(p: pointer): int {.importc: "mi_usable_size", header: "<mimalloc.h>".}
 
 var
   missingBytes {.threadvar.}: int
