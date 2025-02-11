@@ -665,6 +665,9 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   if prag.callConv != NoCallConv and prag.callConv != Nimcall:
     let name = $prag.callConv
     e.addKey genPragmas, name, pinfo
+  if InlineP in prag.flags:
+    e.addKey genPragmas, "inline", pinfo
+
   if prag.externName.len > 0:
     e.registerMangleInParent(s, prag.externName & ".c")
     e.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
@@ -1259,9 +1262,7 @@ proc transformInlineRoutines(e: var EContext; c: var Cursor) =
 
   swap e.dest, swapped
 
-  e.dest.add tagToken("imp", c1.info)
   traverseStmt e, c1, TraverseSig
-  e.dest.addParRi()
 
 proc importSymbol(e: var EContext; s: SymId) =
   let res = tryLoadSym(s)
