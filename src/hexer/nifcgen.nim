@@ -13,7 +13,8 @@ include nifprelude
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof]
 from ".." / nimony / sigmatch import isSomeStringType
-import basics, pipeline, stringcases
+import basics, pipeline
+import  ".." / lib / stringtrees
 
 
 proc setOwner(e: var EContext; newOwner: SymId): SymId =
@@ -768,10 +769,7 @@ proc genCstringLit(e: var EContext; c: var Cursor): bool =
       return true
   return false
 
-proc genStringLit(e: var EContext; c: Cursor) =
-  assert c.kind == StringLit
-  let info = c.info
-  let s {.cursor.} = pool.strings[c.litId]
+proc genStringLit(e: var EContext; s: string; info: PackedLineInfo) =
   let existing = e.strLits.getOrDefault(s)
   if existing != SymId(0):
     e.dest.add symToken(existing, info)
@@ -809,6 +807,12 @@ proc genStringLit(e: var EContext; c: Cursor) =
     e.pending.addParRi() # "oconstr"
     e.pending.addParRi() # "const"
     e.dest.add symToken(strName, info)
+
+proc genStringLit(e: var EContext; c: Cursor) =
+  assert c.kind == StringLit
+  let info = c.info
+  let s {.cursor.} = pool.strings[c.litId]
+  genStringLit(e, s, info)
 
 proc traverseStmtsExpr(e: var EContext; c: var Cursor) =
   let head = c.load()
@@ -1130,6 +1134,8 @@ proc traverseIf(e: var EContext; c: var Cursor) =
     traverseStmt e, c
     wantParRi e, c
   wantParRi e, c
+
+include stringcases
 
 proc traverseStringCase(e: var EContext; c: var Cursor): bool =
   var n = c
