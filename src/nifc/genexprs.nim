@@ -181,6 +181,18 @@ proc suffixConv(c: var GeneratedCode; value, suffix: Cursor) =
   genx c, value
   c.add ParRi
 
+proc genAddr(c: var GeneratedCode; n: var Cursor) =
+  # If we take the address of an array expression, add the `.a` field access.
+  inc n
+  let arrType = getType(c.m, n)
+  c.add ParLe
+  c.add "&"
+  genx c, n
+  if arrType.typeKind == ArrayT and not c.m.isImportC(arrType):
+    c.add ".a"
+  c.add ParRi
+  skipParRi n
+
 proc genx(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -268,7 +280,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     c.add ParRi
     skipParRi n
-  of AddrC: unOp c, n, "&"
+  of AddrC:
+    genAddr c, n
   of SizeofC:
     c.add "sizeof"
     c.add ParLe
