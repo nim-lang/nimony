@@ -109,15 +109,11 @@ proc rawBuildSymChoice(c: var SemContext; identifier: StrId; info: PackedLineInf
       inc result
       if sym.kind.isNonOverloadable:
         inc nonOverloadable
-    if result == 1:
-      case option
-      of InnerMost:
-        return
-      of FindOverloads:
-        if nonOverloadable == 1:
-          # unambiguous local symbol found
-          return
-      else: discard
+    if result == 1 and (option == InnerMost or
+        (option == FindOverloads and nonOverloadable == 1)):
+      # unambiguous local symbol found
+      # in case of FindOverloads, if symbol is overloadable, consider other overloads
+      return
     it = it.up
   inc result, considerImportedSymbols(c, identifier, info)
 
