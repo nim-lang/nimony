@@ -3611,6 +3611,7 @@ proc semWhen(c: var SemContext; it: var Item) =
   if not leaveUnresolved:
     # none of the branches evaluated, output nothing
     c.dest.shrink start
+    producesVoid c, info, it.typ
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
