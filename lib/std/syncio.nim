@@ -75,7 +75,7 @@ proc c_ferror(f: File): int32 {.
 
 proc failed*(f: File): bool {.inline.} = c_ferror(f) != 0
 
-proc c_setvbuf(f: File; buffer: nil ptr UncheckedArray[uint8]; mode: int32; size: uint): int32 {.
+proc c_setvbuf(f: File; buffer: ptr UncheckedArray[uint8]; mode: int32; size: uint): int32 {.
   importc: "setvbuf", header: "<stdio.h>".}
 
 var IOFBF {.importc: "_IOFBF", header: "<stdio.h>".}: int32
