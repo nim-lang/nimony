@@ -17,6 +17,10 @@ type
     pos*: int
     kind*: NifcSym
 
+  TypeScope* {.acyclic.} = ref object
+    locals*: Table[SymId, Cursor]
+    parent*: TypeScope
+
   Module* = object
     src*: TokenBuf
     types*: seq[int]
@@ -25,11 +29,21 @@ type
     config*: ConfigRef
     mem*: seq[TokenBuf] # for intermediate results such as computed types
     builtinTypes*: Table[string, Cursor]
+    current*: TypeScope
 
 proc bug*(msg: string) {.noreturn.} =
   when defined(debug):
     writeStackTrace()
   quit "BUG: " & msg
+
+proc registerLocal*(c: var Module; s: SymId; typ: Cursor) =
+  c.current.locals[s] = typ
+
+proc openScope*(c: var Module) =
+  c.current = TypeScope(locals: initTable[SymId, Cursor](), parent: c.current)
+
+proc closeScope*(c: var Module) =
+  c.current = c.current.parent
 
 proc skipParRi*(n: var Cursor) =
   # XXX: Give NIFC some better error reporting.

@@ -290,7 +290,9 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
 proc genParam(c: var GeneratedCode; n: var Cursor) =
   var d = takeParamDecl(n)
   if d.name.kind == SymbolDef:
-    let name = mangle(pool.syms[d.name.symId])
+    let lit = d.name.symId
+    c.m.registerLocal(lit, d.typ)
+    let name = mangle(pool.syms[lit])
     genType c, d.typ, name
     genParamPragmas c, d.pragmas
   else:
@@ -416,6 +418,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
     let lit = d.name.symId
+    c.m.registerLocal(lit, d.typ)
     let name = mangle(pool.syms[lit])
     let beforeDecl = c.code.len
     if toExtern:
@@ -450,6 +453,7 @@ include genstmts
 
 
 proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
+  c.m.openScope()
   let signatureBegin = c.code.len
   var prc = takeProcDecl(n)
 
@@ -546,6 +550,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     c.add CurlyRi
     if isSelectAny in flags:
       genRoutineGuardEnd(c)
+  c.m.closeScope()
 
 proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n
@@ -641,6 +646,7 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   var m = load(inp)
   m.config = s.config
   var c = initGeneratedCode(m, flags)
+  c.m.openScope()
 
   var co = TypeOrder()
   traverseTypes(c.m, co)
@@ -685,3 +691,5 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
     for x in items(c.headerFile):
       write h, c.tokens[x]
     h.close()
+
+  c.m.closeScope()
