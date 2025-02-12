@@ -1349,11 +1349,12 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     elif sym != SymId(0):
       # non-callable symbol, look up all overloads
       assert cs.fnName != StrId(0)
-      let choiceStart = cs.dest.len
-      swap c.dest, cs.dest
+      var choiceBuf = createTokenBuf(16)
+      swap c.dest, choiceBuf
       discard buildSymChoice(c, cs.fnName, cs.fn.n.info, FindAll)
-      swap c.dest, cs.dest
-      cs.fn = Item(n: cursorAt(cs.dest, choiceStart), typ: c.types.autoType, kind: CchoiceY)
+      swap c.dest, choiceBuf
+      # could store choiceBuf in CallState but cs.fn should not outlive it
+      cs.fn = Item(n: beginRead(choiceBuf), typ: c.types.autoType, kind: CchoiceY)
       resolveOverloads(c, it, cs)
       return
     else:
