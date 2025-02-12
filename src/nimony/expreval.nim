@@ -9,7 +9,7 @@
 import std / assertions
 
 include nifprelude
-import nimony_model, decls, programs, xints, semdata
+import nimony_model, decls, programs, xints, semdata, renderer
 
 type
   EvalContext* = object
@@ -111,11 +111,11 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         skipToEnd n
         return a
       elif a.exprKind != TrueX:
-        error "expected bool for operand of `and` but got: " & toString(a, false), n.info
+        error "expected bool for operand of `and` but got: " & asNimCode(a), n.info
         return
       let b = propagateError eval(c, n)
       if not isConstBoolValue(b):
-        error "expected bool for operand of `and` but got: " & toString(b, false), n.info
+        error "expected bool for operand of `and` but got: " & asNimCode(b), n.info
         return
       else:
         skipParRi n
@@ -127,11 +127,11 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         skipToEnd n
         return a
       elif a.exprKind != FalseX:
-        error "expected bool for operand of `or` but got: " & toString(a, false), n.info
+        error "expected bool for operand of `or` but got: " & asNimCode(a), n.info
         return
       let b = propagateError eval(c, n)
       if not isConstBoolValue(b):
-        error "expected bool for operand of `or` but got: " & toString(b, false), n.info
+        error "expected bool for operand of `or` but got: " & asNimCode(b), n.info
         return
       else:
         skipParRi n
@@ -146,7 +146,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         skipParRi n
         return c.getTrueValue()
       else:
-        error "expected bool for operand of `not` but got: " & toString(a, false), n.info
+        error "expected bool for operand of `not` but got: " & asNimCode(a), n.info
         return
     of SufX:
       # we only need raw value
@@ -157,7 +157,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       inc n
       skipParRi n
       if c.c == nil:
-        error "cannot evaluate expression at compile time: " & toString(n, false), n.info
+        error "cannot evaluate expression at compile time: " & asNimCode(n), n.info
       elif IsMain in c.c.moduleFlags:
         result = c.getTrueValue()
       else:
@@ -167,9 +167,9 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         result = n
         skip n
       else:
-        error "cannot evaluate expression at compile time: " & toString(n, false), n.info
+        error "cannot evaluate expression at compile time: " & asNimCode(n), n.info
   else:
-    error "cannot evaluate expression at compile time: " & toString(n, false), n.info
+    error "cannot evaluate expression at compile time: " & asNimCode(n), n.info
 
 proc evalExpr*(c: var SemContext, n: var Cursor): TokenBuf =
   var ec = initEvalContext(addr c)
@@ -271,7 +271,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     var index = baseType
     inc index # tag
     skip index # basetype
-    # XXX offset not implemented 
+    # XXX offset not implemented
     skip index # lo
     let hi = evalOrdinal(nil, index)
     var err = false

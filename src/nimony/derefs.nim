@@ -25,7 +25,7 @@ import std / [assertions]
 
 include nifprelude
 
-import nimony_model, programs, decls, typenav, sembasics, reporters
+import nimony_model, programs, decls, typenav, sembasics, reporters, renderer
 
 type
   Expects = enum
@@ -218,7 +218,7 @@ proc trReturn(c: var Context; n: var Cursor) =
   else:
     let err = c.r.returnType == WantVarTResult and not validBorrowsFrom(c, n)
     if err:
-      buildLocalErr(c.dest, n.info, "cannot borrow from " & toString(n, false))
+      buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
     else:
       tr c, n, c.r.returnType
   takeParRi c, n
@@ -228,7 +228,7 @@ proc mightBeDangerous(c: var Context; n: Cursor) =
   if root != NoSymId:
     for d in items(c.r.dangerousLocations):
       if d[0] == root:
-        buildLocalErr c.dest, n.info, "cannot mutate " & toString(n, false) &
+        buildLocalErr c.dest, n.info, "cannot mutate " & asNimCode(n) &
           "; binding created here: " & infoToStr(d[1].info)
 
 proc checkForDangerousLocations(c: var Context; n: var Cursor) =
@@ -414,10 +414,10 @@ proc trAsgn(c: var Context; n: var Cursor) =
     tr c, n, e
   case err
   of InvalidBorrow:
-    buildLocalErr c.dest, n.info, "cannot borrow from " & toString(n, false)
+    buildLocalErr c.dest, n.info, "cannot borrow from " & asNimCode(n)
     skip n
   of LocationIsConst:
-    buildLocalErr c.dest, n.info, "cannot mutate expression " & toString(n, false)
+    buildLocalErr c.dest, n.info, "cannot mutate expression " & asNimCode(n)
     tr c, n, e
     tr c, n, e
   else:
