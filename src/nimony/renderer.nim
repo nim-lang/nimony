@@ -41,6 +41,13 @@ proc asNimCode*(n: Cursor): string =
                        FilePosition(line: line1, col: col1))
     else:
       result = extract(pool.files[file0], FilePosition(line: line0, col: col0))
+    var visible = false
+    for i in 0..<result.len:
+      if result[i] > ' ':
+        visible = true
+        break
+    if not visible:
+      result = toString(n, false)
   else:
     # Fallback to the NIF representation as it is much better than nothing:
     result = toString(n, false)
