@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tbadrange.nim(1, 13) Error: expected `a..b` expression for range type

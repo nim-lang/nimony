@@ -2398,6 +2398,44 @@ const InvocableTypeMagics = {ArrayT, RangetypeT, VarargsT,
   PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT,
   SinkT, LentT}
 
+proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind; info: PackedLineInfo) =
+  # `n` is at first arg
+  var typeBuf = createTokenBuf(16)
+  typeBuf.addParLe(kind, info)
+  # reorder invocation according to type specifications:
+  case kind
+  of ArrayT:
+    # invoked as array[len, elem], but needs to become (array elem len)
+    let indexPart = n
+    skip n
+    takeTree typeBuf, n # element type
+    typeBuf.addSubtree indexPart
+    takeParRi typeBuf, n
+  of RangetypeT:
+    # range types are invoked as `range[a..b]`
+    if isRangeExpr(n):
+      # don't bother calling semLocalTypeImpl, fully build type here
+      semRangeTypeFromExpr c, n, info
+      skipParRi n
+    else:
+      c.buildErr info, "expected `a..b` expression for range type"
+      skipToEnd n
+    return
+  of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT, SinkT, LentT:
+    # unary invocations
+    takeTree typeBuf, n
+    takeParRi typeBuf, n
+  of VarargsT:
+    takeTree typeBuf, n
+    if n.kind != ParRi:
+      # optional varargs call
+      takeTree typeBuf, n
+    takeParRi typeBuf, n
+  else:
+    raiseAssert "unreachable" # see type kind check for magicKind
+  var m = cursorAt(typeBuf, 0)
+  semLocalTypeImpl c, m, InLocalDecl
+
 proc semInvoke(c: var SemContext; n: var Cursor) =
   let typeStart = c.dest.len
   let info = n.info
@@ -2406,7 +2444,6 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
 
   var headId: SymId = SymId(0)
   var decl = default TypeDecl
-  var magicKind = NoType
   var ok = false
   if c.dest[typeStart+1].kind == Symbol:
     headId = c.dest[typeStart+1].symId
@@ -2424,8 +2461,9 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     endRead(c.dest)
     if kind in InvocableTypeMagics:
       # magics that can be invoked
-      magicKind = kind
-      ok = true
+      c.dest.shrink typeStart
+      semMagicInvoke(c, n, kind, info)
+      return
     else:
       c.buildErr info, "cannot attempt to instantiate a non-type"
 
@@ -2436,7 +2474,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     semLocalTypeImpl c, n, AllowValues
   swap c.usedTypevars, genericArgs
   takeParRi c, n
-  if ok and (genericArgs == 0 or magicKind != NoType or
+  if ok and (genericArgs == 0 or
       # structural types are inlined even with generic arguments
       # XXX does not instantiate properly if structural type is forward declared
       # because typevar syms are not created in the SemcheckTopLevelSyms phase
@@ -2453,51 +2491,6 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       sym.name = cachedSym
     else:
       var args = cursorAt(c.dest, beforeArgs)
-      if magicKind != NoType:
-        var magicExpr = createTokenBuf(8)
-        magicExpr.addParLe(magicKind, info)
-        # reorder invocation according to type specifications:
-        case magicKind
-        of ArrayT:
-          # invoked as array[len, elem], but needs to become (array elem len)
-          let indexPart = args
-          skip args
-          magicExpr.takeTree args # element type
-          magicExpr.addSubtree indexPart
-          skipParRi args
-        of RangetypeT:
-          # range types are invoked as `range[a..b]`
-          if isRangeExpr(args):
-            # don't bother calling semLocalTypeImpl, fully build type here
-            magicExpr.shrink 0
-            swap c.dest, magicExpr
-            semRangeTypeFromExpr c, args, info
-            swap c.dest, magicExpr
-            c.dest.endRead()
-            c.dest.shrink typeStart
-            c.dest.add magicExpr
-            return
-          else:
-            # error?
-            discard
-        of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT, SinkT, LentT:
-          # unary invocations
-          magicExpr.takeTree args
-          skipParRi args
-        of VarargsT:
-          magicExpr.takeTree args
-          if args.kind != ParRi:
-            # optional varargs call
-            magicExpr.takeTree args
-          skipParRi args
-        else:
-          raiseAssert "unreachable" # see type kind check for magicKind
-        magicExpr.addParRi()
-        c.dest.endRead()
-        c.dest.shrink typeStart
-        var m = cursorAt(magicExpr, 0)
-        semLocalTypeImpl c, m, InLocalDecl
-        return
       let targetSym = newSymId(c, headId)
       if genericArgs == 0:
         c.instantiatedTypes[key] = targetSym
