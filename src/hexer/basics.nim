@@ -28,6 +28,10 @@ type
     # TODO: add a instID for each forStmt
     tmpId*: int # per proc
 
+proc getTmpId*(e: var EContext): int {.inline.} =
+  result = e.tmpId
+  inc e.tmpId
+
 proc openMangleScope*(e: var EContext) =
   e.toMangle = MangleScope(tab: initTable[SymId, string](), parent: e.toMangle)
   e.typeCache.openScope()

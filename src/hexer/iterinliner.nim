@@ -81,10 +81,6 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
     var typ = local.typ
     createDecl(e, destSym, typ, c, info, "var")
 
-proc getTmpId(e: var EContext): int =
-  result = e.tmpId
-  inc e.tmpId
-
 proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
 
