@@ -96,26 +96,37 @@ proc buildSymChoiceForForeignModule*(c: var SemContext; importFrom: ImportedModu
 
 type
   ChoiceOption* = enum
-    FindAll, InnerMost
+    FindAll, FindOverloads, FindCallableOverloads, InnerMost
 
 proc rawBuildSymChoice(c: var SemContext; identifier: StrId; info: PackedLineInfo;
                        option = FindAll): int =
   result = 0
   var it = c.currentScope
-  var nonOverloadable = 0
   while it != nil:
+    var nonOverloadable = 0
+    var callable = false
     for sym in it.tab.getOrDefault(identifier):
-      # for non-overloadable symbols prefer the innermost symbol:
+      c.dest.addSymUse sym, info
+      inc result
       if sym.kind.isNonOverloadable:
-        if nonOverloadable == 0:
-          c.dest.addSymUse sym, info
-          inc result
         inc nonOverloadable
-        if result == 1 and nonOverloadable == 1 and option == InnerMost:
+        callable = option == FindCallableOverloads and sym.kind in {TypeY, TypevarY}
+        # XXX should include proc variables so that they bypass overload resolution
+        # but this implies this should be done in semCall
+    if result == 1:
+      case option
+      of InnerMost:
+        return
+      of FindOverloads:
+        if nonOverloadable == 1:
+          # unambiguous local symbol found
           return
-      else:
-        c.dest.addSymUse sym, info
-        inc result
+      of FindCallableOverloads:
+        if nonOverloadable == 1 and callable:
+          # unambiguous local callable symbol found,
+          # local non-callable symbol means we can still look up overloads
+          return
+      else: discard
     it = it.up
   inc result, considerImportedSymbols(c, identifier, info)
 
