@@ -2461,6 +2461,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     endRead(c.dest)
     if kind in InvocableTypeMagics:
       # magics that can be invoked
+      c.dest.shrink typeStart
       semMagicInvoke(c, n, kind)
       return
     else:
