@@ -2433,8 +2433,8 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
   swap c.usedTypevars, genericArgs
   let beforeArgs = c.dest.len
   while n.kind != ParRi:
-    if magicKind == RangetypeT:
-      # will typecheck later, has special syntax
+    if magicKind != NoType:
+      # will typecheck later
       takeTree c, n
     else:
       semLocalTypeImpl c, n, AllowValues
