@@ -112,7 +112,7 @@ proc trSons(c: var Context; n: var Cursor; e: Expects) =
   inc n
   while n.kind != ParRi:
     tr(c, n, e)
-  wantParRi c.dest, n
+  takeParRi c.dest, n
 
 proc isResultUsage(n: Cursor): bool {.inline.} =
   result = false
@@ -324,13 +324,13 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
       inc n
       while n.kind != ParRi:
         tr c, n, DontCare
-      wantParRi c.dest, n
+      takeParRi c.dest, n
   else:
     c.dest.addParLe AsgnS, info
     inc n
     tr c, n, DontCare
     tr c, n, DontCare
-    wantParRi c.dest, n
+    takeParRi c.dest, n
 
 proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
@@ -472,7 +472,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
       # do not advance formal parameter:
       fnType = previousFormalParam
     tr c, n, e2
-  wantParRi c.dest, n
+  takeParRi c.dest, n
   finishOwningTemp c.dest, ow
 
 proc trRawConstructor(c: var Context; n: var Cursor; e: Expects) =
@@ -482,7 +482,7 @@ proc trRawConstructor(c: var Context; n: var Cursor; e: Expects) =
   inc n
   while n.kind != ParRi:
     tr c, n, e2
-  wantParRi c.dest, n
+  takeParRi c.dest, n
 
 proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
   copyInto c.dest, n:
@@ -583,7 +583,7 @@ proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
       tr(c, n, e)
     else:
       tr(c, n, WantNonOwner)
-  wantParRi c.dest, n
+  takeParRi c.dest, n
 
 proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
   let typ = getType(c.typeCache, n)

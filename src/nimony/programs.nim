@@ -192,7 +192,7 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   prog.mods[prog.main] = m
   publishStringType()
 
-proc wantParRi*(dest: var TokenBuf; n: var Cursor) =
+proc takeParRi*(dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParRi:
     dest.add n
     inc n

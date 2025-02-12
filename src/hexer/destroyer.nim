@@ -291,7 +291,7 @@ proc tr(c: var Context; n: var Cursor) =
         inc n
         while n.kind != ParRi:
           tr(c, n)
-        wantParRi(c.dest, n)
+        takeParRi(c.dest, n)
       else:
         c.dest.add n
         inc n

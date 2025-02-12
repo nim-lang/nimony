@@ -118,7 +118,7 @@ proc traverseField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   traverseType e, c, flags
 
   skip c # skips value
-  wantParRi e, c
+  takeParRi e, c
 
 proc ithTupleField(counter: int): SymId {.inline.} =
   pool.syms.getOrIncl("fld." & $counter)
@@ -152,7 +152,7 @@ proc traverseEnumField(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}
   skip c
   skipParRi e, c
 
-  wantParRi e, c
+  takeParRi e, c
 
 proc genStringType(e: var EContext; info: PackedLineInfo) =
   let s = pool.syms.getOrIncl(StringName)
@@ -214,7 +214,7 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
         e.offer c.symId
       genTupleField(e, c, counter)
     inc counter
-  wantParRi e, c
+  takeParRi e, c
 
 proc traverseOpenArrayBody(e: var EContext; c: var Cursor) =
   e.dest.add tagToken("object", c.info)
@@ -255,7 +255,7 @@ proc traverseArrayBody(e: var EContext; c: var Cursor) =
   else:
     # should not be possible, but assume length anyway
     traverseExpr e, c
-  wantParRi e, c
+  takeParRi e, c
 
 type
   GenPragmas = object
@@ -307,7 +307,7 @@ proc traverseProcTypeBody(e: var EContext; c: var Cursor) =
   # ignore, effects and body:
   skip c
   skip c
-  wantParRi e, c
+  takeParRi e, c
 
 proc traverseAsNamedType(e: var EContext; c: var Cursor) =
   let info = c.info
@@ -388,7 +388,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         skipParRi e, c
         skipParRi e, c
       else:
-        wantParRi e, c
+        takeParRi e, c
     of FloatT, CharT, BoolT, AutoT, SymKindT:
       e.loop c:
         e.dest.add c
@@ -409,7 +409,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       traverseType e, c
       skip c
       skip c
-      wantParRi e, c
+      takeParRi e, c
     of UncheckedArrayT:
       if IsPointerOf in flags:
         inc c
@@ -419,20 +419,20 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         e.dest.add tagToken("flexarray", c.info)
         inc c
         traverseType e, c
-        wantParRi e, c
+        takeParRi e, c
     of PointerT:
       e.dest.add tagToken("ptr", c.info)
       e.dest.add tagToken("void", c.info)
       e.dest.addParRi()
       inc c
-      wantParRi e, c
+      takeParRi e, c
     of CstringT:
       e.dest.add tagToken("ptr", c.info)
       e.dest.add tagToken($CharT, c.info)
       e.dest.addIntLit(8, c.info)
       e.dest.addParRi()
       inc c
-      wantParRi e, c
+      takeParRi e, c
     of StaticT, SinkT, DistinctT:
       inc c
       traverseType e, c, flags
@@ -458,7 +458,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
         while c.substructureKind == FldU:
           traverseField(e, c, flags)
 
-      wantParRi e, c
+      takeParRi e, c
     of EnumT, HoleyEnumT:
       e.dest.add tagToken("enum", c.info)
       inc c
@@ -467,7 +467,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       while c.substructureKind == EfldU:
         traverseEnumField(e, c, flags)
 
-      wantParRi e, c
+      takeParRi e, c
     of SetT:
       let info = c.info
       inc c
@@ -690,7 +690,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   else:
     e.dest.addDotToken()
     skip c
-  wantParRi e, c
+  takeParRi e, c
   swap dst, e.dest
   if NodeclP in prag.flags or isGeneric:
     discard "do not add to e.dest"
@@ -746,7 +746,7 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
     skip c
   else:
     traverseType e, c, {IsTypeBody} + (if NodeclP in prag.flags: {IsNodecl} else: {})
-  wantParRi e, c
+  takeParRi e, c
   swap dst, e.dest
   if NodeclP in prag.flags or isGeneric:
     discard "do not add to e.dest"
@@ -827,7 +827,7 @@ proc traverseStmtsExpr(e: var EContext; c: var Cursor) =
         traverseStmt e, c
       else:
         traverseExpr e, c
-    wantParRi e, c
+    takeParRi e, c
 
 proc traverseTupleConstr(e: var EContext; c: var Cursor) =
   e.dest.add tagToken("oconstr", c.info)
@@ -847,7 +847,7 @@ proc traverseTupleConstr(e: var EContext; c: var Cursor) =
     else:
       traverseExpr e, c
     e.dest.addParRi() # "kv"
-  wantParRi e, c
+  takeParRi e, c
 
 proc traverseExpr(e: var EContext; c: var Cursor) =
   var nested = 0
@@ -916,7 +916,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.add symToken(ithTupleField(pool.integers[c.intId]), c.info)
         inc c # skip index
         e.dest.addIntLit(0, c.info) # inheritance
-        wantParRi e, c
+        takeParRi e, c
       of DdotX:
         e.dest.add tagToken("dot", c.info)
         e.dest.add tagToken("deref", c.info)
@@ -925,7 +925,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.addParRi()
         traverseExpr e, c
         traverseExpr e, c
-        wantParRi e, c
+        takeParRi e, c
       of HaddrX, AddrX:
         e.dest.add tagToken("addr", c.info)
         inc c
@@ -953,7 +953,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
           traverseExpr e, c
           e.dest.add c
           inc c
-          wantParRi e, c
+          takeParRi e, c
       of AshrX:
         e.dest.add tagToken("shr", c.info)
         inc c
@@ -976,7 +976,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
           e.dest.addIntLit(bits, c.info)
           e.dest.addParRi()
           traverseExpr e, c
-        wantParRi e, c
+        takeParRi e, c
       of NewOconstrX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, BracketX, CurlyX:
         error e, "BUG: not eliminated: ", c
       else:
@@ -1056,7 +1056,7 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   else:
     # Parameter decls in NIFC have no dot token for the default value!
     skip c
-  wantParRi e, c
+  takeParRi e, c
   if nodecl:
     e.dest.shrink toPatch
   if prag.header != StrId(0):
@@ -1075,7 +1075,7 @@ proc traverseWhile(e: var EContext; c: var Cursor) =
   inc c
   traverseExpr e, c
   traverseStmt e, c
-  wantParRi e, c
+  takeParRi e, c
   let lab = e.nestedIn[^1][1]
   if lab != SymId(0):
     e.dest.add tagToken("lab", info)
@@ -1095,7 +1095,7 @@ proc traverseBlock(e: var EContext; c: var Cursor) =
     e.nestedIn.add (BlockS, s)
   e.dest.add tagToken("scope", info)
   traverseStmt e, c
-  wantParRi e, c
+  takeParRi e, c
   let lab = e.nestedIn[^1][1]
   if lab != SymId(0):
     e.dest.add tagToken("lab", info)
@@ -1116,7 +1116,7 @@ proc traverseBreak(e: var EContext; c: var Cursor) =
     inc c
     e.dest.add tagToken("jmp", info)
     e.dest.add symToken(lab, info)
-  wantParRi e, c
+  takeParRi e, c
 
 proc traverseIf(e: var EContext; c: var Cursor) =
   # (if cond (.. then ..) (.. else ..))
@@ -1127,13 +1127,13 @@ proc traverseIf(e: var EContext; c: var Cursor) =
     inc c # skips '(elif'
     traverseExpr e, c
     traverseStmt e, c
-    wantParRi e, c
+    takeParRi e, c
   if c.kind == ParLe and c.substructureKind == ElseU:
     e.dest.add c
     inc c
     traverseStmt e, c
-    wantParRi e, c
-  wantParRi e, c
+    takeParRi e, c
+  takeParRi e, c
 
 include stringcases
 
@@ -1163,19 +1163,19 @@ proc traverseCase(e: var EContext; c: var Cursor) =
         e.add "ranges", c.info
         while c.kind != ParRi:
           traverseExpr e, c
-        wantParRi e, c
+        takeParRi e, c
       else:
         traverseExpr e, c
       traverseStmt e, c
-      wantParRi e, c
+      takeParRi e, c
     of ElseU:
       e.dest.add c
       inc c
       traverseStmt e, c
-      wantParRi e, c
+      takeParRi e, c
     else:
       error e, "expected (of) or (else) but got: ", c
-  wantParRi e, c
+  takeParRi e, c
 
 proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
   case c.kind
@@ -1243,7 +1243,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       else:
         e.dest.add discardToken
         traverseExpr e, c
-        wantParRi e, c
+        takeParRi e, c
     of BreakS: traverseBreak e, c
     of WhileS: traverseWhile e, c
     of BlockS: traverseBlock e, c

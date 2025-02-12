@@ -370,7 +370,7 @@ proc takeTree*(c: var SemContext; n: var Cursor) =
 
 # -------------------------------------------------------------
 
-proc wantParRi*(c: var SemContext; n: var Cursor) =
+proc takeParRi*(c: var SemContext; n: var Cursor) =
   if n.kind == ParRi:
     c.dest.add n
     inc n

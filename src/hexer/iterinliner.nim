@@ -129,7 +129,7 @@ proc transformBreakStmt(e: var EContext; c: var Cursor) =
     assert c.kind in {DotToken, Symbol}
     e.dest.add c
   inc c
-  wantParRi e, c
+  takeParRi e, c
 
 proc transformContinueStmt(e: var EContext; c: var Cursor) =
   e.dest.add tagToken("break", c.info)
@@ -138,7 +138,7 @@ proc transformContinueStmt(e: var EContext; c: var Cursor) =
     let lab = e.continues[^1]
     e.dest.add symToken(lab, c.info)
   inc c # dotToken
-  wantParRi e, c
+  takeParRi e, c
 
 proc pop(s: var seq[SymId]): SymId =
   result = s[^1]
@@ -183,7 +183,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
       e.breaks.add SymId(0)
       e.continues.add SymId(0)
       inlineLoopBody(e, c, mapping)
-      wantParRi(e, c)
+      takeParRi(e, c)
       discard e.breaks.pop()
       discard e.continues.pop()
     of BlockS:
@@ -203,7 +203,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
         inc c
         while c.kind != ParRi:
           inlineLoopBody(e, c, mapping)
-        wantParRi(e, c)
+        takeParRi(e, c)
     else:
       e.dest.add c
       inc c
@@ -222,7 +222,7 @@ proc inlineIteratorBody(e: var EContext;
       inc c
       while c.kind != ParRi:
         inlineIteratorBody(e, c, forStmt, yieldType)
-      wantParRi e, c
+      takeParRi e, c
     of YldS:
       e.dest.add tagToken($BlockS, c.info)
       e.dest.addDotToken()
@@ -376,7 +376,7 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       inc c
       while c.kind notin {EofToken, ParRi}:
         transformStmt(e, c)
-      wantParRi e, c # skipParRi
+      takeParRi e, c # skipParRi
     of VarS, LetS, CursorS, ResultS:
       takeTree(e, c)
     of ForS:
@@ -398,7 +398,7 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       e.tmpId = 0
       transformStmt(e, c)
       e.tmpId = oldTmpId
-      wantParRi(e, c)
+      takeParRi(e, c)
     else:
       takeTree(e, c)
   else:
