@@ -41,6 +41,7 @@ type
     reportLastUse: bool
     typeCache: TypeCache
     tmpCounter: int
+    source: ptr TokenBuf
 
   Expects = enum
     DontCare,
@@ -50,9 +51,9 @@ type
 
 # -------------- helpers ----------------------------------------
 
-proc isLastRead(c: Context; n: Cursor): bool =
-  # XXX We don't have a move analyser yet.
-  false
+proc isLastRead(c: var Context; n: Cursor): bool =
+  var otherUsage = NoLineInfo
+  result = isLastUse(n, c.source[], otherUsage)
 
 const
   ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX, NewOconstrX,
@@ -671,9 +672,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSons c, n, WantNonOwner
 
-proc injectDups*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
+proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): TokenBuf =
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
-    dest: createTokenBuf(400))
+    dest: createTokenBuf(400), source: addr source)
   c.typeCache.openScope()
   var n = n
   tr(c, n, WantNonOwner)

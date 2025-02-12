@@ -233,7 +233,7 @@ when isMainModule:
     while true:
       case result.kind
       of ParLe:
-        if result.exprKind == EnsureMoveX:
+        if result.exprKind == EMoveX:
           inc result
           return result
         inc nested

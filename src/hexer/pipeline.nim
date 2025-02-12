@@ -46,7 +46,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
 
   var c2 = beginRead(n1)
   let ctx = createLiftingCtx()
-  var n2 = injectDups(c2, ctx)
+  var n2 = injectDups(c2, n1, ctx)
   endRead(n1)
 
   var c3 = beginRead(n2)
