@@ -409,7 +409,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       traverseType e, c
       skip c
       skip c
-      takeParRi e, c
+      skipParRi e, c
     of UncheckedArrayT:
       if IsPointerOf in flags:
         inc c

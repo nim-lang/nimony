@@ -2417,10 +2417,10 @@ proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind; info: Pack
       # don't bother calling semLocalTypeImpl, fully build type here
       semRangeTypeFromExpr c, n, info
       skipParRi n
-      return
     else:
-      # error?
-      discard
+      c.buildErr info, "expected `a..b` expression for range type"
+      skipToEnd n
+    return
   of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT, SinkT, LentT:
     # unary invocations
     takeTree typeBuf, n
