@@ -100,10 +100,12 @@ proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
 proc genScope(c: var GeneratedCode; n: var Cursor) =
   c.add CurlyLe
   inc n
+  c.m.openScope()
   while n.kind != ParRi:
     c.genStmt n
   skipParRi n
   c.add CurlyRi
+  c.m.closeScope()
 
 proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
   if n.kind in {IntLit, UIntLit, CharLit, Symbol} or n.exprKind in {TrueC, FalseC}:

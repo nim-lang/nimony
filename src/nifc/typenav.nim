@@ -27,6 +27,12 @@ proc getType*(m: var Module; n: Cursor): Cursor =
   of DotToken, Ident, SymbolDef:
     result = createIntegralType(m, "(err)")
   of Symbol:
+    var it {.cursor.} = m.current
+    while it != nil:
+      let res = it.locals.getOrDefault(n.symId)
+      if not cursorIsNil(res):
+        return res
+      it = it.parent
     let d = m.defs.getOrDefault(n.symId)
     if d.pos != 0:
       result = getType(m, m.src.cursorAt(d.pos))
