@@ -16,3 +16,12 @@ concreteSet({})
 var x: set[Enum] = {}
 genericSet(x, {})
 
+proc concreteRangeSet(arr: set[range[0..3]]) = discard
+
+concreteRangeSet({})
+var rangeSet: set[range[0..3]] = {}
+genericSet(rangeSet, {})
+type RangeAlias = range[0..3]
+var aliasRangeSet: set[RangeAlias] = {}
+genericSet(rangeSet, aliasRangeSet)
+
