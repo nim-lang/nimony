@@ -607,6 +607,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
     let m = "not the last usage of: " & toString(n, false)
     c.dest.buildTree ErrT, info:
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
+  skip n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
