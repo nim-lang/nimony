@@ -587,7 +587,7 @@ proc instantiateGenericHooks(c: var SemContext) =
 type
   SemFlag = enum
     KeepMagics
-    CallOverloads
+    AllowOverloads
     PreferIterators
     AllowUndeclared
     AllowModuleSym
@@ -1325,9 +1325,8 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
     if m.len == 0:
       # symchoice contained no callable symbols and no typebound ops
-      # since this is a symchoice, the identifier is ambiguous
       assert cs.fnName != StrId(0)
-      buildErr c, cs.fn.n.info, "ambiguous identifier: '" & pool.strings[cs.fnName] & "'"
+      buildErr c, cs.fn.n.info, "attempt to call routine: '" & pool.strings[cs.fnName] & "'"
   elif cs.fn.n.kind == Ident:
     # error should have been given above already:
     # buildErr c, fn.n.info, "attempt to call undeclared routine"
@@ -1347,6 +1346,18 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       m.add createMatch(addr c)
       sigmatch(m[^1], candidate, cs.args, genericArgs)
       considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
+    elif sym != SymId(0):
+      # non-callable symbol, look up all overloads
+      assert cs.fnName != StrId(0)
+      let choiceStart = cs.dest.len
+      swap c.dest, cs.dest
+      discard buildSymChoice(c, cs.fnName, cs.fn.n.info, FindAll)
+      swap c.dest, cs.dest
+      cs.fn = Item(n: cursorAt(cs.dest, choiceStart), typ: c.types.autoType, kind: CchoiceY)
+      resolveOverloads(c, it, cs)
+      return
+    else:
+      buildErr c, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
   var idx = pickBestMatch(c, m)
 
   if idx < 0:
@@ -1572,7 +1583,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     skipParRi cs.fn.n
     it.n = cs.fn.n
     # now interpret the dot expression:
-    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared, CallOverloads})
+    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared, AllowOverloads})
     if dotState == FailedDot or
         # also ignore non-proc fields:
         (dotState == MatchedDotField and cs.fn.typ.typeKind != ProctypeT):
@@ -1582,7 +1593,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       c.dest.shrink dotStart
       # sem b:
       cs.fn = Item(n: fieldNameCursor, typ: c.types.autoType)
-      semExpr c, cs.fn, {KeepMagics, AllowUndeclared, CallOverloads}
+      semExpr c, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads}
       cs.fnName = getFnIdent(c)
       # add a as argument:
       let lhsIndex = c.dest.len
@@ -1597,7 +1608,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       # lhs.n escapes here, but is not read and will be set by argIndexes:
       cs.args.add lhs
   else:
-    semExpr(c, cs.fn, {KeepMagics, AllowUndeclared, CallOverloads})
+    semExpr(c, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads})
     cs.fnName = getFnIdent(c)
     it.n = cs.fn.n
   if c.g.config.compat and cs.fnName in c.unoverloadableMagics:
@@ -2063,7 +2074,7 @@ proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; ki
 
 proc semIdentImpl(c: var SemContext; n: var Cursor; ident: StrId; flags: set[SemFlag]): Sym =
   let mode =
-    if CallOverloads in flags: FindCallableOverloads
+    if AllowOverloads in flags: FindOverloads
     else: InnerMost
   let insertPos = c.dest.len
   let info = n.info
@@ -3309,7 +3320,7 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
         c.buildErr it.n.info, "undeclared identifier", cursorAt(orig, 0)
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
-    if KeepMagics notin flags and c.routine.kind != TemplateY:
+    if AllowOverloads notin flags and c.routine.kind != TemplateY:
       c.buildErr it.n.info, "ambiguous identifier"
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:

@@ -96,7 +96,7 @@ proc buildSymChoiceForForeignModule*(c: var SemContext; importFrom: ImportedModu
 
 type
   ChoiceOption* = enum
-    FindAll, FindOverloads, FindCallableOverloads, InnerMost
+    FindAll, FindOverloads, InnerMost
 
 proc rawBuildSymChoice(c: var SemContext; identifier: StrId; info: PackedLineInfo;
                        option = FindAll): int =
@@ -104,15 +104,11 @@ proc rawBuildSymChoice(c: var SemContext; identifier: StrId; info: PackedLineInf
   var it = c.currentScope
   while it != nil:
     var nonOverloadable = 0
-    var callable = false
     for sym in it.tab.getOrDefault(identifier):
       c.dest.addSymUse sym, info
       inc result
       if sym.kind.isNonOverloadable:
         inc nonOverloadable
-        callable = option == FindCallableOverloads and sym.kind in {TypeY, TypevarY}
-        # XXX should include proc variables so that they bypass overload resolution
-        # but this implies this should be done in semCall
     if result == 1:
       case option
       of InnerMost:
@@ -120,11 +116,6 @@ proc rawBuildSymChoice(c: var SemContext; identifier: StrId; info: PackedLineInf
       of FindOverloads:
         if nonOverloadable == 1:
           # unambiguous local symbol found
-          return
-      of FindCallableOverloads:
-        if nonOverloadable == 1 and callable:
-          # unambiguous local callable symbol found,
-          # local non-callable symbol means we can still look up overloads
           return
       else: discard
     it = it.up
