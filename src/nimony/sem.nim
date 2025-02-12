@@ -2398,7 +2398,7 @@ const InvocableTypeMagics = {ArrayT, RangetypeT, VarargsT,
   PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT,
   SinkT, LentT}
 
-proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind) =
+proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind; info: PackedLineInfo) =
   # `n` is at first arg
   var typeBuf = createTokenBuf(16)
   typeBuf.addParLe(kind, info)
@@ -2462,7 +2462,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     if kind in InvocableTypeMagics:
       # magics that can be invoked
       c.dest.shrink typeStart
-      semMagicInvoke(c, n, kind)
+      semMagicInvoke(c, n, kind, info)
       return
     else:
       c.buildErr info, "cannot attempt to instantiate a non-type"
