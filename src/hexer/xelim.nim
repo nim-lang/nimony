@@ -242,7 +242,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     else:
       # Bug: just copy the thing around
       takeTree dest, n
-  wantParRi dest, n
+  takeParRi dest, n
   if tar.m != IsIgnored:
     tar.t.addSymUse tmp, info
 

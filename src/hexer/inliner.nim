@@ -75,7 +75,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr c, dest, n
   else:
     takeTree dest, n
-  dest.wantParRi(n)
+  dest.takeParRi(n)
   c.thisRoutine = oldThisRoutine
   c.typeCache.closeScope()
 

@@ -50,7 +50,7 @@ proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
   inc n
 
-proc wantParRi(c: var Context; n: var Cursor) =
+proc takeParRi(c: var Context; n: var Cursor) =
   if n.kind == ParRi:
     c.dest.add n
     inc n
@@ -100,7 +100,7 @@ proc trSons(c: var Context; n: var Cursor; e: Expects) =
     takeToken c, n
     while n.kind != ParRi:
       tr c, n, e
-    wantParRi c, n
+    takeParRi c, n
 
 proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   # --------------------------------------------------------------------------
@@ -221,7 +221,7 @@ proc trReturn(c: var Context; n: var Cursor) =
       buildLocalErr(c.dest, n.info, "cannot borrow from " & toString(n, false))
     else:
       tr c, n, c.r.returnType
-  wantParRi c, n
+  takeParRi c, n
 
 proc mightBeDangerous(c: var Context; n: Cursor) =
   let root = rootOf(n)
@@ -287,7 +287,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     takeTree c.dest, n
   if isGeneric:
     takeTree c.dest, n
-    wantParRi c, n
+    takeParRi c, n
   else:
     swap c.r, r
     var body = n
@@ -295,7 +295,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     if c.r.dangerousLocations.len > 0:
       checkForDangerousLocations c, body
     swap c.r, r
-    wantParRi c, n
+    takeParRi c, n
   c.typeCache.closeScope()
 
 proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
@@ -368,7 +368,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       buildLocalErr c.dest, info, "cannot pass $1 to var/out T parameter"
   else:
     trCallArgs(c, n, fnType)
-  wantParRi c, n
+  takeParRi c, n
 
   swap c.dest, callBuf
   if needHderef:
@@ -422,7 +422,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     tr c, n, e
   else:
     trAsgnRhs c, le, n, e
-  wantParRi c, n
+  takeParRi c, n
 
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # Idea: A variable like `x` does not own its value as it can be read multiple times.
@@ -462,7 +462,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   c.typeCache.registerLocal(name.symId, typ)
   let e = if typ.typeKind in {OutT, MutT}: WantVarT else: WantT
   trAsgnRhs c, name, n, e
-  wantParRi c, n
+  takeParRi c, n
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
   takeToken c, n
@@ -471,7 +471,7 @@ proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
       tr c, n, outerE
     else:
       tr c, n, WantT
-  wantParRi c, n
+  takeParRi c, n
 
 proc trObjConstr(c: var Context; n: var Cursor) =
   takeToken c, n
@@ -483,15 +483,15 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     let fieldType = getType(c.typeCache, n)
     let e = if fieldType.typeKind in {MutT, OutT}: WantVarT else: WantT
     tr c, n, e
-    wantParRi c, n
-  wantParRi c, n
+    takeParRi c, n
+  takeParRi c, n
 
 proc trVarHook(c: var Context; n: var Cursor) =
   takeToken c, n
   tr c, n, WantVarT
   if n.kind != ParRi:
     tr c, n, WantT
-  wantParRi c, n
+  takeParRi c, n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind

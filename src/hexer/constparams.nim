@@ -97,7 +97,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trConstRef c, dest, n
     else:
       tr c, dest, n
-  wantParRi dest, n
+  takeParRi dest, n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -110,7 +110,7 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   while n.kind != ParRi:
     tr c, dest, n
-  wantParRi dest, n
+  takeParRi dest, n
   c.typeCache.closeScope()
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
