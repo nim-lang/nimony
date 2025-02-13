@@ -96,26 +96,24 @@ proc buildSymChoiceForForeignModule*(c: var SemContext; importFrom: ImportedModu
 
 type
   ChoiceOption* = enum
-    FindAll, InnerMost
+    FindAll, FindOverloads, InnerMost
 
 proc rawBuildSymChoice(c: var SemContext; identifier: StrId; info: PackedLineInfo;
                        option = FindAll): int =
   result = 0
   var it = c.currentScope
-  var nonOverloadable = 0
   while it != nil:
+    var nonOverloadable = 0
     for sym in it.tab.getOrDefault(identifier):
-      # for non-overloadable symbols prefer the innermost symbol:
+      c.dest.addSymUse sym, info
+      inc result
       if sym.kind.isNonOverloadable:
-        if nonOverloadable == 0:
-          c.dest.addSymUse sym, info
-          inc result
         inc nonOverloadable
-        if result == 1 and nonOverloadable == 1 and option == InnerMost:
-          return
-      else:
-        c.dest.addSymUse sym, info
-        inc result
+    if result == 1 and (option == InnerMost or
+        (option == FindOverloads and nonOverloadable == 1)):
+      # unambiguous local symbol found
+      # in case of FindOverloads, if symbol is overloadable, consider other overloads
+      return
     it = it.up
   inc result, considerImportedSymbols(c, identifier, info)
 

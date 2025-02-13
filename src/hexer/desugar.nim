@@ -233,6 +233,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSubtree a
         dest.addSubtree b
     of InSetX:
+      # XXX subtract offsets for range types if implemented
       let mask = size * 8 - 1
       copyIntoKind dest, NeqX, info:
         dest.addSubtree cType

@@ -587,7 +587,7 @@ proc instantiateGenericHooks(c: var SemContext) =
 type
   SemFlag = enum
     KeepMagics
-    FindOverloads
+    AllowOverloads
     PreferIterators
     AllowUndeclared
     AllowModuleSym
@@ -771,7 +771,7 @@ template skipToParams(n) =
   skip n # skip pattern
   skip n # skip generics
 
-proc fetchType(c: var SemContext; n: Cursor; s: Sym): TypeCursor =
+proc fetchCallableType(c: var SemContext; n: Cursor; s: Sym): TypeCursor =
   if s.kind == NoSym:
     c.buildErr n.info, "undeclared identifier"
     result = c.types.autoType
@@ -781,11 +781,13 @@ proc fetchType(c: var SemContext; n: Cursor; s: Sym): TypeCursor =
       var d = res.decl
       if s.kind.isLocal:
         skipToLocalType d
+        if d.typeKind == ProctypeT:
+          skipToParams d
       elif s.kind.isRoutine:
         skipToParams d
       else:
-        # XXX enum field, object field?
-        assert false, "not implemented"
+        # consider not callable
+        discard
       result = d
     else:
       c.buildErr n.info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
@@ -1312,7 +1314,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       if f.kind == Symbol:
         let sym = f.symId
         let s = fetchSym(c, sym)
-        let typ = fetchType(c, f, s)
+        let typ = fetchCallableType(c, f, s)
         if typ.typeKind == ParamsT:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: typ)
           m.add createMatch(addr c)
@@ -1321,6 +1323,10 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         buildErr c, cs.fn.n.info, "`choice` node does not contain `symbol`"
       inc f
     considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
+    if m.len == 0:
+      # symchoice contained no callable symbols and no typebound ops
+      assert cs.fnName != StrId(0)
+      buildErr c, cs.fn.n.info, "attempt to call routine: '" & pool.strings[cs.fnName] & "'"
   elif cs.fn.n.kind == Ident:
     # error should have been given above already:
     # buildErr c, fn.n.info, "attempt to call undeclared routine"
@@ -1340,6 +1346,19 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       m.add createMatch(addr c)
       sigmatch(m[^1], candidate, cs.args, genericArgs)
       considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
+    elif sym != SymId(0):
+      # non-callable symbol, look up all overloads
+      assert cs.fnName != StrId(0)
+      var choiceBuf = createTokenBuf(16)
+      swap c.dest, choiceBuf
+      discard buildSymChoice(c, cs.fnName, cs.fn.n.info, FindAll)
+      swap c.dest, choiceBuf
+      # could store choiceBuf in CallState but cs.fn should not outlive it
+      cs.fn = Item(n: beginRead(choiceBuf), typ: c.types.autoType, kind: CchoiceY)
+      resolveOverloads(c, it, cs)
+      return
+    else:
+      buildErr c, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
   var idx = pickBestMatch(c, m)
 
   if idx < 0:
@@ -1565,7 +1584,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     skipParRi cs.fn.n
     it.n = cs.fn.n
     # now interpret the dot expression:
-    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared, FindOverloads})
+    let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared, AllowOverloads})
     if dotState == FailedDot or
         # also ignore non-proc fields:
         (dotState == MatchedDotField and cs.fn.typ.typeKind != ProctypeT):
@@ -1575,7 +1594,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       c.dest.shrink dotStart
       # sem b:
       cs.fn = Item(n: fieldNameCursor, typ: c.types.autoType)
-      semExpr c, cs.fn, {KeepMagics, AllowUndeclared, FindOverloads}
+      semExpr c, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads}
       cs.fnName = getFnIdent(c)
       # add a as argument:
       let lhsIndex = c.dest.len
@@ -1590,7 +1609,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       # lhs.n escapes here, but is not read and will be set by argIndexes:
       cs.args.add lhs
   else:
-    semExpr(c, cs.fn, {KeepMagics, AllowUndeclared, FindOverloads})
+    semExpr(c, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads})
     cs.fnName = getFnIdent(c)
     it.n = cs.fn.n
   if c.g.config.compat and cs.fnName in c.unoverloadableMagics:
@@ -2056,7 +2075,7 @@ proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; ki
 
 proc semIdentImpl(c: var SemContext; n: var Cursor; ident: StrId; flags: set[SemFlag]): Sym =
   let mode =
-    if FindOverloads in flags: FindAll
+    if AllowOverloads in flags: FindOverloads
     else: InnerMost
   let insertPos = c.dest.len
   let info = n.info
@@ -2379,6 +2398,44 @@ const InvocableTypeMagics = {ArrayT, RangetypeT, VarargsT,
   PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT,
   SinkT, LentT}
 
+proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind; info: PackedLineInfo) =
+  # `n` is at first arg
+  var typeBuf = createTokenBuf(16)
+  typeBuf.addParLe(kind, info)
+  # reorder invocation according to type specifications:
+  case kind
+  of ArrayT:
+    # invoked as array[len, elem], but needs to become (array elem len)
+    let indexPart = n
+    skip n
+    takeTree typeBuf, n # element type
+    typeBuf.addSubtree indexPart
+    takeParRi typeBuf, n
+  of RangetypeT:
+    # range types are invoked as `range[a..b]`
+    if isRangeExpr(n):
+      # don't bother calling semLocalTypeImpl, fully build type here
+      semRangeTypeFromExpr c, n, info
+      skipParRi n
+    else:
+      c.buildErr info, "expected `a..b` expression for range type"
+      skipToEnd n
+    return
+  of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT, SinkT, LentT:
+    # unary invocations
+    takeTree typeBuf, n
+    takeParRi typeBuf, n
+  of VarargsT:
+    takeTree typeBuf, n
+    if n.kind != ParRi:
+      # optional varargs call
+      takeTree typeBuf, n
+    takeParRi typeBuf, n
+  else:
+    raiseAssert "unreachable" # see type kind check for magicKind
+  var m = cursorAt(typeBuf, 0)
+  semLocalTypeImpl c, m, InLocalDecl
+
 proc semInvoke(c: var SemContext; n: var Cursor) =
   let typeStart = c.dest.len
   let info = n.info
@@ -2387,7 +2444,6 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
 
   var headId: SymId = SymId(0)
   var decl = default TypeDecl
-  var magicKind = NoType
   var ok = false
   if c.dest[typeStart+1].kind == Symbol:
     headId = c.dest[typeStart+1].symId
@@ -2405,8 +2461,9 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     endRead(c.dest)
     if kind in InvocableTypeMagics:
       # magics that can be invoked
-      magicKind = kind
-      ok = true
+      c.dest.shrink typeStart
+      semMagicInvoke(c, n, kind, info)
+      return
     else:
       c.buildErr info, "cannot attempt to instantiate a non-type"
 
@@ -2417,7 +2474,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     semLocalTypeImpl c, n, AllowValues
   swap c.usedTypevars, genericArgs
   takeParRi c, n
-  if ok and (genericArgs == 0 or magicKind != NoType or
+  if ok and (genericArgs == 0 or
       # structural types are inlined even with generic arguments
       # XXX does not instantiate properly if structural type is forward declared
       # because typevar syms are not created in the SemcheckTopLevelSyms phase
@@ -2434,51 +2491,6 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       sym.name = cachedSym
     else:
       var args = cursorAt(c.dest, beforeArgs)
-      if magicKind != NoType:
-        var magicExpr = createTokenBuf(8)
-        magicExpr.addParLe(magicKind, info)
-        # reorder invocation according to type specifications:
-        case magicKind
-        of ArrayT:
-          # invoked as array[len, elem], but needs to become (array elem len)
-          let indexPart = args
-          skip args
-          magicExpr.takeTree args # element type
-          magicExpr.addSubtree indexPart
-          skipParRi args
-        of RangetypeT:
-          # range types are invoked as `range[a..b]`
-          if isRangeExpr(args):
-            # don't bother calling semLocalTypeImpl, fully build type here
-            magicExpr.shrink 0
-            swap c.dest, magicExpr
-            semRangeTypeFromExpr c, args, info
-            swap c.dest, magicExpr
-            c.dest.endRead()
-            c.dest.shrink typeStart
-            c.dest.add magicExpr
-            return
-          else:
-            # error?
-            discard
-        of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT, SinkT, LentT:
-          # unary invocations
-          magicExpr.takeTree args
-          skipParRi args
-        of VarargsT:
-          magicExpr.takeTree args
-          if args.kind != ParRi:
-            # optional varargs call
-            magicExpr.takeTree args
-          skipParRi args
-        else:
-          raiseAssert "unreachable" # see type kind check for magicKind
-        magicExpr.addParRi()
-        c.dest.endRead()
-        c.dest.shrink typeStart
-        var m = cursorAt(magicExpr, 0)
-        semLocalTypeImpl c, m, InLocalDecl
-        return
       let targetSym = newSymId(c, headId)
       if genericArgs == 0:
         c.instantiatedTypes[key] = targetSym
@@ -3302,7 +3314,7 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
         c.buildErr it.n.info, "undeclared identifier", cursorAt(orig, 0)
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
-    if KeepMagics notin flags and c.routine.kind != TemplateY:
+    if AllowOverloads notin flags and c.routine.kind != TemplateY:
       c.buildErr it.n.info, "ambiguous identifier"
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
@@ -3592,6 +3604,7 @@ proc semWhen(c: var SemContext; it: var Item) =
   if not leaveUnresolved:
     # none of the branches evaluated, output nothing
     c.dest.shrink start
+    producesVoid c, info, it.typ
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =

@@ -267,6 +267,17 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     let m = asSigned(b.hi, err) + 1'i64
     if err: result = createNaN()
     else: result = createXint div8Roundup(m)
+  of RangetypeT:
+    var index = baseType
+    inc index # tag
+    skip index # basetype
+    # XXX offset not implemented 
+    skip index # lo
+    let hi = evalOrdinal(nil, index)
+    var err = false
+    let m = asSigned(hi, err) + 1'i64
+    if err: result = createNaN()
+    else: result = createXint div8Roundup(m)
   of DistinctT:
     result = bitsetSizeInBytes(baseType.firstSon)
   else:
