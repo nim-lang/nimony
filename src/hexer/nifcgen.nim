@@ -1051,11 +1051,11 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   else:
     traverseType e, c
 
-  if mode != TraverseSig:
-    traverseExpr e, c
-  else:
+  if mode == TraverseSig and localDecl.substructureKind == ParamU:
     # Parameter decls in NIFC have no dot token for the default value!
     skip c
+  else:
+    traverseExpr e, c
   takeParRi e, c
   if nodecl:
     e.dest.shrink toPatch
