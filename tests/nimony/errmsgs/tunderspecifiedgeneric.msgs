@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tunderspecifiedgeneric.nim(3, 4) Error: Type mismatch at [position]
+[2] could not infer type for T.0.tunsd0i13

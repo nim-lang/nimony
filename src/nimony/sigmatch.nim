@@ -417,8 +417,10 @@ proc commonType(f, a: Cursor): Cursor =
 proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
   let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:
+    let firstErr = not m.err
     m.error InvalidRematch, f, a
-    m.error.typeVar = typeVar
+    if firstErr:
+      m.error.typeVar = typeVar
   elif matchesConstraint(m, typeVar, com):
     m.inferred[typeVar] = skipModifier(com)
   else:
@@ -862,8 +864,10 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.tvars.incl v
       if e.kind == DotToken: discard
       elif e.kind == ParRi:
-        m.error.typeVar = v
+        let firstErr = not m.err
         m.error0 MissingExplicitGenericParameter
+        if firstErr:
+          m.error.typeVar = v
         break
       else:
         if matchesConstraint(m, v, e):
@@ -913,8 +917,8 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     for v in typeVars(fn.sym):
       let inf = m.inferred.getOrDefault(v)
       if inf == default(Cursor):
-        m.error.typeVar = v
         m.error0 CouldNotInferTypeVar
+        m.error.typeVar = v
         break
       m.typeArgs.addSubtree inf
 
