@@ -32,7 +32,7 @@ It follows that we're only interested in Call expressions here, or similar
 import std / [assertions]
 include nifprelude
 import nifindexes, symparser, treemangler, lifter, mover
-import ".." / nimony / [nimony_model, programs, decls, typenav]
+import ".." / nimony / [nimony_model, programs, decls, typenav, renderer]
 
 type
   Context = object
@@ -604,7 +604,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
     copyInto c.dest, n:
       tr c, n, e
   else:
-    let m = "not the last usage of: " & toString(n, false)
+    let m = "not the last usage of: " & asNimCode(n)
     c.dest.buildTree ErrT, info:
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
   skip n

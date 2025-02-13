@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer
 
 type
   Item* = object
@@ -70,7 +70,7 @@ proc concat(a: varargs[string]): string =
   for i in 1..high(a): result.add a[i]
 
 proc typeToString*(n: Cursor): string =
-  result = toString(n, false)
+  result = asNimCode(n)
 
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   if m.err: return # first error is the important one
