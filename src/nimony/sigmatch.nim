@@ -85,6 +85,19 @@ proc error0(m: var Match; k: MatchErrorKind) =
   m.err = true
   m.error = MatchError(info: m.argInfo, kind: k, pos: m.pos+1)
 
+proc errorTypevar(m: var Match; k: MatchErrorKind; expected, got: Cursor; typevar: SymId) =
+  if m.err: return # first error is the important one
+  m.err = true
+  m.error = MatchError(info: m.argInfo, kind: k,
+                       typeVar: typevar,
+                       expected: expected, got: got, pos: m.pos+1)
+
+proc error0Typevar(m: var Match; k: MatchErrorKind; typevar: SymId) =
+  if m.err: return # first error is the important one
+  m.err = true
+  m.error = MatchError(info: m.argInfo, kind: k,
+                       typeVar: typevar, pos: m.pos+1)
+
 proc getErrorMsg(m: Match): string =
   case m.error.kind
   of InvalidMatch:
@@ -417,8 +430,7 @@ proc commonType(f, a: Cursor): Cursor =
 proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
   let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:
-    m.error InvalidRematch, f, a
-    m.error.typeVar = typeVar
+    m.errorTypevar InvalidRematch, f, a, typeVar
   elif matchesConstraint(m, typeVar, com):
     m.inferred[typeVar] = skipModifier(com)
   else:
@@ -862,8 +874,7 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.tvars.incl v
       if e.kind == DotToken: discard
       elif e.kind == ParRi:
-        m.error.typeVar = v
-        m.error0 MissingExplicitGenericParameter
+        m.error0Typevar MissingExplicitGenericParameter, v
         break
       else:
         if matchesConstraint(m, v, e):
@@ -913,8 +924,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     for v in typeVars(fn.sym):
       let inf = m.inferred.getOrDefault(v)
       if inf == default(Cursor):
-        m.error.typeVar = v
-        m.error0 CouldNotInferTypeVar
+        m.error0Typevar CouldNotInferTypeVar, v
         break
       m.typeArgs.addSubtree inf
 
