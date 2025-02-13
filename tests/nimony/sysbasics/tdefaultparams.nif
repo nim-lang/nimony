@@ -1,0 +1,114 @@
+(.nif24)
+0,1,tests/nimony/sysbasics/tdefaultparams.nim(stmts
+ (proc 5 :foo1.0.tdebp8hax . . . 9
+  (params 1
+   (param :x.0 . . 3
+    (i -1) .) 9
+   (param :y.0 . . 3
+    (f +64) 11 +1.2)) . . . 2,1
+  (stmts 4
+   (let :m.0 . . 7,~1
+    (i -1) 4 x.0))) ,3
+ (proc 5 :foo2.0.tdebp8hax . . . 9
+  (params 1
+   (param :x.1 . . 3,~3
+    (i -1) 4 +3) 8
+   (param :y.1 . . ~4,~3
+    (i -1) 4 +7)) . . . 2,1
+  (stmts 4
+   (let :s.0 . . 7,~4
+    (i -1) 4 x.1) 4,1
+   (let :j.0 . . 7,~5
+    (i -1) 4 y.1))) ,7
+ (proc 5 :foo3.0.tdebp8hax . . . 9
+  (params 1
+   (param :x.2 . . 3
+    (i -1) .) 9
+   (param :y.2 . . 3
+    (f +64) .) 19
+   (param :z.0 . . ~15,~7
+    (i -1) 9 +23)) . . . 2,1
+  (stmts
+   (discard .))) ,10
+ (proc 5 :foo4.0.tdebp8hax . . . 9
+  (params 1
+   (param :x.3 . . 3
+    (i -1) .) 9
+   (param :y.3 . . 3
+    (f +64) .) 19
+   (param :z.1 . . ~15,~10
+    (i -1) 9 +23) 32
+   (param :a.0 . . ~20,~10
+    (f +64) 11 +1.2)) . . . 2,1
+  (stmts
+   (discard .))) ,13
+ (proc 5 :foo5.0.tdebp8hax . . 9
+  (typevars 1
+   (typevar :T.0.tdebp8hax . . . .)) 12
+  (params 1
+   (param :x.4 . . 3 T.0.tdebp8hax .) 7
+   (param :y.4 . . ~6,~13
+    (i -1) 9 +7)) . . . 2,1
+  (stmts
+   (discard .))) ,16
+ (proc 5 :foo6.0.tdebp8hax . . 9
+  (typevars 1
+   (typevar :T.1.tdebp8hax . . . .)) 12
+  (params 1
+   (param :x.5 . . 3 T.1.tdebp8hax 7 +3) 11
+   (param :y.5 . . ~10,~16
+    (i -1) 9 +7)) . . . 2,1
+  (stmts
+   (discard .))) ,19
+ (proc 5 :foo.0.tdebp8hax . . 8
+  (typevars 1
+   (typevar :T.2.tdebp8hax . . . .)) 11
+  (params 1
+   (param :x.6 . . 3 T.2.tdebp8hax .) 7
+   (param :y.6 . . ~3 T.2.tdebp8hax 7 +7)) . . . 2,1
+  (stmts 4
+   (let :s.1 . . 9,~1 T.2.tdebp8hax 4 x.6) 4,1
+   (let :j.1 . . 9,~2 T.2.tdebp8hax 4 y.6))) 3,23
+ (call ~3 foo.1.tdebp8hax 1 +3 22,~4 +7) 4,24
+ (call ~4 foo2.0.tdebp8hax 10,~21 +3 17,~21 +7) 4,25
+ (call ~4 foo2.0.tdebp8hax 1 +1 17,~22 +7) 4,26
+ (call ~4 foo3.0.tdebp8hax 1 +1 4 +2.3 33,~19 +23) 4,27
+ (call ~4 foo4.0.tdebp8hax 1 +1 4 +234.34 33,~17 +23 48,~17 +1.2) 4,29
+ (call ~4 foo2.0.tdebp8hax 1 +2 4 +3) 4,31
+ (call ~4 foo1.0.tdebp8hax 1 +34 25,~31 +1.2) 4,33
+ (call ~4 foo5.1.tdebp8hax 1 +1.3 24,~20 +7) 4,34
+ (call ~4 foo6.1.tdebp8hax 1 +4 28,~18 +7) 9,35
+ (call ~9 foo6.1.tdebp8hax 11,~19 +3 23,~19 +7) 3,23
+ (proc :foo.1.tdebp8hax . ~3,~4 .
+  (at foo.0.tdebp8hax
+   (i -1)) 8,~4
+  (params 1
+   (param :x.10 . .
+    (i -1) .) 7
+   (param :y.10 . . ~5,~19
+    (i -1) 7 +7)) ~3,~4 . ~3,~4 . ~3,~4 . ~1,~3
+  (stmts 4
+   (let :s.2 . . 7,~20
+    (i -1) 4 x.10) 4,1
+   (let :j.2 . . 7,~21
+    (i -1) 4 y.10))) 4,33
+ (proc :foo5.1.tdebp8hax . ~4,~20 .
+  (at foo5.0.tdebp8hax
+   (f +64)) 8,~20
+  (params 1
+   (param :x.11 . .
+    (f +64) .) 7
+   (param :y.11 . . ~6,~13
+    (i -1) 9 +7)) ~4,~20 . ~4,~20 . ~4,~20 . ~2,~19
+  (stmts
+   (discard .))) 4,34
+ (proc :foo6.1.tdebp8hax . ~4,~18 .
+  (at foo6.0.tdebp8hax
+   (i -1)) 8,~18
+  (params 1
+   (param :x.12 . . ,~16
+    (i -1) 7 +3) 11
+   (param :y.12 . . ~10,~16
+    (i -1) 9 +7)) ~4,~18 . ~4,~18 . ~4,~18 . ~2,~17
+  (stmts
+   (discard .))))
