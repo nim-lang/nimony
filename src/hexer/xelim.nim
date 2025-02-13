@@ -366,7 +366,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   of WhileS:
     trWhile c, dest, n
-  of AsgnS, CallS, InclS, ExclS:
+  of AsgnS, CallS, InclS, ExclS, AsmS, DeferS:
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
@@ -383,15 +383,15 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
      ForS, CmdS, IncludeS, ImportS, FromS, ImportExceptS,
      ExportS, CommentS,
-     PragmasS:
+     PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     takeTree dest, n
-  of ScopeS:
+  of ScopeS, StaticstmtS:
     c.typeCache.openScope()
     copyInto(dest, n):
       while n.kind != ParRi:
         trStmt c, dest, n
     c.typeCache.closeScope()
-  of StmtsS:
+  of StmtsS, UnpackDeclS:
     copyInto(dest, n):
       while n.kind != ParRi:
         trStmt c, dest, n
