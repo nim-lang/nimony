@@ -839,12 +839,19 @@ iterator typeVars(fn: SymId): SymId =
           yield tv.symId
         skip c
 
-proc collectDefaultValues(f: var Cursor): seq[Item] =
+proc collectDefaultValues(m: var Match; f: Cursor): seq[Item] =
+  var f = f
   result = @[]
   while f.symKind == ParamY:
     let param = asLocal(f)
     if param.val.kind == DotToken: break
-    result.add Item(n: param.val, typ: param.typ)
+ 
+    if param.typ.kind == Symbol and isTypevar(param.typ.symId) and
+        m.inferred.contains(param.typ.symId):
+      var prev = m.inferred[param.typ.symId]
+      result.add Item(n: param.val, typ: prev)
+    else:
+      result.add Item(n: param.val, typ: param.typ)
     skip f
 
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
@@ -894,7 +901,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     # use default values for these parameters, but this needs to be done
     # properly with generics etc. so we use a helper `args` seq and pretend
     # the programmer had written out these arguments:
-    let moreArgs = collectDefaultValues(f)
+    let moreArgs = collectDefaultValues(m, f)
     sigmatchLoop m, f, moreArgs
     if f.kind != ParRi:
       m.error0 TooFewArguments
