@@ -293,16 +293,19 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
     if f.kind == Symbol and isTypevar(f.symId):
       # type vars are specal:
       let fs = f.symId
-      if a.kind == Symbol and a.symId == fs:
-        # self match, consider equal
-        inc f
-        inc a
-      elif m.inferred.contains(fs):
+      if m.inferred.contains(fs):
         # rematch?
         var prev = m.inferred[fs]
         linearMatch(m, prev, a) # skips a
         inc f
         if m.err: break
+      elif a.kind == Symbol and a.symId == fs:
+        # self match, consider equal
+        inc f
+        inc a
+        if m.tvars.len != 0:
+          # XXX this should be equal match but counts toward generic match
+          m.inferred[fs] = a
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
@@ -441,7 +444,9 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   if isTypevar(fs):
     if a.kind == Symbol and a.symId == fs:
       # self match, consider equal
-      discard
+      if m.tvars.len != 0:
+        # XXX this should be equal match but counts toward generic match
+        m.inferred[fs] = a
     elif m.inferred.contains(fs):
       typevarRematch(m, fs, m.inferred[fs], a)
     elif matchesConstraint(m, fs, a):
