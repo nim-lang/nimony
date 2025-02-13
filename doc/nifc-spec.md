@@ -80,7 +80,7 @@ CharLiteral ::= <according to NIF's spec>
 StringLiteral ::= <according to NIF's spec>
 IntBits ::= ('+' | '-') [0-9]+
 
-Lvalue ::= Symbol | (deref Expr) |
+Lvalue ::= Symbol | (deref Expr (cppref)?) |
              (at Expr Expr) | # array indexing
              (dot Expr Symbol Number) | # field access
              (pat Expr Expr) | # pointer indexing
@@ -92,7 +92,7 @@ CallCanRaise ::= (onerr Stmt Expr+)
 Expr ::= Number | CharLiteral | StringLiteral |
          Lvalue |
          (par Expr) | # wraps the expression in parentheses
-         (addr Lvalue) | # "address of" operation
+         (addr Lvalue (cppref)?) | # "address of" operation
          (nil) | (false) | (true) |
          (inf) | (neginf) | (nan) |
          (and Expr Expr) | # "&&"
@@ -191,7 +191,7 @@ Type ::= Symbol |
          (c IntBits IntQualifier*) | # character types
          (bool IntQualifier*) |
          (void) |
-         (ptr Type PtrQualifier*) | # pointer to a single object
+         (ptr Type PtrQualifier* (cppref)?) | # pointer to a single object
          (flexarray Type) |
          (aptr Type PtrQualifier*) | # pointer to an array of objects
          ProcType
@@ -277,6 +277,10 @@ Notes:
 - `var` is always a local variable, `gvar` is a global variable and `tvar` a thread local
   variable.
 - `SCOPE` indicates the construct introduces a new local scope for variables.
+- `cppref` is a pragma that indicates that the pointer should be translated into a C++
+  reference (`T&`). The `(deref)` and `(addr)` operations are still mandatory then and
+  must be annotated with `(cppref)` too. `(cppref)` can be combined with `(ro)` to produce
+  a `const T&` reference.
 
 
 Scopes

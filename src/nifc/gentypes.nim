@@ -212,10 +212,10 @@ proc getNumberQualifier(c: var GeneratedCode; n: Cursor): string =
     else:
       # TODO: cpp doesn't support _Atomic
       result = ""
-  of RestrictQ, NoQualifier:
+  of RestrictQ, NoQualifier, CppRefQ:
     error c.m, "expected number qualifier but got: ", n
 
-proc getPtrQualifier(c: var GeneratedCode; n: Cursor): string =
+proc getPtrQualifier(c: var GeneratedCode; n: Cursor; isCppRef: var bool): string =
   case n.typeQual
   of RoQ:
     result = "const "
@@ -227,6 +227,9 @@ proc getPtrQualifier(c: var GeneratedCode; n: Cursor): string =
       result = ""
   of RestrictQ:
     result = "restrict "
+  of CppRefQ:
+    isCppRef = true
+    result = ""
   of NoQualifier:
     error c.m, "expected pointer qualifier but got: ", n
 
@@ -265,12 +268,16 @@ proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string) =
   inc n
   var elem = n
   skip n # element type
+  var isCppRef = false
   while n.kind != ParRi:
-    c.add getPtrQualifier(c, n)
+    c.add getPtrQualifier(c, n, isCppRef)
     skip n
   inc n # ParRi
   genType c, elem
-  c.add Star
+  if isCppRef:
+    c.add "&"
+  else:
+    c.add Star
   maybeAddName(c, name)
 
 proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
