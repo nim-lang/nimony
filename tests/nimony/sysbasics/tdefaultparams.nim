@@ -14,7 +14,7 @@ proc foo4(x: int, y: float, z: int = 23, a: float = 1.2) =
 proc foo5[T](x: T, y: int = 7) =
   discard
 
-proc foo6[T](x: T = 3, y: int = 7) =
+proc foo6[T](x: T = T(3), y: int = 7) =
   discard
 
 proc foo[T](x: T, y: T = T(7)) =

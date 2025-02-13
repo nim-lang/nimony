@@ -15,9 +15,9 @@ type
     proc `-`(x, y: Self): Self
 
 proc fib[T: Fibable](a: T): T =
-  if a <= 2:
-    result = 1
+  if a <= T(2):
+    result = T(1)
   else:
-    result = fib(a-1) + fib(a-2)
+    result = fib(a-T(1)) + fib(a-T(2))
 
 discard fib(8)
