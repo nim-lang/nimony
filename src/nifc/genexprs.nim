@@ -88,7 +88,8 @@ proc genDeref(c: var GeneratedCode; n: var Cursor) =
   genx c, n
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:
-    c.code[starAt] = Token EmptyToken
+    if c.m.config.backend == backendCpp:
+      c.code[starAt] = Token EmptyToken
     skip n
   skipParRi n
 
@@ -205,7 +206,8 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
     c.add ".a"
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:
-    c.code[ampAt] = Token EmptyToken
+    if c.m.config.backend == backendCpp:
+      c.code[ampAt] = Token EmptyToken
     skip n
   skipParRi n
 

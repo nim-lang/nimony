@@ -228,7 +228,8 @@ proc getPtrQualifier(c: var GeneratedCode; n: Cursor; isCppRef: var bool): strin
   of RestrictQ:
     result = "restrict "
   of CppRefQ:
-    isCppRef = true
+    if c.m.config.backend == backendCpp:
+      isCppRef = true
     result = ""
   of NoQualifier:
     error c.m, "expected pointer qualifier but got: ", n
