@@ -99,6 +99,7 @@
 | atomic | TQC | `atomic` type qualifier for NIFC |
 | ro | TQC | `readonly` (= `const`) type qualifier for NIFC |
 | restrict | TQC | type qualifier for NIFC |
+| cppref | TQC | type qualifier for NIFC that provides a C++ reference |
 | i | TC, TN | `int` builtin type |
 | u | TC, TN | `uint` builtin type |
 | f | TC, TN | `float` builtin type |

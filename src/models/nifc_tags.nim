@@ -44,10 +44,10 @@ type
     CastC = (44, "cast")
     ConvC = (45, "conv")  ## type conversion
     CallC = (46, "call")  ## call operation
-    ErrvC = (245, "errv")  ## error flag for `NIFC`
+    ErrvC = (246, "errv")  ## error flag for `NIFC`
 
 proc rawTagIsNifcExpr*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 24'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 46'u8, 245'u8}
+  raw <= 255'u32 and raw.uint8 in {2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 24'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 46'u8, 246'u8}
 
 type
   NifcStmt* = enum
@@ -70,15 +70,15 @@ type
     JmpS = (88, "jmp")  ## jump/goto instruction
     RetS = (89, "ret")  ## `return` instruction
     StmtsS = (91, "stmts")  ## list of statements
-    ImpS = (129, "imp")  ## import declaration
-    InclS = (131, "incl")  ## `#include` statement or `incl` set operation
-    DiscardS = (139, "discard")  ## `discard` statement
-    TryS = (140, "try")  ## `try` statement
-    RaiseS = (141, "raise")  ## `raise` statement
-    OnerrS = (142, "onerr")  ## error handling statement
+    ImpS = (130, "imp")  ## import declaration
+    InclS = (132, "incl")  ## `#include` statement or `incl` set operation
+    DiscardS = (140, "discard")  ## `discard` statement
+    TryS = (141, "try")  ## `try` statement
+    RaiseS = (142, "raise")  ## `raise` statement
+    OnerrS = (143, "onerr")  ## error handling statement
 
 proc rawTagIsNifcStmt*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {46'u8, 50'u8, 51'u8, 52'u8, 54'u8, 61'u8, 68'u8, 73'u8, 74'u8, 75'u8, 76'u8, 81'u8, 84'u8, 85'u8, 87'u8, 88'u8, 89'u8, 91'u8, 129'u8, 131'u8, 139'u8, 140'u8, 141'u8, 142'u8}
+  raw <= 255'u32 and raw.uint8 in {46'u8, 50'u8, 51'u8, 52'u8, 54'u8, 61'u8, 68'u8, 73'u8, 74'u8, 75'u8, 76'u8, 81'u8, 84'u8, 85'u8, 87'u8, 88'u8, 89'u8, 91'u8, 130'u8, 132'u8, 140'u8, 141'u8, 142'u8, 143'u8}
 
 type
   NifcType* = enum
@@ -88,19 +88,19 @@ type
     ObjectT = (94, "object")  ## object type declaration
     EnumT = (95, "enum")  ## enum type declaration
     ProctypeT = (96, "proctype")  ## proc type declaration (soon obsolete, use params instead)
-    IT = (100, "i")  ## `int` builtin type
-    UT = (101, "u")  ## `uint` builtin type
-    FT = (102, "f")  ## `float` builtin type
-    CT = (103, "c")  ## `char` builtin type
-    BoolT = (104, "bool")  ## `bool` builtin type
-    VoidT = (105, "void")  ## `void` return type
-    PtrT = (106, "ptr")  ## `ptr` type contructor
-    ArrayT = (107, "array")  ## `array` type constructor
-    FlexarrayT = (108, "flexarray")  ## `flexarray` type constructor
-    AptrT = (109, "aptr")  ## "pointer to array of" type constructor
+    IT = (101, "i")  ## `int` builtin type
+    UT = (102, "u")  ## `uint` builtin type
+    FT = (103, "f")  ## `float` builtin type
+    CT = (104, "c")  ## `char` builtin type
+    BoolT = (105, "bool")  ## `bool` builtin type
+    VoidT = (106, "void")  ## `void` return type
+    PtrT = (107, "ptr")  ## `ptr` type contructor
+    ArrayT = (108, "array")  ## `array` type constructor
+    FlexarrayT = (109, "flexarray")  ## `flexarray` type constructor
+    AptrT = (110, "aptr")  ## "pointer to array of" type constructor
 
 proc rawTagIsNifcType*(raw: uint32): bool {.inline.} =
-  raw >= 92'u32 and raw <= 109'u32 and raw != 97'u32 and raw != 98'u32 and raw != 99'u32
+  raw <= 255'u32 and raw.uint8 in {92'u8, 93'u8, 94'u8, 95'u8, 96'u8, 101'u8, 102'u8, 103'u8, 104'u8, 105'u8, 106'u8, 107'u8, 108'u8, 109'u8, 110'u8}
 
 type
   NifcOther* = enum
@@ -115,30 +115,30 @@ type
     ElifU = (78, "elif")  ## pair of (condition, action)
     ElseU = (79, "else")  ## `else` action
     OfU = (86, "of")  ## `of` branch within a `case` statement
-    PragmasU = (125, "pragmas")  ## begin of pragma section
+    PragmasU = (126, "pragmas")  ## begin of pragma section
 
 proc rawTagIsNifcOther*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {28'u8, 48'u8, 49'u8, 53'u8, 58'u8, 59'u8, 60'u8, 78'u8, 79'u8, 86'u8, 125'u8}
+  raw <= 255'u32 and raw.uint8 in {28'u8, 48'u8, 49'u8, 53'u8, 58'u8, 59'u8, 60'u8, 78'u8, 79'u8, 86'u8, 126'u8}
 
 type
   NifcPragma* = enum
     NoPragma
-    InlineP = (119, "inline")  ## `inline` proc annotation
-    NoinlineP = (120, "noinline")  ## `noinline` proc annotation
-    AttrP = (121, "attr")  ## general attribute annoation
-    VarargsP = (122, "varargs")  ## `varargs` proc annotation
-    WasP = (123, "was")
-    SelectanyP = (124, "selectany")
-    AlignP = (126, "align")
-    BitsP = (127, "bits")
-    VectorP = (128, "vector")
-    NodeclP = (130, "nodecl")  ## `nodecl` annotation
-    RaisesP = (143, "raises")  ## proc annotation
-    ErrsP = (144, "errs")  ## proc annotation
-    StaticP = (145, "static")  ## `static` type or annotation
+    InlineP = (120, "inline")  ## `inline` proc annotation
+    NoinlineP = (121, "noinline")  ## `noinline` proc annotation
+    AttrP = (122, "attr")  ## general attribute annoation
+    VarargsP = (123, "varargs")  ## `varargs` proc annotation
+    WasP = (124, "was")
+    SelectanyP = (125, "selectany")
+    AlignP = (127, "align")
+    BitsP = (128, "bits")
+    VectorP = (129, "vector")
+    NodeclP = (131, "nodecl")  ## `nodecl` annotation
+    RaisesP = (144, "raises")  ## proc annotation
+    ErrsP = (145, "errs")  ## proc annotation
+    StaticP = (146, "static")  ## `static` type or annotation
 
 proc rawTagIsNifcPragma*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {119'u8, 120'u8, 121'u8, 122'u8, 123'u8, 124'u8, 126'u8, 127'u8, 128'u8, 130'u8, 143'u8, 144'u8, 145'u8}
+  raw <= 255'u32 and raw.uint8 in {120'u8, 121'u8, 122'u8, 123'u8, 124'u8, 125'u8, 127'u8, 128'u8, 129'u8, 131'u8, 144'u8, 145'u8, 146'u8}
 
 type
   NifcTypeQualifier* = enum
@@ -146,9 +146,10 @@ type
     AtomicQ = (97, "atomic")  ## `atomic` type qualifier for NIFC
     RoQ = (98, "ro")  ## `readonly` (= `const`) type qualifier for NIFC
     RestrictQ = (99, "restrict")  ## type qualifier for NIFC
+    CpprefQ = (100, "cppref")  ## type qualifier for NIFC that provides a C++ reference
 
 proc rawTagIsNifcTypeQualifier*(raw: uint32): bool {.inline.} =
-  raw >= 97'u32 and raw <= 99'u32
+  raw >= 97'u32 and raw <= 100'u32
 
 type
   NifcSym* = enum
