@@ -436,9 +436,12 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
 
     var value = d.value
     let mustMoveToInit = vk == IsGlobal and not isLiteral(value)
-    if vk != IsLocal or mustMoveToInit: inc c.inSimpleInit
-    genVarInitValue c, d.value
-    if vk != IsLocal or mustMoveToInit: dec c.inSimpleInit
+    if toExtern:
+      c.add Semicolon
+    else:
+      if vk != IsLocal or mustMoveToInit: inc c.inSimpleInit
+      genVarInitValue c, d.value
+      if vk != IsLocal or mustMoveToInit: dec c.inSimpleInit
 
     if mustMoveToInit:
       c.init.add c.tokens.getOrIncl(name)
