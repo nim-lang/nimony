@@ -32,7 +32,7 @@ proc asNimCode*(n: Cursor): string =
     if nested == 0: break
     inc n2
 
-  if m0.isValid:
+  when false: #if m0.isValid:
     let (_, line0, col0) = unpack(pool.man, m0)
     if m1.isValid:
       let (_, line1, col1) = unpack(pool.man, m1)
