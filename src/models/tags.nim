@@ -29,225 +29,239 @@ const
     ("arr", 25),
     ("bracket", 26),
     ("curly", 27),
-    ("kv", 28),
-    ("add", 29),
-    ("sub", 30),
-    ("mul", 31),
-    ("div", 32),
-    ("mod", 33),
-    ("shr", 34),
-    ("shl", 35),
-    ("bitand", 36),
-    ("bitor", 37),
-    ("bitxor", 38),
-    ("bitnot", 39),
-    ("eq", 40),
-    ("neq", 41),
-    ("le", 42),
-    ("lt", 43),
-    ("cast", 44),
-    ("conv", 45),
-    ("call", 46),
-    ("cmd", 47),
-    ("range", 48),
-    ("ranges", 49),
-    ("gvar", 50),
-    ("tvar", 51),
-    ("var", 52),
-    ("param", 53),
-    ("const", 54),
-    ("result", 55),
-    ("let", 56),
-    ("cursor", 57),
-    ("typevar", 58),
-    ("efld", 59),
-    ("fld", 60),
-    ("proc", 61),
-    ("func", 62),
-    ("iterator", 63),
-    ("converter", 64),
-    ("method", 65),
-    ("macro", 66),
-    ("template", 67),
-    ("type", 68),
-    ("block", 69),
-    ("module", 70),
-    ("cchoice", 71),
-    ("ochoice", 72),
-    ("emit", 73),
-    ("asgn", 74),
-    ("scope", 75),
-    ("if", 76),
-    ("when", 77),
-    ("elif", 78),
-    ("else", 79),
-    ("typevars", 80),
-    ("break", 81),
-    ("continue", 82),
-    ("for", 83),
-    ("while", 84),
-    ("case", 85),
-    ("of", 86),
-    ("lab", 87),
-    ("jmp", 88),
-    ("ret", 89),
-    ("yld", 90),
-    ("stmts", 91),
-    ("params", 92),
-    ("union", 93),
-    ("object", 94),
-    ("enum", 95),
-    ("proctype", 96),
-    ("atomic", 97),
-    ("ro", 98),
-    ("restrict", 99),
-    ("cppref", 100),
-    ("i", 101),
-    ("u", 102),
-    ("f", 103),
-    ("c", 104),
-    ("bool", 105),
-    ("void", 106),
-    ("ptr", 107),
-    ("array", 108),
-    ("flexarray", 109),
-    ("aptr", 110),
-    ("cdecl", 111),
-    ("stdcall", 112),
-    ("safecall", 113),
-    ("syscall", 114),
-    ("fastcall", 115),
-    ("thiscall", 116),
-    ("noconv", 117),
-    ("member", 118),
-    ("nimcall", 119),
-    ("inline", 120),
-    ("noinline", 121),
-    ("attr", 122),
-    ("varargs", 123),
-    ("was", 124),
-    ("selectany", 125),
-    ("pragmas", 126),
-    ("align", 127),
-    ("bits", 128),
-    ("vector", 129),
-    ("imp", 130),
-    ("nodecl", 131),
-    ("incl", 132),
-    ("excl", 133),
-    ("include", 134),
-    ("import", 135),
-    ("from", 136),
-    ("importexcept", 137),
-    ("export", 138),
-    ("comment", 139),
-    ("discard", 140),
-    ("try", 141),
-    ("raise", 142),
-    ("onerr", 143),
-    ("raises", 144),
-    ("errs", 145),
-    ("static", 146),
-    ("ite", 147),
-    ("graph", 148),
-    ("forbind", 149),
-    ("kill", 150),
-    ("unpackflat", 151),
-    ("unpacktup", 152),
-    ("except", 153),
-    ("fin", 154),
-    ("refobj", 155),
-    ("ptrobj", 156),
-    ("tuple", 157),
-    ("onum", 158),
-    ("ref", 159),
-    ("mut", 160),
-    ("out", 161),
-    ("lent", 162),
-    ("sink", 163),
-    ("nilt", 164),
-    ("concept", 165),
-    ("distinct", 166),
-    ("itertype", 167),
-    ("rangetype", 168),
-    ("uarray", 169),
-    ("openarray", 170),
-    ("set", 171),
-    ("auto", 172),
-    ("symkind", 173),
-    ("typekind", 174),
-    ("typedesc", 175),
-    ("untyped", 176),
-    ("typed", 177),
-    ("cstring", 178),
-    ("pointer", 179),
-    ("ordinal", 180),
-    ("magic", 181),
-    ("importc", 182),
-    ("importcpp", 183),
-    ("exportc", 184),
-    ("header", 185),
-    ("threadvar", 186),
-    ("global", 187),
-    ("discardable", 188),
-    ("noreturn", 189),
-    ("borrow", 190),
-    ("noSideEffect", 191),
-    ("nodestroy", 192),
-    ("plugin", 193),
-    ("bycopy", 194),
-    ("byref", 195),
-    ("noinit", 196),
-    ("requires", 197),
-    ("ensures", 198),
-    ("build", 199),
-    ("string", 200),
-    ("quoted", 201),
-    ("hderef", 202),
-    ("ddot", 203),
-    ("haddr", 204),
-    ("newobj", 205),
-    ("tup", 206),
-    ("setconstr", 207),
-    ("ashr", 208),
-    ("oconv", 209),
-    ("hconv", 210),
-    ("dconv", 211),
-    ("callstrlit", 212),
-    ("infix", 213),
-    ("prefix", 214),
-    ("hcall", 215),
-    ("compiles", 216),
-    ("declared", 217),
-    ("defined", 218),
-    ("high", 219),
-    ("low", 220),
-    ("typeof", 221),
-    ("unpack", 222),
-    ("enumtostr", 223),
-    ("ismainmodule", 224),
-    ("defaultobj", 225),
-    ("defaulttup", 226),
-    ("expr", 227),
-    ("arrat", 228),
-    ("tupat", 229),
-    ("plusset", 230),
-    ("minusset", 231),
-    ("mulset", 232),
-    ("xorset", 233),
-    ("eqset", 234),
-    ("leset", 235),
-    ("ltset", 236),
-    ("inset", 237),
-    ("card", 238),
-    ("emove", 239),
-    ("destroy", 240),
-    ("dup", 241),
-    ("copy", 242),
-    ("wasmoved", 243),
-    ("sinkh", 244),
-    ("trace", 245),
-    ("errv", 246)
+    ("curlyat", 28),
+    ("kv", 29),
+    ("vv", 30),
+    ("add", 31),
+    ("sub", 32),
+    ("mul", 33),
+    ("div", 34),
+    ("mod", 35),
+    ("shr", 36),
+    ("shl", 37),
+    ("bitand", 38),
+    ("bitor", 39),
+    ("bitxor", 40),
+    ("bitnot", 41),
+    ("eq", 42),
+    ("neq", 43),
+    ("le", 44),
+    ("lt", 45),
+    ("cast", 46),
+    ("conv", 47),
+    ("call", 48),
+    ("cmd", 49),
+    ("range", 50),
+    ("ranges", 51),
+    ("gvar", 52),
+    ("tvar", 53),
+    ("var", 54),
+    ("param", 55),
+    ("const", 56),
+    ("result", 57),
+    ("let", 58),
+    ("cursor", 59),
+    ("typevar", 60),
+    ("efld", 61),
+    ("fld", 62),
+    ("proc", 63),
+    ("func", 64),
+    ("iterator", 65),
+    ("converter", 66),
+    ("method", 67),
+    ("macro", 68),
+    ("template", 69),
+    ("type", 70),
+    ("block", 71),
+    ("module", 72),
+    ("cchoice", 73),
+    ("ochoice", 74),
+    ("emit", 75),
+    ("asgn", 76),
+    ("scope", 77),
+    ("if", 78),
+    ("when", 79),
+    ("elif", 80),
+    ("else", 81),
+    ("typevars", 82),
+    ("break", 83),
+    ("continue", 84),
+    ("for", 85),
+    ("while", 86),
+    ("case", 87),
+    ("of", 88),
+    ("lab", 89),
+    ("jmp", 90),
+    ("ret", 91),
+    ("yld", 92),
+    ("stmts", 93),
+    ("params", 94),
+    ("union", 95),
+    ("object", 96),
+    ("enum", 97),
+    ("proctype", 98),
+    ("atomic", 99),
+    ("ro", 100),
+    ("restrict", 101),
+    ("cppref", 102),
+    ("i", 103),
+    ("u", 104),
+    ("f", 105),
+    ("c", 106),
+    ("bool", 107),
+    ("void", 108),
+    ("ptr", 109),
+    ("array", 110),
+    ("flexarray", 111),
+    ("aptr", 112),
+    ("cdecl", 113),
+    ("stdcall", 114),
+    ("safecall", 115),
+    ("syscall", 116),
+    ("fastcall", 117),
+    ("thiscall", 118),
+    ("noconv", 119),
+    ("member", 120),
+    ("nimcall", 121),
+    ("inline", 122),
+    ("noinline", 123),
+    ("attr", 124),
+    ("varargs", 125),
+    ("was", 126),
+    ("selectany", 127),
+    ("pragmas", 128),
+    ("pragmax", 129),
+    ("align", 130),
+    ("bits", 131),
+    ("vector", 132),
+    ("imp", 133),
+    ("nodecl", 134),
+    ("incl", 135),
+    ("excl", 136),
+    ("include", 137),
+    ("import", 138),
+    ("importas", 139),
+    ("from", 140),
+    ("importexcept", 141),
+    ("export", 142),
+    ("exportexcept", 143),
+    ("comment", 144),
+    ("discard", 145),
+    ("try", 146),
+    ("raise", 147),
+    ("onerr", 148),
+    ("raises", 149),
+    ("errs", 150),
+    ("static", 151),
+    ("ite", 152),
+    ("graph", 153),
+    ("forbind", 154),
+    ("kill", 155),
+    ("unpackflat", 156),
+    ("unpacktup", 157),
+    ("unpackdecl", 158),
+    ("except", 159),
+    ("fin", 160),
+    ("refobj", 161),
+    ("ptrobj", 162),
+    ("tuple", 163),
+    ("onum", 164),
+    ("ref", 165),
+    ("mut", 166),
+    ("out", 167),
+    ("lent", 168),
+    ("sink", 169),
+    ("nilt", 170),
+    ("concept", 171),
+    ("distinct", 172),
+    ("itertype", 173),
+    ("rangetype", 174),
+    ("uarray", 175),
+    ("openarray", 176),
+    ("set", 177),
+    ("auto", 178),
+    ("symkind", 179),
+    ("typekind", 180),
+    ("typedesc", 181),
+    ("untyped", 182),
+    ("typed", 183),
+    ("cstring", 184),
+    ("pointer", 185),
+    ("ordinal", 186),
+    ("magic", 187),
+    ("importc", 188),
+    ("importcpp", 189),
+    ("exportc", 190),
+    ("header", 191),
+    ("threadvar", 192),
+    ("global", 193),
+    ("discardable", 194),
+    ("noreturn", 195),
+    ("borrow", 196),
+    ("noSideEffect", 197),
+    ("nodestroy", 198),
+    ("plugin", 199),
+    ("bycopy", 200),
+    ("byref", 201),
+    ("noinit", 202),
+    ("requires", 203),
+    ("ensures", 204),
+    ("build", 205),
+    ("string", 206),
+    ("quoted", 207),
+    ("hderef", 208),
+    ("ddot", 209),
+    ("haddr", 210),
+    ("newobj", 211),
+    ("tup", 212),
+    ("setconstr", 213),
+    ("tabconstr", 214),
+    ("ashr", 215),
+    ("oconv", 216),
+    ("hconv", 217),
+    ("dconv", 218),
+    ("callstrlit", 219),
+    ("infix", 220),
+    ("prefix", 221),
+    ("hcall", 222),
+    ("compiles", 223),
+    ("declared", 224),
+    ("defined", 225),
+    ("high", 226),
+    ("low", 227),
+    ("typeof", 228),
+    ("unpack", 229),
+    ("enumtostr", 230),
+    ("ismainmodule", 231),
+    ("defaultobj", 232),
+    ("defaulttup", 233),
+    ("expr", 234),
+    ("do", 235),
+    ("arrat", 236),
+    ("tupat", 237),
+    ("plusset", 238),
+    ("minusset", 239),
+    ("mulset", 240),
+    ("xorset", 241),
+    ("eqset", 242),
+    ("leset", 243),
+    ("ltset", 244),
+    ("inset", 245),
+    ("card", 246),
+    ("emove", 247),
+    ("destroy", 248),
+    ("dup", 249),
+    ("copy", 250),
+    ("wasmoved", 251),
+    ("sinkh", 252),
+    ("trace", 253),
+    ("errv", 254),
+    ("staticstmt", 255),
+    ("bind", 256),
+    ("mixin", 257),
+    ("using", 258),
+    ("asm", 259),
+    ("defer", 260)
   ]
 const
   ErrTagId* = 1
@@ -277,222 +291,236 @@ const
   ArrTagId* = 25
   BracketTagId* = 26
   CurlyTagId* = 27
-  KvTagId* = 28
-  AddTagId* = 29
-  SubTagId* = 30
-  MulTagId* = 31
-  DivTagId* = 32
-  ModTagId* = 33
-  ShrTagId* = 34
-  ShlTagId* = 35
-  BitandTagId* = 36
-  BitorTagId* = 37
-  BitxorTagId* = 38
-  BitnotTagId* = 39
-  EqTagId* = 40
-  NeqTagId* = 41
-  LeTagId* = 42
-  LtTagId* = 43
-  CastTagId* = 44
-  ConvTagId* = 45
-  CallTagId* = 46
-  CmdTagId* = 47
-  RangeTagId* = 48
-  RangesTagId* = 49
-  GvarTagId* = 50
-  TvarTagId* = 51
-  VarTagId* = 52
-  ParamTagId* = 53
-  ConstTagId* = 54
-  ResultTagId* = 55
-  LetTagId* = 56
-  CursorTagId* = 57
-  TypevarTagId* = 58
-  EfldTagId* = 59
-  FldTagId* = 60
-  ProcTagId* = 61
-  FuncTagId* = 62
-  IteratorTagId* = 63
-  ConverterTagId* = 64
-  MethodTagId* = 65
-  MacroTagId* = 66
-  TemplateTagId* = 67
-  TypeTagId* = 68
-  BlockTagId* = 69
-  ModuleTagId* = 70
-  CchoiceTagId* = 71
-  OchoiceTagId* = 72
-  EmitTagId* = 73
-  AsgnTagId* = 74
-  ScopeTagId* = 75
-  IfTagId* = 76
-  WhenTagId* = 77
-  ElifTagId* = 78
-  ElseTagId* = 79
-  TypevarsTagId* = 80
-  BreakTagId* = 81
-  ContinueTagId* = 82
-  ForTagId* = 83
-  WhileTagId* = 84
-  CaseTagId* = 85
-  OfTagId* = 86
-  LabTagId* = 87
-  JmpTagId* = 88
-  RetTagId* = 89
-  YldTagId* = 90
-  StmtsTagId* = 91
-  ParamsTagId* = 92
-  UnionTagId* = 93
-  ObjectTagId* = 94
-  EnumTagId* = 95
-  ProctypeTagId* = 96
-  AtomicTagId* = 97
-  RoTagId* = 98
-  RestrictTagId* = 99
-  CpprefTagId* = 100
-  ITagId* = 101
-  UTagId* = 102
-  FTagId* = 103
-  CTagId* = 104
-  BoolTagId* = 105
-  VoidTagId* = 106
-  PtrTagId* = 107
-  ArrayTagId* = 108
-  FlexarrayTagId* = 109
-  AptrTagId* = 110
-  CdeclTagId* = 111
-  StdcallTagId* = 112
-  SafecallTagId* = 113
-  SyscallTagId* = 114
-  FastcallTagId* = 115
-  ThiscallTagId* = 116
-  NoconvTagId* = 117
-  MemberTagId* = 118
-  NimcallTagId* = 119
-  InlineTagId* = 120
-  NoinlineTagId* = 121
-  AttrTagId* = 122
-  VarargsTagId* = 123
-  WasTagId* = 124
-  SelectanyTagId* = 125
-  PragmasTagId* = 126
-  AlignTagId* = 127
-  BitsTagId* = 128
-  VectorTagId* = 129
-  ImpTagId* = 130
-  NodeclTagId* = 131
-  InclTagId* = 132
-  ExclTagId* = 133
-  IncludeTagId* = 134
-  ImportTagId* = 135
-  FromTagId* = 136
-  ImportexceptTagId* = 137
-  ExportTagId* = 138
-  CommentTagId* = 139
-  DiscardTagId* = 140
-  TryTagId* = 141
-  RaiseTagId* = 142
-  OnerrTagId* = 143
-  RaisesTagId* = 144
-  ErrsTagId* = 145
-  StaticTagId* = 146
-  IteTagId* = 147
-  GraphTagId* = 148
-  ForbindTagId* = 149
-  KillTagId* = 150
-  UnpackflatTagId* = 151
-  UnpacktupTagId* = 152
-  ExceptTagId* = 153
-  FinTagId* = 154
-  RefobjTagId* = 155
-  PtrobjTagId* = 156
-  TupleTagId* = 157
-  OnumTagId* = 158
-  RefTagId* = 159
-  MutTagId* = 160
-  OutTagId* = 161
-  LentTagId* = 162
-  SinkTagId* = 163
-  NiltTagId* = 164
-  ConceptTagId* = 165
-  DistinctTagId* = 166
-  ItertypeTagId* = 167
-  RangetypeTagId* = 168
-  UarrayTagId* = 169
-  OpenarrayTagId* = 170
-  SetTagId* = 171
-  AutoTagId* = 172
-  SymkindTagId* = 173
-  TypekindTagId* = 174
-  TypedescTagId* = 175
-  UntypedTagId* = 176
-  TypedTagId* = 177
-  CstringTagId* = 178
-  PointerTagId* = 179
-  OrdinalTagId* = 180
-  MagicTagId* = 181
-  ImportcTagId* = 182
-  ImportcppTagId* = 183
-  ExportcTagId* = 184
-  HeaderTagId* = 185
-  ThreadvarTagId* = 186
-  GlobalTagId* = 187
-  DiscardableTagId* = 188
-  NoreturnTagId* = 189
-  BorrowTagId* = 190
-  NoSideEffectTagId* = 191
-  NodestroyTagId* = 192
-  PluginTagId* = 193
-  BycopyTagId* = 194
-  ByrefTagId* = 195
-  NoinitTagId* = 196
-  RequiresTagId* = 197
-  EnsuresTagId* = 198
-  BuildTagId* = 199
-  StringTagId* = 200
-  QuotedTagId* = 201
-  HderefTagId* = 202
-  DdotTagId* = 203
-  HaddrTagId* = 204
-  NewobjTagId* = 205
-  TupTagId* = 206
-  SetconstrTagId* = 207
-  AshrTagId* = 208
-  OconvTagId* = 209
-  HconvTagId* = 210
-  DconvTagId* = 211
-  CallstrlitTagId* = 212
-  InfixTagId* = 213
-  PrefixTagId* = 214
-  HcallTagId* = 215
-  CompilesTagId* = 216
-  DeclaredTagId* = 217
-  DefinedTagId* = 218
-  HighTagId* = 219
-  LowTagId* = 220
-  TypeofTagId* = 221
-  UnpackTagId* = 222
-  EnumtostrTagId* = 223
-  IsmainmoduleTagId* = 224
-  DefaultobjTagId* = 225
-  DefaulttupTagId* = 226
-  ExprTagId* = 227
-  ArratTagId* = 228
-  TupatTagId* = 229
-  PlussetTagId* = 230
-  MinussetTagId* = 231
-  MulsetTagId* = 232
-  XorsetTagId* = 233
-  EqsetTagId* = 234
-  LesetTagId* = 235
-  LtsetTagId* = 236
-  InsetTagId* = 237
-  CardTagId* = 238
-  EmoveTagId* = 239
-  DestroyTagId* = 240
-  DupTagId* = 241
-  CopyTagId* = 242
-  WasmovedTagId* = 243
-  SinkhTagId* = 244
-  TraceTagId* = 245
-  ErrvTagId* = 246
+  CurlyatTagId* = 28
+  KvTagId* = 29
+  VvTagId* = 30
+  AddTagId* = 31
+  SubTagId* = 32
+  MulTagId* = 33
+  DivTagId* = 34
+  ModTagId* = 35
+  ShrTagId* = 36
+  ShlTagId* = 37
+  BitandTagId* = 38
+  BitorTagId* = 39
+  BitxorTagId* = 40
+  BitnotTagId* = 41
+  EqTagId* = 42
+  NeqTagId* = 43
+  LeTagId* = 44
+  LtTagId* = 45
+  CastTagId* = 46
+  ConvTagId* = 47
+  CallTagId* = 48
+  CmdTagId* = 49
+  RangeTagId* = 50
+  RangesTagId* = 51
+  GvarTagId* = 52
+  TvarTagId* = 53
+  VarTagId* = 54
+  ParamTagId* = 55
+  ConstTagId* = 56
+  ResultTagId* = 57
+  LetTagId* = 58
+  CursorTagId* = 59
+  TypevarTagId* = 60
+  EfldTagId* = 61
+  FldTagId* = 62
+  ProcTagId* = 63
+  FuncTagId* = 64
+  IteratorTagId* = 65
+  ConverterTagId* = 66
+  MethodTagId* = 67
+  MacroTagId* = 68
+  TemplateTagId* = 69
+  TypeTagId* = 70
+  BlockTagId* = 71
+  ModuleTagId* = 72
+  CchoiceTagId* = 73
+  OchoiceTagId* = 74
+  EmitTagId* = 75
+  AsgnTagId* = 76
+  ScopeTagId* = 77
+  IfTagId* = 78
+  WhenTagId* = 79
+  ElifTagId* = 80
+  ElseTagId* = 81
+  TypevarsTagId* = 82
+  BreakTagId* = 83
+  ContinueTagId* = 84
+  ForTagId* = 85
+  WhileTagId* = 86
+  CaseTagId* = 87
+  OfTagId* = 88
+  LabTagId* = 89
+  JmpTagId* = 90
+  RetTagId* = 91
+  YldTagId* = 92
+  StmtsTagId* = 93
+  ParamsTagId* = 94
+  UnionTagId* = 95
+  ObjectTagId* = 96
+  EnumTagId* = 97
+  ProctypeTagId* = 98
+  AtomicTagId* = 99
+  RoTagId* = 100
+  RestrictTagId* = 101
+  CpprefTagId* = 102
+  ITagId* = 103
+  UTagId* = 104
+  FTagId* = 105
+  CTagId* = 106
+  BoolTagId* = 107
+  VoidTagId* = 108
+  PtrTagId* = 109
+  ArrayTagId* = 110
+  FlexarrayTagId* = 111
+  AptrTagId* = 112
+  CdeclTagId* = 113
+  StdcallTagId* = 114
+  SafecallTagId* = 115
+  SyscallTagId* = 116
+  FastcallTagId* = 117
+  ThiscallTagId* = 118
+  NoconvTagId* = 119
+  MemberTagId* = 120
+  NimcallTagId* = 121
+  InlineTagId* = 122
+  NoinlineTagId* = 123
+  AttrTagId* = 124
+  VarargsTagId* = 125
+  WasTagId* = 126
+  SelectanyTagId* = 127
+  PragmasTagId* = 128
+  PragmaxTagId* = 129
+  AlignTagId* = 130
+  BitsTagId* = 131
+  VectorTagId* = 132
+  ImpTagId* = 133
+  NodeclTagId* = 134
+  InclTagId* = 135
+  ExclTagId* = 136
+  IncludeTagId* = 137
+  ImportTagId* = 138
+  ImportasTagId* = 139
+  FromTagId* = 140
+  ImportexceptTagId* = 141
+  ExportTagId* = 142
+  ExportexceptTagId* = 143
+  CommentTagId* = 144
+  DiscardTagId* = 145
+  TryTagId* = 146
+  RaiseTagId* = 147
+  OnerrTagId* = 148
+  RaisesTagId* = 149
+  ErrsTagId* = 150
+  StaticTagId* = 151
+  IteTagId* = 152
+  GraphTagId* = 153
+  ForbindTagId* = 154
+  KillTagId* = 155
+  UnpackflatTagId* = 156
+  UnpacktupTagId* = 157
+  UnpackdeclTagId* = 158
+  ExceptTagId* = 159
+  FinTagId* = 160
+  RefobjTagId* = 161
+  PtrobjTagId* = 162
+  TupleTagId* = 163
+  OnumTagId* = 164
+  RefTagId* = 165
+  MutTagId* = 166
+  OutTagId* = 167
+  LentTagId* = 168
+  SinkTagId* = 169
+  NiltTagId* = 170
+  ConceptTagId* = 171
+  DistinctTagId* = 172
+  ItertypeTagId* = 173
+  RangetypeTagId* = 174
+  UarrayTagId* = 175
+  OpenarrayTagId* = 176
+  SetTagId* = 177
+  AutoTagId* = 178
+  SymkindTagId* = 179
+  TypekindTagId* = 180
+  TypedescTagId* = 181
+  UntypedTagId* = 182
+  TypedTagId* = 183
+  CstringTagId* = 184
+  PointerTagId* = 185
+  OrdinalTagId* = 186
+  MagicTagId* = 187
+  ImportcTagId* = 188
+  ImportcppTagId* = 189
+  ExportcTagId* = 190
+  HeaderTagId* = 191
+  ThreadvarTagId* = 192
+  GlobalTagId* = 193
+  DiscardableTagId* = 194
+  NoreturnTagId* = 195
+  BorrowTagId* = 196
+  NoSideEffectTagId* = 197
+  NodestroyTagId* = 198
+  PluginTagId* = 199
+  BycopyTagId* = 200
+  ByrefTagId* = 201
+  NoinitTagId* = 202
+  RequiresTagId* = 203
+  EnsuresTagId* = 204
+  BuildTagId* = 205
+  StringTagId* = 206
+  QuotedTagId* = 207
+  HderefTagId* = 208
+  DdotTagId* = 209
+  HaddrTagId* = 210
+  NewobjTagId* = 211
+  TupTagId* = 212
+  SetconstrTagId* = 213
+  TabconstrTagId* = 214
+  AshrTagId* = 215
+  OconvTagId* = 216
+  HconvTagId* = 217
+  DconvTagId* = 218
+  CallstrlitTagId* = 219
+  InfixTagId* = 220
+  PrefixTagId* = 221
+  HcallTagId* = 222
+  CompilesTagId* = 223
+  DeclaredTagId* = 224
+  DefinedTagId* = 225
+  HighTagId* = 226
+  LowTagId* = 227
+  TypeofTagId* = 228
+  UnpackTagId* = 229
+  EnumtostrTagId* = 230
+  IsmainmoduleTagId* = 231
+  DefaultobjTagId* = 232
+  DefaulttupTagId* = 233
+  ExprTagId* = 234
+  DoTagId* = 235
+  ArratTagId* = 236
+  TupatTagId* = 237
+  PlussetTagId* = 238
+  MinussetTagId* = 239
+  MulsetTagId* = 240
+  XorsetTagId* = 241
+  EqsetTagId* = 242
+  LesetTagId* = 243
+  LtsetTagId* = 244
+  InsetTagId* = 245
+  CardTagId* = 246
+  EmoveTagId* = 247
+  DestroyTagId* = 248
+  DupTagId* = 249
+  CopyTagId* = 250
+  WasmovedTagId* = 251
+  SinkhTagId* = 252
+  TraceTagId* = 253
+  ErrvTagId* = 254
+  StaticstmtTagId* = 255
+  BindTagId* = 256
+  MixinTagId* = 257
+  UsingTagId* = 258
+  AsmTagId* = 259
+  DeferTagId* = 260
