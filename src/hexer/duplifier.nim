@@ -654,6 +654,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trSons c, n, WantNonOwner
     of DefaultobjX, DefaulttupX, BracketX, CurlyX:
       raiseAssert "nodekind should have been eliminated in sem.nim"
+    of PragmaxX, CurlyatX, TabconstrX, DoX:
+      trSons c, n, e
     of NoExpr:
       case n.stmtKind
       of RetS:

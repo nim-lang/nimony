@@ -80,6 +80,19 @@ proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   c.add ParRi
   skipParRi n
 
+proc genDeref(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  c.add ParLe
+  let starAt = c.code.len
+  c.add "*"
+  genx c, n
+  c.add ParRi
+  if n.kind != ParRi and n.typeQual == CppRefQ:
+    if c.m.config.backend == backendCpp:
+      c.code[starAt] = Token EmptyToken
+    skip n
+  skipParRi n
+
 proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -90,7 +103,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
       inc n
     else:
       error c.m, "expected expression but got: ", n
-  of DerefC: unOp c, n, "*"
+  of DerefC: genDeref c, n
   of AtC:
     inc n
     let arrType = getType(c.m, n)
@@ -186,11 +199,16 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
   inc n
   let arrType = getType(c.m, n)
   c.add ParLe
+  let ampAt = c.code.len
   c.add "&"
   genx c, n
   if arrType.typeKind == ArrayT and not c.m.isImportC(arrType):
     c.add ".a"
   c.add ParRi
+  if n.kind != ParRi and n.typeQual == CppRefQ:
+    if c.m.config.backend == backendCpp:
+      c.code[ampAt] = Token EmptyToken
+    skip n
   skipParRi n
 
 proc genx(c: var GeneratedCode; n: var Cursor) =

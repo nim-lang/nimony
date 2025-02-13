@@ -5205,6 +5205,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
+      of ImportasS, ExportexceptS, UnpackdeclS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
+        buildErr c, it.n.info, "unsupported statement: " & $stmtKind(it.n)
+        skip it.n
       of ProcS:
         procGuard c:
           semProc c, it, ProcY, whichPass(c)
@@ -5425,7 +5428,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semDupHook c, it
     of ErrX:
       takeTree c, it.n
-    of OconvX,
+    of OconvX, PragmaxX, CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)

@@ -1,11 +1,13 @@
+## This tool generates the different enums from the doc/tags.md file.
 
-import std / [strutils, sets, sequtils]
+import std / [strutils, sets]
 
 proc toNimName(s: string; suffix: string): string =
   s[0].toUpperAscii & s.substr(1) & suffix
 
 type
   EnumList = enum
+    NiflerKind,
     CallConv,
     NifcExpr, NifcStmt, NifcType, NifcOther, NifcPragma, NifcTypeQualifier, NifcSym,
     NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym, ControlFlowKind,
@@ -13,6 +15,7 @@ type
 
 proc toSuffix(e: EnumList): (string, string) =
   case e
+  of NiflerKind: ("L", "None")
   of CallConv: ("", "NoCallConv")
   of NifcExpr: ("C", "NoExpr")
   of NifcStmt: ("S", "NoStmt")
@@ -32,6 +35,7 @@ proc toSuffix(e: EnumList): (string, string) =
 
 proc shortcutToEnumList(shortcut: string): set[EnumList] =
   case shortcut.strip()
+  of "L": {NiflerKind}
   of "CC": {CallConv}
   of "C": {NifcExpr}
   of "X": {NimonyExpr}
@@ -82,12 +86,19 @@ proc writeClassifier(f: File; e: EnumList; fields: seq[EnumField]) =
       f.write " and raw != " & $h & "'u32"
     f.write "\n"
   else:
-    f.write "\n  raw <= 255'u32 and raw.uint8 in {"
+    assert last - first + 1 < 256, "cannot generate enum " & $e
+    let useOffset = first > 1 or (first != 0 and last >= 256)
+    if useOffset:
+      f.write "\n  let r = raw - " & $first & "'u32"
+    else:
+      f.write "\n  let r = raw"
+    f.write "\n  r <= 255'u32 and r.uint8 in {"
     var i = 0
     for field in fields:
       if i > 0: f.write ", "
-      assert field.value >= 0 and field.value <= 255
-      f.write $field.value & "'u8"
+      assert field.value >= first and field.value <= last
+      let v = if useOffset: field.value - first else: field.value
+      f.write $v & "'u8"
       inc i
     f.write "}\n"
 
@@ -103,7 +114,8 @@ proc writeModel(basename: string; data: EnumImpls; first, last: EnumList) =
       f.write " = (" & $field.value & ", " & field.tag & ")"
       if field.desc.len > 0:
         f.write "  ## " & field.desc
-    writeClassifier(f, e, data[e])
+    if e != NiflerKind:
+      writeClassifier(f, e, data[e])
   f.write "\n"
 
 proc writeTagsFile(output: string; data: seq[(string, int)]) =
@@ -152,6 +164,7 @@ proc genTags(inp: File) =
 
   writeTagsFile "src/models/tags.nim", tags
 
+  writeModel "src/models/nifler", enumDecls, NiflerKind, NiflerKind
   writeModel "src/models/callconv", enumDecls, CallConv, CallConv
   writeModel "src/models/nifc", enumDecls, NifcExpr, NifcSym
   writeModel "src/models/nimony", enumDecls, NimonyExpr, ControlFlowKind

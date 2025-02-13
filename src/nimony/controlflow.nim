@@ -611,12 +611,12 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trIf c, n, default(Target)
   of WhileS:
     trWhile c, n
-  of StmtsS:
+  of StmtsS, UnpackDeclS:
     inc n
     while n.kind != ParRi:
       trStmt c, n
     inc n
-  of ScopeS:
+  of ScopeS, StaticstmtS:
     c.dest.add n
     inc n
     c.typeCache.openScope()
@@ -649,12 +649,13 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trRaise c, n
   of IteratorS, ProcS, FuncS, MacroS, ConverterS, MethodS:
     trProc c, n
-  of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromS, ImportExceptS, PragmasS:
+  of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromS, ImportExceptS, PragmasS,
+     ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     c.dest.addDotToken()
     skip n
   of CallS, CmdS:
     trCall c, n
-  of YldS, DiscardS, InclS, ExclS:
+  of YldS, DiscardS, InclS, ExclS, AsmS, DeferS:
     c.dest.add n
     inc n
     while n.kind != ParRi:
@@ -748,7 +749,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
       trExprLoop c, n
     of AddrX, HaddrX:
       trExprLoop c, n
-    of QuotedX, ParX,
+    of QuotedX, ParX, PragmaxX, CurlyatX, TabconstrX, DoX,
        NilX, FalseX, TrueX, NotX, NegX, OconstrX, NewOconstrX, TupleConstrX,
        AconstrX, SetConstrX, OchoiceX, CchoiceX, AddX, SubX, MulX, DivX, ModX,
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,

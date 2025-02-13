@@ -1051,11 +1051,11 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   else:
     traverseType e, c
 
-  if mode != TraverseSig:
-    traverseExpr e, c
-  else:
+  if mode == TraverseSig and localDecl.substructureKind == ParamU:
     # Parameter decls in NIFC have no dot token for the default value!
     skip c
+  else:
+    traverseExpr e, c
   takeParRi e, c
   if nodecl:
     e.dest.shrink toPatch
@@ -1219,7 +1219,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       inc c
       e.loop c:
         traverseExpr e, c
-    of EmitS:
+    of EmitS, AsmS:
       e.dest.add c
       inc c
       e.loop c:
@@ -1249,13 +1249,14 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
     of BlockS: traverseBlock e, c
     of IfS: traverseIf e, c
     of CaseS: traverseCase e, c
-    of YldS, ForS, InclS, ExclS:
+    of YldS, ForS, InclS, ExclS, DeferS, UnpackDeclS:
       error e, "BUG: not eliminated: ", c
     of TryS, RaiseS:
       error e, "BUG: not implemented: ", c
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc e, c, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromS, ImportExceptS, ExportS, CommentS, IteratorS:
+    of MacroS, TemplateS, IncludeS, ImportS, FromS, ImportExceptS, ExportS, CommentS, IteratorS,
+       ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
       skip c
     of TypeS:
