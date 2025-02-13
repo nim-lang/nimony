@@ -293,7 +293,11 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
     if f.kind == Symbol and isTypevar(f.symId):
       # type vars are specal:
       let fs = f.symId
-      if m.inferred.contains(fs):
+      if a.kind == Symbol and a.symId == fs:
+        # self match, consider equal
+        inc f
+        inc a
+      elif m.inferred.contains(fs):
         # rematch?
         var prev = m.inferred[fs]
         linearMatch(m, prev, a) # skips a
@@ -433,7 +437,10 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
   if isTypevar(fs):
-    if m.inferred.contains(fs):
+    if a.kind == Symbol and a.symId == fs:
+      # self match, consider equal
+      discard
+    elif m.inferred.contains(fs):
       typevarRematch(m, fs, m.inferred[fs], a)
     elif matchesConstraint(m, fs, a):
       m.inferred[fs] = a
@@ -776,6 +783,9 @@ type
 
 proc usesConversion*(m: Match): bool {.inline.} =
   result = abs(m.inheritanceCosts) + m.intLitCosts + m.intConvCosts + m.convCosts > 0
+
+proc isGeneric*(m: Match): bool {.inline.} =
+  result = m.inferred.len != 0
 
 proc classifyMatch*(m: Match): TypeRelation {.inline.} =
   if m.err:

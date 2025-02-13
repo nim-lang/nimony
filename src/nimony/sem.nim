@@ -191,6 +191,8 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       it.typ = expected
     else:
       c.typeMismatch info, it.typ, expected
+  elif m.isGeneric:
+    c.buildErr info, "cannot implicitly convert expression of type " & typeToString(it.typ) & " to generic type " & typeToString(expected)
   else:
     shrink c.dest, argBegin
     c.dest.add m.args
