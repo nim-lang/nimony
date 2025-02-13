@@ -565,7 +565,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   of ParLe:
     let fk = f.typeKind
     case fk
-    of MutT:
+    of MutT, OutT:
       var a = arg.typ
       if a.typeKind in {MutT, OutT, LentT}:
         inc a
@@ -699,7 +699,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         skip f
       else:
         procTypeMatch m, f, a
-    of NoType, ErrT, ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NiltT, OrT, AndT, NotT,
+    of NoType, ErrT, ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, VoidT, LentT, SinkT, NiltT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
