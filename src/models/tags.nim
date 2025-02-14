@@ -261,7 +261,15 @@ const
     ("mixin", 257),
     ("using", 258),
     ("asm", 259),
-    ("defer", 260)
+    ("defer", 260),
+    ("index", 261),
+    ("public", 262),
+    ("private", 263),
+    ("cloner", 264),
+    ("tracer", 265),
+    ("disarmer", 266),
+    ("mover", 267),
+    ("dtor", 268)
   ]
 const
   ErrTagId* = 1
@@ -524,3 +532,11 @@ const
   UsingTagId* = 258
   AsmTagId* = 259
   DeferTagId* = 260
+  IndexTagId* = 261
+  PublicTagId* = 262
+  PrivateTagId* = 263
+  ClonerTagId* = 264
+  TracerTagId* = 265
+  DisarmerTagId* = 266
+  MoverTagId* = 267
+  DtorTagId* = 268
