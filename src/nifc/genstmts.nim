@@ -236,6 +236,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of ScopeS:
     genScope c, n
   of CallS:
+    genCLineDir(c, info(n))
     genCall c, n
     c.add Semicolon
   of VarS:
@@ -297,6 +298,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of OnErrS:
     var onErrAction = n
     inc onErrAction
+    genCLineDir(c, info(n))
     genCallCanRaise c, n
     c.add Semicolon
     if onErrAction.kind != DotToken:

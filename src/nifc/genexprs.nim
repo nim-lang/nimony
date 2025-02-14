@@ -54,7 +54,6 @@ proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
   skipParRi n
 
 proc genCall(c: var GeneratedCode; n: var Cursor) =
-  genCLineDir(c, info(n))
   inc n
   genx c, n
   c.add ParLe
@@ -67,7 +66,6 @@ proc genCall(c: var GeneratedCode; n: var Cursor) =
   skipParRi n
 
 proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
-  genCLineDir(c, info(n))
   inc n
   skip n # skip error action
   genx c, n
