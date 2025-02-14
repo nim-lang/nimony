@@ -1310,7 +1310,7 @@ proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
   var stack: seq[PackedLineInfo] = @[]
   if rootInfo.isValid:
     stack.add rootInfo
-    var (file, line, col) = unpack(pool.man, rootInfo)
+    let (file, line, col) = unpack(pool.man, rootInfo)
     b.addLineInfo(col, line, pool.files[file])
   b.addTree "stmts"
   for h in e.headers:
@@ -1326,16 +1326,17 @@ proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
     let info = c.info
     if info.isValid:
       var (file, line, col) = unpack(pool.man, info)
-      var fileAsStr = ""
-      if stack.len > 0:
-        let (pfile, pline, pcol) = unpack(pool.man, stack[^1])
-        if file != pfile: fileAsStr = pool.files[file]
-        if fileAsStr.len == 0:
-          line = line - pline
-          col = col - pcol
-      else:
-        fileAsStr = pool.files[file]
-      b.addLineInfo(col, line, fileAsStr)
+      if file.isValid:
+        var fileAsStr = ""
+        if stack.len > 0:
+          let (pfile, pline, pcol) = unpack(pool.man, stack[^1])
+          if file != pfile: fileAsStr = pool.files[file]
+          if fileAsStr.len == 0:
+            line = line - pline
+            col = col - pcol
+        else:
+          fileAsStr = pool.files[file]
+        b.addLineInfo(col, line, fileAsStr)
 
     case c.kind
     of DotToken:

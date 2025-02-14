@@ -33,14 +33,15 @@ proc asNimCode*(n: Cursor): string =
     inc n2
 
   when false: #if m0.isValid:
-    let (_, line0, col0) = unpack(pool.man, m0)
-    if m1.isValid:
-      let (_, line1, col1) = unpack(pool.man, m1)
-      result = extract(pool.files[file0],
-                       FilePosition(line: line0, col: col0),
-                       FilePosition(line: line1, col: col1))
-    else:
-      result = extract(pool.files[file0], FilePosition(line: line0, col: col0))
+    if file0.isValid:
+      let (_, line0, col0) = unpack(pool.man, m0)
+      if m1.isValid:
+        let (_, line1, col1) = unpack(pool.man, m1)
+        result = extract(pool.files[file0],
+                        FilePosition(line: line0, col: col0),
+                        FilePosition(line: line1, col: col1))
+      else:
+        result = extract(pool.files[file0], FilePosition(line: line0, col: col0))
     var visible = false
     for i in 0..<result.len:
       if result[i] > ' ':
