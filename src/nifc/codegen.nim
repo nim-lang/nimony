@@ -148,7 +148,10 @@ proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
   let info = n.info
   if info.isValid:
     let (file, line, col) = unpack(pool.man, info)
-    write stdout, pool.files[file]
+    if pool.files.hasId(file):
+      write stdout, pool.files[file]
+    else:
+      write stdout, "???"
     write stdout, "(" & $line & ", " & $(col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
@@ -628,6 +631,7 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
     if n.pragmaKind == NodeclP:
       genNodecl c, n
     else:
+      echo n.kind, " ", n
       error c.m, "expected top level construct but got: ", n
 
 proc traverseCode(c: var GeneratedCode; n: var Cursor) =
