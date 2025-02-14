@@ -247,12 +247,12 @@
 | `(inset T X X)` | NimonyExpr | |
 | `(card T X)` | NimonyExpr | |
 | `(emove X)` | NimonyExpr | |
-| `(destroy X)` | NimonyExpr | |
-| `(dup X)` | NimonyExpr | |
-| `(copy X X)` | NimonyExpr | |
-| `(wasmoved X)` | NimonyExpr | |
-| `(sinkh X X)` | NimonyExpr | |
-| `(trace X X)` | NimonyExpr | |
+| `(destroy X)` | NimonyExpr, NifIndex, HookKind | |
+| `(dup X)` | NimonyExpr, NifIndex, HookKind| |
+| `(copy X X)` | NimonyExpr, NifIndex, HookKind | |
+| `(wasmoved X)` | NimonyExpr, NifIndex, HookKind | |
+| `(sinkh X X)` | NimonyExpr, NifIndex, HookKind | |
+| `(trace X X)` | NimonyExpr, NifIndex, HookKind | |
 | `(errv)` | NifcExpr | error flag for `NIFC` |
 | `(staticstmt S)` | NimonyStmt, NiflerKind | `static` statement |
 | `(bind Y+)` | NimonyStmt, NiflerKind | `bind` statement |
@@ -263,8 +263,3 @@
 | `(index (public ...) (private ...) (hooks ...) (converter ...) (build ...))` | NifIndex | index section |
 | `(public (kv Y INTLIT*)` | NifIndex | public section |
 | `(private (kv Y INTLIT*))` | NifIndex | private section |
-| `(cloner Y Y)` | NifIndex | cloner hook section |
-| `(tracer Y Y)` | NifIndex | tracer hook section |
-| `(disarmer Y Y)` | NifIndex | disarmer hook section |
-| `(mover Y Y)` | NifIndex | mover hook section |
-| `(dtor Y Y)` | NifIndex | destructor hook section |

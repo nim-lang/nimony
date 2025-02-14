@@ -11,15 +11,6 @@ import stringviews
 import ".." / models / [nimony_tags, callconv_tags]
 export nimony_tags, callconv_tags
 
-type
-  AttachedOp* = enum
-    attachedDestroy,
-    attachedWasMoved,
-    attachedDup,
-    attachedCopy,
-    attachedSink,
-    attachedTrace
-
 proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
   if c.kind == ParLe and rawTagIsNimonyStmt(tag(c).uint32):
     result = cast[NimonyStmt](tag(c))
@@ -261,14 +252,15 @@ proc firstSon*(n: Cursor): Cursor {.inline.} =
   result = n
   inc result
 
-proc hookName*(op: AttachedOp): string =
+proc hookName*(op: HookKind): string =
   case op
-  of attachedDestroy: "destroy"
-  of attachedWasMoved: "wasMoved"
-  of attachedDup: "dup"
-  of attachedCopy: "copy"
-  of attachedSink: "sink"
-  of attachedTrace: "trace"
+  of DestroyH: "destroy"
+  of WasmovedH: "wasMoved"
+  of DupH: "dup"
+  of CopyH: "copy"
+  of SinkhH: "sink"
+  of TraceH: "trace"
+  of NoHook: "(NoHook)"
 
 const
   NoSymId* = SymId(0)

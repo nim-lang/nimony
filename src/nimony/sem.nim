@@ -3065,15 +3065,6 @@ proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
           break
       endRead(c.dest)
 
-type
-  HookOp = enum
-    hookNone
-    hookCloner = "cloner"
-    hookTracer = "tracer"
-    hookDisarmer = "disarmer"
-    hookMover = "mover"
-    hookDtor = "dtor"
-
 proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
   var obj = skipModifier(obj)
   while true:
@@ -3086,27 +3077,29 @@ proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
   else:
     result = SymId(0)
 
-proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info: PackedLineInfo) =
+proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookKind; info: PackedLineInfo) =
   var cond: bool
   case op
-  of hookNone:
+  of NoHook:
     return
-  of hookDtor:
+  of DestroyH:
     cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 1
     if not cond:
       buildErr c, info, "signature for '=destroy' must be proc[T: object](x: T)"
-  of hookTracer:
+  of TraceH:
     cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
       classifyType(c, params[0]) == MutT and classifyType(c, params[1]) == PointerT
-  of hookDisarmer:
+  of WasmovedH:
     cond = classifyType(c, c.routine.returnType) == VoidT and
         params.len == 1 and classifyType(c, params[0]) == MutT
-  of hookCloner:
+  of CopyH:
     cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
       classifyType(c, params[0]) == MutT
-  of hookMover:
+  of SinkhH:
     cond = classifyType(c, c.routine.returnType) == VoidT and params.len == 2 and
       classifyType(c, params[0]) == MutT
+  of DupH:
+    cond = params.len == 1 and sameTrees(params[0], c.routine.returnType)
 
   if cond:
     let obj = getObjSymId(c, params[0])
@@ -3126,20 +3119,22 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookOp; info:
 
   if not cond:
     case op
-    of hookNone:
+    of NoHook:
       discard
-    of hookDtor:
+    of DestroyH:
       buildErr c, info, "signature for '=destroy' must be proc[T: object](x: T)"
-    of hookTracer:
+    of TraceH:
       buildErr c, info, "signature for '=trace' must be proc[T: object](x: var T; env: pointer)"
-    of hookDisarmer:
+    of WasmovedH:
       buildErr c, info, "signature for '=wasMoved' must be proc[T: object](x: var T)"
-    of hookCloner:
+    of CopyH:
       buildErr c, info, "signature for '=copy' must be proc[T: object](x: var T; y: T)"
-    of hookMover:
+    of SinkhH:
       buildErr c, info, "signature for '=sink' must be proc[T: object](x: var T; y: T)"
+    of DupH:
+      buildErr c, info, "signature for '=dup' must be proc[T: object](x: T): T"
 
-proc expandHook(c: var SemContext; obj: SymId, symId: SymId, op: HookOp) =
+proc expandHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind) =
   c.hookIndexMap.mgetOrPut($op, @[]).add (obj, symId)
 
 proc getHookName(symId: SymId): string =
@@ -3151,31 +3146,35 @@ proc semHook(c: var SemContext; name: string; beforeParams: int; symId: SymId, i
   let params = getParamsType(c, beforeParams)
   case name
   of "=destroy":
-    checkTypeHook(c, params, hookDtor, info)
+    checkTypeHook(c, params, DestroyH, info)
     result = params[0]
   of "=wasMoved":
-    checkTypeHook(c, params, hookDisarmer, info)
+    checkTypeHook(c, params, WasmovedH, info)
     result = params[0]
   of "=trace":
-    checkTypeHook(c, params, hookTracer, info)
+    checkTypeHook(c, params, TraceH, info)
     result = params[0]
   of "=copy":
-    checkTypeHook(c, params, hookCloner, info)
+    checkTypeHook(c, params, CopyH, info)
     result = params[0]
   of "=sink":
-    checkTypeHook(c, params, hookMover, info)
+    checkTypeHook(c, params, SinkhH, info)
+    result = params[0]
+  of "=dup":
+    checkTypeHook(c, params, DupH, info)
     result = params[0]
   else:
     raiseAssert "unreachable"
 
-proc hookToKind(name: string): HookOp =
+proc hookToKind(name: string): HookKind =
   case name
-  of "=destroy": hookDtor
-  of "=wasMoved": hookDisarmer
-  of "=trace": hookTracer
-  of "=copy": hookCloner
-  of "=sink": hookMover
-  else: hookNone
+  of "=destroy": DestroyH
+  of "=wasMoved": WasmovedH
+  of "=trace": TraceH
+  of "=copy": CopyH
+  of "=sink": SinkhH
+  of "=dup": DupH
+  else: NoHook
 
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   let info = it.n.info
@@ -3246,7 +3245,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close parameter scope
 
         let hk = hookToKind(getHookName(symId))
-        if hk != hookNone:
+        if hk != NoHook:
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
           let obj = getObjSymId(c, params[0])
@@ -3264,7 +3263,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         addReturnResult c, resId, it.n.info
         let name = getHookName(symId)
         let hk = hookToKind(name)
-        if hk != hookNone:
+        if hk != NoHook:
           let objCursor = semHook(c, name, beforeParams, symId, info)
           let obj = getObjSymId(c, objCursor)
 

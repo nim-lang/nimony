@@ -10,7 +10,7 @@ type
     NiflerKind,
     CallConv,
     NifcExpr, NifcStmt, NifcType, NifcOther, NifcPragma, NifcTypeQualifier, NifcSym,
-    NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym, ControlFlowKind,
+    NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym, HookKind, ControlFlowKind,
     NifIndex
 
 proc toSuffix(e: EnumList): (string, string) =
@@ -31,6 +31,7 @@ proc toSuffix(e: EnumList): (string, string) =
   of NimonyPragma: ("P", "NoPragma")
   of NimonySym: ("Y", "NoSym")
   of ControlFlowKind: ("F", "NoControlFlow")
+  of HookKind: ("H", "NoHook")
   of NifIndex: ("Idx", "NoIndexTag")
 
 proc shortcutToEnumList(shortcut: string): EnumList =

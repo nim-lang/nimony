@@ -86,7 +86,7 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
             skip n
         skipToEnd n
       of NoIndexTag, InlineIdx, KvIdx, BuildIdx, IndexIdx, PublicIdx, PrivateIdx,
-         ClonerIdx, TracerIdx, DisarmerIdx, MoverIdx, DtorIdx:
+         DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx:
         inc n
         inc nested
     of ParRi:
@@ -336,8 +336,7 @@ proc readIndex*(indexName: string): NifIndex =
     else:
       assert false, "'private' expected"
     t = next(s)
-    # XXX Dup is missing here!
-    while t.tag.entryKind in {DtorIdx, DisarmerIdx, TracerIdx, ClonerIdx, MoverIdx}:
+    while t.tag.entryKind in {DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx}:
       let tagName = pool.tags[t.tag]
       result.hooks[tagName] = initTable[string, NifIndexEntry]()
       readSection(s, result.hooks[tagName])
