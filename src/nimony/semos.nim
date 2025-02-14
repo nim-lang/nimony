@@ -250,7 +250,10 @@ proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
 
 proc getFile*(info: PackedLineInfo): string =
   let fid = unpack(pool.man, info)[0]
-  result = pool.files[fid]
+  if fid.isValid:
+    result = pool.files[fid]
+  else:
+    result = ""
 
 proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
   exec os.getAppFilename() & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
