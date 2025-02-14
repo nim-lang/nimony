@@ -1204,53 +1204,90 @@ proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
-  if not (m.genericConverter or m.genericEmpty):
+  if not (m.genericConverter or m.genericEmpty or m.insertedParam):
     c.dest.add m.args
   else:
     m.args.addParRi()
+    var sig = m.fn.typ
+    if m.insertedParam and m.inferred.len != 0 and m.fn.sym != SymId(0): # procvar should not be generic
+      let sigStart = c.dest.len
+      c.dest.addParLe(InvokeT, NoLineInfo)
+      c.dest.add symToken(m.fn.sym, NoLineInfo)
+      c.dest.add m.typeArgs
+      c.dest.addParRi()
+      let key = typeToCanon(c.dest, sigStart)
+      c.dest.shrink sigStart
+      if c.instantiatedSigs.hasKey(key):
+        sig = c.instantiatedSigs[key]
+      else:
+        var sigBuf = createTokenBuf(30)
+        sigBuf.addParLe(ProctypeT, NoLineInfo)
+        for i in 1..4: # name, export marker, pattern, generics
+          sigBuf.addDotToken()
+        var copySig = sig
+        takeTree sigBuf, copySig # params
+        takeTree sigBuf, copySig # return type
+        takeTree sigBuf, copySig # pragmas
+        for i in 8..9: # exceptions, body
+          sigBuf.addDotToken()
+        sigBuf.addParRi()
+        sig = instantiateType(c, typeToCursor(c, sigBuf, 0), m.inferred)
+        c.instantiatedSigs[key] = sig
+      skipToParams sig
+    var f = sig
+    inc f
     var arg = beginRead(m.args)
     var i = 0
     while arg.kind != ParRi:
-      var nested = 0
-      while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
+      if m.insertedParam and arg.kind == DotToken:
+        let param = asLocal(f)
+        assert param.val.kind != DotToken
+        c.dest.addSubtree param.val
+        inc arg
+      elif m.genericEmpty and isEmptyLiteral(arg):
         takeToken c, arg
-        inc nested
-      if m.genericEmpty and isEmptyLiteral(arg):
-        takeToken c, arg
-        inc nested
         if containsGenericParams(arg):
           let start = c.dest.len
           c.dest.addSubtree instantiateType(c, arg, m.inferred)
           skip arg
         else:
           takeTree c, arg
-        # leave ParRi token to while loop below
-      elif arg.exprKind == HcallX:
-        let convInfo = arg.info
-        takeToken c, arg
-        inc nested
-        if arg.kind == Symbol:
-          let sym = arg.symId
+        takeParRi c, arg
+      elif m.genericConverter:
+        var nested = 0
+        while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
           takeToken c, arg
-          let res = tryLoadSym(sym)
-          if res.status == LacksNothing and res.decl.symKind == ConverterY:
-            let routine = asRoutine(res.decl)
-            if isGeneric(routine):
-              let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
-              var convMatch = createMatch(addr c)
-              sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode()
-              # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
-              assert not convMatch.err
-              let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
-              c.dest[c.dest.len-1].setSymId inst.targetSym
-      while true:
-        case arg.kind
-        of ParLe: inc nested
-        of ParRi: dec nested
-        else: discard
-        takeToken c, arg
-        if nested == 0: break
+          inc nested
+        if arg.exprKind == HcallX:
+          let convInfo = arg.info
+          takeToken c, arg
+          inc nested
+          if arg.kind == Symbol:
+            let sym = arg.symId
+            takeToken c, arg
+            let res = tryLoadSym(sym)
+            if res.status == LacksNothing and res.decl.symKind == ConverterY:
+              let routine = asRoutine(res.decl)
+              if isGeneric(routine):
+                let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
+                var convMatch = createMatch(addr c)
+                sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode()
+                # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
+                assert not convMatch.err
+                let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
+                c.dest[c.dest.len-1].setSymId inst.targetSym
+        while true:
+          case arg.kind
+          of ParLe: inc nested
+          of ParRi: dec nested
+          else: discard
+          takeToken c, arg
+          if nested == 0: break
+      else:
+        takeTree c, arg
+      skip f # should not be parri
       inc i
+    assert f.kind == ParRi
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
   ## looks for a converter from `arg` to `f`, returns `true` if found and

@@ -61,7 +61,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*, genericEmpty*: bool
+    genericConverter*, genericEmpty*, insertedParam*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -822,10 +822,15 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
     else:
       isVarargs = true
       if i >= args.len: break
-    m.argInfo = args[i].n.info
-
-    singleArg m, ftyp, args[i]
-    if m.err: break
+    if args[i].n.kind == DotToken:
+      # default parameter
+      assert param.val.kind != DotToken
+      assert not isVarargs
+      m.args.add args[i].n
+    else:
+      m.argInfo = args[i].n.info
+      singleArg m, ftyp, args[i]
+      if m.err: break
     inc m.pos
     inc i
   if isVarargs:
@@ -894,6 +899,39 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.error0 RoutineIsNotGeneric
       return
 
+proc orderArgs*(m: var Match; params: Cursor; args: openArray[Item]): seq[Item] =
+  result = @[]
+  var i = 0
+  var isVarargs = false
+  var f = params
+  while f.kind != ParRi:
+    assert f.symKind == ParamY
+    let param = asLocal(f)
+    var ftyp = param.typ
+    if ftyp != "varargs":
+      if i >= args.len:
+        if param.val.kind == DotToken:
+          # this fails early
+          m.error0 TooFewArguments
+          break
+        else:
+          # dot token
+          m.insertedParam = true
+          result.add Item(n: m.context.types.voidType, typ: m.context.types.autoType)
+      else:
+        result.add args[i]
+      skip f
+    else:
+      isVarargs = true
+      if i >= args.len:
+        break
+      else:
+        result.add args[i]
+    inc i
+  if i < args.len:
+    # again, fails early
+    m.error0 TooManyArguments
+
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
@@ -903,6 +941,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
   var f = fn.typ
   assert f == "params"
   inc f # "params"
+  let args = orderArgs(m, f, args)
   sigmatchLoop m, f, args
 
   if m.pos < args.len:

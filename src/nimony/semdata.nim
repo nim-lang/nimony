@@ -83,6 +83,7 @@ type
     typeMem*: Table[string, TokenBuf]
     instantiatedTypes*: OrderedTable[string, SymId]
     instantiatedProcs*: OrderedTable[(SymId, string), SymId]
+    instantiatedSigs*: OrderedTable[string, Cursor]
     thisModuleSuffix*: string
     moduleFlags*: set[ModuleFlag]
     processedModules*: HashSet[string]
