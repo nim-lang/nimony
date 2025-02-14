@@ -862,13 +862,7 @@ proc collectDefaultValues(m: var Match; f: Cursor): seq[Item] =
   while f.symKind == ParamY:
     let param = asLocal(f)
     if param.val.kind == DotToken: break
-    # xxx getType so that in `proc foo6[T](x: T = 3); foo6()`, the type of `x` might be inferred
-    if param.typ.kind == Symbol and isTypevar(param.typ.symId) and
-        m.inferred.contains(param.typ.symId):
-      var prev = m.inferred[param.typ.symId]
-      result.add Item(n: param.val, typ: prev)
-    else:
-      result.add Item(n: param.val, typ: param.typ)
+    result.add Item(n: m.context.types.voidType, typ: m.context.types.autoType)
     skip f
 
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
@@ -900,6 +894,7 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       return
 
 proc orderArgs*(m: var Match; params: Cursor; args: openArray[Item]): seq[Item] =
+  # unused, might be useful for named params
   result = @[]
   var i = 0
   var isVarargs = false
@@ -941,7 +936,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
   var f = fn.typ
   assert f == "params"
   inc f # "params"
-  let args = orderArgs(m, f, args)
+  #let args = orderArgs(m, f, args)
   sigmatchLoop m, f, args
 
   if m.pos < args.len:
