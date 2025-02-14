@@ -322,15 +322,6 @@ proc readIndex*(indexName: string): NifIndex =
   let res = processDirectives(s.r)
   assert res == Success
 
-  let ClonerT = registerTag "cloner"
-  let TracerT = registerTag "tracer"
-  let DisarmerT = registerTag "disarmer"
-  let MoverT = registerTag "mover"
-  let DtorT = registerTag "dtor"
-
-  let hookSet = toHashSet([ClonerT, TracerT, DisarmerT, MoverT, DtorT])
-  # XXX Remove this!
-
   result = default(NifIndex)
   var t = next(s)
   if t.tag == TagId(IndexIdx):
@@ -345,7 +336,8 @@ proc readIndex*(indexName: string): NifIndex =
     else:
       assert false, "'private' expected"
     t = next(s)
-    while t.tag in hookSet:
+    # XXX Dup is missing here!
+    while t.tag.entryKind in {DtorIdx, DisarmerIdx, TracerIdx, ClonerIdx, MoverIdx}:
       let tagName = pool.tags[t.tag]
       result.hooks[tagName] = initTable[string, NifIndexEntry]()
       readSection(s, result.hooks[tagName])
