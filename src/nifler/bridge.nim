@@ -30,7 +30,7 @@ proc nodeKindTranslation(k: TNodeKind): NiflerKind =
   of nkExprEqExpr: VvL
   of nkExprColonExpr: KvL
   of nkPar: ParL
-  of nkObjConstr: ObjL
+  of nkObjConstr: OconstrL
   of nkCurly: CurlyL
   of nkCurlyExpr: CurlyatL
   of nkBracket: BracketL
