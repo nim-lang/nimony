@@ -98,7 +98,7 @@ proc error0Typevar(m: var Match; k: MatchErrorKind; typevar: SymId) =
   m.error = MatchError(info: m.argInfo, kind: k,
                        typeVar: typevar, pos: m.pos+1)
 
-proc getErrorMsg(m: Match): string =
+proc getErrorMsg*(m: Match): string =
   case m.error.kind
   of InvalidMatch:
     concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
@@ -958,9 +958,10 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     inc f
     m.returnType = f # return type follows the parameters in the token stream
 
+proc addTypeArgs*(m: var Match) =
   # check all type vars have a value:
-  if not m.err and fn.kind in RoutineKinds:
-    for v in typeVars(fn.sym):
+  if not m.err and m.fn.kind in RoutineKinds:
+    for v in typeVars(m.fn.sym):
       let inf = m.inferred.getOrDefault(v)
       if inf == default(Cursor):
         m.error0Typevar CouldNotInferTypeVar, v

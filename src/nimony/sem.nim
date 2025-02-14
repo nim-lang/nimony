@@ -596,6 +596,18 @@ type
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
+proc instantiateExprIntoBuf(c: var SemContext; buf: var TokenBuf; it: var Item; bindings: Table[SymId, Cursor]) =
+  var dest = createTokenBuf(30)
+  var sc = SubsContext(params: addr bindings)
+  subs(c, dest, sc, it.n)
+  var sub = beginRead(dest)
+  let start = buf.len
+  swap c.dest, buf
+  it.n = sub
+  semExpr(c, it)
+  swap c.dest, buf
+  it.n = cursorAt(buf, start)
+
 proc fetchSym(c: var SemContext; s: SymId): Sym =
   # yyy find a better solution
   var name = pool.syms[s]
@@ -1208,41 +1220,24 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
     c.dest.add m.args
   else:
     m.args.addParRi()
-    var sig = m.fn.typ
-    if m.insertedParam and m.inferred.len != 0 and m.fn.sym != SymId(0): # procvar should not be generic
-      let sigStart = c.dest.len
-      c.dest.addParLe(InvokeT, NoLineInfo)
-      c.dest.add symToken(m.fn.sym, NoLineInfo)
-      c.dest.add m.typeArgs
-      c.dest.addParRi()
-      let key = typeToCanon(c.dest, sigStart)
-      c.dest.shrink sigStart
-      if c.instantiatedSigs.hasKey(key):
-        sig = c.instantiatedSigs[key]
-      else:
-        var sigBuf = createTokenBuf(30)
-        sigBuf.addParLe(ProctypeT, NoLineInfo)
-        for i in 1..4: # name, export marker, pattern, generics
-          sigBuf.addDotToken()
-        var copySig = sig
-        takeTree sigBuf, copySig # params
-        takeTree sigBuf, copySig # return type
-        takeTree sigBuf, copySig # pragmas
-        for i in 8..9: # exceptions, body
-          sigBuf.addDotToken()
-        sigBuf.addParRi()
-        sig = instantiateType(c, typeToCursor(c, sigBuf, 0), m.inferred)
-        c.instantiatedSigs[key] = sig
-      skipToParams sig
-    var f = sig
-    inc f
+    var f = m.fn.typ
+    inc f # params tag
     var arg = beginRead(m.args)
     var i = 0
     while arg.kind != ParRi:
       if m.insertedParam and arg.kind == DotToken:
         let param = asLocal(f)
         assert param.val.kind != DotToken
-        c.dest.addSubtree param.val
+        var defaultValueBuf = createTokenBuf(30)
+        var defaultValue = Item(n: param.val, typ: c.types.autoType)
+        instantiateExprIntoBuf(c, defaultValueBuf, defaultValue, m.inferred)
+        let prevErr = m.err
+        swap m.args, c.dest
+        typematch(m, param.typ, defaultValue)
+        swap m.args, c.dest
+        if m.err and not prevErr:
+          # info is wrong here
+          c.typeMismatch arg.info, defaultValue.typ, param.typ
         inc arg
       elif m.genericEmpty and isEmptyLiteral(arg):
         takeToken c, arg
@@ -1447,8 +1442,12 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     let isMagic = c.addFn(finalFn, cs.fn.n, cs.args)
     addArgsInstConverters(c, m[idx], cs.args)
     takeParRi c, it.n
+    addTypeArgs(m[idx])
 
-    if finalFn.kind == TemplateY:
+    if m[idx].err:
+      # adding args or type args may have errored
+      buildErr c, cs.callNode.info, getErrorMsg(m[idx])
+    elif finalFn.kind == TemplateY:
       typeofCallIs c, it, cs.beforeCall, m[idx].returnType
       if c.templateInstCounter <= MaxNestedTemplates:
         inc c.templateInstCounter
