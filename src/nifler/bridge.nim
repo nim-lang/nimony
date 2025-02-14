@@ -16,95 +16,103 @@ import compiler / [
   parser, llstream, idents, msgs]
 
 import ".." / lib / nifbuilder
+import ".." / models / nifler_tags
 
-proc nodeKindTranslation(k: TNodeKind): string =
+proc nodeKindTranslation(k: TNodeKind): NiflerKind =
   # many of these kinds are never returned by the parser.
   case k
-  of nkCommand: "cmd"
-  of nkCall: "call"
-  of nkCallStrLit: "callstrlit"
-  of nkInfix: "infix"
-  of nkPrefix: "prefix"
-  of nkHiddenCallConv: "<error>"
-  of nkExprEqExpr: "vv"
-  of nkExprColonExpr: "kv"
-  of nkPar: "par"
-  of nkObjConstr: "obj"
-  of nkCurly: "curly"
-  of nkCurlyExpr: "curlyx"
-  of nkBracket: "bracket"
-  of nkBracketExpr: "at"
-  of nkPragmaBlock, nkPragmaExpr: "pragmax"
-  of nkDotExpr: "dot"
-  of nkAsgn, nkFastAsgn: "asgn"
-  of nkIfExpr, nkIfStmt: "if"
-  of nkWhenStmt, nkRecWhen: "when"
-  of nkWhileStmt: "while"
-  of nkCaseStmt, nkRecCase: "case"
-  of nkForStmt: "for"
-  of nkDiscardStmt: "discard"
-  of nkBreakStmt: "break"
-  of nkReturnStmt: "ret"
-  of nkElifExpr, nkElifBranch: "elif"
-  of nkElseExpr, nkElse: "else"
-  of nkOfBranch: "of"
-  of nkCast: "cast"
-  of nkLambda: "proc"
-  of nkAccQuoted: "quoted"
-  of nkTableConstr: "tab"
-  of nkStmtListType, nkStmtListExpr, nkStmtList, nkRecList, nkArgList: "stmts"
-  of nkBlockStmt, nkBlockExpr, nkBlockType: "block"
-  of nkStaticStmt: "staticstmt"
-  of nkBind, nkBindStmt: "bind"
-  of nkMixinStmt: "mixin"
-  of nkAddr: "addr"
-  of nkGenericParams: "typevars"
-  of nkFormalParams: "params"
-  of nkImportAs: "importas"
-  of nkRaiseStmt: "raise"
-  of nkContinueStmt: "continue"
-  of nkYieldStmt: "yld"
-  of nkProcDef: "proc"
-  of nkFuncDef: "func"
-  of nkMethodDef: "method"
-  of nkConverterDef: "converter"
-  of nkMacroDef: "macro"
-  of nkTemplateDef: "template"
-  of nkIteratorDef: "iterator"
-  of nkExceptBranch: "except"
-  of nkTypeOfExpr: "typeof"
-  of nkFinally: "fin"
-  of nkTryStmt: "try"
-  of nkImportStmt: "import"
-  of nkImportExceptStmt: "importexcept"
-  of nkIncludeStmt: "include"
-  of nkExportStmt: "export"
-  of nkExportExceptStmt: "exportexcept"
-  of nkFromStmt: "from"
-  of nkPragma: "pragmas"
-  of nkAsmStmt: "asm"
-  of nkDefer: "defer"
-  of nkUsingStmt: "using"
-  of nkCommentStmt: "comment"
-  of nkObjectTy: "object"
-  of nkTupleTy, nkTupleClassTy: "tuple"
-  of nkTypeClassTy: "concept"
-  of nkStaticTy: "static"
-  of nkRefTy: "ref"
-  of nkPtrTy: "ptr"
-  of nkVarTy: "mut"
-  of nkDistinctTy: "distinct"
-  of nkIteratorTy: "itertype"
-  of nkEnumTy: "enum"
+  of nkCommand: CmdL
+  of nkCall: CallL
+  of nkCallStrLit: CallstrlitL
+  of nkInfix: InfixL
+  of nkPrefix: PrefixL
+  of nkHiddenCallConv: ErrL
+  of nkExprEqExpr: VvL
+  of nkExprColonExpr: KvL
+  of nkPar: ParL
+  of nkObjConstr: OconstrL
+  of nkCurly: CurlyL
+  of nkCurlyExpr: CurlyatL
+  of nkBracket: BracketL
+  of nkBracketExpr: AtL
+  of nkPragmaBlock, nkPragmaExpr: PragmaxL
+  of nkDotExpr: DotL
+  of nkAsgn, nkFastAsgn: AsgnL
+  of nkIfExpr, nkIfStmt: IfL
+  of nkWhenStmt, nkRecWhen: WhenL
+  of nkWhileStmt: WhileL
+  of nkCaseStmt, nkRecCase: CaseL
+  of nkForStmt: ForL
+  of nkDiscardStmt: DiscardL
+  of nkBreakStmt: BreakL
+  of nkReturnStmt: RetL
+  of nkElifExpr, nkElifBranch: ElifL
+  of nkElseExpr, nkElse: ElseL
+  of nkOfBranch: OfL
+  of nkCast: CastL
+  of nkLambda: ProcL
+  of nkAccQuoted: QuotedL
+  of nkTableConstr: TabconstrL
+  of nkStmtListType, nkStmtListExpr, nkStmtList, nkRecList, nkArgList: StmtsL
+  of nkBlockStmt, nkBlockExpr, nkBlockType: BlockL
+  of nkStaticStmt: StaticstmtL
+  of nkBind, nkBindStmt: BindL
+  of nkMixinStmt: MixinL
+  of nkAddr: AddrL
+  of nkGenericParams: TypevarsL
+  of nkFormalParams: ParamsL
+  of nkImportAs: ImportasL
+  of nkRaiseStmt: RaiseL
+  of nkContinueStmt: ContinueL
+  of nkYieldStmt: YldL
+  of nkProcDef: ProcL
+  of nkFuncDef: FuncL
+  of nkMethodDef: MethodL
+  of nkConverterDef: ConverterL
+  of nkMacroDef: MacroL
+  of nkTemplateDef: TemplateL
+  of nkIteratorDef: IteratorL
+  of nkExceptBranch: ExceptL
+  of nkTypeOfExpr: TypeofL
+  of nkFinally: FinL
+  of nkTryStmt: TryL
+  of nkImportStmt: ImportL
+  of nkImportExceptStmt: ImportexceptL
+  of nkIncludeStmt: IncludeL
+  of nkExportStmt: ExportL
+  of nkExportExceptStmt: ExportexceptL
+  of nkFromStmt: FromL
+  of nkPragma: PragmasL
+  of nkAsmStmt: AsmL
+  of nkDefer: DeferL
+  of nkUsingStmt: UsingL
+  of nkCommentStmt: CommentL
+  of nkObjectTy: ObjectL
+  of nkTupleTy, nkTupleClassTy: TupleL
+  of nkTypeClassTy: ConceptL
+  of nkStaticTy: StaticL
+  of nkRefTy: RefL
+  of nkPtrTy: PtrL
+  of nkVarTy: MutL
+  of nkDistinctTy: DistinctL
+  of nkIteratorTy: ItertypeL
+  of nkEnumTy: EnumL
   #of nkEnumFieldDef: EnumFieldDecl
-  of nkTupleConstr: "tup"
-  of nkOutTy: "out"
-  else: "<error>"
+  of nkTupleConstr: TupL
+  of nkOutTy: OutL
+  else: ErrL
+
+template addTree(b: var Builder; tag: NiflerKind) = b.addTree $tag
+
+template withTree(b: var Builder; tag: NiflerKind; body: untyped) =
+  b.addTree tag
+  body
+  b.endTree()
 
 type
   TranslationContext = object
     conf: ConfigRef
-    section: string
+    section: NiflerKind
     b, deps: Builder
     portablePaths: bool
     depsEnabled, lineInfoEnabled: bool
@@ -133,19 +141,19 @@ proc relLineInfo(n, parent: PNode; c: var TranslationContext;
 
 proc addIntLit*(b: var Builder; u: BiggestInt; suffix: string) =
   assert suffix.len > 0
-  b.withTree "suf":
+  b.withTree SufL:
     b.addIntLit u
     b.addStrLit suffix
 
 proc addUIntLit*(b: var Builder; u: BiggestUInt; suffix: string) =
   assert suffix.len > 0
-  b.withTree "suf":
+  b.withTree SufL:
     b.addUIntLit u
     b.addStrLit suffix
 
 proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
   assert suffix.len > 0
-  b.withTree "suf":
+  b.withTree SufL:
     b.addFloatLit u
     b.addStrLit suffix
 
@@ -218,7 +226,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.addIdent n.ident.s
   of nkTypeDef:
     relLineInfo(n, parent, c)
-    c.b.addTree("type")
+    c.b.addTree TypeL
     var name: PNode
     var visibility: PNode = nil
     var pragma: PNode = nil
@@ -258,38 +266,38 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], parent, c)
 
   of nkVarSection:
-    c.section = "var"
+    c.section = VarL
     for i in 0..<n.len:
       toNif(n[i], parent, c)
   of nkLetSection:
-    c.section = "let"
+    c.section = LetL
     for i in 0..<n.len:
       toNif(n[i], parent, c)
   of nkConstSection:
-    c.section = "const"
+    c.section = ConstL
     for i in 0..<n.len:
       toNif(n[i], parent, c)
 
   of nkFormalParams:
-    c.section = "param"
+    c.section = ParamL
     relLineInfo(n, parent, c)
-    c.b.addTree("params")
+    c.b.addTree(ParamsL)
     for i in 1..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
     # put return type outside of `(params)`:
     toNif(n[0], n, c, allowEmpty = true)
   of nkGenericParams:
-    c.section = "typevar"
+    c.section = TypevarL
     relLineInfo(n, parent, c)
-    c.b.addTree("typevars")
+    c.b.addTree(TypevarsL)
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
 
   of nkIdentDefs, nkConstDef:
     # multiple ident defs are annoying so we remove them here:
-    assert c.section != ""
+    assert c.section != NiflerKind.None
     let last = n.len-1
     for i in 0..last - 2:
       relLineInfo(n[i], parent, c)
@@ -329,7 +337,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.endTree()
   of nkDo:
     relLineInfo(n, parent, c)
-    c.b.addTree("paramsAndBody")
+    c.b.addTree(DoL)
     toNif(n[paramsPos], n, c, allowEmpty = true)
     toNif(n[bodyPos], n, c)
     c.b.endTree()
@@ -338,14 +346,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[0], parent, c)
     else:
       relLineInfo(n, parent, c)
-      c.b.addTree("par")
+      c.b.addTree(ParL)
       for i in 0..<n.len:
         toNif(n[i], n, c)
       c.b.endTree()
   of nkOfBranch:
     relLineInfo(n, parent, c)
-    c.b.addTree("of")
-    c.b.addTree("ranges")
+    c.b.addTree(OfL)
+    c.b.addTree(RangesL)
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
     c.b.endTree()
@@ -354,9 +362,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
   of nkStmtListType, nkStmtListExpr:
     relLineInfo(n, parent, c)
-    c.b.addTree("expr")
+    c.b.addTree(ExprL)
     c.b.addEmpty # type information of StmtListExpr
-    c.b.addTree("stmts")
+    c.b.addTree(StmtsL)
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
     c.b.endTree()
@@ -369,9 +377,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkProcTy, nkIteratorTy:
     relLineInfo(n, parent, c)
     if n.kind == nkProcTy:
-      c.b.addTree("proctype")
+      c.b.addTree(ProctypeL)
     else:
-      c.b.addTree("itertype")
+      c.b.addTree(ItertypeL)
 
     c.b.addEmpty 4 # 0: name
     # 1: export marker
@@ -400,7 +408,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     #   EnumType
     #   (Integer value, "string value")
     relLineInfo(n, parent, c)
-    c.b.addTree("enum")
+    c.b.addTree(EnumL)
     if n.len > 0:
       assert n[0].kind == nkEmpty
       c.b.addEmpty # base type
@@ -431,7 +439,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
       relLineInfo(it, n, c)
 
-      c.b.addTree("efld")
+      c.b.addTree(EfldL)
 
       toNif name, it, c
       c.b.addEmpty # export marker
@@ -476,10 +484,10 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkVarTuple:
     relLineInfo(n, parent, c)
     assert n[n.len-2].kind == nkEmpty
-    c.b.addTree("unpackdecl")
+    c.b.addTree(UnpackdeclL)
     toNif(n[n.len-1], n, c)
 
-    c.b.addTree("unpacktup")
+    c.b.addTree(UnpacktupL)
     for i in 0..<n.len-2:
       c.b.addTree(c.section)
       toNif(n[i], n, c) # name
@@ -494,15 +502,15 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
   of nkForStmt:
     relLineInfo(n, parent, c)
-    c.b.addTree("for")
+    c.b.addTree(ForL)
 
     toNif(n[n.len-2], n, c) # iterator
 
     if n[0].kind == nkVarTuple:
       let v = n[0]
-      c.b.addTree("unpacktup")
+      c.b.addTree(UnpacktupL)
       for i in 0..<v.len-1: # ignores typedesc
-        c.b.addTree("let")
+        c.b.addTree(LetL)
 
         toNif(v[i], n, c) # name
 
@@ -510,9 +518,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
         c.b.endTree() # LetDecl
       c.b.endTree() # UnpackIntoTuple
     else:
-      c.b.addTree("unpackflat")
+      c.b.addTree(UnpackflatL)
       for i in 0..<n.len-2:
-        c.b.addTree("let")
+        c.b.addTree(LetL)
 
         toNif(n[i], n, c) # name
 
@@ -526,7 +534,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
   of nkRefTy, nkPtrTy:
     if n.len == 1 and n[0].kind == nkObjectTy:
-      c.section = if n.kind == nkRefTy: "ref" else: "ptr"
+      c.section = if n.kind == nkRefTy: RefL else: PtrL
       toNif n[0], parent, c
     else:
       relLineInfo(n, parent, c)
@@ -538,10 +546,10 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkObjectTy:
     let kind =
       case c.section
-      of "ref": "refobj"
-      of "ptr": "ptrobj"
+      of RefL: RefobjL
+      of PtrL: PtrobjL
       else: nodeKindTranslation(n.kind)
-    c.section = "fld"
+    c.section = FldL
     relLineInfo(n, parent, c)
     c.b.addTree(kind)
     for i in 0..<n.len-3:
@@ -552,7 +560,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       discard
     else:
       if n[n.len-3].kind != nkEmpty:
-        c.b.addTree "err"
+        c.b.addTree ErrL
         c.b.endTree()
 
       toNif(n[n.len-2], n, c, allowEmpty = true)
@@ -565,7 +573,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.endTree()
 
   of nkTupleTy, nkTupleClassTy:
-    c.section = "fld"
+    c.section = FldL
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
     for i in 0..<n.len:
@@ -630,7 +638,7 @@ proc moduleToIr*(n: PNode; c: var TranslationContext) =
   c.b.addHeader "Nifler", "nim-parsed"
   if c.depsEnabled:
     c.deps.addHeader "Nifler", "nim-deps"
-    c.deps.addTree "stmts"
+    c.deps.addTree StmtsL
   toNif(n, nil, c)
 
 proc createConf(): ConfigRef =

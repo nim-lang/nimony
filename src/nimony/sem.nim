@@ -13,7 +13,7 @@ include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
-  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof
+  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer
 
 import ".." / gear2 / modnames
 import ".." / models / tags
@@ -636,7 +636,7 @@ proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
     if value.kind == ParLe and value.tagId == ErrT:
       c.dest.add valueBuf
     else:
-      buildErr c, it.n.info, "expected constant bool value but got: " & toString(value, false)
+      buildErr c, it.n.info, "expected constant bool value but got: " & asNimCode(value)
   else:
     c.dest.shrink start
     c.dest.add valueBuf
@@ -656,7 +656,7 @@ proc semConstStrExpr(c: var SemContext; n: var Cursor) =
     if value.kind == ParLe and value.tagId == ErrT:
       c.dest.add valueBuf
     else:
-      buildErr c, it.n.info, "expected constant string value but got: " & toString(value, false)
+      buildErr c, it.n.info, "expected constant string value but got: " & asNimCode(value)
   else:
     c.dest.shrink start
     c.dest.add valueBuf
@@ -676,7 +676,7 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
     if value.kind == ParLe and value.tagId == ErrT:
       c.dest.add valueBuf
     else:
-      buildErr c, it.n.info, "expected constant integer value but got: " & toString(value, false)
+      buildErr c, it.n.info, "expected constant integer value but got: " & asNimCode(value)
   else:
     c.dest.shrink start
     c.dest.add valueBuf
@@ -4442,7 +4442,7 @@ proc semDefined(c: var SemContext; it: var Item) =
   let name = getDottedIdent(it.n)
   skipParRi it.n
   if name == "":
-    c.buildErr info, "invalid expression for defined: " & toString(orig, false), orig
+    c.buildErr info, "invalid expression for defined: " & asNimCode(orig), orig
   else:
     let isDefined = name in c.g.config.defines
     let beforeExpr = c.dest.len
@@ -4474,7 +4474,7 @@ proc semDeclared(c: var SemContext; it: var Item) =
     skipToEnd it.n
   skipParRi it.n
   if nameId == StrId(0):
-    c.buildErr info, "invalid expression for declared: " & toString(orig, false), orig
+    c.buildErr info, "invalid expression for declared: " & asNimCode(orig), orig
   else:
     let isDeclared = isDeclared(c, nameId)
     let beforeExpr = c.dest.len
@@ -5015,7 +5015,7 @@ proc semAddr(c: var SemContext; it: var Item) =
   if isAddressable(a):
     endRead c.dest
   else:
-    let asStr = toString(a, false)
+    let asStr = asNimCode(a)
     endRead c.dest
     c.dest.shrink beforeArg
     c.buildErr info, "invalid expression for `addr` operation: " & asStr
@@ -5063,7 +5063,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; info: PackedLineInfo) =
     var args = newSeq[string]()
     while it.n.kind != ParRi:
       if it.n.kind != StringLit:
-        buildErr c, it.n.info, "expected `string` but got: " & toString(it.n)
+        buildErr c, it.n.info, "expected `string` but got: " & asNimCode(it.n)
 
       args.add pool.strings[it.n.litId]
       inc it.n
@@ -5205,6 +5205,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
+      of ImportasS, ExportexceptS, UnpackdeclS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
+        buildErr c, it.n.info, "unsupported statement: " & $stmtKind(it.n)
+        skip it.n
       of ProcS:
         procGuard c:
           semProc c, it, ProcY, whichPass(c)
@@ -5425,7 +5428,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semDupHook c, it
     of ErrX:
       takeTree c, it.n
-    of OconvX,
+    of OconvX, PragmaxX, CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)

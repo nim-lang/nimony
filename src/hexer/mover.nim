@@ -184,7 +184,9 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
             otherUsage = pc
             return false
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
-           IncludeS, ImportS, FromS, ImportExceptS, CommentS, PragmasS:
+           IncludeS, ImportS, FromS, ImportExceptS, CommentS, PragmasS,
+           ImportasS, ExportexceptS, BindS, MixinS, UsingS,
+           UnpackDeclS, StaticstmtS, AsmS, DeferS:
           raiseAssert "BUG: statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
           # declarative junk we don't care about:

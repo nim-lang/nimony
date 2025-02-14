@@ -121,8 +121,6 @@ const
   HoleyEnumT* = OnumT
   InvokeT* = AtT
   TupleconstrX* = TupX
-  OconstrX* = ObjX
-  AconstrX* = ArrX
   NewOconstrX* = NewObjX
 
 const

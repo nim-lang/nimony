@@ -66,7 +66,7 @@
     (suf +7u "u8") 6
     (suf +9u "u8")))) 6,20
  (asgn ~6 myarr.0.tge7jvqqk1 2
-  (arr 8,~3
+  (aconstr 8,~3
    (array 4
     (i -1)
     (rangetype
@@ -150,7 +150,7 @@
    (rangetype
     (i -1) +0 +2)) 27 myarr.0.tge7jvqqk1) 7,57
  (asgn ~7 myarr2.0.tge7jvqqk1 2
-  (arr 7,~40
+  (aconstr 7,~40
    (array 4
     (i -1)
     (rangetype
@@ -160,7 +160,7 @@
    (i -1)
    (rangetype
     (i -1) +0 +3)) 20
-  (arr ~11
+  (aconstr ~11
    (array 4
     (i -1)
     (rangetype
@@ -171,7 +171,7 @@
    (rangetype
     (i -1) 1 +4 4 +7)) 23 m3.0.tge7jvqqk1) 3,61
  (asgn ~3 x3.0.tge7jvqqk1 2
-  (arr 8,~2
+  (aconstr 8,~2
    (array 4
     (i -1)
     (rangetype

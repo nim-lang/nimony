@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer
 
 type
   Item* = object
@@ -70,7 +70,7 @@ proc concat(a: varargs[string]): string =
   for i in 1..high(a): result.add a[i]
 
 proc typeToString*(n: Cursor): string =
-  result = toString(n, false)
+  result = asNimCode(n)
 
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   if m.err: return # first error is the important one
@@ -84,6 +84,19 @@ proc error0(m: var Match; k: MatchErrorKind) =
   if m.err: return # first error is the important one
   m.err = true
   m.error = MatchError(info: m.argInfo, kind: k, pos: m.pos+1)
+
+proc errorTypevar(m: var Match; k: MatchErrorKind; expected, got: Cursor; typevar: SymId) =
+  if m.err: return # first error is the important one
+  m.err = true
+  m.error = MatchError(info: m.argInfo, kind: k,
+                       typeVar: typevar,
+                       expected: expected, got: got, pos: m.pos+1)
+
+proc error0Typevar(m: var Match; k: MatchErrorKind; typevar: SymId) =
+  if m.err: return # first error is the important one
+  m.err = true
+  m.error = MatchError(info: m.argInfo, kind: k,
+                       typeVar: typevar, pos: m.pos+1)
 
 proc getErrorMsg(m: Match): string =
   case m.error.kind
@@ -417,8 +430,7 @@ proc commonType(f, a: Cursor): Cursor =
 proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
   let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:
-    m.error InvalidRematch, f, a
-    m.error.typeVar = typeVar
+    m.errorTypevar InvalidRematch, f, a, typeVar
   elif matchesConstraint(m, typeVar, com):
     m.inferred[typeVar] = skipModifier(com)
   else:
@@ -565,7 +577,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   of ParLe:
     let fk = f.typeKind
     case fk
-    of MutT:
+    of MutT, OutT:
       var a = arg.typ
       if a.typeKind in {MutT, OutT, LentT}:
         inc a
@@ -699,7 +711,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         skip f
       else:
         procTypeMatch m, f, a
-    of NoType, ErrT, ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, VoidT, OutT, LentT, SinkT, NiltT, OrT, AndT, NotT,
+    of NoType, ErrT, ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, VoidT, LentT, SinkT, NiltT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
@@ -862,8 +874,7 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.tvars.incl v
       if e.kind == DotToken: discard
       elif e.kind == ParRi:
-        m.error.typeVar = v
-        m.error0 MissingExplicitGenericParameter
+        m.error0Typevar MissingExplicitGenericParameter, v
         break
       else:
         if matchesConstraint(m, v, e):
@@ -913,8 +924,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     for v in typeVars(fn.sym):
       let inf = m.inferred.getOrDefault(v)
       if inf == default(Cursor):
-        m.error.typeVar = v
-        m.error0 CouldNotInferTypeVar
+        m.error0Typevar CouldNotInferTypeVar, v
         break
       m.typeArgs.addSubtree inf
 

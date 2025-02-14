@@ -129,6 +129,14 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       result = c.builtins.charType
     else:
       result = c.builtins.autoType # still an error
+  of PragmaxX:
+    var n = n
+    inc n
+    skip n # pragmas
+    result = getTypeImpl(c, n)
+  of DoX:
+    # the parameter list that follows `(do)` is actually a good type
+    result = getTypeImpl(c, n.firstSon)
   of ExprX:
     var n = n
     inc n # skip "expr"
@@ -240,6 +248,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.voidType
   of DupX:
     result = getTypeImpl(c, n.firstSon)
+  of CurlyatX, TabconstrX:
+    # error: should have been eliminated earlier
+    result = c.builtins.autoType
   of SufX:
     var n = n
     inc n # tag

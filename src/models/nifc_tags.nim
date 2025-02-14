@@ -25,7 +25,7 @@ type
     AlignofC = (20, "alignof")  ## `alignof` operation
     OffsetofC = (21, "offsetof")  ## `offsetof` operation
     OconstrC = (22, "oconstr")  ## object constructor
-    AconstrC = (24, "aconstr")  ## array constructor
+    AconstrC = (23, "aconstr")  ## array constructor
     AddC = (29, "add")
     SubC = (30, "sub")
     MulC = (31, "mul")
@@ -41,13 +41,14 @@ type
     NeqC = (41, "neq")
     LeC = (42, "le")
     LtC = (43, "lt")
-    CastC = (44, "cast")
+    CastC = (44, "cast")  ## `cast` operation
     ConvC = (45, "conv")  ## type conversion
     CallC = (46, "call")  ## call operation
-    ErrvC = (246, "errv")  ## error flag for `NIFC`
+    ErrvC = (252, "errv")  ## error flag for `NIFC`
 
 proc rawTagIsNifcExpr*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 24'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 46'u8, 246'u8}
+  let r = raw - 2'u32
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 27'u8, 28'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 250'u8}
 
 type
   NifcStmt* = enum
@@ -70,15 +71,16 @@ type
     JmpS = (88, "jmp")  ## jump/goto instruction
     RetS = (89, "ret")  ## `return` instruction
     StmtsS = (91, "stmts")  ## list of statements
-    ImpS = (130, "imp")  ## import declaration
-    InclS = (132, "incl")  ## `#include` statement or `incl` set operation
-    DiscardS = (140, "discard")  ## `discard` statement
-    TryS = (141, "try")  ## `try` statement
-    RaiseS = (142, "raise")  ## `raise` statement
-    OnerrS = (143, "onerr")  ## error handling statement
+    ImpS = (131, "imp")  ## import declaration
+    InclS = (133, "incl")  ## `#include` statement or `incl` set operation
+    DiscardS = (143, "discard")  ## `discard` statement
+    TryS = (144, "try")  ## `try` statement
+    RaiseS = (145, "raise")  ## `raise` statement
+    OnerrS = (146, "onerr")  ## error handling statement
 
 proc rawTagIsNifcStmt*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {46'u8, 50'u8, 51'u8, 52'u8, 54'u8, 61'u8, 68'u8, 73'u8, 74'u8, 75'u8, 76'u8, 81'u8, 84'u8, 85'u8, 87'u8, 88'u8, 89'u8, 91'u8, 130'u8, 132'u8, 140'u8, 141'u8, 142'u8, 143'u8}
+  let r = raw - 46'u32
+  r <= 255'u32 and r.uint8 in {0'u8, 4'u8, 5'u8, 6'u8, 8'u8, 15'u8, 22'u8, 27'u8, 28'u8, 29'u8, 30'u8, 35'u8, 38'u8, 39'u8, 41'u8, 42'u8, 43'u8, 45'u8, 85'u8, 87'u8, 97'u8, 98'u8, 99'u8, 100'u8}
 
 type
   NifcType* = enum
@@ -100,12 +102,13 @@ type
     AptrT = (110, "aptr")  ## "pointer to array of" type constructor
 
 proc rawTagIsNifcType*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {92'u8, 93'u8, 94'u8, 95'u8, 96'u8, 101'u8, 102'u8, 103'u8, 104'u8, 105'u8, 106'u8, 107'u8, 108'u8, 109'u8, 110'u8}
+  let r = raw - 92'u32
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 2'u8, 3'u8, 4'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8}
 
 type
   NifcOther* = enum
     NoSub
-    KvU = (28, "kv")  ## key-value pair
+    KvU = (27, "kv")  ## key-value pair
     RangeU = (48, "range")  ## `(range a b)` construct
     RangesU = (49, "ranges")
     ParamU = (53, "param")  ## parameter declaration
@@ -118,7 +121,8 @@ type
     PragmasU = (126, "pragmas")  ## begin of pragma section
 
 proc rawTagIsNifcOther*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {28'u8, 48'u8, 49'u8, 53'u8, 58'u8, 59'u8, 60'u8, 78'u8, 79'u8, 86'u8, 126'u8}
+  let r = raw - 27'u32
+  r <= 255'u32 and r.uint8 in {0'u8, 21'u8, 22'u8, 26'u8, 31'u8, 32'u8, 33'u8, 51'u8, 52'u8, 59'u8, 99'u8}
 
 type
   NifcPragma* = enum
@@ -129,16 +133,17 @@ type
     VarargsP = (123, "varargs")  ## `varargs` proc annotation
     WasP = (124, "was")
     SelectanyP = (125, "selectany")
-    AlignP = (127, "align")
-    BitsP = (128, "bits")
-    VectorP = (129, "vector")
-    NodeclP = (131, "nodecl")  ## `nodecl` annotation
-    RaisesP = (144, "raises")  ## proc annotation
-    ErrsP = (145, "errs")  ## proc annotation
-    StaticP = (146, "static")  ## `static` type or annotation
+    AlignP = (128, "align")
+    BitsP = (129, "bits")
+    VectorP = (130, "vector")
+    NodeclP = (132, "nodecl")  ## `nodecl` annotation
+    RaisesP = (147, "raises")  ## proc annotation
+    ErrsP = (148, "errs")  ## proc annotation
+    StaticP = (149, "static")  ## `static` type or annotation
 
 proc rawTagIsNifcPragma*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {120'u8, 121'u8, 122'u8, 123'u8, 124'u8, 125'u8, 127'u8, 128'u8, 129'u8, 131'u8, 144'u8, 145'u8, 146'u8}
+  let r = raw - 120'u32
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 8'u8, 9'u8, 10'u8, 12'u8, 27'u8, 28'u8, 29'u8}
 
 type
   NifcTypeQualifier* = enum
@@ -165,5 +170,6 @@ type
     LabY = (87, "lab")  ## label, target of a `jmp` instruction
 
 proc rawTagIsNifcSym*(raw: uint32): bool {.inline.} =
-  raw <= 255'u32 and raw.uint8 in {50'u8, 51'u8, 52'u8, 53'u8, 54'u8, 59'u8, 60'u8, 61'u8, 87'u8}
+  let r = raw - 50'u32
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 2'u8, 3'u8, 4'u8, 9'u8, 10'u8, 11'u8, 37'u8}
 
