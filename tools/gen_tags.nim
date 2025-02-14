@@ -133,6 +133,19 @@ proc writeTagsFile(output: string; data: seq[(string, int)]) =
   for d in data:
     f.writeLine "  " & toNimName(d[0], "TagId") & "* = " & $d[1]
 
+proc extractTagName(s: string): string =
+  var i = 0
+  while i < s.len and s[i] == ' ': inc i
+  if i < s.len and s[i] == '`': inc i
+  if i < s.len and s[i] == '(': inc i
+  if i < s.len and s[i] in IdentStartChars:
+    let start = i
+    while i < s.len and s[i] in IdentChars:
+      inc i
+    result = s.substr(start, i - 1)
+  else:
+    quit "Cannot extract tag name from: " & s
+
 proc genTags(inp: File) =
   var i = -2
   var enumDecls = default EnumImpls
@@ -145,7 +158,7 @@ proc genTags(inp: File) =
     if parts.len == 0: continue
     if parts.len != 5:
       quit "WRONG LINE: " & line
-    let tagName = parts[1].strip()
+    let tagName = extractTagName parts[1]
     if knownTags.containsOrIncl(tagName):
       quit "DUPLICATE TAG: " & tagName
     tags.add (tagName, i)
