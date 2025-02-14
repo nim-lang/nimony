@@ -1442,7 +1442,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     let isMagic = c.addFn(finalFn, cs.fn.n, cs.args)
     addArgsInstConverters(c, m[idx], cs.args)
     takeParRi c, it.n
-    addTypeArgs(m[idx])
+    buildTypeArgs(m[idx])
 
     if m[idx].err:
       # adding args or type args may have errored

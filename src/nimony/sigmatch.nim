@@ -958,7 +958,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     inc f
     m.returnType = f # return type follows the parameters in the token stream
 
-proc addTypeArgs*(m: var Match) =
+proc buildTypeArgs*(m: var Match) =
   # check all type vars have a value:
   if not m.err and m.fn.kind in RoutineKinds:
     for v in typeVars(m.fn.sym):
