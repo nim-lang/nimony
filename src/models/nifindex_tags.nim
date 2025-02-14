@@ -23,16 +23,17 @@ type
     TypeIdx = (70, "type")  ## type declaration
     InlineIdx = (122, "inline")  ## `inline` proc annotation
     BuildIdx = (205, "build")  ## `build` pragma
+    DestroyIdx = (248, "destroy")
+    DupIdx = (249, "dup")
+    CopyIdx = (250, "copy")
+    WasmovedIdx = (251, "wasmoved")
+    SinkhIdx = (252, "sinkh")
+    TraceIdx = (253, "trace")
     IndexIdx = (261, "index")  ## index section
     PublicIdx = (262, "public")  ## public section
     PrivateIdx = (263, "private")  ## private section
-    ClonerIdx = (264, "cloner")  ## cloner hook section
-    TracerIdx = (265, "tracer")  ## tracer hook section
-    DisarmerIdx = (266, "disarmer")  ## disarmer hook section
-    MoverIdx = (267, "mover")  ## mover hook section
-    DtorIdx = (268, "dtor")  ## destructor hook section
 
 proc rawTagIsNifIndex*(raw: uint32): bool {.inline.} =
   let r = raw - 27'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 178'u8, 234'u8, 235'u8, 236'u8, 237'u8, 238'u8, 239'u8, 240'u8, 241'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 178'u8, 221'u8, 222'u8, 223'u8, 224'u8, 225'u8, 226'u8, 234'u8, 235'u8, 236'u8}
 

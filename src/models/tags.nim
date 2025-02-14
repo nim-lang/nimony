@@ -264,12 +264,7 @@ const
     ("defer", 260),
     ("index", 261),
     ("public", 262),
-    ("private", 263),
-    ("cloner", 264),
-    ("tracer", 265),
-    ("disarmer", 266),
-    ("mover", 267),
-    ("dtor", 268)
+    ("private", 263)
   ]
 const
   ErrTagId* = 1
@@ -535,8 +530,3 @@ const
   IndexTagId* = 261
   PublicTagId* = 262
   PrivateTagId* = 263
-  ClonerTagId* = 264
-  TracerTagId* = 265
-  DisarmerTagId* = 266
-  MoverTagId* = 267
-  DtorTagId* = 268

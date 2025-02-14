@@ -314,6 +314,19 @@ proc rawTagIsNimonySym*(raw: uint32): bool {.inline.} =
   raw >= 50'u32 and raw <= 73'u32
 
 type
+  HookKind* = enum
+    NoHook
+    DestroyH = (248, "destroy")
+    DupH = (249, "dup")
+    CopyH = (250, "copy")
+    WasmovedH = (251, "wasmoved")
+    SinkhH = (252, "sinkh")
+    TraceH = (253, "trace")
+
+proc rawTagIsHookKind*(raw: uint32): bool {.inline.} =
+  raw >= 248'u32 and raw <= 253'u32
+
+type
   ControlFlowKind* = enum
     NoControlFlow
     IteF = (152, "ite")  ## if-then-else
