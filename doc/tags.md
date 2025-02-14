@@ -235,15 +235,15 @@
 | `(do (params...)+ T X)` | X, L | `do` expression |
 | `(arrat X X)` | X | |
 | `(tupat X X)` | X | |
-| `(plusset X X)` | X | |
-| `(minusset X X)` | X | |
-| `(mulset X X)` | X | |
-| `(xorset X X)` | X | |
-| `(eqset X X)` | X | |
-| `(leset X X)` | X | |
-| `(ltset X X)` | X | |
-| `(inset X X)` | X | |
-| `(card X)` | X | |
+| `(plusset T X X)` | X | |
+| `(minusset T X X)` | X | |
+| `(mulset T X X)` | X | |
+| `(xorset T X X)` | X | |
+| `(eqset T X X)` | X | |
+| `(leset T X X)` | X | |
+| `(ltset T X X)` | X | |
+| `(inset T X X)` | X | |
+| `(card T X)` | X | |
 | `(emove X)` | X | |
 | `(destroy X)` | X | |
 | `(dup X)` | X | |
