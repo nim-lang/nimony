@@ -4,7 +4,35 @@
 type
   NifIndex* = enum
     NoIndexTag
+    KvIdx = (27, "kv")  ## key-value pair
+    GvarIdx = (50, "gvar")  ## global variable declaration
+    TvarIdx = (51, "tvar")  ## thread local variable declaration
+    VarIdx = (52, "var")  ## variable declaration
+    ConstIdx = (54, "const")  ## const variable declaration
+    GletIdx = (56, "glet")  ## global let variable declaration
+    TletIdx = (57, "tlet")  ## thread local let variable declaration
+    LetIdx = (58, "let")  ## let variable declaration
+    CursorIdx = (59, "cursor")  ## cursor variable declaration
+    ProcIdx = (63, "proc")  ## proc declaration
+    FuncIdx = (64, "func")  ## function declaration
+    IteratorIdx = (65, "iterator")  ## iterator declaration
+    ConverterIdx = (66, "converter")  ## converter declaration
+    MethodIdx = (67, "method")  ## method declaration
+    MacroIdx = (68, "macro")  ## macro declaration
+    TemplateIdx = (69, "template")  ## template declaration
+    TypeIdx = (70, "type")  ## type declaration
+    InlineIdx = (122, "inline")  ## `inline` proc annotation
+    BuildIdx = (205, "build")  ## `build` pragma
+    IndexIdx = (261, "index")  ## index section
+    PublicIdx = (262, "public")  ## public section
+    PrivateIdx = (263, "private")  ## private section
+    ClonerIdx = (264, "cloner")  ## cloner hook section
+    TracerIdx = (265, "tracer")  ## tracer hook section
+    DisarmerIdx = (266, "disarmer")  ## disarmer hook section
+    MoverIdx = (267, "mover")  ## mover hook section
+    DtorIdx = (268, "dtor")  ## destructor hook section
 
 proc rawTagIsNifIndex*(raw: uint32): bool {.inline.} =
-  raw >= -1'u32 and raw <= -1'u32
+  let r = raw - 27'u32
+  r <= 255'u32 and r.uint8 in {0'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 178'u8, 234'u8, 235'u8, 236'u8, 237'u8, 238'u8, 239'u8, 240'u8, 241'u8}
 
