@@ -4,16 +4,16 @@
 type
   CallConv* = enum
     NoCallConv
-    Cdecl = (113, "cdecl")  ## `cdecl` calling convention
-    Stdcall = (114, "stdcall")  ## `stdcall` calling convention
-    Safecall = (115, "safecall")  ## `safecall` calling convention
-    Syscall = (116, "syscall")  ## `syscall` calling convention
-    Fastcall = (117, "fastcall")  ## `fastcall` calling convention
-    Thiscall = (118, "thiscall")  ## `thiscall` calling convention
-    Noconv = (119, "noconv")  ## no explicit calling convention
-    Member = (120, "member")  ## `member` calling convention
-    Nimcall = (121, "nimcall")  ## `nimcall` calling convention
+    Cdecl = (111, "cdecl")  ## `cdecl` calling convention
+    Stdcall = (112, "stdcall")  ## `stdcall` calling convention
+    Safecall = (113, "safecall")  ## `safecall` calling convention
+    Syscall = (114, "syscall")  ## `syscall` calling convention
+    Fastcall = (115, "fastcall")  ## `fastcall` calling convention
+    Thiscall = (116, "thiscall")  ## `thiscall` calling convention
+    Noconv = (117, "noconv")  ## no explicit calling convention
+    Member = (118, "member")  ## `member` calling convention
+    Nimcall = (119, "nimcall")  ## `nimcall` calling convention
 
 proc rawTagIsCallConv*(raw: uint32): bool {.inline.} =
-  raw >= 113'u32 and raw <= 121'u32
+  raw >= 111'u32 and raw <= 119'u32
 

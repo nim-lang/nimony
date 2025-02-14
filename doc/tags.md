@@ -21,10 +21,8 @@
 | sizeof               | C, X | `sizeof` operation |
 | alignof              | C, X | `alignof` operation |
 | offsetof             | C, X | `offsetof` operation |
-| oconstr              | C | object constructor |
-| obj                  | X, L | object constructor |
-| aconstr              | C | array constructor |
-| arr                  | X | array constructor |
+| oconstr              | C, X, L | object constructor |
+| aconstr              | C, X | array constructor |
 | bracket              | X, L | untyped array constructor |
 | curly                | X, L | untyped set constructor |
 | curlyat              | X, L | curly expression `a{i}` |

@@ -21,7 +21,7 @@
        (i -1) .))
      (rangetype
       (i -1) +0 +0)) 5
-    (arr ~5
+    (aconstr ~5
      (array 7
       (tuple
        (fld :Field0.1.tfo6zftzj1 . .
