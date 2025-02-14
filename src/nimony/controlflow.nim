@@ -633,7 +633,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trReturn c, n
   of ResultS:
     trResult c, n
-  of VarS, LetS, CursorS, ConstS:
+  of VarS, LetS, CursorS, ConstS, GvarS, TvarS, GletS, TletS:
     trLocal c, n
   of BlockS:
     trBlock c, n, default(Target)

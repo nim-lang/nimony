@@ -49,12 +49,14 @@
 | `(cmd X X*)`             | NimonyStmt, NimonyExpr, NiflerKind | command operation |
 | `(range X X)`          | NifcOther, NimonyOther | `(range a b)` construct |
 | `(ranges (range ...)*)` | NifcOther, NimonyOther, NiflerKind | |
-| `(gvar D P T X)` | NifcStmt, NifcSym | global variable declaration |
-| `(tvar D P T X)` | NifcStmt, NifcSym | thread local variable declaration |
+| `(gvar D E P T X)`; `(gvar D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym | global variable declaration |
+| `(tvar D E P T X)`; `(tvar D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym | thread local variable declaration |
 | `(var D E P T X)`; `(var D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind | variable declaration |
 | `(param D E P T X)`; `(param D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | parameter declaration |
 | `(const D E P T X)`; `(const D P T)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind | const variable declaration |
 | `(result D E P T X)` | NimonySym, NimonyStmt | result variable declaration |
+| `(glet D E P T X)` | NimonyStmt, NimonySym | global let variable declaration |
+| `(tlet D E P T X)` | NimonyStmt, NimonySym | thread local let variable declaration |
 | `(let D E P T X)` | NimonySym, NimonyStmt, NiflerKind | let variable declaration |
 | `(cursor D E P T X)` | NimonySym, NimonyStmt | cursor variable declaration |
 | `(typevar D E P T X)` | NimonySym, NifcOther, NimonyOther, NiflerKind | type variable declaration |
