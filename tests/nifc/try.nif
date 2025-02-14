@@ -1,5 +1,5 @@
 (.nif24)
-(stmts
+0,1,test1.nim(stmts
   (incl "<assert.h>")
   (incl "<stdio.h>")
 

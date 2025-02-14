@@ -1,10 +1,10 @@
 (.nif24)
 (index
 (public)
-(private
- (kv MyObject.ptr.flexarray +975)
- (kv MyObject.ptr.object +699)
- (kv MyObject.my.sequence +171)
+(private 0,1,test1.nim
+ (kv MyObject.ptr.flexarray +988) 0,1,test1.nim
+ (kv MyObject.ptr.object +699) 0,1,test1.nim
+ (kv MyObject.my.sequence +171) 0,1,test1.nim
  (kv MyObject.sequence.base +127))
 (build)
 

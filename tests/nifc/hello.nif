@@ -1,5 +1,5 @@
 (.nif24)
-(stmts
+0,1,test1.nim(stmts
   (incl "<stdio.h>")
   (incl "<assert.h>")
   (type 1,1,hello.nim :MyObject.c . (object . ))

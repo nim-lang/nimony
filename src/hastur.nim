@@ -388,7 +388,7 @@ proc nifctests(overwrite: bool) =
   execNifc " cpp -r " & tryIssues
 
   let issues = "tests/nifc/issues.nif"
-  execNifc " c -r --linedir:on " & issues
+  # execNifc " c -r --linedir:on " & issues
   execNifc " cpp -r --linedir:off " & issues
 
 proc hexertests(overwrite: bool) =

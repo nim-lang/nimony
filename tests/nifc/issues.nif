@@ -1,5 +1,5 @@
 (.nif24)
-(stmts
+0,1,test1.nim(stmts
   (incl "<stdio.h>")
   (incl "<assert.h>")
   (type :MyProc.e . (proctype . (params (param :x.0 . (ptr MyObject3.m)) (param :y.0 . (ptr MyObject4.m))) MyObject2.m . ))

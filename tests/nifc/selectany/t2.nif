@@ -1,5 +1,5 @@
 (.nif24)
-(stmts
+0,1,test2.nim(stmts
   (incl "<stdio.h>")
   (proc :genericProc.c . (void) (pragmas (selectany)) (stmts
     (call printf.c "hello %s\0A" "file t2")

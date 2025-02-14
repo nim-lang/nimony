@@ -1,5 +1,5 @@
 (.nif24)
-(stmts
+0,1,test1.nim(stmts
   (incl "<stdio.h>")
 
   (proc :genericProc.c . (void) (pragmas (selectany)) (stmts

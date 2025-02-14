@@ -148,7 +148,7 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
       let curLine = line+t.pos.line
       let curCol = col+t.pos.col
       if not hasId(pool.files, file):
-        bug "invalid file name in the line info"
+        bug "no file name in the line info"
       currentInfo = pack(pool.man, file, curLine, curCol)
   else:
     # absolute file position:
