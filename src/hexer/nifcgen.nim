@@ -1210,7 +1210,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
         e.loop c:
           traverseStmt e, c, mode
       e.closeMangleScope()
-    of VarS, LetS, CursorS, ResultS:
+    of VarS, LetS, CursorS, ResultS, GvarS, TvarS, GletS, TletS:
       traverseLocal e, c, (if e.nestedIn[^1][0] == StmtsS and mode in {TraverseTopLevel, TraverseSig}: "gvar" else: "var"), mode
     of ConstS:
       traverseLocal e, c, "const", mode
