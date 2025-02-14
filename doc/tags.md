@@ -1,260 +1,260 @@
 | Tag                    | Enums                       |   Description |
 |------------------------|-----------------------------|---------------|
-| `(err ...)`            | X, TN, L                    | indicates an error |
-| `(suf LIT STR)`        | C, X, L                     | literal with suffix annotation |
-| `(at X X)`             | C, X, TN, L | array indexing operation |
-| `(deref X)`; `(deref X (cppref)?)`            | C, X, L | pointer deref operation |
-| `(dot X Y)`; `(dot X Y INTLIT)` | C, X, L | object field selection |
-| `(pat X X)`            | C, X | pointer indexing operation |
-| `(par X)`              | C, X, L | syntactic parenthesis |
-| `(addr X)`; `(addr X (cppref)?)`  | C, X, L | address of operation |
-| `(nil T?)`             | C, X, L | nil pointer value |
-| `(inf T?)`             | C, X | positive infinity floating point value |
-| `(neginf T?)`          | C, X | negative infinity floating point value |
-| `(nan T?)`             | C, X | NaN floating point value |
-| `(false)`              | C, X | boolean `false` value |
-| `(true)`               | C, X | boolean `true` value |
-| `(and X X)`            | C, X, TN | boolean `and` operation |
-| `(or X X)`             | C, X, TN | boolean `or` operation |
-| `(not X)`              | C, X, TN | boolean `not` operation |
-| `(neg X)`              | C, X | negation operation |
-| `(sizeof T)`           | C, X | `sizeof` operation |
-| `(alignof T)`          | C, X | `alignof` operation |
-| `(offsetof T Y)`       | C, X | `offsetof` operation |
-| `(oconstr T (kv Y X)*)`; `(oconstr T (oconstr...)? (kv Y X*))` | C, X, L | object constructor |
-| `(aconstr T X*)`       | C, X | array constructor |
-| `(bracket X*)`         | X, L | untyped array constructor |
-| `(curly X*)`           | X, L | untyped set constructor |
-| `(curlyat X X)`        | X, L | curly expression `a{i}` |
-| `(kv Y X)`             | SU, L | key-value pair |
-| `(vv X X)`             | SUN, L | value-value pair (used for explicitly named arguments in function calls) | 
-| `(add T X X)`          | C, X | |
-| `(sub T X X)`          | C, X | |
-| `(mul T X X)`          | C, X | |
-| `(div T X X)`          | C, X | |
-| `(mod T X X)`          | C, X | |
-| `(shr T X X)`          | C, X | |
-| `(shl T X X)`          | C, X | |
-| `(bitand T X X)`       | C, X | |
-| `(bitor T X X)`        | C, X | |
-| `(bitxor T X X)`       | C, X | |
-| `(bitnot T X)`         | C, X | |
-| `(eq T X X)`           | C, X | |
-| `(neq T X X)`          | C, X | |
-| `(le T X X)`           | C, X | |
-| `(lt T X X)`           | C, X | |
-| `(cast T X)`           | C, X, L | `cast` operation |
-| `(conv T X)`           | C, X | type conversion |
-| `(call X X*)`          | C, X, SC, SN, L | call operation |
-| `(cmd X X*)`             | SN, X, L | command operation |
-| `(range X X)`          | SU | `(range a b)` construct |
-| `(ranges (range ...)*)` | SU, L | |
-| `(gvar D P T X)` | SC, Z | global variable declaration |
-| `(tvar D P T X)` | SC, Z | thread local variable declaration |
-| `(var D E P T X)`; `(var D P T X)` | SC, SN, Y, Z, L | variable declaration |
-| `(param D E P T X)`; `(param D P T)` | SU, Y, Z, L | parameter declaration |
-| `(const D E P T X)`; `(const D P T)` | SC, SN, Y, Z, L | const variable declaration |
-| `(result D E P T X)` | Y, SN | result variable declaration |
-| `(let D E P T X)` | Y, SN, L | let variable declaration |
-| `(cursor D E P T X)` | Y, SN | cursor variable declaration |
-| `(typevar D E P T X)` | Y, SU, L | type variable declaration |
-| `(efld D E P T X)`; `(efld D X)` | Y, Z, SU, L | enum field declaration |
-| `(fld D E P T X)`; `(fld D P T)` | SU, Y, Z, L | field declaration |
-| `(proc D ...)` | SC, SN, Y, Z, L | proc declaration |
-| `(func D ...)` | SN, Y, L | function declaration |
-| `(iterator D ...)` | SN, Y, TN, L | iterator declaration |
-| `(converter D ...)` | SN, Y, L | converter declaration |
-| `(method D ...)` | SN, Y, L | method declaration |
-| `(macro D ...)` | SN, Y, L | macro declaration |
-| `(template D ...)` | SN, Y, L | template declaration |
-| `(type D ...)` | SC, SN, Y, L | type declaration |
-| `(block .D X)` | SN, Y, L | block declaration |
-| `(module)` | Y | module declaration |
-| `(cchoice X X*)` | X, Y | closed choice |
-| `(ochoice X X*)`| X | open choice |
-| `(emit X*)` | SC, SN, PN | emit statement |
-| `(asgn X X)` | SC, SN, L | assignment statement |
-| `(scope S*)` | SC, SN | explicit scope annotation, like `stmts` |
-| `(if (elif X X)+ (else X)?)` | SC, SN, L | if statement header |
-| `(when (elif X X)+ (else X)?)` | SN, L | when statement header |
-| `(elif X X)` | SU, L | pair of (condition, action) |
-| `(else X)` | SU, L | `else` action |
-| `(typevars (typevar ...)*)` | SUN, L | type variable/generic parameters |
-| `(break .Y)`; `(break)` | SC, SN, L | `break` statement |
-| `(continue)` | SN, L | `continue` statement |
-| `(for X ... S)` | SN, L | for statement |
-| `(while X S)` | SC, SN, L| `while` statement |
-| `(case X (of (ranges...))+ (else X)?)` | SC, SN, L | `case` statement |
-| `(of (ranges ...))` | SU, L | `of` branch within a `case` statement |
-| `(lab D)` | SC, Z | label, target of a `jmp` instruction |
-| `(jmp Y)` | SC | jump/goto instruction |
-| `(ret .X)` | SC, SN, L | `return` instruction |
-| `(yld .X)` | SN, L | yield statement |
-| `(stmts S*)` | SC, SN, L | list of statements |
-| `(params (param...)*)` | TC, TN, L | list of proc parameters, also used as a "proc type" |
-| `(union (fld ...)*)` | TC | union declaration |
-| `(object .T (fld ...)*)` | TC, TN, L | object type declaration |
-| `(enum (efld...)*)` | TC, TN, L | enum type declaration |
-| `(proctype . (params...) T P)` | TC, TN, L | proc type declaration (soon obsolete, use params instead) |
-| `(atomic)` | TQC | `atomic` type qualifier for NIFC |
-| `(ro)` | TQC | `readonly` (= `const`) type qualifier for NIFC |
-| `(restrict)` | TQC | type qualifier for NIFC |
-| `(cppref)` | TQC | type qualifier for NIFC that provides a C++ reference |
-| `(i INTLIT)` | TC, TN | `int` builtin type |
-| `(u INTLIT)` | TC, TN | `uint` builtin type |
-| `(f INTLIT)` | TC, TN | `float` builtin type |
-| `(c INTLIT)` | TC, TN | `char` builtin type |
-| `(bool)` | TC, TN | `bool` builtin type |
-| `(void)` | TC, TN | `void` return type |
-| `(ptr T)` | TC, TN, L | `ptr` type contructor |
-| `(array T X)` | TC, TN | `array` type constructor |
-| `(flexarray T)` | TC | `flexarray` type constructor |
-| `(aptr T TQC*)` | TC | "pointer to array of" type constructor |
-| `(cdecl)` | CC | `cdecl` calling convention |
-| `(stdcall)` | CC | `stdcall` calling convention |
-| `(safecall)` | CC | `safecall` calling convention |
-| `(syscall)` | CC | `syscall` calling convention |
-| `(fastcall)` | CC | `fastcall` calling convention |
-| `(thiscall)` | CC | `thiscall` calling convention |
-| `(noconv)` | CC | no explicit calling convention |
-| `(member)`  | CC | `member` calling convention |
-| `(nimcall)` | CC | `nimcall` calling convention |
-| `(inline)` | PP | `inline` proc annotation |
-| `(noinline)` | PP | `noinline` proc annotation |
-| `(attr STR)` | PC | general attribute annoation |
-| `(varargs)` | PP, TN | `varargs` proc annotation |
-| `(was STR)` | PC | |
-| `(selectany)` | PP | |
-| `(pragmas (pragma ...)*)` | SU, SN, L | begin of pragma section |
-| `(pragmax X (pragmas ...))` | X, L | pragma expressions |
-| `(align X)` | PP | |
-| `(bits X)`| PP | |
-| `(vector)` | PC | |
-| `(imp S)` | SC | import declaration |
-| `(nodecl)` | P | `nodecl` annotation |
-| `(incl X X)`; `(incl STR)` | SC, SN | `#include` statement or `incl` set operation |
-| `(excl X X)` | SN | `excl` set operation |
-| `(include X+)` | SN, L | `include` statement |
-| `(import X+)` | SN, L | `import` statement |
-| `(importas X X)` | SN, L | `import as` statement |
-| `(from X X)` | SN, L | `from` statement |
-| `(importexcept X+)` | SN, L | `importexcept` statement |
-| `(export X+)` | SN, L | `export` statement |
-| `(exportexcept X+)` | SN, L | `exportexcept` statement |
-| `(comment STR)` | SN, L | `comment` statement |
-| `(discard X)` | SC, SN, L | `discard` statement |
-| `(try X (except .X X)* (fin S)?); (try S S S)` | SC, SN, L | `try` statement |
-| `(raise X)` | SC, SN, L | `raise` statement |
-| `(onerr S X+)` | SC | error handling statement |
-| `(raises)` | PP | proc annotation |
-| `(errs)` | PPC | proc annotation |
-| `(static T)`; `(static)` | PC, TN, L | `static` type or annotation |
-| `(ite X S S)` | G | if-then-else |
-| `(graph Y)` | G | disjoint subgraph annotation |
-| `(forbind ...)` | G | bindings for a `for` loop but the loop itself is mapped to gotos |
-| `(kill Y)` | G | some.var is about to disappear (scope exit) |
-| `(unpackflat ...)` | SUN, L | unpack into flat variable list |
-| `(unpacktup ...)` | SUN, L | unpack tuple |
-| `(unpackdecl S+)` | SN, L | unpack var/let/const declaration |
-| `(except .Y X)` | SUN, L | except subsection |
-| `(fin S)` | SUN, L | finally subsection |
-| `(refobj .T (fld ...)*)` | TN, L | `ref object` type |
-| `(ptrobj .T (fld ...)*)` | TN, L | `ptr object` type |
-| `(tuple (fld ...)* <or> T*)` | TN, L | `tuple` type |
-| `(onum (efld...)*)` | TN | enum with holes type |
-| `(ref T)` | TN, L | `ref` type |
-| `(mut T)` | TN, L | `mut` type |
-| `(out T)` | TN, L | `out` type |
-| `(lent T)` | TN | `lent` type |
-| `(sink T)` | TN | `sink` type |
-| `(nilt)` | TN | `nilt` type |
-| `(concept S*)` | TN, L | `concept` type |
-| `(distinct T)` | TN, L | `distinct` type |
-| `(itertype . (params...) T)` | TN, L | `itertype` type |
-| `(rangetype T X X)` | TN | `rangetype` type |
-| `(uarray T)` | TN | `uarray` type |
-| `(openarray T)` | TN | `openarray` type |
-| `(set T)` | TN | `set` type |
-| `(auto)` | TN | `auto` type |
-| `(symkind UNUSED)` | TN | `symkind` type |
-| `(typekind UNUSED)` | TN | `typekind` type |
-| `(typedesc T)` | TN | `typedesc` type |
-| `(untyped)` | TN | `untyped` type |
-| `(typed)` | TN | `typed` type |
-| `(cstring)` | TN | `cstring` type |
-| `(pointer)` | TN | `pointer` type |
-| `(ordinal)` | TN | `ordinal` type |
-| `(magic STR)` | PN | `magic` pragma |
-| `(importc X)` | PN | `importc` pragma |
-| `(importcpp X)` | PN | `importcpp` pragma |
-| `(exportc X)` | PN | `exportc` pragma |
-| `(header X)` | PN | `header` pragma |
-| `(threadvar)` | PN | `threadvar` pragma |
-| `(global)` | PN | `global` pragma |
-| `(discardable)` | PN | `discardable` pragma |
-| `(noreturn)` | PN | `noreturn` pragma |
-| `(borrow)` | PN | `borrow` pragma |
-| `(noSideEffect)` | PN | `noSideEffect` pragma |
-| `(nodestroy)` | PN | `nodestroy` pragma |
-| `(plugin X)` | PN | `plugin` pragma |
-| `(bycopy)` | PN | `bycopy` pragma |
-| `(byref)` | PN | `byref` pragma |
-| `(noinit)` | PN | `noinit` pragma |
-| `(requires X)` | PN | `requires` pragma |
-| `(ensures X)` | PN | `ensures` pragma |
-| `(build X)` | PN | `build` pragma |
-| `(string)` | PN | `string` pragma |
-| `(quoted X+)` | X, L | name in backticks |
-| `(hderef X)` | X | hidden pointer deref operation |
-| `(ddot X)` | X | deref dot |
-| `(haddr X)` | X | hidden address of operation |
-| `(newobj T (kv Y X)*)` | X | new object constructor |
-| `(tup X+)` | X, L | tuple constructor |
-| `(setconstr X*)` | X | set constructor |
-| `(tabconstr X*)` | X, L | table constructor |
-| `(ashr T X X)` | X | |
-| `(oconv T X)` | X | object conversion |
-| `(hconv T X)` | X | hidden basic type conversion |
-| `(dconv T X)` | X | conversion between `distinct` types |
-| `(callstrlit X+)` | X, L | |
-| `(infix X X)` | X, L | |
-| `(prefix X)` | X, L | |
-| `(hcall X*)` | X | hidden converter call |
-| `(compiles X)` | X | |
-| `(declared X)` | X | |
-| `(defined X)` | X | |
-| `(high X)` | X | |
-| `(low X)` | X | |
-| `(typeof X)` | X, L | |
-| `(unpack)` | X | |
-| `(enumtostr X)` | X | |
-| `(ismainmodule)` | X | |
-| `(defaultobj T)` | X | |
-| `(defaulttup T)` | X | |
-| `(expr S+ X)` | X, L | |
-| `(do (params...)+ T X)` | X, L | `do` expression |
-| `(arrat X X)` | X | |
-| `(tupat X X)` | X | |
-| `(plusset T X X)` | X | |
-| `(minusset T X X)` | X | |
-| `(mulset T X X)` | X | |
-| `(xorset T X X)` | X | |
-| `(eqset T X X)` | X | |
-| `(leset T X X)` | X | |
-| `(ltset T X X)` | X | |
-| `(inset T X X)` | X | |
-| `(card T X)` | X | |
-| `(emove X)` | X | |
-| `(destroy X)` | X | |
-| `(dup X)` | X | |
-| `(copy X X)` | X | |
-| `(wasmoved X)` | X | |
-| `(sinkh X X)` | X | |
-| `(trace X X)` | X | |
-| `(errv)` | C | error flag for `NIFC` |
-| `(staticstmt S)` | SN, L | `static` statement |
-| `(bind Y+)` | SN, L | `bind` statement |
-| `(mixin Y+)` | SN, L | `mixin` statement |
-| `(using (params...)+)` | SN, L | `using` statement |
-| `(asm X+)` | SN, L | `asm` statement |
-| `(defer X)` | SN, L | `defer` statement |
+| `(err ...)`            | NimonyExpr, NimonyType, NiflerKind                    | indicates an error |
+| `(suf LIT STR)`        | NifcExpr, NimonyExpr, NiflerKind                     | literal with suffix annotation |
+| `(at X X)`             | NifcExpr, NimonyExpr, NimonyType, NiflerKind | array indexing operation |
+| `(deref X)`; `(deref X (cppref)?)`            | NifcExpr, NimonyExpr, NiflerKind | pointer deref operation |
+| `(dot X Y)`; `(dot X Y INTLIT)` | NifcExpr, NimonyExpr, NiflerKind | object field selection |
+| `(pat X X)`            | NifcExpr, NimonyExpr | pointer indexing operation |
+| `(par X)`              | NifcExpr, NimonyExpr, NiflerKind | syntactic parenthesis |
+| `(addr X)`; `(addr X (cppref)?)`  | NifcExpr, NimonyExpr, NiflerKind | address of operation |
+| `(nil T?)`             | NifcExpr, NimonyExpr, NiflerKind | nil pointer value |
+| `(inf T?)`             | NifcExpr, NimonyExpr | positive infinity floating point value |
+| `(neginf T?)`          | NifcExpr, NimonyExpr | negative infinity floating point value |
+| `(nan T?)`             | NifcExpr, NimonyExpr | NaN floating point value |
+| `(false)`              | NifcExpr, NimonyExpr | boolean `false` value |
+| `(true)`               | NifcExpr, NimonyExpr | boolean `true` value |
+| `(and X X)`            | NifcExpr, NimonyExpr, NimonyType | boolean `and` operation |
+| `(or X X)`             | NifcExpr, NimonyExpr, NimonyType | boolean `or` operation |
+| `(not X)`              | NifcExpr, NimonyExpr, NimonyType | boolean `not` operation |
+| `(neg X)`              | NifcExpr, NimonyExpr | negation operation |
+| `(sizeof T)`           | NifcExpr, NimonyExpr | `sizeof` operation |
+| `(alignof T)`          | NifcExpr, NimonyExpr | `alignof` operation |
+| `(offsetof T Y)`       | NifcExpr, NimonyExpr | `offsetof` operation |
+| `(oconstr T (kv Y X)*)`; `(oconstr T (oconstr...)? (kv Y X*))` | NifcExpr, NimonyExpr, NiflerKind | object constructor |
+| `(aconstr T X*)`       | NifcExpr, NimonyExpr | array constructor |
+| `(bracket X*)`         | NimonyExpr, NiflerKind | untyped array constructor |
+| `(curly X*)`           | NimonyExpr, NiflerKind | untyped set constructor |
+| `(curlyat X X)`        | NimonyExpr, NiflerKind | curly expression `a{i}` |
+| `(kv Y X)`             | NimonyOther, NifcOther, NiflerKind | key-value pair |
+| `(vv X X)`             | NimonyOther, NiflerKind | value-value pair (used for explicitly named arguments in function calls) | 
+| `(add T X X)`          | NifcExpr, NimonyExpr | |
+| `(sub T X X)`          | NifcExpr, NimonyExpr | |
+| `(mul T X X)`          | NifcExpr, NimonyExpr | |
+| `(div T X X)`          | NifcExpr, NimonyExpr | |
+| `(mod T X X)`          | NifcExpr, NimonyExpr | |
+| `(shr T X X)`          | NifcExpr, NimonyExpr | |
+| `(shl T X X)`          | NifcExpr, NimonyExpr | |
+| `(bitand T X X)`       | NifcExpr, NimonyExpr | |
+| `(bitor T X X)`        | NifcExpr, NimonyExpr | |
+| `(bitxor T X X)`       | NifcExpr, NimonyExpr | |
+| `(bitnot T X)`         | NifcExpr, NimonyExpr | |
+| `(eq T X X)`           | NifcExpr, NimonyExpr | |
+| `(neq T X X)`          | NifcExpr, NimonyExpr | |
+| `(le T X X)`           | NifcExpr, NimonyExpr | |
+| `(lt T X X)`           | NifcExpr, NimonyExpr | |
+| `(cast T X)`           | NifcExpr, NimonyExpr, NiflerKind | `cast` operation |
+| `(conv T X)`           | NifcExpr, NimonyExpr | type conversion |
+| `(call X X*)`          | NifcExpr, NimonyExpr, NifcStmt, NimonyStmt, NiflerKind | call operation |
+| `(cmd X X*)`             | NimonyStmt, NimonyExpr, NiflerKind | command operation |
+| `(range X X)`          | NifcOther, NimonyOther | `(range a b)` construct |
+| `(ranges (range ...)*)` | NifcOther, NimonyOther, NiflerKind | |
+| `(gvar D P T X)` | NifcStmt, NifcSym | global variable declaration |
+| `(tvar D P T X)` | NifcStmt, NifcSym | thread local variable declaration |
+| `(var D E P T X)`; `(var D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind | variable declaration |
+| `(param D E P T X)`; `(param D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | parameter declaration |
+| `(const D E P T X)`; `(const D P T)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind | const variable declaration |
+| `(result D E P T X)` | NimonySym, NimonyStmt | result variable declaration |
+| `(let D E P T X)` | NimonySym, NimonyStmt, NiflerKind | let variable declaration |
+| `(cursor D E P T X)` | NimonySym, NimonyStmt | cursor variable declaration |
+| `(typevar D E P T X)` | NimonySym, NifcOther, NimonyOther, NiflerKind | type variable declaration |
+| `(efld D E P T X)`; `(efld D X)` | NimonySym, NifcSym, NifcOther, NimonyOther, NiflerKind | enum field declaration |
+| `(fld D E P T X)`; `(fld D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | field declaration |
+| `(proc D ...)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind | proc declaration |
+| `(func D ...)` | NimonyStmt, NimonySym, NiflerKind | function declaration |
+| `(iterator D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind | iterator declaration |
+| `(converter D ...)` | NimonyStmt, NimonySym, NiflerKind | converter declaration |
+| `(method D ...)` | NimonyStmt, NimonySym, NiflerKind | method declaration |
+| `(macro D ...)` | NimonyStmt, NimonySym, NiflerKind | macro declaration |
+| `(template D ...)` | NimonyStmt, NimonySym, NiflerKind | template declaration |
+| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NiflerKind | type declaration |
+| `(block .D X)` | NimonyStmt, NimonySym, NiflerKind | block declaration |
+| `(module)` | NimonySym | module declaration |
+| `(cchoice X X*)` | NimonyExpr, NimonySym | closed choice |
+| `(ochoice X X*)`| NimonyExpr | open choice |
+| `(emit X*)` | NifcStmt, NimonyStmt, NimonyPragma | emit statement |
+| `(asgn X X)` | NifcStmt, NimonyStmt, NiflerKind | assignment statement |
+| `(scope S*)` | NifcStmt, NimonyStmt | explicit scope annotation, like `stmts` |
+| `(if (elif X X)+ (else X)?)` | NifcStmt, NimonyStmt, NiflerKind | if statement header |
+| `(when (elif X X)+ (else X)?)` | NimonyStmt, NiflerKind | when statement header |
+| `(elif X X)` | NifcOther, NimonyOther, NiflerKind | pair of (condition, action) |
+| `(else X)` | NifcOther, NimonyOther, NiflerKind | `else` action |
+| `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters |
+| `(break .Y)`; `(break)` | NifcStmt, NimonyStmt, NiflerKind | `break` statement |
+| `(continue)` | NimonyStmt, NiflerKind | `continue` statement |
+| `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
+| `(while X S)` | NifcStmt, NimonyStmt, NiflerKind| `while` statement |
+| `(case X (of (ranges...))+ (else X)?)` | NifcStmt, NimonyStmt, NiflerKind | `case` statement |
+| `(of (ranges ...))` | NifcOther, NimonyOther, NiflerKind | `of` branch within a `case` statement |
+| `(lab D)` | NifcStmt, NifcSym | label, target of a `jmp` instruction |
+| `(jmp Y)` | NifcStmt | jump/goto instruction |
+| `(ret .X)` | NifcStmt, NimonyStmt, NiflerKind | `return` instruction |
+| `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
+| `(stmts S*)` | NifcStmt, NimonyStmt, NiflerKind | list of statements |
+| `(params (param...)*)` | NifcType, NimonyType, NiflerKind | list of proc parameters, also used as a "proc type" |
+| `(union (fld ...)*)` | NifcType | union declaration |
+| `(object .T (fld ...)*)` | NifcType, NimonyType, NiflerKind | object type declaration |
+| `(enum (efld...)*)` | NifcType, NimonyType, NiflerKind | enum type declaration |
+| `(proctype . (params...) T P)` | NifcType, NimonyType, NiflerKind | proc type declaration (soon obsolete, use params instead) |
+| `(atomic)` | NifcTypeQualifier | `atomic` type qualifier for NIFC |
+| `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
+| `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |
+| `(cppref)` | NifcTypeQualifier | type qualifier for NIFC that provides a C++ reference |
+| `(i INTLIT)` | NifcType, NimonyType | `int` builtin type |
+| `(u INTLIT)` | NifcType, NimonyType | `uint` builtin type |
+| `(f INTLIT)` | NifcType, NimonyType | `float` builtin type |
+| `(c INTLIT)` | NifcType, NimonyType | `char` builtin type |
+| `(bool)` | NifcType, NimonyType | `bool` builtin type |
+| `(void)` | NifcType, NimonyType | `void` return type |
+| `(ptr T)` | NifcType, NimonyType, NiflerKind | `ptr` type contructor |
+| `(array T X)` | NifcType, NimonyType | `array` type constructor |
+| `(flexarray T)` | NifcType | `flexarray` type constructor |
+| `(aptr T TQC*)` | NifcType | "pointer to array of" type constructor |
+| `(cdecl)` | CallConv | `cdecl` calling convention |
+| `(stdcall)` | CallConv | `stdcall` calling convention |
+| `(safecall)` | CallConv | `safecall` calling convention |
+| `(syscall)` | CallConv | `syscall` calling convention |
+| `(fastcall)` | CallConv | `fastcall` calling convention |
+| `(thiscall)` | CallConv | `thiscall` calling convention |
+| `(noconv)` | CallConv | no explicit calling convention |
+| `(member)`  | CallConv | `member` calling convention |
+| `(nimcall)` | CallConv | `nimcall` calling convention |
+| `(inline)` | NifcPragma, NimonyPragma | `inline` proc annotation |
+| `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
+| `(attr STR)` | NifcPragma | general attribute annoation |
+| `(varargs)` | NifcPragma, NimonyPragma, NimonyType | `varargs` proc annotation |
+| `(was STR)` | NifcPragma | |
+| `(selectany)` | NifcPragma, NimonyPragma | |
+| `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |
+| `(pragmax X (pragmas ...))` | NimonyExpr, NiflerKind | pragma expressions |
+| `(align X)` | NifcPragma, NimonyPragma | |
+| `(bits X)`| NifcPragma, NimonyPragma | |
+| `(vector)` | NifcPragma | |
+| `(imp S)` | NifcStmt | import declaration |
+| `(nodecl)` | NifcPragma, NimonyPragma | `nodecl` annotation |
+| `(incl X X)`; `(incl STR)` | NifcStmt, NimonyStmt | `#include` statement or `incl` set operation |
+| `(excl X X)` | NimonyStmt | `excl` set operation |
+| `(include X+)` | NimonyStmt, NiflerKind | `include` statement |
+| `(import X+)` | NimonyStmt, NiflerKind | `import` statement |
+| `(importas X X)` | NimonyStmt, NiflerKind | `import as` statement |
+| `(from X X)` | NimonyStmt, NiflerKind | `from` statement |
+| `(importexcept X+)` | NimonyStmt, NiflerKind | `importexcept` statement |
+| `(export X+)` | NimonyStmt, NiflerKind | `export` statement |
+| `(exportexcept X+)` | NimonyStmt, NiflerKind | `exportexcept` statement |
+| `(comment STR)` | NimonyStmt, NiflerKind | `comment` statement |
+| `(discard X)` | NifcStmt, NimonyStmt, NiflerKind | `discard` statement |
+| `(try X (except .X X)* (fin S)?); (try S S S)` | NifcStmt, NimonyStmt, NiflerKind | `try` statement |
+| `(raise X)` | NifcStmt, NimonyStmt, NiflerKind | `raise` statement |
+| `(onerr S X+)` | NifcStmt | error handling statement |
+| `(raises)` | NifcPragma, NimonyPragma | proc annotation |
+| `(errs)` | NifcPragma | proc annotation |
+| `(static T)`; `(static)` | NifcPragma, NimonyType, NiflerKind | `static` type or annotation |
+| `(ite X S S)` | ControlFlowKind | if-then-else |
+| `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |
+| `(forbind ...)` | ControlFlowKind | bindings for a `for` loop but the loop itself is mapped to gotos |
+| `(kill Y)` | ControlFlowKind | some.var is about to disappear (scope exit) |
+| `(unpackflat ...)` | NimonyOther, NiflerKind | unpack into flat variable list |
+| `(unpacktup ...)` | NimonyOther, NiflerKind | unpack tuple |
+| `(unpackdecl S+)` | NimonyStmt, NiflerKind | unpack var/let/const declaration |
+| `(except .Y X)` | NimonyOther, NiflerKind | except subsection |
+| `(fin S)` | NimonyOther, NiflerKind | finally subsection |
+| `(refobj .T (fld ...)*)` | NimonyType, NiflerKind | `ref object` type |
+| `(ptrobj .T (fld ...)*)` | NimonyType, NiflerKind | `ptr object` type |
+| `(tuple (fld ...)* <or> T*)` | NimonyType, NiflerKind | `tuple` type |
+| `(onum (efld...)*)` | NimonyType | enum with holes type |
+| `(ref T)` | NimonyType, NiflerKind | `ref` type |
+| `(mut T)` | NimonyType, NiflerKind | `mut` type |
+| `(out T)` | NimonyType, NiflerKind | `out` type |
+| `(lent T)` | NimonyType | `lent` type |
+| `(sink T)` | NimonyType | `sink` type |
+| `(nilt)` | NimonyType | `nilt` type |
+| `(concept S*)` | NimonyType, NiflerKind | `concept` type |
+| `(distinct T)` | NimonyType, NiflerKind | `distinct` type |
+| `(itertype . (params...) T)` | NimonyType, NiflerKind | `itertype` type |
+| `(rangetype T X X)` | NimonyType | `rangetype` type |
+| `(uarray T)` | NimonyType | `uarray` type |
+| `(openarray T)` | NimonyType | `openarray` type |
+| `(set T)` | NimonyType | `set` type |
+| `(auto)` | NimonyType | `auto` type |
+| `(symkind UNUSED)` | NimonyType | `symkind` type |
+| `(typekind UNUSED)` | NimonyType | `typekind` type |
+| `(typedesc T)` | NimonyType | `typedesc` type |
+| `(untyped)` | NimonyType | `untyped` type |
+| `(typed)` | NimonyType | `typed` type |
+| `(cstring)` | NimonyType | `cstring` type |
+| `(pointer)` | NimonyType | `pointer` type |
+| `(ordinal)` | NimonyType | `ordinal` type |
+| `(magic STR)` | NimonyPragma | `magic` pragma |
+| `(importc X)` | NimonyPragma | `importc` pragma |
+| `(importcpp X)` | NimonyPragma | `importcpp` pragma |
+| `(exportc X)` | NimonyPragma | `exportc` pragma |
+| `(header X)` | NimonyPragma | `header` pragma |
+| `(threadvar)` | NimonyPragma | `threadvar` pragma |
+| `(global)` | NimonyPragma | `global` pragma |
+| `(discardable)` | NimonyPragma | `discardable` pragma |
+| `(noreturn)` | NimonyPragma | `noreturn` pragma |
+| `(borrow)` | NimonyPragma | `borrow` pragma |
+| `(noSideEffect)` | NimonyPragma | `noSideEffect` pragma |
+| `(nodestroy)` | NimonyPragma | `nodestroy` pragma |
+| `(plugin X)` | NimonyPragma | `plugin` pragma |
+| `(bycopy)` | NimonyPragma | `bycopy` pragma |
+| `(byref)` | NimonyPragma | `byref` pragma |
+| `(noinit)` | NimonyPragma | `noinit` pragma |
+| `(requires X)` | NimonyPragma | `requires` pragma |
+| `(ensures X)` | NimonyPragma | `ensures` pragma |
+| `(build X)` | NimonyPragma | `build` pragma |
+| `(string)` | NimonyPragma | `string` pragma |
+| `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
+| `(hderef X)` | NimonyExpr | hidden pointer deref operation |
+| `(ddot X)` | NimonyExpr | deref dot |
+| `(haddr X)` | NimonyExpr | hidden address of operation |
+| `(newobj T (kv Y X)*)` | NimonyExpr | new object constructor |
+| `(tup X+)` | NimonyExpr, NiflerKind | tuple constructor |
+| `(setconstr X*)` | NimonyExpr | set constructor |
+| `(tabconstr X*)` | NimonyExpr, NiflerKind | table constructor |
+| `(ashr T X X)` | NimonyExpr | |
+| `(oconv T X)` | NimonyExpr | object conversion |
+| `(hconv T X)` | NimonyExpr | hidden basic type conversion |
+| `(dconv T X)` | NimonyExpr | conversion between `distinct` types |
+| `(callstrlit X+)` | NimonyExpr, NiflerKind | |
+| `(infix X X)` | NimonyExpr, NiflerKind | |
+| `(prefix X)` | NimonyExpr, NiflerKind | |
+| `(hcall X*)` | NimonyExpr | hidden converter call |
+| `(compiles X)` | NimonyExpr | |
+| `(declared X)` | NimonyExpr | |
+| `(defined X)` | NimonyExpr | |
+| `(high X)` | NimonyExpr | |
+| `(low X)` | NimonyExpr | |
+| `(typeof X)` | NimonyExpr, NiflerKind | |
+| `(unpack)` | NimonyExpr | |
+| `(enumtostr X)` | NimonyExpr | |
+| `(ismainmodule)` | NimonyExpr | |
+| `(defaultobj T)` | NimonyExpr | |
+| `(defaulttup T)` | NimonyExpr | |
+| `(expr S+ X)` | NimonyExpr, NiflerKind | |
+| `(do (params...)+ T X)` | NimonyExpr, NiflerKind | `do` expression |
+| `(arrat X X)` | NimonyExpr | |
+| `(tupat X X)` | NimonyExpr | |
+| `(plusset T X X)` | NimonyExpr | |
+| `(minusset T X X)` | NimonyExpr | |
+| `(mulset T X X)` | NimonyExpr | |
+| `(xorset T X X)` | NimonyExpr | |
+| `(eqset T X X)` | NimonyExpr | |
+| `(leset T X X)` | NimonyExpr | |
+| `(ltset T X X)` | NimonyExpr | |
+| `(inset T X X)` | NimonyExpr | |
+| `(card T X)` | NimonyExpr | |
+| `(emove X)` | NimonyExpr | |
+| `(destroy X)` | NimonyExpr | |
+| `(dup X)` | NimonyExpr | |
+| `(copy X X)` | NimonyExpr | |
+| `(wasmoved X)` | NimonyExpr | |
+| `(sinkh X X)` | NimonyExpr | |
+| `(trace X X)` | NimonyExpr | |
+| `(errv)` | NifcExpr | error flag for `NIFC` |
+| `(staticstmt S)` | NimonyStmt, NiflerKind | `static` statement |
+| `(bind Y+)` | NimonyStmt, NiflerKind | `bind` statement |
+| `(mixin Y+)` | NimonyStmt, NiflerKind | `mixin` statement |
+| `(using (params...)+)` | NimonyStmt, NiflerKind | `using` statement |
+| `(asm X+)` | NimonyStmt, NiflerKind | `asm` statement |
+| `(defer X)` | NimonyStmt, NiflerKind | `defer` statement |
