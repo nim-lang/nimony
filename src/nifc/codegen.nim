@@ -631,7 +631,6 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
     if n.pragmaKind == NodeclP:
       genNodecl c, n
     else:
-      echo n.kind, " ", n
       error c.m, "expected top level construct but got: ", n
 
 proc traverseCode(c: var GeneratedCode; n: var Cursor) =
