@@ -862,6 +862,7 @@ proc collectDefaultValues(m: var Match; f: Cursor): seq[Item] =
   while f.symKind == ParamY:
     let param = asLocal(f)
     if param.val.kind == DotToken: break
+    m.insertedParam = true
     result.add Item(n: m.context.types.voidType, typ: m.context.types.autoType)
     skip f
 
