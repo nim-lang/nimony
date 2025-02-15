@@ -22,6 +22,6 @@
     (i -1) .)) . . . 37
   (stmts
    (discard .))) 4,7
- (var :foo.0.tseyic8ua1 . . 5 Foo.0.tseyic8ua1 .) ,8
+ (gvar :foo.0.tseyic8ua1 . . 5 Foo.0.tseyic8ua1 .) ,8
  (call bar=.0.tseyic8ua1 foo.0.tseyic8ua1 10 +123) ,9
  (call \5B\5D=.0.tseyic8ua1 foo.0.tseyic8ua1 4 +123 11 +456))

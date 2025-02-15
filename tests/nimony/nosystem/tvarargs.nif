@@ -60,7 +60,7 @@
    (magic 7 "LeI")) . .) 8,17
  (type ~6 :File.0.tvah6culb x . . 2
   (object .)) 4,19
- (var :stdout.0.tvah6culb . . 8 File.0.tvah6culb .) ,21
+ (gvar :stdout.0.tvah6culb . . 8 File.0.tvah6culb .) ,21
  (proc 5 :write.0.tvah6culb . . . 10
   (params 1
    (param :f.0 . . 3
@@ -104,7 +104,7 @@
      (cmd
       (ochoice write.0.tvah6culb write.1.tvah6culb) 6 stdout.0.tvah6culb 14 x.4))) ,2
    (cmd write.0.tvah6culb 6 stdout.0.tvah6culb 14 '\0A'))) 4,36
- (var :someVar.0.tvah6culb . . string.0.sys9azlf 10 "") 2,32
+ (gvar :someVar.0.tvah6culb . . string.0.sys9azlf 10 "") 2,32
  (stmts 2,1
   (stmts
    (cmd write.1.tvah6culb 6

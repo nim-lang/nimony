@@ -11,12 +11,12 @@
     (untyped) .)) . 25
   (pragmas 2
    (magic 7 Defined)) . .) 4,4
- (let :x.0.tdej0g1hh1 . .
+ (glet :x.0.tdej0g1hh1 . .
   (bool) 11
   (false)) 4,5
- (let :y.0.tdej0g1hh1 . .
+ (glet :y.0.tdej0g1hh1 . .
   (bool) 11
   (true)) 4,6
- (let :z.0.tdej0g1hh1 . .
+ (glet :z.0.tdej0g1hh1 . .
   (bool) 15
   (false)))

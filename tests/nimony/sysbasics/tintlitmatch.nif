@@ -31,9 +31,9 @@
   (stmts
    (discard .))) 3,6
  (call ~3 baz.1.tin4pj0od1 1 +123) 4,9
- (var :x.0.tin4pj0od1 . . 3
+ (gvar :x.0.tin4pj0od1 . . 3
   (i +32) .) 4,10
- (var :y.0.tin4pj0od1 . . 3
+ (gvar :y.0.tin4pj0od1 . . 3
   (i -1) .) ,13
  (discard 10
   (eq ~3,~4

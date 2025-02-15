@@ -115,7 +115,7 @@
     (at ~8 MyObject.0.tho8gh7q4 1 T.5.tho8gh7q4 4 Y.5.tho8gh7q4) .)) . . . 2,1
   (stmts
    (discard .))) 4,52
- (var :obj.0.tho8gh7q4 . . 13 MyObject.1.tho8gh7q4 .) 12,53
+ (gvar :obj.0.tho8gh7q4 . . 13 MyObject.1.tho8gh7q4 .) 12,53
  (call 1 =checkHook.1.tho8gh7q4 1 obj.0.tho8gh7q4) 12,53
  (proc :=checkHook.1.tho8gh7q4 . ~12,~4 .
   (at =checkHook.0.tho8gh7q4 8,~17

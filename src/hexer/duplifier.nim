@@ -662,7 +662,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trReturn c, n
       of AsgnS:
         trAsgn c, n
-      of VarS, LetS, ConstS, ResultS, CursorS:
+      of LocalDecls:
         trLocal c, n
       of ProcS, FuncS, ConverterS, MethodS, MacroS:
         trProcDecl c, n

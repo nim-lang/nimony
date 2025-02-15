@@ -40,8 +40,8 @@
    (typevar :T.3.tte5tld8n . . . .)) . 2
   (object . ~13,1
    (fld :x.0.tte5tld8n . . 3 T.3.tte5tld8n .))) 2,19
- (var :myglob.0.tte5tld8n . . 17 MyGeneric.1.tte5tld8n .) 2,20
- (var :other.0.tte5tld8n . . 16 MyGeneric.2.tte5tld8n .) 9,22
+ (gvar :myglob.0.tte5tld8n . . 17 MyGeneric.1.tte5tld8n .) 2,20
+ (gvar :other.0.tte5tld8n . . 16 MyGeneric.2.tte5tld8n .) 9,22
  (asgn ~3
   (dot ~6 myglob.0.tte5tld8n x.1.tte5tld8n +0) 2 +56) 8,23
  (asgn ~3
@@ -112,7 +112,7 @@
   (stmts 1
    (expr
     (conv ~1 T.4.tte5tld8n 1 x.4)))) 4,42
- (let :val.0.tte5tld8n . .
+ (glet :val.0.tte5tld8n . .
   (i -1) 6 +123) ,43
  (discard 30,~3
   (expr 1

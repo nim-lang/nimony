@@ -54,7 +54,7 @@ proc buildSymChoiceForDot(c: var SemContext; identifier: StrId; info: PackedLine
     c.dest.add identToken(identifier, info)
 
 proc isNonOverloadable(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, CursorY, BlockY}
+  t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, CursorY, BlockY, GletY, TletY, GvarY, TvarY}
 
 proc buildSymChoiceForSelfModule(c: var SemContext;
                                  identifier: StrId; info: PackedLineInfo) =

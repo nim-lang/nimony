@@ -46,9 +46,9 @@
      (stmts
       (ret "F"))))
    (ret result.0))) 4,3
- (var :s.0.tsefy5wha . . 10
+ (gvar :s.0.tsefy5wha . . 10
   (set 1 Foo.0.tsefy5wha) .) 7,3
- (var :s1.0.tsefy5wha . . 7
+ (gvar :s1.0.tsefy5wha . . 7
   (set 1 Foo.0.tsefy5wha) .) 2,4
  (asgn ~2 s.0.tsefy5wha 2
   (setconstr 10,~1
@@ -61,11 +61,11 @@
  (discard 11
   (ltset 3,~3
    (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) 4,7
- (let :y.0.tsefy5wha . . 10,~4
+ (glet :y.0.tsefy5wha . . 10,~4
   (set 1 Foo.0.tsefy5wha) 7
   (mulset 3,~4
    (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) 4,8
- (let :z.0.tsefy5wha . . 10,~5
+ (glet :z.0.tsefy5wha . . 10,~5
   (set 1 Foo.0.tsefy5wha) 14 y.0.tsefy5wha) ,9
  (discard 10
   (eqset 4,~6

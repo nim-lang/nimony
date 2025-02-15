@@ -288,3 +288,6 @@ proc skipModifier*(a: Cursor): Cursor =
   result = a
   if result.kind == ParLe and result.typeKind in TypeModifiers:
     inc result
+
+const
+  LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}

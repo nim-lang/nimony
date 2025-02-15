@@ -2872,7 +2872,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   of TypevarY:
     discard semLocalType(c, n, InGenericConstraint)
     wantDot c, n
-  of ParamY, LetY, VarY, ConstY, CursorY, ResultY, FldY:
+  of ParamY, LetY, VarY, ConstY, CursorY, ResultY, FldY, GletY, TletY, GvarY, TvarY:
     let beforeType = c.dest.len
     if n.kind == DotToken:
       # no explicit type given:
@@ -2903,6 +2903,16 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
     assert false, "bug"
   c.addSym delayed
   takeParRi c, n
+  if kind == LetY:
+    if ThreadvarP in crucial.flags:
+      copyKeepLineInfo c.dest[declStart], parLeToken(TletS, NoLineInfo)
+    elif GlobalP in crucial.flags or c.currentScope.kind == TopLevelScope:
+      copyKeepLineInfo c.dest[declStart], parLeToken(GletS, NoLineInfo)
+  elif kind == VarY:
+    if ThreadvarP in crucial.flags:
+      copyKeepLineInfo c.dest[declStart], parLeToken(TvarS, NoLineInfo)
+    elif GlobalP in crucial.flags or c.currentScope.kind == TopLevelScope:
+      copyKeepLineInfo c.dest[declStart], parLeToken(GvarS, NoLineInfo)
   publish c, delayed.s.name, declStart
 
 proc semLocal(c: var SemContext; it: var Item; kind: SymKind) =
@@ -5234,9 +5244,21 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of VarS:
         toplevelGuard c:
           semLocal c, it, VarY
+      of GvarS:
+        toplevelGuard c:
+          semLocal c, it, GvarY
+      of TvarS:
+        toplevelGuard c:
+          semLocal c, it, TvarY
       of LetS:
         toplevelGuard c:
           semLocal c, it, LetY
+      of GletS:
+        toplevelGuard c:
+          semLocal c, it, GletY
+      of TletS:
+        toplevelGuard c:
+          semLocal c, it, TletY
       of CursorS:
         toplevelGuard c:
           semLocal c, it, CursorY
@@ -5301,7 +5323,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ExportS, CommentS:
         # XXX ignored for now
         skip it.n
-      of EmitS, GvarS, TvarS, GletS, TletS:
+      of EmitS:
         raiseAssert "unreachable"
       of PragmasS:
         toplevelGuard c:
