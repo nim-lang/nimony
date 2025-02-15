@@ -154,10 +154,6 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
 
-template emptyNode(): Cursor =
-  # XXX find a better solution for this
-  c.types.voidType
-
 proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCursor) =
   if typeKind(expected) == AutoT:
     return
@@ -1236,7 +1232,6 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         typematch(m, param.typ, defaultValue)
         swap m.args, c.dest
         if m.err and not prevErr:
-          # info is wrong here
           c.typeMismatch arg.info, defaultValue.typ, param.typ
         inc arg
       elif m.genericEmpty and isEmptyLiteral(arg):
@@ -1266,7 +1261,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
               if isGeneric(routine):
                 let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
                 var convMatch = createMatch(addr c)
-                sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode()
+                sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode(c)
                 # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
                 assert not convMatch.err
                 let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
@@ -1308,7 +1303,7 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     let candidate = FnCandidate(kind: fn.kind, sym: conv, typ: fn.params)
 
     # first match the input argument of `conv` so that the unification algorithm works as expected:
-    sigmatch(inputMatch, candidate, [arg], emptyNode())
+    sigmatch(inputMatch, candidate, [arg], emptyNode(c))
     if classifyMatch(inputMatch) notin {EqualMatch, GenericMatch, SubtypeMatch}:
       continue
     # use inputMatch.returnType here so the caller doesn't have to instantiate it again:
@@ -1336,7 +1331,7 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
-    else: emptyNode()
+    else: emptyNode(c)
 
   var m: seq[Match] = @[]
   if cs.fn.n.exprKind in {OchoiceX, CchoiceX}:
