@@ -46,11 +46,11 @@
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) 4,13
- (var :x.0.tcsj45p9m . . 12,~5
+ (gvar :x.0.tcsj45p9m . . 12,~5
   (i -1) 4
   (cast 5
    (i -1) 10 +55)) 4,15
- (var :y.0.tcsj45p9m . . 3
+ (gvar :y.0.tcsj45p9m . . 3
   (pointer) 13
   (nil)) 2,18
  (const :myconst.0.tcsj45p9m . . 10
@@ -58,7 +58,7 @@
   (conv ~7
    (cstring)
    (suf "abc" "R"))) 4,20
- (var :zz.0.tcsj45p9m . . 4
+ (gvar :zz.0.tcsj45p9m . . 4
   (cstring)
   (hconv 8,22,tests/nimony/nosystem/tcstring.nim
    (cstring) 18,22,tests/nimony/nosystem/tcstring.nim "xzy")))

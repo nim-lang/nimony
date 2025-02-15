@@ -80,10 +80,10 @@
        (i -1) x.4)
       (dconv 11,~2
        (i -1) y.3)))))) 4,29
- (var :x.0.tdiuhv8dm . . 3 VarId.0.tdiuhv8dm .) 2,31
+ (gvar :x.0.tdiuhv8dm . . 3 VarId.0.tdiuhv8dm .) 2,31
  (asgn ~2 x.0.tdiuhv8dm 4
   (infix \2B.1.tdiuhv8dm ~2 x.0.tdiuhv8dm 2 x.0.tdiuhv8dm)) 4,33
- (let :y.0.tdiuhv8dm . . 4
+ (glet :y.0.tdiuhv8dm . . 4
   (i +8) 8
   (conv ~4
    (i +8) 1 x.0.tdiuhv8dm)))

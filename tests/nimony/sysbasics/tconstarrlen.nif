@@ -2,7 +2,7 @@
 0,1,tests/nimony/sysbasics/tconstarrlen.nim(stmts 6
  (const :Len.0.tcoacwdbr . .
   (i -1) 6 +100) 4,1
- (var :a.0.tcoacwdbr . . 8
+ (gvar :a.0.tcoacwdbr . . 8
   (array 6
    (i -1)
    (rangetype
@@ -12,7 +12,7 @@
    (i -1)
    (rangetype
     (i -1) +0 +99))) 4,6
- (var :b.0.tcoacwdbr . . 14,~2
+ (gvar :b.0.tcoacwdbr . . 14,~2
   (array 6
    (i -1)
    (rangetype

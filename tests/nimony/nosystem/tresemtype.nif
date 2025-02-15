@@ -31,14 +31,14 @@
    (object . ~9,1
     (fld :val.2.treckpe1i1 . .
      (i -1) .))) 4,2
-  (var :obj.2 . . 6 Foo.2 9
+  (gvar :obj.2 . . 6 Foo.2 9
    (oconstr ~3 Foo.2 4
     (kv ~4 val.2.treckpe1i1 ~10,2 +123)))) 2,9
  (stmts 9
   (type ~4 :Foo.3 . . . 2
    (object . ~9,1
     (fld :val.3.treckpe1i1 . . string.0.sys9azlf .))) 4,2
-  (var :obj.3 . . 6 Foo.3 9
+  (gvar :obj.3 . . 6 Foo.3 9
    (oconstr ~3 Foo.3 4
     (kv ~4 val.3.treckpe1i1 ~10,3 "abc")))) 3,5
  (proc :foo.1.treckpe1i1 . ~3,~5 .

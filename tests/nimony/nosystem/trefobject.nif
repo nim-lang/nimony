@@ -9,7 +9,7 @@
    (fld :x.0.trerqi4zu . . 3
     (i -1) .) ~13,2
    (fld :parent.0.trerqi4zu . . 8 Foo.0.trerqi4zu .))) 4,6
- (var :foo.0.trerqi4zu . . 5 Foo.0.trerqi4zu .) 13,8
+ (gvar :foo.0.trerqi4zu . . 5 Foo.0.trerqi4zu .) 13,8
  (type ~8 :Node.0.trerqi4zu . ~4
   (typevars 1
    (typevar :T.0.trerqi4zu . . . .)) . 6
@@ -19,7 +19,7 @@
     (at ~4 Node.0.trerqi4zu 1 T.0.trerqi4zu) .) ~11,2
    (fld :right.0.trerqi4zu . . 11
     (at ~4 Node.0.trerqi4zu 1 T.0.trerqi4zu) .))) 4,12
- (var :node.0.trerqi4zu . . 10 Node.1.trerqi4zu .) 14,12
+ (gvar :node.0.trerqi4zu . . 10 Node.1.trerqi4zu .) 14,12
  (type :Node.1.trerqi4zu .
   (at Node.0.trerqi4zu 1
    (i -1)) ~1,~4 . 5,~4

@@ -13,7 +13,7 @@ proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
 
 proc isLocal*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, FldY, EfldY}
+  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, FldY, EfldY, GletY, TletY, GvarY, TvarY}
 
 proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol

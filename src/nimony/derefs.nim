@@ -86,7 +86,7 @@ proc isAddressable*(n: Cursor): bool =
     let res = tryLoadSym(s)
     assert res.status == LacksNothing
     let local = asLocal(res.decl)
-    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, LetY, ConstY}
+    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, ConstY, GletY, TletY, GvarY, TvarY}
     # Assignments to `ConstY` are prevented later.
   else:
     result = false
@@ -186,7 +186,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
     case local.kind
     of ConstY:
       result = true
-    of LetY:
+    of LetY, GletY, TletY:
       let tk = local.typ.typeKind
       result = tk notin {MutT, OutT}
       if result and tk == OpenArrayT:

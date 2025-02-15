@@ -45,15 +45,15 @@
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,14
  (type ~8 :string.0.tge7jvqqk1 x . . string.0.sys9azlf) 4,16
- (var :myset.0.tge7jvqqk1 . . 10
+ (gvar :myset.0.tge7jvqqk1 . . 10
   (set 1
    (u +8)) .) 4,17
- (var :myarr.0.tge7jvqqk1 . . 12
+ (gvar :myarr.0.tge7jvqqk1 . . 12
   (array 4
    (i -1)
    (rangetype
     (i -1) +0 +2)) .) 4,18
- (let :u8.0.tge7jvqqk1 . .
+ (glet :u8.0.tge7jvqqk1 . .
   (u +8) 5
   (suf +3u "u8")) 6,19
  (asgn ~6 myset.0.tge7jvqqk1 2
@@ -76,8 +76,8 @@
    (typevar :T.4.tge7jvqqk1 . . . .)) . 2
   (object . ~13,1
    (fld :x.0.tge7jvqqk1 . . 3 T.4.tge7jvqqk1 .))) 2,27
- (var :myglob.0.tge7jvqqk1 . . 17 MyGeneric.1.tge7jvqqk1 .) 2,28
- (var :other.0.tge7jvqqk1 . . 16 MyGeneric.2.tge7jvqqk1 .) 9,30
+ (gvar :myglob.0.tge7jvqqk1 . . 17 MyGeneric.1.tge7jvqqk1 .) 2,28
+ (gvar :other.0.tge7jvqqk1 . . 16 MyGeneric.2.tge7jvqqk1 .) 9,30
  (asgn ~3
   (dot ~6 myglob.0.tge7jvqqk1 x.1.tge7jvqqk1 +0) 2 +56) 8,31
  (asgn ~3
@@ -144,7 +144,7 @@
     (at ~6 HSlice.0.tge7jvqqk1 1 T.7.tge7jvqqk1 4 U.1.tge7jvqqk1) .)
    (discard .) ~45
    (ret result.1))) 4,56
- (var :myarr2.0.tge7jvqqk1 . . 12,~39
+ (gvar :myarr2.0.tge7jvqqk1 . . 12,~39
   (array 4
    (i -1)
    (rangetype
@@ -155,7 +155,7 @@
     (i -1)
     (rangetype
      (i -1) +0 +2)) 1 +4 4 +5 7 +6)) 4,59
- (var :m3.0.tge7jvqqk1 . . 9
+ (gvar :m3.0.tge7jvqqk1 . . 9
   (array 4
    (i -1)
    (rangetype
@@ -165,7 +165,7 @@
     (i -1)
     (rangetype
      (i -1) +0 +3)) 1 +1 4 +2 7 +3 10 +45)) 4,60
- (var :x3.0.tge7jvqqk1 . . 9
+ (gvar :x3.0.tge7jvqqk1 . . 9
   (array 7
    (i -1)
    (rangetype

@@ -1062,12 +1062,6 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   if prag.header != StrId(0):
     e.headers.incl prag.header
 
-  if mode != TraverseTopLevel and tag in ["var", "const", "param"] and
-      prag.flags * {ThreadvarP, GlobalP} == {}: # register local variables
-    var declBuf = createTokenBuf()
-    takeTree(declBuf, localDecl)
-    publish s, declBuf
-
 proc traverseWhile(e: var EContext; c: var Cursor) =
   let info = c.info
   e.nestedIn.add (WhileS, SymId(0))
@@ -1210,8 +1204,12 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
         e.loop c:
           traverseStmt e, c, mode
       e.closeMangleScope()
-    of VarS, LetS, CursorS, ResultS, GvarS, TvarS, GletS, TletS:
-      traverseLocal e, c, (if e.nestedIn[^1][0] == StmtsS and mode in {TraverseTopLevel, TraverseSig}: "gvar" else: "var"), mode
+    of VarS, LetS, CursorS, ResultS:
+      traverseLocal e, c, "var", mode
+    of  GvarS, GletS:
+      traverseLocal e, c, "gvar", mode
+    of TvarS, TletS:
+      traverseLocal e, c, "tvar", mode
     of ConstS:
       traverseLocal e, c, "const", mode
     of CmdS, CallS:
