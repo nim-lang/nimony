@@ -274,16 +274,17 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
     let k = tree[n].kind
     if produceLineInfo and info.isValid and k != ParRi:
       var (file, line, col) = unpack(pool.man, info)
-      var fileAsStr = ""
-      if stack.len > 0:
-        let (pfile, pline, pcol) = unpack(pool.man, stack[^1])
-        if file != pfile: fileAsStr = pool.files[file]
-        if fileAsStr.len == 0:
-          line = line - pline
-          col = col - pcol
-      else:
-        fileAsStr = pool.files[file]
-      b.addLineInfo(col, line, fileAsStr)
+      if file.isValid:
+        var fileAsStr = ""
+        if stack.len > 0:
+          let (pfile, pline, pcol) = unpack(pool.man, stack[^1])
+          if file != pfile: fileAsStr = pool.files[file]
+          if fileAsStr.len == 0:
+            line = line - pline
+            col = col - pcol
+        else:
+          fileAsStr = pool.files[file]
+        b.addLineInfo(col, line, fileAsStr)
 
     case k
     of DotToken:

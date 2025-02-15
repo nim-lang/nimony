@@ -148,8 +148,9 @@ proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
   let info = n.info
   if info.isValid:
     let (file, line, col) = unpack(pool.man, info)
-    write stdout, pool.files[file]
-    write stdout, "(" & $line & ", " & $(col+1) & ") "
+    if file.isValid:
+      write stdout, pool.files[file]
+      write stdout, "(" & $line & ", " & $(col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
   writeLine stdout, toString(n, false)
@@ -336,8 +337,8 @@ proc genCLineDir(c: var GeneratedCode; info: PackedLineInfo) =
     c.add Space
     c.add name
     c.add NewLine
-
-    c.fileIds.incl id
+    if id.isValid:
+      c.fileIds.incl id
 
 template moveToDataSection(body: untyped) =
   let oldLen = c.code.len

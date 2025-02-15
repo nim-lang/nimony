@@ -647,7 +647,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         discard "ok"
         inc f
         expectParRi m, f
-      of PtrT:
+      of PtrT, CstringT:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened

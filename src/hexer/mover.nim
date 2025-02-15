@@ -168,7 +168,7 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
           inc pc
           inc nested
-        of VarS, LetS, CursorS, ResultS, ConstS:
+        of VarS, LetS, CursorS, ResultS, ConstS, GvarS, TvarS, GletS, TletS:
           inc pc
           if root != NoSymId and pc.kind == SymbolDef and pc.symId == root:
             # found the definition, so it gets a new value:

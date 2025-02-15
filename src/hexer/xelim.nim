@@ -373,7 +373,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi:
         trExpr c, dest, n, tar
     dest.add tar
-  of ResultS, LetS, VarS, CursorS, ConstS:
+  of ResultS, LetS, VarS, CursorS, ConstS, GvarS, TvarS, GletS, TletS:
     trLocal c, dest, n
   of ProcS, FuncS, MacroS, MethodS, ConverterS:
     trProc c, dest, n

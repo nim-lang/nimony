@@ -23,6 +23,14 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints]
 type
   TypeCursor = Cursor
 
+  AttachedOp* = enum
+    attachedDestroy,
+    attachedWasMoved,
+    attachedDup,
+    attachedCopy,
+    attachedSink,
+    attachedTrace
+
   GenHookRequest = object
     sym: SymId
     typ: TypeCursor
@@ -36,6 +44,14 @@ type
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
     hookNames: Table[string, int]
 
+proc hookName*(op: AttachedOp): string =
+  case op
+  of attachedDestroy: "destroy"
+  of attachedWasMoved: "wasMoved"
+  of attachedDup: "dup"
+  of attachedCopy: "copy"
+  of attachedSink: "sink"
+  of attachedTrace: "trace"
 
 # Phase 1: Determine if the =hook is trivial:
 
@@ -470,7 +486,7 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
       copyIntoSymUse c.dest, res, c.info
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
-  #let name = attachedOpToLitId(c.op)
+  #let name = HookKindToLitId(c.op)
   #echo "generating ", c.p[dest.m].strings[name] # name
   #result = declareSym(c.p[c.thisModule], ProcDecl, name)
   let paramA = pool.syms.getOrIncl("dest.0")

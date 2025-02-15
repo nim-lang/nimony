@@ -11,6 +11,13 @@ import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 
 #import std / [sha1]
 import "$nim"/dist/checksums/src/checksums/sha1
+import ".." / models / nifindex_tags
+
+proc entryKind(tag: TagId): NifIndex =
+  if rawTagIsNifIndex(tag.uint32):
+    result = cast[NifIndex](tag)
+  else:
+    result = NoIndexTag
 
 proc registerTag(tag: string): TagId = pool.tags.getOrIncl(tag)
 
@@ -31,24 +38,14 @@ proc isExported(n: Cursor): bool =
 proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
   var n = beginRead(content)
   var nested = 0
-  let letT = registerTag("let")
-  let varT = registerTag("var")
-  let cursorT = registerTag("cursor")
-  let constT = registerTag("const")
-  let typeT = registerTag("type")
-  let procT = registerTag("proc")
-  let templateT = registerTag("template")
-  let funcT = registerTag("func")
-  let macroT = registerTag("macro")
-  let converterT = registerTag("converter")
-  let methodT = registerTag("method")
-  let iteratorT = registerTag("iterator")
-  let inlineT = registerTag("inline")
+  let inlineT = TagId(InlineIdx)
   while true:
     case n.kind
     of ParLe:
       var foundInline = false
-      if n.tagId == letT or n.tagId == varT or n.tagId == cursorT or n.tagId == constT or n.tagId == typeT:
+      let k = entryKind(n.tagId)
+      case k
+      of LetIdx, VarIdx, CursorIdx, ConstIdx, TypeIdx, GletIdx, TletIdx, GvarIdx, TvarIdx:
         inc n # tag
         if isExported(n):
           updateLoop(dest, n, inlineT, foundInline) # SymbolDef
@@ -57,7 +54,7 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           updateLoop(dest, n, inlineT, foundInline) # type
           updateLoop(dest, n, inlineT, foundInline) # value
         skipToEnd n
-      elif n.tagId == templateT or n.tagId == macroT or n.tagId == iteratorT:
+      of TemplateIdx, MacroIdx, IteratorIdx:
         # these always have inline semantics
         inc n # tag
         if isExported(n):
@@ -71,7 +68,7 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           updateLoop(dest, n, inlineT, foundInline) # effects
           updateLoop(dest, n, inlineT, foundInline) # body
         skipToEnd n
-      elif n.tagId == procT or n.tagId == funcT or n.tagId == methodT or n.tagId == converterT:
+      of ProcIdx, FuncIdx, MethodIdx, ConverterIdx:
         inc n # tag
         if isExported(n):
           var dummy = false
@@ -88,7 +85,8 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           else:
             skip n
         skipToEnd n
-      else:
+      of NoIndexTag, InlineIdx, KvIdx, BuildIdx, IndexIdx, PublicIdx, PrivateIdx,
+         DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx:
         inc n
         inc nested
     of ParRi:
@@ -99,35 +97,32 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
     else:
       inc n
 
-type IndexSections* = object
-  hooks*: Table[string, seq[(SymId, SymId)]]
-  converters*: seq[(SymId, SymId)]
-  toBuild*: TokenBuf
+type
+  IndexSections* = object
+    hooks*: Table[string, seq[(SymId, SymId)]]
+    converters*: seq[(SymId, SymId)]
+    toBuild*: TokenBuf
 
 proc getSection(tag: TagId; values: seq[(SymId, SymId)]; symToOffsetMap: Table[SymId, int]): TokenBuf =
-  let KvT = registerTag "kv"
-
-  result = default(TokenBuf)
+  result = createTokenBuf(30)
   result.addParLe tag
 
   for value in values:
     let (key, sym) = value
     let offset = symToOffsetMap[sym]
-    result.buildTree KvT, NoLineInfo:
+    result.buildTree TagId(KvIdx), NoLineInfo:
       result.add symToken(key, NoLineInfo)
       result.add intToken(pool.integers.getOrIncl(offset), NoLineInfo)
 
   result.addParRi()
 
 proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
-  let KvT = registerTag "kv"
-
-  result = default(TokenBuf)
+  result = createTokenBuf(30)
   result.addParLe tag
 
   for value in values:
     let (key, sym) = value
-    result.buildTree KvT, NoLineInfo:
+    result.buildTree TagId(KvIdx), NoLineInfo:
       if key == SymId(0):
         result.add dotToken(NoLineInfo)
       else:
@@ -137,10 +132,6 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   result.addParRi()
 
 proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) =
-  let PublicT = registerTag "public"
-  let PrivateT = registerTag "private"
-  let KvT = registerTag "kv"
-
   let indexName = changeFileExt(infile, ".idx.nif")
 
   var s = nifstreams.open(infile)
@@ -149,10 +140,10 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
   var previousPublicTarget = 0
   var previousPrivateTarget = 0
 
-  var public = default(TokenBuf)
-  var private = default(TokenBuf)
-  public.addParLe PublicT
-  private.addParLe PrivateT
+  var public = createTokenBuf(30)
+  var private = createTokenBuf(30)
+  public.addParLe TagId(PublicIdx)
+  private.addParLe TagId(PrivateIdx)
   var buf = createTokenBuf(100)
   var symToOffsetMap = initTable[SymId, int]()
 
@@ -178,7 +169,7 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
         symToOffsetMap[sym] = target
         let diff = if isPublic: target - previousPublicTarget
                   else: target - previousPrivateTarget
-        dest[].buildTree KvT, info:
+        dest[].buildTree TagId(KvIdx), info:
           dest[].add symToken(sym, NoLineInfo)
           dest[].add intToken(pool.integers.getOrIncl(diff), NoLineInfo)
         if isPublic:
@@ -204,8 +195,7 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
     content.add "\n"
 
   if sections.converters.len != 0:
-    let ConverterT = registerTag "converter"
-    let converterSectionBuf = getSymbolSection(ConverterT, sections.converters)
+    let converterSectionBuf = getSymbolSection(TagId(ConverterIdx), sections.converters)
 
     content.add toString(converterSectionBuf)
     content.add "\n"
@@ -243,7 +233,6 @@ type
     toBuild*: seq[(string, string, string)]
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsoluteOffset = false) =
-  let KvT = registerTag "kv"
   var previousOffset = 0
   var t = next(s)
   var nested = 1
@@ -251,7 +240,7 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsolu
     let info = t.info
     if t.kind == ParLe:
       inc nested
-      if t.tagId == KvT:
+      if t.tagId == TagId(KvIdx):
         t = next(s)
         var key: string
         if t.kind == Symbol:
@@ -286,13 +275,12 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsolu
       #t = next(s)
 
 proc readSymbolSection(s: var Stream; tab: var Table[string, string]) =
-  let KvT = registerTag "kv"
   var t = next(s)
   var nested = 1
   while t.kind != EofToken:
     if t.kind == ParLe:
       inc nested
-      if t.tagId == KvT:
+      if t.tagId == TagId(KvIdx):
         t = next(s)
         var key: string
         if t.kind == Symbol:
@@ -334,45 +322,30 @@ proc readIndex*(indexName: string): NifIndex =
   let res = processDirectives(s.r)
   assert res == Success
 
-  let PublicT = registerTag "public"
-  let PrivateT = registerTag "private"
-  let IndexT = registerTag "index"
-
-  let ClonerT = registerTag "cloner"
-  let TracerT = registerTag "tracer"
-  let DisarmerT = registerTag "disarmer"
-  let MoverT = registerTag "mover"
-  let DtorT = registerTag "dtor"
-
-  let hookSet = toHashSet([ClonerT, TracerT, DisarmerT, MoverT, DtorT])
-
-  let ConverterT = registerTag "converter"
-
   result = default(NifIndex)
   var t = next(s)
-  if t.tag == IndexT:
+  if t.tag == TagId(IndexIdx):
     t = next(s)
-    if t.tag == PublicT:
+    if t.tag == TagId(PublicIdx):
       readSection s, result.public
     else:
       assert false, "'public' expected"
     t = next(s)
-    if t.tag == PrivateT:
+    if t.tag == TagId(PrivateIdx):
       readSection s, result.private
     else:
       assert false, "'private' expected"
     t = next(s)
-    while t.tag in hookSet:
+    while t.tag.entryKind in {DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx}:
       let tagName = pool.tags[t.tag]
       result.hooks[tagName] = initTable[string, NifIndexEntry]()
       readSection(s, result.hooks[tagName])
       t = next(s)
-    if t.tag == ConverterT:
+    if t.tag == TagId(ConverterIdx):
       readSymbolSection(s, result.converters)
       t = next(s)
 
-    let BuildT = registerTag "build"
-    if t.tag == BuildT:
+    if t.tag == TagId(BuildIdx):
       t = next(s)
       while t.kind != EofToken and t.kind != ParRi:
         # tup
