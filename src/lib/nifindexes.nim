@@ -132,7 +132,6 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   result.addParRi()
 
 proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
-  assert root.isValid
   let indexName = changeFileExt(infile, ".idx.nif")
 
   var s = nifstreams.open(infile)
@@ -366,4 +365,4 @@ proc readIndex*(indexName: string): NifIndex =
     assert false, "expected 'index' tag"
 
 when isMainModule:
-  createIndex paramStr(1), false
+  createIndex paramStr(1), false, NoLineInfo
