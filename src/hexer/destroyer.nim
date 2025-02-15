@@ -279,7 +279,7 @@ proc tr(c: var Context; n: var Cursor) =
       trCase c, n
     of BlockS:
       trBlock c, n
-    of VarS, LetS, ConstS, ResultS, CursorS:
+    of LocalDecls:
       trLocal c, n
     of WhileS:
       trWhile c, n

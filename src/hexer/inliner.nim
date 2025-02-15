@@ -318,7 +318,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       case n.stmtKind
       of AsgnS:
         trAsgn c, dest, n
-      of LetS, CursorS, VarS, ResultS:
+      of LocalDecls:
         trLocalDecl c, dest, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProcDecl c, dest, n

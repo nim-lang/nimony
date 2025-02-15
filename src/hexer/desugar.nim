@@ -408,7 +408,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
                 tr(c, dest, n)
             else:
               tr(c, dest, n)
-      of ResultS, LetS, VarS, CursorS, ConstS:
+      of LocalDecls:
         trLocal c, dest, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProc c, dest, n

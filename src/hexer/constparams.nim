@@ -134,7 +134,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         case n.stmtKind
         of ProcS, FuncS, MacroS, MethodS, ConverterS:
           trProcDecl c, dest, n
-        of CursorS, LetS, VarS, ConstS, ResultS:
+        of LocalDecls:
           trLocal c, dest, n
         of ScopeS:
           trScope c, dest, n

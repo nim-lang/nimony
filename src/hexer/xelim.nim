@@ -23,7 +23,7 @@ proc isComplex(n: Cursor): bool =
     of IntLit, UIntLit, FloatLit, StringLit, CharLit, UnknownToken, EofToken, Ident, Symbol, SymbolDef, DotToken:
       inc n
     of ParLe:
-      if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, StmtsS, ResultS}:
+      if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
         return true
       elif n.exprKind == ExprX:
         inc n
@@ -373,7 +373,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi:
         trExpr c, dest, n, tar
     dest.add tar
-  of ResultS, LetS, VarS, CursorS, ConstS, GvarS, TvarS, GletS, TletS:
+  of LocalDecls:
     trLocal c, dest, n
   of ProcS, FuncS, MacroS, MethodS, ConverterS:
     trProc c, dest, n
