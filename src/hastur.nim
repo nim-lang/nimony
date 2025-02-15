@@ -3,7 +3,7 @@
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
-import lib / nifindexes
+import lib / [nifindexes, lineinfos]
 import gear2 / modnames
 
 const
@@ -394,8 +394,8 @@ proc nifctests(overwrite: bool) =
 proc hexertests(overwrite: bool) =
   let mod1 = "tests/hexer/mod1"
   let helloworld = "tests/hexer/hexer_helloworld"
-  createIndex helloworld & ".nif", false
-  createIndex mod1 & ".nif", false
+  createIndex helloworld & ".nif", false, NoLineInfo
+  createIndex mod1 & ".nif", false, NoLineInfo
   execHexer mod1 & ".nif"
   execHexer helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"

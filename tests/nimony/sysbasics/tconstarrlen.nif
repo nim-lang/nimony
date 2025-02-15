@@ -19,8 +19,8 @@
     (i -1) +0 +99)) .) ,7
  (if 3
   (elif 6
-   (eq 24,603,lib/std/system.nim
-    (i +64) 11,940,lib/std/system.nim
+   (eq 15,134,lib/std/system.nim
+    (i +64) 2,471,lib/std/system.nim
     (expr
      (expr ,~4
       (expr

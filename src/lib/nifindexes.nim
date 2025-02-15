@@ -131,7 +131,7 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
 
   result.addParRi()
 
-proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) =
+proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
   let indexName = changeFileExt(infile, ".idx.nif")
 
   var s = nifstreams.open(infile)
@@ -142,8 +142,8 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
 
   var public = createTokenBuf(30)
   var private = createTokenBuf(30)
-  public.addParLe TagId(PublicIdx)
-  private.addParLe TagId(PrivateIdx)
+  public.addParLe TagId(PublicIdx), root
+  private.addParLe TagId(PrivateIdx), root
   var buf = createTokenBuf(100)
   var symToOffsetMap = initTable[SymId, int]()
 
@@ -155,7 +155,7 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
     if t.kind == ParLe:
       target = offs
     elif t.kind == SymbolDef:
-      let info = t.info
+      #let info = t.info
       let sym = t.symId
       if pool.syms[sym].isImportant:
         let tb = next(s)
@@ -169,7 +169,7 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
         symToOffsetMap[sym] = target
         let diff = if isPublic: target - previousPublicTarget
                   else: target - previousPrivateTarget
-        dest[].buildTree TagId(KvIdx), info:
+        dest[].buildTree TagId(KvIdx), NoLineInfo:
           dest[].add symToken(sym, NoLineInfo)
           dest[].add intToken(pool.integers.getOrIncl(diff), NoLineInfo)
         if isPublic:
@@ -200,9 +200,8 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
     content.add toString(converterSectionBuf)
     content.add "\n"
 
-  let buildT = registerTag "build"
   var buildBuf = createTokenBuf()
-  buildBuf.addParLe buildT
+  buildBuf.addParLe TagId(BuildIdx)
   buildBuf.add sections.toBuild
   buildBuf.addParRi
   content.add toString(buildBuf)
@@ -219,8 +218,9 @@ proc createIndex*(infile: string; buildChecksum: bool; sections: IndexSections) 
   else:
     writeFile(indexName, content)
 
-proc createIndex*(infile: string; buildChecksum: bool) =
-  createIndex(infile, buildChecksum, IndexSections(hooks: initTable[string, seq[(SymId, SymId)]](), toBuild: default(TokenBuf)))
+proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
+  createIndex(infile, root, buildChecksum,
+    IndexSections(hooks: initTable[string, seq[(SymId, SymId)]](), toBuild: default(TokenBuf)))
 
 type
   NifIndexEntry* = object
@@ -365,4 +365,4 @@ proc readIndex*(indexName: string): NifIndex =
     assert false, "expected 'index' tag"
 
 when isMainModule:
-  createIndex paramStr(1), false
+  createIndex paramStr(1), false, NoLineInfo
