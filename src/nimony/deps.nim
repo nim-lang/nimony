@@ -39,7 +39,7 @@ proc exeFile(f: FilePair): string = "nifcache" / f.modname.addFileExt ExeExt
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
-  if not fileExists(result) and toResolve.startsWith("std/"):
+  if not semos.fileExists(result) and toResolve.startsWith("std/"):
     result = resolveFile(paths, origin, toResolve.substr(4))
 
 type
@@ -94,7 +94,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
             isRecursive = true
             break
 
-        if not isRecursive and fileExists(f2):
+        if not isRecursive and semos.fileExists(f2):
           let oldActive = current.active
           current.active = current.files.len
           current.files.add c.toPair(f2)
@@ -116,7 +116,7 @@ proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
 proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
                       current: Node; isSystem: bool) =
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
-  if not fileExists(f2): return
+  if not semos.fileExists(f2): return
   let p = c.toPair(f2)
   if not c.processedModules.containsOrIncl(p.modname):
     current.deps.add p
@@ -193,7 +193,7 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
       processDep c, n, current
 
 proc execNifler(c: var DepContext; input, output: string) =
-  if not c.forceRebuild and fileExists(output) and fileExists(input) and
+  if not c.forceRebuild and semos.fileExists(output) and semos.fileExists(input) and
       getLastModificationTime(output) > getLastModificationTime(input):
     discard "nothing to do"
   else:

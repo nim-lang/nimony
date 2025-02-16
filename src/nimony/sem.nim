@@ -259,6 +259,9 @@ type
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
+  if not fileExists(f2):
+    c.buildErr info, "file not found: " & f2
+    return
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
@@ -5091,7 +5094,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; info: PackedLineInfo) =
     var name = replaceSubs(args[1], currentDir, c.g.config).toAbsolutePath(currentDir)
     let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
 
-    if not fileExists2(name):
+    if not semos.fileExists(name):
       buildErr c, it.n.info, "cannot find: " & name
     name = name.toRelativePath(nifcacheDir)
 

@@ -44,7 +44,7 @@ type
     None, SingleModule
 
 proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
-  if not fileExists(infile):
+  if not semos.fileExists(infile):
     quit "cannot find " & infile
   else:
     semcheck(infile, outfile, ensureMove config, moduleFlags, "", false)

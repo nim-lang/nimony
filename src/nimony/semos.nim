@@ -39,7 +39,7 @@ proc toolDir*(f: string): string =
 proc absoluteParentDir*(f: string): string =
   result = f.absolutePath().parentDir()
 
-proc fileExists2*(f: string): bool =
+proc fileExists*(f: string): bool =
   result = os.fileExists(f)
 
 proc toAbsolutePath*(f: string): string =
