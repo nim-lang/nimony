@@ -34,7 +34,7 @@
   (typedesc 1 T.2.tte5tld8n) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,12
- (type ~8 :string.0.tte5tld8n x . . string.0.sys9azlf) 15,15
+ (type ~8 :string.0.tte5tld8n x . . string.0.sysvq0asl) 15,15
  (type ~13 :MyGeneric.0.tte5tld8n . ~4
   (typevars 1
    (typevar :T.3.tte5tld8n . . . .)) . 2
@@ -71,12 +71,12 @@
   (params 1
    (param :x.3 . . 3
     (i -1) .) 9
-   (param :y.2 . . string.0.sys9azlf .)) 21
+   (param :y.2 . . string.0.sysvq0asl .)) 21
   (i -1) . . 2,1
   (stmts 4
    (result :result.0 . . 10,~5
     (i -1) .) 4
-   (var :x.5 . . string.0.sys9azlf 4 "abc") 7,1
+   (var :x.5 . . string.0.sysvq0asl 4 "abc") 7,1
    (asgn ~7 result.0 23,~4
     (expr 2
      (expr

@@ -154,10 +154,6 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
 
-template emptyNode(): Cursor =
-  # XXX find a better solution for this
-  c.types.voidType
-
 proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCursor) =
   if typeKind(expected) == AutoT:
     return
@@ -259,6 +255,9 @@ type
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
+  if not fileExists(f2):
+    c.buildErr info, "file not found: " & f2
+    return
   let suffix = moduleSuffix(f2, c.g.config.paths)
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
@@ -595,6 +594,18 @@ type
     InTypeContext
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
+
+proc instantiateExprIntoBuf(c: var SemContext; buf: var TokenBuf; it: var Item; bindings: Table[SymId, Cursor]) =
+  var dest = createTokenBuf(30)
+  var sc = SubsContext(params: addr bindings)
+  subs(c, dest, sc, it.n)
+  var sub = beginRead(dest)
+  let start = buf.len
+  swap c.dest, buf
+  it.n = sub
+  semExpr(c, it)
+  swap c.dest, buf
+  it.n = cursorAt(buf, start)
 
 proc fetchSym(c: var SemContext; s: SymId): Sym =
   # yyy find a better solution
@@ -1217,53 +1228,72 @@ proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
-  if not (m.genericConverter or m.genericEmpty):
+  if not (m.genericConverter or m.genericEmpty or m.insertedParam):
     c.dest.add m.args
   else:
     m.args.addParRi()
+    var f = m.fn.typ
+    inc f # params tag
     var arg = beginRead(m.args)
     var i = 0
     while arg.kind != ParRi:
-      var nested = 0
-      while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
+      if m.insertedParam and arg.kind == DotToken:
+        let param = asLocal(f)
+        assert param.val.kind != DotToken
+        var defaultValueBuf = createTokenBuf(30)
+        var defaultValue = Item(n: param.val, typ: c.types.autoType)
+        instantiateExprIntoBuf(c, defaultValueBuf, defaultValue, m.inferred)
+        let prevErr = m.err
+        swap m.args, c.dest
+        typematch(m, param.typ, defaultValue)
+        swap m.args, c.dest
+        if m.err and not prevErr:
+          c.typeMismatch arg.info, defaultValue.typ, param.typ
+        inc arg
+      elif m.genericEmpty and isEmptyLiteral(arg):
         takeToken c, arg
-        inc nested
-      if m.genericEmpty and isEmptyLiteral(arg):
-        takeToken c, arg
-        inc nested
         if containsGenericParams(arg):
           let start = c.dest.len
           c.dest.addSubtree instantiateType(c, arg, m.inferred)
           skip arg
         else:
           takeTree c, arg
-        # leave ParRi token to while loop below
-      elif arg.exprKind == HcallX:
-        let convInfo = arg.info
-        takeToken c, arg
-        inc nested
-        if arg.kind == Symbol:
-          let sym = arg.symId
+        takeParRi c, arg
+      elif m.genericConverter:
+        var nested = 0
+        while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
           takeToken c, arg
-          let res = tryLoadSym(sym)
-          if res.status == LacksNothing and res.decl.symKind == ConverterY:
-            let routine = asRoutine(res.decl)
-            if isGeneric(routine):
-              let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
-              var convMatch = createMatch(addr c)
-              sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode()
-              # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
-              assert not convMatch.err
-              let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
-              c.dest[c.dest.len-1].setSymId inst.targetSym
-      while true:
-        case arg.kind
-        of ParLe: inc nested
-        of ParRi: dec nested
-        else: discard
-        takeToken c, arg
-        if nested == 0: break
+          inc nested
+        if arg.exprKind == HcallX:
+          let convInfo = arg.info
+          takeToken c, arg
+          inc nested
+          if arg.kind == Symbol:
+            let sym = arg.symId
+            takeToken c, arg
+            let res = tryLoadSym(sym)
+            if res.status == LacksNothing and res.decl.symKind == ConverterY:
+              let routine = asRoutine(res.decl)
+              if isGeneric(routine):
+                let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
+                var convMatch = createMatch(addr c)
+                sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode(c)
+                # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
+                assert not convMatch.err
+                let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
+                c.dest[c.dest.len-1].setSymId inst.targetSym
+        while true:
+          case arg.kind
+          of ParLe: inc nested
+          of ParRi: dec nested
+          else: discard
+          takeToken c, arg
+          if nested == 0: break
+      else:
+        takeTree c, arg
+      skip f # should not be parri
       inc i
+    assert f.kind == ParRi
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
   ## looks for a converter from `arg` to `f`, returns `true` if found and
@@ -1289,7 +1319,7 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     let candidate = FnCandidate(kind: fn.kind, sym: conv, typ: fn.params)
 
     # first match the input argument of `conv` so that the unification algorithm works as expected:
-    sigmatch(inputMatch, candidate, [arg], emptyNode())
+    sigmatch(inputMatch, candidate, [arg], emptyNode(c))
     if classifyMatch(inputMatch) notin {EqualMatch, GenericMatch, SubtypeMatch}:
       continue
     # use inputMatch.returnType here so the caller doesn't have to instantiate it again:
@@ -1317,7 +1347,7 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
-    else: emptyNode()
+    else: emptyNode(c)
 
   var m: seq[Match] = @[]
   if cs.fn.n.exprKind in {OchoiceX, CchoiceX}:
@@ -1423,8 +1453,12 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     let isMagic = c.addFn(finalFn, cs.fn.n, cs.args)
     addArgsInstConverters(c, m[idx], cs.args)
     takeParRi c, it.n
+    buildTypeArgs(m[idx])
 
-    if finalFn.kind == TemplateY:
+    if m[idx].err:
+      # adding args or type args may have errored
+      buildErr c, cs.callNode.info, getErrorMsg(m[idx])
+    elif finalFn.kind == TemplateY:
       typeofCallIs c, it, cs.beforeCall, m[idx].returnType
       if c.templateInstCounter <= MaxNestedTemplates:
         inc c.templateInstCounter
@@ -4559,7 +4593,7 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
       var m = createMatch(addr c)
       m.fn = candidate
       matchTypevars m, candidate, args
-      buildTypeArgs m
+      buildTypeArgs(m)
       if not m.err:
         # match
         c.dest.add symToken(sym, syms.info)
@@ -5105,7 +5139,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; info: PackedLineInfo) =
     var name = replaceSubs(args[1], currentDir, c.g.config).toAbsolutePath(currentDir)
     let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
 
-    if not fileExists2(name):
+    if not semos.fileExists(name):
       buildErr c, it.n.info, "cannot find: " & name
     name = name.toRelativePath(nifcacheDir)
 

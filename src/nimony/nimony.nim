@@ -139,11 +139,8 @@ proc handleCmdLine() =
     quit "too few command line arguments"
   elif args.len > 2 - int(cmd == FullProject):
     quit "too many command line arguments"
-  if useEnv:
-    let nimPath = getEnv("NIMPATH")
-    for entry in split(nimPath, PathSep):
-      if entry.strip != "":
-        config.paths.add entry
+  semos.setupPaths(config, useEnv)
+
   case cmd
   of None:
     quit "command missing"

@@ -44,7 +44,7 @@ type
     None, SingleModule
 
 proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
-  if not fileExists(infile):
+  if not semos.fileExists(infile):
     quit "cannot find " & infile
   else:
     semcheck(infile, outfile, ensureMove config, moduleFlags, "", false)
@@ -105,11 +105,7 @@ proc handleCmdLine() =
     of cmdEnd: assert false, "cannot happen"
   if args.len != 3:
     quit "want exactly 3 command line arguments"
-  if useEnv:
-    let nimPath = getEnv("NIMPATH")
-    for entry in split(nimPath, PathSep):
-      if entry.strip != "":
-        config.paths.add entry
+  semos.setupPaths(config, useEnv)
   case cmd
   of None:
     quit "command missing"

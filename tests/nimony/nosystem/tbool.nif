@@ -17,9 +17,9 @@
  (proc :dollar`.bool.0.tbokvwxm9 x . .
   (params
    (param :e.0 . .
-    (bool) .)) string.0.sys9azlf . .
+    (bool) .)) string.0.sysvq0asl . .
   (stmts 23
-   (result :result.0 . . string.0.sys9azlf .) 23
+   (result :result.0 . . string.0.sysvq0asl .) 23
    (case e.0 ~18,1
     (of
      (ranges ~8

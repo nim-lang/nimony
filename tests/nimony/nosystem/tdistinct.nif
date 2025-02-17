@@ -31,7 +31,7 @@
   (typedesc 1 T.1.tdiuhv8dm) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,11
- (type ~8 :string.0.tdiuhv8dm x . . string.0.sys9azlf) ,13
+ (type ~8 :string.0.tdiuhv8dm x . . string.0.sysvq0asl) ,13
  (proc 5 :\2B.0.tdiuhv8dm
   (add -3) . . 9
   (params 1
