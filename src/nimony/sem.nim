@@ -3323,7 +3323,7 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
         c.buildErr it.n.info, "undeclared identifier", cursorAt(orig, 0)
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
-    if AllowOverloads notin flags and c.routine.kind != TemplateY:
+    if KeepMagics notin flags and c.routine.kind != TemplateY:
       c.buildErr it.n.info, "ambiguous identifier"
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
@@ -4546,6 +4546,7 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
       var m = createMatch(addr c)
       m.fn = candidate
       matchTypevars m, candidate, args
+      buildTypeArgs(m)
       if not m.err:
         # match
         c.dest.add symToken(sym, syms.info)
