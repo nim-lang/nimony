@@ -993,7 +993,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     var req = InstRequest(
       origin: origin,
       targetSym: targetSym,
-      inferred: move(inferred)
+      inferred: move(newInferred)
     )
     for ins in c.instantiatedFrom: req.requestFrom.add ins
     req.requestFrom.add info
