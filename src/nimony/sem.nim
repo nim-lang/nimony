@@ -881,7 +881,9 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
     shrink c.dest, beforeCall
     expandedInto.addParRi() # extra token so final `inc` doesn't break
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
+    inc c.routine.inInst
     semExpr c, a
+    dec c.routine.inInst
     it.typ = a.typ
     it.kind = a.kind
   else:
@@ -952,6 +954,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]
+    var typeArgsStart = -1
     buildTree signature, decl.kind, info:
       signature.add symdefToken(targetSym, info)
       signature.addDotToken() # a generic instance is not exported
@@ -959,6 +962,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       # InvokeT for the generic params:
       signature.buildTree InvokeT, info:
         signature.add symToken(origin, info)
+        typeArgsStart = signature.len
         signature.add typeArgs
       var sc = SubsContext(params: addr inferred)
       subs(c, signature, sc, decl.params)
@@ -971,13 +975,24 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
 
     result = ProcInstance(targetSym: targetSym, procType: cursorAt(signature, 0),
       returnType: cursorAt(signature, beforeRetType))
+    var newInferred = initTable[SymId, Cursor](inferred.len)
+    var typevars = decl.typevars
+    inc typevars
+    var typeArg = cursorAt(signature, typeArgsStart)
+    while typevars.kind != ParRi:
+      assert typeArg.kind != ParRi
+      let typevar = asLocal(typevars).name.symId
+      newInferred[typevar] = typeArg
+      skip typevars
+      skip typeArg
+    assert typeArg.kind == ParRi
     publish targetSym, ensureMove signature
 
     c.instantiatedProcs[(origin, key)] = targetSym
     var req = InstRequest(
       origin: origin,
       targetSym: targetSym,
-      inferred: move(inferred)
+      inferred: move(newInferred)
     )
     for ins in c.instantiatedFrom: req.requestFrom.add ins
     req.requestFrom.add info
@@ -1475,6 +1490,16 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         returnType = semReturnType(c, subsReturnType)
         swap c.dest, instReturnType
       else:
+        if isMagic == NonMagicCall and cs.hasGenericArgs:
+          # add back explicit generic args since we cannot instantiate
+          var invokeBuf = createTokenBuf(16)
+          invokeBuf.addParLe(AtX, cs.fn.n.info)
+          invokeBuf.add symToken(finalFn.sym, cs.fn.n.info)
+          var genericArgsRead = genericArgs
+          while genericArgsRead.kind != ParRi:
+            takeTree invokeBuf, genericArgsRead
+          invokeBuf.addParRi()
+          replace c.dest, beginRead(invokeBuf), cs.beforeCall+1
         if matched.returnType.kind == DotToken:
           returnType = matched.returnType
         else:
@@ -1736,23 +1761,25 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId): Ob
   if impl.typeKind in {RefT, PtrT}:
     inc impl
   result = findObjFieldAux(impl, name)
-  if result.level == 0:
-    result.rootOwner = genericRootSym(decl)
-  if result.level >= 0:
-    # check visibility
-    var visible = false
-    if result.exported:
-      visible = true
-    else:
-      let owner = result.rootOwner
-      if owner == SymId(0):
+  if c.routine.inInst == 0:
+    # only check visibility during first semcheck
+    if result.level == 0:
+      result.rootOwner = genericRootSym(decl)
+    if result.level >= 0:
+      # check visibility
+      var visible = false
+      if result.exported:
         visible = true
       else:
-        let ownerModule = extractModule(pool.syms[owner])
-        visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
-    if not visible:
-      # treat as undeclared
-      result = ObjField(level: -1)
+        let owner = result.rootOwner
+        if owner == SymId(0):
+          visible = true
+        else:
+          let ownerModule = extractModule(pool.syms[owner])
+          visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
+      if not visible:
+        # treat as undeclared
+        result = ObjField(level: -1)
 
 proc findModuleSymbol(n: Cursor): SymId =
   result = SymId(0)
@@ -2531,6 +2558,10 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       var sub = createTokenBuf(30)
       subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
       c.dest.endRead()
+      let oldScope = c.currentScope
+      # move to top level scope:
+      while c.currentScope.up != nil:
+        c.currentScope = c.currentScope.up
       var phase = SemcheckTopLevelSyms
       var topLevel = createTokenBuf(30)
       swap c.phase, phase
@@ -2545,6 +2576,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       semTypeSection c, tn
       swap c.dest, instance
       swap c.phase, phase
+      c.currentScope = oldScope
       publish targetSym, ensureMove instance
       c.dest.shrink typeStart
       c.dest.add symToken(targetSym, info)
@@ -3056,6 +3088,7 @@ proc semGenericParams(c: var SemContext; n: var Cursor) =
       semGenericParam c, n
     takeParRi c, n
   elif n == $InvokeT:
+    inc c.routine.inInst
     takeTree c, n
   else:
     buildErr c, n.info, "expected '.' or 'typevars'"
