@@ -886,7 +886,9 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
     shrink c.dest, beforeCall
     expandedInto.addParRi() # extra token so final `inc` doesn't break
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
+    inc c.routine.inInst
     semExpr c, a
+    dec c.routine.inInst
     it.typ = a.typ
     it.kind = a.kind
   else:
@@ -1501,6 +1503,16 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         returnType = semReturnType(c, subsReturnType)
         swap c.dest, instReturnType
       else:
+        if isMagic == NonMagicCall and cs.hasGenericArgs:
+          # add back explicit generic args since we cannot instantiate
+          var invokeBuf = createTokenBuf(16)
+          invokeBuf.addParLe(AtX, cs.fn.n.info)
+          invokeBuf.add symToken(finalFn.sym, cs.fn.n.info)
+          var genericArgsRead = genericArgs
+          while genericArgsRead.kind != ParRi:
+            takeTree invokeBuf, genericArgsRead
+          invokeBuf.addParRi()
+          replace c.dest, beginRead(invokeBuf), cs.beforeCall+1
         if matched.returnType.kind == DotToken:
           returnType = matched.returnType
         else:
@@ -1762,23 +1774,25 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId): Ob
   if impl.typeKind in {RefT, PtrT}:
     inc impl
   result = findObjFieldAux(impl, name)
-  if result.level == 0:
-    result.rootOwner = genericRootSym(decl)
-  if result.level >= 0:
-    # check visibility
-    var visible = false
-    if result.exported:
-      visible = true
-    else:
-      let owner = result.rootOwner
-      if owner == SymId(0):
+  if c.routine.inInst == 0:
+    # only check visibility during first semcheck
+    if result.level == 0:
+      result.rootOwner = genericRootSym(decl)
+    if result.level >= 0:
+      # check visibility
+      var visible = false
+      if result.exported:
         visible = true
       else:
-        let ownerModule = extractModule(pool.syms[owner])
-        visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
-    if not visible:
-      # treat as undeclared
-      result = ObjField(level: -1)
+        let owner = result.rootOwner
+        if owner == SymId(0):
+          visible = true
+        else:
+          let ownerModule = extractModule(pool.syms[owner])
+          visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
+      if not visible:
+        # treat as undeclared
+        result = ObjField(level: -1)
 
 proc findModuleSymbol(n: Cursor): SymId =
   result = SymId(0)
@@ -2557,6 +2571,10 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       var sub = createTokenBuf(30)
       subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
       c.dest.endRead()
+      let oldScope = c.currentScope
+      # move to top level scope:
+      while c.currentScope.up != nil:
+        c.currentScope = c.currentScope.up
       var phase = SemcheckTopLevelSyms
       var topLevel = createTokenBuf(30)
       swap c.phase, phase
@@ -2571,6 +2589,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       semTypeSection c, tn
       swap c.dest, instance
       swap c.phase, phase
+      c.currentScope = oldScope
       publish targetSym, ensureMove instance
       c.dest.shrink typeStart
       c.dest.add symToken(targetSym, info)
@@ -3082,6 +3101,7 @@ proc semGenericParams(c: var SemContext; n: var Cursor) =
       semGenericParam c, n
     takeParRi c, n
   elif n == $InvokeT:
+    inc c.routine.inInst
     takeTree c, n
   else:
     buildErr c, n.info, "expected '.' or 'typevars'"
@@ -3908,6 +3928,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
         c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
     let prevGeneric = c.routine.inGeneric
+    let prevInst = c.routine.inInst
     if n.kind == DotToken:
       takeToken c, n
       isGeneric = false
@@ -3935,6 +3956,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     if isGeneric:
       closeScope c
       c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
+      c.routine.inInst = prevInst
   else:
     c.takeTree n # generics
     discard semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
