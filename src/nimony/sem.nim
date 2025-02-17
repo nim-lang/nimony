@@ -1283,6 +1283,8 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
                 sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode(c)
                 # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
                 assert not convMatch.err
+                buildTypeArgs(convMatch)
+                assert not convMatch.err
                 let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
                 c.dest[c.dest.len-1].setSymId inst.targetSym
         while true:
