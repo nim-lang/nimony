@@ -61,7 +61,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*, genericEmpty*: bool
+    genericConverter*, genericEmpty*, insertedParam*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -98,7 +98,7 @@ proc error0Typevar(m: var Match; k: MatchErrorKind; typevar: SymId) =
   m.error = MatchError(info: m.argInfo, kind: k,
                        typeVar: typevar, pos: m.pos+1)
 
-proc getErrorMsg(m: Match): string =
+proc getErrorMsg*(m: Match): string =
   case m.error.kind
   of InvalidMatch:
     concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
@@ -822,10 +822,15 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
     else:
       isVarargs = true
       if i >= args.len: break
-    m.argInfo = args[i].n.info
-
-    singleArg m, ftyp, args[i]
-    if m.err: break
+    if args[i].n.kind == DotToken:
+      # default parameter
+      assert param.val.kind != DotToken
+      assert not isVarargs
+      m.args.add dotToken(param.val.info)
+    else:
+      m.argInfo = args[i].n.info
+      singleArg m, ftyp, args[i]
+      if m.err: break
     inc m.pos
     inc i
   if isVarargs:
@@ -857,13 +862,9 @@ proc collectDefaultValues(m: var Match; f: Cursor): seq[Item] =
   while f.symKind == ParamY:
     let param = asLocal(f)
     if param.val.kind == DotToken: break
-    # xxx getType so that in `proc foo6[T](x: T = 3); foo6()`, the type of `x` might be inferred
-    if param.typ.kind == Symbol and isTypevar(param.typ.symId) and
-        m.inferred.contains(param.typ.symId):
-      var prev = m.inferred[param.typ.symId]
-      result.add Item(n: param.val, typ: prev)
-    else:
-      result.add Item(n: param.val, typ: param.typ)
+    m.insertedParam = true
+    # add dot token
+    result.add Item(n: emptyNode(m.context[]), typ: m.context.types.autoType)
     skip f
 
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
