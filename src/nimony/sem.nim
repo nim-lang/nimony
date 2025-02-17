@@ -1291,7 +1291,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
                 buildTypeArgs(convMatch)
                 if convMatch.err:
                   # adding type args errored
-                  buildErr c, info, getErrorMsg(convMatch)
+                  buildErr c, convInfo, getErrorMsg(convMatch)
                 else:
                   let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
                   c.dest[c.dest.len-1].setSymId inst.targetSym
