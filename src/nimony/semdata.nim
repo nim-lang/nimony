@@ -147,3 +147,7 @@ proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
 
 proc typeToCursor*(c: var SemContext; start: int): TypeCursor =
   typeToCursor(c, c.dest, start)
+
+template emptyNode*(c: var SemContext): Cursor =
+  # XXX find a better solution for this
+  c.types.voidType
