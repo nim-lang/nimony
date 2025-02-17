@@ -59,5 +59,7 @@ proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
     id = id div 36'u32
 
 when isMainModule:
-  echo moduleSuffix("/Users/rumpf/projects/nim/lib/system.nim")
-  echo moduleSuffix("/Users/araq/projects/nim/lib/system.nim")
+  #echo moduleSuffix("/Users/rumpf/projects/nim/lib/system.nim")
+  #echo moduleSuffix("/Users/araq/projects/nim/lib/system.nim")
+  echo moduleSuffix("/Users/rumpf/projects/nimony/lib/std/system.nim", [])
+  echo moduleSuffix("/Users/rumpf/projects/nimony/lib/std/system.nim", ["/Users/rumpf/projects/nimony/lib"])

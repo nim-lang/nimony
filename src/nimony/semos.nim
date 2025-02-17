@@ -6,7 +6,7 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
-from std / strutils import multiReplace
+from std / strutils import multiReplace, split, strip
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
 import ".." / lib / nifchecksums
@@ -17,13 +17,27 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
 
 import ".." / gear2 / modnames
 
-proc stdlibFile*(f: string): string =
+proc stdlibDir*(): string =
   let appDir = getAppDir()
   let (head, tail) = splitPath(appDir)
   if tail == "bin":
-    result = head / "lib" / f
+    result = head / "lib"
   else:
-    result = appDir / "lib" / f
+    result = appDir / "lib"
+
+proc setupPaths*(config: var NifConfig; useEnv: bool) =
+  if useEnv:
+    let nimPath = getEnv("NIMPATH")
+    for entry in split(nimPath, PathSep):
+      if entry.strip != "":
+        config.paths.add entry
+    if config.paths.len == 0:
+      config.paths.add stdlibDir()
+  else:
+    config.paths.add stdlibDir()
+
+proc stdlibFile*(f: string): string =
+  result = stdlibDir() / f
 
 proc binDir*(): string =
   let appDir = getAppDir()
