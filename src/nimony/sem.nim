@@ -149,7 +149,7 @@ proc isNoReturn(n: Cursor): bool {.inline.} =
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
-                            inferred: var Table[SymId, Cursor];
+                            inferred: Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
@@ -943,7 +943,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCa
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
-                            inferred: var Table[SymId, Cursor];
+                            inferred: Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance =
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
@@ -4617,13 +4617,7 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
   elif matches == 1 and c.routine.inGeneric == 0 and instLastMatch:
     # can instantiate single match
     c.dest.shrink exprStart
-    # inferred table outlives proc but argsBuf is ephemeral:
-    var inferred = lastMatch.inferred
-    for _, value in inferred.mpairs:
-      c.dest.addSubtree value
-      value = typeToCursor(c, exprStart)
-      c.dest.shrink exprStart
-    let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, inferred, info)
+    let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, lastMatch.inferred, info)
     c.dest.add symToken(inst.targetSym, info)
     it.typ = asRoutine(inst.procType).params
     it.kind = lastMatch.fn.kind
