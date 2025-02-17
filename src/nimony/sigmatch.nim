@@ -930,8 +930,6 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
     inc f
     m.returnType = f # return type follows the parameters in the token stream
 
-  buildTypeArgs(m)
-
 type
   DisambiguationResult* = enum
     NobodyWins,
