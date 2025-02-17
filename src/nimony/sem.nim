@@ -952,6 +952,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]
+    var typeArgsStart = -1
     buildTree signature, decl.kind, info:
       signature.add symdefToken(targetSym, info)
       signature.addDotToken() # a generic instance is not exported
@@ -959,6 +960,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       # InvokeT for the generic params:
       signature.buildTree InvokeT, info:
         signature.add symToken(origin, info)
+        typeArgsStart = signature.len
         signature.add typeArgs
       var sc = SubsContext(params: addr inferred)
       subs(c, signature, sc, decl.params)
@@ -971,6 +973,20 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
 
     result = ProcInstance(targetSym: targetSym, procType: cursorAt(signature, 0),
       returnType: cursorAt(signature, beforeRetType))
+
+    # rebuild inferred as cursors to params in signature invocation
+    var newInferred = initTable[SymId, Cursor](inferred.len)
+    var typevar = decl.typevars
+    inc typevar # skip tag
+    var typeArg = cursorAt(signature, typeArgsStart)
+    while typevar.kind != ParRi:
+      assert typeArg.kind != ParRi
+      let sym = asLocal(typevar).name.symId
+      newInferred[sym] = typeArg
+      skip typevar
+      skip typeArg
+    assert typeArg.kind == ParRi
+
     publish targetSym, ensureMove signature
 
     c.instantiatedProcs[(origin, key)] = targetSym
