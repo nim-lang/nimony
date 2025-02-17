@@ -15,3 +15,6 @@ template resem() =
   discard getPrivateTempl(generic)
   generic = createGeneric[int](456)
 resem()
+
+proc scope() =
+  let differentGeneric = createGeneric[float](123)

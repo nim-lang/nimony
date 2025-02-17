@@ -17,4 +17,4 @@ template getPrivateTempl*(x: Foo): int = x.private
 template getPrivateTempl*[T](x: Generic[T]): T = T(x.private)
 
 proc createGeneric*[T](x: int): Generic[T] =
-  result = Generic[T](public: x, private: x)
+  result = Generic[T](public: T(x), private: T(x))
