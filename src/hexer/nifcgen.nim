@@ -1296,9 +1296,15 @@ proc importSymbol(e: var EContext; s: SymId) =
           transformInlineRoutines(e, c)
           return
 
-      e.dest.add tagToken("imp", c.info)
+      var dst = createTokenBuf(50)
+      swap e.dest, dst
       traverseStmt e, c, TraverseSig
-      e.dest.addParRi()
+      swap dst, e.dest
+
+      if dst.len > 0:
+        e.dest.add tagToken("imp", c.info)
+        e.dest.add dst
+        e.dest.addParRi()
   else:
     error e, "could not find symbol: " & pool.syms[s]
 
