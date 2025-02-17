@@ -475,3 +475,4 @@ template len*[I, T](x: array[I, T]): int =
 include "system/setops"
 
 include "system/stringimpl"
+include "system/seqimpl"

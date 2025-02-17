@@ -113,7 +113,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     case n.exprKind
     of DotX, AtX, ArrAtX, ParX:
       inc n
-    of HderefX, HaddrX, DerefX, AddrX, DdotX:
+    of HderefX, HaddrX, DerefX, AddrX, DdotX, PatX:
       inc n
       someIndirection = true
     of DconvX, OconvX, ConvX, CastX:

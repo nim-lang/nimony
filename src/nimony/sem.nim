@@ -941,6 +941,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]
+    var typeArgsStart = -1
     buildTree signature, decl.kind, info:
       signature.add symdefToken(targetSym, info)
       signature.addDotToken() # a generic instance is not exported
@@ -948,6 +949,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       # InvokeT for the generic params:
       signature.buildTree InvokeT, info:
         signature.add symToken(origin, info)
+        typeArgsStart = signature.len
         signature.add typeArgs
       var sc = SubsContext(params: addr inferred)
       subs(c, signature, sc, decl.params)
@@ -960,13 +962,24 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
 
     result = ProcInstance(targetSym: targetSym, procType: cursorAt(signature, 0),
       returnType: cursorAt(signature, beforeRetType))
+    var newInferred = initTable[SymId, Cursor](inferred.len)
+    var typevars = decl.typevars
+    inc typevars
+    var typeArg = cursorAt(signature, typeArgsStart)
+    while typevars.kind != ParRi:
+      assert typeArg.kind != ParRi
+      let typevar = asLocal(typevars).name.symId
+      newInferred[typevar] = typeArg
+      skip typevars
+      skip typeArg
+    assert typeArg.kind == ParRi
     publish targetSym, ensureMove signature
 
     c.instantiatedProcs[(origin, key)] = targetSym
     var req = InstRequest(
       origin: origin,
       targetSym: targetSym,
-      inferred: move(inferred)
+      inferred: move(newInferred)
     )
     for ins in c.instantiatedFrom: req.requestFrom.add ins
     req.requestFrom.add info
@@ -1716,7 +1729,7 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId): Ob
       else:
         let ownerModule = extractModule(pool.syms[owner])
         visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
-    if not visible:
+    if false:#not visible:
       # treat as undeclared
       result = ObjField(level: -1)
 
