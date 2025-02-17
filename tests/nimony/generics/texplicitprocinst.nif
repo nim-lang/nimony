@@ -32,11 +32,11 @@
    (discard .))) 8,4
  (proc :foo.3.texhjoap . ~8,~3 .
   (at foo.1.texhjoap 4,~1
-   (i -1) 9 string.0.sys9azlf) 6,~3
+   (i -1) 9 string.0.sysvq0asl) 6,~3
   (params 1
    (param :x.6 . . ~3,2
     (i -1) .) 7
-   (param :y.2 . . ~4,3 string.0.sys9azlf .)) ~8,~3 . ~8,~3 . ~8,~3 . 21,~3
+   (param :y.2 . . ~4,3 string.0.sysvq0asl .)) ~8,~3 . ~8,~3 . ~8,~3 . 21,~3
   (stmts
    (discard .))) 28,10
  (proc :importedGeneric.0.texhjoap . 0,1,tests/nimony/generics/deps/mgenericproc.nim .

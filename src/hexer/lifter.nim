@@ -18,7 +18,7 @@ import std/[assertions, tables]
 
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys
-import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints]
+import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes]
 
 type
   TypeCursor = Cursor
@@ -63,8 +63,7 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
   false
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
-  const systemSuffix = "sys9azlf"
-  result = pool.syms.getOrIncl(name & ".0." & systemSuffix)
+  result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
 
 proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var n = n

@@ -105,11 +105,7 @@ proc handleCmdLine() =
     of cmdEnd: assert false, "cannot happen"
   if args.len != 3:
     quit "want exactly 3 command line arguments"
-  if useEnv:
-    let nimPath = getEnv("NIMPATH")
-    for entry in split(nimPath, PathSep):
-      if entry.strip != "":
-        config.paths.add entry
+  semos.setupPaths(config, useEnv)
   case cmd
   of None:
     quit "command missing"

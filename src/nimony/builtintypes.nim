@@ -21,7 +21,7 @@ proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inl
   parLeToken(pool.tags.getOrIncl(tag), info)
 
 const
-  SystemModuleSuffix* = "sys9azlf"
+  SystemModuleSuffix* = "sysvq0asl" # "sys9azlf"
   StringName* = "string.0." & SystemModuleSuffix
   StringAField* = "a.0." & SystemModuleSuffix
   StringIField* = "i.0." & SystemModuleSuffix

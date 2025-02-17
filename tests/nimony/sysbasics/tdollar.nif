@@ -11,9 +11,9 @@
     (tup +2 "Green1")))) 2,1
  (proc :dollar`.Color1.0.tdoqc0e0v x . .
   (params
-   (param :e.0 . . Color1.0.tdoqc0e0v .)) string.0.sys9azlf . .
+   (param :e.0 . . Color1.0.tdoqc0e0v .)) string.0.sysvq0asl . .
   (stmts 9
-   (result :result.0 . . string.0.sys9azlf .) 9
+   (result :result.0 . . string.0.sysvq0asl .) 9
    (case e.0 ~7,1
     (of
      (ranges Red1.0.tdoqc0e0v)
@@ -31,5 +31,5 @@
  (proc 5 :fooColor.0.tdoqc0e0v . . . 14
   (params) . . . 2,1
   (stmts 4
-   (let :m.0 . . string.0.sys9azlf 4
+   (let :m.0 . . string.0.sysvq0asl 4
     (call dollar`.Color1.0.tdoqc0e0v 1 Blue1.0.tdoqc0e0v)))))
