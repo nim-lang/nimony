@@ -44,7 +44,7 @@
   (typedesc 1 T.3.tge7jvqqk1) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,14
- (type ~8 :string.0.tge7jvqqk1 x . . string.0.sys9azlf) 4,16
+ (type ~8 :string.0.tge7jvqqk1 x . . string.0.sysvq0asl) 4,16
  (gvar :myset.0.tge7jvqqk1 . . 10
   (set 1
    (u +8)) .) 4,17
@@ -100,12 +100,12 @@
   (params 1
    (param :x.2 . . 3
     (i -1) .) 9
-   (param :y.1 . . string.0.sys9azlf .)) 21
+   (param :y.1 . . string.0.sysvq0asl .)) 21
   (i -1) . . 2,1
   (stmts 4
    (result :result.0 . . 10,~6
     (i -1) .) 4
-   (var :x.5 . . string.0.sys9azlf 4 "abc") 7,1
+   (var :x.5 . . string.0.sysvq0asl 4 "abc") 7,1
    (asgn ~7 result.0 2 +4) 2,2
    (asgn ~2 x.5 2 "34") ~2,~1
    (ret result.0))) ,43
