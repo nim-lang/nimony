@@ -179,8 +179,13 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       c.dest.add parLeToken(HcallX, info)
       c.dest.add symToken(convMatch.fn.sym, info)
       if convMatch.genericConverter:
-        let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
-        c.dest[c.dest.len-1].setSymId inst.targetSym
+        buildTypeArgs(convMatch)
+        if convMatch.err:
+          # adding type args errored
+          buildErr c, info, getErrorMsg(convMatch)
+        else:
+          let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
+          c.dest[c.dest.len-1].setSymId inst.targetSym
       # ignore genericEmpty case, probably environment is generic
       c.dest.add convMatch.args
       c.dest.addParRi()
@@ -1284,9 +1289,12 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
                 # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
                 assert not convMatch.err
                 buildTypeArgs(convMatch)
-                assert not convMatch.err
-                let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
-                c.dest[c.dest.len-1].setSymId inst.targetSym
+                if convMatch.err:
+                  # adding type args errored
+                  buildErr c, info, getErrorMsg(convMatch)
+                else:
+                  let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
+                  c.dest[c.dest.len-1].setSymId inst.targetSym
         while true:
           case arg.kind
           of ParLe: inc nested
