@@ -149,7 +149,7 @@ proc isNoReturn(n: Cursor): bool {.inline.} =
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
-                            inferred: var Table[SymId, Cursor];
+                            inferred: Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
@@ -179,8 +179,13 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       c.dest.add parLeToken(HcallX, info)
       c.dest.add symToken(convMatch.fn.sym, info)
       if convMatch.genericConverter:
-        let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
-        c.dest[c.dest.len-1].setSymId inst.targetSym
+        buildTypeArgs(convMatch)
+        if convMatch.err:
+          # adding type args errored
+          buildErr c, info, getErrorMsg(convMatch)
+        else:
+          let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
+          c.dest[c.dest.len-1].setSymId inst.targetSym
       # ignore genericEmpty case, probably environment is generic
       c.dest.add convMatch.args
       c.dest.addParRi()
@@ -943,7 +948,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCa
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
-                            inferred: var Table[SymId, Cursor];
+                            inferred: Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance =
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
@@ -952,6 +957,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]
+    var typeArgsStart = -1
     buildTree signature, decl.kind, info:
       signature.add symdefToken(targetSym, info)
       signature.addDotToken() # a generic instance is not exported
@@ -959,6 +965,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       # InvokeT for the generic params:
       signature.buildTree InvokeT, info:
         signature.add symToken(origin, info)
+        typeArgsStart = signature.len
         signature.add typeArgs
       var sc = SubsContext(params: addr inferred)
       subs(c, signature, sc, decl.params)
@@ -971,13 +978,27 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
 
     result = ProcInstance(targetSym: targetSym, procType: cursorAt(signature, 0),
       returnType: cursorAt(signature, beforeRetType))
+
+    # rebuild inferred as cursors to params in signature invocation
+    var newInferred = initTable[SymId, Cursor](inferred.len)
+    var typevar = decl.typevars
+    inc typevar # skip tag
+    var typeArg = cursorAt(signature, typeArgsStart)
+    while typevar.kind != ParRi:
+      assert typeArg.kind != ParRi
+      let sym = asLocal(typevar).name.symId
+      newInferred[sym] = typeArg
+      skip typevar
+      skip typeArg
+    assert typeArg.kind == ParRi
+
     publish targetSym, ensureMove signature
 
     c.instantiatedProcs[(origin, key)] = targetSym
     var req = InstRequest(
       origin: origin,
       targetSym: targetSym,
-      inferred: move(inferred)
+      inferred: move(newInferred)
     )
     for ins in c.instantiatedFrom: req.requestFrom.add ins
     req.requestFrom.add info
@@ -1267,8 +1288,13 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
                 sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode(c)
                 # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
                 assert not convMatch.err
-                let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
-                c.dest[c.dest.len-1].setSymId inst.targetSym
+                buildTypeArgs(convMatch)
+                if convMatch.err:
+                  # adding type args errored
+                  buildErr c, convInfo, getErrorMsg(convMatch)
+                else:
+                  let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
+                  c.dest[c.dest.len-1].setSymId inst.targetSym
         while true:
           case arg.kind
           of ParLe: inc nested
@@ -4601,13 +4627,7 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
   elif matches == 1 and c.routine.inGeneric == 0 and instLastMatch:
     # can instantiate single match
     c.dest.shrink exprStart
-    # inferred table outlives proc but argsBuf is ephemeral:
-    var inferred = lastMatch.inferred
-    for _, value in inferred.mpairs:
-      c.dest.addSubtree value
-      value = typeToCursor(c, exprStart)
-      c.dest.shrink exprStart
-    let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, inferred, info)
+    let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, lastMatch.inferred, info)
     c.dest.add symToken(inst.targetSym, info)
     it.typ = asRoutine(inst.procType).params
     it.kind = lastMatch.fn.kind
