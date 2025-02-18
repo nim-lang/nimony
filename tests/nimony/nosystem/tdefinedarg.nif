@@ -12,10 +12,10 @@
   (pragmas 2
    (magic 7 Defined)) . .) 4,4
  (glet :x.0.tdej0g1hh1 . .
-  (bool) 11
+  (bool) 12
   (false)) 4,5
  (glet :y.0.tdej0g1hh1 . .
-  (bool) 11
+  (bool) 12
   (true)) 4,6
  (glet :z.0.tdej0g1hh1 . .
   (bool) 15

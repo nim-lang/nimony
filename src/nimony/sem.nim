@@ -633,9 +633,9 @@ proc fetchSym(c: var SemContext; s: SymId): Sym =
 proc semBoolExpr(c: var SemContext; n: var Cursor) =
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
-  n = it.n
   if classifyType(c, it.typ) != BoolT:
-    buildErr c, it.n.info, "expected `bool` but got: " & typeToString(it.typ)
+    buildErr c, n.info, "expected `bool` but got: " & typeToString(it.typ)
+  n = it.n
 
 proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
   let start = c.dest.len
@@ -5257,8 +5257,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     literal c, it, c.types.charType
   of Ident:
     let start = c.dest.len
-    let s = semIdent(c, it.n, flags)
+    let s = semIdentImpl(c, it.n, it.n.litId, flags)
     semExprSym c, it, s, start, flags
+    inc it.n
   of Symbol:
     let start = c.dest.len
     let s = fetchSym(c, it.n.symId)
