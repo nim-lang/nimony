@@ -19,9 +19,9 @@
    (array
     (bool)
     (rangetype
-     (i -1) +0 +2)) 9
+     (i -1) +0 +2)) 10
    (false) 29
-   (true) 47
+   (true) 48
    (false))) 4,6
  (glet :fromDeclared.0.timhjtr28 . . ,~1
   (array
@@ -33,6 +33,6 @@
     (bool)
     (rangetype
      (i -1) +0 +2)) 10
-   (true) 26
+   (true) 27
    (false) 44
    (true))))
