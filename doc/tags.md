@@ -263,3 +263,5 @@
 | `(index (public ...) (private ...) (hooks ...) (converter ...) (build ...))` | NifIndex | index section |
 | `(public (kv Y INTLIT*)` | NifIndex | public section |
 | `(private (kv Y INTLIT*))` | NifIndex | private section |
+| `(inject)` | NimonyPragma | `inject` pragma |
+| `(gensym)` | NimonyPragma | `gensym` pragma |
