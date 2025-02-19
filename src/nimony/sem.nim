@@ -4544,14 +4544,6 @@ proc semDefined(c: var SemContext; it: var Item) =
     it.typ = c.types.boolType
     commonType c, it, beforeExpr, expected
 
-proc isDeclared(c: var SemContext; name: StrId): bool =
-  var scope = c.currentScope
-  while scope != nil:
-    if name in scope.tab:
-      return true
-    scope = scope.up
-  result = name in c.importTab
-
 proc semDeclared(c: var SemContext; it: var Item) =
   inc it.n
   let info = it.n.info
