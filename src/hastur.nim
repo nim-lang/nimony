@@ -203,7 +203,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       let nimcacheC = generatedFile(file, ".c")
       diffFiles c, file, cfile, nimcacheC, overwrite
 
-    if cat == Normal:
+    if cat notin {Basics, Tracked}:
       let exe = file.generatedFile(ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       if testProgramExitCode != 0:
@@ -311,7 +311,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     gitAdd test
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
-    if cat == Normal:
+    if cat notin {Basics, Tracked}:
       let exe = file.generatedFile(ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       assert testProgramExitCode == 0, "the test program had an invalid exitcode; unsupported"
