@@ -1295,6 +1295,12 @@ proc importSymbol(e: var EContext; s: SymId) =
         if InlineP in prag.flags:
           transformInlineRoutines(e, c)
           return
+        if NodeclP in prag.flags:
+          if prag.externName.len > 0:
+            e.registerMangle(s, prag.externName & ".c")
+          if prag.header != StrId(0):
+            e.headers.incl prag.header
+          return
 
       e.dest.add tagToken("imp", c.info)
       traverseStmt e, c, TraverseSig

@@ -31,10 +31,10 @@
   (stmts
    (discard .))) 8,4
  (proc :foo.3.texhjoap . ~8,~3 .
-  (at foo.1.texhjoap 4,~1
+  (at foo.1.texhjoap 4
    (i -1) 9 string.0.sysvq0asl) 6,~3
   (params 1
-   (param :x.6 . . ~3,2
+   (param :x.6 . . ~3,3
     (i -1) .) 7
    (param :y.2 . . ~4,3 string.0.sysvq0asl .)) ~8,~3 . ~8,~3 . ~8,~3 . 21,~3
   (stmts

@@ -149,7 +149,7 @@ proc isNoReturn(n: Cursor): bool {.inline.} =
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
-                            inferred: var Table[SymId, Cursor];
+                            inferred: Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
@@ -179,8 +179,13 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       c.dest.add parLeToken(HcallX, info)
       c.dest.add symToken(convMatch.fn.sym, info)
       if convMatch.genericConverter:
-        let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
-        c.dest[c.dest.len-1].setSymId inst.targetSym
+        buildTypeArgs(convMatch)
+        if convMatch.err:
+          # adding type args errored
+          buildErr c, info, getErrorMsg(convMatch)
+        else:
+          let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
+          c.dest[c.dest.len-1].setSymId inst.targetSym
       # ignore genericEmpty case, probably environment is generic
       c.dest.add convMatch.args
       c.dest.addParRi()
@@ -628,9 +633,9 @@ proc fetchSym(c: var SemContext; s: SymId): Sym =
 proc semBoolExpr(c: var SemContext; n: var Cursor) =
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
-  n = it.n
   if classifyType(c, it.typ) != BoolT:
-    buildErr c, it.n.info, "expected `bool` but got: " & typeToString(it.typ)
+    buildErr c, n.info, "expected `bool` but got: " & typeToString(it.typ)
+  n = it.n
 
 proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
   let start = c.dest.len
@@ -881,7 +886,9 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
     shrink c.dest, beforeCall
     expandedInto.addParRi() # extra token so final `inc` doesn't break
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
+    inc c.routine.inInst
     semExpr c, a
+    dec c.routine.inInst
     it.typ = a.typ
     it.kind = a.kind
   else:
@@ -943,7 +950,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCa
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
-                            inferred: var Table[SymId, Cursor];
+                            inferred: Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance =
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
@@ -952,6 +959,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]
+    var typeArgsStart = -1
     buildTree signature, decl.kind, info:
       signature.add symdefToken(targetSym, info)
       signature.addDotToken() # a generic instance is not exported
@@ -959,6 +967,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       # InvokeT for the generic params:
       signature.buildTree InvokeT, info:
         signature.add symToken(origin, info)
+        typeArgsStart = signature.len
         signature.add typeArgs
       var sc = SubsContext(params: addr inferred)
       subs(c, signature, sc, decl.params)
@@ -971,6 +980,20 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
 
     result = ProcInstance(targetSym: targetSym, procType: cursorAt(signature, 0),
       returnType: cursorAt(signature, beforeRetType))
+
+    # rebuild inferred as cursors to params in signature invocation
+    var newInferred = initTable[SymId, Cursor](inferred.len)
+    var typevar = decl.typevars
+    inc typevar # skip tag
+    var typeArg = cursorAt(signature, typeArgsStart)
+    while typevar.kind != ParRi:
+      assert typeArg.kind != ParRi
+      let sym = asLocal(typevar).name.symId
+      newInferred[sym] = typeArg
+      skip typevar
+      skip typeArg
+    assert typeArg.kind == ParRi
+
     publish targetSym, ensureMove signature
 
     c.instantiatedProcs[(origin, key)] = targetSym
@@ -1267,8 +1290,13 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
                 sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode(c)
                 # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
                 assert not convMatch.err
-                let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
-                c.dest[c.dest.len-1].setSymId inst.targetSym
+                buildTypeArgs(convMatch)
+                if convMatch.err:
+                  # adding type args errored
+                  buildErr c, convInfo, getErrorMsg(convMatch)
+                else:
+                  let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
+                  c.dest[c.dest.len-1].setSymId inst.targetSym
         while true:
           case arg.kind
           of ParLe: inc nested
@@ -1475,6 +1503,16 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         returnType = semReturnType(c, subsReturnType)
         swap c.dest, instReturnType
       else:
+        if isMagic == NonMagicCall and cs.hasGenericArgs:
+          # add back explicit generic args since we cannot instantiate
+          var invokeBuf = createTokenBuf(16)
+          invokeBuf.addParLe(AtX, cs.fn.n.info)
+          invokeBuf.add symToken(finalFn.sym, cs.fn.n.info)
+          var genericArgsRead = genericArgs
+          while genericArgsRead.kind != ParRi:
+            takeTree invokeBuf, genericArgsRead
+          invokeBuf.addParRi()
+          replace c.dest, beginRead(invokeBuf), cs.beforeCall+1
         if matched.returnType.kind == DotToken:
           returnType = matched.returnType
         else:
@@ -1736,23 +1774,25 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId): Ob
   if impl.typeKind in {RefT, PtrT}:
     inc impl
   result = findObjFieldAux(impl, name)
-  if result.level == 0:
-    result.rootOwner = genericRootSym(decl)
-  if result.level >= 0:
-    # check visibility
-    var visible = false
-    if result.exported:
-      visible = true
-    else:
-      let owner = result.rootOwner
-      if owner == SymId(0):
+  if c.routine.inInst == 0:
+    # only check visibility during first semcheck
+    if result.level == 0:
+      result.rootOwner = genericRootSym(decl)
+    if result.level >= 0:
+      # check visibility
+      var visible = false
+      if result.exported:
         visible = true
       else:
-        let ownerModule = extractModule(pool.syms[owner])
-        visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
-    if not visible:
-      # treat as undeclared
-      result = ObjField(level: -1)
+        let owner = result.rootOwner
+        if owner == SymId(0):
+          visible = true
+        else:
+          let ownerModule = extractModule(pool.syms[owner])
+          visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
+      if not visible:
+        # treat as undeclared
+        result = ObjField(level: -1)
 
 proc findModuleSymbol(n: Cursor): SymId =
   result = SymId(0)
@@ -2531,6 +2571,10 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       var sub = createTokenBuf(30)
       subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
       c.dest.endRead()
+      let oldScope = c.currentScope
+      # move to top level scope:
+      while c.currentScope.up != nil:
+        c.currentScope = c.currentScope.up
       var phase = SemcheckTopLevelSyms
       var topLevel = createTokenBuf(30)
       swap c.phase, phase
@@ -2545,6 +2589,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       semTypeSection c, tn
       swap c.dest, instance
       swap c.phase, phase
+      c.currentScope = oldScope
       publish targetSym, ensureMove instance
       c.dest.shrink typeStart
       c.dest.add symToken(targetSym, info)
@@ -3056,6 +3101,7 @@ proc semGenericParams(c: var SemContext; n: var Cursor) =
       semGenericParam c, n
     takeParRi c, n
   elif n == $InvokeT:
+    inc c.routine.inInst
     takeTree c, n
   else:
     buildErr c, n.info, "expected '.' or 'typevars'"
@@ -3882,6 +3928,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
         c.phase != SemcheckTopLevelSyms):
     var isGeneric: bool
     let prevGeneric = c.routine.inGeneric
+    let prevInst = c.routine.inInst
     if n.kind == DotToken:
       takeToken c, n
       isGeneric = false
@@ -3909,6 +3956,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     if isGeneric:
       closeScope c
       c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
+      c.routine.inInst = prevInst
   else:
     c.takeTree n # generics
     discard semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
@@ -4601,13 +4649,7 @@ proc tryExplicitRoutineInst(c: var SemContext; syms: Cursor; it: var Item): bool
   elif matches == 1 and c.routine.inGeneric == 0 and instLastMatch:
     # can instantiate single match
     c.dest.shrink exprStart
-    # inferred table outlives proc but argsBuf is ephemeral:
-    var inferred = lastMatch.inferred
-    for _, value in inferred.mpairs:
-      c.dest.addSubtree value
-      value = typeToCursor(c, exprStart)
-      c.dest.shrink exprStart
-    let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, inferred, info)
+    let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, lastMatch.inferred, info)
     c.dest.add symToken(inst.targetSym, info)
     it.typ = asRoutine(inst.procType).params
     it.kind = lastMatch.fn.kind
@@ -5215,8 +5257,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     literal c, it, c.types.charType
   of Ident:
     let start = c.dest.len
-    let s = semIdent(c, it.n, flags)
+    let s = semIdentImpl(c, it.n, it.n.litId, flags)
     semExprSym c, it, s, start, flags
+    inc it.n
   of Symbol:
     let start = c.dest.len
     let s = fetchSym(c, it.n.symId)
