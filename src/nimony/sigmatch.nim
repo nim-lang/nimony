@@ -895,16 +895,6 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.error0 RoutineIsNotGeneric
       return
 
-proc buildTypeArgs*(m: var Match) =
-  # check all type vars have a value:
-  if not m.err and m.fn.kind in RoutineKinds:
-    for v in typeVars(m.fn.sym):
-      let inf = m.inferred.getOrDefault(v)
-      if inf == default(Cursor):
-        m.error0Typevar CouldNotInferTypeVar, v
-        break
-      m.typeArgs.addSubtree inf
-
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
