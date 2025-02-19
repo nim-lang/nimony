@@ -363,6 +363,9 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
     skip n
     skipParRi n
 
+when not defined(nimony):
+  proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false)
+
 proc trOnlyEssentials(c: var Context; n: var Cursor) =
   var nested = 0
   while true:
@@ -384,6 +387,25 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
         trExplicitWasMoved c, n
       of TraceX:
         trExplicitTrace c, n
+      of NoExpr:
+        case n.stmtKind
+        of LocalDecls:
+          c.dest.add n
+          inc n
+          let name = n
+          takeTree c.dest, n # name
+          takeTree c.dest, n # exported
+          takeTree c.dest, n # pragmas
+          let typ = n
+          takeTree c.dest, n # typ
+          c.typeCache.registerLocal(name.symId, typ)
+          inc nested
+        of ProcS, FuncS, ConverterS, MethodS, MacroS:
+          trProcDecl c, n, parentNodestroy = true
+        else:
+          c.dest.add n
+          inc n
+          inc nested
       else:
         c.dest.add n
         inc n
@@ -394,7 +416,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc trProcDecl(c: var Context; n: var Cursor) =
+proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.dest.add n
   var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
@@ -408,7 +430,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   if r.body.stmtKind == StmtsS and not isGeneric(r):
     c.typeCache.openScope()
     c.typeCache.registerParams(r.name.symId, r.params)
-    if hasBuiltinPragma(r.pragmas, NodestroyP):
+    if parentNodestroy or hasBuiltinPragma(r.pragmas, NodestroyP):
       trOnlyEssentials c, r.body
     else:
       tr c, r.body, DontCare
