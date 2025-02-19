@@ -55,10 +55,10 @@ proc semMixinStmt(c: var SemContext; n: var Cursor; toMixin: var HashSet[StrId])
   takeParRi c, n
 
 type
-  UntypedMode = enum
+  UntypedMode* = enum
     UntypedTemplate
     UntypedGeneric
-  UntypedCtx = object
+  UntypedCtx* = object
     c: ptr SemContext
     mode: UntypedMode
     toBind: HashSet[SymId]
@@ -69,6 +69,18 @@ type
     inNestedRoutine: int
     noGenSym: int
     inTemplateHeader: int
+
+proc createUntypedContext*(c: ptr SemContext; mode: UntypedMode): UntypedCtx =
+  UntypedCtx(c: c, mode: mode)
+
+proc addParams*(c: var UntypedCtx; paramsStart: int) =
+  var read = cursorAt(c.c.dest, paramsStart)
+  if read.substructureKind in {ParamsU, TypevarsU}:
+    inc read # skip tag
+    while read.kind != ParRi:
+      let param = asLocal(read)
+      incl c.params, param.name.symId
+  endRead(c.c.dest)
 
 proc openScope(c: var UntypedCtx) =
   openScope c.c[]
@@ -373,7 +385,7 @@ when false:
     # close scope for parameters
     closeScope(c)
 
-proc semTemplBody(c: var UntypedCtx; n: var Cursor)
+proc semTemplBody*(c: var UntypedCtx; n: var Cursor)
 
 proc semTemplBodySons(c: var UntypedCtx; n: var Cursor) =
   takeToken c.c[], n
@@ -405,7 +417,7 @@ proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
 proc semTemplRoutineDecl(c: var UntypedCtx; n: var Cursor; k: SymKind) =
   raiseAssert("unimplemented")
 
-proc semTemplBody(c: var UntypedCtx; n: var Cursor) =
+proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
   case n.kind
   of Ident:
     if isInjected(c, n.litId):

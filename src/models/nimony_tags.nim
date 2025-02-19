@@ -235,6 +235,7 @@ type
     ElseU = (81, "else")  ## `else` action
     TypevarsU = (82, "typevars")  ## type variable/generic parameters
     OfU = (88, "of")  ## `of` branch within a `case` statement
+    ParamsU = (94, "params")  ## list of proc parameters, also used as a "proc type"
     PragmasU = (128, "pragmas")  ## begin of pragma section
     UnpackflatU = (156, "unpackflat")  ## unpack into flat variable list
     UnpacktupU = (157, "unpacktup")  ## unpack tuple
@@ -243,7 +244,7 @@ type
 
 proc rawTagIsNimonyOther*(raw: uint32): bool {.inline.} =
   let r = raw - 27'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 21'u8, 22'u8, 26'u8, 33'u8, 34'u8, 35'u8, 53'u8, 54'u8, 55'u8, 61'u8, 101'u8, 129'u8, 130'u8, 132'u8, 133'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 21'u8, 22'u8, 26'u8, 33'u8, 34'u8, 35'u8, 53'u8, 54'u8, 55'u8, 61'u8, 67'u8, 101'u8, 129'u8, 130'u8, 132'u8, 133'u8}
 
 type
   NimonyPragma* = enum

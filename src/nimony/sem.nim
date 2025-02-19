@@ -13,7 +13,8 @@ include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
-  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer
+  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
+  semuntyped
 
 import ".." / gear2 / modnames
 import ".." / models / tags
@@ -3346,12 +3347,21 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         if it.n != "stmts":
           error "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
-        takeToken c, it.n
-        let resId = declareResult(c, it.n.info)
-        semProcBody c, it
+        var resId = SymId(0)
+        if c.g.config.compat and c.routine.inGeneric > 0: # includes templates
+          let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
+          var ctx = createUntypedContext(addr c, mode)
+          addParams(ctx, beforeGenericParams)
+          addParams(ctx, beforeParams)
+          semTemplBody ctx, it.n
+        else:
+          takeToken c, it.n
+          resId = declareResult(c, it.n.info)
+          semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
-        addReturnResult c, resId, it.n.info
+        if resId != SymId(0):
+          addReturnResult c, resId, it.n.info
         let name = getHookName(symId)
         let hk = hookToKind(name)
         if hk != NoHook:
