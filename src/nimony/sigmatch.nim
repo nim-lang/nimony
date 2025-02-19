@@ -579,7 +579,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     case fk
     of MutT, OutT, SinkT:
       var a = arg.typ
-      if a.typeKind in {MutT, OutT, LentT, SinkT}:
+      if a.typeKind in {MutT, OutT, SinkT, LentT}:
         inc a
       else:
         m.skippedMod = f.typeKind
