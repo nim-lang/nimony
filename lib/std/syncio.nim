@@ -62,7 +62,7 @@ proc fclose(f: File): int32 {.importc: "fclose", header: "<stdio.h>".}
 
 proc close*(f: File) = discard fclose(f)
 
-proc fopen(filename, mode: cstring): File {.importc: "fopen", header: "<stdio.h>".}
+proc fopen(filename: ptr UncheckedArray[char]; mode: cstring): File {.importc: "fopen", header: "<stdio.h>".}
 
 proc writeBuffer*(f: File; buffer: ptr UncheckedArray[uint8]; size: int): int =
   result = cast[int](c_fwrite(buffer, 1'u, cast[uint](size), f))
@@ -91,7 +91,7 @@ proc open*(f: out File; filename: string;
     of fmReadWriteExisting: cstring"r+b"
     of fmAppend: cstring"ab"
 
-  f = fopen(filename.toCString, m)
+  f = fopen(filename.getData, m)
   if f != nil:
     result = true
     if bufSize >= 0:
@@ -133,7 +133,7 @@ proc readLine*(f: File; s: var string): bool =
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
 proc quit*(value: int) = exit(value.int32)
 
-template assert*(cond: untyped; msg = "") =
+template assert*(cond: bool; msg = "") =
   if not cond:
     echo "[Assertion Failure] ", msg
     quit 1
