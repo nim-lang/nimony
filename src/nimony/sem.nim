@@ -541,12 +541,6 @@ proc semLocalType(c: var SemContext; n: var Cursor; context = InLocalDecl): Type
   result = typeToCursor(c, insertPos)
 
 proc semTypeSection(c: var SemContext; n: var Cursor)
-proc instantiateGenericType(c: var SemContext; req: InstRequest) =
-  var dest = createTokenBuf(30)
-  withFromInfo req:
-    subsGenericType c, dest, req
-    var n = beginRead(dest)
-    semTypeSection c, n
 
 proc instantiateType(c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor =
   var dest = createTokenBuf(30)
@@ -571,12 +565,10 @@ proc instantiateGenericProc(c: var SemContext; req: InstRequest) =
     semProc c, it, it.n.symKind, checkGenericInst
 
 proc instantiateGenerics(c: var SemContext) =
-  while c.typeRequests.len + c.procRequests.len > 0:
+  while c.procRequests.len > 0:
     # This way with `move` ensures it is safe even though
-    # the semchecking of generics can add to `c.typeRequests`
-    # or to `c.procRequests`. This is subtle!
-    let typeReqs = move(c.typeRequests)
-    for t in typeReqs: instantiateGenericType c, t
+    # the semchecking of generics can add to `c.procRequests`.
+    # This is subtle!
     let procReqs = move(c.procRequests)
     for p in procReqs: instantiateGenericProc c, p
 
@@ -2566,8 +2558,9 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     else:
       var args = cursorAt(c.dest, beforeArgs)
       let targetSym = newSymId(c, headId)
+      c.instantiatedTypes[key] = targetSym
       if genericArgs == 0:
-        c.instantiatedTypes[key] = targetSym
+        c.typeInstantiations.add targetSym
       var sub = createTokenBuf(30)
       subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
       c.dest.endRead()
@@ -5657,7 +5650,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   while n.kind != ParRi:
     semStmt c, n, false
   instantiateGenerics c
-  for _, val in mpairs(c.instantiatedTypes):
+  for val in c.typeInstantiations:
     let s = fetchSym(c, val)
     let res = declToCursor(c, s)
     if res.status == LacksNothing:
