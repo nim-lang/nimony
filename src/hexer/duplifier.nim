@@ -392,13 +392,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
         of LocalDecls:
           c.dest.add n
           inc n
-          let name = n
-          takeTree c.dest, n # name
-          takeTree c.dest, n # exported
-          takeTree c.dest, n # pragmas
-          let typ = n
-          takeTree c.dest, n # typ
-          c.typeCache.registerLocal(name.symId, typ)
+          c.typeCache.takeLocalHeader(c.dest, n)
           inc nested
         of ProcS, FuncS, ConverterS, MethodS, MacroS:
           trProcDecl c, n, parentNodestroy = true
