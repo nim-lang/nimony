@@ -1259,7 +1259,7 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
       skip c
     of TypeS:
       traverseTypeDecl e, c
-    of ContinueS, WhenS, MixinS, BindS:
+    of ContinueS, WhenS:
       error e, "unreachable: ", c
     of PragmasS:
       skip c
