@@ -112,7 +112,7 @@
    (asgn ~6
     (ddot ~6 result.1 data.1.tge70unlm +0) 2 data.2) ~2,~1
    (ret result.1))) 12,8
- (type :Node.4.tge70unlm .
+ (type :Node.3.tge70unlm .
   (at Node.0.tge70unlm 1
    (i -1)) ~2,~5 . ,~5
   (ref 11 NodeObj.1.tge70unlm)) 23,3
