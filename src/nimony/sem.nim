@@ -2560,7 +2560,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       let targetSym = newSymId(c, headId)
       c.instantiatedTypes[key] = targetSym
       if genericArgs == 0:
-        c.typeInstantiations.add targetSym
+        c.typeInstDecls.add targetSym
       var sub = createTokenBuf(30)
       subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
       c.dest.endRead()
@@ -5650,7 +5650,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   while n.kind != ParRi:
     semStmt c, n, false
   instantiateGenerics c
-  for val in c.typeInstantiations:
+  for val in c.typeInstDecls:
     let s = fetchSym(c, val)
     let res = declToCursor(c, s)
     if res.status == LacksNothing:
