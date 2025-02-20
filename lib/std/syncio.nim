@@ -91,7 +91,8 @@ proc open*(f: out File; filename: string;
     of fmReadWriteExisting: cstring"r+b"
     of fmAppend: cstring"ab"
 
-  f = fopen(filename.toCString, m)
+  var tmpFilename = filename
+  f = fopen(tmpFilename.toCString, m)
   if f != nil:
     result = true
     if bufSize >= 0:
@@ -133,7 +134,7 @@ proc readLine*(f: File; s: var string): bool =
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
 proc quit*(value: int) = exit(value.int32)
 
-template assert*(cond: untyped; msg = "") =
+template assert*(cond: bool; msg = "") =
   if not cond:
     echo "[Assertion Failure] ", msg
     quit 1
