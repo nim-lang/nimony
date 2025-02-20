@@ -3218,7 +3218,15 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookKind; inf
       buildErr c, info, "signature for '=dup' must be proc[T: object](x: T): T"
 
 proc expandHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind) =
-  c.hookIndexMap.mgetOrPut($op, @[]).add (obj, symId)
+  let attachedOp =
+    case op
+    of DestroyH: attachedDestroy
+    of WasmovedH: attachedWasMoved
+    of CopyH: attachedCopy
+    of SinkhH: attachedSink
+    of DupH: attachedDup
+    of TraceH, NoHook: attachedTrace
+  c.hookIndexMap[attachedOp].add (obj, symId)
 
 proc getHookName(symId: SymId): string =
   result = pool.syms[symId]
@@ -5565,7 +5573,10 @@ proc writeOutput(c: var SemContext; outfile: string) =
   #b.close()
   writeFile outfile, "(.nif24)\n" & toString(c.dest)
   let root = c.dest[0].info
-  createIndex outfile, root, true, IndexSections(hooks: c.hookIndexMap, converters: c.converterIndexMap, toBuild: c.toBuild)
+  createIndex outfile, root, true,
+    IndexSections(hooks: move c.hookIndexMap,
+      converters: move c.converterIndexMap,
+      toBuild: move c.toBuild)
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n == "stmts"

@@ -23,14 +23,6 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints,
 type
   TypeCursor = Cursor
 
-  AttachedOp* = enum
-    attachedDestroy,
-    attachedWasMoved,
-    attachedDup,
-    attachedCopy,
-    attachedSink,
-    attachedTrace
-
   GenHookRequest = object
     sym: SymId
     typ: TypeCursor
@@ -43,15 +35,6 @@ type
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
     hookNames: Table[string, int]
-
-proc hookName*(op: AttachedOp): string =
-  case op
-  of attachedDestroy: "destroy"
-  of attachedWasMoved: "wasMoved"
-  of attachedDup: "dup"
-  of attachedCopy: "copy"
-  of attachedSink: "sink"
-  of attachedTrace: "trace"
 
 # Phase 1: Determine if the =hook is trivial:
 
