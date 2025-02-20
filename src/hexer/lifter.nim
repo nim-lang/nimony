@@ -36,15 +36,6 @@ type
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
     hookNames: Table[string, int]
 
-proc hookName*(op: AttachedOp): string =
-  case op
-  of attachedDestroy: "destroy"
-  of attachedWasMoved: "wasMoved"
-  of attachedDup: "dup"
-  of attachedCopy: "copy"
-  of attachedSink: "sink"
-  of attachedTrace: "trace"
-
 # Phase 1: Determine if the =hook is trivial:
 
 when not defined(nimony):
