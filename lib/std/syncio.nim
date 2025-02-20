@@ -111,13 +111,13 @@ proc writeLine*(f: var File; s: string) =
 
 const bufsize = 80
 
-proc fgets(str: out array[bufsize, char]; n: int32; f: File): cstring {.
+proc fgets(str: ptr UncheckedArray[char]; n: int32; f: File): cstring {.
   importc: "fgets", header: "<stdio.h>".}
 
 proc addReadLine*(f: File; s: var string): bool =
   result = false
   var buf: array[bufsize, char]
-  while fgets(buf, bufsize.int32, f) != nil:
+  while fgets(cast[ptr UncheckedArray[char]](addr buf[0]), bufsize.int32, f) != nil:
     result = true
     var done = false
     for i in 0 ..< bufsize:
