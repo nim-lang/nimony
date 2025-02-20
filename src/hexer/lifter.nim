@@ -23,14 +23,6 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints,
 type
   TypeCursor = Cursor
 
-  AttachedOp* = enum
-    attachedDestroy,
-    attachedWasMoved,
-    attachedDup,
-    attachedCopy,
-    attachedSink,
-    attachedTrace
-
   GenHookRequest = object
     sym: SymId
     typ: TypeCursor

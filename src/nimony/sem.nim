@@ -3218,7 +3218,15 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookKind; inf
       buildErr c, info, "signature for '=dup' must be proc[T: object](x: T): T"
 
 proc expandHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind) =
-  c.hookIndexMap.mgetOrPut($op, @[]).add (obj, symId)
+  let attachedOp =
+    case op
+    of DestroyH: attachedDestroy
+    of WasmovedH: attachedWasMoved
+    of CopyH: attachedCopy
+    of SinkhH: attachedSink
+    of DupH: attachedDup
+    of TraceH, NoHook: attachedTrace
+  c.hookIndexMap[attachedOp].add (obj, symId)
 
 proc getHookName(symId: SymId): string =
   result = pool.syms[symId]

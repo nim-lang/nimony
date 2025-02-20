@@ -97,7 +97,7 @@ type
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     genericHooks*: Table[SymId, seq[SymId]]
-    hookIndexMap*: Table[string, seq[(SymId, SymId)]]
+    hookIndexMap*: array[AttachedOp, seq[(SymId, SymId)]]
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking

@@ -98,10 +98,27 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
       inc n
 
 type
+  AttachedOp* = enum # this one can be used as an array index
+    attachedDestroy,
+    attachedWasMoved,
+    attachedDup,
+    attachedCopy,
+    attachedSink,
+    attachedTrace
+
   IndexSections* = object
-    hooks*: Table[string, seq[(SymId, SymId)]]
+    hooks*: array[AttachedOp, seq[(SymId, SymId)]]
     converters*: seq[(SymId, SymId)]
     toBuild*: TokenBuf
+
+proc hookName*(op: AttachedOp): string =
+  case op
+  of attachedDestroy: "destroy"
+  of attachedWasMoved: "wasMoved"
+  of attachedDup: "dup"
+  of attachedCopy: "copy"
+  of attachedSink: "sink"
+  of attachedTrace: "trace"
 
 proc getSection(tag: TagId; values: seq[(SymId, SymId)]; symToOffsetMap: Table[SymId, int]): TokenBuf =
   result = createTokenBuf(30)
@@ -187,9 +204,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   content.add toString(private)
   content.add "\n"
 
-  for (key, values) in sections.hooks.pairs:
-    let tag = registerTag(key)
-    let hookSectionBuf = getSection(tag, values, symToOffsetMap)
+  for op in AttachedOp:
+    let tag = registerTag(hookName(op))
+    let hookSectionBuf = getSection(tag, sections.hooks[op], symToOffsetMap)
 
     content.add toString(hookSectionBuf)
     content.add "\n"
@@ -220,7 +237,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
 
 proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
   createIndex(infile, root, buildChecksum,
-    IndexSections(hooks: initTable[string, seq[(SymId, SymId)]](), toBuild: default(TokenBuf)))
+    IndexSections())
 
 type
   NifIndexEntry* = object
