@@ -42,8 +42,8 @@ when not defined(nimony):
   proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool
 
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
-  # XXX to implement
-  false
+  #result = tryLoadHook(c.op, s).status == LacksNothing
+  result = false
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
@@ -561,3 +561,10 @@ proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLi
 
 proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): SymId =
   getHook(c, attachedDestroy, typ, info)
+
+when isMainModule:
+  import std/os
+  setupProgramForTesting getCurrentDir() / "nifcache", "test.nim", ".nif"
+  let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
+  echo res.status
+  echo toString res.decl

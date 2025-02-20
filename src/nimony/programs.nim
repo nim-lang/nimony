@@ -36,7 +36,7 @@ proc suffixToNif*(suffix: string): string {.inline.} =
 proc needsRecompile*(dep, output: string): bool =
   result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)
 
-proc load*(suffix: string): NifModule =
+proc load(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
     let infile = suffixToNif suffix
     result = newNifModule(infile)
@@ -123,6 +123,27 @@ proc tryLoadSym*(s: SymId): LoadResult =
         prog.mem[s] = ensureMove(buf)
         result = LoadResult(status: LacksNothing, decl: decl)
 
+type
+  HookResult* = object
+    status*: LoadStatus
+    decl*: TokenBuf
+
+proc tryLoadHook*(op: AttachedOp; typ: SymId): HookResult =
+  let nifName = pool.syms[typ]
+  let modname = extractModule(nifName)
+  if modname == "":
+    result = HookResult(status: LacksModuleName)
+  else:
+    var m = load(modname)
+    var entry = m.index.hooks[op].getOrDefault(nifName)
+    if entry.offset == 0:
+      result = HookResult(status: LacksOffset)
+    else:
+      m.stream.r.jumpTo entry.offset
+      var buf = createTokenBuf(30)
+      nifcursors.parse(m.stream, buf, entry.info)
+      result = HookResult(status: LacksNothing, decl: buf)
+
 proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 
 proc publish*(s: SymId; buf: sink TokenBuf) =
@@ -190,6 +211,12 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   #echo "INPUT IS ", toString(m.buf)
   result = beginRead(m.buf)
   prog.mods[prog.main] = m
+  publishStringType()
+
+proc setupProgramForTesting*(dir, file, ext: string) =
+  prog.dir = dir
+  prog.main = file
+  prog.ext = ext
   publishStringType()
 
 proc takeParRi*(dest: var TokenBuf; n: var Cursor) =
