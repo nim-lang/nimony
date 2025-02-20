@@ -5573,7 +5573,10 @@ proc writeOutput(c: var SemContext; outfile: string) =
   #b.close()
   writeFile outfile, "(.nif24)\n" & toString(c.dest)
   let root = c.dest[0].info
-  createIndex outfile, root, true, IndexSections(hooks: c.hookIndexMap, converters: c.converterIndexMap, toBuild: c.toBuild)
+  createIndex outfile, root, true,
+    IndexSections(hooks: move c.hookIndexMap,
+      converters: move c.converterIndexMap,
+      toBuild: move c.toBuild)
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n == "stmts"
