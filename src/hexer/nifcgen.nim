@@ -1289,10 +1289,14 @@ proc importSymbol(e: var EContext; s: SymId) =
     if c.stmtKind == TypeS:
       traverseTypeDecl e, c
     else:
-      if isRoutine(c.symKind):
-        var pragmas = asRoutine(c).pragmas
+      let isR = isRoutine(c.symKind)
+      if isR or isLocal(c.symKind):
+        var pragmas = if isR:
+                        asRoutine(c).pragmas
+                      else:
+                        asLocal(c).pragmas
         let prag = parsePragmas(e, pragmas)
-        if InlineP in prag.flags:
+        if isR and InlineP in prag.flags:
           transformInlineRoutines(e, c)
           return
         if NodeclP in prag.flags:
