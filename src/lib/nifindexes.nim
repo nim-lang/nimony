@@ -245,7 +245,7 @@ type
     info*: PackedLineInfo
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
-    hooks*: Table[string, Table[string, NifIndexEntry]]
+    hooks*: array[AttachedOp, Table[string, NifIndexEntry]]
     converters*: Table[string, string] # map of dest types to converter symbols
     toBuild*: seq[(string, string, string)]
 
@@ -353,11 +353,10 @@ proc readIndex*(indexName: string): NifIndex =
     else:
       assert false, "'private' expected"
     t = next(s)
-    while t.tag.entryKind in {DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx}:
-      let tagName = pool.tags[t.tag]
-      result.hooks[tagName] = initTable[string, NifIndexEntry]()
-      readSection(s, result.hooks[tagName])
-      t = next(s)
+    for op in AttachedOp:
+      if t.kind == ParLe and pool.tags[t.tag] == hookName(op):
+        readSection(s, result.hooks[op])
+        t = next(s)
     if t.tag == TagId(ConverterIdx):
       readSymbolSection(s, result.converters)
       t = next(s)
