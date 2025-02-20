@@ -62,7 +62,7 @@ proc fclose(f: File): int32 {.importc: "fclose", header: "<stdio.h>".}
 
 proc close*(f: File) = discard fclose(f)
 
-proc fopen(filename: ptr UncheckedArray[char]; mode: cstring): File {.importc: "fopen", header: "<stdio.h>".}
+proc fopen(filename, mode: cstring): File {.importc: "fopen", header: "<stdio.h>".}
 
 proc writeBuffer*(f: File; buffer: ptr UncheckedArray[uint8]; size: int): int =
   result = cast[int](c_fwrite(buffer, 1'u, cast[uint](size), f))
@@ -91,7 +91,8 @@ proc open*(f: out File; filename: string;
     of fmReadWriteExisting: cstring"r+b"
     of fmAppend: cstring"ab"
 
-  f = fopen(filename.getData, m)
+  var tmpFilename = filename
+  f = fopen(tmpFilename.toCString, m)
   if f != nil:
     result = true
     if bufSize >= 0:
