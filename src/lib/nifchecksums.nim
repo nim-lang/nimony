@@ -6,7 +6,7 @@
 
 import std / [formatfloat]
 
-import bitabs, lineinfos, nifreader, nifstreams, nifcursors
+import bitabs, nifreader, nifstreams, nifcursors
 
 #import std / [sha1]
 import "$nim"/dist/checksums/src/checksums/sha1
