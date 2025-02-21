@@ -575,22 +575,26 @@ proc trLocal(c: var Context; n: var Cursor) =
   copyTree c.dest, r.typ
   c.typeCache.registerLocal(r.name.symId, r.typ)
 
-  let destructor = getDestructor(c.lifter[], r.typ, n.info)
-  if destructor != NoSymId:
-    if constructsValue(r.val):
-      tr c, r.val, WillBeOwned
-      c.dest.addParRi()
-
-    elif isLastRead(c, r.val):
-      tr c, r.val, WillBeOwned
-      c.dest.addParRi()
-      callWasMoved c, r.val
-    else:
-      callDup c, r.val
-      c.dest.addParRi()
-  else:
-    tr c, r.val, WillBeOwned
+  if r.val.kind == DotToken:
+    copyTree c.dest, r.val
     c.dest.addParRi()
+  else:
+    let destructor = getDestructor(c.lifter[], r.typ, n.info)
+    if destructor != NoSymId:
+      if constructsValue(r.val):
+        tr c, r.val, WillBeOwned
+        c.dest.addParRi()
+
+      elif isLastRead(c, r.val):
+        tr c, r.val, WillBeOwned
+        c.dest.addParRi()
+        callWasMoved c, r.val
+      else:
+        callDup c, r.val
+        c.dest.addParRi()
+    else:
+      tr c, r.val, WillBeOwned
+      c.dest.addParRi()
 
 proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
   c.dest.add n
