@@ -566,5 +566,7 @@ when isMainModule:
   import std/os
   setupProgramForTesting getCurrentDir() / "nifcache", "test.nim", ".nif"
   let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
-  echo res.status
-  echo toString res.decl
+  if res != SymId(0):
+    echo pool.syms[res]
+  else:
+    echo "no hook"

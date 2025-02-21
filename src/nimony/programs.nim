@@ -21,6 +21,7 @@ type
     dir, main*, ext: string
     mem: Table[SymId, TokenBuf]
 
+
 var
   prog*: Program
 
@@ -123,26 +124,14 @@ proc tryLoadSym*(s: SymId): LoadResult =
         prog.mem[s] = ensureMove(buf)
         result = LoadResult(status: LacksNothing, decl: decl)
 
-type
-  HookResult* = object
-    status*: LoadStatus
-    decl*: TokenBuf
-
-proc tryLoadHook*(op: AttachedOp; typ: SymId): HookResult =
+proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
   let nifName = pool.syms[typ]
   let modname = extractModule(nifName)
   if modname == "":
-    result = HookResult(status: LacksModuleName)
+    result = SymId(0)
   else:
     var m = load(modname)
-    var entry = m.index.hooks[op].getOrDefault(nifName)
-    if entry.offset == 0:
-      result = HookResult(status: LacksOffset)
-    else:
-      m.stream.r.jumpTo entry.offset
-      var buf = createTokenBuf(30)
-      nifcursors.parse(m.stream, buf, entry.info)
-      result = HookResult(status: LacksNothing, decl: buf)
+    result = m.index.hooks[op].getOrDefault(typ)
 
 proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 
