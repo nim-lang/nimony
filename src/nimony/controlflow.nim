@@ -390,10 +390,11 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
     if isConcrete:
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
+      for ret in thisProc.breakInstrs: c.patch ret
       c.dest.addParPair RetS, NoLineInfo
     else:
       takeTree c.dest, n
-    for ret in thisProc.breakInstrs: c.patch ret
+      for ret in thisProc.breakInstrs: c.patch ret
     if isConcrete:
       c.dest.addParRi() # StmtsS
   c.currentBlock = c.currentBlock.parent
