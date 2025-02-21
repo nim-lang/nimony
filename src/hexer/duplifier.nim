@@ -70,7 +70,7 @@ proc constructsValue*(n: Cursor): bool =
       inc n
       while not isLastSon(n): skip n
     else: break
-  result = n.exprKind in ConstructingExprs
+  result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
 proc rootOf(n: Cursor): SymId =
   var n = n
@@ -610,19 +610,19 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
   let typ = getType(c.typeCache, n)
   let arg = n.firstSon
   let info = n.info
-  if isLastRead(c, arg):
+  if constructsValue(arg):
+    # we allow rather silly code like `ensureMove(234)`.
+    # Seems very useful for generic programming as this can come up
+    # from template expansions:
+    copyInto c.dest, n:
+      tr c, n, e
+  elif isLastRead(c, arg):
     if e == WantOwner and hasDestructor(c, typ):
       copyInto c.dest, n:
         genLastRead(c, n, typ)
     else:
       copyInto c.dest, n:
         tr c, n, e
-  elif constructsValue(arg):
-    # we allow rather silly code like `ensureMove(234)`.
-    # Seems very useful for generic programming as this can come up
-    # from template expansions:
-    copyInto c.dest, n:
-      tr c, n, e
   else:
     let m = "not the last usage of: " & asNimCode(n)
     c.dest.buildTree ErrT, info:
