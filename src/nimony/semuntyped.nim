@@ -1,14 +1,25 @@
-## attempt at combining generic and template untyped prepasses
-## important distinctions are:
-## 
-## 1. generics do not gensym and introduce skUnknown symbols which act as injects,
-##    templates introduce symbols with the same symbol kind
-##  - aim is to use the inject mechanism for generics but with scope behavior
-##    mixing this with the template behavior doesn't really make sense
-##    (i.e. real symbol - inject - real symbol, injects would be checked first)
-##    but would be backwards compatible
-##    - injected symbols could be handled in scope object
-## 2. the symbol binding rules seem slightly different (can't tell if these are mostly just special rules for dot fields)
+##[
+
+attempt at combining generic and template untyped prepasses
+important distinctions in the original compiler are:
+
+1. generics do not gensym, instead every declaration is added as
+  an skUnknown symbol which inject the identifier.
+  templates introduce symbols with the same symbol kind and add injects
+  to a set of identifiers.
+
+  these are combined by using the inject set for generics,
+  but keeping the inject set scoped,
+  i.e. injects introduced in a scope are not injected after exiting the scope
+  this changes behavior for templates but could also be disabled for them
+2. generics turns param symbols etc back into identifiers,
+  this does not need to be done anymore as `subs` refreshes them
+3. generics have special behavior for calls (e..g macro expansion),
+  not done here
+
+mostly based on templates so there might be more inconsistencies
+
+]##
 
 import std/[assertions, sets]
 include nifprelude
@@ -259,61 +270,9 @@ proc semTemplSymbol(c: var UntypedCtx; n: var Cursor; firstSym: SymId; count: in
           withoutGensyms.add choice
         inc choice
       takeParRi withoutGensyms, choice
-
-when false:
-  proc semRoutineInTemplName(c: var TemplCtx, n: PNode, explicitInject: bool): PNode =
-    result = n
-    if n.kind == nkIdent:
-      let s = qualifiedLookUp(c.c, n, {})
-      if s != nil:
-        if s.owner == c.owner and (s.kind == skParam or
-            (sfGenSym in s.flags and not explicitInject)):
-          incl(s.flags, sfUsed)
-          result = newSymNode(s, n.info)
-          onUse(n.info, s)
-    else:
-      for i in 0..<n.safeLen:
-        result[i] = semRoutineInTemplName(c, n[i], explicitInject)
-
-  proc semRoutineInTemplBody(c: var TemplCtx, n: PNode, k: TSymKind): PNode =
-    result = n
-    checkSonsLen(n, bodyPos + 1, c.c.config)
-    if n.kind notin nkLambdaKinds:
-      # routines default to 'inject':
-      let binding = symBinding(n[pragmasPos])
-      if binding == spGenSym:
-        let (ident, hasParam) = getIdentReplaceParams(c, n[namePos])
-        if not hasParam:
-          var s = newGenSym(k, ident, c)
-          s.ast = n
-          addPrelimDecl(c.c, s)
-          styleCheckDef(c.c, n.info, s)
-          onDef(n.info, s)
-          n[namePos] = newSymNode(s, n[namePos].info)
-        else:
-          n[namePos] = ident
-      else:
-        n[namePos] = semRoutineInTemplName(c, n[namePos], binding == spInject)
-    # open scope for parameters
-    openScope(c)
-    for i in patternPos..paramsPos-1:
-      n[i] = semTemplBody(c, n[i])
-
-    if k == skTemplate: inc(c.inTemplateHeader)
-    n[paramsPos] = semTemplBody(c, n[paramsPos])
-    if k == skTemplate: dec(c.inTemplateHeader)
-
-    for i in paramsPos+1..miscPos:
-      n[i] = semTemplBody(c, n[i])
-    # open scope for locals
-    inc c.inNestedRoutine
-    openScope(c)
-    n[bodyPos] = semTemplBody(c, n[bodyPos])
-    # close scope for locals
-    closeScope(c)
-    dec c.inNestedRoutine
-    # close scope for parameters
-    closeScope(c)
+      c.c.dest.endRead()
+      c.c.dest.shrink start
+      c.c.dest.add withoutGensyms
 
 proc semTemplBody*(c: var UntypedCtx; n: var Cursor)
 
@@ -324,6 +283,7 @@ proc semTemplBodySons(c: var UntypedCtx; n: var Cursor) =
   takeParRi c.c[], n
 
 proc semTemplPragmas(c: var UntypedCtx; n: var Cursor) =
+  # XXX should call `semTemplBody` but ignore valid pragma identifiers
   takeTree c.c[], n
 
 proc semTemplType(c: var UntypedCtx; n: var Cursor) =
@@ -331,9 +291,11 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
   of VoidT:
     takeToken c.c[], n
   else:
+    # XXX todo
     raiseAssert("unimplemented")
 
 proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
+  # XXX todo
   raiseAssert("unimplemented")
 
 proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
@@ -350,6 +312,7 @@ proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
   takeParRi c.c[], n
 
 proc semTemplRoutineDecl(c: var UntypedCtx; n: var Cursor; k: SymKind) =
+  # XXX todo
   raiseAssert("unimplemented")
 
 proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
@@ -391,10 +354,6 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
         c.c.dest.add symToken(firstSym, n.info)
       else:
         semTemplSymbol(c, n, firstSym, count, start)
-        when false:
-          if s.kind in {skVar, skLet, skConst}:
-            discard qualifiedLookUp(c.c, n, {checkAmbiguity, checkModule})
-          result = semTemplSymbol(c, n, s, c.noGenSym > 0, c.c.isAmbiguous)
     inc n
   of Symbol, IntLit, UIntLit, CharLit, StringLit, FloatLit,
       DotToken, UnknownToken, EofToken, ParRi, SymbolDef: # ?
@@ -430,7 +389,8 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
             semTemplBody c, n
             closeScope c
             takeParRi c.c[], n
-          else: raiseAssert("illformed AST")
+          else:
+            error "illformed AST", n
         takeParRi c.c[], n
       of WhileS:
         takeToken c.c[], n
@@ -464,7 +424,8 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
             semTemplBody c, n
             closeScope c
             takeParRi c.c[], n
-          else: raiseAssert("illformed AST")
+          else:
+            error "illformed AST", n
         closeScope c
         takeParRi c.c[], n
       of ForS:
@@ -473,7 +434,8 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
         case n.substructureKind
         of UnpackFlatU, UnpackTupU:
           semTemplBodySons c, n
-        else: raiseAssert("illformed AST")
+        else:
+          error "illformed AST", n
         semTemplBody c, n
         openScope c
         semTemplBody c, n
@@ -506,55 +468,24 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
       of TemplateS: semTemplRoutineDecl(c, n, TemplateY)
       of MacroS: semTemplRoutineDecl(c, n, MacroY)
       of AsgnS:
-        when false:
-          checkSonsLen(n, 2, c.c.config)
-          let a = n[0]
-          let b = n[1]
-
-          let k = a.kind
-          case k
-          of nkBracketExpr:
-            if a.typ == nil:
-              # see nkBracketExpr case above for explanation
-              result = newNodeI(nkCall, n.info)
-              result.add newIdentNode(getIdent(c.c.cache, "[]="), n.info)
-              for i in 0..<a.len: result.add(a[i])
-              result.add(b)
-            let a0 = semTemplBody(c, a[0])
-            result = semTemplBodySons(c, result)
-          of nkCurlyExpr:
-            if a.typ == nil:
-              # see nkBracketExpr case above for explanation
-              result = newNodeI(nkCall, n.info)
-              result.add newIdentNode(getIdent(c.c.cache, "{}="), n.info)
-              for i in 0..<a.len: result.add(a[i])
-              result.add(b)
-            result = semTemplBodySons(c, result)
-          else:
-            result = semTemplBodySons(c, n)
-        else:
-          semTemplBodySons c, n
+        # XXX generate `[]=`/`{}=` symchoices
+        semTemplBodySons c, n
       of NoStmt:
-        # XXX type expressions
-        discard
+        case n.typeKind
+        of NoType:
+          semTemplBodySons c, n
+        else:
+          semTemplType c, n
       else:
         semTemplBodySons c, n
     of AtX:
-      when false:
-        # if a[b] is nested inside a typed expression, don't convert it
-        # back to `[]`(a, b), prepareOperand will not typecheck it again
-        # and so `[]` will not be resolved
-        # checking if a[b] is typed should be enough to cover this case
-        result = newNodeI(nkCall, n.info)
-        result.add newIdentNode(getIdent(c.c.cache, "[]"), n.info)
-        for i in 0..<n.len: result.add(n[i])
-        result = semTemplBodySons(c, result)
-      else:
-        semTemplBodySons c, n
+      # XXX generate `[]`/`{}` symchoice
+      semTemplBodySons c, n
     of DotX:
-      # for now don't handle qualified symbols here
+      # XXX qualified symbols not special cased here, not tested if this works
       takeToken c.c[], n
       semTemplBody c, n
+      # XXX unsure if this is 1 to 1 with `fuzzyLookup`
       inc c.noGenSym
       semTemplBody c, n
       dec c.noGenSym
@@ -562,6 +493,7 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
     of QuotedX:
       var n2 = n
       let ident = getIdent(n2)
+      # emulate `qualifiedLookUp(n) != nil`:
       if isDeclared(c.c[], ident):
         # consider identifier
         var identBuf = createTokenBuf(4)
@@ -570,6 +502,7 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
         let start = c.c.dest.len
         semTemplBody c, identRead
         if c.c.dest[start].kind == Ident:
+          # stayed as ident for some reason, convert back to original AST
           c.c.dest.shrink start
           takeTree c.c.dest, n
         else:

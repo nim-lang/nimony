@@ -228,8 +228,12 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
     if x.kind == pcFile and x.path.endsWith(".nim"):
       files.add x.path
   sort files
+  if cat == Compat:
+    removeDir "nifcache"
   for f in items files:
     testFile c, f, overwrite, cat
+  if cat == Compat:
+    removeDir "nifcache"
 
 proc parseCategory(path: string): Category =
   case path
