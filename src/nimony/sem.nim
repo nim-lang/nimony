@@ -1721,7 +1721,7 @@ proc objBody(td: TypeDecl): Cursor {.inline.} =
 proc skipInvoke(t: var Cursor): Cursor {.inline.} =
   ## if `t` is an invocation, skips to root sym and returns start of args,
   ## otherwise returns `default(Cursor)`
-  if t.kind == InvokeT:
+  if t.typeKind == InvokeT:
     inc t
     result = t
     inc result
