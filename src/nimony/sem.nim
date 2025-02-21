@@ -4351,14 +4351,18 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
   if objImpl.kind == Symbol:
     objDecl = getTypeSection(objImpl.symId)
     objImpl = objDecl.objBody
-    if constrKind == NoExpr:
-      case objImpl.typeKind
-      of RefobjT:
-        constrKind = NewOconstrX
-      of ObjectT:
+    case objImpl.typeKind
+    of RefobjT:
+      if constrKind != NoExpr:
+        c.buildErr info, "cannot construct double ref object: " & typeToString(typ)
+        return
+      constrKind = NewOconstrX
+    of ObjectT:
+      if constrKind == NoExpr:
         constrKind = OconstrX
-      else:
-        error "cannot build object constructor for type", objImpl
+    else:
+      c.buildErr info, "cannot build object constructor for type: " & typeToString(objImpl)
+      return
   c.dest.addParLe(constrKind, info)
   c.dest.addSubtree typ
   var obj = asObjectDecl(objImpl)
