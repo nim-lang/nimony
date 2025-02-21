@@ -1719,7 +1719,19 @@ proc genericRootSym(td: TypeDecl): SymId =
     assert root.kind == Symbol
     result = root.symId
 
-proc findObjFieldAux(t: Cursor; name: StrId; level = 0): ObjField =
+proc buildInvokeArgs(decl: TypeDecl, bindings: var Table[SymId, Cursor], invokeArgs: Cursor) =
+  var typevar = decl.typevars
+  assert typevar.substructureKind == TypevarsU
+  inc typevar
+  var arg = invokeArgs
+  while arg.kind != ParRi:
+    let tv = asLocal(typevar)
+    assert tv.kind == TypevarY
+    bindings[tv.name.symId] = arg
+    skip typevar
+    skip arg
+
+proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[SymId, Cursor]; level = 0): ObjField =
   assert t == "object"
   var n = t
   inc n # skip `(object` token
@@ -1733,7 +1745,10 @@ proc findObjFieldAux(t: Cursor; name: StrId; level = 0): ObjField =
       let exported = n.kind != DotToken
       skip n # export marker
       skip n # pragmas
-      return ObjField(sym: symId, level: level, typ: n, exported: exported, rootOwner: SymId(0))
+      var typ = n
+      if bindings.len != 0:
+        typ = instantiateType(c, typ, bindings)
+      return ObjField(sym: symId, level: level, typ: typ, exported: exported, rootOwner: SymId(0))
     skip n # skip name
     skip n # export marker
     skip n # pragmas
@@ -1745,27 +1760,40 @@ proc findObjFieldAux(t: Cursor; name: StrId; level = 0): ObjField =
   else:
     if baseType.typeKind in {RefT, PtrT}:
       inc baseType
+    var baseInvokeArgs = default(Cursor)
     if baseType.typeKind == InvokeT:
       inc baseType # get to root symbol
+      baseInvokeArgs = baseType
+      inc baseInvokeArgs
     if baseType.kind == Symbol:
       let decl = getTypeSection(baseType.symId)
+      var newBindingBuf = default(TokenBuf)
+      var newBindings = initTable[SymId, Cursor]()
+      if baseInvokeArgs != default(Cursor):
+        newBindingBuf = createTokenBuf(16)
+        var sc = SubsContext(params: addr bindings)
+        while baseInvokeArgs.kind != ParRi:
+          subs(c, newBindingBuf, sc, baseInvokeArgs)
+          skip baseInvokeArgs
+        newBindingBuf.addParRi()
+        buildInvokeArgs(decl, newBindings, beginRead(newBindingBuf))
       var objType = decl.body
       # emulate objtypeImpl
       if objType.typeKind in {RefT, PtrT}:
         inc objType
-      result = findObjFieldAux(objType, name, level+1)
+      result = findObjFieldAux(c, objType, name, newBindings, level+1)
       if result.level == level+1:
         result.rootOwner = genericRootSym(decl)
     else:
       # maybe error
       result = ObjField(level: -1)
 
-proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId): ObjField =
+proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; bindings: Table[SymId, Cursor]): ObjField =
   var impl = decl.body
   # emulate objtypeImpl
   if impl.typeKind in {RefT, PtrT}:
     inc impl
-  result = findObjFieldAux(impl, name)
+  result = findObjFieldAux(c, impl, name, bindings)
   if c.routine.inInst == 0:
     # only check visibility during first semcheck
     if result.level == 0:
@@ -1835,8 +1863,11 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
     if root.typeKind in {RefT, PtrT}:
       doDeref = true
       inc root
+    var invokeArgs = default(Cursor)
     if root.typeKind == InvokeT:
       inc root
+      invokeArgs = root
+      inc invokeArgs
     if root.kind == Symbol:
       let decl = getTypeSection(root.symId)
       if decl.kind == TypeY:
@@ -1846,7 +1877,10 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
           doDeref = true
           inc objType
         if objType.typeKind in {ObjectT, RefobjT, PtrobjT}:
-          let field = findObjFieldConsiderVis(c, decl, fieldName)
+          var bindings = initTable[SymId, Cursor]()
+          if invokeArgs != default(Cursor):
+            buildInvokeArgs(decl, bindings, invokeArgs)
+          let field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
           if field.level >= 0:
             if doDeref or objType.typeKind in {RefobjT, PtrobjT}:
               c.dest[exprStart] = parLeToken(DdotX, info)
@@ -4286,26 +4320,41 @@ proc callDefault(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
   var it = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
   semCall c, it, {}
 
-proc buildObjConstrField(c: var SemContext; field: Local; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
+proc buildObjConstrField(c: var SemContext; field: Local;
+                         setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                         bindings: Table[SymId, Cursor]) =
   let fieldSym = field.name.symId
   if fieldSym in setFields:
     c.dest.addSubtree setFields[fieldSym]
   else:
     c.dest.addParLe(KvU, info)
     c.dest.add symToken(fieldSym, info)
-    callDefault c, field.typ, info
+    var typ = field.typ
+    if bindings.len != 0:
+      typ = instantiateType(c, typ, bindings)
+    callDefault c, typ, info
     c.dest.addParRi()
 
-proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymId, Cursor]; info: PackedLineInfo) =
+proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
+                           setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                           prebuiltBindings = initTable[SymId, Cursor]()) =
   var constrKind = NoExpr
   var objImpl = typ
   if objImpl.typeKind == RefT:
     constrKind = NewOconstrX
     inc objImpl
+  var invokeArgs = default(Cursor)
   if objImpl.typeKind == InvokeT:
     inc objImpl
+    invokeArgs = objImpl
+    inc invokeArgs
+  var objDecl = default(TypeDecl)
   if objImpl.kind == Symbol:
-    objImpl = objtypeImpl(objImpl.symId)
+    objDecl = getTypeSection(objImpl.symId)
+    objImpl = objDecl.body
+    # emulate objtypeImpl
+    if objImpl.typeKind in {RefT, PtrT}:
+      inc objImpl
     if constrKind == NoExpr:
       case objImpl.typeKind
       of RefobjT:
@@ -4317,32 +4366,60 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor; setFields: Table[SymI
   c.dest.addParLe(constrKind, info)
   c.dest.addSubtree typ
   var obj = asObjectDecl(objImpl)
+  var bindings = prebuiltBindings
+  if invokeArgs != default(Cursor):
+    if bindings.len == 0:
+      # bindings weren't prebuilt, build here:
+      buildInvokeArgs(objDecl, bindings, invokeArgs)
   # same field order as old nim VM: starting with most shallow base type
-  while obj.parentType.kind != DotToken:
-    var parentImpl = obj.parentType
-    if parentImpl.typeKind in {RefT, PtrT}:
-      inc parentImpl
-    if parentImpl.kind == Symbol:
-      parentImpl = objtypeImpl(parentImpl.symId)
-    elif parentImpl.typeKind == InvokeT:
-      inc parentImpl # get to symbol
-      parentImpl = objtypeImpl(parentImpl.symId)
-    else:
-      # should not be possible
-      discard
-    let parent = asObjectDecl(parentImpl)
-    obj.parentType = parent.parentType
-    var currentField = parent.firstField
-    if currentField.kind != DotToken:
-      while currentField.kind != ParRi:
-        let field = asLocal(currentField)
-        buildObjConstrField(c, field, setFields, info)
-        skip currentField
+  if obj.parentType.kind != DotToken:
+    let origBindings = bindings
+    var bindingBuf = default(TokenBuf)
+    while obj.parentType.kind != DotToken:
+      var parentImpl = obj.parentType
+      if parentImpl.typeKind in {RefT, PtrT}:
+        inc parentImpl
+      var parentInvokeArgs = default(Cursor)
+      if parentImpl.typeKind == InvokeT:
+        inc parentImpl # get to symbol
+        parentInvokeArgs = parentImpl
+        inc parentInvokeArgs
+      var parentDecl = default(TypeDecl)
+      if parentImpl.kind == Symbol:
+        parentDecl = getTypeSection(parentImpl.symId)
+        parentImpl = parentDecl.body
+        # emulate objtypeImpl
+        if parentImpl.typeKind in {RefT, PtrT}:
+          inc parentImpl
+      else:
+        # should not be possible
+        discard
+      let parent = asObjectDecl(parentImpl)
+      var newBindingBuf = default(TokenBuf)
+      var newBindings = initTable[SymId, Cursor]()
+      if parentInvokeArgs != default(Cursor):
+        newBindingBuf = createTokenBuf(16)
+        var sc = SubsContext(params: addr bindings)
+        while parentInvokeArgs.kind != ParRi:
+          subs(c, newBindingBuf, sc, parentInvokeArgs)
+          skip parentInvokeArgs
+        newBindingBuf.addParRi()
+        buildInvokeArgs(parentDecl, newBindings, beginRead(newBindingBuf))
+      bindingBuf = newBindingBuf
+      bindings = newBindings
+      obj.parentType = parent.parentType
+      var currentField = parent.firstField
+      if currentField.kind != DotToken:
+        while currentField.kind != ParRi:
+          let field = asLocal(currentField)
+          buildObjConstrField(c, field, setFields, info, bindings)
+          skip currentField
+    bindings = origBindings
   var currentField = obj.firstField
   if currentField.kind != DotToken:
     while currentField.kind != ParRi:
       let field = asLocal(currentField)
-      buildObjConstrField(c, field, setFields, info)
+      buildObjConstrField(c, field, setFields, info, bindings)
       skip currentField
   c.dest.addParRi()
 
@@ -4358,8 +4435,12 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   let isGenericObj = containsGenericParams(objType)
   if objType.typeKind in {RefT, PtrT}:
     inc objType
+  var bindings = initTable[SymId, Cursor]()
+  var invokeArgs = default(Cursor)
   if objType.typeKind == InvokeT:
     inc objType
+    invokeArgs = objType
+    inc invokeArgs
   if objType.kind == Symbol:
     decl = getTypeSection(objType.symId)
     objType = decl.body
@@ -4369,6 +4450,8 @@ proc semObjConstr(c: var SemContext, it: var Item) =
     if objType.typeKind notin {ObjectT, RefobjT, PtrobjT}:
       c.buildErr info, "expected object type for object constructor"
       return
+    if invokeArgs != default(Cursor):
+      buildInvokeArgs(decl, bindings, invokeArgs)
   var fieldBuf = createTokenBuf(16)
   var setFieldPositions = initTable[SymId, int]()
   while it.n.kind != ParRi:
@@ -4394,9 +4477,9 @@ proc semObjConstr(c: var SemContext, it: var Item) =
             # level is not known but not used either, set it to 0:
             field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
           else:
-            field = findObjFieldConsiderVis(c, decl, fieldName)
+            field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
         else:
-          field = findObjFieldConsiderVis(c, decl, fieldName)
+          field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
         if field.level >= 0:
           if field.sym in setFieldPositions:
             c.buildErr fieldInfo, "field already set: " & pool.strings[fieldName]
@@ -4423,7 +4506,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   var setFields = initTable[SymId, Cursor]()
   for field, pos in setFieldPositions:
     setFields[field] = cursorAt(fieldBuf, pos)
-  buildDefaultObjConstr(c, it.typ, setFields, info)
+  buildDefaultObjConstr(c, it.typ, setFields, info, bindings)
   commonType c, it, exprStart, expected
 
 proc semObjDefault(c: var SemContext; it: var Item) =
