@@ -360,10 +360,17 @@ template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInf
 proc parse*(r: var Stream; dest: var TokenBuf;
             parentInfo: PackedLineInfo) =
   r.parents[0] = parentInfo
+  var nested = 0
   while true:
     let tok = r.next()
     dest.add tok
-    if tok.kind == EofToken: break
+    if tok.kind == EofToken:
+      break
+    elif tok.kind == ParLe:
+      inc nested
+    elif tok.kind == ParRi:
+      dec nested
+      if nested == 0: break
 
 proc parse*(input: string; sizeHint = 100): TokenBuf =
   var r = nifstreams.openFromBuffer(input)

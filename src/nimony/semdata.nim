@@ -73,7 +73,9 @@ type
     routine*: SemRoutine
     currentScope*: Scope
     g*: ProgramContext
-    typeRequests*, procRequests*: seq[InstRequest]
+    procRequests*: seq[InstRequest]
+    typeInstDecls*: seq[SymId]
+      ## syms of type instantiations to add their declarations to module
     includeStack*: seq[string]
     importedModules*: Table[SymId, ImportedModule]
     instantiatedFrom*: seq[PackedLineInfo]
@@ -81,8 +83,8 @@ type
     globals*, locals*: Table[string, int]
     types*: BuiltinTypes
     typeMem*: Table[string, TokenBuf]
-    instantiatedTypes*: OrderedTable[string, SymId]
-    instantiatedProcs*: OrderedTable[(SymId, string), SymId]
+    instantiatedTypes*: Table[string, SymId]
+    instantiatedProcs*: Table[(SymId, string), SymId]
     thisModuleSuffix*: string
     moduleFlags*: set[ModuleFlag]
     processedModules*: HashSet[string]
@@ -95,7 +97,7 @@ type
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     genericHooks*: Table[SymId, seq[SymId]]
-    hookIndexMap*: Table[string, seq[(SymId, SymId)]]
+    hookIndexMap*: array[AttachedOp, seq[(SymId, SymId)]]
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking

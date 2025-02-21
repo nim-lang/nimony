@@ -1,7 +1,7 @@
 # It supports overwriting tested results using `--overwrite`
 
-import std / [os, strutils]
-import "../src/lib" / [nifreader, nifbuilder]
+import std / [os]
+import "../src/lib" / [nifbuilder]
 
 const
   ExpectedNifBuilderResult = """(.nif24)

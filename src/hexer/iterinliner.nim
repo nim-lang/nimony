@@ -400,7 +400,10 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       e.tmpId = oldTmpId
       takeParRi(e, c)
     else:
-      takeTree(e, c)
+      e.dest.add c
+      inc c
+      e.loop(c):
+        transformStmt(e, c)
   else:
     takeTree(e, c)
 

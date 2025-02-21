@@ -54,3 +54,8 @@ iterator powers3(b: int): int =
 for m in powers3(5):
   for n in countup3(4):
     printf("Hello, world: %ld\n", m+n)
+
+while true:
+  for i in 0 ..< 1:
+    discard i
+  break
