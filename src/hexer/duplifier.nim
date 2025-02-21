@@ -258,7 +258,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           callDestroy(c, destructor, lhs)
         copyInto c.dest, n:
           copyTree c.dest, lhs
-          var n = ri
+          n = ri
           tr c, n, WillBeOwned
         callWasMoved c, ri
     else:
@@ -269,7 +269,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
-          var n = ri
+          n = ri
           callDup c, n
         callDestroy(c, destructor, tmp, le.info)
       else:
