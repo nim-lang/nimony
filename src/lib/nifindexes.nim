@@ -120,16 +120,15 @@ proc hookName*(op: AttachedOp): string =
   of attachedSink: "sink"
   of attachedTrace: "trace"
 
-proc getSection(tag: TagId; values: seq[(SymId, SymId)]; symToOffsetMap: Table[SymId, int]): TokenBuf =
+proc getHookSection(tag: TagId; values: openArray[(SymId, SymId)]): TokenBuf =
   result = createTokenBuf(30)
   result.addParLe tag
 
   for value in values:
     let (key, sym) = value
-    let offset = symToOffsetMap[sym]
     result.buildTree TagId(KvIdx), NoLineInfo:
       result.add symToken(key, NoLineInfo)
-      result.add intToken(pool.integers.getOrIncl(offset), NoLineInfo)
+      result.add symToken(sym, NoLineInfo)
 
   result.addParRi()
 
@@ -162,7 +161,6 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   public.addParLe TagId(PublicIdx), root
   private.addParLe TagId(PrivateIdx), root
   var buf = createTokenBuf(100)
-  var symToOffsetMap = initTable[SymId, int]()
 
   while true:
     let offs = offset(s.r)
@@ -183,7 +181,6 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
             addr(public)
           else:
             addr(private)
-        symToOffsetMap[sym] = target
         let diff = if isPublic: target - previousPublicTarget
                   else: target - previousPrivateTarget
         dest[].buildTree TagId(KvIdx), NoLineInfo:
@@ -206,7 +203,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
 
   for op in AttachedOp:
     let tag = registerTag(hookName(op))
-    let hookSectionBuf = getSection(tag, sections.hooks[op], symToOffsetMap)
+    let hookSectionBuf = getHookSection(tag, sections.hooks[op])
 
     content.add toString(hookSectionBuf)
     content.add "\n"
@@ -245,7 +242,7 @@ type
     info*: PackedLineInfo
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
-    hooks*: array[AttachedOp, Table[string, NifIndexEntry]]
+    hooks*: array[AttachedOp, Table[SymId, SymId]]
     converters*: Table[string, string] # map of dest types to converter symbols
     toBuild*: seq[(string, string, string)]
 
@@ -275,6 +272,42 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsolu
         else:
           assert false, "invalid (kv) construct: IntLit expected"
         t = next(s) # skip offset
+        if t.kind == ParRi:
+          t = next(s)
+          dec nested
+        else:
+          assert false, "invalid (kv) construct: ')' expected"
+      else:
+        assert false, "expected (kv) construct"
+    elif t.kind == ParRi:
+      dec nested
+      if nested == 0:
+        break
+      t = next(s)
+    else:
+      assert false, "expected (kv) construct"
+      #t = next(s)
+
+proc readHookSection(s: var Stream; tab: var Table[SymId, SymId]) =
+  var t = next(s)
+  var nested = 1
+  while t.kind != EofToken:
+    let info = t.info
+    if t.kind == ParLe:
+      inc nested
+      if t.tagId == TagId(KvIdx):
+        t = next(s)
+        var key = SymId(0)
+        if t.kind == Symbol:
+          key = t.symId
+        else:
+          raiseAssert "invalid (kv) construct: symbol expected"
+        t = next(s) # skip Symbol
+        if t.kind == Symbol:
+          tab[key] = t.symId
+        else:
+          assert false, "invalid (kv) construct: symbol expected"
+        t = next(s) # skip Symbol 2
         if t.kind == ParRi:
           t = next(s)
           dec nested
@@ -355,7 +388,7 @@ proc readIndex*(indexName: string): NifIndex =
     t = next(s)
     for op in AttachedOp:
       if t.kind == ParLe and pool.tags[t.tag] == hookName(op):
-        readSection(s, result.hooks[op])
+        readHookSection(s, result.hooks[op])
         t = next(s)
     if t.tag == TagId(ConverterIdx):
       readSymbolSection(s, result.converters)
