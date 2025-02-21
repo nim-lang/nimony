@@ -13,7 +13,8 @@ include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
-  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer
+  semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
+  semuntyped
 
 import ".." / gear2 / modnames
 import ".." / models / tags
@@ -2101,7 +2102,8 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     semConstIntExpr(c, n)
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
-     NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP:
+     NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
+     InjectP, GensymP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
@@ -3346,12 +3348,21 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         if it.n != "stmts":
           error "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
-        takeToken c, it.n
-        let resId = declareResult(c, it.n.info)
-        semProcBody c, it
+        var resId = SymId(0)
+        if c.g.config.compat and c.routine.inGeneric > 0: # includes templates
+          let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
+          var ctx = createUntypedContext(addr c, mode)
+          addParams(ctx, beforeGenericParams)
+          addParams(ctx, beforeParams)
+          semTemplBody ctx, it.n
+        else:
+          takeToken c, it.n
+          resId = declareResult(c, it.n.info)
+          semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
-        addReturnResult c, resId, it.n.info
+        if resId != SymId(0):
+          addReturnResult c, resId, it.n.info
         let name = getHookName(symId)
         let hk = hookToKind(name)
         if hk != NoHook:
@@ -4543,14 +4554,6 @@ proc semDefined(c: var SemContext; it: var Item) =
     let expected = it.typ
     it.typ = c.types.boolType
     commonType c, it, beforeExpr, expected
-
-proc isDeclared(c: var SemContext; name: StrId): bool =
-  var scope = c.currentScope
-  while scope != nil:
-    if name in scope.tab:
-      return true
-    scope = scope.up
-  result = name in c.importTab
 
 proc semDeclared(c: var SemContext; it: var Item) =
   inc it.n

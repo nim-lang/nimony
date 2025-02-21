@@ -578,7 +578,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, BorrowP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
-           InlineP, NoinlineP, NoInitP:
+           InlineP, NoinlineP, NoInitP, InjectP, GensymP:
           result.flags.incl pk
           inc c
         of HeaderP:

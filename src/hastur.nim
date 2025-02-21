@@ -203,7 +203,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       let nimcacheC = generatedFile(file, ".c")
       diffFiles c, file, cfile, nimcacheC, overwrite
 
-    if cat == Normal:
+    if cat notin {Basics, Tracked}:
       let exe = file.generatedFile(ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       if testProgramExitCode != 0:
@@ -228,8 +228,12 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
     if x.kind == pcFile and x.path.endsWith(".nim"):
       files.add x.path
   sort files
+  if cat == Compat:
+    removeDir "nifcache"
   for f in items files:
     testFile c, f, overwrite, cat
+  if cat == Compat:
+    removeDir "nifcache"
 
 proc parseCategory(path: string): Category =
   case path
@@ -311,7 +315,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     gitAdd test
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
-    if cat == Normal:
+    if cat notin {Basics, Tracked}:
       let exe = file.generatedFile(ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       assert testProgramExitCode == 0, "the test program had an invalid exitcode; unsupported"
