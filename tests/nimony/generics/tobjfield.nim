@@ -17,3 +17,14 @@ proc foo[T: Addable](a: T): Foo[T] =
 
 let x = foo(123)
 let y: Foo[int] = x
+
+type Bar[T] = object
+  field: ptr T
+
+proc bar[U](a: ptr U) =
+  var x = Bar[U](field: a)
+  if x.field == nil:
+    # typed magic here: needs to produce `(ptr U)` and not `(ptr T)`
+    discard
+
+bar(addr x)
