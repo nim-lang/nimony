@@ -1738,8 +1738,6 @@ proc genericRootSym(td: TypeDecl): SymId =
 
 proc bindInvokeArgs(decl: TypeDecl; invokeArgs: Cursor): Table[SymId, Cursor] =
   ## returns a mapping of invocation arguments to typevars of a type
-  ## 
-  ## 
   result = initTable[SymId, Cursor]()
   if invokeArgs != default(Cursor):
     var typevar = decl.typevars
