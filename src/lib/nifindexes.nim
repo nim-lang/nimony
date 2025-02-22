@@ -112,10 +112,10 @@ type
 proc hookName*(op: AttachedOp): string =
   case op
   of attachedDestroy: "destroy"
-  of attachedWasMoved: "wasMoved"
+  of attachedWasMoved: "wasmoved"
   of attachedDup: "dup"
   of attachedCopy: "copy"
-  of attachedSink: "sink"
+  of attachedSink: "sinkh"
   of attachedTrace: "trace"
 
 proc hookToTag(op: AttachedOp): TagId =
@@ -181,8 +181,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
       if stack.len > 1:
         discard stack.pop()
     elif t.kind == SymbolDef:
-      let symInfo = t.info
-      #echo "SymbolDef: ", pool.syms[t.symId], " info: ", info.isValid
+      #let symInfo = t.info
       let sym = t.symId
       if pool.syms[sym].isImportant:
         let tb = next(s)
@@ -195,9 +194,6 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
             addr(private)
         let diff = if isPublic: target - previousPublicTarget
                   else: target - previousPrivateTarget
-        #let u = unpackToObject(pool.man, prevInfo)
-        #let parent = unpackToObject(pool.man, stack[^1])
-        #let relativeInfo = pack(pool.man, u.file, max(0, u.line - parent.line), max(0, u.col - parent.col))
         dest[].buildTree TagId(KvIdx), stack[^2]:
           dest[].add symToken(sym, NoLineInfo)
           dest[].add intToken(pool.integers.getOrIncl(diff), NoLineInfo)
