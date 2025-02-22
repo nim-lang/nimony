@@ -137,6 +137,8 @@ proc transformContinueStmt(e: var EContext; c: var Cursor) =
   if e.continues.len > 0 and e.continues[^1] != SymId(0):
     let lab = e.continues[^1]
     e.dest.add symToken(lab, c.info)
+  else:
+    e.dest.addDotToken()
   inc c # dotToken
   takeParRi e, c
 
