@@ -204,6 +204,9 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
   genx c, n
   if arrType.typeKind == ArrayT and not c.m.isImportC(arrType):
     c.add ".a"
+    c.add BracketLe
+    c.add "0"
+    c.add BracketRi
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:
     if c.m.config.backend == backendCpp:

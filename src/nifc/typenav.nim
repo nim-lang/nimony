@@ -28,12 +28,16 @@ proc getType*(m: var Module; n: Cursor): Cursor =
     result = createIntegralType(m, "(err)")
   of Symbol:
     var it {.cursor.} = m.current
+    var res = default Cursor
     while it != nil:
-      let res = it.locals.getOrDefault(n.symId)
+      res = it.locals.getOrDefault(n.symId)
       if not cursorIsNil(res):
-        return res
+        if res.kind != Symbol or m.isImportC(res):
+          return res
+        else:
+          break
       it = it.parent
-    let d = m.defs.getOrDefault(n.symId)
+    let d = m.defs.getOrDefault(if cursorIsNil(res): n.symId else: res.symId)
     if d.pos != 0:
       result = getType(m, m.src.cursorAt(d.pos))
     else:
@@ -119,6 +123,12 @@ proc getType*(m: var Module; n: Cursor): Cursor =
         inc result # token
         skip result # skip the name
         skip result # skip the pragmas
+      of TypeS:
+        let typeBody = n.asTypeDecl.body
+        result = if typeBody.kind != Symbol or m.isImportC(typeBody):
+                   typeBody
+                 else:
+                   getType(m, typeBody)
       else:
         if n.substructureKind in {ParamU, FldU}:
           result = n
