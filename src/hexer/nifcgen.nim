@@ -756,19 +756,6 @@ proc traverseTypeDecl(e: var EContext; c: var Cursor) =
     e.headers.incl prag.header
   discard setOwner(e, oldOwner)
 
-proc genCstringLit(e: var EContext; c: var Cursor): bool =
-  var cb = c
-  if cb.typeKind == CstringT:
-    inc cb # skip "(cstring"
-    skipParRi e, cb # skip ")"
-    if cb.kind == StringLit:
-      e.dest.addStrLit pool.strings[cb.litId]
-      inc cb
-      skipParRi e, cb # skip ")" from "(conv"
-      c = cb
-      return true
-  return false
-
 proc genStringLit(e: var EContext; s: string; info: PackedLineInfo) =
   when false:
     # cannot use this logic because C is stupid crap.
@@ -871,21 +858,29 @@ proc traverseTupleConstr(e: var EContext; c: var Cursor) =
 
 proc traverseConv(e: var EContext; c: var Cursor) =
   let info = c.info
+  let beforeConv = e.dest.len
   inc c
-  if not genCstringLit(e, c):
-    e.dest.add tagToken("conv", info)
-    let destType = c
-    traverseType(e, c)
-    let srcType = getType(e.typeCache, c)
-    if destType.typeKind == CstringT and isStringType(srcType):
+  e.dest.add tagToken("conv", info)
+  let destType = c
+  traverseType(e, c)
+  let srcType = getType(e.typeCache, c)
+  if destType.typeKind == CstringT and isStringType(srcType):
+    if c.kind == StringLit:
+      # evaluate the conversion at compile time:
+      e.dest.shrink beforeConv
+      e.dest.addStrLit pool.strings[c.litId]
+      inc c
+      skipParRi e, c
+    else:
       let strField = pool.syms.getOrIncl(StringAField)
       e.dest.add tagToken("dot", info)
       traverseExpr(e, c)
       e.dest.add symToken(strField, info)
       e.dest.addIntLit(0, info)
       e.dest.addParRi()
-    else:
-      traverseExpr(e, c)
+      takeParRi e, c
+  else:
+    traverseExpr(e, c)
     takeParRi e, c
 
 proc traverseExpr(e: var EContext; c: var Cursor) =
