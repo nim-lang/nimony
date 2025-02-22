@@ -79,6 +79,16 @@ proc unpack*(m: LineInfoManager; info: PackedLineInfo): (FileId, int32, int32) =
     assert(not isPayload(info))
     result = m.aside[int(i shr 2'u32)]
 
+type
+  LineInfoUnpacked* = object
+    file*: FileId
+    line*: int32
+    col*: int32
+
+proc unpackToObject*(m: LineInfoManager; info: PackedLineInfo): LineInfoUnpacked =
+  let (file, line, col) = unpack(m, info)
+  result = LineInfoUnpacked(file: file, line: line, col: col)
+
 proc getPayload*(i: PackedLineInfo): uint32 {.inline.} =
   assert isPayload(i)
   result = i.uint32 shr 2'u32
