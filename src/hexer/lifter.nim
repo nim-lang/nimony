@@ -34,6 +34,7 @@ type
     info: PackedLineInfo
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
+    nominalTypeToHook: array[AttachedOp, Table[SymId, SymId]]
     hookNames: Table[string, int]
 
 # Phase 1: Determine if the =hook is trivial:
@@ -41,9 +42,15 @@ type
 when not defined(nimony):
   proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool
 
+proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
+  result = c.nominalTypeToHook[op].getOrDefault(s)
+  if result == SymId(0):
+    result = tryLoadHook(op, s)
+    if result != SymId(0):
+      c.nominalTypeToHook[op][s] = result
+
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
-  #result = tryLoadHook(c.op, s).status == LacksNothing
-  result = false
+  result = loadHook(c, c.op, s) != SymId(0)
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
@@ -161,6 +168,11 @@ proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
   result.add "hooks" # c.thisModuleSuffix
 
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
+  if t.kind in {Symbol, SymbolDef}:
+    result = loadHook(c, op, t.symId)
+    if result != SymId(0):
+      return result
+
   let key = mangle(t)
   result = c.structuralTypeToHook[op].getOrDefault(key)
   if result == SymId(0):

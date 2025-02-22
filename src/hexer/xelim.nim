@@ -292,7 +292,8 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
             trStmt c, dest, n
           dest.copyIntoKind ElseU, info:
             copyIntoKind dest, StmtsS, info:
-              dest.copyIntoKind BreakS, info: discard
+              dest.copyIntoKind BreakS, info:
+                dest.addDotToken()
     else:
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar

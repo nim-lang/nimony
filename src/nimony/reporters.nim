@@ -58,6 +58,8 @@ proc warn*(c: var Reporter; p, arg: string) =
   inc c.warnings
 
 proc error*(c: var Reporter; p, arg: string) =
+  when defined(debug):
+    writeStackTrace()
   if c.assertOnError:
     raise newException(AssertionDefect, p & ": " & arg)
   c.message(Error, p, arg)

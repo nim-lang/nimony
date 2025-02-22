@@ -89,15 +89,17 @@ type
     init: seq[Token]
     fileIds: PackedSet[FileId]
     tokens: BiTable[Token, string]
-    inSimpleInit: int
     headerFile: seq[Token]
     generatedTypes: HashSet[SymId]
     requestedSyms: HashSet[string]
     flags: set[GenFlag]
+    inToplevel: bool
+    objConstrNeedsType: bool
 
 proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
-      fileIds: initPackedSet[FileId](), flags: flags)
+      fileIds: initPackedSet[FileId](), flags: flags, inToplevel: true,
+      objConstrNeedsType: true)
   fillTokenTable(result.tokens)
 
 proc add*(c: var GeneratedCode; t: PredefinedToken) {.inline.} =
@@ -436,15 +438,20 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     let beforeInit = c.code.len
 
     var value = d.value
-    let mustMoveToInit = vk == IsGlobal and not isLiteral(value)
+    let mustMoveToInit = (vk == IsGlobal and not isLiteral(value))
     if toExtern:
       c.add Semicolon
     else:
-      if vk != IsLocal or mustMoveToInit: inc c.inSimpleInit
+      if vk != IsLocal and not mustMoveToInit: c.objConstrNeedsType = false
       genVarInitValue c, d.value
-      if vk != IsLocal or mustMoveToInit: dec c.inSimpleInit
+      if vk != IsLocal and not mustMoveToInit: c.objConstrNeedsType = true
 
-    if mustMoveToInit:
+    if vk == IsLocal and c.inToplevel:
+      for i in beforeDecl ..< c.code.len:
+        c.init.add c.code[i]
+      setLen c.code, beforeDecl
+      c.add Semicolon
+    elif mustMoveToInit:
       c.init.add c.tokens.getOrIncl(name)
       for i in beforeInit ..< c.code.len:
         c.init.add c.code[i]
@@ -458,6 +465,7 @@ include genstmts
 
 proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   c.m.openScope()
+  c.inToplevel = false
   let signatureBegin = c.code.len
   var prc = takeProcDecl(n)
 
@@ -555,6 +563,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     if isSelectAny in flags:
       genRoutineGuardEnd(c)
   c.m.closeScope()
+  c.inToplevel = true
 
 proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n

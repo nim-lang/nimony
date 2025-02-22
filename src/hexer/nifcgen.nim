@@ -770,43 +770,63 @@ proc genCstringLit(e: var EContext; c: var Cursor): bool =
   return false
 
 proc genStringLit(e: var EContext; s: string; info: PackedLineInfo) =
-  let existing = e.strLits.getOrDefault(s)
-  if existing != SymId(0):
-    e.dest.add symToken(existing, info)
+  when false:
+    # cannot use this logic because C is stupid crap.
+    let existing = e.strLits.getOrDefault(s)
+    if existing != SymId(0):
+      e.dest.add symToken(existing, info)
+    else:
+      let strName = pool.syms.getOrIncl("str`." & $e.strLits.len)
+      e.strLits[s] = strName
+      e.pending.add tagToken("const", info)
+      e.pending.add symdefToken(strName, info)
+      e.offer strName
+
+      e.pending.add tagToken("pragmas", info)
+      e.pending.add tagToken("static", info)
+      e.pending.addParRi()
+      e.pending.addParRi()
+
+      # type:
+      e.pending.add symToken(pool.syms.getOrIncl(StringName), info)
+      # value:
+      e.pending.add tagToken("oconstr", info)
+      e.pending.add symToken(pool.syms.getOrIncl(StringName), info)
+
+      e.pending.add parLeToken(KvU, info)
+      let strField = pool.syms.getOrIncl(StringAField)
+      e.pending.add symToken(strField, info)
+      e.pending.addStrLit(s)
+      e.pending.addParRi() # "kv"
+
+      e.pending.add parLeToken(KvU, info)
+      let lenField = pool.syms.getOrIncl(StringIField)
+      e.pending.add symToken(lenField, info)
+      # length also contains the "isConst" flag:
+      e.pending.addIntLit(s.len * 2 + 1, info)
+      e.pending.addParRi() # "kv"
+
+      e.pending.addParRi() # "oconstr"
+      e.pending.addParRi() # "const"
+      e.dest.add symToken(strName, info)
   else:
-    let strName = pool.syms.getOrIncl("str`." & $e.strLits.len)
-    e.strLits[s] = strName
-    e.pending.add tagToken("const", info)
-    e.pending.add symdefToken(strName, info)
-    e.offer strName
+    e.dest.add tagToken("oconstr", info)
+    e.dest.add symToken(pool.syms.getOrIncl(StringName), info)
 
-    e.pending.add tagToken("pragmas", info)
-    e.pending.add tagToken("static", info)
-    e.pending.addParRi()
-    e.pending.addParRi()
-
-    # type:
-    e.pending.add symToken(pool.syms.getOrIncl(StringName), info)
-    # value:
-    e.pending.add tagToken("oconstr", info)
-    e.pending.add symToken(pool.syms.getOrIncl(StringName), info)
-
-    e.pending.add parLeToken(KvU, info)
+    e.dest.add parLeToken(KvU, info)
     let strField = pool.syms.getOrIncl(StringAField)
-    e.pending.add symToken(strField, info)
-    e.pending.addStrLit(s)
-    e.pending.addParRi() # "kv"
+    e.dest.add symToken(strField, info)
+    e.dest.addStrLit(s)
+    e.dest.addParRi() # "kv"
 
-    e.pending.add parLeToken(KvU, info)
+    e.dest.add parLeToken(KvU, info)
     let lenField = pool.syms.getOrIncl(StringIField)
-    e.pending.add symToken(lenField, info)
+    e.dest.add symToken(lenField, info)
     # length also contains the "isConst" flag:
-    e.pending.addIntLit(s.len * 2 + 1, info)
-    e.pending.addParRi() # "kv"
+    e.dest.addIntLit(s.len * 2 + 1, info)
+    e.dest.addParRi() # "kv"
 
-    e.pending.addParRi() # "oconstr"
-    e.pending.addParRi() # "const"
-    e.dest.add symToken(strName, info)
+    e.dest.addParRi() # "oconstr"
 
 proc genStringLit(e: var EContext; c: Cursor) =
   assert c.kind == StringLit
