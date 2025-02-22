@@ -4385,6 +4385,9 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
     else:
       c.buildErr info, "cannot build object constructor for type: " & typeToString(objImpl)
       return
+  else:
+    c.buildErr info, "cannot build object constructor for type: " & typeToString(objImpl)
+    return
   c.dest.addParLe(constrKind, info)
   c.dest.addSubtree typ
   var obj = asObjectDecl(objImpl)
