@@ -4397,7 +4397,7 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
   if obj.parentType.kind != DotToken:
     # copy original bindings to bring back when iterating the original type:
     let origBindings = bindings
-    var bindingBuf = default(TokenBuf)
+    var bindingBuf = default(TokenBuf) # to store subsequent parent args
     var parentType = obj.parentType
     while parentType.kind != DotToken:
       var parentImpl = parentType
@@ -4419,13 +4419,13 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
       bindings = newBindings
 
       let parent = asObjectDecl(parentImpl)
-      parentType = parent.parentType
       var currentField = parent.firstField
       if currentField.kind != DotToken:
         while currentField.kind != ParRi:
           let field = asLocal(currentField)
           buildObjConstrField(c, field, setFields, info, bindings)
           skip currentField
+      parentType = parent.parentType
     # bring back original bindings:
     bindings = origBindings
   var currentField = obj.firstField
