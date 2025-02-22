@@ -240,6 +240,7 @@ proc toTypeImpl*(n: Cursor): Cursor =
   result = n
   var counter = 20
   while counter > 0 and result.kind == Symbol:
+    dec counter
     let sym = tryLoadSym(result.symId)
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)

@@ -14,6 +14,9 @@ import nifc_model, mangler
 proc isImportC*(m: Module; typ: Cursor): bool =
   result = typ.kind == Symbol and pool.syms[typ.symId].isImportC
 
+proc isImportC*(n: Cursor): bool {.inline.} =
+  result = n.kind == Symbol and pool.syms[n.symId].isImportC
+
 proc createIntegralType*(m: var Module; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
   if cursorIsNil(result):
@@ -22,7 +25,7 @@ proc createIntegralType*(m: var Module; name: string): Cursor =
     m.mem.add buf
     m.builtinTypes[name] = result
 
-proc getType*(m: var Module; n: Cursor): Cursor =
+proc getTypeImpl(m: var Module; n: Cursor): Cursor =
   case n.kind
   of DotToken, Ident, SymbolDef:
     result = createIntegralType(m, "(err)")
@@ -35,7 +38,7 @@ proc getType*(m: var Module; n: Cursor): Cursor =
       it = it.parent
     let d = m.defs.getOrDefault(n.symId)
     if d.pos != 0:
-      result = getType(m, m.src.cursorAt(d.pos))
+      result = getTypeImpl(m, m.src.cursorAt(d.pos))
     else:
       # importC types are not defined
       result = createIntegralType(m, "(err)")
@@ -56,7 +59,7 @@ proc getType*(m: var Module; n: Cursor): Cursor =
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC:
       result = createIntegralType(m, "(bool)")
     of CallC:
-      var procType = getType(m, n.firstSon)
+      var procType = getTypeImpl(m, n.firstSon)
       if procType.typeKind == ProctypeT or procType.symKind == ProcY:
         inc procType
         skip procType # name
@@ -67,20 +70,20 @@ proc getType*(m: var Module; n: Cursor): Cursor =
         result = createIntegralType(m, "(err)")
     of AtC, PatC:
       let a = n.firstSon
-      let arrayType = getType(m, a)
+      let arrayType = getTypeImpl(m, a)
       result = arrayType
       inc result # (arr ...)
     of DotC:
       var a = n.firstSon
       skip a # skip the object
       let fld = a
-      result = getType(m, fld)
+      result = getTypeImpl(m, fld)
     of DerefC:
-      let x = getType(m, n.firstSon)
+      let x = getTypeImpl(m, n.firstSon)
       assert x.typeKind == PtrT
       result = x.firstSon
     of AddrC:
-      let x = getType(m, n.firstSon)
+      let x = getTypeImpl(m, n.firstSon)
       var buf = createTokenBuf(4)
       buf.add parLeToken(PtrT, x.info)
       buf.addSubtree x
@@ -92,7 +95,7 @@ proc getType*(m: var Module; n: Cursor): Cursor =
     of NegC, AddC, SubC, MulC, DivC, ModC, ShrC, ShlC, BitandC, BitorC, BitxorC, BitnotC:
       result = n.firstSon
     of ParC:
-      result = getType(m, n.firstSon)
+      result = getTypeImpl(m, n.firstSon)
     of NilC:
       result = createIntegralType(m, "(ptr (void))")
     of SufC:
@@ -134,3 +137,20 @@ proc getType*(m: var Module; n: Cursor): Cursor =
           bug "typenav: cannot get type of construct: " & $n.stmtKind
   else:
     result = createIntegralType(m, "(err)")
+
+proc getType*(m: var Module; n: Cursor; skipAliases = true): Cursor =
+  result = getTypeImpl(m, n)
+  if skipAliases:
+    var counter = 20
+    while counter > 0 and result.kind == Symbol:
+      dec counter
+      let d = m.defs.getOrDefault(result.symId)
+      if d.pos != 0:
+        let dd = m.src.cursorAt(d.pos)
+        if dd.stmtKind == TypeS:
+          let decl = asTypeDecl(dd)
+          result = decl.body
+        else:
+          break
+      else:
+        raiseAssert "could not load: " & pool.syms[result.symId]
