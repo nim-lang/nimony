@@ -60,6 +60,8 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
     error c.m, "`if` expects `elif` or `else` but got: ", first
 
 proc genWhile(c: var GeneratedCode; n: var Cursor) =
+  let oldInToplevel = c.inToplevel
+  c.inToplevel = false
   inc n
   c.add WhileKeyword
   c.add ParLe
@@ -69,6 +71,7 @@ proc genWhile(c: var GeneratedCode; n: var Cursor) =
   c.genStmt n
   c.add CurlyRi
   skipParRi n
+  c.inToplevel = oldInToplevel
 
 proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
   inc n
@@ -234,7 +237,10 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       genStmt(c, n)
     inc n # ParRi
   of ScopeS:
+    let oldInToplevel = c.inToplevel
+    c.inToplevel = false
     genScope c, n
+    c.inToplevel = oldInToplevel
   of CallS:
     genCall c, n
     c.add Semicolon
