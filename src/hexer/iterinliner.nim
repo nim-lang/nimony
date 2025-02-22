@@ -399,6 +399,8 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       transformForStmt(e, c)
     of IteratorS:
       skip(c)
+    of TemplateS:
+      e.dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:
       e.dest.add c
       inc c
