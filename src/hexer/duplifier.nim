@@ -230,7 +230,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trSons c, n, DontCare
 
   else:
-    let isNotFirstAsgn = true # XXX Adapt this once we have "isFirstAsgn" analysis
+    let isNotFirstAsgn = false # not isResultUsage(le) # XXX Adapt this once we have "isFirstAsgn" analysis
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
     if constructsValue(ri):
