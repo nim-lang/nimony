@@ -865,11 +865,18 @@ proc traverseConv(e: var EContext; c: var Cursor) =
   traverseType(e, c)
   let srcType = getType(e.typeCache, c)
   if destType.typeKind == CstringT and isStringType(srcType):
+    var isSuffix = false
+    if c.exprKind == SufX:
+      isSuffix = true
+      inc c
     if c.kind == StringLit:
       # evaluate the conversion at compile time:
       e.dest.shrink beforeConv
       e.dest.addStrLit pool.strings[c.litId]
       inc c
+      if isSuffix:
+        inc c
+        skipParRi e, c
       skipParRi e, c
     else:
       let strField = pool.syms.getOrIncl(StringAField)
