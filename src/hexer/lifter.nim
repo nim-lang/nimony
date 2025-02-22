@@ -23,14 +23,6 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints,
 type
   TypeCursor = Cursor
 
-  AttachedOp* = enum
-    attachedDestroy,
-    attachedWasMoved,
-    attachedDup,
-    attachedCopy,
-    attachedSink,
-    attachedTrace
-
   GenHookRequest = object
     sym: SymId
     typ: TypeCursor
@@ -42,25 +34,23 @@ type
     info: PackedLineInfo
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
+    nominalTypeToHook: array[AttachedOp, Table[SymId, SymId]]
     hookNames: Table[string, int]
-
-proc hookName*(op: AttachedOp): string =
-  case op
-  of attachedDestroy: "destroy"
-  of attachedWasMoved: "wasMoved"
-  of attachedDup: "dup"
-  of attachedCopy: "copy"
-  of attachedSink: "sink"
-  of attachedTrace: "trace"
 
 # Phase 1: Determine if the =hook is trivial:
 
 when not defined(nimony):
   proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool
 
+proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
+  result = c.nominalTypeToHook[op].getOrDefault(s)
+  if result == SymId(0):
+    result = tryLoadHook(op, s)
+    if result != SymId(0):
+      c.nominalTypeToHook[op][s] = result
+
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
-  # XXX to implement
-  false
+  result = loadHook(c, c.op, s) != SymId(0)
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
@@ -178,6 +168,11 @@ proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
   result.add "hooks" # c.thisModuleSuffix
 
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
+  if t.kind in {Symbol, SymbolDef}:
+    result = loadHook(c, op, t.symId)
+    if result != SymId(0):
+      return result
+
   let key = mangle(t)
   result = c.structuralTypeToHook[op].getOrDefault(key)
   if result == SymId(0):
@@ -578,3 +573,12 @@ proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLi
 
 proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): SymId =
   getHook(c, attachedDestroy, typ, info)
+
+when isMainModule:
+  import std/os
+  setupProgramForTesting getCurrentDir() / "nifcache", "test.nim", ".nif"
+  let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
+  if res != SymId(0):
+    echo pool.syms[res]
+  else:
+    echo "no hook"

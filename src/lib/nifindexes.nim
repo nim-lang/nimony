@@ -6,7 +6,7 @@
 
 ## Create an index file for a NIF file.
 
-import std / [os, tables, assertions, syncio, formatfloat, sets]
+import std / [os, tables, assertions, syncio]
 import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 
 #import std / [sha1]
@@ -18,8 +18,6 @@ proc entryKind(tag: TagId): NifIndex =
     result = cast[NifIndex](tag)
   else:
     result = NoIndexTag
-
-proc registerTag(tag: string): TagId = pool.tags.getOrIncl(tag)
 
 proc isImportant(s: string): bool =
   var c = 0
@@ -98,21 +96,46 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
       inc n
 
 type
+  AttachedOp* = enum # this one can be used as an array index
+    attachedDestroy,
+    attachedWasMoved,
+    attachedDup,
+    attachedCopy,
+    attachedSink,
+    attachedTrace
+
   IndexSections* = object
-    hooks*: Table[string, seq[(SymId, SymId)]]
+    hooks*: array[AttachedOp, seq[(SymId, SymId)]]
     converters*: seq[(SymId, SymId)]
     toBuild*: TokenBuf
 
-proc getSection(tag: TagId; values: seq[(SymId, SymId)]; symToOffsetMap: Table[SymId, int]): TokenBuf =
+proc hookName*(op: AttachedOp): string =
+  case op
+  of attachedDestroy: "destroy"
+  of attachedWasMoved: "wasmoved"
+  of attachedDup: "dup"
+  of attachedCopy: "copy"
+  of attachedSink: "sinkh"
+  of attachedTrace: "trace"
+
+proc hookToTag(op: AttachedOp): TagId =
+  case op
+  of attachedDestroy: TagId(DestroyIdx)
+  of attachedWasMoved: TagId(WasmovedIdx)
+  of attachedDup: TagId(DupIdx)
+  of attachedCopy: TagId(CopyIdx)
+  of attachedSink: TagId(SinkhIdx)
+  of attachedTrace: TagId(TraceIdx)
+
+proc getHookSection(tag: TagId; values: openArray[(SymId, SymId)]): TokenBuf =
   result = createTokenBuf(30)
   result.addParLe tag
 
   for value in values:
     let (key, sym) = value
-    let offset = symToOffsetMap[sym]
     result.buildTree TagId(KvIdx), NoLineInfo:
       result.add symToken(key, NoLineInfo)
-      result.add intToken(pool.integers.getOrIncl(offset), NoLineInfo)
+      result.add symToken(sym, NoLineInfo)
 
   result.addParRi()
 
@@ -145,17 +168,20 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   public.addParLe TagId(PublicIdx), root
   private.addParLe TagId(PrivateIdx), root
   var buf = createTokenBuf(100)
-  var symToOffsetMap = initTable[SymId, int]()
-
+  var stack: seq[PackedLineInfo] = @[root]
   while true:
     let offs = offset(s.r)
     let t = next(s)
     if t.kind == EofToken: break
     buf.add t
     if t.kind == ParLe:
+      stack.add t.info
       target = offs
+    elif t.kind == ParRi:
+      if stack.len > 1:
+        discard stack.pop()
     elif t.kind == SymbolDef:
-      #let info = t.info
+      #let symInfo = t.info
       let sym = t.symId
       if pool.syms[sym].isImportant:
         let tb = next(s)
@@ -166,10 +192,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
             addr(public)
           else:
             addr(private)
-        symToOffsetMap[sym] = target
         let diff = if isPublic: target - previousPublicTarget
                   else: target - previousPrivateTarget
-        dest[].buildTree TagId(KvIdx), NoLineInfo:
+        dest[].buildTree TagId(KvIdx), stack[^2]:
           dest[].add symToken(sym, NoLineInfo)
           dest[].add intToken(pool.integers.getOrIncl(diff), NoLineInfo)
         if isPublic:
@@ -187,9 +212,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   content.add toString(private)
   content.add "\n"
 
-  for (key, values) in sections.hooks.pairs:
-    let tag = registerTag(key)
-    let hookSectionBuf = getSection(tag, values, symToOffsetMap)
+  for op in AttachedOp:
+    let tag = hookToTag(op)
+    let hookSectionBuf = getHookSection(tag, sections.hooks[op])
 
     content.add toString(hookSectionBuf)
     content.add "\n"
@@ -220,7 +245,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
 
 proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
   createIndex(infile, root, buildChecksum,
-    IndexSections(hooks: initTable[string, seq[(SymId, SymId)]](), toBuild: default(TokenBuf)))
+    IndexSections())
 
 type
   NifIndexEntry* = object
@@ -228,11 +253,11 @@ type
     info*: PackedLineInfo
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
-    hooks*: Table[string, Table[string, NifIndexEntry]]
+    hooks*: array[AttachedOp, Table[SymId, SymId]]
     converters*: Table[string, string] # map of dest types to converter symbols
     toBuild*: seq[(string, string, string)]
 
-proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsoluteOffset = false) =
+proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
   var previousOffset = 0
   var t = next(s)
   var nested = 1
@@ -253,11 +278,45 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsolu
         if t.kind == IntLit:
           let offset = pool.integers[t.intId] + previousOffset
           tab[key] = NifIndexEntry(offset: offset, info: info)
-          if not useAbsoluteOffset:
-            previousOffset = offset
+          previousOffset = offset
         else:
           assert false, "invalid (kv) construct: IntLit expected"
         t = next(s) # skip offset
+        if t.kind == ParRi:
+          t = next(s)
+          dec nested
+        else:
+          assert false, "invalid (kv) construct: ')' expected"
+      else:
+        assert false, "expected (kv) construct"
+    elif t.kind == ParRi:
+      dec nested
+      if nested == 0:
+        break
+      t = next(s)
+    else:
+      assert false, "expected (kv) construct"
+      #t = next(s)
+
+proc readHookSection(s: var Stream; tab: var Table[SymId, SymId]) =
+  var t = next(s)
+  var nested = 1
+  while t.kind != EofToken:
+    if t.kind == ParLe:
+      inc nested
+      if t.tagId == TagId(KvIdx):
+        t = next(s)
+        var key = SymId(0)
+        if t.kind == Symbol:
+          key = t.symId
+        else:
+          raiseAssert "invalid (kv) construct: symbol expected"
+        t = next(s) # skip Symbol
+        if t.kind == Symbol:
+          tab[key] = t.symId
+        else:
+          assert false, "invalid (kv) construct: symbol expected"
+        t = next(s) # skip Symbol 2
         if t.kind == ParRi:
           t = next(s)
           dec nested
@@ -336,11 +395,10 @@ proc readIndex*(indexName: string): NifIndex =
     else:
       assert false, "'private' expected"
     t = next(s)
-    while t.tag.entryKind in {DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx}:
-      let tagName = pool.tags[t.tag]
-      result.hooks[tagName] = initTable[string, NifIndexEntry]()
-      readSection(s, result.hooks[tagName])
-      t = next(s)
+    for op in AttachedOp:
+      if t.kind == ParLe and pool.tags[t.tag] == hookName(op):
+        readHookSection(s, result.hooks[op])
+        t = next(s)
     if t.tag == TagId(ConverterIdx):
       readSymbolSection(s, result.converters)
       t = next(s)

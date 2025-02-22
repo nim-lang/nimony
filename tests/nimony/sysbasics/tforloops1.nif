@@ -170,7 +170,18 @@
       (hconv 9,~47
        (cstring) "Hello, world\3A %ld\0A") 25
       (add ~25,~6
-       (i -1) ~1 m.2 1 n.3)))))) 4,20
+       (i -1) ~1 m.2 1 n.3)))))) ,57
+ (while 6
+  (true) 2,1
+  (stmts 4
+   (for 7
+    (infix \2E.<.0.sysvq0asl ~2 +0 4 +1)
+    (unpackflat
+     (let :i.6 . . 13,1,lib/std/system/iterators.nim
+      (i -1) .)) ~2,1
+    (stmts
+     (discard 8 i.6))) ,2
+   (break .))) 4,20
  (proc :inc.0.tfo6yv57p . 0,276,lib/std/system.nim .
   (at inc.1.sysvq0asl 19,~4
    (i -1)) 21,276,lib/std/system.nim

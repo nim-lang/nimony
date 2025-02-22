@@ -127,6 +127,14 @@ proc buildSymChoice*(c: var SemContext; identifier: StrId; info: PackedLineInfo;
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 
+proc isDeclared*(c: var SemContext; name: StrId): bool =
+  var scope = c.currentScope
+  while scope != nil:
+    if name in scope.tab:
+      return true
+    scope = scope.up
+  result = name in c.importTab
+
 proc openScope*(c: var SemContext) =
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: c.currentScope, kind: NormalScope)
 
