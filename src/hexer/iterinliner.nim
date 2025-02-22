@@ -145,7 +145,7 @@ proc pop(s: var seq[SymId]): SymId =
   setLen(s, s.len-1)
 
 proc transformForStmt(e: var EContext; c: var Cursor)
-proc transformStmt(e: var EContext; c: var Cursor)
+proc transformStmt(e: var EContext; c: var Cursor; relations: Table[SymId, SymId])
 
 proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]; fromForloop = false) =
   case c.kind
@@ -267,20 +267,23 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
     var params = routine.params
     inc params # (params
     inc iter # name
+    var relationsMap = initTable[SymId, SymId]()
     while params.kind != ParRi:
       let param = asLocal(params)
       var typ = param.typ
       let name = param.name
       let symId = name.symId
 
-      createDecl(e, symId, typ, iter, name.info, "var")
+      let newName = pool.syms.getOrIncl(pool.syms[symId] & ".lf." & $e.instId)
+      createDecl(e, newName, typ, iter, name.info, "var")
+      relationsMap[symId] = newName
 
       skip params
 
     var bodyBuf = createTokenBuf()
     var body = routine.body
     swap(e.dest, bodyBuf)
-    transformStmt(e, body)
+    transformStmt(e, body, relationsMap)
     swap(e.dest, bodyBuf)
 
     var transformedBody = beginRead(bodyBuf)
@@ -357,6 +360,7 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
 
   e.breaks.add lab
 
+  inc e.instId
   inlineIterator(e, forStmt)
 
   e.dest.addParRi()
@@ -364,7 +368,27 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
 
   skip c
 
-proc transformStmt(e: var EContext; c: var Cursor) =
+proc replaceSymbol(e: var EContext; c: var Cursor; relations: Table[SymId, SymId]) =
+  case c.kind
+  of DotToken:
+    e.dest.add c
+    inc c
+  of ParLe:
+    e.dest.add c
+    inc c
+    e.loop(c):
+      replaceSymbol(e, c, relations)
+  of Symbol:
+    let s = c.symId
+    if relations.hasKey(s):
+      e.dest.add symToken(relations[s], c.info)
+    else:
+      e.dest.add c
+    inc c
+  else:
+    takeTree(e, c)
+
+proc transformStmt(e: var EContext; c: var Cursor; relations: Table[SymId, SymId]) =
   case c.kind
   of DotToken:
     e.dest.add c
@@ -375,37 +399,36 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       e.dest.add c
       inc c
       while c.kind notin {EofToken, ParRi}:
-        transformStmt(e, c)
-      takeParRi e, c # skipParRi
-    of VarS, LetS, CursorS, ResultS:
-      takeTree(e, c)
+        transformStmt(e, c, relations)
+      takeParRi e, c
     of ForS:
-      transformForStmt(e, c)
+      var swapped = createTokenBuf()
+      swap e.dest, swapped
+      replaceSymbol(e, c, relations)
+      swap e.dest, swapped
+
+      var forCursor = beginRead(swapped)
+      transformForStmt(e, forCursor)
+
     of IteratorS:
       skip(c)
     of FuncS, ProcS, ConverterS, MethodS:
       e.dest.add c
       inc c
-      takeTree(e, c) # name
-      takeTree(e, c) # exported
-      takeTree(e, c) # pattern
-      takeTree(e, c) # typevars
-      takeTree(e, c) # params
-      takeTree(e, c) # retType
-      takeTree(e, c) # pragmas
-      takeTree(e, c) # effects
+      for i in 0..<BodyPos:
+        takeTree(e, c)
       let oldTmpId = e.tmpId
       e.tmpId = 0
-      transformStmt(e, c)
+      transformStmt(e, c, relations)
       e.tmpId = oldTmpId
       takeParRi(e, c)
     else:
       e.dest.add c
       inc c
       e.loop(c):
-        transformStmt(e, c)
+        transformStmt(e, c, relations)
   else:
-    takeTree(e, c)
+    replaceSymbol(e, c, relations)
 
 proc elimForLoops*(e: var EContext; c: var Cursor) =
-  transformStmt(e, c)
+  transformStmt(e, c, initTable[SymId, SymId]())
