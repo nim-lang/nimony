@@ -859,8 +859,8 @@ proc traverseTupleConstr(e: var EContext; c: var Cursor) =
 proc traverseConv(e: var EContext; c: var Cursor) =
   let info = c.info
   let beforeConv = e.dest.len
-  inc c
   e.dest.add tagToken("conv", info)
+  inc c
   let destType = c
   traverseType(e, c)
   let srcType = getType(e.typeCache, c)
@@ -892,10 +892,9 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     of EqX, NeqX, LeX, LtX:
       e.dest.add c
       inc c
-      var skipped = createTokenBuf()
-      swap skipped, e.dest
+      let beforeType = e.dest.len
       traverseType(e, c)
-      swap skipped, e.dest
+      e.dest.shrink beforeType
       traverseExpr(e, c)
       traverseExpr(e, c)
       takeParRi e, c
@@ -930,7 +929,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       takeParRi e, c
     of TupleConstrX:
       traverseTupleConstr e, c
-    of CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
+    of CmdX, CallStrLitX, InfixX, PrefixX, HcallX, CallX:
       e.dest.add tagToken("call", c.info)
       inc c
       while c.kind != ParRi:
@@ -1030,7 +1029,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       skip c
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
        SizeofX, AlignofX, OffsetofX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
-       BitandX, BitorX, BitxorX, BitnotX, CallX, OconvX, NoExpr:
+       BitandX, BitorX, BitxorX, BitnotX, OconvX, NoExpr:
       # XXX Refine NoExpr case here. For now types like `(i -1)` can enter here.
       e.dest.add c
       inc c
