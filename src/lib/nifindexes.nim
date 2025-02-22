@@ -19,8 +19,6 @@ proc entryKind(tag: TagId): NifIndex =
   else:
     result = NoIndexTag
 
-proc registerTag(tag: string): TagId = pool.tags.getOrIncl(tag)
-
 proc isImportant(s: string): bool =
   var c = 0
   for ch in s:
@@ -120,6 +118,15 @@ proc hookName*(op: AttachedOp): string =
   of attachedSink: "sink"
   of attachedTrace: "trace"
 
+proc hookToTag(op: AttachedOp): TagId =
+  case op
+  of attachedDestroy: TagId(DestroyIdx)
+  of attachedWasMoved: TagId(WasmovedIdx)
+  of attachedDup: TagId(DupIdx)
+  of attachedCopy: TagId(CopyIdx)
+  of attachedSink: TagId(SinkhIdx)
+  of attachedTrace: TagId(TraceIdx)
+
 proc getHookSection(tag: TagId; values: openArray[(SymId, SymId)]): TokenBuf =
   result = createTokenBuf(30)
   result.addParLe tag
@@ -161,16 +168,21 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   public.addParLe TagId(PublicIdx), root
   private.addParLe TagId(PrivateIdx), root
   var buf = createTokenBuf(100)
-
+  var stack: seq[PackedLineInfo] = @[root]
   while true:
     let offs = offset(s.r)
     let t = next(s)
     if t.kind == EofToken: break
     buf.add t
     if t.kind == ParLe:
+      stack.add t.info
       target = offs
+    elif t.kind == ParRi:
+      if stack.len > 1:
+        discard stack.pop()
     elif t.kind == SymbolDef:
-      #let info = t.info
+      let symInfo = t.info
+      #echo "SymbolDef: ", pool.syms[t.symId], " info: ", info.isValid
       let sym = t.symId
       if pool.syms[sym].isImportant:
         let tb = next(s)
@@ -183,7 +195,10 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
             addr(private)
         let diff = if isPublic: target - previousPublicTarget
                   else: target - previousPrivateTarget
-        dest[].buildTree TagId(KvIdx), NoLineInfo:
+        #let u = unpackToObject(pool.man, prevInfo)
+        #let parent = unpackToObject(pool.man, stack[^1])
+        #let relativeInfo = pack(pool.man, u.file, max(0, u.line - parent.line), max(0, u.col - parent.col))
+        dest[].buildTree TagId(KvIdx), stack[^2]:
           dest[].add symToken(sym, NoLineInfo)
           dest[].add intToken(pool.integers.getOrIncl(diff), NoLineInfo)
         if isPublic:
@@ -202,7 +217,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   content.add "\n"
 
   for op in AttachedOp:
-    let tag = registerTag(hookName(op))
+    let tag = hookToTag(op)
     let hookSectionBuf = getHookSection(tag, sections.hooks[op])
 
     content.add toString(hookSectionBuf)
@@ -246,7 +261,7 @@ type
     converters*: Table[string, string] # map of dest types to converter symbols
     toBuild*: seq[(string, string, string)]
 
-proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsoluteOffset = false) =
+proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
   var previousOffset = 0
   var t = next(s)
   var nested = 1
@@ -267,8 +282,7 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; useAbsolu
         if t.kind == IntLit:
           let offset = pool.integers[t.intId] + previousOffset
           tab[key] = NifIndexEntry(offset: offset, info: info)
-          if not useAbsoluteOffset:
-            previousOffset = offset
+          previousOffset = offset
         else:
           assert false, "invalid (kv) construct: IntLit expected"
         t = next(s) # skip offset
@@ -292,7 +306,6 @@ proc readHookSection(s: var Stream; tab: var Table[SymId, SymId]) =
   var t = next(s)
   var nested = 1
   while t.kind != EofToken:
-    let info = t.info
     if t.kind == ParLe:
       inc nested
       if t.tagId == TagId(KvIdx):
