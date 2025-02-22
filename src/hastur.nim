@@ -22,6 +22,8 @@ Commands:
   test <file>          run test <file>.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
+  sync [new-branch]    delete current branch and pull the latest
+                       changes from remote. Optionally creates a new branch.
 
 Arguments are forwarded to the Nimony compiler.
 
@@ -404,6 +406,16 @@ proc hexertests(overwrite: bool) =
   execHexer helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
+proc syncCmd(newBranch: string) =
+  let (output, status) = execCmdEx("git symbolic-ref --short HEAD")
+  if status != 0:
+    quit "FAILURE: " & output
+  exec "git checkout master"
+  exec "git pull origin master"
+  exec "git branch -D " & output.strip()
+  if newBranch.len > 0:
+    exec "git checkout -B " & newBranch
+
 proc handleCmdLine =
   var primaryCmd = ""
   var args: seq[string] = @[]
@@ -501,6 +513,8 @@ proc handleCmdLine =
   of "clean":
     removeDir "nifcache"
     removeDir "bin"
+  of "sync":
+    syncCmd(if args.len > 0: args[0] else: "")
   else:
     quit "invalid command: " & primaryCmd
 
