@@ -41,6 +41,7 @@ type
     reportLastUse: bool
     typeCache: TypeCache
     tmpCounter: int
+    resultSym: SymId
     source: ptr TokenBuf
 
   Expects = enum
@@ -115,18 +116,15 @@ proc trSons(c: var Context; n: var Cursor; e: Expects) =
     tr(c, n, e)
   takeParRi c.dest, n
 
-proc isResultUsage(n: Cursor): bool {.inline.} =
+proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   result = false
   if n.kind == Symbol:
-    let res = tryLoadSym(n.symId)
-    if res.status == LacksNothing:
-      let r = asLocal(res.decl)
-      result = r.kind == ResultY
+    result = n.symId == c.resultSym
 
 proc trReturn(c: var Context; n: var Cursor) =
   copyInto c.dest, n:
-    if isResultUsage(n):
-      copyTree c.dest, n
+    if isResultUsage(c, n):
+      takeTree c.dest, n
     else:
       tr c, n, WantOwner
 
@@ -230,7 +228,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trSons c, n, DontCare
 
   else:
-    let isNotFirstAsgn = false # not isResultUsage(le) # XXX Adapt this once we have "isFirstAsgn" analysis
+    let isNotFirstAsgn = not isResultUsage(c, le) # XXX Adapt this once we have "isFirstAsgn" analysis
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
     if constructsValue(ri):
@@ -412,6 +410,8 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
 
 proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.dest.add n
+  let oldResultSym = c.resultSym
+  c.resultSym = NoSymId
   var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -432,6 +432,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   else:
     copyTree c.dest, r.body
   c.dest.addParRi()
+  c.resultSym = oldResultSym
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   not isTrivial(c.lifter[], typ)
@@ -566,9 +567,11 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   else:
     trSons c, n, DontCare
 
-proc trLocal(c: var Context; n: var Cursor) =
+proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   c.dest.add n
   var r = takeLocal(n, SkipFinalParRi)
+  if k == ResultS and r.name.kind == SymbolDef:
+    c.resultSym = r.name.symId
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pragmas
@@ -677,13 +680,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of PragmaxX, CurlyatX, TabconstrX, DoX:
       trSons c, n, e
     of NoExpr:
-      case n.stmtKind
+      let k = n.stmtKind
+      case k
       of RetS:
         trReturn c, n
       of AsgnS:
         trAsgn c, n
       of LocalDecls:
-        trLocal c, n
+        trLocal c, n, k
       of ProcS, FuncS, ConverterS, MethodS, MacroS:
         trProcDecl c, n
       of ScopeS:
