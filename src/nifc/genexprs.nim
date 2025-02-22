@@ -152,7 +152,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
 proc objConstrType(c: var GeneratedCode; n: var Cursor) =
   # C99 is strange, it requires (T){} for struct construction but not for
   # consts.
-  if c.inSimpleInit == 0:
+  if c.objConstrNeedsType:
     c.add ParLe
     genType c, n
     c.add ParRi
