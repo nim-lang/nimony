@@ -56,6 +56,7 @@ proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
 proc genCall(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
+  #let isCfn = isImportC(n)
   genx c, n
   c.add ParLe
   var i = 0
@@ -205,7 +206,7 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
   c.add "&"
   genx c, n
   if arrType.typeKind == ArrayT and not c.m.isImportC(arrType):
-    c.add ".a"
+    c.add ".a[0]"
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:
     if c.m.config.backend == backendCpp:
