@@ -41,7 +41,7 @@ proc rememberConstRefParams(c: var Context; params: Cursor) =
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
-  var c2 = Context(ptrSize: c.ptrSize, typeCache: createTypeCache())
+  var c2 = Context(ptrSize: c.ptrSize, typeCache: createTypeCache(), needsXelim: c.needsXelim)
   c2.typeCache.openScope()
   copyInto(dest, n):
     let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
@@ -51,6 +51,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeTree dest, n
   c2.typeCache.closeScope()
+  c.needsXelim = c2.needsXelim
 
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
