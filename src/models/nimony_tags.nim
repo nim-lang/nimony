@@ -258,6 +258,7 @@ type
     BitsP = (131, "bits")
     NodeclP = (134, "nodecl")  ## `nodecl` annotation
     RaisesP = (149, "raises")  ## proc annotation
+    UntypedP = (182, "untyped")  ## `untyped` type
     MagicP = (187, "magic")  ## `magic` pragma
     ImportcP = (188, "importc")  ## `importc` pragma
     ImportcppP = (189, "importcpp")  ## `importcpp` pragma
@@ -283,7 +284,7 @@ type
 
 proc rawTagIsNimonyPragma*(raw: uint32): bool {.inline.} =
   let r = raw - 75'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 47'u8, 48'u8, 50'u8, 52'u8, 55'u8, 56'u8, 59'u8, 74'u8, 112'u8, 113'u8, 114'u8, 115'u8, 116'u8, 117'u8, 118'u8, 119'u8, 120'u8, 121'u8, 122'u8, 123'u8, 124'u8, 125'u8, 126'u8, 127'u8, 128'u8, 129'u8, 130'u8, 131'u8, 189'u8, 190'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 47'u8, 48'u8, 50'u8, 52'u8, 55'u8, 56'u8, 59'u8, 74'u8, 107'u8, 112'u8, 113'u8, 114'u8, 115'u8, 116'u8, 117'u8, 118'u8, 119'u8, 120'u8, 121'u8, 122'u8, 123'u8, 124'u8, 125'u8, 126'u8, 127'u8, 128'u8, 129'u8, 130'u8, 131'u8, 189'u8, 190'u8}
 
 type
   NimonySym* = enum

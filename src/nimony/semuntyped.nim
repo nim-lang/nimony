@@ -394,6 +394,7 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
         takeParRi c.c[], n
       of WhileS:
         takeToken c.c[], n
+        semTemplBody c, n
         openScope c
         semTemplBody c, n
         closeScope c

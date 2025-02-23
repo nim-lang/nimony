@@ -181,7 +181,7 @@
 | `(symkind UNUSED)` | NimonyType | `symkind` type |
 | `(typekind UNUSED)` | NimonyType | `typekind` type |
 | `(typedesc T)` | NimonyType | `typedesc` type |
-| `(untyped)` | NimonyType | `untyped` type |
+| `(untyped)` | NimonyPragma, NimonyType | `untyped` type |
 | `(typed)` | NimonyType | `typed` type |
 | `(cstring)` | NimonyType | `cstring` type |
 | `(pointer)` | NimonyType | `pointer` type |
