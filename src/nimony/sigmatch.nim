@@ -456,7 +456,8 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let fs = f.symId
   if isTypevar(fs):
     if m.inferred.contains(fs):
-      typevarRematch(m, fs, m.inferred[fs], a)
+      var prev = m.inferred[fs]
+      singleArgImpl(m, prev, a)
     elif matchesConstraint(m, fs, a):
       m.inferred[fs] = a
     else:
