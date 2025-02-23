@@ -32,16 +32,16 @@ proc asNimCode*(n: Cursor): string =
     if nested == 0: break
     inc n2
 
-  if m0.isValid:
+  when false: #if m0.isValid:
     if file0.isValid:
       let (_, line0, col0) = unpack(pool.man, m0)
       if m1.isValid:
         let (_, line1, col1) = unpack(pool.man, m1)
         result = extract(pool.files[file0],
-                        FilePosition(line: line0, col: col0+1),
-                        FilePosition(line: line1, col: col1+1))
+                        FilePosition(line: line0, col: col0),
+                        FilePosition(line: line1, col: col1))
       else:
-        result = extract(pool.files[file0], FilePosition(line: line0, col: col0+1))
+        result = extract(pool.files[file0], FilePosition(line: line0, col: col0))
     else:
       result = ""
     var visible = false
