@@ -36,6 +36,7 @@ type
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
     nominalTypeToHook: array[AttachedOp, Table[SymId, SymId]]
     hookNames: Table[string, int]
+    thisModuleSuffix: string
 
 # Phase 1: Determine if the =hook is trivial:
 
@@ -165,7 +166,7 @@ proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
   result.add '.'
   result.addInt counter[]
   result.add '.'
-  result.add "hooks" # c.thisModuleSuffix
+  result.add c.thisModuleSuffix
 
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
   if t.kind in {Symbol, SymbolDef}:
@@ -397,7 +398,7 @@ proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
   c.dest.addParRi()
 
 proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.typeKind == RefT
+  assert n.typeKind in {RefT, RefobjT}
   let baseType = n.firstSon
   case c.op
   of attachedDestroy:
@@ -535,11 +536,11 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     let a = toTypeImpl typ
     copyIntoKind(c.dest, StmtsS, c.info):
       maybeAddResultDecl c, paramA, typ
-      if a.typeKind == RefT:
+      if a.typeKind in {RefT, RefobjT}:
         unravelRef(c, typ, paramTreeA, paramTreeB)
       else:
         unravel(c, typ, paramTreeA, paramTreeB)
-        maybeAddReturn c, paramA
+      maybeAddReturn c, paramA
 
 proc genMissingHooks*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
@@ -549,8 +550,8 @@ proc genMissingHooks*(c: var LiftingCtx) =
       c.op = reqs[i].op
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
-proc createLiftingCtx*(): ref LiftingCtx =
-  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo)
+proc createLiftingCtx*(thisModuleSuffix: string): ref LiftingCtx =
+  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix)
 
 proc requestHook*(c: var LiftingCtx; sym: SymId; typ: TypeCursor; op: AttachedOp) =
   c.op = op
