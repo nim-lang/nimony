@@ -1034,7 +1034,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
        EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX:
       error e, "BUG: not eliminated: ", c
-      skip c
+      #skip c
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
        SizeofX, AlignofX, OffsetofX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
        BitandX, BitorX, BitxorX, BitnotX, OconvX, NoExpr:
@@ -1403,14 +1403,12 @@ proc writeOutput(e: var EContext, rootInfo: PackedLineInfo) =
     of Ident:
       b.addIdent(pool.strings[c.litId])
     of Symbol:
-      let owner = ownerStack[^1][0]
       let val = e.maybeMangle(c.symId)
       if val.len > 0:
         b.addSymbol(val)
       else:
         b.addSymbol(pool.syms[c.symId])
     of SymbolDef:
-      let owner = ownerStack[^1][0]
       let val = e.maybeMangle(c.symId)
       if val.len > 0:
         b.addSymbolDef(val)
