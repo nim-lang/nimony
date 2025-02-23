@@ -5,7 +5,10 @@ proc main() =
   var s = default(seq[int])
   s.add(123)
   s.add(456)
-  #s.add(newSeq[int](3)) # should error, not defined
+  #s.add(newSeq[int](3)) # not defined yet
+  s.add(0)
+  s.add(0)
+  s.add(0)
   s[3] = 789
   let s2 = @[123, 456, 0, 789, 0]
   cAssert(s.len == s2.len)
@@ -15,3 +18,5 @@ proc main() =
     let b = s2[i]
     cAssert(a == b)
     inc i
+
+main()
