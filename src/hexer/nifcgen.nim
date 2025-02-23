@@ -891,6 +891,31 @@ proc traverseConv(e: var EContext; c: var Cursor) =
     traverseExpr(e, c)
     takeParRi e, c
 
+proc isSimpleLiteral(n: var Cursor): bool =
+  case n.kind
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit, DotToken:
+    result = true
+    inc n
+  else:
+    case n.exprKind
+    of FalseX, TrueX, InfX, NegInfX, NanX, NilX:
+      result = true
+      skip n
+    of SufX:
+      inc n
+      result = isSimpleLiteral(n)
+      skip n # type suffix
+      skipParRi n
+    of CastX, ConvX:
+      result = true
+      inc n
+      skip n # type
+      while n.kind != ParRi:
+        if not isSimpleLiteral(n): return false
+      skipParRi n
+    else:
+      result = false
+
 proc traverseExpr(e: var EContext; c: var Cursor) =
   case c.kind
   of EofToken, ParRi:
@@ -1049,18 +1074,17 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     e.offer c.symId
     inc c
   of Symbol:
-    #[
     let inlineValue = getInitValue(e.typeCache, c.symId)
-    if not cursorIsNil(inlineValue) and isSimpleEnough(inlineValue):
+    var inlineValueCopy = inlineValue
+    if not cursorIsNil(inlineValue) and isSimpleLiteral(inlineValueCopy):
       e.dest.addSubtree inlineValue
     else:
-    ]#
-    let ext = maybeMangle(e, c.symId)
-    if ext.len != 0:
-      e.dest.addSymUse pool.syms.getOrIncl(ext), c.info
-    else:
-      e.dest.add c
-    e.demand c.symId
+      let ext = maybeMangle(e, c.symId)
+      if ext.len != 0:
+        e.dest.addSymUse pool.syms.getOrIncl(ext), c.info
+      else:
+        e.dest.add c
+      e.demand c.symId
     inc c
   of StringLit:
     genStringLit e, c

@@ -57,9 +57,12 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
   while it != nil:
     var res = it.locals.getOrDefault(s)
     if res.kind != NoSym:
-      # we know the init value comes after the type:
-      skip res.typ
-      return res.typ
+      if res.kind == ConstY:
+        # we know the init value comes after the type:
+        skip res.typ
+        return res.typ
+      else:
+        return default(Cursor)
     it = it.parent
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
@@ -70,7 +73,9 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
 
 proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
   result = getInitValueImpl(c, s)
-  while not cursorIsNil(result) and result.kind == Symbol:
+  var counter = 0
+  while counter < 20 and not cursorIsNil(result) and result.kind == Symbol:
+    dec counter
     # see if we can resolve it even further:
     let res = getInitValueImpl(c, result.symId)
     if not cursorIsNil(res):
