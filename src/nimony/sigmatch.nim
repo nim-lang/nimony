@@ -423,22 +423,13 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   skip f # body
   expectParRi m, f
 
-proc commonType(c: var SemContext; f, a: Cursor): Cursor =
+proc commonType(f, a: Cursor): Cursor =
   # XXX Refine
-  if f.typeKind == AutoT:
-    result = a
-  elif a.typeKind == AutoT:
-    result = f
-  elif sameTrees(f, a):
-    result = f
-  else:
-    var buf = createTokenBuf(16)
-    buf.buildTree ErrT, a.info:
-      buf.addDotToken()
-    result = typeToCursor(c, buf, 0)
+  result = a
 
 proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
-  let com = commonType(m.context[], f, a)
+  # now unused, maybe bring back error message somehow
+  let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:
     m.errorTypevar InvalidRematch, f, a, typeVar
   elif matchesConstraint(m, typeVar, com):
@@ -456,6 +447,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let fs = f.symId
   if isTypevar(fs):
     if m.inferred.contains(fs):
+      # used to call typevarRematch
       var prev = m.inferred[fs]
       singleArgImpl(m, prev, arg)
     elif matchesConstraint(m, fs, a):
