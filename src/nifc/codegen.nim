@@ -369,7 +369,7 @@ proc isLiteral(n: var Cursor): bool =
     inc n
   else:
     case n.exprKind
-    of FalseC, TrueC, InfC, NegInfC, NanC, SufC:
+    of FalseC, TrueC, InfC, NegInfC, NanC, SufC, NilC:
       result = true
       skip n
     of AconstrC, OconstrC, CastC, ConvC:

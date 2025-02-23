@@ -388,9 +388,10 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
       of NoExpr:
         case n.stmtKind
         of LocalDecls:
+          let kind = n.symKind
           c.dest.add n
           inc n
-          c.typeCache.takeLocalHeader(c.dest, n)
+          c.typeCache.takeLocalHeader(c.dest, n, kind)
           inc nested
         of ProcS, FuncS, ConverterS, MethodS, MacroS:
           trProcDecl c, n, parentNodestroy = true
@@ -568,6 +569,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
     trSons c, n, DontCare
 
 proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
+  let kind = n.symKind
   c.dest.add n
   var r = takeLocal(n, SkipFinalParRi)
   if k == ResultS and r.name.kind == SymbolDef:
@@ -576,7 +578,7 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   copyTree c.dest, r.exported
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.typ
-  c.typeCache.registerLocal(r.name.symId, r.typ)
+  c.typeCache.registerLocal(r.name.symId, kind, r.typ)
 
   if r.val.kind == DotToken:
     copyTree c.dest, r.val
