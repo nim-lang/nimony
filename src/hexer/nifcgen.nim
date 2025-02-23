@@ -1473,7 +1473,6 @@ proc expand*(infile: string, bits: int) =
     #genStringType e, c.info
     while c.kind != ParRi:
       traverseStmt e, c, TraverseTopLevel
-    e.dest.add e.pending
   else:
     error e, "expected (stmts) but got: ", c
 
@@ -1484,6 +1483,7 @@ proc expand*(infile: string, bits: int) =
     if not e.declared.contains(imp):
       importSymbol(e, imp)
     inc i
+  e.dest.add e.pending
   skipParRi e, c
   writeOutput e, rootInfo
   e.closeMangleScope()
