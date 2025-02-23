@@ -80,6 +80,8 @@ proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
     let res = getInitValueImpl(c, result.symId)
     if not cursorIsNil(res):
       result = res
+    else:
+      break
 
 proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   result = c.builtins.autoType # to indicate error

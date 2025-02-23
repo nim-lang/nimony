@@ -480,9 +480,6 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
       copyIntoSymUse c.dest, res, c.info
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
-  #let name = HookKindToLitId(c.op)
-  #echo "generating ", c.p[dest.m].strings[name] # name
-  #result = declareSym(c.p[c.thisModule], ProcDecl, name)
   let paramA = pool.syms.getOrIncl("dest.0")
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
@@ -537,17 +534,12 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
 
     let a = toTypeImpl typ
     copyIntoKind(c.dest, StmtsS, c.info):
-      when true: # TODO: implement
-        maybeAddResultDecl c, paramA, typ
-        c.dest.addDotToken()
-        maybeAddReturn c, paramA
+      maybeAddResultDecl c, paramA, typ
+      if a.typeKind == RefT:
+        unravelRef(c, typ, paramTreeA, paramTreeB)
       else:
-        maybeAddResultDecl c, paramA, typ
-        if a.typeKind == RefT:
-          unravelRef(c, typ, paramTreeA, paramTreeB)
-        else:
-          unravel(c, typ, paramTreeA, paramTreeB)
-          maybeAddReturn c, paramA
+        unravel(c, typ, paramTreeA, paramTreeB)
+        maybeAddReturn c, paramA
 
 proc genMissingHooks*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
