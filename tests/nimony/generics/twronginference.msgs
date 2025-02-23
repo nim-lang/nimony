@@ -1,0 +1,2 @@
+tests/nimony/generics/twronginference.nim(7, 6) Error: Type mismatch at [position]
+[2] Could not match again: T.1.twrt5xaak expected (i -1) but got Foo.1.twrt5xaak
