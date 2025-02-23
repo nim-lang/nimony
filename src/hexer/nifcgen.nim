@@ -192,6 +192,7 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
 proc useStringType(e: var EContext; info: PackedLineInfo) =
   let s = pool.syms.getOrIncl(StringName)
   e.dest.add symToken(s, info)
+  e.demand s
 
 proc traverseTupleBody(e: var EContext; c: var Cursor) =
   let info = c.info
@@ -578,7 +579,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, BorrowP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
-           InlineP, NoinlineP, NoInitP, InjectP, GensymP:
+           InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP:
           result.flags.incl pk
           inc c
         of HeaderP:
@@ -798,7 +799,7 @@ proc genStringLit(e: var EContext; s: string; info: PackedLineInfo) =
       e.dest.add symToken(strName, info)
   else:
     e.dest.add tagToken("oconstr", info)
-    e.dest.add symToken(pool.syms.getOrIncl(StringName), info)
+    useStringType e, info
 
     e.dest.add parLeToken(KvU, info)
     let strField = pool.syms.getOrIncl(StringAField)
@@ -1473,7 +1474,6 @@ proc expand*(infile: string, bits: int) =
     #genStringType e, c.info
     while c.kind != ParRi:
       traverseStmt e, c, TraverseTopLevel
-    e.dest.add e.pending
   else:
     error e, "expected (stmts) but got: ", c
 
@@ -1484,6 +1484,7 @@ proc expand*(infile: string, bits: int) =
     if not e.declared.contains(imp):
       importSymbol(e, imp)
     inc i
+  e.dest.add e.pending
   skipParRi e, c
   writeOutput e, rootInfo
   e.closeMangleScope()
