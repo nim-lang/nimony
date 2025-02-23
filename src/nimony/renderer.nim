@@ -5,12 +5,10 @@
 # distribution, for details about the copyright.
 
 import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache]
-import reporters
 
 ## Rendering of Nim code from a cursor.
 
 proc asNimCode*(n: Cursor): string =
-  let originalInfo = n.info
   var m0: PackedLineInfo = NoLineInfo
   var m1: PackedLineInfo = NoLineInfo
   var nested = 0
@@ -40,10 +38,10 @@ proc asNimCode*(n: Cursor): string =
       if m1.isValid:
         let (_, line1, col1) = unpack(pool.man, m1)
         result = extract(pool.files[file0],
-                        FilePosition(line: line0, col: col0),
-                        FilePosition(line: line1, col: col1))
+                        FilePosition(line: line0, col: col0+1),
+                        FilePosition(line: line1, col: col1+1))
       else:
-        result = extract(pool.files[file0], FilePosition(line: line0, col: col0))
+        result = extract(pool.files[file0], FilePosition(line: line0, col: col0+1))
     else:
       result = ""
     var visible = false
@@ -53,9 +51,6 @@ proc asNimCode*(n: Cursor): string =
         break
     if not visible:
       result = toString(n, false)
-    else:
-      result.add " - "
-      result.add $(infoToStr originalInfo, infoToStr m0, infoToStr m1)
   else:
     # Fallback to the NIF representation as it is much better than nothing:
     result = toString(n, false)
