@@ -77,7 +77,7 @@ type
 
 proc traverseExpr(e: var EContext; c: var Cursor)
 proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll)
-proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMode)
+proc traverseLocal(e: var EContext; c: var Cursor; tag: SymKind; mode: TraverseMode)
 
 type
   TypeFlag = enum
@@ -514,11 +514,11 @@ proc maybeByConstRef(e: var EContext; c: var Cursor) =
     paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
-    traverseLocal(e, paramCursor, "param", TraverseSig)
+    traverseLocal(e, paramCursor, ParamY, TraverseSig)
     endRead(paramBuf)
     skip c
   else:
-    traverseLocal(e, c, "param", TraverseSig)
+    traverseLocal(e, c, ParamY, TraverseSig)
 
 proc traverseParams(e: var EContext; c: var Cursor) =
   if c.kind == DotToken:
@@ -1049,6 +1049,12 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     e.offer c.symId
     inc c
   of Symbol:
+    #[
+    let inlineValue = getInitValue(e.typeCache, c.symId)
+    if not cursorIsNil(inlineValue) and isSimpleEnough(inlineValue):
+      e.dest.addSubtree inlineValue
+    else:
+    ]#
     let ext = maybeMangle(e, c.symId)
     if ext.len != 0:
       e.dest.addSymUse pool.syms.getOrIncl(ext), c.info
@@ -1063,11 +1069,12 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     e.dest.add c
     inc c
 
-proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMode) =
+proc traverseLocal(e: var EContext; c: var Cursor; tag: SymKind; mode: TraverseMode) =
+  var symKind = tag
   var localDecl = c
   let toPatch = e.dest.len
   let vinfo = c.info
-  e.add tag, vinfo
+  e.dest.addParLe tag, vinfo
   inc c
   let (s, sinfo) = getSymDef(e, c)
   skipExportMarker e, c
@@ -1085,8 +1092,10 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
 
   if ThreadvarP in prag.flags:
     e.dest[toPatch] = tagToken("tvar", vinfo)
+    symKind = TvarY
   elif GlobalP in prag.flags:
     e.dest[toPatch] = tagToken("gvar", vinfo)
+    symKind = GvarY
 
   if prag.align != IntId(0):
     e.addKeyVal genPragmas, "align", intToken(prag.align, pinfo), pinfo
@@ -1095,8 +1104,8 @@ proc traverseLocal(e: var EContext; c: var Cursor; tag: string; mode: TraverseMo
   closeGenPragmas e, genPragmas
 
   var nodecl = prag.flags.contains(NodeclP)
-  e.typeCache.registerLocal(s, c)
-  if tag == "param" and typeKind(c) == VarargsT:
+  e.typeCache.registerLocal(s, symKind, c)
+  if tag == ParamY and typeKind(c) == VarargsT:
     skip c
     nodecl = true
   else:
@@ -1256,13 +1265,13 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
           traverseStmt e, c, mode
       e.closeMangleScope()
     of VarS, LetS, CursorS, ResultS:
-      traverseLocal e, c, "var", mode
-    of  GvarS, GletS:
-      traverseLocal e, c, "gvar", mode
+      traverseLocal e, c, VarY, mode
+    of GvarS, GletS:
+      traverseLocal e, c, GvarY, mode
     of TvarS, TletS:
-      traverseLocal e, c, "tvar", mode
+      traverseLocal e, c, TvarY, mode
     of ConstS:
-      traverseLocal e, c, "const", mode
+      traverseLocal e, c, ConstY, mode
     of CmdS, CallS:
       e.dest.add tagToken("call", c.info)
       inc c

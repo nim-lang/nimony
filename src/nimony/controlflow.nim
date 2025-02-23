@@ -373,12 +373,13 @@ proc trResult(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
     if c.currentBlock.kind == IsRoutine:
       c.currentBlock.sym = n.symId
-    takeLocalHeader c.typeCache, c.dest, n
+    takeLocalHeader c.typeCache, c.dest, n, ResultY
     trExpr c, n
 
 proc trLocal(c: var ControlFlow; n: var Cursor) =
+  let kind = n.symKind
   copyInto c.dest, n:
-    takeLocalHeader c.typeCache, c.dest, n
+    takeLocalHeader c.typeCache, c.dest, n, kind
     trExpr c, n
 
 proc trProc(c: var ControlFlow; n: var Cursor) =

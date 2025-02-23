@@ -15,8 +15,11 @@ import std/tables
 import nimony_model, builtintypes, decls, programs
 
 type
+  LocalInfo* = object
+    kind*: SymKind
+    typ*: Cursor
   TypeScope* {.acyclic.} = ref object
-    locals: Table[SymId, Cursor]
+    locals: Table[SymId, LocalInfo]
     parent: TypeScope
 
   TypeCache* = object
@@ -27,11 +30,11 @@ type
 proc createTypeCache*(): TypeCache =
   TypeCache(builtins: createBuiltinTypes())
 
-proc registerLocal*(c: var TypeCache; s: SymId; typ: Cursor) =
-  c.current.locals[s] = typ
+proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor) =
+  c.current.locals[s] = LocalInfo(kind: kind, typ: typ)
 
 proc openScope*(c: var TypeCache) =
-  c.current = TypeScope(locals: initTable[SymId, Cursor](), parent: c.current)
+  c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current)
 
 proc closeScope*(c: var TypeCache) =
   c.current = c.current.parent
@@ -42,12 +45,36 @@ proc registerParams*(c: var TypeCache; routine: SymId; params: Cursor) =
     inc p
     while p.kind != ParRi:
       let r = takeLocal(p, SkipFinalParRi)
-      registerLocal(c, r.name.symId, r.typ)
-  c.current.locals[routine] = params
+      registerLocal(c, r.name.symId, ParamY, r.typ)
+  c.current.locals[routine] = LocalInfo(kind: ProcY, typ: params)
 
 proc firstSon(n: Cursor): Cursor {.inline.} =
   result = n
   inc result
+
+proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
+  var it {.cursor.} = c.current
+  while it != nil:
+    var res = it.locals.getOrDefault(s)
+    if res.kind != NoSym:
+      # we know the init value comes after the type:
+      skip res.typ
+      return res.typ
+    it = it.parent
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing:
+    let local = asLocal(res.decl)
+    if local.kind == ConstY:
+      return local.val
+  return default(Cursor)
+
+proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
+  result = getInitValueImpl(c, s)
+  while not cursorIsNil(result) and result.kind == Symbol:
+    # see if we can resolve it even further:
+    let res = getInitValueImpl(c, result.symId)
+    if not cursorIsNil(res):
+      result = res
 
 proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   result = c.builtins.autoType # to indicate error
@@ -58,8 +85,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       var it {.cursor.} = c.current
       while it != nil:
         let res = it.locals.getOrDefault(n.symId)
-        if res != default(Cursor):
-          return res
+        if res.kind != NoSym:
+          return res.typ
         it = it.parent
       let res = tryLoadSym(n.symId)
       if res.status == LacksNothing:
@@ -287,10 +314,10 @@ proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor): bo
       result = n.substructureKind != TypevarsU
     takeTree dest, n
 
-proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor) =
+proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   let name = n.symId
   takeTree dest, n # name
   takeTree dest, n # export marker
   takeTree dest, n # pragmas
-  c.registerLocal(name, n)
+  c.registerLocal(name, kind, n)
   takeTree dest, n # type

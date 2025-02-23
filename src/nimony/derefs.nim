@@ -453,13 +453,14 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
     trSons c, n, WantT
 
 proc trLocal(c: var Context; n: var Cursor) =
+  let kind = n.symKind
   takeToken c, n
   let name = n
   for i in 0..<LocalTypePos:
     takeTree c.dest, n
   let typ = n
   takeTree c.dest, n
-  c.typeCache.registerLocal(name.symId, typ)
+  c.typeCache.registerLocal(name.symId, kind, typ)
   let e = if typ.typeKind in {OutT, MutT}: WantVarT else: WantT
   trAsgnRhs c, name, n, e
   takeParRi c, n

@@ -298,7 +298,7 @@ proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyTree dest, r.exported
     copyTree dest, r.pragmas
     copyTree dest, r.typ
-    c.typeCache.registerLocal(r.name.symId, r.typ)
+    c.typeCache.registerLocal(r.name.symId, r.kind, r.typ)
     if inlineCall:
       addEmpty dest, r.val.info
     else:
