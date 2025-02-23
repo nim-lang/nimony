@@ -192,6 +192,7 @@ proc genStringType(e: var EContext; info: PackedLineInfo) =
 proc useStringType(e: var EContext; info: PackedLineInfo) =
   let s = pool.syms.getOrIncl(StringName)
   e.dest.add symToken(s, info)
+  e.demand s
 
 proc traverseTupleBody(e: var EContext; c: var Cursor) =
   let info = c.info
@@ -798,7 +799,7 @@ proc genStringLit(e: var EContext; s: string; info: PackedLineInfo) =
       e.dest.add symToken(strName, info)
   else:
     e.dest.add tagToken("oconstr", info)
-    e.dest.add symToken(pool.syms.getOrIncl(StringName), info)
+    useStringType e, info
 
     e.dest.add parLeToken(KvU, info)
     let strField = pool.syms.getOrIncl(StringAField)
