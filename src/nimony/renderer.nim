@@ -5,10 +5,12 @@
 # distribution, for details about the copyright.
 
 import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache]
+import reporters
 
 ## Rendering of Nim code from a cursor.
 
 proc asNimCode*(n: Cursor): string =
+  let originalInfo = n.info
   var m0: PackedLineInfo = NoLineInfo
   var m1: PackedLineInfo = NoLineInfo
   var nested = 0
@@ -51,6 +53,9 @@ proc asNimCode*(n: Cursor): string =
         break
     if not visible:
       result = toString(n, false)
+    else:
+      result.add " - "
+      result.add $(infoToStr originalInfo, infoToStr m0, infoToStr m1)
   else:
     # Fallback to the NIF representation as it is much better than nothing:
     result = toString(n, false)
