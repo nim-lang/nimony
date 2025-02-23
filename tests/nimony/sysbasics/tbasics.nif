@@ -5,12 +5,12 @@
    (i -1)
    (rangetype
     (i -1) +0 +4))) 4,3
- (gvar :s.0.tbawx6nu81 . .
+ (gvar :s.0.tbawx6nu81 . . 4
   (array
    (i -1)
    (rangetype
     (i -1) +0 +2)) 4
-  (aconstr ~4
+  (aconstr
    (array
     (i -1)
     (rangetype
@@ -33,22 +33,22 @@
  (proc 5 :foo.0.tbawx6nu81 . . . 9
   (params) . . . 2,1
   (stmts 4
-   (var :x.2 . . ~2,~5
+   (var :x.2 . . 2,~5
     (array
      (i -1)
      (rangetype
       (i -1) +0 +2)) 19
-    (aconstr ~21,~5
+    (aconstr ~17,~5
      (array
       (i -1)
       (rangetype
        (i -1) +0 +2)) 1 +5 4 +6 7 +7)) 4,1
-   (var :m.1 . .
+   (var :m.1 . . 4
     (array
      (i -1)
      (rangetype
       (i -1) +0 +3)) 4
-    (aconstr ~4
+    (aconstr
      (array
       (i -1)
       (rangetype
