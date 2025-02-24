@@ -167,4 +167,20 @@
    (kv e.0.tbawx6nu81 43,421,lib/std/system.nim
     (expr
      (expr +0))))) 7,43
- (call ~7 foo1314.0.tbawx6nu81 1 a.1.tbawx6nu81))
+ (call ~7 foo1314.0.tbawx6nu81 1 a.1.tbawx6nu81) ,45
+ (proc 5 :foo2233.0.tbawx6nu81 . . . 12
+  (params) . 15
+  (pragmas 2
+   (nimcall)) . 2,1
+  (stmts 4
+   (var :x.4 . . 8
+    (proctype . . . .
+     (params) . 3
+     (pragmas 2
+      (cdecl)) . .) .) 4,3
+   (var :y.1 . . 8
+    (proctype . . . .
+     (params) . 3
+     (pragmas 2
+      (nimcall)) . .) .))) 7,51
+ (call ~7 foo2233.0.tbawx6nu81))
