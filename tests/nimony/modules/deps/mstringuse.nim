@@ -1,0 +1,2 @@
+proc usesString*() =
+  discard "abc"

@@ -177,7 +177,7 @@
    (for 7
     (infix \2E.<.0.sysvq0asl ~2 +0 4 +1)
     (unpackflat
-     (let :i.6 . . 13,1,lib/std/system.nim
+     (let :i.6 . . 13,1,lib/std/system/iterators.nim
       (i -1) .)) ~2,1
     (stmts
      (discard 8 i.6))) ,2

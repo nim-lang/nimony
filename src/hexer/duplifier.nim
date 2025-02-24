@@ -41,6 +41,7 @@ type
     reportLastUse: bool
     typeCache: TypeCache
     tmpCounter: int
+    resultSym: SymId
     source: ptr TokenBuf
 
   Expects = enum
@@ -70,7 +71,7 @@ proc constructsValue*(n: Cursor): bool =
       inc n
       while not isLastSon(n): skip n
     else: break
-  result = n.exprKind in ConstructingExprs
+  result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
 proc rootOf(n: Cursor): SymId =
   var n = n
@@ -115,18 +116,15 @@ proc trSons(c: var Context; n: var Cursor; e: Expects) =
     tr(c, n, e)
   takeParRi c.dest, n
 
-proc isResultUsage(n: Cursor): bool {.inline.} =
+proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   result = false
   if n.kind == Symbol:
-    let res = tryLoadSym(n.symId)
-    if res.status == LacksNothing:
-      let r = asLocal(res.decl)
-      result = r.kind == ResultY
+    result = n.symId == c.resultSym
 
 proc trReturn(c: var Context; n: var Cursor) =
   copyInto c.dest, n:
-    if isResultUsage(n):
-      copyTree c.dest, n
+    if isResultUsage(c, n):
+      takeTree c.dest, n
     else:
       tr c, n, WantOwner
 
@@ -230,7 +228,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trSons c, n, DontCare
 
   else:
-    let isNotFirstAsgn = true # XXX Adapt this once we have "isFirstAsgn" analysis
+    let isNotFirstAsgn = not isResultUsage(c, le) # XXX Adapt this once we have "isFirstAsgn" analysis
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
     if constructsValue(ri):
@@ -258,7 +256,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           callDestroy(c, destructor, lhs)
         copyInto c.dest, n:
           copyTree c.dest, lhs
-          var n = ri
+          n = ri
           tr c, n, WillBeOwned
         callWasMoved c, ri
     else:
@@ -269,7 +267,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
-          var n = ri
+          n = ri
           callDup c, n
         callDestroy(c, destructor, tmp, le.info)
       else:
@@ -390,9 +388,10 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
       of NoExpr:
         case n.stmtKind
         of LocalDecls:
+          let kind = n.symKind
           c.dest.add n
           inc n
-          c.typeCache.takeLocalHeader(c.dest, n)
+          c.typeCache.takeLocalHeader(c.dest, n, kind)
           inc nested
         of ProcS, FuncS, ConverterS, MethodS, MacroS:
           trProcDecl c, n, parentNodestroy = true
@@ -412,6 +411,8 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
 
 proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.dest.add n
+  let oldResultSym = c.resultSym
+  c.resultSym = NoSymId
   var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -432,6 +433,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   else:
     copyTree c.dest, r.body
   c.dest.addParRi()
+  c.resultSym = oldResultSym
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   not isTrivial(c.lifter[], typ)
@@ -566,31 +568,38 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   else:
     trSons c, n, DontCare
 
-proc trLocal(c: var Context; n: var Cursor) =
+proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
+  let kind = n.symKind
   c.dest.add n
   var r = takeLocal(n, SkipFinalParRi)
+  if k == ResultS and r.name.kind == SymbolDef:
+    c.resultSym = r.name.symId
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.typ
-  c.typeCache.registerLocal(r.name.symId, r.typ)
+  c.typeCache.registerLocal(r.name.symId, kind, r.typ)
 
-  let destructor = getDestructor(c.lifter[], r.typ, n.info)
-  if destructor != NoSymId:
-    if constructsValue(r.val):
-      tr c, r.val, WillBeOwned
-      c.dest.addParRi()
-
-    elif isLastRead(c, r.val):
-      tr c, r.val, WillBeOwned
-      c.dest.addParRi()
-      callWasMoved c, r.val
-    else:
-      callDup c, r.val
-      c.dest.addParRi()
-  else:
-    tr c, r.val, WillBeOwned
+  if r.val.kind == DotToken:
+    copyTree c.dest, r.val
     c.dest.addParRi()
+  else:
+    let destructor = getDestructor(c.lifter[], r.typ, n.info)
+    if destructor != NoSymId:
+      if constructsValue(r.val):
+        tr c, r.val, WillBeOwned
+        c.dest.addParRi()
+
+      elif isLastRead(c, r.val):
+        tr c, r.val, WillBeOwned
+        c.dest.addParRi()
+        callWasMoved c, r.val
+      else:
+        callDup c, r.val
+        c.dest.addParRi()
+    else:
+      tr c, r.val, WillBeOwned
+      c.dest.addParRi()
 
 proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
   c.dest.add n
@@ -606,19 +615,19 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
   let typ = getType(c.typeCache, n)
   let arg = n.firstSon
   let info = n.info
-  if isLastRead(c, arg):
+  if constructsValue(arg):
+    # we allow rather silly code like `ensureMove(234)`.
+    # Seems very useful for generic programming as this can come up
+    # from template expansions:
+    copyInto c.dest, n:
+      tr c, n, e
+  elif isLastRead(c, arg):
     if e == WantOwner and hasDestructor(c, typ):
       copyInto c.dest, n:
         genLastRead(c, n, typ)
     else:
       copyInto c.dest, n:
         tr c, n, e
-  elif constructsValue(arg):
-    # we allow rather silly code like `ensureMove(234)`.
-    # Seems very useful for generic programming as this can come up
-    # from template expansions:
-    copyInto c.dest, n:
-      tr c, n, e
   else:
     let m = "not the last usage of: " & asNimCode(n)
     c.dest.buildTree ErrT, info:
@@ -673,13 +682,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of PragmaxX, CurlyatX, TabconstrX, DoX:
       trSons c, n, e
     of NoExpr:
-      case n.stmtKind
+      let k = n.stmtKind
+      case k
       of RetS:
         trReturn c, n
       of AsgnS:
         trAsgn c, n
       of LocalDecls:
-        trLocal c, n
+        trLocal c, n, k
       of ProcS, FuncS, ConverterS, MethodS, MacroS:
         trProcDecl c, n
       of ScopeS:

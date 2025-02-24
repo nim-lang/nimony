@@ -93,7 +93,7 @@
 | `(ret .X)` | NifcStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
 | `(stmts S*)` | NifcStmt, NimonyStmt, NiflerKind | list of statements |
-| `(params (param...)*)` | NifcType, NimonyType, NiflerKind | list of proc parameters, also used as a "proc type" |
+| `(params (param...)*)` | NifcType, NimonyType, NimonyOther, NiflerKind | list of proc parameters, also used as a "proc type" |
 | `(union (fld ...)*)` | NifcType | union declaration |
 | `(object .T (fld ...)*)` | NifcType, NimonyType, NiflerKind | object type declaration |
 | `(enum (efld...)*)` | NifcType, NimonyType, NiflerKind | enum type declaration |
@@ -181,7 +181,7 @@
 | `(symkind UNUSED)` | NimonyType | `symkind` type |
 | `(typekind UNUSED)` | NimonyType | `typekind` type |
 | `(typedesc T)` | NimonyType | `typedesc` type |
-| `(untyped)` | NimonyType | `untyped` type |
+| `(untyped)` | NimonyPragma, NimonyType | `untyped` type |
 | `(typed)` | NimonyType | `typed` type |
 | `(cstring)` | NimonyType | `cstring` type |
 | `(pointer)` | NimonyType | `pointer` type |
@@ -263,3 +263,5 @@
 | `(index (public ...) (private ...) (hooks ...) (converter ...) (build ...))` | NifIndex | index section |
 | `(public (kv Y INTLIT*)` | NifIndex | public section |
 | `(private (kv Y INTLIT*))` | NifIndex | private section |
+| `(inject)` | NimonyPragma | `inject` pragma |
+| `(gensym)` | NimonyPragma | `gensym` pragma |

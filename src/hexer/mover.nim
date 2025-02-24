@@ -103,6 +103,7 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
   var pc = pc
   let root = rootOf(x)
   while true:
+    #echo "PC IS: ", pc.kind
     case pc.kind
     of GotoInstr:
       let diff = pc.getInt28
@@ -135,6 +136,7 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
     of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
       inc pc
     of ParLe:
+      #echo "PC IS: ", pool.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
         if containsUsage(pc, x):
@@ -197,10 +199,13 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
   var n = default Cursor
   if not findStart(c, toPayload(idx + PayloadOffset), n):
     return true
+  #echo "LOOKING AT: ", codeListing(c)
+  #echo "N IS: ", toString(n, false)
   # we are interested in what comes after this node:
   let x = n
   skip n
   while n.kind == ParRi: inc n
+  #echo "START IS ", toString(n, false)
   var pcs = @[n]
   while pcs.len > 0:
     let pc = pcs.pop()

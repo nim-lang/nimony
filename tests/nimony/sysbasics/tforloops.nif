@@ -12,8 +12,8 @@
    (fld :Field1.0.tfo6zftzj1 . .
     (i -1) .)) . . 2,2
   (stmts 4
-   (let :ff.0 . .
-    (array 7
+   (let :ff.0 . . 5
+    (array 2
      (tuple
       (fld :Field0.1.tfo6zftzj1 . .
        (i -1) .) 4
@@ -21,8 +21,8 @@
        (i -1) .))
      (rangetype
       (i -1) +0 +0)) 5
-    (aconstr ~5
-     (array 7
+    (aconstr
+     (array 2
       (tuple
        (fld :Field0.1.tfo6zftzj1 . .
         (i -1) .) 4

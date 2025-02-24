@@ -150,9 +150,6 @@ proc addErrorMsg*(dest: var TokenBuf; m: Match) =
   dest.addStrLit str
   dest.addParRi()
 
-proc expected(f, a: Cursor): string =
-  concat("expected: ", typeToString(f), " but got: ", typeToString(a))
-
 proc typeImpl(s: SymId): Cursor =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
@@ -428,6 +425,7 @@ proc commonType(f, a: Cursor): Cursor =
   result = a
 
 proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
+  # now unused, maybe bring back error message somehow
   let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:
     m.errorTypevar InvalidRematch, f, a, typeVar
@@ -446,7 +444,9 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let fs = f.symId
   if isTypevar(fs):
     if m.inferred.contains(fs):
-      typevarRematch(m, fs, m.inferred[fs], a)
+      # used to call typevarRematch
+      var prev = m.inferred[fs]
+      singleArgImpl(m, prev, arg)
     elif matchesConstraint(m, fs, a):
       m.inferred[fs] = a
     else:
@@ -753,7 +753,6 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
     if not m.err:
       if containsGenericParams(f): # maybe restrict to params of this routine
         m.genericEmpty = true
-      let start = m.args.len
       m.args.add arg.n.load # copy tag
       m.args.takeTree f
       m.args.addParRi()

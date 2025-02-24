@@ -74,8 +74,9 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr(c, dest, n)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let kind = n.symKind
   copyInto dest, n:
-    c.typeCache.takeLocalHeader(dest, n)
+    c.typeCache.takeLocalHeader(dest, n, kind)
     tr(c, dest, n)
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =

@@ -373,12 +373,13 @@ proc trResult(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
     if c.currentBlock.kind == IsRoutine:
       c.currentBlock.sym = n.symId
-    takeLocalHeader c.typeCache, c.dest, n
+    takeLocalHeader c.typeCache, c.dest, n, ResultY
     trExpr c, n
 
 proc trLocal(c: var ControlFlow; n: var Cursor) =
+  let kind = n.symKind
   copyInto c.dest, n:
-    takeLocalHeader c.typeCache, c.dest, n
+    takeLocalHeader c.typeCache, c.dest, n, kind
     trExpr c, n
 
 proc trProc(c: var ControlFlow; n: var Cursor) =
@@ -390,10 +391,11 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
     if isConcrete:
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
+      for ret in thisProc.breakInstrs: c.patch ret
       c.dest.addParPair RetS, NoLineInfo
     else:
       takeTree c.dest, n
-    for ret in thisProc.breakInstrs: c.patch ret
+      for ret in thisProc.breakInstrs: c.patch ret
     if isConcrete:
       c.dest.addParRi() # StmtsS
   c.currentBlock = c.currentBlock.parent
@@ -682,7 +684,7 @@ proc trStmtListExpr(c: var ControlFlow; n: var Cursor) =
     if isLastSon(n): break
     trStmt c, n
 
-  let temp = openTempVar(c, typ, info)
+  let temp = openTempVar(c, typ, NoLineInfo)
   trExpr c, n
   c.dest.addParRi() # close temp var declaration
   skipParRi n
@@ -700,7 +702,7 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
 
   let fullExpr = rollbackToStmtBegin c
 
-  let tar = openTempVar(c, typ, info)
+  let tar = openTempVar(c, typ, NoLineInfo)
   c.dest.addDotToken()
   c.dest.addParRi() # close temp var declaration
 

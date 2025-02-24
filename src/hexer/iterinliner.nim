@@ -137,17 +137,15 @@ proc transformContinueStmt(e: var EContext; c: var Cursor) =
   if e.continues.len > 0 and e.continues[^1] != SymId(0):
     let lab = e.continues[^1]
     e.dest.add symToken(lab, c.info)
+  else:
+    e.dest.addDotToken()
   inc c # dotToken
   takeParRi e, c
-
-proc pop(s: var seq[SymId]): SymId =
-  result = s[^1]
-  setLen(s, s.len-1)
 
 proc transformForStmt(e: var EContext; c: var Cursor)
 proc transformStmt(e: var EContext; c: var Cursor)
 
-proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]; fromForloop = false) =
+proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, SymId]; fromForloop = false) =
   case c.kind
   of Symbol:
     let s = c.symId
@@ -204,6 +202,24 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: Table[SymId, SymId]
         while c.kind != ParRi:
           inlineLoopBody(e, c, mapping)
         takeParRi(e, c)
+    of VarS, LetS, CursorS, ResultS:
+      e.dest.add c
+      inc c
+      let oldName = c.symId
+      let freshLocal = pool.syms.getOrIncl(":tmp.v." & $e.getTmpId)
+      mapping[oldName] = freshLocal
+      e.dest.add symdefToken(freshLocal, c.info) # name
+
+      inc c
+      # export marker:
+      e.dest.takeTree c
+      # pragmas:
+      e.dest.takeTree c
+      # type:
+      e.dest.takeTree c
+      # value:
+      inlineLoopBody(e, c, mapping)
+      e.dest.takeParRi(c)
     else:
       e.dest.add c
       inc c
@@ -237,7 +253,7 @@ proc inlineIteratorBody(e: var EContext;
         e.continues.add lab
 
       inc c # skips yield
-      let mapping = createYieldMapping(e, c, forStmt.vars, yieldType)
+      var mapping = createYieldMapping(e, c, forStmt.vars, yieldType)
       var body = forStmt.body
       inlineLoopBody(e, body, mapping, true)
 
@@ -412,6 +428,8 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       transformForStmt(e, c)
     of IteratorS:
       skip(c)
+    of TemplateS:
+      e.dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:
       e.dest.add c
       inc c

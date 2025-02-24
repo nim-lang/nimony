@@ -56,6 +56,7 @@ proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
 proc genCall(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
+  #let isCfn = isImportC(n)
   genx c, n
   c.add ParLe
   var i = 0
@@ -127,6 +128,8 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     var fld = n
     skip n
+    if n.kind != IntLit:
+      error c.m, "expected integer literal (inheritance depth) but got: ", n
     var inh = pool.integers[n.intId]
     inc n
     while inh > 0:
@@ -152,7 +155,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
 proc objConstrType(c: var GeneratedCode; n: var Cursor) =
   # C99 is strange, it requires (T){} for struct construction but not for
   # consts.
-  if c.inSimpleInit == 0:
+  if c.objConstrNeedsType:
     c.add ParLe
     genType c, n
     c.add ParRi
@@ -203,7 +206,7 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
   c.add "&"
   genx c, n
   if arrType.typeKind == ArrayT and not c.m.isImportC(arrType):
-    c.add ".a"
+    c.add ".a[0]"
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:
     if c.m.config.backend == backendCpp:

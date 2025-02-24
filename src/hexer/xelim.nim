@@ -292,7 +292,8 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
             trStmt c, dest, n
           dest.copyIntoKind ElseU, info:
             copyIntoKind dest, StmtsS, info:
-              dest.copyIntoKind BreakS, info: discard
+              dest.copyIntoKind BreakS, info:
+                dest.addDotToken()
     else:
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar
@@ -301,12 +302,13 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tmp = createTokenBuf(30)
+  let kind = n.symKind
   copyInto tmp, n:
     let name = n.symId
     takeTree tmp, n # name
     takeTree tmp, n # export marker
     takeTree tmp, n # pragmas
-    c.typeCache.registerLocal(name, n)
+    c.typeCache.registerLocal(name, kind, n)
     takeTree tmp, n # type
     var v = Target(m: IsEmpty)
     trExpr c, dest, n, v
