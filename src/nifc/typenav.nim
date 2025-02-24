@@ -41,7 +41,7 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       result = getTypeImpl(m, m.src.cursorAt(d.pos))
     else:
       # importC types are not defined
-      result = createIntegralType(m, "(err)")
+      result = n
   of ParRi:
     bug "typenav: unexpected ParRi"
   of IntLit:
@@ -153,4 +153,7 @@ proc getType*(m: var Module; n: Cursor; skipAliases = true): Cursor =
         else:
           break
       else:
-        raiseAssert "could not load: " & pool.syms[result.symId]
+        if result.isImportC:
+          break
+        else:
+          raiseAssert "could not load: " & pool.syms[result.symId]
