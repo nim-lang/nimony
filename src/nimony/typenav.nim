@@ -107,6 +107,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
           #if isRoutine(symKind(res.decl)):
           #  result = res.decl
       else:
+        when defined(debug):
+          writeStackTrace()
         quit "could not find symbol: " & pool.syms[n.symId]
     of IntLit:
       result = c.builtins.intType

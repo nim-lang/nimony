@@ -480,6 +480,11 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
     copyIntoKind(c.dest, RetS, c.info):
       copyIntoSymUse c.dest, res, c.info
 
+proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
+  var buf = createTokenBuf(100)
+  for i in procStart ..< dest.len: buf.add dest[i]
+  programs.publish(sym, buf)
+
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   let paramA = pool.syms.getOrIncl("dest.0")
   var paramTreeA = createTokenBuf(4)
@@ -494,6 +499,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     paramB = pool.syms.getOrIncl("src.0")
     copyIntoSymUse paramTreeB, paramB, c.info
 
+  let procStart = c.dest.len
   copyIntoKind(c.dest, ProcS, c.info):
     addSymDef c.dest, sym, c.info
     c.dest.addEmpty3 c.info # export marker, pattern, generics
@@ -541,6 +547,8 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       else:
         unravel(c, typ, paramTreeA, paramTreeB)
       maybeAddReturn c, paramA
+
+  publishProc(sym, c.dest, procStart)
 
 proc genMissingHooks*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
