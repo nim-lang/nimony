@@ -198,7 +198,7 @@ proc callingConvToStr(cc: CallConv): string =
   of Thiscall: "N_THISCALL"
   of Noconv: "N_NOCONV"
   of Member: "N_NOCONV"
-  of Nimcall: "N_FASTCALL"
+  of Nimcall: "N_NIMCALL"
 
 include gentypes
 

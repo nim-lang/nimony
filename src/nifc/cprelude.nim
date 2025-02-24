@@ -237,6 +237,15 @@ typedef NU8 NU;
 #  define N_LIB_IMPORT  extern
 #endif
 
+#if defined(__BORLANDC__) || defined(_MSC_VER) || defined(WIN32) || defined(_WIN32)
+/* these compilers have a fastcall so use it: */
+#  define N_NIMCALL(rettype, name) rettype __fastcall name
+#  define N_NIMCALL_PTR(rettype, name) rettype (__fastcall *name)
+#else
+#  define N_NIMCALL(rettype, name) rettype name /* no modifier */
+#  define N_NIMCALL_PTR(rettype, name) rettype (*name)
+#endif
+
 #define N_NOCONV(rettype, name) rettype name
 /* specify no calling convention */
 #define N_NOCONV_PTR(rettype, name) rettype (*name)

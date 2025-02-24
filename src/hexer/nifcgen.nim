@@ -301,7 +301,7 @@ proc traverseProcTypeBody(e: var EContext; c: var Cursor) =
   let prag = parsePragmas(e, c)
   var genPragmas = openGenPragmas()
   if prag.callConv != NoCallConv:
-    let name = if prag.callConv == Nimcall: $Fastcall else: $prag.callConv
+    let name = $prag.callConv
     e.addKey genPragmas, name, pinfo
   closeGenPragmas e, genPragmas
 
@@ -665,7 +665,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   let oldOwner = setOwner(e, s)
 
   var genPragmas = openGenPragmas()
-  if prag.callConv != NoCallConv and prag.callConv != Nimcall:
+  if prag.callConv != NoCallConv:
     let name = $prag.callConv
     e.addKey genPragmas, name, pinfo
   if InlineP in prag.flags:
