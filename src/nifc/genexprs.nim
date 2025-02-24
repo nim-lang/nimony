@@ -109,7 +109,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
     inc n
     let arrType = getType(c.m, n)
     genx c, n
-    if not c.m.isImportC(arrType):
+    if not (c.m.isImportC(arrType) or arrType.typeKind == NoType):
       c.add Dot
       c.add "a"
     c.add BracketLe
@@ -205,7 +205,7 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
   let ampAt = c.code.len
   c.add "&"
   genx c, n
-  if arrType.typeKind == ArrayT and not c.m.isImportC(arrType):
+  if arrType.typeKind == ArrayT and not (c.m.isImportC(arrType) or arrType.typeKind == NoType):
     c.add ".a[0]"
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:

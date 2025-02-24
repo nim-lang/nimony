@@ -41,7 +41,7 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       result = getTypeImpl(m, m.src.cursorAt(d.pos))
     else:
       # importC types are not defined
-      result = n
+      result = createIntegralType(m, "(err)")
   of ParRi:
     bug "typenav: unexpected ParRi"
   of IntLit:
