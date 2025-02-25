@@ -233,4 +233,9 @@ proc prepareMutation*(s: var string) =
     s.a = a # also do this for `a == nil`
 
 proc newString*(len: int): string =
-  result.setLen len
+  let a = cast[StrData](alloc(len))
+  if a != nil:
+    result = string(a: a, i: len shl LenShift)
+  else:
+    oomHandler len
+    result = string(a: nil, i, EmptyI)
