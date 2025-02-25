@@ -10,11 +10,9 @@ proc `$`*(x: cstring): string =
   for i in 0..<result.len:
     result[i] = x[i]
 
-proc substr*(s: string; start, stop: int): string =
-  let newLen = stop - start + 1
-  result = newString(newLen)
-  for i in 0 ..< result.len:
-    result[i] = s[i+start]
+proc `$`*(x: char): string =
+  result = newString(1)
+  result[0] = x
 
 func continuesWith*(s, prefix: string; start: int): bool =
   if prefix.len > s.len-start:
