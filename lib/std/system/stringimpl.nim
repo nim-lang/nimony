@@ -238,4 +238,4 @@ proc newString*(len: int): string =
     result = string(a: a, i: len shl LenShift)
   else:
     oomHandler len
-    result = string(a: nil, i, EmptyI)
+    result = string(a: nil, i: EmptyI)
