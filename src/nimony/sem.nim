@@ -4478,6 +4478,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   while it.n.kind != ParRi:
     if it.n.substructureKind != KvU:
       c.buildErr it.n.info, "expected key/value pair in object constructor"
+      skip it.n
     else:
       let fieldStart = fieldBuf.len
       fieldBuf.add it.n
