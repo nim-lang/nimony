@@ -231,3 +231,6 @@ proc prepareMutation*(s: var string) =
       oomHandler len
       s.i = EmptyI
     s.a = a # also do this for `a == nil`
+
+proc newString*(len: int): string =
+  result.setLen len
