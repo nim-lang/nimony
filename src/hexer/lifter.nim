@@ -368,12 +368,9 @@ proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor
   copyIntoKinds c.dest, [StmtsS, IfS], c.info:
     # here we know that `x` is not nil:
     copyIntoKind c.dest, ElifU, c.info:
-      copyIntoKind c.dest, EqX, c.info:
-        addIntType c
-        copyIntoKind c.dest, CallS, c.info:
-          copyIntoSymUse c.dest, getCompilerProc(c, "atomicDec"), c.info
-          refcountOf(c, paramA)
-        c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
+      copyIntoKind c.dest, CallS, c.info:
+        copyIntoSymUse c.dest, getCompilerProc(c, "arcDec"), c.info
+        refcountOf(c, paramA)
 
       copyIntoKind c.dest, StmtsS, c.info:
         let oldOp = c.op
@@ -393,7 +390,7 @@ proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
     copyTree c.dest, x
     copyIntoKind c.dest, StmtsS, c.info:
       copyIntoKind c.dest, CallS, c.info:
-        copyIntoSymUse c.dest, getCompilerProc(c, "atomicInc"), c.info
+        copyIntoSymUse c.dest, getCompilerProc(c, "arcInc"), c.info
         refcountOf(c, x)
   c.dest.addParRi()
 
