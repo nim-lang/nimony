@@ -30,7 +30,7 @@ proc atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
 
 proc arcInc*(memLoc: var int) {.inline.} =
   ## Atomically increments the integer by some `x`.
-  result = atomicAddFetch(memLoc.addr, 1, ATOMIC_SEQ_CST)
+  atomicAddFetch(memLoc.addr, 1, ATOMIC_SEQ_CST)
 
 proc arcDec*(memLoc: var int): bool {.inline.} =
   ## Atomically decrements the integer by some `x`. It returns the new value.

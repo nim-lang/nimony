@@ -358,7 +358,7 @@ proc refcountOf(c: var LiftingCtx; x: TokenBuf) =
   copyIntoKind c.dest, DotX, c.info:
     copyIntoKind c.dest, DerefX, c.info:
       copyTree c.dest, x
-    copyIntoSymUse c.dest, pool.syms.getOrIncl("rc.0"), c.info
+    copyIntoSymUse c.dest, pool.syms.getOrIncl(RcField), c.info
 
 proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
   c.dest.addParLe IfS, c.info

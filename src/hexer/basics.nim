@@ -3,6 +3,10 @@ import std / [tables, sets, syncio]
 include nifprelude
 import ".." / nimony / [nimony_model, typenav]
 
+const
+  RcField* = "r.0."
+  DataField* = "d.0."
+
 type
   MangleScope* {.acyclic.} = ref object
     tab: Table[SymId, string]
