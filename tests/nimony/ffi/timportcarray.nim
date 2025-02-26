@@ -1,3 +1,5 @@
+import std/syncio
+
 type
   CInt = int32
   CStruct {.importc: "struct CStruct", header: "ctestarray.h".} = object
@@ -13,22 +15,21 @@ proc setCStruct2(cs2: ptr CStruct2) {.importc: "setCStruct2", header: "ctestarra
 block:
   var carray: array[2, CInt]
   setCArray(carray)
-  discard carray[0] == 1
-  discard carray[1] == 2
+  assert carray[0] == 1
+  assert carray[1] == 2
 
 block:
   var cstruct: CStruct
   setCStruct(addr cstruct)
-  # TODO: Use doAssert when it become available
-  discard cstruct.field[0] == 567
-  discard cstruct.field[1] == 8910
+  assert cstruct.field[0] == 567
+  assert cstruct.field[1] == 8910
 
 block:
   var cstruct2: CStruct2
   setCStruct2(addr cstruct2)
-  discard cstruct2.cs.field[0] == 111
-  discard cstruct2.cs.field[1] == 222
-  discard cstruct2.cs2[0].field[0] == 333
-  discard cstruct2.cs2[0].field[1] == 444
-  discard cstruct2.cs2[1].field[0] == 55555
-  discard cstruct2.cs2[1].field[1] == 666666
+  assert cstruct2.cs.field[0] == 111
+  assert cstruct2.cs.field[1] == 222
+  assert cstruct2.cs2[0].field[0] == 333
+  assert cstruct2.cs2[0].field[1] == 4444
+  assert cstruct2.cs2[1].field[0] == 55555
+  assert cstruct2.cs2[1].field[1] == 666666
