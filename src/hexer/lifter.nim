@@ -218,9 +218,10 @@ proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; paramPos = 0
     if nd:
       result.addParLe HderefX, c.info
     copyTree result, obj
-    copyIntoSymUse result, nameSym, c.info
     if nd:
       result.addParRi()
+    copyIntoSymUse result, nameSym, c.info
+    result.addIntLit(0, c.info)
 
 proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): TokenBuf =
   result = createTokenBuf(4)
@@ -359,6 +360,7 @@ proc refcountOf(c: var LiftingCtx; x: TokenBuf) =
     copyIntoKind c.dest, DerefX, c.info:
       copyTree c.dest, x
     copyIntoSymUse c.dest, pool.syms.getOrIncl(RcField), c.info
+    c.dest.addIntLit(0, c.info)
 
 proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
   c.dest.addParLe IfS, c.info
