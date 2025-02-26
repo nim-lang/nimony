@@ -356,7 +356,7 @@ proc derefInner(c: var LiftingCtx; x: TokenBuf): TokenBuf =
     copyIntoKind result, DerefX, c.info:
       copyTree result, x
     copyIntoSymUse result, pool.syms.getOrIncl(DataField), c.info
-    c.dest.addIntLit(0, c.info)
+    result.addIntLit(0, c.info)
 
 proc refcountOf(c: var LiftingCtx; x: TokenBuf) =
   copyIntoKind c.dest, AddrX, c.info:
