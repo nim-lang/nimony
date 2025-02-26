@@ -387,17 +387,17 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
         discard "ok"
       else:
         m.error FormalParamsMismatch, f, a
-        skipToEnd a
+        skipUntilEnd a
     else:
       m.error FormalParamsMismatch, f, a
-      skipToEnd f
-      skipToEnd a
+      skipUntilEnd f
+      skipUntilEnd a
   elif hasParams == 2:
     m.error FormalParamsMismatch, f, a
-    skipToEnd a
+    skipUntilEnd a
   elif hasParams == 1:
     m.error FormalParamsMismatch, f, a
-    skipToEnd f
+    skipUntilEnd f
 
   # also correct for the DotToken case:
   inc f

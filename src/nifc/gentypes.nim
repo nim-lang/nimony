@@ -60,6 +60,9 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
          var viaPointer = false
          recordDependencyImpl m, o, ch, ch.firstSon, viaPointer
       o.ordered.add tracebackTypeC(ch), TypedefStruct
+  of EnumT:
+    # enums do not depend on anything so always safe to generate them
+    o.ordered.add tracebackTypeC(ch), TypedefKeyword
   else:
     if ch.kind == Symbol:
       # follow the symbol to its definition:

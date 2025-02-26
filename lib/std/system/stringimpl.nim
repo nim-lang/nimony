@@ -231,3 +231,11 @@ proc prepareMutation*(s: var string) =
       oomHandler len
       s.i = EmptyI
     s.a = a # also do this for `a == nil`
+
+proc newString*(len: int): string =
+  let a = cast[StrData](alloc(len))
+  if a != nil:
+    result = string(a: a, i: len shl LenShift)
+  else:
+    oomHandler len
+    result = string(a: nil, i: EmptyI)

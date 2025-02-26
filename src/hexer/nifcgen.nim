@@ -301,7 +301,7 @@ proc traverseProcTypeBody(e: var EContext; c: var Cursor) =
   let prag = parsePragmas(e, c)
   var genPragmas = openGenPragmas()
   if prag.callConv != NoCallConv:
-    let name = if prag.callConv == Nimcall: $Fastcall else: $prag.callConv
+    let name = $prag.callConv
     e.addKey genPragmas, name, pinfo
   closeGenPragmas e, genPragmas
 
@@ -665,7 +665,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   let oldOwner = setOwner(e, s)
 
   var genPragmas = openGenPragmas()
-  if prag.callConv != NoCallConv and prag.callConv != Nimcall:
+  if prag.callConv != NoCallConv:
     let name = $prag.callConv
     e.addKey genPragmas, name, pinfo
   if InlineP in prag.flags:
@@ -1370,11 +1370,18 @@ proc importSymbol(e: var EContext; s: SymId) =
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
     var c = res.decl
-    if c.stmtKind == TypeS:
+    let kind = c.symKind
+    case kind
+    of TypeY:
       traverseTypeDecl e, c
+    of EfldY:
+      # import full enum type:
+      let typ = asLocal(c).typ
+      assert typ.kind == Symbol
+      e.demand typ.symId
     else:
-      let isR = isRoutine(c.symKind)
-      if isR or isLocal(c.symKind):
+      let isR = isRoutine(kind)
+      if isR or isLocal(kind):
         var pragmas = if isR:
                         asRoutine(c).pragmas
                       else:

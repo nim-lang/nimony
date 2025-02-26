@@ -1,0 +1,10 @@
+(.nif24)
+0,1,tests/nimony/sysbasics/tdefinedwhen.nim(stmts 2,1
+ (stmts
+  (discard 8 "good")) 2,8
+ (stmts
+  (discard 8 "good")) 2,11
+ (stmts
+  (discard 8 "good")) 2,18
+ (stmts
+  (discard 8 "good")))

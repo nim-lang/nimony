@@ -80,11 +80,24 @@ proc skip*(c: var Cursor) =
   inc c
 
 proc skipToEnd*(c: var Cursor) =
+  ## skips `c` until an unmatched ParRi is found, then skips the ParRi and returns
   var nested = 0
   while true:
     if c.kind == ParRi:
       if nested == 0:
         inc c
+        break
+      dec nested
+    elif c.kind == ParLe:
+      inc nested
+    inc c
+
+proc skipUntilEnd*(c: var Cursor) =
+  ## skips `c` until an unmatched ParRi is found, then returns without skipping the ParRi
+  var nested = 0
+  while true:
+    if c.kind == ParRi:
+      if nested == 0:
         break
       dec nested
     elif c.kind == ParLe:

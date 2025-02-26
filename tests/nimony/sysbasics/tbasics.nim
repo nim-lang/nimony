@@ -42,3 +42,11 @@ proc foo1314(x: Foo1314) =
 
 var a = Foo1314()
 foo1314(a)
+
+proc foo2233() {.nimcall.} =
+  var x: proc () {.cdecl.}
+
+# Compile error
+  var y: proc () {.nimcall.}
+
+foo2233()
