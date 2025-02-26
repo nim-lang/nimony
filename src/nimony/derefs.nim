@@ -197,7 +197,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
     else:
       result = false
   elif n.kind in {StringLit, IntLit, UIntLit, FloatLit, CharLit} or
-       n.exprKind in {SufX, OconstrX, NewOconstrX, AconstrX}:
+       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}:
     result = true
   else:
     result = false
@@ -514,7 +514,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trCall c, n, e, disallowDangerous
     of DotX, DdotX, AtX, ArrAtX, TupAtX, PatX:
       trLocation c, n, e
-    of OconstrX, NewOconstrX:
+    of OconstrX, NewobjX:
       if e notin {WantT, WantTButSkipDeref}:
         buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
         skip n

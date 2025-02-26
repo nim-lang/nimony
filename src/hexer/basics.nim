@@ -3,6 +3,11 @@ import std / [tables, sets, syncio]
 include nifprelude
 import ".." / nimony / [nimony_model, typenav]
 
+const
+  RcField* = "r.0."
+  DataField* = "d.0."
+  GeneratedTypeSuffix* = ".0.t"
+
 type
   MangleScope* {.acyclic.} = ref object
     tab: Table[SymId, string]
@@ -27,6 +32,7 @@ type
     continues*: seq[SymId] # how to translate `continue`
     # TODO: add a instID for each forStmt
     tmpId*: int # per proc
+    inImpSection*: int
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId

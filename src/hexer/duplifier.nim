@@ -57,7 +57,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   result = isLastUse(n, c.source[], otherUsage)
 
 const
-  ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX, NewOconstrX,
+  ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX, NewobjX,
                        AconstrX, TupleConstrX}
 
 proc constructsValue*(n: Cursor): bool =
@@ -657,7 +657,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trExplicitTrace c, n
     of ConvKinds, SufX:
       trConvExpr c, n, e
-    of OconstrX, NewOconstrX:
+    of OconstrX, NewobjX:
       trObjConstr c, n, e
     of DotX, DdotX, AtX, ArrAtX, PatX, TupAtX:
       trLocation c, n, e

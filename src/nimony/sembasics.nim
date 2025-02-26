@@ -195,7 +195,7 @@ proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string) =
 proc ptrTypeOf*(c: var SemContext; typ: TypeCursor): TypeCursor =
   let typeBegin = c.dest.len
   c.dest.buildTree PtrT, typ.info:
-    c.dest.addSubtree typ
+    c.dest.addSubtree typ.skipModifier
   result = typeToCursor(c, typeBegin)
   c.dest.shrink typeBegin
 

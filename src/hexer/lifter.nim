@@ -17,7 +17,7 @@ to type `(T, T)`, etc.
 import std/[assertions, tables]
 
 include nifprelude
-import nifindexes, symparser, treemangler, typekeys
+import nifindexes, symparser, treemangler, typekeys, basics
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes]
 
 type
@@ -36,6 +36,7 @@ type
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
     nominalTypeToHook: array[AttachedOp, Table[SymId, SymId]]
     hookNames: Table[string, int]
+    thisModuleSuffix: string
 
 # Phase 1: Determine if the =hook is trivial:
 
@@ -165,7 +166,7 @@ proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
   result.add '.'
   result.addInt counter[]
   result.add '.'
-  result.add "hooks" # c.thisModuleSuffix
+  result.add c.thisModuleSuffix
 
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
   if t.kind in {Symbol, SymbolDef}:
@@ -217,9 +218,10 @@ proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; paramPos = 0
     if nd:
       result.addParLe HderefX, c.info
     copyTree result, obj
-    copyIntoSymUse result, nameSym, c.info
     if nd:
       result.addParRi()
+    copyIntoSymUse result, nameSym, c.info
+    result.addIntLit(0, c.info)
 
 proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): TokenBuf =
   result = createTokenBuf(4)
@@ -350,14 +352,19 @@ proc unravelArray(c: var LiftingCtx;
 
 proc derefInner(c: var LiftingCtx; x: TokenBuf): TokenBuf =
   result = createTokenBuf(10)
-  copyIntoKind result, DerefX, c.info:
-    copyTree result, x
+  copyIntoKind result, DotX, c.info:
+    copyIntoKind result, DerefX, c.info:
+      copyTree result, x
+    copyIntoSymUse result, pool.syms.getOrIncl(DataField), c.info
+    result.addIntLit(0, c.info)
 
 proc refcountOf(c: var LiftingCtx; x: TokenBuf) =
-  copyIntoKind c.dest, DotX, c.info:
-    copyIntoKind c.dest, DerefX, c.info:
-      copyTree c.dest, x
-    copyIntoSymUse c.dest, pool.syms.getOrIncl("rc.0"), c.info
+  copyIntoKind c.dest, AddrX, c.info:
+    copyIntoKind c.dest, DotX, c.info:
+      copyIntoKind c.dest, DerefX, c.info:
+        copyTree c.dest, x
+      copyIntoSymUse c.dest, pool.syms.getOrIncl(RcField), c.info
+      c.dest.addIntLit(0, c.info)
 
 proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
   c.dest.addParLe IfS, c.info
@@ -367,12 +374,9 @@ proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor
   copyIntoKinds c.dest, [StmtsS, IfS], c.info:
     # here we know that `x` is not nil:
     copyIntoKind c.dest, ElifU, c.info:
-      copyIntoKind c.dest, EqX, c.info:
-        addIntType c
-        copyIntoKind c.dest, CallS, c.info:
-          copyIntoSymUse c.dest, getCompilerProc(c, "atomicDec"), c.info
-          refcountOf(c, paramA)
-        c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
+      copyIntoKind c.dest, CallS, c.info:
+        copyIntoSymUse c.dest, getCompilerProc(c, "arcDec"), c.info
+        refcountOf(c, paramA)
 
       copyIntoKind c.dest, StmtsS, c.info:
         let oldOp = c.op
@@ -392,12 +396,12 @@ proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
     copyTree c.dest, x
     copyIntoKind c.dest, StmtsS, c.info:
       copyIntoKind c.dest, CallS, c.info:
-        copyIntoSymUse c.dest, getCompilerProc(c, "atomicInc"), c.info
+        copyIntoSymUse c.dest, getCompilerProc(c, "arcInc"), c.info
         refcountOf(c, x)
   c.dest.addParRi()
 
 proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.typeKind == RefT
+  assert n.typeKind in {RefT, RefobjT}
   let baseType = n.firstSon
   case c.op
   of attachedDestroy:
@@ -437,10 +441,8 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   let typ = toTypeImpl typ
 
   case typ.typeKind
-  of ObjectT:
+  of RefobjT, ObjectT:
     unravelObj c, typ, paramA, paramB
-  of RefobjT, PtrobjT:
-    raiseAssert "unravel: unimplemented"
   of DistinctT:
     unravel(c, typ.firstSon, paramA, paramB)
   of TupleT:
@@ -479,10 +481,12 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
     copyIntoKind(c.dest, RetS, c.info):
       copyIntoSymUse c.dest, res, c.info
 
+proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
+  var buf = createTokenBuf(100)
+  for i in procStart ..< dest.len: buf.add dest[i]
+  programs.publish(sym, buf)
+
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
-  #let name = HookKindToLitId(c.op)
-  #echo "generating ", c.p[dest.m].strings[name] # name
-  #result = declareSym(c.p[c.thisModule], ProcDecl, name)
   let paramA = pool.syms.getOrIncl("dest.0")
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
@@ -496,6 +500,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     paramB = pool.syms.getOrIncl("src.0")
     copyIntoSymUse paramTreeB, paramB, c.info
 
+  let procStart = c.dest.len
   copyIntoKind(c.dest, ProcS, c.info):
     addSymDef c.dest, sym, c.info
     c.dest.addEmpty3 c.info # export marker, pattern, generics
@@ -537,17 +542,14 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
 
     let a = toTypeImpl typ
     copyIntoKind(c.dest, StmtsS, c.info):
-      when true: # TODO: implement
-        maybeAddResultDecl c, paramA, typ
-        c.dest.addDotToken()
-        maybeAddReturn c, paramA
+      maybeAddResultDecl c, paramA, typ
+      if a.typeKind in {RefT, RefobjT}:
+        unravelRef(c, typ, paramTreeA, paramTreeB)
       else:
-        maybeAddResultDecl c, paramA, typ
-        if a.typeKind == RefT:
-          unravelRef(c, typ, paramTreeA, paramTreeB)
-        else:
-          unravel(c, typ, paramTreeA, paramTreeB)
-          maybeAddReturn c, paramA
+        unravel(c, typ, paramTreeA, paramTreeB)
+      maybeAddReturn c, paramA
+
+  publishProc(sym, c.dest, procStart)
 
 proc genMissingHooks*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
@@ -557,8 +559,8 @@ proc genMissingHooks*(c: var LiftingCtx) =
       c.op = reqs[i].op
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
-proc createLiftingCtx*(): ref LiftingCtx =
-  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo)
+proc createLiftingCtx*(thisModuleSuffix: string): ref LiftingCtx =
+  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix)
 
 proc requestHook*(c: var LiftingCtx; sym: SymId; typ: TypeCursor; op: AttachedOp) =
   c.op = op

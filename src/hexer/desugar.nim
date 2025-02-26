@@ -2,8 +2,8 @@
 
 import std / [assertions]
 include nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints]
-import basics
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes]
+import basics, typekeys
 
 type
   Context = object
@@ -16,12 +16,11 @@ proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLi
   let s = "`desugar." & $c.counter & "." & c.thisModuleSuffix
   inc c.counter
   result = pool.syms.getOrIncl(s)
-  copyIntoKind dest, VarS, info:
-    dest.addSymDef result, info
-    dest.addDotToken() # export, pragmas
-    dest.addDotToken()
-    copyTree dest, typ # type
-    dest.addDotToken() # value
+  dest.add tagToken("var", info)
+  dest.addSymDef result, info
+  dest.addDotToken() # export, pragmas
+  dest.addDotToken()
+  copyTree dest, typ # type
 
 proc needsTemp(n: Cursor): bool =
   case n.kind
@@ -116,9 +115,8 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc liftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: PackedLineInfo): Cursor =
   let tmp = declareTemp(c, dest, typ, n.info)
-  copyIntoKind dest, AsgnS, n.info:
-    dest.add symToken(tmp, n.info)
-    dest.addSubtree n
+  dest.addSubtree n
+  dest.addParRi()
   c.tempUseBufStack.add createTokenBuf(4)
   c.tempUseBufStack[^1].add symToken(tmp, n.info)
   result = beginRead(c.tempUseBufStack[^1])
@@ -129,10 +127,9 @@ proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; in
     ptrTypeBuf.addSubtree typ
   let ptrType = beginRead(ptrTypeBuf)
   let tmp = declareTemp(c, dest, ptrType, n.info)
-  copyIntoKind dest, AsgnS, n.info:
-    dest.add symToken(tmp, n.info)
-    copyIntoKind dest, AddrX, n.info:
-      dest.addSubtree n
+  copyIntoKind dest, AddrX, n.info:
+    dest.addSubtree n
+  dest.addParRi()
   c.tempUseBufStack.add createTokenBuf(4)
   copyIntoKind c.tempUseBufStack[^1], DerefX, n.info:
     c.tempUseBufStack[^1].add symToken(tmp, n.info)
@@ -381,6 +378,55 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
 
+proc trNewobjFields(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  while n.kind != ParRi:
+    if n.substructureKind == KvU:
+      copyInto dest, n:
+        takeTree dest, n # keep field name
+        tr(c, dest, n)
+    else:
+      tr(c, dest, n)
+  inc n # skip ParRi
+
+proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n
+  let refType = n
+  assert refType.typeKind in {RefT, RefobjT}
+
+  let baseType = refType.firstSon
+  var refTypeCopy = refType
+  let typeKey = takeMangle refTypeCopy
+  let typeSym = pool.syms.getOrIncl(typeKey & GeneratedTypeSuffix)
+
+  copyIntoKind dest, ExprX, info:
+    copyIntoKind dest, StmtsS, info:
+      let tmp = declareTemp(c, dest, refType, info)
+      copyIntoKind dest, CastX, info:
+        dest.addSubtree refType
+        copyIntoKind dest, CallX, info:
+          dest.add symToken(pool.syms.getOrIncl("allocFixed.0." & SystemModuleSuffix), info)
+          copyIntoKind dest, SizeofX, info:
+            dest.add symToken(typeSym, info)
+      dest.addParRi() # finish temp declaration
+      copyIntoKind dest, AsgnS, info:
+        copyIntoKind dest, DerefX, info:
+          dest.add symToken(tmp, info)
+        copyIntoKind dest, OconstrX, info:
+          dest.add symToken(typeSym, info)
+          copyIntoKind dest, KvU, info:
+            let rcField = pool.syms.getOrIncl(RcField)
+            dest.add symdefToken(rcField, info)
+            dest.addIntLit(0, info)
+          copyIntoKind dest, KvU, info:
+            let dataField = pool.syms.getOrIncl(DataField)
+            dest.add symdefToken(dataField, info)
+            copyIntoKind dest, OconstrX, info:
+              dest.addSubtree baseType
+              trNewobjFields(c, dest, n)
+    # ExprX's expression is the temp:
+    dest.add symToken(tmp, info)
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -428,11 +474,44 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       genSetConstr(c, dest, n)
     of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
       genSetOp(c, dest, n)
-    of NewOconstrX:
-      # XXX `new`
-      raiseAssert("unimplemented")
+    of NewobjX:
+      genNewobj(c, dest, n)
     of TypeofX:
       takeTree dest, n
+    of HderefX, DerefX:
+      dest.add tagToken("deref", n.info)
+      inc n
+      let typ = getType(c.typeCache, n, true)
+      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
+      if isRef:
+        dest.add tagToken("dot", n.info)
+      tr c, dest, n
+      if isRef:
+        let dataField = pool.syms.getOrIncl(DataField)
+        dest.add symToken(dataField, n.info)
+        dest.addIntLit(0, n.info) # inheritance
+        dest.addParRi()
+      takeParRi dest, n
+    of DdotX:
+      dest.add tagToken("dot", n.info)
+      dest.add tagToken("deref", n.info)
+      inc n # skip tag
+
+      let typ = getType(c.typeCache, n, true)
+      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
+      if isRef:
+        dest.add tagToken("dot", n.info)
+      tr c, dest, n
+      if isRef:
+        # (*x).f --> (*x).d.f
+        let dataField = pool.syms.getOrIncl(DataField)
+        dest.add symToken(dataField, n.info)
+        dest.addIntLit(0, n.info) # inheritance
+        dest.addParRi()
+      dest.addParRi()
+      tr c, dest, n
+      tr c, dest, n
+      takeParRi dest, n
     else:
       trSons(c, dest, n)
   of ParRi:
