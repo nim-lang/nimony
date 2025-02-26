@@ -1053,7 +1053,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       if isRef:
         # (*x).f --> (*x).d.f
         let dataField = pool.syms.getOrIncl(DataField)
-        e.dest.add symdefToken(dataField, c.info)
+        e.dest.add symToken(dataField, c.info)
         e.dest.addIntLit(0, c.info) # inheritance
         e.dest.addParRi()
       e.dest.addParRi()
@@ -1075,7 +1075,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       traverseExpr(e, c)
       if isRef:
         let dataField = pool.syms.getOrIncl(DataField)
-        e.dest.add symdefToken(dataField, c.info)
+        e.dest.add symToken(dataField, c.info)
         e.dest.addIntLit(0, c.info) # inheritance
         e.dest.addParRi()
       takeParRi e, c
