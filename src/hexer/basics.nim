@@ -25,7 +25,7 @@ type
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`
-    # TODO: add a instID for each forStmt
+    instId*: int # per forStmt
     tmpId*: int # per proc
 
 proc getTmpId*(e: var EContext): int {.inline.} =
