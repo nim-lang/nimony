@@ -3500,7 +3500,6 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
         if AllowModuleSym notin flags:
           c.buildErr c.dest[start].info, "module symbol '" & pool.syms[s.name] & "' not allowed in this context"
       else:
-        # XXX enum field?
         assert false, "not implemented"
       it.typ = n
       commonType c, it, start, expected
