@@ -153,4 +153,7 @@ proc getType*(m: var Module; n: Cursor; skipAliases = true): Cursor =
         else:
           break
       else:
-        raiseAssert "could not load: " & pool.syms[result.symId]
+        if result.isImportC:
+          break
+        else:
+          raiseAssert "could not load: " & pool.syms[result.symId]
