@@ -100,7 +100,8 @@ proc lookupSymbol(c: var TypeCache; s: SymId): Cursor =
       if isRoutine(fn.kind):
         result = fn.params
       else:
-        result = default(Cursor)
+        # XXX This is not good enough
+        result = c.builtins.autoType
       #if isRoutine(symKind(res.decl)):
       #  result = res.decl
   else:
