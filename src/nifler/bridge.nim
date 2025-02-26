@@ -387,12 +387,12 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     # 3: generics
 
     if n.len > 0:
-      toNif n[0], n, c  # 4: params
+      toNif n[0], n, c, allowEmpty = true  # 4: params
     else:
       c.b.addEmpty
 
     if n.len > 1:
-      toNif n[1], n, c  # 5: pragmas
+      toNif n[1], n, c, allowEmpty = true  # 5: pragmas
     else:
       c.b.addEmpty
 
