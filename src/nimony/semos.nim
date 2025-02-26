@@ -263,7 +263,7 @@ proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
     nifstreams.close(stream)
 
 proc getFile*(info: PackedLineInfo): string =
-  let fid = unpack(pool.man, info)[0]
+  let fid = unpack(pool.man, info).file
   if fid.isValid:
     result = pool.files[fid]
   else:

@@ -68,26 +68,23 @@ proc pack*(m: var LineInfoManager; file: FileId; line, col: int32): PackedLineIn
 proc isPayload*(i: PackedLineInfo): bool {.inline.} =
   result = (i.uint32 and 3'u32) == 3'u32
 
-proc unpack*(m: LineInfoManager; info: PackedLineInfo): (FileId, int32, int32) =
-  let i = info.uint32
-  if (i and 1'u32) == 0'u32:
-    # inline representation:
-    result = (FileId((i shr 1'u32) and FileMax.uint32),
-      int32((i shr uint32(AsideBit + FileBits)) and LineMax.uint32),
-      int32((i shr uint32(AsideBit + FileBits + LineBits)) and ColMax.uint32))
-  else:
-    assert(not isPayload(info))
-    result = m.aside[int(i shr 2'u32)]
-
 type
   LineInfoUnpacked* = object
     file*: FileId
     line*: int32
     col*: int32
 
-proc unpackToObject*(m: LineInfoManager; info: PackedLineInfo): LineInfoUnpacked =
-  let (file, line, col) = unpack(m, info)
-  result = LineInfoUnpacked(file: file, line: line, col: col)
+proc unpack*(m: LineInfoManager; info: PackedLineInfo): LineInfoUnpacked =
+  let i = info.uint32
+  if (i and 1'u32) == 0'u32:
+    # inline representation:
+    result = LineInfoUnpacked(file: FileId((i shr 1'u32) and FileMax.uint32),
+      line: int32((i shr uint32(AsideBit + FileBits)) and LineMax.uint32),
+      col: int32((i shr uint32(AsideBit + FileBits + LineBits)) and ColMax.uint32))
+  else:
+    assert(not isPayload(info))
+    let (file, line, col) = m.aside[int(i shr 2'u32)]
+    result = LineInfoUnpacked(file: file, line: line, col: col)
 
 proc getPayload*(i: PackedLineInfo): uint32 {.inline.} =
   assert isPayload(i)
@@ -97,7 +94,7 @@ proc toPayload*(val: uint32): PackedLineInfo {.inline.} =
   result = PackedLineInfo((val shl 2'u32) or 3'u32)
 
 proc getFileId*(m: LineInfoManager; i: PackedLineInfo): FileId =
-  result = unpack(m, i)[0]
+  result = unpack(m, i).file
 
 proc memSize*(m: LineInfoManager): int = m.aside.len
 
@@ -108,9 +105,9 @@ when isMainModule:
       let packed = pack(m, FileId(1023), i, col)
       assert(not isPayload(packed))
       let u = unpack(m, packed)
-      assert u[0] == FileId(1023)
-      assert u[1] == i
-      assert u[2] == col
+      assert u.file == FileId(1023)
+      assert u.line == i
+      assert u.col == col
   echo m.aside.len
 
   let i = toPayload(8000u32)

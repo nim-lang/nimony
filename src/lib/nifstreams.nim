@@ -172,8 +172,8 @@ proc rawNext(s: var Stream; t: Token): PackedToken =
   if t.filename.len == 0:
     # relative file position
     if t.pos.line != 0 or t.pos.col != 0:
-      let (file, line, col) = unpack(pool.man, s.parents[^1])
-      currentInfo = pack(pool.man, file, line+t.pos.line, col+t.pos.col)
+      let rawInfo = unpack(pool.man, s.parents[^1])
+      currentInfo = pack(pool.man, rawInfo.file, rawInfo.line+t.pos.line, rawInfo.col+t.pos.col)
     else:
       currentInfo = s.parents[^1]
   else:
@@ -273,15 +273,18 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
     let info = tree[n].info
     let k = tree[n].kind
     if produceLineInfo and info.isValid and k != ParRi:
-      var (file, line, col) = unpack(pool.man, info)
+      let rawInfo = unpack(pool.man, info)
+      let file = rawInfo.file
+      var line = rawInfo.line
+      var col = rawInfo.col
       if file.isValid:
         var fileAsStr = ""
         if stack.len > 0:
-          let (pfile, pline, pcol) = unpack(pool.man, stack[^1])
-          if file != pfile: fileAsStr = pool.files[file]
+          let pRawInfo = unpack(pool.man, stack[^1])
+          if file != pRawInfo.file: fileAsStr = pool.files[file]
           if fileAsStr.len == 0:
-            line = line - pline
-            col = col - pcol
+            line = line - pRawInfo.line
+            col = col - pRawInfo.col
         else:
           fileAsStr = pool.files[file]
         b.addLineInfo(col, line, fileAsStr)
