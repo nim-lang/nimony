@@ -1044,18 +1044,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       e.dest.add tagToken("dot", c.info)
       e.dest.add tagToken("deref", c.info)
       inc c # skip tag
-
-      let typ = getType(e.typeCache, c, true)
-      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
-      if isRef:
-        e.dest.add tagToken("dot", c.info)
       traverseExpr e, c
-      if isRef:
-        # (*x).f --> (*x).d.f
-        let dataField = pool.syms.getOrIncl(DataField)
-        e.dest.add symToken(dataField, c.info)
-        e.dest.addIntLit(0, c.info) # inheritance
-        e.dest.addParRi()
       e.dest.addParRi()
       traverseExpr e, c
       traverseExpr e, c
@@ -1068,16 +1057,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     of HderefX, DerefX:
       e.dest.add tagToken("deref", c.info)
       inc c
-      let typ = getType(e.typeCache, c, true)
-      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
-      if isRef:
-        e.dest.add tagToken("dot", c.info)
       traverseExpr(e, c)
-      if isRef:
-        let dataField = pool.syms.getOrIncl(DataField)
-        e.dest.add symToken(dataField, c.info)
-        e.dest.addIntLit(0, c.info) # inheritance
-        e.dest.addParRi()
       takeParRi e, c
     of SufX:
       var suf = c

@@ -478,6 +478,40 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       genNewobj(c, dest, n)
     of TypeofX:
       takeTree dest, n
+    of HderefX, DerefX:
+      dest.add tagToken("deref", n.info)
+      inc n
+      let typ = getType(c.typeCache, n, true)
+      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
+      if isRef:
+        dest.add tagToken("dot", n.info)
+      tr c, dest, n
+      if isRef:
+        let dataField = pool.syms.getOrIncl(DataField)
+        dest.add symToken(dataField, n.info)
+        dest.addIntLit(0, n.info) # inheritance
+        dest.addParRi()
+      takeParRi dest, n
+    of DdotX:
+      dest.add tagToken("dot", n.info)
+      dest.add tagToken("deref", n.info)
+      inc n # skip tag
+
+      let typ = getType(c.typeCache, n, true)
+      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
+      if isRef:
+        dest.add tagToken("dot", n.info)
+      tr c, dest, n
+      if isRef:
+        # (*x).f --> (*x).d.f
+        let dataField = pool.syms.getOrIncl(DataField)
+        dest.add symToken(dataField, n.info)
+        dest.addIntLit(0, n.info) # inheritance
+        dest.addParRi()
+      dest.addParRi()
+      tr c, dest, n
+      tr c, dest, n
+      takeParRi dest, n
     else:
       trSons(c, dest, n)
   of ParRi:
