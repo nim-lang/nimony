@@ -149,10 +149,10 @@ proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
 proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
   let info = n.info
   if info.isValid:
-    let (file, line, col) = unpack(pool.man, info)
-    if file.isValid:
-      write stdout, pool.files[file]
-      write stdout, "(" & $line & ", " & $(col+1) & ") "
+    let rawInfo = unpack(pool.man, info)
+    if rawInfo.file.isValid:
+      write stdout, pool.files[rawInfo.file]
+      write stdout, "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
   writeLine stdout, toString(n, false)
@@ -332,7 +332,9 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
 
 proc genCLineDir(c: var GeneratedCode; info: PackedLineInfo) =
   if optLineDir in c.m.config.options and info.isValid:
-    let (id, line, _) = unpack(pool.man, info)
+    let rawInfo = unpack(pool.man, info)
+    let id = rawInfo.file
+    let line = rawInfo.line
     let name = "FX_" & $(int id)
     c.add LineDirKeyword
     c.add $line

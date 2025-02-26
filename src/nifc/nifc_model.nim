@@ -144,9 +144,9 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
   if t.filename.len == 0:
     # relative file position
     if t.pos.line != 0 or t.pos.col != 0:
-      let (file, line, col) = unpack(pool.man, parentInfo)
-      if file.isValid:
-        currentInfo = pack(pool.man, file, line+t.pos.line, col+t.pos.col)
+      let rawInfo = unpack(pool.man, parentInfo)
+      if rawInfo.file.isValid:
+        currentInfo = pack(pool.man, rawInfo.file, rawInfo.line+t.pos.line, rawInfo.col+t.pos.col)
   else:
     # absolute file position:
     let fileId = pool.files.getOrIncl(decodeFilename t)

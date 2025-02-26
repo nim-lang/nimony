@@ -92,9 +92,9 @@ proc shortenDir*(x: string): string =
     result = x
 
 proc infoToStr*(info: PackedLineInfo): string =
-  let (file, line, col) = unpack(pool.man, info)
-  if not info.isValid or not file.isValid:
+  let rawInfo = unpack(pool.man, info)
+  if not info.isValid or not rawInfo.file.isValid:
     result = "???"
   else:
-    result = pool.files[file].shortenDir()
-    result.add "(" & $line & ", " & $(col+1) & ")"
+    result = pool.files[rawInfo.file].shortenDir()
+    result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
