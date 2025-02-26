@@ -1370,11 +1370,17 @@ proc importSymbol(e: var EContext; s: SymId) =
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
     var c = res.decl
-    if c.stmtKind == TypeS:
+    let kind = c.symKind
+    case kind
+    of TypeY:
       traverseTypeDecl e, c
+    of EfldY:
+      let typ = asLocal(c).typ
+      assert typ.kind == Symbol
+      e.demand typ.symId
     else:
-      let isR = isRoutine(c.symKind)
-      if isR or isLocal(c.symKind):
+      let isR = isRoutine(kind)
+      if isR or isLocal(kind):
         var pragmas = if isR:
                         asRoutine(c).pragmas
                       else:

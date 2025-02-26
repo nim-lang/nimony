@@ -133,7 +133,7 @@ proc symKind*(c: Cursor): NifcSym {.inline.} =
     result = NoSym
 
 proc tracebackTypeC*(n: Cursor): Cursor =
-  assert n.typeKind in {ObjectT, UnionT, ArrayT}
+  assert n.typeKind in {ObjectT, UnionT, ArrayT, EnumT}
   result = n
   while result.stmtKind != TypeS:
     unsafeDec result
