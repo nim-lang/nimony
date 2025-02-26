@@ -1375,6 +1375,7 @@ proc importSymbol(e: var EContext; s: SymId) =
     of TypeY:
       traverseTypeDecl e, c
     of EfldY:
+      # import full enum type:
       let typ = asLocal(c).typ
       assert typ.kind == Symbol
       e.demand typ.symId
