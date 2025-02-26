@@ -478,3 +478,5 @@ include "system/stringimpl"
 include "system/seqimpl"
 
 include "system/iterators"
+
+include "system/atomics"

@@ -80,6 +80,8 @@ proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
     let res = getInitValueImpl(c, result.symId)
     if not cursorIsNil(res):
       result = res
+    else:
+      break
 
 proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   result = c.builtins.autoType # to indicate error
@@ -105,6 +107,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
           #if isRoutine(symKind(res.decl)):
           #  result = res.decl
       else:
+        when defined(debug):
+          writeStackTrace()
         quit "could not find symbol: " & pool.syms[n.symId]
     of IntLit:
       result = c.builtins.intType
