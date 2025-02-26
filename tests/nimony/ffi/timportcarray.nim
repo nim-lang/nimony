@@ -6,8 +6,15 @@ type
     cs {.importc: "cs".}: CStruct
     cs2 {.importc: "cs2".}: array[2, CStruct]
 
-proc setCStruct(cs: ptr CStruct) {.importc: "setCStruct", header: "ctestarray.h"}
-proc setCStruct2(cs2: ptr CStruct2) {.importc: "setCStruct2", header: "ctestarray.h"}
+proc setCArray(arr: out array[2, CInt]) {.importc: "setCArray", header: "ctestarray.h".}
+proc setCStruct(cs: ptr CStruct) {.importc: "setCStruct", header: "ctestarray.h".}
+proc setCStruct2(cs2: ptr CStruct2) {.importc: "setCStruct2", header: "ctestarray.h".}
+
+block:
+  var carray: array[2, CInt]
+  setCArray(carray)
+  discard carray[0] == 1
+  discard carray[1] == 2
 
 block:
   var cstruct: CStruct

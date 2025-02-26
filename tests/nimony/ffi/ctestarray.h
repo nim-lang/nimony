@@ -1,5 +1,10 @@
 // C header file for testing.
 
+void setCArray(int* arr) {
+  arr[0] = 1;
+  arr[1] = 2;
+}
+
 struct CStruct {
   int field[10];
 };
