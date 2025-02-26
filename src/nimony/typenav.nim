@@ -83,30 +83,37 @@ proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
     else:
       break
 
+proc lookupSymbol(c: var TypeCache; s: SymId): Cursor =
+  var it {.cursor.} = c.current
+  while it != nil:
+    let res = it.locals.getOrDefault(s)
+    if res.kind != NoSym:
+      return res.typ
+    it = it.parent
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing:
+    let local = asLocal(res.decl)
+    if local.kind.isLocal:
+      result = local.typ
+    else:
+      let fn = asRoutine(res.decl)
+      if isRoutine(fn.kind):
+        result = fn.params
+      else:
+        result = default(Cursor)
+      #if isRoutine(symKind(res.decl)):
+      #  result = res.decl
+  else:
+    result = default(Cursor)
+
 proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   result = c.builtins.autoType # to indicate error
   case exprKind(n)
   of NoExpr:
     case n.kind
     of Symbol:
-      var it {.cursor.} = c.current
-      while it != nil:
-        let res = it.locals.getOrDefault(n.symId)
-        if res.kind != NoSym:
-          return res.typ
-        it = it.parent
-      let res = tryLoadSym(n.symId)
-      if res.status == LacksNothing:
-        let local = asLocal(res.decl)
-        if local.kind.isLocal:
-          result = local.typ
-        else:
-          let fn = asRoutine(res.decl)
-          if isRoutine(fn.kind):
-            result = fn.params
-          #if isRoutine(symKind(res.decl)):
-          #  result = res.decl
-      else:
+      result = lookupSymbol(c, n.symId)
+      if cursorIsNil(result):
         when defined(debug):
           writeStackTrace()
         quit "could not find symbol: " & pool.syms[n.symId]
@@ -202,7 +209,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
-     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewOconstrX, AconstrX, SetConstrX:
+     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewobjX, AconstrX, SetConstrX:
     result = n.firstSon
   of ParX, EmoveX:
     result = getTypeImpl(c, n.firstSon)
@@ -309,8 +316,18 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       of "R": result = c.builtins.stringType
       else: result = c.builtins.autoType
 
-proc getType*(c: var TypeCache; n: Cursor): Cursor =
-  getTypeImpl c, n
+proc getType*(c: var TypeCache; n: Cursor; skipAliases = false): Cursor =
+  result = getTypeImpl(c, n)
+  if skipAliases:
+    var counter = 20
+    while counter > 0 and result.kind == Symbol:
+      dec counter
+      let d = lookupSymbol(c, result.symId)
+      if not cursorIsNil(d) and d.stmtKind == TypeS:
+        let decl = asTypeDecl(d)
+        result = decl.body
+      else:
+        break
 
 proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor): bool =
   # returns false if the routine is generic

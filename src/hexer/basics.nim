@@ -6,6 +6,7 @@ import ".." / nimony / [nimony_model, typenav]
 const
   RcField* = "r.0."
   DataField* = "d.0."
+  GeneratedTypeSuffix* = ".0.t"
 
 type
   MangleScope* {.acyclic.} = ref object

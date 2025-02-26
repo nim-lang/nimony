@@ -1788,7 +1788,7 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
       if bindings.len != 0:
         # fields in generic type AST contain generic params of the type
         # for invoked object types, bindings are built from the given arguments
-        # and the field type is instantiated based on them here 
+        # and the field type is instantiated based on them here
         typ = instantiateType(c, typ, bindings)
       return ObjField(sym: symId, level: level, typ: typ, exported: exported, rootOwner: SymId(0))
     skip n # skip name
@@ -4367,7 +4367,7 @@ proc buildObjConstrField(c: var SemContext; field: Local;
     if bindings.len != 0:
       # fields in generic type AST contain generic params of the type
       # for invoked object types, bindings are built from the given arguments
-      # and the field type is instantiated based on them here 
+      # and the field type is instantiated based on them here
       typ = instantiateType(c, typ, bindings)
     callDefault c, typ, info
     c.dest.addParRi()
@@ -4378,7 +4378,7 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
   var constrKind = NoExpr
   var objImpl = typ
   if objImpl.typeKind == RefT:
-    constrKind = NewOconstrX
+    constrKind = NewobjX
     inc objImpl
   let invokeArgs = skipInvoke(objImpl)
   var objDecl = default(TypeDecl)
@@ -4390,7 +4390,7 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
       if constrKind != NoExpr:
         c.buildErr info, "cannot construct double ref object: " & typeToString(typ)
         return
-      constrKind = NewOconstrX
+      constrKind = NewobjX
     of ObjectT:
       if constrKind == NoExpr:
         constrKind = OconstrX
@@ -5571,7 +5571,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSuf c, it
     of TupleConstrX:
       semTupleConstr c, it
-    of OconstrX, NewOconstrX:
+    of OconstrX, NewobjX:
       semObjConstr c, it
     of DefinedX:
       semDefined c, it

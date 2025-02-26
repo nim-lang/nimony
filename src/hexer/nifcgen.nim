@@ -310,14 +310,52 @@ proc traverseProcTypeBody(e: var EContext; c: var Cursor) =
   skip c
   takeParRi e, c
 
+proc traverseRefBody(e: var EContext; c: var Cursor; key: string) =
+  # We translate `ref T` to:
+  # ptr OuterT;
+  # OuterT = object
+  #  r: int
+  #  d: T
+  # This means `deref x` becomes `x->d` and `x.field` becomes `x->d.field`
+  # `cast` must also be adjusted by the offset of `d` within `OuterT` but this seems
+  # to be optional.
+
+  #let dataStructName = pool.syms.getOrIncl(key & ".1.t")
+
+  let info = c.info
+  inc c
+  e.dest.add tagToken("object", info)
+  e.dest.addDotToken()
+
+  e.dest.add tagToken("fld", info)
+  let rcField = pool.syms.getOrIncl(RcField)
+  e.dest.add symdefToken(rcField, info)
+  e.offer rcField
+  e.dest.addDotToken() # pragmas
+  e.dest.add tagToken("i", info)
+  e.dest.addIntLit(-1, info)
+  e.dest.addParRi() # "i"
+  e.dest.addParRi() # "fld"
+
+  let dataField = pool.syms.getOrIncl(DataField)
+  e.dest.add tagToken("fld", info)
+  e.dest.add symdefToken(dataField, info)
+  e.offer dataField
+  e.dest.addDotToken() # pragmas
+  e.traverseType(c, {})
+  e.dest.addParRi() # "fld"
+
+  e.dest.addParRi() # "object"
+
 proc traverseAsNamedType(e: var EContext; c: var Cursor) =
   let info = c.info
   var body = c
+  let k = body.typeKind
   let key = takeMangle c
 
   var val = e.newTypes.getOrDefault(key)
   if val == SymId(0):
-    val = pool.syms.getOrIncl(key & ".0.t")
+    val = pool.syms.getOrIncl(key & GeneratedTypeSuffix)
     e.newTypes[key] = val
 
     var buf = createTokenBuf(30)
@@ -328,7 +366,7 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
     e.offer val
 
     e.dest.addDotToken()
-    case body.typeKind
+    case k
     of TupleT:
       traverseTupleBody e, body
     of ArrayT:
@@ -337,6 +375,8 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
       traverseOpenArrayBody e, body
     of ProctypeT:
       traverseProcTypeBody e, body
+    of RefT:
+      traverseRefBody e, body, key
     else:
       error e, "expected tuple or array, but got: ", body
     e.dest.addParRi() # "type"
@@ -344,7 +384,12 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
     swap e.dest, buf
     e.pending.add buf
   # regardless of what we had to do, we still need to add the typename:
-  e.dest.add symToken(val, info)
+  if k == RefT:
+    e.dest.add tagToken("ptr", info)
+    e.dest.add symToken(val, info)
+    e.dest.addParRi()
+  else:
+    e.dest.add symToken(val, info)
 
 proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
   case c.kind
@@ -394,11 +439,13 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.loop c:
         e.dest.add c
         inc c
-    of PtrT, RefT, MutT, OutT, LentT:
+    of PtrT, MutT, OutT, LentT:
       e.dest.add tagToken("ptr", c.info)
       inc c
       e.loop c:
         traverseType e, c, {IsPointerOf}
+    of RefT:
+      traverseAsNamedType e, c
     of ArrayT, OpenarrayT, ProctypeT:
       if IsNodecl in flags:
         traverseArrayBody e, c
@@ -997,7 +1044,18 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       e.dest.add tagToken("dot", c.info)
       e.dest.add tagToken("deref", c.info)
       inc c # skip tag
+
+      let typ = getType(e.typeCache, c, true)
+      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
+      if isRef:
+        e.dest.add tagToken("dot", c.info)
       traverseExpr e, c
+      if isRef:
+        # (*x).f --> (*x).d.f
+        let dataField = pool.syms.getOrIncl(DataField)
+        e.dest.add symdefToken(dataField, c.info)
+        e.dest.addIntLit(0, c.info) # inheritance
+        e.dest.addParRi()
       e.dest.addParRi()
       traverseExpr e, c
       traverseExpr e, c
@@ -1010,7 +1068,16 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     of HderefX, DerefX:
       e.dest.add tagToken("deref", c.info)
       inc c
+      let typ = getType(e.typeCache, c, true)
+      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
+      if isRef:
+        e.dest.add tagToken("dot", c.info)
       traverseExpr(e, c)
+      if isRef:
+        let dataField = pool.syms.getOrIncl(DataField)
+        e.dest.add symdefToken(dataField, c.info)
+        e.dest.addIntLit(0, c.info) # inheritance
+        e.dest.addParRi()
       takeParRi e, c
     of SufX:
       var suf = c
@@ -1054,7 +1121,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
         e.dest.addParRi()
         traverseExpr e, c
       takeParRi e, c
-    of ErrX, NewOconstrX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX,
+    of ErrX, NewobjX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX,
        InSetX, CardX, BracketX, CurlyX, CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, UnpackX,
        EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX:

@@ -17,7 +17,7 @@ to type `(T, T)`, etc.
 import std/[assertions, tables]
 
 include nifprelude
-import nifindexes, symparser, treemangler, typekeys
+import nifindexes, symparser, treemangler, typekeys, basics
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes]
 
 type
