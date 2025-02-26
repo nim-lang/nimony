@@ -352,15 +352,19 @@ proc unravelArray(c: var LiftingCtx;
 
 proc derefInner(c: var LiftingCtx; x: TokenBuf): TokenBuf =
   result = createTokenBuf(10)
-  copyIntoKind result, DerefX, c.info:
-    copyTree result, x
+  copyIntoKind result, DotX, c.info:
+    copyIntoKind result, DerefX, c.info:
+      copyTree result, x
+    copyIntoSymUse result, pool.syms.getOrIncl(DataField), c.info
+    c.dest.addIntLit(0, c.info)
 
 proc refcountOf(c: var LiftingCtx; x: TokenBuf) =
-  copyIntoKind c.dest, DotX, c.info:
-    copyIntoKind c.dest, DerefX, c.info:
-      copyTree c.dest, x
-    copyIntoSymUse c.dest, pool.syms.getOrIncl(RcField), c.info
-    c.dest.addIntLit(0, c.info)
+  copyIntoKind c.dest, AddrX, c.info:
+    copyIntoKind c.dest, DotX, c.info:
+      copyIntoKind c.dest, DerefX, c.info:
+        copyTree c.dest, x
+      copyIntoSymUse c.dest, pool.syms.getOrIncl(RcField), c.info
+      c.dest.addIntLit(0, c.info)
 
 proc emitRefDestructor(c: var LiftingCtx; paramA: TokenBuf; baseType: TypeCursor) =
   c.dest.addParLe IfS, c.info
@@ -437,10 +441,8 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   let typ = toTypeImpl typ
 
   case typ.typeKind
-  of ObjectT:
+  of RefobjT, ObjectT:
     unravelObj c, typ, paramA, paramB
-  of RefobjT, PtrobjT:
-    raiseAssert "unravel: unimplemented"
   of DistinctT:
     unravel(c, typ.firstSon, paramA, paramB)
   of TupleT:

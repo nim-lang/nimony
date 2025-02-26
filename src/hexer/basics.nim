@@ -32,6 +32,7 @@ type
     continues*: seq[SymId] # how to translate `continue`
     # TODO: add a instID for each forStmt
     tmpId*: int # per proc
+    inImpSection*: int
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId

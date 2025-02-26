@@ -742,7 +742,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   swap dst, e.dest
   if NodeclP in prag.flags or isGeneric:
     discard "do not add to e.dest"
-  elif prag.flags * {ImportcP, ImportcppP} != {}:
+  elif prag.flags * {ImportcP, ImportcppP} != {} and e.inImpSection == 0:
     e.dest.add tagToken("imp", c.info)
     e.dest.add dst
     e.dest.addParRi()
@@ -1444,9 +1444,12 @@ proc importSymbol(e: var EContext; s: SymId) =
             e.headers.incl prag.header
           return
 
+      # XXX This is a stupid hack to avoid producing (imp (imp ...))
+      inc e.inImpSection
       e.dest.add tagToken("imp", c.info)
       traverseStmt e, c, TraverseSig
       e.dest.addParRi()
+      dec e.inImpSection
   else:
     error e, "could not find symbol: " & pool.syms[s]
 

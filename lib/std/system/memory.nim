@@ -3,8 +3,10 @@ include mimalloc
 type
   cint {.importc: "int", nodecl.} = int32
 
-proc allocFixed*(size: int): pointer {.importc.}
-proc deallocFixed*(p: pointer) {.importc.}
+proc allocFixed*(size: int): pointer =
+  result = mi_malloc(size.csize_t)
+
+proc deallocFixed*(p: pointer) = mi_free(p)
 
 proc c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
 proc c_memcmp(a, b: pointer; size: csize_t): cint {.importc: "memcmp", header: "<string.h>".}
