@@ -130,9 +130,9 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mType, mTypeOf: res TypeofX
   of mAddr: res AddrX
   of mDeref: res DerefX
-  of mEqI, mEqB, mEqCh, mEqF64, mEqRef: res EqX, TypedMagic
-  of mLeI, mLeB, mLeCh, mLeF64, mLePtr: res LeX, TypedMagic
-  of mLtI, mLtB, mLtCh, mLtF64, mLtPtr: res LtX, TypedMagic
+  of mEqI, mEqB, mEqCh, mEqF64, mEqRef, mEqEnum: res EqX, TypedMagic
+  of mLeI, mLeB, mLeCh, mLeF64, mLePtr, mLeEnum: res LeX, TypedMagic
+  of mLtI, mLtB, mLtCh, mLtF64, mLtPtr, mLtEnum: res LtX, TypedMagic
   of mLow: res LowX
   of mHigh: res HighX
   of mEnumToStr: res EnumToStrX
