@@ -217,7 +217,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       else:
         hasError = true
         inc n
-    of TupleConstrX:
+    of TupX:
       inc n
       skip n # skip type
       if n.kind != ParRi:

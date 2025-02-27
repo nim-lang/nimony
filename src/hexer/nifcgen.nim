@@ -458,7 +458,7 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       skip c
       skip c
       skipParRi e, c
-    of UncheckedArrayT:
+    of UarrayT:
       if IsPointerOf in flags:
         inc c
         traverseType e, c
@@ -1007,7 +1007,7 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       while c.kind != ParRi:
         traverseExpr(e, c)
       takeParRi e, c
-    of TupleConstrX:
+    of TupX:
       traverseTupleConstr e, c
     of CmdX, CallStrLitX, InfixX, PrefixX, HcallX, CallX:
       e.dest.add tagToken("call", c.info)

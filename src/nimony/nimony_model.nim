@@ -108,10 +108,8 @@ const
   UIntT* = UT
   FloatT* = FT
   CharT* = CT
-  UncheckedArrayT* = UarrayT
   HoleyEnumT* = OnumT
   InvokeT* = AtT
-  TupleconstrX* = TupX
 
 const
   RoutineKinds* = {ProcY, FuncY, IteratorY, TemplateY, MacroY, ConverterY, MethodY}

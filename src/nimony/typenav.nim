@@ -245,7 +245,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
-  of TupleConstrX:
+  of TupX:
     var buf = createTokenBuf(4)
     buf.add parLeToken(TupleT, n.info)
     var n = n

@@ -186,7 +186,7 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mIncl: res InclS, TypedMagic
   of mExcl: res ExclS, TypedMagic
   of mEnsureMove: res EmoveX
-  of mUncheckedArray: res UncheckedArrayT
+  of mUncheckedArray: res UarrayT
   of mSink: res SinkT
   of mLent: res LentT
   of mDestroy: res DestroyX

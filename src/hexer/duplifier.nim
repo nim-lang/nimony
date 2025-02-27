@@ -58,7 +58,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
 
 const
   ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX, NewobjX,
-                       AconstrX, TupleConstrX}
+                       AconstrX, TupX}
 
 proc constructsValue*(n: Cursor): bool =
   var n = n
@@ -667,7 +667,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trStmtListExpr c, n, e
     of EmoveX:
       trEnsureMove c, n, e
-    of AconstrX, TupleConstrX:
+    of AconstrX, TupX:
       trRawConstructor c, n, e
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetConstrX,
        OchoiceX, CchoiceX,

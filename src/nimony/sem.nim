@@ -2517,7 +2517,7 @@ proc semRangeTypeFromExpr(c: var SemContext; n: var Cursor; info: PackedLineInfo
   takeParRi c, n
 
 const InvocableTypeMagics = {ArrayT, RangetypeT, VarargsT,
-  PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT,
+  PtrT, RefT, UarrayT, SetT, StaticT, TypedescT,
   SinkT, LentT}
 
 proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind; info: PackedLineInfo) =
@@ -2543,7 +2543,7 @@ proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind; info: Pack
       c.buildErr info, "expected `a..b` expression for range type"
       skipToEnd n
     return
-  of PtrT, RefT, UncheckedArrayT, SetT, StaticT, TypedescT, SinkT, LentT:
+  of PtrT, RefT, UarrayT, SetT, StaticT, TypedescT, SinkT, LentT:
     # unary invocations
     takeTree typeBuf, n
     takeParRi typeBuf, n
@@ -2810,7 +2810,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         inc n
         semLocalTypeImpl c, n, context
         skipParRi n
-      elif xkind == TupleConstrX:
+      elif xkind == TupX:
         semTupleType c, n
       elif isOrExpr(n):
         c.dest.addParLe(OrT, info)
@@ -2838,7 +2838,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT,
         SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
       takeTree c, n
-    of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UncheckedArrayT,
+    of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UarrayT,
        StaticT, TypedescT, OpenArrayT:
       if tryTypeClass(c, n):
         return
@@ -3097,13 +3097,13 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   if n.kind == DotToken:
     # empty value
     let info = c.dest[declStart].info
-    c.dest.add parLeToken(TupleConstrX, info)
+    c.dest.add parLeToken(TupX, info)
     c.addXint state.thisValue, info
     c.dest.add strToken(delayed.lit, info)
     c.dest.addParRi()
     inc n
   else:
-    if n.kind == ParLe and n.exprKind == TupleConstrX:
+    if n.kind == ParLe and n.exprKind == TupX:
       c.dest.add n
       inc n
       let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
@@ -3117,13 +3117,13 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
       var valueCursor = n
       let fieldValue = eval(ec, valueCursor)
       if fieldValue.kind == StringLit:
-        c.dest.add parLeToken(TupleConstrX, n.info)
+        c.dest.add parLeToken(TupX, n.info)
         c.addXint state.thisValue, n.info
         c.dest.add fieldValue
         c.dest.addParRi()
         n = valueCursor
       else:
-        c.dest.add parLeToken(TupleConstrX, n.info)
+        c.dest.add parLeToken(TupX, n.info)
         let explicitValue = evalConstIntExpr(c, n, c.types.autoType) # 4
         if explicitValue != state.thisValue:
           state.hasHole = true
@@ -4542,7 +4542,7 @@ proc semObjDefault(c: var SemContext; it: var Item) =
   commonType c, it, exprStart, expected
 
 proc buildDefaultTuple(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
-  c.dest.addParLe(TupleConstrX, info)
+  c.dest.addParLe(TupX, info)
   var currentField = typ
   inc currentField # skip tuple tag
   while currentField.kind != ParRi:
@@ -4838,7 +4838,7 @@ proc semTypedAt(c: var SemContext; it: var Item) =
   if typ.typeKind == PtrT:
     inc typ
   case typ.typeKind
-  of ArrayT, UncheckedArrayT:
+  of ArrayT, UarrayT:
     it.typ = typ
     inc it.typ
   of CstringT:
@@ -5272,7 +5272,7 @@ proc semPragmaLine(c: var SemContext; it: var Item) =
       buildErr c, info, "cannot find: " & name
     name = name.toRelativePath(nifcacheDir)
 
-    c.toBuild.buildTree TupleConstrX, info:
+    c.toBuild.buildTree TupX, info:
       c.toBuild.addStrLit compileType, info
       c.toBuild.addStrLit name, info
       c.toBuild.addStrLit customArgs, info
@@ -5383,7 +5383,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           buildErr c, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymKindT,
-            PtrT, RefT, MutT, OutT, LentT, SinkT, UncheckedArrayT, SetT, StaticT, TypedescT,
+            PtrT, RefT, MutT, OutT, LentT, SinkT, UarrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangetypeT, VarargsT, ProctypeT, IteratorT, UntypedT, TypedT,
             CstringT, PointerT, TypeKindT, OrdinalT, OpenArrayT, ParamsT, ItertypeT:
           # every valid local type expression
@@ -5569,7 +5569,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSetConstr c, it
     of SufX:
       semSuf c, it
-    of TupleConstrX:
+    of TupX:
       semTupleConstr c, it
     of OconstrX, NewobjX:
       semObjConstr c, it
