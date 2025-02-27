@@ -44,8 +44,13 @@ proc `==`*(a, b: FileId): bool {.borrow.}
 proc `==`*(a, b: PackedLineInfo): bool {.borrow.}
 
 type
+  LineInfoUnpacked* = object
+    file*: FileId
+    line*: int32
+    col*: int32
+
   LineInfoManager* = object
-    aside: seq[(FileId, int32, int32)]
+    aside: seq[LineInfoUnpacked]
 
 const
   NoLineInfo* = PackedLineInfo(0'u32)
@@ -63,16 +68,10 @@ proc pack*(m: var LineInfoManager; file: FileId; line, col: int32): PackedLineIn
       (col shl uint32(AsideBit + FileBits + LineBits)))
   else:
     result = PackedLineInfo((m.aside.len shl 2) or AsideBit)
-    m.aside.add (file, line, col)
+    m.aside.add LineInfoUnpacked(file: file, line: line, col: col)
 
 proc isPayload*(i: PackedLineInfo): bool {.inline.} =
   result = (i.uint32 and 3'u32) == 3'u32
-
-type
-  LineInfoUnpacked* = object
-    file*: FileId
-    line*: int32
-    col*: int32
 
 proc unpack*(m: LineInfoManager; info: PackedLineInfo): LineInfoUnpacked =
   let i = info.uint32
@@ -83,8 +82,7 @@ proc unpack*(m: LineInfoManager; info: PackedLineInfo): LineInfoUnpacked =
       col: int32((i shr uint32(AsideBit + FileBits + LineBits)) and ColMax.uint32))
   else:
     assert(not isPayload(info))
-    let (file, line, col) = m.aside[int(i shr 2'u32)]
-    result = LineInfoUnpacked(file: file, line: line, col: col)
+    result = m.aside[int(i shr 2'u32)]
 
 proc getPayload*(i: PackedLineInfo): uint32 {.inline.} =
   assert isPayload(i)
