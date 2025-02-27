@@ -5355,8 +5355,10 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
     return
   of SemcheckSignatures:
     var kindTag = it.n
-    inc kindTag # unpackdecl tag
-    skip kindTag # value
+    while kindTag.stmtKind == UnpackdeclS:
+      inc kindTag # unpackdecl tag
+      skip kindTag # value
+      inc kindTag # unpacktup tag
     let kind = kindTag.symKind
     if kind != ConstY:
       c.takeTree it.n
@@ -5379,7 +5381,12 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
   if it.n.substructureKind != UnpacktupU:
     error "illformed AST: `unpacktup` inside `unpackdecl` expected, got ", it.n
   inc it.n # skip unpacktup tag
-  let kind = it.n.symKind
+  var kindTag = it.n
+  while kindTag.stmtKind == UnpackdeclS:
+    inc kindTag # unpackdecl tag
+    skip kindTag # value
+    inc kindTag # unpacktup tag
+  let kind = kindTag.symKind
   let tmpName = identToSym(c, "`tmptup", kind)
 
   # build local for tuple:
@@ -5397,8 +5404,10 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
   var i = 0
   while it.n.kind != ParRi:
     let declInfo = it.n.info
-    if it.n.stmtKind == UnpackDeclS:
+    if it.n.stmtKind == UnpackdeclS:
       declBuf.add it.n
+      inc it.n
+      assert it.n.kind == DotToken # value
       inc it.n
       declBuf.addTupleAccess(tmpName, i, declInfo)
       takeTree declBuf, it.n
@@ -5419,7 +5428,8 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
     endRead(declBuf)
     declBuf.shrink 0
     inc i
-  skipParRi it.n
+  skipParRi it.n # close unpacktup
+  skipParRi it.n # close unpackdecl
   producesVoid c, info, it.typ
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
