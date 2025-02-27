@@ -533,22 +533,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.endTree()
 
   of nkRefTy, nkPtrTy:
-    if n.len == 1 and n[0].kind == nkObjectTy:
-      c.section = if n.kind == nkRefTy: RefL else: PtrL
-      toNif n[0], parent, c
-    else:
-      relLineInfo(n, parent, c)
-      c.b.addTree(nodeKindTranslation(n.kind))
-      for i in 0..<n.len:
-        toNif(n[i], n, c)
-      c.b.endTree()
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
 
   of nkObjectTy:
-    let kind =
-      case c.section
-      of RefL: RefobjL
-      of PtrL: PtrobjL
-      else: nodeKindTranslation(n.kind)
+    let kind = nodeKindTranslation(n.kind)
     c.section = FldL
     relLineInfo(n, parent, c)
     c.b.addTree(kind)
