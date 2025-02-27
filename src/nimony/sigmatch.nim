@@ -177,7 +177,7 @@ proc getProcDecl*(s: SymId): Routine =
 
 proc isObjectType(s: SymId): bool =
   let impl = objtypeImpl(s)
-  result = impl.typeKind in {ObjectT, RefobjT, PtrobjT}
+  result = impl.typeKind == ObjectT
 
 proc isEnumType*(n: Cursor): bool =
   if n.kind == Symbol:
@@ -196,7 +196,7 @@ iterator inheritanceChain(s: SymId): SymId =
   var objbody = objtypeImpl(s)
   while true:
     let od = asObjectDecl(objbody)
-    if od.kind in {ObjectT, RefobjT, PtrobjT}:
+    if od.kind == ObjectT:
       var parent = od.parentType
       if parent.typeKind in {RefT, PtrT}:
         inc parent
@@ -711,7 +711,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         skip f
       else:
         procTypeMatch m, f, a
-    of NoType, ErrT, ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, VoidT, LentT, NiltT, OrT, AndT, NotT,
+    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, VoidT, LentT, NiltT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:

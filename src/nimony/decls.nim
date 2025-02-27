@@ -17,7 +17,7 @@ proc isLocal*(t: SymKind): bool {.inline.} =
 
 proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol
-  t in {ObjectT, RefobjT, PtrobjT, EnumT, OnumT, DistinctT, ConceptT}
+  t in {ObjectT, EnumT, OnumT, DistinctT, ConceptT}
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   result = t
@@ -169,7 +169,7 @@ proc asObjectDecl*(c: Cursor): ObjectDecl =
   var c = c
   let kind = typeKind c
   result = ObjectDecl(kind: kind)
-  if kind in {ObjectT, RefobjT, PtrobjT}:
+  if kind == ObjectT:
     inc c
     result.parentType = c
     skip c

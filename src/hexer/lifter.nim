@@ -91,9 +91,9 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
   let r = asTypeDecl(n)
   assert(not r.isGeneric)
   case r.body.typeKind
-  of PtrT, PtrobjT:
+  of PtrT:
     result = true
-  of RefT, RefobjT:
+  of RefT:
     result = false
   of ObjectT:
     result = isTrivialObjectBody(c, r.body)
@@ -110,14 +110,14 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       quit "could not load: " & pool.syms[typ.symId]
 
   case typ.typeKind
-  of IntT, UIntT, FloatT, BoolT, CharT, PtrT, PtrobjT,
+  of IntT, UIntT, FloatT, BoolT, CharT, PtrT,
      MutT, OutT, SetT,
      EnumT, HoleyEnumT, VoidT, AutoT, SymKindT, ProctypeT,
      CstringT, PointerT, OrdinalT, OpenArrayT,
      UarrayT, VarargsT, RangetypeT, TypedescT,
      ParamsT:
     result = true
-  of RefT, RefobjT:
+  of RefT:
     result = false
   of SinkT, ArrayT, LentT:
     result = isTrivial(c, typ.firstSon)
@@ -195,9 +195,9 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   let orig = typ
   let typ = toTypeImpl typ
   case typ.typeKind
-  of PtrT, PtrobjT:
+  of PtrT:
     raiseAssert "ptr T should have been a 'trivial' type"
-  of ObjectT, RefobjT, DistinctT, TupleT, ArrayT, RefT:
+  of ObjectT, DistinctT, TupleT, ArrayT, RefT:
     result = requestLifting(c, c.op, orig)
   else:
     result = NoSymId
@@ -401,7 +401,7 @@ proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
   c.dest.addParRi()
 
 proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.typeKind in {RefT, RefobjT}
+  assert n.typeKind == RefT
   let baseType = n.firstSon
   case c.op
   of attachedDestroy:
@@ -441,7 +441,7 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   let typ = toTypeImpl typ
 
   case typ.typeKind
-  of RefobjT, ObjectT:
+  of ObjectT:
     unravelObj c, typ, paramA, paramB
   of DistinctT:
     unravel(c, typ.firstSon, paramA, paramB)
@@ -543,7 +543,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     let a = toTypeImpl typ
     copyIntoKind(c.dest, StmtsS, c.info):
       maybeAddResultDecl c, paramA, typ
-      if a.typeKind in {RefT, RefobjT}:
+      if a.typeKind == RefT:
         unravelRef(c, typ, paramTreeA, paramTreeB)
       else:
         unravel(c, typ, paramTreeA, paramTreeB)

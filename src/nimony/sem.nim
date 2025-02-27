@@ -1149,7 +1149,7 @@ proc semObjConstrFromCall(c: var SemContext; it: var Item; cs: CallState) =
   it.typ = objConstr.typ
 
 proc isCastableType(t: TypeCursor): bool =
-  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, RefobjT, PtrobjT, NiltT, EnumT, HoleyEnumT}
+  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NiltT, EnumT, HoleyEnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; it: var Item) =
@@ -1897,12 +1897,12 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
         if objType.typeKind in {RefT, PtrT}:
           doDeref = true
           inc objType
-        if objType.typeKind in {ObjectT, RefobjT, PtrobjT}:
+        if objType.typeKind == ObjectT:
           # build bindings for invoked object type to get proper field type:
           let bindings = bindInvokeArgs(decl, invokeArgs)
           let field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
           if field.level >= 0:
-            if doDeref or objType.typeKind in {RefobjT, PtrobjT}:
+            if doDeref:
               c.dest[exprStart] = parLeToken(DdotX, info)
             c.dest.add symToken(field.sym, info)
             c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
@@ -2893,7 +2893,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           # XXX Check the expression is a symchoice or a sym
           n = it.n
       takeParRi c, n
-    of ObjectT, RefobjT, PtrobjT:
+    of ObjectT:
       if tryTypeClass(c, n):
         discard
       elif context != InTypeSection:
@@ -3251,7 +3251,7 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookKind; inf
       if res.decl.symKind == TypeY:
         let typeDecl = asTypeDecl(res.decl)
 
-        if not (classifyType(c, typeDecl.body) in {ObjectT, RefobjT, PtrobjT}):
+        if not (classifyType(c, typeDecl.body) == ObjectT):
           cond = false
       else:
         cond = false
@@ -4385,13 +4385,7 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
   if objImpl.kind == Symbol:
     objDecl = getTypeSection(objImpl.symId)
     objImpl = objDecl.objBody
-    case objImpl.typeKind
-    of RefobjT:
-      if constrKind != NoExpr:
-        c.buildErr info, "cannot construct double ref object: " & typeToString(typ)
-        return
-      constrKind = NewobjX
-    of ObjectT:
+    if objImpl.typeKind == ObjectT:
       if constrKind == NoExpr:
         constrKind = OconstrX
     else:
@@ -4467,7 +4461,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   if objType.kind == Symbol:
     decl = getTypeSection(objType.symId)
     objType = decl.objBody
-    if objType.typeKind notin {ObjectT, RefobjT, PtrobjT}:
+    if objType.typeKind != ObjectT:
       c.buildErr info, "expected object type for object constructor"
       return
   # build bindings for invoked object type to get proper types for fields:
@@ -5379,7 +5373,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           skip it.n
         of ErrT:
           c.takeTree it.n
-        of ObjectT, RefobjT, PtrobjT, EnumT, HoleyEnumT, DistinctT, ConceptT:
+        of ObjectT, EnumT, HoleyEnumT, DistinctT, ConceptT:
           buildErr c, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymKindT,
