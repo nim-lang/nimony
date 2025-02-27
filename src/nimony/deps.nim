@@ -25,17 +25,17 @@ type
     nimFile: string
     modname: string
 
-proc indexFile(f: FilePair): string = "nifcache" / f.modname & ".2.idx.nif"
-proc parsedFile(f: FilePair): string = "nifcache" / f.modname & ".1.nif"
-proc depsFile(f: FilePair): string = "nifcache" / f.modname & ".1.deps.nif"
-proc semmedFile(f: FilePair): string = "nifcache" / f.modname & ".2.nif"
-proc nifcFile(f: FilePair): string = "nifcache" / f.modname & ".c.nif"
-proc cFile(f: FilePair): string = "nifcache" / f.modname & ".c"
-proc objFile(f: FilePair): string = "nifcache" / f.modname & ".o"
+proc indexFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".2.idx.nif"
+proc parsedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".1.nif"
+proc depsFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".1.deps.nif"
+proc semmedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".2.nif"
+proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c.nif"
+proc cFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c"
+proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".o"
 
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
-proc exeFile(f: FilePair): string = "nifcache" / f.modname.addFileExt ExeExt
+proc exeFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname.addFileExt ExeExt
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -205,16 +205,16 @@ proc importSystem(c: var DepContext; current: Node) =
   let p = c.toPair(stdlibFile("std/system.nim"))
   current.deps.add p
   if not c.processedModules.containsOrIncl(p.modname):
-    #echo "NIFLING ", p.nimFile, " -> ", parsedFile(p)
-    execNifler c, p.nimFile, parsedFile(p)
+    #echo "NIFLING ", p.nimFile, " -> ", c.config.parsedFile(p)
+    execNifler c, p.nimFile, c.config.parsedFile(p)
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
     c.nodes.add imported
     parseDeps c, p, imported
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  execNifler c, p.nimFile, parsedFile(p)
+  execNifler c, p.nimFile, c.config.parsedFile(p)
 
-  let depsFile = depsFile(p)
+  let depsFile = c.config.depsFile(p)
   var stream = nifstreams.open(depsFile)
   try:
     discard processDirectives(stream.r)
@@ -259,23 +259,23 @@ proc rootPath(c: DepContext): string =
 proc toBuildList(c: DepContext): seq[CFile] =
   result = @[]
   for v in c.nodes:
-    let index = readIndex(mescape(indexFile(v.files[0])))
+    let index = readIndex(mescape(c.config.indexFile(v.files[0])))
     for i in index.toBuild:
       let path = i[1]
       let obj = splitFile(path).name & ".o"
       let customArgs = i[2]
       result.add (path, obj, customArgs)
 
-proc generateFinalMakefile(c: DepContext; passC, passL: string): string =
+proc generateFinalMakefile(c: DepContext; commandLineArgs: string; passC, passL: string): string =
   var s = makefileHeader
   let dest =
     case c.cmd
     of DoCheck:
-      indexFile(c.rootNode.files[0])
+      c.config.indexFile(c.rootNode.files[0])
     of DoTranslate:
       ""
     of DoCompile, DoRun:
-      exeFile(c.rootNode.files[0])
+      c.config.exeFile(c.rootNode.files[0])
 
   # Absolute path of root node module
   s.add "\nROOT_PATH = " & rootPath(c)
@@ -287,19 +287,19 @@ proc generateFinalMakefile(c: DepContext; passC, passL: string): string =
   if c.cmd in {DoCompile, DoRun}:
     let buildList = toBuildList(c)
 
-    s.add "\n" & mescape(exeFile(c.rootNode.files[0])) & ":"
+    s.add "\n" & mescape(c.config.exeFile(c.rootNode.files[0])) & ":"
 
     for cfile in buildList:
-      s.add " " & mescape("nifcache" / cfile.obj)
+      s.add " " & mescape(c.config.nifcachePath / cfile.obj)
 
     for v in c.nodes:
-      s.add " " & mescape(objFile(v.files[0]))
+      s.add " " & mescape(c.config.objFile(v.files[0]))
     s.add "\n\t$(CC) -o $@ $^"
     if passL.len != 0:
       s.add " " & mescape(passL)
 
     for cfile in buildList:
-      s.add "\n" & mescape("nifcache" / cfile.obj) & ": " & mescape(cfile.name) &
+      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) &
             "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
             mescape(cfile.customArgs) & " $< -o $@"
 
@@ -308,17 +308,17 @@ proc generateFinalMakefile(c: DepContext; passC, passL: string): string =
 
     # entry point is special:
     let nifc = findTool("nifc")
-    s.add "\n" & mescape(cFile(c.rootNode.files[0])) & ": " & mescape(nifcFile c.rootNode.files[0])
-    s.add "\n\t" & mescape(nifc) & " c --compileOnly --isMain $<"
+    s.add "\n" & mescape(c.config.cFile(c.rootNode.files[0])) & ": " & mescape(c.config.nifcFile c.rootNode.files[0])
+    s.add "\n\t" & mescape(nifc) & " c --compileOnly --isMain " & commandLineArgs & " $<"
 
     # The .c files depend on their .c.nif files:
-    s.add "\n%.c: %.c.nif\n\t" & mescape(nifc) & " c --compileOnly $<"
+    s.add "\n%.c: %.c.nif\n\t" & mescape(nifc) & " c --compileOnly " & commandLineArgs & " $<"
 
     # The .c.nif files depend on all of their .2.nif files:
     let hexer = findTool("hexer")
     s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(hexer) & " --bits:" & $c.config.bits & " $<"
 
-  result = "nifcache" / c.rootNode.files[0].modname & ".final.makefile"
+  result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.makefile"
   writeFile result, s
 
 proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
@@ -327,32 +327,32 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
   for v in c.nodes:
-    s.add "\n" & mescape(indexFile(v.files[0])) & " " & mescape(semmedFile(v.files[0])) & ":"
+    s.add "\n" & mescape(c.config.indexFile(v.files[0])) & " " & mescape(c.config.semmedFile(v.files[0])) & ":"
     var seenDeps = initHashSet[string]()
     for f in v.files:
-      let pf = parsedFile(f)
+      let pf = c.config.parsedFile(f)
       if not seenDeps.containsOrIncl(pf):
         s.add " " & mescape(pf)
     for f in v.deps:
-      let idxFile = indexFile(f)
+      let idxFile = c.config.indexFile(f)
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
     let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "")
-    s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(parsedFile(v.files[0])) & " " &
-      mescape(semmedFile(v.files[0])) & " " & mescape(indexFile(v.files[0]))
+    s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(c.config.parsedFile(v.files[0])) & " " &
+      mescape(c.config.semmedFile(v.files[0])) & " " & mescape(c.config.indexFile(v.files[0]))
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
   var seenFiles = initHashSet[string]()
   for v in c.nodes:
     for i in 0..<v.files.len:
-      let f = parsedFile(v.files[i])
+      let f = c.config.parsedFile(v.files[i])
       if not seenFiles.containsOrIncl(f):
         let nimFile = v.files[i].nimFile
         s.add "\n" & mescape(f) & ": " & mescape(nimFile)
         s.add "\n\t" & mescape(c.nifler) & " --portablePaths --deps parse " & mescape(nimFile) & " " &
           mescape(f)
 
-  result = "nifcache" / c.rootNode.files[0].modname & ".makefile"
+  result = c.config.nifcachePath / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
@@ -360,7 +360,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   let nifler = findTool("nifler")
 
   if config.compat:
-    let cfgNif = "nifcache" / moduleSuffix(project, []) & ".cfg.nif"
+    let cfgNif = config.nifcachePath / moduleSuffix(project, []) & ".cfg.nif"
     exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
       quoteShell(cfgNif)
     parseNifConfig cfgNif, config
@@ -383,7 +383,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     " -f "
   exec makeCommand & quoteShell(makeFilename)
 
-  let makeFinalFilename = generateFinalMakefile(c, passC, passL)
+  let makeFinalFilename = generateFinalMakefile(c, commandLineArgs, passC, passL)
   exec makeCommand & quoteShell(makeFinalFilename)
   if cmd == DoRun:
-    exec exeFile(c.rootNode.files[0])
+    exec c.config.exeFile(c.rootNode.files[0])
