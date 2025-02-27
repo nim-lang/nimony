@@ -5358,7 +5358,7 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
     while kindTag.stmtKind == UnpackdeclS:
       inc kindTag # unpackdecl tag
       skip kindTag # value
-      assert kindTag.stmtKind == UnpacktupU
+      assert kindTag.substructureKind == UnpacktupU
       inc kindTag # unpacktup tag
     let kind = kindTag.symKind
     if kind != ConstY:
@@ -5387,7 +5387,7 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
     # skip nested unpacks as well
     inc kindTag # unpackdecl tag
     skip kindTag # value
-    assert kindTag.stmtKind == UnpacktupU
+    assert kindTag.substructureKind == UnpacktupU
     inc kindTag # unpacktup tag
   let kind = kindTag.symKind
   let tmpName = identToSym(c, "`tmptup", kind)
