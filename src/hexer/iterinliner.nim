@@ -273,6 +273,26 @@ proc inlineIteratorBody(e: var EContext;
   else:
     takeTree(e, c)
 
+proc replaceSymbol(e: var EContext; c: var Cursor; relations: Table[SymId, SymId]) =
+  case c.kind
+  of DotToken:
+    e.dest.add c
+    inc c
+  of ParLe:
+    e.dest.add c
+    inc c
+    e.loop(c):
+      replaceSymbol(e, c, relations)
+  of Symbol:
+    let s = c.symId
+    if relations.hasKey(s):
+      e.dest.add symToken(relations[s], c.info)
+    else:
+      e.dest.add c
+    inc c
+  else:
+    takeTree(e, c)
+
 proc inlineIterator(e: var EContext; forStmt: ForStmt) =
   var iter = forStmt.iter
   inc iter
@@ -283,19 +303,28 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
     var params = routine.params
     inc params # (params
     inc iter # name
+    var relationsMap = initTable[SymId, SymId]()
     while params.kind != ParRi:
       let param = asLocal(params)
       var typ = param.typ
       let name = param.name
       let symId = name.symId
 
-      createDecl(e, symId, typ, iter, name.info, "var")
+      let newName = pool.syms.getOrIncl(pool.syms[symId] & ".lf." & $e.instId)
+      createDecl(e, newName, typ, iter, name.info, "var")
+      relationsMap[symId] = newName
 
       skip params
 
+    var preBodyBuf = createTokenBuf()
     var bodyBuf = createTokenBuf()
-    var body = routine.body
+    var preBody = routine.body
+    swap(e.dest, preBodyBuf)
+    replaceSymbol(e, preBody, relationsMap)
+    swap(e.dest, preBodyBuf)
+
     swap(e.dest, bodyBuf)
+    var body = cursorAt(preBodyBuf, 0)
     transformStmt(e, body)
     swap(e.dest, bodyBuf)
 
@@ -373,12 +402,14 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
 
   e.breaks.add lab
 
+  inc e.instId
   inlineIterator(e, forStmt)
 
   e.dest.addParRi()
   e.dest.addParRi()
 
   skip c
+
 
 proc transformStmt(e: var EContext; c: var Cursor) =
   case c.kind
@@ -392,9 +423,7 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       inc c
       while c.kind notin {EofToken, ParRi}:
         transformStmt(e, c)
-      takeParRi e, c # skipParRi
-    of VarS, LetS, CursorS, ResultS:
-      takeTree(e, c) # XXX You need to handle `var x = block: for: ...` here
+      takeParRi e, c
     of ForS:
       transformForStmt(e, c)
     of IteratorS:
@@ -404,14 +433,8 @@ proc transformStmt(e: var EContext; c: var Cursor) =
     of FuncS, ProcS, ConverterS, MethodS:
       e.dest.add c
       inc c
-      takeTree(e, c) # name
-      takeTree(e, c) # exported
-      takeTree(e, c) # pattern
-      takeTree(e, c) # typevars
-      takeTree(e, c) # params
-      takeTree(e, c) # retType
-      takeTree(e, c) # pragmas
-      takeTree(e, c) # effects
+      for i in 0..<BodyPos:
+        takeTree(e, c)
       let oldTmpId = e.tmpId
       e.tmpId = 0
       transformStmt(e, c)

@@ -59,3 +59,15 @@ while true:
   for i in 0 ..< 1:
     discard i
   break
+
+
+iterator countup4(a: int): int =
+  yield a
+
+iterator powers4(a: int): int =
+  for j in countup4(a):
+    yield j
+
+for i in powers4(5):
+  for j in countup4(4):
+    printf("Hello, world: %ld\n", i+j)

@@ -181,7 +181,44 @@
       (i -1) .)) ~2,1
     (stmts
      (discard 8 i.6))) ,2
-   (break .))) 4,20
+   (break .))) ,63
+ (iterator 9 :countup4.0.tfo6yv57p . . . 17
+  (params 1
+   (param :a.2 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts
+   (yld 6 a.2))) ,66
+ (iterator 9 :powers4.0.tfo6yv57p . . . 16
+  (params 1
+   (param :a.3 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts 4
+   (for 13
+    (call ~8 countup4.0.tfo6yv57p 1 a.3)
+    (unpackflat
+     (let :j.1 . . 4,~4
+      (i -1) .)) ~2,1
+    (stmts
+     (yld 6 j.1))))) 4,70
+ (for 12
+  (call ~7 powers4.0.tfo6yv57p 1 +5)
+  (unpackflat
+   (let :i.7 . . 6,~4
+    (i -1) .)) ~2,1
+  (stmts 4
+   (for 13
+    (call ~8 countup4.0.tfo6yv57p 1 +4)
+    (unpackflat
+     (let :j.2 . . 4,~8
+      (i -1) .)) ~2,1
+    (stmts 6
+     (call ~6 printf.0.tfo6yv57p 1
+      (hconv 9,~64
+       (cstring) "Hello, world\3A %ld\0A") 25
+      (add ~25,~6
+       (i -1) ~1 i.7 1 j.2)))))) 4,20
  (proc :inc.0.tfo6yv57p . 0,276,lib/std/system.nim .
   (at inc.1.sysvq0asl 19,~4
    (i -1)) 21,276,lib/std/system.nim
