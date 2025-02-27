@@ -5381,6 +5381,7 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
   inc it.n # skip unpacktup tag
   let kind = it.n.symKind
   let tmpName = identToSym(c, "`tmptup", kind)
+
   # build local for tuple:
   let tmpStart = c.dest.len
   c.dest.buildTree kind, info:
