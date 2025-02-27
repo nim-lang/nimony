@@ -288,9 +288,6 @@ proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
 proc `==`*(x, y: pointer): bool {.magic: "EqRef", noSideEffect.}
   ## Checks for equality between two `pointer` variables.
 
-proc `==`*(x, y: string): bool {.magic: "EqStr", noSideEffect.}
-  ## Checks for equality between two `string` variables.
-
 proc `==`*(x, y: char): bool {.magic: "EqCh", noSideEffect.}
   ## Checks for equality between two `char` variables.
 proc `==`*(x, y: bool): bool {.magic: "EqB", noSideEffect.}
@@ -304,9 +301,6 @@ proc `==`*[T](x, y: ptr T): bool {.magic: "EqRef", noSideEffect.}
   ## Checks that two `ptr` variables refer to the same item.
 
 proc `<=`*[Enum: enum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
-proc `<=`*(x, y: string): bool {.magic: "LeStr", noSideEffect.}
-  ## Compares two strings and returns true if `x` is lexicographically
-  ## before `y` (uppercase letters come before lowercase letters).
 
 proc `<=`*(x, y: char): bool {.magic: "LeCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
@@ -323,9 +317,6 @@ proc `<=`*[T](x, y: ref T): bool {.magic: "LePtr", noSideEffect.}
 proc `<=`*(x, y: pointer): bool {.magic: "LePtr", noSideEffect.}
 
 proc `<`*[Enum: enum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
-proc `<`*(x, y: string): bool {.magic: "LtStr", noSideEffect.}
-  ## Compares two strings and returns true if `x` is lexicographically
-  ## before `y` (uppercase letters come before lowercase letters).
 
 proc `<`*(x, y: char): bool {.magic: "LtCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically

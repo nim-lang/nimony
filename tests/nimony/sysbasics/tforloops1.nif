@@ -75,7 +75,7 @@
     (hconv 11,~16
      (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
    (if 3
-    (elif 2,416,lib/std/system.nim
+    (elif 2,407,lib/std/system.nim
      (expr 2,1
       (lt
        (i -1) 9,28,tests/nimony/sysbasics/tforloops1.nim +5 5,28,tests/nimony/sysbasics/tforloops1.nim x.1)) ~1,1
