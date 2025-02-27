@@ -440,6 +440,13 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       transformStmt(e, c)
       e.tmpId = oldTmpId
       takeParRi(e, c)
+    of VarS, LetS, CursorS, ResultS:
+      e.dest.add c
+      inc c
+      for i in 0..<LocalValuePos:
+        takeTree(e, c)
+      transformStmt(e, c)
+      takeParRi(e, c)
     else:
       e.dest.add c
       inc c
