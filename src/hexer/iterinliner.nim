@@ -89,7 +89,7 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
   if forVars.len == 1:
     connectSingleExprToLoopVar(e, c, forVars[0], result)
   else:
-    if c.kind == ParLe and c.exprKind == TupleConstrX:
+    if c.kind == ParLe and c.exprKind == TupX:
       inc c
       var i = 0
       while c.kind != ParRi:
