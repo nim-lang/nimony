@@ -160,8 +160,6 @@
 | `(unpackdecl S+)` | NimonyStmt, NiflerKind | unpack var/let/const declaration |
 | `(except .Y X)` | NimonyOther, NiflerKind | except subsection |
 | `(fin S)` | NimonyOther, NiflerKind | finally subsection |
-| `(refobj .T (fld ...)*)` | NimonyType, NiflerKind | `ref object` type |
-| `(ptrobj .T (fld ...)*)` | NimonyType, NiflerKind | `ptr object` type |
 | `(tuple (fld ...)* <or> T*)` | NimonyType, NiflerKind | `tuple` type |
 | `(onum (efld...)*)` | NimonyType | enum with holes type |
 | `(ref T)` | NimonyType, NiflerKind | `ref` type |

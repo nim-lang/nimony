@@ -1,0 +1,44 @@
+(.nif24)
+0,1,tests/nimony/sysbasics/trefobject.nim(stmts 9
+ (type ~4 :Foo.0.tre8amq6m . . . 2
+  (ref 4 Foo.Obj.0.tre8amq6m)) 9
+ (type ~4 :Foo.Obj.0.tre8amq6m . . . 6
+  (object . ~13,1
+   (fld :x.0.tre8amq6m . . 3
+    (i -1) .) ~13,2
+   (fld :parent.0.tre8amq6m . . 9,~2
+    (ref 4 Foo.Obj.0.tre8amq6m) .))) 4,4
+ (gvar :foo.0.tre8amq6m . . 7,~4
+  (ref 4 Foo.Obj.0.tre8amq6m) .) 10,7
+ (type ~8 :Node.0.tre8amq6m . ~4
+  (typevars 1
+   (typevar :T.0.tre8amq6m . . . .)) . 2
+  (ref 4
+   (at Node.Obj.0.tre8amq6m ~9 T.0.tre8amq6m))) 10,7
+ (type ~8 :Node.Obj.0.tre8amq6m . ~4
+  (typevars 1
+   (typevar :T.1.tre8amq6m . . . .)) . 6
+  (object . ~12,1
+   (fld :val.0.tre8amq6m . . 5 T.1.tre8amq6m .) ~12,2
+   (fld :left.0.tre8amq6m . . 8,~2
+    (ref 4
+     (at Node.Obj.0.tre8amq6m 6,2 T.1.tre8amq6m)) .) ~6,2
+   (fld :right.0.tre8amq6m . . 2,~2
+    (ref 4
+     (at Node.Obj.0.tre8amq6m 6,2 T.1.tre8amq6m)) .))) 4,11
+ (gvar :node.0.tre8amq6m . . 8,~4
+  (ref 4 Node.Obj.1.tre8amq6m) .) 14,11
+ (type :Node.2.tre8amq6m .
+  (at Node.0.tre8amq6m 1
+   (i -1)) ~4,~4 . ~2,~4
+  (ref 4 Node.Obj.1.tre8amq6m)) 16,7
+ (type :Node.Obj.1.tre8amq6m .
+  (at Node.Obj.0.tre8amq6m ~1,4
+   (i -1)) ~6 .
+  (object . ~12,1
+   (fld :val.1.tre8amq6m . . 11,3
+    (i -1) .) ~12,2
+   (fld :left.1.tre8amq6m . . 8,~2
+    (ref 4 Node.Obj.1.tre8amq6m) .) ~6,2
+   (fld :right.1.tre8amq6m . . 2,~2
+    (ref 4 Node.Obj.1.tre8amq6m) .))))

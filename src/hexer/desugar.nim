@@ -392,7 +392,7 @@ proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n
   let refType = n
-  assert refType.typeKind in {RefT, RefobjT}
+  assert refType.typeKind == RefT
 
   let baseType = refType.firstSon
   var refTypeCopy = refType
@@ -482,7 +482,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.add tagToken("deref", n.info)
       inc n
       let typ = getType(c.typeCache, n, true)
-      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
+      let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
       if isRef:
         dest.add tagToken("dot", n.info)
       tr c, dest, n
@@ -498,7 +498,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n # skip tag
 
       let typ = getType(c.typeCache, n, true)
-      let isRef = not cursorIsNil(typ) and typ.typeKind in {RefobjT, RefT}
+      let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
       if isRef:
         dest.add tagToken("dot", n.info)
       tr c, dest, n
