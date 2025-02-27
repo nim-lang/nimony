@@ -273,16 +273,28 @@ proc inlineIteratorBody(e: var EContext;
   else:
     takeTree(e, c)
 
-proc replaceSymbol(e: var EContext; c: var Cursor; relations: Table[SymId, SymId]) =
+proc replaceSymbol(e: var EContext; c: var Cursor; relations: var Table[SymId, SymId]) =
   case c.kind
   of DotToken:
     e.dest.add c
     inc c
   of ParLe:
-    e.dest.add c
-    inc c
-    e.loop(c):
-      replaceSymbol(e, c, relations)
+    case c.stmtKind
+    of VarS, LetS, CursorS:
+      e.dest.add c
+      inc c
+      let oldName = c.symId
+      let newName = pool.syms.getOrIncl(pool.syms[oldName] & ".lf." & $e.instId)
+      relations[oldName] = newName
+      e.dest.add symdefToken(newName, c.info)
+      inc c
+      e.loop(c):
+        replaceSymbol(e, c, relations)
+    else:
+      e.dest.add c
+      inc c
+      e.loop(c):
+        replaceSymbol(e, c, relations)
   of Symbol:
     let s = c.symId
     if relations.hasKey(s):

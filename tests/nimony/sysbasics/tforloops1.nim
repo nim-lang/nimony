@@ -1,3 +1,5 @@
+import std / [syncio]
+
 iterator powers(n: int): int =
   var i = 0
   while i <= n:
@@ -71,3 +73,11 @@ iterator powers4(a: int): int =
 for i in powers4(5):
   for j in countup4(4):
     printf("Hello, world: %ld\n", i+j)
+
+
+for i in 0..<3:
+  for j in 0..<4:
+    if j == 2:
+      echo "left the loop!"
+      break
+    echo "A i ", i, " j ", j
