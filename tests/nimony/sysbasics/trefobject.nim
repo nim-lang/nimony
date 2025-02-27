@@ -11,7 +11,7 @@ type
 
 var node: Node[int]
 
-when false: # need forwarded structural types to work
+when false: # need forwarded generic structural types to work
   type
     Forward1[T] = object
       x: ForwardNode1[T]
