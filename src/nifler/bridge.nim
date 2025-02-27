@@ -157,6 +157,24 @@ proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
     b.addFloatLit u
     b.addStrLit suffix
 
+type IdentDefName = object
+  name, visibility, pragma: PNode
+
+proc splitIdentDefName(n: PNode): IdentDefName =
+  result = IdentDefName(visibility: nil, pragma: nil)
+  if n.kind == nkPragmaExpr:
+    result.pragma = n[1]
+    if n[0].kind == nkPostfix:
+      result.visibility = n[0][0]
+      result.name = n[0][1]
+    else:
+      result.name = n[0]
+  elif n.kind == nkPostfix:
+    result.visibility = n[0]
+    result.name = n[1]
+  else:
+    result.name = n
+
 proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   case n.kind
   of nkNone:
@@ -227,33 +245,19 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkTypeDef:
     relLineInfo(n, parent, c)
     c.b.addTree TypeL
-    var name: PNode
-    var visibility: PNode = nil
-    var pragma: PNode = nil
-    if n[0].kind == nkPragmaExpr:
-      pragma = n[0][1]
-      if n[0][0].kind == nkPostfix:
-        visibility = n[0][0][0]
-        name = n[0][0][1]
-      else:
-        name = n[0][0]
-    elif n[0].kind == nkPostfix:
-      visibility = n[0][0]
-      name = n[0][1]
-    else:
-      name = n[0]
+    let split = splitIdentDefName(n[0])
 
-    toNif(name, n, c)
+    toNif(split.name, n, c)
 
-    if visibility != nil:
+    if split.visibility != nil:
       c.b.addRaw " x"
     else:
       c.b.addEmpty
 
     toNif(n[1], n, c, allowEmpty = true) # generics
 
-    if pragma != nil:
-      toNif(pragma, n, c)
+    if split.pragma != nil:
+      toNif(split.pragma, n, c)
     else:
       c.b.addEmpty
 
@@ -303,31 +307,17 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       relLineInfo(n[i], parent, c)
       c.b.addTree(c.section)
       # flatten it further:
-      var name: PNode
-      var visibility: PNode = nil
-      var pragma: PNode = nil
-      if n[i].kind == nkPragmaExpr:
-        pragma = n[i][1]
-        if n[i][0].kind == nkPostfix:
-          visibility = n[i][0][0]
-          name = n[i][0][1]
-        else:
-          name = n[i][0]
-      elif n[i].kind == nkPostfix:
-        visibility = n[i][0]
-        name = n[i][1]
-      else:
-        name = n[i]
+      let split = splitIdentDefName(n[i])
 
-      toNif(name, n[i], c) # name
+      toNif(split.name, n[i], c) # name
 
-      if visibility != nil:
+      if split.visibility != nil:
         c.b.addRaw " x"
       else:
         c.b.addEmpty
 
-      if pragma != nil:
-        toNif(pragma, n[i], c)
+      if split.pragma != nil:
+        toNif(split.pragma, n[i], c)
       else:
         c.b.addEmpty
 
@@ -485,18 +475,29 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     relLineInfo(n, parent, c)
     assert n[n.len-2].kind == nkEmpty
     c.b.addTree(UnpackdeclL)
-    toNif(n[n.len-1], n, c)
+    toNif(n[n.len-1], n, c, allowEmpty = true)
 
     c.b.addTree(UnpacktupL)
     for i in 0..<n.len-2:
-      c.b.addTree(c.section)
-      toNif(n[i], n, c) # name
+      if n[i].kind == nkVarTuple:
+        toNif(n[i], n, c)
+      else:
+        c.b.addTree(c.section)
+        let split = splitIdentDefName(n[i])
+        toNif(split.name, n, c) # name
 
-      c.b.addEmpty 4 # 1: export marker
-      # 2: pragmas
-      # 3: type
-      # 4: value
-      c.b.endTree()
+        if split.visibility != nil:
+          c.b.addRaw " x"
+        else:
+          c.b.addEmpty
+
+        if split.pragma != nil:
+          toNif(split.pragma, n, c)
+        else:
+          c.b.addEmpty
+
+        c.b.addEmpty 2 # type, value
+        c.b.endTree()
     c.b.endTree()
     c.b.endTree()
 

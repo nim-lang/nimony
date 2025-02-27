@@ -53,15 +53,22 @@ proc rememberZero(s: Scope; name: StrId) {.inline.} =
     if not s.undo[last].hasKey(name):
       s.undo[last][name] = 0
 
+proc isUnderscore*(lit: StrId): bool =
+  # could speed up by caching id of _
+  result = pool.strings[lit] == "_"
+
 proc addOverloadable*(s: Scope; name: StrId; sym: Sym) =
-  s.remember name
-  s.tab.mgetOrPut(name, @[]).add sym
+  if not isUnderscore(name):
+    s.remember name
+    s.tab.mgetOrPut(name, @[]).add sym
 
 type
   AddStatus* = enum
     Conflict, Success
 
 proc addNonOverloadable*(s: Scope; name: StrId; sym: Sym): AddStatus =
+  if isUnderscore(name):
+    return Success
   let existing = s.tab.getOrDefault(name)
   if existing.len == 0:
     # no error
