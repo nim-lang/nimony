@@ -5342,6 +5342,85 @@ proc semCardSet(c: var SemContext; it: var Item) =
   it.typ = c.types.intType
   commonType c, it, beforeExpr, expected
 
+proc addTupleAccess(buf: var TokenBuf; lvalue: SymId; i: int; info: PackedLineInfo) =
+  buf.add parLeToken(TupAtX, info)
+  buf.add symToken(lvalue, info)
+  buf.addIntLit(i, info)
+  buf.addParRi()
+
+proc semUnpackDecl(c: var SemContext; it: var Item) =
+  case c.phase
+  of SemcheckTopLevelSyms:
+    c.takeTree it.n
+    return
+  of SemcheckSignatures:
+    var kindTag = it.n
+    inc kindTag # unpackdecl tag
+    skip kindTag # value
+    let kind = kindTag.symKind
+    if kind != ConstY:
+      c.takeTree it.n
+      return
+  of SemcheckBodies: discard
+
+  let info = it.n.info
+  inc it.n # skip tag
+  var tup = Item(n: it.n, typ: c.types.autoType)
+  let tupInfo = tup.n.info
+  var tupBuf = createTokenBuf(16)
+  swap c.dest, tupBuf
+  semExpr c, tup
+  swap c.dest, tupBuf
+  it.n = tup.n
+  if tup.typ.typeKind != TupleT:
+    c.buildErr tupInfo, "expected tuple for tuple unpacking"
+    skipToEnd it.n
+    return
+  if it.n.substructureKind != UnpacktupU:
+    error "illformed AST: `unpacktup` inside `unpackdecl` expected, got ", it.n
+  inc it.n # skip unpacktup tag
+  let kind = it.n.symKind
+  let tmpName = identToSym(c, "`tmptup", kind)
+  # build local for tuple:
+  let tmpStart = c.dest.len
+  c.dest.buildTree kind, info:
+    c.dest.add symdefToken(tmpName, info) # 0: name
+    c.dest.addDotToken() # 1: export
+    c.dest.addDotToken() # 2: pragma
+    c.dest.addSubtree tup.typ # 3: type
+    c.dest.add tupBuf # 4: value
+  publish c, tmpName, tmpStart
+
+  # iterate over unpacktup:
+  var declBuf = createTokenBuf(32)
+  var i = 0
+  while it.n.kind != ParRi:
+    let declInfo = it.n.info
+    if it.n.stmtKind == UnpackDeclS:
+      declBuf.add it.n
+      inc it.n
+      declBuf.addTupleAccess(tmpName, i, declInfo)
+      takeTree declBuf, it.n
+      takeParRi declBuf, it.n
+    else:
+      declBuf.add it.n
+      inc it.n
+      takeTree declBuf, it.n # 0: name
+      takeTree declBuf, it.n # 1: export
+      takeTree declBuf, it.n # 2: pragma
+      takeTree declBuf, it.n # 3: type
+      assert it.n.kind == DotToken # value
+      inc it.n
+      declBuf.addTupleAccess(tmpName, i, declInfo) # 4: value
+      takeParRi declBuf, it.n
+    var decl = cursorAt(declBuf, 0)
+    semStmt c, decl, false
+    endRead(declBuf)
+    declBuf.shrink 0
+    inc i
+  skipParRi it.n
+  producesVoid c, info, it.typ
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -5391,7 +5470,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
-      of ImportasS, ExportexceptS, UnpackdeclS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
+      of ImportasS, ExportexceptS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
         buildErr c, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
       of ProcS:
@@ -5445,6 +5524,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ConstS:
         constGuard c:
           semLocal c, it, ConstY
+      of UnpackdeclS:
+        semUnpackDecl c, it
       of StmtsS: semStmtsExpr c, it, false
       of ScopeS: semStmtsExpr c, it, true
       of BreakS:
