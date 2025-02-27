@@ -15,7 +15,7 @@ proc isImportC*(m: Module; typ: Cursor): bool =
   result = typ.kind == Symbol and pool.syms[typ.symId].isImportC
 
 proc isImportC*(n: Cursor): bool {.inline.} =
-  result = n.kind == Symbol and pool.syms[n.symId].isImportC
+  result = n.kind in {Symbol, SymbolDef} and pool.syms[n.symId].isImportC
 
 proc createIntegralType*(m: var Module; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)

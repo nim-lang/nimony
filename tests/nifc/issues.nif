@@ -38,45 +38,45 @@
   ))
 
   (proc :foo.m3 . . . (stmts
-    (var :x.c . (bool) (true))
-    (var :y.c . (bool) (false))
-    (call assert.c (eq x.c (true)))
-    (call assert.c (eq y.c (false)))
+    (var :x.0 . (bool) (true))
+    (var :y.0 . (bool) (false))
+    (call assert.c (eq x.0 (true)))
+    (call assert.c (eq y.0 (false)))
     (var :s.m . (c +8) 'm')
     (call assert.c (eq 'm' s.m))
-    (var :z.c . (ptr (c +8 (ro))) (nil))
+    (var :z.0 . (ptr (c +8 (ro))) (nil))
   ))
 
   (proc :foo.if . . . (stmts
-    (const :x.c . (i +32) (suf +12 "i32"))
-    (if (elif (eq x.c +1) (call assert.c (eq x.c +1)))
-        (elif (eq x.c +3) (call assert.c (eq x.c +3)))
-        (else (call assert.c (eq x.c +12)))
+    (const :x.0 . (i +32) (suf +12 "i32"))
+    (if (elif (eq x.0 +1) (call assert.c (eq x.0 +1)))
+        (elif (eq x.0 +3) (call assert.c (eq x.0 +3)))
+        (else (call assert.c (eq x.0 +12)))
     )
   ))
 
   (proc :foo.switch . . . (stmts
-    (var :x.c . (i +32) (suf +12 "i32"))
-    (case x.c
-      (of (ranges +1) (call assert.c (eq x.c +1)))
-      (of (ranges (range +3 +5)) (call printf.c "hello %d" x.c))
-      (else (call assert.c (eq x.c +12)))
+    (var :x.0 . (i +32) (suf +12 "i32"))
+    (case x.0
+      (of (ranges +1) (call assert.c (eq x.0 +1)))
+      (of (ranges (range +3 +5)) (call printf.c "hello %d" x.0))
+      (else (call assert.c (eq x.0 +12)))
     )
   ))
 
   (proc :foo.while . . . (stmts
-    (var :x.c . (i +32 (atomic)) (suf +12 "i32"))
-    (while (not (lt x.c +8))
+    (var :x.0 . (i +32 (atomic)) (suf +12 "i32"))
+    (while (not (lt x.0 +8))
        (stmts
-          (asgn x.c
-            (sub (i +32) x.c +1)
+          (asgn x.0
+            (sub (i +32) x.0 +1)
           )
        )
     )
   ))
 
   (proc :foo.neg . . . (stmts
-    (var :x.c . (i +32) (neg (i +32) +12 ))
+    (var :x.0 . (i +32) (neg (i +32) +12 ))
   )
   )
 
@@ -123,22 +123,22 @@
 
     (lab :label.c)
 
-    (var :x.c . (bool) (true))
+    (var :x.0 . (bool) (true))
 
     (call assert.c (eq (sizeof (bool)) +1))
 
-    (var :y.c . MyObject2.mc (oconstr MyObject2.mc (kv a2.c +12) (kv a3.c (true))))
+    (var :y.0 . MyObject2.mc (oconstr MyObject2.mc (kv a2.c +12) (kv a3.c (true))))
 
-    (call assert.c (eq (dot y.c a2.c +0) +12))
+    (call assert.c (eq (dot y.0 a2.c +0) +12))
     (call assert.c (eq (and (par +1) (par +0)) +0))
     (call assert.c (eq (or (par +1) (par -0)) +1))
 
-    (var :z.c . MyArray.mc (aconstr MyArray.mc +1 +2 +3))
+    (var :z.0 . MyArray.mc (aconstr MyArray.mc +1 +2 +3))
 
 
-    (call assert.c (eq (at z.c +0) +1))
-    (call assert.c (eq (at z.c +1) +2))
-    (call assert.c (eq (mul (i +64) (at z.c +1) (at z.c +2)) +6))
+    (call assert.c (eq (at z.0 +0) +1))
+    (call assert.c (eq (at z.0 +1) +2))
+    (call assert.c (eq (mul (i +64) (at z.0 +1) (at z.0 +2)) +6))
     (call assert.c (eq (mod (i +64) +9 +4) +1))
     (call assert.c (eq (div (i +64) +9 +4) +2))
     (call assert.c (eq (shr (i +64) +9 +1) +4))
@@ -217,19 +217,19 @@
   ))
 
   (proc :foo.switch.bool . . . (stmts
-    (var :x.c . (bool) (false))
-    (case x.c
-      (of (ranges (true)) (call printf.c "hello %d" x.c))
-      (of (ranges (false)) (call assert.c (not x.c)))
+    (var :x.0 . (bool) (false))
+    (case x.0
+      (of (ranges (true)) (call printf.c "hello %d" x.0))
+      (of (ranges (false)) (call assert.c (not x.0)))
     )
   ))
 
   (proc :foo.attr.used . . (pragmas (attr "used")) (stmts
-    (var :x.c . (bool) (false))
+    (var :x.0 . (bool) (false))
   ))
 
   (proc :foo.attr.used.inline . . (pragmas (attr "used") (inline)) (stmts
-    (var :x.c . (bool) (false))
+    (var :x.0 . (bool) (false))
   ))
 
   (proc :foo.error.stmts . . (pragmas (errs)) (stmts
@@ -292,8 +292,8 @@
     (var :foovar.noconv . FooProc.noconv foo.noconv)
     (var :foovar.member . FooProc.member foo.member)
 
-    (var :x.c . (i +8) (suf +12 "i8"))
-    (discard x.c)
+    (var :x.0 . (i +8) (suf +12 "i8"))
+    (discard x.0)
     (var :x.m . (i +16) (suf -12 "i16"))
     (var :x1 . (i +32) (suf +12 "i32"))
     (var :y1 . (u +32) (suf +12 "u32"))
@@ -309,7 +309,7 @@
 
     (call foo.switch.bool)
 
-    (emit "(void)" x.c ";")
+    (emit "(void)" x.0 ";")
 
 
     (onerr (jmp L1.c) foo.error.stmts)
@@ -323,7 +323,7 @@
 
     (call foo.escaped)
 
-    (var :x.0 . 6,~3 bool.0.tesg7afhq1 4 false.0.tesg7afhq1)
+    (var :x.1 . 6,~3 bool.0.tesg7afhq1 4 false.0.tesg7afhq1)
 
     (ret +0)
   ))

@@ -426,7 +426,8 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     c.m.registerLocal(lit, d.typ)
     let name = mangle(pool.syms[lit])
     let beforeDecl = c.code.len
-    if toExtern:
+
+    if toExtern or isImportC(d.name):
       c.add ExternKeyword
 
     if vk == IsConst:

@@ -43,8 +43,8 @@
   ))
 
   (nodecl (proc :foo2.c . (void) . (stmts
-    (var :x.c . (i +32 (ro)) +12)
-    (call assert.c (eq x.c +12))
+    (var :x.0 . (i +32 (ro)) +12)
+    (call assert.c (eq x.0 +12))
   )))
 
   (type :MyObject.ptr.flexarray .
@@ -102,9 +102,9 @@
   ))
 
   (proc :main.c . (i +32 (atomic)) . (stmts
-    (var :x.c . (i +32 (ro)) +12)
+    (var :x.0 . (i +32 (ro)) +12)
     (call assert.c (eq (suf +12 "i64") +12))
-    (call assert.c (eq x.c +12))
+    (call assert.c (eq x.0 +12))
     (call foo.c)
     (ret +0)
   ))
