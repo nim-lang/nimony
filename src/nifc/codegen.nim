@@ -688,9 +688,10 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   if gfProducesMainProc in c.flags:
     f.write "int cmdCount;\n"
     f.write "NC8 **cmdLine;\n"
-    f.write "int main(int argc, NC8 **argv) {\n"
+    # Changing argv type other than `char**` results in compile error in clang.
+    f.write "int main(int argc, char **argv) {\n"
     f.write "  cmdCount = argc;\n"
-    f.write "  cmdLine = argv;\n"
+    f.write "  cmdLine = (NC8**)argv;\n"
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   elif c.init.len > 0:
