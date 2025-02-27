@@ -426,17 +426,8 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     c.m.registerLocal(lit, d.typ)
     let name = mangle(pool.syms[lit])
     let beforeDecl = c.code.len
-    var hasWas = false
-    if d.pragmas.substructureKind == PragmasU:
-      var p = d.pragmas.firstSon
-      while p.kind != ParRi:
-        if p.pragmaKind == WasP:
-          hasWas = true
-          break
-        else:
-          skip p
 
-    if toExtern or hasWas:
+    if toExtern or isImportC(d.name):
       c.add ExternKeyword
 
     if vk == IsConst:
