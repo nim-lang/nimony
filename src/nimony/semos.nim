@@ -248,10 +248,10 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
 
 # ------------------ include/import handling ------------------------
 
-proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
+proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, paths)
-  let src = "nifcache" / name & ".1.nif"
+  let src = nifcachePath / name & ".1.nif"
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 
@@ -281,10 +281,10 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nimfile, exefile: st
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string) =
   let p = splitFile(pluginName)
-  let basename = "nifcache" / p.name & "_" & computeChecksum(input)
+  let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input)
   let inputFile = basename & ".in.nif"
   let outputFile = basename & ".out.nif"
-  let pluginExe = "nifcache" / p.name.addFileExt(ExeExt)
+  let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
   if not fileExists(pluginExe):
     compilePlugin(c, info, pluginName, pluginExe)
   if fileExists(inputFile) and readFile(inputFile) == input:

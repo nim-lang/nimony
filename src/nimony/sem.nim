@@ -235,7 +235,7 @@ proc semInclude(c: var SemContext; it: var Item) =
           break
 
       if not isRecursive:
-        var buf = parseFile(f2, c.g.config.paths)
+        var buf = parseFile(f2, c.g.config.paths, c.g.config.nifcachePath)
         c.includeStack.add f2
         #c.m.includes.add f2
         var n = cursorAt(buf, 0)

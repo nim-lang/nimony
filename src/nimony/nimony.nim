@@ -36,6 +36,7 @@ Options:
   --noSystem                do not auto-import `system.nim`
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --silentMake              suppresses make output
+  --nimcache:PATH           set the path used for generated files
   --version                 show the version
   --help                    show this help
 """
@@ -47,8 +48,8 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
                          commandLineArgs: string; forceRebuild: bool) =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, config.paths)
-  let src = "nifcache" / name & ".1.nif"
-  let dest = "nifcache" / name & ".2.nif"
+  let src = config.nifcachePath / name & ".1.nif"
+  let dest = config.nifcachePath / name & ".2.nif"
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
@@ -67,8 +68,7 @@ proc handleCmdLine() =
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
-  # XXX: harcoded relative nifcache path for now
-  config.nifcachePath = toAbsolutePath("nifcache")
+  config.nifcachePath = toAbsolutePath("nimcache")
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
@@ -128,6 +128,8 @@ proc handleCmdLine() =
       of "passl":
         passL = val
         forwardArg = false
+      of "nimcache":
+        config.nifcachePath = toAbsolutePath(val)
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
@@ -146,14 +148,14 @@ proc handleCmdLine() =
     quit "command missing"
   of SingleModule:
     if not isChild:
-      createDir("nifcache")
+      createDir(config.nifcachePath)
       createDir(binDir())
       requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
       requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
-    createDir("nifcache")
+    createDir(config.nifcachePath)
     createDir(binDir())
     exec "git submodule update --init"
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild

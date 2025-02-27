@@ -79,7 +79,7 @@ proc handleCmdLine() =
     s.config.cCompiler = ccCLang
   else:
     s.config.cCompiler = ccGcc
-  s.config.nifcacheDir = "nifcache"
+  s.config.nifcacheDir = "nimcache"
 
   for kind, key, val in getopt():
     case kind
@@ -146,7 +146,7 @@ proc handleCmdLine() =
           s.config.options.excl optLineDir
         else:
           quit "'on', 'off' expected, but '$1' found" % val
-      of "nifcache":
+      of "nimcache":
         s.config.nifcacheDir = val
       of "out", "o":
         s.config.outputFile = val
