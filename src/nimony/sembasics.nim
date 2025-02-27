@@ -248,13 +248,16 @@ type
     s*: Sym
     info*: PackedLineInfo
 
-proc identToSym*(c: var SemContext; lit: StrId; kind: SymKind): SymId =
-  var name = pool.strings[lit]
+proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
+  var name = str
   if c.currentScope.kind == ToplevelScope or kind in {FldY, EfldY, TypevarY}:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
   result = pool.syms.getOrIncl(name)
+
+proc identToSym*(c: var SemContext; lit: StrId; kind: SymKind): SymId =
+  result = identToSym(c, pool.strings[lit], kind)
 
 proc symToIdent*(s: SymId): StrId =
   var name = pool.syms[s]
