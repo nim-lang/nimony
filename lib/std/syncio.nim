@@ -105,7 +105,7 @@ template echo*() {.varargs.} =
     write stdout, x
   write stdout, '\n'
 
-proc writeLine*(f: var File; s: string) =
+proc writeLine*(f: File; s: string) =
   write f, s
   write f, '\n'
 
