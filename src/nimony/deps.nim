@@ -266,7 +266,7 @@ proc toBuildList(c: DepContext): seq[CFile] =
       let customArgs = i[2]
       result.add (path, obj, customArgs)
 
-proc generateFinalMakefile(c: DepContext; commandLineArgs: string; passC, passL: string): string =
+proc generateFinalMakefile(c: DepContext; commandLineArgs, commandLineArgsNifc: string; passC, passL: string): string =
   var s = makefileHeader
   let dest =
     case c.cmd
@@ -309,10 +309,10 @@ proc generateFinalMakefile(c: DepContext; commandLineArgs: string; passC, passL:
     # entry point is special:
     let nifc = findTool("nifc")
     s.add "\n" & mescape(c.config.cFile(c.rootNode.files[0])) & ": " & mescape(c.config.nifcFile c.rootNode.files[0])
-    s.add "\n\t" & mescape(nifc) & " c --compileOnly --isMain " & commandLineArgs & " $<"
+    s.add "\n\t" & mescape(nifc) & " c --compileOnly --isMain " & commandLineArgsNifc & " $<"
 
     # The .c files depend on their .c.nif files:
-    s.add "\n%.c: %.c.nif\n\t" & mescape(nifc) & " c --compileOnly " & commandLineArgs & " $<"
+    s.add "\n%.c: %.c.nif\n\t" & mescape(nifc) & " c --compileOnly " & commandLineArgsNifc & " $<"
 
     # The .c.nif files depend on all of their .2.nif files:
     let hexer = findTool("hexer")
@@ -356,7 +356,8 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
   writeFile result, s
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
-    commandLineArgs: string; moduleFlags: set[ModuleFlag]; cmd: Command; passC, passL: string) =
+    commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
+    passC, passL: string) =
   let nifler = findTool("nifler")
 
   if config.compat:
@@ -383,7 +384,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     " -f "
   exec makeCommand & quoteShell(makeFilename)
 
-  let makeFinalFilename = generateFinalMakefile(c, commandLineArgs, passC, passL)
+  let makeFinalFilename = generateFinalMakefile(c, commandLineArgs, commandLineArgsNifc, passC, passL)
   exec makeCommand & quoteShell(makeFinalFilename)
   if cmd == DoRun:
     exec c.config.exeFile(c.rootNode.files[0])

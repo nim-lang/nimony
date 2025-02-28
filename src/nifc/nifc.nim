@@ -38,6 +38,7 @@ Options:
   --opt:none|speed|size     optimize not at all or for speed|size
   --lineDir:on|off          generation of #line directive on|off
   --bits:N                  `(i -1)` has N bits; possible values: 64, 32, 16
+  --nimcache:PATH           set the path used for generated files
   --version                 show the version
   --help                    show this help
 """
