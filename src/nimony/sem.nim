@@ -9,6 +9,7 @@
 ## type checking.
 
 import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
+from std/os import getCurrentDir
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -5406,8 +5407,8 @@ proc semPragmaLine(c: var SemContext; it: var Item) =
     if args.len != 2 and args.len != 3:
       buildErr c, info, "build expected 2 or 3 parameters"
 
-    # XXX: makefile is executed parent to nifcachePath
-    let nifcacheDir = absoluteParentDir(c.g.config.nifcachePath)
+    # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
+    let curWorkDir = os.getCurrentDir()
     let currentDir = absoluteParentDir(info.getFile)
 
     # Extract build pragma arguments
@@ -5417,7 +5418,7 @@ proc semPragmaLine(c: var SemContext; it: var Item) =
 
     if not semos.fileExists(name):
       buildErr c, info, "cannot find: " & name
-    name = name.toRelativePath(nifcacheDir)
+    name = name.toRelativePath(curWorkDir)
 
     c.toBuild.buildTree TupX, info:
       c.toBuild.addStrLit compileType, info
