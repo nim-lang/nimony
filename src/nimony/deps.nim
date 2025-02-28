@@ -252,9 +252,9 @@ type
     name, obj, customArgs: string
 
 proc rootPath(c: DepContext): string =
-  # XXX: makefile is executed parent to nifcachePath
+  # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
-  result = relativePath(result, parentDir c.config.nifcachePath)
+  result = relativePath(result, os.getCurrentDir())
 
 proc toBuildList(c: DepContext): seq[CFile] =
   result = @[]
