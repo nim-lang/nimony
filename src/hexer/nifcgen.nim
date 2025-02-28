@@ -11,7 +11,7 @@ import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
 import typekeys
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops]
 from ".." / nimony / sigmatch import isSomeStringType, isStringType
 import basics, pipeline
 import  ".." / lib / stringtrees
@@ -217,27 +217,6 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
     inc counter
   takeParRi e, c
 
-proc traverseOpenArrayBody(e: var EContext; c: var Cursor) =
-  e.dest.add tagToken("object", c.info)
-  e.dest.addDotToken()
-  inc c
-  let typ = c
-  e.dest.add tagToken("fld", typ.info)
-  let name = ithTupleField(0)
-  e.dest.add symdefToken(name, typ.info)
-  e.offer name
-  e.dest.addDotToken() # pragmas
-  e.dest.add tagToken("ptr", typ.info)
-  e.traverseType(c, {})
-  e.dest.addParRi() # "ptr"
-  e.dest.addParRi() # "fld"
-
-  var intType = e.typeCache.builtins.intType
-  genTupleField(e, intType, 1)
-
-  traverseType e, c
-  skipParRi e, c
-
 proc traverseArrayBody(e: var EContext; c: var Cursor) =
   e.dest.add c
   inc c
@@ -371,8 +350,6 @@ proc traverseAsNamedType(e: var EContext; c: var Cursor) =
       traverseTupleBody e, body
     of ArrayT:
       traverseArrayBody e, body
-    of OpenArrayT:
-      traverseOpenArrayBody e, body
     of ProctypeT:
       traverseProcTypeBody e, body
     of RefT:
@@ -439,14 +416,24 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
       e.loop c:
         e.dest.add c
         inc c
-    of PtrT, MutT, OutT, LentT:
+    of MutT, LentT:
+      e.dest.add tagToken("ptr", c.info)
+      inc c
+      if isViewType(c):
+        e.dest.shrink e.dest.len-1 # remove the "ptr" again
+        traverseType e, c, {}
+        skipParRi c
+      else:
+        e.loop c:
+          traverseType e, c, {IsPointerOf}
+    of PtrT, OutT:
       e.dest.add tagToken("ptr", c.info)
       inc c
       e.loop c:
         traverseType e, c, {IsPointerOf}
     of RefT:
       traverseAsNamedType e, c
-    of ArrayT, OpenarrayT, ProctypeT:
+    of ArrayT, ProctypeT:
       if IsNodecl in flags:
         traverseArrayBody e, c
       else:
@@ -626,7 +613,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           inc c
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, BorrowP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
-           InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP:
+           InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP:
           result.flags.incl pk
           inc c
         of HeaderP:

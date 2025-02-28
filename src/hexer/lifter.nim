@@ -113,7 +113,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   of IntT, UIntT, FloatT, BoolT, CharT, PtrT,
      MutT, OutT, SetT,
      EnumT, HoleyEnumT, VoidT, AutoT, SymKindT, ProctypeT,
-     CstringT, PointerT, OrdinalT, OpenArrayT,
+     CstringT, PointerT, OrdinalT,
      UarrayT, VarargsT, RangetypeT, TypedescT,
      ParamsT:
     result = true

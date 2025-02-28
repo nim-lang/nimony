@@ -173,7 +173,6 @@
 | `(itertype . (params...) T)` | NimonyType, NiflerKind | `itertype` type |
 | `(rangetype T X X)` | NimonyType | `rangetype` type |
 | `(uarray T)` | NimonyType | `uarray` type |
-| `(openarray T)` | NimonyType | `openarray` type |
 | `(set T)` | NimonyType | `set` type |
 | `(auto)` | NimonyType | `auto` type |
 | `(symkind UNUSED)` | NimonyType | `symkind` type |
@@ -204,6 +203,7 @@
 | `(ensures X)` | NimonyPragma | `ensures` pragma |
 | `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndex | `build` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
+| `(view)` | NimonyPragma | `view` pragma |
 | `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
 | `(hderef X)` | NimonyExpr | hidden pointer deref operation |
 | `(ddot X)` | NimonyExpr | deref dot |

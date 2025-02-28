@@ -22,7 +22,7 @@ type
     TemplateIdx = (69, "template")  ## template declaration
     TypeIdx = (70, "type")  ## type declaration
     InlineIdx = (122, "inline")  ## `inline` proc annotation
-    BuildIdx = (203, "build")  ## `build` pragma
+    BuildIdx = (202, "build")  ## `build` pragma
     DestroyIdx = (246, "destroy")
     DupIdx = (247, "dup")
     CopyIdx = (248, "copy")
@@ -35,5 +35,5 @@ type
 
 proc rawTagIsNifIndex*(raw: uint32): bool {.inline.} =
   let r = raw - 27'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 176'u8, 219'u8, 220'u8, 221'u8, 222'u8, 223'u8, 224'u8, 232'u8, 233'u8, 234'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 175'u8, 219'u8, 220'u8, 221'u8, 222'u8, 223'u8, 224'u8, 232'u8, 233'u8, 234'u8}
 

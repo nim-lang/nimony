@@ -145,8 +145,6 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
-  of OpenArrayT:
-    update c, ptrSize*2, ptrSize
   of RangetypeT:
     getSize c, cache, n.firstSon, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,

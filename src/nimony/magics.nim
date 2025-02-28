@@ -57,7 +57,7 @@ type
     mNewString, mNewStringOfCap, mParseBiggestFloat,
     mMove, mEnsureMove, mWasMoved, mDup, mDestroy, mTrace,
     mDefault, mUnown, mFinished, mIsolate, mAccessEnv, mAccessTypeField,
-    mArray, mOpenArray, mRange, mSet, mSeq, mVarargs,
+    mArray, mRange, mSet, mSeq, mVarargs,
     mRef, mPtr, mVar, mDistinct, mVoid, mTuple,
     mOrdinal, mIterableType,
     mInt, mInt8, mInt16, mInt32, mInt64,
@@ -173,7 +173,6 @@ proc magicToTag*(m: TMagic): (string, int) =
   of mPointer: res PointerT
   of mDefaultObj: res DefaultObjX
   of mDefaultTup: res DefaultTupX
-  of mOpenArray: res OpenArrayT
   of mPlusSet: res PlusSetX, TypedMagic
   of mMinusSet: res MinusSetX, TypedMagic
   of mMulSet: res MulSetX, TypedMagic

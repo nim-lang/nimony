@@ -111,7 +111,7 @@ proc toCString*(s: var string): cstring =
   ensureTerminatingZero(s)
   result = cast[cstring](s.a)
 
-proc getData*(s: string): ptr UncheckedArray[char] {.inline.} =
+proc rawData*(s: string): ptr UncheckedArray[char] {.inline.} =
   result = s.a
 
 proc growImpl(s: var string; newLen: int) =
