@@ -162,9 +162,9 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
     it.typ = expected
     return
 
-  let info = it.n.info
   var m = createMatch(addr c)
   var arg = Item(n: cursorAt(c.dest, argBegin), typ: it.typ)
+  let info = arg.n.info
   if typeKind(arg.typ) == VoidT and isNoReturn(arg.n):
     # noreturn allowed in expression context
     # maybe use sem flags to restrict this to statement branches
