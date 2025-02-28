@@ -25,7 +25,7 @@ import std / [assertions]
 
 include nifprelude
 
-import nimony_model, programs, decls, typenav, sembasics, reporters, renderer
+import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops
 
 type
   Expects = enum
@@ -189,7 +189,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
     of LetY, GletY, TletY:
       let tk = local.typ.typeKind
       result = tk notin {MutT, OutT}
-      if result and tk == OpenArrayT:
+      if result and isViewType(local.typ):
         # Special rule to make `toOpenArray` work:
         result = borrowsFromReadonly(c, local.val)
     of ParamY:
@@ -310,7 +310,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
     if pk == MutT:
       var elemType = param.typ
       inc elemType
-      if elemType.typeKind == OpenArrayT:
+      if isViewType(elemType):
         e = WantMutableT
       else:
         e = WantVarT
@@ -362,7 +362,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     else:
       buildLocalErr c.dest, info, "cannot pass $1 to var/out T parameter"
   elif e notin {WantT, WantTButSkipDeref}:
-    if retType.typeKind == OpenArrayT and firstArgIsMutable(c, callExpr):
+    if isViewType(retType) and firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
     else:
       buildLocalErr c.dest, info, "cannot pass $1 to var/out T parameter"
@@ -435,7 +435,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
         buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
       trSons c, n, WantT
     else:
-      if (k == MutT and typ.firstSon.typeKind != OpenArrayT) or k == OutT:
+      if (k == MutT and not isViewType(typ.firstSon)) or k == OutT:
         c.dest.addParLe(HderefX, n.info)
         trSons c, n, WantT
         c.dest.addParRi()

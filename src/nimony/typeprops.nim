@@ -251,3 +251,25 @@ proc nominalRoot*(t: TypeCursor, allowTypevar = false): SymId =
         break
     else:
       break
+
+proc isViewType*(n: Cursor): bool =
+  var counter = 20
+  var n = n
+  while counter > 0 and n.kind == Symbol:
+    dec counter
+    let res = tryLoadSym(n.symId)
+    assert res.status == LacksNothing
+    let impl = asTypeDecl(res.decl)
+    if impl.kind == TypeY:
+      var p = impl.pragmas
+      if p.kind == DotToken: return false
+      inc p
+      while p.kind != ParRi:
+        if p.pragmaKind == ViewP: return true
+        skip p
+      # Might be an alias, so traverse this one here:
+      if impl.body.kind == Symbol:
+        n = impl.body
+      else:
+        break
+  return false

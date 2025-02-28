@@ -175,37 +175,37 @@ const
     ("itertype", 171),
     ("rangetype", 172),
     ("uarray", 173),
-    ("openarray", 174),
-    ("set", 175),
-    ("auto", 176),
-    ("symkind", 177),
-    ("typekind", 178),
-    ("typedesc", 179),
-    ("untyped", 180),
-    ("typed", 181),
-    ("cstring", 182),
-    ("pointer", 183),
-    ("ordinal", 184),
-    ("magic", 185),
-    ("importc", 186),
-    ("importcpp", 187),
-    ("exportc", 188),
-    ("header", 189),
-    ("threadvar", 190),
-    ("global", 191),
-    ("discardable", 192),
-    ("noreturn", 193),
-    ("borrow", 194),
-    ("noSideEffect", 195),
-    ("nodestroy", 196),
-    ("plugin", 197),
-    ("bycopy", 198),
-    ("byref", 199),
-    ("noinit", 200),
-    ("requires", 201),
-    ("ensures", 202),
-    ("build", 203),
-    ("string", 204),
+    ("set", 174),
+    ("auto", 175),
+    ("symkind", 176),
+    ("typekind", 177),
+    ("typedesc", 178),
+    ("untyped", 179),
+    ("typed", 180),
+    ("cstring", 181),
+    ("pointer", 182),
+    ("ordinal", 183),
+    ("magic", 184),
+    ("importc", 185),
+    ("importcpp", 186),
+    ("exportc", 187),
+    ("header", 188),
+    ("threadvar", 189),
+    ("global", 190),
+    ("discardable", 191),
+    ("noreturn", 192),
+    ("borrow", 193),
+    ("noSideEffect", 194),
+    ("nodestroy", 195),
+    ("plugin", 196),
+    ("bycopy", 197),
+    ("byref", 198),
+    ("noinit", 199),
+    ("requires", 200),
+    ("ensures", 201),
+    ("build", 202),
+    ("string", 203),
+    ("view", 204),
     ("quoted", 205),
     ("hderef", 206),
     ("ddot", 207),
@@ -440,37 +440,37 @@ const
   ItertypeTagId* = 171
   RangetypeTagId* = 172
   UarrayTagId* = 173
-  OpenarrayTagId* = 174
-  SetTagId* = 175
-  AutoTagId* = 176
-  SymkindTagId* = 177
-  TypekindTagId* = 178
-  TypedescTagId* = 179
-  UntypedTagId* = 180
-  TypedTagId* = 181
-  CstringTagId* = 182
-  PointerTagId* = 183
-  OrdinalTagId* = 184
-  MagicTagId* = 185
-  ImportcTagId* = 186
-  ImportcppTagId* = 187
-  ExportcTagId* = 188
-  HeaderTagId* = 189
-  ThreadvarTagId* = 190
-  GlobalTagId* = 191
-  DiscardableTagId* = 192
-  NoreturnTagId* = 193
-  BorrowTagId* = 194
-  NoSideEffectTagId* = 195
-  NodestroyTagId* = 196
-  PluginTagId* = 197
-  BycopyTagId* = 198
-  ByrefTagId* = 199
-  NoinitTagId* = 200
-  RequiresTagId* = 201
-  EnsuresTagId* = 202
-  BuildTagId* = 203
-  StringTagId* = 204
+  SetTagId* = 174
+  AutoTagId* = 175
+  SymkindTagId* = 176
+  TypekindTagId* = 177
+  TypedescTagId* = 178
+  UntypedTagId* = 179
+  TypedTagId* = 180
+  CstringTagId* = 181
+  PointerTagId* = 182
+  OrdinalTagId* = 183
+  MagicTagId* = 184
+  ImportcTagId* = 185
+  ImportcppTagId* = 186
+  ExportcTagId* = 187
+  HeaderTagId* = 188
+  ThreadvarTagId* = 189
+  GlobalTagId* = 190
+  DiscardableTagId* = 191
+  NoreturnTagId* = 192
+  BorrowTagId* = 193
+  NoSideEffectTagId* = 194
+  NodestroyTagId* = 195
+  PluginTagId* = 196
+  BycopyTagId* = 197
+  ByrefTagId* = 198
+  NoinitTagId* = 199
+  RequiresTagId* = 200
+  EnsuresTagId* = 201
+  BuildTagId* = 202
+  StringTagId* = 203
+  ViewTagId* = 204
   QuotedTagId* = 205
   HderefTagId* = 206
   DdotTagId* = 207

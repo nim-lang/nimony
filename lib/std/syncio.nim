@@ -37,7 +37,7 @@ proc c_fread(buf: ptr UncheckedArray[uint8]; size, n: uint; f: File): uint {.
 proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
 
 proc write*(f: File; s: string) =
-  discard c_fwrite(getData(s), 1'u, s.len.uint, f)
+  discard c_fwrite(rawData(s), 1'u, s.len.uint, f)
 
 proc write*(f: File; b: bool) =
   if b: write f, "true"

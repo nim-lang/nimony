@@ -2164,6 +2164,13 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
+  of ViewP:
+    if kind == TypeY:
+      c.dest.add parLeToken(pk, n.info)
+      inc n
+    else:
+      buildErr c, n.info, "`view` pragma only allowed on types"
+    c.dest.addParRi()
   of VarargsP:
     crucial.hasVarargs = n.info
     c.dest.add parLeToken(pk, n.info)
@@ -2841,7 +2848,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
       takeTree c, n
     of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UarrayT,
-       StaticT, TypedescT, OpenArrayT:
+       StaticT, TypedescT:
       if tryTypeClass(c, n):
         return
       takeToken c, n
@@ -5572,7 +5579,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UarrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangetypeT, VarargsT, ProctypeT, IteratorT, UntypedT, TypedT,
-            CstringT, PointerT, TypeKindT, OrdinalT, OpenArrayT, ParamsT, ItertypeT:
+            CstringT, PointerT, TypeKindT, OrdinalT, ParamsT, ItertypeT:
           # every valid local type expression
           semLocalTypeExpr c, it
         of OrT, AndT, NotT, InvokeT:
