@@ -72,6 +72,7 @@ proc handleCmdLine() =
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
+  var commandLineArgsNifc = ""
   var isChild = false
   var passC = ""
   var passL = ""
@@ -91,6 +92,7 @@ proc handleCmdLine() =
 
     of cmdLongOption, cmdShortOption:
       var forwardArg = true
+      var forwardArgNifc = false
       case normalize(key)
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
@@ -130,11 +132,16 @@ proc handleCmdLine() =
         forwardArg = false
       of "nimcache":
         config.nifcachePath = toAbsolutePath(val)
+        forwardArgNifc = true
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
         if val.len > 0:
           commandLineArgs.add ":" & quoteShell(val)
+      if forwardArgNifc:
+        commandLineArgsNifc.add " --" & key
+        if val.len > 0:
+          commandLineArgsNifc.add ":" & quoteShell(val)
 
     of cmdEnd: assert false, "cannot happen"
   if args.len == 0:
@@ -163,7 +170,7 @@ proc handleCmdLine() =
     requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
     buildGraph config, args[0], forceRebuild, silentMake,
-      commandLineArgs, moduleFlags, (if doRun: DoRun else: DoCompile),
+      commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),
       passC, passL
 
 when isMainModule:
