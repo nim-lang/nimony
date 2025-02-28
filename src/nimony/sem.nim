@@ -2104,10 +2104,12 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       inc n
       c.dest.addParRi()
     else:
-      buildErr c, n.info, "expected pragma"
-      inc n
+      if n.exprKind == ErrX:
+        takeTree c, n
+      else:
+        buildErr c, n.info, "expected pragma"
+        inc n
       c.dest.addParRi()
-      #skip n
   of MagicP:
     c.dest.add parLeToken(MagicP, n.info)
     inc n
@@ -3986,7 +3988,7 @@ proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBu
   ## build inner object type declaration from full ref/ptr object decl
   result = createTokenBuf(64)
 
-  # make anon object symbol from `sym` and set `sym` to it: 
+  # make anon object symbol from `sym` and set `sym` to it:
   var isGlobal = false
   let basename = extractBasename(pool.syms[sym], isGlobal)
   var objName = basename & ".Obj"
@@ -4125,7 +4127,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     var enumTypeDecl = tryLoadSym(delayed.s.name)
     assert enumTypeDecl.status == LacksNothing
     genEnumToStrProc(c, enumTypeDecl.decl)
-  
+
   if isRefPtrObj:
     if c.phase != SemcheckTopLevelSyms:
       var topLevelDest = createTokenBuf(64)
