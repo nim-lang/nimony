@@ -165,6 +165,7 @@ typedef NU8 NU;
 /* ------------ ignore typical warnings in Nim-generated files ------------- */
 #if defined(__GNUC__) || defined(__clang__)
 #  pragma GCC diagnostic ignored "-Wswitch-bool"
+#  pragma GCC diagnostic ignored "-Wformat"
 #endif
 
 
