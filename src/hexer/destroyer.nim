@@ -190,7 +190,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
-    if hasBuiltinPragma(r.pragmas, NodestroyP):
+    if hasPragma(r.pragmas, NodestroyP):
       copyTree c.dest, r.body
     else:
       var s2 = createEntryScope(r.body.info)

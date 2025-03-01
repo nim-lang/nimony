@@ -425,7 +425,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   if r.body.stmtKind == StmtsS and not isGeneric(r):
     c.typeCache.openScope()
     c.typeCache.registerParams(r.name.symId, r.params)
-    if parentNodestroy or hasBuiltinPragma(r.pragmas, NodestroyP):
+    if parentNodestroy or hasPragma(r.pragmas, NodestroyP):
       trOnlyEssentials c, r.body
     else:
       tr c, r.body, DontCare
