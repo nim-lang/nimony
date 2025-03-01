@@ -825,7 +825,7 @@ proc genStringLit(e: var EContext; s: string; info: PackedLineInfo) =
       let lenField = pool.syms.getOrIncl(StringIField)
       e.pending.add symToken(lenField, info)
       # length also contains the "isConst" flag:
-      e.pending.addIntLit(s.len * 2 + 1, info)
+      e.pending.addIntLit(s.len * 2, info)
       e.pending.addParRi() # "kv"
 
       e.pending.addParRi() # "oconstr"
@@ -845,7 +845,7 @@ proc genStringLit(e: var EContext; s: string; info: PackedLineInfo) =
     let lenField = pool.syms.getOrIncl(StringIField)
     e.dest.add symToken(lenField, info)
     # length also contains the "isConst" flag:
-    e.dest.addIntLit(s.len * 2 + 1, info)
+    e.dest.addIntLit(s.len * 2, info)
     e.dest.addParRi() # "kv"
 
     e.dest.addParRi() # "oconstr"
