@@ -261,12 +261,8 @@ proc isViewType*(n: Cursor): bool =
     assert res.status == LacksNothing
     let impl = asTypeDecl(res.decl)
     if impl.kind == TypeY:
-      var p = impl.pragmas
-      if p.kind == DotToken: return false
-      inc p
-      while p.kind != ParRi:
-        if p.pragmaKind == ViewP: return true
-        skip p
+      if hasPragma(impl.pragmas, ViewP):
+        return true
       # Might be an alias, so traverse this one here:
       if impl.body.kind == Symbol:
         n = impl.body

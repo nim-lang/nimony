@@ -262,7 +262,7 @@ proc hookName*(op: HookKind): string =
 const
   NoSymId* = SymId(0)
 
-proc hasBuiltinPragma*(n: Cursor; kind: PragmaKind): bool =
+proc hasPragma*(n: Cursor; kind: PragmaKind): bool =
   result = false
   var n = n
   if n.kind == DotToken:

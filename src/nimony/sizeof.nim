@@ -173,9 +173,9 @@ proc typeSectionMode(n: Cursor): PragmaKind =
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
       if local.kind == TypeY:
-        if hasBuiltinPragma(local.pragmas, BycopyP):
+        if hasPragma(local.pragmas, BycopyP):
           return BycopyP
-        elif hasBuiltinPragma(local.pragmas, ByrefP):
+        elif hasPragma(local.pragmas, ByrefP):
           return ByrefP
         n = local.body
   return NoPragma
@@ -186,6 +186,6 @@ proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
      TypeKindT, UntypedT, VarargsT}:
     result = false
   elif typeIsBig(typ, ptrSize):
-    result = not hasBuiltinPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
+    result = not hasPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
   else:
-    result = hasBuiltinPragma(pragmas, ByrefP) or typeSectionMode(typ) == ByrefP
+    result = hasPragma(pragmas, ByrefP) or typeSectionMode(typ) == ByrefP
