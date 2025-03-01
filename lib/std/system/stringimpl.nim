@@ -6,9 +6,9 @@ type
   StrData = ptr UncheckedArray[char]
 
 const
-  EmptyI = 1 # length==0 and not allocated
+  EmptyI = 0 # length==0 and not allocated
   LenShift = 1
-  IsStaticMask = 1
+  IsAllocatedBit = 1
 
 proc len*(s: string): int {.inline, ensures: (0 <= result).} =
   result = s.i shr LenShift
@@ -17,7 +17,7 @@ proc high*(s: string): int {.inline.} = len(s)-1
 
 proc cap(s: string): int {.inline.} = allocatedSize(s.a)
 
-template isAllocated(s: string): bool = (s.i and IsStaticMask) == 0
+template isAllocated(s: string): bool = (s.i and IsAllocatedBit) != 0
 
 proc capacity*(s: string): int =
   result = if isAllocated(s): s.cap else: 0
@@ -31,7 +31,7 @@ proc `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
 template safeCopyMem(dest: var string; src: string; len, allocated: int) =
   if dest.a != nil:
     copyMem dest.a, src.a, len
-    dest.i = len shl LenShift
+    dest.i = (len shl LenShift) or IsAllocatedBit
   else:
     oomHandler allocated
     dest.i = EmptyI
@@ -44,7 +44,7 @@ proc `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, no
     let cap = dest.cap
     if cap >= len:
       copyMem(dest.a, src.a, len)
-      dest.i = len shl LenShift
+      dest.i = (len shl LenShift) or IsAllocatedBit
     else:
       let newCap = max(len, cap + (cap shr 1))
       dealloc dest.a
@@ -75,7 +75,7 @@ proc borrowCStringUnsafe*(s: cstring; len: int): string =
   ## underlying storage. You have to ensure the `cstring` lives
   ## long enough for this to be safe! If in doubt,
   ## use `fromCString` instead.
-  string(a: cast[StrData](s), i: (len shl LenShift) or IsStaticMask)
+  string(a: cast[StrData](s), i: (len shl LenShift))
 
 proc ensureTerminatingZero*(s: var string) =
   let len = s.len
@@ -101,6 +101,7 @@ proc ensureTerminatingZero*(s: var string) =
       copyMem a, s.a, len
       a[len] = '\0'
       s.a = a
+      s.i = s.i or IsAllocatedBit
     else:
       oomHandler newCap
       # ensure zero termination anyway:
@@ -120,7 +121,7 @@ proc growImpl(s: var string; newLen: int) =
     let newCap = max(newLen, cap + (cap shr 1))
     s.a = cast[StrData](realloc(s.a, newCap))
     if s.a != nil:
-      s.i = newLen shl LenShift
+      s.i = (newLen shl LenShift) or IsAllocatedBit
     else:
       oomHandler newCap
       s.i = EmptyI
@@ -130,7 +131,7 @@ proc makeAllocated(s: var string; newLen: int) =
   let newCap = max(newLen, len + (len shr 1))
   s.a = cast[StrData](alloc(newCap))
   if s.a != nil:
-    s.i = newLen shl LenShift
+    s.i = (newLen shl LenShift) or IsAllocatedBit
   else:
     oomHandler newCap
     s.i = EmptyI
@@ -157,7 +158,7 @@ proc add*(s: var string; c: char) =
 proc setLen*(s: var string; newLen: int) =
   let len = s.len
   if newLen < len:
-    s.i = newLen shl LenShift or (s.i and IsStaticMask)
+    s.i = newLen shl LenShift or (s.i and IsAllocatedBit)
   elif newLen > len:
     if not isAllocated(s):
       makeAllocated s, newLen
@@ -166,9 +167,9 @@ proc setLen*(s: var string; newLen: int) =
 
 proc shrink*(s: var string; newLen: int) =
   if newLen < 0:
-    s.i = s.i and IsStaticMask
+    s.i = s.i and IsAllocatedBit
   elif newLen < s.len:
-    s.i = newLen shl LenShift or (s.i and IsStaticMask)
+    s.i = newLen shl LenShift or (s.i and IsAllocatedBit)
 
 proc `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
   s.a[i] = c
@@ -184,7 +185,7 @@ proc substr*(s: string; first, last: int): string =
   else:
     let newLen = l - f
     if isAllocated(s):
-      result = string(a: cast[StrData](alloc(newLen)), i: newLen shl LenShift or (s.i and IsStaticMask))
+      result = string(a: cast[StrData](alloc(newLen)), i: (newLen shl LenShift) or IsAllocatedBit)
       if result.a != nil:
         copyMem result.a, addr s.a[f], newLen
       else:
@@ -192,7 +193,7 @@ proc substr*(s: string; first, last: int): string =
         result.i = EmptyI
     else:
       # slices into data we don't own anyway can be done without copy:
-      result = string(a: cast[StrData](addr s.a[f]), i: newLen shl LenShift or (s.i and IsStaticMask))
+      result = string(a: cast[StrData](addr s.a[f]), i: newLen shl LenShift)
 
 proc substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
@@ -226,7 +227,7 @@ proc prepareMutation*(s: var string) =
     let a = cast[StrData](alloc(len))
     if a != nil:
       copyMem a, s.a, len
-      s.i = len shl LenShift
+      s.i = (len shl LenShift) or IsAllocatedBit
     else:
       oomHandler len
       s.i = EmptyI
@@ -235,7 +236,7 @@ proc prepareMutation*(s: var string) =
 proc newString*(len: int): string =
   let a = cast[StrData](alloc(len))
   if a != nil:
-    result = string(a: a, i: len shl LenShift)
+    result = string(a: a, i: (len shl LenShift) or IsAllocatedBit)
   else:
     oomHandler len
     result = string(a: nil, i: EmptyI)
