@@ -203,8 +203,14 @@ proc produceConfig*(infile, outfile: string) =
     b.addHeader()
     b.withTree "config":
       b.buildConfig conf
-    conf.outDir = AbsoluteDir getCurrentDir()
-    conf.outFile = RelativeFile(outfile)
+    if outfile.isAbsolute:
+      let p = outfile.splitPath
+      conf.outDir = AbsoluteDir(p.head)
+      conf.outFile = RelativeFile(p.tail)
+    else:
+      conf.outDir = AbsoluteDir getCurrentDir()
+      conf.outFile = RelativeFile(outfile)
+
     conf.setNote hintSuccessX
     genSuccessX(conf)
   finally:
