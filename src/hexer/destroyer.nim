@@ -300,7 +300,13 @@ proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
     dest: createTokenBuf(400))
   var n = n
-  tr(c, n)
+  assert n.stmtKind == StmtsS
+  c.dest.add n
+  inc n
+  while n.kind != ParRi:
+    tr(c, n)
+
   leaveScope c, c.currentScope
+  takeParRi(c.dest, n)
   genMissingHooks lifter[]
   result = ensureMove c.dest
