@@ -153,8 +153,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   c.dest.addParRi()
 
   let destructor = getDestructor(c.lifter[], r.typ, info)
-  if destructor != NoSymId and r.kind notin {CursorY, ResultY} and not c.currentScope.isTopLevel:
-    # XXX If we don't free global variables let's at least free temporaries!
+  if destructor != NoSymId and r.kind notin {CursorY, ResultY, GvarY, TvarY, GletY, TletY}:
     c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
 proc trScope(c: var Context; body: var Cursor) =
