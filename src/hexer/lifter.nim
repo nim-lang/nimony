@@ -200,6 +200,10 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   of ObjectT, DistinctT, TupleT, ArrayT, RefT:
     result = requestLifting(c, c.op, orig)
   else:
+    # XXX Something like:
+    #if orig.kind in {Symbol, SymbolDef}:
+    #  result = requestLifting(c, c.op, orig)
+    #else:
     result = NoSymId
 
 when not defined(nimony):

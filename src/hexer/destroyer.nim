@@ -153,8 +153,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   c.dest.addParRi()
 
   let destructor = getDestructor(c.lifter[], r.typ, info)
-  if destructor != NoSymId and r.kind notin {CursorY, ResultY} and not c.currentScope.isTopLevel:
-    # XXX If we don't free global variables let's at least free temporaries!
+  if destructor != NoSymId and r.kind notin {CursorY, ResultY, GvarY, TvarY, GletY, TletY}:
     c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
 proc trScope(c: var Context; body: var Cursor) =
@@ -301,7 +300,13 @@ proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
     dest: createTokenBuf(400))
   var n = n
-  tr(c, n)
+  assert n.stmtKind == StmtsS
+  c.dest.add n
+  inc n
+  while n.kind != ParRi:
+    tr(c, n)
+
   leaveScope c, c.currentScope
+  takeParRi(c.dest, n)
   genMissingHooks lifter[]
   result = ensureMove c.dest
