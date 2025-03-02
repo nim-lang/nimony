@@ -266,7 +266,7 @@ proc toBuildList(c: DepContext): seq[CFile] =
       let customArgs = i[2]
       result.add (path, obj, customArgs)
 
-proc generateFinalMakefile(c: DepContext; commandLineArgs, commandLineArgsNifc: string; passC, passL: string): string =
+proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   var s = makefileHeader
   let dest =
     case c.cmd
@@ -384,7 +384,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     " -f "
   exec makeCommand & quoteShell(makeFilename)
 
-  let makeFinalFilename = generateFinalMakefile(c, commandLineArgs, commandLineArgsNifc, passC, passL)
+  let makeFinalFilename = generateFinalMakefile(c, commandLineArgsNifc, passC, passL)
   exec makeCommand & quoteShell(makeFinalFilename)
   if cmd == DoRun:
     exec c.config.exeFile(c.rootNode.files[0])
