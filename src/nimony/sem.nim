@@ -2362,6 +2362,7 @@ proc semTupleType(c: var SemContext; n: var Cursor) =
 type
   EnumTypeState = object
     isBoolType: bool # `bool` is a magic enum and needs special handling
+    isExported: bool
     enumType: SymId
     thisValue: xint
     hasHole: bool
@@ -2378,7 +2379,8 @@ proc semEnumType(c: var SemContext; n: var Cursor; enumType: SymId; beforeExport
     takeTree c, n
   let magicToken = c.dest[beforeExportMarker]
   var state = EnumTypeState(enumType: enumType, thisValue: createXint(0'i64), hasHole: false,
-    isBoolType: magicToken.kind == ParLe and pool.tags[magicToken.tagId] == $BoolT)
+    isBoolType: magicToken.kind == ParLe and pool.tags[magicToken.tagId] == $BoolT,
+    isExported: magicToken.kind != DotToken)
   var signed = false
   var lastValue = state.thisValue
   while n.substructureKind == EfldU:
@@ -3082,7 +3084,15 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   takeToken c, n
   let delayed = handleSymDef(c, n, EfldY) # 0
   let beforeExportMarker = c.dest.len
-  wantExportMarker c, n # 1
+  if n.kind == DotToken:
+    if state.isExported:
+      # if enum type is exported, enum field is exported
+      c.dest.add strToken(pool.strings.getOrIncl("x"), n.info)
+    else:
+      c.dest.add n
+    inc n # 1
+  else:
+    wantExportMarker c, n # 1
   var crucial = CrucialPragma(sym: delayed.s.name)
   semPragmas c, n, crucial, EfldY # 2
   if state.isBoolType and crucial.magic.len == 0:
