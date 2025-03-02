@@ -3087,7 +3087,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   if n.kind == DotToken:
     if state.isExported:
       # if enum type is exported, enum field is exported
-      c.dest.add strToken(pool.strings.getOrIncl("x"), n.info)
+      c.dest.add identToken(pool.strings.getOrIncl("x"), n.info)
     else:
       c.dest.add n
     inc n # 1
