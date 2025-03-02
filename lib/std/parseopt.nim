@@ -8,7 +8,7 @@ when defined(nimony):
 
   proc paramStr*(i: int): string =
     if i < nifcArgc and i >= 0:
-      result = $nifcArgv[i]
+      result = borrowCStringUnsafe(nifcArgv[i])
     else:
       result = ""
 
