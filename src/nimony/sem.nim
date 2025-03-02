@@ -1870,6 +1870,18 @@ proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: Pac
 
 proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[SemFlag])
 
+proc findEnumField(decl: EnumDecl; name: StrId): SymId =
+  result = SymId(0)
+  var f = decl.firstField
+  while f.kind != ParRi:
+    let field = takeLocal(f, SkipFinalParRi)
+    let symId = field.name.symId
+    var isGlobal = false
+    let basename = extractBasename(pool.syms[symId], isGlobal)
+    let strId = pool.strings.getOrIncl(basename)
+    if name == strId:
+      return symId
+
 proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
                    info: PackedLineInfo; flags: set[SemFlag]): DotExprState =
   let exprStart = c.dest.len
@@ -1902,13 +1914,13 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
           let bindings = bindInvokeArgs(decl, invokeArgs)
           let field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
           if field.level >= 0:
+            result = MatchedDotField
             if doDeref:
               c.dest[exprStart] = parLeToken(DdotX, info)
             c.dest.add symToken(field.sym, info)
             c.dest.add intToken(pool.integers.getOrIncl(field.level), info)
             it.typ = field.typ # will be fit later with commonType
             it.kind = FldY
-            result = MatchedDotField
           else:
             c.dest.add identToken(fieldName, info)
         else:
@@ -1944,6 +1956,26 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       if result != MatchedDotField:
         c.dest.add identToken(fieldName, info)
         c.dest.add intToken(pool.integers.getOrIncl(0), info)
+    elif t.typeKind == TypedescT:
+      var tval = t
+      inc tval
+      if tval.kind == Symbol:
+        let decl = getTypeSection(tval.symId)
+        tval = decl.body
+      if tval.typeKind in {EnumT, OnumT}:
+        # check for qualified enum field i.e. Foo.Bar
+        let field = findEnumField(asEnumDecl(tval), fieldName)
+        if field != SymId(0):
+          result = MatchedDotSym
+          c.dest.shrink exprStart
+          c.dest.add symToken(field, info)
+          let s = Sym(kind: EfldY, name: field, pos: ImportedPos) # placeholder pos
+          semExprSym c, it, s, exprStart, flags
+          return
+        else:
+          c.dest.add identToken(fieldName, info)
+      else:
+        c.dest.add identToken(fieldName, info)
     else:
       c.dest.add identToken(fieldName, info)
   c.dest.addParRi()
