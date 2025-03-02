@@ -200,10 +200,6 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   of ObjectT, DistinctT, TupleT, ArrayT, RefT:
     result = requestLifting(c, c.op, orig)
   else:
-    # XXX Something like:
-    #if orig.kind in {Symbol, SymbolDef}:
-    #  result = requestLifting(c, c.op, orig)
-    #else:
     result = NoSymId
 
 when not defined(nimony):
@@ -440,22 +436,28 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
   # `unravel`'s job is to "expand" the object fields in contrast to `lift`.
   if isTrivial(c, typ):
     genTrivialOp c, paramA, paramB
-    return
+  else:
+    let fn = lift(c, typ)
+    maybeCallHook c, fn, paramA, paramB
 
+proc unravelDispatch(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
+  #if isTrivial(c, typ):
+  #  genTrivialOp c, paramA, paramB
+  #  return
   let typ = toTypeImpl typ
-
   case typ.typeKind
   of ObjectT:
     unravelObj c, typ, paramA, paramB
   of DistinctT:
-    unravel(c, typ.firstSon, paramA, paramB)
+    unravelDispatch(c, typ.firstSon, paramA, paramB)
   of TupleT:
     unravelTuple c, typ, paramA, paramB
   of ArrayT:
     unravelArray c, typ, paramA, paramB
   else:
-    let fn = lift(c, typ)
-    maybeCallHook c, fn, paramA, paramB
+    discard "nothing to do"
+    #let fn = lift(c, typ)
+    #maybeCallHook c, fn, paramA, paramB
 
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
   copyIntoKind(c.dest, ParamY, c.info):
@@ -547,10 +549,13 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     let a = toTypeImpl typ
     copyIntoKind(c.dest, StmtsS, c.info):
       maybeAddResultDecl c, paramA, typ
+      let beforeUnravel = c.dest.len
       if a.typeKind == RefT:
         unravelRef(c, typ, paramTreeA, paramTreeB)
       else:
-        unravel(c, typ, paramTreeA, paramTreeB)
+        unravelDispatch(c, typ, paramTreeA, paramTreeB)
+      if c.dest.len == beforeUnravel:
+        assert false, "empty hook created"
       maybeAddReturn c, paramA
 
   publishProc(sym, c.dest, procStart)

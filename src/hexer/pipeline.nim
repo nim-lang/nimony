@@ -63,6 +63,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
 
   if ctx[].dest.len > 0:
     var hookCursor = beginRead(ctx[].dest)
+    #echo "HOOKS: ", toString(hookCursor)
     publishHooks hookCursor
     endRead(ctx[].dest)
 
