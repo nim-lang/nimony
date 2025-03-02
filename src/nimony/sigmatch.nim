@@ -485,7 +485,11 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
       if impl.kind == ParLe and impl.tagId == ErrT:
         m.error InvalidMatch, f, a
       else:
-        singleArgImpl(m, impl, arg)
+        if impl.typeKind in {EnumT, HoleyEnumT}:
+          #echo "ENUM: ", f.toString(false), " ", arg.n.toString(false)
+          m.error InvalidMatch, f, a
+        else:
+          singleArgImpl(m, impl, arg)
 
 proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
   if (f.kind == IntLit or f.kind == InlineInt) and
