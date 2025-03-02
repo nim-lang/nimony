@@ -138,9 +138,12 @@ proc growImpl(s: var string; newLen: int) =
 proc makeAllocated(s: var string; newLen: int) =
   let len = s.len
   let newCap = max(newLen, len + (len shr 1))
+  let existing = s.a
   s.a = cast[StrData](alloc(newCap))
   if s.a != nil:
     s.i = (newLen shl LenShift) or IsAllocatedBit
+    if len > 0:
+      copyMem addr(s.a[0]), existing, len
   else:
     oomHandler newCap
     s.i = EmptyI
@@ -152,7 +155,7 @@ proc add*(s: var string; part: string) =
     makeAllocated s, newLen
   else:
     growImpl s, newLen
-  if s.a != nil:
+  if s.a != nil and part.len > 0:
     copyMem addr(s.a[len]), part.a, part.len
 
 proc add*(s: var string; c: char) =
