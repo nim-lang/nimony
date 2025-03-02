@@ -57,7 +57,7 @@ proc handleCmdLine() =
   var useEnv = true
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
-  config.nifcachePath = toAbsolutePath("nimcache")
+  config.nifcachePath = "nimcache"
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
@@ -97,7 +97,7 @@ proc handleCmdLine() =
         of "16": config.bits = 16
         else: quit "invalid value for --bits"
       of "nimcache":
-        config.nifcachePath = toAbsolutePath(val)
+        config.nifcachePath = val
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key

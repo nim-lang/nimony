@@ -68,7 +68,7 @@ proc handleCmdLine() =
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
-  config.nifcachePath = toAbsolutePath("nimcache")
+  config.nifcachePath = "nimcache"
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
@@ -131,7 +131,7 @@ proc handleCmdLine() =
         passL = val
         forwardArg = false
       of "nimcache":
-        config.nifcachePath = toAbsolutePath(val)
+        config.nifcachePath = val
         forwardArgNifc = true
       else: writeHelp()
       if forwardArg:
