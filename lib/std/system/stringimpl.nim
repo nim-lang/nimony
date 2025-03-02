@@ -77,6 +77,15 @@ proc borrowCStringUnsafe*(s: cstring; len: int): string =
   ## use `fromCString` instead.
   string(a: cast[StrData](s), i: (len shl LenShift))
 
+func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
+
+proc borrowCStringUnsafe*(s: cstring): string =
+  ## Creates a Nim string from a `cstring` by borrowing the
+  ## underlying storage. You have to ensure the `cstring` lives
+  ## long enough for this to be safe! If in doubt,
+  ## use `fromCString` instead.
+  string(a: cast[StrData](s), i: (int(strlen(s)) shl LenShift))
+
 proc ensureTerminatingZero*(s: var string) =
   let len = s.len
   if isAllocated(s):
