@@ -5029,17 +5029,21 @@ proc semEnumToStr(c: var SemContext; it: var Item) =
   semExpr c, x
   swap c.dest, exprTokenBuf
   it.n = x.n
-  let typeSymId = x.typ.symId
-  let typeName = pool.syms[typeSymId]
-  let dollorName = "dollar`." & typeName
-  let dollorSymId = pool.syms.getOrIncl(dollorName)
-  shrink c.dest, beforeExpr
-  c.dest.add parLeToken(CallX, info)
-  c.dest.add symToken(dollorSymId, info)
+  if containsGenericParams(x.typ):
+    discard
+  else:
+    let typeSymId = x.typ.symId
+    let typeName = pool.syms[typeSymId]
+    let dollorName = "dollar`." & typeName
+    let dollorSymId = pool.syms.getOrIncl(dollorName)
+    shrink c.dest, beforeExpr
+    c.dest.add parLeToken(CallX, info)
+    c.dest.add symToken(dollorSymId, info)
   c.dest.add exprTokenBuf
-  c.dest.addParRi()
-
+  takeParRi c, it.n
+  let expected = it.typ
   it.typ = c.types.stringType
+  commonType c, it, beforeExpr, expected
 
 proc buildLowValue(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
   case typ.kind
