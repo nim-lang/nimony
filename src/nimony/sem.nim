@@ -3112,17 +3112,19 @@ proc addXint(c: var SemContext; x: xint; info: PackedLineInfo) =
 proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): xint =
   let beforeExpr = c.dest.len
   var x = Item(n: n, typ: expected)
-  semExpr c, x
+  semConstExpr c, x
   n = x.n
-  result = evalOrdinal(c, cursorAt(c.dest, beforeExpr))
+  let val = cursorAt(c.dest, beforeExpr)
+  result = getConstOrdinalValue(val)
   endRead c.dest
 
 proc evalConstStrExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): StrId =
   let beforeExpr = c.dest.len
   var x = Item(n: n, typ: expected)
-  semExpr c, x
+  semConstExpr c, x
   n = x.n
-  result = evalString(c, cursorAt(c.dest, beforeExpr))
+  let val = cursorAt(c.dest, beforeExpr)
+  result = getConstStringValue(val)
   endRead c.dest
 
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =

@@ -1,3 +1,4 @@
 tests/nimony/errmsgs/tcaseoverlap.nim(6, 11) Error: value already handled
 tests/nimony/errmsgs/tcaseoverlap.nim(12, 12) Error: overlapping values
 tests/nimony/errmsgs/tcaseoverlap.nim(13, 4) Error: value already handled
+tests/nimony/errmsgs/tcaseoverlap.nim(21, 25) Error: value already handled

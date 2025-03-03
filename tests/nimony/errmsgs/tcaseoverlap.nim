@@ -12,3 +12,10 @@ of 123, 456: discard
 of 789, 122..124: discard
 of 456: discard
 else: discard
+
+let c = cstring"abc"
+
+case c
+of cstring"abc", cstring"def": discard
+of cstring"ghi", cstring"jkl": discard
+of cstring"mno", cstring"abc": discard

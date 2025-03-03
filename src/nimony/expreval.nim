@@ -153,6 +153,23 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       inc n
       result = n
       skipToEnd n
+    of ConvX:
+      let nOrig = n
+      inc n
+      let typ = n
+      skip n
+      let val = propagateError eval(c, n)
+      skipParRi n
+      if typ.typeKind == CstringT and val.kind == StringLit:
+        result = val
+      else:
+        # other conversions not implemented
+        error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
+    of DconvX:
+      inc n # tag
+      skip n # type
+      result = eval(c, n)
+      skipParRi n
     of IsMainModuleX:
       inc n
       skipParRi n
@@ -177,10 +194,7 @@ proc evalExpr*(c: var SemContext, n: var Cursor): TokenBuf =
   result = createTokenBuf(val.span)
   result.addSubtree val
 
-proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
-  var ec = initEvalContext(c)
-  var n0 = n
-  let val = eval(ec, n0)
+proc getConstOrdinalValue*(val: Cursor): xint =
   case val.kind
   of CharLit:
     result = createXint val.uoperand
@@ -199,17 +213,26 @@ proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
   else:
     result = createNaN()
 
+proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
+  var ec = initEvalContext(c)
+  var n0 = n
+  let val = eval(ec, n0)
+  result = getConstOrdinalValue(val)
+
 proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
   evalOrdinal(addr c, n)
+
+proc getConstStringValue*(val: Cursor): StrId =
+  if val.kind == StringLit:
+    result = val.litId
+  else:
+    result = StrId(0)
 
 proc evalString(c: ptr SemContext, n: Cursor): StrId =
   var ec = initEvalContext(c)
   var n0 = n
   let val = eval(ec, n0)
-  if val.kind == StringLit:
-    result = val.litId
-  else:
-    result = StrId(0)
+  result = getConstStringValue(val)
 
 proc evalString*(c: var SemContext, n: Cursor): StrId =
   evalString(addr c, n)
