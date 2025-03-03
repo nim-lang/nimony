@@ -409,8 +409,8 @@ template `>`*(x, y: untyped): untyped =
 
 template default*(x: typedesc[bool]): bool = false
 template default*(x: typedesc[char]): char = '\0'
-template default*(x: typedesc[int]): int = 0
-template default*(x: typedesc[uint]): uint = 0'u
+#template default*(x: typedesc[int]): int = 0
+#template default*(x: typedesc[uint]): uint = 0'u
 template default*(x: typedesc[int8]): int8 = 0'i8
 template default*(x: typedesc[uint8]): uint8 = 0'u8
 template default*(x: typedesc[int16]): int16 = 0'i16
