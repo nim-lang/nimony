@@ -2040,7 +2040,13 @@ proc semBlock(c: var SemContext; it: var Item) =
       c.addSym delayed
       publish c, delayed.s.name, declStart
 
-    semStmt c, it.n, true
+    if it.n.stmtKind == StmtsS:
+      takeToken c, it.n
+      while it.n.kind != ParRi:
+        semStmt c, it.n, true
+      takeParRi c, it.n
+    else:
+      semStmt c, it.n, true
   dec c.routine.inBlock
 
   takeParRi c, it.n
