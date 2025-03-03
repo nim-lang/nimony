@@ -202,6 +202,18 @@ proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
 proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
   evalOrdinal(addr c, n)
 
+proc evalString(c: ptr SemContext, n: Cursor): StrId =
+  var ec = initEvalContext(c)
+  var n0 = n
+  let val = eval(ec, n0)
+  if val.kind == StringLit:
+    result = val.litId
+  else:
+    result = StrId(0)
+
+proc evalString*(c: var SemContext, n: Cursor): StrId =
+  evalString(addr c, n)
+
 type
   Bounds* = object
     lo*, hi*: xint

@@ -3117,6 +3117,14 @@ proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): x
   result = evalOrdinal(c, cursorAt(c.dest, beforeExpr))
   endRead c.dest
 
+proc evalConstStrExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): StrId =
+  let beforeExpr = c.dest.len
+  var x = Item(n: n, typ: expected)
+  semExpr c, x
+  n = x.n
+  result = evalString(c, cursorAt(c.dest, beforeExpr))
+  endRead c.dest
+
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   let declStart = c.dest.len
   takeToken c, n
@@ -3822,12 +3830,19 @@ proc semWhen(c: var SemContext; it: var Item) =
     producesVoid c, info, it.typ
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
-                    seen: var seq[(xint, xint)]) =
+                    seen: var seq[(xint, xint)]; isString: bool) =
   if it.n == "ranges":
     takeToken c, it.n
     while it.n.kind != ParRi:
       let info = it.n.info
-      if isRangeExpr(it.n):
+      if isString:
+        let s = evalConstStrExpr(c, it.n, selectorType) # will error if range is given
+        if s != StrId(0): # otherwise error
+          # use literal id as value:
+          let a = createXint(int64(s))
+          if seen.doesOverlapOrIncl(a, a):
+            buildErr c, info, "value already handled"
+      elif isRangeExpr(it.n):
         inc it.n # call tag
         skip it.n # `..`
         c.dest.buildTree RangeU, it.n.info:
@@ -3858,11 +3873,12 @@ proc semCase(c: var SemContext; it: var Item) =
   var selector = Item(n: it.n, typ: c.types.autoType)
   semExpr c, selector
   it.n = selector.n
+  let isString = isSomeStringType(selector.typ)
   var seen: seq[(xint, xint)] = @[]
   if it.n.substructureKind == OfU:
     while it.n.substructureKind == OfU:
       takeToken c, it.n
-      semCaseOfValue c, it, selector.typ, seen
+      semCaseOfValue c, it, selector.typ, seen, isString
       withNewScope c:
         semStmtBranch c, it, true
       takeParRi c, it.n
