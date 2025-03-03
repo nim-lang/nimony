@@ -1,0 +1,7 @@
+tests/nimony/errmsgs/tcaseerrors.nim(5, 18) Error: cannot evaluate symbol at compile time: a.0.tcagl87gf1
+tests/nimony/errmsgs/tcaseerrors.nim(6, 11) Error: value already handled
+tests/nimony/errmsgs/tcaseerrors.nim(12, 12) Error: overlapping values
+tests/nimony/errmsgs/tcaseerrors.nim(12, 19) Error: cannot evaluate symbol at compile time: b.0.tcagl87gf1
+tests/nimony/errmsgs/tcaseerrors.nim(13, 4) Error: value already handled
+tests/nimony/errmsgs/tcaseerrors.nim(20, 32) Error: cannot evaluate symbol at compile time: c.0.tcagl87gf1
+tests/nimony/errmsgs/tcaseerrors.nim(21, 25) Error: value already handled
