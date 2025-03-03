@@ -283,21 +283,22 @@ type
 
 proc takeProcType*(n: var Cursor): ProcType =
   if n.typeKind == ParamsT:
-    discard
+    result = ProcType(params: n)
+    skip n
   else:
     assert n.stmtKind == ProcS or n.typeKind == ProctypeT
     inc n # into (proctype ...)
     skip n # skip the name
-  assert n.typeKind == ParamsT or n.kind == DotToken
-  result = ProcType(params: n)
-  skip n
-  result.returnType = n
-  skip n
-  result.pragmas = n
-  skip n
-  if n.kind == DotToken:
-    inc n
-  skipParRi n
+    assert n.typeKind == ParamsT or n.kind == DotToken
+    result = ProcType(params: n)
+    skip n
+    result.returnType = n
+    skip n
+    result.pragmas = n
+    skip n
+    if n.kind == DotToken:
+      inc n
+    skipParRi n
 
 type
   ProcDecl* = object
