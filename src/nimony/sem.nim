@@ -690,14 +690,14 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
     c.dest.shrink start
     c.dest.add valueBuf
 
-proc semConstExpr(c: var SemContext; it: var Item) =
+proc semConstExpr(c: var SemContext; it: var Item): TokenBuf =
   let start = c.dest.len
   semExpr c, it
+  # XXX adds semchecked expression to c.dest since evaluated value is untyped,
+  # maybe should construct typed AST from evaluated value 
   var e = cursorAt(c.dest, start)
-  var valueBuf = evalExpr(c, e)
+  result = evalExpr(c, e)
   endRead(c.dest)
-  c.dest.shrink start
-  c.dest.add valueBuf
 
 proc semStmtsExprImpl(c: var SemContext; it: var Item) =
   while it.n.kind != ParRi:
@@ -3057,7 +3057,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       var it = Item(n: n, typ: c.types.autoType)
       if false and kind == ConstY:
         withNewScope c:
-          semConstExpr c, it # 4
+          discard semConstExpr(c, it) # 4
       else:
         semLocalValue c, it, crucial # 4
       n = it.n
@@ -3071,7 +3071,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         var it = Item(n: n, typ: typ)
         if false and kind == ConstY:
           withNewScope c:
-            semConstExpr c, it # 4
+            discard semConstExpr(c, it) # 4
         else:
           semLocalValue c, it, crucial # 4
         n = it.n
@@ -3110,22 +3110,32 @@ proc addXint(c: var SemContext; x: xint; info: PackedLineInfo) =
       c.buildErr info, "enum value not a constant expression"
 
 proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): xint =
+  let info = n.info
   let beforeExpr = c.dest.len
   var x = Item(n: n, typ: expected)
-  semConstExpr c, x
+  var valueBuf = semConstExpr(c, x)
   n = x.n
-  let val = cursorAt(c.dest, beforeExpr)
-  result = getConstOrdinalValue(val)
-  endRead c.dest
+  let value = beginRead(valueBuf)
+  result = getConstOrdinalValue(value)
+  if result.isNaN:
+    if value.kind == ParLe and value.tagId == ErrT:
+      c.dest.add valueBuf
+    else:
+      buildErr c, info, "expected constant integer value but got: " & asNimCode(value)
 
 proc evalConstStrExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): StrId =
+  let info = n.info
   let beforeExpr = c.dest.len
   var x = Item(n: n, typ: expected)
-  semConstExpr c, x
+  var valueBuf = semConstExpr(c, x)
   n = x.n
-  let val = cursorAt(c.dest, beforeExpr)
-  result = getConstStringValue(val)
-  endRead c.dest
+  let value = beginRead(valueBuf)
+  result = getConstStringValue(value)
+  if result == StrId(0):
+    if value.kind == ParLe and value.tagId == ErrT:
+      c.dest.add valueBuf
+    else:
+      buildErr c, info, "expected constant string value but got: " & asNimCode(value)
 
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   let declStart = c.dest.len
