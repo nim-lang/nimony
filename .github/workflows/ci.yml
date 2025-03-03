@@ -51,7 +51,7 @@ jobs:
           path: nif
           submodules: false
 
-      - name: Install Linux dependency (Linx)
+      - name: Install Linux dependency (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
