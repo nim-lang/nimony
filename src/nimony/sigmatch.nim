@@ -302,6 +302,14 @@ proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
   else:
     result = -1
 
+proc cmpExactTypeBits(f, a: Cursor): int =
+  # compares type bits without normalizing
+  if (f.kind == IntLit or f.kind == InlineInt) and
+     (a.kind == IntLit or a.kind == InlineInt):
+    result = typebits(f.load) - typebits(a.load)
+  else:
+    result = -1
+
 proc expectParRi(m: var Match; f: var Cursor) =
   if f.kind == ParRi:
     inc f
@@ -310,7 +318,10 @@ proc expectParRi(m: var Match; f: var Cursor) =
 
 proc procTypeMatch(m: var Match; f, a: var Cursor)
 
-proc linearMatch(m: var Match; f, a: var Cursor) =
+type LinearMatchFlag = enum
+  ExactBits ## do not normalize bits
+
+proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}) =
   let fOrig = f
   let aOrig = a
   var nested = 0
@@ -321,7 +332,7 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
       if m.inferred.contains(fs):
         # rematch?
         var prev = m.inferred[fs]
-        linearMatch(m, prev, a) # skips a
+        linearMatch(m, prev, a, flags) # skips a
         inc f
         if m.err: break # might not have fully skipped on error
       elif matchesConstraint(m, fs, a):
@@ -358,9 +369,14 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
             break
           inc f
           inc a
-          if cmpTypeBits(m.context, f, a) != 0:
-            m.error(InvalidMatch, fOrig, aOrig)
-            break
+          if ExactBits in flags:
+            if cmpExactTypeBits(f, a) != 0:
+              m.error(InvalidMatch, fOrig, aOrig)
+              break
+          else:
+            if cmpTypeBits(m.context, f, a) != 0:
+              m.error(InvalidMatch, fOrig, aOrig)
+              break
           skip f
           skip a
           expectParRi m, f
@@ -385,7 +401,7 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
       # This means a Symbol can match an InvokT.
       var t = getTypeSection(a.symId)
       if t.kind == TypeY and t.typevars.typeKind == InvokeT:
-        linearMatch m, f, t.typevars # skips f
+        linearMatch m, f, t.typevars, flags # skips f
         inc a
         if m.err: break # might not have fully skipped on error
       else:
@@ -711,7 +727,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of TypedescT:
       # do not skip modifier
       var a = arg.typ
-      linearMatch m, f, a
+      linearMatch m, f, a, {ExactBits}
     of VarargsT:
       discard "do not even advance f here"
       if m.firstVarargPosition < 0:
