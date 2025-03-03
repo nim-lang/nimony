@@ -179,7 +179,7 @@ proc compareValgrindOutput(s1: string, s2: string): bool =
   for i in 0 .. s1.len - 1:
     let n1 = rfind(s1[i], "== ")
     let n2 = rfind(s2[i], "== ")
-    if s1[i][n1+3..^1] != s2[i][n2+3..^1]:
+    if n2 == -1 or s1[i][n1+3..^1] != s2[i][n2+3..^1]:
       return false
   return true
 
@@ -196,6 +196,8 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; exe: strin
     if not success:
       if overwrite:
         writeFile(valgrind, testProgramOutput)
+
+      failure c, file, valgrindSpec, testProgramOutput
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   #echo "TESTING ", file
