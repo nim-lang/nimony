@@ -348,7 +348,7 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
           if a.typeKind notin {ProctypeT, ParamsT}:
             m.error(InvalidMatch, fOrig, aOrig)
             break
-          var a2 = a
+          var a2 = a # since procTypeMatch does not skip it properly
           procTypeMatch m, f, a2
           skip a # XXX consider when a is (params)
           if m.err: break # might not have fully skipped on error
