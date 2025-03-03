@@ -643,11 +643,31 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
   else:
     error e, "(pragmas) or '.' expected, but got: ", c
 
+proc traverseProcBody(e: var EContext; c: var Cursor) =
+  if c.stmtKind == StmtsS:
+    e.dest.add c
+    inc c
+    var prevStmt = NoStmt
+    while c.kind != ParRi:
+      prevStmt = c.stmtKind
+      traverseStmt e, c, TraverseAll
+    if prevStmt == RetS or e.resultSym == SymId(0):
+      discard "ok, do not add another return"
+    else:
+      e.dest.add parLeToken(RetS, c.info)
+      e.dest.add symToken(e.resultSym, c.info)
+      e.dest.addParRi()
+    takeParRi e, c
+  else:
+    traverseStmt e, c, TraverseAll
+
 proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   e.openMangleScope()
   var dst = createTokenBuf(50)
   swap e.dest, dst
   #let toPatch = e.dest.len
+  let oldResultSym = e.resultSym
+  e.resultSym = SymId(0)
 
   let vinfo = c.info
   e.add "proc", vinfo
@@ -721,7 +741,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
   if isGeneric:
     skip c
   elif mode != TraverseSig or InlineP in prag.flags:
-    traverseStmt e, c, TraverseAll
+    traverseProcBody e, c
   else:
     e.dest.addDotToken()
     skip c
@@ -739,6 +759,7 @@ proc traverseProc(e: var EContext; c: var Cursor; mode: TraverseMode) =
     e.headers.incl prag.header
   discard setOwner(e, oldOwner)
   e.closeMangleScope()
+  e.resultSym = oldResultSym
 
 proc traverseTypeDecl(e: var EContext; c: var Cursor) =
   var dst = createTokenBuf(50)
@@ -1128,13 +1149,15 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
     inc c
 
 proc traverseLocal(e: var EContext; c: var Cursor; tag: SymKind; mode: TraverseMode) =
-  var symKind = tag
+  var symKind = if tag == ResultY: VarY else: tag
   var localDecl = c
   let toPatch = e.dest.len
   let vinfo = c.info
-  e.dest.addParLe tag, vinfo
+  e.dest.addParLe symKind, vinfo
   inc c
   let (s, sinfo) = getSymDef(e, c)
+  if tag == ResultY:
+    e.resultSym = s
   skipExportMarker e, c
   let pinfo = c.info
   let prag = parsePragmas(e, c)
@@ -1322,8 +1345,10 @@ proc traverseStmt(e: var EContext; c: var Cursor; mode = TraverseAll) =
         e.loop c:
           traverseStmt e, c, mode
       e.closeMangleScope()
-    of VarS, LetS, CursorS, ResultS:
+    of VarS, LetS, CursorS:
       traverseLocal e, c, VarY, mode
+    of ResultS:
+      traverseLocal e, c, ResultY, mode
     of GvarS, GletS:
       traverseLocal e, c, GvarY, mode
     of TvarS, TletS:
