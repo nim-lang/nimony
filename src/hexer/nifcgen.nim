@@ -1275,7 +1275,7 @@ include stringcases
 proc traverseStringCase(e: var EContext; c: var Cursor): bool =
   var n = c
   inc n
-  let selectorType = getType(e.typeCache, c)
+  let selectorType = getType(e.typeCache, n)
   if isSomeStringType(selectorType):
     transformStringCase(e, c)
     result = true

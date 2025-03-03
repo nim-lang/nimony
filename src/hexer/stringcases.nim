@@ -57,6 +57,7 @@ proc transformStringCase*(e: var EContext; c: var Cursor) =
       let labl = "`sc" & $getTmpId(e)
       inc n
       assert n.substructureKind == RangesU
+      inc n
       while n.kind != ParRi:
         assert n.kind == StringLit
         pairs.add (pool.strings[n.litId], labl)
