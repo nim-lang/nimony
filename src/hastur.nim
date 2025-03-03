@@ -170,6 +170,33 @@ proc removeMakeErrors(output: string): string =
       result = result[0 .. lastLine].strip
     else: break
 
+proc compareValgrindOutput(s1: string, s2: string): bool =
+  # ==90429==
+  let s1 = s1.split('\n')
+  let s2 = s2.split('\n')
+  if s1.len != s2.len:
+    return false
+  for i in 0 .. s1.len - 1:
+    let n1 = rfind(s1[i], "== ")
+    let n2 = rfind(s2[i], "== ")
+    if s1[i][n1+3..^1] != s2[i][n2+3..^1]:
+      return false
+  return true
+
+proc testValgrind(c: var TestCounters; file: string; overwrite: bool; exe: string) =
+  let valgrind = file.changeFileExt(".valgrind")
+  if valgrind.fileExists():
+    let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(
+          "valgrind --leak-check=full --error-exitcode=1 " & exe)
+    if testProgramExitCode != 0:
+      failure c, file, "valgrind program exitcode 0", "exitcode " & $testProgramExitCode
+
+    let valgrindSpec = readFile(valgrind).strip
+    let success = compareValgrindOutput(valgrindSpec, testProgramOutput.strip)
+    if not success:
+      if overwrite:
+        writeFile(valgrind, testProgramOutput)
+
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   #echo "TESTING ", file
   inc c.total
@@ -218,6 +245,9 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
           if overwrite:
             writeFile(output, testProgramOutput)
           failure c, file, outputSpec, testProgramOutput
+
+      when defined(linux):
+        testValgrind c, file, overwrite, quoteShell exe
 
     let ast = file.changeFileExt(".nif")
     if ast.fileExists():
