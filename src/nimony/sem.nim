@@ -696,6 +696,8 @@ proc semConstExpr(c: var SemContext; it: var Item) =
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
   endRead(c.dest)
+  # XXX evaluated value is untyped so adding it to c.dest is wrong,
+  # maybe should construct typed AST from evaluated value 
   c.dest.shrink start
   c.dest.add valueBuf
 
@@ -3056,6 +3058,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       inc n # 3
       var it = Item(n: n, typ: c.types.autoType)
       if false and kind == ConstY:
+        # XXX output from expreval is not typed so cannot be used yet
         withNewScope c:
           semConstExpr c, it # 4
       else:
@@ -3070,6 +3073,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       else:
         var it = Item(n: n, typ: typ)
         if false and kind == ConstY:
+          # XXX output from expreval is not typed so cannot be used yet
           withNewScope c:
             semConstExpr c, it # 4
         else:
@@ -3109,13 +3113,36 @@ proc addXint(c: var SemContext; x: xint; info: PackedLineInfo) =
     else:
       c.buildErr info, "enum value not a constant expression"
 
-proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): xint =
+proc evalConstExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): TokenBuf =
   let beforeExpr = c.dest.len
   var x = Item(n: n, typ: expected)
   semExpr c, x
   n = x.n
-  result = evalOrdinal(c, cursorAt(c.dest, beforeExpr))
-  endRead c.dest
+  var e = cursorAt(c.dest, beforeExpr)
+  result = evalExpr(c, e)
+  endRead(c.dest)
+
+proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): xint =
+  let info = n.info
+  var valueBuf = evalConstExpr(c, n, expected)
+  let value = beginRead(valueBuf)
+  result = getConstOrdinalValue(value)
+  if result.isNaN:
+    if value.kind == ParLe and value.tagId == ErrT:
+      c.dest.add valueBuf
+    else:
+      buildErr c, info, "expected constant integer value but got: " & asNimCode(value)
+
+proc evalConstStrExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): StrId =
+  let info = n.info
+  var valueBuf = evalConstExpr(c, n, expected)
+  let value = beginRead(valueBuf)
+  result = getConstStringValue(value)
+  if result == StrId(0):
+    if value.kind == ParLe and value.tagId == ErrT:
+      c.dest.add valueBuf
+    else:
+      buildErr c, info, "expected constant string value but got: " & asNimCode(value)
 
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   let declStart = c.dest.len
@@ -3852,17 +3879,38 @@ proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
     buildErr c, it.n.info, "`ranges` within `of` expected"
     skip it.n
 
+proc semCaseOfValueString(c: var SemContext; it: var Item; selectorType: TypeCursor;
+                          seen: var HashSet[StrId]) =
+  if it.n == "ranges":
+    takeToken c, it.n
+    while it.n.kind != ParRi:
+      let info = it.n.info
+      let s = evalConstStrExpr(c, it.n, selectorType) # will error if range is given
+      if s != StrId(0): # otherwise error
+        # use literal id as value:
+        if seen.containsOrIncl(s):
+          buildErr c, info, "value already handled"
+    takeParRi c, it.n
+  else:
+    buildErr c, it.n.info, "`ranges` within `of` expected"
+    skip it.n
+
 proc semCase(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
   var selector = Item(n: it.n, typ: c.types.autoType)
   semExpr c, selector
   it.n = selector.n
+  let isString = isSomeStringType(selector.typ)
   var seen: seq[(xint, xint)] = @[]
+  var seenStr = initHashSet[StrId]()
   if it.n.substructureKind == OfU:
     while it.n.substructureKind == OfU:
       takeToken c, it.n
-      semCaseOfValue c, it, selector.typ, seen
+      if isString:
+        semCaseOfValueString c, it, selector.typ, seenStr
+      else:
+        semCaseOfValue c, it, selector.typ, seen
       withNewScope c:
         semStmtBranch c, it, true
       takeParRi c, it.n
