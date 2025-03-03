@@ -56,10 +56,15 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   assert n.exprKind notin {AddrX, HaddrX}
+  dest.add parLeToken(HconvX, info)
+  let argType = getType(c.typeCache, n)
+  var ptrTypeBuf = createTokenBuf(8)
+  copyIntoKind ptrTypeBuf, PtrT, argType.info:
+    ptrTypeBuf.addSubtree argType
+  dest.add ptrTypeBuf
   if constructsValue(n):
     # We cannot take the address of a literal so we have to copy it to a
     # temporary first:
-    let argType = getType(c.typeCache, n)
     c.needsXelim = true
     copyIntoKind dest, ExprX, info:
       copyIntoKind dest, StmtsS, info:
@@ -76,6 +81,7 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     copyIntoKind dest, HaddrX, info:
       tr c, dest, n
+  dest.addParRi()
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add n
