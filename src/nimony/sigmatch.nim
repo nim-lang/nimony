@@ -334,7 +334,6 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
         var prev = m.inferred[fs]
         linearMatch(m, prev, a, flags) # skips a
         inc f
-        if m.err: break # might not have fully skipped on error
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
@@ -362,7 +361,6 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
           var a2 = a # since procTypeMatch does not skip it properly
           procTypeMatch m, f, a2
           skip a # XXX consider when a is (params)
-          if m.err: break # might not have fully skipped on error
         of IntT, UIntT, FloatT, CharT:
           if a.typeKind != f.typeKind:
             m.error(InvalidMatch, fOrig, aOrig)
@@ -403,7 +401,6 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
       if t.kind == TypeY and t.typevars.typeKind == InvokeT:
         linearMatch m, f, t.typevars, flags # skips f
         inc a
-        if m.err: break # might not have fully skipped on error
       else:
         m.error(InvalidMatch, fOrig, aOrig)
         break
@@ -411,7 +408,14 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
       m.error(InvalidMatch, fOrig, aOrig)
       break
     # only match a single tree/token:
-    if nested == 0: break
+    if nested == 0:
+      # successful match
+      return
+  # arriving here means the loop was exited early, make sure arguments are fully skipped
+  f = fOrig
+  a = aOrig
+  skip f
+  skip a
 
 proc extractCallConv(c: var Cursor): CallConv =
   result = Fastcall
@@ -478,7 +482,6 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     skip a
   else:
     linearMatch m, f, a
-    if m.err: return # might not have fully skipped on error
   # match calling conventions:
   let fcc = extractCallConv(f)
   let acc = extractCallConv(a)
