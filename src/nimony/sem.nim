@@ -3114,11 +3114,11 @@ proc addXint(c: var SemContext; x: xint; info: PackedLineInfo) =
       c.buildErr info, "enum value not a constant expression"
 
 proc evalConstExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): TokenBuf =
-  let start = c.dest.len
+  let beforeExpr = c.dest.len
   var x = Item(n: n, typ: expected)
   semExpr c, x
   n = x.n
-  var e = cursorAt(c.dest, start)
+  var e = cursorAt(c.dest, beforeExpr)
   result = evalExpr(c, e)
   endRead(c.dest)
 
