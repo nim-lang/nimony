@@ -218,6 +218,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.nilType
   of DotX, DdotX:
     result = n
+    inc result # skip "dot"
     skip result # obj
     result = getTypeImpl(c, result) # typeof(obj.field) == typeof field
   of DerefX, HderefX:

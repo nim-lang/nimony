@@ -586,7 +586,10 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   else:
     let destructor = getDestructor(c.lifter[], r.typ, n.info)
     if destructor != NoSymId:
-      if constructsValue(r.val):
+      if k == CursorS:
+        tr c, r.val, DontCare
+        c.dest.addParRi()
+      elif constructsValue(r.val):
         tr c, r.val, WillBeOwned
         c.dest.addParRi()
 
