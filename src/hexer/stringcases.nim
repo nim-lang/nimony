@@ -54,7 +54,7 @@ proc transformStringCase*(e: var EContext; c: var Cursor) =
 
   while n.kind != ParRi:
     if n.substructureKind == OfU:
-      let labl = "`sc" & $getTmpId(e)
+      let labl = "`sc." & $getTmpId(e)
       inc n
       assert n.substructureKind == RangesU
       inc n
@@ -75,7 +75,7 @@ proc transformStringCase*(e: var EContext; c: var Cursor) =
   inc n
 
   skip n # selector
-  let afterwards = pool.syms.getOrIncl("`sc" & $getTmpId(e))
+  let afterwards = pool.syms.getOrIncl("`sc." & $getTmpId(e))
 
   while n.kind != ParRi:
     if n.substructureKind == OfU:
