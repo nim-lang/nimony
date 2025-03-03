@@ -690,14 +690,16 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
     c.dest.shrink start
     c.dest.add valueBuf
 
-proc semConstExpr(c: var SemContext; it: var Item): TokenBuf =
+proc semConstExpr(c: var SemContext; it: var Item) =
   let start = c.dest.len
   semExpr c, it
-  # XXX adds semchecked expression to c.dest since evaluated value is untyped,
-  # maybe should construct typed AST from evaluated value 
   var e = cursorAt(c.dest, start)
-  result = evalExpr(c, e)
+  var valueBuf = evalExpr(c, e)
   endRead(c.dest)
+  # XXX evaluated value is untyped so adding it to c.dest is wrong,
+  # maybe should construct typed AST from evaluated value 
+  c.dest.shrink start
+  c.dest.add valueBuf
 
 proc semStmtsExprImpl(c: var SemContext; it: var Item) =
   while it.n.kind != ParRi:
@@ -3056,8 +3058,9 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       inc n # 3
       var it = Item(n: n, typ: c.types.autoType)
       if false and kind == ConstY:
+        # XXX output from expreval is not typed so cannot be used yet
         withNewScope c:
-          discard semConstExpr(c, it) # 4
+          semConstExpr c, it # 4
       else:
         semLocalValue c, it, crucial # 4
       n = it.n
@@ -3070,8 +3073,9 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       else:
         var it = Item(n: n, typ: typ)
         if false and kind == ConstY:
+          # XXX output from expreval is not typed so cannot be used yet
           withNewScope c:
-            discard semConstExpr(c, it) # 4
+            semConstExpr c, it # 4
         else:
           semLocalValue c, it, crucial # 4
         n = it.n
@@ -3109,12 +3113,18 @@ proc addXint(c: var SemContext; x: xint; info: PackedLineInfo) =
     else:
       c.buildErr info, "enum value not a constant expression"
 
+proc evalConstExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): TokenBuf =
+  let start = c.dest.len
+  var x = Item(n: n, typ: expected)
+  semExpr c, x
+  n = x.n
+  var e = cursorAt(c.dest, start)
+  result = evalExpr(c, e)
+  endRead(c.dest)
+
 proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): xint =
   let info = n.info
-  let beforeExpr = c.dest.len
-  var x = Item(n: n, typ: expected)
-  var valueBuf = semConstExpr(c, x)
-  n = x.n
+  var valueBuf = evalConstExpr(c, n, expected)
   let value = beginRead(valueBuf)
   result = getConstOrdinalValue(value)
   if result.isNaN:
@@ -3125,10 +3135,7 @@ proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): x
 
 proc evalConstStrExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): StrId =
   let info = n.info
-  let beforeExpr = c.dest.len
-  var x = Item(n: n, typ: expected)
-  var valueBuf = semConstExpr(c, x)
-  n = x.n
+  var valueBuf = evalConstExpr(c, n, expected)
   let value = beginRead(valueBuf)
   result = getConstStringValue(value)
   if result == StrId(0):
