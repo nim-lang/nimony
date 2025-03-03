@@ -51,6 +51,13 @@ jobs:
           path: nif
           submodules: false
 
+      - name: Install Valgrind dependency (Linx)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
       - name: Restore MinGW-W64 (Windows) from cache
         if: runner.os == 'Windows'
         id: windows-mingw-cache
