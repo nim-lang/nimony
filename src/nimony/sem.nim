@@ -3849,19 +3849,12 @@ proc semWhen(c: var SemContext; it: var Item) =
     producesVoid c, info, it.typ
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
-                    seen: var seq[(xint, xint)]; isString: bool) =
+                    seen: var seq[(xint, xint)]) =
   if it.n == "ranges":
     takeToken c, it.n
     while it.n.kind != ParRi:
       let info = it.n.info
-      if isString:
-        let s = evalConstStrExpr(c, it.n, selectorType) # will error if range is given
-        if s != StrId(0): # otherwise error
-          # use literal id as value:
-          let a = createXint(int64(s))
-          if seen.doesOverlapOrIncl(a, a):
-            buildErr c, info, "value already handled"
-      elif isRangeExpr(it.n):
+      if isRangeExpr(it.n):
         inc it.n # call tag
         skip it.n # `..`
         c.dest.buildTree RangeU, it.n.info:
@@ -3886,6 +3879,22 @@ proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
     buildErr c, it.n.info, "`ranges` within `of` expected"
     skip it.n
 
+proc semCaseOfValueString(c: var SemContext; it: var Item; selectorType: TypeCursor;
+                          seen: var HashSet[StrId]) =
+  if it.n == "ranges":
+    takeToken c, it.n
+    while it.n.kind != ParRi:
+      let info = it.n.info
+      let s = evalConstStrExpr(c, it.n, selectorType) # will error if range is given
+      if s != StrId(0): # otherwise error
+        # use literal id as value:
+        if seen.containsOrIncl(s):
+          buildErr c, info, "value already handled"
+    takeParRi c, it.n
+  else:
+    buildErr c, it.n.info, "`ranges` within `of` expected"
+    skip it.n
+
 proc semCase(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
@@ -3894,10 +3903,14 @@ proc semCase(c: var SemContext; it: var Item) =
   it.n = selector.n
   let isString = isSomeStringType(selector.typ)
   var seen: seq[(xint, xint)] = @[]
+  var seenStr = initHashSet[StrId]()
   if it.n.substructureKind == OfU:
     while it.n.substructureKind == OfU:
       takeToken c, it.n
-      semCaseOfValue c, it, selector.typ, seen, isString
+      if isString:
+        semCaseOfValueString c, it, selector.typ, seenStr
+      else:
+        semCaseOfValue c, it, selector.typ, seen
       withNewScope c:
         semStmtBranch c, it, true
       takeParRi c, it.n
