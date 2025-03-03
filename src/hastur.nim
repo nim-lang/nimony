@@ -172,8 +172,8 @@ proc removeMakeErrors(output: string): string =
 
 proc compareValgrindOutput(s1: string, s2: string): bool =
   # ==90429==
-  let s1 = s1.split('\n')
-  let s2 = s2.split('\n')
+  let s1 = s1.splitLines()
+  let s2 = s2.splitLines()
   if s1.len != s2.len:
     return false
   for i in 0 .. s1.len - 1:
