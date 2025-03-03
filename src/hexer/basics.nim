@@ -33,6 +33,7 @@ type
     instId*: int # per forStmt
     tmpId*: int # per proc
     inImpSection*: int
+    resultSym*: SymId
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId
