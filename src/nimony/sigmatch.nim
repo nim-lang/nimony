@@ -387,7 +387,7 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
           inc f
           inc a
       of ParRi:
-        if nested == 0: break
+        assert nested > 0
         dec nested
         inc f
         inc a
