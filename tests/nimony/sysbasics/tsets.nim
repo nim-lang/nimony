@@ -11,8 +11,11 @@ discard y == {A..C}
 discard z == {A..C}
 discard s - s1 == {D}
 discard s1 <= s
+let val = D
+s1 = {A..B, val, F}
 
 template resem() =
   s = {A, C..E, F}
+  s1 = {A..B, val, F}
 
 resem()
