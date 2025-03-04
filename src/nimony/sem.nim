@@ -4766,7 +4766,7 @@ proc semTupAt(c: var SemContext; it: var Item) =
   takeToken c, it.n
   var tup = Item(n: it.n, typ: c.types.autoType)
   semExpr c, tup
-  if containsGenericParams(tup.typ):
+  if false and containsGenericParams(tup.typ):
     # leave as is, probably enough to check tup.typ is a typevar
     var index = Item(n: tup.n, typ: c.types.autoType)
     semExpr c, index
