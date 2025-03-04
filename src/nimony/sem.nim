@@ -712,26 +712,13 @@ proc semStmtsExprImpl(c: var SemContext; it: var Item) =
 
 proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
   let before = c.dest.len
-  let orig = it.n
   takeToken c, it.n
-  var sons = 0
-  while it.n.kind != ParRi:
-    if not isLastSon(it.n):
-      semStmt c, it.n, false
-    else:
-      semExpr c, it
-    inc sons
-  takeParRi c, it.n
+  semStmtsExprImpl c, it
   let kind =
     if classifyType(c, it.typ) in {VoidT, AutoT}:
       (if isNewScope: ScopeTagId else: StmtsTagId)
     else: ExprTagId
   c.dest[before] = parLeToken(TagId(kind), c.dest[before].info)
-  # repair (expr (expr ...)) to (expr (stmts ...)):
-  if kind == ExprTagId and sons > 1 and before+1 < c.dest.len and c.dest[before+1].tag == TagId(ExprTagId):
-    c.dest[before+1] = parLeToken(StmtsS, c.dest[before+1].info)
-    #echo "A ", toString(it.typ, false), " for expression ", toString(orig, false)
-    #assert false, "invalid construct created"
 
 proc semProcBody(c: var SemContext; itB: var Item) =
   let beforeBodyPos = c.dest.len

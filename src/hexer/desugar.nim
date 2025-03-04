@@ -663,6 +663,23 @@ proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # ExprX's expression is the temp:
     dest.add symToken(tmp, info)
 
+proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # Simplify (expr (expr ...)) to (expr (...)) so that our
+  # controlflow graph can handle them easily:
+  dest.add n
+  inc n
+  var nestedExpr = 0
+  while n.exprKind == ExprX:
+    inc n
+    inc nestedExpr
+  while n.kind != ParRi:
+    tr(c, dest, n)
+  inc n
+  dest.addParRi()
+  while nestedExpr > 0:
+    skipParRi n
+    dec nestedExpr
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -748,6 +765,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
       tr c, dest, n
       takeParRi dest, n
+    of ExprX:
+      trExpr c, dest, n
     else:
       trSons(c, dest, n)
   of ParRi:
