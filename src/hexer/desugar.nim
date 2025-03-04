@@ -88,8 +88,13 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
   c.typeCache.closeScope()
 
-proc addUintType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
+proc addUIntType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
   buf.add tagToken("u", info)
+  buf.addIntLit(bits, info)
+  buf.addParRi()
+
+proc addIntType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
+  buf.add tagToken("i", info)
   buf.addIntLit(bits, info)
   buf.addParRi()
 
@@ -104,10 +109,10 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     case size
     of 1, 2, 4, 8:
-      dest.addUintType(size * 8, info)
+      dest.addUIntType(size * 8, info)
     else:
       dest.add tagToken("array", info)
-      dest.addUintType(8, info)
+      dest.addUIntType(8, info)
       dest.addIntLit(size, info)
       dest.addParRi()
   skip n
@@ -134,6 +139,40 @@ proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; in
   copyIntoKind c.tempUseBufStack[^1], DerefX, n.info:
     c.tempUseBufStack[^1].add symToken(tmp, n.info)
   result = beginRead(c.tempUseBufStack[^1])
+
+template addTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; typ: Cursor; info: PackedLineInfo; body: typed) =
+  copyIntoKind dest, kind, info:
+    dest.addSubtree typ
+    body
+
+template addUIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) =
+  copyIntoKind dest, kind, info:
+    dest.addUIntType(bits, info)
+    body
+
+template addIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) =
+  copyIntoKind dest, kind, info:
+    dest.addIntType(bits, info)
+    body
+
+template forRangeExclusive(c: var Context; dest: var TokenBuf; i: Cursor; bound: int; info: PackedLineInfo; body: typed) =
+  copyIntoKind dest, WhileS, info:
+    addIntTypedOp dest, LtX, -1, info:
+      dest.addSubtree i
+      dest.addIntLit(bound, info)
+    copyIntoKind dest, StmtsS, info:
+      body
+      copyIntoKind dest, AsgnS, info:
+        dest.addSubtree i
+        addIntTypedOp dest, AddX, -1, info:
+          dest.addSubtree i
+          dest.addIntLit(1, info)
+
+proc arrayToPointer(dest: var TokenBuf; arr: Cursor; info: PackedLineInfo) =
+  copyIntoKind dest, AddrX, info:
+    copyIntoKind dest, ArrAtX, info:
+      dest.addSubtree arr
+      dest.addIntLit(0, info)
 
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -180,81 +219,169 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
       raiseAssert("unimplemented")
     of LtSetX:
       copyIntoKind dest, AndX, info:
-        copyIntoKind dest, EqX, info:
-          dest.addSubtree cType
-          copyIntoKind dest, BitAndX, info:
-            dest.addSubtree cType
+        addTypedOp dest, EqX, cType, info:
+          addTypedOp dest, BitAndX, cType, info:
             dest.addSubtree a
-            copyIntoKind dest, BitNotX, info:
-              dest.addSubtree cType
+            addTypedOp dest, BitNotX, cType, info:
               dest.addSubtree b
           dest.addIntLit(0, info)
-        copyIntoKind dest, NeqX, info:
-          dest.addSubtree cType
+        addTypedOp dest, NeqX, cType, info:
           dest.addSubtree a
           dest.addSubtree b
     of LeSetX:
-      copyIntoKind dest, EqX, info:
-        dest.addSubtree cType
-        copyIntoKind dest, BitAndX, info:
-          dest.addSubtree cType
+      addTypedOp dest, EqX, cType, info:
+        addTypedOp dest, BitAndX, cType, info:
           dest.addSubtree a
-          copyIntoKind dest, BitNotX, info:
-            dest.addSubtree cType
+          addTypedOp dest, BitNotX, cType, info:
             dest.addSubtree b
         dest.addIntLit(0, info)
     of EqSetX:
-      copyIntoKind dest, EqX, info:
-        dest.addSubtree cType
+      addTypedOp dest, EqX, cType, info:
         dest.addSubtree a
         dest.addSubtree b
     of MulSetX:
-      copyIntoKind dest, BitAndX, info:
-        dest.addSubtree cType
+      addTypedOp dest, BitAndX, cType, info:
         dest.addSubtree a
         dest.addSubtree b
     of PlusSetX:
-      copyIntoKind dest, BitOrX, info:
-        dest.addSubtree cType
+      addTypedOp dest, BitOrX, cType, info:
         dest.addSubtree a
         dest.addSubtree b
     of MinusSetX:
-      copyIntoKind dest, BitAndX, info:
-        dest.addSubtree cType
+      addTypedOp dest, BitAndX, cType, info:
         dest.addSubtree a
-        copyIntoKind dest, BitNotX, info:
-          dest.addSubtree cType
+        addTypedOp dest, BitNotX, cType, info:
           dest.addSubtree b
     of XorSetX:
-      copyIntoKind dest, BitXorX, info:
-        dest.addSubtree cType
+      addTypedOp dest, BitXorX, cType, info:
         dest.addSubtree a
         dest.addSubtree b
     of InSetX:
       # XXX subtract offsets for range types if implemented
       let mask = size * 8 - 1
-      copyIntoKind dest, NeqX, info:
-        dest.addSubtree cType
-        copyIntoKind dest, BitAndX, info:
-          dest.addSubtree cType
+      addTypedOp dest, NeqX, cType, info:
+        addTypedOp dest, BitAndX, cType, info:
           dest.addSubtree a
-          copyIntoKind dest, ShlX, info:
-            dest.addSubtree cType
-            copyIntoKind dest, CastX, info:
-              dest.addSubtree cType
+          addTypedOp dest, ShlX, cType, info:
+            addTypedOp dest, CastX, cType, info:
               dest.addIntLit(1, info)
-            copyIntoKind dest, BitAndX, info:
-              dest.addUintType(-1, info)
-              copyIntoKind dest, CastX, info:
-                dest.addUintType(-1, info)
+            addUIntTypedOp dest, BitAndX, -1, info:
+              addUIntTypedOp dest, CastX, -1, info:
                 dest.addSubtree b
               dest.addUIntLit(uint64(mask), info)
         dest.addUIntLit(0, info)
     else:
       raiseAssert("unreachable")
   else:
-    # XXX implement
-    raiseAssert("unimplemented")
+    let start = dest.len
+    case kind
+    of CardX:
+      # XXX originally implemented as cardSet compilerproc
+      raiseAssert("unimplemented")
+    of LtSetX, LeSetX:
+      dest.add parLeToken(ExprX, info)
+      let resValue = [parLeToken(TrueX, info), parRiToken(info)]
+      let res = liftTemp(c, dest, fromBuffer(resValue), c.typeCache.builtins.boolType, info)
+      let iValue = [intToken(pool.integers.getOrIncl(0), info)]
+      let i = liftTemp(c, dest, fromBuffer(iValue), c.typeCache.builtins.intType, info)
+      forRangeExclusive c, dest, i, size, info:
+        copyIntoKind dest, AsgnS, info:
+          dest.addSubtree res
+          addUIntTypedOp dest, EqX, 8, info:
+            addUIntTypedOp dest, BitandX, 8, info:
+              copyIntoKind dest, ArrAtX, info:
+                dest.addSubtree a
+                dest.addSubtree i
+              addUIntTypedOp dest, BitnotX, 8, info:
+                copyIntoKind dest, ArrAtX, info:
+                  dest.addSubtree b
+                  dest.addSubtree i
+            dest.addIntLit(0, info)
+        copyIntoKind dest, IfS, info:
+          copyIntoKind dest, ElifU, info:
+            copyIntoKind dest, NotX, info:
+              dest.addSubtree res
+            copyIntoKind dest, StmtsS, info:
+              copyIntoKind dest, BreakS, info:
+                dest.addDotToken()
+      if kind == LtSetX:
+        copyIntoKind dest, IfS, info:
+          copyIntoKind dest, ElifU, info:
+            dest.addSubtree res
+            copyIntoKind dest, StmtsS, info:
+              copyIntoKind dest, AsgnS, info:
+                dest.addSubtree res
+                addIntTypedOp dest, NeqX, -1, info:
+                  copyIntoKind dest, CallX, info:
+                    dest.add symToken(pool.syms.getOrIncl("cmpMem.0." & SystemModuleSuffix), info)
+                    dest.arrayToPointer(a, info)
+                    dest.arrayToPointer(b, info)
+                    dest.addIntLit(size, info)
+                  dest.addIntLit(0, info)
+      dest.addSubtree res
+      dest.addParRi()
+    of EqSetX:
+      addIntTypedOp dest, EqX, -1, info:
+        copyIntoKind dest, CallX, info:
+          dest.add symToken(pool.syms.getOrIncl("cmpMem.0." & SystemModuleSuffix), info)
+          dest.arrayToPointer(a, info)
+          dest.arrayToPointer(b, info)
+          dest.addIntLit(size, info)
+        dest.addIntLit(0, info)
+    of MulSetX, PlusSetX, MinusSetX, XorSetX:
+      dest.add parLeToken(ExprX, info)
+      let resValue = [dotToken(info)]
+      let res = liftTemp(c, dest, fromBuffer(resValue), cType, info)
+      let iValue = [intToken(pool.integers.getOrIncl(0), info)]
+      let i = liftTemp(c, dest, fromBuffer(iValue), c.typeCache.builtins.intType, info)
+      forRangeExclusive c, dest, i, size, info:
+        copyIntoKind dest, AsgnS, info:
+          copyIntoKind dest, ArrAtX, info:
+            dest.addSubtree res
+            dest.addSubtree i
+          let op =
+            case kind
+            of PlusSetX: BitorX
+            of XorSetX: BitxorX
+            of MulSetX, MinusSetX: BitandX
+            else: raiseAssert("unreachable")
+          addUIntTypedOp dest, op, 8, info:
+            copyIntoKind dest, ArrAtX, info:
+              dest.addSubtree a
+              dest.addSubtree i
+            if op == MinusSetX:
+              addUIntTypedOp dest, BitnotX, 8, info:
+                copyIntoKind dest, ArrAtX, info:
+                  dest.addSubtree b
+                  dest.addSubtree i
+            else:
+              copyIntoKind dest, ArrAtX, info:
+                dest.addSubtree b
+                dest.addSubtree i
+      dest.addSubtree res
+      dest.addParRi()
+    of InSetX:
+      # XXX subtract offsets for range types if implemented
+      addUIntTypedOp dest, NeqX, 8, info:
+        addUIntTypedOp dest, BitAndX, 8, info:
+          copyIntoKind dest, ArrAtX, info:
+            dest.addSubtree a
+            addUIntTypedOp dest, ShrX, -1, info:
+              addUIntTypedOp dest, CastX, -1, info:
+                dest.addSubtree b
+              dest.addUintLit(3, info)
+          addUIntTypedOp dest, ShlX, 8, info:
+            dest.addSubtree c.typeCache.builtins.uint8Type
+            dest.addUIntLit(1, info)
+            addUIntTypedOp dest, BitAndX, -1, info:
+              dest.addUintType(-1, info)
+              addUIntTypedOp dest, CastX, -1, info:
+                dest.addUintType(-1, info)
+                dest.addSubtree b
+              dest.addUIntLit(7, info)
+        dest.addUIntLit(0, info)
+    else:
+      raiseAssert("unreachable")
   if useTemp:
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
@@ -333,13 +460,10 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSubtree a
         dest.addParLe(BitNotX, info)
         dest.addSubtree cType
-      copyIntoKind dest, ShlX, info:
-        dest.addSubtree cType
-        copyIntoKind dest, CastX, info:
-          dest.addSubtree cType
+      addTypedOp dest, ShlX, cType, info:
+        addTypedOp dest, CastX, cType, info:
           dest.addIntLit(1, info)
-        copyIntoKind dest, BitAndX, info:
-          dest.addUintType(-1, info)
+        addUIntTypedOp dest, BitAndX, -1, info:
           dest.addSubtree b
           dest.addIntLit(mask, info)
       if kind == InclS:
@@ -351,25 +475,21 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     template addLhs() =
       copyIntoKind dest, ArrAtX, info:
         dest.addSubtree a
-        copyIntoKind dest, ShrX, info:
-          dest.addUintType(-1, info)
-          copyIntoKind dest, CastX, info:
-            dest.addUintType(-1, info)
+        addUIntTypedOp dest, ShrX, -1, info:
+          addUIntTypedOp dest, CastX, -1, info:
             dest.addParRi()
             dest.addSubtree b
-          dest.addIntLit(3)
+          dest.addUIntLit(3)
     copyIntoKind dest, AsgnS, info:
       addLhs()
-      copyIntoKind dest, if kind == InclS: BitOrX else: BitAndX, info:
+      addUIntTypedOp dest, if kind == InclS: BitOrX else: BitAndX, 8, info:
         addLhs()
         if kind == ExclS:
           dest.addParLe BitNotX, info
           dest.addUintType(8, info)
-        copyIntoKind dest, ShlX, info:
-          dest.addUintType(8, info)
+        addUIntTypedOp dest, ShlX, 8, info:
           dest.addUIntLit(1, info)
-          copyIntoKind dest, BitAndX, info:
-            dest.addUintType(-1, info)
+          addUIntTypedOp dest, BitAndX, -1, info:
             dest.addSubtree b
             dest.addUIntLit(7, info)
         if kind == ExclS:
