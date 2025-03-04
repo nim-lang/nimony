@@ -25,7 +25,7 @@ jobs:
         include:
           - target:
               os: linux
-            builder: ubuntu-latest
+            builder: ubuntu-24.04
           - target:
               os: macos
             builder: macos-13
@@ -51,12 +51,13 @@ jobs:
           path: nif
           submodules: false
 
-      - name: Install Valgrind dependency (Linx)
+      - name: Install Linux dependency (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y valgrind
+          sudo apt-get install -y valgrind gcc-14 g++-14
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 60 --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
       - name: Restore MinGW-W64 (Windows) from cache
         if: runner.os == 'Windows'

@@ -53,17 +53,42 @@ proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
   c.add ParRi
   skipParRi n
 
+proc genParams(c: var GeneratedCode; n: var Cursor, p: Cursor) =
+  var procTypeCursor = getType(c.m, p)
+  if procTypeCursor.kind != DotToken and
+       procTypeCursor.typeKind != NoType:
+    # TODO: handle importc types?
+    let procType = takeProcType(procTypeCursor)
+    var params = procType.params
+    inc params
+
+    var i = 0
+    while n.kind != ParRi:
+      if i > 0: c.add Comma
+
+      var paramType = takeParamDecl(params).typ
+      # TODO: implements backend types comparison
+      if paramType.typeKind == PtrT:
+        c.add ParLe
+        genType(c, paramType)
+        c.add ParRi
+      genx c, n
+      inc i
+  else:
+    var i = 0
+    while n.kind != ParRi:
+      if i > 0: c.add Comma
+      genx c, n
+      inc i
+
 proc genCall(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
   #let isCfn = isImportC(n)
+  let procStart = n
   genx c, n
   c.add ParLe
-  var i = 0
-  while n.kind != ParRi:
-    if i > 0: c.add Comma
-    genx c, n
-    inc i
+  genParams(c, n, procStart)
   c.add ParRi
   skipParRi n
 
@@ -71,13 +96,10 @@ proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
   skip n # skip error action
+  let procStart = n
   genx c, n
   c.add ParLe
-  var i = 0
-  while n.kind != ParRi:
-    if i > 0: c.add Comma
-    genx c, n
-    inc i
+  genParams(c, n, procStart)
   c.add ParRi
   skipParRi n
 
