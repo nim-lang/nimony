@@ -189,9 +189,9 @@
   (stmts 4
    (var :t.0 . . 3
     (tuple 1
-     (fld Field0 . .
+     (fld :Field0.3.tbawx6nu81 . .
       (i -1) .) 6
-     (fld Field1 . .
+     (fld :Field1.3.tbawx6nu81 . .
       (i -1) .)) .) 2,1
    (asgn ~2 t.0 2
     (tup 1 +1 4 +2)) 2,2
