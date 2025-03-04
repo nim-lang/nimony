@@ -44,6 +44,9 @@ proc decodeSolution(e: var EContext; s: seq[SearchNode]; i: int;
               e.dest.add symToken(pool.syms.getOrIncl(x[1]), info)
 
 proc transformStringCase*(e: var EContext; c: var Cursor) =
+  e.demand pool.syms.getOrIncl("==.17." & SystemModuleSuffix)
+  e.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
+
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
   var n = c
@@ -54,9 +57,10 @@ proc transformStringCase*(e: var EContext; c: var Cursor) =
 
   while n.kind != ParRi:
     if n.substructureKind == OfU:
-      let labl = "`sc" & $getTmpId(e)
+      let labl = "`sc." & $getTmpId(e)
       inc n
       assert n.substructureKind == RangesU
+      inc n
       while n.kind != ParRi:
         assert n.kind == StringLit
         pairs.add (pool.strings[n.litId], labl)
@@ -74,7 +78,7 @@ proc transformStringCase*(e: var EContext; c: var Cursor) =
   inc n
 
   skip n # selector
-  let afterwards = pool.syms.getOrIncl("`sc" & $getTmpId(e))
+  let afterwards = pool.syms.getOrIncl("`sc." & $getTmpId(e))
 
   while n.kind != ParRi:
     if n.substructureKind == OfU:
