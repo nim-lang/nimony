@@ -2166,6 +2166,12 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`magic` pragma takes a string literal"
     c.dest.addParRi()
+  of ErrorP:
+    c.dest.add parLeToken(ErrorP, n.info)
+    inc n
+    if n.kind != ParRi:
+      semConstStrExpr c, n
+    c.dest.addParRi()
   of ImportcP, ImportcppP, ExportcP, HeaderP, PluginP:
     crucial.flags.incl pk
     let info = n.info

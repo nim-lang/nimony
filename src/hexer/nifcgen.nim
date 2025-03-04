@@ -632,7 +632,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           expectIntLit e, c
           result.bits = c.intId
           inc c
-        of RequiresP, EnsuresP, StringP, RaisesP:
+        of RequiresP, EnsuresP, StringP, RaisesP, ErrorP:
           skip c
           continue
         of BuildP, EmitP:

@@ -282,7 +282,6 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       raiseAssert("unreachable")
   else:
-    let start = dest.len
     case kind
     of CardX:
       # XXX originally implemented as cardSet compilerproc
@@ -422,7 +421,6 @@ proc genSingleInclBig(dest: var TokenBuf; s, elem: Cursor; info: PackedLineInfo)
           dest.addUIntLit(7, info)
 
 proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let start = dest.len
   let info = n.info
   dest.add parLeToken(ExprX, info)
   inc n # tag

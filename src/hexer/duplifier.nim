@@ -170,17 +170,33 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     copyTree c.dest, typ
     tr c, n, WillBeOwned
 
+proc producedError(c: var Context; hookProc: SymId; arg: Cursor): bool =
+  result = false
+  let res = tryLoadSym(hookProc)
+  if res.status == LacksNothing:
+    let r = asRoutine(res.decl)
+    if hasPragma(r.pragmas, ErrorP):
+      let info = arg.info
+      let m = "not the last usage of: " & asNimCode(arg)
+      c.dest.buildTree ErrT, info:
+        c.dest.add strToken(pool.strings.getOrIncl(m), info)
+      result = true
+
 proc callDup(c: var Context; arg: var Cursor) =
   let typ = getType(c.typeCache, arg)
   if typ.typeKind == NiltT:
     tr c, arg, DontCare
   else:
+    let n = arg
     let info = arg.info
     let hookProc = getHook(c.lifter[], attachedDup, typ, info)
     if hookProc != NoSymId and arg.kind != StringLit:
-      copyIntoKind c.dest, CallS, info:
-        copyIntoSymUse c.dest, hookProc, info
-        tr c, arg, WillBeOwned
+      if producedError(c, hookProc, n):
+        skip arg
+      else:
+        copyIntoKind c.dest, CallS, info:
+          copyIntoSymUse c.dest, hookProc, info
+          tr c, arg, WillBeOwned
     else:
       tr c, arg, WillBeOwned
 
@@ -197,10 +213,13 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      copyIntoKind c.dest, HaddrX, info:
-        copyTree c.dest, n
+    if producedError(c, hookProc, n):
+      discard "nothing to skip"
+    else:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        copyIntoKind c.dest, HaddrX, info:
+          copyTree c.dest, n
 
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
@@ -310,10 +329,14 @@ proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedDup, typ, info)
   if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
+    if producedError(c, hookProc, n):
       inc n
-      tr c, n, DontCare
+      skip n
+    else:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        inc n
+        tr c, n, DontCare
   else:
     let e2 = if e == WillBeOwned: WantOwner else: e
     inc n
@@ -325,12 +348,17 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
   let info = n.info
   let hookProc = getHook(c.lifter[], op, typ, info)
   if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
+    if producedError(c, hookProc, n):
       inc n
-      while n.kind != ParRi:
-        tr c, n, DontCare
-      takeParRi c.dest, n
+      while n.kind != ParRi: skip n
+      inc n
+    else:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        inc n
+        while n.kind != ParRi:
+          tr c, n, DontCare
+        takeParRi c.dest, n
   else:
     c.dest.addParLe AsgnS, info
     inc n
@@ -343,30 +371,39 @@ proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
+    if producedError(c, hookProc, n):
       inc n
-      tr c, n, DontCare
+      skip n
+    else:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        inc n
+        tr c, n, DontCare
   else:
     inc n
     skip n
-    skipParRi n
+  skipParRi n
 
 proc trExplicitTrace(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedTrace, typ, info)
   if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
+    if producedError(c, hookProc, n):
       inc n
-      tr c, n, DontCare
-      tr c, n, DontCare
+      skip n
+      skip n
+    else:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        inc n
+        tr c, n, DontCare
+        tr c, n, DontCare
   else:
     inc n
     skip n
     skip n
-    skipParRi n
+  skipParRi n
 
 when not defined(nimony):
   proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false)
@@ -540,10 +577,13 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
 
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      copyIntoKind c.dest, HaddrX, info:
-        copyTree c.dest, ex
+    if producedError(c, hookProc, n):
+      discard "nothing to skip"
+    else:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        copyIntoKind c.dest, HaddrX, info:
+          copyTree c.dest, ex
 
   c.dest.addParRi() # finish the StmtList
   c.dest.copyIntoSymUse ow.s, ow.info
@@ -560,12 +600,15 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
       # translate `x` to `=dup(x)`:
       let hookProc = getHook(c.lifter[], attachedDup, typ, info)
       if hookProc != NoSymId:
-        copyIntoKind c.dest, CallS, info:
-          copyIntoSymUse c.dest, hookProc, info
-          if isAtom(n):
-            takeTree c.dest, n
-          else:
-            trSons c, n, DontCare
+        if producedError(c, hookProc, n):
+          skip n
+        else:
+          copyIntoKind c.dest, CallS, info:
+            copyIntoSymUse c.dest, hookProc, info
+            if isAtom(n):
+              takeTree c.dest, n
+            else:
+              trSons c, n, DontCare
       elif isAtom(n):
         takeTree c.dest, n
       else:
