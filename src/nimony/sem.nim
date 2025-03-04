@@ -698,7 +698,7 @@ proc semConstExpr(c: var SemContext; it: var Item) =
   var valueBuf = evalExpr(c, e)
   endRead(c.dest)
   # XXX evaluated value is untyped so adding it to c.dest is wrong,
-  # maybe should construct typed AST from evaluated value 
+  # maybe should construct typed AST from evaluated value
   c.dest.shrink start
   c.dest.add valueBuf
 
@@ -715,7 +715,7 @@ proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
   takeToken c, it.n
   semStmtsExprImpl c, it
   let kind =
-    if classifyType(c, it.typ) == VoidT:
+    if classifyType(c, it.typ) in {VoidT, AutoT}:
       (if isNewScope: ScopeTagId else: StmtsTagId)
     else: ExprTagId
   c.dest[before] = parLeToken(TagId(kind), c.dest[before].info)
@@ -4773,7 +4773,7 @@ proc semTupAt(c: var SemContext; it: var Item) =
   semExpr c, tup
   if tup.typ.typeKind != TupleT:
     if tup.typ.kind == Symbol and getTypeSection(tup.typ.symId).kind == TypevarY:
-      # for `T: tuple`  
+      # for `T: tuple`
       var index = Item(n: tup.n, typ: c.types.autoType)
       semExpr c, index
       it.n = index.n
