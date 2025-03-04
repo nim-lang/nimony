@@ -159,7 +159,7 @@ proc execNimony(cmd: string; cat: Category): (string, int) =
 
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
-  result = "nifcache" / name.addFileExt(ext)
+  result = "nimcache" / name.addFileExt(ext)
 
 proc removeMakeErrors(output: string): string =
   result = output.strip
@@ -263,11 +263,11 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
       files.add x.path
   sort files
   if cat == Compat:
-    removeDir "nifcache"
+    removeDir "nimcache"
   for f in items files:
     testFile c, f, overwrite, cat
   if cat == Compat:
-    removeDir "nifcache"
+    removeDir "nimcache"
 
 proc parseCategory(path: string): Category =
   case path
@@ -511,7 +511,7 @@ proc handleCmdLine =
       buildHexer(showProgress)
     else:
       writeHelp()
-    removeDir "nifcache"
+    removeDir "nimcache"
 
   of "nimony":
     buildNimony()
@@ -543,7 +543,7 @@ proc handleCmdLine =
     else:
       quit "`record` takes two arguments"
   of "clean":
-    removeDir "nifcache"
+    removeDir "nimcache"
     removeDir "bin"
   of "sync":
     syncCmd(if args.len > 0: args[0] else: "")

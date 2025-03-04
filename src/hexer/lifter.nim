@@ -587,7 +587,7 @@ proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): S
 
 when isMainModule:
   import std/os
-  setupProgramForTesting getCurrentDir() / "nifcache", "test.nim", ".nif"
+  setupProgramForTesting getCurrentDir() / "nimcache", "test.nim", ".nif"
   let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
   if res != SymId(0):
     echo pool.syms[res]
