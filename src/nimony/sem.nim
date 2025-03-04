@@ -2377,13 +2377,16 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
   takeParRi c, n
 
 proc semTupleFieldType(c: var SemContext; elemType: var Cursor; i: int) =
-  c.dest.add parLeToken(FldU, elemType.info) # start field
-  c.dest.add identToken(pool.strings.getOrIncl("Field" & $i), elemType.info)
-  c.dest.addDotToken() # export marker
-  c.dest.addDotToken() # pragmas
-  semLocalTypeImpl c, elemType, InLocalDecl
-  c.dest.addDotToken() # value
-  c.dest.addParRi() # end field
+  var buf = createTokenBuf(32)
+  buf.add parLeToken(FldU, elemType.info) # start field
+  buf.add identToken(pool.strings.getOrIncl("Field" & $i), elemType.info)
+  buf.addDotToken() # export marker
+  buf.addDotToken() # pragmas
+  buf.takeTree elemType
+  buf.addDotToken() # value
+  buf.addParRi() # end field
+  var read = beginRead(buf)
+  semLocal(c, read, FldY)
 
 proc semTupleType(c: var SemContext; n: var Cursor) =
   c.dest.add parLeToken(TupleT, n.info)
