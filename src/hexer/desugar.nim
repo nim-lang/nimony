@@ -207,12 +207,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let cType = cursorAt(argsBuf, typeStart)
   let aOrig = cursorAt(argsBuf, aStart)
   let bOrig = cursorAt(argsBuf, bStart)
-  var bTempCheck = bOrig
-  if kind == InSetX:
-    # skip cast for temp check
-    inc bTempCheck
-    skip bTempCheck
-  let useTemp = needsTemp(aOrig) or needsTemp(bTempCheck)
+  let useTemp = needsTemp(aOrig) or needsTemp(bOrig)
   let oldBufStackLen = c.tempUseBufStack.len
   let a: Cursor
   let b: Cursor
@@ -465,11 +460,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # a is used once, no need for temp:
       let a = cursorAt(argsBuf, aStart)
       let bOrig = cursorAt(argsBuf, bStart)
-      var bTempCheck = bOrig
-      # skip cast for temp check
-      inc bTempCheck
-      skip bTempCheck
-      let useTemp = needsTemp(bTempCheck)
+      let useTemp = needsTemp(bOrig)
       let b: Cursor
       if useTemp:
         b = liftTemp(c, dest, bOrig, c.typeCache.builtins.uintType, info)
@@ -497,11 +488,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       genSetElem(c, dest, n)
       swap dest, argsBuf
       let aOrig = cursorAt(argsBuf, aStart)
-      var aTempCheck = aOrig
-      # skip cast for temp check
-      inc aTempCheck
-      skip aTempCheck
-      let useTemp = needsTemp(aTempCheck)
+      let useTemp = needsTemp(aOrig)
       let a: Cursor
       if useTemp:
         a = liftTemp(c, dest, aOrig, c.typeCache.builtins.uintType, info)
