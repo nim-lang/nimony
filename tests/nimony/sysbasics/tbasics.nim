@@ -50,3 +50,13 @@ proc foo2233() {.nimcall.} =
   var y: proc () {.nimcall.}
 
 foo2233()
+
+proc basictuple() =
+  var t: (int, int)
+  t = (1, 2)
+  t = (a: 1, b: 2)
+  t = (x: 1, y: 2)
+  discard t[0]
+  discard t[1]
+
+basictuple()

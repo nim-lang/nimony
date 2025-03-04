@@ -252,7 +252,11 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     var n = n
     inc n
     while n.kind != ParRi:
-      buf.addSubtree getTypeImpl(c, n)
+      var val = n
+      if val.substructureKind == KvU:
+        inc val
+        skip val
+      buf.addSubtree getTypeImpl(c, val)
       skip n
     buf.addParRi()
     c.mem.add buf

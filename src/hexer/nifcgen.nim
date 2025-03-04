@@ -203,7 +203,8 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
   while c.kind != ParRi:
     if c.substructureKind == FldU:
       inc c # skip fld
-      e.offer c.symId
+      if c.kind == SymbolDef:
+        e.offer c.symId
       skip c # skip name
       skip c # skip export marker
       skip c # skip pragmas
