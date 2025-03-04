@@ -183,4 +183,28 @@
      (params) . 3
      (pragmas 2
       (nimcall)) . .) .))) 7,51
- (call ~7 foo2233.0.tbawx6nu81))
+ (call ~7 foo2233.0.tbawx6nu81) ,53
+ (proc 5 :basictuple.0.tbawx6nu81 . . . 15
+  (params) . . . 2,1
+  (stmts 4
+   (var :t.0 . . 3
+    (tuple 1
+     (fld Field0 . .
+      (i -1) .) 6
+     (fld Field1 . .
+      (i -1) .)) .) 2,1
+   (asgn ~2 t.0 2
+    (tup 1 +1 4 +2)) 2,2
+   (asgn ~2 t.0 2
+    (tup 2
+     (kv ~1 a 2 +1) 8
+     (kv ~1 b 2 +2))) 2,3
+   (asgn ~2 t.0 2
+    (tup 2
+     (kv ~1 x 2 +1) 8
+     (kv ~1 y 2 +2))) ,4
+   (discard 8
+    (tupat t.0 2 +0)) ,5
+   (discard 8
+    (tupat t.0 2 +1)))) 10,61
+ (call ~10 basictuple.0.tbawx6nu81))
