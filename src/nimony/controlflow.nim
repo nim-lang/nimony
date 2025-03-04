@@ -676,14 +676,20 @@ proc openTempVar(c: var ControlFlow; typ: Cursor; info: PackedLineInfo): SymId =
   c.dest.copyTree typ
 
 proc trStmtListExpr(c: var ControlFlow; n: var Cursor) =
-  let typ = c.typeCache.getType(n)
+  var typ = default(Cursor)
   let info = n.info
   inc n
   let fullExpr = rollbackToStmtBegin c
   while n.kind != ParRi:
-    if isLastSon(n): break
+    if isLastSon(n):
+      typ = c.typeCache.getType(n)
+      break
     trStmt c, n
 
+  if cursorIsNil(typ):
+    when defined(debug):
+      writeStackTrace()
+    quit "trStmtListExpr: type is nil"
   let temp = openTempVar(c, typ, NoLineInfo)
   trExpr c, n
   c.dest.addParRi() # close temp var declaration
