@@ -92,7 +92,7 @@ proc transformStringCase*(e: var EContext; c: var Cursor) =
   let elseLabel = pool.syms.getOrIncl("`sc." & $getTmpId(e))
   e.dest.copyIntoUnchecked "jmp", selectorNode.info:
     e.dest.add symToken(elseLabel, selectorNode.info)
-
+  var hasElse = false
   while n.kind != ParRi:
     let info = n.info
     if n.substructureKind == OfU:
@@ -111,8 +111,13 @@ proc transformStringCase*(e: var EContext; c: var Cursor) =
       inc n
       traverseStmt e, n
       skipParRi n
+      hasElse = true
     else:
       error "invalid `case` statement", n
+  if not hasElse:
+    e.dest.copyIntoUnchecked "lab", sinfo:
+      e.dest.add symdefToken(elseLabel, sinfo)
+
   skipParRi n
   e.dest.copyIntoUnchecked "lab", c.info:
     e.dest.add symdefToken(afterwards, c.info)
