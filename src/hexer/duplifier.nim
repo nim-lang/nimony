@@ -57,8 +57,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   result = isLastUse(n, c.source[], otherUsage)
 
 const
-  ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX, NewobjX,
-                       AconstrX, TupX}
+  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX}
 
 proc constructsValue*(n: Cursor): bool =
   var n = n
