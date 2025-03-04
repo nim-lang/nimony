@@ -53,7 +53,7 @@ proc transformStringCase*(e: var EContext; c: var Cursor) =
   let selectorNode = n
   let sinfo = selectorNode.info
   let selector: SymId
-  if selectorNode.kind == Symbol: # TODO: Produce a temporary for non-variable
+  if selectorNode.kind == Symbol:
     selector = selectorNode.symId
   else:
     selector = pool.syms.getOrIncl(":tmp.c." & $e.getTmpId)
