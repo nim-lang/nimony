@@ -4,14 +4,14 @@ type
 proc `!&`*(h: Hash; val: uint): Hash {.inline.} =
   ## Mixes a hash value `h` with `val` to produce a new hash value.
   result = h + val
-  result = result + (result shl 10'u)
-  result = result xor (result shr 6'u)
+  result = result + (result shl 10)
+  result = result xor (result shr 6)
 
 proc `!$`*(h: Hash): Hash {.inline.} =
   ## Finishes the computation of the hash value.
-  result = h + h shl 3'u
-  result = result xor (result shr 11'u)
-  result = result + result shl 15'u
+  result = h + h shl 3
+  result = result xor (result shr 11)
+  result = result + result shl 15
 
 when not defined(nimony):
   proc hash*(s: string): Hash =
