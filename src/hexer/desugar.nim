@@ -447,6 +447,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.arrayToPointer(res, info)
       dest.addIntLit(size, info)
   while n.kind != ParRi:
+    let elemInfo = n.info
     if n.substructureKind == RangeU:
       inc n
       var argsBuf = createTokenBuf(16)
@@ -463,24 +464,24 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let useTemp = needsTemp(bOrig)
       let b: Cursor
       if useTemp:
-        b = liftTemp(c, dest, bOrig, c.typeCache.builtins.uintType, info)
+        b = liftTemp(c, dest, bOrig, c.typeCache.builtins.uintType, elemInfo)
       else:
         b = bOrig
-      let i = liftTemp(c, dest, a, c.typeCache.builtins.uintType, info)
-      copyIntoKind dest, WhileS, info:
-        addUIntTypedOp dest, LeX, -1, info:
+      let i = liftTemp(c, dest, a, c.typeCache.builtins.uintType, elemInfo)
+      copyIntoKind dest, WhileS, elemInfo:
+        addUIntTypedOp dest, LeX, -1, elemInfo:
           dest.addSubtree i
           dest.addSubtree b
-        copyIntoKind dest, StmtsS, info:
+        copyIntoKind dest, StmtsS, elemInfo:
           if big:
-            genSingleInclBig(dest, res, i, info)
+            genSingleInclBig(dest, res, i, elemInfo)
           else:
-            genSingleInclSmall(dest, res, i, size, info)
-          copyIntoKind dest, AsgnS, info:
+            genSingleInclSmall(dest, res, i, size, elemInfo)
+          copyIntoKind dest, AsgnS, elemInfo:
             dest.addSubtree i
-            addUIntTypedOp dest, AddX, -1, info:
+            addUIntTypedOp dest, AddX, -1, elemInfo:
               dest.addSubtree i
-              dest.addUIntLit(1, info)
+              dest.addUIntLit(1, elemInfo)
     else:
       var argsBuf = createTokenBuf(16)
       swap dest, argsBuf
@@ -491,13 +492,13 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let useTemp = needsTemp(aOrig)
       let a: Cursor
       if useTemp:
-        a = liftTemp(c, dest, aOrig, c.typeCache.builtins.uintType, info)
+        a = liftTemp(c, dest, aOrig, c.typeCache.builtins.uintType, elemInfo)
       else:
         a = aOrig
       if big:
-        genSingleInclBig(dest, res, a, info)
+        genSingleInclBig(dest, res, a, elemInfo)
       else:
-        genSingleInclSmall(dest, res, a, size, info)
+        genSingleInclSmall(dest, res, a, size, elemInfo)
   skipParRi n
   dest.addSubtree res
   dest.addParRi()
