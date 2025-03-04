@@ -185,15 +185,23 @@ proc callDup(c: var Context; arg: var Cursor) =
     else:
       tr c, arg, WillBeOwned
 
-proc callWasMoved(c: var Context; arg: Cursor) =
-  let typ = getType(c.typeCache, arg)
-  let info = arg.info
+proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
+  var n = arg
+  if n.exprKind == ExprX:
+    inc n
+    while n.kind != ParRi:
+      if isLastSon(n):
+        break
+      else:
+        skip n
+
+  let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
       copyIntoKind c.dest, HaddrX, info:
-        copyTree c.dest, arg
+        copyTree c.dest, n
 
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
@@ -243,7 +251,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
         let tmp = tempOfTrArg(c, ri, leType)
-        callWasMoved c, ri
+        callWasMoved c, ri, leType
         callDestroy(c, destructor, lhs)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
@@ -258,7 +266,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           copyTree c.dest, lhs
           n = ri
           tr c, n, WillBeOwned
-        callWasMoved c, ri
+        callWasMoved c, ri, leType
     else:
       # XXX We should really prefer to simply call `=copy(x, y)` here.
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
@@ -568,10 +576,14 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   else:
     trSons c, n, DontCare
 
+proc trValue(c: var Context; n: Cursor; e: Expects) =
+  var n = n
+  tr c, n, e
+
 proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   let kind = n.symKind
   c.dest.add n
-  var r = takeLocal(n, SkipFinalParRi)
+  let r = takeLocal(n, SkipFinalParRi)
   if k == ResultS and r.name.kind == SymbolDef:
     c.resultSym = r.name.symId
   copyTree c.dest, r.name
@@ -587,21 +599,22 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
     let destructor = getDestructor(c.lifter[], r.typ, n.info)
     if destructor != NoSymId:
       if k == CursorS:
-        tr c, r.val, DontCare
+        trValue c, r.val, DontCare
         c.dest.addParRi()
       elif constructsValue(r.val):
-        tr c, r.val, WillBeOwned
+        trValue c, r.val, WillBeOwned
         c.dest.addParRi()
 
       elif isLastRead(c, r.val):
-        tr c, r.val, WillBeOwned
+        trValue c, r.val, WillBeOwned
         c.dest.addParRi()
-        callWasMoved c, r.val
+        callWasMoved c, r.val, r.typ
       else:
-        callDup c, r.val
+        var rval = r.val
+        callDup c, rval
         c.dest.addParRi()
     else:
-      tr c, r.val, WillBeOwned
+      trValue c, r.val, WillBeOwned
       c.dest.addParRi()
 
 proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =

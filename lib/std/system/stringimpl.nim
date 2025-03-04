@@ -255,3 +255,9 @@ proc newString*(len: int): string =
   else:
     oomHandler len
     result = string(a: nil, i: EmptyI)
+
+template concat*(): string {.varargs.} =
+  var res = ""
+  for s in unpack():
+    res.add s
+  res
