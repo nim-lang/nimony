@@ -4768,13 +4768,18 @@ proc semTupAt(c: var SemContext; it: var Item) =
   let expected = it.typ
   takeToken c, it.n
   var tup = Item(n: it.n, typ: c.types.autoType)
+  let tupInfo = tup.n.info
   semExpr c, tup
-  if containsGenericParams(tup.typ):
-    # leave as is, probably enough to check tup.typ is a typevar
-    var index = Item(n: tup.n, typ: c.types.autoType)
-    semExpr c, index
-    it.n = index.n
-    takeParRi c, it.n
+  if tup.typ.typeKind != TupleT:
+    if tup.typ.kind == Symbol and getTypeSection(tup.typ.symId).kind == TypevarY:
+      # for `T: tuple`  
+      var index = Item(n: tup.n, typ: c.types.autoType)
+      semExpr c, index
+      it.n = index.n
+      takeParRi c, it.n
+      it.typ = c.types.untypedType
+    else:
+      c.buildErr tupInfo, "expected tuple"
     return
   var idx = tup.n
   let idxStart = c.dest.len
