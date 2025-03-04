@@ -44,6 +44,9 @@ proc decodeSolution(e: var EContext; s: seq[SearchNode]; i: int;
               e.dest.add symToken(pool.syms.getOrIncl(x[1]), info)
 
 proc transformStringCase*(e: var EContext; c: var Cursor) =
+  e.demand pool.syms.getOrIncl("==.17." & SystemModuleSuffix)
+  e.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
+
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
   var n = c
