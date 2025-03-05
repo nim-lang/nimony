@@ -57,6 +57,7 @@ proc handleCmdLine() =
   var useEnv = true
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
+  config.currentPath = getCurrentDir()
   config.nifcachePath = "nimcache"
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8

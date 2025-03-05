@@ -39,6 +39,13 @@ proc setupPaths*(config: var NifConfig; useEnv: bool) =
 proc stdlibFile*(f: string): string =
   result = stdlibDir() / f
 
+proc compilerDir*(): string =
+  let appDir = getAppDir()
+  let (head, tail) = splitPath(appDir)
+  if tail == "bin":
+    return head
+  else: return tail
+
 proc binDir*(): string =
   let appDir = getAppDir()
   let (_, tail) = splitPath(appDir)

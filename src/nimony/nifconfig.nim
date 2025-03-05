@@ -14,6 +14,7 @@ type
   NifConfig* = object
     defines*: HashSet[string]
     paths*, nimblePaths*: seq[string]
+    currentPath*: string
     nifcachePath*: string
     bits*: int
     compat*: bool

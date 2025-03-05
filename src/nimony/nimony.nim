@@ -68,6 +68,7 @@ proc handleCmdLine() =
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
+  config.currentPath = getCurrentDir()
   config.nifcachePath = "nimcache"
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
@@ -155,20 +156,27 @@ proc handleCmdLine() =
     quit "command missing"
   of SingleModule:
     if not isChild:
-      createDir(config.nifcachePath)
       createDir(binDir())
+      createDir(config.nifcachePath)
+      # configure required tools
+      setCurrentDir(compilerDir())
       requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
       requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+      setCurrentDir(config.currentPath)
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
-    createDir(config.nifcachePath)
     createDir(binDir())
+    createDir(config.nifcachePath)
+    # configure required tools
+    setCurrentDir(compilerDir())
     exec "git submodule update --init"
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
     requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+    # compile full project modules
+    setCurrentDir(config.currentPath)
     buildGraph config, args[0], forceRebuild, silentMake,
       commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),
       passC, passL
