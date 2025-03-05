@@ -147,7 +147,9 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
           copyTree c.dest, paramA
     of attachedDestroy:
       copyTree c.dest, paramA
-    of attachedCopy, attachedTrace, attachedSink, attachedDup:
+    of attachedDup:
+      copyTree c.dest, paramB
+    of attachedCopy, attachedTrace, attachedSink:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
 
@@ -190,7 +192,12 @@ proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
       let r = asRoutine(res.decl)
       if hasPragma(r.pragmas, ErrorP):
         c.calledErrorHook = r.name.info
-    genCallHook c, s, paramA, paramB
+    if c.op == attachedDup:
+      copyIntoKind c.dest, AsgnS, c.info:
+        copyTree c.dest, paramA
+        genCallHook c, s, paramA, paramB
+    else:
+      genCallHook c, s, paramA, paramB
 
 proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # Goal: We produce a call to some function. Maybe this function must be
@@ -260,8 +267,7 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
       let a = accessObjField(c, paramA, r.name)
       unravel c, fieldType, a, paramB
     of attachedCopy, attachedSink, attachedDup:
-      # attachedDup needs no deref operation for `dest[0]`:
-      let a = accessObjField(c, paramA, r.name, int(c.op == attachedDup))
+      let a = accessObjField(c, paramA, r.name, 0)
       let b = accessObjField(c, paramB, r.name, 1)
       unravel c, fieldType, a, b
 
@@ -283,7 +289,7 @@ proc unravelTuple(c: var LiftingCtx;
       let a = accessTupField(c, paramA, idx)
       unravel c, fieldType, a, paramB
     of attachedCopy, attachedSink, attachedDup:
-      let a = accessTupField(c, paramA, idx, int(c.op == attachedDup))
+      let a = accessTupField(c, paramA, idx, 0)
       let b = accessTupField(c, paramB, idx, 1)
       unravel c, fieldType, a, b
     inc idx
