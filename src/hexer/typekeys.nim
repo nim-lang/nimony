@@ -26,6 +26,18 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
         mangleImpl b, c # type is interesting
         skip c # value
         inc c # ParRi
+      elif tag == "tuple":
+        b.addTree(tag)
+        inc c
+        while c.kind != ParRi:
+          if c.substructureKind == KvU:
+            inc c
+            skip c # name
+            mangleImpl b, c # type is interesting
+            inc c # ParRi
+          else:
+            mangleImpl b, c
+        inc c # ParRi
       elif tag == "array":
         b.addTree tag
         inc c
