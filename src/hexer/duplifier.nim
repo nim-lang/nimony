@@ -32,13 +32,14 @@ It follows that we're only interested in Call expressions here, or similar
 import std / [assertions]
 include nifprelude
 import nifindexes, symparser, treemangler, lifter, mover
-import ".." / nimony / [nimony_model, programs, decls, typenav, renderer]
+import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters]
 
 type
   Context = object
     dest: TokenBuf
     lifter: ref LiftingCtx
     reportLastUse: bool
+    hasErrors: bool
     typeCache: TypeCache
     tmpCounter: int
     resultSym: SymId
@@ -179,7 +180,9 @@ proc producedError(c: var Context; hookProc: SymId; arg: Cursor): bool =
       let info = arg.info
       let m = "not the last usage of: " & asNimCode(arg)
       c.dest.buildTree ErrT, info:
+        c.dest.addSubtree arg
         c.dest.add strToken(pool.strings.getOrIncl(m), info)
+      c.hasErrors = true
       result = true
 
 proc callDup(c: var Context; arg: var Cursor) =
@@ -689,6 +692,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
   else:
     let m = "not the last usage of: " & asNimCode(n)
     c.dest.buildTree ErrT, info:
+      c.dest.addSubtree n
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
   skip n
 
@@ -768,4 +772,10 @@ proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): Token
   genMissingHooks lifter[]
 
   c.typeCache.closeScope()
+  if c.hasErrors:
+    if reportErrors(c.dest) > 0:
+      quit 1
+    else:
+      quit "BUG: move-related errors found but no errors reported"
+
   result = ensureMove(c.dest)

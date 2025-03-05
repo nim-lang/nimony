@@ -2167,6 +2167,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       buildErr c, n.info, "`magic` pragma takes a string literal"
     c.dest.addParRi()
   of ErrorP:
+    crucial.flags.incl pk
     c.dest.add parLeToken(ErrorP, n.info)
     inc n
     if n.kind != ParRi:
@@ -3367,7 +3368,7 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookKind; inf
     of DupH:
       buildErr c, info, "signature for '=dup' must be proc[T: object](x: T): T"
 
-proc expandHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind) =
+proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind) =
   let attachedOp =
     case op
     of DestroyH: attachedDestroy
@@ -3490,7 +3491,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
           let obj = getObjSymId(c, params[0])
-          expandHook(c, obj, symId, hk)
+          registerHook(c, obj, symId, hk)
 
       of checkBody:
         if it.n != "stmts":
@@ -3520,7 +3521,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
 
           if c.routine.inGeneric == 0:
             # because it's a hook for sure
-            expandHook(c, obj, symId, hk)
+            registerHook(c, obj, symId, hk)
           else:
             c.genericHooks.mgetOrPut(obj, @[]).add symId
 
@@ -3535,7 +3536,19 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           c.buildErr it.n.info, "inside a `concept` a routine cannot have a body"
           skip it.n
     else:
-      if BorrowP in crucial.flags and pass in {checkGenericInst, checkBody}:
+      if ErrorP in crucial.flags and pass in {checkGenericInst, checkBody}:
+        let name = getHookName(symId)
+        let hk = hookToKind(name)
+        if hk != NoHook:
+          let objCursor = semHook(c, name, beforeParams, symId, info)
+          let obj = getObjSymId(c, objCursor)
+          if c.routine.inGeneric == 0:
+            # because it's a hook for sure
+            registerHook(c, obj, symId, hk)
+          else:
+            c.genericHooks.mgetOrPut(obj, @[]).add symId
+        takeToken c, it.n
+      elif BorrowP in crucial.flags and pass in {checkGenericInst, checkBody}:
         if kind notin {ProcY, FuncY, ConverterY, TemplateY, MethodY}:
           c.buildErr it.n.info, ".borrow only valid for proc, func, converter, template or method"
         else:
@@ -5948,32 +5961,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     buildErr c, it.n.info, "expression expected"
 
 proc reportErrors(c: var SemContext): int =
-  let errTag = pool.tags.getOrIncl("err")
-  var i = 0
-  var r = Reporter(verbosity: 2, noColors: not useColors())
-  result = 0
-  while i < c.dest.len:
-    if c.dest[i].kind == ParLe and c.dest[i].tagId == errTag:
-      inc result
-      let info = c.dest[i].info
-      inc i
-      # original expression, optional:
-      if c.dest[i].kind == DotToken:
-        inc i
-      else:
-        let x = cursorAt(c.dest, i)
-        inc i, span(x)
-        endRead(c.dest)
-      # instantiation contexts:
-      while c.dest[i].kind == DotToken:
-        r.trace infoToStr(c.dest[i].info), "instantiation from here"
-        inc i
-      # error message:
-      assert c.dest[i].kind == StringLit
-      r.error infoToStr(info), pool.strings[c.dest[i].litId]
-      inc i
-    else:
-      inc i
+  result = reporters.reportErrors(c.dest)
 
 proc writeOutput(c: var SemContext; outfile: string) =
   #var b = nifbuilder.open(outfile)
