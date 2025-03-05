@@ -1951,7 +1951,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
         var field = asTupleField(tup)
         if field.kind in {KvU, FldU}:
           let name = getIdent(field.name)
-          if sameIdent(name, fieldName):
+          if name == fieldName:
             c.dest[exprStart] = parLeToken(TupAtX, info)
             c.dest.addIntLit(i, info)
             it.typ = field.typ # will be fit later with commonType
