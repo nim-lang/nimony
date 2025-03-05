@@ -52,7 +52,7 @@ type
     tvars: HashSet[SymId]
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
-    err*, flipped*: bool
+    err*, flipped*, matchingArgType: bool
     skippedMod: TypeKind
     argInfo: PackedLineInfo
     pos, opened: int
@@ -329,13 +329,20 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
     if f.kind == Symbol and isTypevar(f.symId):
       # type vars are specal:
       let fs = f.symId
-      if m.inferred.contains(fs):
+      if not m.matchingArgType and m.inferred.contains(fs):
         # rematch?
         var prev = m.inferred[fs]
+        # the inferred type can contain generic parameters,
+        # in which case we ignore what those generic parameters were inferred to,
+        # as they cannot belong to the typevars of the current match
+        m.matchingArgType = true
         linearMatch(m, prev, a, flags) # skips a
+        m.matchingArgType = false
         inc f
       elif matchesConstraint(m, fs, a):
-        m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
+        if not m.matchingArgType:
+          # again, do not give values to generic parameters in the argument type
+          m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
         skip a
       else:
@@ -518,12 +525,19 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
   if isTypevar(fs):
-    if m.inferred.contains(fs):
+    if not m.matchingArgType and m.inferred.contains(fs):
       # used to call typevarRematch
       var prev = m.inferred[fs]
+      # the inferred type can contain generic parameters,
+      # in which case we ignore what those generic parameters were inferred to,
+      # as they cannot belong to the typevars of the current match
+      m.matchingArgType = true
       singleArgImpl(m, prev, arg)
+      m.matchingArgType = false
     elif matchesConstraint(m, fs, a):
-      m.inferred[fs] = a
+      if not m.matchingArgType:
+        # again, do not give values to generic parameters in the argument type
+        m.inferred[fs] = a
     else:
       m.error ConstraintMismatch, f, a
   elif isObjectType(fs):
