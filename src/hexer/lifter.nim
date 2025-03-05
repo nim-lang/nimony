@@ -163,7 +163,7 @@ proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
   of attachedTrace: discard
 
 proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
-  result = hookName(op) & "_" & key
+  result = "=" & hookName(op) & "_" & key
   var counter = addr c.hookNames.mgetOrPut(result, -1)
   counter[] += 1
   result.add '.'

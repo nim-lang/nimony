@@ -763,6 +763,60 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSons c, n, WantNonOwner
 
+proc readableHookname(s: string): string =
+  result = s
+  if result.len > 2 and result[0] == '=' and result[1] in {'a'..'z'}:
+    var i = 2
+    while i < result.len and result[i] != '_':
+      inc i
+    setLen result, i
+
+proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int =
+  let res = tryLoadSym(fn)
+  result = 0
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    if hasPragma(routine.pragmas, ErrorP):
+      let fnName = readableHookname(pool.syms[fn])
+      var m = "'" & fnName & "' is not available"
+      var arg = routine.params
+      if arg.substructureKind == ParamsU:
+        inc arg
+        if arg.kind != ParRi:
+          let param = asLocal(arg)
+          m.add " for type <" & asNimCode(param.typ) & ">"
+      r.error infoToStr(info), m
+      inc result
+
+proc checkForMoveTypes(c: var Context; n: Cursor): int =
+  var nested = 0
+  var r = Reporter(verbosity: 2, noColors: not useColors())
+  var n = n
+  result = 0
+  while true:
+    case n.kind
+    of ParLe:
+      inc nested
+      let ek = n.exprKind
+      if ek in CallKinds:
+        let fn = n.firstSon
+        if fn.kind == Symbol:
+          result += checkForErrorRoutine(r, fn.symId, n.info)
+      elif ek == ErrX:
+        let info = n.info
+        inc n
+        skip n
+        while n.kind == DotToken: inc n
+        if n.kind == StringLit:
+          r.error infoToStr(info), pool.strings[n.litId]
+          inc result
+    of ParRi:
+      dec nested
+    else:
+      discard
+    if nested == 0: break
+    inc n
+
 proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): TokenBuf =
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
     dest: createTokenBuf(400), source: addr source)
@@ -771,11 +825,12 @@ proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): Token
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]
 
+  var ndest = beginRead(c.dest)
+  let errorCount = checkForMoveTypes(c, ndest)
+  endRead(c.dest)
   c.typeCache.closeScope()
-  if c.hasErrors:
-    if reportErrors(c.dest) > 0:
-      quit 1
-    else:
-      quit "BUG: move-related errors found but no errors reported"
+
+  if errorCount > 0:
+    quit 1
 
   result = ensureMove(c.dest)
