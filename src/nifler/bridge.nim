@@ -566,11 +566,22 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.endTree()
 
   of nkTupleTy, nkTupleClassTy:
-    c.section = FldL
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
     for i in 0..<n.len:
-      toNif(n[i], n, c)
+      assert n[i].kind == nkIdentDefs
+      let def = n[i]
+      let last = def.len - 1
+      for j in 0..last - 2:
+        relLineInfo(def[j], parent, c)
+        c.b.addTree(KvL)
+        let split = splitIdentDefName(def[j])
+
+        toNif(split.name, def[j], c) # name
+
+        toNif(def[last-1], def[j], c, allowEmpty = true) # type
+
+        c.b.endTree()
     c.b.endTree()
 
   of nkImportStmt, nkFromStmt, nkExportStmt, nkExportExceptStmt, nkImportAs, nkImportExceptStmt, nkIncludeStmt:

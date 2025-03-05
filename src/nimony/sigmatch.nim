@@ -755,8 +755,8 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
             # len(f) > len(a)
             m.error InvalidMatch, fOrig, aOrig
           # only the type of the field is important:
-          var ffld = asLocal(f).typ
-          var afld = asLocal(a).typ
+          var ffld = getTupleFieldType(f)
+          var afld = getTupleFieldType(a)
           linearMatch m, ffld, afld
           # skip fields:
           skip f

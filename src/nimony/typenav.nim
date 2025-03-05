@@ -272,11 +272,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       while idx > 0:
         skip tupType
         dec idx
-      if tupType == "fld":
-        let field = asLocal(tupType)
-        result = field.typ
-      else:
-        result = tupType
+      result = getTupleFieldType(tupType)
   of BracketX:
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.firstSon)
