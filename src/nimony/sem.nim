@@ -4801,8 +4801,9 @@ proc semTupAt(c: var SemContext; it: var Item) =
   var tup = Item(n: it.n, typ: c.types.autoType)
   let tupInfo = tup.n.info
   semExpr c, tup
-  if tup.typ.typeKind != TupleT:
-    if tup.typ.kind == Symbol and getTypeSection(tup.typ.symId).kind == TypevarY:
+  let tupleType = skipModifier(tup.typ)
+  if tupleType.typeKind != TupleT:
+    if tupleType.kind == Symbol and getTypeSection(tupleType.symId).kind == TypevarY:
       # for `T: tuple`
       var index = Item(n: tup.n, typ: c.types.autoType)
       semExpr c, index
@@ -4810,7 +4811,7 @@ proc semTupAt(c: var SemContext; it: var Item) =
       takeParRi c, it.n
       it.typ = c.types.untypedType
     else:
-      c.buildErr tupInfo, "expected tuple"
+      c.buildErr tupInfo, "expected tuple but got: " & typeToString(tupleType)
     return
   var idx = tup.n
   let idxStart = c.dest.len
@@ -4825,7 +4826,7 @@ proc semTupAt(c: var SemContext; it: var Item) =
     c.buildErr idxInfo, "must be a constant expression >= 0"
     takeParRi c, it.n
   else:
-    it.typ = tup.typ
+    it.typ = tupleType
     inc it.typ
     # navigate to the proper type within the tuple type:
     let one = createXint(1'i64)
@@ -5615,7 +5616,8 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
   semExpr c, tup
   swap c.dest, tupBuf
   it.n = tup.n
-  if tup.typ.typeKind != TupleT:
+  let tupleType = skipModifier(tup.typ)
+  if tupleType.typeKind != TupleT:
     c.buildErr tupInfo, "expected tuple for tuple unpacking"
     skipToEnd it.n
     return
@@ -5638,7 +5640,7 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
     c.dest.add symdefToken(tmpName, info) # 0: name
     c.dest.addDotToken() # 1: export
     c.dest.addDotToken() # 2: pragma
-    c.dest.addSubtree tup.typ # 3: type
+    c.dest.addSubtree tupleType # 3: type
     c.dest.add tupBuf # 4: value
   publish c, tmpName, tmpStart
 
