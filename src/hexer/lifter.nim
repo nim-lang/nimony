@@ -31,6 +31,7 @@ type
   LiftingCtx* = object
     dest*: TokenBuf
     op: AttachedOp
+    calledErrorHook: PackedLineInfo
     info: PackedLineInfo
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
@@ -184,6 +185,11 @@ proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
 
 proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
   if s != NoSymId:
+    let res = tryLoadSym(s)
+    if res.status == LacksNothing:
+      let r = asRoutine(res.decl)
+      if hasPragma(r.pragmas, ErrorP):
+        c.calledErrorHook = r.name.info
     genCallHook c, s, paramA, paramB
 
 proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
@@ -543,6 +549,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
 
     copyIntoKind c.dest, PragmasS, c.info:
       copyIntoKind c.dest, NodestroyP, c.info: discard
+      let pragmasPos = c.dest.len
 
     c.dest.addEmpty c.info # exc
 
@@ -558,6 +565,9 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
         assert false, "empty hook created"
       maybeAddReturn c, paramA
 
+  if c.calledErrorHook != NoLineInfo:
+    c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
+
   publishProc(sym, c.dest, procStart)
 
 proc genMissingHooks*(c: var LiftingCtx) =
@@ -566,6 +576,7 @@ proc genMissingHooks*(c: var LiftingCtx) =
     let reqs = move(c.requests)
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
+      c.calledErrorHook = NoLineInfo
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc createLiftingCtx*(thisModuleSuffix: string): ref LiftingCtx =
@@ -573,11 +584,13 @@ proc createLiftingCtx*(thisModuleSuffix: string): ref LiftingCtx =
 
 proc requestHook*(c: var LiftingCtx; sym: SymId; typ: TypeCursor; op: AttachedOp) =
   c.op = op
+  c.calledErrorHook = NoLineInfo
   genProcDecl c, sym, typ
   genMissingHooks(c)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
+  c.calledErrorHook = NoLineInfo
   c.info = info
   let t = if typ.typeKind == SinkT: typ.firstSon else: typ
   result = lift(c, t)

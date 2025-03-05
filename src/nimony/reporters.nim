@@ -4,8 +4,8 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, strutils, os, terminal]
-import nifstreams, bitabs, lineinfos
+import std / [syncio, strutils, os, terminal, assertions]
+import nifstreams, nifcursors, bitabs, lineinfos
 
 type
   MsgKind* = enum
@@ -98,3 +98,31 @@ proc infoToStr*(info: PackedLineInfo): string =
   else:
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
+
+proc reportErrors*(dest: var TokenBuf): int =
+  let errTag = pool.tags.getOrIncl("err")
+  var i = 0
+  var r = Reporter(verbosity: 2, noColors: not useColors())
+  result = 0
+  while i < dest.len:
+    if dest[i].kind == ParLe and dest[i].tagId == errTag:
+      inc result
+      let info = dest[i].info
+      inc i
+      # original expression, optional:
+      if dest[i].kind == DotToken:
+        inc i
+      else:
+        let x = cursorAt(dest, i)
+        inc i, span(x)
+        endRead(dest)
+      # instantiation contexts:
+      while dest[i].kind == DotToken:
+        r.trace infoToStr(dest[i].info), "instantiation from here"
+        inc i
+      # error message:
+      assert dest[i].kind == StringLit
+      r.error infoToStr(info), pool.strings[dest[i].litId]
+      inc i
+    else:
+      inc i

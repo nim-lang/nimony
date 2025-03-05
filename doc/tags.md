@@ -263,3 +263,4 @@
 | `(private (kv Y INTLIT*))` | NifIndex | private section |
 | `(inject)` | NimonyPragma | `inject` pragma |
 | `(gensym)` | NimonyPragma | `gensym` pragma |
+| `(error X?)` | NimonyPragma | `error` pragma |
