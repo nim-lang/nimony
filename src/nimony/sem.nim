@@ -4777,8 +4777,8 @@ proc buildDefaultTuple(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
   var currentField = typ
   inc currentField # skip tuple tag
   while currentField.kind != ParRi:
-    let field = asLocal(currentField)
-    callDefault c, field.typ, info
+    let field = getTupleFieldType(currentField)
+    callDefault c, field, info
     skip currentField
   c.dest.addParRi()
 
