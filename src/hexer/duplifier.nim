@@ -39,7 +39,6 @@ type
     dest: TokenBuf
     lifter: ref LiftingCtx
     reportLastUse: bool
-    hasErrors: bool
     typeCache: TypeCache
     tmpCounter: int
     resultSym: SymId
@@ -171,20 +170,6 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     copyTree c.dest, typ
     tr c, n, WillBeOwned
 
-proc producedError(c: var Context; hookProc: SymId; arg: Cursor): bool =
-  result = false
-  let res = tryLoadSym(hookProc)
-  if res.status == LacksNothing:
-    let r = asRoutine(res.decl)
-    if hasPragma(r.pragmas, ErrorP):
-      let info = arg.info
-      let m = "not the last usage of: " & asNimCode(arg)
-      c.dest.buildTree ErrT, info:
-        c.dest.addSubtree arg
-        c.dest.add strToken(pool.strings.getOrIncl(m), info)
-      c.hasErrors = true
-      result = true
-
 proc callDup(c: var Context; arg: var Cursor) =
   let typ = getType(c.typeCache, arg)
   if typ.typeKind == NiltT:
@@ -194,12 +179,9 @@ proc callDup(c: var Context; arg: var Cursor) =
     let info = arg.info
     let hookProc = getHook(c.lifter[], attachedDup, typ, info)
     if hookProc != NoSymId and arg.kind != StringLit:
-      if producedError(c, hookProc, n):
-        skip arg
-      else:
-        copyIntoKind c.dest, CallS, info:
-          copyIntoSymUse c.dest, hookProc, info
-          tr c, arg, WillBeOwned
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        tr c, arg, WillBeOwned
     else:
       tr c, arg, WillBeOwned
 
@@ -216,13 +198,10 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
-    if producedError(c, hookProc, n):
-      discard "nothing to skip"
-    else:
-      copyIntoKind c.dest, CallS, info:
-        copyIntoSymUse c.dest, hookProc, info
-        copyIntoKind c.dest, HaddrX, info:
-          copyTree c.dest, n
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      copyIntoKind c.dest, HaddrX, info:
+        copyTree c.dest, n
 
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
@@ -332,14 +311,10 @@ proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedDup, typ, info)
   if hookProc != NoSymId:
-    if producedError(c, hookProc, n):
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
       inc n
-      skip n
-    else:
-      copyIntoKind c.dest, CallS, info:
-        copyIntoSymUse c.dest, hookProc, info
-        inc n
-        tr c, n, DontCare
+      tr c, n, DontCare
   else:
     let e2 = if e == WillBeOwned: WantOwner else: e
     inc n
@@ -351,17 +326,12 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
   let info = n.info
   let hookProc = getHook(c.lifter[], op, typ, info)
   if hookProc != NoSymId:
-    if producedError(c, hookProc, n):
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
       inc n
-      while n.kind != ParRi: skip n
-      inc n
-    else:
-      copyIntoKind c.dest, CallS, info:
-        copyIntoSymUse c.dest, hookProc, info
-        inc n
-        while n.kind != ParRi:
-          tr c, n, DontCare
-        takeParRi c.dest, n
+      while n.kind != ParRi:
+        tr c, n, DontCare
+      takeParRi c.dest, n
   else:
     c.dest.addParLe AsgnS, info
     inc n
@@ -374,14 +344,10 @@ proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
-    if producedError(c, hookProc, n):
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
       inc n
-      skip n
-    else:
-      copyIntoKind c.dest, CallS, info:
-        copyIntoSymUse c.dest, hookProc, info
-        inc n
-        tr c, n, DontCare
+      tr c, n, DontCare
   else:
     inc n
     skip n
@@ -392,16 +358,11 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedTrace, typ, info)
   if hookProc != NoSymId:
-    if producedError(c, hookProc, n):
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
       inc n
-      skip n
-      skip n
-    else:
-      copyIntoKind c.dest, CallS, info:
-        copyIntoSymUse c.dest, hookProc, info
-        inc n
-        tr c, n, DontCare
-        tr c, n, DontCare
+      tr c, n, DontCare
+      tr c, n, DontCare
   else:
     inc n
     skip n
@@ -580,13 +541,10 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
 
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
-    if producedError(c, hookProc, n):
-      discard "nothing to skip"
-    else:
-      copyIntoKind c.dest, CallS, info:
-        copyIntoSymUse c.dest, hookProc, info
-        copyIntoKind c.dest, HaddrX, info:
-          copyTree c.dest, ex
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      copyIntoKind c.dest, HaddrX, info:
+        copyTree c.dest, ex
 
   c.dest.addParRi() # finish the StmtList
   c.dest.copyIntoSymUse ow.s, ow.info
@@ -603,15 +561,12 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
       # translate `x` to `=dup(x)`:
       let hookProc = getHook(c.lifter[], attachedDup, typ, info)
       if hookProc != NoSymId:
-        if producedError(c, hookProc, n):
-          skip n
-        else:
-          copyIntoKind c.dest, CallS, info:
-            copyIntoSymUse c.dest, hookProc, info
-            if isAtom(n):
-              takeTree c.dest, n
-            else:
-              trSons c, n, DontCare
+        copyIntoKind c.dest, CallS, info:
+          copyIntoSymUse c.dest, hookProc, info
+          if isAtom(n):
+            takeTree c.dest, n
+          else:
+            trSons c, n, DontCare
       elif isAtom(n):
         takeTree c.dest, n
       else:
@@ -763,6 +718,61 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSons c, n, WantNonOwner
 
+proc readableHookname(s: string): string =
+  result = s
+  extractBasename(result)
+  if result.len > 2 and result[0] == '=' and result[1] in {'a'..'z'}:
+    var i = 2
+    while i < result.len and result[i] != '_':
+      inc i
+    setLen result, i
+
+proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int =
+  let res = tryLoadSym(fn)
+  result = 0
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    if routine.kind.isRoutine and hasPragma(routine.pragmas, ErrorP):
+      let fnName = readableHookname(pool.syms[fn])
+      var m = "'" & fnName & "' is not available"
+      var arg = routine.params
+      if arg.substructureKind == ParamsU:
+        inc arg
+        if arg.kind != ParRi:
+          let param = asLocal(arg)
+          m.add " for type <" & asNimCode(param.typ) & ">"
+      r.error infoToStr(info), m
+      inc result
+
+proc checkForMoveTypes(c: var Context; n: Cursor): int =
+  var nested = 0
+  var r = Reporter(verbosity: 2, noColors: not useColors())
+  var n = n
+  result = 0
+  while true:
+    case n.kind
+    of ParLe:
+      inc nested
+      let ek = n.exprKind
+      if ek in CallKinds:
+        let fn = n.firstSon
+        if fn.kind == Symbol:
+          result += checkForErrorRoutine(r, fn.symId, n.info)
+      elif ek == ErrX:
+        let info = n.info
+        inc n
+        skip n
+        while n.kind == DotToken: inc n
+        if n.kind == StringLit:
+          r.error infoToStr(info), pool.strings[n.litId]
+          inc result
+    of ParRi:
+      dec nested
+    else:
+      discard
+    if nested == 0: break
+    inc n
+
 proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): TokenBuf =
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
     dest: createTokenBuf(400), source: addr source)
@@ -771,11 +781,12 @@ proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): Token
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]
 
+  var ndest = beginRead(c.dest)
+  let errorCount = checkForMoveTypes(c, ndest)
+  endRead(c.dest)
   c.typeCache.closeScope()
-  if c.hasErrors:
-    if reportErrors(c.dest) > 0:
-      quit 1
-    else:
-      quit "BUG: move-related errors found but no errors reported"
+
+  if errorCount > 0:
+    quit 1
 
   result = ensureMove(c.dest)

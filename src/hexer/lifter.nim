@@ -163,7 +163,7 @@ proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
   of attachedTrace: discard
 
 proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
-  result = hookName(op) & "_" & key
+  result = "=" & hookName(op) & "_" & key
   var counter = addr c.hookNames.mgetOrPut(result, -1)
   counter[] += 1
   result.add '.'
@@ -587,12 +587,6 @@ proc genMissingHooks*(c: var LiftingCtx) =
 
 proc createLiftingCtx*(thisModuleSuffix: string): ref LiftingCtx =
   (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix)
-
-proc requestHook*(c: var LiftingCtx; sym: SymId; typ: TypeCursor; op: AttachedOp) =
-  c.op = op
-  c.calledErrorHook = NoLineInfo
-  genProcDecl c, sym, typ
-  genMissingHooks(c)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
