@@ -156,8 +156,8 @@ proc handleCmdLine() =
     quit "command missing"
   of SingleModule:
     if not isChild:
-      createDir(binDir())
       createDir(config.nifcachePath)
+      createDir(binDir())
       # configure required tools
       setCurrentDir(compilerDir())
       requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
@@ -166,8 +166,8 @@ proc handleCmdLine() =
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
-    createDir(binDir())
     createDir(config.nifcachePath)
+    createDir(binDir())
     # configure required tools
     setCurrentDir(compilerDir())
     exec "git submodule update --init"
