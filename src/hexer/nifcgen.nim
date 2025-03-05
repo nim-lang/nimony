@@ -201,23 +201,12 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
   e.dest.addDotToken()
   var counter = 0
   while c.kind != ParRi:
-    if c.substructureKind == FldU:
-      inc c # skip fld
-      e.offer c.symId
-      skip c # skip name
-      skip c # skip export marker
-      skip c # skip pragmas
-      genTupleField(e, c, counter)
-      skip c # skip value
-      skipParRi e, c
-    elif c.substructureKind == KvU:
+    if c.substructureKind == KvU:
       inc c # skip tag
       skip c # skip name
       genTupleField(e, c, counter)
       skipParRi e, c
     else:
-      if c.kind == SymbolDef:
-        e.offer c.symId
       genTupleField(e, c, counter)
     inc counter
   takeParRi e, c

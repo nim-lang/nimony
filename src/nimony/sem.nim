@@ -1949,7 +1949,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       var i = 0
       while tup.kind != ParRi:
         var field = asTupleField(tup)
-        if field.kind in {KvU, FldU}:
+        if field.kind == KvU:
           let name = getIdent(field.name)
           if name == fieldName:
             c.dest[exprStart] = parLeToken(TupAtX, info)
@@ -2394,9 +2394,7 @@ proc semTupleType(c: var SemContext; n: var Cursor) =
   # tuple fields:
   withNewScope c:
     while n.kind != ParRi:
-      if n.substructureKind == FldU:
-        semLocal(c, n, FldY)
-      elif n.substructureKind == KvU:
+      if n.substructureKind == KvU:
         takeToken c, n
         let nameCursor = n
         let name = getIdent(n)

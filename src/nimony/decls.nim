@@ -207,13 +207,6 @@ proc asTupleField*(c: Cursor): TupleField =
     result.name = c
     skip c
     result.typ = c
-  of FldU:
-    inc c # tag
-    result.name = c
-    skip c
-    skip c # exported
-    skip c # pragmas
-    result.typ = c
   else:
     # unnamed
     result.typ = c
@@ -224,12 +217,6 @@ proc getTupleFieldType*(c: Cursor): Cursor =
     result = c
     inc result # tag
     skip result # name
-  of FldU:
-    result = c
-    inc result # tag
-    skip result # name
-    skip result # exported
-    skip result # pragmas
   else:
     result = c
 
