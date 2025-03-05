@@ -588,12 +588,6 @@ proc genMissingHooks*(c: var LiftingCtx) =
 proc createLiftingCtx*(thisModuleSuffix: string): ref LiftingCtx =
   (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix)
 
-proc requestHook*(c: var LiftingCtx; sym: SymId; typ: TypeCursor; op: AttachedOp) =
-  c.op = op
-  c.calledErrorHook = NoLineInfo
-  genProcDecl c, sym, typ
-  genMissingHooks(c)
-
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
   c.calledErrorHook = NoLineInfo
