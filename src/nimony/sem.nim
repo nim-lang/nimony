@@ -2400,9 +2400,10 @@ proc semTupleType(c: var SemContext; n: var Cursor) =
         takeToken c, n
         let nameCursor = n
         let name = getIdent(n)
-        if name != StrId(0):
+        if name == StrId(0):
           c.buildErr nameCursor.info, "invalid tuple field name", nameCursor
-        c.dest.add identToken(name, nameCursor.info)
+        else:
+          c.dest.add identToken(name, nameCursor.info)
         semLocalTypeImpl c, n, InLocalDecl
         takeParRi c, n
       else:
@@ -4537,10 +4538,13 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
         takeToken c, it.n
         let nameCursor = it.n
         let name = getIdent(it.n)
-        if name != StrId(0):
+        let nameStart = c.dest.len
+        if name == StrId(0):
           c.buildErr nameCursor.info, "invalid tuple field name", nameCursor
-        typ.add identToken(name, nameCursor.info)
-        c.dest.add identToken(name, nameCursor.info)
+        else:
+          c.dest.add identToken(name, nameCursor.info)
+        for tok in nameStart ..< c.dest.len:
+          typ.add c.dest[tok]
     var elem = Item(n: it.n, typ: c.types.autoType)
     if doExpected:
       elem.typ = getTupleFieldType(expected)
