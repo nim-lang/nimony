@@ -222,14 +222,14 @@ proc getTupleFieldType*(c: Cursor): Cursor =
   case c.substructureKind
   of KvU:
     result = c
-    inc c # tag
-    skip c # name
+    inc result # tag
+    skip result # name
   of FldU:
     result = c
     inc result # tag
-    skip c # name
-    skip c # exported
-    skip c # pragmas
+    skip result # name
+    skip result # exported
+    skip result # pragmas
   else:
     result = c
 

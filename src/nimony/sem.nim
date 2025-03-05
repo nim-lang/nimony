@@ -3978,7 +3978,7 @@ proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
   var tup = tup
   inc tup
   while it.n.kind != ParRi and tup.kind != ParRi:
-    let field = getTupleFieldType(field.typ)
+    let field = getTupleFieldType(tup)
     semForLoopVar c, it, field
     skip tup
   if it.n.kind == ParRi:

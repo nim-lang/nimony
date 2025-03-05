@@ -131,7 +131,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       let field = getTupleFieldType(tup)
       if not isTrivial(c, tup):
         return false
-      skip n
+      skip tup
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
      TypeKindT, UntypedT, TypedT, IteratorT, ItertypeT:
