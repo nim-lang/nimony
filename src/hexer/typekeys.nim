@@ -55,7 +55,8 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
             inc c # ParRi
           else:
             mangleImpl b, c
-        inc nested
+        b.endTree()
+        inc c
       else:
         b.addTree(tag)
         inc nested
