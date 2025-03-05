@@ -116,6 +116,7 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
         var tupBuf = createTupleAccess(tmpId, i, info)
         var tup = beginRead(tupBuf)
         var fieldTyp = getTupleFieldType(typ)
+        skip typ
         createDecl(e, symId, fieldTyp, tup, info, "let")
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
