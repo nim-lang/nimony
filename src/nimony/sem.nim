@@ -1948,8 +1948,8 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       inc tup
       var i = 0
       while tup.kind != ParRi:
-        let field = asLocal(tup)
-        if field.name.kind == SymbolDef and sameIdent(field.name.symId, fieldName):
+        let field = asTupleField(tup)
+        if field.kind in {KvU, FldU} and sameIdent(field.name.symId, fieldName):
           c.dest[exprStart] = parLeToken(TupAtX, info)
           c.dest.addIntLit(i, info)
           it.typ = field.typ # will be fit later with commonType
@@ -3978,8 +3978,8 @@ proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
   var tup = tup
   inc tup
   while it.n.kind != ParRi and tup.kind != ParRi:
-    let field = asLocal(tup)
-    semForLoopVar c, it, field.typ
+    let field = getTupleFieldType(field.typ)
+    semForLoopVar c, it, field
     skip tup
   if it.n.kind == ParRi:
     if tup.kind == ParRi:
@@ -4840,9 +4840,8 @@ proc semTupAt(c: var SemContext; it: var Item) =
         idxValue = idxValue - one
       else:
         break
-    if it.typ.substructureKind == FldU:
-      let fld = asLocal(it.typ)
-      it.typ = fld.typ
+    if it.typ.kind != ParRi:
+      it.typ = getTupleFieldType(it.typ)
     takeParRi c, it.n
     commonType c, it, exprStart, expected
 

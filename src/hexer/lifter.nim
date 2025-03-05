@@ -127,7 +127,12 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   of TupleT:
     var tup = typ
     inc tup
-    result = isTrivialForFields(c, tup)
+    while tup.kind != ParRi:
+      let field = getTupleFieldType(tup)
+      if not isTrivial(c, tup):
+        return false
+      skip n
+    result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
      TypeKindT, UntypedT, TypedT, IteratorT, ItertypeT:
     raiseAssert "bug here"
@@ -278,11 +283,8 @@ proc unravelTuple(c: var LiftingCtx;
   inc n
   var idx = 0
   while n.kind != ParRi:
-    var fieldType = n
-    if n.substructureKind == FldU:
-      fieldType = takeLocal(n, SkipFinalParRi).typ
-    else:
-      skip n
+    let fieldType = getTupleFieldType(n)
+    skip n
 
     case c.op
     of attachedDestroy, attachedTrace, attachedWasMoved:

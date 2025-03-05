@@ -192,6 +192,48 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
     result.firstField = c
 
 type
+  TupleField* = object
+    kind*: SubstructureKind
+    name*: Cursor
+    typ*: Cursor
+
+proc asTupleField*(c: Cursor): TupleField =
+  var c = c
+  let kind = substructureKind c
+  result = TupleField(kind: kind)
+  case c.substructureKind
+  of KvU:
+    inc c # tag
+    result.name = c
+    skip c
+    result.typ = c
+  of FldU:
+    inc c # tag
+    result.name = c
+    skip c
+    skip c # exported
+    skip c # pragmas
+    result.typ = c
+  else:
+    # unnamed
+    result.typ = c
+
+proc getTupleFieldType*(c: Cursor): Cursor =
+  case c.substructureKind
+  of KvU:
+    result = c
+    inc c # tag
+    skip c # name
+  of FldU:
+    result = c
+    inc result # tag
+    skip c # name
+    skip c # exported
+    skip c # pragmas
+  else:
+    result = c
+
+type
   ForStmt* = object
     kind*: StmtKind
     iter*, vars*, body*: Cursor
