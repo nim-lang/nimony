@@ -1808,6 +1808,8 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
     let baseInvokeArgs = skipInvoke(baseType)
     if baseType.kind == Symbol:
       let decl = getTypeSection(baseType.symId)
+      if decl.kind != TypeY:
+        error "invalid parent object type", baseType
       let objType = decl.objBody
       # build bindings for parent type:
       var newBindingBuf = default(TokenBuf)
@@ -1964,7 +1966,8 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       inc tval
       if tval.kind == Symbol:
         let decl = getTypeSection(tval.symId)
-        tval = decl.body
+        if decl.kind == TypeY:
+          tval = decl.body
       if tval.typeKind in {EnumT, OnumT}:
         # check for qualified enum field i.e. Foo.Bar
         let field = findEnumField(asEnumDecl(tval), fieldName)
@@ -4610,7 +4613,8 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
   var objDecl = default(TypeDecl)
   if objImpl.kind == Symbol:
     objDecl = getTypeSection(objImpl.symId)
-    objImpl = objDecl.objBody
+    if objDecl.kind == TypeY:
+      objImpl = objDecl.objBody
     if objImpl.typeKind == ObjectT:
       if constrKind == NoExpr:
         constrKind = OconstrX
@@ -4642,7 +4646,10 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
       var parentDecl = default(TypeDecl)
       if parentImpl.kind == Symbol:
         parentDecl = getTypeSection(parentImpl.symId)
-        parentImpl = parentDecl.objBody
+        if parentDecl.kind == TypeY:
+          parentImpl = parentDecl.objBody
+        else:
+          error "invalid parent object type", parentImpl
       else:
         error "invalid parent object type", parentImpl
 
@@ -4686,6 +4693,10 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   let invokeArgs = skipInvoke(objType)
   if objType.kind == Symbol:
     decl = getTypeSection(objType.symId)
+    if decl.kind != TypeY:
+      # includes typevar case
+      c.buildErr info, "expected type for object constructor"
+      return
     objType = decl.objBody
     if objType.typeKind != ObjectT:
       c.buildErr info, "expected object type for object constructor"
