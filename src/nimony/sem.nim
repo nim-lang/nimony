@@ -1948,14 +1948,15 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       inc tup
       var i = 0
       while tup.kind != ParRi:
-        let field = asTupleField(tup)
-        if field.kind in {KvU, FldU} and sameIdent(field.name.symId, fieldName):
-          c.dest[exprStart] = parLeToken(TupAtX, info)
-          c.dest.addIntLit(i, info)
-          it.typ = field.typ # will be fit later with commonType
-          it.kind = FldY
-          result = MatchedDotField
-          break
+        var field = asTupleField(tup)
+        if field.kind in {KvU, FldU}:
+          let name = getIdent(field.name)
+          if sameIdent(name, fieldName):
+            c.dest[exprStart] = parLeToken(TupAtX, info)
+            c.dest.addIntLit(i, info)
+            it.typ = field.typ # will be fit later with commonType
+            result = MatchedDotField
+            break
         skip tup
         inc i
       if result != MatchedDotField:
@@ -2387,30 +2388,25 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
         semLocal(c, n, FldY)
   takeParRi c, n
 
-proc semTupleFieldType(c: var SemContext; elemType: var Cursor; i: int) =
-  var buf = createTokenBuf(32)
-  buf.add parLeToken(FldU, elemType.info) # start field
-  buf.add identToken(pool.strings.getOrIncl("Field" & $i), elemType.info)
-  buf.addDotToken() # export marker
-  buf.addDotToken() # pragmas
-  buf.takeTree elemType
-  buf.addDotToken() # value
-  buf.addParRi() # end field
-  var read = beginRead(buf)
-  semLocal(c, read, FldY)
-
 proc semTupleType(c: var SemContext; n: var Cursor) =
   c.dest.add parLeToken(TupleT, n.info)
   inc n
   # tuple fields:
   withNewScope c:
-    var i = 0
     while n.kind != ParRi:
       if n.substructureKind == FldU:
         semLocal(c, n, FldY)
+      elif n.substructureKind == KvU:
+        takeToken c, n
+        let nameCursor = n
+        let name = getIdent(n)
+        if name != StrId(0):
+          c.buildErr nameCursor.info, "invalid tuple field name", nameCursor
+        c.dest.add identToken(name, nameCursor.info)
+        semLocalTypeImpl c, n, InLocalDecl
+        takeParRi c, n
       else:
-        semTupleFieldType(c, n, i)
-        inc i
+        semLocalTypeImpl c, n, InLocalDecl
   takeParRi c, n
 
 type
@@ -4532,37 +4528,33 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
   let named = it.n.substructureKind == KvU
   var typ = createTokenBuf(32)
   typ.add parLeToken(TupleT, it.n.info)
-  var i = 0
   while it.n.kind != ParRi:
-    typ.add parLeToken(FldU, it.n.info) # start field
     if named:
       if it.n.substructureKind != KvU:
         c.buildErr it.n.info, "expected field name for named tuple constructor"
       else:
+        typ.add it.n
         takeToken c, it.n
-        typ.addSubtree it.n # add name
-        takeToken c, it.n
-    else:
-      typ.add identToken(pool.strings.getOrIncl("Field" & $i), it.n.info)
-      inc i
-    typ.addDotToken() # export marker
-    typ.addDotToken() # pragmas
+        let nameCursor = it.n
+        let name = getIdent(it.n)
+        if name != StrId(0):
+          c.buildErr nameCursor.info, "invalid tuple field name", nameCursor
+        typ.add identToken(name, nameCursor.info)
+        c.dest.add identToken(name, nameCursor.info)
     var elem = Item(n: it.n, typ: c.types.autoType)
     if doExpected:
-      let fld = asLocal(expected)
-      elem.typ = fld.typ
+      elem.typ = getTupleFieldType(expected)
       skip expected
       if expected.kind == ParRi:
         # happens if expected tuple type has less fields than constructor
         doExpected = false
     semExpr c, elem
     it.n = elem.n
+    typ.addSubtree elem.typ # type
     if named:
       # should be KvX
       takeParRi c, it.n
-    typ.addSubtree elem.typ # type
-    typ.addDotToken() # value
-    typ.addParRi() # end field
+      typ.addParRi()
   takeParRi c, it.n
   typ.addParRi()
   let typeStart = c.dest.len

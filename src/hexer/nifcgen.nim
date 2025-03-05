@@ -210,6 +210,11 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
       genTupleField(e, c, counter)
       skip c # skip value
       skipParRi e, c
+    elif c.substructureKind == KvU:
+      inc c # skip tag
+      skip c # skip name
+      genTupleField(e, c, counter)
+      skipParRi e, c
     else:
       if c.kind == SymbolDef:
         e.offer c.symId
