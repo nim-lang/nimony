@@ -1,0 +1,1 @@
+tests/nimony/arc/tmove_only.nim(18, 15) Error: not the last usage of: o.2

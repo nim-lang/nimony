@@ -86,6 +86,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType
+    assert fnType.kind == ParLe
     let param = takeLocal(fnType, SkipFinalParRi)
     let pk = param.typ.typeKind
     if pk in {MutT, OutT, LentT}:
