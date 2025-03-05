@@ -129,7 +129,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     inc tup
     while tup.kind != ParRi:
       let field = getTupleFieldType(tup)
-      if not isTrivial(c, tup):
+      if not isTrivial(c, field):
         return false
       skip tup
     result = true
