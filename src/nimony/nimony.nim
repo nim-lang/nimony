@@ -159,24 +159,20 @@ proc handleCmdLine() =
       createDir(config.nifcachePath)
       createDir(binDir())
       # configure required tools
-      setCurrentDir(compilerDir())
       requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
       requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
-      setCurrentDir(config.currentPath)
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
     createDir(config.nifcachePath)
     createDir(binDir())
     # configure required tools
-    setCurrentDir(compilerDir())
-    exec "git submodule update --init"
+    updateCompilerGitSubmodules(config)
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
     requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
     # compile full project modules
-    setCurrentDir(config.currentPath)
     buildGraph config, args[0], forceRebuild, silentMake,
       commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),
       passC, passL

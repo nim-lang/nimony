@@ -89,14 +89,23 @@ proc nimexec(cmd: string) =
     quit("FAILURE: cannot find nim.exe / nim binary")
   exec quoteShell(t) & " " & cmd
 
+proc updateCompilerGitSubmodules*(config: NifConfig) =
+  # XXX: hack for more convenient development
+  setCurrentDir compilerDir()
+  exec "git submodule update --init"
+  setCurrentDir config.currentPath
+
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
+  # XXX: hack for more convenient development
   if not fileExists(t) or forceRebuild:
-    when not defined(debug):
-      nimexec("c -d:release " & src)
-    else:
-      nimexec("c " & src)
-    #moveFile src.changeFileExt(ExeExt), t
+    let src = compilerDir() / src
+    let args = # compiler bin path
+      when not defined(debug):
+        "c -d:release --outdir:" & binDir()
+      else: "c --outdir:" & binDir()
+    # compile required tool
+    nimexec(args & "  " & src)
 
 proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =
   let nimFile = toResolve.addFileExt(".nim")
