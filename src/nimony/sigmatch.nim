@@ -53,6 +53,7 @@ type
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
+    concreteMatch: bool
     skippedMod: TypeKind
     argInfo: PackedLineInfo
     pos, opened: int
@@ -329,10 +330,22 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
     if f.kind == Symbol and isTypevar(f.symId):
       # type vars are specal:
       let fs = f.symId
-      if m.inferred.contains(fs):
+      if m.concreteMatch:
+        # generic param is from provided argument type
+        # instead of considering inference, treat as a standalone value
+        if matchesConstraint(m, fs, a):
+          inc f
+          skip a
+        else:
+          m.error(ConstraintMismatch, f, a)
+          break
+      elif m.inferred.contains(fs):
         # rematch?
         var prev = m.inferred[fs]
+        # mark that the match is to a given type from the outside context:
+        m.concreteMatch = true
         linearMatch(m, prev, a, flags) # skips a
+        m.concreteMatch = false # was already false because of `elif`
         inc f
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
@@ -518,10 +531,18 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
   if isTypevar(fs):
-    if m.inferred.contains(fs):
+    if m.concreteMatch:
+      # generic param is from provided argument type
+      # instead of considering inference, treat as a standalone value
+      if not matchesConstraint(m, fs, a):
+        m.error ConstraintMismatch, f, a
+    elif m.inferred.contains(fs):
       # used to call typevarRematch
       var prev = m.inferred[fs]
+      # mark that the match is to a given type from the outside context:
+      m.concreteMatch = true
       singleArgImpl(m, prev, arg)
+      m.concreteMatch = false # was already false because of `elif`
     elif matchesConstraint(m, fs, a):
       m.inferred[fs] = a
     else:
