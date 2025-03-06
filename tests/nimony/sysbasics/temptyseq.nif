@@ -21,12 +21,16 @@
  (call ~3 bar.1.temd2l7vy 1 +1.23 43,140,lib/std/system/seqimpl.nim
   (expr 15
    (expr
-    (call ~15 newSeqUninit.1.temd2l7vy 1 +0)))) 58,140,lib/std/system/seqimpl.nim
+    (call ~15 newSeqUninit.1.temd2l7vy 1 +0)))) 4,8
+ (gvar :s.0.temd2l7vy . . 6 seq.2.temd2l7vy 43,140,lib/std/system/seqimpl.nim
+  (expr 15
+   (expr
+    (call ~15 newSeqUninit.2.temd2l7vy 1 +0)))) 58,140,lib/std/system/seqimpl.nim
  (proc :newSeqUninit.0.temd2l7vy . ~58,~85 .
   (at newSeqUninit.0.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
    (i -1)) ~37,~85
   (params 1
-   (param :size.2 . . 6
+   (param :size.3 . . 6
     (i -1) .)) ~42,~85 seq.0.temd2l7vy ~17,~85
   (pragmas 2
    (nodestroy) 13
@@ -36,11 +40,11 @@
    (if 3
     (elif 5
      (eq 18,~1
-      (i -1) ~5 size.2 3 +0) ~1,1
+      (i -1) ~5 size.3 3 +0) ~1,1
      (stmts 7
       (asgn ~7 result.0 8
        (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.temd2l7vy 4
-        (kv ~4 len.0.temd2l7vy 2 size.2) 16
+        (kv ~4 len.0.temd2l7vy 2 size.3) 16
         (kv ~16 data.0.temd2l7vy 2
          (nil)))))) ,2
     (else 2,1
@@ -48,12 +52,12 @@
       (let :memSize.0 . . 1,~54
        (i -1) 15
        (mul 5,~4
-        (i -1) ~5 size.2 8
+        (i -1) ~5 size.3 8
         (sizeof 16,1,tests/nimony/sysbasics/temptyseq.nim
          (i -1)))) 7,1
       (asgn ~7 result.0 8
        (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.temd2l7vy 4
-        (kv ~4 len.0.temd2l7vy 2 size.2) 16
+        (kv ~4 len.0.temd2l7vy 2 size.3) 16
         (kv ~16 data.0.temd2l7vy 2
          (cast 5
           (ptr 18
@@ -82,7 +86,7 @@
   (at newSeqUninit.0.sysvq0asl
    (f +64)) ~37,~85
   (params 1
-   (param :size.3 . . 6
+   (param :size.4 . . 6
     (i -1) .)) ~42,~85 seq.1.temd2l7vy ~17,~85
   (pragmas 2
    (nodestroy) 13
@@ -92,11 +96,11 @@
    (if 3
     (elif 5
      (eq 18,~1
-      (i -1) ~5 size.3 3 +0) ~1,1
+      (i -1) ~5 size.4 3 +0) ~1,1
      (stmts 7
       (asgn ~7 result.1 8
        (oconstr ~3,~2 seq.1.temd2l7vy 4
-        (kv ~4 len.1.temd2l7vy 2 size.3) 16
+        (kv ~4 len.1.temd2l7vy 2 size.4) 16
         (kv ~16 data.1.temd2l7vy 2
          (nil)))))) ,2
     (else 2,1
@@ -104,12 +108,12 @@
       (let :memSize.1 . . 1,~54
        (i -1) 15
        (mul 5,~4
-        (i -1) ~5 size.3 8
+        (i -1) ~5 size.4 8
         (sizeof
          (f +64)))) 7,1
       (asgn ~7 result.1 8
        (oconstr ~3,~5 seq.1.temd2l7vy 4
-        (kv ~4 len.1.temd2l7vy 2 size.3) 16
+        (kv ~4 len.1.temd2l7vy 2 size.4) 16
         (kv ~16 data.1.temd2l7vy 2
          (cast 5
           (ptr 18
@@ -142,7 +146,63 @@
     (f +64) .) 7
    (param :y.2 . . 6 seq.1.temd2l7vy .)) ~3,~2 . ~3,~2 . ~3,~2 . 28,~2
   (stmts
-   (discard .))) 15
+   (discard .))) 58,140,lib/std/system/seqimpl.nim
+ (proc :newSeqUninit.2.temd2l7vy . ~58,~85 .
+  (at newSeqUninit.0.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
+   (u +8)) ~37,~85
+  (params 1
+   (param :size.5 . . 6
+    (i -1) .)) ~42,~85 seq.2.temd2l7vy ~17,~85
+  (pragmas 2
+   (nodestroy) 13
+   (inline)) ~58,~85 . ~56,~84
+  (stmts
+   (result :result.2 . . 14,~1 seq.2.temd2l7vy .)
+   (if 3
+    (elif 5
+     (eq 18,~1
+      (i -1) ~5 size.5 3 +0) ~1,1
+     (stmts 7
+      (asgn ~7 result.2 8
+       (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.2.temd2l7vy 4
+        (kv ~4 len.2.temd2l7vy 2 size.5) 16
+        (kv ~16 data.2.temd2l7vy 2
+         (nil)))))) ,2
+    (else 2,1
+     (stmts 4
+      (let :memSize.2 . . 1,~54
+       (i -1) 15
+       (mul 5,~4
+        (i -1) ~5 size.5 8
+        (sizeof 11,9,tests/nimony/sysbasics/temptyseq.nim
+         (u +8)))) 7,1
+      (asgn ~7 result.2 8
+       (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.2.temd2l7vy 4
+        (kv ~4 len.2.temd2l7vy 2 size.5) 16
+        (kv ~16 data.2.temd2l7vy 2
+         (cast 5
+          (ptr 18
+           (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
+            (u +8))) 33
+          (call ~5 alloc.0.sysvq0asl 1 memSize.2))))) ,2
+      (if 3
+       (elif 2,399,lib/std/system.nim
+        (expr ,1
+         (not 7
+          (eq 10,6,lib/std/system/seqimpl.nim
+           (ptr 18
+            (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
+             (u +8))) 13,61,lib/std/system/seqimpl.nim
+           (dot ~6 result.2 data.2.temd2l7vy +0) 22,61,lib/std/system/seqimpl.nim
+           (nil)))) ~1,1
+        (stmts
+         (discard 8 "leave uninitialized"))) ,2
+       (else 2,1
+        (stmts 11
+         (asgn ~5
+          (dot ~6 result.2 len.2.temd2l7vy +0) 2 +0) ,1
+         (cmd oomHandler.0.sysvq0asl 11 memSize.2))))))) ~2,~1
+   (ret result.2))) 15
  (type :seq.0.temd2l7vy .
   (at seq.0.sysvq0asl 1
    (i -1)) 10,4,lib/std/system/seqimpl.nim . 12,4,lib/std/system/seqimpl.nim
@@ -162,4 +222,14 @@
    (fld :data.1.temd2l7vy . . 6
     (ptr 18
      (uarray
-      (f +64))) .))))
+      (f +64))) .))) 10,8
+ (type :seq.2.temd2l7vy .
+  (at seq.0.sysvq0asl 1
+   (u +8)) 10,4,lib/std/system/seqimpl.nim . 12,4,lib/std/system/seqimpl.nim
+  (object . ~8,1
+   (fld :len.2.temd2l7vy . . 5
+    (i -1) .) ~8,2
+   (fld :data.2.temd2l7vy . . 6
+    (ptr 18
+     (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
+      (u +8))) .))))
