@@ -204,14 +204,6 @@ include gentypes
 
 # Procs
 
-template emitData(s: string) = c.data.add c.tokens.getOrIncl(s)
-template emitData(t: Token) = c.data.add t
-template emitData(t: PredefinedToken) = c.data.add Token(t)
-
-proc genStrLit(c: var GeneratedCode; litId: StrId): Token =
-  let cstr = makeCString(pool.strings[litId])
-  result = c.tokens.getOrIncl cstr
-
 proc inclHeader(c: var GeneratedCode, name: string) =
   let header = c.tokens.getOrIncl(name)
   if not c.includedHeaders.containsOrIncl(int header):
