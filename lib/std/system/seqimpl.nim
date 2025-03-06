@@ -164,12 +164,12 @@ proc growUnsafe*[T](s: var seq[T]; newLen: int) =
     if s.data == nil: return
   s.len = newLen
 
-proc grow*[T](s: var seq[T]; newLen: int; val: T) =
+proc grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
   var i = s.len
   growUnsafe(s, newLen)
   if s.data == nil: return
   while i < newLen:
-    (s.data[i]) = val
+    (s.data[i]) = `=dup`(val)
     inc i
 
 proc high*[T](s: seq[T]): int {.inline.} = s.len - 1
