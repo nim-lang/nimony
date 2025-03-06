@@ -532,6 +532,8 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let fs = f.symId
   if isTypevar(fs):
     if m.concreteMatch:
+      # generic param is from provided argument type
+      # instead of considering inference, treat as a standalone value
       if not matchesConstraint(m, fs, a):
         m.error ConstraintMismatch, f, a
     elif m.inferred.contains(fs):
