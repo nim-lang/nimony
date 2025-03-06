@@ -194,6 +194,7 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
         break
       else:
         skip n
+  if n.exprKind == EmoveX: inc n
 
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
@@ -635,21 +636,24 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
-    copyInto c.dest, n:
-      tr c, n, e
+    inc n
+    tr c, n, e
+    skipParRi n
   elif isLastRead(c, arg):
     if e == WantOwner and hasDestructor(c, typ):
-      copyInto c.dest, n:
-        genLastRead(c, n, typ)
+      inc n
+      genLastRead(c, n, typ)
+      skipParRi n
     else:
-      copyInto c.dest, n:
-        tr c, n, e
+      inc n
+      tr c, n, e
+      skipParRi n
   else:
     let m = "not the last usage of: " & asNimCode(n)
     c.dest.buildTree ErrT, info:
       c.dest.addSubtree n
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
-  skip n
+    skip n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
