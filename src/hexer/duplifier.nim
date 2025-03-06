@@ -175,7 +175,6 @@ proc callDup(c: var Context; arg: var Cursor) =
   if typ.typeKind == NiltT:
     tr c, arg, DontCare
   else:
-    let n = arg
     let info = arg.info
     let hookProc = getHook(c.lifter[], attachedDup, typ, info)
     if hookProc != NoSymId and arg.kind != StringLit:

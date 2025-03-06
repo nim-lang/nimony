@@ -13,9 +13,9 @@ import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 import "$nim"/dist/checksums/src/checksums/sha1
 import ".." / models / nifindex_tags
 
-proc entryKind(tag: TagId): NifIndex =
-  if rawTagIsNifIndex(tag.uint32):
-    result = cast[NifIndex](tag)
+proc entryKind(tag: TagId): NifIndexKind =
+  if rawTagIsNifIndexKind(tag.uint32):
+    result = cast[NifIndexKind](tag)
   else:
     result = NoIndexTag
 
@@ -83,7 +83,7 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           else:
             skip n
         skipToEnd n
-      of NoIndexTag, InlineIdx, KvIdx, BuildIdx, IndexIdx, PublicIdx, PrivateIdx,
+      of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, IndexIdx, PublicIdx, PrivateIdx,
          DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx:
         inc n
         inc nested
@@ -104,8 +104,12 @@ type
     attachedSink,
     attachedTrace
 
+  HookIndexEntry* = object
+    typ*, hook*: SymId
+    isGeneric*: bool
+
   IndexSections* = object
-    hooks*: array[AttachedOp, seq[(SymId, SymId)]]
+    hooks*: array[AttachedOp, seq[HookIndexEntry]]
     converters*: seq[(SymId, SymId)]
     toBuild*: TokenBuf
 
@@ -127,15 +131,15 @@ proc hookToTag(op: AttachedOp): TagId =
   of attachedSink: TagId(SinkhIdx)
   of attachedTrace: TagId(TraceIdx)
 
-proc getHookSection(tag: TagId; values: openArray[(SymId, SymId)]): TokenBuf =
+proc getHookSection(tag: TagId; values: openArray[HookIndexEntry]): TokenBuf =
   result = createTokenBuf(30)
   result.addParLe tag
 
-  for value in values:
-    let (key, sym) = value
-    result.buildTree TagId(KvIdx), NoLineInfo:
-      result.add symToken(key, NoLineInfo)
-      result.add symToken(sym, NoLineInfo)
+  for v in values:
+    let t = if v.isGeneric: TagId(VvIdx) else: TagId(KvIdx)
+    result.buildTree t, NoLineInfo:
+      result.add symToken(v.typ, NoLineInfo)
+      result.add symToken(v.hook, NoLineInfo)
 
   result.addParRi()
 
@@ -251,9 +255,12 @@ type
   NifIndexEntry* = object
     offset*: int
     info*: PackedLineInfo
+  HooksPerType* = object
+    a*: array[AttachedOp, (SymId, bool)]
+
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
-    hooks*: array[AttachedOp, Table[SymId, SymId]]
+    hooks*: Table[SymId, HooksPerType]
     converters*: Table[string, string] # map of dest types to converter symbols
     toBuild*: seq[(string, string, string)]
 
@@ -298,13 +305,14 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
       assert false, "expected (kv) construct"
       #t = next(s)
 
-proc readHookSection(s: var Stream; tab: var Table[SymId, SymId]) =
+proc readHookSection(s: var Stream; tab: var Table[SymId, HooksPerType]; op: AttachedOp) =
   var t = next(s)
   var nested = 1
   while t.kind != EofToken:
     if t.kind == ParLe:
       inc nested
-      if t.tagId == TagId(KvIdx):
+      if t.tagId == TagId(KvIdx) or t.tagId == TagId(VvIdx):
+        let isGeneric = t.tagId == TagId(VvIdx)
         t = next(s)
         var key = SymId(0)
         if t.kind == Symbol:
@@ -313,7 +321,9 @@ proc readHookSection(s: var Stream; tab: var Table[SymId, SymId]) =
           raiseAssert "invalid (kv) construct: symbol expected"
         t = next(s) # skip Symbol
         if t.kind == Symbol:
-          tab[key] = t.symId
+          if not tab.hasKey(key):
+            tab[key] = HooksPerType(a: default(array[AttachedOp, (SymId, bool)]))
+          tab[key].a[op] = (t.symId, isGeneric)
         else:
           assert false, "invalid (kv) construct: symbol expected"
         t = next(s) # skip Symbol 2
@@ -323,14 +333,14 @@ proc readHookSection(s: var Stream; tab: var Table[SymId, SymId]) =
         else:
           assert false, "invalid (kv) construct: ')' expected"
       else:
-        assert false, "expected (kv) construct"
+        assert false, "expected (kv) or (vv) construct"
     elif t.kind == ParRi:
       dec nested
       if nested == 0:
         break
       t = next(s)
     else:
-      assert false, "expected (kv) construct"
+      assert false, "expected (kv) or (vv) construct"
       #t = next(s)
 
 proc readSymbolSection(s: var Stream; tab: var Table[string, string]) =
@@ -397,7 +407,7 @@ proc readIndex*(indexName: string): NifIndex =
     t = next(s)
     for op in AttachedOp:
       if t.kind == ParLe and pool.tags[t.tag] == hookName(op):
-        readHookSection(s, result.hooks[op])
+        readHookSection(s, result.hooks, op)
         t = next(s)
     if t.tag == TagId(ConverterIdx):
       readSymbolSection(s, result.converters)

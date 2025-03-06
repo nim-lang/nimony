@@ -47,7 +47,7 @@ when not defined(nimony):
 proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
   result = c.nominalTypeToHook[op].getOrDefault(s)
   if result == SymId(0):
-    result = tryLoadHook(op, s)
+    result = tryLoadHook(op, s, false)
     if result != SymId(0):
       c.nominalTypeToHook[op][s] = result
 
