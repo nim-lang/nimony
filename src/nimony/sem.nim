@@ -1233,6 +1233,8 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
 proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
+proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
+
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
   if not (m.genericConverter or m.genericEmpty or m.insertedParam):
     c.dest.add m.args
@@ -1256,7 +1258,12 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         if m.err and not prevErr:
           c.typeMismatch arg.info, defaultValue.typ, param.typ
         inc arg
-      elif m.genericEmpty and isEmptyLiteral(arg):
+      elif m.genericEmpty and isEmptyContainer(arg):
+        let isCall = arg.exprKind in CallKinds
+        let start = c.dest.len
+        if isCall:
+          takeToken c, arg
+          takeTree c, arg
         takeToken c, arg
         if containsGenericParams(arg):
           c.dest.addSubtree instantiateType(c, arg, m.inferred)
@@ -1264,6 +1271,14 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         else:
           takeTree c, arg
         takeParRi c, arg
+        if isCall:
+          takeParRi c, arg
+          var callBuf = createTokenBuf(c.dest.len - start)
+          for tok in start ..< c.dest.len:
+            callBuf.add c.dest[tok]
+          c.dest.shrink start
+          var call = Item(n: beginRead(callBuf), typ: c.types.autoType)
+          semCall c, call, {}
       elif m.genericConverter:
         var nested = 0
         while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
@@ -1467,7 +1482,10 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
 
     if m[idx].err:
       # adding args or type args may have errored
-      buildErr c, cs.callNode.info, getErrorMsg(m[idx])
+      if AllowEmpty in cs.flags and pool.syms[finalFn.sym] == "@.1." & SystemModuleSuffix:
+        typeofCallIs c, it, cs.beforeCall, c.types.autoType
+      else:
+        buildErr c, cs.callNode.info, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
       typeofCallIs c, it, cs.beforeCall, m[idx].returnType
       if c.templateInstCounter <= MaxNestedTemplates:
@@ -1593,7 +1611,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     callNode: it.n.load(),
     dest: createTokenBuf(16),
     source: source,
-    flags: {InTypeContext}*flags
+    flags: {InTypeContext, AllowEmpty}*flags
   )
   inc it.n
   swap c.dest, cs.dest

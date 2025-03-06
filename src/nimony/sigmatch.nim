@@ -662,6 +662,20 @@ proc isStringType*(a: Cursor): bool {.inline.} =
 proc isSomeStringType*(a: Cursor): bool {.inline.} =
   result = a.typeKind == CstringT or isStringType(a)
 
+proc isSomeSeqType*(a: Cursor): bool =
+  # either an instantiation of seq or an invocation to it
+  result = false
+  if a.kind == Symbol:
+    let decl = getTypeSection(a.symId)
+    if decl.kind == TypeY and decl.typevars.typeKind == InvokeT:
+      var root = decl.typevars
+      inc root # tag
+      result = root.kind == Symbol and pool.syms[root.symId] == "seq.0." & SystemModuleSuffix
+  elif a.typeKind == InvokeT:
+    var root = a
+    inc root # tag
+    result = root.kind == Symbol and pool.syms[root.symId] == "seq.0." & SystemModuleSuffix
+
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
   of Symbol:
@@ -807,6 +821,29 @@ proc isEmptyLiteral*(n: Cursor): bool =
     skip n # type
     result = n.kind == ParRi
 
+proc isEmptyCall*(n: Cursor): bool =
+  if n.exprKind notin CallKinds:
+    return false
+  var n = n
+  inc n
+  result = n.kind == Symbol and pool.syms[n.symId] == "@.1." & SystemModuleSuffix
+  inc n
+  if not isEmptyLiteral(n):
+    return false
+  skip n
+  if n.kind != ParRi:
+    return false
+
+proc isEmptyContainer*(n: Cursor): bool =
+  result = isEmptyLiteral(n) or isEmptyCall(n)
+
+proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInfo) =
+  buf.addParLe(RangetypeT, info)
+  buf.addSubtree c.types.intType
+  buf.addIntLit(0, info)
+  buf.addIntLit(-1, info)
+  buf.addParRi()
+
 proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
   if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
       (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
@@ -821,11 +858,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
         # create index type to match to
         var buf = createTokenBuf(8)
         let info = arg.n.info
-        buf.addParLe(RangetypeT, info)
-        buf.addSubtree m.context.types.intType
-        buf.addIntLit(0, info)
-        buf.addIntLit(-1, info)
-        buf.addParRi()
+        addEmptyRangeType(buf, m.context, info)
         # hoist it in case it gets inferred:
         var aIndex = typeToCursor(m.context[], buf, 0)
         linearMatch(m, fIndex, aIndex)
@@ -838,12 +871,41 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
       m.args.add arg.n.load # copy tag
       m.args.takeTree f
       m.args.addParRi()
+  elif (arg.n.exprKind in CallKinds and isSomeSeqType(f)):
+    inc m.inheritanceCosts
+    if not m.err:
+      var elemType = f
+      if elemType.kind == Symbol:
+        let decl = getTypeSection(elemType.symId)
+        elemType = decl.typevars
+      assert elemType.typeKind == InvokeT
+      inc elemType # tag
+      skip elemType # `seq`
+      # always needs semchecking:
+      m.genericEmpty = true
+      # give the type to the array constructor:
+      var call = arg.n
+      m.args.add call.load # copy call tag
+      inc call
+      m.args.add call.load # copy symbol
+      inc call
+      assert call.exprKind == AconstrX
+      m.args.add call.load # copy array tag
+      inc call
+      # build our own array type:
+      m.args.addParLe(ArrayT, call.info)
+      m.args.addSubtree elemType
+      addEmptyRangeType(m.args, m.context, call.info)
+      m.args.addParRi()
+      skip call
+      takeParRi m.args, call
+      takeParRi m.args, call
   else:
     # match against `auto`, untyped/varargs should still match
     singleArgImpl(m, f, arg)
 
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
-  if arg.typ.typeKind == AutoT and isEmptyLiteral(arg.n):
+  if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
     matchEmptyContainer(m, f, arg)
     return
   singleArgImpl(m, f, arg)
