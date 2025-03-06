@@ -211,7 +211,11 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   of Compat:
     nimonycmd.add " --compat"
-  let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file), cat)
+  when defined(linux):
+    nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
+  else:
+    nimonycmd.add " "
+  let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & quoteShell(file), cat)
 
   let msgs = file.changeFileExt(".msgs")
 
