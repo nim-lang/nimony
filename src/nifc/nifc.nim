@@ -10,7 +10,7 @@
 ## NIFC driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, noptions, mangler, cprelude
+import codegen, noptions, mangler
 
 when defined(windows):
   import bat
@@ -67,7 +67,6 @@ proc generateBackend(s: var State; action: Action; files: seq[string]; flags: se
   generateCode s, inp, outp, flags
 
 proc handleCmdLine() =
-  var args: seq[string] = @[]
   var toRun = false
   var compileOnly = false
   var isMain = false
