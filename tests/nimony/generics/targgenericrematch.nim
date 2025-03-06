@@ -18,3 +18,12 @@ proc baz3[T]() =
 baz1[int, int]()
 baz2[int]()
 baz3[int]()
+
+proc barrec[T, U](x: T, y: U) =
+  if false:
+    barrec[T, U](x, y)
+    barrec[T, T](x, x)
+    barrec[U, T](y, x)
+    barrec[U, U](y, y)
+
+barrec[int, float](1, 2)
