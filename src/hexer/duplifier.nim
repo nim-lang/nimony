@@ -194,6 +194,7 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
         break
       else:
         skip n
+  if n.exprKind == EmoveX: inc n
 
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
