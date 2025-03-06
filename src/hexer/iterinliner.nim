@@ -177,7 +177,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
     of WhileS:
       e.dest.add c
       inc c
-      takeTree(e, c)
+      inlineLoopBody(e, c, mapping)
       e.breaks.add SymId(0)
       e.continues.add SymId(0)
       inlineLoopBody(e, c, mapping)
