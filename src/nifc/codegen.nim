@@ -696,7 +696,7 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   elif c.init.len > 0:
-    f.write "void __attribute__((constructor)) init(void) {"
+    f.write "static void __attribute__((constructor)) init(void) {"
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   f.f.close
