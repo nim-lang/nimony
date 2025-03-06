@@ -531,7 +531,10 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
 
 proc maybeByConstRef(e: var EContext; c: var Cursor) =
   let param = asLocal(c)
-  if passByConstRef(param.typ, param.pragmas, e.bits div 8):
+  if param.typ.typeKind in {TypedescT, StaticT}:
+    # do not produce any code for this as it's a compile-time parameter
+    skip c
+  elif passByConstRef(param.typ, param.pragmas, e.bits div 8):
     var paramBuf = createTokenBuf()
     paramBuf.add tagToken("param", c.info)
     paramBuf.addSubtree param.name
