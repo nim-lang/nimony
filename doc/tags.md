@@ -26,8 +26,8 @@
 | `(bracket X*)`         | NimonyExpr, NiflerKind | untyped array constructor |
 | `(curly X*)`           | NimonyExpr, NiflerKind | untyped set constructor |
 | `(curlyat X X)`        | NimonyExpr, NiflerKind | curly expression `a{i}` |
-| `(kv Y X)`             | NimonyOther, NifcOther, NiflerKind, NifIndex | key-value pair |
-| `(vv X X)`             | NimonyOther, NiflerKind | value-value pair (used for explicitly named arguments in function calls) | 
+| `(kv Y X)`             | NimonyOther, NifcOther, NiflerKind, NifIndexKind | key-value pair |
+| `(vv X X)`             | NimonyOther, NiflerKind, NifIndexKind | value-value pair (used for explicitly named arguments in function calls) |
 | `(add T X X)`          | NifcExpr, NimonyExpr | |
 | `(sub T X X)`          | NifcExpr, NimonyExpr | |
 | `(mul T X X)`          | NifcExpr, NimonyExpr | |
@@ -49,27 +49,27 @@
 | `(cmd X X*)`             | NimonyStmt, NimonyExpr, NiflerKind | command operation |
 | `(range X X)`          | NifcOther, NimonyOther | `(range a b)` construct |
 | `(ranges (range ...)*)` | NifcOther, NimonyOther, NiflerKind | |
-| `(gvar D E P T X)`; `(gvar D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NifIndex | global variable declaration |
-| `(tvar D E P T X)`; `(tvar D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NifIndex | thread local variable declaration |
-| `(var D E P T X)`; `(var D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndex | variable declaration |
+| `(gvar D E P T X)`; `(gvar D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NifIndexKind | global variable declaration |
+| `(tvar D E P T X)`; `(tvar D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NifIndexKind | thread local variable declaration |
+| `(var D E P T X)`; `(var D P T X)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndexKind | variable declaration |
 | `(param D E P T X)`; `(param D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | parameter declaration |
-| `(const D E P T X)`; `(const D P T)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndex | const variable declaration |
+| `(const D E P T X)`; `(const D P T)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndexKind | const variable declaration |
 | `(result D E P T X)` | NimonySym, NimonyStmt | result variable declaration |
-| `(glet D E P T X)` | NimonyStmt, NimonySym, NifIndex | global let variable declaration |
-| `(tlet D E P T X)` | NimonyStmt, NimonySym, NifIndex | thread local let variable declaration |
-| `(let D E P T X)` | NimonySym, NimonyStmt, NiflerKind, NifIndex | let variable declaration |
-| `(cursor D E P T X)` | NimonySym, NimonyStmt, NifIndex | cursor variable declaration |
+| `(glet D E P T X)` | NimonyStmt, NimonySym, NifIndexKind | global let variable declaration |
+| `(tlet D E P T X)` | NimonyStmt, NimonySym, NifIndexKind | thread local let variable declaration |
+| `(let D E P T X)` | NimonySym, NimonyStmt, NiflerKind, NifIndexKind | let variable declaration |
+| `(cursor D E P T X)` | NimonySym, NimonyStmt, NifIndexKind | cursor variable declaration |
 | `(typevar D E P T X)` | NimonySym, NifcOther, NimonyOther, NiflerKind | type variable declaration |
 | `(efld D E P T X)`; `(efld D X)` | NimonySym, NifcSym, NifcOther, NimonyOther, NiflerKind | enum field declaration |
 | `(fld D E P T X)`; `(fld D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | field declaration |
-| `(proc D ...)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndex | proc declaration |
-| `(func D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndex | function declaration |
-| `(iterator D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndex | iterator declaration |
-| `(converter D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndex | converter declaration |
-| `(method D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndex | method declaration |
-| `(macro D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndex | macro declaration |
-| `(template D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndex | template declaration |
-| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NiflerKind, NifIndex | type declaration |
+| `(proc D ...)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndexKind | proc declaration |
+| `(func D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | function declaration |
+| `(iterator D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | iterator declaration |
+| `(converter D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | converter declaration |
+| `(method D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | method declaration |
+| `(macro D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | macro declaration |
+| `(template D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | template declaration |
+| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NiflerKind, NifIndexKind | type declaration |
 | `(block .D X)` | NimonyStmt, NimonySym, NiflerKind | block declaration |
 | `(module)` | NimonySym | module declaration |
 | `(cchoice X X*)` | NimonyExpr, NimonySym | closed choice |
@@ -121,7 +121,7 @@
 | `(noconv)` | CallConv | no explicit calling convention |
 | `(member)`  | CallConv | `member` calling convention |
 | `(nimcall)` | CallConv | `nimcall` calling convention |
-| `(inline)` | NifcPragma, NimonyPragma, NifIndex | `inline` proc annotation |
+| `(inline)` | NifcPragma, NimonyPragma, NifIndexKind | `inline` proc annotation |
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
 | `(attr STR)` | NifcPragma | general attribute annoation |
 | `(varargs)` | NifcPragma, NimonyPragma, NimonyType | `varargs` proc annotation |
@@ -201,7 +201,7 @@
 | `(noinit)` | NimonyPragma | `noinit` pragma |
 | `(requires X)` | NimonyPragma | `requires` pragma |
 | `(ensures X)` | NimonyPragma | `ensures` pragma |
-| `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndex | `build` pragma |
+| `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |
 | `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
@@ -245,12 +245,12 @@
 | `(inset T X X)` | NimonyExpr | |
 | `(card T X)` | NimonyExpr | |
 | `(emove X)` | NimonyExpr | |
-| `(destroy X)` | NimonyExpr, NifIndex, HookKind | |
-| `(dup X)` | NimonyExpr, NifIndex, HookKind| |
-| `(copy X X)` | NimonyExpr, NifIndex, HookKind | |
-| `(wasmoved X)` | NimonyExpr, NifIndex, HookKind | |
-| `(sinkh X X)` | NimonyExpr, NifIndex, HookKind | |
-| `(trace X X)` | NimonyExpr, NifIndex, HookKind | |
+| `(destroy X)` | NimonyExpr, NifIndexKind, HookKind | |
+| `(dup X)` | NimonyExpr, NifIndexKind, HookKind| |
+| `(copy X X)` | NimonyExpr, NifIndexKind, HookKind | |
+| `(wasmoved X)` | NimonyExpr, NifIndexKind, HookKind | |
+| `(sinkh X X)` | NimonyExpr, NifIndexKind, HookKind | |
+| `(trace X X)` | NimonyExpr, NifIndexKind, HookKind | |
 | `(errv)` | NifcExpr | error flag for `NIFC` |
 | `(staticstmt S)` | NimonyStmt, NiflerKind | `static` statement |
 | `(bind Y+)` | NimonyStmt, NiflerKind | `bind` statement |
@@ -258,9 +258,9 @@
 | `(using (params...)+)` | NimonyStmt, NiflerKind | `using` statement |
 | `(asm X+)` | NimonyStmt, NiflerKind | `asm` statement |
 | `(defer X)` | NimonyStmt, NiflerKind | `defer` statement |
-| `(index (public ...) (private ...) (hooks ...) (converter ...) (build ...))` | NifIndex | index section |
-| `(public (kv Y INTLIT*)` | NifIndex | public section |
-| `(private (kv Y INTLIT*))` | NifIndex | private section |
+| `(index (public ...) (private ...) (hooks ...) (converter ...) (build ...))` | NifIndexKind | index section |
+| `(public (kv Y INTLIT*)` | NifIndexKind | public section |
+| `(private (kv Y INTLIT*))` | NifIndexKind | private section |
 | `(inject)` | NimonyPragma | `inject` pragma |
 | `(gensym)` | NimonyPragma | `gensym` pragma |
 | `(error X?)` | NimonyPragma | `error` pragma |

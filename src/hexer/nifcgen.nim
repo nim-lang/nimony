@@ -531,7 +531,10 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
 
 proc maybeByConstRef(e: var EContext; c: var Cursor) =
   let param = asLocal(c)
-  if passByConstRef(param.typ, param.pragmas, e.bits div 8):
+  if param.typ.typeKind in {TypedescT, StaticT}:
+    # do not produce any code for this as it's a compile-time parameter
+    skip c
+  elif passByConstRef(param.typ, param.pragmas, e.bits div 8):
     var paramBuf = createTokenBuf()
     paramBuf.add tagToken("param", c.info)
     paramBuf.addSubtree param.name
@@ -1007,7 +1010,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       inc c
       traverseType(e, c)
       while c.kind != ParRi:
-        traverseExpr(e, c)
+        if c.substructureKind == KvU:
+          e.dest.add c # KvU
+          inc c
+          takeTree e, c # key
+          traverseExpr e, c # value
+          takeParRi e, c
+        else:
+          traverseExpr e, c
       takeParRi e, c
     of TupX:
       traverseTupleConstr e, c
@@ -1111,13 +1121,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       #skip c
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
        SizeofX, AlignofX, OffsetofX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
-       BitandX, BitorX, BitxorX, BitnotX, OconvX, NoExpr:
-      # XXX Refine NoExpr case here. For now types like `(i -1)` can enter here.
+       BitandX, BitorX, BitxorX, BitnotX, OconvX:
       e.dest.add c
       inc c
       while c.kind != ParRi:
         traverseExpr e, c
       takeParRi e, c
+    of NoExpr:
+      traverseType e, c
   of SymbolDef:
     e.dest.add c
     e.offer c.symId

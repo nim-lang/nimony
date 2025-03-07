@@ -3399,16 +3399,19 @@ proc checkTypeHook(c: var SemContext; params: seq[TypeCursor]; op: HookKind; inf
     of DupH:
       buildErr c, info, "signature for '=dup' must be proc[T: object](x: T): T"
 
-proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind) =
-  let attachedOp =
-    case op
-    of DestroyH: attachedDestroy
-    of WasmovedH: attachedWasMoved
-    of CopyH: attachedCopy
-    of SinkhH: attachedSink
-    of DupH: attachedDup
-    of TraceH, NoHook: attachedTrace
-  c.hookIndexMap[attachedOp].add (obj, symId)
+proc hookToAttachedOp(op: HookKind): AttachedOp =
+  case op
+  of DestroyH: attachedDestroy
+  of WasmovedH: attachedWasMoved
+  of CopyH: attachedCopy
+  of SinkhH: attachedSink
+  of DupH: attachedDup
+  of TraceH, NoHook: attachedTrace
+
+proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isGeneric: bool) =
+  let attachedOp = hookToAttachedOp(op)
+  c.hookIndexLog[attachedOp].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
+  programs.registerHook(c.thisModuleSuffix, obj, attachedOp, symId, isGeneric)
 
 proc getHookName(symId: SymId): string =
   result = pool.syms[symId]
@@ -3522,7 +3525,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
           let obj = getObjSymId(c, params[0])
-          registerHook(c, obj, symId, hk)
+          registerHook(c, obj, symId, hk, false)
 
       of checkBody:
         if it.n != "stmts":
@@ -3550,11 +3553,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           let objCursor = semHook(c, name, beforeParams, symId, info)
           let obj = getObjSymId(c, objCursor)
 
-          if c.routine.inGeneric == 0:
-            # because it's a hook for sure
-            registerHook(c, obj, symId, hk)
-          else:
-            c.genericHooks.mgetOrPut(obj, @[]).add symId
+          # because it's a hook for sure
+          registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
 
       of checkSignatures:
         c.takeTree it.n
@@ -3573,11 +3573,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         if hk != NoHook:
           let objCursor = semHook(c, name, beforeParams, symId, info)
           let obj = getObjSymId(c, objCursor)
-          if c.routine.inGeneric == 0:
-            # because it's a hook for sure
-            registerHook(c, obj, symId, hk)
-          else:
-            c.genericHooks.mgetOrPut(obj, @[]).add symId
+          registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
         takeToken c, it.n
       elif BorrowP in crucial.flags and pass in {checkGenericInst, checkBody}:
         if kind notin {ProcY, FuncY, ConverterY, TemplateY, MethodY}:
@@ -6010,7 +6006,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
   writeFile outfile, "(.nif24)\n" & toString(c.dest)
   let root = c.dest[0].info
   createIndex outfile, root, true,
-    IndexSections(hooks: move c.hookIndexMap,
+    IndexSections(hooks: move c.hookIndexLog,
       converters: move c.converterIndexMap,
       toBuild: move c.toBuild)
 
@@ -6032,20 +6028,31 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   assert typevars.kind == Symbol
 
   let symId = typevars.symId
-  if symId in c.genericHooks:
-    var inferred = initTable[SymId, Cursor]()
-    var typeArgs = createTokenBuf()
-    let originHooks = c.genericHooks[symId]
 
-    inc typevars # skips symbol
+  let hooks = tryLoadAllHooks(symId)
+  var needsSomething = false
+  for op in low(AttachedOp)..high(AttachedOp):
+    let h = hooks.a[op]
+    if h[0] != NoSymId and h[1]:
+      needsSomething = true
+      break
+  if not needsSomething: return
 
-    var typevarsSeq: seq[Cursor] = @[]
+  var inferred = initTable[SymId, Cursor]()
+  var typeArgs = createTokenBuf()
 
-    while typevars.kind != ParRi:
-      typevarsSeq.add typevars
-      takeTree(typeArgs, typevars)
+  inc typevars # skips symbol
 
-    for hook in originHooks:
+  var typevarsSeq: seq[Cursor] = @[]
+
+  while typevars.kind != ParRi:
+    typevarsSeq.add typevars
+    takeTree(typeArgs, typevars)
+
+  for op in low(AttachedOp)..high(AttachedOp):
+    let h = hooks.a[op]
+    let hook = h[0]
+    if hook != NoSymId and h[1]:
       let res = tryLoadSym(hook)
       if res.status == LacksNothing:
         let info = res.decl.info
@@ -6060,6 +6067,8 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
           skip typevarsStart # skip the typevar tree
           inc counter
         discard requestRoutineInstance(c, hook, typeArgs, inferred, info)
+      else:
+        quit "BUG: Could not load hook: " & pool.syms[hook]
 
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =

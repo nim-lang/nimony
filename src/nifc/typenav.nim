@@ -6,7 +6,7 @@
 
 ## A type navigator can recompute the type of an expression.
 
-import std / [strutils, tables, assertions]
+import std / [tables, assertions]
 include "../lib" / nifprelude
 
 import nifc_model, mangler
