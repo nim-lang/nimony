@@ -5,7 +5,7 @@
    (param :x.0 . . 6 seq.0.temd2l7vy .)) . . . 24
   (stmts
    (discard .))) 3,2
- (call ~3 foo.0.temd2l7vy 43,146,lib/std/system/seqimpl.nim
+ (call ~3 foo.0.temd2l7vy 43,147,lib/std/system/seqimpl.nim
   (expr 15
    (expr
     (call ~15 newSeqUninit.0.temd2l7vy 1 +0)))) ,4
@@ -18,23 +18,23 @@
     (at ~3 seq.0.sysvq0asl 1 T.0.temd2l7vy) .)) . . . 31
   (stmts
    (discard .))) 3,6
- (call ~3 bar.1.temd2l7vy 1 +1.23 43,146,lib/std/system/seqimpl.nim
+ (call ~3 bar.1.temd2l7vy 1 +1.23 43,147,lib/std/system/seqimpl.nim
   (expr 15
    (expr
     (call ~15 newSeqUninit.1.temd2l7vy 1 +0)))) 4,8
- (gvar :s.0.temd2l7vy . . 6 seq.2.temd2l7vy 43,146,lib/std/system/seqimpl.nim
+ (gvar :s.0.temd2l7vy . . 6 seq.2.temd2l7vy 43,147,lib/std/system/seqimpl.nim
   (expr 15
    (expr
-    (call ~15 newSeqUninit.2.temd2l7vy 1 +0)))) 58,146,lib/std/system/seqimpl.nim
- (proc :newSeqUninit.0.temd2l7vy . ~58,~91 .
+    (call ~15 newSeqUninit.2.temd2l7vy 1 +0)))) 58,147,lib/std/system/seqimpl.nim
+ (proc :newSeqUninit.0.temd2l7vy . ~58,~92 .
   (at newSeqUninit.0.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
-   (i -1)) ~37,~91
+   (i -1)) ~37,~92
   (params 1
    (param :size.3 . . 6
-    (i -1) .)) ~42,~91 seq.0.temd2l7vy ~17,~91
+    (i -1) .)) ~42,~92 seq.0.temd2l7vy ~17,~92
   (pragmas 2
    (nodestroy) 13
-   (inline)) ~58,~91 . ~56,~90
+   (inline)) ~58,~92 . ~56,~91
   (stmts
    (result :result.0 . . 14,~1 seq.0.temd2l7vy .)
    (if 3
@@ -81,16 +81,16 @@
          (asgn ~5
           (dot ~6 result.0 len.0.temd2l7vy +0) 2 +0) ,1
          (cmd oomHandler.0.sysvq0asl 11 memSize.0))))))) ~2,~1
-   (ret result.0))) 58,146,lib/std/system/seqimpl.nim
- (proc :newSeqUninit.1.temd2l7vy . ~58,~91 .
+   (ret result.0))) 58,147,lib/std/system/seqimpl.nim
+ (proc :newSeqUninit.1.temd2l7vy . ~58,~92 .
   (at newSeqUninit.0.sysvq0asl
-   (f +64)) ~37,~91
+   (f +64)) ~37,~92
   (params 1
    (param :size.4 . . 6
-    (i -1) .)) ~42,~91 seq.1.temd2l7vy ~17,~91
+    (i -1) .)) ~42,~92 seq.1.temd2l7vy ~17,~92
   (pragmas 2
    (nodestroy) 13
-   (inline)) ~58,~91 . ~56,~90
+   (inline)) ~58,~92 . ~56,~91
   (stmts
    (result :result.1 . . 14,~1 seq.1.temd2l7vy .)
    (if 3
@@ -146,16 +146,16 @@
     (f +64) .) 7
    (param :y.2 . . 6 seq.1.temd2l7vy .)) ~3,~2 . ~3,~2 . ~3,~2 . 28,~2
   (stmts
-   (discard .))) 58,146,lib/std/system/seqimpl.nim
- (proc :newSeqUninit.2.temd2l7vy . ~58,~91 .
+   (discard .))) 58,147,lib/std/system/seqimpl.nim
+ (proc :newSeqUninit.2.temd2l7vy . ~58,~92 .
   (at newSeqUninit.0.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
-   (u +8)) ~37,~91
+   (u +8)) ~37,~92
   (params 1
    (param :size.5 . . 6
-    (i -1) .)) ~42,~91 seq.2.temd2l7vy ~17,~91
+    (i -1) .)) ~42,~92 seq.2.temd2l7vy ~17,~92
   (pragmas 2
    (nodestroy) 13
-   (inline)) ~58,~91 . ~56,~90
+   (inline)) ~58,~92 . ~56,~91
   (stmts
    (result :result.2 . . 14,~1 seq.2.temd2l7vy .)
    (if 3
