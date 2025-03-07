@@ -143,6 +143,7 @@ proc `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
       (result.data[i]) = `=dup`(a[i])
       inc i
 
+# special cased in compiler as "@.1.<system suffix>" for empty seq type inference:
 template `@`*[T](a: array[0, T]): seq[T] = newSeqUninit[T](0)
 
 when false:
