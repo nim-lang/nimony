@@ -3377,7 +3377,7 @@ proc hookToAttachedOp(op: HookKind): AttachedOp =
 
 proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isGeneric: bool) =
   let attachedOp = hookToAttachedOp(op)
-  c.hookIndexMap[attachedOp].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
+  c.hookIndexLog[attachedOp].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
   programs.registerHook(c.thisModuleSuffix, obj, attachedOp, symId, isGeneric)
 
 proc getHookName(symId: SymId): string =
@@ -5973,7 +5973,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
   writeFile outfile, "(.nif24)\n" & toString(c.dest)
   let root = c.dest[0].info
   createIndex outfile, root, true,
-    IndexSections(hooks: move c.hookIndexMap,
+    IndexSections(hooks: move c.hookIndexLog,
       converters: move c.converterIndexMap,
       toBuild: move c.toBuild)
 

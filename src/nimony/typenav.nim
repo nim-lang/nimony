@@ -9,6 +9,7 @@
 
 ## A type navigator can recompute the type of an expression.
 
+import std/assertions
 include nifprelude
 
 import std/tables
@@ -164,11 +165,24 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         skip n # skip key
         result = getTypeImpl(c, n)
       else: discard
-  of AtX, PatX, ArrAtX:
+  of AtX, ArrAtX:
     result = getTypeImpl(c, n.firstSon)
     case typeKind(result)
     of ArrayT:
       inc result # to the element type
+    of CstringT:
+      result = c.builtins.charType
+    else:
+      result = c.builtins.autoType # still an error
+  of PatX:
+    result = getTypeImpl(c, n.firstSon)
+    case typeKind(result)
+    of PtrT:
+      inc result
+      if typeKind(result) == UarrayT:
+        inc result
+      else:
+        result = c.builtins.autoType # still an error
     of CstringT:
       result = c.builtins.charType
     else:
@@ -223,7 +237,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = getTypeImpl(c, result) # typeof(obj.field) == typeof field
   of DerefX, HderefX:
     result = getTypeImpl(c, n.firstSon)
-    if typeKind(result) in {RefT, PtrT}:
+    if typeKind(result) in {RefT, PtrT, MutT, OutT}:
       inc result
     else:
       result = c.builtins.autoType # still an error
@@ -320,6 +334,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
 
 proc getType*(c: var TypeCache; n: Cursor; skipAliases = false): Cursor =
   result = getTypeImpl(c, n)
+  #assert result.typeKind != AutoT
   if skipAliases:
     var counter = 20
     while counter > 0 and result.kind == Symbol:
