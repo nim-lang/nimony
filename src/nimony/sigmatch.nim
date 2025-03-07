@@ -835,6 +835,7 @@ proc isEmptyLiteral*(n: Cursor): bool =
     result = n.kind == ParRi
 
 proc isEmptyCall*(n: Cursor): bool =
+  # input needs to be semchecked, possibly in AllowEmpty context
   if n.exprKind notin CallKinds:
     return false
   var n = n
