@@ -680,7 +680,7 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
       elemType = a
 
 proc isSomeSeqType*(a: Cursor): bool {.inline.} =
-  var dummy: Cursor
+  var dummy = default(Cursor)
   result = isSomeSeqType(a, dummy)
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
