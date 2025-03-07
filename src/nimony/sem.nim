@@ -156,23 +156,44 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
 
+type
+  SemFlag = enum
+    KeepMagics
+    AllowOverloads
+    PreferIterators
+    AllowUndeclared
+    AllowModuleSym
+    AllowEmpty
+    InTypeContext
+
+  TransformedCallSource = enum
+    RegularCall, MethodCall,
+    DotCall, SubscriptCall,
+    DotAsgnCall, SubscriptAsgnCall
+
+proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
+
 proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCursor) =
   if typeKind(expected) == AutoT:
     return
-  elif typeKind(it.typ) == AutoT:
-    it.typ = expected
-    return
 
-  var m = createMatch(addr c)
   var arg = Item(n: cursorAt(c.dest, argBegin), typ: it.typ)
-  let info = arg.n.info
+  var done = false
   if typeKind(arg.typ) == VoidT and isNoReturn(arg.n):
     # noreturn allowed in expression context
     # maybe use sem flags to restrict this to statement branches
-    discard
-  else:
-    typematch m, expected, arg
+    done = true
+  elif typeKind(arg.typ) == AutoT and not isEmptyContainer(arg.n):
+    # auto is valid for empty container, will be handled below
+    it.typ = expected
+    done = true
   endRead(c.dest)
+  if done:
+    return
+
+  var m = createMatch(addr c)
+  let info = arg.n.info
+  typematch m, expected, arg
   if m.err:
     # try converter
     var convMatch = default(Match)
@@ -188,7 +209,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
         else:
           let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
           c.dest[c.dest.len-1].setSymId inst.targetSym
-      # ignore genericEmpty case, probably environment is generic
+      # ignore checkEmptyArg case, probably environment is generic
       c.dest.add convMatch.args
       c.dest.addParRi()
       it.typ = expected
@@ -196,7 +217,12 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       c.typeMismatch info, it.typ, expected
   else:
     shrink c.dest, argBegin
-    c.dest.add m.args
+    if m.checkEmptyArg and cursorAt(m.args, 0).exprKind in CallKinds:
+      # empty seq call, semcheck
+      var call = Item(n: beginRead(m.args), typ: c.types.autoType)
+      semCall c, call, {}
+    else:
+      c.dest.add m.args
     it.typ = expected
 
 proc producesVoid(c: var SemContext; info: PackedLineInfo; dest: var Cursor) =
@@ -581,16 +607,6 @@ proc instantiateGenericHooks(c: var SemContext) =
     for p in procReqs: instantiateGenericProc c, p
 
 # -------------------- sem checking -----------------------------
-
-type
-  SemFlag = enum
-    KeepMagics
-    AllowOverloads
-    PreferIterators
-    AllowUndeclared
-    AllowModuleSym
-    AllowEmpty
-    InTypeContext
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
@@ -1035,11 +1051,6 @@ proc tryBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item): bool
 proc semBuiltinSubscript(c: var SemContext; it: var Item; lhs: Item)
 
 type
-  TransformedCallSource = enum
-    RegularCall, MethodCall,
-    DotCall, SubscriptCall,
-    DotAsgnCall, SubscriptAsgnCall
-
   CallState = object
     beforeCall: int
     fn: Item
@@ -1234,7 +1245,7 @@ proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
-  if not (m.genericConverter or m.genericEmpty or m.insertedParam):
+  if not (m.genericConverter or m.checkEmptyArg or m.insertedParam):
     c.dest.add m.args
   else:
     m.args.addParRi()
@@ -1256,7 +1267,12 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         if m.err and not prevErr:
           c.typeMismatch arg.info, defaultValue.typ, param.typ
         inc arg
-      elif m.genericEmpty and isEmptyLiteral(arg):
+      elif m.checkEmptyArg and isEmptyContainer(arg):
+        let isCall = arg.exprKind in CallKinds
+        let start = c.dest.len
+        if isCall:
+          takeToken c, arg
+          takeTree c, arg
         takeToken c, arg
         if containsGenericParams(arg):
           c.dest.addSubtree instantiateType(c, arg, m.inferred)
@@ -1264,6 +1280,15 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         else:
           takeTree c, arg
         takeParRi c, arg
+        if isCall:
+          takeParRi c, arg
+          # instantiate `@` call, done by semchecking:
+          var callBuf = createTokenBuf(c.dest.len - start)
+          for tok in start ..< c.dest.len:
+            callBuf.add c.dest[tok]
+          c.dest.shrink start
+          var call = Item(n: beginRead(callBuf), typ: c.types.autoType)
+          semCall c, call, {}
       elif m.genericConverter:
         var nested = 0
         while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
@@ -1467,7 +1492,15 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
 
     if m[idx].err:
       # adding args or type args may have errored
-      buildErr c, cs.callNode.info, getErrorMsg(m[idx])
+      if finalFn.sym != SymId(0) and
+          # overload of `@` with empty array param:
+          pool.syms[finalFn.sym] == "@.1." & SystemModuleSuffix and
+          (AllowEmpty in cs.flags or isSomeSeqType(it.typ)):
+        # empty seq will be handled, either by `commonType` now or
+        # the call this is an argument of in the case of AllowEmpty
+        typeofCallIs c, it, cs.beforeCall, c.types.autoType
+      else:
+        buildErr c, cs.callNode.info, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
       typeofCallIs c, it, cs.beforeCall, m[idx].returnType
       if c.templateInstCounter <= MaxNestedTemplates:
@@ -1593,7 +1626,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     callNode: it.n.load(),
     dest: createTokenBuf(16),
     source: source,
-    flags: {InTypeContext}*flags
+    flags: {InTypeContext, AllowEmpty}*flags
   )
   inc it.n
   swap c.dest, cs.dest
