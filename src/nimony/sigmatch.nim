@@ -666,12 +666,18 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
   # check that `a` is either an instantiation of seq or an invocation to it
   result = false
   var a = a
-  if a.kind == Symbol:
+  var i = 0
+  while a.kind == Symbol:
     let decl = getTypeSection(a.symId)
     if decl.kind == TypeY:
-      a = decl.typevars
+      if decl.body.kind == Symbol:
+        a = decl.body
+      else:
+        a = decl.typevars
     else:
       return false
+    inc i
+    if i == 20: break
   if a.typeKind == InvokeT:
     inc a # tag
     result = a.kind == Symbol and pool.syms[a.symId] == "seq.0." & SystemModuleSuffix
