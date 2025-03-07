@@ -62,7 +62,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*, genericEmpty*, insertedParam*: bool
+    genericConverter*, checkEmptyArg*, insertedParam*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -662,19 +662,26 @@ proc isStringType*(a: Cursor): bool {.inline.} =
 proc isSomeStringType*(a: Cursor): bool {.inline.} =
   result = a.typeKind == CstringT or isStringType(a)
 
-proc isSomeSeqType*(a: Cursor): bool =
-  # either an instantiation of seq or an invocation to it
+proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
+  # check that `a` is either an instantiation of seq or an invocation to it
   result = false
+  var a = a
   if a.kind == Symbol:
     let decl = getTypeSection(a.symId)
-    if decl.kind == TypeY and decl.typevars.typeKind == InvokeT:
-      var root = decl.typevars
-      inc root # tag
-      result = root.kind == Symbol and pool.syms[root.symId] == "seq.0." & SystemModuleSuffix
-  elif a.typeKind == InvokeT:
-    var root = a
-    inc root # tag
-    result = root.kind == Symbol and pool.syms[root.symId] == "seq.0." & SystemModuleSuffix
+    if decl.kind == TypeY:
+      a = decl.typevars
+    else:
+      return false
+  if a.typeKind == InvokeT:
+    inc a # tag
+    result = a.kind == Symbol and pool.syms[a.symId] == "seq.0." & SystemModuleSuffix
+    if result:
+      inc a
+      elemType = a
+
+proc isSomeSeqType*(a: Cursor): bool {.inline.} =
+  var dummy: Cursor
+  result = isSomeSeqType(a, dummy)
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
@@ -826,6 +833,7 @@ proc isEmptyCall*(n: Cursor): bool =
     return false
   var n = n
   inc n
+  # overload of `@` with empty array param:
   result = n.kind == Symbol and pool.syms[n.symId] == "@.1." & SystemModuleSuffix
   inc n
   if not isEmptyLiteral(n):
@@ -867,42 +875,39 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
     inc m.inheritanceCosts
     if not m.err:
       if containsGenericParams(f): # maybe restrict to params of this routine
-        m.genericEmpty = true
+        # element type needs to be instantiated:
+        m.checkEmptyArg = true
       m.args.add arg.n.load # copy tag
       m.args.takeTree f
       m.args.addParRi()
-  elif (arg.n.exprKind in CallKinds and isSomeSeqType(f)):
-    inc m.inheritanceCosts
-    if not m.err:
-      var elemType = f
-      if elemType.kind == Symbol:
-        let decl = getTypeSection(elemType.symId)
-        elemType = decl.typevars
-      assert elemType.typeKind == InvokeT
-      inc elemType # tag
-      skip elemType # `seq`
-      # always needs semchecking:
-      m.genericEmpty = true
-      # give the type to the array constructor:
-      var call = arg.n
-      m.args.add call.load # copy call tag
-      inc call
-      m.args.add call.load # copy symbol
-      inc call
-      assert call.exprKind == AconstrX
-      m.args.add call.load # copy array tag
-      inc call
-      # build our own array type:
-      m.args.addParLe(ArrayT, call.info)
-      m.args.addSubtree elemType
-      addEmptyRangeType(m.args, m.context, call.info)
-      m.args.addParRi()
-      skip call
-      takeParRi m.args, call
-      takeParRi m.args, call
   else:
-    # match against `auto`, untyped/varargs should still match
-    singleArgImpl(m, f, arg)
+    var elemType = default(Cursor)
+    if (arg.n.exprKind in CallKinds and isSomeSeqType(f, elemType)):
+      inc m.inheritanceCosts
+      if not m.err:
+        # call to `@` needs to be instantiated/template expanded,
+        # also the element type needs to be instantiated if generic:
+        m.checkEmptyArg = true
+        # keep the call to `@` but give the array constructor the element type:
+        var call = arg.n
+        m.args.add call.load # copy call tag
+        inc call
+        m.args.add call.load # copy symbol
+        inc call
+        assert call.exprKind == AconstrX
+        m.args.add call.load # copy array tag
+        inc call
+        # build our own array type:
+        m.args.addParLe(ArrayT, call.info)
+        m.args.addSubtree elemType
+        addEmptyRangeType(m.args, m.context, call.info)
+        m.args.addParRi()
+        skip call
+        takeParRi m.args, call # array constructor
+        takeParRi m.args, call # call
+    else:
+      # match against `auto`, untyped/varargs should still match
+      singleArgImpl(m, f, arg)
 
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
   if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):

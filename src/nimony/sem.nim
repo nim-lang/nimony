@@ -184,6 +184,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
     # maybe use sem flags to restrict this to statement branches
     done = true
   elif typeKind(arg.typ) == AutoT and not isEmptyContainer(arg.n):
+    # auto is valid for empty container, will be handled below
     it.typ = expected
     done = true
   endRead(c.dest)
@@ -208,7 +209,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
         else:
           let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
           c.dest[c.dest.len-1].setSymId inst.targetSym
-      # ignore genericEmpty case, probably environment is generic
+      # ignore checkEmptyArg case, probably environment is generic
       c.dest.add convMatch.args
       c.dest.addParRi()
       it.typ = expected
@@ -216,7 +217,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       c.typeMismatch info, it.typ, expected
   else:
     shrink c.dest, argBegin
-    if m.genericEmpty and cursorAt(m.args, 0).exprKind in CallKinds:
+    if m.checkEmptyArg and cursorAt(m.args, 0).exprKind in CallKinds:
       # empty seq call, semcheck
       var call = Item(n: beginRead(m.args), typ: c.types.autoType)
       semCall c, call, {}
@@ -1244,7 +1245,7 @@ proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
-  if not (m.genericConverter or m.genericEmpty or m.insertedParam):
+  if not (m.genericConverter or m.checkEmptyArg or m.insertedParam):
     c.dest.add m.args
   else:
     m.args.addParRi()
@@ -1266,7 +1267,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         if m.err and not prevErr:
           c.typeMismatch arg.info, defaultValue.typ, param.typ
         inc arg
-      elif m.genericEmpty and isEmptyContainer(arg):
+      elif m.checkEmptyArg and isEmptyContainer(arg):
         let isCall = arg.exprKind in CallKinds
         let start = c.dest.len
         if isCall:
@@ -1281,6 +1282,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         takeParRi c, arg
         if isCall:
           takeParRi c, arg
+          # instantiate `@` call, done by semchecking:
           var callBuf = createTokenBuf(c.dest.len - start)
           for tok in start ..< c.dest.len:
             callBuf.add c.dest[tok]
@@ -1491,8 +1493,11 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     if m[idx].err:
       # adding args or type args may have errored
       if finalFn.sym != SymId(0) and
+          # overload of `@` with empty array param:
           pool.syms[finalFn.sym] == "@.1." & SystemModuleSuffix and
           (AllowEmpty in cs.flags or isSomeSeqType(it.typ)):
+        # empty seq will be handled, either by `commonType` now or
+        # the call this is an argument of in the case of AllowEmpty
         typeofCallIs c, it, cs.beforeCall, c.types.autoType
       else:
         buildErr c, cs.callNode.info, getErrorMsg(m[idx])
