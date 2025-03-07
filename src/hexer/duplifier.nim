@@ -230,6 +230,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
   skip n2
   let ri = n2
   let leType = getType(c.typeCache, le)
+  assert leType.typeKind != AutoT, "could not compute type of: " & toString(le, false)
+
   let destructor = getDestructor(c.lifter[], leType, n.info)
   if destructor == NoSymId:
     # the type has no destructor, there is nothing interesting to do:
