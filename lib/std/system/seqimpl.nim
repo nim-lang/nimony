@@ -78,7 +78,7 @@ proc recalcCap(oldCap, addedElements: int): int {.inline.} =
   if result < oldCap + addedElements:
     result = oldCap + addedElements
 
-proc resize[T](dest: var seq[T]; addedElements: int) {.nodestroy.} =
+proc resize[T](dest: var seq[T]; addedElements: int): bool {.nodestroy.} =
   let oldCap = dest.capInBytes div sizeof(T)
   let newCap = recalcCap(oldCap, addedElements)
   let memSize = newCap * sizeof(T)
@@ -86,6 +86,9 @@ proc resize[T](dest: var seq[T]; addedElements: int) {.nodestroy.} =
   if dest.data == nil:
     dest.len = 0
     oomHandler memSize
+    result = false
+  else:
+    result = true
 
 proc `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
   if dest.data == src.data: return
@@ -112,8 +115,11 @@ proc `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
 proc add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
   let L = s.len
   if s.capInBytes <= L * sizeof(T):
-    resize s, 1
-    if s.data == nil: return
+    if not resize(s, 1):
+      # It is our responsibility to destroy the `sink` element if
+      # it could not be added:
+      `=destroy`(elem)
+      return
   inc s.len
   (s.data[L]) = elem
 
@@ -160,16 +166,15 @@ proc shrink*[T](s: var seq[T]; newLen: int) =
 
 proc growUnsafe*[T](s: var seq[T]; newLen: int) =
   if s.capInBytes <= newLen * sizeof(T):
-    resize s, newLen - s.len
-    if s.data == nil: return
+    if not resize(s, newLen - s.len): return
   s.len = newLen
 
-proc grow*[T](s: var seq[T]; newLen: int; val: T) =
+proc grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
   var i = s.len
   growUnsafe(s, newLen)
   if s.data == nil: return
   while i < newLen:
-    (s.data[i]) = val
+    (s.data[i]) = `=dup`(val)
     inc i
 
 proc high*[T](s: seq[T]): int {.inline.} = s.len - 1

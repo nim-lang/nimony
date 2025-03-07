@@ -2,9 +2,10 @@
 
 
 type
-  NifIndex* = enum
+  NifIndexKind* = enum
     NoIndexTag
     KvIdx = (27, "kv")  ## key-value pair
+    VvIdx = (28, "vv")  ## value-value pair (used for explicitly named arguments in function calls)
     GvarIdx = (50, "gvar")  ## global variable declaration
     TvarIdx = (51, "tvar")  ## thread local variable declaration
     VarIdx = (52, "var")  ## variable declaration
@@ -33,7 +34,7 @@ type
     PublicIdx = (260, "public")  ## public section
     PrivateIdx = (261, "private")  ## private section
 
-proc rawTagIsNifIndex*(raw: uint32): bool {.inline.} =
+proc rawTagIsNifIndexKind*(raw: uint32): bool {.inline.} =
   let r = raw - 27'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 175'u8, 219'u8, 220'u8, 221'u8, 222'u8, 223'u8, 224'u8, 232'u8, 233'u8, 234'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 175'u8, 219'u8, 220'u8, 221'u8, 222'u8, 223'u8, 224'u8, 232'u8, 233'u8, 234'u8}
 
