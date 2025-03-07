@@ -20,7 +20,7 @@ proc decodeSolution(ctx: var EContext; s: seq[SearchNode]; i: int;
     ctx.dest.copyIntoUnchecked "if", info:
       ctx.dest.copyIntoUnchecked "elif", info:
         ctx.dest.copyIntoUnchecked "call", info:
-          ctx.dest.add symToken(pool.syms.getOrIncl("nimStrAtLe.c"), info)
+          ctx.dest.add symToken(pool.syms.getOrIncl("nimStrAtLe.n"), info)
           ctx.dest.add symToken(selector, info)
           ctx.dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
           ctx.dest.add charToken(f.best[0], info)
@@ -35,20 +35,20 @@ proc decodeSolution(ctx: var EContext; s: seq[SearchNode]; i: int;
       for x in s[i].choices:
         ctx.dest.copyIntoUnchecked "elif", info:
           ctx.dest.copyIntoUnchecked "call", info:
-            ctx.dest.add symToken(pool.syms.getOrIncl("nimStrEq.c"), info)
+            ctx.dest.add symToken(pool.syms.getOrIncl("nimStrEq.n"), info)
             ctx.dest.add symToken(selector, info)
             ctx.genStringLit(x[0], info)
           ctx.dest.copyIntoUnchecked "stmts", info:
             ctx.dest.copyIntoUnchecked "jmp", info:
               ctx.dest.add symToken(pool.syms.getOrIncl(x[1]), info)
 
-proc transformStringCase*(ctx: var EContext; c: var Cursor) =
+proc transformStringCase*(ctx: var EContext; n: var Cursor) =
   ctx.demand pool.syms.getOrIncl("==.17." & SystemModuleSuffix)
   ctx.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
 
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
-  var nb = c
+  var nb = n
   inc nb
   let selectorNode = nb
   let sinfo = selectorNode.info
@@ -83,7 +83,7 @@ proc transformStringCase*(ctx: var EContext; c: var Cursor) =
   let solution = createSearchTree(pairs)
   decodeSolution(ctx, solution, 0, selector, selectorNode.info)
   var i = 0
-  nb = c
+  nb = n
   inc nb
 
   skip nb # selector
@@ -119,6 +119,6 @@ proc transformStringCase*(ctx: var EContext; c: var Cursor) =
       ctx.dest.add symdefToken(elseLabel, sinfo)
 
   skipParRi nb
-  ctx.dest.copyIntoUnchecked "lab", c.info:
-    ctx.dest.add symdefToken(afterwards, c.info)
-  c = nb
+  ctx.dest.copyIntoUnchecked "lab", n.info:
+    ctx.dest.add symdefToken(afterwards, n.info)
+  n = nb
