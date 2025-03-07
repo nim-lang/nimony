@@ -792,7 +792,7 @@ proc traverseTypeDecl(ctx: var EContext; n: var Cursor) =
   ctx.dest.addDotToken() # adds pragmas
 
   if prag.externName.len > 0:
-    ctx.registerMangle(s, prag.externName & "c")
+    ctx.registerMangle(s, prag.externName & ".c")
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
