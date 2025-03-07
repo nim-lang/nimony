@@ -1688,6 +1688,10 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       swap c.dest, cs.dest
       unoverloadableMagicCall(c, it, cs, magic)
       return
+  when defined(debug):
+    let oldDebugAllowErrors = c.debugAllowErrors
+    if cs.fnName in c.unoverloadableMagics:
+      c.debugAllowErrors = true
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
   while it.n.kind != ParRi:
@@ -1704,6 +1708,8 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
         maybeAddConceptMethods c, cs.fnName, root, cs.candidates
     it.n = arg.n
     cs.args.add arg
+  when defined(debug):
+    c.debugAllowErrors = oldDebugAllowErrors
   assert cs.args.len == argIndexes.len
   swap c.dest, cs.dest
   cs.fn.n = beginRead(cs.dest)
@@ -6050,7 +6056,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec)
-  for magic in ["typeof", "compiles"]:
+  for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
   # XXX could add self module symbol here
