@@ -201,18 +201,12 @@ proc traverseTupleBody(e: var EContext; c: var Cursor) =
   e.dest.addDotToken()
   var counter = 0
   while c.kind != ParRi:
-    if c.substructureKind == FldU:
-      inc c # skip fld
-      e.offer c.symId
+    if c.substructureKind == KvU:
+      inc c # skip tag
       skip c # skip name
-      skip c # skip export marker
-      skip c # skip pragmas
       genTupleField(e, c, counter)
-      skip c # skip value
       skipParRi e, c
     else:
-      if c.kind == SymbolDef:
-        e.offer c.symId
       genTupleField(e, c, counter)
     inc counter
   takeParRi e, c
@@ -537,7 +531,10 @@ proc traverseType(e: var EContext; c: var Cursor; flags: set[TypeFlag] = {}) =
 
 proc maybeByConstRef(e: var EContext; c: var Cursor) =
   let param = asLocal(c)
-  if passByConstRef(param.typ, param.pragmas, e.bits div 8):
+  if param.typ.typeKind in {TypedescT, StaticT}:
+    # do not produce any code for this as it's a compile-time parameter
+    skip c
+  elif passByConstRef(param.typ, param.pragmas, e.bits div 8):
     var paramBuf = createTokenBuf()
     paramBuf.add tagToken("param", c.info)
     paramBuf.addSubtree param.name
@@ -632,7 +629,7 @@ proc parsePragmas(e: var EContext; c: var Cursor): CollectedPragmas =
           expectIntLit e, c
           result.bits = c.intId
           inc c
-        of RequiresP, EnsuresP, StringP, RaisesP:
+        of RequiresP, EnsuresP, StringP, RaisesP, ErrorP:
           skip c
           continue
         of BuildP, EmitP:
@@ -1013,7 +1010,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       inc c
       traverseType(e, c)
       while c.kind != ParRi:
-        traverseExpr(e, c)
+        if c.substructureKind == KvU:
+          e.dest.add c # KvU
+          inc c
+          takeTree e, c # key
+          traverseExpr e, c # value
+          takeParRi e, c
+        else:
+          traverseExpr e, c
       takeParRi e, c
     of TupX:
       traverseTupleConstr e, c
@@ -1117,13 +1121,14 @@ proc traverseExpr(e: var EContext; c: var Cursor) =
       #skip c
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
        SizeofX, AlignofX, OffsetofX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
-       BitandX, BitorX, BitxorX, BitnotX, OconvX, NoExpr:
-      # XXX Refine NoExpr case here. For now types like `(i -1)` can enter here.
+       BitandX, BitorX, BitxorX, BitnotX, OconvX:
       e.dest.add c
       inc c
       while c.kind != ParRi:
         traverseExpr e, c
       takeParRi e, c
+    of NoExpr:
+      traverseType e, c
   of SymbolDef:
     e.dest.add c
     e.offer c.symId
@@ -1275,7 +1280,7 @@ include stringcases
 proc traverseStringCase(e: var EContext; c: var Cursor): bool =
   var n = c
   inc n
-  let selectorType = getType(e.typeCache, c)
+  let selectorType = getType(e.typeCache, n)
   if isSomeStringType(selectorType):
     transformStringCase(e, c)
     result = true

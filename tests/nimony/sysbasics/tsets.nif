@@ -88,16 +88,29 @@
     (set 1 Foo.0.tsefy5wha) 1 D.0.tsefy5wha))) ,12
  (discard 11
   (leset 3,~9
-   (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 3 s.0.tsefy5wha)) ,14
+   (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 3 s.0.tsefy5wha)) 4,13
+ (glet :val.0.tsefy5wha . . 7,~12 Foo.0.tsefy5wha 6 D.0.tsefy5wha) 3,14
+ (asgn ~3 s1.0.tsefy5wha 2
+  (setconstr 9,~11
+   (set 1 Foo.0.tsefy5wha) 1
+   (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha)) ,16
  (template 9 :resem.0.tsefy5wha . . . 14
   (params) . . . 2,1
   (stmts 2
    (asgn ~2 s.0.tsefy5wha 2
-    (setconstr 8,~12
+    (setconstr 8,~14
      (set 1 Foo.0.tsefy5wha) 1 A.0.tsefy5wha 4
-     (range C.0.tsefy5wha 3 E.0.tsefy5wha) 10 F.0.tsefy5wha)))) 2,15
+     (range C.0.tsefy5wha 3 E.0.tsefy5wha) 10 F.0.tsefy5wha)) 3,1
+   (asgn ~3 s1.0.tsefy5wha 2
+    (setconstr 7,~15
+     (set 1 Foo.0.tsefy5wha) 1
+     (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha)))) 2,17
  (stmts 2
   (asgn ~2 s.0.tsefy5wha 2
-   (setconstr 8,~12
+   (setconstr 8,~14
     (set 1 Foo.0.tsefy5wha) 1 A.0.tsefy5wha 4
-    (range C.0.tsefy5wha 3 E.0.tsefy5wha) 10 F.0.tsefy5wha))))
+    (range C.0.tsefy5wha 3 E.0.tsefy5wha) 10 F.0.tsefy5wha)) 3,1
+  (asgn ~3 s1.0.tsefy5wha 2
+   (setconstr 7,~15
+    (set 1 Foo.0.tsefy5wha) 1
+    (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha))))

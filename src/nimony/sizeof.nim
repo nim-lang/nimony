@@ -136,12 +136,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     inc n
     var c2 = createSizeofValue(c.strict)
     while n.kind != ParRi:
-      if n.substructureKind == FldU:
-        let field = takeLocal(n, SkipFinalParRi)
-        getSize c2, cache, field.typ, ptrSize
-      else:
-        getSize c2, cache, n, ptrSize
-        skip n
+      getSize c2, cache, getTupleFieldType(n), ptrSize
+      skip n
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
@@ -182,8 +178,7 @@ proc typeSectionMode(n: Cursor): PragmaKind =
 
 proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
   let k = typ.typeKind
-  if k in {SinkT, MutT, OutT,
-     TypeKindT, UntypedT, VarargsT}:
+  if k in {SinkT, MutT, OutT, TypeKindT, UntypedT, VarargsT, TypedescT, StaticT}:
     result = false
   elif typeIsBig(typ, ptrSize):
     result = not hasPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP

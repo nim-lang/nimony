@@ -264,7 +264,8 @@ const
     ("public", 260),
     ("private", 261),
     ("inject", 262),
-    ("gensym", 263)
+    ("gensym", 263),
+    ("error", 264)
   ]
 const
   ErrTagId* = 1
@@ -530,3 +531,4 @@ const
   PrivateTagId* = 261
   InjectTagId* = 262
   GensymTagId* = 263
+  ErrorTagId* = 264

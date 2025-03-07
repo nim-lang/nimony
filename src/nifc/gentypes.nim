@@ -456,6 +456,7 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
     let decl = takeTypeDecl(n)
     let s = mangle(pool.syms[decl.name.symId])
     c.add declKeyword
+    c.add "Q1_"
     c.add s
     c.add Space
     c.add s
@@ -490,6 +491,7 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
         c.add Semicolon
       else:
         c.add declKeyword
+        c.add "Q1_"
         c.add s
         c.add CurlyLe
         # XXX generate attributes and pragmas here

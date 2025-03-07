@@ -86,6 +86,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType
+    assert fnType.kind == ParLe
     let param = takeLocal(fnType, SkipFinalParRi)
     let pk = param.typ.typeKind
     if pk in {MutT, OutT, LentT}:
@@ -96,6 +97,9 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
     elif passByConstRef(param.typ, param.pragmas, c.ptrSize):
       trConstRef c, dest, n
+    elif pk in {TypedescT, StaticT}:
+      # do not produce any code for this as it's a compile-time value:
+      skip n
     else:
       tr c, dest, n
   takeParRi dest, n

@@ -10,7 +10,7 @@
 ## NIFC driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, noptions, mangler, cprelude
+import codegen, noptions, mangler
 
 when defined(windows):
   import bat
@@ -38,6 +38,7 @@ Options:
   --opt:none|speed|size     optimize not at all or for speed|size
   --lineDir:on|off          generation of #line directive on|off
   --bits:N                  `(i -1)` has N bits; possible values: 64, 32, 16
+  --nimcache:PATH           set the path used for generated files
   --version                 show the version
   --help                    show this help
 """
@@ -66,7 +67,6 @@ proc generateBackend(s: var State; action: Action; files: seq[string]; flags: se
   generateCode s, inp, outp, flags
 
 proc handleCmdLine() =
-  var args: seq[string] = @[]
   var toRun = false
   var compileOnly = false
   var isMain = false
@@ -79,7 +79,7 @@ proc handleCmdLine() =
     s.config.cCompiler = ccCLang
   else:
     s.config.cCompiler = ccGcc
-  s.config.nifcacheDir = "nifcache"
+  s.config.nifcacheDir = "nimcache"
 
   for kind, key, val in getopt():
     case kind
@@ -146,7 +146,7 @@ proc handleCmdLine() =
           s.config.options.excl optLineDir
         else:
           quit "'on', 'off' expected, but '$1' found" % val
-      of "nifcache":
+      of "nimcache":
         s.config.nifcacheDir = val
       of "out", "o":
         s.config.outputFile = val

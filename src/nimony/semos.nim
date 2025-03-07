@@ -39,6 +39,13 @@ proc setupPaths*(config: var NifConfig; useEnv: bool) =
 proc stdlibFile*(f: string): string =
   result = stdlibDir() / f
 
+proc compilerDir*(): string =
+  let appDir = getAppDir()
+  let (head, tail) = splitPath(appDir)
+  if tail == "bin":
+    return head
+  else: return tail
+
 proc binDir*(): string =
   let appDir = getAppDir()
   let (_, tail) = splitPath(appDir)
@@ -82,14 +89,23 @@ proc nimexec(cmd: string) =
     quit("FAILURE: cannot find nim.exe / nim binary")
   exec quoteShell(t) & " " & cmd
 
+proc updateCompilerGitSubmodules*(config: NifConfig) =
+  # XXX: hack for more convenient development
+  setCurrentDir compilerDir()
+  exec "git submodule update --init"
+  setCurrentDir config.currentPath
+
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
+  # XXX: hack for more convenient development
   if not fileExists(t) or forceRebuild:
-    when not defined(debug):
-      nimexec("c -d:release " & src)
-    else:
-      nimexec("c " & src)
-    #moveFile src.changeFileExt(ExeExt), t
+    let src = compilerDir() / src
+    let args = # compiler bin path
+      when not defined(debug):
+        "c -d:release --outdir:" & binDir()
+      else: "c --outdir:" & binDir()
+    # compile required tool
+    nimexec(args & "  " & src)
 
 proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =
   let nimFile = toResolve.addFileExt(".nim")
@@ -248,10 +264,10 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
 
 # ------------------ include/import handling ------------------------
 
-proc parseFile*(nimFile: string; paths: openArray[string]): TokenBuf =
+proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, paths)
-  let src = "nifcache" / name & ".1.nif"
+  let src = nifcachePath / name & ".1.nif"
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 
@@ -281,10 +297,10 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nimfile, exefile: st
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string) =
   let p = splitFile(pluginName)
-  let basename = "nifcache" / p.name & "_" & computeChecksum(input)
+  let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input)
   let inputFile = basename & ".in.nif"
   let outputFile = basename & ".out.nif"
-  let pluginExe = "nifcache" / p.name.addFileExt(ExeExt)
+  let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
   if not fileExists(pluginExe):
     compilePlugin(c, info, pluginName, pluginExe)
   if fileExists(inputFile) and readFile(inputFile) == input:

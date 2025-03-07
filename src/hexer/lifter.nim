@@ -31,6 +31,7 @@ type
   LiftingCtx* = object
     dest*: TokenBuf
     op: AttachedOp
+    calledErrorHook: PackedLineInfo
     info: PackedLineInfo
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
@@ -46,7 +47,7 @@ when not defined(nimony):
 proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
   result = c.nominalTypeToHook[op].getOrDefault(s)
   if result == SymId(0):
-    result = tryLoadHook(op, s)
+    result = tryLoadHook(op, s, false)
     if result != SymId(0):
       c.nominalTypeToHook[op][s] = result
 
@@ -126,7 +127,12 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   of TupleT:
     var tup = typ
     inc tup
-    result = isTrivialForFields(c, tup)
+    while tup.kind != ParRi:
+      let field = getTupleFieldType(tup)
+      if not isTrivial(c, field):
+        return false
+      skip tup
+    result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
      TypeKindT, UntypedT, TypedT, IteratorT, ItertypeT:
     raiseAssert "bug here"
@@ -146,7 +152,9 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
           copyTree c.dest, paramA
     of attachedDestroy:
       copyTree c.dest, paramA
-    of attachedCopy, attachedTrace, attachedSink, attachedDup:
+    of attachedDup:
+      copyTree c.dest, paramB
+    of attachedCopy, attachedTrace, attachedSink:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
 
@@ -160,7 +168,7 @@ proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
   of attachedTrace: discard
 
 proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
-  result = hookName(op) & "_" & key
+  result = "=" & hookName(op) & "_" & key
   var counter = addr c.hookNames.mgetOrPut(result, -1)
   counter[] += 1
   result.add '.'
@@ -184,7 +192,17 @@ proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
 
 proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
   if s != NoSymId:
-    genCallHook c, s, paramA, paramB
+    let res = tryLoadSym(s)
+    if res.status == LacksNothing:
+      let r = asRoutine(res.decl)
+      if hasPragma(r.pragmas, ErrorP):
+        c.calledErrorHook = r.name.info
+    if c.op == attachedDup:
+      copyIntoKind c.dest, AsgnS, c.info:
+        copyTree c.dest, paramA
+        genCallHook c, s, paramA, paramB
+    else:
+      genCallHook c, s, paramA, paramB
 
 proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # Goal: We produce a call to some function. Maybe this function must be
@@ -254,8 +272,7 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
       let a = accessObjField(c, paramA, r.name)
       unravel c, fieldType, a, paramB
     of attachedCopy, attachedSink, attachedDup:
-      # attachedDup needs no deref operation for `dest[0]`:
-      let a = accessObjField(c, paramA, r.name, int(c.op == attachedDup))
+      let a = accessObjField(c, paramA, r.name, 0)
       let b = accessObjField(c, paramB, r.name, 1)
       unravel c, fieldType, a, b
 
@@ -266,18 +283,15 @@ proc unravelTuple(c: var LiftingCtx;
   inc n
   var idx = 0
   while n.kind != ParRi:
-    var fieldType = n
-    if n.substructureKind == FldU:
-      fieldType = takeLocal(n, SkipFinalParRi).typ
-    else:
-      skip n
+    let fieldType = getTupleFieldType(n)
+    skip n
 
     case c.op
     of attachedDestroy, attachedTrace, attachedWasMoved:
       let a = accessTupField(c, paramA, idx)
       unravel c, fieldType, a, paramB
     of attachedCopy, attachedSink, attachedDup:
-      let a = accessTupField(c, paramA, idx, int(c.op == attachedDup))
+      let a = accessTupField(c, paramA, idx, 0)
       let b = accessTupField(c, paramB, idx, 1)
       unravel c, fieldType, a, b
     inc idx
@@ -543,6 +557,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
 
     copyIntoKind c.dest, PragmasS, c.info:
       copyIntoKind c.dest, NodestroyP, c.info: discard
+      let pragmasPos = c.dest.len
 
     c.dest.addEmpty c.info # exc
 
@@ -558,6 +573,9 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
         assert false, "empty hook created"
       maybeAddReturn c, paramA
 
+  if c.calledErrorHook != NoLineInfo:
+    c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
+
   publishProc(sym, c.dest, procStart)
 
 proc genMissingHooks*(c: var LiftingCtx) =
@@ -566,18 +584,15 @@ proc genMissingHooks*(c: var LiftingCtx) =
     let reqs = move(c.requests)
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
+      c.calledErrorHook = NoLineInfo
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc createLiftingCtx*(thisModuleSuffix: string): ref LiftingCtx =
   (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix)
 
-proc requestHook*(c: var LiftingCtx; sym: SymId; typ: TypeCursor; op: AttachedOp) =
-  c.op = op
-  genProcDecl c, sym, typ
-  genMissingHooks(c)
-
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
+  c.calledErrorHook = NoLineInfo
   c.info = info
   let t = if typ.typeKind == SinkT: typ.firstSon else: typ
   result = lift(c, t)
@@ -587,7 +602,7 @@ proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): S
 
 when isMainModule:
   import std/os
-  setupProgramForTesting getCurrentDir() / "nifcache", "test.nim", ".nif"
+  setupProgramForTesting getCurrentDir() / "nimcache", "test.nim", ".nif"
   let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
   if res != SymId(0):
     echo pool.syms[res]

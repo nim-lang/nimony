@@ -36,6 +36,7 @@ Options:
   --noSystem                do not auto-import `system.nim`
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --silentMake              suppresses make output
+  --nimcache:PATH           set the path used for generated files
   --version                 show the version
   --help                    show this help
 """
@@ -47,8 +48,8 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
                          commandLineArgs: string; forceRebuild: bool) =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, config.paths)
-  let src = "nifcache" / name & ".1.nif"
-  let dest = "nifcache" / name & ".2.nif"
+  let src = config.nifcachePath / name & ".1.nif"
+  let dest = config.nifcachePath / name & ".2.nif"
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
@@ -67,11 +68,12 @@ proc handleCmdLine() =
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
-  # XXX: harcoded relative nifcache path for now
-  config.nifcachePath = toAbsolutePath("nifcache")
+  config.currentPath = getCurrentDir()
+  config.nifcachePath = "nimcache"
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
+  var commandLineArgsNifc = ""
   var isChild = false
   var passC = ""
   var passL = ""
@@ -91,6 +93,7 @@ proc handleCmdLine() =
 
     of cmdLongOption, cmdShortOption:
       var forwardArg = true
+      var forwardArgNifc = false
       case normalize(key)
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
@@ -128,11 +131,18 @@ proc handleCmdLine() =
       of "passl":
         passL = val
         forwardArg = false
+      of "nimcache":
+        config.nifcachePath = val
+        forwardArgNifc = true
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
         if val.len > 0:
           commandLineArgs.add ":" & quoteShell(val)
+      if forwardArgNifc:
+        commandLineArgsNifc.add " --" & key
+        if val.len > 0:
+          commandLineArgsNifc.add ":" & quoteShell(val)
 
     of cmdEnd: assert false, "cannot happen"
   if args.len == 0:
@@ -146,22 +156,25 @@ proc handleCmdLine() =
     quit "command missing"
   of SingleModule:
     if not isChild:
-      createDir("nifcache")
+      createDir(config.nifcachePath)
       createDir(binDir())
+      # configure required tools
       requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
       requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
-    createDir("nifcache")
+    createDir(config.nifcachePath)
     createDir(binDir())
-    exec "git submodule update --init"
+    # configure required tools
+    updateCompilerGitSubmodules(config)
     requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
     requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
     requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+    # compile full project modules
     buildGraph config, args[0], forceRebuild, silentMake,
-      commandLineArgs, moduleFlags, (if doRun: DoRun else: DoCompile),
+      commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),
       passC, passL
 
 when isMainModule:

@@ -124,14 +124,36 @@ proc tryLoadSym*(s: SymId): LoadResult =
         prog.mem[s] = ensureMove(buf)
         result = LoadResult(status: LacksNothing, decl: decl)
 
-proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
+proc tryLoadHook*(op: AttachedOp; typ: SymId; wantGeneric: bool): SymId =
   let nifName = pool.syms[typ]
   let modname = extractModule(nifName)
-  if modname == "":
-    result = SymId(0)
-  else:
+  result = SymId(0)
+  if modname != "":
     var m = load(modname)
-    result = m.index.hooks[op].getOrDefault(typ)
+    if m.index.hooks.hasKey(typ):
+      let res = m.index.hooks[typ].a[op]
+      if res[1] == wantGeneric: result = res[0]
+
+proc tryLoadAllHooks*(typ: SymId): HooksPerType =
+  let nifName = pool.syms[typ]
+  let modname = extractModule(nifName)
+  result = HooksPerType(a: default(array[AttachedOp, (SymId, bool)]))
+  if modname != "":
+    var m = load(modname)
+    if m.index.hooks.hasKey(typ):
+      result = m.index.hooks[typ]
+
+proc registerHook*(suffix: string; typ: SymId; op: AttachedOp; hook: SymId; isGeneric: bool) =
+  let m: NifModule
+  if not prog.mods.hasKey(suffix):
+    let infile = suffixToNif suffix
+    m = newNifModule(infile)
+    prog.mods[suffix] = m
+  else:
+    m = prog.mods[suffix]
+  if not m.index.hooks.hasKey(typ):
+    m.index.hooks[typ] = HooksPerType(a: default(array[AttachedOp, (SymId, bool)]))
+  m.index.hooks[typ].a[op] = (hook, isGeneric)
 
 proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 

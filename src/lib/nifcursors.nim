@@ -347,6 +347,20 @@ proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
 proc toString*(b: TokenBuf; produceLineInfo = true): string =
   result = nifstreams.toString(toOpenArray(b.data, 0, b.len-1), produceLineInfo)
 
+proc toString*(b: TokenBuf; first: int; produceLineInfo = true): string =
+  var last = first
+  var nested = 0
+  while true:
+    case b[last].kind
+    of ParLe:
+      inc nested
+    of ParRi:
+      dec nested
+    else: discard
+    if nested == 0: break
+    inc last
+  result = nifstreams.toString(toOpenArray(b.data, first, last), produceLineInfo)
+
 proc toString*(b: Cursor; produceLineInfo = true): string =
   let counter = span(b)
   result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, counter-1), produceLineInfo)

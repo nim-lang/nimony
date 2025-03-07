@@ -16,7 +16,7 @@ proc moduleSuffix(conf: ConfigRef; fileIdx: FileIndex): string =
 
 proc toNifFile(conf: ConfigRef; fileIdx: FileIndex): string =
   let dest = moduleSuffix(toFullPath(conf, fileIdx))
-  result = "nifcache" / dest
+  result = conf.nimcacheDir / dest
 
 proc importPipelineModule2(graph: ModuleGraph; s: PSym, fileIdx: FileIndex): PSym =
   # this is called by the semantic checking phase
@@ -181,12 +181,12 @@ proc commandCheck(graph: ModuleGraph) =
   elif conf.backend == backendJs:
     setTarget(conf.target, osJS, cpuJS)
   setPipeLinePass(graph, SemPass)
-  createDir "nifcache"
+  createDir conf.nimcacheDir
   let module = compilePipelineProject2(graph)
   when defined(debug):
     echo renderTree(module.ast)
   #let dest = moduleSuffix(toFullPath(conf, module.fileIdx))
-  #toNif(conf, module.ast, "nifcache" / dest.addFileExt".nif")
+  #toNif(conf, module.ast, conf.nimcacheDir / dest.addFileExt".nif")
 
 proc processCmdLine(pass: TCmdLinePass, cmd: string; config: ConfigRef) =
   var p = parseopt.initOptParser(cmd)

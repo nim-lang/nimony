@@ -53,6 +53,7 @@ type
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
+    concreteMatch: bool
     skippedMod: TypeKind
     argInfo: PackedLineInfo
     pos, opened: int
@@ -295,7 +296,33 @@ proc isTypevar(s: SymId): bool =
   let typevar = asTypevar(res.decl)
   result = typevar.kind == TypevarY
 
-proc linearMatch(m: var Match; f, a: var Cursor) =
+proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
+  if (f.kind == IntLit or f.kind == InlineInt) and
+     (a.kind == IntLit or a.kind == InlineInt):
+    result = typebits(context.g.config, f.load) - typebits(context.g.config, a.load)
+  else:
+    result = -1
+
+proc cmpExactTypeBits(f, a: Cursor): int =
+  # compares type bits without normalizing
+  if (f.kind == IntLit or f.kind == InlineInt) and
+     (a.kind == IntLit or a.kind == InlineInt):
+    result = typebits(f.load) - typebits(a.load)
+  else:
+    result = -1
+
+proc expectParRi(m: var Match; f: var Cursor) =
+  if f.kind == ParRi:
+    inc f
+  else:
+    m.error FormalTypeNotAtEndBug, f, f
+
+proc procTypeMatch(m: var Match; f, a: var Cursor)
+
+type LinearMatchFlag = enum
+  ExactBits ## do not normalize bits
+
+proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}) =
   let fOrig = f
   let aOrig = a
   var nested = 0
@@ -303,12 +330,23 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
     if f.kind == Symbol and isTypevar(f.symId):
       # type vars are specal:
       let fs = f.symId
-      if m.inferred.contains(fs):
+      if m.concreteMatch:
+        # generic param is from provided argument type
+        # instead of considering inference, treat as a standalone value
+        if matchesConstraint(m, fs, a):
+          inc f
+          skip a
+        else:
+          m.error(ConstraintMismatch, f, a)
+          break
+      elif m.inferred.contains(fs):
         # rematch?
         var prev = m.inferred[fs]
-        linearMatch(m, prev, a) # skips a
+        # mark that the match is to a given type from the outside context:
+        m.concreteMatch = true
+        linearMatch(m, prev, a, flags) # skips a
+        m.concreteMatch = false # was already false because of `elif`
         inc f
-        if m.err: break
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
@@ -324,27 +362,73 @@ proc linearMatch(m: var Match; f, a: var Cursor) =
         if f.uoperand != a.uoperand:
           m.error(InvalidMatch, fOrig, aOrig)
           break
+        inc f
+        inc a
       of ParLe:
-        if f.uoperand != a.uoperand:
-          m.error(InvalidMatch, fOrig, aOrig)
-          break
-        inc nested
+        # special cases:
+        case f.typeKind
+        of ProctypeT, ParamsT:
+          if a.typeKind notin {ProctypeT, ParamsT}:
+            m.error(InvalidMatch, fOrig, aOrig)
+            break
+          var a2 = a # since procTypeMatch does not skip it properly
+          procTypeMatch m, f, a2
+          skip a # XXX consider when a is (params)
+        of IntT, UIntT, FloatT, CharT:
+          if a.typeKind != f.typeKind:
+            m.error(InvalidMatch, fOrig, aOrig)
+            break
+          inc f
+          inc a
+          if ExactBits in flags:
+            if cmpExactTypeBits(f, a) != 0:
+              m.error(InvalidMatch, fOrig, aOrig)
+              break
+          else:
+            if cmpTypeBits(m.context, f, a) != 0:
+              m.error(InvalidMatch, fOrig, aOrig)
+              break
+          skip f
+          skip a
+          expectParRi m, f
+          expectParRi m, a
+        else:
+          if f.uoperand != a.uoperand:
+            m.error(InvalidMatch, fOrig, aOrig)
+            break
+          inc nested
+          inc f
+          inc a
       of ParRi:
-        if nested == 0: break
+        assert nested > 0
         dec nested
-      inc f
-      inc a
+        inc f
+        inc a
+    elif f.typeKind == InvokeT and a.kind == Symbol:
+      # Keep in mind that (invok GenericHead Type1 Type2 ...)
+      # is tyGenericInvokation in the old Nim. A generic *instance*
+      # is always a nominal type ("Symbol") like
+      # `(type GeneratedName (invok MyInst ConcreteTypeA ConcreteTypeB) (object ...))`.
+      # This means a Symbol can match an InvokT.
+      var t = getTypeSection(a.symId)
+      if t.kind == TypeY and t.typevars.typeKind == InvokeT:
+        linearMatch m, f, t.typevars, flags # skips f
+        inc a
+      else:
+        m.error(InvalidMatch, fOrig, aOrig)
+        break
     else:
       m.error(InvalidMatch, fOrig, aOrig)
       break
     # only match a single tree/token:
-    if nested == 0: break
-
-proc expectParRi(m: var Match; f: var Cursor) =
-  if f.kind == ParRi:
-    inc f
-  else:
-    m.error FormalTypeNotAtEndBug, f, f
+    if nested == 0:
+      # successful match
+      return
+  # arriving here means the loop was exited early, make sure arguments are fully skipped
+  f = fOrig
+  a = aOrig
+  skip f
+  skip a
 
 proc extractCallConv(c: var Cursor): CallConv =
   result = Fastcall
@@ -416,9 +500,13 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   let acc = extractCallConv(a)
   if fcc != acc:
     m.error CallConvMismatch, f, a
+  # XXX consider when f or a is (params):
   skip f # effects
+  #skip a # effects
   skip f # body
+  #skip a # body
   expectParRi m, f
+  #expectParRi m, a
 
 proc commonType(f, a: Cursor): Cursor =
   # XXX Refine
@@ -443,10 +531,18 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
   if isTypevar(fs):
-    if m.inferred.contains(fs):
+    if m.concreteMatch:
+      # generic param is from provided argument type
+      # instead of considering inference, treat as a standalone value
+      if not matchesConstraint(m, fs, a):
+        m.error ConstraintMismatch, f, a
+    elif m.inferred.contains(fs):
       # used to call typevarRematch
       var prev = m.inferred[fs]
+      # mark that the match is to a given type from the outside context:
+      m.concreteMatch = true
       singleArgImpl(m, prev, arg)
+      m.concreteMatch = false # was already false because of `elif`
     elif matchesConstraint(m, fs, a):
       m.inferred[fs] = a
     else:
@@ -490,13 +586,6 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
           m.error InvalidMatch, f, a
         else:
           singleArgImpl(m, impl, arg)
-
-proc cmpTypeBits(context: ptr SemContext; f, a: Cursor): int =
-  if (f.kind == IntLit or f.kind == InlineInt) and
-     (a.kind == IntLit or a.kind == InlineInt):
-    result = typebits(context.g.config, f.load) - typebits(context.g.config, a.load)
-  else:
-    result = -1
 
 proc checkIntLitRange(context: ptr SemContext; f: Cursor; intLit: Cursor): bool =
   if f.typeKind == FloatT:
@@ -600,21 +689,10 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       inc f
       expectParRi m, f
     of InvokeT:
-      # Keep in mind that (invok GenericHead Type1 Type2 ...)
-      # is tyGenericInvokation in the old Nim. A generic *instance*
-      # is always a nominal type ("Symbol") like
-      # `(type GeneratedName (invok MyInst ConcreteTypeA ConcreteTypeB) (object ...))`.
-      # This means a Symbol can match an InvokT.
+      # handled in linearMatch
+      # XXX except for inheritance
       var a = skipModifier(arg.typ)
-      if a.kind == Symbol:
-        var t = getTypeSection(a.symId)
-        if t.kind == TypeY and t.typevars.typeKind == InvokeT:
-          linearMatch m, f, t.typevars
-        else:
-          m.error InvalidMatch, f, a
-          skip f
-      else:
-        linearMatch m, f, a
+      linearMatch m, f, a
     of RangetypeT:
       # for now acts the same as base type
       var a = skipModifier(arg.typ)
@@ -673,7 +751,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of TypedescT:
       # do not skip modifier
       var a = arg.typ
-      linearMatch m, f, a
+      linearMatch m, f, a, {ExactBits}
     of VarargsT:
       discard "do not even advance f here"
       if m.firstVarargPosition < 0:
@@ -698,8 +776,8 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
             # len(f) > len(a)
             m.error InvalidMatch, fOrig, aOrig
           # only the type of the field is important:
-          var ffld = asLocal(f).typ
-          var afld = asLocal(a).typ
+          var ffld = getTupleFieldType(f)
+          var afld = getTupleFieldType(a)
           linearMatch m, ffld, afld
           # skip fields:
           skip f

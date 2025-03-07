@@ -210,11 +210,14 @@ proc substr*(s: string; first, last: int): string =
 proc substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
 
-proc `==`*(a, b: string): bool =
+proc `==`*(a, b: string): bool {.exportc: "nimStrEq", inline.} =
   if a.len == b.len:
     result = cmpMem(a.a, b.a, a.len) == 0
   else:
     result = false
+
+proc nimStrAtLe(s: string; idx: int; ch: char): bool {.exportc: "nimStrAtLe", inline.} =
+  result = idx < s.len and s[idx] <= ch
 
 proc cmpStrings(a, b: string): int =
   let alen = a.len
@@ -252,3 +255,9 @@ proc newString*(len: int): string =
   else:
     oomHandler len
     result = string(a: nil, i: EmptyI)
+
+template concat*(): string {.varargs.} =
+  var res = ""
+  for s in unpack():
+    res.add s
+  res
