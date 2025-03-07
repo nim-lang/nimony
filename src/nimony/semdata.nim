@@ -102,6 +102,7 @@ type
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     unoverloadableMagics*: HashSet[StrId]
+    debugAllowErrors*: bool
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
