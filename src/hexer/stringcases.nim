@@ -20,7 +20,7 @@ proc decodeSolution(ctx: var EContext; s: seq[SearchNode]; i: int;
     ctx.dest.copyIntoUnchecked "if", info:
       ctx.dest.copyIntoUnchecked "elif", info:
         ctx.dest.copyIntoUnchecked "call", info:
-          ctx.dest.add symToken(pool.syms.getOrIncl("nimStrAtLe.n"), info)
+          ctx.dest.add symToken(pool.syms.getOrIncl("nimStrAtLe.c"), info)
           ctx.dest.add symToken(selector, info)
           ctx.dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
           ctx.dest.add charToken(f.best[0], info)
@@ -35,7 +35,7 @@ proc decodeSolution(ctx: var EContext; s: seq[SearchNode]; i: int;
       for x in s[i].choices:
         ctx.dest.copyIntoUnchecked "elif", info:
           ctx.dest.copyIntoUnchecked "call", info:
-            ctx.dest.add symToken(pool.syms.getOrIncl("nimStrEq.n"), info)
+            ctx.dest.add symToken(pool.syms.getOrIncl("nimStrEq.c"), info)
             ctx.dest.add symToken(selector, info)
             ctx.genStringLit(x[0], info)
           ctx.dest.copyIntoUnchecked "stmts", info:
