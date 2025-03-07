@@ -56,12 +56,14 @@ proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
 proc genCall(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
-  #let isCfn = isImportC(n)
+  let isCfn = isImportC(n)
   genx c, n
   c.add ParLe
   var i = 0
   while n.kind != ParRi:
     if i > 0: c.add Comma
+    if isCfn:
+      c.flags.incl gfInCallImportC
     genx c, n
     inc i
   c.add ParRi
@@ -71,11 +73,14 @@ proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
   skip n # skip error action
+  let isCfn = isImportC(n)
   genx c, n
   c.add ParLe
   var i = 0
   while n.kind != ParRi:
     if i > 0: c.add Comma
+    if isCfn:
+      c.flags.incl gfInCallImportC
     genx c, n
     inc i
   c.add ParRi
@@ -199,13 +204,15 @@ proc suffixConv(c: var GeneratedCode; value, suffix: Cursor) =
 
 proc genAddr(c: var GeneratedCode; n: var Cursor) =
   # If we take the address of an array expression, add the `.a` field access.
+  let inCallImportC = gfInCallImportC in c.flags
   inc n
   let arrType = getType(c.m, n)
   c.add ParLe
   let ampAt = c.code.len
   c.add "&"
   genx c, n
-  if arrType.typeKind == ArrayT and not (c.m.isImportC(arrType) or arrType.typeKind == NoType):
+  if arrType.typeKind == ArrayT and not (c.m.isImportC(arrType) or arrType.typeKind == NoType) and
+        inCallImportC:
     c.add ".a[0]"
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:
@@ -215,6 +222,8 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
   skipParRi n
 
 proc genx(c: var GeneratedCode; n: var Cursor) =
+  if n.exprKind != AddrC:
+    c.flags.excl gfInCallImportC
   case n.exprKind
   of NoExpr:
     case n.kind
@@ -303,6 +312,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     skipParRi n
   of AddrC:
     genAddr c, n
+    c.flags.excl gfInCallImportC
   of SizeofC:
     c.add "sizeof"
     c.add ParLe
