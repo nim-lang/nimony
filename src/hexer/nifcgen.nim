@@ -170,9 +170,9 @@ proc genStringType(ctx: var EContext; info: PackedLineInfo) =
   ctx.offer strField
   ctx.dest.addDotToken()
   ctx.dest.add tagToken("ptr", info)
-  ctx.dest.add tagToken("n", info)
+  ctx.dest.add tagToken("c", info)
   ctx.dest.addIntLit(8, info)
-  ctx.dest.addParRi() # "n"
+  ctx.dest.addParRi() # "c"
   ctx.dest.addParRi() # "ptr"
   ctx.dest.addParRi() # "fld"
 
