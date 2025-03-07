@@ -57,7 +57,6 @@ proc genParams(c: var GeneratedCode; n: var Cursor, p: Cursor) =
   var procTypeCursor = getType(c.m, p)
   if procTypeCursor.kind != DotToken and
        procTypeCursor.typeKind != NoType:
-    # TODO: handle importc types?
     let procType = takeProcType(procTypeCursor)
     var params = procType.params
     inc params
@@ -67,8 +66,8 @@ proc genParams(c: var GeneratedCode; n: var Cursor, p: Cursor) =
       if i > 0: c.add Comma
 
       var paramType = takeParamDecl(params).typ
-      # TODO: implements backend types comparison
-      if paramType.typeKind == PtrT:
+      var actualType = getType(c.m, n)
+      if paramType.typeKind == PtrT and not sameType(paramType, actualType):
         c.add ParLe
         genType(c, paramType)
         c.add ParRi
