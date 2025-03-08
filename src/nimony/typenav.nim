@@ -179,7 +179,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     case typeKind(result)
     of PtrT:
       inc result
-      if typeKind(result) == UarrayT:
+      if typeKind(result) in {UarrayT, ArrayT}:
         inc result
       else:
         result = c.builtins.autoType # still an error
