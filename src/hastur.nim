@@ -256,7 +256,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
           failure c, file, outputSpec, testProgramOutput
 
       when defined(linux):
-        testValgrind c, file, overwrite, quoteShell exe
+        testValgrind c, file, overwrite, cat, quoteShell exe
 
     let ast = file.changeFileExt(".nif")
     if ast.fileExists():
