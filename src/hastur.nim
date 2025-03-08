@@ -148,11 +148,12 @@ type
     Tracked # tracked tests: These are processed and can contain "track info"
             # for line, col, filename extraction (useful for nimsuggest-like tests)
     Compat # compatibility mode tests
+    Valgrind # valgrind tests
 
 proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
-  of Normal, Tracked, Compat: "c --silentMake"
+  of Normal, Tracked, Compat, Valgrind: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
@@ -183,28 +184,30 @@ proc compareValgrindOutput(s1: string, s2: string): bool =
       return false
   return true
 
-proc testValgrind(c: var TestCounters; file: string; overwrite: bool; exe: string) =
+proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Category; exe: string) =
   let valgrind = file.changeFileExt(".valgrind")
-  if valgrind.fileExists():
+  let hasValgrindFile = valgrind.fileExists()
+  if cat == Valgrind or hasValgrindFile:
     let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(
           "valgrind --leak-check=full --error-exitcode=1 " & exe)
     if testProgramExitCode != 0:
       failure c, file, "valgrind program exitcode 0", "exitcode " & $testProgramExitCode
 
-    let valgrindSpec = readFile(valgrind).strip
-    let success = compareValgrindOutput(valgrindSpec, testProgramOutput.strip)
-    if not success:
-      if overwrite:
-        writeFile(valgrind, testProgramOutput)
+    if hasValgrindFile:
+      let valgrindSpec = readFile(valgrind).strip
+      let success = compareValgrindOutput(valgrindSpec, testProgramOutput.strip)
+      if not success:
+        if overwrite:
+          writeFile(valgrind, testProgramOutput)
 
-      failure c, file, valgrindSpec, testProgramOutput
+        failure c, file, valgrindSpec, testProgramOutput
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   #echo "TESTING ", file
   inc c.total
   var nimonycmd = "--isMain"
   case cat
-  of Normal: discard
+  of Normal, Valgrind: discard
   of Basics:
     nimonycmd.add " --noSystem"
   of Tracked:
@@ -278,6 +281,7 @@ proc parseCategory(path: string): Category =
   of "track": Tracked
   of "nosystem": Basics
   of "compat": Compat
+  of "valgrind": Valgrind
   else: Normal
 
 proc findCategory(path: string): Category =
