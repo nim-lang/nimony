@@ -27,18 +27,18 @@
     (ref 4
      (at Node.Obj.0.tre8amq6m 6,2 T.1.tre8amq6m)) .))) 4,11
  (gvar :node.0.tre8amq6m . . 8,~4
-  (ref 4 Node.Obj.0.tre8amq6m.Iiz3k2p1.tre8amq6m) .) 14,11
- (type :Node.0.tre8amq6m.Isesnzm1.tre8amq6m .
+  (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .) 14,11
+ (type :Node.0.Isesnzm1.tre8amq6m .
   (at Node.0.tre8amq6m 1
    (i -1)) ~4,~4 . ~2,~4
-  (ref 4 Node.Obj.0.tre8amq6m.Iiz3k2p1.tre8amq6m)) 16,7
- (type :Node.Obj.0.tre8amq6m.Iiz3k2p1.tre8amq6m .
+  (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m)) 16,7
+ (type :Node.Obj.0.Iiz3k2p1.tre8amq6m .
   (at Node.Obj.0.tre8amq6m ~1,4
    (i -1)) ~6 .
   (object . ~12,1
-   (fld :val.0.tre8amq6m.Iiz3k2p1.tre8amq6m . . 11,3
+   (fld :val.0.Iiz3k2p1.tre8amq6m . . 11,3
     (i -1) .) ~12,2
-   (fld :left.0.tre8amq6m.Iiz3k2p1.tre8amq6m . . 8,~2
-    (ref 4 Node.Obj.0.tre8amq6m.Iiz3k2p1.tre8amq6m) .) ~6,2
-   (fld :right.0.tre8amq6m.Iiz3k2p1.tre8amq6m . . 2,~2
-    (ref 4 Node.Obj.0.tre8amq6m.Iiz3k2p1.tre8amq6m) .))))
+   (fld :left.0.Iiz3k2p1.tre8amq6m . . 8,~2
+    (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .) ~6,2
+   (fld :right.0.Iiz3k2p1.tre8amq6m . . 2,~2
+    (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .))))

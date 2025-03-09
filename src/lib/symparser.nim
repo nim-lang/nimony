@@ -42,9 +42,9 @@ proc extractModule*(s: string): string =
   return ""
 
 proc isInstantiation*(s: string): bool =
-  # abc.12.mod1.Iabcdefghi.mod2
+  # abc.12.Iabcdefghi.mod2
   var i = s.len - 2
-  var dots = 4
+  var dots = 3
   while i > 0:
     if s[i] == '.':
       dec dots

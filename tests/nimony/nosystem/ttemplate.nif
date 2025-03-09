@@ -40,12 +40,12 @@
    (typevar :T.3.tte5tld8n . . . .)) . 2
   (object . ~13,1
    (fld :x.0.tte5tld8n . . 3 T.3.tte5tld8n .))) 2,19
- (gvar :myglob.0.tte5tld8n . . 17 MyGeneric.0.tte5tld8n.Igj236q.tte5tld8n .) 2,20
- (gvar :other.0.tte5tld8n . . 16 MyGeneric.0.tte5tld8n.Ibr3ivb1.tte5tld8n .) 9,22
+ (gvar :myglob.0.tte5tld8n . . 17 MyGeneric.0.Igj236q.tte5tld8n .) 2,20
+ (gvar :other.0.tte5tld8n . . 16 MyGeneric.0.Ibr3ivb1.tte5tld8n .) 9,22
  (asgn ~3
-  (dot ~6 myglob.0.tte5tld8n x.0.tte5tld8n.Igj236q.tte5tld8n +0) 2 +56) 8,23
+  (dot ~6 myglob.0.tte5tld8n x.0.Igj236q.tte5tld8n +0) 2 +56) 8,23
  (asgn ~3
-  (dot ~5 other.0.tte5tld8n x.0.tte5tld8n.Ibr3ivb1.tte5tld8n +0) 2 +79.0) ,25
+  (dot ~5 other.0.tte5tld8n x.0.Ibr3ivb1.tte5tld8n +0) 2 +79.0) ,25
  (proc 5 :\2B.0.tte5tld8n
   (add -3) . . 9
   (params 1
@@ -119,15 +119,15 @@
    (expr
     (conv ~18,3
      (u -1) ~12,3 val.0.tte5tld8n)))) 19,19
- (type :MyGeneric.0.tte5tld8n.Igj236q.tte5tld8n .
+ (type :MyGeneric.0.Igj236q.tte5tld8n .
   (at MyGeneric.0.tte5tld8n 1
    (i -1)) ~4,~4 . ~2,~4
   (object . ~13,1
-   (fld :x.0.tte5tld8n.Igj236q.tte5tld8n . . 16,3
+   (fld :x.0.Igj236q.tte5tld8n . . 16,3
     (i -1) .))) 18,20
- (type :MyGeneric.0.tte5tld8n.Ibr3ivb1.tte5tld8n .
+ (type :MyGeneric.0.Ibr3ivb1.tte5tld8n .
   (at MyGeneric.0.tte5tld8n 1
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
-   (fld :x.0.tte5tld8n.Ibr3ivb1.tte5tld8n . . 15,4
+   (fld :x.0.Ibr3ivb1.tte5tld8n . . 15,4
     (f +64) .))))
