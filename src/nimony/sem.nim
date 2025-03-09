@@ -483,6 +483,7 @@ proc instToSuffix(buf: TokenBuf, start: int): string =
   result = uhashBase36(instToString(buf, start))
 
 proc newInstSymId(c: var SemContext; orig: SymId; suffix: string): SymId =
+  # abc.123.origmod.Iabcdefgh.instmod
   var name = pool.syms[orig]
   name.add(".I")
   name.add(suffix)

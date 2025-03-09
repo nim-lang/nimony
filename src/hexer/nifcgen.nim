@@ -1520,6 +1520,7 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
       else:
         let s = pool.syms[n.symId]
         if isInstantiation(s):
+          # ensure instantiations have the same name across modules:
           b.addSymbol(removeModule(s))
         else:
           b.addSymbol(s)
@@ -1530,6 +1531,7 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
       else:
         let s = pool.syms[n.symId]
         if isInstantiation(s):
+          # ensure instantiations have the same name across modules:
           b.addSymbolDef(removeModule(s))
         else:
           b.addSymbolDef(s)
