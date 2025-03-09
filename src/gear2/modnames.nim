@@ -41,6 +41,14 @@ const
 const
   Base36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
+proc uhashBase36*(s: string): string =
+  var id = uhash(s)
+  result = newStringOfCap(8)
+  # Convert decimal number to base 36, reversed since it does not matter:
+  while id > 0'u32:
+    result.add Base36[int(id mod 36'u32)]
+    id = id div 36'u32
+
 proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
   var f = relativePath(path, getCurrentDir(), '/')
   # Select the path that is shortest relative to the searchPath:

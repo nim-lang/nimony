@@ -10,6 +10,7 @@
 import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
+import symparser
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops]
 from ".." / nimony / sigmatch import isSomeStringType, isStringType
@@ -1517,13 +1518,21 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
       if val.len > 0:
         b.addSymbol(val)
       else:
-        b.addSymbol(pool.syms[n.symId])
+        let s = pool.syms[n.symId]
+        if isInstantiation(s):
+          b.addSymbol(removeModule(s))
+        else:
+          b.addSymbol(s)
     of SymbolDef:
       let val = c.maybeMangle(n.symId)
       if val.len > 0:
         b.addSymbolDef(val)
       else:
-        b.addSymbolDef(pool.syms[n.symId])
+        let s = pool.syms[n.symId]
+        if isInstantiation(s):
+          b.addSymbolDef(removeModule(s))
+        else:
+          b.addSymbolDef(s)
       if nextIsOwner >= 0:
         ownerStack.add (n.symId, nextIsOwner)
         nextIsOwner = -1

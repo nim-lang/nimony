@@ -40,3 +40,30 @@ proc extractModule*(s: string): string =
         return substr(s, i+1)
     dec i
   return ""
+
+proc isInstantiation*(s: string): bool =
+  # abc.12.mod1.Iabcdefghi.mod2
+  var i = s.len - 2
+  var dots = 4
+  while i > 0:
+    if s[i] == '.':
+      dec dots
+      if s[i+1] in {'0'..'9'}:
+        return dots == 0
+      elif dots == 2 and s[i+1] != 'I':
+        return false
+    dec i
+  result = false
+
+proc removeModule*(s: string): string =
+  # From "abc.12.Mod132a3bc" extract "abc.12".
+  # From "abc.12" extract "abc.12".
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        return s
+      else:
+        return substr(s, 0, i-1)
+    dec i
+  return s

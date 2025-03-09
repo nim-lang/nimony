@@ -451,6 +451,14 @@ proc newSymId(c: var SemContext; s: SymId): SymId =
     c.makeLocalSym(name)
   result = pool.syms.getOrIncl(name)
 
+proc newInstSymId(c: var SemContext; orig: SymId; key: string): SymId =
+  var name = pool.syms[orig]
+  name.add(".I")
+  name.add(uhashBase36(key))
+  name.add '.'
+  name.add c.thisModuleSuffix
+  result = pool.syms.getOrIncl(name)
+
 type
   SubsContext = object
     newVars: Table[SymId, SymId]
@@ -967,7 +975,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
-    let targetSym = newSymId(c, origin)
+    let targetSym = newInstSymId(c, origin, toString(typeArgs, false))
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]
@@ -2712,7 +2720,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       sym.name = cachedSym
     else:
       var args = cursorAt(c.dest, beforeArgs)
-      let targetSym = newSymId(c, headId)
+      let targetSym = newInstSymId(c, headId, toString(c.dest, typeStart, false))
       c.instantiatedTypes[key] = targetSym
       if genericArgs == 0:
         c.typeInstDecls.add targetSym

@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, symparser
 
 type
   Item* = object
@@ -311,6 +311,14 @@ proc cmpExactTypeBits(f, a: Cursor): int =
   else:
     result = -1
 
+proc sameSymbol(a, b: SymId): bool =
+  if a == b:
+    return true
+  # symbols might be different for instantiations from different modules,
+  # consider this case by checking if the instantiation keys are equal:
+  result = isInstantiation(pool.syms[a]) and isInstantiation(pool.syms[b]) and
+    removeModule(pool.syms[a]) == removeModule(pool.syms[b])
+
 proc expectParRi(m: var Match; f: var Cursor) =
   if f.kind == ParRi:
     inc f
@@ -357,9 +365,15 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
     elif f.kind == a.kind:
       case f.kind
       of UnknownToken, EofToken,
-          DotToken, Ident, Symbol, SymbolDef,
+          DotToken, Ident, SymbolDef,
           StringLit, CharLit, IntLit, UIntLit, FloatLit:
         if f.uoperand != a.uoperand:
+          m.error(InvalidMatch, fOrig, aOrig)
+          break
+        inc f
+        inc a
+      of Symbol:
+        if not sameSymbol(f.symId, a.symId):
           m.error(InvalidMatch, fOrig, aOrig)
           break
         inc f
@@ -550,12 +564,12 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   elif isObjectType(fs):
     if a.kind != Symbol:
       m.error InvalidMatch, f, a
-    elif a.symId == fs:
+    elif sameSymbol(fs, a.symId):
       discard "direct match, no annotation required"
     else:
       var diff = 1
       for fparent in inheritanceChain(fs):
-        if fparent == a.symId:
+        if sameSymbol(fparent, a.symId):
           m.args.addParLe OconvX, m.argInfo
           m.args.addIntLit diff, m.argInfo
           if m.flipped:
@@ -574,7 +588,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
     m.error NotImplementedConcept, f, a
   else:
     # fast check that works for aliases too:
-    if a.kind == Symbol and a.symId == fs:
+    if a.kind == Symbol and sameSymbol(a.symId, fs):
       discard "perfect match"
     else:
       var impl = typeImpl(fs)
