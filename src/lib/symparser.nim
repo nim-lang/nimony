@@ -50,7 +50,7 @@ proc isInstantiation*(s: string): bool =
       dec dots
       if s[i+1] in {'0'..'9'}:
         return dots == 0
-      elif dots == 2 and s[i+1] != 'I':
+      elif dots == 1 and s[i+1] != 'I':
         return false
     dec i
   result = false
