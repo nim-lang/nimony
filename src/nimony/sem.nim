@@ -451,11 +451,36 @@ proc newSymId(c: var SemContext; s: SymId): SymId =
     c.makeLocalSym(name)
   result = pool.syms.getOrIncl(name)
 
-proc instToSuffix(buf: TokenBuf): string =
-  result = uhashBase36(toString(buf, false))
+proc instToString(buf: TokenBuf; start: int): string =
+  # canonicalized string of invocation
+  # could directly build hash too but this is easier to debug
+  var b = nifbuilder.open((buf.len - start) * 20, compact = true)
+  for n in start ..< buf.len:
+    let k = buf[n].kind
+    case k
+    of DotToken: b.addEmpty()
+    of Ident: b.addIdent(pool.strings[buf[n].litId])
+    of Symbol:
+      # for nested instantiations i.e. `Foo[Bar[int]]`
+      let s = pool.syms[buf[n].symId]
+      if isInstantiation(s):
+        b.addSymbol(removeModule(s))
+      else:
+        b.addSymbol(s)
+    of IntLit: b.addIntLit(pool.integers[buf[n].intId])
+    of UIntLit: b.addUIntLit(pool.uintegers[buf[n].uintId])
+    of FloatLit: b.addFloatLit(pool.floats[buf[n].floatId])
+    of SymbolDef: b.addSymbolDef(pool.syms[buf[n].symId])
+    of CharLit: b.addCharLit char(buf[n].uoperand)
+    of StringLit: b.addStrLit(pool.strings[buf[n].litId])
+    of UnknownToken: b.addIdent "<unknown token>"
+    of EofToken: b.addIntLit buf[n].soperand
+    of ParRi: b.endTree()
+    of ParLe: b.addTree(pool.tags[buf[n].tagId])
+  result = b.extract()
 
 proc instToSuffix(buf: TokenBuf, start: int): string =
-  result = uhashBase36(toString(buf, start, false))
+  result = uhashBase36(instToString(buf, start))
 
 proc newInstSymId(c: var SemContext; orig: SymId; suffix: string): SymId =
   var name = pool.syms[orig]
@@ -986,11 +1011,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
-    when false:
-      let instSuffix = instToSuffix(typeArgs)
-      let targetSym = newInstSymId(c, origin, instSuffix)
-    else:
-      let targetSym = newSymId(c, origin)
+    let targetSym = newSymId(c, origin)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]

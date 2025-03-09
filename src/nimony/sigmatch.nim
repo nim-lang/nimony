@@ -316,8 +316,10 @@ proc sameSymbol(a, b: SymId): bool =
     return true
   # symbols might be different for instantiations from different modules,
   # consider this case by checking if the instantiation keys are equal:
-  result = isInstantiation(pool.syms[a]) and isInstantiation(pool.syms[b]) and
-    removeModule(pool.syms[a]) == removeModule(pool.syms[b])
+  let sa = pool.syms[a]
+  let sb = pool.syms[b]
+  result = isInstantiation(sa) and isInstantiation(sb) and
+    removeModule(sa) == removeModule(sb)
 
 proc expectParRi(m: var Match; f: var Cursor) =
   if f.kind == ParRi:
