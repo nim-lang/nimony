@@ -76,12 +76,12 @@
    (typevar :T.4.tge7jvqqk1 . . . .)) . 2
   (object . ~13,1
    (fld :x.0.tge7jvqqk1 . . 3 T.4.tge7jvqqk1 .))) 2,27
- (gvar :myglob.0.tge7jvqqk1 . . 17 MyGeneric.1.tge7jvqqk1 .) 2,28
- (gvar :other.0.tge7jvqqk1 . . 16 MyGeneric.2.tge7jvqqk1 .) 9,30
+ (gvar :myglob.0.tge7jvqqk1 . . 17 MyGeneric.0.tge7jvqqk1.Igegqa11.tge7jvqqk1 .) 2,28
+ (gvar :other.0.tge7jvqqk1 . . 16 MyGeneric.0.tge7jvqqk1.Ivx8fa61.tge7jvqqk1 .) 9,30
  (asgn ~3
-  (dot ~6 myglob.0.tge7jvqqk1 x.1.tge7jvqqk1 +0) 2 +56) 8,31
+  (dot ~6 myglob.0.tge7jvqqk1 x.0.tge7jvqqk1.Igegqa11.tge7jvqqk1 +0) 2 +56) 8,31
  (asgn ~3
-  (dot ~5 other.0.tge7jvqqk1 x.2.tge7jvqqk1 +0) 2 +79.0) ,33
+  (dot ~5 other.0.tge7jvqqk1 x.0.tge7jvqqk1.Ivx8fa61.tge7jvqqk1 +0) 2 +79.0) ,33
  (proc 5 :\2B.0.tge7jvqqk1
   (add -3) . . 9
   (params 1
@@ -237,15 +237,15 @@
       (i -1) +0 +2)) .) 7
    (asgn ~7 result.3 2 x.9) ~2,~1
    (ret result.3))) 19,27
- (type :MyGeneric.1.tge7jvqqk1 .
+ (type :MyGeneric.0.tge7jvqqk1.Igegqa11.tge7jvqqk1 .
   (at MyGeneric.0.tge7jvqqk1 1
    (i -1)) ~4,~4 . ~2,~4
   (object . ~13,1
-   (fld :x.1.tge7jvqqk1 . . 16,3
+   (fld :x.0.tge7jvqqk1.Igegqa11.tge7jvqqk1 . . 16,3
     (i -1) .))) 18,28
- (type :MyGeneric.2.tge7jvqqk1 .
+ (type :MyGeneric.0.tge7jvqqk1.Ivx8fa61.tge7jvqqk1 .
   (at MyGeneric.0.tge7jvqqk1 1
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
-   (fld :x.2.tge7jvqqk1 . . 15,4
+   (fld :x.0.tge7jvqqk1.Ivx8fa61.tge7jvqqk1 . . 15,4
     (f +64) .))))
