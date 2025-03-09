@@ -451,10 +451,13 @@ proc newSymId(c: var SemContext; s: SymId): SymId =
     c.makeLocalSym(name)
   result = pool.syms.getOrIncl(name)
 
-proc newInstSymId(c: var SemContext; orig: SymId; key: string): SymId =
+proc instToSuffix(buf: TokenBuf, start: int = 0): string =
+  result = uhashBase36(toString(buf, start, false))
+
+proc newInstSymId(c: var SemContext; orig: SymId; suffix: string): SymId =
   var name = pool.syms[orig]
   name.add(".I")
-  name.add(uhashBase36(key))
+  name.add(suffix)
   name.add '.'
   name.add c.thisModuleSuffix
   result = pool.syms.getOrIncl(name)
@@ -463,6 +466,7 @@ type
   SubsContext = object
     newVars: Table[SymId, SymId]
     params: ptr Table[SymId, Cursor]
+    instSuffix: string
 
 proc addFreshSyms(c: var SemContext, sc: var SubsContext) =
   for _, newVar in sc.newVars:
@@ -488,7 +492,7 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
           dest.add n # keep Symbol as it was
     of SymbolDef:
       let s = n.symId
-      let newDef = newSymId(c, s)
+      let newDef = newInstSymId(c, s, sc.instSuffix)
       sc.newVars[s] = newDef
       dest.add symdefToken(newDef, n.info)
     of ParLe:
@@ -975,7 +979,8 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
-    let targetSym = newInstSymId(c, origin, toString(typeArgs, false))
+    let instSuffix = instToSuffix(typeArgs)
+    let targetSym = newInstSymId(c, origin, instSuffix)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]
@@ -989,7 +994,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
         signature.add symToken(origin, info)
         typeArgsStart = signature.len
         signature.add typeArgs
-      var sc = SubsContext(params: addr inferred)
+      var sc = SubsContext(params: addr inferred, instSuffix: instSuffix)
       subs(c, signature, sc, decl.params)
       let beforeRetType = signature.len
       subs(c, signature, sc, decl.retType)
@@ -2541,7 +2546,8 @@ proc semConceptType(c: var SemContext; n: var Cursor) =
   takeParRi c, n
   takeParRi c, n
 
-proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
+                             info: PackedLineInfo; instSuffix: string;
                              origin, targetSym: SymId; decl: TypeDecl; args: Cursor) =
   #[
   What we need to do is rather simple: A generic instantiation is
@@ -2574,7 +2580,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf; info: Packed
     # take the pragmas from the origin:
     dest.copyTree decl.pragmas
     if err == 0:
-      var sc = SubsContext(params: addr inferred)
+      var sc = SubsContext(params: addr inferred, instSuffix: instSuffix)
       subs(c, dest, sc, decl.body)
       addFreshSyms(c, sc)
     elif err == 1:
@@ -2720,12 +2726,13 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       sym.name = cachedSym
     else:
       var args = cursorAt(c.dest, beforeArgs)
-      let targetSym = newInstSymId(c, headId, toString(c.dest, typeStart, false))
+      let instSuffix = instToSuffix(c.dest, typeStart)
+      let targetSym = newInstSymId(c, headId, instSuffix)
       c.instantiatedTypes[key] = targetSym
       if genericArgs == 0:
         c.typeInstDecls.add targetSym
       var sub = createTokenBuf(30)
-      subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
+      subsGenericTypeFromArgs c, sub, info, instSuffix, headId, targetSym, decl, args
       c.dest.endRead()
       let oldScope = c.currentScope
       # move to top level scope:
