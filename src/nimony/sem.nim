@@ -2714,6 +2714,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       var args = cursorAt(c.dest, beforeArgs)
       let targetSym = newSymId(c, headId)
       c.instantiatedTypes[key] = targetSym
+      c.instantiationKeys[targetSym] = key
       if genericArgs == 0:
         c.typeInstDecls.add targetSym
       var sub = createTokenBuf(30)
