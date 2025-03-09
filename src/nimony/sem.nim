@@ -451,7 +451,10 @@ proc newSymId(c: var SemContext; s: SymId): SymId =
     c.makeLocalSym(name)
   result = pool.syms.getOrIncl(name)
 
-proc instToSuffix(buf: TokenBuf, start: int = 0): string =
+proc instToSuffix(buf: TokenBuf): string =
+  result = uhashBase36(toString(buf, false))
+
+proc instToSuffix(buf: TokenBuf, start: int): string =
   result = uhashBase36(toString(buf, start, false))
 
 proc newInstSymId(c: var SemContext; orig: SymId; suffix: string): SymId =
@@ -492,7 +495,11 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
           dest.add n # keep Symbol as it was
     of SymbolDef:
       let s = n.symId
-      let newDef = newInstSymId(c, s, sc.instSuffix)
+      let newDef =
+        if sc.instSuffix != "":
+          newInstSymId(c, s, sc.instSuffix)
+        else:
+          newSymId(c, s)
       sc.newVars[s] = newDef
       dest.add symdefToken(newDef, n.info)
     of ParLe:
@@ -979,8 +986,11 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
-    let instSuffix = instToSuffix(typeArgs)
-    let targetSym = newInstSymId(c, origin, instSuffix)
+    when false:
+      let instSuffix = instToSuffix(typeArgs)
+      let targetSym = newInstSymId(c, origin, instSuffix)
+    else:
+      let targetSym = newSymId(c, origin)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars == "typevars", pool.syms[origin]
@@ -994,7 +1004,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
         signature.add symToken(origin, info)
         typeArgsStart = signature.len
         signature.add typeArgs
-      var sc = SubsContext(params: addr inferred, instSuffix: instSuffix)
+      var sc = SubsContext(params: addr inferred)
       subs(c, signature, sc, decl.params)
       let beforeRetType = signature.len
       subs(c, signature, sc, decl.retType)
