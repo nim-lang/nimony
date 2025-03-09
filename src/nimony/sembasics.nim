@@ -162,9 +162,10 @@ template withErrorContext*(c: var SemContext; info: PackedLineInfo; body: untype
 
 proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
-    writeStackTrace()
-    echo infoToStr(info) & " Error: " & msg
-    quit msg
+    if not c.debugAllowErrors:
+      writeStackTrace()
+      echo infoToStr(info) & " Error: " & msg
+      quit msg
   c.dest.buildTree ErrT, info:
     c.dest.addSubtree orig
     for instFrom in items(c.instantiatedFrom):
@@ -178,9 +179,10 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string) =
 
 proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
-    writeStackTrace()
-    echo infoToStr(info) & " Error: " & msg
-    quit msg
+    if true: # not c.debugAllowErrors: - c not given
+      writeStackTrace()
+      echo infoToStr(info) & " Error: " & msg
+      quit msg
   dest.buildTree ErrT, info:
     dest.addSubtree orig
     dest.add strToken(pool.strings.getOrIncl(msg), info)

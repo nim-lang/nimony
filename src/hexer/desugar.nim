@@ -88,10 +88,25 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
   c.typeCache.closeScope()
 
-proc addUintType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
+proc addUIntType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
   buf.add tagToken("u", info)
   buf.addIntLit(bits, info)
   buf.addParRi()
+
+proc addIntType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
+  buf.add tagToken("i", info)
+  buf.addIntLit(bits, info)
+  buf.addParRi()
+
+proc addSetType(buf: var TokenBuf; size: int; info: PackedLineInfo) =
+  case size
+  of 1, 2, 4, 8:
+    buf.addUIntType(size * 8, info)
+  else:
+    buf.add tagToken("array", info)
+    buf.addUIntType(8, info)
+    buf.addIntLit(size, info)
+    buf.addParRi()
 
 proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -102,14 +117,7 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if err:
     error "invalid set element type: ", n
   else:
-    case size
-    of 1, 2, 4, 8:
-      dest.addUintType(size * 8, info)
-    else:
-      dest.add tagToken("array", info)
-      dest.addUintType(8, info)
-      dest.addIntLit(size, info)
-      dest.addParRi()
+    addSetType dest, size, info
   skip n
   skipParRi n
 
@@ -135,6 +143,45 @@ proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; in
     c.tempUseBufStack[^1].add symToken(tmp, n.info)
   result = beginRead(c.tempUseBufStack[^1])
 
+template addTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; typ: Cursor; info: PackedLineInfo; body: typed) =
+  copyIntoKind dest, kind, info:
+    dest.addSubtree typ
+    body
+
+template addUIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) =
+  copyIntoKind dest, kind, info:
+    dest.addUIntType(bits, info)
+    body
+
+template addIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) =
+  copyIntoKind dest, kind, info:
+    dest.addIntType(bits, info)
+    body
+
+template forRangeExclusive(c: var Context; dest: var TokenBuf; i: Cursor; bound: int; info: PackedLineInfo; body: typed) =
+  copyIntoKind dest, WhileS, info:
+    addIntTypedOp dest, LtX, -1, info:
+      dest.addSubtree i
+      dest.addIntLit(bound, info)
+    copyIntoKind dest, StmtsS, info:
+      body
+      copyIntoKind dest, AsgnS, info:
+        dest.addSubtree i
+        addIntTypedOp dest, AddX, -1, info:
+          dest.addSubtree i
+          dest.addIntLit(1, info)
+
+proc arrayToPointer(dest: var TokenBuf; arr: Cursor; info: PackedLineInfo) =
+  copyIntoKind dest, AddrX, info:
+    copyIntoKind dest, ArrAtX, info:
+      dest.addSubtree arr
+      dest.addIntLit(0, info)
+
+proc genSetElem(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # XXX could implement offset here
+  addUIntTypedOp dest, CastX, -1, n.info:
+    tr(c, dest, n)
+
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let kind = n.exprKind
@@ -151,7 +198,10 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let aStart = dest.len
   tr(c, dest, n)
   let bStart = dest.len
-  tr(c, dest, n)
+  if kind == InSetX:
+    genSetElem(c, dest, n)
+  else:
+    tr(c, dest, n)
   swap dest, argsBuf
   skipParRi n
   let cType = cursorAt(argsBuf, typeStart)
@@ -165,7 +215,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.add parLeToken(ExprX, info)
     # lift both so (n, (n = 123; n)) works
     a = liftTemp(c, dest, aOrig, typ, info)
-    b = liftTemp(c, dest, bOrig, typ, info)
+    b = liftTemp(c, dest, bOrig, if kind == InSetX: c.typeCache.builtins.uintType else: typ, info)
   else:
     a = aOrig
     b = bOrig
@@ -180,84 +230,276 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
       raiseAssert("unimplemented")
     of LtSetX:
       copyIntoKind dest, AndX, info:
-        copyIntoKind dest, EqX, info:
-          dest.addSubtree cType
-          copyIntoKind dest, BitAndX, info:
-            dest.addSubtree cType
+        addTypedOp dest, EqX, cType, info:
+          addTypedOp dest, BitAndX, cType, info:
             dest.addSubtree a
-            copyIntoKind dest, BitNotX, info:
-              dest.addSubtree cType
+            addTypedOp dest, BitNotX, cType, info:
               dest.addSubtree b
           dest.addIntLit(0, info)
-        copyIntoKind dest, NeqX, info:
-          dest.addSubtree cType
+        addTypedOp dest, NeqX, cType, info:
           dest.addSubtree a
           dest.addSubtree b
     of LeSetX:
-      copyIntoKind dest, EqX, info:
-        dest.addSubtree cType
-        copyIntoKind dest, BitAndX, info:
-          dest.addSubtree cType
+      addTypedOp dest, EqX, cType, info:
+        addTypedOp dest, BitAndX, cType, info:
           dest.addSubtree a
-          copyIntoKind dest, BitNotX, info:
-            dest.addSubtree cType
+          addTypedOp dest, BitNotX, cType, info:
             dest.addSubtree b
         dest.addIntLit(0, info)
     of EqSetX:
-      copyIntoKind dest, EqX, info:
-        dest.addSubtree cType
+      addTypedOp dest, EqX, cType, info:
         dest.addSubtree a
         dest.addSubtree b
     of MulSetX:
-      copyIntoKind dest, BitAndX, info:
-        dest.addSubtree cType
+      addTypedOp dest, BitAndX, cType, info:
         dest.addSubtree a
         dest.addSubtree b
     of PlusSetX:
-      copyIntoKind dest, BitOrX, info:
-        dest.addSubtree cType
+      addTypedOp dest, BitOrX, cType, info:
         dest.addSubtree a
         dest.addSubtree b
     of MinusSetX:
-      copyIntoKind dest, BitAndX, info:
-        dest.addSubtree cType
+      addTypedOp dest, BitAndX, cType, info:
         dest.addSubtree a
-        copyIntoKind dest, BitNotX, info:
-          dest.addSubtree cType
+        addTypedOp dest, BitNotX, cType, info:
           dest.addSubtree b
     of XorSetX:
-      copyIntoKind dest, BitXorX, info:
-        dest.addSubtree cType
+      addTypedOp dest, BitXorX, cType, info:
         dest.addSubtree a
         dest.addSubtree b
     of InSetX:
-      # XXX subtract offsets for range types if implemented
       let mask = size * 8 - 1
-      copyIntoKind dest, NeqX, info:
-        dest.addSubtree cType
-        copyIntoKind dest, BitAndX, info:
-          dest.addSubtree cType
+      addTypedOp dest, NeqX, cType, info:
+        addTypedOp dest, BitAndX, cType, info:
           dest.addSubtree a
-          copyIntoKind dest, ShlX, info:
-            dest.addSubtree cType
-            copyIntoKind dest, CastX, info:
-              dest.addSubtree cType
+          addTypedOp dest, ShlX, cType, info:
+            addTypedOp dest, CastX, cType, info:
               dest.addIntLit(1, info)
-            copyIntoKind dest, BitAndX, info:
-              dest.addUintType(-1, info)
-              copyIntoKind dest, CastX, info:
-                dest.addUintType(-1, info)
-                dest.addSubtree b
+            addUIntTypedOp dest, BitAndX, -1, info:
+              dest.addSubtree b
               dest.addUIntLit(uint64(mask), info)
         dest.addUIntLit(0, info)
     else:
       raiseAssert("unreachable")
   else:
-    # XXX implement
-    raiseAssert("unimplemented")
+    case kind
+    of CardX:
+      # XXX originally implemented as cardSet compilerproc
+      raiseAssert("unimplemented")
+    of LtSetX, LeSetX:
+      dest.add parLeToken(ExprX, info)
+      let resValue = [parLeToken(TrueX, info), parRiToken(info)]
+      let res = liftTemp(c, dest, fromBuffer(resValue), c.typeCache.builtins.boolType, info)
+      let iValue = [intToken(pool.integers.getOrIncl(0), info)]
+      let i = liftTemp(c, dest, fromBuffer(iValue), c.typeCache.builtins.intType, info)
+      forRangeExclusive c, dest, i, size, info:
+        copyIntoKind dest, AsgnS, info:
+          dest.addSubtree res
+          addUIntTypedOp dest, EqX, 8, info:
+            addUIntTypedOp dest, BitandX, 8, info:
+              copyIntoKind dest, ArrAtX, info:
+                dest.addSubtree a
+                dest.addSubtree i
+              addUIntTypedOp dest, BitnotX, 8, info:
+                copyIntoKind dest, ArrAtX, info:
+                  dest.addSubtree b
+                  dest.addSubtree i
+            dest.addIntLit(0, info)
+        copyIntoKind dest, IfS, info:
+          copyIntoKind dest, ElifU, info:
+            copyIntoKind dest, NotX, info:
+              dest.addSubtree res
+            copyIntoKind dest, StmtsS, info:
+              copyIntoKind dest, BreakS, info:
+                dest.addDotToken()
+      if kind == LtSetX:
+        copyIntoKind dest, IfS, info:
+          copyIntoKind dest, ElifU, info:
+            dest.addSubtree res
+            copyIntoKind dest, StmtsS, info:
+              copyIntoKind dest, AsgnS, info:
+                dest.addSubtree res
+                addIntTypedOp dest, NeqX, -1, info:
+                  copyIntoKind dest, CallX, info:
+                    dest.add symToken(pool.syms.getOrIncl("cmpMem.0." & SystemModuleSuffix), info)
+                    dest.arrayToPointer(a, info)
+                    dest.arrayToPointer(b, info)
+                    dest.addIntLit(size, info)
+                  dest.addIntLit(0, info)
+      dest.addSubtree res
+      dest.addParRi()
+    of EqSetX:
+      addIntTypedOp dest, EqX, -1, info:
+        copyIntoKind dest, CallX, info:
+          dest.add symToken(pool.syms.getOrIncl("cmpMem.0." & SystemModuleSuffix), info)
+          dest.arrayToPointer(a, info)
+          dest.arrayToPointer(b, info)
+          dest.addIntLit(size, info)
+        dest.addIntLit(0, info)
+    of MulSetX, PlusSetX, MinusSetX, XorSetX:
+      dest.add parLeToken(ExprX, info)
+      let resValue = [dotToken(info)]
+      let res = liftTemp(c, dest, fromBuffer(resValue), cType, info)
+      let iValue = [intToken(pool.integers.getOrIncl(0), info)]
+      let i = liftTemp(c, dest, fromBuffer(iValue), c.typeCache.builtins.intType, info)
+      forRangeExclusive c, dest, i, size, info:
+        copyIntoKind dest, AsgnS, info:
+          copyIntoKind dest, ArrAtX, info:
+            dest.addSubtree res
+            dest.addSubtree i
+          let op =
+            case kind
+            of PlusSetX: BitorX
+            of XorSetX: BitxorX
+            of MulSetX, MinusSetX: BitandX
+            else: raiseAssert("unreachable")
+          addUIntTypedOp dest, op, 8, info:
+            copyIntoKind dest, ArrAtX, info:
+              dest.addSubtree a
+              dest.addSubtree i
+            if op == MinusSetX:
+              addUIntTypedOp dest, BitnotX, 8, info:
+                copyIntoKind dest, ArrAtX, info:
+                  dest.addSubtree b
+                  dest.addSubtree i
+            else:
+              copyIntoKind dest, ArrAtX, info:
+                dest.addSubtree b
+                dest.addSubtree i
+      dest.addSubtree res
+      dest.addParRi()
+    of InSetX:
+      addUIntTypedOp dest, NeqX, 8, info:
+        addUIntTypedOp dest, BitAndX, 8, info:
+          copyIntoKind dest, ArrAtX, info:
+            dest.addSubtree a
+            addUIntTypedOp dest, ShrX, -1, info:
+              dest.addSubtree b
+              dest.addUintLit(3, info)
+          addUIntTypedOp dest, ShlX, 8, info:
+            dest.addUIntLit(1, info)
+            addUIntTypedOp dest, BitAndX, -1, info:
+              dest.addSubtree b
+              dest.addUIntLit(7, info)
+        dest.addUIntLit(0, info)
+    else:
+      raiseAssert("unreachable")
   if useTemp:
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
+
+proc genSingleInclSmall(dest: var TokenBuf; s, elem: Cursor; size: int; info: PackedLineInfo) =
+  let bits = size * 8
+  copyIntoKind dest, AsgnS, info:
+    dest.addSubtree s
+    addUIntTypedOp dest, BitorX, bits, info:
+      dest.addSubtree s
+      addUIntTypedOp dest, ShlX, bits, info:
+        addUIntTypedOp dest, CastX, bits, info:
+          dest.addIntLit(1, info)
+        addUIntTypedOp dest, ModX, bits, info:
+          dest.addSubtree elem
+          dest.addUIntLit(uint64(bits), info)
+
+proc genSingleInclBig(dest: var TokenBuf; s, elem: Cursor; info: PackedLineInfo) =
+  template addLhs() =
+    copyIntoKind dest, ArrAtX, info:
+      dest.addSubtree s
+      addUIntTypedOp dest, ShrX, -1, info:
+        addUIntTypedOp dest, CastX, -1, info:
+          dest.addSubtree elem
+        dest.addUIntLit(3, info)
+  copyIntoKind dest, AsgnS, info:
+    addLhs()
+    addUIntTypedOp dest, BitorX, 8, info:
+      addLhs()
+      addUIntTypedOp dest, ShlX, 8, info:
+        dest.addUIntLit(1, info)
+        addUIntTypedOp dest, BitandX, -1, info:
+          addUIntTypedOp dest, CastX, -1, info:
+            dest.addSubtree elem
+          dest.addUIntLit(7, info)
+
+proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  dest.add parLeToken(ExprX, info)
+  inc n # tag
+  let typ = n
+  skip n
+  var elemTyp = typ
+  inc elemTyp
+  var err = false
+  let size = asSigned(bitsetSizeInBytes(elemTyp), err)
+  assert not err
+  var typBuf = createTokenBuf(16)
+  addSetType typBuf, size, info
+  let cType = beginRead(typBuf)
+  let big = size > 8
+  let resValue =
+    if big: [dotToken(info)]
+    else: [uintToken(pool.uintegers.getOrIncl(0), info)]
+  let res = liftTemp(c, dest, fromBuffer(resValue), cType, info)
+  if big:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("zeroMem.0." & SystemModuleSuffix), info)
+      dest.arrayToPointer(res, info)
+      dest.addIntLit(size, info)
+  while n.kind != ParRi:
+    let elemInfo = n.info
+    if n.substructureKind == RangeU:
+      inc n
+      var argsBuf = createTokenBuf(16)
+      swap dest, argsBuf
+      let aStart = dest.len
+      genSetElem(c, dest, n)
+      let bStart = dest.len
+      genSetElem(c, dest, n)
+      swap dest, argsBuf
+      skipParRi n
+      # a is used once, no need for temp:
+      let a = cursorAt(argsBuf, aStart)
+      let bOrig = cursorAt(argsBuf, bStart)
+      let useTemp = needsTemp(bOrig)
+      let b: Cursor
+      if useTemp:
+        b = liftTemp(c, dest, bOrig, c.typeCache.builtins.uintType, elemInfo)
+      else:
+        b = bOrig
+      let i = liftTemp(c, dest, a, c.typeCache.builtins.uintType, elemInfo)
+      copyIntoKind dest, WhileS, elemInfo:
+        addUIntTypedOp dest, LeX, -1, elemInfo:
+          dest.addSubtree i
+          dest.addSubtree b
+        copyIntoKind dest, StmtsS, elemInfo:
+          if big:
+            genSingleInclBig(dest, res, i, elemInfo)
+          else:
+            genSingleInclSmall(dest, res, i, size, elemInfo)
+          copyIntoKind dest, AsgnS, elemInfo:
+            dest.addSubtree i
+            addUIntTypedOp dest, AddX, -1, elemInfo:
+              dest.addSubtree i
+              dest.addUIntLit(1, elemInfo)
+    else:
+      var argsBuf = createTokenBuf(16)
+      swap dest, argsBuf
+      let aStart = dest.len
+      genSetElem(c, dest, n)
+      swap dest, argsBuf
+      let aOrig = cursorAt(argsBuf, aStart)
+      let useTemp = needsTemp(aOrig)
+      let a: Cursor
+      if useTemp:
+        a = liftTemp(c, dest, aOrig, c.typeCache.builtins.uintType, elemInfo)
+      else:
+        a = aOrig
+      if big:
+        genSingleInclBig(dest, res, a, elemInfo)
+      else:
+        genSingleInclSmall(dest, res, a, size, elemInfo)
+  skipParRi n
+  dest.addSubtree res
+  dest.addParRi()
 
 proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -266,8 +508,7 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case bytes.len
   of 0:
     # not constant
-    # XXX implement
-    raiseAssert("unimplemented")
+    genSetConstrRuntime(c, dest, n)
   of 1, 2, 4, 8:
     # hopefully this is correct?
     bytes.setLen(8)
@@ -333,13 +574,10 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSubtree a
         dest.addParLe(BitNotX, info)
         dest.addSubtree cType
-      copyIntoKind dest, ShlX, info:
-        dest.addSubtree cType
-        copyIntoKind dest, CastX, info:
-          dest.addSubtree cType
+      addTypedOp dest, ShlX, cType, info:
+        addTypedOp dest, CastX, cType, info:
           dest.addIntLit(1, info)
-        copyIntoKind dest, BitAndX, info:
-          dest.addUintType(-1, info)
+        addUIntTypedOp dest, BitAndX, -1, info:
           dest.addSubtree b
           dest.addIntLit(mask, info)
       if kind == InclS:
@@ -351,25 +589,21 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     template addLhs() =
       copyIntoKind dest, ArrAtX, info:
         dest.addSubtree a
-        copyIntoKind dest, ShrX, info:
-          dest.addUintType(-1, info)
-          copyIntoKind dest, CastX, info:
-            dest.addUintType(-1, info)
+        addUIntTypedOp dest, ShrX, -1, info:
+          addUIntTypedOp dest, CastX, -1, info:
             dest.addParRi()
             dest.addSubtree b
-          dest.addIntLit(3)
+          dest.addUIntLit(3)
     copyIntoKind dest, AsgnS, info:
       addLhs()
-      copyIntoKind dest, if kind == InclS: BitOrX else: BitAndX, info:
+      addUIntTypedOp dest, if kind == InclS: BitOrX else: BitAndX, 8, info:
         addLhs()
         if kind == ExclS:
           dest.addParLe BitNotX, info
           dest.addUintType(8, info)
-        copyIntoKind dest, ShlX, info:
-          dest.addUintType(8, info)
+        addUIntTypedOp dest, ShlX, 8, info:
           dest.addUIntLit(1, info)
-          copyIntoKind dest, BitAndX, info:
-            dest.addUintType(-1, info)
+          addUIntTypedOp dest, BitAndX, -1, info:
             dest.addSubtree b
             dest.addUIntLit(7, info)
         if kind == ExclS:
@@ -426,6 +660,23 @@ proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor) =
               trNewobjFields(c, dest, n)
     # ExprX's expression is the temp:
     dest.add symToken(tmp, info)
+
+proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # Simplify (expr (expr ...)) to (expr (...)) so that our
+  # controlflow graph can handle them easily:
+  dest.add n
+  inc n
+  var nestedExpr = 0
+  while n.exprKind == ExprX:
+    inc n
+    inc nestedExpr
+  while n.kind != ParRi:
+    tr(c, dest, n)
+  inc n
+  dest.addParRi()
+  while nestedExpr > 0:
+    skipParRi n
+    dec nestedExpr
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -512,6 +763,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
       tr c, dest, n
       takeParRi dest, n
+    of ExprX:
+      trExpr c, dest, n
     else:
       trSons(c, dest, n)
   of ParRi:

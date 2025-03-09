@@ -32,7 +32,7 @@ It follows that we're only interested in Call expressions here, or similar
 import std / [assertions]
 include nifprelude
 import nifindexes, symparser, treemangler, lifter, mover
-import ".." / nimony / [nimony_model, programs, decls, typenav, renderer]
+import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters]
 
 type
   Context = object
@@ -57,8 +57,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   result = isLastUse(n, c.source[], otherUsage)
 
 const
-  ConstructingExprs = {CallX, CallStrLitX, InfixX, PrefixX, CmdX, OconstrX, NewobjX,
-                       AconstrX, TupX}
+  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX}
 
 proc constructsValue*(n: Cursor): bool =
   var n = n
@@ -185,15 +184,24 @@ proc callDup(c: var Context; arg: var Cursor) =
     else:
       tr c, arg, WillBeOwned
 
-proc callWasMoved(c: var Context; arg: Cursor) =
-  let typ = getType(c.typeCache, arg)
-  let info = arg.info
+proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
+  var n = arg
+  if n.exprKind == ExprX:
+    inc n
+    while n.kind != ParRi:
+      if isLastSon(n):
+        break
+      else:
+        skip n
+  if n.exprKind == EmoveX: inc n
+
+  let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
       copyIntoKind c.dest, HaddrX, info:
-        copyTree c.dest, arg
+        copyTree c.dest, n
 
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
@@ -222,6 +230,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
   skip n2
   let ri = n2
   let leType = getType(c.typeCache, le)
+  assert leType.typeKind != AutoT, "could not compute type of: " & toString(le, false)
+
   let destructor = getDestructor(c.lifter[], leType, n.info)
   if destructor == NoSymId:
     # the type has no destructor, there is nothing interesting to do:
@@ -243,7 +253,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
         let tmp = tempOfTrArg(c, ri, leType)
-        callWasMoved c, ri
+        callWasMoved c, ri, leType
         callDestroy(c, destructor, lhs)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
@@ -258,7 +268,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           copyTree c.dest, lhs
           n = ri
           tr c, n, WillBeOwned
-        callWasMoved c, ri
+        callWasMoved c, ri, leType
     else:
       # XXX We should really prefer to simply call `=copy(x, y)` here.
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
@@ -343,7 +353,7 @@ proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   else:
     inc n
     skip n
-    skipParRi n
+  skipParRi n
 
 proc trExplicitTrace(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
@@ -359,7 +369,7 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
     inc n
     skip n
     skip n
-    skipParRi n
+  skipParRi n
 
 when not defined(nimony):
   proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false)
@@ -425,7 +435,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   if r.body.stmtKind == StmtsS and not isGeneric(r):
     c.typeCache.openScope()
     c.typeCache.registerParams(r.name.symId, r.params)
-    if parentNodestroy or hasBuiltinPragma(r.pragmas, NodestroyP):
+    if parentNodestroy or hasPragma(r.pragmas, NodestroyP):
       trOnlyEssentials c, r.body
     else:
       tr c, r.body, DontCare
@@ -568,10 +578,14 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   else:
     trSons c, n, DontCare
 
+proc trValue(c: var Context; n: Cursor; e: Expects) =
+  var n = n
+  tr c, n, e
+
 proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   let kind = n.symKind
   c.dest.add n
-  var r = takeLocal(n, SkipFinalParRi)
+  let r = takeLocal(n, SkipFinalParRi)
   if k == ResultS and r.name.kind == SymbolDef:
     c.resultSym = r.name.symId
   copyTree c.dest, r.name
@@ -586,19 +600,23 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   else:
     let destructor = getDestructor(c.lifter[], r.typ, n.info)
     if destructor != NoSymId:
-      if constructsValue(r.val):
-        tr c, r.val, WillBeOwned
+      if k == CursorS:
+        trValue c, r.val, DontCare
+        c.dest.addParRi()
+      elif constructsValue(r.val):
+        trValue c, r.val, WillBeOwned
         c.dest.addParRi()
 
       elif isLastRead(c, r.val):
-        tr c, r.val, WillBeOwned
+        trValue c, r.val, WillBeOwned
         c.dest.addParRi()
-        callWasMoved c, r.val
+        callWasMoved c, r.val, r.typ
       else:
-        callDup c, r.val
+        var rval = r.val
+        callDup c, rval
         c.dest.addParRi()
     else:
-      tr c, r.val, WillBeOwned
+      trValue c, r.val, WillBeOwned
       c.dest.addParRi()
 
 proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
@@ -619,20 +637,24 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
-    copyInto c.dest, n:
-      tr c, n, e
+    inc n
+    tr c, n, e
+    skipParRi n
   elif isLastRead(c, arg):
     if e == WantOwner and hasDestructor(c, typ):
-      copyInto c.dest, n:
-        genLastRead(c, n, typ)
+      inc n
+      genLastRead(c, n, typ)
+      skipParRi n
     else:
-      copyInto c.dest, n:
-        tr c, n, e
+      inc n
+      tr c, n, e
+      skipParRi n
   else:
     let m = "not the last usage of: " & asNimCode(n)
     c.dest.buildTree ErrT, info:
+      c.dest.addSubtree n
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
-  skip n
+    skip n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
@@ -701,6 +723,61 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSons c, n, WantNonOwner
 
+proc readableHookname(s: string): string =
+  result = s
+  extractBasename(result)
+  if result.len > 2 and result[0] == '=' and result[1] in {'a'..'z'}:
+    var i = 2
+    while i < result.len and result[i] != '_':
+      inc i
+    setLen result, i
+
+proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int =
+  let res = tryLoadSym(fn)
+  result = 0
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    if routine.kind.isRoutine and hasPragma(routine.pragmas, ErrorP):
+      let fnName = readableHookname(pool.syms[fn])
+      var m = "'" & fnName & "' is not available"
+      var arg = routine.params
+      if arg.substructureKind == ParamsU:
+        inc arg
+        if arg.kind != ParRi:
+          let param = asLocal(arg)
+          m.add " for type <" & asNimCode(param.typ) & ">"
+      r.error infoToStr(info), m
+      inc result
+
+proc checkForMoveTypes(c: var Context; n: Cursor): int =
+  var nested = 0
+  var r = Reporter(verbosity: 2, noColors: not useColors())
+  var n = n
+  result = 0
+  while true:
+    case n.kind
+    of ParLe:
+      inc nested
+      let ek = n.exprKind
+      if ek in CallKinds:
+        let fn = n.firstSon
+        if fn.kind == Symbol:
+          result += checkForErrorRoutine(r, fn.symId, n.info)
+      elif ek == ErrX:
+        let info = n.info
+        inc n
+        skip n
+        while n.kind == DotToken: inc n
+        if n.kind == StringLit:
+          r.error infoToStr(info), pool.strings[n.litId]
+          inc result
+    of ParRi:
+      dec nested
+    else:
+      discard
+    if nested == 0: break
+    inc n
+
 proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): TokenBuf =
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
     dest: createTokenBuf(400), source: addr source)
@@ -709,5 +786,12 @@ proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): Token
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]
 
+  var ndest = beginRead(c.dest)
+  let errorCount = checkForMoveTypes(c, ndest)
+  endRead(c.dest)
   c.typeCache.closeScope()
+
+  if errorCount > 0:
+    quit 1
+
   result = ensureMove(c.dest)

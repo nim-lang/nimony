@@ -9,6 +9,7 @@
 
 ## A type navigator can recompute the type of an expression.
 
+import std/assertions
 include nifprelude
 
 import std/tables
@@ -164,11 +165,24 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         skip n # skip key
         result = getTypeImpl(c, n)
       else: discard
-  of AtX, PatX, ArrAtX:
+  of AtX, ArrAtX:
     result = getTypeImpl(c, n.firstSon)
     case typeKind(result)
     of ArrayT:
       inc result # to the element type
+    of CstringT:
+      result = c.builtins.charType
+    else:
+      result = c.builtins.autoType # still an error
+  of PatX:
+    result = getTypeImpl(c, n.firstSon)
+    case typeKind(result)
+    of PtrT:
+      inc result
+      if typeKind(result) in {UarrayT, ArrayT}:
+        inc result
+      else:
+        result = c.builtins.autoType # still an error
     of CstringT:
       result = c.builtins.charType
     else:
@@ -218,11 +232,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.nilType
   of DotX, DdotX:
     result = n
+    inc result # skip "dot"
     skip result # obj
     result = getTypeImpl(c, result) # typeof(obj.field) == typeof field
   of DerefX, HderefX:
     result = getTypeImpl(c, n.firstSon)
-    if typeKind(result) in {RefT, PtrT}:
+    if typeKind(result) in {RefT, PtrT, MutT, OutT}:
       inc result
     else:
       result = c.builtins.autoType # still an error
@@ -251,7 +266,11 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     var n = n
     inc n
     while n.kind != ParRi:
-      buf.addSubtree getTypeImpl(c, n)
+      var val = n
+      if val.substructureKind == KvU:
+        inc val
+        skip val
+      buf.addSubtree getTypeImpl(c, val)
       skip n
     buf.addParRi()
     c.mem.add buf
@@ -267,11 +286,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       while idx > 0:
         skip tupType
         dec idx
-      if tupType == "fld":
-        let field = asLocal(tupType)
-        result = field.typ
-      else:
-        result = tupType
+      result = getTupleFieldType(tupType)
   of BracketX:
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.firstSon)
@@ -319,6 +334,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
 
 proc getType*(c: var TypeCache; n: Cursor; skipAliases = false): Cursor =
   result = getTypeImpl(c, n)
+  #assert result.typeKind != AutoT
   if skipAliases:
     var counter = 20
     while counter > 0 and result.kind == Symbol:

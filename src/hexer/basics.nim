@@ -1,3 +1,12 @@
+#
+#
+#           Hexer Compiler
+#        (c) Copyright 2025 Andreas Rumpf
+#
+#    See the file "copying.txt", included in this
+#    distribution, for details about the copyright.
+#
+
 import std / [tables, sets, syncio]
 
 include nifprelude
@@ -33,6 +42,7 @@ type
     instId*: int # per forStmt
     tmpId*: int # per proc
     inImpSection*: int
+    resultSym*: SymId
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId

@@ -10,12 +10,16 @@ proc deallocFixed*(p: pointer) = mi_free(p)
 
 proc c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
 proc c_memcmp(a, b: pointer; size: csize_t): cint {.importc: "memcmp", header: "<string.h>".}
+proc c_memset(dest: pointer; val: cint; size: csize_t) {.importc: "memset", header: "<string.h>".}
 
-proc copyMem(dest, src: pointer; size: int) {.inline.} =
+proc copyMem*(dest, src: pointer; size: int) {.inline.} =
   c_memcpy(dest, src, csize_t size)
 
-proc cmpMem(a, b: pointer; size: int): int {.inline.} =
+proc cmpMem*(a, b: pointer; size: int): int {.inline.} =
   result = c_memcmp(a, b, csize_t size)
+
+proc zeroMem*(dest: pointer; size: int) {.inline.} =
+  c_memset(dest, 0, csize_t size)
 
 var
   missingBytes {.threadvar.}: int

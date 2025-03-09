@@ -11,90 +11,114 @@
 
 ## Transforms string `case` statements to decision trees.
 
-proc decodeSolution(e: var EContext; s: seq[SearchNode]; i: int;
-                    selector: Cursor) =
-  let info = selector.info
+proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
+                    selector: SymId; info: PackedLineInfo) =
   case s[i].kind
   of ForkedSearch:
     let f = forked(s, i)
 
-    e.dest.copyIntoUnchecked "if", info:
-      e.dest.copyIntoUnchecked "elif", info:
-        e.dest.copyIntoUnchecked "call", info:
-          e.dest.add symToken(pool.syms.getOrIncl("nimStrAtLe.c"), info)
-          e.dest.addSubtree selector
-          e.dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
-          e.dest.add charToken(f.best[0], info)
-        e.dest.copyIntoUnchecked "stmts", info:
-          e.decodeSolution s, f.thenA, selector
-      e.dest.copyIntoUnchecked "else", info:
-        e.dest.copyIntoUnchecked "stmts", info:
-          e.decodeSolution s, f.elseA, selector
+    c.dest.copyIntoUnchecked "if", info:
+      c.dest.copyIntoUnchecked "elif", info:
+        c.dest.copyIntoUnchecked "call", info:
+          c.dest.add symToken(pool.syms.getOrIncl("nimStrAtLe.c"), info)
+          c.dest.add symToken(selector, info)
+          c.dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
+          c.dest.add charToken(f.best[0], info)
+        c.dest.copyIntoUnchecked "stmts", info:
+          c.decodeSolution s, f.thenA, selector, info
+      c.dest.copyIntoUnchecked "else", info:
+        c.dest.copyIntoUnchecked "stmts", info:
+          c.decodeSolution s, f.elseA, selector, info
 
   of LinearSearch:
-    e.dest.copyIntoUnchecked "if", info:
+    c.dest.copyIntoUnchecked "if", info:
       for x in s[i].choices:
-        e.dest.copyIntoUnchecked "elif", info:
-          e.dest.copyIntoUnchecked "call", info:
-            e.dest.add symToken(pool.syms.getOrIncl("nimStrEq.c"), info)
-            e.dest.addSubtree selector
-            e.genStringLit(x[0], info)
-          e.dest.copyIntoUnchecked "stmts", info:
-            e.dest.copyIntoUnchecked "jmp", info:
-              e.dest.add symToken(pool.syms.getOrIncl(x[1]), info)
+        c.dest.copyIntoUnchecked "elif", info:
+          c.dest.copyIntoUnchecked "call", info:
+            c.dest.add symToken(pool.syms.getOrIncl("nimStrEq.c"), info)
+            c.dest.add symToken(selector, info)
+            c.genStringLit(x[0], info)
+          c.dest.copyIntoUnchecked "stmts", info:
+            c.dest.copyIntoUnchecked "jmp", info:
+              c.dest.add symToken(pool.syms.getOrIncl(x[1]), info)
 
-proc transformStringCase*(e: var EContext; c: var Cursor) =
+proc transformStringCase*(c: var EContext; n: var Cursor) =
+  c.demand pool.syms.getOrIncl("==.17." & SystemModuleSuffix)
+  c.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
+
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
-  var n = c
-  inc n
-  let selector = n
-  assert selector.kind == Symbol # TODO: Produce a temporary for non-variable
-  skip n # selector
+  var nb = n
+  inc nb
+  let selectorNode = nb
+  let sinfo = selectorNode.info
+  let selector: SymId
+  if selectorNode.kind == Symbol:
+    selector = selectorNode.symId
+  else:
+    selector = pool.syms.getOrIncl(":tmp.c." & $c.getTmpId)
+    c.dest.copyIntoUnchecked "var", sinfo:
+      c.dest.add symdefToken(selector, sinfo)
+      c.dest.addDotToken() # pragmas
+      c.dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
+      c.dest.addSubtree selectorNode
+  skip nb # selector
 
-  while n.kind != ParRi:
-    if n.substructureKind == OfU:
-      let labl = "`sc" & $getTmpId(e)
-      inc n
-      assert n.substructureKind == RangesU
-      while n.kind != ParRi:
-        assert n.kind == StringLit
-        pairs.add (pool.strings[n.litId], labl)
-        inc n
-      inc n # skip ParRi
-      skip n # skip action for now
-      skipParRi n
+  while nb.kind != ParRi:
+    if nb.substructureKind == OfU:
+      let labl = "`sc." & $getTmpId(c)
+      inc nb
+      assert nb.substructureKind == RangesU
+      inc nb
+      while nb.kind != ParRi:
+        assert nb.kind == StringLit
+        pairs.add (pool.strings[nb.litId], labl)
+        inc nb
+      inc nb # skip ParRi
+      skip nb # skip action for now
+      skipParRi nb
     else:
-      skip n
+      skip nb
 
   let solution = createSearchTree(pairs)
-  decodeSolution(e, solution, 0, selector)
+  decodeSolution(c, solution, 0, selector, selectorNode.info)
   var i = 0
-  n = c
-  inc n
+  nb = n
+  inc nb
 
-  skip n # selector
-  let afterwards = pool.syms.getOrIncl("`sc" & $getTmpId(e))
+  skip nb # selector
+  let afterwards = pool.syms.getOrIncl("`sc." & $getTmpId(c))
 
-  while n.kind != ParRi:
-    if n.substructureKind == OfU:
-      let info = n.info
-      e.dest.copyIntoUnchecked "lab", info:
-        e.dest.add symdefToken(pool.syms.getOrIncl(pairs[i][1]), info)
-      inc n
-      skip n # skip string values
-      traverseStmt e, n
-      e.dest.copyIntoUnchecked "jmp", info:
-        e.dest.add symToken(afterwards, info)
-      skipParRi n
+  let elseLabel = pool.syms.getOrIncl("`sc." & $getTmpId(c))
+  c.dest.copyIntoUnchecked "jmp", selectorNode.info:
+    c.dest.add symToken(elseLabel, selectorNode.info)
+  var hasElse = false
+  while nb.kind != ParRi:
+    let info = nb.info
+    if nb.substructureKind == OfU:
+      c.dest.copyIntoUnchecked "lab", info:
+        c.dest.add symdefToken(pool.syms.getOrIncl(pairs[i][1]), info)
+      inc nb
+      skip nb # skip string values
+      traverseStmt c, nb
+      c.dest.copyIntoUnchecked "jmp", info:
+        c.dest.add symToken(afterwards, info)
+      skipParRi nb
       inc i
-    elif n.substructureKind == ElseU:
-      inc n
-      traverseStmt e, n
-      skipParRi n
+    elif nb.substructureKind == ElseU:
+      c.dest.copyIntoUnchecked "lab", info:
+        c.dest.add symdefToken(elseLabel, info)
+      inc nb
+      traverseStmt c, nb
+      skipParRi nb
+      hasElse = true
     else:
-      error "invalid `case` statement", n
-  skipParRi n
-  e.dest.copyIntoUnchecked "lab", c.info:
-    e.dest.add symdefToken(afterwards, c.info)
-  c = n
+      error "invalid `case` statement", nb
+  if not hasElse:
+    c.dest.copyIntoUnchecked "lab", sinfo:
+      c.dest.add symdefToken(elseLabel, sinfo)
+
+  skipParRi nb
+  c.dest.copyIntoUnchecked "lab", n.info:
+    c.dest.add symdefToken(afterwards, n.info)
+  n = nb

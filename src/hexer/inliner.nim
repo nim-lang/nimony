@@ -80,7 +80,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc shouldInlineRoutine(pragmas: Cursor): bool =
-  hasBuiltinPragma(pragmas, InlineP)
+  hasPragma(pragmas, InlineP)
 
 proc shouldInlineCall(c: var Context; n: Cursor; routine: var Routine): bool =
   result = false

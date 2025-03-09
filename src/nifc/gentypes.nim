@@ -469,6 +469,7 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
       case decl.body.typeKind
       of ArrayT:
         c.add declKeyword
+        c.add s
         c.add CurlyLe
         var n = decl.body.firstSon
         genType c, n, "a"

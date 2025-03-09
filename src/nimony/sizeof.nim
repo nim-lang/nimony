@@ -136,12 +136,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     inc n
     var c2 = createSizeofValue(c.strict)
     while n.kind != ParRi:
-      if n.substructureKind == FldU:
-        let field = takeLocal(n, SkipFinalParRi)
-        getSize c2, cache, field.typ, ptrSize
-      else:
-        getSize c2, cache, n, ptrSize
-        skip n
+      getSize c2, cache, getTupleFieldType(n), ptrSize
+      skip n
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
@@ -173,19 +169,18 @@ proc typeSectionMode(n: Cursor): PragmaKind =
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
       if local.kind == TypeY:
-        if hasBuiltinPragma(local.pragmas, BycopyP):
+        if hasPragma(local.pragmas, BycopyP):
           return BycopyP
-        elif hasBuiltinPragma(local.pragmas, ByrefP):
+        elif hasPragma(local.pragmas, ByrefP):
           return ByrefP
         n = local.body
   return NoPragma
 
 proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
   let k = typ.typeKind
-  if k in {SinkT, MutT, OutT,
-     TypeKindT, UntypedT, VarargsT}:
+  if k in {SinkT, MutT, OutT, TypeKindT, UntypedT, VarargsT, TypedescT, StaticT}:
     result = false
   elif typeIsBig(typ, ptrSize):
-    result = not hasBuiltinPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
+    result = not hasPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
   else:
-    result = hasBuiltinPragma(pragmas, ByrefP) or typeSectionMode(typ) == ByrefP
+    result = hasPragma(pragmas, ByrefP) or typeSectionMode(typ) == ByrefP

@@ -96,13 +96,13 @@ type
                              # to forward command line args properly.
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
-    genericHooks*: Table[SymId, seq[SymId]]
-    hookIndexMap*: array[AttachedOp, seq[(SymId, SymId)]]
+    hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     unoverloadableMagics*: HashSet[StrId]
+    debugAllowErrors*: bool
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

@@ -11,7 +11,7 @@ type
     CallConv,
     NifcExpr, NifcStmt, NifcType, NifcOther, NifcPragma, NifcTypeQualifier, NifcSym,
     NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym, HookKind, ControlFlowKind,
-    NifIndex
+    NifIndexKind
 
 proc toSuffix(e: EnumList): (string, string) =
   case e
@@ -32,7 +32,7 @@ proc toSuffix(e: EnumList): (string, string) =
   of NimonySym: ("Y", "NoSym")
   of ControlFlowKind: ("F", "NoControlFlow")
   of HookKind: ("H", "NoHook")
-  of NifIndex: ("Idx", "NoIndexTag")
+  of NifIndexKind: ("Idx", "NoIndexTag")
 
 proc shortcutToEnumList(shortcut: string): EnumList =
   try:
@@ -165,7 +165,7 @@ proc genTags(inp: File) =
   writeModel "src/models/callconv", enumDecls, CallConv, CallConv
   writeModel "src/models/nifc", enumDecls, NifcExpr, NifcSym
   writeModel "src/models/nimony", enumDecls, NimonyExpr, ControlFlowKind
-  writeModel "src/models/nifindex", enumDecls, NifIndex, NifIndex
+  writeModel "src/models/nifindex", enumDecls, NifIndexKind, NifIndexKind
 
 proc main =
   var inp = open("doc/tags.md", fmRead)

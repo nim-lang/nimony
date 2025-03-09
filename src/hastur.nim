@@ -148,18 +148,19 @@ type
     Tracked # tracked tests: These are processed and can contain "track info"
             # for line, col, filename extraction (useful for nimsuggest-like tests)
     Compat # compatibility mode tests
+    Valgrind # valgrind tests
 
 proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
-  of Normal, Tracked, Compat: "c --silentMake"
+  of Normal, Tracked, Compat, Valgrind: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
 
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
-  result = "nifcache" / name.addFileExt(ext)
+  result = "nimcache" / name.addFileExt(ext)
 
 proc removeMakeErrors(output: string): string =
   result = output.strip
@@ -170,19 +171,54 @@ proc removeMakeErrors(output: string): string =
       result = result[0 .. lastLine].strip
     else: break
 
+proc compareValgrindOutput(s1: string, s2: string): bool =
+  # ==90429==
+  let s1 = s1.splitLines()
+  let s2 = s2.splitLines()
+  if s1.len != s2.len:
+    return false
+  for i in 0 .. s1.len - 1:
+    let n1 = rfind(s1[i], "== ")
+    let n2 = rfind(s2[i], "== ")
+    if n2 == -1 or s1[i][n1+3..^1] != s2[i][n2+3..^1]:
+      return false
+  return true
+
+proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Category; exe: string) =
+  let valgrind = file.changeFileExt(".valgrind")
+  let hasValgrindFile = valgrind.fileExists()
+  if cat == Valgrind or hasValgrindFile:
+    let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(
+          "valgrind --leak-check=full --error-exitcode=1 " & exe)
+    if testProgramExitCode != 0:
+      failure c, file, "valgrind program exitcode 0", "exitcode " & $testProgramExitCode
+
+    if hasValgrindFile:
+      let valgrindSpec = readFile(valgrind).strip
+      let success = compareValgrindOutput(valgrindSpec, testProgramOutput.strip)
+      if not success:
+        if overwrite:
+          writeFile(valgrind, testProgramOutput)
+
+        failure c, file, valgrindSpec, testProgramOutput
+
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   #echo "TESTING ", file
   inc c.total
   var nimonycmd = "--isMain"
   case cat
-  of Normal: discard
+  of Normal, Valgrind: discard
   of Basics:
     nimonycmd.add " --noSystem"
   of Tracked:
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   of Compat:
     nimonycmd.add " --compat"
-  let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & " " & quoteShell(file), cat)
+  when defined(linux):
+    nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
+  else:
+    nimonycmd.add " "
+  let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & quoteShell(file), cat)
 
   let msgs = file.changeFileExt(".msgs")
 
@@ -219,6 +255,9 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
             writeFile(output, testProgramOutput)
           failure c, file, outputSpec, testProgramOutput
 
+      when defined(linux):
+        testValgrind c, file, overwrite, cat, quoteShell exe
+
     let ast = file.changeFileExt(".nif")
     if ast.fileExists():
       let nif = generatedFile(file, ".2.nif")
@@ -231,17 +270,18 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
       files.add x.path
   sort files
   if cat == Compat:
-    removeDir "nifcache"
+    removeDir "nimcache"
   for f in items files:
     testFile c, f, overwrite, cat
   if cat == Compat:
-    removeDir "nifcache"
+    removeDir "nimcache"
 
 proc parseCategory(path: string): Category =
   case path
   of "track": Tracked
   of "nosystem": Basics
   of "compat": Compat
+  of "valgrind": Valgrind
   else: Normal
 
 proc findCategory(path: string): Category =
@@ -479,7 +519,7 @@ proc handleCmdLine =
       buildHexer(showProgress)
     else:
       writeHelp()
-    removeDir "nifcache"
+    removeDir "nimcache"
 
   of "nimony":
     buildNimony()
@@ -511,7 +551,7 @@ proc handleCmdLine =
     else:
       quit "`record` takes two arguments"
   of "clean":
-    removeDir "nifcache"
+    removeDir "nimcache"
     removeDir "bin"
   of "sync":
     syncCmd(if args.len > 0: args[0] else: "")

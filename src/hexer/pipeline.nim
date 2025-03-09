@@ -7,6 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
+import std/assertions
 include nifprelude
 
 import ".." / nimony / [nimony_model, programs, decls]
@@ -57,10 +58,12 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n4 = injectDestructors(c4, ctx)
   endRead(n3)
 
+  assert n4[n4.len-1].kind == ParRi
   shrink(n4, n4.len-1)
 
   if ctx[].dest.len > 0:
     var hookCursor = beginRead(ctx[].dest)
+    #echo "HOOKS: ", toString(hookCursor)
     publishHooks hookCursor
     endRead(ctx[].dest)
 

@@ -78,6 +78,7 @@ type
     gfMainModule # isMainModule
     gfHasError   # already generated the error variable
     gfProducesMainProc # needs main proc
+    gfInCallImportC # in importC call context
 
   GeneratedCode* = object
     m: Module
@@ -203,14 +204,6 @@ proc callingConvToStr(cc: CallConv): string =
 include gentypes
 
 # Procs
-
-template emitData(s: string) = c.data.add c.tokens.getOrIncl(s)
-template emitData(t: Token) = c.data.add t
-template emitData(t: PredefinedToken) = c.data.add Token(t)
-
-proc genStrLit(c: var GeneratedCode; litId: StrId): Token =
-  let cstr = makeCString(pool.strings[litId])
-  result = c.tokens.getOrIncl cstr
 
 proc inclHeader(c: var GeneratedCode, name: string) =
   let header = c.tokens.getOrIncl(name)
@@ -696,7 +689,7 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   elif c.init.len > 0:
-    f.write "void __attribute__((constructor)) init(void) {"
+    f.write "static void __attribute__((constructor)) init(void) {"
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   f.f.close

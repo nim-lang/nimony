@@ -32,6 +32,7 @@ Options:
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
+  --nimcache:PATH           set the path used for generated files
   --version                 show the version
   --help                    show this help
 """
@@ -56,8 +57,8 @@ proc handleCmdLine() =
   var useEnv = true
   var moduleFlags: set[ModuleFlag] = {}
   var config = NifConfig()
-  # XXX: harcoded relative nifcache path for now
-  config.nifcachePath = toAbsolutePath("nifcache")
+  config.currentPath = getCurrentDir()
+  config.nifcachePath = "nimcache"
   config.defines.incl "nimony"
   config.bits = sizeof(int)*8
   var commandLineArgs = ""
@@ -96,6 +97,8 @@ proc handleCmdLine() =
         of "32": config.bits = 32
         of "16": config.bits = 16
         else: quit "invalid value for --bits"
+      of "nimcache":
+        config.nifcachePath = val
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
