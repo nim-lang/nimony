@@ -451,10 +451,51 @@ proc newSymId(c: var SemContext; s: SymId): SymId =
     c.makeLocalSym(name)
   result = pool.syms.getOrIncl(name)
 
+proc instToString(buf: TokenBuf; start: int): string =
+  # canonicalized string of invocation
+  # could directly build hash too but this is easier to debug
+  var b = nifbuilder.open((buf.len - start) * 20, compact = true)
+  for n in start ..< buf.len:
+    let k = buf[n].kind
+    case k
+    of DotToken: b.addEmpty()
+    of Ident: b.addIdent(pool.strings[buf[n].litId])
+    of Symbol:
+      # for nested instantiations i.e. `Foo[Bar[int]]`
+      let s = pool.syms[buf[n].symId]
+      if isInstantiation(s):
+        b.addSymbol(removeModule(s))
+      else:
+        b.addSymbol(s)
+    of IntLit: b.addIntLit(pool.integers[buf[n].intId])
+    of UIntLit: b.addUIntLit(pool.uintegers[buf[n].uintId])
+    of FloatLit: b.addFloatLit(pool.floats[buf[n].floatId])
+    of SymbolDef: b.addSymbolDef(pool.syms[buf[n].symId])
+    of CharLit: b.addCharLit char(buf[n].uoperand)
+    of StringLit: b.addStrLit(pool.strings[buf[n].litId])
+    of UnknownToken: b.addIdent "<unknown token>"
+    of EofToken: b.addIntLit buf[n].soperand
+    of ParRi: b.endTree()
+    of ParLe: b.addTree(pool.tags[buf[n].tagId])
+  result = b.extract()
+
+proc instToSuffix(buf: TokenBuf, start: int): string =
+  result = uhashBase36(instToString(buf, start))
+
+proc newInstSymId(c: var SemContext; orig: SymId; suffix: string): SymId =
+  # abc.123.Iabcdefgh.instmod
+  var name = removeModule(pool.syms[orig])
+  name.add(".I")
+  name.add(suffix)
+  name.add '.'
+  name.add c.thisModuleSuffix
+  result = pool.syms.getOrIncl(name)
+
 type
   SubsContext = object
     newVars: Table[SymId, SymId]
     params: ptr Table[SymId, Cursor]
+    instSuffix: string
 
 proc addFreshSyms(c: var SemContext, sc: var SubsContext) =
   for _, newVar in sc.newVars:
@@ -480,7 +521,11 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
           dest.add n # keep Symbol as it was
     of SymbolDef:
       let s = n.symId
-      let newDef = newSymId(c, s)
+      let newDef =
+        if sc.instSuffix != "":
+          newInstSymId(c, s, sc.instSuffix)
+        else:
+          newSymId(c, s)
       sc.newVars[s] = newDef
       dest.add symdefToken(newDef, n.info)
     of ParLe:
@@ -2533,7 +2578,8 @@ proc semConceptType(c: var SemContext; n: var Cursor) =
   takeParRi c, n
   takeParRi c, n
 
-proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
+                             info: PackedLineInfo; instSuffix: string;
                              origin, targetSym: SymId; decl: TypeDecl; args: Cursor) =
   #[
   What we need to do is rather simple: A generic instantiation is
@@ -2566,7 +2612,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf; info: Packed
     # take the pragmas from the origin:
     dest.copyTree decl.pragmas
     if err == 0:
-      var sc = SubsContext(params: addr inferred)
+      var sc = SubsContext(params: addr inferred, instSuffix: instSuffix)
       subs(c, dest, sc, decl.body)
       addFreshSyms(c, sc)
     elif err == 1:
@@ -2712,12 +2758,13 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       sym.name = cachedSym
     else:
       var args = cursorAt(c.dest, beforeArgs)
-      let targetSym = newSymId(c, headId)
+      let instSuffix = instToSuffix(c.dest, typeStart)
+      let targetSym = newInstSymId(c, headId, instSuffix)
       c.instantiatedTypes[key] = targetSym
       if genericArgs == 0:
         c.typeInstDecls.add targetSym
       var sub = createTokenBuf(30)
-      subsGenericTypeFromArgs c, sub, info, headId, targetSym, decl, args
+      subsGenericTypeFromArgs c, sub, info, instSuffix, headId, targetSym, decl, args
       c.dest.endRead()
       let oldScope = c.currentScope
       # move to top level scope:
