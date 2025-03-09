@@ -470,6 +470,7 @@ include "system/stringimpl"
 
 include "system/setops"
 
+include "system/openarrays"
 include "system/seqimpl"
 
 include "system/iterators"
