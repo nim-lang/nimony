@@ -1,3 +1,4 @@
+## Openarray implementation.
 
 type
   openArray*[T] {.view.} = object

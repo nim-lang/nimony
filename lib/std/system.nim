@@ -466,6 +466,7 @@ template len*[I, T](x: array[I, T]): int =
 include "system/setops"
 
 include "system/stringimpl"
+include "system/openarrays"
 include "system/seqimpl"
 
 include "system/iterators"
