@@ -147,6 +147,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
 
     copyIntoKind result, DerefX, info:
       copyIntoSymUse result, tmp, info
+    c.typeCache.registerLocalPtrOf(tmp, VarY, typ)
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf) =
   let info = arg[0].info
@@ -169,13 +170,13 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     c.dest.addEmpty2 info # export marker, pragma
     copyTree c.dest, typ
     tr c, n, WillBeOwned
+  c.typeCache.registerLocal(result, VarY, typ)
 
 proc callDup(c: var Context; arg: var Cursor) =
   let typ = getType(c.typeCache, arg)
   if typ.typeKind == NiltT:
     tr c, arg, DontCare
   else:
-    let n = arg
     let info = arg.info
     let hookProc = getHook(c.lifter[], attachedDup, typ, info)
     if hookProc != NoSymId and arg.kind != StringLit:
@@ -231,6 +232,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
   skip n2
   let ri = n2
   let leType = getType(c.typeCache, le)
+  assert leType.typeKind != AutoT, "could not compute type of: " & toString(le, false)
+
   let destructor = getDestructor(c.lifter[], leType, n.info)
   if destructor == NoSymId:
     # the type has no destructor, there is nothing interesting to do:
@@ -688,7 +691,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trStmtListExpr c, n, e
     of EmoveX:
       trEnsureMove c, n, e
-    of AconstrX, TupX:
+    of AconstrX, TupConstrX:
       trRawConstructor c, n, e
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetConstrX,
        OchoiceX, CchoiceX,
@@ -698,7 +701,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        DefinedX, HighX, LowX, TypeofX, UnpackX, EnumtostrX, IsmainmoduleX, QuotedX,
        DerefX, HderefX, AddrX, HaddrX, AlignofX, OffsetofX, ErrX:
       trSons c, n, WantNonOwner
-    of DefaultobjX, DefaulttupX, BracketX, CurlyX:
+    of DefaultobjX, DefaulttupX, BracketX, CurlyX, TupX:
       raiseAssert "nodekind should have been eliminated in sem.nim"
     of PragmaxX, CurlyatX, TabconstrX, DoX:
       trSons c, n, e

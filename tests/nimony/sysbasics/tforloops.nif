@@ -24,15 +24,24 @@
        (i -1))
       (rangetype
        (i -1) +0 +0)) 1
-     (tup 1 +12 5 globalX.0.tfo6zftzj1))) ,1
+     (tupconstr ~2,~2
+      (tuple 1
+       (i -1) 6
+       (i -1)) 1 +12 5 globalX.0.tfo6zftzj1))) ,1
    (yld 6
     (arrat ff.0 3 +0)) ,2
    (yld 6
     (arrat ff.0 3 +0)) ,3
    (yld 6
-    (tup 1 +12 5 x.0)) ,4
+    (tupconstr 2,~5
+     (tuple 1
+      (i -1) 6
+      (i -1)) 1 +12 5 x.0)) ,4
    (yld 6
-    (tup 1 +22 5 +4)))) ,10
+    (tupconstr 2,~6
+     (tuple 1
+      (i -1) 6
+      (i -1)) 1 +22 5 +4)))) ,10
  (iterator 9 :foo1.0.tfo6zftzj1 . . . 13
   (params 1
    (param :x.1 . . 3

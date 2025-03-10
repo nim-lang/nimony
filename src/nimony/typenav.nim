@@ -9,6 +9,7 @@
 
 ## A type navigator can recompute the type of an expression.
 
+import std/assertions
 include nifprelude
 
 import std/tables
@@ -164,11 +165,24 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
         skip n # skip key
         result = getTypeImpl(c, n)
       else: discard
-  of AtX, PatX, ArrAtX:
+  of AtX, ArrAtX:
     result = getTypeImpl(c, n.firstSon)
     case typeKind(result)
     of ArrayT:
       inc result # to the element type
+    of CstringT:
+      result = c.builtins.charType
+    else:
+      result = c.builtins.autoType # still an error
+  of PatX:
+    result = getTypeImpl(c, n.firstSon)
+    case typeKind(result)
+    of PtrT:
+      inc result
+      if typeKind(result) in {UarrayT, ArrayT}:
+        inc result
+      else:
+        result = c.builtins.autoType # still an error
     of CstringT:
       result = c.builtins.charType
     else:
@@ -210,7 +224,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
-     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewobjX, AconstrX, SetConstrX:
+     CastX, ConvX, OconvX, HconvX, DconvX,
+     OconstrX, NewobjX, AconstrX, SetConstrX, TupConstrX:
     result = n.firstSon
   of ParX, EmoveX:
     result = getTypeImpl(c, n.firstSon)
@@ -223,7 +238,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = getTypeImpl(c, result) # typeof(obj.field) == typeof field
   of DerefX, HderefX:
     result = getTypeImpl(c, n.firstSon)
-    if typeKind(result) in {RefT, PtrT}:
+    if typeKind(result) in {RefT, PtrT, MutT, OutT}:
       inc result
     else:
       result = c.builtins.autoType # still an error
@@ -247,6 +262,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
   of TupX:
+    # should not be encountered but keep this code for now
     var buf = createTokenBuf(4)
     buf.add parLeToken(TupleT, n.info)
     var n = n
@@ -320,6 +336,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
 
 proc getType*(c: var TypeCache; n: Cursor; skipAliases = false): Cursor =
   result = getTypeImpl(c, n)
+  #assert result.typeKind != AutoT
   if skipAliases:
     var counter = 20
     while counter > 0 and result.kind == Symbol:
@@ -349,3 +366,11 @@ proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind:
   takeTree dest, n # pragmas
   c.registerLocal(name, kind, n)
   takeTree dest, n # type
+
+proc registerLocalPtrOf*(c: var TypeCache; name: SymId; kind: SymKind; elemType: Cursor) =
+  var buf = createTokenBuf(4)
+  buf.add parLeToken(PtrT, elemType.info)
+  buf.addSubtree elemType
+  buf.addParRi()
+  c.mem.add buf
+  c.registerLocal(name, kind, cursorAt(c.mem[c.mem.len-1], 0))

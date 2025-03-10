@@ -78,6 +78,7 @@ type
     gfMainModule # isMainModule
     gfHasError   # already generated the error variable
     gfProducesMainProc # needs main proc
+    gfInCallImportC # in importC call context
 
   GeneratedCode* = object
     m: Module

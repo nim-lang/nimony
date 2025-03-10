@@ -1,6 +1,9 @@
 type
   Hash* = uint
 
+  Hashable* = concept
+    proc hash(a: Self): Hash
+
 proc `!&`*(h: Hash; val: uint): Hash {.inline.} =
   ## Mixes a hash value `h` with `val` to produce a new hash value.
   result = h + val

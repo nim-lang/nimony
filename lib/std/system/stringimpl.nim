@@ -261,3 +261,16 @@ template concat*(): string {.varargs.} =
   for s in unpack():
     res.add s
   res
+
+proc `&`*(a, b: string): string =
+  let rlen = a.len + b.len
+  let r = cast[StrData](alloc(rlen))
+  if r != nil:
+    result = string(a: r, i: (rlen shl LenShift) or IsAllocatedBit)
+    if a.len > 0:
+      copyMem r, a.a, a.len
+    if b.len > 0:
+      copyMem addr r[a.len], b.a, b.len
+  else:
+    oomHandler rlen
+    result = string(a: nil, i: EmptyI)

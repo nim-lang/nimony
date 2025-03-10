@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, symparser
 
 type
   Item* = object
@@ -62,7 +62,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*, genericEmpty*, insertedParam*: bool
+    genericConverter*, checkEmptyArg*, insertedParam*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -311,6 +311,16 @@ proc cmpExactTypeBits(f, a: Cursor): int =
   else:
     result = -1
 
+proc sameSymbol(a, b: SymId): bool =
+  if a == b:
+    return true
+  # symbols might be different for instantiations from different modules,
+  # consider this case by checking if the instantiation keys are equal:
+  let sa = pool.syms[a]
+  let sb = pool.syms[b]
+  result = isInstantiation(sa) and isInstantiation(sb) and
+    removeModule(sa) == removeModule(sb)
+
 proc expectParRi(m: var Match; f: var Cursor) =
   if f.kind == ParRi:
     inc f
@@ -357,9 +367,15 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
     elif f.kind == a.kind:
       case f.kind
       of UnknownToken, EofToken,
-          DotToken, Ident, Symbol, SymbolDef,
+          DotToken, Ident, SymbolDef,
           StringLit, CharLit, IntLit, UIntLit, FloatLit:
         if f.uoperand != a.uoperand:
+          m.error(InvalidMatch, fOrig, aOrig)
+          break
+        inc f
+        inc a
+      of Symbol:
+        if not sameSymbol(f.symId, a.symId):
           m.error(InvalidMatch, fOrig, aOrig)
           break
         inc f
@@ -550,12 +566,12 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   elif isObjectType(fs):
     if a.kind != Symbol:
       m.error InvalidMatch, f, a
-    elif a.symId == fs:
+    elif sameSymbol(fs, a.symId):
       discard "direct match, no annotation required"
     else:
       var diff = 1
       for fparent in inheritanceChain(fs):
-        if fparent == a.symId:
+        if sameSymbol(fparent, a.symId):
           m.args.addParLe OconvX, m.argInfo
           m.args.addIntLit diff, m.argInfo
           if m.flipped:
@@ -574,7 +590,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
     m.error NotImplementedConcept, f, a
   else:
     # fast check that works for aliases too:
-    if a.kind == Symbol and a.symId == fs:
+    if a.kind == Symbol and sameSymbol(a.symId, fs):
       discard "perfect match"
     else:
       var impl = typeImpl(fs)
@@ -661,6 +677,33 @@ proc isStringType*(a: Cursor): bool {.inline.} =
 
 proc isSomeStringType*(a: Cursor): bool {.inline.} =
   result = a.typeKind == CstringT or isStringType(a)
+
+proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
+  # check that `a` is either an instantiation of seq or an invocation to it
+  result = false
+  var a = a
+  var i = 0
+  while a.kind == Symbol:
+    let decl = getTypeSection(a.symId)
+    if decl.kind == TypeY:
+      if decl.body.kind == Symbol:
+        a = decl.body
+      else:
+        a = decl.typevars
+    else:
+      return false
+    inc i
+    if i == 20: break
+  if a.typeKind == InvokeT:
+    inc a # tag
+    result = a.kind == Symbol and pool.syms[a.symId] == "seq.0." & SystemModuleSuffix
+    if result:
+      inc a
+      elemType = a
+
+proc isSomeSeqType*(a: Cursor): bool {.inline.} =
+  var dummy = default(Cursor)
+  result = isSomeSeqType(a, dummy)
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   case f.kind
@@ -762,7 +805,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       expectParRi m, f
     of TupleT:
       let fOrig = f
-      let aOrig = arg.typ
+      let aOrig = skipModifier(arg.typ)
       var a = aOrig
       if a.typeKind != TupleT:
         m.error InvalidMatch, fOrig, aOrig
@@ -807,6 +850,31 @@ proc isEmptyLiteral*(n: Cursor): bool =
     skip n # type
     result = n.kind == ParRi
 
+proc isEmptyCall*(n: Cursor): bool =
+  # input needs to be semchecked, possibly in AllowEmpty context
+  if n.exprKind notin CallKinds:
+    return false
+  var n = n
+  inc n
+  # overload of `@` with empty array param:
+  result = n.kind == Symbol and pool.syms[n.symId] == "@.1." & SystemModuleSuffix
+  inc n
+  if not isEmptyLiteral(n):
+    return false
+  skip n
+  if n.kind != ParRi:
+    return false
+
+proc isEmptyContainer*(n: Cursor): bool =
+  result = isEmptyLiteral(n) or isEmptyCall(n)
+
+proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInfo) =
+  buf.addParLe(RangetypeT, info)
+  buf.addSubtree c.types.intType
+  buf.addIntLit(0, info)
+  buf.addIntLit(-1, info)
+  buf.addParRi()
+
 proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
   if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
       (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
@@ -821,11 +889,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
         # create index type to match to
         var buf = createTokenBuf(8)
         let info = arg.n.info
-        buf.addParLe(RangetypeT, info)
-        buf.addSubtree m.context.types.intType
-        buf.addIntLit(0, info)
-        buf.addIntLit(-1, info)
-        buf.addParRi()
+        addEmptyRangeType(buf, m.context, info)
         # hoist it in case it gets inferred:
         var aIndex = typeToCursor(m.context[], buf, 0)
         linearMatch(m, fIndex, aIndex)
@@ -834,16 +898,42 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
     inc m.inheritanceCosts
     if not m.err:
       if containsGenericParams(f): # maybe restrict to params of this routine
-        m.genericEmpty = true
+        # element type needs to be instantiated:
+        m.checkEmptyArg = true
       m.args.add arg.n.load # copy tag
       m.args.takeTree f
       m.args.addParRi()
   else:
-    # match against `auto`, untyped/varargs should still match
-    singleArgImpl(m, f, arg)
+    var elemType = default(Cursor)
+    if (arg.n.exprKind in CallKinds and isSomeSeqType(f, elemType)):
+      inc m.inheritanceCosts
+      if not m.err:
+        # call to `@` needs to be instantiated/template expanded,
+        # also the element type needs to be instantiated if generic:
+        m.checkEmptyArg = true
+        # keep the call to `@` but give the array constructor the element type:
+        var call = arg.n
+        m.args.add call.load # copy call tag
+        inc call
+        m.args.add call.load # copy symbol
+        inc call
+        assert call.exprKind == AconstrX
+        m.args.add call.load # copy array tag
+        inc call
+        # build our own array type:
+        m.args.addParLe(ArrayT, call.info)
+        m.args.addSubtree elemType
+        addEmptyRangeType(m.args, m.context, call.info)
+        m.args.addParRi()
+        skip call
+        takeParRi m.args, call # array constructor
+        takeParRi m.args, call # call
+    else:
+      # match against `auto`, untyped/varargs should still match
+      singleArgImpl(m, f, arg)
 
 proc singleArg(m: var Match; f: var Cursor; arg: Item) =
-  if arg.typ.typeKind == AutoT and isEmptyLiteral(arg.n):
+  if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
     matchEmptyContainer(m, f, arg)
     return
   singleArgImpl(m, f, arg)
@@ -1017,6 +1107,36 @@ type
     FirstWins,
     SecondWins
 
+proc mutualGenericMatch(a, b: Match): DisambiguationResult =
+  # same goal as `checkGeneric` in old compiler
+  result = NobodyWins
+  let c = a.context
+  var aParams = a.fn.typ
+  var bParams = b.fn.typ
+  assert aParams.typeKind == ParamsT
+  assert bParams.typeKind == ParamsT
+  inc aParams
+  inc bParams
+  while aParams.kind != ParRi and bParams.kind != ParRi:
+    let aParam = takeLocal(aParams, SkipFinalParRi)
+    let bParam = takeLocal(bParams, SkipFinalParRi)
+    var aFormal = aParam.typ
+    var bFormal = bParam.typ
+    var ma = createMatch(c)
+    singleArg ma, aFormal, Item(n: emptyNode(c[]), typ: bParam.typ)
+    var mb = createMatch(c)
+    singleArg mb, bFormal, Item(n: emptyNode(c[]), typ: aParam.typ)
+    let aMatch = classifyMatch(ma)
+    let bMatch = classifyMatch(mb)
+    if aMatch == GenericMatch and bMatch == NoMatch:
+      # b is more specific
+      if result == FirstWins: return NobodyWins
+      result = SecondWins
+    if bMatch == GenericMatch and aMatch == NoMatch:
+      # a is more specific
+      if result == SecondWins: return NobodyWins
+      result = FirstWins
+
 proc cmpMatches*(a, b: Match): DisambiguationResult =
   assert not a.err
   assert not b.err
@@ -1043,7 +1163,10 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
     elif diff > 0:
       result = SecondWins
     else:
-      result = NobodyWins
+      if a.fn.typ.typeKind == ParamsT and b.fn.typ.typeKind == ParamsT:
+        result = mutualGenericMatch(a, b)
+      else:
+        result = NobodyWins
 
 # How to implement named parameters: In a preprocessing step
 # The signature is matched against the named parameters. The

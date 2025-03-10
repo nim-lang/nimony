@@ -758,14 +758,14 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
     of AddrX, HaddrX:
       trExprLoop c, n
     of QuotedX, ParX, PragmaxX, CurlyatX, TabconstrX, DoX,
-       NilX, FalseX, TrueX, NotX, NegX, OconstrX, NewobjX, TupX,
+       NilX, FalseX, TrueX, NotX, NegX, OconstrX, NewobjX, TupConstrX,
        AconstrX, SetConstrX, OchoiceX, CchoiceX, AddX, SubX, MulX, DivX, ModX,
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
        CastX, ConvX, OconvX, HconvX, DconvX, InfX, NegInfX, NanX, SufX,
        UnpackX, EnumToStrX,
        IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
-       DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX, BracketX, CurlyX:
+       DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX, BracketX, CurlyX, TupX:
       trExprLoop c, n
     of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
@@ -799,6 +799,7 @@ proc toControlflow*(n: Cursor): TokenBuf =
   c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove c.dest
+  #echo "result: ", codeListing(result)
 
 when isMainModule:
   proc test(s: string) =

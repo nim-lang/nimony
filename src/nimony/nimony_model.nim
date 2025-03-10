@@ -281,10 +281,13 @@ proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
 const
   TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
 
+proc removeModifier*(a: var Cursor) =
+  if a.kind == ParLe and a.typeKind in TypeModifiers:
+    inc a
+
 proc skipModifier*(a: Cursor): Cursor =
   result = a
-  if result.kind == ParLe and result.typeKind in TypeModifiers:
-    inc result
+  removeModifier(result)
 
 const
   LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}

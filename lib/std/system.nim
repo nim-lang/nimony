@@ -464,14 +464,20 @@ template len*[I, T](x: array[I, T]): int =
   len(array[I, T])
 
 # This must be the first include so that we know string's `==` is the 17th.
-# This is a minor hack, let's see how long it will be able to last. The fact that ==.18
+# This is a minor hack, let's see how long it will be able to last. The fact that ==.17
 # is the string equality is used by hexer/stringcases.nim.
 include "system/stringimpl"
 
 include "system/setops"
 
+include "system/openarrays"
 include "system/seqimpl"
 
 include "system/iterators"
 
 include "system/atomics"
+
+proc swap*[T](x, y: var T) {.inline, nodestroy.} =
+  let tmp = x
+  x = y
+  y = tmp
