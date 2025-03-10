@@ -129,7 +129,7 @@ proc trReturn(c: var Context; n: var Cursor) =
 
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
-  if le.kind == Symbol:
+  if le.kind == Symbol or (le.exprKind in {DerefX, HderefX} and le.firstSon.kind == Symbol):
     # simple enough:
     takeTree result, le
   else:
