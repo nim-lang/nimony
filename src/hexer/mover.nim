@@ -91,15 +91,23 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
     inc tree
     if nested == 0: break
 
-proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): bool =
+proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): int =
+  result = 0
   for i in 0..<c.len:
+    case c[i].kind
+    of ParLe:
+      inc result
+    of ParRi:
+      dec result
+    else:
+      discard
     if c[i].info == idx:
       n = c.readonlyCursorAt(i)
-      return true
-  return false
+      return result
+  return -1
 
-proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bool =
-  var nested = 0
+proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bool =
+  var nested = nested
   var pc = pc
   let root = rootOf(x)
   while true:
@@ -197,7 +205,8 @@ proc singlePath(pc, x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bo
 
 proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
   var n = default Cursor
-  if not findStart(c, toPayload(idx + PayloadOffset), n):
+  let nested = findStart(c, toPayload(idx + PayloadOffset), n)
+  if nested < 0:
     return true
   #echo "LOOKING AT: ", codeListing(c)
   #echo "N IS: ", toString(n, false)
@@ -211,7 +220,7 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
     let pc = pcs.pop()
     #echo "Looking at: ", toString(pc, false)
     if not isMarked(pc):
-      if not singlePath(pc, x, pcs, otherUsage):
+      if not singlePath(pc, nested, x, pcs, otherUsage):
         return false
       doMark pc
   return true
