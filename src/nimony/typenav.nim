@@ -364,3 +364,11 @@ proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind:
   takeTree dest, n # pragmas
   c.registerLocal(name, kind, n)
   takeTree dest, n # type
+
+proc registerLocalPtrOf*(c: var TypeCache; name: SymId; kind: SymKind; elemType: Cursor) =
+  var buf = createTokenBuf(4)
+  buf.add parLeToken(PtrT, elemType.info)
+  buf.addSubtree elemType
+  buf.addParRi()
+  c.mem.add buf
+  c.registerLocal(name, kind, cursorAt(c.mem[c.mem.len-1], 0))

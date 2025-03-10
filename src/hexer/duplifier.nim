@@ -147,6 +147,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
 
     copyIntoKind result, DerefX, info:
       copyIntoSymUse result, tmp, info
+    c.typeCache.registerLocalPtrOf(tmp, VarY, typ)
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf) =
   let info = arg[0].info
@@ -169,6 +170,7 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     c.dest.addEmpty2 info # export marker, pragma
     copyTree c.dest, typ
     tr c, n, WillBeOwned
+  c.typeCache.registerLocal(result, VarY, typ)
 
 proc callDup(c: var Context; arg: var Cursor) =
   let typ = getType(c.typeCache, arg)
