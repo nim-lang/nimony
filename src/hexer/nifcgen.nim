@@ -892,9 +892,8 @@ proc traverseStmtsExpr(c: var EContext; n: var Cursor) =
 
 proc traverseTupleConstr(c: var EContext; n: var Cursor) =
   c.dest.add tagToken("oconstr", n.info)
-  var tupleType = c.typeCache.getType(n)
-  c.traverseType(tupleType, {})
   inc n
+  c.traverseType(n, {})
   var counter = 0
   while n.kind != ParRi:
     c.dest.add tagToken("kv", n.info)
@@ -1020,7 +1019,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
         else:
           traverseExpr c, n
       takeParRi c, n
-    of TupX:
+    of TupConstrX:
       traverseTupleConstr c, n
     of CmdX, CallStrLitX, InfixX, PrefixX, HcallX, CallX:
       c.dest.add tagToken("call", n.info)
@@ -1115,7 +1114,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
         traverseExpr c, n
       takeParRi c, n
     of ErrX, NewobjX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX,
-       InSetX, CardX, BracketX, CurlyX, CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, UnpackX,
+       InSetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, UnpackX,
        EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX:
       error c, "BUG: not eliminated: ", n

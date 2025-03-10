@@ -4555,11 +4555,12 @@ proc semArrayConstr(c: var SemContext; it: var Item) =
   it.typ = semLocalType(c, it.n)
   # XXX type length not enforced
   var elem = Item(n: it.n, typ: c.types.autoType)
-  if it.typ.typeKind == ArrayT:
-    elem.typ = it.typ
+  let t = skipModifier(it.typ)
+  if t.typeKind == ArrayT:
+    elem.typ = t
     inc elem.typ
   else:
-    c.buildErr info, "expected array type for array constructor, got: " & typeToString(it.typ)
+    c.buildErr info, "expected array type for array constructor, got: " & typeToString(t)
   while elem.n.kind != ParRi:
     semExpr c, elem
   it.n = elem.n
@@ -4573,11 +4574,12 @@ proc semSetConstr(c: var SemContext; it: var Item) =
   takeToken c, it.n
   it.typ = semLocalType(c, it.n)
   var elem = Item(n: it.n, typ: c.types.autoType)
-  if it.typ.typeKind == SetT:
-    elem.typ = it.typ
+  let t = skipModifier(it.typ)
+  if t.typeKind == SetT:
+    elem.typ = t
     inc elem.typ
   else:
-    c.buildErr info, "expected set type for set constructor, got: " & typeToString(it.typ)
+    c.buildErr info, "expected set type for set constructor, got: " & typeToString(t)
   while elem.n.kind != ParRi:
     if elem.n.substructureKind == RangeU:
       takeToken c, elem.n
@@ -4622,15 +4624,18 @@ proc semSuf(c: var SemContext, it: var Item) =
   takeParRi c, it.n # right paren
   commonType c, it, exprStart, expected
 
-proc semTupleConstr(c: var SemContext, it: var Item) =
+proc semTup(c: var SemContext, it: var Item) =
   let exprStart = c.dest.len
   let origExpected = it.typ
-  takeToken c, it.n
+  c.dest.add parLeToken(TupConstrX, it.n.info)
+  inc it.n
   if it.n.kind == ParRi:
+    it.typ = c.types.emptyTupleType
+    c.dest.addSubtree it.typ
     takeParRi c, it.n
-    it.typ = c.types.emptyTupletype
     commonType c, it, exprStart, origExpected
     return
+  let typePos = c.dest.len
   var expected = origExpected
   var doExpected = expected.typeKind == TupleT
   if doExpected:
@@ -4680,7 +4685,40 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
   semTupleType c, t
   it.typ = typeToCursor(c, typeStart)
   c.dest.shrink typeStart
+  c.dest.insert it.typ, typePos
   commonType c, it, exprStart, origExpected
+
+proc semTupleConstr(c: var SemContext, it: var Item) =
+  let start = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  takeToken c, it.n
+  it.typ = semLocalType(c, it.n)
+  var t = skipModifier(it.typ)
+  if t.typeKind != TupleT:
+    c.dest.shrink start
+    c.buildErr info, "expected tuple type for tuple constructor, got: " & typeToString(t)
+    return
+  inc t
+  while it.n.kind != ParRi:
+    let named = it.n.substructureKind == KvU
+    if named:
+      takeToken c, it.n
+      takeTree c, it.n
+    var elem = Item(n: it.n, typ: c.types.autoType)
+    if t.kind != ParRi:
+      elem.typ = getTupleFieldType(t)
+      skip t
+    else:
+      c.buildErr info, "tuple type " & typeToString(it.typ) & " too short for tuple constructor"
+    semExpr c, elem
+    it.n = elem.n
+    if named:
+      takeParRi c, it.n
+  if t.kind != ParRi:
+    c.buildErr info, "tuple type " & typeToString(it.typ) & " too long for tuple constructor"
+  takeParRi c, it.n
+  commonType c, it, start, expected
 
 proc callDefault(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
   var callBuf = createTokenBuf(16)
@@ -4883,7 +4921,8 @@ proc semObjDefault(c: var SemContext; it: var Item) =
   commonType c, it, exprStart, expected
 
 proc buildDefaultTuple(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
-  c.dest.addParLe(TupX, info)
+  c.dest.addParLe(TupConstrX, info)
+  c.dest.addSubtree typ
   var currentField = typ
   inc currentField # skip tuple tag
   while currentField.kind != ParRi:
@@ -6010,14 +6049,16 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semBracket c, it, flags
     of CurlyX:
       semCurly c, it, flags
+    of TupX:
+      semTup c, it
     of AconstrX:
       semArrayConstr c, it
     of SetConstrX:
       semSetConstr c, it
+    of TupConstrX:
+      semTupleConstr c, it
     of SufX:
       semSuf c, it
-    of TupX:
-      semTupleConstr c, it
     of OconstrX, NewobjX:
       semObjConstr c, it
     of DefinedX:

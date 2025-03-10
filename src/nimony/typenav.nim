@@ -224,7 +224,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
-     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewobjX, AconstrX, SetConstrX:
+     CastX, ConvX, OconvX, HconvX, DconvX,
+     OconstrX, NewobjX, AconstrX, SetConstrX, TupConstrX:
     result = n.firstSon
   of ParX, EmoveX:
     result = getTypeImpl(c, n.firstSon)
@@ -261,6 +262,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
   of TupX:
+    # should not be encountered but keep this code for now
     var buf = createTokenBuf(4)
     buf.add parLeToken(TupleT, n.info)
     var n = n
@@ -270,11 +272,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       if val.substructureKind == KvU:
         inc val
         skip val
-      let elemType = getTypeImpl(c, val)
-      # XXX wrong to skip modifier here if tuple contains a view type
-      # solution would be to include the type in the tuple constructor
-      # but this is too niche for now
-      buf.addSubtree skipModifier(elemType)
+      buf.addSubtree getTypeImpl(c, val)
       skip n
     buf.addParRi()
     c.mem.add buf

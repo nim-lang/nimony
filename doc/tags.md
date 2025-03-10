@@ -209,8 +209,9 @@
 | `(ddot X)` | NimonyExpr | deref dot |
 | `(haddr X)` | NimonyExpr | hidden address of operation |
 | `(newobj T (kv Y X)*)` | NimonyExpr | new object constructor |
-| `(tup X+)` | NimonyExpr, NiflerKind | tuple constructor |
-| `(setconstr X*)` | NimonyExpr | set constructor |
+| `(tup X+)` | NimonyExpr, NiflerKind | untyped tuple constructor |
+| `(tupconstr T X+)` | NimonyExpr | tuple constructor |
+| `(setconstr T X*)` | NimonyExpr | set constructor |
 | `(tabconstr X*)` | NimonyExpr, NiflerKind | table constructor |
 | `(ashr T X X)` | NimonyExpr | |
 | `(oconv T X)` | NimonyExpr | object conversion |
