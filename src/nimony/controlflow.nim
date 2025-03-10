@@ -799,6 +799,7 @@ proc toControlflow*(n: Cursor): TokenBuf =
   c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove c.dest
+  #echo "result: ", codeListing(result)
 
 when isMainModule:
   proc test(s: string) =
