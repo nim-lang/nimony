@@ -1,0 +1,5 @@
+broad
+specific Foo[T]
+broad ptr
+ptr
+specific ptr Foo[T]

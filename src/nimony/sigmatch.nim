@@ -1107,6 +1107,36 @@ type
     FirstWins,
     SecondWins
 
+proc mutualGenericMatch(a, b: Match): DisambiguationResult =
+  # same goal as `checkGeneric` in old compiler
+  result = NobodyWins
+  let c = a.context
+  var aParams = a.fn.typ
+  var bParams = b.fn.typ
+  assert aParams.typeKind == ParamsT
+  assert bParams.typeKind == ParamsT
+  inc aParams
+  inc bParams
+  while aParams.kind != ParRi and bParams.kind != ParRi:
+    let aParam = takeLocal(aParams, SkipFinalParRi)
+    let bParam = takeLocal(bParams, SkipFinalParRi)
+    var aFormal = aParam.typ
+    var bFormal = bParam.typ
+    var ma = createMatch(c)
+    singleArg ma, aFormal, Item(n: emptyNode(c[]), typ: bParam.typ)
+    var mb = createMatch(c)
+    singleArg mb, bFormal, Item(n: emptyNode(c[]), typ: aParam.typ)
+    let aMatch = classifyMatch(ma)
+    let bMatch = classifyMatch(mb)
+    if aMatch == GenericMatch and bMatch == NoMatch:
+      # b is more specific
+      if result == FirstWins: return NobodyWins
+      result = SecondWins
+    if bMatch == GenericMatch and aMatch == NoMatch:
+      # a is more specific
+      if result == SecondWins: return NobodyWins
+      result = FirstWins
+
 proc cmpMatches*(a, b: Match): DisambiguationResult =
   assert not a.err
   assert not b.err
@@ -1133,7 +1163,10 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
     elif diff > 0:
       result = SecondWins
     else:
-      result = NobodyWins
+      if a.fn.typ.typeKind == ParamsT and b.fn.typ.typeKind == ParamsT:
+        result = mutualGenericMatch(a, b)
+      else:
+        result = NobodyWins
 
 # How to implement named parameters: In a preprocessing step
 # The signature is matched against the named parameters. The
