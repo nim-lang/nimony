@@ -66,7 +66,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
     if not symMarked:
       # mark that this module contains the identifier `strId`:
       importTab.mgetOrPut(strId, @[]).add(module)
-  for k, v in m.index.converters:
+  for k, v in m.index.converters.items:
     var name = v
     extractBasename(name)
     let nameId = pool.strings.getOrIncl(name)

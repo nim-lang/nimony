@@ -261,7 +261,7 @@ type
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
     hooks*: Table[SymId, HooksPerType]
-    converters*: Table[string, string] # map of dest types to converter symbols
+    converters*: seq[(string, string)] # map of dest types to converter symbols
     toBuild*: seq[(string, string, string)]
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
@@ -343,7 +343,7 @@ proc readHookSection(s: var Stream; tab: var Table[SymId, HooksPerType]; op: Att
       assert false, "expected (kv) or (vv) construct"
       #t = next(s)
 
-proc readSymbolSection(s: var Stream; tab: var Table[string, string]) =
+proc readSymbolSection(s: var Stream; tab: var seq[(string, string)]) =
   var t = next(s)
   var nested = 1
   while t.kind != EofToken:
@@ -369,7 +369,7 @@ proc readSymbolSection(s: var Stream; tab: var Table[string, string]) =
         else:
           raiseAssert "invalid (kv) construct: symbol expected"
         t = next(s) # skip value symbol
-        tab[key] = value
+        tab.add((key, value))
         if t.kind == ParRi:
           t = next(s)
           dec nested
