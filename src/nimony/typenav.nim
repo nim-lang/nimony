@@ -270,7 +270,11 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       if val.substructureKind == KvU:
         inc val
         skip val
-      buf.addSubtree getTypeImpl(c, val)
+      let elemType = getTypeImpl(c, val)
+      # XXX wrong to skip modifier here if tuple contains a view type
+      # solution would be to include the type in the tuple constructor
+      # but this is too niche for now
+      buf.addSubtree skipModifier(elemType)
       skip n
     buf.addParRi()
     c.mem.add buf
