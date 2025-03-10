@@ -691,7 +691,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trStmtListExpr c, n, e
     of EmoveX:
       trEnsureMove c, n, e
-    of AconstrX, TupX:
+    of AconstrX, TupConstrX:
       trRawConstructor c, n, e
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetConstrX,
        OchoiceX, CchoiceX,
@@ -701,7 +701,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        DefinedX, HighX, LowX, TypeofX, UnpackX, EnumtostrX, IsmainmoduleX, QuotedX,
        DerefX, HderefX, AddrX, HaddrX, AlignofX, OffsetofX, ErrX:
       trSons c, n, WantNonOwner
-    of DefaultobjX, DefaulttupX, BracketX, CurlyX:
+    of DefaultobjX, DefaulttupX, BracketX, CurlyX, TupX:
       raiseAssert "nodekind should have been eliminated in sem.nim"
     of PragmaxX, CurlyatX, TabconstrX, DoX:
       trSons c, n, e

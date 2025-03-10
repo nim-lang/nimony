@@ -212,60 +212,61 @@ const
     ("haddr", 208),
     ("newobj", 209),
     ("tup", 210),
-    ("setconstr", 211),
-    ("tabconstr", 212),
-    ("ashr", 213),
-    ("oconv", 214),
-    ("hconv", 215),
-    ("dconv", 216),
-    ("callstrlit", 217),
-    ("infix", 218),
-    ("prefix", 219),
-    ("hcall", 220),
-    ("compiles", 221),
-    ("declared", 222),
-    ("defined", 223),
-    ("high", 224),
-    ("low", 225),
-    ("typeof", 226),
-    ("unpack", 227),
-    ("enumtostr", 228),
-    ("ismainmodule", 229),
-    ("defaultobj", 230),
-    ("defaulttup", 231),
-    ("expr", 232),
-    ("do", 233),
-    ("arrat", 234),
-    ("tupat", 235),
-    ("plusset", 236),
-    ("minusset", 237),
-    ("mulset", 238),
-    ("xorset", 239),
-    ("eqset", 240),
-    ("leset", 241),
-    ("ltset", 242),
-    ("inset", 243),
-    ("card", 244),
-    ("emove", 245),
-    ("destroy", 246),
-    ("dup", 247),
-    ("copy", 248),
-    ("wasmoved", 249),
-    ("sinkh", 250),
-    ("trace", 251),
-    ("errv", 252),
-    ("staticstmt", 253),
-    ("bind", 254),
-    ("mixin", 255),
-    ("using", 256),
-    ("asm", 257),
-    ("defer", 258),
-    ("index", 259),
-    ("public", 260),
-    ("private", 261),
-    ("inject", 262),
-    ("gensym", 263),
-    ("error", 264)
+    ("tupconstr", 211),
+    ("setconstr", 212),
+    ("tabconstr", 213),
+    ("ashr", 214),
+    ("oconv", 215),
+    ("hconv", 216),
+    ("dconv", 217),
+    ("callstrlit", 218),
+    ("infix", 219),
+    ("prefix", 220),
+    ("hcall", 221),
+    ("compiles", 222),
+    ("declared", 223),
+    ("defined", 224),
+    ("high", 225),
+    ("low", 226),
+    ("typeof", 227),
+    ("unpack", 228),
+    ("enumtostr", 229),
+    ("ismainmodule", 230),
+    ("defaultobj", 231),
+    ("defaulttup", 232),
+    ("expr", 233),
+    ("do", 234),
+    ("arrat", 235),
+    ("tupat", 236),
+    ("plusset", 237),
+    ("minusset", 238),
+    ("mulset", 239),
+    ("xorset", 240),
+    ("eqset", 241),
+    ("leset", 242),
+    ("ltset", 243),
+    ("inset", 244),
+    ("card", 245),
+    ("emove", 246),
+    ("destroy", 247),
+    ("dup", 248),
+    ("copy", 249),
+    ("wasmoved", 250),
+    ("sinkh", 251),
+    ("trace", 252),
+    ("errv", 253),
+    ("staticstmt", 254),
+    ("bind", 255),
+    ("mixin", 256),
+    ("using", 257),
+    ("asm", 258),
+    ("defer", 259),
+    ("index", 260),
+    ("public", 261),
+    ("private", 262),
+    ("inject", 263),
+    ("gensym", 264),
+    ("error", 265)
   ]
 const
   ErrTagId* = 1
@@ -478,57 +479,58 @@ const
   HaddrTagId* = 208
   NewobjTagId* = 209
   TupTagId* = 210
-  SetconstrTagId* = 211
-  TabconstrTagId* = 212
-  AshrTagId* = 213
-  OconvTagId* = 214
-  HconvTagId* = 215
-  DconvTagId* = 216
-  CallstrlitTagId* = 217
-  InfixTagId* = 218
-  PrefixTagId* = 219
-  HcallTagId* = 220
-  CompilesTagId* = 221
-  DeclaredTagId* = 222
-  DefinedTagId* = 223
-  HighTagId* = 224
-  LowTagId* = 225
-  TypeofTagId* = 226
-  UnpackTagId* = 227
-  EnumtostrTagId* = 228
-  IsmainmoduleTagId* = 229
-  DefaultobjTagId* = 230
-  DefaulttupTagId* = 231
-  ExprTagId* = 232
-  DoTagId* = 233
-  ArratTagId* = 234
-  TupatTagId* = 235
-  PlussetTagId* = 236
-  MinussetTagId* = 237
-  MulsetTagId* = 238
-  XorsetTagId* = 239
-  EqsetTagId* = 240
-  LesetTagId* = 241
-  LtsetTagId* = 242
-  InsetTagId* = 243
-  CardTagId* = 244
-  EmoveTagId* = 245
-  DestroyTagId* = 246
-  DupTagId* = 247
-  CopyTagId* = 248
-  WasmovedTagId* = 249
-  SinkhTagId* = 250
-  TraceTagId* = 251
-  ErrvTagId* = 252
-  StaticstmtTagId* = 253
-  BindTagId* = 254
-  MixinTagId* = 255
-  UsingTagId* = 256
-  AsmTagId* = 257
-  DeferTagId* = 258
-  IndexTagId* = 259
-  PublicTagId* = 260
-  PrivateTagId* = 261
-  InjectTagId* = 262
-  GensymTagId* = 263
-  ErrorTagId* = 264
+  TupconstrTagId* = 211
+  SetconstrTagId* = 212
+  TabconstrTagId* = 213
+  AshrTagId* = 214
+  OconvTagId* = 215
+  HconvTagId* = 216
+  DconvTagId* = 217
+  CallstrlitTagId* = 218
+  InfixTagId* = 219
+  PrefixTagId* = 220
+  HcallTagId* = 221
+  CompilesTagId* = 222
+  DeclaredTagId* = 223
+  DefinedTagId* = 224
+  HighTagId* = 225
+  LowTagId* = 226
+  TypeofTagId* = 227
+  UnpackTagId* = 228
+  EnumtostrTagId* = 229
+  IsmainmoduleTagId* = 230
+  DefaultobjTagId* = 231
+  DefaulttupTagId* = 232
+  ExprTagId* = 233
+  DoTagId* = 234
+  ArratTagId* = 235
+  TupatTagId* = 236
+  PlussetTagId* = 237
+  MinussetTagId* = 238
+  MulsetTagId* = 239
+  XorsetTagId* = 240
+  EqsetTagId* = 241
+  LesetTagId* = 242
+  LtsetTagId* = 243
+  InsetTagId* = 244
+  CardTagId* = 245
+  EmoveTagId* = 246
+  DestroyTagId* = 247
+  DupTagId* = 248
+  CopyTagId* = 249
+  WasmovedTagId* = 250
+  SinkhTagId* = 251
+  TraceTagId* = 252
+  ErrvTagId* = 253
+  StaticstmtTagId* = 254
+  BindTagId* = 255
+  MixinTagId* = 256
+  UsingTagId* = 257
+  AsmTagId* = 258
+  DeferTagId* = 259
+  IndexTagId* = 260
+  PublicTagId* = 261
+  PrivateTagId* = 262
+  InjectTagId* = 263
+  GensymTagId* = 264
+  ErrorTagId* = 265

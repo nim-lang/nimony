@@ -224,7 +224,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     result = c.builtins.intType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
-     CastX, ConvX, OconvX, HconvX, DconvX, OconstrX, NewobjX, AconstrX, SetConstrX:
+     CastX, ConvX, OconvX, HconvX, DconvX,
+     OconstrX, NewobjX, AconstrX, SetConstrX, TupConstrX:
     result = n.firstSon
   of ParX, EmoveX:
     result = getTypeImpl(c, n.firstSon)
@@ -261,6 +262,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
   of TupX:
+    # should not be encountered but keep this code for now
     var buf = createTokenBuf(4)
     buf.add parLeToken(TupleT, n.info)
     var n = n
