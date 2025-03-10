@@ -805,7 +805,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       expectParRi m, f
     of TupleT:
       let fOrig = f
-      let aOrig = arg.typ
+      let aOrig = skipModifier(arg.typ)
       var a = aOrig
       if a.typeKind != TupleT:
         m.error InvalidMatch, fOrig, aOrig

@@ -697,8 +697,9 @@ proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
   n = it.n
-  if classifyType(c, it.typ) != BoolT:
-    buildErr c, it.n.info, "expected `bool` but got: " & typeToString(it.typ)
+  let t = skipModifier(it.typ)
+  if classifyType(c, t) != BoolT:
+    buildErr c, it.n.info, "expected `bool` but got: " & typeToString(t)
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
   endRead(c.dest)
@@ -717,8 +718,9 @@ proc semConstStrExpr(c: var SemContext; n: var Cursor) =
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
   n = it.n
-  if not isStringType(it.typ):
-    buildErr c, it.n.info, "expected `string` but got: " & typeToString(it.typ)
+  let t = skipModifier(it.typ)
+  if not isStringType(t):
+    buildErr c, it.n.info, "expected `string` but got: " & typeToString(t)
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
   endRead(c.dest)
@@ -737,8 +739,9 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
   n = it.n
-  if classifyType(c, it.typ) != IntT:
-    buildErr c, it.n.info, "expected `int` but got: " & typeToString(it.typ)
+  let t = skipModifier(it.typ)
+  if classifyType(c, t) != IntT:
+    buildErr c, it.n.info, "expected `int` but got: " & typeToString(t)
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
   endRead(c.dest)
@@ -2652,6 +2655,7 @@ proc semRangeTypeFromExpr(c: var SemContext; n: var Cursor; info: PackedLineInfo
   var valuesBuf = createTokenBuf(4)
   swap c.dest, valuesBuf
   semExpr c, it
+  removeModifier(it.typ)
   semExpr c, it
   swap c.dest, valuesBuf
   n = it.n
@@ -3159,7 +3163,8 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       else:
         semLocalValue c, it, crucial # 4
       n = it.n
-      insertType c, it.typ, beforeType
+      let typ = skipModifier(it.typ)
+      insertType c, typ, beforeType
     else:
       let typ = semLocalType(c, n) # 3
       if n.kind == DotToken:
@@ -3723,7 +3728,7 @@ proc semSubscriptAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
     # build regular assignment:
     c.dest.addParLe(AsgnS, info)
     c.dest.add subscriptBuf
-    subscript.typ = skipModifier(subscript.typ) # remove `var` for rhs
+    removeModifier(subscript.typ) # remove `var` for rhs
     semExpr c, subscript # use the type and position from the subscript
     it.n = subscript.n
     takeParRi c, it.n
@@ -3771,7 +3776,7 @@ proc semDotAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
     # build regular assignment:
     c.dest.addParLe(AsgnS, info)
     c.dest.add dotBuf
-    dot.typ = skipModifier(dot.typ) # remove `var` for rhs
+    removeModifier(dot.typ) # remove `var` for rhs
     semExpr c, dot # use the type and position from the dot expression
     it.n = dot.n
     takeParRi c, it.n
@@ -3803,7 +3808,7 @@ proc semAsgn(c: var SemContext; it: var Item) =
     c.dest.addParLe(AsgnS, info)
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, a # infers type of `left-hand-side`
-    a.typ = skipModifier(a.typ) # remove `var` for rhs
+    removeModifier(a.typ) # remove `var` for rhs
     semExpr c, a # ensures type compatibility with `left-hand-side`
     it.n = a.n
     takeParRi c, it.n
@@ -4004,16 +4009,17 @@ proc semCase(c: var SemContext; it: var Item) =
   var selector = Item(n: it.n, typ: c.types.autoType)
   semExpr c, selector
   it.n = selector.n
-  let isString = isSomeStringType(selector.typ)
+  let selectorType = skipModifier(selector.typ)
+  let isString = isSomeStringType(selectorType)
   var seen: seq[(xint, xint)] = @[]
   var seenStr = initHashSet[StrId]()
   if it.n.substructureKind == OfU:
     while it.n.substructureKind == OfU:
       takeToken c, it.n
       if isString:
-        semCaseOfValueString c, it, selector.typ, seenStr
+        semCaseOfValueString c, it, selectorType, seenStr
       else:
-        semCaseOfValue c, it, selector.typ, seen
+        semCaseOfValue c, it, selectorType, seen
       withNewScope c:
         semStmtBranch c, it, true
       takeParRi c, it.n
@@ -4420,16 +4426,22 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
 
   let typeInsertPos = c.dest.len
   var elem = Item(n: it.n, typ: c.types.autoType)
+  var freshElemType = true # whether the array element type is being inferred from the first element
   case it.typ.typeKind
   of ArrayT: # , SeqT, OpenArrayT
     var arr = it.typ
     inc arr
     elem.typ = arr
+    freshElemType = false
   of AutoT: discard
   else:
     buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
   # XXX index types, `index: value` etc not implemented
   semExpr c, elem
+  if freshElemType:
+    # do not save modifier in array type unless it was annotated as such
+    # also do not expect it from subsequent elements
+    removeModifier(elem.typ)
   var count = 1
   while elem.n.kind != ParRi:
     semExpr c, elem
@@ -4470,11 +4482,13 @@ proc semCurly(c: var SemContext, it: var Item; flags: set[SemFlag]) =
 
   let typeInsertPos = c.dest.len
   var elem = Item(n: it.n, typ: c.types.autoType)
+  var freshElemType = true # whether the set element type is being inferred from the first element
   case it.typ.typeKind
   of SetT:
     var t = it.typ
     inc t
     elem.typ = t
+    freshElemType = false
   of AutoT: discard
   else:
     buildErr c, info, "invalid expected type for set constructor: " & typeToString(it.typ)
@@ -4488,15 +4502,30 @@ proc semCurly(c: var SemContext, it: var Item; flags: set[SemFlag]) =
         elemStart = c.dest.len
         elemInfo = elem.n.info
         semExpr c, elem
+        if freshElemType:
+          # do not save modifier in set type unless it was annotated as such
+          # also do not expect it from subsequent elements
+          removeModifier(elem.typ)
+          freshElemType = false
         semExpr c, elem
       inc elem.n # right paren of call
     elif elem.n.substructureKind == RangeU:
       takeToken c, elem.n
       semExpr c, elem
+      if freshElemType:
+        # do not save modifier in set type unless it was annotated as such
+        # also do not expect it from subsequent elements
+        removeModifier(elem.typ)
+        freshElemType = false
       semExpr c, elem
       takeParRi c, elem.n
     else:
       semExpr c, elem
+      if freshElemType:
+        # do not save modifier in set type unless it was annotated as such
+        # also do not expect it from subsequent elements
+        removeModifier(elem.typ)
+        freshElemType = false
   if containsGenericParams(elem.typ):
     discard
   elif not isOrdinalType(elem.typ, allowEnumWithHoles = true):
@@ -4626,14 +4655,19 @@ proc semTupleConstr(c: var SemContext, it: var Item) =
         for tok in nameStart ..< c.dest.len:
           typ.add c.dest[tok]
     var elem = Item(n: it.n, typ: c.types.autoType)
+    var freshElemType = true
     if doExpected:
       elem.typ = getTupleFieldType(expected)
+      freshElemType = false
       skip expected
       if expected.kind == ParRi:
         # happens if expected tuple type has less fields than constructor
         doExpected = false
     semExpr c, elem
     it.n = elem.n
+    if freshElemType:
+      # do not save modifier in tuple type unless it was annotated as such
+      removeModifier(elem.typ)
     typ.addSubtree elem.typ # type
     if named:
       # should be KvX
@@ -5493,12 +5527,13 @@ proc semDeref(c: var SemContext; it: var Item) =
   semExpr c, arg
   it.n = arg.n
   takeParRi c, it.n
-  case arg.typ.typeKind
+  let t = skipModifier(arg.typ)
+  case t.typeKind
   of RefT, PtrT:
-    it.typ = arg.typ
+    it.typ = t
     inc it.typ # get to base type
   else:
-    c.buildErr info, "invalid type for deref: " & typeToString(arg.typ)
+    c.buildErr info, "invalid type for deref: " & typeToString(t)
   commonType c, it, beforeExpr, expected
 
 proc semAddr(c: var SemContext; it: var Item) =
@@ -5521,7 +5556,7 @@ proc semAddr(c: var SemContext; it: var Item) =
     c.buildErr info, "invalid expression for `addr` operation: " & asStr
     c.dest.addParRi()
 
-  it.typ = ptrTypeOf(c, arg.typ)
+  it.typ = ptrTypeOf(c, skipModifier(arg.typ))
   commonType c, it, beforeExpr, expected
 
 proc semSizeof(c: var SemContext; it: var Item) =
