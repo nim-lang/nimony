@@ -37,16 +37,18 @@ proc magicToTag*(m: string): (string, int) =
   of "BitorI": res BitorX, TypedMagic
   of "BitxorI": res BitxorX, TypedMagic
   of "BitnotI": res BitnotX, TypedMagic
+  of "UnaryMinusI", "UnaryMinusF64": res NegX, TypedMagic
   of "And": res AndX
   of "Or": res OrX
   of "Not": res NotX
+  of "Xor": res XorX
   of "SizeOf": res SizeofX
   of "Type", "TypeOf": res TypeofX
   of "Addr": res AddrX
   of "Deref": res DerefX
   of "EqI", "EqB", "EqCh", "EqF64", "EqRef", "EqEnum": res EqX, TypedMagic
-  of "LeI", "LeB", "LeCh", "LeF64", "LePtr", "LeEnum": res LeX, TypedMagic
-  of "LtI", "LtB", "LtCh", "LtF64", "LtPtr", "LtEnum": res LtX, TypedMagic
+  of "LeI", "LeU", "LeB", "LeCh", "LeF64", "LePtr", "LeEnum": res LeX, TypedMagic
+  of "LtI", "LtU", "LtB", "LtCh", "LtF64", "LtPtr", "LtEnum": res LtX, TypedMagic
   of "Low": res LowX
   of "High": res HighX
   of "EnumToStr": res EnumToStrX

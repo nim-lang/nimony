@@ -212,7 +212,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
       inc result
       inc result # dot token
       skip result # parameters
-  of FalseX, TrueX, AndX, OrX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
+  of FalseX, TrueX, AndX, OrX, XorX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
      EqsetX, LesetX, LtsetX, InsetX,
      CompilesX:
     result = c.builtins.boolType

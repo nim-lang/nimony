@@ -1127,6 +1127,12 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       while n.kind != ParRi:
         traverseExpr c, n
       takeParRi c, n
+    of XorX:
+      c.dest.add tagToken("neq", n.info)
+      inc n
+      while n.kind != ParRi:
+        traverseExpr c, n
+      takeParRi c, n
     of NoExpr:
       traverseType c, n
   of SymbolDef:

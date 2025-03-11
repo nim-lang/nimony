@@ -6044,7 +6044,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
       literalB c, it, c.types.floatType
-    of AndX, OrX:
+    of AndX, OrX, XorX:
       let start = c.dest.len
       takeToken c, it.n
       semBoolExpr c, it.n
