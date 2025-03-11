@@ -16,6 +16,7 @@
 | `(true)`               | NifcExpr, NimonyExpr | boolean `true` value |
 | `(and X X)`            | NifcExpr, NimonyExpr, NimonyType | boolean `and` operation |
 | `(or X X)`             | NifcExpr, NimonyExpr, NimonyType | boolean `or` operation |
+| `(xor X X)`            | NimonyExpr | boolean `xor` operation |
 | `(not X)`              | NifcExpr, NimonyExpr, NimonyType | boolean `not` operation |
 | `(neg X)`              | NifcExpr, NimonyExpr | negation operation |
 | `(sizeof T)`           | NifcExpr, NimonyExpr | `sizeof` operation |

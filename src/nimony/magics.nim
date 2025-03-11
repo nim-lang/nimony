@@ -4,196 +4,112 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-## Same as compiler/ast.nim, but could remove plenty of magics and then add new ones
-## so it's better not to import it from compiler/ast.nim.
+## Magics, somewhat compatible with Nim 2.0, but it's neither required nor desirable.
 
-import nimony_model, stringviews, keymatcher
-
-type
-  TMagic* = enum # symbols that require compiler magic:
-    mNone,
-    mDefined, mDeclared, mDeclaredInScope, mCompiles, mArrGet, mArrPut, mAsgn,
-    mLow, mHigh, mSizeOf, mAlignOf, mOffsetOf, mTypeTrait,
-    mIs, mOf, mAddr, mType, mTypeOf,
-    mPlugin, mEcho, mShallowCopy, mSlurp, mStaticExec, mStatic,
-    mParseExprToAst, mParseStmtToAst, mExpandToAst, mQuoteAst,
-    mInc, mDec, mOrd,
-    mNew, mNewFinalize, mNewSeq, mNewSeqOfCap,
-    mLengthOpenArray, mLengthStr, mLengthArray, mLengthSeq,
-    mIncl, mExcl, mCard, mChr,
-    mGCref, mGCunref,
-    mAddI, mSubI, mMulI, mDivI, mModI,
-    mSucc, mPred,
-    mAddF64, mSubF64, mMulF64, mDivF64,
-    mShrI, mShlI, mAshrI, mBitandI, mBitorI, mBitxorI,
-    mMinI, mMaxI,
-    mAddU, mSubU, mMulU, mDivU, mModU,
-    mEqI, mLeI, mLtI,
-    mEqF64, mLeF64, mLtF64,
-    mLeU, mLtU,
-    mEqEnum, mLeEnum, mLtEnum,
-    mEqCh, mLeCh, mLtCh,
-    mEqB, mLeB, mLtB,
-    mEqRef, mLePtr, mLtPtr,
-    mXor, mEqCString, mEqProc,
-    mUnaryMinusI, mUnaryMinusI64, mAbsI, mNot,
-    mUnaryPlusI, mBitnotI,
-    mUnaryPlusF64, mUnaryMinusF64,
-    mCharToStr, mBoolToStr,
-    mCStrToStr,
-    mStrToStr, mEnumToStr,
-    mAnd, mOr,
-    mImplies, mIff, mExists, mForall, mOld,
-    mEqStr, mLeStr, mLtStr,
-    mEqSet, mLeSet, mLtSet, mMulSet, mPlusSet, mMinusSet, mXorSet,
-    mConStrStr, mSlice,
-    mDotDot, # this one is only necessary to give nice compile time warnings
-    mFields, mFieldPairs, mOmpParFor,
-    mAppendStrCh, mAppendStrStr, mAppendSeqElem,
-    mInSet, mRepr, mExit,
-    mSetLengthStr, mSetLengthSeq,
-    mIsPartOf, mAstToStr, mParallel,
-    mSwap, mIsNil, mArrToSeq, mOpenArrayToSeq,
-    mNewString, mNewStringOfCap, mParseBiggestFloat,
-    mMove, mEnsureMove, mWasMoved, mDup, mDestroy, mTrace,
-    mDefault, mUnown, mFinished, mIsolate, mAccessEnv, mAccessTypeField,
-    mArray, mRange, mSet, mSeq, mVarargs,
-    mRef, mPtr, mVar, mDistinct, mVoid, mTuple,
-    mOrdinal, mIterableType,
-    mInt, mInt8, mInt16, mInt32, mInt64,
-    mUInt, mUInt8, mUInt16, mUInt32, mUInt64,
-    mFloat, mFloat32, mFloat64, mFloat128,
-    mBool, mChar, mString, mCstring,
-    mPointer, mNil, mExpr, mStmt, mTypeDesc,
-    mVoidType, mPNimrodNode, mSpawn, mDeepCopy,
-    mIsMainModule, mCompileDate, mCompileTime, mProcCall,
-    mCpuEndian, mHostOS, mHostCPU, mBuildOS, mBuildCPU, mAppType,
-    mCompileOption, mCompileOptionArg,
-    mNLen, mNChild, mNSetChild, mNAdd, mNAddMultiple, mNDel,
-    mNKind, mNSymKind,
-
-    mNccValue, mNccInc, mNcsAdd, mNcsIncl, mNcsLen, mNcsAt,
-    mNctPut, mNctLen, mNctGet, mNctHasNext, mNctNext,
-
-    mNIntVal, mNFloatVal, mNSymbol, mNIdent, mNGetType, mNStrVal, mNSetIntVal,
-    mNSetFloatVal, mNSetSymbol, mNSetIdent, mNSetStrVal, mNLineInfo,
-    mNNewNimNode, mNCopyNimNode, mNCopyNimTree, mStrToIdent, mNSigHash, mNSizeOf,
-    mNBindSym, mNCallSite,
-    mEqIdent, mEqNimrodNode, mSameNodeType, mGetImpl, mNGenSym,
-    mNHint, mNWarning, mNError,
-    mInstantiationInfo, mGetTypeInfo, mGetTypeInfoV2,
-    mNimvm, mIntDefine, mStrDefine, mBoolDefine, mGenericDefine, mRunnableExamples,
-    mException, mBuiltinType, mSymOwner, mUncheckedArray, mGetImplTransf,
-    mSymIsInstantiationOf, mNodeId, mPrivateAccess, mZeroDefault,
-    # not in Nim 2:
-    mUnpack
-    mDefaultObj, mDefaultTup
-    mArrAt, mPat, mTupAt
-    mDeref
-    mSink, mLent, # were mBuiltinType
-    mSinkHook, mCopy
-
-declareMatcher parseMagic, TMagic, 1, 1
+import ".." / models / tags
+import nimony_model, nifstreams
 
 template res(t: ExprKind | StmtKind | TypeKind; bits = 0): (string, int) = ($t, bits)
 
 const
   TypedMagic* = -3
 
-proc magicToTag*(m: TMagic): (string, int) =
+proc magicToTag*(m: string): (string, int) =
   case m
-  of mDefined: res DefinedX
-  of mDeclared: res DeclaredX
-  of mIsMainModule: res IsMainModuleX
-  of mCompiles: res CompilesX
-  of mArrGet: res AtX
-  of mArrAt: res ArrAtX
-  of mPat: res PatX
-  of mTupAt: res TupAtX
-  of mAsgn: res AsgnS
-  of mAddI, mAddU, mAddF64: res AddX, TypedMagic
-  of mSubI, mSubU, mSubF64: res SubX, TypedMagic
-  of mMulI, mMulU, mMulF64: res MulX, TypedMagic
-  of mDivI, mDivU, mDivF64: res DivX, TypedMagic
-  of mModI, mModU: res ModX, TypedMagic
-  of mShrI: res ShrX, TypedMagic
-  of mAshrI: res AshrX, TypedMagic
-  of mShlI: res ShlX, TypedMagic
-  of mBitandI: res BitandX, TypedMagic
-  of mBitorI: res BitorX, TypedMagic
-  of mBitxorI: res BitxorX, TypedMagic
-  of mBitnotI: res BitnotX, TypedMagic
-  of mAnd: res AndX
-  of mOr: res OrX
-  of mNot: res NotX
-  of mSizeOf: res SizeofX
-  of mType, mTypeOf: res TypeofX
-  of mAddr: res AddrX
-  of mDeref: res DerefX
-  of mEqI, mEqB, mEqCh, mEqF64, mEqRef, mEqEnum: res EqX, TypedMagic
-  of mLeI, mLeB, mLeCh, mLeF64, mLePtr, mLeEnum: res LeX, TypedMagic
-  of mLtI, mLtB, mLtCh, mLtF64, mLtPtr, mLtEnum: res LtX, TypedMagic
-  of mLow: res LowX
-  of mHigh: res HighX
-  of mEnumToStr: res EnumToStrX
-  of mArray: res ArrayT
-  of mRange: res RangetypeT
-  of mSet: res SetT
-  of mVarargs: res VarargsT
-  of mRef: res RefT
-  of mPtr: res PtrT
-  of mVar: res MutT
-  of mDistinct: res DistinctT
-  of mVoid: res VoidT
-  of mTuple: res TupleT
-  of mOrdinal: res OrdinalT
-  of mIterableType: res IteratorT
-  of mInt: res IntT, -1
-  of mInt8: res IntT, 8
-  of mInt16: res IntT, 16
-  of mInt32: res IntT, 32
-  of mInt64: res IntT, 64
-  of mUInt: res UIntT, -1
-  of mUInt8: res UIntT, 8
-  of mUInt16: res UIntT, 16
-  of mUInt32: res UIntT, 32
-  of mUInt64: res UIntT, 64
-  of mFloat: res FloatT, 64
-  of mFloat32: res FloatT, 32
-  of mFloat64: res FloatT, 64
-  of mFloat128: res FloatT, 128
-  of mBool: res BoolT
-  of mChar: res CharT, 8
-  of mTypeDesc: res TypedescT
-  of mVoidType: res VoidT
-  of mUnpack: res UnpackX
-  of mExpr: res UntypedT
-  of mStmt: res TypedT
-  of mCstring: res CstringT
-  of mPointer: res PointerT
-  of mDefaultObj: res DefaultObjX
-  of mDefaultTup: res DefaultTupX
-  of mPlusSet: res PlusSetX, TypedMagic
-  of mMinusSet: res MinusSetX, TypedMagic
-  of mMulSet: res MulSetX, TypedMagic
-  of mXorSet: res XorSetX, TypedMagic
-  of mEqSet: res EqSetX, TypedMagic
-  of mLeSet: res LeSetX, TypedMagic
-  of mLtSet: res LtSetX, TypedMagic
-  of mInSet: res InSetX, TypedMagic
-  of mCard: res CardX, TypedMagic
-  of mIncl: res InclS, TypedMagic
-  of mExcl: res ExclS, TypedMagic
-  of mEnsureMove: res EmoveX
-  of mUncheckedArray: res UarrayT
-  of mSink: res SinkT
-  of mLent: res LentT
-  of mDestroy: res DestroyX
-  of mSinkHook: res SinkhX
-  of mDup: res DupX
-  of mCopy: res CopyX
-  of mWasMoved: res WasMovedX
-  of mTrace: res TraceX
+  of "Defined": res DefinedX
+  of "Declared": res DeclaredX
+  of "IsMainModule": res IsMainModuleX
+  of "Compiles": res CompilesX
+  of "ArrGet": res AtX
+  of "ArrAt": res ArrAtX
+  of "Pat": res PatX
+  of "TupAt": res TupAtX
+  of "Asgn": res AsgnS
+  of "AddI", "AddU", "AddF64": res AddX, TypedMagic
+  of "SubI", "SubU", "SubF64": res SubX, TypedMagic
+  of "MulI", "MulU", "MulF64": res MulX, TypedMagic
+  of "DivI", "DivU", "DivF64": res DivX, TypedMagic
+  of "ModI", "ModU": res ModX, TypedMagic
+  of "ShrI": res ShrX, TypedMagic
+  of "AshrI": res AshrX, TypedMagic
+  of "ShlI": res ShlX, TypedMagic
+  of "BitandI": res BitandX, TypedMagic
+  of "BitorI": res BitorX, TypedMagic
+  of "BitxorI": res BitxorX, TypedMagic
+  of "BitnotI": res BitnotX, TypedMagic
+  of "UnaryMinusI", "UnaryMinusF64": res NegX, TypedMagic
+  of "And": res AndX
+  of "Or": res OrX
+  of "Not": res NotX
+  of "Xor": res XorX
+  of "SizeOf": res SizeofX
+  of "Type", "TypeOf": res TypeofX
+  of "Addr": res AddrX
+  of "Deref": res DerefX
+  of "EqI", "EqB", "EqCh", "EqF64", "EqRef", "EqEnum": res EqX, TypedMagic
+  of "LeI", "LeU", "LeB", "LeCh", "LeF64", "LePtr", "LeEnum": res LeX, TypedMagic
+  of "LtI", "LtU", "LtB", "LtCh", "LtF64", "LtPtr", "LtEnum": res LtX, TypedMagic
+  of "Low": res LowX
+  of "High": res HighX
+  of "EnumToStr": res EnumToStrX
+  of "Array": res ArrayT
+  of "Range": res RangetypeT
+  of "Set": res SetT
+  of "Varargs": res VarargsT
+  of "Ref": res RefT
+  of "Ptr": res PtrT
+  of "Var": res MutT
+  of "Distinct": res DistinctT
+  of "Void": res VoidT
+  of "Tuple": res TupleT
+  of "Ordinal": res OrdinalT
+  of "IterableType": res IteratorT
+  of "Int": res IntT, -1
+  of "Int8": res IntT, 8
+  of "Int16": res IntT, 16
+  of "Int32": res IntT, 32
+  of "Int64": res IntT, 64
+  of "UInt": res UIntT, -1
+  of "UInt8": res UIntT, 8
+  of "UInt16": res UIntT, 16
+  of "UInt32": res UIntT, 32
+  of "UInt64": res UIntT, 64
+  of "Float": res FloatT, 64
+  of "Float32": res FloatT, 32
+  of "Float64": res FloatT, 64
+  of "Float128": res FloatT, 128
+  of "Bool": res BoolT
+  of "Char": res CharT, 8
+  of "TypeDesc": res TypedescT
+  of "VoidType": res VoidT
+  of "Unpack": res UnpackX
+  of "Expr": res UntypedT
+  of "Stmt": res TypedT
+  of "Cstring": res CstringT
+  of "Pointer": res PointerT
+  of "DefaultObj": res DefaultObjX
+  of "DefaultTup": res DefaultTupX
+  of "PlusSet": res PlusSetX, TypedMagic
+  of "MinusSet": res MinusSetX, TypedMagic
+  of "MulSet": res MulSetX, TypedMagic
+  of "XorSet": res XorSetX, TypedMagic
+  of "EqSet": res EqSetX, TypedMagic
+  of "LeSet": res LeSetX, TypedMagic
+  of "LtSet": res LtSetX, TypedMagic
+  of "InSet": res InSetX, TypedMagic
+  of "Card": res CardX, TypedMagic
+  of "Incl": res InclS, TypedMagic
+  of "Excl": res ExclS, TypedMagic
+  of "EnsureMove": res EmoveX
+  of "UncheckedArray": res UarrayT
+  of "Sink": res SinkT
+  of "Lent": res LentT
+  of "Destroy": res DestroyX
+  of "SinkHook": res SinkhX
+  of "Dup": res DupX
+  of "Copy": res CopyX
+  of "WasMoved": res WasMovedX
+  of "Trace": res TraceX
   else: ("", 0)
 
 when isMainModule:

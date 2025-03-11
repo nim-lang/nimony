@@ -105,16 +105,16 @@ template `[]=`*[T](x: ref T, val: T) =
   (x[]) = val
 
 # integer calculations:
-proc `+`*(x: int8): int8 {.magic: "UnaryPlusI", noSideEffect.}
-proc `+`*(x: int16): int16 {.magic: "UnaryPlusI", noSideEffect.}
-proc `+`*(x: int32): int32 {.magic: "UnaryPlusI", noSideEffect.}
-proc `+`*(x: int64): int64 {.magic: "UnaryPlusI", noSideEffect.}
+template `+`*(x: int8): int8 = x
+template `+`*(x: int16): int16 = x
+template `+`*(x: int32): int32 = x
+template `+`*(x: int64): int64 = x
   ## Unary `+` operator for an integer. Has no effect.
 
 proc `-`*(x: int8): int8 {.magic: "UnaryMinusI", noSideEffect.}
 proc `-`*(x: int16): int16 {.magic: "UnaryMinusI", noSideEffect.}
 proc `-`*(x: int32): int32 {.magic: "UnaryMinusI", noSideEffect.}
-proc `-`*(x: int64): int64 {.magic: "UnaryMinusI64", noSideEffect.}
+proc `-`*(x: int64): int64 {.magic: "UnaryMinusI", noSideEffect.}
   ## Unary `-` operator for an integer. Negates `x`.
 
 proc `not`*(x: int8): int8 {.magic: "BitnotI", noSideEffect.}
@@ -245,14 +245,14 @@ proc `mod`*(x, y: uint32): uint32 {.magic: "ModU", noSideEffect.}
 proc `mod`*(x, y: uint64): uint64 {.magic: "ModU", noSideEffect.}
 
 # floating point operations:
-proc `+`*(x: float32): float32 {.magic: "UnaryPlusF64", noSideEffect.}
+template `+`*(x: float32): float32 = x
 proc `-`*(x: float32): float32 {.magic: "UnaryMinusF64", noSideEffect.}
 proc `+`*(x, y: float32): float32 {.magic: "AddF64", noSideEffect.}
 proc `-`*(x, y: float32): float32 {.magic: "SubF64", noSideEffect.}
 proc `*`*(x, y: float32): float32 {.magic: "MulF64", noSideEffect.}
 proc `/`*(x, y: float32): float32 {.magic: "DivF64", noSideEffect.}
 
-proc `+`*(x: float): float {.magic: "UnaryPlusF64", noSideEffect.}
+template `+`*(x: float): float = x
 proc `-`*(x: float): float {.magic: "UnaryMinusF64", noSideEffect.}
 proc `+`*(x, y: float): float {.magic: "AddF64", noSideEffect.}
 proc `-`*(x, y: float): float {.magic: "SubF64", noSideEffect.}

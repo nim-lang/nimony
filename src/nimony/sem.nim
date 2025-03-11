@@ -2246,11 +2246,10 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(MagicP, n.info)
     inc n
     if n.kind in {StringLit, Ident}:
-      let m = parseMagic(pool.strings[n.litId])
-      if m == mNone:
+      let (magicWord, bits) = magicToTag(pool.strings[n.litId])
+      if magicWord == "":
         buildErr c, n.info, "unknown `magic`"
       else:
-        let (magicWord, bits) = magicToTag(m)
         crucial.magic = magicWord
         crucial.bits = bits
       takeToken c, n
@@ -6045,7 +6044,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
       literalB c, it, c.types.floatType
-    of AndX, OrX:
+    of AndX, OrX, XorX:
       let start = c.dest.len
       takeToken c, it.n
       semBoolExpr c, it.n
