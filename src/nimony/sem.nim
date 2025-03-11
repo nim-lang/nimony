@@ -4003,6 +4003,50 @@ proc semCaseOfValueString(c: var SemContext; it: var Item; selectorType: TypeCur
     buildErr c, it.n.info, "`ranges` within `of` expected"
     skip it.n
 
+proc checkExhaustiveness(c: var SemContext; info: PackedLineInfo; selectorType: TypeCursor; seen: seq[(xint, xint)]) =
+  var total = createXint(0'i32)
+  for s in items(seen):
+    total = total + s[1] - s[0] + createXint(1'i32)
+
+  var typ = selectorType
+  var counter = 20
+  while typ.kind == Symbol:
+    dec counter
+    if counter <= 0: break
+    let impl = getTypeSection(typ.symId)
+    if impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT}:
+      typ = impl.body
+      break
+
+  if typ.typeKind != HoleyEnumT:
+    # quick check based on the `total` count:
+    if total == lengthOrd(c, selectorType):
+      return
+
+  if typ.typeKind in {EnumT, HoleyEnumT}:
+    # check if all values are handled:
+    var field = asEnumDecl(typ).firstField
+    var missing = ""
+    while field.kind != ParRi:
+      let f = takeLocal(field, SkipFinalParRi)
+      let v: xint
+      let vnode = f.val.firstSon # skip tuple tag
+      case vnode.kind
+      of IntLit:
+        v = createXint pool.integers[vnode.intId]
+      of UIntLit:
+        v = createXint pool.uintegers[vnode.uintId]
+      else:
+        v = createNaN()
+      if not seen.contains(v):
+        if missing.len > 0: missing.add ", "
+        var isGlobal = false
+        missing.add extractBasename(pool.syms[f.name.symId], isGlobal)
+    if missing.len > 0:
+      buildErr c, info, "not all cases are covered; missing: {" & missing & "}"
+  else:
+    buildErr c, info, "not all cases are covered"
+
 proc semCase(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
@@ -4030,6 +4074,9 @@ proc semCase(c: var SemContext; it: var Item) =
     withNewScope c:
       semStmtBranch c, it, true
     takeParRi c, it.n
+  elif not isString:
+    checkExhaustiveness c, it.n.info, selector.typ, seen
+
   takeParRi c, it.n
   if typeKind(it.typ) == AutoT:
     producesVoid c, info, it.typ

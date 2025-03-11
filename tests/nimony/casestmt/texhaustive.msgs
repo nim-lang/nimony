@@ -1,0 +1,2 @@
+tests/nimony/casestmt/texhaustive.nim(13, 3) Error: not all cases are covered; missing: {b}
+tests/nimony/casestmt/texhaustive.nim(29, 3) Error: not all cases are covered; missing: {Hc}
