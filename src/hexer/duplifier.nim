@@ -165,12 +165,12 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
   let info = n.info
   result = pool.syms.getOrIncl("`lhs." & $c.tmpCounter)
   inc c.tmpCounter
-  copyIntoKind c.dest, VarS, info:
+  copyIntoKind c.dest, CursorS, info:
     addSymDef c.dest, result, info
     c.dest.addEmpty2 info # export marker, pragma
     copyTree c.dest, typ
     tr c, n, WillBeOwned
-  c.typeCache.registerLocal(result, VarY, typ)
+  c.typeCache.registerLocal(result, CursorY, typ)
 
 proc callDup(c: var Context; arg: var Cursor) =
   let typ = getType(c.typeCache, arg)
