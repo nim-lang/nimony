@@ -4030,18 +4030,20 @@ proc checkExhaustiveness(c: var SemContext; info: PackedLineInfo; selectorType: 
     while field.kind != ParRi:
       let f = takeLocal(field, SkipFinalParRi)
       let v: xint
-      case f.val.kind
+      let vnode = f.val.firstSon # skip tuple tag
+      case vnode.kind
       of IntLit:
-        v = createXint pool.integers[f.val.intId]
+        v = createXint pool.integers[vnode.intId]
       of UIntLit:
-        v = createXint pool.uintegers[f.val.uintId]
+        v = createXint pool.uintegers[vnode.uintId]
       else:
         v = createNaN()
       if not seen.contains(v):
         if missing.len > 0: missing.add ", "
-        missing.add $f.val
+        var isGlobal = false
+        missing.add extractBasename(pool.syms[f.name.symId], isGlobal)
     if missing.len > 0:
-      buildErr c, info, "not all cases are covered: " & missing
+      buildErr c, info, "not all cases are covered; missing: {" & missing & "}"
   else:
     buildErr c, info, "not all cases are covered"
 
