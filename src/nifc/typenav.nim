@@ -72,6 +72,14 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       let a = n.firstSon
       let arrayType = getTypeImpl(m, a)
       result = arrayType
+      # array type is an alias
+      if result.kind == Symbol:
+        let d = m.defs.getOrDefault(result.symId)
+        if d.pos != 0:
+          let dd = m.src.cursorAt(d.pos)
+          if dd.stmtKind == TypeS:
+            let decl = asTypeDecl(dd)
+            result = decl.body
       inc result # (arr ...)
     of DotC:
       var a = n.firstSon
