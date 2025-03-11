@@ -447,7 +447,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
         c.init.add c.code[i]
       setLen c.code, beforeDecl
       c.add Semicolon
-    elif mustMoveToInit:
+    elif mustMoveToInit and not toExtern:
       c.init.add c.tokens.getOrIncl(name)
       for i in beforeInit ..< c.code.len:
         c.init.add c.code[i]
