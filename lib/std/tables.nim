@@ -1,7 +1,11 @@
 
-import hashes
+import hashes, syncio
 
 type
+  Keyable* = concept
+    proc `==`(a, b: Self): bool
+    proc hash(a: Self): Hash
+
   HashEntry = object
     fullhash: Hash
     position: int # index into `data`; 1 based so that 0 means "unfilled"
@@ -28,7 +32,7 @@ proc resize(t: var seq[HashEntry]) =
 const
   HashThreshold = 4
 
-proc fillHashPart[K, V](t: var Table[K, V]) =
+proc fillHashPart[K: Keyable, V](t: var Table[K, V]) =
   t.hashes = newSeq[HashEntry](HashThreshold*2)
   for i in 0 ..< t.data.len:
     let fullhash = hash(t.data[i][0])
@@ -36,7 +40,7 @@ proc fillHashPart[K, V](t: var Table[K, V]) =
     while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
     t.hashes[hi] = HashEntry(fullhash: fullhash, position: i+1)
 
-proc rawGet[K, V](t: Table[K, V]; k: K; kh: Hash): int =
+proc rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int =
   if t.data.len <= HashThreshold:
     for i in 0 ..< t.data.len:
       if t.data[i][0] == k: return i
@@ -49,13 +53,13 @@ proc rawGet[K, V](t: Table[K, V]; k: K; kh: Hash): int =
       h = nextTry(h, high(t.hashes))
   result = -1
 
-proc contains*[K, V](t: Table[K, V]; k: K): bool {.inline.} =
+proc contains*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
   rawGet(t, k, hash(k)) >= 0
 
 proc hasKey*[K, V](t: Table[K, V]; k: K): bool {.inline.} =
   contains(t, k)
 
-proc getOrDefault*[K, V](t: Table[K, V]; k: K): V =
+proc getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
   let idx = rawGet(t, k, hash(k))
   if idx >= 0:
     t.data[idx][1]
@@ -63,7 +67,7 @@ proc getOrDefault*[K, V](t: Table[K, V]; k: K): V =
     default(V)
 
 when defined(nimony):
-  proc `[]`*[K, V](t: Table[K, V]; k: K): var V =
+  proc `[]`*[K: Keyable, V](t: var Table[K, V]; k: K): var V =
     let idx = rawGet(t, k, hash(k))
     assert idx >= 0
     t.data[idx][1]
@@ -89,7 +93,7 @@ proc rawPut[K, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
   while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
   t.hashes[hi] = HashEntry(fullhash: h, position: t.data.len)
 
-proc `[]=`*[K, V](t: var Table[K, V]; k: sink K; v: sink V) =
+proc `[]=`*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V) =
   let h = hash(k)
   let idx = rawGet(t, k, h)
   if idx >= 0:
@@ -97,7 +101,7 @@ proc `[]=`*[K, V](t: var Table[K, V]; k: sink K; v: sink V) =
   else:
     rawPut(t, k, v, h)
 
-proc mgetOrPut*[K, V](t: var Table[K, V]; k: K; v: V): var V =
+proc mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V =
   let h = hash(k)
   var idx = rawGet(t, k, h)
   if idx < 0:
