@@ -4013,17 +4013,37 @@ proc checkExhaustiveness(c: var SemContext; info: PackedLineInfo; selectorType: 
   while typ.kind == Symbol:
     dec counter
     if counter <= 0: break
-    let impl = getTypeSection(n.symId)
+    let impl = getTypeSection(typ.symId)
     if impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT}:
       typ = impl.body
       break
 
+  if typ.typeKind != HoleyEnumT:
+    # quick check based on the `total` count:
+    if total == lengthOrd(c, selectorType):
+      return
+
   if typ.typeKind in {EnumT, HoleyEnumT}:
-    # check if all variants are handled:
-    let variants = getEnumVariants(typ)
-    for variant in variants:
-      if not seen.contains(variant):
-        buildErr c, info, "unhandled variant: " & $variant
+    # check if all values are handled:
+    var field = asEnumDecl(typ).firstField
+    var missing = ""
+    while field.kind != ParRi:
+      let f = takeLocal(field, SkipFinalParRi)
+      let v: xint
+      case f.val.kind
+      of IntLit:
+        v = createXint pool.integers[f.val.intId]
+      of UIntLit:
+        v = createXint pool.uintegers[f.val.uintId]
+      else:
+        v = createNaN()
+      if not seen.contains(v):
+        if missing.len > 0: missing.add ", "
+        missing.add $f.val
+    if missing.len > 0:
+      buildErr c, info, "not all cases are covered: " & missing
+  else:
+    buildErr c, info, "not all cases are covered"
 
 proc semCase(c: var SemContext; it: var Item) =
   let info = it.n.info

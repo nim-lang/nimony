@@ -27,6 +27,13 @@ proc containsOrIncl*[T](s: var seq[(T, T)]; c: T): bool =
     s.add (c, c)
   return false
 
+proc contains*[T](s: seq[(T, T)]; c: T): bool =
+  for i in 0..<s.len:
+    let (x, y) = s[i]
+    if x <= c and c <= y:
+      return true
+  return false
+
 proc doesOverlapOrIncl*[T](s: var seq[(T, T)]; c, d: T): bool =
   mixin succ, pred
   assert c <= d
