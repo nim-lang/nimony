@@ -4976,7 +4976,13 @@ proc semNewref(c: var SemContext; it: var Item) =
   let expected = it.typ
   let info = it.n.info
   c.takeToken it.n
+  let beforeTypeArg = c.dest.len
   it.typ = semLocalType(c, it.n)
+  c.dest.shrink beforeTypeArg
+  if it.typ.typeKind == TypedescT:
+    inc it.typ
+  c.dest.addSubtree it.typ
+  skip it.n
   takeParRi c, it.n
   commonType c, it, exprStart, expected
 
