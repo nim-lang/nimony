@@ -3,7 +3,7 @@
 import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes]
-import basics
+import hexer_context
 
 type
   Context = object
