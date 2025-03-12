@@ -386,6 +386,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor)
 
 proc genOnError(c: var GeneratedCode; n: var Cursor) =
   c.add IfKeyword
+  c.add ParLe
   c.add ErrToken
   c.add ParRi
   c.add Space

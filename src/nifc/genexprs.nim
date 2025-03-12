@@ -235,7 +235,7 @@ proc genCond(c: var GeneratedCode; n: var Cursor) =
     c.add ParRi
 
 proc genx(c: var GeneratedCode; n: var Cursor) =
-  if n.exprKind != AddrC:
+  if n.exprKind != AddrC and n.kind != StringLit:
     c.flags.excl gfInCallImportC
   case n.exprKind
   of NoExpr:
@@ -257,6 +257,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add s
       inc n
     of StringLit:
+      if gfInCallImportC notin c.flags:
+        c.add "(NC8*)"
       c.add makeCString(pool.strings[n.litId])
       inc n
     else:
