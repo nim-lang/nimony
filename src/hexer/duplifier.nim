@@ -713,6 +713,21 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
     skip n
 
+proc trDeref(c: var Context; n: var Cursor) =
+  c.dest.add tagToken("deref", n.info)
+  inc n
+  let typ = getType(c.typeCache, n, true)
+  let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
+  if isRef:
+    c.dest.add tagToken("dot", n.info)
+  tr c, n, WantNonOwner
+  if isRef:
+    let dataField = pool.syms.getOrIncl(DataField)
+    c.dest.add symToken(dataField, n.info)
+    c.dest.addIntLit(0, n.info) # inheritance
+    c.dest.addParRi()
+  takeParRi c.dest, n
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
     trLocation c, n, e
@@ -742,7 +757,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trNewobj c, n, e, NewobjX
     of NewrefX:
       trNewobj c, n, e, NewrefX
-    of DotX, DdotX, AtX, ArrAtX, PatX, TupAtX:
+    of DotX, AtX, ArrAtX, PatX, TupAtX:
       trLocation c, n, e
     of ParX:
       trSons c, n, e
@@ -758,8 +773,12 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX,
        EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, CompilesX, DeclaredX,
        DefinedX, HighX, LowX, TypeofX, UnpackX, EnumtostrX, IsmainmoduleX, QuotedX,
-       DerefX, HderefX, AddrX, HaddrX, AlignofX, OffsetofX, ErrX:
+       AddrX, HaddrX, AlignofX, OffsetofX, ErrX:
       trSons c, n, WantNonOwner
+    of DerefX, HderefX:
+      trDeref c, n
+    of DdotX:
+      raiseAssert "nodekind should have been eliminated in desugar.nim"
     of DefaultobjX, DefaulttupX, BracketX, CurlyX, TupX:
       raiseAssert "nodekind should have been eliminated in sem.nim"
     of PragmaxX, CurlyatX, TabconstrX, DoX:
