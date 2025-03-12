@@ -42,8 +42,7 @@ proc `$`*(n: BinaryTree): string =
 
 proc main =
   var x = newNode("abc")
-  let other = newNode("def")
-  x.append other
+  x.append "def"
   echo $x
 
 main()
