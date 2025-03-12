@@ -343,7 +343,6 @@ proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
     closeScope c
 
 proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
-  let orig = n
   let local = asLocal(n)
   let declStart = c.c.dest.len
   takeToken c.c[], n
