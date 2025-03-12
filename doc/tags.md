@@ -209,6 +209,7 @@
 | `(hderef X)` | NimonyExpr | hidden pointer deref operation |
 | `(ddot X)` | NimonyExpr | deref dot |
 | `(haddr X)` | NimonyExpr | hidden address of operation |
+| `(newref T)` | NimonyExpr | Nim's `new` magic proc that allocates a `ref T` |
 | `(newobj T (kv Y X)*)` | NimonyExpr | new object constructor |
 | `(tup X+)` | NimonyExpr, NiflerKind | untyped tuple constructor |
 | `(tupconstr T X+)` | NimonyExpr | tuple constructor |
