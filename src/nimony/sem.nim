@@ -4279,8 +4279,8 @@ proc invokeInnerObj(c: var SemContext; genericsPos: int; objSym: SymId; info: Pa
         if typevar.kind == SymbolDef:
           invokeBuf.add symToken(typevar.symId, typevar.info)
         else:
-          raiseAssert("typevar should always be declared")
-          #invokeBuf.addSubtree typevar
+          # assume it was left as an identifier
+          invokeBuf.addSubtree typevar
         skip params
     endRead(c.dest)
     c.dest.add invokeBuf
@@ -4316,7 +4316,9 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     # copy toplevel scope status for exported fields
     c.currentScope.kind = oldScopeKind
     isGeneric = true
+  
   let crucial = semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
+
   if c.phase == SemcheckSignatures or
       (delayed.status in {OkNew, OkExistingFresh} and
         c.phase != SemcheckTopLevelSyms):
@@ -4363,7 +4365,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
         # capture typevars for instantiation of forward declared types to work
         var ctx = createUntypedContext(addr c, UntypedForwardGeneric)
         addParams(ctx, beforeGenerics)
-        semTemplBody ctx, n
+        semTemplBody ctx, n # body
       else:
         c.takeTree n # body
   if isGeneric:
