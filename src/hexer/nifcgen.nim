@@ -14,7 +14,7 @@ import symparser
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops]
 from ".." / nimony / sigmatch import isSomeStringType, isStringType
-import basics, pipeline
+import hexer_context, pipeline
 import  ".." / lib / stringtrees
 
 
@@ -1397,7 +1397,7 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
     of DiscardS:
       let discardToken = n
       inc n
-      if n.kind == DotToken:
+      if n.kind in {StringLit, DotToken}:
         # eliminates discard without side effects
         inc n
         skipParRi c, n
