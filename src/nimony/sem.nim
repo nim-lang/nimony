@@ -160,7 +160,6 @@ type
   SemFlag = enum
     KeepMagics
     AllowOverloads
-    GetAllOverloads
     PreferIterators
     AllowUndeclared
     AllowModuleSym
