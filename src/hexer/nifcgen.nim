@@ -356,6 +356,7 @@ proc traverseAsNamedType(c: var EContext; n: var Cursor) =
 
     swap c.dest, buf
     c.pending.add buf
+    programs.publish val, buf
   # regardless of what we had to do, we still need to add the typename:
   if k == RefT:
     c.dest.add tagToken("ptr", info)
@@ -1121,10 +1122,17 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       error c, "BUG: not eliminated: ", n
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
-       SizeofX, AlignofX, OffsetofX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+       AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
        BitandX, BitorX, BitxorX, BitnotX, OconvX:
       c.dest.add n
       inc n
+      while n.kind != ParRi:
+        traverseExpr c, n
+      takeParRi c, n
+    of SizeofX, AlignofX, OffsetofX:
+      c.dest.add n
+      inc n
+      traverseType c, n
       while n.kind != ParRi:
         traverseExpr c, n
       takeParRi c, n

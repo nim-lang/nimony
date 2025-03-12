@@ -572,11 +572,11 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
       c.dest.add symToken(typeSym, info)
       copyIntoKind c.dest, KvU, info:
         let rcField = pool.syms.getOrIncl(RcField)
-        c.dest.add symdefToken(rcField, info)
+        c.dest.add symToken(rcField, info)
         c.dest.addIntLit(0, info)
       copyIntoKind c.dest, KvU, info:
         let dataField = pool.syms.getOrIncl(DataField)
-        c.dest.add symdefToken(dataField, info)
+        c.dest.add symToken(dataField, info)
         if kind == NewobjX:
           copyIntoKind c.dest, OconstrX, info:
             c.dest.addSubtree baseType
@@ -714,18 +714,19 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
     skip n
 
 proc trDeref(c: var Context; n: var Cursor) =
-  c.dest.add tagToken("deref", n.info)
+  let info = n.info
   inc n
   let typ = getType(c.typeCache, n, true)
   let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
   if isRef:
-    c.dest.add tagToken("dot", n.info)
+    c.dest.addParLe DotX, info
+  c.dest.addParLe DerefX, info
   tr c, n, WantNonOwner
   if isRef:
-    let dataField = pool.syms.getOrIncl(DataField)
-    c.dest.add symToken(dataField, n.info)
-    c.dest.addIntLit(0, n.info) # inheritance
     c.dest.addParRi()
+    let dataField = pool.syms.getOrIncl(DataField)
+    c.dest.add symToken(dataField, info)
+    c.dest.addIntLit(0, info) # inheritance
   takeParRi c.dest, n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
