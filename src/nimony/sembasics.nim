@@ -35,7 +35,8 @@ proc considerImportedSymbols(c: var SemContext; name: StrId; info: PackedLineInf
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
 
-proc buildSymChoiceForDot(c: var SemContext; identifier: StrId; info: PackedLineInfo) =
+proc buildSymChoiceForDot(c: var SemContext; identifier: StrId; info: PackedLineInfo) {.used.} =
+  # not used yet
   var count = 0
   let oldLen = c.dest.len
   c.dest.buildTree OchoiceX, info:
@@ -57,7 +58,8 @@ proc isNonOverloadable(t: SymKind): bool {.inline.} =
   t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, CursorY, BlockY, GletY, TletY, GvarY, TvarY}
 
 proc buildSymChoiceForSelfModule(c: var SemContext;
-                                 identifier: StrId; info: PackedLineInfo) =
+                                 identifier: StrId; info: PackedLineInfo) {.used.} =
+  # not used yet
   var count = 0
   let oldLen = c.dest.len
   c.dest.buildTree OchoiceX, info:
