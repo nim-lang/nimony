@@ -38,10 +38,10 @@
  (proc 5 :typeof.0.tge7jvqqk1
   (typeof) . 12
   (typevars 1
-   (typevar :T.3.tge7jvqqk1 . . . .)) 15
+   (typevar :T.6.tge7jvqqk1 . . . .)) 15
   (params 1
-   (param :x.0 . . 3 T.3.tge7jvqqk1 .)) 16
-  (typedesc 1 T.3.tge7jvqqk1) 35
+   (param :x.0 . . 3 T.6.tge7jvqqk1 .)) 16
+  (typedesc 1 T.6.tge7jvqqk1) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,14
  (type ~8 :string.0.tge7jvqqk1 x . . string.0.sysvq0asl) 4,16
@@ -73,9 +73,9 @@
      (i -1) +0 +2)) 1 +1 4 +2 7 +3)) 15,23
  (type ~13 :MyGeneric.0.tge7jvqqk1 . ~4
   (typevars 1
-   (typevar :T.4.tge7jvqqk1 . . . .)) . 2
+   (typevar :T.3.tge7jvqqk1 . . . .)) . 2
   (object . ~13,1
-   (fld :x.0.tge7jvqqk1 . . 3 T.4.tge7jvqqk1 .))) 2,27
+   (fld :x.0.tge7jvqqk1 . . 3 T.3.tge7jvqqk1 .))) 2,27
  (gvar :myglob.0.tge7jvqqk1 . . 17 MyGeneric.0.I8smrpu.tge7jvqqk1 .) 2,28
  (gvar :other.0.tge7jvqqk1 . . 16 MyGeneric.0.Iliphp3.tge7jvqqk1 .) 9,30
  (asgn ~3
@@ -122,15 +122,15 @@
       (i -1) ~2 +34 1 +56) 8 "xyz")))) 16,48
  (type ~14 :HSlice.0.tge7jvqqk1 x ~7
   (typevars 1
-   (typevar :T.5.tge7jvqqk1 . . . .) 4
+   (typevar :T.4.tge7jvqqk1 . . . .) 4
    (typevar :U.0.tge7jvqqk1 . . . .)) . 2
   (object . ~14,1
-   (fld :a.0.tge7jvqqk1 . . 3 T.5.tge7jvqqk1 .) ~14,2
+   (fld :a.0.tge7jvqqk1 . . 3 T.4.tge7jvqqk1 .) ~14,2
    (fld :b.0.tge7jvqqk1 . . 3 U.0.tge7jvqqk1 .))) 12,51
  (type ~10 :Slice.0.tge7jvqqk1 x ~4
   (typevars 1
-   (typevar :T.6.tge7jvqqk1 . . . .)) . 8
-  (at ~6 HSlice.0.tge7jvqqk1 1 T.6.tge7jvqqk1 4 T.6.tge7jvqqk1)) ,53
+   (typevar :T.5.tge7jvqqk1 . . . .)) . 8
+  (at ~6 HSlice.0.tge7jvqqk1 1 T.5.tge7jvqqk1 4 T.5.tge7jvqqk1)) ,53
  (proc 5 :\2E..0.tge7jvqqk1 x . 10
   (typevars 1
    (typevar :T.7.tge7jvqqk1 . . . .) 4

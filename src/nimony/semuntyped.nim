@@ -69,6 +69,7 @@ type
   UntypedMode* = enum
     UntypedTemplate
     UntypedGeneric
+    UntypedForwardGeneric
   UntypedCtx* = object
     c: ptr SemContext
     mode: UntypedMode
@@ -379,6 +380,10 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
         assert count == 1
         c.c.dest.shrink start
         c.c.dest.add symToken(firstSym, n.info)
+      elif c.mode == UntypedForwardGeneric:
+        # leave as ident if not typevar
+        c.c.dest.shrink start
+        c.c.dest.add n
       elif contains(c.toBind, firstSym):
         if count == 1:
           c.c.dest.shrink start

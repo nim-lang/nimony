@@ -4361,7 +4361,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     if not isRefPtrObj: # body not already handled
       if isGeneric:
         # capture typevars for instantiation of forward declared types to work
-        var ctx = createUntypedContext(addr c, UntypedGeneric)
+        var ctx = createUntypedContext(addr c, UntypedForwardGeneric)
         addParams(ctx, beforeGenerics)
         semTemplBody ctx, n
       else:

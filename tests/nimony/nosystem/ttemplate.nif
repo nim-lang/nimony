@@ -28,18 +28,18 @@
  (proc 5 :typeof.0.tte5tld8n
   (typeof) . 12
   (typevars 1
-   (typevar :T.2.tte5tld8n . . . .)) 15
+   (typevar :T.3.tte5tld8n . . . .)) 15
   (params 1
-   (param :x.0 . . 3 T.2.tte5tld8n .)) 16
-  (typedesc 1 T.2.tte5tld8n) 35
+   (param :x.0 . . 3 T.3.tte5tld8n .)) 16
+  (typedesc 1 T.3.tte5tld8n) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,12
  (type ~8 :string.0.tte5tld8n x . . string.0.sysvq0asl) 15,15
  (type ~13 :MyGeneric.0.tte5tld8n . ~4
   (typevars 1
-   (typevar :T.3.tte5tld8n . . . .)) . 2
+   (typevar :T.2.tte5tld8n . . . .)) . 2
   (object . ~13,1
-   (fld :x.0.tte5tld8n . . 3 T.3.tte5tld8n .))) 2,19
+   (fld :x.0.tte5tld8n . . 3 T.2.tte5tld8n .))) 2,19
  (gvar :myglob.0.tte5tld8n . . 17 MyGeneric.0.Igj236q.tte5tld8n .) 2,20
  (gvar :other.0.tte5tld8n . . 16 MyGeneric.0.Ibr3ivb1.tte5tld8n .) 9,22
  (asgn ~3
