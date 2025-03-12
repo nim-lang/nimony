@@ -53,8 +53,30 @@ type
 # -------------- helpers ----------------------------------------
 
 proc isLastRead(c: var Context; n: Cursor): bool =
-  var otherUsage = NoLineInfo
-  result = isLastUse(n, c.source[], otherUsage)
+  # This is a hack to make sure that the type cache is populated for the
+  # expression we are analysing:
+  discard getType(c.typeCache, n)
+  var n = n
+  while n.exprKind == ExprX:
+    inc n
+    while n.kind != ParRi and not isLastSon(n): skip n
+
+  let r = rootOf(n)
+  result = false
+  if r != NoSymId:
+    var canAnalyse = false
+    let v = c.typeCache.getLocalInfo(r)
+    if v.kind == ParamY:
+      canAnalyse = v.typ.typeKind == SinkT
+    elif v.kind in {VarY, LetY}:
+      # CursorY omitted here on purpose as we cannot steal ownership from a cursor
+      # as it doesn't have any.
+      canAnalyse = true
+    else:
+      canAnalyse = false
+    if canAnalyse:
+      var otherUsage = NoLineInfo
+      result = isLastUse(n, c.source[], otherUsage)
 
 const
   ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX, NewrefX}
@@ -72,7 +94,7 @@ proc constructsValue*(n: Cursor): bool =
     else: break
   result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
-proc rootOf(n: Cursor): SymId =
+proc lvalueRoot(n: Cursor): SymId =
   var n = n
   while n.exprKind in {DotX, TupAtX, AtX, ArrAtX}:
     n = n.firstSon
@@ -88,8 +110,8 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
     result = false
   else:
     result = true # true until proven otherwise
-    let d = rootOf(dest)
-    let s = rootOf(src)
+    let d = lvalueRoot(dest)
+    let s = lvalueRoot(src)
     if d != NoSymId or s != NoSymId:
       # one of the expressions was analysable
       if d == s:
