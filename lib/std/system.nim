@@ -481,3 +481,26 @@ proc swap*[T](x, y: var T) {.inline, nodestroy.} =
   let tmp = x
   x = y
   y = tmp
+
+type
+  Comparable* = concept
+    proc `==`(x, y: Self): bool
+    proc `<`(x, y: Self): bool
+
+proc cmp*[T: Comparable](x, y: T): int =
+  ## Generic compare proc.
+  ##
+  ## Returns:
+  ## * a value less than zero, if `x < y`
+  ## * a value greater than zero, if `x > y`
+  ## * zero, if `x == y`
+  ##
+  ## This is useful for writing generic algorithms without performance loss.
+  ## This generic implementation uses the `==` and `<` operators.
+  ##   ```nim
+  ##   import std/algorithm
+  ##   echo sorted(@[4, 2, 6, 5, 8, 7], cmp[int])
+  ##   ```
+  if x == y: return 0
+  if x < y: return -1
+  return 1
