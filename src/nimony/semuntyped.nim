@@ -166,16 +166,14 @@ proc symBinding(n: Cursor): TSymBinding =
     else: discard
     skip n
 
-proc addLocalDecl(c: var UntypedCtx, n: Cursor, k: SymKind; nameStart, declStart: int) =
-  let local = asLocal(n)
+proc addDecl(c: var UntypedCtx; name, pragmas: Cursor; k: SymKind; nameStart, declStart: int) =
+  var name = name
   if c.mode == UntypedTemplate:
     # locals default to 'gensym', fields default to 'inject':
-    var pragmas = local.pragmas
     if (pragmas.kind != DotToken and symBinding(pragmas) == spInject) or
         k == FldY:
       # even if injected, don't produce a sym choice here:
       #n = semTemplBody(c, n)
-      var name = local.name
       var newNameBuf = createTokenBuf(4)
       swap c.c.dest, newNameBuf
       let hasParam = getIdentReplaceParams(c, name)
@@ -188,7 +186,6 @@ proc addLocalDecl(c: var UntypedCtx, n: Cursor, k: SymKind; nameStart, declStart
       else:
         c.c.dest.replace(newName, nameStart)
     else:
-      var name = local.name
       var newNameBuf = createTokenBuf(4)
       swap c.c.dest, newNameBuf
       let hasParam = getIdentReplaceParams(c, name)
@@ -214,7 +211,6 @@ proc addLocalDecl(c: var UntypedCtx, n: Cursor, k: SymKind; nameStart, declStart
       else:
         c.c.dest.replace(newName, nameStart)
   else:
-    var name = local.name
     let ident = getIdent(name)
     c.inject(ident)
 
@@ -286,25 +282,73 @@ proc semTemplPragmas(c: var UntypedCtx; n: var Cursor) =
   # XXX should call `semTemplBody` but ignore valid pragma identifiers
   takeTree c.c[], n
 
+proc semTemplGenericParams(c: var UntypedCtx; n: var Cursor) =
+  semTemplBodySons c, n
+
 proc semTemplType(c: var UntypedCtx; n: var Cursor) =
   case n.typeKind
   of VoidT:
     takeToken c.c[], n
-  else:
-    # XXX todo
-    raiseAssert("unimplemented")
+  of IntT, FloatT, CharT, BoolT, UIntT, NiltT, AutoT,
+      SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT,
+      PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UarrayT,
+      StaticT, TypedescT, SetT, OrT, AndT, TupleT, ArrayT, RangetypeT, VarargsT,
+      InvokeT, ErrT:
+    semTemplBodySons c, n
+  of ObjectT:
+    # open scope for fields
+    openScope(c)
+    semTemplBodySons c, n
+    closeScope(c)
+  of EnumT, HoleyEnumT:
+    # no new scope
+    semTemplBodySons c, n
+  of ConceptT:
+    # open scope for proc decls
+    openScope(c)
+    semTemplBodySons c, n
+    closeScope(c)
+  of DistinctT:
+    semTemplBodySons c, n
+  of ProctypeT, IteratorT, ParamsT:
+    # open scope for param decls
+    openScope(c)
+    semTemplBodySons c, n
+    closeScope(c)
+  of ItertypeT:
+    semTemplBodySons c, n
+  of NoType:
+    raiseAssert("unreachable")
 
 proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
-  # XXX todo
-  raiseAssert("unimplemented")
-
-proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
   let orig = n
+  let decl = asTypeDecl(orig)
   let declStart = c.c.dest.len
   takeToken c.c[], n
   let nameStart = c.c.dest.len
   takeTree c.c[], n # name
-  addLocalDecl(c, orig, k, nameStart, declStart)
+  addDecl(c, decl.name, decl.pragmas, TypeY, nameStart, declStart)
+  takeTree c.c[], n # exported
+  let isGeneric = n.kind != DotToken
+  if isGeneric:
+    openScope c
+    semTemplGenericParams c, n
+  else:
+    takeToken c.c[], n
+  semTemplPragmas c, n # pragmas
+  semTemplType c, n # body
+  takeParRi c.c[], n
+  if isGeneric:
+    closeScope c
+
+proc semTemplLocal(c: var UntypedCtx; n: var Cursor; k: SymKind) =
+  let orig = n
+  let local = asLocal(n)
+  let declStart = c.c.dest.len
+  takeToken c.c[], n
+  let nameStart = c.c.dest.len
+  takeTree c.c[], n # name
+  addDecl(c, local.name, local.pragmas, k, nameStart, declStart)
   takeTree c.c[], n # exported
   semTemplPragmas c, n # pragmas
   semTemplType c, n # type

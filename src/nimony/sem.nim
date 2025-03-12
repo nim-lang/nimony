@@ -2746,9 +2746,6 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
   takeParRi c, n
   if ok and (genericArgs == 0 or
       # structural types are inlined even with generic arguments
-      # XXX does not instantiate properly if structural type is forward declared
-      # because typevar syms are not created in the SemcheckTopLevelSyms phase
-      # maybe  they could be declared and captured in the body with an untyped prepass
       not isNominal(decl.body.typeKind)):
     # we have to be eager in generic type instantiations so that type-checking
     # can do its job properly:
@@ -4282,9 +4279,8 @@ proc invokeInnerObj(c: var SemContext; genericsPos: int; objSym: SymId; info: Pa
         if typevar.kind == SymbolDef:
           invokeBuf.add symToken(typevar.symId, typevar.info)
         else:
-          # typevar can be an identifier if this is the top level phase
-          # in the future though maybe typevars should be declared in the top level phase too, see XXX in semInvoke
-          invokeBuf.addSubtree typevar
+          raiseAssert("typevar should always be declared")
+          #invokeBuf.addSubtree typevar
         skip params
     endRead(c.dest)
     c.dest.add invokeBuf
@@ -4307,25 +4303,23 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   var innerObjDecl = default(TokenBuf)
 
   let beforeGenerics = c.dest.len
+  var isGeneric: bool
+  let prevGeneric = c.routine.inGeneric
+  let prevInst = c.routine.inInst
+  if n.kind == DotToken:
+    takeToken c, n
+    isGeneric = false
+  else:
+    let oldScopeKind = c.currentScope.kind
+    openScope c
+    semGenericParams c, n
+    # copy toplevel scope status for exported fields
+    c.currentScope.kind = oldScopeKind
+    isGeneric = true
+  let crucial = semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
   if c.phase == SemcheckSignatures or
       (delayed.status in {OkNew, OkExistingFresh} and
         c.phase != SemcheckTopLevelSyms):
-    var isGeneric: bool
-    let prevGeneric = c.routine.inGeneric
-    let prevInst = c.routine.inInst
-    if n.kind == DotToken:
-      takeToken c, n
-      isGeneric = false
-    else:
-      let oldScopeKind = c.currentScope.kind
-      openScope c
-      semGenericParams c, n
-      # copy toplevel scope status for exported fields
-      c.currentScope.kind = oldScopeKind
-      isGeneric = true
-
-    let crucial = semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
-
     # body:
     if n.kind == DotToken:
       takeToken c, n
@@ -4351,13 +4345,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       else:
         semLocalTypeImpl c, n, InTypeSection
       fitTypeToPragmas(c, crucial, typeStart)
-    if isGeneric:
-      closeScope c
-      c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
-      c.routine.inInst = prevInst
   else:
-    c.takeTree n # generics
-    discard semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
     if n.typeKind in {RefT, PtrT}:
       var obj = n
       inc obj
@@ -4370,10 +4358,18 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
         invokeInnerObj(c, beforeGenerics, objSym, n.info)
         skip n
         takeParRi c, n
+    if not isRefPtrObj: # body not already handled
+      if isGeneric:
+        # capture typevars for instantiation of forward declared types to work
+        var ctx = createUntypedContext(addr c, UntypedGeneric)
+        addParams(ctx, beforeGenerics)
+        semTemplBody ctx, n
       else:
-        c.takeTree n
-    else:
-      c.takeTree n # body
+        c.takeTree n # body
+  if isGeneric:
+    closeScope c
+    c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
+    c.routine.inInst = prevInst
 
   c.addSym delayed
   takeParRi c, n
