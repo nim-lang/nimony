@@ -660,7 +660,8 @@ proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor; kind: ExprKind
                 dest.addSubtree baseType
                 trNewobjFields(c, dest, n)
             else:
-              tr c, dest, n
+              skip n # skip type
+              tr c, dest, n # process default(T) call
     # ExprX's expression is the temp:
     dest.add symToken(tmp, info)
 

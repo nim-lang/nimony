@@ -4982,7 +4982,12 @@ proc semNewref(c: var SemContext; it: var Item) =
   if it.typ.typeKind == TypedescT:
     inc it.typ
   c.dest.addSubtree it.typ
-  skip it.n
+  assert it.typ.typeKind == RefT
+  let typeForDefault = it.typ.firstSon
+  callDefault c, typeForDefault, info
+  skip it.n # type
+  if it.n.kind != ParRi:
+    skip it.n # existing `default(T)` call
   takeParRi c, it.n
   commonType c, it, exprStart, expected
 
