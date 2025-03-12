@@ -205,6 +205,14 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
       copyIntoKind c.dest, HaddrX, info:
         copyTree c.dest, n
 
+proc callWasMoved(c: var Context; sym: SymId; info: PackedLineInfo; typ: Cursor) =
+  let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
+  if hookProc != NoSymId:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, hookProc, info
+      copyIntoKind c.dest, HaddrX, info:
+        copyIntoSymUse c.dest, sym, info
+
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
   `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
@@ -240,7 +248,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trSons c, n, DontCare
 
   else:
-    let isNotFirstAsgn = not isResultUsage(c, le) # XXX Adapt this once we have "isFirstAsgn" analysis
+    #let isNotFirstAsgn = not isResultUsage(c, le) # YYY Adapt this once we have "isFirstAsgn" analysis
+    const isNotFirstAsgn = true
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
     if constructsValue(ri):
@@ -550,7 +559,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
   let refType = n
   assert refType.typeKind == RefT
 
-  var ow = bindToTemp(c, refType, info)
+  var ow = bindToTemp(c, refType, info, if e == WantNonOwner: VarS else: CursorS)
 
   let baseType = refType.firstSon
   var refTypeCopy = refType
@@ -654,6 +663,7 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   if r.val.kind == DotToken:
     copyTree c.dest, r.val
     c.dest.addParRi()
+    callWasMoved c, r.name.symId, r.name.info, r.typ
   else:
     let destructor = getDestructor(c.lifter[], r.typ, n.info)
     if destructor != NoSymId:
