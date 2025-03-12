@@ -35,8 +35,7 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
           c.add ElseKeyword
         c.add IfKeyword
         inc n
-        c.genx n
-        c.add ParRi
+        c.genCond n
         c.add CurlyLe
         genStmt c, n
         c.add CurlyRi
@@ -64,9 +63,7 @@ proc genWhile(c: var GeneratedCode; n: var Cursor) =
   c.inToplevel = false
   inc n
   c.add WhileKeyword
-  c.add ParLe
-  c.genx n
-  c.add ParRi
+  c.genCond n
   c.add CurlyLe
   c.genStmt n
   c.add CurlyRi
@@ -165,11 +162,9 @@ proc genGoto(c: var GeneratedCode; n: var Cursor) =
 proc genSwitch(c: var GeneratedCode; n: var Cursor) =
   # (case Expr (of BranchRanges StmtList)* (else StmtList)?) |
   c.add SwitchKeyword
-  c.add ParLe
   inc n
   let first = n
-  c.genx n
-  c.add ParRi
+  c.genCond n
   c.add CurlyLe
 
   var hasElse = false
