@@ -3,7 +3,7 @@
 import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes]
-import basics, typekeys
+import basics
 
 type
   Context = object
@@ -612,59 +612,6 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
 
-proc trNewobjFields(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  while n.kind != ParRi:
-    if n.substructureKind == KvU:
-      copyInto dest, n:
-        takeTree dest, n # keep field name
-        tr(c, dest, n)
-    else:
-      tr(c, dest, n)
-  inc n # skip ParRi
-
-proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor; kind: ExprKind) =
-  let info = n.info
-  inc n
-  let refType = n
-  assert refType.typeKind == RefT
-
-  let baseType = refType.firstSon
-  var refTypeCopy = refType
-  let typeKey = takeMangle refTypeCopy
-  let typeSym = pool.syms.getOrIncl(typeKey & GeneratedTypeSuffix)
-
-  copyIntoKind dest, ExprX, info:
-    copyIntoKind dest, StmtsS, info:
-      let tmp = declareTemp(c, dest, refType, info)
-      copyIntoKind dest, CastX, info:
-        dest.addSubtree refType
-        copyIntoKind dest, CallX, info:
-          dest.add symToken(pool.syms.getOrIncl("allocFixed.0." & SystemModuleSuffix), info)
-          copyIntoKind dest, SizeofX, info:
-            dest.add symToken(typeSym, info)
-      dest.addParRi() # finish temp declaration
-      copyIntoKind dest, AsgnS, info:
-        copyIntoKind dest, DerefX, info:
-          dest.add symToken(tmp, info)
-        copyIntoKind dest, OconstrX, info:
-          dest.add symToken(typeSym, info)
-          copyIntoKind dest, KvU, info:
-            let rcField = pool.syms.getOrIncl(RcField)
-            dest.add symdefToken(rcField, info)
-            dest.addIntLit(0, info)
-          copyIntoKind dest, KvU, info:
-            let dataField = pool.syms.getOrIncl(DataField)
-            dest.add symdefToken(dataField, info)
-            if kind == NewobjX:
-              copyIntoKind dest, OconstrX, info:
-                dest.addSubtree baseType
-                trNewobjFields(c, dest, n)
-            else:
-              skip n # skip type
-              tr c, dest, n # process default(T) call
-    # ExprX's expression is the temp:
-    dest.add symToken(tmp, info)
-
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
@@ -729,10 +676,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       genSetConstr(c, dest, n)
     of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
       genSetOp(c, dest, n)
-    of NewobjX:
-      genNewobj(c, dest, n, NewobjX)
-    of NewrefX:
-      genNewobj(c, dest, n, NewrefX)
     of TypeofX:
       takeTree dest, n
     of HderefX, DerefX:

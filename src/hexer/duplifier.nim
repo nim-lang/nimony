@@ -31,8 +31,8 @@ It follows that we're only interested in Call expressions here, or similar
 
 import std / [assertions]
 include nifprelude
-import nifindexes, symparser, treemangler, lifter, mover
-import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters]
+import nifindexes, symparser, treemangler, lifter, mover, basics, typekeys
+import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes]
 
 type
   Context = object
@@ -57,7 +57,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   result = isLastUse(n, c.source[], otherUsage)
 
 const
-  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX}
+  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX, NewrefX}
 
 proc constructsValue*(n: Cursor): bool =
   var n = n
@@ -534,6 +534,61 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
         tr c, n, WantOwner
   finishOwningTemp c.dest, ow
 
+proc trNewobjFields(c: var Context; n: var Cursor) =
+  while n.kind != ParRi:
+    if n.substructureKind == KvU:
+      copyInto c.dest, n:
+        takeTree c.dest, n # keep field name
+        tr(c, n, WantOwner)
+    else:
+      tr(c, n, WantOwner)
+  inc n # skip ParRi
+
+proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
+  let info = n.info
+  inc n
+  let refType = n
+  assert refType.typeKind == RefT
+
+  var ow = bindToTemp(c, refType, info)
+
+  let baseType = refType.firstSon
+  var refTypeCopy = refType
+  let typeKey = takeMangle refTypeCopy
+  let typeSym = pool.syms.getOrIncl(typeKey & GeneratedTypeSuffix)
+
+  copyIntoKind c.dest, CastX, info:
+    c.dest.addSubtree refType
+    copyIntoKind c.dest, CallX, info:
+      c.dest.add symToken(pool.syms.getOrIncl("allocFixed.0." & SystemModuleSuffix), info)
+      copyIntoKind c.dest, SizeofX, info:
+        c.dest.add symToken(typeSym, info)
+  c.dest.addParRi() # finish temp declaration
+
+  copyIntoKind c.dest, AsgnS, info:
+    copyIntoKind c.dest, DerefX, info:
+      c.dest.add symToken(ow.s, info)
+    copyIntoKind c.dest, OconstrX, info:
+      c.dest.add symToken(typeSym, info)
+      copyIntoKind c.dest, KvU, info:
+        let rcField = pool.syms.getOrIncl(RcField)
+        c.dest.add symdefToken(rcField, info)
+        c.dest.addIntLit(0, info)
+      copyIntoKind c.dest, KvU, info:
+        let dataField = pool.syms.getOrIncl(DataField)
+        c.dest.add symdefToken(dataField, info)
+        if kind == NewobjX:
+          copyIntoKind c.dest, OconstrX, info:
+            c.dest.addSubtree baseType
+            trNewobjFields(c, n)
+        else:
+          skip n # skip type
+          tr c, n, WantOwner # process default(T) call
+
+  c.dest.addParRi()  # finish the StmtsS
+  c.dest.copyIntoSymUse ow.s, ow.info
+  c.dest.addParRi()  # finish the StmtListExpr
+
 proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
   let ex = n
   let info = n.info
@@ -681,8 +736,12 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trExplicitTrace c, n
     of ConvKinds, SufX:
       trConvExpr c, n, e
-    of OconstrX, NewobjX, NewrefX:
+    of OconstrX:
       trObjConstr c, n, e
+    of NewobjX:
+      trNewobj c, n, e, NewobjX
+    of NewrefX:
+      trNewobj c, n, e, NewrefX
     of DotX, DdotX, AtX, ArrAtX, PatX, TupAtX:
       trLocation c, n, e
     of ParX:
