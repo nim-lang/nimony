@@ -117,6 +117,30 @@ proc lookupSymbol(c: var TypeCache; s: SymId): Cursor =
   else:
     result = default(Cursor)
 
+proc registerLocals(c: var TypeCache; n: var Cursor) =
+  if n.kind == ParLe:
+    let k = n.stmtKind
+    case k
+    of StmtsS:
+      inc n
+      while n.kind != ParRi:
+        registerLocals(c, n)
+      inc n
+    of LetS, CursorS, VarS, TvarS, TletS, GvarS, GletS:
+      inc n
+      let name = n.symId
+      inc n # name
+      skip n # export marker
+      skip n # pragmas
+      c.registerLocal name, cast[SymKind](k), n
+      skip n # type
+      skip n # init value
+      skipParRi n
+    else:
+      skip n
+  else:
+    skip n
+
 proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
   result = c.builtins.autoType # to indicate error
   case exprKind(n)
@@ -209,7 +233,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor): Cursor =
     inc n # skip "expr"
     while n.kind != ParRi:
       let prev = n
-      skip n
+      registerLocals(c, n)
       if n.kind == ParRi:
         result = getTypeImpl(c, prev)
   of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX:

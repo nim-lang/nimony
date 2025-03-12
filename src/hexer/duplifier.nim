@@ -53,6 +53,14 @@ type
 # -------------- helpers ----------------------------------------
 
 proc isLastRead(c: var Context; n: Cursor): bool =
+  # This is a hack to make sure that the type cache is populated for the
+  # expression we are analysing:
+  discard getType(c.typeCache, n)
+  var n = n
+  while n.exprKind == ExprX:
+    inc n
+    while n.kind != ParRi and not isLastSon(n): skip n
+
   let r = rootOf(n)
   result = false
   if r != NoSymId:
