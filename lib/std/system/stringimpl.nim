@@ -212,7 +212,10 @@ proc substr*(s: string; first = 0): string =
 
 proc `==`*(a, b: string): bool {.exportc: "nimStrEq", inline.} =
   if a.len == b.len:
-    result = cmpMem(a.a, b.a, a.len) == 0
+    if a.len > 0:
+      result = cmpMem(a.a, b.a, a.len) == 0
+    else:
+      result = true
   else:
     result = false
 
