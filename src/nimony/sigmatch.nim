@@ -528,7 +528,7 @@ proc commonType(f, a: Cursor): Cursor =
   # XXX Refine
   result = a
 
-proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
+proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) {.used.} =
   # now unused, maybe bring back error message somehow
   let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:

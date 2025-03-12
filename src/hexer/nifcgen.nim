@@ -155,7 +155,8 @@ proc traverseEnumField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}
 
   takeParRi c, n
 
-proc genStringType(c: var EContext; info: PackedLineInfo) =
+proc genStringType(c: var EContext; info: PackedLineInfo) {.used.} =
+  # now unused
   let s = pool.syms.getOrIncl(StringName)
   c.dest.add tagToken("type", info)
   c.dest.add symdefToken(s, info)

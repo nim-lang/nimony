@@ -553,7 +553,8 @@ proc produceInvoke(c: var SemContext; dest: var TokenBuf; req: InstRequest;
           dest.copyTree req.inferred[tv.symId]
         skip typeVars
 
-proc subsGenericType(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
+proc subsGenericType(c: var SemContext; dest: var TokenBuf; req: InstRequest) {.used.} =
+  # was used for `c.typeRequests` but types are instantiated eagerly now
   #[
   What we need to do is rather simple: A generic instantiation is
   the typical (type :Name ex generic_params pragmas body) tuple but
@@ -967,7 +968,8 @@ proc sameIdent(sym: SymId; str: StrId): bool =
   extractBasename(name)
   result = pool.strings.getOrIncl(name) == str
 
-proc sameIdent(a, b: SymId): bool =
+proc sameIdent(a, b: SymId): bool {.used.} =
+  # not used yet
   # XXX speed this up by using the `fieldCache` idea
   var x = pool.syms[a]
   extractBasename(x)
