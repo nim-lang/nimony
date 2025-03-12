@@ -39,7 +39,7 @@ proc testOrSetMark(n: Cursor): bool {.inline.} =
     doMark(n)
     result = false
 
-proc rootOf(n: Cursor): SymId =
+proc rootOf*(n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind

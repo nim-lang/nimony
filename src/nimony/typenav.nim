@@ -72,6 +72,15 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
       return local.val
   return default(Cursor)
 
+proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
+  var it {.cursor.} = c.current
+  while it != nil:
+    var res = it.locals.getOrDefault(s)
+    if res.kind != NoSym:
+      return res
+    it = it.parent
+  return default(LocalInfo)
+
 proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
   result = getInitValueImpl(c, s)
   var counter = 0
