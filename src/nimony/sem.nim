@@ -686,9 +686,11 @@ proc fetchSym(c: var SemContext; s: SymId): Sym =
     result = Sym(kind: NoSym, name: s, pos: InvalidPos)
 
 proc semBoolExpr(c: var SemContext; n: var Cursor) =
+  let start = c.dest.len
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
   if classifyType(c, it.typ) != BoolT:
+    c.dest.shrink start
     buildErr c, n.info, "expected `bool` but got: " & typeToString(it.typ)
   n = it.n
 
@@ -699,6 +701,7 @@ proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
   n = it.n
   let t = skipModifier(it.typ)
   if classifyType(c, t) != BoolT:
+    c.dest.shrink start
     buildErr c, it.n.info, "expected `bool` but got: " & typeToString(t)
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
@@ -708,6 +711,7 @@ proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
     if value.kind == ParLe and value.tagId == ErrT:
       c.dest.add valueBuf
     else:
+      c.dest.shrink start
       buildErr c, it.n.info, "expected constant bool value but got: " & asNimCode(value)
   else:
     c.dest.shrink start
@@ -720,6 +724,7 @@ proc semConstStrExpr(c: var SemContext; n: var Cursor) =
   n = it.n
   let t = skipModifier(it.typ)
   if not isStringType(t):
+    c.dest.shrink start
     buildErr c, it.n.info, "expected `string` but got: " & typeToString(t)
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
@@ -741,6 +746,7 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
   n = it.n
   let t = skipModifier(it.typ)
   if classifyType(c, t) != IntT:
+    c.dest.shrink start
     buildErr c, it.n.info, "expected `int` but got: " & typeToString(t)
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
@@ -750,6 +756,7 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
     if value.kind == ParLe and value.tagId == ErrT:
       c.dest.add valueBuf
     else:
+      c.dest.shrink start
       buildErr c, it.n.info, "expected constant integer value but got: " & asNimCode(value)
   else:
     c.dest.shrink start
