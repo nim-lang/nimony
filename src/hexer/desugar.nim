@@ -622,7 +622,7 @@ proc trNewobjFields(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr(c, dest, n)
   inc n # skip ParRi
 
-proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor; kind: ExprKind) =
   let info = n.info
   inc n
   let refType = n
@@ -655,9 +655,13 @@ proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor) =
           copyIntoKind dest, KvU, info:
             let dataField = pool.syms.getOrIncl(DataField)
             dest.add symdefToken(dataField, info)
-            copyIntoKind dest, OconstrX, info:
-              dest.addSubtree baseType
-              trNewobjFields(c, dest, n)
+            if kind == NewobjX:
+              copyIntoKind dest, OconstrX, info:
+                dest.addSubtree baseType
+                trNewobjFields(c, dest, n)
+            else:
+              skip n # skip type
+              tr c, dest, n # process default(T) call
     # ExprX's expression is the temp:
     dest.add symToken(tmp, info)
 
@@ -726,7 +730,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
       genSetOp(c, dest, n)
     of NewobjX:
-      genNewobj(c, dest, n)
+      genNewobj(c, dest, n, NewobjX)
+    of NewrefX:
+      genNewobj(c, dest, n, NewrefX)
     of TypeofX:
       takeTree dest, n
     of HderefX, DerefX:

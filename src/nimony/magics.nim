@@ -110,7 +110,5 @@ proc magicToTag*(m: string): (string, int) =
   of "Copy": res CopyX
   of "WasMoved": res WasMovedX
   of "Trace": res TraceX
+  of "NewRef": res NewrefX, TypedMagic
   else: ("", 0)
-
-when isMainModule:
-  echo parseMagic "Int32"

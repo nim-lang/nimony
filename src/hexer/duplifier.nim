@@ -681,7 +681,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trExplicitTrace c, n
     of ConvKinds, SufX:
       trConvExpr c, n, e
-    of OconstrX, NewobjX:
+    of OconstrX, NewobjX, NewrefX:
       trObjConstr c, n, e
     of DotX, DdotX, AtX, ArrAtX, PatX, TupAtX:
       trLocation c, n, e

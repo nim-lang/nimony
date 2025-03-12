@@ -4323,7 +4323,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     # copy toplevel scope status for exported fields
     c.currentScope.kind = oldScopeKind
     isGeneric = true
-  
+
   let crucial = semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
 
   if c.phase == SemcheckSignatures or
@@ -4969,6 +4969,26 @@ proc semObjDefault(c: var SemContext; it: var Item) =
   c.dest.shrink exprStart
   skipParRi it.n
   buildDefaultObjConstr(c, it.typ, initTable[SymId, Cursor](), info)
+  commonType c, it, exprStart, expected
+
+proc semNewref(c: var SemContext; it: var Item) =
+  let exprStart = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  c.takeToken it.n
+  let beforeTypeArg = c.dest.len
+  it.typ = semLocalType(c, it.n)
+  c.dest.shrink beforeTypeArg
+  if it.typ.typeKind == TypedescT:
+    inc it.typ
+  c.dest.addSubtree it.typ
+  assert it.typ.typeKind == RefT
+  let typeForDefault = it.typ.firstSon
+  callDefault c, typeForDefault, info
+  skip it.n # type
+  if it.n.kind != ParRi:
+    skip it.n # existing `default(T)` call
+  takeParRi c, it.n
   commonType c, it, exprStart, expected
 
 proc buildDefaultTuple(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
@@ -6112,6 +6132,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSuf c, it
     of OconstrX, NewobjX:
       semObjConstr c, it
+    of NewrefX:
+      semNewref c, it
     of DefinedX:
       semDefined c, it
     of DeclaredX:

@@ -504,3 +504,6 @@ proc cmp*[T: Comparable](x, y: T): int =
   if x == y: return 0
   if x < y: return -1
   return 1
+
+proc newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
+proc new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
