@@ -23,18 +23,21 @@ type
     TemplateIdx = (70, "template")  ## template declaration
     TypeIdx = (71, "type")  ## type declaration
     InlineIdx = (123, "inline")  ## `inline` proc annotation
-    BuildIdx = (203, "build")  ## `build` pragma
-    DestroyIdx = (248, "destroy")
-    DupIdx = (249, "dup")
-    CopyIdx = (250, "copy")
-    WasmovedIdx = (251, "wasmoved")
-    SinkhIdx = (252, "sinkh")
-    TraceIdx = (253, "trace")
-    IndexIdx = (261, "index")  ## index section
-    PublicIdx = (262, "public")  ## public section
-    PrivateIdx = (263, "private")  ## private section
+    ExportIdx = (143, "export")  ## `export` statement
+    FromexportIdx = (144, "fromexport")  ## specific exported symbols from a module
+    ExportexceptIdx = (145, "exportexcept")  ## `exportexcept` statement
+    BuildIdx = (204, "build")  ## `build` pragma
+    DestroyIdx = (249, "destroy")
+    DupIdx = (250, "dup")
+    CopyIdx = (251, "copy")
+    WasmovedIdx = (252, "wasmoved")
+    SinkhIdx = (253, "sinkh")
+    TraceIdx = (254, "trace")
+    IndexIdx = (262, "index")  ## index section
+    PublicIdx = (263, "public")  ## public section
+    PrivateIdx = (264, "private")  ## private section
 
 proc rawTagIsNifIndexKind*(raw: uint32): bool {.inline.} =
   let r = raw - 28'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 175'u8, 220'u8, 221'u8, 222'u8, 223'u8, 224'u8, 225'u8, 233'u8, 234'u8, 235'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 23'u8, 24'u8, 25'u8, 27'u8, 29'u8, 30'u8, 31'u8, 32'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 95'u8, 115'u8, 116'u8, 117'u8, 176'u8, 221'u8, 222'u8, 223'u8, 224'u8, 225'u8, 226'u8, 234'u8, 235'u8, 236'u8}
 

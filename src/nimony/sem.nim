@@ -18,7 +18,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semuntyped
 
 import ".." / gear2 / modnames
-import ".." / models / tags
+import ".." / models / [tags, nifindex_tags]
 
 # ------------------ include/import handling ------------------------
 
@@ -160,6 +160,7 @@ type
   SemFlag = enum
     KeepMagics
     AllowOverloads
+    GetAllOverloads
     PreferIterators
     AllowUndeclared
     AllowModuleSym
@@ -170,6 +171,8 @@ type
     RegularCall, MethodCall,
     DotCall, SubscriptCall,
     DotAsgnCall, SubscriptAsgnCall
+
+proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
 proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
 
@@ -292,20 +295,21 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
     c.buildErr info, "file not found: " & f2
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
-  if not c.processedModules.containsOrIncl(suffix):
+  if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
       selfExec c, f2, (if mode.kind == ImportSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
     let moduleSym = identToSym(c, moduleName, ModuleY)
+    c.processedModules[suffix] = moduleSym
     let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
     c.currentScope.addOverloadable(moduleName, s)
     var moduleDecl = createTokenBuf(2)
     moduleDecl.addParLe(ModuleY, info)
     moduleDecl.addParRi()
     publish moduleSym, moduleDecl
-    var module = ImportedModule()
+    var module = ImportedModule(path: f2)
     var marker = mode.list
     loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters,
       marker, negateMarker = mode.kind == FromImport
@@ -405,6 +409,162 @@ proc semFromImport(c: var SemContext; it: var Item) =
       else:
         included.incl getIdent(x)
     doImportMode c, files, ImportMode(kind: FromImport, list: included), info
+
+  producesVoid c, info, it.typ
+
+proc findModuleSymbol(n: Cursor): SymId =
+  result = SymId(0)
+  if n.kind == Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing and symKind(res.decl) == ModuleY:
+      result = n.symId
+  elif n.kind == ParLe and exprKind(n) in {OchoiceX, CchoiceX}:
+    # if any sym in choice is module sym, count it as a module reference
+    # this emulates behavior that was caused by sym order shenanigans before, could be removed
+    var n = n
+    inc n
+    while n.kind != ParRi:
+      result = findModuleSymbol(n)
+      if result != SymId(0): break
+      inc n
+
+proc semExportSymbol(c: var SemContext; n: var Cursor) =
+  let info = n.info
+  if n.exprKind == DotX:
+    var it = Item(n: n, typ: c.types.autoType)
+    semExpr c, it
+  else:
+    let ident = getIdent(n)
+    if ident == StrId(0):
+      c.buildErr info, "not an identifier"
+      return
+    discard buildSymChoice(c, ident, info, FindAll)
+
+proc doExport(c: var SemContext; sym: SymId; info: PackedLineInfo) =
+  let res = tryLoadSym(sym)
+  let isModule = res.status == LacksNothing and res.decl.symKind == ModuleY
+  if isModule:
+    # overrides previous export mode if exists
+    c.exports[sym] = ExportMode(kind: ExportAll)
+  else:
+    let suffix = extractModule(pool.syms[sym])
+    if suffix == "":
+      c.buildErr info, "cannot export non-global symbol"
+      return
+    elif suffix == c.thisModuleSuffix:
+      # XXX
+      c.buildErr info, "exporting local symbol not implemented"
+      return
+    let moduleSym = c.processedModules[suffix]
+    if moduleSym in c.exports:
+      case c.exports[moduleSym].kind
+      of ExportAll:
+        # nothing to do, already exported
+        discard
+      of FromExport:
+        c.exports[moduleSym].list.incl sym
+      of ExportExcept:
+        c.exports[moduleSym].list.excl sym
+    else:
+      c.exports[moduleSym] = ExportMode(kind: FromExport, list: initHashSet[SymId]())
+      c.exports[moduleSym].list.incl sym
+
+proc semExport(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  var x = it.n
+  skip it.n
+  inc x # skip the `export`
+
+  while x.kind != ParRi:
+    let info = x.info
+    var symBuf = createTokenBuf(8)
+    swap c.dest, symBuf
+    semExportSymbol(c, x)
+    swap c.dest, symBuf
+    var syms = beginRead(symBuf)
+    case syms.kind
+    of Ident:
+      c.buildErr info, "undeclared identifier"
+    of Symbol:
+      doExport(c, syms.symId, info)
+    of ParLe:
+      case syms.exprKind
+      of ErrX:
+        c.dest.add symBuf
+      of OchoiceX, CchoiceX:
+        inc syms
+        while syms.kind != ParRi:
+          assert syms.kind == Symbol
+          doExport(c, syms.symId, info)
+          inc syms
+      else:
+        c.buildErr info, "not an identifier for `export`"
+    else:
+      c.buildErr info, "not an identifier for `export`"
+
+  producesVoid c, info, it.typ
+
+proc doExportExcept(c: var SemContext; moduleSym, sym: SymId; info: PackedLineInfo) =
+  let suffix = extractModule(pool.syms[sym])
+  if c.processedModules[suffix] != moduleSym:
+    # doesn't belong to exported module, no need to consider
+    return
+  if moduleSym in c.exports:
+    case c.exports[moduleSym].kind
+    of ExportAll:
+      c.exports[moduleSym] = ExportMode(kind: ExportExcept, list: initHashSet[SymId]())
+      c.exports[moduleSym].list.incl sym
+    of FromExport:
+      c.exports[moduleSym].list.excl sym
+    of ExportExcept:
+      c.exports[moduleSym].list.incl sym
+  else:
+    c.exports[moduleSym] = ExportMode(kind: ExportExcept, list: initHashSet[SymId]())
+    c.exports[moduleSym].list.incl sym
+
+proc semExportExcept(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  var x = it.n
+  skip it.n
+  inc x # skip the `exportexcept`
+
+  let moduleSymStart = c.dest.len
+  var m = Item(n: x, typ: c.types.autoType)
+  semExpr c, m # get module sym
+  x = m.n
+  let moduleSym = findModuleSymbol(cursorAt(c.dest, moduleSymStart))
+  endRead(c.dest)
+  c.dest.shrink moduleSymStart 
+  if moduleSym == SymId(0):
+    c.buildErr info, "expected module for `export except`"
+    return
+
+  while x.kind != ParRi:
+    let info = x.info
+    var symBuf = createTokenBuf(8)
+    swap c.dest, symBuf
+    semExportSymbol(c, x)
+    swap c.dest, symBuf
+    var syms = beginRead(symBuf)
+    case syms.kind
+    of Ident:
+      c.buildErr info, "undeclared identifier"
+    of Symbol:
+      doExportExcept(c, moduleSym, syms.symId, info)
+    of ParLe:
+      case syms.exprKind
+      of ErrX:
+        c.dest.add symBuf
+      of OchoiceX, CchoiceX:
+        inc syms
+        while syms.kind != ParRi:
+          assert syms.kind == Symbol
+          doExportExcept(c, moduleSym, syms.symId, info)
+          inc syms
+      else:
+        c.buildErr info, "not an identifier for `export`"
+    else:
+      c.buildErr info, "not an identifier for `export`"
 
   producesVoid c, info, it.typ
 
@@ -652,8 +812,6 @@ proc instantiateGenericHooks(c: var SemContext) =
     for p in procReqs: instantiateGenericProc c, p
 
 # -------------------- sem checking -----------------------------
-
-proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
 proc instantiateExprIntoBuf(c: var SemContext; buf: var TokenBuf; it: var Item; bindings: Table[SymId, Cursor]) =
   var dest = createTokenBuf(30)
@@ -1937,22 +2095,6 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; bin
       if not visible:
         # treat as undeclared
         result = ObjField(level: -1)
-
-proc findModuleSymbol(n: Cursor): SymId =
-  result = SymId(0)
-  if n.kind == Symbol:
-    let res = tryLoadSym(n.symId)
-    if res.status == LacksNothing and symKind(res.decl) == ModuleY:
-      result = n.symId
-  elif n.kind == ParLe and exprKind(n) in {OchoiceX, CchoiceX}:
-    # if any sym in choice is module sym, count it as a module reference
-    # this emulates behavior that was caused by sym order shenanigans before, could be removed
-    var n = n
-    inc n
-    while n.kind != ParRi:
-      result = findModuleSymbol(n)
-      if result != SymId(0): break
-      inc n
 
 proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
   # mirrors semIdent
@@ -5926,7 +6068,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
-      of ImportasS, ExportexceptS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
+      of ImportasS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
         buildErr c, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
       of ProcS:
@@ -5996,7 +6138,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of IncludeS: semInclude c, it
       of ImportS: semImport c, it
       of ImportExceptS: semImportExcept c, it
-      of FromS: semFromImport c, it
+      of FromImportS: semFromImport c, it
+      of ExportS: semExport c, it
+      of ExportExceptS: semExportExcept c, it
       of AsgnS:
         toplevelGuard c:
           semAsgn c, it
@@ -6034,7 +6178,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of RaiseS:
         toplevelGuard c:
           semRaise c, it
-      of ExportS, CommentS:
+      of CommentS:
         # XXX ignored for now
         skip it.n
       of EmitS:
@@ -6178,6 +6322,32 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
 proc reportErrors(c: var SemContext): int =
   result = reporters.reportErrors(c.dest)
 
+proc buildExports(c: var SemContext): TokenBuf =
+  if c.exports.len == 0:
+    return default(TokenBuf)
+  result = createTokenBuf(32)
+  for m, ex in c.exports:
+    let path = c.importedModules[m].path
+    case ex.kind
+    of ExportAll:
+      result.addParLe(TagId(ExportIdx), NoLineInfo)
+      result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+      result.addParRi()
+    of FromExport:
+      if ex.list.len != 0:
+        result.addParLe(TagId(FromexportIdx), NoLineInfo)
+        result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+        for s in ex.list:
+          result.add symToken(s, NoLineInfo)
+        result.addParRi()
+    of ExportExcept:
+      let kind = if ex.list.len == 0: ExportIdx else: ExportexceptIdx
+      result.addParLe(TagId(kind), NoLineInfo)
+      result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+      for s in ex.list:
+        result.add symToken(s, NoLineInfo)
+      result.addParRi()
+
 proc writeOutput(c: var SemContext; outfile: string) =
   #var b = nifbuilder.open(outfile)
   #b.addHeader "nimony", "nim-sem"
@@ -6188,7 +6358,8 @@ proc writeOutput(c: var SemContext; outfile: string) =
   createIndex outfile, root, true,
     IndexSections(hooks: move c.hookIndexLog,
       converters: move c.converterIndexMap,
-      toBuild: move c.toBuild)
+      toBuild: move c.toBuild,
+      exportBuf: buildExports(c))
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n == "stmts"
