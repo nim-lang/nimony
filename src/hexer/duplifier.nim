@@ -589,6 +589,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
         if kind == NewobjX:
           copyIntoKind c.dest, OconstrX, info:
             c.dest.addSubtree baseType
+            skip n # skip old base type (which is a ref)
             trNewobjFields(c, n)
         else:
           skip n # skip type
