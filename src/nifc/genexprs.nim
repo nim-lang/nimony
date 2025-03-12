@@ -221,6 +221,19 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
     skip n
   skipParRi n
 
+proc genCond(c: var GeneratedCode; n: var Cursor) =
+  # Special cased so that we do not end up with `if ((a == b))` which
+  # produced warnings.
+  case n.exprKind
+  of EqC: cmpOp c, n, " == "
+  of NeqC: cmpOp c, n, " != "
+  of LeC: cmpOp c, n, " <= "
+  of LtC: cmpOp c, n, " < "
+  else:
+    c.add ParLe
+    genx c, n
+    c.add ParRi
+
 proc genx(c: var GeneratedCode; n: var Cursor) =
   if n.exprKind != AddrC:
     c.flags.excl gfInCallImportC
