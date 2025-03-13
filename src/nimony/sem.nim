@@ -214,6 +214,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       c.dest.addParRi()
       it.typ = expected
     else:
+      shrink c.dest, argBegin
       c.typeMismatch info, it.typ, expected
   else:
     shrink c.dest, argBegin
