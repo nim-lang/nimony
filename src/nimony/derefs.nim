@@ -359,7 +359,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   takeToken c, n
   let fnType = skipProcTypeToParams(getType(c.typeCache, n))
   assert fnType == "params"
-  takeToken c, n
+  takeToken c, n # bug here for more complex `fn`?
   var retType = fnType
   skip retType
 
@@ -368,8 +368,10 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     if e == WantT:
       needHderef = true
       trCallArgs(c, n, fnType)
+      takeParRi c, n
     elif e in {WantVarTResult, WantTButSkipDeref} or firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
+      takeParRi c, n
     elif not dangerous:
       # DANGER-ZONE HERE! Consider: `for d in items(a)` where `a` is immutable.
       # Which is turned to `var d: var T = a[i]`.
@@ -378,18 +380,20 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       # `passedToVar(d)` or `d[] = value` and flag them as errornous.
       dangerous = true
       trCallArgs(c, n, fnType)
+      takeParRi c, n
     else:
       cannotPassToVar c.dest, info, callExpr
       skipToEnd n
   elif e.wantMutable:
     if isViewType(retType) and firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
+      takeParRi c, n
     else:
       cannotPassToVar c.dest, info, callExpr
       skipToEnd n
   else:
     trCallArgs(c, n, fnType)
-  takeParRi c, n
+    takeParRi c, n
 
   swap c.dest, callBuf
   if needHderef and c.dest[c.dest.len-1].tag != TagId(HderefTagId):
