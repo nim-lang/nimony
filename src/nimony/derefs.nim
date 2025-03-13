@@ -359,7 +359,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   takeToken c, n
   let fnType = skipProcTypeToParams(getType(c.typeCache, n))
   assert fnType == "params"
-  takeToken c, n # bug here for more complex `fn`?
+  tr c, n, WantT # `fn` part of the call
   var retType = fnType
   skip retType
 
