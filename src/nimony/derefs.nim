@@ -37,7 +37,7 @@ type
     WantMutableT  # `var openArray` does need derefs but mutable locations regardless
 
   CurrentRoutine = object
-    returnType: Expects
+    returnExpects: Expects
     firstParam: SymId
     firstParamKind: TypeKind
     resultSym: SymId
@@ -216,11 +216,16 @@ proc trReturn(c: var Context; n: var Cursor) =
   if isResultUsage(c, n):
     takeTree c.dest, n
   else:
-    let err = c.r.returnType == WantVarTResult and not validBorrowsFrom(c, n)
+    let err = c.r.returnExpects == WantVarTResult and not validBorrowsFrom(c, n)
     if err:
       buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
     else:
-      tr c, n, c.r.returnType
+      tr c, n, c.r.returnExpects
+  takeParRi c, n
+
+proc trYield(c: var Context; n: var Cursor) =
+  takeToken c, n
+  tr c, n, WantT # c.r.returnExpects
   takeParRi c, n
 
 proc mightBeDangerous(c: var Context; n: Cursor) =
@@ -269,7 +274,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   takeToken c, n
   let symId = n.symId
   var isGeneric = false
-  var r = CurrentRoutine(returnType: WantT)
+  var r = CurrentRoutine(returnExpects: WantT)
   for i in 0..<BodyPos:
     if i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
@@ -283,7 +288,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
         r.firstParamKind = firstParam.typ.typeKind
 
     if i == ResultPos and n.typeKind in {MutT, OutT, LentT}:
-      r.returnType = WantVarTResult
+      r.returnExpects = WantVarTResult
     takeTree c.dest, n
   if isGeneric:
     takeTree c.dest, n
@@ -340,6 +345,9 @@ proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
     dest.addSubtree arg
     dest.add strToken(pool.strings.getOrIncl(msg), info)
 
+proc wantMutable(e: Expects): bool {.inline.} =
+  e in {WantVarT, WantVarTResult, WantMutableT}
+
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
   let callExpr = n
@@ -371,7 +379,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       trCallArgs(c, n, fnType)
     else:
       cannotPassToVar c.dest, info, callExpr
-  elif e notin {WantT, WantTButSkipDeref}:
+  elif e.wantMutable:
     if isViewType(retType) and firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
     else:
@@ -411,7 +419,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
   var err = Valid
   let le = n
   if isResultUsage(c, le):
-    e = c.r.returnType
+    e = c.r.returnExpects
     if e == WantVarTResult:
       tr c, n, e
       if not validBorrowsFrom(c, n):
@@ -439,7 +447,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   let typ = getType(c.typeCache, n)
   let k = typ.typeKind
   if k in {MutT, OutT, LentT}:
-    if e notin {WantT, WantTButSkipDeref}:
+    if e.wantMutable:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
       if borrowsFromReadonly(c, n):
         cannotPassToVar c.dest, n.info, n
@@ -454,7 +462,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
           c.dest.addParRi()
       else:
         trSons c, n, WantT
-  elif e notin {WantT, WantTButSkipDeref}:
+  elif e.wantMutable:
     if borrowsFromReadonly(c, n):
       cannotPassToVar c.dest, n.info, n
       trSons c, n, WantT
@@ -533,7 +541,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
   of Symbol:
     trLocation c, n, e
   of IntLit, UIntLit, FloatLit, CharLit, StringLit:
-    if e notin {WantT, WantTButSkipDeref}:
+    if e.wantMutable:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
       cannotPassToVar c.dest, n.info, n
       inc n
@@ -549,13 +557,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of DotX, DdotX, AtX, ArrAtX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:
-      if e notin {WantT, WantTButSkipDeref}:
+      if e.wantMutable:
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
         trObjConstr c, n
     of TupConstrX:
-      if e notin {WantT, WantTButSkipDeref}:
+      if e.wantMutable:
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
@@ -571,7 +579,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of DupX, DestroyX:
       trSons c, n, WantT
     of HconvX, ConvX, CastX:
-      if e notin {WantT, WantTButSkipDeref}:
+      if e.wantMutable:
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
@@ -581,6 +589,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       case n.stmtKind
       of RetS:
         trReturn(c, n)
+      of YldS:
+        trYield(c, n)
       of AsgnS:
         trAsgn c, n
       of LocalDecls:
@@ -599,7 +609,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
 
 proc injectDerefs*(n: Cursor): TokenBuf =
   var c = Context(typeCache: createTypeCache(),
-    r: CurrentRoutine(returnType: WantT, firstParam: NoSymId), dest: TokenBuf())
+    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf())
   c.typeCache.openScope()
   var n2 = n
   var n3 = n
