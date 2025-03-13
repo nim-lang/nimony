@@ -5,6 +5,7 @@ import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorit
 
 import lib / [nifindexes, lineinfos]
 import gear2 / modnames
+import nimony / [nifconfig]
 
 const
   Version = "0.6"
@@ -158,9 +159,9 @@ proc toCommand(cat: Category): string =
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
 
-proc generatedFile(orig, ext: string): string =
-  let name = modnames.moduleSuffix(orig, [])
-  result = "nimcache" / name.addFileExt(ext)
+proc generatedFile(config: NifConfig; orig, ext: string): string =
+  let name = modnames.moduleSuffix(orig, [], config.getOptionsAsOneString(true))
+  result = config.nifcachePath / name.addFileExt(ext)
 
 proc removeMakeErrors(output: string): string =
   result = output.strip
@@ -202,6 +203,12 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
 
         failure c, file, valgrindSpec, testProgramOutput
 
+proc initNifConfig(file: string; cat: Category): NifConfig =
+  result = initNifConfig()
+  if cat == Compat:
+    let cfgNif = result.nifcachePath / moduleSuffix(file, [], result.getOptionsAsOneString(true)) & ".cfg.nif"
+    parseNifConfig cfgNif, result
+
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
   #echo "TESTING ", file
   inc c.total
@@ -220,6 +227,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
     nimonycmd.add " "
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & quoteShell(file), cat)
 
+  let config = initNifConfig(file, cat)
   let msgs = file.changeFileExt(".msgs")
 
   var expectedExitCode = 0
@@ -238,11 +246,11 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
   if compilerExitCode == 0:
     let cfile = file.changeFileExt(".nim.c")
     if cfile.fileExists():
-      let nimcacheC = generatedFile(file, ".c")
+      let nimcacheC = config.generatedFile(file, ".c")
       diffFiles c, file, cfile, nimcacheC, overwrite
 
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = config.generatedFile(file, ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       if testProgramExitCode != 0:
         failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode
@@ -260,7 +268,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
 
     let ast = file.changeFileExt(".nif")
     if ast.fileExists():
-      let nif = generatedFile(file, ".2.nif")
+      let nif = config.generatedFile(file, ".2.nif")
       diffFiles c, file, ast, nif, overwrite
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
@@ -357,8 +365,9 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     gitAdd test
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
+    let config = initNifConfig(file, cat)
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = config.generatedFile(file, ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       assert testProgramExitCode == 0, "the test program had an invalid exitcode; unsupported"
       addTestSpec test.changeFileExt(".output"), testProgramOutput
@@ -369,11 +378,11 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
       assert finalCompilerExitCode == 0, finalCompilerOutput
 
     if RecordCodegen in flags:
-      let nimcacheC = generatedFile(test, ".c")
+      let nimcacheC = config.generatedFile(test, ".c")
       addTestCode test.changeFileExt(".nim.c"), nimcacheC
 
     if RecordAst in flags:
-      let nif = generatedFile(test, ".2.nif")
+      let nif = config.generatedFile(test, ".2.nif")
       addTestCode test.changeFileExt(".nif"), nif
 
 proc binDir*(): string =

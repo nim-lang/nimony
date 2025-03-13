@@ -67,8 +67,13 @@ type
     processedModules: HashSet[string]
     moduleFlags: set[ModuleFlag]
 
-proc toPair(c: DepContext; f: string): FilePair =
-  FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
+proc toPair(c: DepContext; f: string; moduleFlags: set[ModuleFlag] = {}): FilePair =
+  let additional = if IsSystem in moduleFlags:
+                     ""
+                   else:
+                     c.config.getOptionsAsOneString(IsMain in moduleFlags)
+  FilePair(nimFile: f,
+           modname: moduleSuffix(f, c.config.paths, additional))
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
 proc parseDeps(c: var DepContext; p: FilePair; current: Node)
@@ -202,7 +207,7 @@ proc execNifler(c: var DepContext; input, output: string) =
     exec cmd
 
 proc importSystem(c: var DepContext; current: Node) =
-  let p = c.toPair(stdlibFile("std/system.nim"))
+  let p = c.toPair(stdlibFile("std/system.nim"), {IsSystem})
   current.deps.add p
   if not c.processedModules.containsOrIncl(p.modname):
     #echo "NIFLING ", p.nimFile, " -> ", c.config.parsedFile(p)
@@ -361,7 +366,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   let nifler = findTool("nifler")
 
   if config.compat:
-    let cfgNif = config.nifcachePath / moduleSuffix(project, []) & ".cfg.nif"
+    let cfgNif = config.nifcachePath / moduleSuffix(project, [], config.getOptionsAsOneString(true)) & ".cfg.nif"
     exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
       quoteShell(cfgNif)
     parseNifConfig cfgNif, config
@@ -369,7 +374,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
     cmd: cmd)
-  let p = c.toPair(project)
+  let p = c.toPair(project, {IsMain})
   c.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname

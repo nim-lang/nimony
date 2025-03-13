@@ -49,7 +49,13 @@ proc uhashBase36*(s: string): string =
     result.add Base36[int(id mod 36'u32)]
     id = id div 36'u32
 
-proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
+proc moduleSuffix*(path: string; searchPaths: openArray[string]; additional: string): string =
+  # `additional` contains command line options that can affects generated nif or c files.
+  # When they are changed, new generated files have different module suffix and
+  # existing cached files are not used.
+  #
+  # `additional` must be empty when `path` is system module as
+  # `nimony/builtintypes.SystemModuleSuffix`.
   var f = relativePath(path, getCurrentDir(), '/')
   # Select the path that is shortest relative to the searchPath:
   for s in searchPaths:
@@ -57,7 +63,7 @@ proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
     if candidate.len < f.len:
       f = candidate
   let m = extractModulename(f)
-  var id = uhash(f)
+  var id = uhash(f & additional)
   result = newStringOfCap(10)
   for i in 0..<min(m.len, PrefixLen):
     result.add m[i]

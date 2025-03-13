@@ -1,52 +1,52 @@
 (.nif24)
 0,2,tests/nimony/nosystem/ttemplate.nim(stmts 2,1
- (type :int.0.tte5tld8n
+ (type :int.0.tterqlp661
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,3
- (type :float.0.tte5tld8n
+ (type :float.0.tterqlp661
   (f +64) . 7
   (pragmas 2
    (magic 7 Float)) .) 2,4
- (type :char.0.tte5tld8n
+ (type :char.0.tterqlp661
   (c +8) . 6
   (pragmas 2
    (magic 7 Char)) .) 2,6
- (type :array.0.tte5tld8n
+ (type :array.0.tterqlp661
   (array) 7
   (typevars 1
-   (typevar :Index.0.tte5tld8n . . . .) 8
-   (typevar :T.0.tte5tld8n . . . .)) 18
+   (typevar :Index.0.tterqlp661 . . . .) 8
+   (typevar :T.0.tterqlp661 . . . .)) 18
   (pragmas 2
    (magic 7 Array)) .) 2,7
- (type :typedesc.0.tte5tld8n
+ (type :typedesc.0.tterqlp661
   (typedesc) 9
   (typevars 1
-   (typevar :T.1.tte5tld8n . . . .)) 13
+   (typevar :T.1.tterqlp661 . . . .)) 13
   (pragmas 2
    (magic 7 TypeDesc)) .) ,9
- (proc 5 :typeof.0.tte5tld8n
+ (proc 5 :typeof.0.tterqlp661
   (typeof) . 12
   (typevars 1
-   (typevar :T.3.tte5tld8n . . . .)) 15
+   (typevar :T.3.tterqlp661 . . . .)) 15
   (params 1
-   (param :x.0 . . 3 T.3.tte5tld8n .)) 16
-  (typedesc 1 T.3.tte5tld8n) 35
+   (param :x.0 . . 3 T.3.tterqlp661 .)) 16
+  (typedesc 1 T.3.tterqlp661) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,12
- (type ~8 :string.0.tte5tld8n x . . string.0.sysvq0asl) 15,15
- (type ~13 :MyGeneric.0.tte5tld8n . ~4
+ (type ~8 :string.0.tterqlp661 x . . string.0.sysvq0asl) 15,15
+ (type ~13 :MyGeneric.0.tterqlp661 . ~4
   (typevars 1
-   (typevar :T.2.tte5tld8n . . . .)) . 2
+   (typevar :T.2.tterqlp661 . . . .)) . 2
   (object . ~13,1
-   (fld :x.0.tte5tld8n . . 3 T.2.tte5tld8n .))) 2,19
- (gvar :myglob.0.tte5tld8n . . 17 MyGeneric.0.Igj236q.tte5tld8n .) 2,20
- (gvar :other.0.tte5tld8n . . 16 MyGeneric.0.Ibr3ivb1.tte5tld8n .) 9,22
+   (fld :x.0.tterqlp661 . . 3 T.2.tterqlp661 .))) 2,19
+ (gvar :myglob.0.tterqlp661 . . 17 MyGeneric.0.Iw0gq351.tterqlp661 .) 2,20
+ (gvar :other.0.tterqlp661 . . 16 MyGeneric.0.If0jtig.tterqlp661 .) 9,22
  (asgn ~3
-  (dot ~6 myglob.0.tte5tld8n x.0.Igj236q.tte5tld8n +0) 2 +56) 8,23
+  (dot ~6 myglob.0.tterqlp661 x.0.Iw0gq351.tterqlp661 +0) 2 +56) 8,23
  (asgn ~3
-  (dot ~5 other.0.tte5tld8n x.0.Ibr3ivb1.tte5tld8n +0) 2 +79.0) ,25
- (proc 5 :\2B.0.tte5tld8n
+  (dot ~5 other.0.tterqlp661 x.0.If0jtig.tterqlp661 +0) 2 +79.0) ,25
+ (proc 5 :\2B.0.tterqlp661
   (add -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -56,7 +56,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,27
- (template 9 :plus.0.tte5tld8n . . . 13
+ (template 9 :plus.0.tterqlp661 . . . 13
   (params 1
    (param :x.2 . . 6
     (i -1) .) 4
@@ -67,7 +67,7 @@
    (expr
     (add ~14
      (i -1) ~2 x.2 2 y.1)))) ,29
- (proc 5 :foo.0.tte5tld8n . . . 8
+ (proc 5 :foo.0.tterqlp661 . . . 8
   (params 1
    (param :x.3 . . 3
     (i -1) .) 9
@@ -88,7 +88,7 @@
           (i -1) ~10,4 +2 ~7,4 +89))))))) 2,2
    (asgn ~2 x.5 2 "34") ~2,~1
    (ret result.0))) ,34
- (proc 5 :overloaded.0.tte5tld8n . . . 15
+ (proc 5 :overloaded.0.tterqlp661 . . . 15
   (params) . . . 2,1
   (stmts 4
    (let :someInt.0 . . 7,~10
@@ -96,38 +96,38 @@
     (add
      (i -1) 1 +23 5 +90)) ,1
    (discard 11
-    (call ~3 foo.0.tte5tld8n 3
+    (call ~3 foo.0.tterqlp661 3
      (add
       (i -1) ~2 +34 1 +56) 8 "xyz")))) 5,38
- (type :uint.0.tte5tld8n
+ (type :uint.0.tterqlp661
   (u -1) . 6
   (pragmas 2
    (magic 7 UInt)) .) ,40
- (template 9 :conv.0.tte5tld8n . . 13
+ (template 9 :conv.0.tterqlp661 . . 13
   (typevars 1
-   (typevar :T.4.tte5tld8n . . . .)) 16
+   (typevar :T.4.tterqlp661 . . . .)) 16
   (params 1
    (param :x.4 . . 3
-    (i -1) .)) 10 T.4.tte5tld8n . . 30
+    (i -1) .)) 10 T.4.tterqlp661 . . 30
   (stmts 1
    (expr
-    (conv ~1 T.4.tte5tld8n 1 x.4)))) 4,42
- (glet :val.0.tte5tld8n . .
+    (conv ~1 T.4.tterqlp661 1 x.4)))) 4,42
+ (glet :val.0.tterqlp661 . .
   (i -1) 6 +123) ,43
  (discard 30,~3
   (expr 1
    (expr
     (conv ~18,3
-     (u -1) ~12,3 val.0.tte5tld8n)))) 19,19
- (type :MyGeneric.0.Igj236q.tte5tld8n .
-  (at MyGeneric.0.tte5tld8n 1
+     (u -1) ~12,3 val.0.tterqlp661)))) 19,19
+ (type :MyGeneric.0.Iw0gq351.tterqlp661 .
+  (at MyGeneric.0.tterqlp661 1
    (i -1)) ~4,~4 . ~2,~4
   (object . ~13,1
-   (fld :x.0.Igj236q.tte5tld8n . . 16,3
+   (fld :x.0.Iw0gq351.tterqlp661 . . 16,3
     (i -1) .))) 18,20
- (type :MyGeneric.0.Ibr3ivb1.tte5tld8n .
-  (at MyGeneric.0.tte5tld8n 1
+ (type :MyGeneric.0.If0jtig.tterqlp661 .
+  (at MyGeneric.0.tterqlp661 1
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
-   (fld :x.0.Ibr3ivb1.tte5tld8n . . 15,4
+   (fld :x.0.If0jtig.tterqlp661 . . 15,4
     (f +64) .))))

@@ -56,11 +56,7 @@ proc handleCmdLine() =
   var forceRebuild = false
   var useEnv = true
   var moduleFlags: set[ModuleFlag] = {}
-  var config = NifConfig()
-  config.currentPath = getCurrentDir()
-  config.nifcachePath = "nimcache"
-  config.defines.incl "nimony"
-  config.bits = sizeof(int)*8
+  var config = initNifConfig()
   var commandLineArgs = ""
   for kind, key, val in getopt():
     case kind

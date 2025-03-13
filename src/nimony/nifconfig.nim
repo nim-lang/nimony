@@ -6,9 +6,9 @@
 
 ## Read the configuration from the `.cfg.nif` file.
 
-import std / [sets, tables]
+import std / [os, sets, tables]
 
-include nifprelude
+include ".." / lib / nifprelude
 
 type
   NifConfig* = object
@@ -18,6 +18,12 @@ type
     nifcachePath*: string
     bits*: int
     compat*: bool
+
+proc initNifConfig*(): NifConfig =
+  result = NifConfig(currentPath: getCurrentDir(),
+                     nifcachePath: "nimcache",
+                     bits: sizeof(int)*8)
+  result.defines.incl "nimony"
 
 proc parseConfig(c: Cursor; result: var NifConfig) =
   var c = c
@@ -73,6 +79,18 @@ proc parseNifConfig*(configFile: string; result: var NifConfig) =
     parseConfig(c, result)
   finally:
     f.close()
+
+proc getOptionsAsOneString*(config: NifConfig; isMain: bool): string =
+  ## Returns the concatenation of options that affects generated files.
+  result = "--cwd:" & config.currentPath
+  if isMain:
+    result.add " --isMain"
+
+  for i in config.defines:
+    result.add(" -d:" & i)
+
+  result.add " --bits:" & $config.bits
+  #echo result
 
 when isMainModule:
   var conf = default(NifConfig)

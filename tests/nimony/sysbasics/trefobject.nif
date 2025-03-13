@@ -1,119 +1,119 @@
 (.nif24)
 0,1,tests/nimony/sysbasics/trefobject.nim(stmts 9
- (type ~4 :Foo.0.tre8amq6m . . . 2
-  (ref 4 Foo.Obj.0.tre8amq6m)) 9
- (type ~4 :Foo.Obj.0.tre8amq6m . . . 6
+ (type ~4 :Foo.0.tregrbip11 . . . 2
+  (ref 4 Foo.Obj.0.tregrbip11)) 9
+ (type ~4 :Foo.Obj.0.tregrbip11 . . . 6
   (object . ~13,1
-   (fld :x.0.tre8amq6m . . 3
+   (fld :x.0.tregrbip11 . . 3
     (i -1) .) ~13,2
-   (fld :parent.0.tre8amq6m . . 9,~2
-    (ref 4 Foo.Obj.0.tre8amq6m) .))) 4,4
- (gvar :foo.0.tre8amq6m . . 7,~4
-  (ref 4 Foo.Obj.0.tre8amq6m) .) 10,7
- (type ~8 :Node.0.tre8amq6m . ~4
+   (fld :parent.0.tregrbip11 . . 9,~2
+    (ref 4 Foo.Obj.0.tregrbip11) .))) 4,4
+ (gvar :foo.0.tregrbip11 . . 7,~4
+  (ref 4 Foo.Obj.0.tregrbip11) .) 10,7
+ (type ~8 :Node.0.tregrbip11 . ~4
   (typevars 1
-   (typevar :T.0.tre8amq6m . . . .)) . 2
+   (typevar :T.0.tregrbip11 . . . .)) . 2
   (ref 4
-   (at Node.Obj.0.tre8amq6m ~9 T.0.tre8amq6m))) 10,7
- (type ~8 :Node.Obj.0.tre8amq6m . ~4
+   (at Node.Obj.0.tregrbip11 ~9 T.0.tregrbip11))) 10,7
+ (type ~8 :Node.Obj.0.tregrbip11 . ~4
   (typevars 1
-   (typevar :T.1.tre8amq6m . . . .)) . 6
+   (typevar :T.1.tregrbip11 . . . .)) . 6
   (object . ~12,1
-   (fld :val.0.tre8amq6m . . 5 T.1.tre8amq6m .) ~12,2
-   (fld :left.0.tre8amq6m . . 8,~2
+   (fld :val.0.tregrbip11 . . 5 T.1.tregrbip11 .) ~12,2
+   (fld :left.0.tregrbip11 . . 8,~2
     (ref 4
-     (at Node.Obj.0.tre8amq6m 6,2 T.1.tre8amq6m)) .) ~6,2
-   (fld :right.0.tre8amq6m . . 2,~2
+     (at Node.Obj.0.tregrbip11 6,2 T.1.tregrbip11)) .) ~6,2
+   (fld :right.0.tregrbip11 . . 2,~2
     (ref 4
-     (at Node.Obj.0.tre8amq6m 6,2 T.1.tre8amq6m)) .))) 4,11
- (gvar :node.0.tre8amq6m . . 8,~4
-  (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .) 14,14
- (type ~12 :Forward1.0.tre8amq6m . ~4
+     (at Node.Obj.0.tregrbip11 6,2 T.1.tregrbip11)) .))) 4,11
+ (gvar :node.0.tregrbip11 . . 8,~4
+  (ref 4 Node.Obj.0.Ir2xlws.tregrbip11) .) 14,14
+ (type ~12 :Forward1.0.tregrbip11 . ~4
   (typevars 1
-   (typevar :T.2.tre8amq6m . . . .)) . 2
+   (typevar :T.2.tregrbip11 . . . .)) . 2
   (object . ~12,1
-   (fld :x.1.tre8amq6m . . 16,1
+   (fld :x.1.tregrbip11 . . 16,1
     (ref 4
-     (at ForwardNode1.Obj.0.tre8amq6m ~4,~1 T.2.tre8amq6m)) .))) 18,16
- (type ~16 :ForwardNode1.0.tre8amq6m . ~4
+     (at ForwardNode1.Obj.0.tregrbip11 ~4,~1 T.2.tregrbip11)) .))) 18,16
+ (type ~16 :ForwardNode1.0.tregrbip11 . ~4
   (typevars 1
-   (typevar :T.3.tre8amq6m . . . .)) . 2
+   (typevar :T.3.tregrbip11 . . . .)) . 2
   (ref 4
-   (at ForwardNode1.Obj.0.tre8amq6m ~9 T.3.tre8amq6m))) 18,16
- (type ~16 :ForwardNode1.Obj.0.tre8amq6m . ~4
+   (at ForwardNode1.Obj.0.tregrbip11 ~9 T.3.tregrbip11))) 18,16
+ (type ~16 :ForwardNode1.Obj.0.tregrbip11 . ~4
   (typevars 1
-   (typevar :T.4.tre8amq6m . . . .)) . 6
+   (typevar :T.4.tregrbip11 . . . .)) . 6
   (object . ~20,1
-   (fld :val.1.tre8amq6m . . 5 T.4.tre8amq6m .) ~20,2
-   (fld :left.1.tre8amq6m . . 16,~2
+   (fld :val.1.tregrbip11 . . 5 T.4.tregrbip11 .) ~20,2
+   (fld :left.1.tregrbip11 . . 16,~2
     (ref 4
-     (at ForwardNode1.Obj.0.tre8amq6m 6,2 T.4.tre8amq6m)) .) ~14,2
-   (fld :right.1.tre8amq6m . . 10,~2
+     (at ForwardNode1.Obj.0.tregrbip11 6,2 T.4.tregrbip11)) .) ~14,2
+   (fld :right.1.tregrbip11 . . 10,~2
     (ref 4
-     (at ForwardNode1.Obj.0.tre8amq6m 6,2 T.4.tre8amq6m)) .))) 4,20
- (gvar :forwardNode1.0.tre8amq6m . . 16,~4
-  (ref 4 ForwardNode1.Obj.0.I93upex.tre8amq6m) .) 11,23
- (type ~9 :Forward2.0.tre8amq6m . . . 2
+     (at ForwardNode1.Obj.0.tregrbip11 6,2 T.4.tregrbip11)) .))) 4,20
+ (gvar :forwardNode1.0.tregrbip11 . . 16,~4
+  (ref 4 ForwardNode1.Obj.0.Isi4prb.tregrbip11) .) 11,23
+ (type ~9 :Forward2.0.tregrbip11 . . . 2
   (object . ~9,1
-   (fld :x.2.tre8amq6m . . 16,1
-    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m) .))) 18,25
- (type ~16 :ForwardNode2.0.tre8amq6m . ~4
+   (fld :x.2.tregrbip11 . . 16,1
+    (ref 4 ForwardNode2.Obj.0.Iz2wdw3.tregrbip11) .))) 18,25
+ (type ~16 :ForwardNode2.0.tregrbip11 . ~4
   (typevars 1
-   (typevar :T.5.tre8amq6m . . . .)) . 2
+   (typevar :T.5.tregrbip11 . . . .)) . 2
   (ref 4
-   (at ForwardNode2.Obj.0.tre8amq6m ~9 T.5.tre8amq6m))) 18,25
- (type ~16 :ForwardNode2.Obj.0.tre8amq6m . ~4
+   (at ForwardNode2.Obj.0.tregrbip11 ~9 T.5.tregrbip11))) 18,25
+ (type ~16 :ForwardNode2.Obj.0.tregrbip11 . ~4
   (typevars 1
-   (typevar :T.6.tre8amq6m . . . .)) . 6
+   (typevar :T.6.tregrbip11 . . . .)) . 6
   (object . ~20,1
-   (fld :val.3.tre8amq6m . . 5 T.6.tre8amq6m .) ~20,2
-   (fld :left.3.tre8amq6m . . 16,~2
+   (fld :val.3.tregrbip11 . . 5 T.6.tregrbip11 .) ~20,2
+   (fld :left.3.tregrbip11 . . 16,~2
     (ref 4
-     (at ForwardNode2.Obj.0.tre8amq6m 6,2 T.6.tre8amq6m)) .) ~14,2
-   (fld :right.3.tre8amq6m . . 10,~2
+     (at ForwardNode2.Obj.0.tregrbip11 6,2 T.6.tregrbip11)) .) ~14,2
+   (fld :right.3.tregrbip11 . . 10,~2
     (ref 4
-     (at ForwardNode2.Obj.0.tre8amq6m 6,2 T.6.tre8amq6m)) .))) 4,29
- (gvar :forwardNode2.0.tre8amq6m . . 16,~4
-  (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m) .) 19,24
- (type :ForwardNode2.0.Ishmn651.tre8amq6m .
-  (at ForwardNode2.0.tre8amq6m 1
+     (at ForwardNode2.Obj.0.tregrbip11 6,2 T.6.tregrbip11)) .))) 4,29
+ (gvar :forwardNode2.0.tregrbip11 . . 16,~4
+  (ref 4 ForwardNode2.Obj.0.Iz2wdw3.tregrbip11) .) 19,24
+ (type :ForwardNode2.0.Inrrgt41.tregrbip11 .
+  (at ForwardNode2.0.tregrbip11 1
    (i -1)) ~1,1 . 1,1
-  (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m)) 24,25
- (type :ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m .
-  (at ForwardNode2.Obj.0.tre8amq6m ~4,~1
+  (ref 4 ForwardNode2.Obj.0.Iz2wdw3.tregrbip11)) 24,25
+ (type :ForwardNode2.Obj.0.Iz2wdw3.tregrbip11 .
+  (at ForwardNode2.Obj.0.tregrbip11 ~4,~1
    (i -1)) ~6 .
   (object . ~20,1
-   (fld :val.2.tre8amq6m . . 16,~2
+   (fld :val.2.tregrbip11 . . 16,~2
     (i -1) .) ~20,2
-   (fld :left.2.tre8amq6m . . 16,~2
-    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m) .) ~14,2
-   (fld :right.2.tre8amq6m . . 10,~2
-    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m) .))) 14,11
- (type :Node.0.Isesnzm1.tre8amq6m .
-  (at Node.0.tre8amq6m 1
+   (fld :left.2.tregrbip11 . . 16,~2
+    (ref 4 ForwardNode2.Obj.0.Iz2wdw3.tregrbip11) .) ~14,2
+   (fld :right.2.tregrbip11 . . 10,~2
+    (ref 4 ForwardNode2.Obj.0.Iz2wdw3.tregrbip11) .))) 14,11
+ (type :Node.0.Ib92ikk1.tregrbip11 .
+  (at Node.0.tregrbip11 1
    (i -1)) ~4,~4 . ~2,~4
-  (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m)) 16,7
- (type :Node.Obj.0.Iiz3k2p1.tre8amq6m .
-  (at Node.Obj.0.tre8amq6m ~1,4
+  (ref 4 Node.Obj.0.Ir2xlws.tregrbip11)) 16,7
+ (type :Node.Obj.0.Ir2xlws.tregrbip11 .
+  (at Node.Obj.0.tregrbip11 ~1,4
    (i -1)) ~6 .
   (object . ~12,1
-   (fld :val.0.Iiz3k2p1.tre8amq6m . . 11,3
+   (fld :val.0.Ir2xlws.tregrbip11 . . 11,3
     (i -1) .) ~12,2
-   (fld :left.0.Iiz3k2p1.tre8amq6m . . 8,~2
-    (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .) ~6,2
-   (fld :right.0.Iiz3k2p1.tre8amq6m . . 2,~2
-    (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .))) 30,20
- (type :ForwardNode1.0.Iee6hkd1.tre8amq6m .
-  (at ForwardNode1.0.tre8amq6m 1
+   (fld :left.0.Ir2xlws.tregrbip11 . . 8,~2
+    (ref 4 Node.Obj.0.Ir2xlws.tregrbip11) .) ~6,2
+   (fld :right.0.Ir2xlws.tregrbip11 . . 2,~2
+    (ref 4 Node.Obj.0.Ir2xlws.tregrbip11) .))) 30,20
+ (type :ForwardNode1.0.Irtywr8.tregrbip11 .
+  (at ForwardNode1.0.tregrbip11 1
    (i -1)) ~12,~4 . ~10,~4
-  (ref 4 ForwardNode1.Obj.0.I93upex.tre8amq6m)) 24,16
- (type :ForwardNode1.Obj.0.I93upex.tre8amq6m .
-  (at ForwardNode1.Obj.0.tre8amq6m 7,4
+  (ref 4 ForwardNode1.Obj.0.Isi4prb.tregrbip11)) 24,16
+ (type :ForwardNode1.Obj.0.Isi4prb.tregrbip11 .
+  (at ForwardNode1.Obj.0.tregrbip11 7,4
    (i -1)) ~6 .
   (object . ~20,1
-   (fld :val.1.I93upex.tre8amq6m . . 27,3
+   (fld :val.1.Isi4prb.tregrbip11 . . 27,3
     (i -1) .) ~20,2
-   (fld :left.1.I93upex.tre8amq6m . . 16,~2
-    (ref 4 ForwardNode1.Obj.0.I93upex.tre8amq6m) .) ~14,2
-   (fld :right.1.I93upex.tre8amq6m . . 10,~2
-    (ref 4 ForwardNode1.Obj.0.I93upex.tre8amq6m) .))))
+   (fld :left.1.Isi4prb.tregrbip11 . . 16,~2
+    (ref 4 ForwardNode1.Obj.0.Isi4prb.tregrbip11) .) ~14,2
+   (fld :right.1.Isi4prb.tregrbip11 . . 10,~2
+    (ref 4 ForwardNode1.Obj.0.Isi4prb.tregrbip11) .))))

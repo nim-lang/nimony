@@ -1,60 +1,60 @@
 (.nif24)
 0,1,tests/nimony/nosystem/tbinarytree.nim(stmts 5
- (type :int.0.tbimvo1d9
+ (type :int.0.tbitsvlox
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 10,3
- (type ~8 :NodeObj.0.tbimvo1d9 . . . 2
+ (type ~8 :NodeObj.0.tbitsvlox . . . 2
   (object . ~8,1
-   (fld :data.0.tbimvo1d9 . . 6
+   (fld :data.0.tbitsvlox . . 6
     (i -1) .) ~8,2
-   (fld :left.0.tbimvo1d9 . . 5,1
-    (ref 4 NodeObj.0.tbimvo1d9) .) ~2,2
-   (fld :right.0.tbimvo1d9 . . ~1,1
-    (ref 4 NodeObj.0.tbimvo1d9) .))) 7,6
- (type ~5 :Node.0.tbimvo1d9 . . . 2
-  (ref 4 NodeObj.0.tbimvo1d9)) 4,8
- (gvar :x.0.tbimvo1d9 . . 5,~2
-  (ref 4 NodeObj.0.tbimvo1d9) 8
+   (fld :left.0.tbitsvlox . . 5,1
+    (ref 4 NodeObj.0.tbitsvlox) .) ~2,2
+   (fld :right.0.tbitsvlox . . ~1,1
+    (ref 4 NodeObj.0.tbitsvlox) .))) 7,6
+ (type ~5 :Node.0.tbitsvlox . . . 2
+  (ref 4 NodeObj.0.tbitsvlox)) 4,8
+ (gvar :x.0.tbitsvlox . . 5,~2
+  (ref 4 NodeObj.0.tbitsvlox) 8
   (newobj ~3,~2
-   (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~5 data.0.tbimvo1d9 2 +123) 16
-   (kv ~16 left.0.tbimvo1d9 2
+   (ref 4 NodeObj.0.tbitsvlox) 5
+   (kv ~5 data.0.tbitsvlox 2 +123) 16
+   (kv ~16 left.0.tbitsvlox 2
     (nil)) 28
-   (kv ~28 right.0.tbimvo1d9 2
+   (kv ~28 right.0.tbitsvlox 2
     (nil)))) 7,9
  (asgn ~6
-  (ddot ~1 x.0.tbimvo1d9 data.0.tbimvo1d9 +0) 2 +456) 7,10
+  (ddot ~1 x.0.tbitsvlox data.0.tbitsvlox +0) 2 +456) 7,10
  (asgn ~6
-  (ddot ~1 x.0.tbimvo1d9 left.0.tbimvo1d9 +0) 6
+  (ddot ~1 x.0.tbitsvlox left.0.tbitsvlox +0) 6
   (newobj ~4,~4
-   (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~5 data.0.tbimvo1d9 2 +123) 16
-   (kv ~16 left.0.tbimvo1d9 2
+   (ref 4 NodeObj.0.tbitsvlox) 5
+   (kv ~5 data.0.tbitsvlox 2 +123) 16
+   (kv ~16 left.0.tbitsvlox 2
     (nil)) 28
-   (kv ~28 right.0.tbimvo1d9 2
+   (kv ~28 right.0.tbitsvlox 2
     (nil)))) 8,11
  (asgn ~7
-  (ddot ~1 x.0.tbimvo1d9 right.0.tbimvo1d9 +0) 2
+  (ddot ~1 x.0.tbitsvlox right.0.tbitsvlox +0) 2
   (nil)) 13,12
  (asgn ~7
   (ddot ~5
-   (ddot ~1 x.0.tbimvo1d9 left.0.tbimvo1d9 +0) right.0.tbimvo1d9 +0) 2
+   (ddot ~1 x.0.tbitsvlox left.0.tbitsvlox +0) right.0.tbitsvlox +0) 2
   (nil)) 4,13
- (gvar :y.0.tbimvo1d9 . . 5,~7
-  (ref 4 NodeObj.0.tbimvo1d9) 8
+ (gvar :y.0.tbitsvlox . . 5,~7
+  (ref 4 NodeObj.0.tbitsvlox) 8
   (newobj ~3,~7
-   (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~5 data.0.tbimvo1d9 2 +987) 16
-   (kv ~16 left.0.tbimvo1d9 2
+   (ref 4 NodeObj.0.tbitsvlox) 5
+   (kv ~5 data.0.tbitsvlox 2 +987) 16
+   (kv ~16 left.0.tbitsvlox 2
     (nil)) 28
-   (kv ~28 right.0.tbimvo1d9 2
+   (kv ~28 right.0.tbitsvlox 2
     (nil)))) 12,14
  (asgn ~6
   (ddot ~5
-   (ddot ~1 x.0.tbimvo1d9 left.0.tbimvo1d9 +0) left.0.tbimvo1d9 +0) 15
+   (ddot ~1 x.0.tbitsvlox left.0.tbitsvlox +0) left.0.tbitsvlox +0) 15
   (newobj ~18,~8
-   (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~5 data.0.tbimvo1d9 2 -123) 17
-   (kv ~17 left.0.tbimvo1d9 2 y.0.tbimvo1d9) 27
-   (kv ~27 right.0.tbimvo1d9 2 y.0.tbimvo1d9))))
+   (ref 4 NodeObj.0.tbitsvlox) 5
+   (kv ~5 data.0.tbitsvlox 2 -123) 17
+   (kv ~17 left.0.tbitsvlox 2 y.0.tbitsvlox) 27
+   (kv ~27 right.0.tbitsvlox 2 y.0.tbitsvlox))))

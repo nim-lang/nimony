@@ -263,7 +263,7 @@ proc semInclude(c: var SemContext; it: var Item) =
           break
 
       if not isRecursive:
-        var buf = parseFile(f2, c.g.config.paths, c.g.config.nifcachePath)
+        var buf = parseFile(f2, c.g.config)
         c.includeStack.add f2
         #c.m.includes.add f2
         var n = cursorAt(buf, 0)
@@ -292,7 +292,12 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
   if not fileExists(f2):
     c.buildErr info, "file not found: " & f2
     return
-  let suffix = moduleSuffix(f2, c.g.config.paths)
+  let suffix = moduleSuffix(f2,
+                            c.g.config.paths,
+                            if mode.kind == ImportSystem:
+                              ""
+                            else:
+                              c.g.config.getOptionsAsOneString(false))
   if not c.processedModules.containsOrIncl(suffix):
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):

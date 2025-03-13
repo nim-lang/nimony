@@ -1,30 +1,30 @@
 (.nif24)
 0,2,tests/nimony/nosystem/t2.nim(stmts 2,1
- (type :int.0.t2er4ggt1
+ (type :int.0.t2oplpoj
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,3
- (type :float.0.t2er4ggt1
+ (type :float.0.t2oplpoj
   (f +64) . 7
   (pragmas 2
    (magic 7 Float)) .) 2,4
- (type :typedesc.0.t2er4ggt1
+ (type :typedesc.0.t2oplpoj
   (typedesc) 9
   (typevars 1
-   (typevar :T.0.t2er4ggt1 . . . .)) 13
+   (typevar :T.0.t2oplpoj . . . .)) 13
   (pragmas 2
    (magic 7 TypeDesc)) .) ,6
- (proc 5 :typeof.0.t2er4ggt1
+ (proc 5 :typeof.0.t2oplpoj
   (typeof) . 12
   (typevars 1
-   (typevar :T.1.t2er4ggt1 . . . .)) 15
+   (typevar :T.1.t2oplpoj . . . .)) 15
   (params 1
-   (param :x.0 . . 3 T.1.t2er4ggt1 .)) 16
-  (typedesc 1 T.1.t2er4ggt1) 35
+   (param :x.0 . . 3 T.1.t2oplpoj .)) 16
+  (typedesc 1 T.1.t2oplpoj) 35
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,9
- (type ~8 :string.0.t2er4ggt1 x . . string.0.sysvq0asl) ,12
- (proc 5 :\2B.0.t2er4ggt1
+ (type ~8 :string.0.t2oplpoj x . . string.0.sysvq0asl) ,12
+ (proc 5 :\2B.0.t2oplpoj
   (add -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -34,7 +34,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,14
- (proc 5 :foo.0.t2er4ggt1 . . . 8
+ (proc 5 :foo.0.t2oplpoj . . . 8
   (params 1
    (param :x.2 . . 3
     (i -1) .) 9
@@ -47,7 +47,7 @@
    (asgn ~7 result.0 2 +4) 2,2
    (asgn ~2 x.4 2 "34") ~2,~1
    (ret result.0))) ,19
- (proc 5 :overloaded.0.t2er4ggt1 . . . 15
+ (proc 5 :overloaded.0.t2oplpoj . . . 15
   (params) . . . 2,1
   (stmts 4
    (let :someInt.0 . . 7,~8
@@ -55,10 +55,10 @@
     (add
      (i -1) 1 +23 5 +90)) ,1
    (discard 11
-    (call ~3 foo.0.t2er4ggt1 3
+    (call ~3 foo.0.t2oplpoj 3
      (add
       (i -1) ~2 +34 1 +56) 8 "xyz")))) ,23
- (proc 5 :exprReturn.0.t2er4ggt1 . . . 15
+ (proc 5 :exprReturn.0.t2oplpoj . . . 15
   (params 1
    (param :x.3 . . 3
     (i -1) .)) 10

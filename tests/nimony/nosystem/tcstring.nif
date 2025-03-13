@@ -1,22 +1,22 @@
 (.nif24)
 0,2,tests/nimony/nosystem/tcstring.nim(stmts 2,1
- (type :int.0.tcsj45p9m
+ (type :int.0.tcsaaosui1
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,2
- (type :bool.0.tcsj45p9m
+ (type :bool.0.tcsaaosui1
   (bool) . 6
   (pragmas 2
    (magic 7 Bool)) .) 2,4
- (type :cstring.0.tcsj45p9m
+ (type :cstring.0.tcsaaosui1
   (cstring) . 9
   (pragmas 2
    (magic 7 Cstring)) .) 2,5
- (type :pointer.0.tcsj45p9m
+ (type :pointer.0.tcsaaosui1
   (pointer) . 9
   (pragmas 2
    (magic 7 Pointer)) .) ,8
- (proc 5 :\2B.0.tcsj45p9m
+ (proc 5 :\2B.0.tcsaaosui1
   (add -3) . . 9
   (params 1
    (param :x.0 . . 6
@@ -26,7 +26,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,9
- (proc 5 :\2D.0.tcsj45p9m
+ (proc 5 :\2D.0.tcsaaosui1
   (sub -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -36,7 +36,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,11
- (proc 5 :<=.0.tcsj45p9m
+ (proc 5 :<=.0.tcsaaosui1
   (le -3) . . 10
   (params 1
    (param :x.2 . . 6
@@ -46,19 +46,19 @@
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) 4,13
- (gvar :x.0.tcsj45p9m . . 12,~5
+ (gvar :x.0.tcsaaosui1 . . 12,~5
   (i -1) 4
   (cast 5
    (i -1) 10 +55)) 4,15
- (gvar :y.0.tcsj45p9m . . 3
+ (gvar :y.0.tcsaaosui1 . . 3
   (pointer) 13
   (nil)) 2,18
- (const :myconst.0.tcsj45p9m . . 10
+ (const :myconst.0.tcsaaosui1 . . 10
   (cstring) 17
   (conv ~7
    (cstring)
    (suf "abc" "R"))) 4,20
- (gvar :zz.0.tcsj45p9m . . 4
+ (gvar :zz.0.tcsaaosui1 . . 4
   (cstring)
   (hconv 8,22,tests/nimony/nosystem/tcstring.nim
    (cstring) 18,22,tests/nimony/nosystem/tcstring.nim "xzy")))

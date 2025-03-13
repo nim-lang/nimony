@@ -1,11 +1,11 @@
 (.nif24)
 0,1,tests/nimony/sysbasics/tbasics.nim(stmts 8,1
- (type ~6 :Array.0.tbawx6nu81 . . . 7
+ (type ~6 :Array.0.tbayqq7xr1 . . . 7
   (array 4
    (i -1)
    (rangetype
     (i -1) +0 +4))) 4,3
- (gvar :s.0.tbawx6nu81 . . 4
+ (gvar :s.0.tbayqq7xr1 . . 4
   (array
    (i -1)
    (rangetype
@@ -15,12 +15,12 @@
     (i -1)
     (rangetype
      (i -1) +0 +2)) 1 +1 4 +2 7 +3)) 4,4
- (gvar :s2.0.tbawx6nu81 . . 11,~3
+ (gvar :s2.0.tbayqq7xr1 . . 11,~3
   (array 4
    (i -1)
    (rangetype
     (i -1) +0 +4)) .) 4,5
- (gvar :s3.0.tbawx6nu81 . . 11,~4
+ (gvar :s3.0.tbayqq7xr1 . . 11,~4
   (array 4
    (i -1)
    (rangetype
@@ -30,7 +30,7 @@
     (i -1)
     (rangetype
      (i -1) +0 +4)) 1 +1 4 +2 7 +3 10 +4 13 +5)) ,7
- (proc 5 :foo.0.tbawx6nu81 . . . 9
+ (proc 5 :foo.0.tbayqq7xr1 . . . 9
   (params) . . . 2,1
   (stmts 4
    (var :x.2 . . 2,~5
@@ -53,8 +53,8 @@
       (i -1)
       (rangetype
        (i -1) +0 +3)) 1 +5 4 +6 7 +7 10 +8)))) 3,11
- (call ~3 foo.0.tbawx6nu81) ,13
- (proc 5 :foo2.0.tbawx6nu81 . . . 9
+ (call ~3 foo.0.tbayqq7xr1) ,13
+ (proc 5 :foo2.0.tbayqq7xr1 . . . 9
   (params 1
    (param :m.0 . . 3
     (i -1) .)) . . . 2,1
@@ -101,8 +101,8 @@
       (tuple 1,~3
        (i -1)
        (i -1))) 1 y.0 4 s.0 7 m1.0)))) 4,20
- (call ~4 foo2.0.tbawx6nu81 1 +12) ,22
- (proc 5 :foo3.0.tbawx6nu81 . . . 9
+ (call ~4 foo2.0.tbayqq7xr1 1 +12) ,22
+ (proc 5 :foo3.0.tbayqq7xr1 . . . 9
   (params 1
    (param :x.0 . . 3
     (pointer) .)) . . . 2,1
@@ -126,52 +126,52 @@
     (ptr 4
      (i -1)) 9
     (addr s.1)) 4,2
-   (call ~4 foo3.0.tbawx6nu81 1
+   (call ~4 foo3.0.tbayqq7xr1 1
     (hconv 6,~8
      (pointer) m.3)) 4,3
    (let :m2.0 . . 7,~9
     (pointer) 5
     (cast 5
      (pointer) 14 m.3)) 4,4
-   (call ~4 foo3.0.tbawx6nu81 1 m2.0))) 10,35
- (type ~8 :Foo1314.0.tbawx6nu81 . . . 2
+   (call ~4 foo3.0.tbayqq7xr1 1 m2.0))) 10,35
+ (type ~8 :Foo1314.0.tbayqq7xr1 . . . 2
   (object . ~8,1
-   (fld :a.0.tbawx6nu81 . . 15
+   (fld :a.0.tbayqq7xr1 . . 15
     (i -1) .) ~5,1
-   (fld :b.0.tbawx6nu81 . . 12
+   (fld :b.0.tbayqq7xr1 . . 12
     (i -1) .) ~2,1
-   (fld :c.0.tbawx6nu81 . . 9
+   (fld :c.0.tbayqq7xr1 . . 9
     (i -1) .) 1,1
-   (fld :d.0.tbawx6nu81 . . 6
+   (fld :d.0.tbayqq7xr1 . . 6
     (i -1) .) 4,1
-   (fld :e.0.tbawx6nu81 . . 3
+   (fld :e.0.tbayqq7xr1 . . 3
     (i -1) .))) ,39
- (proc 5 :foo1314.0.tbawx6nu81 . . . 12
+ (proc 5 :foo1314.0.tbayqq7xr1 . . . 12
   (params 1
-   (param :x.1 . . 3 Foo1314.0.tbawx6nu81 .)) . . . 2,1
+   (param :x.1 . . 3 Foo1314.0.tbayqq7xr1 .)) . . . 2,1
   (stmts 4
    (let :s.2 . . 13,~4
     (i -1) 5
-    (dot ~1 x.1 a.0.tbawx6nu81 +0)))) 4,42
- (gvar :a.1.tbawx6nu81 . . 12,~3 Foo1314.0.tbawx6nu81 11
-  (oconstr 1,~3 Foo1314.0.tbawx6nu81
-   (kv a.0.tbawx6nu81 43,412,lib/std/system.nim
+    (dot ~1 x.1 a.0.tbayqq7xr1 +0)))) 4,42
+ (gvar :a.1.tbayqq7xr1 . . 12,~3 Foo1314.0.tbayqq7xr1 11
+  (oconstr 1,~3 Foo1314.0.tbayqq7xr1
+   (kv a.0.tbayqq7xr1 43,412,lib/std/system.nim
     (expr
      (expr +0)))
-   (kv b.0.tbawx6nu81 43,412,lib/std/system.nim
+   (kv b.0.tbayqq7xr1 43,412,lib/std/system.nim
     (expr
      (expr +0)))
-   (kv c.0.tbawx6nu81 43,412,lib/std/system.nim
+   (kv c.0.tbayqq7xr1 43,412,lib/std/system.nim
     (expr
      (expr +0)))
-   (kv d.0.tbawx6nu81 43,412,lib/std/system.nim
+   (kv d.0.tbayqq7xr1 43,412,lib/std/system.nim
     (expr
      (expr +0)))
-   (kv e.0.tbawx6nu81 43,412,lib/std/system.nim
+   (kv e.0.tbayqq7xr1 43,412,lib/std/system.nim
     (expr
      (expr +0))))) 7,43
- (call ~7 foo1314.0.tbawx6nu81 1 a.1.tbawx6nu81) ,45
- (proc 5 :foo2233.0.tbawx6nu81 . . . 12
+ (call ~7 foo1314.0.tbayqq7xr1 1 a.1.tbayqq7xr1) ,45
+ (proc 5 :foo2233.0.tbayqq7xr1 . . . 12
   (params) . 15
   (pragmas 2
    (nimcall)) . 2,1
@@ -186,8 +186,8 @@
      (params) . 3
      (pragmas 2
       (nimcall)) . .) .))) 7,51
- (call ~7 foo2233.0.tbawx6nu81) ,53
- (proc 5 :basictuple.0.tbawx6nu81 . . . 15
+ (call ~7 foo2233.0.tbayqq7xr1) ,53
+ (proc 5 :basictuple.0.tbayqq7xr1 . . . 15
   (params) . . . 2,1
   (stmts 4
    (var :t.0 . . 3
@@ -221,4 +221,4 @@
     (tupat t.0 2 +0)) ,5
    (discard 8
     (tupat t.0 2 +1)))) 10,61
- (call ~10 basictuple.0.tbawx6nu81))
+ (call ~10 basictuple.0.tbayqq7xr1))

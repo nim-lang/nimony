@@ -264,10 +264,10 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
 
 # ------------------ include/import handling ------------------------
 
-proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
+proc parseFile*(nimFile: string; config: NifConfig): TokenBuf =
   let nifler = findTool("nifler")
-  let name = moduleSuffix(nimFile, paths)
-  let src = nifcachePath / name & ".1.nif"
+  let name = moduleSuffix(nimFile, config.paths, config.getOptionsAsOneString(false))
+  let src = config.nifcachePath / name & ".1.nif"
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 

@@ -1,116 +1,116 @@
 (.nif24)
 0,1,tests/nimony/sysbasics/tsets.nim(stmts 9
- (type ~4 :Foo.0.tsefy5wha . . . 2
+ (type ~4 :Foo.0.tse6d56m4 . . . 2
   (enum
    (u +8) ~9,1
-   (efld :A.0.tsefy5wha . . Foo.0.tsefy5wha
+   (efld :A.0.tse6d56m4 . . Foo.0.tse6d56m4
     (tup +0 "A")) ~6,1
-   (efld :B.0.tsefy5wha . . Foo.0.tsefy5wha
+   (efld :B.0.tse6d56m4 . . Foo.0.tse6d56m4
     (tup +1 "B")) ~3,1
-   (efld :C.0.tsefy5wha . . Foo.0.tsefy5wha
+   (efld :C.0.tse6d56m4 . . Foo.0.tse6d56m4
     (tup +2 "C")) ,1
-   (efld :D.0.tsefy5wha . . Foo.0.tsefy5wha
+   (efld :D.0.tse6d56m4 . . Foo.0.tse6d56m4
     (tup +3 "D")) 3,1
-   (efld :E.0.tsefy5wha . . Foo.0.tsefy5wha
+   (efld :E.0.tse6d56m4 . . Foo.0.tse6d56m4
     (tup +4 "E")) 6,1
-   (efld :F.0.tsefy5wha . . Foo.0.tsefy5wha
+   (efld :F.0.tse6d56m4 . . Foo.0.tse6d56m4
     (tup +5 "F")))) 5
- (proc :dollar`.Foo.0.tsefy5wha x . .
+ (proc :dollar`.Foo.0.tse6d56m4 x . .
   (params
-   (param :e.0 . . Foo.0.tsefy5wha .)) string.0.sysvq0asl . .
+   (param :e.0 . . Foo.0.tse6d56m4 .)) string.0.sysvq0asl . .
   (stmts 6
    (result :result.0 . . string.0.sysvq0asl .) 6
    (case e.0 ~9,1
     (of
-     (ranges A.0.tsefy5wha)
+     (ranges A.0.tse6d56m4)
      (stmts
       (ret "A"))) ~6,1
     (of
-     (ranges B.0.tsefy5wha)
+     (ranges B.0.tse6d56m4)
      (stmts
       (ret "B"))) ~3,1
     (of
-     (ranges C.0.tsefy5wha)
+     (ranges C.0.tse6d56m4)
      (stmts
       (ret "C"))) ,1
     (of
-     (ranges D.0.tsefy5wha)
+     (ranges D.0.tse6d56m4)
      (stmts
       (ret "D"))) 3,1
     (of
-     (ranges E.0.tsefy5wha)
+     (ranges E.0.tse6d56m4)
      (stmts
       (ret "E"))) 6,1
     (of
-     (ranges F.0.tsefy5wha)
+     (ranges F.0.tse6d56m4)
      (stmts
       (ret "F"))))
    (ret result.0))) 4,3
- (gvar :s.0.tsefy5wha . . 10
-  (set 1 Foo.0.tsefy5wha) .) 7,3
- (gvar :s1.0.tsefy5wha . . 7
-  (set 1 Foo.0.tsefy5wha) .) 2,4
- (asgn ~2 s.0.tsefy5wha 2
+ (gvar :s.0.tse6d56m4 . . 10
+  (set 1 Foo.0.tse6d56m4) .) 7,3
+ (gvar :s1.0.tse6d56m4 . . 7
+  (set 1 Foo.0.tse6d56m4) .) 2,4
+ (asgn ~2 s.0.tse6d56m4 2
   (setconstr 10,~1
-   (set 1 Foo.0.tsefy5wha) 1
-   (range A.0.tsefy5wha 3 D.0.tsefy5wha))) 3,5
- (asgn ~3 s1.0.tsefy5wha 2
+   (set 1 Foo.0.tse6d56m4) 1
+   (range A.0.tse6d56m4 3 D.0.tse6d56m4))) 3,5
+ (asgn ~3 s1.0.tse6d56m4 2
   (setconstr 9,~2
-   (set 1 Foo.0.tsefy5wha) 1
-   (range A.0.tsefy5wha 3 C.0.tsefy5wha))) ,6
+   (set 1 Foo.0.tse6d56m4) 1
+   (range A.0.tse6d56m4 3 C.0.tse6d56m4))) ,6
  (discard 11
   (ltset 3,~3
-   (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) 4,7
- (glet :y.0.tsefy5wha . . 10,~4
-  (set 1 Foo.0.tsefy5wha) 7
+   (set 1 Foo.0.tse6d56m4) ~3 s1.0.tse6d56m4 2 s.0.tse6d56m4)) 4,7
+ (glet :y.0.tse6d56m4 . . 10,~4
+  (set 1 Foo.0.tse6d56m4) 7
   (mulset 3,~4
-   (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) 4,8
- (glet :z.0.tsefy5wha . . 10,~5
-  (set 1 Foo.0.tsefy5wha) 14 y.0.tsefy5wha) ,9
+   (set 1 Foo.0.tse6d56m4) ~3 s1.0.tse6d56m4 2 s.0.tse6d56m4)) 4,8
+ (glet :z.0.tse6d56m4 . . 10,~5
+  (set 1 Foo.0.tse6d56m4) 14 y.0.tse6d56m4) ,9
  (discard 10
   (eqset 4,~6
-   (set 1 Foo.0.tsefy5wha) ~2 y.0.tsefy5wha 3
+   (set 1 Foo.0.tse6d56m4) ~2 y.0.tse6d56m4 3
    (setconstr 1,~6
-    (set 1 Foo.0.tsefy5wha) 1
-    (range A.0.tsefy5wha 3 C.0.tsefy5wha)))) ,10
+    (set 1 Foo.0.tse6d56m4) 1
+    (range A.0.tse6d56m4 3 C.0.tse6d56m4)))) ,10
  (discard 10
   (eqset 4,~7
-   (set 1 Foo.0.tsefy5wha) ~2 z.0.tsefy5wha 3
+   (set 1 Foo.0.tse6d56m4) ~2 z.0.tse6d56m4 3
    (setconstr 1,~7
-    (set 1 Foo.0.tsefy5wha) 1
-    (range A.0.tsefy5wha 3 C.0.tsefy5wha)))) ,11
+    (set 1 Foo.0.tse6d56m4) 1
+    (range A.0.tse6d56m4 3 C.0.tse6d56m4)))) ,11
  (discard 15
   (eqset ~1,~8
-   (set 1 Foo.0.tsefy5wha) ~5
+   (set 1 Foo.0.tse6d56m4) ~5
    (minusset 4,~8
-    (set 1 Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 2 s1.0.tsefy5wha) 3
+    (set 1 Foo.0.tse6d56m4) ~2 s.0.tse6d56m4 2 s1.0.tse6d56m4) 3
    (setconstr ~4,~8
-    (set 1 Foo.0.tsefy5wha) 1 D.0.tsefy5wha))) ,12
+    (set 1 Foo.0.tse6d56m4) 1 D.0.tse6d56m4))) ,12
  (discard 11
   (leset 3,~9
-   (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 3 s.0.tsefy5wha)) 4,13
- (glet :val.0.tsefy5wha . . 7,~12 Foo.0.tsefy5wha 6 D.0.tsefy5wha) 3,14
- (asgn ~3 s1.0.tsefy5wha 2
+   (set 1 Foo.0.tse6d56m4) ~3 s1.0.tse6d56m4 3 s.0.tse6d56m4)) 4,13
+ (glet :val.0.tse6d56m4 . . 7,~12 Foo.0.tse6d56m4 6 D.0.tse6d56m4) 3,14
+ (asgn ~3 s1.0.tse6d56m4 2
   (setconstr 9,~11
-   (set 1 Foo.0.tsefy5wha) 1
-   (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha)) ,16
- (template 9 :resem.0.tsefy5wha . . . 14
+   (set 1 Foo.0.tse6d56m4) 1
+   (range A.0.tse6d56m4 3 B.0.tse6d56m4) 7 val.0.tse6d56m4 12 F.0.tse6d56m4)) ,16
+ (template 9 :resem.0.tse6d56m4 . . . 14
   (params) . . . 2,1
   (stmts 2
-   (asgn ~2 s.0.tsefy5wha 2
+   (asgn ~2 s.0.tse6d56m4 2
     (setconstr 8,~14
-     (set 1 Foo.0.tsefy5wha) 1 A.0.tsefy5wha 4
-     (range C.0.tsefy5wha 3 E.0.tsefy5wha) 10 F.0.tsefy5wha)) 3,1
-   (asgn ~3 s1.0.tsefy5wha 2
+     (set 1 Foo.0.tse6d56m4) 1 A.0.tse6d56m4 4
+     (range C.0.tse6d56m4 3 E.0.tse6d56m4) 10 F.0.tse6d56m4)) 3,1
+   (asgn ~3 s1.0.tse6d56m4 2
     (setconstr 7,~15
-     (set 1 Foo.0.tsefy5wha) 1
-     (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha)))) 2,17
+     (set 1 Foo.0.tse6d56m4) 1
+     (range A.0.tse6d56m4 3 B.0.tse6d56m4) 7 val.0.tse6d56m4 12 F.0.tse6d56m4)))) 2,17
  (stmts 2
-  (asgn ~2 s.0.tsefy5wha 2
+  (asgn ~2 s.0.tse6d56m4 2
    (setconstr 8,~14
-    (set 1 Foo.0.tsefy5wha) 1 A.0.tsefy5wha 4
-    (range C.0.tsefy5wha 3 E.0.tsefy5wha) 10 F.0.tsefy5wha)) 3,1
-  (asgn ~3 s1.0.tsefy5wha 2
+    (set 1 Foo.0.tse6d56m4) 1 A.0.tse6d56m4 4
+    (range C.0.tse6d56m4 3 E.0.tse6d56m4) 10 F.0.tse6d56m4)) 3,1
+  (asgn ~3 s1.0.tse6d56m4 2
    (setconstr 7,~15
-    (set 1 Foo.0.tsefy5wha) 1
-    (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha))))
+    (set 1 Foo.0.tse6d56m4) 1
+    (range A.0.tse6d56m4 3 B.0.tse6d56m4) 7 val.0.tse6d56m4 12 F.0.tse6d56m4))))

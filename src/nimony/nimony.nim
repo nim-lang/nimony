@@ -47,7 +47,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                          commandLineArgs: string; forceRebuild: bool) =
   let nifler = findTool("nifler")
-  let name = moduleSuffix(nimFile, config.paths)
+  let name = moduleSuffix(nimFile, config.paths, config.getOptionsAsOneString(IsMain in moduleFlags))
   let src = config.nifcachePath / name & ".1.nif"
   let dest = config.nifcachePath / name & ".2.nif"
   let toforceRebuild = if forceRebuild: " -f " else: ""
@@ -67,11 +67,7 @@ proc handleCmdLine() =
   var useEnv = true
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
-  var config = NifConfig()
-  config.currentPath = getCurrentDir()
-  config.nifcachePath = "nimcache"
-  config.defines.incl "nimony"
-  config.bits = sizeof(int)*8
+  var config = initNifConfig()
   var commandLineArgs = ""
   var commandLineArgsNifc = ""
   var isChild = false

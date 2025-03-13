@@ -1,22 +1,22 @@
 (.nif24)
 0,1,tests/nimony/nosystem/tdefinedarg.nim(stmts 5
- (type :untyped.0.tdej0g1hh1
+ (type :untyped.0.tdeoeo7gr1
   (untyped) . 9
   (pragmas 2
    (magic 7 Expr)) .) ,2
- (proc 5 :defined.0.tdej0g1hh1
+ (proc 5 :defined.0.tdeoeo7gr1
   (defined) . . 12
   (params 1
    (param :x.0 . . 3
     (untyped) .)) . 25
   (pragmas 2
    (magic 7 Defined)) . .) 4,4
- (glet :x.0.tdej0g1hh1 . .
+ (glet :x.0.tdeoeo7gr1 . .
   (bool) 12
   (false)) 4,5
- (glet :y.0.tdej0g1hh1 . .
+ (glet :y.0.tdeoeo7gr1 . .
   (bool) 12
   (true)) 4,6
- (glet :z.0.tdej0g1hh1 . .
+ (glet :z.0.tdeoeo7gr1 . .
   (bool) 15
   (false)))

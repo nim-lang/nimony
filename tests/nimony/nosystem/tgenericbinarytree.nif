@@ -1,128 +1,128 @@
 (.nif24)
 0,1,tests/nimony/nosystem/tgenericbinarytree.nim(stmts 5
- (type :int.0.tge70unlm
+ (type :int.0.tgexqxvrf
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 10,3
- (type ~8 :Node.0.tge70unlm . ~4
+ (type ~8 :Node.0.tgexqxvrf . ~4
   (typevars 1
-   (typevar :T.0.tge70unlm . . . .)) . 2
+   (typevar :T.0.tgexqxvrf . . . .)) . 2
   (ref 11
-   (at ~7 NodeObj.0.tge70unlm 1 T.0.tge70unlm))) 13,4
- (type ~11 :NodeObj.0.tge70unlm . ~4
+   (at ~7 NodeObj.0.tgexqxvrf 1 T.0.tgexqxvrf))) 13,4
+ (type ~11 :NodeObj.0.tgexqxvrf . ~4
   (typevars 1
-   (typevar :T.1.tge70unlm . . . .)) . 2
+   (typevar :T.1.tgexqxvrf . . . .)) . 2
   (object . ~11,1
-   (fld :data.0.tge70unlm . . 6 T.1.tge70unlm .) ~11,2
-   (fld :left.0.tge70unlm . . 8,~3
+   (fld :data.0.tgexqxvrf . . 6 T.1.tgexqxvrf .) ~11,2
+   (fld :left.0.tgexqxvrf . . 8,~3
     (ref 11
-     (at ~7 NodeObj.0.tge70unlm ~1,3 T.1.tge70unlm)) .) ~5,2
-   (fld :right.0.tge70unlm . . 2,~3
+     (at ~7 NodeObj.0.tgexqxvrf ~1,3 T.1.tgexqxvrf)) .) ~5,2
+   (fld :right.0.tgexqxvrf . . 2,~3
     (ref 11
-     (at ~7 NodeObj.0.tge70unlm ~1,3 T.1.tge70unlm)) .))) 4,8
- (gvar :x.0.tge70unlm . . 8,~5
-  (ref 11 NodeObj.0.Itet59r.tge70unlm) 13
+     (at ~7 NodeObj.0.tgexqxvrf ~1,3 T.1.tgexqxvrf)) .))) 4,8
+ (gvar :x.0.tgexqxvrf . . 8,~5
+  (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) 13
   (newobj ~5,~5
-   (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-   (kv ~5 data.0.Itet59r.tge70unlm 2 +123) 16
-   (kv ~16 left.0.Itet59r.tge70unlm 2
+   (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) 5
+   (kv ~5 data.0.Ib3t77t1.tgexqxvrf 2 +123) 16
+   (kv ~16 left.0.Ib3t77t1.tgexqxvrf 2
     (nil)) 28
-   (kv ~28 right.0.Itet59r.tge70unlm 2
+   (kv ~28 right.0.Ib3t77t1.tgexqxvrf 2
     (nil)))) 7,9
  (asgn ~6
-  (ddot ~1 x.0.tge70unlm data.0.Itet59r.tge70unlm +0) 2 +456) 7,10
+  (ddot ~1 x.0.tgexqxvrf data.0.Ib3t77t1.tgexqxvrf +0) 2 +456) 7,10
  (asgn ~6
-  (ddot ~1 x.0.tge70unlm left.0.Itet59r.tge70unlm +0) 11
+  (ddot ~1 x.0.tgexqxvrf left.0.Ib3t77t1.tgexqxvrf +0) 11
   (newobj ~6,~7
-   (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-   (kv ~5 data.0.Itet59r.tge70unlm 2 +123) 16
-   (kv ~16 left.0.Itet59r.tge70unlm 2
+   (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) 5
+   (kv ~5 data.0.Ib3t77t1.tgexqxvrf 2 +123) 16
+   (kv ~16 left.0.Ib3t77t1.tgexqxvrf 2
     (nil)) 28
-   (kv ~28 right.0.Itet59r.tge70unlm 2
+   (kv ~28 right.0.Ib3t77t1.tgexqxvrf 2
     (nil)))) 8,11
  (asgn ~7
-  (ddot ~1 x.0.tge70unlm right.0.Itet59r.tge70unlm +0) 2
+  (ddot ~1 x.0.tgexqxvrf right.0.Ib3t77t1.tgexqxvrf +0) 2
   (nil)) 13,12
  (asgn ~7
   (ddot ~5
-   (ddot ~1 x.0.tge70unlm left.0.Itet59r.tge70unlm +0) right.0.Itet59r.tge70unlm +0) 2
+   (ddot ~1 x.0.tgexqxvrf left.0.Ib3t77t1.tgexqxvrf +0) right.0.Ib3t77t1.tgexqxvrf +0) 2
   (nil)) 4,13
- (gvar :y.0.tge70unlm . . 8,~10
-  (ref 11 NodeObj.0.Itet59r.tge70unlm) 13
+ (gvar :y.0.tgexqxvrf . . 8,~10
+  (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) 13
   (newobj ~5,~10
-   (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-   (kv ~5 data.0.Itet59r.tge70unlm 2 +987) 16
-   (kv ~16 left.0.Itet59r.tge70unlm 2
+   (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) 5
+   (kv ~5 data.0.Ib3t77t1.tgexqxvrf 2 +987) 16
+   (kv ~16 left.0.Ib3t77t1.tgexqxvrf 2
     (nil)) 28
-   (kv ~28 right.0.Itet59r.tge70unlm 2
+   (kv ~28 right.0.Ib3t77t1.tgexqxvrf 2
     (nil)))) 12,14
  (asgn ~6
   (ddot ~5
-   (ddot ~1 x.0.tge70unlm left.0.Itet59r.tge70unlm +0) left.0.Itet59r.tge70unlm +0) 11
+   (ddot ~1 x.0.tgexqxvrf left.0.Ib3t77t1.tgexqxvrf +0) left.0.Ib3t77t1.tgexqxvrf +0) 11
   (newobj ~11,~11
-   (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-   (kv ~5 data.0.Itet59r.tge70unlm 2 -123) 17
-   (kv ~17 left.0.Itet59r.tge70unlm 2 y.0.tge70unlm) 27
-   (kv ~27 right.0.Itet59r.tge70unlm 2 y.0.tge70unlm))) ,16
- (proc 5 :foo.0.tge70unlm . . 8
+   (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) 5
+   (kv ~5 data.0.Ib3t77t1.tgexqxvrf 2 -123) 17
+   (kv ~17 left.0.Ib3t77t1.tgexqxvrf 2 y.0.tgexqxvrf) 27
+   (kv ~27 right.0.Ib3t77t1.tgexqxvrf 2 y.0.tgexqxvrf))) ,16
+ (proc 5 :foo.0.tgexqxvrf . . 8
   (typevars 1
-   (typevar :T.2.tge70unlm . . . .)) 11
+   (typevar :T.2.tgexqxvrf . . . .)) 11
   (params 1
-   (param :data.0 . . 6 T.2.tge70unlm .)) 12,~13
+   (param :data.0 . . 6 T.2.tgexqxvrf .)) 12,~13
   (ref 11
-   (at ~7 NodeObj.0.tge70unlm ~7,13 T.2.tge70unlm)) . . 2,1
+   (at ~7 NodeObj.0.tgexqxvrf ~7,13 T.2.tgexqxvrf)) . . 2,1
   (stmts 7
    (result :result.0 . . 3,~14
     (ref 11
-     (at ~7 NodeObj.0.tge70unlm ~7,13 T.2.tge70unlm)) .) 7
+     (at ~7 NodeObj.0.tgexqxvrf ~7,13 T.2.tgexqxvrf)) .) 7
    (asgn ~7 result.0 9
     (newobj ~6,~14
      (ref 11
-      (at ~7 NodeObj.0.tge70unlm ~7,13 T.2.tge70unlm)) 5
+      (at ~7 NodeObj.0.tgexqxvrf ~7,13 T.2.tgexqxvrf)) 5
      (kv ~5 data 2 data.0) 17
      (kv ~17 left 2
       (nil)) 29
      (kv ~29 right 2
       (nil)))) 12,1
    (asgn ~6
-    (ddot ~6 result.0 data.0.tge70unlm +0) 2 data.0) ~2,~1
+    (ddot ~6 result.0 data.0.tgexqxvrf +0) 2 data.0) ~2,~1
    (ret result.0))) 4,19
- (glet :a.0.tge70unlm . . 8,~16
-  (ref 11 NodeObj.0.Itet59r.tge70unlm) 7
-  (call ~3 foo.1.tge70unlm 1 +123)) 2,20
- (asgn ~2 x.0.tge70unlm 2 a.0.tge70unlm) 11,19
- (proc :foo.1.tge70unlm . ~11,~3 .
-  (at foo.0.tge70unlm
+ (glet :a.0.tgexqxvrf . . 8,~16
+  (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) 7
+  (call ~3 foo.1.tgexqxvrf 1 +123)) 2,20
+ (asgn ~2 x.0.tgexqxvrf 2 a.0.tgexqxvrf) 11,19
+ (proc :foo.1.tgexqxvrf . ~11,~3 .
+  (at foo.0.tgexqxvrf
    (i -1)) ,~3
   (params 1
    (param :data.2 . .
     (i -1) .)) 1,~16
-  (ref 11 NodeObj.0.Itet59r.tge70unlm) ~11,~3 . ~11,~3 . ~9,~2
+  (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) ~11,~3 . ~11,~3 . ~9,~2
   (stmts 7
    (result :result.1 . . 3,~14
-    (ref 11 NodeObj.0.Itet59r.tge70unlm) .) 7
+    (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) .) 7
    (asgn ~7 result.1 9
     (newobj ~6,~14
-     (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-     (kv ~5 data.0.Itet59r.tge70unlm 2 data.2) 17
-     (kv ~17 left.0.Itet59r.tge70unlm 2
+     (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) 5
+     (kv ~5 data.0.Ib3t77t1.tgexqxvrf 2 data.2) 17
+     (kv ~17 left.0.Ib3t77t1.tgexqxvrf 2
       (nil)) 29
-     (kv ~29 right.0.Itet59r.tge70unlm 2
+     (kv ~29 right.0.Ib3t77t1.tgexqxvrf 2
       (nil)))) 12,1
    (asgn ~6
-    (ddot ~6 result.1 data.0.Itet59r.tge70unlm +0) 2 data.2) ~2,~1
+    (ddot ~6 result.1 data.0.Ib3t77t1.tgexqxvrf +0) 2 data.2) ~2,~1
    (ret result.1))) 12,8
- (type :Node.0.Ikmiisb.tge70unlm .
-  (at Node.0.tge70unlm 1
+ (type :Node.0.I26wl13.tgexqxvrf .
+  (at Node.0.tgexqxvrf 1
    (i -1)) ~2,~5 . ,~5
-  (ref 11 NodeObj.0.Itet59r.tge70unlm)) 23,3
- (type :NodeObj.0.Itet59r.tge70unlm .
-  (at NodeObj.0.tge70unlm ~10,5
+  (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf)) 23,3
+ (type :NodeObj.0.Ib3t77t1.tgexqxvrf .
+  (at NodeObj.0.tgexqxvrf ~10,5
    (i -1)) ~10,1 . ~8,1
   (object . ~11,1
-   (fld :data.0.Itet59r.tge70unlm . . 9,3
+   (fld :data.0.Ib3t77t1.tgexqxvrf . . 9,3
     (i -1) .) ~11,2
-   (fld :left.0.Itet59r.tge70unlm . . 8,~3
-    (ref 11 NodeObj.0.Itet59r.tge70unlm) .) ~5,2
-   (fld :right.0.Itet59r.tge70unlm . . 2,~3
-    (ref 11 NodeObj.0.Itet59r.tge70unlm) .))))
+   (fld :left.0.Ib3t77t1.tgexqxvrf . . 8,~3
+    (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) .) ~5,2
+   (fld :right.0.Ib3t77t1.tgexqxvrf . . 2,~3
+    (ref 11 NodeObj.0.Ib3t77t1.tgexqxvrf) .))))
