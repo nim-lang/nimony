@@ -915,7 +915,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX, TupAtX}:
+              ArrAtX, DerefX, TupatX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -2048,7 +2048,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
         if field.kind == KvU:
           let name = getIdent(field.name)
           if name == fieldName:
-            c.dest[exprStart] = parLeToken(TupAtX, info)
+            c.dest[exprStart] = parLeToken(TupatX, info)
             c.dest.addIntLit(i, info)
             it.typ = field.typ # will be fit later with commonType
             result = MatchedDotField
@@ -5806,7 +5806,7 @@ proc semCardSet(c: var SemContext; it: var Item) =
   commonType c, it, beforeExpr, expected
 
 proc addTupleAccess(buf: var TokenBuf; lvalue: SymId; i: int; info: PackedLineInfo) =
-  buf.add parLeToken(TupAtX, info)
+  buf.add parLeToken(TupatX, info)
   buf.add symToken(lvalue, info)
   buf.addIntLit(i, info)
   buf.addParRi()
@@ -6102,7 +6102,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of DotX, DdotX:
       toplevelGuard c:
         semDot c, it, flags
-    of TupAtX:
+    of TupatX:
       toplevelGuard c:
         semTupAt c, it
     of DconvX:

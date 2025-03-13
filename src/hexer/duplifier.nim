@@ -96,7 +96,7 @@ proc constructsValue*(n: Cursor): bool =
 
 proc lvalueRoot(n: Cursor): SymId =
   var n = n
-  while n.exprKind in {DotX, TupAtX, AtX, ArrAtX}:
+  while n.exprKind in {DotX, TupatX, AtX, ArrAtX}:
     n = n.firstSon
   if n.kind == Symbol:
     result = n.symId
@@ -757,7 +757,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
 proc trDeref(c: var Context; n: var Cursor) =
   let info = n.info
   inc n
-  let typ = getType(c.typeCache, n, true)
+  let typ = getType(c.typeCache, n, {SkipAliases})
   let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
   if isRef:
     c.dest.addParLe DotX, info
@@ -799,7 +799,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trNewobj c, n, e, NewobjX
     of NewrefX:
       trNewobj c, n, e, NewrefX
-    of DotX, AtX, ArrAtX, PatX, TupAtX:
+    of DotX, AtX, ArrAtX, PatX, TupatX:
       trLocation c, n, e
     of ParX:
       trSons c, n, e
@@ -840,7 +840,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.openScope()
         trSons c, n, WantNonOwner
         c.typeCache.closeScope()
-      of BreakS, ContinueS:
+      of BreakS, ContinueS, IteratorS:
         takeTree c.dest, n
       else:
         trSons c, n, WantNonOwner

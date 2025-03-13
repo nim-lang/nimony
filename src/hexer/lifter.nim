@@ -244,7 +244,7 @@ proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; paramPos = 0
 proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): TokenBuf =
   result = createTokenBuf(4)
   let nd = needsDeref(c, tup, paramPos)
-  copyIntoKind(result, TupAtX, c.info):
+  copyIntoKind(result, TupatX, c.info):
     if nd:
       copyIntoKind(result, HderefX, c.info):
         copyTree result, tup
