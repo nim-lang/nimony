@@ -630,7 +630,10 @@ proc injectDerefs*(n: Cursor): TokenBuf =
   c.typeCache.openScope()
   var n2 = n
   var n3 = n
-  tr(c, n2, WantT)
+  c.takeToken n2
+  while n2.kind != ParRi:
+    tr(c, n2, WantT)
+  c.dest.addParRi()
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
   c.typeCache.closeScope()
