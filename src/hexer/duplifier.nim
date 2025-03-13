@@ -438,6 +438,14 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
           inc nested
         of ProcS, FuncS, ConverterS, MethodS, MacroS:
           trProcDecl c, n, parentNodestroy = true
+        of ScopeS:
+          c.typeCache.openScope()
+          c.dest.add n
+          inc n
+          while n.kind != ParRi:
+            trOnlyEssentials c, n
+          takeParRi c.dest, n
+          c.typeCache.closeScope()
         else:
           c.dest.add n
           inc n
