@@ -35,6 +35,7 @@ type
     WantVarT
     WantVarTResult
     WantMutableT  # `var openArray` does need derefs but mutable locations regardless
+    WantForwarding
 
   CurrentRoutine = object
     returnExpects: Expects
@@ -225,7 +226,7 @@ proc trReturn(c: var Context; n: var Cursor) =
 
 proc trYield(c: var Context; n: var Cursor) =
   takeToken c, n
-  tr c, n, WantT # c.r.returnExpects
+  tr c, n, WantForwarding # c.r.returnExpects
   takeParRi c, n
 
 proc mightBeDangerous(c: var Context; n: Cursor) =
@@ -296,7 +297,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   else:
     swap c.r, r
     var body = n
-    trSons c, n, WantT
+    trSons c, n, r.returnExpects
     if c.r.dangerousLocations.len > 0:
       checkForDangerousLocations c, body
     swap c.r, r
@@ -358,7 +359,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   takeToken c, n
   let fnType = skipProcTypeToParams(getType(c.typeCache, n))
   assert fnType == "params"
-  takeToken c, n
+  takeToken c, n # bug here for more complex `fn`?
   var retType = fnType
   skip retType
 
@@ -367,8 +368,10 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     if e == WantT:
       needHderef = true
       trCallArgs(c, n, fnType)
+      takeParRi c, n
     elif e in {WantVarTResult, WantTButSkipDeref} or firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
+      takeParRi c, n
     elif not dangerous:
       # DANGER-ZONE HERE! Consider: `for d in items(a)` where `a` is immutable.
       # Which is turned to `var d: var T = a[i]`.
@@ -377,16 +380,20 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       # `passedToVar(d)` or `d[] = value` and flag them as errornous.
       dangerous = true
       trCallArgs(c, n, fnType)
+      takeParRi c, n
     else:
       cannotPassToVar c.dest, info, callExpr
+      skipToEnd n
   elif e.wantMutable:
     if isViewType(retType) and firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
+      takeParRi c, n
     else:
       cannotPassToVar c.dest, info, callExpr
+      skipToEnd n
   else:
     trCallArgs(c, n, fnType)
-  takeParRi c, n
+    takeParRi c, n
 
   swap c.dest, callBuf
   if needHderef and c.dest[c.dest.len-1].tag != TagId(HderefTagId):
@@ -451,7 +458,9 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
       if borrowsFromReadonly(c, n):
         cannotPassToVar c.dest, n.info, n
-      trSons c, n, WantT
+        skip n
+      else:
+        trSons c, n, WantT
     else:
       if (k in {MutT, LentT} and not isViewType(typ.firstSon)) or k == OutT:
         if c.dest[c.dest.len-1].tag == TagId(HderefTagId):
@@ -463,9 +472,16 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSons c, n, WantT
   elif e.wantMutable:
-    if borrowsFromReadonly(c, n):
+    if e == WantVarTResult:
+      c.dest.addParLe(HaddrX, n.info)
+      if n.kind == Symbol:
+        takeToken c, n
+      else:
+        trSons c, n, WantT
+      c.dest.addParRi()
+    elif borrowsFromReadonly(c, n):
       cannotPassToVar c.dest, n.info, n
-      trSons c, n, WantT
+      skip n
     else:
       c.dest.addParLe(HaddrX, n.info)
       trSons c, n, WantT
@@ -497,7 +513,13 @@ proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
       tr c, n, WantT
   takeParRi c, n
 
-proc trObjConstr(c: var Context; n: var Cursor) =
+proc fieldMode(k: TypeKind; outerE: Expects): Expects {.inline.} =
+  if k in {MutT, OutT, LentT}:
+    (if outerE == WantForwarding: WantVarTResult else: WantVarT)
+  else:
+    WantT
+
+proc trObjConstr(c: var Context; n: var Cursor; outerE: Expects) =
   takeToken c, n
   takeTree c.dest, n # type
   while n.kind != ParRi:
@@ -505,12 +527,11 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     takeToken c, n
     takeTree c.dest, n # key
     let fieldType = getType(c.typeCache, n)
-    let e = if fieldType.typeKind in {MutT, OutT, LentT}: WantVarT else: WantT
-    tr c, n, e
+    tr c, n, fieldMode(fieldType.typeKind, outerE)
     takeParRi c, n
   takeParRi c, n
 
-proc trTupleConstr(c: var Context; n: var Cursor) =
+proc trTupleConstr(c: var Context; n: var Cursor; outerE: Expects) =
   takeToken c, n
   var typ = n
   assert typ.typeKind == TupleT
@@ -519,7 +540,7 @@ proc trTupleConstr(c: var Context; n: var Cursor) =
   while n.kind != ParRi:
     let fieldType = getTupleFieldType(typ)
     skip typ
-    let e = if fieldType.typeKind in {MutT, OutT, LentT}: WantVarT else: WantT
+    let e = fieldMode(fieldType.typeKind, outerE)
     if n.substructureKind == KvU:
       takeToken c, n
       takeTree c.dest, n # skip key
@@ -561,13 +582,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
-        trObjConstr c, n
+        trObjConstr c, n, e
     of TupConstrX:
       if e.wantMutable:
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
-        trTupleConstr c, n
+        trTupleConstr c, n, e
     of ExprX:
       trStmtListExpr c, n, e
     of DconvX, OconvX:
@@ -613,7 +634,10 @@ proc injectDerefs*(n: Cursor): TokenBuf =
   c.typeCache.openScope()
   var n2 = n
   var n3 = n
-  tr(c, n2, WantT)
+  c.takeToken n2
+  while n2.kind != ParRi:
+    tr(c, n2, WantT)
+  c.dest.addParRi()
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
   c.typeCache.closeScope()
