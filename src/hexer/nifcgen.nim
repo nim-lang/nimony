@@ -947,7 +947,7 @@ proc traverseConv(c: var EContext; n: var Cursor) =
 
 proc isSimpleLiteral(nb: var Cursor): bool =
   case nb.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit, DotToken:
+  of IntLit, UIntLit, FloatLit, CharLit, DotToken:
     result = true
     inc nb
   else:
