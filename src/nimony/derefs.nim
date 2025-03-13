@@ -135,7 +135,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
         inc fnType
         let firstParam = asLocal(fnType)
         if firstParam.kind == ParamY:
-          let mightForward = firstParam.typ.typeKind in {MutT, OutT}
+          let mightForward = firstParam.typ.typeKind in {MutT, OutT, LentT}
           if not mightForward:
             someIndirection = true
         # borrowing only work from first parameters:
@@ -155,7 +155,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       # and
       # proc access(x: Table): var int = x[].field[0]
       # and we do not try to hide it!
-      result = c.r.firstParamKind in {MutT, OutT} or someIndirection
+      result = c.r.firstParamKind in {MutT, OutT, LentT} or someIndirection
     else:
       result = false
   else:
@@ -189,12 +189,14 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
       result = true
     of LetY, GletY, TletY:
       let tk = local.typ.typeKind
-      result = tk notin {MutT, OutT}
+      result = tk notin {MutT, OutT, LentT}
       if result and isViewType(local.typ):
         # Special rule to make `toOpenArray` work:
         result = borrowsFromReadonly(c, local.val)
+    of VarY, GvarY, TvarY:
+      result = local.typ.typeKind == LentT
     of ParamY:
-      result = local.typ.typeKind notin {MutT, OutT}
+      result = local.typ.typeKind notin {MutT, OutT, LentT}
     else:
       result = false
   elif n.kind in {StringLit, IntLit, UIntLit, FloatLit, CharLit} or
@@ -254,7 +256,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
       let previousFormalParam = fnType
       let param = takeLocal(fnType, SkipFinalParRi)
       let pk = param.typ.typeKind
-      if pk in {MutT, OutT}:
+      if pk in {MutT, OutT, LentT}:
         mightBeDangerous(c, n)
       elif pk == VarargsT:
         # do not advance formal parameter:
@@ -283,7 +285,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
         r.firstParam = firstParam.name.symId
         r.firstParamKind = firstParam.typ.typeKind
 
-    if i == ResultPos and n.typeKind in {MutT, OutT}:
+    if i == ResultPos and n.typeKind in {MutT, OutT, LentT}:
       r.returnType = WantVarTResult
     takeTree c.dest, n
   if isGeneric:
@@ -308,7 +310,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
     let previousFormalParam = fnType
     let param = takeLocal(fnType, SkipFinalParRi)
     var pk = param.typ.typeKind
-    if pk == MutT:
+    if pk in {MutT, LentT}:
       var elemType = param.typ
       inc elemType
       if isViewType(elemType):
@@ -346,7 +348,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   skip retType
 
   var needHderef = false
-  if retType.typeKind == MutT:
+  if retType.typeKind in {MutT, LentT}:
     if e == WantT:
       needHderef = true
       trCallArgs(c, n, fnType)
@@ -429,14 +431,14 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # Idea: A variable like `x` does not own its value as it can be read multiple times.
   let typ = getType(c.typeCache, n)
   let k = typ.typeKind
-  if k in {MutT, OutT}:
+  if k in {MutT, OutT, LentT}:
     if e notin {WantT, WantTButSkipDeref}:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
       if borrowsFromReadonly(c, n):
         buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
       trSons c, n, WantT
     else:
-      if (k == MutT and not isViewType(typ.firstSon)) or k == OutT:
+      if (k in {MutT, LentT} and not isViewType(typ.firstSon)) or k == OutT:
         if c.dest[c.dest.len-1].tag == TagId(HderefTagId):
           trSons c, n, WantT
         else:
@@ -465,7 +467,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   let typ = n
   takeTree c.dest, n
   c.typeCache.registerLocal(name.symId, kind, typ)
-  let e = if typ.typeKind in {OutT, MutT}: WantVarT else: WantT
+  let e = if typ.typeKind in {OutT, MutT, LentT}: WantVarT else: WantT
   trAsgnRhs c, name, n, e
   takeParRi c, n
 
@@ -486,7 +488,7 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     takeToken c, n
     takeTree c.dest, n # key
     let fieldType = getType(c.typeCache, n)
-    let e = if fieldType.typeKind in {MutT, OutT}: WantVarT else: WantT
+    let e = if fieldType.typeKind in {MutT, OutT, LentT}: WantVarT else: WantT
     tr c, n, e
     takeParRi c, n
   takeParRi c, n
