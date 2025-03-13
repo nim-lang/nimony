@@ -25,6 +25,7 @@ import std / [assertions]
 
 include nifprelude
 
+import ".." / models / tags
 import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops
 
 type
@@ -371,7 +372,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   takeParRi c, n
 
   swap c.dest, callBuf
-  if needHderef:
+  if needHderef and c.dest[c.dest.len-1].tag != TagId(HderefTagId):
     c.dest.addParLe(HderefX, info)
     c.dest.add callBuf
     c.dest.addParRi()
@@ -436,8 +437,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
       trSons c, n, WantT
     else:
       if (k == MutT and not isViewType(typ.firstSon)) or k == OutT:
-        let hasDeref = n.kind != Symbol and n.firstSon.exprKind == HderefX
-        if hasDeref:
+        if c.dest[c.dest.len-1].tag == TagId(HderefTagId):
           trSons c, n, WantT
         else:
           c.dest.addParLe(HderefX, n.info)
