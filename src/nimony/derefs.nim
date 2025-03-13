@@ -40,6 +40,7 @@ type
     returnType: Expects
     firstParam: SymId
     firstParamKind: TypeKind
+    resultSym: SymId
     dangerousLocations: seq[(SymId, Cursor)] # Cursor is only used for line information
 
   Context = object
@@ -205,18 +206,14 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
   else:
     result = false
 
-proc isResultUsage(n: Cursor): bool {.inline.} =
+proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
+  result = false
   if n.kind == Symbol:
-    let res = tryLoadSym(n.symId)
-    assert res.status == LacksNothing
-    let local = asLocal(res.decl)
-    result = local.kind == ResultY
-  else:
-    result = false
+    result = n.symId == c.r.resultSym
 
 proc trReturn(c: var Context; n: var Cursor) =
   takeToken c, n
-  if isResultUsage(n):
+  if isResultUsage(c, n):
     takeTree c.dest, n
   else:
     let err = c.r.returnType == WantVarTResult and not validBorrowsFrom(c, n)
@@ -333,6 +330,16 @@ proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   else:
     result = false
 
+proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
+  let msg = "cannot pass " & asNimCode(arg) & " to var/out T parameter"
+  when defined(debug):
+    writeStackTrace()
+    echo infoToStr(info) & " Error: " & msg
+    quit msg
+  dest.buildTree ErrT, info:
+    dest.addSubtree arg
+    dest.add strToken(pool.strings.getOrIncl(msg), info)
+
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
   let callExpr = n
@@ -363,12 +370,12 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       dangerous = true
       trCallArgs(c, n, fnType)
     else:
-      buildLocalErr c.dest, info, "cannot pass $1 to var/out T parameter"
+      cannotPassToVar c.dest, info, callExpr
   elif e notin {WantT, WantTButSkipDeref}:
     if isViewType(retType) and firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
     else:
-      buildLocalErr c.dest, info, "cannot pass $1 to var/out T parameter"
+      cannotPassToVar c.dest, info, callExpr
   else:
     trCallArgs(c, n, fnType)
   takeParRi c, n
@@ -403,7 +410,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
   var e = WantT
   var err = Valid
   let le = n
-  if isResultUsage(le):
+  if isResultUsage(c, le):
     e = c.r.returnType
     if e == WantVarTResult:
       tr c, n, e
@@ -435,7 +442,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
     if e notin {WantT, WantTButSkipDeref}:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
       if borrowsFromReadonly(c, n):
-        buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
+        cannotPassToVar c.dest, n.info, n
       trSons c, n, WantT
     else:
       if (k in {MutT, LentT} and not isViewType(typ.firstSon)) or k == OutT:
@@ -449,7 +456,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
         trSons c, n, WantT
   elif e notin {WantT, WantTButSkipDeref}:
     if borrowsFromReadonly(c, n):
-      buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
+      cannotPassToVar c.dest, n.info, n
       trSons c, n, WantT
     else:
       c.dest.addParLe(HaddrX, n.info)
@@ -462,6 +469,8 @@ proc trLocal(c: var Context; n: var Cursor) =
   let kind = n.symKind
   takeToken c, n
   let name = n
+  if kind == ResultY:
+    c.r.resultSym = name.symId
   for i in 0..<LocalTypePos:
     takeTree c.dest, n
   let typ = n
@@ -493,6 +502,25 @@ proc trObjConstr(c: var Context; n: var Cursor) =
     takeParRi c, n
   takeParRi c, n
 
+proc trTupleConstr(c: var Context; n: var Cursor) =
+  takeToken c, n
+  var typ = n
+  assert typ.typeKind == TupleT
+  inc typ
+  takeTree c.dest, n # type
+  while n.kind != ParRi:
+    let fieldType = getTupleFieldType(typ)
+    skip typ
+    let e = if fieldType.typeKind in {MutT, OutT, LentT}: WantVarT else: WantT
+    if n.substructureKind == KvU:
+      takeToken c, n
+      takeTree c.dest, n # skip key
+      tr c, n, e
+      takeParRi c, n
+    else:
+      tr c, n, e
+  takeParRi c, n
+
 proc trVarHook(c: var Context; n: var Cursor) =
   takeToken c, n
   tr c, n, WantVarT
@@ -507,7 +535,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
   of IntLit, UIntLit, FloatLit, CharLit, StringLit:
     if e notin {WantT, WantTButSkipDeref}:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
-      buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
+      cannotPassToVar c.dest, n.info, n
       inc n
     else:
       takeToken c, n
@@ -522,10 +550,16 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trLocation c, n, e
     of OconstrX, NewobjX:
       if e notin {WantT, WantTButSkipDeref}:
-        buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
+        cannotPassToVar c.dest, n.info, n
         skip n
       else:
         trObjConstr c, n
+    of TupConstrX:
+      if e notin {WantT, WantTButSkipDeref}:
+        cannotPassToVar c.dest, n.info, n
+        skip n
+      else:
+        trTupleConstr c, n
     of ExprX:
       trStmtListExpr c, n, e
     of DconvX, OconvX:
@@ -538,7 +572,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trSons c, n, WantT
     of HconvX, ConvX, CastX:
       if e notin {WantT, WantTButSkipDeref}:
-        buildLocalErr c.dest, n.info, "cannot pass $1 to var/out T parameter"
+        cannotPassToVar c.dest, n.info, n
         skip n
       else:
         trSons c, n, WantT
