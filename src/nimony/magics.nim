@@ -23,7 +23,7 @@ proc magicToTag*(m: string): (string, int) =
   of "ArrGet": res AtX
   of "ArrAt": res ArrAtX
   of "Pat": res PatX
-  of "TupAt": res TupAtX
+  of "TupAt": res TupatX
   of "Asgn": res AsgnS
   of "AddI", "AddU", "AddF64": res AddX, TypedMagic
   of "SubI", "SubU", "SubF64": res SubX, TypedMagic

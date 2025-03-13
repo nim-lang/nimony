@@ -25,6 +25,7 @@ import std / [assertions]
 
 include nifprelude
 
+import ".." / models / tags
 import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops
 
 type
@@ -61,7 +62,7 @@ proc rootOf(n: Cursor; allowIndirection = false): SymId =
   var n = n
   while true:
     case n.exprKind
-    of DotX, AtX, ArrAtX, TupAtX, ParX:
+    of DotX, AtX, ArrAtX, TupatX, ParX:
       inc n
     of PatX, DdotX:
       # not protected from mutation
@@ -111,7 +112,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   var someIndirection = false
   while true:
     case n.exprKind
-    of DotX, AtX, ArrAtX, TupAtX, ParX:
+    of DotX, AtX, ArrAtX, TupatX, ParX:
       inc n
     of HderefX, HaddrX, DerefX, AddrX, DdotX, PatX:
       inc n
@@ -164,7 +165,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
   var n = n
   while true:
     case n.exprKind
-    of DotX, AtX, ArrAtX, TupAtX, ParX:
+    of DotX, AtX, ArrAtX, TupatX, ParX:
       inc n
     of DconvX, HconvX, ConvX, CastX:
       inc n
@@ -371,7 +372,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   takeParRi c, n
 
   swap c.dest, callBuf
-  if needHderef:
+  if needHderef and c.dest[c.dest.len-1].tag != TagId(HderefTagId):
     c.dest.addParLe(HderefX, info)
     c.dest.add callBuf
     c.dest.addParRi()
@@ -436,9 +437,12 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
       trSons c, n, WantT
     else:
       if (k == MutT and not isViewType(typ.firstSon)) or k == OutT:
-        c.dest.addParLe(HderefX, n.info)
-        trSons c, n, WantT
-        c.dest.addParRi()
+        if c.dest[c.dest.len-1].tag == TagId(HderefTagId):
+          trSons c, n, WantT
+        else:
+          c.dest.addParLe(HderefX, n.info)
+          trSons c, n, WantT
+          c.dest.addParRi()
       else:
         trSons c, n, WantT
   elif e notin {WantT, WantTButSkipDeref}:
@@ -512,7 +516,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of CallKinds:
       var disallowDangerous = true
       trCall c, n, e, disallowDangerous
-    of DotX, DdotX, AtX, ArrAtX, TupAtX, PatX:
+    of DotX, DdotX, AtX, ArrAtX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:
       if e notin {WantT, WantTButSkipDeref}:

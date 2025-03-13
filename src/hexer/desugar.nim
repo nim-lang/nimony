@@ -47,7 +47,7 @@ proc needsTemp(n: Cursor): bool =
       inc n
       skip n
       result = needsTemp(n)
-    of AtX, PatX, ArrAtX, TupAtX, DotX, DdotX, ParX, AddrX, HaddrX:
+    of AtX, PatX, ArrAtX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
       inc n
       while n.kind != ParRi:
         if needsTemp(n):
