@@ -1,1 +1,1 @@
-tests/nimony/sysbasics/tderefs1.nim(7, 8) Error: cannot pass $1 to var/out T parameter
+tests/nimony/sysbasics/tderefs1.nim(7, 8) Error: cannot pass (call foo.0.tder01ckv) to var/out T parameter

@@ -11,7 +11,7 @@ import std/assertions
 include nifprelude
 
 import ".." / nimony / [nimony_model, programs, decls]
-import basics, iterinliner, desugar, xelim, duplifier, lifter, destroyer, constparams
+import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer, constparams
 
 proc publishHooks*(n: var Cursor) =
   var nested = 0

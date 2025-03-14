@@ -3,7 +3,7 @@
 import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes]
-import basics, typekeys
+import hexer_context
 
 type
   Context = object
@@ -47,7 +47,7 @@ proc needsTemp(n: Cursor): bool =
       inc n
       skip n
       result = needsTemp(n)
-    of AtX, PatX, ArrAtX, TupAtX, DotX, DdotX, ParX, AddrX, HaddrX:
+    of AtX, PatX, ArrAtX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
       inc n
       while n.kind != ParRi:
         if needsTemp(n):
@@ -612,55 +612,6 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
 
-proc trNewobjFields(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  while n.kind != ParRi:
-    if n.substructureKind == KvU:
-      copyInto dest, n:
-        takeTree dest, n # keep field name
-        tr(c, dest, n)
-    else:
-      tr(c, dest, n)
-  inc n # skip ParRi
-
-proc genNewobj(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  inc n
-  let refType = n
-  assert refType.typeKind == RefT
-
-  let baseType = refType.firstSon
-  var refTypeCopy = refType
-  let typeKey = takeMangle refTypeCopy
-  let typeSym = pool.syms.getOrIncl(typeKey & GeneratedTypeSuffix)
-
-  copyIntoKind dest, ExprX, info:
-    copyIntoKind dest, StmtsS, info:
-      let tmp = declareTemp(c, dest, refType, info)
-      copyIntoKind dest, CastX, info:
-        dest.addSubtree refType
-        copyIntoKind dest, CallX, info:
-          dest.add symToken(pool.syms.getOrIncl("allocFixed.0." & SystemModuleSuffix), info)
-          copyIntoKind dest, SizeofX, info:
-            dest.add symToken(typeSym, info)
-      dest.addParRi() # finish temp declaration
-      copyIntoKind dest, AsgnS, info:
-        copyIntoKind dest, DerefX, info:
-          dest.add symToken(tmp, info)
-        copyIntoKind dest, OconstrX, info:
-          dest.add symToken(typeSym, info)
-          copyIntoKind dest, KvU, info:
-            let rcField = pool.syms.getOrIncl(RcField)
-            dest.add symdefToken(rcField, info)
-            dest.addIntLit(0, info)
-          copyIntoKind dest, KvU, info:
-            let dataField = pool.syms.getOrIncl(DataField)
-            dest.add symdefToken(dataField, info)
-            copyIntoKind dest, OconstrX, info:
-              dest.addSubtree baseType
-              trNewobjFields(c, dest, n)
-    # ExprX's expression is the temp:
-    dest.add symToken(tmp, info)
-
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
@@ -725,43 +676,16 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       genSetConstr(c, dest, n)
     of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
       genSetOp(c, dest, n)
-    of NewobjX:
-      genNewobj(c, dest, n)
     of TypeofX:
       takeTree dest, n
-    of HderefX, DerefX:
-      dest.add tagToken("deref", n.info)
-      inc n
-      let typ = getType(c.typeCache, n, true)
-      let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
-      if isRef:
-        dest.add tagToken("dot", n.info)
-      tr c, dest, n
-      if isRef:
-        let dataField = pool.syms.getOrIncl(DataField)
-        dest.add symToken(dataField, n.info)
-        dest.addIntLit(0, n.info) # inheritance
-        dest.addParRi()
-      takeParRi dest, n
     of DdotX:
       dest.add tagToken("dot", n.info)
       dest.add tagToken("deref", n.info)
       inc n # skip tag
-
-      let typ = getType(c.typeCache, n, true)
-      let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
-      if isRef:
-        dest.add tagToken("dot", n.info)
       tr c, dest, n
-      if isRef:
-        # (*x).f --> (*x).d.f
-        let dataField = pool.syms.getOrIncl(DataField)
-        dest.add symToken(dataField, n.info)
-        dest.addIntLit(0, n.info) # inheritance
-        dest.addParRi()
-      dest.addParRi()
+      dest.addParRi() # deref
       tr c, dest, n
-      tr c, dest, n
+      tr c, dest, n # inheritance depth
       takeParRi dest, n
     of ExprX:
       trExpr c, dest, n

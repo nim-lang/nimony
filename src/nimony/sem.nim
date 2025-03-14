@@ -216,6 +216,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       c.dest.addParRi()
       it.typ = expected
     else:
+      shrink c.dest, argBegin
       c.typeMismatch info, it.typ, expected
   else:
     shrink c.dest, argBegin
@@ -712,7 +713,8 @@ proc produceInvoke(c: var SemContext; dest: var TokenBuf; req: InstRequest;
           dest.copyTree req.inferred[tv.symId]
         skip typeVars
 
-proc subsGenericType(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
+proc subsGenericType(c: var SemContext; dest: var TokenBuf; req: InstRequest) {.used.} =
+  # was used for `c.typeRequests` but types are instantiated eagerly now
   #[
   What we need to do is rather simple: A generic instantiation is
   the typical (type :Name ex generic_params pragmas body) tuple but
@@ -1071,7 +1073,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX, TupAtX}:
+              ArrAtX, DerefX, TupatX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -1124,7 +1126,8 @@ proc sameIdent(sym: SymId; str: StrId): bool =
   extractBasename(name)
   result = pool.strings.getOrIncl(name) == str
 
-proc sameIdent(a, b: SymId): bool =
+proc sameIdent(a, b: SymId): bool {.used.} =
+  # not used yet
   # XXX speed this up by using the `fieldCache` idea
   var x = pool.syms[a]
   extractBasename(x)
@@ -2187,7 +2190,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
         if field.kind == KvU:
           let name = getIdent(field.name)
           if name == fieldName:
-            c.dest[exprStart] = parLeToken(TupAtX, info)
+            c.dest[exprStart] = parLeToken(TupatX, info)
             c.dest.addIntLit(i, info)
             it.typ = field.typ # will be fit later with commonType
             result = MatchedDotField
@@ -4464,7 +4467,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     # copy toplevel scope status for exported fields
     c.currentScope.kind = oldScopeKind
     isGeneric = true
-  
+
   let crucial = semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
 
   if c.phase == SemcheckSignatures or
@@ -4809,7 +4812,7 @@ proc semSuf(c: var SemContext, it: var Item) =
   of "f": it.typ = c.types.floatType
   of "f32": it.typ = c.types.float32Type
   of "f64": it.typ = c.types.float64Type
-  of "R": it.typ = c.types.stringType
+  of "R", "T": it.typ = c.types.stringType
   else:
     c.buildErr it.n.info, "unknown suffix: " & pool.strings[it.n.litId]
   takeToken c, it.n # suffix
@@ -5110,6 +5113,26 @@ proc semObjDefault(c: var SemContext; it: var Item) =
   c.dest.shrink exprStart
   skipParRi it.n
   buildDefaultObjConstr(c, it.typ, initTable[SymId, Cursor](), info)
+  commonType c, it, exprStart, expected
+
+proc semNewref(c: var SemContext; it: var Item) =
+  let exprStart = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  c.takeToken it.n
+  let beforeTypeArg = c.dest.len
+  it.typ = semLocalType(c, it.n)
+  c.dest.shrink beforeTypeArg
+  if it.typ.typeKind == TypedescT:
+    inc it.typ
+  c.dest.addSubtree it.typ
+  assert it.typ.typeKind == RefT
+  let typeForDefault = it.typ.firstSon
+  callDefault c, typeForDefault, info
+  skip it.n # type
+  if it.n.kind != ParRi:
+    skip it.n # existing `default(T)` call
+  takeParRi c, it.n
   commonType c, it, exprStart, expected
 
 proc buildDefaultTuple(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
@@ -5925,7 +5948,7 @@ proc semCardSet(c: var SemContext; it: var Item) =
   commonType c, it, beforeExpr, expected
 
 proc addTupleAccess(buf: var TokenBuf; lvalue: SymId; i: int; info: PackedLineInfo) =
-  buf.add parLeToken(TupAtX, info)
+  buf.add parLeToken(TupatX, info)
   buf.add symToken(lvalue, info)
   buf.addIntLit(i, info)
   buf.addParRi()
@@ -6223,7 +6246,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of DotX, DdotX:
       toplevelGuard c:
         semDot c, it, flags
-    of TupAtX:
+    of TupatX:
       toplevelGuard c:
         semTupAt c, it
     of DconvX:
@@ -6255,6 +6278,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semSuf c, it
     of OconstrX, NewobjX:
       semObjConstr c, it
+    of NewrefX:
+      semNewref c, it
     of DefinedX:
       semDefined c, it
     of DeclaredX:

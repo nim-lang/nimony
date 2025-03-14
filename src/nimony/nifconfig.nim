@@ -74,6 +74,15 @@ proc parseNifConfig*(configFile: string; result: var NifConfig) =
   finally:
     f.close()
 
+proc getOptionsAsOneString*(config: NifConfig): string =
+  ## Returns the concatenation of options that affects generated files.
+  result = "--cwd:" & config.currentPath
+
+  for i in config.defines:
+    result.add(" -d:" & i)
+
+  result.add " --bits:" & $config.bits
+
 when isMainModule:
   var conf = default(NifConfig)
   parseNifConfig "src/nifler/nifler.cfg.nif", conf

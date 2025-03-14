@@ -528,7 +528,7 @@ proc commonType(f, a: Cursor): Cursor =
   # XXX Refine
   result = a
 
-proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) =
+proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) {.used.} =
   # now unused, maybe bring back error message somehow
   let com = commonType(f, a)
   if com.kind == ParLe and com.tagId == ErrT:
@@ -713,7 +713,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
   of ParLe:
     let fk = f.typeKind
     case fk
-    of MutT, OutT, SinkT:
+    of MutT, OutT, SinkT, LentT:
       var a = arg.typ
       if a.typeKind in {MutT, OutT, SinkT, LentT}:
         inc a
@@ -836,7 +836,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         skip f
       else:
         procTypeMatch m, f, a
-    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, VoidT, LentT, NiltT, OrT, AndT, NotT,
+    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, VoidT, NiltT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:

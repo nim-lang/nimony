@@ -1,4 +1,4 @@
-import basics
+import hexer_context
 include nifprelude
 
 import std / [assertions, tables]
@@ -52,7 +52,7 @@ when false:
 
 proc createTupleAccess(lvalue: SymId; i: int; info: PackedLineInfo): TokenBuf =
   result = createTokenBuf()
-  result.add parLeToken(TupAtX, info)
+  result.add parLeToken(TupatX, info)
   result.add symToken(lvalue, info)
   result.addIntLit(i, info)
   result.addParRi()

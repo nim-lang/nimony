@@ -14,7 +14,7 @@ import symparser
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops]
 from ".." / nimony / sigmatch import isSomeStringType, isStringType
-import basics, pipeline
+import hexer_context, pipeline
 import  ".." / lib / stringtrees
 
 
@@ -155,7 +155,8 @@ proc traverseEnumField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}
 
   takeParRi c, n
 
-proc genStringType(c: var EContext; info: PackedLineInfo) =
+proc genStringType(c: var EContext; info: PackedLineInfo) {.used.} =
+  # now unused
   let s = pool.syms.getOrIncl(StringName)
   c.dest.add tagToken("type", info)
   c.dest.add symdefToken(s, info)
@@ -355,6 +356,7 @@ proc traverseAsNamedType(c: var EContext; n: var Cursor) =
 
     swap c.dest, buf
     c.pending.add buf
+    programs.publish val, buf
   # regardless of what we had to do, we still need to add the typename:
   if k == RefT:
     c.dest.add tagToken("ptr", info)
@@ -945,7 +947,7 @@ proc traverseConv(c: var EContext; n: var Cursor) =
 
 proc isSimpleLiteral(nb: var Cursor): bool =
   case nb.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit, DotToken:
+  of IntLit, UIntLit, FloatLit, CharLit, DotToken:
     result = true
     inc nb
   else:
@@ -1036,7 +1038,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       traverseExpr(c, n)
       traverseExpr(c, n)
       takeParRi c, n
-    of TupAtX:
+    of TupatX:
       c.dest.add tagToken("dot", n.info)
       inc n # skip tag
       traverseExpr c, n # tuple
@@ -1077,19 +1079,20 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       let arg = suf
       skip suf
       assert suf.kind == StringLit
-      if arg.kind == StringLit and pool.strings[suf.litId] == "R":
+      if arg.kind == StringLit and pool.strings[suf.litId] in ["R", "T"]:
         # cstring conversion
         inc n
         c.dest.add n # add string lit directly
         inc n # arg
         inc n # suf
+        skipParRi c, n
       else:
         c.dest.add n
         inc n
         traverseExpr c, n
         c.dest.add n
         inc n
-      takeParRi c, n
+        takeParRi c, n
     of AshrX:
       c.dest.add tagToken("shr", n.info)
       inc n
@@ -1113,17 +1116,24 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
         c.dest.addParRi()
         traverseExpr c, n
       takeParRi c, n
-    of ErrX, NewobjX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX,
+    of ErrX, NewobjX, NewrefX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX,
        InSetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, UnpackX,
        EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX:
       error c, "BUG: not eliminated: ", n
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
-       SizeofX, AlignofX, OffsetofX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+       AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
        BitandX, BitorX, BitxorX, BitnotX, OconvX:
       c.dest.add n
       inc n
+      while n.kind != ParRi:
+        traverseExpr c, n
+      takeParRi c, n
+    of SizeofX, AlignofX, OffsetofX:
+      c.dest.add n
+      inc n
+      traverseType c, n
       while n.kind != ParRi:
         traverseExpr c, n
       takeParRi c, n
@@ -1388,7 +1398,7 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
     of DiscardS:
       let discardToken = n
       inc n
-      if n.kind == DotToken:
+      if n.kind in {StringLit, DotToken}:
         # eliminates discard without side effects
         inc n
         skipParRi c, n

@@ -221,4 +221,9 @@
     (tupat t.0 2 +0)) ,5
    (discard 8
     (tupat t.0 2 +1)))) 10,61
- (call ~10 basictuple.0.tbawx6nu81))
+ (call ~10 basictuple.0.tbawx6nu81) ,63
+ (discard 8 "11223") ,65
+ (discard 8
+  (suf "  dw3euuyghid23u23dhiw\0A" "T")) ,69
+ (discard 8
+  (suf "136t54321" "T")))

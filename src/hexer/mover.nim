@@ -39,11 +39,11 @@ proc testOrSetMark(n: Cursor): bool {.inline.} =
     doMark(n)
     result = false
 
-proc rootOf(n: Cursor): SymId =
+proc rootOf*(n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind
-    of DotX, TupAtX, AtX, ArrAtX, DerefX, AddrX, HderefX, HaddrX, PatX:
+    of DotX, TupatX, AtX, ArrAtX, DerefX, AddrX, HderefX, HaddrX, PatX:
       inc n
     of ConvKinds:
       inc n

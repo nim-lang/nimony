@@ -47,14 +47,13 @@ type
     ExternKeyword = "extern "
     WhileKeyword = "while "
     GotoKeyword = "goto "
-    IfKeyword = "if ("
+    IfKeyword = "if "
     ElseKeyword = "else "
     SwitchKeyword = "switch "
     CaseKeyword = "case "
     DefaultKeyword = "default:"
     BreakKeyword = "break"
     NullPtr = "NIM_NIL"
-    IfNot = "if (!("
     ReturnKeyword = "return"
     TypedefStruct = "typedef struct "
     TypedefUnion = "typedef union "
@@ -387,6 +386,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor)
 
 proc genOnError(c: var GeneratedCode; n: var Cursor) =
   c.add IfKeyword
+  c.add ParLe
   c.add ErrToken
   c.add ParRi
   c.add Space
