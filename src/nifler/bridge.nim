@@ -658,6 +658,10 @@ template bench(task, body) =
   else:
     body
 
+proc errorHandler(conf: ConfigRef; info: TLineInfo; msg: TMsgKind; arg: string) =
+  msgs.message(conf, info, msg, arg)
+  quit QuitFailure
+
 proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
   let stream = llStreamOpen(AbsoluteFile thisfile, fmRead)
   if stream == nil:
@@ -665,6 +669,7 @@ proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
   else:
     var conf = createConf()
     var parser: Parser = default(Parser)
+    parser.lex.errorHandler = errorHandler
     openParser(parser, AbsoluteFile(thisfile), stream, newIdentCache(), conf)
     var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled)
 
