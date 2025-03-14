@@ -637,8 +637,10 @@ proc injectDerefs*(n: Cursor): TokenBuf =
   c.takeToken n2
   while n2.kind != ParRi:
     tr(c, n2, WantT)
-  c.dest.addParRi()
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
+  # Must close the `(stmts)` here **after** `checkForDangerousLocations`
+  # because the latter may add error nodes.
+  c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove(c.dest)
