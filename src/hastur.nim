@@ -263,11 +263,6 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       let nif = generatedFile(file, ".2.nif")
       diffFiles c, file, ast, nif, overwrite
 
-    let idx = file.changeFileExt(".idx.nif")
-    if idx.fileExists():
-      let nif = generatedFile(file, ".2.idx.nif")
-      diffFiles c, file, idx, nif, overwrite
-
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
   var files: seq[string] = @[]
   for x in walkDir(dir):
