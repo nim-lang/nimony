@@ -124,15 +124,14 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
     let s = lvalueRoot(src, srcHdrefs)
     if d != NoSymId or s != NoSymId:
       # one of the expressions was analysable
-      if d == s:
-        if destHdrefs and srcHdrefs:
-          # two pointer derefs? can alias:
-          result = true
-        else:
-          # see if we can distinguish between `x.fieldA` and `x.fieldB` which
-          # cannot alias. We do know here that at least one expressions is free of
-          # pointer derefs, so we can simply use `sameValues` here.
-          result = sameTrees(dest, src)
+      if destHdrefs and srcHdrefs:
+        # two pointer derefs? can alias:
+        result = true
+      elif d == s:
+        # see if we can distinguish between `x.fieldA` and `x.fieldB` which
+        # cannot alias. We do know here that at least one expressions is free of
+        # pointer derefs, so we can simply use `sameValues` here.
+        result = sameTrees(dest, src)
       else:
         # different roots while we know that at least one expression has
         # no harmful pointer deref:
