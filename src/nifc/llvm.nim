@@ -15,7 +15,7 @@ from std / os import changeFileExt, splitFile, extractFilename
 include ".." / lib / nifprelude
 import mangler, nifc_model, cprelude, noptions, typenav
 
-# LLVM C API bindings
+# LLVM ctx API bindings
 type
   LLVMContext = object
   LLVMModule = object
@@ -33,111 +33,111 @@ type
   LLVMBool = int32
 
 proc LLVMContextCreate(): LLVMContextRef {.importc, cdecl.}
-proc LLVMContextDispose(C: LLVMContextRef) {.importc, cdecl.}
-proc LLVMModuleCreateWithNameInContext(ModuleID: cstring, C: LLVMContextRef): LLVMModuleRef {.importc, cdecl.}
-proc LLVMModuleCreateWithName(ModuleID: cstring): LLVMModuleRef {.importc, cdecl.}
-proc LLVMDisposeModule(M: LLVMModuleRef) {.importc, cdecl.}
-proc LLVMCreateBuilderInContext(C: LLVMContextRef): LLVMBuilderRef {.importc, cdecl.}
+proc LLVMContextDispose(ctx: LLVMContextRef) {.importc, cdecl.}
+proc LLVMModuleCreateWithNameInContext(moduleId: cstring, ctx: LLVMContextRef): LLVMModuleRef {.importc, cdecl.}
+proc LLVMModuleCreateWithName(moduleId: cstring): LLVMModuleRef {.importc, cdecl.}
+proc LLVMDisposeModule(module: LLVMModuleRef) {.importc, cdecl.}
+proc LLVMCreateBuilderInContext(ctx: LLVMContextRef): LLVMBuilderRef {.importc, cdecl.}
 proc LLVMCreateBuilder(): LLVMBuilderRef {.importc, cdecl.}
-proc LLVMDisposeBuilder(Builder: LLVMBuilderRef) {.importc, cdecl.}
-proc LLVMInt1TypeInContext(C: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMInt8TypeInContext(C: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMInt16TypeInContext(C: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMInt32TypeInContext(C: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMInt64TypeInContext(C: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMFloatTypeInContext(C: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMDoubleTypeInContext(C: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMFunctionType(ReturnType: LLVMTypeRef, ParamTypes: ptr LLVMTypeRef, ParamCount: cuint, IsVarArg: LLVMBool): LLVMTypeRef {.importc, cdecl.}
-proc LLVMStructTypeInContext(C: LLVMContextRef, ElementTypes: ptr LLVMTypeRef, ElementCount: cuint, Packed: LLVMBool): LLVMTypeRef {.importc, cdecl.}
-proc LLVMStructSetBody(StructTy: LLVMTypeRef, ElementTypes: ptr LLVMTypeRef, ElementCount: cuint, Packed: LLVMBool) {.importc, cdecl.}
-proc LLVMArrayType(ElementType: LLVMTypeRef, ElementCount: cuint): LLVMTypeRef {.importc, cdecl.}
-proc LLVMPointerType(ElementType: LLVMTypeRef, AddressSpace: cuint): LLVMTypeRef {.importc, cdecl.}
-proc LLVMVoidTypeInContext(C: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMAddFunction(M: LLVMModuleRef, Name: cstring, FunctionTy: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMAppendBasicBlockInContext(C: LLVMContextRef, Fn: LLVMValueRef, Name: cstring): LLVMBasicBlockRef {.importc, cdecl.}
-proc LLVMBuildRet(Builder: LLVMBuilderRef, V: LLVMValueRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildRetVoid(Builder: LLVMBuilderRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMPositionBuilderAtEnd(Builder: LLVMBuilderRef, Block: LLVMBasicBlockRef) {.importc, cdecl.}
-proc LLVMConstInt(IntTy: LLVMTypeRef, N: culonglong, SignExtend: LLVMBool): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstReal(RealTy: LLVMTypeRef, N: cdouble): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildAlloca(Builder: LLVMBuilderRef, Ty: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildLoad2(Builder: LLVMBuilderRef, Ty: LLVMTypeRef, PointerVal: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildStore(Builder: LLVMBuilderRef, Val: LLVMValueRef, Ptr: LLVMValueRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildCall2(Builder: LLVMBuilderRef, Ty: LLVMTypeRef, Fn: LLVMValueRef, Args: ptr LLVMValueRef, NumArgs: cuint, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildGEP2(Builder: LLVMBuilderRef, Ty: LLVMTypeRef, Pointer: LLVMValueRef, Indices: ptr LLVMValueRef, NumIndices: cuint, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildICmp(Builder: LLVMBuilderRef, Op: cint, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFCmp(Builder: LLVMBuilderRef, Op: cint, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildBr(Builder: LLVMBuilderRef, Dest: LLVMBasicBlockRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildCondBr(Builder: LLVMBuilderRef, If: LLVMValueRef, Then: LLVMBasicBlockRef, Else: LLVMBasicBlockRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMPrintModuleToFile(M: LLVMModuleRef, Filename: cstring, ErrorMessage: cstringArray): LLVMBool {.importc, cdecl.}
+proc LLVMDisposeBuilder(builder: LLVMBuilderRef) {.importc, cdecl.}
+proc LLVMInt1TypeInContext(ctx: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMInt8TypeInContext(ctx: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMInt16TypeInContext(ctx: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMInt32TypeInContext(ctx: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMInt64TypeInContext(ctx: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMFloatTypeInContext(ctx: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMDoubleTypeInContext(ctx: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMFunctionType(returnType: LLVMTypeRef, paramTypes: ptr LLVMTypeRef, paramCount: cuint, isVarArg: LLVMBool): LLVMTypeRef {.importc, cdecl.}
+proc LLVMStructTypeInContext(ctx: LLVMContextRef, elementTypes: ptr LLVMTypeRef, elementCount: cuint, packed: LLVMBool): LLVMTypeRef {.importc, cdecl.}
+proc LLVMStructSetBody(structTy: LLVMTypeRef, elementTypes: ptr LLVMTypeRef, elementCount: cuint, packed: LLVMBool) {.importc, cdecl.}
+proc LLVMArrayType(elementType: LLVMTypeRef, elementCount: cuint): LLVMTypeRef {.importc, cdecl.}
+proc LLVMPointerType(elementType: LLVMTypeRef, addressSpace: cuint): LLVMTypeRef {.importc, cdecl.}
+proc LLVMVoidTypeInContext(ctx: LLVMContextRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMAddFunction(module: LLVMModuleRef, name: cstring, functionTy: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMAppendBasicBlockInContext(ctx: LLVMContextRef, fn: LLVMValueRef, name: cstring): LLVMBasicBlockRef {.importc, cdecl.}
+proc LLVMBuildRet(builder: LLVMBuilderRef, v: LLVMValueRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildRetVoid(builder: LLVMBuilderRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMPositionBuilderAtEnd(builder: LLVMBuilderRef, theBlock: LLVMBasicBlockRef) {.importc, cdecl.}
+proc LLVMConstInt(intTy: LLVMTypeRef, n: culonglong, signExtend: LLVMBool): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstReal(realTy: LLVMTypeRef, n: cdouble): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildAlloca(builder: LLVMBuilderRef, ty: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildLoad2(builder: LLVMBuilderRef, ty: LLVMTypeRef, pointerVal: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildStore(builder: LLVMBuilderRef, val: LLVMValueRef, thePointer: LLVMValueRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildCall2(builder: LLVMBuilderRef, ty: LLVMTypeRef, fn: LLVMValueRef, args: ptr LLVMValueRef, numArgs: cuint, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildGEP2(builder: LLVMBuilderRef, ty: LLVMTypeRef, thePointer: LLVMValueRef, indices: ptr LLVMValueRef, numIndices: cuint, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildICmp(builder: LLVMBuilderRef, op: cint, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFCmp(builder: LLVMBuilderRef, op: cint, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildBr(builder: LLVMBuilderRef, dest: LLVMBasicBlockRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildCondBr(builder: LLVMBuilderRef, cond: LLVMValueRef, thenPart: LLVMBasicBlockRef, elsePart: LLVMBasicBlockRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMPrintModuleToFile(module: LLVMModuleRef, filename: cstring, errorMessage: cstringArray): LLVMBool {.importc, cdecl.}
 proc LLVMCreatePassManager(): pointer {.importc, cdecl.}
-proc LLVMAddInstructionCombiningPass(PM: pointer) {.importc, cdecl.}
-proc LLVMAddReassociatePass(PM: pointer) {.importc, cdecl.}
-proc LLVMAddGVNPass(PM: pointer) {.importc, cdecl.}
-proc LLVMAddCFGSimplificationPass(PM: pointer) {.importc, cdecl.}
-proc LLVMRunPassManager(PM: pointer, M: LLVMModuleRef): LLVMBool {.importc, cdecl.}
-proc LLVMDisposePassManager(PM: pointer) {.importc, cdecl.}
+proc LLVMAddInstructionCombiningPass(pm: pointer) {.importc, cdecl.}
+proc LLVMAddReassociatePass(pm: pointer) {.importc, cdecl.}
+proc LLVMAddGVNPass(pm: pointer) {.importc, cdecl.}
+proc LLVMAddCFGSimplificationPass(pm: pointer) {.importc, cdecl.}
+proc LLVMRunPassManager(pm: pointer, module: LLVMModuleRef): LLVMBool {.importc, cdecl.}
+proc LLVMDisposePassManager(pm: pointer) {.importc, cdecl.}
 
 # Additional LLVM API functions needed for expressions
-proc LLVMTypeOf(Val: LLVMValueRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMGetReturnType(FunctionTy: LLVMTypeRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMGetElementType(Ty: LLVMTypeRef): LLVMTypeRef {.importc, cdecl.}
-proc LLVMGetTypeKind(Ty: LLVMTypeRef): cint {.importc, cdecl.}
-proc LLVMGetIntTypeWidth(IntegerTy: LLVMTypeRef): cuint {.importc, cdecl.}
-proc LLVMIsConstant(Val: LLVMValueRef): LLVMBool {.importc, cdecl.}
-proc LLVMConstSExtOrBitCast(ConstantVal: LLVMValueRef, ToType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstTrunc(ConstantVal: LLVMValueRef, ToType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstBitCast(ConstantVal: LLVMValueRef, ToType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstSIToFP(ConstantVal: LLVMValueRef, ToType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstFPToSI(ConstantVal: LLVMValueRef, ToType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstFPExt(ConstantVal: LLVMValueRef, ToType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstFPTrunc(ConstantVal: LLVMValueRef, ToType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildSExt(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildTrunc(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildBitCast(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildSIToFP(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFPToSI(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFPExt(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFPTrunc(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildPtrToInt(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildIntToPtr(Builder: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstNull(Ty: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMConstArray(ElementTy: LLVMTypeRef, ConstantVals: ptr LLVMValueRef, Length: cuint): LLVMValueRef {.importc, cdecl.}
-proc LLVMAddGlobal(M: LLVMModuleRef, Ty: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMSetInitializer(GlobalVar: LLVMValueRef, ConstantVal: LLVMValueRef) {.importc, cdecl.}
-proc LLVMSetGlobalConstant(GlobalVar: LLVMValueRef, IsConstant: LLVMBool) {.importc, cdecl.}
-proc LLVMSetLinkage(Global: LLVMValueRef, Linkage: cuint) {.importc, cdecl.}
-proc LLVMConstGEP2(Ty: LLVMTypeRef, ConstantVal: LLVMValueRef, ConstantIndices: ptr LLVMValueRef, NumIndices: cuint): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildNot(Builder: LLVMBuilderRef, V: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildNeg(Builder: LLVMBuilderRef, V: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFNeg(Builder: LLVMBuilderRef, V: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildAdd(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFAdd(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildSub(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFSub(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildMul(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFMul(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildSDiv(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFDiv(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildSRem(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildFRem(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildShl(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildLShr(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildAnd(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildOr(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildXor(Builder: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMSizeOf(Ty: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMAlignOf(Ty: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMPtrToInt(Val: LLVMValueRef, DestTy: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMBuildPhi(Builder: LLVMBuilderRef, Ty: LLVMTypeRef, Name: cstring): LLVMValueRef {.importc, cdecl.}
-proc LLVMAddIncoming(PhiNode: LLVMValueRef, IncomingValues: ptr LLVMValueRef, IncomingBlocks: ptr LLVMBasicBlockRef, Count: cuint) {.importc, cdecl.}
-proc LLVMGetInsertBlock(Builder: LLVMBuilderRef): LLVMBasicBlockRef {.importc, cdecl.}
-proc LLVMGetBasicBlockParent(BB: LLVMBasicBlockRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMTypeOf(val: LLVMValueRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMGetReturnType(functionTy: LLVMTypeRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMGetElementType(ty: LLVMTypeRef): LLVMTypeRef {.importc, cdecl.}
+proc LLVMGetTypeKind(ty: LLVMTypeRef): cint {.importc, cdecl.}
+proc LLVMGetIntTypeWidth(integerTy: LLVMTypeRef): cuint {.importc, cdecl.}
+proc LLVMIsConstant(val: LLVMValueRef): LLVMBool {.importc, cdecl.}
+proc LLVMConstSExtOrBitCast(constantVal: LLVMValueRef, toType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstTrunc(constantVal: LLVMValueRef, toType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstBitCast(constantVal: LLVMValueRef, toType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstSIToFP(constantVal: LLVMValueRef, toType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstFPToSI(constantVal: LLVMValueRef, toType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstFPExt(constantVal: LLVMValueRef, toType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstFPTrunc(constantVal: LLVMValueRef, toType: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildSExt(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildTrunc(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildBitCast(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildSIToFP(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFPToSI(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFPExt(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFPTrunc(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildPtrToInt(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildIntToPtr(builder: LLVMBuilderRef, val: LLVMValueRef, destTy: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstNull(ty: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMConstArray(elementTy: LLVMTypeRef, constantVals: ptr LLVMValueRef, length: cuint): LLVMValueRef {.importc, cdecl.}
+proc LLVMAddGlobal(module: LLVMModuleRef, ty: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMSetInitializer(globalVar: LLVMValueRef, constantVal: LLVMValueRef) {.importc, cdecl.}
+proc LLVMSetGlobalConstant(globalVar: LLVMValueRef, isConstant: LLVMBool) {.importc, cdecl.}
+proc LLVMSetLinkage(global: LLVMValueRef, linkage: cuint) {.importc, cdecl.}
+proc LLVMConstGEP2(ty: LLVMTypeRef, constantVal: LLVMValueRef, constantIndices: ptr LLVMValueRef, numIndices: cuint): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildNot(builder: LLVMBuilderRef, v: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildNeg(builder: LLVMBuilderRef, v: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFNeg(builder: LLVMBuilderRef, v: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildSub(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFSub(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildMul(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFMul(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildSDiv(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFDiv(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildSRem(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildFRem(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildShl(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildLShr(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildAnd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildOr(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildXor(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMSizeOf(ty: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMAlignOf(ty: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMPtrToInt(val: LLVMValueRef, destTy: LLVMTypeRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMBuildPhi(builder: LLVMBuilderRef, ty: LLVMTypeRef, name: cstring): LLVMValueRef {.importc, cdecl.}
+proc LLVMAddIncoming(PhiNode: LLVMValueRef, incomingValues: ptr LLVMValueRef, incomingBlocks: ptr LLVMBasicBlockRef, count: cuint) {.importc, cdecl.}
+proc LLVMGetInsertBlock(builder: LLVMBuilderRef): LLVMBasicBlockRef {.importc, cdecl.}
+proc LLVMGetBasicBlockParent(bb: LLVMBasicBlockRef): LLVMValueRef {.importc, cdecl.}
 
 # Additional LLVM API functions for statements
-proc LLVMGetParam(Fn: LLVMValueRef, Index: cuint): LLVMValueRef {.importc, cdecl.}
-proc LLVMIsATerminatorInst(Inst: LLVMValueRef): LLVMValueRef {.importc, cdecl.}
-proc LLVMGetLastInstruction(BB: LLVMBasicBlockRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMGetParam(fn: LLVMValueRef, index: cuint): LLVMValueRef {.importc, cdecl.}
+proc LLVMIsATerminatorInst(inst: LLVMValueRef): LLVMValueRef {.importc, cdecl.}
+proc LLVMGetLastInstruction(bb: LLVMBasicBlockRef): LLVMValueRef {.importc, cdecl.}
 
 const
   LLVMIntEQ: cint = 32
