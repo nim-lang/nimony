@@ -662,7 +662,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProc c, dest, n
       of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-        ForS, CmdS, IncludeS, ImportS, FromImportS, ImportExceptS,
+        ForS, CmdS, IncludeS, ImportS, FromimportS, ImportExceptS,
         ExportS, CommentS,
         PragmasS:
         takeTree dest, n

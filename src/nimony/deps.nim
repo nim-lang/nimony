@@ -176,7 +176,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     processImport c, n, current
   of IncludeS, ImportExceptS:
     processInclude c, n, current
-  of FromImportS:
+  of FromimportS:
     processFrom c, n, current
   of ExportS:
     discard "ignore `export` statement"

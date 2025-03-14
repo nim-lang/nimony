@@ -295,13 +295,14 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
     c.buildErr info, "file not found: " & f2
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
+  var moduleSym = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
       selfExec c, f2, (if mode.kind == ImportSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
-    let moduleSym = identToSym(c, moduleName, ModuleY)
+    moduleSym = identToSym(c, moduleName, ModuleY)
     c.processedModules[suffix] = moduleSym
     let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
     c.currentScope.addOverloadable(moduleName, s)
@@ -309,11 +310,12 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
     moduleDecl.addParLe(ModuleY, info)
     moduleDecl.addParRi()
     publish moduleSym, moduleDecl
-    var module = ImportedModule(path: f2)
-    var marker = mode.list
-    loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters,
-      marker, negateMarker = mode.kind == FromImport
-    c.importedModules[moduleSym] = module
+  else:
+    moduleSym = c.processedModules[suffix]
+  let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
+  var marker = mode.list
+  loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters,
+    marker, negateMarker = mode.kind == FromImport
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
@@ -6160,7 +6162,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of IncludeS: semInclude c, it
       of ImportS: semImport c, it
       of ImportExceptS: semImportExcept c, it
-      of FromImportS: semFromImport c, it
+      of FromimportS: semFromImport c, it
       of ExportS: semExport c, it
       of ExportExceptS: semExportExcept c, it
       of AsgnS:
