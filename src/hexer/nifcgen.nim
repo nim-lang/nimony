@@ -1417,7 +1417,7 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
       error c, "BUG: not implemented: ", n
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc c, n, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromS, ImportExceptS, ExportS, CommentS, IteratorS,
+    of MacroS, TemplateS, IncludeS, ImportS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
       skip n

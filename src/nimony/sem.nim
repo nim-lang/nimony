@@ -6019,7 +6019,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of IncludeS: semInclude c, it
       of ImportS: semImport c, it
       of ImportExceptS: semImportExcept c, it
-      of FromS: semFromImport c, it
+      of FromimportS: semFromImport c, it
       of AsgnS:
         toplevelGuard c:
           semAsgn c, it
