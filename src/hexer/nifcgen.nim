@@ -1079,19 +1079,20 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       let arg = suf
       skip suf
       assert suf.kind == StringLit
-      if arg.kind == StringLit and pool.strings[suf.litId] == "R":
+      if arg.kind == StringLit and pool.strings[suf.litId] in ["R", "T"]:
         # cstring conversion
         inc n
         c.dest.add n # add string lit directly
         inc n # arg
         inc n # suf
+        skipParRi c, n
       else:
         c.dest.add n
         inc n
         traverseExpr c, n
         c.dest.add n
         inc n
-      takeParRi c, n
+        takeParRi c, n
     of AshrX:
       c.dest.add tagToken("shr", n.info)
       inc n

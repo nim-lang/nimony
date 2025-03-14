@@ -60,3 +60,11 @@ proc basictuple() =
   discard t[1]
 
 basictuple()
+
+discard "11223"
+
+discard """
+  dw3euuyghid23u23dhiw
+"""
+
+discard r"""136t54321"""
