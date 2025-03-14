@@ -61,6 +61,8 @@ proc isLastRead(c: var Context; n: Cursor): bool =
     inc n
     while n.kind != ParRi and not isLastSon(n): skip n
 
+  if n.exprKind == EmoveX: inc n
+
   let r = rootOf(n)
   result = false
   if r != NoSymId:
@@ -73,6 +75,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
       # as it doesn't have any.
       canAnalyse = true
     else:
+      assert v.kind != NoSym
       canAnalyse = false
     if canAnalyse:
       var otherUsage = NoLineInfo
@@ -94,10 +97,15 @@ proc constructsValue*(n: Cursor): bool =
     else: break
   result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
-proc lvalueRoot(n: Cursor): SymId =
+proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
   var n = n
-  while n.exprKind in {DotX, TupatX, AtX, ArrAtX}:
-    n = n.firstSon
+  while true:
+    case n.exprKind
+    of DotX, TupatX, AtX, ArrAtX: inc n
+    of HderefX:
+      hdrefs = true
+      inc n
+    else: break
   if n.kind == Symbol:
     result = n.symId
   else:
@@ -110,13 +118,18 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
     result = false
   else:
     result = true # true until proven otherwise
-    let d = lvalueRoot(dest)
-    let s = lvalueRoot(src)
+    var destHdrefs = false
+    var srcHdrefs = false
+    let d = lvalueRoot(dest, destHdrefs)
+    let s = lvalueRoot(src, srcHdrefs)
     if d != NoSymId or s != NoSymId:
       # one of the expressions was analysable
-      if d == s:
+      if destHdrefs and srcHdrefs:
+        # two pointer derefs? can alias:
+        result = true
+      elif d == s:
         # see if we can distinguish between `x.fieldA` and `x.fieldB` which
-        # cannot alias. We do know here that both expressions are free of
+        # cannot alias. We do know here that at least one expressions is free of
         # pointer derefs, so we can simply use `sameValues` here.
         result = sameTrees(dest, src)
       else:
@@ -306,7 +319,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
       # XXX We should really prefer to simply call `=copy(x, y)` here.
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
-        let tmp = tempOfTrArg(c, ri, leType)
+        let tmp = tempOfTrArg(c, le, leType)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
