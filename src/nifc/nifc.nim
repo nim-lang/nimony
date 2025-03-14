@@ -20,6 +20,9 @@ else:
 when defined(enableAsm):
   import amd64 / genasm
 
+when defined(enableLLVM):
+  import llvm
+
 const
   Version = "0.2"
   Usage = "NIFC Compiler. Version " & Version & """
@@ -28,7 +31,7 @@ const
 Usage:
   nifc [options] [command] [arguments]
 Command:
-  c|cpp|n file.nif [file2.nif]    convert NIF files to C|C++|ASM
+  c|cpp|n|llvm file.nif [file2.nif]    convert NIF files to C|C++|ASM|LLVM IR
 
 Options:
   -r, --run                 run the makefile and the compiled program
@@ -48,55 +51,65 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 proc genMakeCmd(config: ConfigRef, makefilePath: string): string =
   when defined(windows):
-    result = expandFilename(makefilePath)
+    result = "cd " & quoteShell(config.nifcacheDir) & " && " & makefilePath
   else:
-    result = "make -f " & makefilePath
+    result = "cd " & quoteShell(config.nifcacheDir) & " && make -f " & makefilePath
 
-proc generateBackend(s: var State; action: Action; files: seq[string]; flags: set[GenFlag]) =
-  assert action in {atC, atCpp}
-  if files.len == 0:
-    quit "command takes a filename"
-  s.config.backend = if action == atC: backendC else: backendCpp
-  let destExt = if action == atC: ".c" else: ".cpp"
-  for i in 0..<files.len-1:
-    let inp = files[i]
-    let outp = s.config.nifcacheDir / splitFile(inp).name.mangleFileName & destExt
-    generateCode s, inp, outp, {}
-  let inp = files[^1]
-  let outp = s.config.nifcacheDir / splitFile(inp).name.mangleFileName & destExt
-  generateCode s, inp, outp, flags
+proc generateBackend(s: var State; action: Action; filenames: seq[string];
+                     flags: set[GenFlag]) =
+  for inp in items filenames:
+    var ext = ExtAction[action]
+    let outp = s.config.nifcacheDir / changeFileExt(inp, ext)
+    if action == atC:
+      s.config.backend = backendC
+      codegen.generateCode(s, inp, outp, flags)
+    elif action == atCpp:
+      s.config.backend = backendCpp
+      codegen.generateCode(s, inp, outp, flags)
+    elif action == atLLVM:
+      when defined(enableLLVM):
+        s.config.backend = backendLLVM
+        # Call LLVM backend
+        generateLLVMCode(s, inp, outp, flags)
+      else:
+        quit "nifc was not compiled with LLVM support"
+    else:
+      quit "target must be 'c', 'cpp', 'llvm' or 'n'"
 
-proc handleCmdLine() =
-  var toRun = false
-  var compileOnly = false
-  var isMain = false
-  var currentAction = atNone
-
-  var actionTable = initActionTable()
-
-  var s = State(config: ConfigRef(), bits: sizeof(int)*8)
-  when defined(macos): # TODO: switches to default config for platforms
-    s.config.cCompiler = ccCLang
-  else:
-    s.config.cCompiler = ccGcc
-  s.config.nifcacheDir = "nimcache"
-
-  for kind, key, val in getopt():
+proc handleCmdLine =
+  var
+    s = State(
+      config: ConfigRef(cCompiler: ccGcc,
+                       optimizeLevel: Speed,
+                       options: {optLineDir},
+                       nifcacheDir: getTempDir() / "nimcache"),
+      bits: 64)
+    isMain = false
+    toRun = false
+    compileOnly = false
+    currentAction: Action = atNone
+    actionTable = initActionTable()
+  var p = initOptParser()
+  while true:
+    next(p)
+    var kind = p.kind
+    var key = p.key
+    var val = p.val
     case kind
     of cmdArgument:
-      case key.normalize:
+      case key.normalize
       of "c":
         currentAction = atC
-        if not hasKey(actionTable, atC):
-          actionTable[atC] = @[]
+        actionTable[atC] = @[]
       of "cpp":
         currentAction = atCpp
-        if not hasKey(actionTable, atCpp):
-          actionTable[atCpp] = @[]
+        actionTable[atCpp] = @[]
       of "n":
         currentAction = atNative
-        if not hasKey(actionTable, atNative):
-          actionTable[atNative] = @[]
+        actionTable[atNative] = @[]
+      of "llvm":
+        currentAction = atLLVM
+        actionTable[atLLVM] = @[]
       else:
         case currentAction
         of atC:
@@ -105,6 +118,8 @@ proc handleCmdLine() =
           actionTable[atCpp].add key
         of atNative:
           actionTable[atNative].add key
+        of atLLVM:
+          actionTable[atLLVM].add key
         of atNone:
           quit "invalid command: " & key
     of cmdLongOption, cmdShortOption:
@@ -157,7 +172,7 @@ proc handleCmdLine() =
   if actionTable.len != 0:
     for action in actionTable.keys:
       case action
-      of atC, atCpp:
+      of atC, atCpp, atLLVM:
         let isLast = (if compileOnly: isMain else: currentAction == action)
         var flags = if isLast: {gfMainModule} else: {}
         if isMain:

@@ -73,12 +73,6 @@ proc fillTokenTable(tab: var BiTable[Token, string]) =
     assert id == Token(e), $(id, " ", ord(e))
 
 type
-  GenFlag* = enum
-    gfMainModule # isMainModule
-    gfHasError   # already generated the error variable
-    gfProducesMainProc # needs main proc
-    gfInCallImportC # in importC call context
-
   GeneratedCode* = object
     m: Module
     includes: seq[Token]
