@@ -17,12 +17,19 @@ import mangler, nifc_model, cprelude, noptions, typenav
 
 # LLVM C API bindings
 type
-  LLVMContextRef = pointer
-  LLVMModuleRef = pointer
-  LLVMBuilderRef = pointer
-  LLVMTypeRef = pointer
-  LLVMValueRef = pointer
-  LLVMBasicBlockRef = pointer
+  LLVMContext = object
+  LLVMModule = object
+  LLVMBuilder = object
+  LLVMType = object
+  LLVMValue = object
+  LLVMBasicBlock = object
+
+  LLVMContextRef = ptr LLVMContext
+  LLVMModuleRef = ptr LLVMModule
+  LLVMBuilderRef = ptr LLVMBuilder
+  LLVMTypeRef = ptr LLVMType
+  LLVMValueRef = ptr LLVMValue
+  LLVMBasicBlockRef = ptr LLVMBasicBlock
   LLVMBool = int32
 
 proc LLVMContextCreate(): LLVMContextRef {.importc, cdecl.}
