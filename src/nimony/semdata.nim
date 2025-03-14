@@ -87,7 +87,7 @@ type
     instantiatedProcs*: Table[(SymId, string), SymId]
     thisModuleSuffix*: string
     moduleFlags*: set[ModuleFlag]
-    processedModules*: HashSet[string]
+    processedModules*: Table[string, SymId] # suffix to sym
     usedTypevars*: int
     phase*: SemPhase
     canSelfExec*: bool
