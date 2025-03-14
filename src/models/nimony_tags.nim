@@ -149,7 +149,7 @@ type
     IncludeS = (138, "include")  ## `include` statement
     ImportS = (139, "import")  ## `import` statement
     ImportasS = (140, "importas")  ## `import as` statement
-    FromS = (141, "from")  ## `from` statement
+    FromimportS = (141, "fromimport")  ## `from import` statement
     ImportexceptS = (142, "importexcept")  ## `importexcept` statement
     ExportS = (143, "export")  ## `export` statement
     ExportexceptS = (144, "exportexcept")  ## `exportexcept` statement
