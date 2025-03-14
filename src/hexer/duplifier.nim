@@ -61,6 +61,8 @@ proc isLastRead(c: var Context; n: Cursor): bool =
     inc n
     while n.kind != ParRi and not isLastSon(n): skip n
 
+  if n.exprKind == EmoveX: inc n
+
   let r = rootOf(n)
   result = false
   if r != NoSymId:
@@ -73,6 +75,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
       # as it doesn't have any.
       canAnalyse = true
     else:
+      assert v.kind != NoSym
       canAnalyse = false
     if canAnalyse:
       var otherUsage = NoLineInfo
@@ -306,7 +309,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
       # XXX We should really prefer to simply call `=copy(x, y)` here.
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
-        let tmp = tempOfTrArg(c, ri, leType)
+        let tmp = tempOfTrArg(c, le, leType)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
