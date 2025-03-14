@@ -44,11 +44,11 @@ type
     CastC = (45, "cast")  ## `cast` operation
     ConvC = (46, "conv")  ## type conversion
     CallC = (47, "call")  ## call operation
-    ErrvC = (255, "errv")  ## error flag for `NIFC`
+    ErrvC = (256, "errv")  ## error flag for `NIFC`
 
 proc rawTagIsNifcExpr*(raw: uint32): bool {.inline.} =
   let r = raw - 2'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 28'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 253'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 28'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 254'u8}
 
 type
   NifcStmt* = enum
@@ -73,14 +73,14 @@ type
     StmtsS = (94, "stmts")  ## list of statements
     ImpS = (134, "imp")  ## import declaration
     InclS = (136, "incl")  ## `#include` statement or `incl` set operation
-    DiscardS = (146, "discard")  ## `discard` statement
-    TryS = (147, "try")  ## `try` statement
-    RaiseS = (148, "raise")  ## `raise` statement
-    OnerrS = (149, "onerr")  ## error handling statement
+    DiscardS = (147, "discard")  ## `discard` statement
+    TryS = (148, "try")  ## `try` statement
+    RaiseS = (149, "raise")  ## `raise` statement
+    OnerrS = (150, "onerr")  ## error handling statement
 
 proc rawTagIsNifcStmt*(raw: uint32): bool {.inline.} =
   let r = raw - 47'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 4'u8, 5'u8, 6'u8, 8'u8, 17'u8, 24'u8, 29'u8, 30'u8, 31'u8, 32'u8, 37'u8, 40'u8, 41'u8, 43'u8, 44'u8, 45'u8, 47'u8, 87'u8, 89'u8, 99'u8, 100'u8, 101'u8, 102'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 4'u8, 5'u8, 6'u8, 8'u8, 17'u8, 24'u8, 29'u8, 30'u8, 31'u8, 32'u8, 37'u8, 40'u8, 41'u8, 43'u8, 44'u8, 45'u8, 47'u8, 87'u8, 89'u8, 100'u8, 101'u8, 102'u8, 103'u8}
 
 type
   NifcType* = enum
@@ -137,13 +137,13 @@ type
     BitsP = (132, "bits")
     VectorP = (133, "vector")
     NodeclP = (135, "nodecl")  ## `nodecl` annotation
-    RaisesP = (150, "raises")  ## proc annotation
-    ErrsP = (151, "errs")  ## proc annotation
-    StaticP = (152, "static")  ## `static` type or annotation
+    RaisesP = (151, "raises")  ## proc annotation
+    ErrsP = (152, "errs")  ## proc annotation
+    StaticP = (153, "static")  ## `static` type or annotation
 
 proc rawTagIsNifcPragma*(raw: uint32): bool {.inline.} =
   let r = raw - 123'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 8'u8, 9'u8, 10'u8, 12'u8, 27'u8, 28'u8, 29'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 8'u8, 9'u8, 10'u8, 12'u8, 28'u8, 29'u8, 30'u8}
 
 type
   NifcTypeQualifier* = enum
