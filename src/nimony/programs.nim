@@ -88,7 +88,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
       let val = pool.syms.getOrIncl(v)
       converters.mgetOrPut(key, @[]).addUnique(val)
   for ex in m.index.exports:
-    let (path, kind, names) = ex
+    let (path, kind, syms) = ex
     let filterKind =
       case kind
       of ExportIdx: ImportAll
@@ -96,8 +96,11 @@ proc loadInterface*(suffix: string; iface: var Iface;
       of ExportexceptIdx: ImportExcept
       else: ImportAll
     var filter = ImportFilter(kind: filterKind)
-    for s in names:
-      filter.list.incl(s)
+    for s in syms:
+      var base = pool.syms[s]
+      extractBasename(base)
+      let strId = pool.strings.getOrIncl(base)
+      filter.list.incl(strId)
     exports.add (path, filter)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =

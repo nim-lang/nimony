@@ -69,6 +69,13 @@ type
   ModuleFlag* = enum
     IsSystem, IsMain, SkipSystem
 
+  ExportModeKind* = enum
+    ExportAll, FromExport, ExportExcept
+
+  ExportMode* = object
+    kind*: ExportModeKind
+    list*: HashSet[SymId] # `from export` or `export except` symbol list
+
   SemContext* = object
     dest*: TokenBuf
     routine*: SemRoutine
@@ -100,7 +107,7 @@ type
     hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
-    exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
+    exports*: OrderedTable[SymId, ExportMode] # module syms to export mode
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     unoverloadableMagics*: HashSet[StrId]
