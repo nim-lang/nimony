@@ -57,6 +57,14 @@ proc createFacts*(): Facts =
 
 proc `==`(a, b: VarId): bool {.borrow.}
 
+proc geXplusC*(f: LeXplusC): LeXplusC =
+  # a >= b + c  --> b + c <= a  --> b <= a - c
+  result = LeXplusC(a: f.b, b: f.a, c: -f.c)
+
+proc ltXplusC*(f: LeXplusC): LeXplusC =
+  # a < b + c  --> a <= b + c - 1
+  result = LeXplusC(a: f.a, b: f.b, c: f.c - createXint(1'i64))
+
 proc negFact(f: var LeXplusC) =
   # not (a <= b + c)
   # -->

@@ -61,15 +61,15 @@ proc argAt(call: Cursor; pos: int): Cursor =
 
 type
   ProofRes = enum
-    Unprovable, Proven, Disproven
+    Unprovable, Disproven, Proven
 
 proc `and`(a, b: ProofRes): ProofRes =
-  if a == Unprovable or b == Unprovable:
-    Unprovable
+  if a == Proven and b == Proven:
+    Proven
   elif a == Disproven or b == Disproven:
     Disproven
   else:
-    Proven
+    Unprovable
 
 proc `or`(a, b: ProofRes): ProofRes =
   if a == Proven or b == Proven:
@@ -87,45 +87,96 @@ proc `not`(a: ProofRes): ProofRes =
   else:
     Proven
 
+proc mapSymbol(c: var Context; paramMap: Table[SymId, int]; call: Cursor; symId: SymId): VarId =
+  result = VarId(0)
+  let pos = paramMap.getOrDefault(symId)
+  if pos > 0:
+    let arg = call.argAt(pos)
+    if arg.kind == Symbol:
+      result = c.toPropId.getOrDefault(arg.symId)
+
+proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
+  var r = req
+  var a, b: VarId
+  var c = createXint(0'i32)
+  if r.kind == Symbol:
+    a = mapSymbol(c, paramMap, call, r.symId)
+    inc r
+  if r.kind == Symbol:
+    b = mapSymbol(c, paramMap, call, r.symId)
+    inc r
+  elif (let op = r.exprKind; op in {AddX, SubX}):
+    inc r
+    if r.kind == Symbol:
+      b = mapSymbol(c, paramMap, call, r.symId)
+      inc r
+      if r.kind == IntLit:
+        c = createXint(pool.integers[r.intId])
+      elif r.kind == UIntLit:
+        c = createXuint(pool.uintegers[r.uintId])
+      else:
+        error "expected integer literal but got: ", r
+    else:
+      error "expected symbol but got: ", r
+  result = query(a, b, c)
+  skipParRi r
+
 proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): ProofRes =
-  case req.kind
-  of Symbol:
-    let pos = paramMap.getOrDefault(req.symId)
-
-  of ParLe:
-    case req.exprKind
-    of AndX:
-      var r = req
-      inc r
-      let a = checkReq(c, paramMap, r, call)
-      let b = checkReq(c, paramMap, r, call)
-      skipParRi r
-      result = a and b
-    of OrX:
-      var r = req
-      inc r
-      let a = checkReq(c, paramMap, r, call)
-      let b = checkReq(c, paramMap, r, call)
-      skipParRi r
-      result = a or b
-    of NotX:
-      var r = req
-      inc r
-      result = not checkReq(c, paramMap, r, call)
-      skipParRi r
-    of EqX:
-      # x == 3?
-      var r = req
-      inc r
-      if r.kind == Symbol:
-        let pos = paramMap.getOrDefault(r.symId)
-        if pos > 0:
-          let arg = call.argAt(pos)
-          if arg.kind == Symbol:
-            let propId = c.toPropId.getOrDefault(arg.symId)
-
-
-
+  case req.exprKind
+  of AndX:
+    var r = req
+    inc r
+    let a = checkReq(c, paramMap, r, call)
+    skip r
+    let b = checkReq(c, paramMap, r, call)
+    skipParRi r
+    result = a and b
+  of OrX:
+    var r = req
+    inc r
+    let a = checkReq(c, paramMap, r, call)
+    skip r
+    let b = checkReq(c, paramMap, r, call)
+    skipParRi r
+    result = a or b
+  of NotX:
+    var r = req
+    inc r
+    result = not checkReq(c, paramMap, r, call)
+    skipParRi r
+  of EqX:
+    # x == 3?
+    var r = req
+    inc r
+    skip r # skip type
+    let cm = compileCmp(c, paramMap, r, call)
+    # a <= b + c
+    # But we require a == b + c
+    # so we also need  a >= b + c  --> b + c <= a  --> b <= a - c
+    let cm2 = cm.geXplusC
+    if implies(c.facts, cm) and implies(c.facts, cm2):
+      result = Proven
+    else:
+      result = Disproven
+  of LeX:
+    var r = req
+    inc r
+    skip r # skip type
+    let cm = compileCmp(c, paramMap, r, call)
+    if implies(c.facts, cm):
+      result = Proven
+    else:
+      result = Disproven
+  of LtX:
+    var r = req
+    inc r
+    skip r # skip type
+    let cm = compileCmp(c, paramMap, r, call)
+    # a < b + c  --> a <= b + c - 1
+    if implies(c.facts, cm.ltXplusC):
+      result = Proven
+    else:
+      result = Disproven
 
 proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   var fnType = skipProcTypeToParams(fnType)
@@ -141,6 +192,9 @@ proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   let req = extractPragma(fnType, RequiresP)
   if not cursorIsNil(req):
     # ... analyse that the input parameters match the requirements
+    let res = checkReq(c, paramMap, req, n)
+    if res != Proven:
+      error "contract violation: ", req
   else:
     while n.kind != ParRi:
       skip n
@@ -154,7 +208,6 @@ proc analyseCall(c: var Context; pc: var Cursor) =
 proc singlePath(c: var Context; pc: Cursor): bool =
   var nested = 0
   var pc = pc
-  var facts = createFacts()
   while true:
     #echo "PC IS: ", pc.kind
     case pc.kind
