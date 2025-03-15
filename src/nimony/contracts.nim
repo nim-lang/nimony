@@ -205,7 +205,26 @@ proc analyseCall(c: var Context; pc: var Cursor) =
   assert fnType == "params"
   analyseCallArgs(c, n, fnType)
 
-proc singlePath(c: var Context; pc: Cursor): bool =
+#[
+We use the control flow graph for a structured traversal over the basic blocks (bb):
+We start with the proc entry. We follow the bb until we arrive at a `goto` instruction
+or at a `ite` instruction which know has two goto instructions.
+We know a `goto` enters a different bb. We add this bb to a worklist. We can process
+this bb once all its predecessors have been processed. We keep track of that by
+lookup table that counts the indegree of each bb.
+]#
+
+proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): CountTable[int] =
+  result = initCountTable[int]()
+  let last = if last < 0: c.len-1 else: min(last, c.len-1)
+  for i in start..last:
+    if c[i].kind == GotoInstr:
+      let diff = c[i].getInt28
+      # we ignore backward jumps for now:
+      if diff > 0:
+        result.inc(i+diff)
+
+proc traverseBasicBlock(c: var Context; pc: Cursor): int =
   var nested = 0
   var pc = pc
   while true:
