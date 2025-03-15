@@ -123,6 +123,7 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
 type ImportedFilename* = object
   path*: string ## stringified path from AST that has to be resolved
   name*: string ## extracted module name to define a sym for in `import`
+  isSystem*: bool
 
 proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs = false) =
   case n.kind

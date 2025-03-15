@@ -21,6 +21,12 @@ type
     dir, main*, ext: string
     mem: Table[SymId, TokenBuf]
 
+  ImportFilterKind* = enum
+    ImportAll, FromImport, ImportExcept
+
+  ImportFilter* = object
+    kind*: ImportFilterKind
+    list*: PackedSet[StrId] # `from import` or `import except` symbol list
 
 var
   prog*: Program
@@ -52,9 +58,11 @@ proc load(suffix: string): NifModule =
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters: var Table[SymId, seq[SymId]];
-                    marker: var PackedSet[StrId]; negateMarker: bool) =
+                    filter: ImportFilter) =
   let m = load(suffix)
   let alreadyLoaded = iface.len != 0
+  var marker = filter.list
+  let negateMarker = filter.kind == FromImport
   for k, _ in m.index.public:
     var base = k
     extractBasename(base)
