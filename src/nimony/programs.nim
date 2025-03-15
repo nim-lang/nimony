@@ -23,7 +23,7 @@ type
     mem: Table[SymId, TokenBuf]
 
   ImportFilterKind* = enum
-    ImportAll, FromImport, ImportExcept, ImportSystem
+    ImportAll, FromImport, ImportExcept
 
   ImportFilter* = object
     kind*: ImportFilterKind

@@ -322,17 +322,17 @@ proc combineFilters(filters: seq[ImportFilter]): ImportFilter =
   for i in 1 ..< filters.len:
     var f2 = filters[i]
     case f2.kind
-    of ImportAll, ImportSystem: discard
+    of ImportAll: discard
     of ImportExcept:
       case result.kind
-      of ImportAll, ImportSystem: result = f2
+      of ImportAll: result = f2
       of ImportExcept:
         result.list.incl(f2.list)
       of FromImport:
         result.list.excl(f2.list)
     of FromImport:
       case result.kind
-      of ImportAll, ImportSystem: result = f2
+      of ImportAll: result = f2
       of ImportExcept:
         f2.list.excl(result.list)
         result = f2
