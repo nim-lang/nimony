@@ -383,7 +383,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsIgnored)
     trBlock c, dest, n, tar
   of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-     ForS, IncludeS, ImportS, FromS, ImportExceptS,
+     ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
      ExportS, CommentS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     takeTree dest, n

@@ -140,10 +140,10 @@
 | `(include X+)` | NimonyStmt, NiflerKind | `include` statement |
 | `(import X+)` | NimonyStmt, NiflerKind | `import` statement |
 | `(importas X X)` | NimonyStmt, NiflerKind | `import as` statement |
-| `(from X X)` | NimonyStmt, NiflerKind | `from` statement |
-| `(importexcept X+)` | NimonyStmt, NiflerKind | `importexcept` statement |
+| `(fromimport X X)` | NimonyStmt, NiflerKind | `from import` statement |
+| `(importexcept X X+)` | NimonyStmt, NiflerKind | `importexcept` statement |
 | `(export X+)` | NimonyStmt, NiflerKind | `export` statement |
-| `(exportexcept X+)` | NimonyStmt, NiflerKind | `exportexcept` statement |
+| `(exportexcept X X+)` | NimonyStmt, NiflerKind | `exportexcept` statement |
 | `(comment STR)` | NimonyStmt, NiflerKind | `comment` statement |
 | `(discard X)` | NifcStmt, NimonyStmt, NiflerKind | `discard` statement |
 | `(try X (except .X X)* (fin S)?); (try S S S)` | NifcStmt, NimonyStmt, NiflerKind | `try` statement |

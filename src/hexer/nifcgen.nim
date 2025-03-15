@@ -1079,18 +1079,19 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       let arg = suf
       skip suf
       assert suf.kind == StringLit
-      if arg.kind == StringLit and pool.strings[suf.litId] == "R":
+      if arg.kind == StringLit and pool.strings[suf.litId] in ["R", "T"]:
         # cstring conversion
         inc n
         traverseExpr c, n # adds string lit directly
         inc n # suf
+        skipParRi c, n
       else:
         c.dest.add n
         inc n
         traverseExpr c, n
         c.dest.add n
         inc n
-      takeParRi c, n
+        takeParRi c, n
     of AshrX:
       c.dest.add tagToken("shr", n.info)
       inc n
@@ -1415,7 +1416,7 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
       error c, "BUG: not implemented: ", n
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc c, n, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromS, ImportExceptS, ExportS, CommentS, IteratorS,
+    of MacroS, TemplateS, IncludeS, ImportS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
       skip n

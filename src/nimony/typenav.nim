@@ -373,7 +373,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       of "f": result = c.builtins.floatType
       of "f32": result = c.builtins.float32Type
       of "f64": result = c.builtins.float64Type
-      of "R": result = c.builtins.stringType
+      of "R", "T": result = c.builtins.stringType
       else: result = c.builtins.autoType
 
   assert result.kind != ParRi, "ParRi for expression: " & toString(n, false)
