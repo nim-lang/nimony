@@ -50,6 +50,8 @@ proc asUnsigned*(x: xint; err: var bool): uint64 =
 proc `-`*(a: xint): xint =
   xint(nan: a.nan, neg: not a.neg, val: a.val)
 
+proc negate*(a: var xint) {.inline.} = a.neg = not a.neg
+
 proc `+`*(a, b: xint): xint =
   if a.nan or b.nan:
     return xint(nan: true)

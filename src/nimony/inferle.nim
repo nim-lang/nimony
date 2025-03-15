@@ -11,6 +11,10 @@ import xints
 
 type
   VarId* = distinct int32  # convention: VarId(0) is always the constant 0!
+
+proc `==`*(a, b: VarId): bool {.borrow.}
+
+type
   LeXplusC* = object    # semantics: a <= b + c
     a, b: VarId
     c: xint
@@ -20,6 +24,12 @@ type
 
   RestorePoint* = object
     xlen: int
+
+const
+  InvalidVarId = VarId(-1)
+
+proc isValid*(x: LeXplusC): bool {.inline.} =
+  result = x.a != InvalidVarId
 
 #[
 
@@ -47,12 +57,23 @@ proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
   f.x.add LeXplusC(a: a, b: b, c: c)
 
+proc query*(a, b: VarId; c: xint = createXint(0'i64)): LeXplusC =
+  result = LeXplusC(a: a, b: b, c: c)
+
 proc createFacts*(): Facts =
   result = Facts()
   # VarId(0) is always mapped to zero so we know that `v0 <= v0 + 0`:
   result.x.add LeXplusC(a: VarId(0), b: VarId(0), c: createXint(0'i64))
 
 proc `==`(a, b: VarId): bool {.borrow.}
+
+proc geXplusC*(f: LeXplusC): LeXplusC =
+  # a >= b + c  --> b + c <= a  --> b <= a - c
+  result = LeXplusC(a: f.b, b: f.a, c: -f.c)
+
+proc ltXplusC*(f: LeXplusC): LeXplusC =
+  # a < b + c  --> a <= b + c - 1
+  result = LeXplusC(a: f.a, b: f.b, c: f.c - createXint(1'i64))
 
 proc negFact(f: var LeXplusC) =
   # not (a <= b + c)

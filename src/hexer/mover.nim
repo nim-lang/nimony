@@ -13,32 +13,6 @@ import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, controlflow, programs]
 
-const
-  PayloadOffset = 1'u32 # so that we don't use 0 as a payload
-
-proc prepare(buf: var TokenBuf): seq[PackedLineInfo] =
-  result = newSeq[PackedLineInfo](buf.len)
-  for i in 0..<buf.len:
-    result[i] = buf[i].info
-    buf[i].info = toPayload(i.uint32 + PayloadOffset)
-
-proc restore(buf: var TokenBuf; infos: seq[PackedLineInfo]) =
-  for i in 0..<buf.len:
-    buf[i].info = infos[i]
-
-proc isMarked(n: Cursor): bool {.inline.} =
-  result = n.info == toPayload(0'u32)
-
-proc doMark(n: Cursor) {.inline.} =
-  n.setInfo(toPayload(0'u32))
-
-proc testOrSetMark(n: Cursor): bool {.inline.} =
-  if isMarked(n):
-    result = true
-  else:
-    doMark(n)
-    result = false
-
 proc rootOf*(n: Cursor): SymId =
   var n = n
   while true:
@@ -55,11 +29,54 @@ proc rootOf*(n: Cursor): SymId =
   else:
     result = NoSymId
 
+proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
+  var a = a
+  var b = b
+  var nested = 0
+  let isAtom = a.kind != ParLe
+  while true:
+    if a.kind != b.kind: return false
+    case a.kind
+    of ParLe:
+      if a.tagId != b.tagId: return false
+      if a.exprKind in {PatX, ArrAtX}:
+        inc a
+        inc b
+        if not sameTreesIgnoreArrayIndexes(a, b):
+          return false
+        # do not compare the array indexes:
+        skipToEnd a
+        skipToEnd b
+      else:
+        inc a
+        inc b
+        inc nested
+    of ParRi:
+      dec nested
+      if nested == 0: return true
+    of Symbol, SymbolDef:
+      if a.symId != b.symId: return false
+    of IntLit:
+      if a.intId != b.intId: return false
+    of UIntLit:
+      if a.uintId != b.uintId: return false
+    of FloatLit:
+      if a.floatId != b.floatId: return false
+    of StringLit, Ident:
+      if a.litId != b.litId: return false
+    of CharLit, UnknownToken:
+      if a.uoperand != b.uoperand: return false
+    of DotToken, EofToken: discard "nothing else to compare"
+    if isAtom: return true
+    inc a
+    inc b
+  return false
+
 proc containsUsage(tree: var Cursor; x: Cursor): bool =
   result = false
   var nested = 0
   while true:
-    if sameTrees(tree, x):
+    if sameTreesIgnoreArrayIndexes(tree, x):
       result = true
     case tree.kind
     of ParLe:

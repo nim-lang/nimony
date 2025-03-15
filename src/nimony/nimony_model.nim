@@ -262,18 +262,19 @@ proc hookName*(op: HookKind): string =
 const
   NoSymId* = SymId(0)
 
-proc hasPragma*(n: Cursor; kind: PragmaKind): bool =
-  result = false
+proc extractPragma*(n: Cursor; kind: PragmaKind): Cursor =
   var n = n
-  if n.kind == DotToken:
-    discard
-  else:
+  if n.kind != DotToken:
     inc n
     while n.kind != ParRi:
       if pragmaKind(n) == kind:
-        result = true
-        break
+        inc n
+        return n
       skip n
+  result = default(Cursor)
+
+proc hasPragma*(n: Cursor; kind: PragmaKind): bool =
+  result = not cursorIsNil(extractPragma(n, kind))
 
 proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   dest.add symToken(s, info)
