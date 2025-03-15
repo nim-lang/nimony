@@ -107,6 +107,12 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
   if r.kind == Symbol:
     b = mapSymbol(c, paramMap, call, r.symId)
     inc r
+  elif r.kind == IntLit:
+    c = createXint(pool.integers[r.intId])
+    inc r
+  elif r.kind == UIntLit:
+    c = createXuint(pool.uintegers[r.uintId])
+    inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
     if r.kind == Symbol:
@@ -225,11 +231,12 @@ lookup table that counts the indegree of each bb.
 type
   BasicBlock = distinct int
   Continuation = object
-    bb: BasicBlock
-    fact: LeXplusC
+    thenPart, elsePart: BasicBlock
+    newFacts: int
 
 const
   NoBasicBlock = BasicBlock(-1)
+  BasicBlockReturn = BasicBlock(-2)
 
 proc toBasicBlock*(c: Context; pc: Cursor): BasicBlock {.inline.} =
   result = BasicBlock(cursorToPosition(c.startInstr, pc))
@@ -244,7 +251,7 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): CountTable[BasicBlo
       if diff > 0:
         result.inc(BasicBlock(i+diff))
 
-proc analyseCondition(c: var Context; pc: var Cursor): LeXplusC =
+proc analyseCondition(c: var Context; pc: var Cursor): int =
   var r = pc
   var a = InvalidVarId
   var b = InvalidVarId
@@ -252,8 +259,17 @@ proc analyseCondition(c: var Context; pc: var Cursor): LeXplusC =
   if r.kind == Symbol:
     a = c.toPropId.getOrDefault(r.symId)
     inc r
+  else:
+    skip pc
+    return 0
   if r.kind == Symbol:
     b = c.toPropId.getOrDefault(r.symId)
+    inc r
+  elif r.kind == IntLit:
+    c = createXint(pool.integers[r.intId])
+    inc r
+  elif r.kind == UIntLit:
+    c = createXuint(pool.uintegers[r.uintId])
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
@@ -268,11 +284,31 @@ proc analyseCondition(c: var Context; pc: var Cursor): LeXplusC =
         error "expected integer literal but got: ", r
     else:
       error "expected symbol but got: ", r
-  result = query(a, b, c)
+  let fact = query(a, b, c)
+  if fact.isValid:
+    c.facts.add fact
+    result = 1
+  else:
+    result = 0
   skipParRi r
   pc = r
 
-proc traverseBasicBlock(c: var Context; pc: Cursor): (Continuation, Continuation) =
+proc analyseAsgn(c: var Context; pc: var Cursor) =
+  inc pc # skip asgn instruction
+  if pc.kind == Symbol:
+    # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
+    let a = c.toPropId.getOrDefault(pc.symId)
+    let b = a
+    let c = createXint(4'i32)
+    let fact = query(a, b, c)
+    c.facts.add fact
+    inc pc
+  else:
+    skip pc # skip left-hand-side
+  skip pc # skip right-hand-side
+  skipParRi pc
+
+proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
   var nested = 0
   var pc = pc
   while true:
@@ -285,10 +321,10 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): (Continuation, Continuation
         # it is a backwards jump: In Nimony we know this came from a loop in
         # the control flow graph. So we skip over it and proceed with the BB after the loop:
         inc pc
-        return (toBasicBlock(c, pc), NoBasicBlock)
+        return Continuation(thenPart: toBasicBlock(c, pc), elsePart: NoBasicBlock)
       else:
         # ordinary goto, simply follow it:
-        return (toBasicBlock(c, pc +! diff), NoBasicBlock)
+        return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock)
     of ParRi:
       if nested == 0:
         raiseAssert "BUG: unpaired ')'"
@@ -304,26 +340,20 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): (Continuation, Continuation
       #echo "PC IS: ", pool.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
-        analyseCondition(c, pc)
+        let newFacts = analyseCondition(c, pc)
         # now 2 goto instructions follow:
         let a = pc +! pc.getInt28
         inc pc
         let b = pc +! pc.getInt28
-        # we follow the second goto and remember the first one:
-        if not isMarked(a):
-          pcs.add a
-        pc = b
+        return Continuation(thenPart: toBasicBlock(c, a), elsePart: toBasicBlock(c, b), newFacts: newFacts)
       else:
         let kind = pc.stmtKind
         case kind
         of AsgnS:
-          inc pc
-          skip pc # skip left-hand-side
-          skip pc # skip right-hand-side
-          skipParRi pc
+          analyseAsgn(c, pc)
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
-          break
+          return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
           inc pc
           inc nested
