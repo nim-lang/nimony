@@ -437,7 +437,8 @@ proc readIndex*(indexName: string): NifIndex =
         result.toBuild.add (typ, path, args)
         t = next(s)
         t = next(s)
-    
+      t = next(s)
+
     while t.tag == TagId(ExportIdx) or t.tag == TagId(FromexportIdx) or t.tag == TagId(ExportexceptIdx):
       let kind = cast[NifIndexKind](t.tag)
       t = next(s)

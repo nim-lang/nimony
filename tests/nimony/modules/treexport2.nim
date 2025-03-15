@@ -1,0 +1,6 @@
+import treexport
+
+discard foo
+discard xyz
+discard uvw
+discard good

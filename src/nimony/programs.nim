@@ -7,6 +7,7 @@
 import std / [syncio, os, tables, sequtils, times, packedsets]
 include nifprelude
 import nifindexes, symparser, reporters, builtintypes
+import ".." / models / [nifindex_tags]
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
@@ -21,6 +22,12 @@ type
     dir, main*, ext: string
     mem: Table[SymId, TokenBuf]
 
+  ImportModeKind* = enum
+    ImportAll, FromImport, ImportExcept, ImportSystem
+
+  ImportMode* = object
+    kind*: ImportModeKind
+    list*: PackedSet[StrId] # `from import` or `import except` symbol list
 
 var
   prog*: Program
@@ -52,9 +59,12 @@ proc load(suffix: string): NifModule =
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters: var Table[SymId, seq[SymId]];
-                    marker: var PackedSet[StrId]; negateMarker: bool) =
+                    exports: var seq[(string, ImportMode)];
+                    mode: ImportMode) =
   let m = load(suffix)
   let alreadyLoaded = iface.len != 0
+  var marker = mode.list
+  let negateMarker = mode.kind == FromImport
   for k, _ in m.index.public:
     var base = k
     extractBasename(base)
@@ -77,6 +87,21 @@ proc loadInterface*(suffix: string; iface: var Iface;
       let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
       let val = pool.syms.getOrIncl(v)
       converters.mgetOrPut(key, @[]).addUnique(val)
+  for ex in m.index.exports:
+    let (path, kind, syms) = ex
+    let modeKind =
+      case kind
+      of ExportIdx: ImportAll
+      of FromexportIdx: FromImport
+      of ExportexceptIdx: ImportExcept
+      else: ImportAll
+    var mode = ImportMode(kind: modeKind)
+    for s in syms:
+      var base = pool.syms[s]
+      extractBasename(base)
+      let strId = pool.strings.getOrIncl(base)
+      mode.list.incl(strId)
+    exports.add (path, mode)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):

@@ -281,15 +281,9 @@ proc semInclude(c: var SemContext; it: var Item) =
 
   producesVoid c, info, it.typ
 
-type
-  ImportModeKind = enum
-    ImportAll, FromImport, ImportExcept, ImportSystem
-
-  ImportMode = object
-    kind: ImportModeKind
-    list: PackedSet[StrId] # `from import` or `import except` symbol list
-
-proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
+proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
+                      mode: ImportMode; exports: var seq[(string, ImportMode)];
+                      info: PackedLineInfo) =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
     c.buildErr info, "file not found: " & f2
@@ -305,7 +299,8 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
     moduleSym = identToSym(c, moduleName, ModuleY)
     c.processedModules[suffix] = moduleSym
     let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
-    c.currentScope.addOverloadable(moduleName, s)
+    if f1.name != "":
+      c.currentScope.addOverloadable(moduleName, s)
     var moduleDecl = createTokenBuf(2)
     moduleDecl.addParLe(ModuleY, info)
     moduleDecl.addParRi()
@@ -313,9 +308,50 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
   else:
     moduleSym = c.processedModules[suffix]
   let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
-  var marker = mode.list
-  loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters,
-    marker, negateMarker = mode.kind == FromImport
+  loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters, exports, mode
+
+proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
+                      mode: ImportMode;
+                      info: PackedLineInfo) =
+  var exports: seq[(string, ImportMode)] = @[] # ignored
+  importSingleFile(c, f1, origin, mode, exports, info)
+
+proc combineFilters(filters: seq[ImportMode]): ImportMode =
+  # last one is last applied
+  result = filters[0]
+  for i in 1 ..< filters.len:
+    var f2 = filters[i]
+    case f2.kind
+    of ImportAll, ImportSystem: discard
+    of ImportExcept:
+      case result.kind
+      of ImportAll, ImportSystem: result = f2
+      of ImportExcept:
+        result.list.incl(f2.list)
+      of FromImport:
+        result.list.excl(f2.list)
+    of FromImport:
+      case result.kind
+      of ImportAll, ImportSystem: result = f2
+      of ImportExcept:
+        f2.list.excl(result.list)
+        result = f2
+      of FromImport:
+        result.list = intersection(result.list, f2.list)
+
+proc `$`*(x: StrId): string = pool.strings[x]
+
+proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
+  var imports = @[(f1, @[mode])]
+  while imports.len != 0:
+    var newImports: seq[(ImportedFilename, seq[ImportMode])] = @[]
+    for im in imports:
+      let combined = combineFilters(im[1])
+      var exports: seq[(string, ImportMode)] = @[]
+      importSingleFile(c, im[0], origin, combined, exports, info)
+      for ex in exports:
+        newImports.add (ImportedFilename(path: ex[0], name: ""), @[ex[1]] & im[1])
+    imports = newImports
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
@@ -323,7 +359,7 @@ proc cyclicImport(c: var SemContext; x: var Cursor) =
 proc doImportMode(c: var SemContext; files: seq[ImportedFilename]; mode: ImportMode; info: PackedLineInfo) =
   let origin = getFile(info)
   for f in files:
-    importSingleFile c, f, origin, mode, info
+    importSingleFileConsiderExports c, f, origin, mode, info
 
 proc semImport(c: var SemContext; it: var Item) =
   let info = it.n.info
@@ -6353,7 +6389,7 @@ proc buildExports(c: var SemContext): TokenBuf =
     return default(TokenBuf)
   result = createTokenBuf(32)
   for m, ex in c.exports:
-    let path = c.importedModules[m].path
+    let path = toAbsolutePath(c.importedModules[m].path)
     case ex.kind
     of ExportAll:
       result.addParLe(TagId(ExportIdx), NoLineInfo)
