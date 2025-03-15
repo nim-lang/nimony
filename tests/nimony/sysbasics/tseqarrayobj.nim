@@ -10,6 +10,7 @@ var d: array[1, seq[array[1, int]]] = [@[[4]]]
 assert a[0][0] == 1
 assert b[0][0][0] == 2
 assert c[0][0] == 3
+assert d[0][0][0] == 4
 
 type
   Foo = object
