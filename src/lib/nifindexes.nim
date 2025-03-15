@@ -264,13 +264,12 @@ type
   HooksPerType* = object
     a*: array[AttachedOp, (SymId, bool)]
 
-
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
     hooks*: Table[SymId, HooksPerType]
     converters*: seq[(string, string)] # map of dest types to converter symbols
     toBuild*: seq[(string, string, string)]
-    exports*: seq[(string, NifIndexKind, seq[SymId])] # module, export kind, syms
+    exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
   var previousOffset = 0
@@ -445,12 +444,12 @@ proc readIndex*(indexName: string): NifIndex =
       assert t.kind == StringLit
       let path = pool.strings[t.litId]
       t = next(s)
-      var syms: seq[SymId] = @[]
+      var names: seq[StrId] = @[]
       while t.kind != ParRi:
-        assert t.kind == Symbol
-        syms.add t.symId
+        assert t.kind == Ident
+        names.add t.litId
         t = next(s)
-      result.exports.add (path, kind, syms)
+      result.exports.add (path, kind, names)
       t = next(s)
   else:
     assert false, "expected 'index' tag"

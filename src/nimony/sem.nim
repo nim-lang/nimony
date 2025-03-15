@@ -483,9 +483,10 @@ proc doExport(c: var SemContext; sym: SymId; info: PackedLineInfo) =
   let isModule = res.status == LacksNothing and res.decl.symKind == ModuleY
   if isModule:
     # overrides previous export mode if exists
-    c.exports[sym] = ExportMode(kind: ExportAll)
+    c.exports[sym] = ImportFilter(kind: ImportAll)
   else:
-    let suffix = extractModule(pool.syms[sym])
+    let name = pool.syms[sym]
+    let suffix = extractModule(name)
     if suffix == "":
       c.buildErr info, "cannot export non-global symbol"
       return
@@ -494,18 +495,21 @@ proc doExport(c: var SemContext; sym: SymId; info: PackedLineInfo) =
       c.buildErr info, "exporting local symbol not implemented"
       return
     let moduleSym = c.processedModules[suffix]
+    var basename = ensureMove name
+    extractBasename(basename)
+    let strId = pool.strings.getOrIncl(basename)
     if moduleSym in c.exports:
       case c.exports[moduleSym].kind
-      of ExportAll:
+      of ImportAll:
         # nothing to do, already exported
         discard
-      of FromExport:
-        c.exports[moduleSym].list.incl sym
-      of ExportExcept:
-        c.exports[moduleSym].list.excl sym
+      of FromImport:
+        c.exports[moduleSym].list.incl strId
+      of ImportExcept:
+        c.exports[moduleSym].list.excl strId
     else:
-      c.exports[moduleSym] = ExportMode(kind: FromExport, list: initHashSet[SymId]())
-      c.exports[moduleSym].list.incl sym
+      c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initPackedSet[StrId]())
+      c.exports[moduleSym].list.incl strId
 
 proc semExport(c: var SemContext; it: var Item) =
   let info = it.n.info
@@ -543,22 +547,26 @@ proc semExport(c: var SemContext; it: var Item) =
   producesVoid c, info, it.typ
 
 proc doExportExcept(c: var SemContext; moduleSym, sym: SymId; info: PackedLineInfo) =
-  let suffix = extractModule(pool.syms[sym])
+  let name = pool.syms[sym]
+  let suffix = extractModule(name)
   if c.processedModules[suffix] != moduleSym:
     # doesn't belong to exported module, no need to consider
     return
+  var basename = ensureMove name
+  extractBasename(basename)
+  let strId = pool.strings.getOrIncl(basename)
   if moduleSym in c.exports:
     case c.exports[moduleSym].kind
-    of ExportAll:
-      c.exports[moduleSym] = ExportMode(kind: ExportExcept, list: initHashSet[SymId]())
-      c.exports[moduleSym].list.incl sym
-    of FromExport:
-      c.exports[moduleSym].list.excl sym
-    of ExportExcept:
-      c.exports[moduleSym].list.incl sym
+    of ImportAll:
+      c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initPackedSet[StrId]())
+      c.exports[moduleSym].list.incl strId
+    of FromImport:
+      c.exports[moduleSym].list.excl strId
+    of ImportExcept:
+      c.exports[moduleSym].list.incl strId
   else:
-    c.exports[moduleSym] = ExportMode(kind: ExportExcept, list: initHashSet[SymId]())
-    c.exports[moduleSym].list.incl sym
+    c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initPackedSet[StrId]())
+    c.exports[moduleSym].list.incl strId
 
 proc semExportExcept(c: var SemContext; it: var Item) =
   let info = it.n.info
@@ -6391,23 +6399,23 @@ proc buildExports(c: var SemContext): TokenBuf =
   for m, ex in c.exports:
     let path = toAbsolutePath(c.importedModules[m].path)
     case ex.kind
-    of ExportAll:
+    of ImportAll:
       result.addParLe(TagId(ExportIdx), NoLineInfo)
       result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
       result.addParRi()
-    of FromExport:
+    of FromImport:
       if ex.list.len != 0:
         result.addParLe(TagId(FromexportIdx), NoLineInfo)
         result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
         for s in ex.list:
-          result.add symToken(s, NoLineInfo)
+          result.add identToken(s, NoLineInfo)
         result.addParRi()
-    of ExportExcept:
+    of ImportExcept:
       let kind = if ex.list.len == 0: ExportIdx else: ExportexceptIdx
       result.addParLe(TagId(kind), NoLineInfo)
       result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
       for s in ex.list:
-        result.add symToken(s, NoLineInfo)
+        result.add identToken(s, NoLineInfo)
       result.addParRi()
 
 proc writeOutput(c: var SemContext; outfile: string) =
