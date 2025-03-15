@@ -47,6 +47,9 @@ proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
   f.x.add LeXplusC(a: a, b: b, c: c)
 
+proc query*(a, b: VarId; c: xint = createXint(0'i64)): LeXplusC =
+  result = LeXplusC(a: a, b: b, c: c)
+
 proc createFacts*(): Facts =
   result = Facts()
   # VarId(0) is always mapped to zero so we know that `v0 <= v0 + 0`:

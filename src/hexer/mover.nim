@@ -13,32 +13,6 @@ import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, controlflow, programs]
 
-const
-  PayloadOffset = 1'u32 # so that we don't use 0 as a payload
-
-proc prepare(buf: var TokenBuf): seq[PackedLineInfo] =
-  result = newSeq[PackedLineInfo](buf.len)
-  for i in 0..<buf.len:
-    result[i] = buf[i].info
-    buf[i].info = toPayload(i.uint32 + PayloadOffset)
-
-proc restore(buf: var TokenBuf; infos: seq[PackedLineInfo]) =
-  for i in 0..<buf.len:
-    buf[i].info = infos[i]
-
-proc isMarked(n: Cursor): bool {.inline.} =
-  result = n.info == toPayload(0'u32)
-
-proc doMark(n: Cursor) {.inline.} =
-  n.setInfo(toPayload(0'u32))
-
-proc testOrSetMark(n: Cursor): bool {.inline.} =
-  if isMarked(n):
-    result = true
-  else:
-    doMark(n)
-    result = false
-
 proc rootOf*(n: Cursor): SymId =
   var n = n
   while true:
