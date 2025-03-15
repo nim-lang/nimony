@@ -22,11 +22,11 @@ type
     dir, main*, ext: string
     mem: Table[SymId, TokenBuf]
 
-  ImportModeKind* = enum
+  ImportFilterKind* = enum
     ImportAll, FromImport, ImportExcept, ImportSystem
 
-  ImportMode* = object
-    kind*: ImportModeKind
+  ImportFilter* = object
+    kind*: ImportFilterKind
     list*: PackedSet[StrId] # `from import` or `import except` symbol list
 
 var
@@ -59,12 +59,12 @@ proc load(suffix: string): NifModule =
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters: var Table[SymId, seq[SymId]];
-                    exports: var seq[(string, ImportMode)];
-                    mode: ImportMode) =
+                    exports: var seq[(string, ImportFilter)];
+                    filter: ImportFilter) =
   let m = load(suffix)
   let alreadyLoaded = iface.len != 0
-  var marker = mode.list
-  let negateMarker = mode.kind == FromImport
+  var marker = filter.list
+  let negateMarker = filter.kind == FromImport
   for k, _ in m.index.public:
     var base = k
     extractBasename(base)
@@ -89,19 +89,19 @@ proc loadInterface*(suffix: string; iface: var Iface;
       converters.mgetOrPut(key, @[]).addUnique(val)
   for ex in m.index.exports:
     let (path, kind, syms) = ex
-    let modeKind =
+    let filterKind =
       case kind
       of ExportIdx: ImportAll
       of FromexportIdx: FromImport
       of ExportexceptIdx: ImportExcept
       else: ImportAll
-    var mode = ImportMode(kind: modeKind)
+    var filter = ImportFilter(kind: filterKind)
     for s in syms:
       var base = pool.syms[s]
       extractBasename(base)
       let strId = pool.strings.getOrIncl(base)
-      mode.list.incl(strId)
-    exports.add (path, mode)
+      filter.list.incl(strId)
+    exports.add (path, filter)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):

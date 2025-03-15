@@ -282,7 +282,7 @@ proc semInclude(c: var SemContext; it: var Item) =
   producesVoid c, info, it.typ
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
-                      mode: ImportMode; exports: var seq[(string, ImportMode)];
+                      mode: ImportFilter; exports: var seq[(string, ImportFilter)];
                       info: PackedLineInfo) =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
@@ -293,7 +293,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
-      selfExec c, f2, (if mode.kind == ImportSystem: " --isSystem" else: "")
+      selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
     moduleSym = identToSym(c, moduleName, ModuleY)
@@ -311,12 +311,12 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters, exports, mode
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
-                      mode: ImportMode;
+                      filter: ImportFilter;
                       info: PackedLineInfo) =
-  var exports: seq[(string, ImportMode)] = @[] # ignored
-  importSingleFile(c, f1, origin, mode, exports, info)
+  var exports: seq[(string, ImportFilter)] = @[] # ignored
+  importSingleFile(c, f1, origin, filter, exports, info)
 
-proc combineFilters(filters: seq[ImportMode]): ImportMode =
+proc combineFilters(filters: seq[ImportFilter]): ImportFilter =
   # last one is last applied
   result = filters[0]
   for i in 1 ..< filters.len:
@@ -341,13 +341,13 @@ proc combineFilters(filters: seq[ImportMode]): ImportMode =
 
 proc `$`*(x: StrId): string = pool.strings[x]
 
-proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
-  var imports = @[(f1, @[mode])]
+proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
+  var imports = @[(f1, @[filter])]
   while imports.len != 0:
-    var newImports: seq[(ImportedFilename, seq[ImportMode])] = @[]
+    var newImports: seq[(ImportedFilename, seq[ImportFilter])] = @[]
     for im in imports:
       let combined = combineFilters(im[1])
-      var exports: seq[(string, ImportMode)] = @[]
+      var exports: seq[(string, ImportFilter)] = @[]
       importSingleFile(c, im[0], origin, combined, exports, info)
       for ex in exports:
         newImports.add (ImportedFilename(path: ex[0], name: ""), @[ex[1]] & im[1])
@@ -356,10 +356,10 @@ proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; or
 proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
 
-proc doImportMode(c: var SemContext; files: seq[ImportedFilename]; mode: ImportMode; info: PackedLineInfo) =
+proc doImports(c: var SemContext; files: seq[ImportedFilename]; filter: ImportFilter; info: PackedLineInfo) =
   let origin = getFile(info)
   for f in files:
-    importSingleFileConsiderExports c, f, origin, mode, info
+    importSingleFileConsiderExports c, f, origin, filter, info
 
 proc semImport(c: var SemContext; it: var Item) =
   let info = it.n.info
@@ -384,7 +384,7 @@ proc semImport(c: var SemContext; it: var Item) =
   if hasError:
     c.buildErr info, "wrong `import` statement"
   else:
-    doImportMode c, files, ImportMode(kind: ImportAll, list: initPackedSet[StrId]()), info
+    doImports c, files, ImportFilter(kind: ImportAll), info
 
   producesVoid c, info, it.typ
 
@@ -413,7 +413,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
     var excluded = initPackedSet[StrId]()
     while x.kind != ParRi:
       excluded.incl getIdent(x)
-    doImportMode c, files, ImportMode(kind: ImportExcept, list: excluded), info
+    doImports c, files, ImportFilter(kind: ImportExcept, list: excluded), info
 
   producesVoid c, info, it.typ
 
@@ -446,7 +446,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
         discard
       else:
         included.incl getIdent(x)
-    doImportMode c, files, ImportMode(kind: FromImport, list: included), info
+    doImports c, files, ImportFilter(kind: FromImport, list: included), info
 
   producesVoid c, info, it.typ
 
@@ -6504,8 +6504,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   assert n0 == "stmts"
 
   if {SkipSystem, IsSystem} * moduleFlags == {}:
-    importSingleFile(c, ImportedFilename(path: stdlibFile("std/system"), name: "system"),
-       "", ImportMode(kind: ImportSystem, list: initPackedSet[StrId]()), n0.info)
+    let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
+    importSingleFile(c, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
   #echo "PHASE 1"
   var n1 = phaseX(c, n0, SemcheckTopLevelSyms)
