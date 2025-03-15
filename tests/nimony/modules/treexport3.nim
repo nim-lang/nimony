@@ -1,11 +1,11 @@
-import treexport except uzw
+from deps/mreexport import good, uvw, foo
 
 # should work:
 discard foo
-discard xyz
+discard uvw
 discard good
 
 # should fail:
 discard bar
-discard uzw
+discard xyz
 discard bad

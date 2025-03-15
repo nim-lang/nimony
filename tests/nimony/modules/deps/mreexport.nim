@@ -1,4 +1,4 @@
-import deps/[mreexport1, mreexport2, mreexport3]
+import mreexport1, mreexport2, mreexport3
 
 export foo
 export mreexport2
