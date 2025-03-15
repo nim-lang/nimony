@@ -947,7 +947,7 @@ proc traverseConv(c: var EContext; n: var Cursor) =
 
 proc isSimpleLiteral(nb: var Cursor): bool =
   case nb.kind
-  of IntLit, UIntLit, FloatLit, CharLit, DotToken:
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit, DotToken:
     result = true
     inc nb
   else:
@@ -1082,8 +1082,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       if arg.kind == StringLit and pool.strings[suf.litId] in ["R", "T"]:
         # cstring conversion
         inc n
-        c.dest.add n # add string lit directly
-        inc n # arg
+        traverseExpr c, n # adds string lit directly
         inc n # suf
         skipParRi c, n
       else:
@@ -1150,10 +1149,10 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
     c.offer n.symId
     inc n
   of Symbol:
-    let inlineValue = getInitValue(c.typeCache, n.symId)
+    var inlineValue = getInitValue(c.typeCache, n.symId)
     var inlineValueCopy = inlineValue
     if not cursorIsNil(inlineValue) and isSimpleLiteral(inlineValueCopy):
-      c.dest.addSubtree inlineValue
+      traverseExpr(c, inlineValue)
     else:
       let ext = maybeMangle(c, n.symId)
       if ext.len != 0:

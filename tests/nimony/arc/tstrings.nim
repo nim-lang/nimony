@@ -16,3 +16,10 @@ proc foo =
   var m1 = s
 
 foo()
+
+proc myStr(a: string): string =
+  ## strips the last two chars, see test below
+  a
+
+let m = myStr"AnB"
+echo m
