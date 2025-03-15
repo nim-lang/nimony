@@ -11,6 +11,10 @@ import xints
 
 type
   VarId* = distinct int32  # convention: VarId(0) is always the constant 0!
+
+proc `==`*(a, b: VarId): bool {.borrow.}
+
+type
   LeXplusC* = object    # semantics: a <= b + c
     a, b: VarId
     c: xint
@@ -20,6 +24,12 @@ type
 
   RestorePoint* = object
     xlen: int
+
+const
+  InvalidVarId = VarId(-1)
+
+proc isValid*(x: LeXplusC): bool {.inline.} =
+  result = x.a != InvalidVarId
 
 #[
 

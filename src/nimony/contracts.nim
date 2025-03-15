@@ -32,6 +32,7 @@ type
     typeCache: TypeCache
     facts: Facts
     toPropId: Table[SymId, VarId]
+    startInstr: Cursor
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
@@ -97,7 +98,8 @@ proc mapSymbol(c: var Context; paramMap: Table[SymId, int]; call: Cursor; symId:
 
 proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
   var r = req
-  var a, b: VarId
+  var a = InvalidVarId
+  var b = InvalidVarId
   var c = createXint(0'i32)
   if r.kind == Symbol:
     a = mapSymbol(c, paramMap, call, r.symId)
@@ -154,7 +156,9 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     # But we require a == b + c
     # so we also need  a >= b + c  --> b + c <= a  --> b <= a - c
     let cm2 = cm.geXplusC
-    if implies(c.facts, cm) and implies(c.facts, cm2):
+    if not cm.isValid:
+      result = Unprovable
+    elif implies(c.facts, cm) and implies(c.facts, cm2):
       result = Proven
     else:
       result = Disproven
@@ -163,7 +167,9 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     inc r
     skip r # skip type
     let cm = compileCmp(c, paramMap, r, call)
-    if implies(c.facts, cm):
+    if not cm.isValid:
+      result = Unprovable
+    elif implies(c.facts, cm):
       result = Proven
     else:
       result = Disproven
@@ -172,11 +178,14 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     inc r
     skip r # skip type
     let cm = compileCmp(c, paramMap, r, call)
-    # a < b + c  --> a <= b + c - 1
-    if implies(c.facts, cm.ltXplusC):
+    if not cm.isValid:
+      result = Unprovable
+    elif implies(c.facts, cm.ltXplusC):
       result = Proven
     else:
       result = Disproven
+  else:
+    result = Unprovable
 
 proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   var fnType = skipProcTypeToParams(fnType)
@@ -213,36 +222,73 @@ We know a `goto` enters a different bb. We add this bb to a worklist. We can pro
 this bb once all its predecessors have been processed. We keep track of that by
 lookup table that counts the indegree of each bb.
 ]#
+type
+  BasicBlock = distinct int
+  Continuation = object
+    bb: BasicBlock
+    fact: LeXplusC
 
-proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): CountTable[int] =
-  result = initCountTable[int]()
+const
+  NoBasicBlock = BasicBlock(-1)
+
+proc toBasicBlock*(c: Context; pc: Cursor): BasicBlock {.inline.} =
+  result = BasicBlock(cursorToPosition(c.startInstr, pc))
+
+proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): CountTable[BasicBlock] =
+  result = initCountTable[BasicBlock]()
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
   for i in start..last:
     if c[i].kind == GotoInstr:
       let diff = c[i].getInt28
       # we ignore backward jumps for now:
       if diff > 0:
-        result.inc(i+diff)
+        result.inc(BasicBlock(i+diff))
 
-proc traverseBasicBlock(c: var Context; pc: Cursor): int =
+proc analyseCondition(c: var Context; pc: var Cursor): LeXplusC =
+  var r = pc
+  var a = InvalidVarId
+  var b = InvalidVarId
+  var c = createXint(0'i32)
+  if r.kind == Symbol:
+    a = c.toPropId.getOrDefault(r.symId)
+    inc r
+  if r.kind == Symbol:
+    b = c.toPropId.getOrDefault(r.symId)
+    inc r
+  elif (let op = r.exprKind; op in {AddX, SubX}):
+    inc r
+    if r.kind == Symbol:
+      b = c.toPropId.getOrDefault(r.symId)
+      inc r
+      if r.kind == IntLit:
+        c = createXint(pool.integers[r.intId])
+      elif r.kind == UIntLit:
+        c = createXuint(pool.uintegers[r.uintId])
+      else:
+        error "expected integer literal but got: ", r
+    else:
+      error "expected symbol but got: ", r
+  result = query(a, b, c)
+  skipParRi r
+  pc = r
+
+proc traverseBasicBlock(c: var Context; pc: Cursor): (Continuation, Continuation) =
   var nested = 0
   var pc = pc
   while true:
     #echo "PC IS: ", pc.kind
     case pc.kind
     of GotoInstr:
+      # Every goto intruction leaves the basic block.
       let diff = pc.getInt28
       if diff < 0:
-        # jump backwards:
-        let back = pc +! diff
-        if not testOrSetMark(back):
-          pc = back
-        else:
-          # finished traversing this path:
-          break
+        # it is a backwards jump: In Nimony we know this came from a loop in
+        # the control flow graph. So we skip over it and proceed with the BB after the loop:
+        inc pc
+        return (toBasicBlock(c, pc), NoBasicBlock)
       else:
         # ordinary goto, simply follow it:
-        pc = pc +! diff
+        return (toBasicBlock(c, pc +! diff), NoBasicBlock)
     of ParRi:
       if nested == 0:
         raiseAssert "BUG: unpaired ')'"
@@ -258,9 +304,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): int =
       #echo "PC IS: ", pool.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
-        if containsUsage(pc, x):
-          otherUsage = pc
-          return false
+        analyseCondition(c, pc)
         # now 2 goto instructions follow:
         let a = pc +! pc.getInt28
         inc pc
