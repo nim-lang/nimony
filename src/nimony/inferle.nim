@@ -11,15 +11,31 @@ import xints
 
 type
   VarId* = distinct int32  # convention: VarId(0) is always the constant 0!
+
+proc `==`*(a, b: VarId): bool {.borrow.}
+
+type
   LeXplusC* = object    # semantics: a <= b + c
-    a, b: VarId
-    c: xint
+    a*, b*: VarId
+    c*: xint
 
   Facts* = object
     x: seq[LeXplusC]
 
   RestorePoint* = object
     xlen: int
+
+const
+  InvalidVarId* = VarId(-1)
+
+proc isValid*(x: LeXplusC): bool {.inline.} =
+  result = x.a != InvalidVarId
+
+proc len*(f: Facts): int {.inline.} = f.x.len
+proc `[]`*(f: Facts; i: int): lent LeXplusC {.inline.} = f.x[i]
+
+proc shrink*(f: var Facts; newLen: int) {.inline.} =
+  f.x.shrink newLen
 
 #[
 
@@ -47,14 +63,23 @@ proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
   f.x.add LeXplusC(a: a, b: b, c: c)
 
+proc query*(a, b: VarId; c: xint = createXint(0'i64)): LeXplusC =
+  result = LeXplusC(a: a, b: b, c: c)
+
 proc createFacts*(): Facts =
   result = Facts()
   # VarId(0) is always mapped to zero so we know that `v0 <= v0 + 0`:
   result.x.add LeXplusC(a: VarId(0), b: VarId(0), c: createXint(0'i64))
 
-proc `==`(a, b: VarId): bool {.borrow.}
+proc geXplusC*(f: LeXplusC): LeXplusC =
+  # a >= b + c  --> b + c <= a  --> b <= a - c
+  result = LeXplusC(a: f.b, b: f.a, c: -f.c)
 
-proc negFact(f: var LeXplusC) =
+proc ltXplusC*(f: LeXplusC): LeXplusC =
+  # a < b + c  --> a <= b + c - 1
+  result = LeXplusC(a: f.a, b: f.b, c: f.c - createXint(1'i64))
+
+proc negFact*(f: var LeXplusC) =
   # not (a <= b + c)
   # -->
   # a >= b + c - 1
@@ -92,7 +117,7 @@ proc simpleImplies(facts: Facts; v: LeXplusC): bool =
       if f.c <= v.c: return true
   return false
 
-import intsets
+import std/intsets
 
 type
   Path = object
