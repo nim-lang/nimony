@@ -75,39 +75,37 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   var exports: seq[(string, ImportFilter)] = @[] # ignored
   importSingleFile(c, f1, origin, filter, exports, info)
 
-proc combineFilters(filters: seq[ImportFilter]): ImportFilter =
-  # last one is last applied
-  result = filters[0]
-  for i in 1 ..< filters.len:
-    var f2 = filters[i]
-    case f2.kind
-    of ImportAll: discard
+proc compose(f, g: ImportFilter): ImportFilter =
+  # applies filter f to filter g, commutative since it computes the intersection
+  case f.kind
+  of ImportAll: result = g
+  of ImportExcept:
+    case g.kind
+    of ImportAll: result = f
     of ImportExcept:
-      case result.kind
-      of ImportAll: result = f2
-      of ImportExcept:
-        result.list.incl(f2.list)
-      of FromImport:
-        result.list.excl(f2.list)
+      result = g
+      result.list.incl(f.list)
     of FromImport:
-      case result.kind
-      of ImportAll: result = f2
-      of ImportExcept:
-        f2.list.excl(result.list)
-        result = f2
-      of FromImport:
-        result.list = intersection(result.list, f2.list)
+      result = g
+      result.list.excl(f.list)
+  of FromImport:
+    case result.kind
+    of ImportAll: result = f
+    of ImportExcept:
+      result = f
+      result.list.excl(g.list)
+    of FromImport:
+      result = ImportFilter(kind: FromImport, list: intersection(f.list, g.list))
 
 proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
-  var imports = @[(f1, @[filter])]
+  var imports = @[(f1, filter)]
   while imports.len != 0:
-    var newImports: seq[(ImportedFilename, seq[ImportFilter])] = @[]
+    var newImports: seq[(ImportedFilename, ImportFilter)] = @[]
     for im in imports:
-      let combined = combineFilters(im[1])
       var exports: seq[(string, ImportFilter)] = @[]
-      importSingleFile(c, im[0], origin, combined, exports, info)
+      importSingleFile(c, im[0], origin, im[1], exports, info)
       for ex in exports:
-        newImports.add (ImportedFilename(path: ex[0], name: ""), @[ex[1]] & im[1])
+        newImports.add (ImportedFilename(path: ex[0], name: ""), compose(ex[1], im[1]))
     imports = newImports
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
