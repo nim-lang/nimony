@@ -176,7 +176,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     processImport c, n, current
   of IncludeS, ImportExceptS:
     processInclude c, n, current
-  of FromS:
+  of FromimportS:
     processFrom c, n, current
   of ExportS:
     discard "ignore `export` statement"
@@ -321,6 +321,9 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string; passC, pa
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.makefile"
   writeFile result, s
 
+proc cachedConfigFile(config: NifConfig): string =
+  config.nifcachePath / "cachedconfigfile.txt"
+
 proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
   var s = makefileHeader
 
@@ -337,6 +340,7 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
       let idxFile = c.config.indexFile(f)
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
+    s.add " " & c.config.cachedConfigFile()
     let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "")
     s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(c.config.parsedFile(v.files[0])) & " " &
       mescape(c.config.semmedFile(v.files[0])) & " " & mescape(c.config.indexFile(v.files[0]))
@@ -354,6 +358,16 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
 
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
+
+proc generateCachedConfigFile(c: DepContext) =
+  let path = c.config.cachedConfigFile()
+  let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile
+  let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
+                     configStr != readFile path
+                   else:
+                     true
+  if needUpdate:
+    writeFile path, configStr
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
@@ -374,6 +388,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
+  generateCachedConfigFile c
   let makeFilename = generateFrontendMakefile(c, commandLineArgs)
   #echo "run with: make -f ", makeFilename
   when defined(windows):

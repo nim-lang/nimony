@@ -20,9 +20,6 @@ proc `=wasMoved`*[T](s: var seq[T]) {.inline.} =
   s.len = 0
   s.data = nil
 
-type HasDefault* = concept
-  proc default(_: typedesc[Self]): Self
-
 proc newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
   if size == 0:
     result = seq[T](len: size, data: nil)

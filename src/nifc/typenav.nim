@@ -49,13 +49,13 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
   of UIntLit:
     result = createIntegralType(m, "(u -1)")
   of FloatLit:
-    result = createIntegralType(m, "(f 64)")
-  of StringLit: result = createIntegralType(m, "(aptr (c 8))")
-  of CharLit: result = createIntegralType(m, "(c 8)")
+    result = createIntegralType(m, "(f +64)")
+  of StringLit: result = createIntegralType(m, "(aptr (c +8))")
+  of CharLit: result = createIntegralType(m, "(c +8)")
   of ParLe:
     case n.exprKind
-    of SizeofC, AlignofC, OffsetofC: result = createIntegralType(m, "(i 8)")
-    of InfC, NegInfC, NanC: result = createIntegralType(m, "(f 64)")
+    of SizeofC, AlignofC, OffsetofC: result = createIntegralType(m, "(i +8)")
+    of InfC, NegInfC, NanC: result = createIntegralType(m, "(f +64)")
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC:
       result = createIntegralType(m, "(bool)")
     of CallC:

@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, os, tables, times, packedsets]
+import std / [syncio, os, tables, sequtils, times, packedsets]
 include nifprelude
 import nifindexes, symparser, reporters, builtintypes
 
@@ -21,6 +21,12 @@ type
     dir, main*, ext: string
     mem: Table[SymId, TokenBuf]
 
+  ImportFilterKind* = enum
+    ImportAll, FromImport, ImportExcept
+
+  ImportFilter* = object
+    kind*: ImportFilterKind
+    list*: PackedSet[StrId] # `from import` or `import except` symbol list
 
 var
   prog*: Program
@@ -52,20 +58,24 @@ proc load(suffix: string): NifModule =
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters: var Table[SymId, seq[SymId]];
-                    marker: var PackedSet[StrId]; negateMarker: bool) =
+                    filter: ImportFilter) =
   let m = load(suffix)
+  let alreadyLoaded = iface.len != 0
+  var marker = filter.list
+  let negateMarker = filter.kind == FromImport
   for k, _ in m.index.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
     let symId = pool.syms.getOrIncl(k)
-    iface.mgetOrPut(strId, @[]).add symId
+    if not alreadyLoaded:
+      iface.mgetOrPut(strId, @[]).add symId
     let symMarked =
       if negateMarker: marker.missingOrExcl(strId)
       else: marker.containsOrIncl(strId)
     if not symMarked:
       # mark that this module contains the identifier `strId`:
-      importTab.mgetOrPut(strId, @[]).add(module)
+      importTab.mgetOrPut(strId, @[]).addUnique(module)
   for k, v in m.index.converters.items:
     var name = v
     extractBasename(name)
@@ -74,7 +84,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
     if nameId in importTab and module in importTab[nameId]:
       let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
       let val = pool.syms.getOrIncl(v)
-      converters.mgetOrPut(key, @[]).add(val)
+      converters.mgetOrPut(key, @[]).addUnique(val)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):

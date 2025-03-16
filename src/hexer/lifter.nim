@@ -296,10 +296,15 @@ proc unravelTuple(c: var LiftingCtx;
       unravel c, fieldType, a, b
     inc idx
 
-proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId): TokenBuf =
+proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId; paramPos = 0): TokenBuf =
   result = createTokenBuf(4)
+  let nd = needsDeref(c, arr, paramPos)
   copyIntoKind result, ArrAtX, c.info:
+    if nd:
+      result.addParLe HderefX, c.info
     copyTree result, arr
+    if nd:
+      result.addParRi()
     copyIntoSymUse result, indexVar, c.info
 
 proc indexVarLowerThanArrayLen(c: var LiftingCtx; indexVar: SymId; arrayLen: xint) =
@@ -357,8 +362,8 @@ proc unravelArray(c: var LiftingCtx;
         let fn = lift(c, baseType)
         maybeCallHook c, fn, a, paramA
       of attachedCopy, attachedDup, attachedSink:
-        let a = accessArrayAt(c, paramA, indexVar)
-        let b = accessArrayAt(c, paramB, indexVar)
+        let a = accessArrayAt(c, paramA, indexVar, 0)
+        let b = accessArrayAt(c, paramB, indexVar, 1)
         let fn = lift(c, baseType)
         maybeCallHook c, fn, a, b
 

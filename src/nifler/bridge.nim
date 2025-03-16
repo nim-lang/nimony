@@ -81,7 +81,7 @@ proc nodeKindTranslation(k: TNodeKind): NiflerKind =
   of nkIncludeStmt: IncludeL
   of nkExportStmt: ExportL
   of nkExportExceptStmt: ExportexceptL
-  of nkFromStmt: FromL
+  of nkFromStmt: FromimportL
   of nkPragma: PragmasL
   of nkAsmStmt: AsmL
   of nkDefer: DeferL

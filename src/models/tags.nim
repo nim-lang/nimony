@@ -142,7 +142,7 @@ const
     ("include", 138),
     ("import", 139),
     ("importas", 140),
-    ("from", 141),
+    ("fromimport", 141),
     ("importexcept", 142),
     ("export", 143),
     ("exportexcept", 144),
@@ -411,7 +411,7 @@ const
   IncludeTagId* = 138
   ImportTagId* = 139
   ImportasTagId* = 140
-  FromTagId* = 141
+  FromimportTagId* = 141
   ImportexceptTagId* = 142
   ExportTagId* = 143
   ExportexceptTagId* = 144

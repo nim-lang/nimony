@@ -407,6 +407,9 @@ template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
 
+type HasDefault* = concept
+  proc default(_: typedesc[Self]): Self
+
 template default*(x: typedesc[bool]): bool = false
 template default*(x: typedesc[char]): char = '\0'
 template default*(x: typedesc[int]): int = 0

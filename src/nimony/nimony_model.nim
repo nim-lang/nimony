@@ -229,7 +229,7 @@ proc sameTrees*(a, b: Cursor): bool =
 
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
-  of FromS, ImportS, ExportS, IncludeS, ImportExceptS, TypeS, CommentS, TemplateS:
+  of FromimportS, ImportS, ExportS, IncludeS, ImportExceptS, TypeS, CommentS, TemplateS:
     result = true
   else:
     case n.substructureKind

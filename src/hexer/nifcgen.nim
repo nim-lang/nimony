@@ -947,7 +947,7 @@ proc traverseConv(c: var EContext; n: var Cursor) =
 
 proc isSimpleLiteral(nb: var Cursor): bool =
   case nb.kind
-  of IntLit, UIntLit, FloatLit, CharLit, DotToken:
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit, DotToken:
     result = true
     inc nb
   else:
@@ -1079,19 +1079,19 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       let arg = suf
       skip suf
       assert suf.kind == StringLit
-      if arg.kind == StringLit and pool.strings[suf.litId] == "R":
+      if arg.kind == StringLit and pool.strings[suf.litId] in ["R", "T"]:
         # cstring conversion
         inc n
-        c.dest.add n # add string lit directly
-        inc n # arg
+        traverseExpr c, n # adds string lit directly
         inc n # suf
+        skipParRi c, n
       else:
         c.dest.add n
         inc n
         traverseExpr c, n
         c.dest.add n
         inc n
-      takeParRi c, n
+        takeParRi c, n
     of AshrX:
       c.dest.add tagToken("shr", n.info)
       inc n
@@ -1149,10 +1149,10 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
     c.offer n.symId
     inc n
   of Symbol:
-    let inlineValue = getInitValue(c.typeCache, n.symId)
+    var inlineValue = getInitValue(c.typeCache, n.symId)
     var inlineValueCopy = inlineValue
     if not cursorIsNil(inlineValue) and isSimpleLiteral(inlineValueCopy):
-      c.dest.addSubtree inlineValue
+      traverseExpr(c, inlineValue)
     else:
       let ext = maybeMangle(c, n.symId)
       if ext.len != 0:
@@ -1416,7 +1416,7 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
       error c, "BUG: not implemented: ", n
     of FuncS, ProcS, ConverterS, MethodS:
       traverseProc c, n, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromS, ImportExceptS, ExportS, CommentS, IteratorS,
+    of MacroS, TemplateS, IncludeS, ImportS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
       skip n
