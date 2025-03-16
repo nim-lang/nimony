@@ -18,17 +18,17 @@ another code transformation.
 
 ]##
 
-import std / [assertions]
+import std / [assertions, tables]
 
 include nifprelude
 
 import ".." / models / tags
-import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops, inferle
+import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops,
+ controlflow, inferle, xints
 
 type
   Context = object
-    dest: TokenBuf
-    r: CurrentRoutine
+    cf, dest: TokenBuf
     typeCache: TypeCache
     facts: Facts
     writesTo: seq[SymId]
@@ -101,7 +101,7 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
   var r = req
   var a = InvalidVarId
   var b = InvalidVarId
-  var c = createXint(0'i32)
+  var cnst = createXint(0'i32)
   if r.kind == Symbol:
     a = mapSymbol(c, paramMap, call, r.symId)
     inc r
@@ -109,10 +109,10 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
     b = mapSymbol(c, paramMap, call, r.symId)
     inc r
   elif r.kind == IntLit:
-    c = createXint(pool.integers[r.intId])
+    cnst = createXint(pool.integers[r.intId])
     inc r
   elif r.kind == UIntLit:
-    c = createXuint(pool.uintegers[r.uintId])
+    cnst = createXint(pool.uintegers[r.uintId])
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
@@ -120,14 +120,14 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
       b = mapSymbol(c, paramMap, call, r.symId)
       inc r
       if r.kind == IntLit:
-        c = createXint(pool.integers[r.intId])
+        cnst = createXint(pool.integers[r.intId])
       elif r.kind == UIntLit:
-        c = createXuint(pool.uintegers[r.uintId])
+        cnst = createXint(pool.uintegers[r.uintId])
       else:
         error "expected integer literal but got: ", r
     else:
       error "expected symbol but got: ", r
-  result = query(a, b, c)
+  result = query(a, b, cnst)
   skipParRi r
 
 proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): ProofRes =
@@ -215,8 +215,8 @@ proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
     while n.kind != ParRi:
       skip n
 
-proc analyseCall(c: var Context; pc: var Cursor) =
-  inc pc # skip call instruction
+proc analyseCall(c: var Context; n: var Cursor) =
+  inc n # skip call instruction
   let fnType = skipProcTypeToParams(getType(c.typeCache, n))
   assert fnType == "params"
   analyseCallArgs(c, n, fnType)
@@ -230,33 +230,41 @@ this bb once all its predecessors have been processed. We keep track of that by
 lookup table that counts the indegree of each bb.
 ]#
 type
-  BasicBlock = distinct int
+  BasicBlockIdx = distinct int
   Continuation = object
-    thenPart, elsePart: BasicBlock
+    thenPart, elsePart: BasicBlockIdx
     newFacts: int
+  BasicBlock = object
+    indegree: int
+    indegreeFacts: Facts
 
 const
-  NoBasicBlock = BasicBlock(-1)
-  BasicBlockReturn = BasicBlock(-2)
+  NoBasicBlock = BasicBlockIdx(-1)
+  BasicBlockReturn = BasicBlockIdx(-2)
 
-proc toBasicBlock*(c: Context; pc: Cursor): BasicBlock {.inline.} =
-  result = BasicBlock(cursorToPosition(c.startInstr, pc))
+proc `==`*(a, b: BasicBlockIdx): bool {.borrow.}
+proc `<=`*(a, b: BasicBlockIdx): bool {.borrow.}
+proc `<`*(a, b: BasicBlockIdx): bool {.borrow.}
 
-proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): CountTable[BasicBlock] =
-  result = initCountTable[BasicBlock]()
+proc toBasicBlock*(c: Context; pc: Cursor): BasicBlockIdx {.inline.} =
+  result = BasicBlockIdx(cursorToPosition(c.startInstr, pc))
+
+proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx, BasicBlock] =
+  result = initTable[BasicBlockIdx, BasicBlock]()
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
   for i in start..last:
     if c[i].kind == GotoInstr:
       let diff = c[i].getInt28
       # we ignore backward jumps for now:
       if diff > 0:
-        result.inc(BasicBlock(i+diff))
+        let idx = BasicBlockIdx(i+diff)
+        result.mgetOrPut(idx, BasicBlock(indegree: 0)).indegree += 1
 
 proc analyseCondition(c: var Context; pc: var Cursor): int =
   var r = pc
   var a = InvalidVarId
   var b = InvalidVarId
-  var c = createXint(0'i32)
+  var cnst = createXint(0'i32)
   if r.kind == Symbol:
     a = c.toPropId.getOrDefault(r.symId)
     inc r
@@ -267,10 +275,10 @@ proc analyseCondition(c: var Context; pc: var Cursor): int =
     b = c.toPropId.getOrDefault(r.symId)
     inc r
   elif r.kind == IntLit:
-    c = createXint(pool.integers[r.intId])
+    cnst = createXint(pool.integers[r.intId])
     inc r
   elif r.kind == UIntLit:
-    c = createXuint(pool.uintegers[r.uintId])
+    cnst = createXint(pool.uintegers[r.uintId])
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
@@ -278,14 +286,14 @@ proc analyseCondition(c: var Context; pc: var Cursor): int =
       b = c.toPropId.getOrDefault(r.symId)
       inc r
       if r.kind == IntLit:
-        c = createXint(pool.integers[r.intId])
+        cnst = createXint(pool.integers[r.intId])
       elif r.kind == UIntLit:
-        c = createXuint(pool.uintegers[r.uintId])
+        cnst = createXint(pool.uintegers[r.uintId])
       else:
         error "expected integer literal but got: ", r
     else:
       error "expected symbol but got: ", r
-  let fact = query(a, b, c)
+  let fact = query(a, b, cnst)
   if fact.isValid:
     c.facts.add fact
     result = 1
@@ -319,7 +327,7 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
           addAsgnFact c, fact
           inc pc
         elif pc.kind == UIntLit:
-          fact.c = createXuint(pool.uintegers[pc.uintId])
+          fact.c = createXint(pool.uintegers[pc.uintId])
           addAsgnFact c, fact
           inc pc
         else:
@@ -337,7 +345,7 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
       addAsgnFact c, fact
       inc pc
     elif pc.kind == UIntLit:
-      fact.c = createXuint(pool.uintegers[pc.uintId])
+      fact.c = createXint(pool.uintegers[pc.uintId])
       addAsgnFact c, fact
       inc pc
     else:
@@ -412,7 +420,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           inc pc
           inc nested
         of CallS, CmdS:
-          analyzeCall(c, pc)
+          analyseCall(c, pc)
         of EmitS, InclS, ExclS:
           # not of interest for contract analysis:
           skip pc
@@ -424,20 +432,46 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
           # declarative junk we don't care about:
           skip pc
-  return true
+  return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
 
-proc checkContracts(c: var Context): bool =
+proc decAndTest(x: var int): bool {.inline.} =
+  dec x
+  result = x == 0
+
+proc takeFacts(c: var Context; bb: var BasicBlock; newFacts: int; negate: bool) =
+  let start = bb.indegreeFacts.len
+  for i in c.facts.len - newFacts ..< c.facts.len:
+    bb.indegreeFacts.add c.facts[i]
+  c.facts.shrink c.facts.len - newFacts
+  if negate:
+    negateFacts(bb.indegreeFacts, start)
+
+proc pushFacts(c: var Context; bb: var BasicBlock) =
+  for i in 0 ..< bb.indegreeFacts.len:
+    c.facts.add bb.indegreeFacts[i]
+
+proc checkContracts(c: var Context) =
+  var bbs = computeBasicBlocks(c.cf)
   var n = readonlyCursorAt(c.cf, 0)
   #echo "LOOKING AT: ", codeListing(c)
-  var pcs = @[n]
-  while pcs.len > 0:
-    let pc = pcs.pop()
+  var pc = n
+  var nextIter = true
+  while nextIter:
+    nextIter = false
     #echo "Looking at: ", toString(pc, false)
-    if not isMarked(pc):
-      if not singlePath(c, pc):
-        return false
-      doMark pc
-  return true
+    let cont = traverseBasicBlock(c, pc)
+    if cont.thenPart > NoBasicBlock:
+      takeFacts(c, bbs[cont.thenPart], cont.newFacts, false)
+      if decAndTest(bbs[cont.thenPart].indegree):
+        pc = readonlyCursorAt(c.cf, cont.thenPart.int)
+        pushFacts(c, bbs[cont.thenPart])
+        nextIter = true
+    elif cont.elsePart > NoBasicBlock:
+      takeFacts(c, bbs[cont.elsePart], cont.newFacts, true)
+      if decAndTest(bbs[cont.elsePart].indegree):
+        pc = readonlyCursorAt(c.cf, cont.elsePart.int)
+        pushFacts(c, bbs[cont.elsePart])
+        nextIter = true
 
 proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   let oldInfos = prepare(input)
@@ -448,7 +482,7 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   #echo "CF IS ", codeListing(c.cf)
   c.typeCache.openScope()
 
-  discard checkContracts(c)
+  checkContracts(c)
 
   endRead input
   restore(input, oldInfos)

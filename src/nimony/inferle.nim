@@ -26,10 +26,16 @@ type
     xlen: int
 
 const
-  InvalidVarId = VarId(-1)
+  InvalidVarId* = VarId(-1)
 
 proc isValid*(x: LeXplusC): bool {.inline.} =
   result = x.a != InvalidVarId
+
+proc len*(f: Facts): int {.inline.} = f.x.len
+proc `[]`*(f: Facts; i: int): lent LeXplusC {.inline.} = f.x[i]
+
+proc shrink*(f: var Facts; newLen: int) {.inline.} =
+  f.x.shrink newLen
 
 #[
 
@@ -65,8 +71,6 @@ proc createFacts*(): Facts =
   # VarId(0) is always mapped to zero so we know that `v0 <= v0 + 0`:
   result.x.add LeXplusC(a: VarId(0), b: VarId(0), c: createXint(0'i64))
 
-proc `==`(a, b: VarId): bool {.borrow.}
-
 proc geXplusC*(f: LeXplusC): LeXplusC =
   # a >= b + c  --> b + c <= a  --> b <= a - c
   result = LeXplusC(a: f.b, b: f.a, c: -f.c)
@@ -75,7 +79,7 @@ proc ltXplusC*(f: LeXplusC): LeXplusC =
   # a < b + c  --> a <= b + c - 1
   result = LeXplusC(a: f.a, b: f.b, c: f.c - createXint(1'i64))
 
-proc negFact(f: var LeXplusC) =
+proc negFact*(f: var LeXplusC) =
   # not (a <= b + c)
   # -->
   # a >= b + c - 1
@@ -113,7 +117,7 @@ proc simpleImplies(facts: Facts; v: LeXplusC): bool =
       if f.c <= v.c: return true
   return false
 
-import intsets
+import std/intsets
 
 type
   Path = object

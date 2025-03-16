@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped
+  semuntyped, contracts
 
 import ".." / gear2 / modnames
 import ".." / models / tags
@@ -6321,8 +6321,12 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   takeParRi c, n
 
   if reportErrors(c) == 0:
-    var final = move c.dest
-    var finalBuf = beginRead(final)
+    var afterSem = move c.dest
+    when defined(enableContracts):
+      var afterContracts = analyzeContracts(afterSem)
+      var finalBuf = beginRead afterContracts
+    else:
+      var finalBuf = beginRead afterSem
     c.dest = injectDerefs(finalBuf)
   else:
     quit 1
