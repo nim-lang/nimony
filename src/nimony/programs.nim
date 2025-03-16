@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, os, tables, sequtils, times, packedsets]
+import std / [syncio, os, tables, sequtils, times, sets]
 include nifprelude
 import nifindexes, symparser, reporters, builtintypes
 import ".." / models / [nifindex_tags]
@@ -27,7 +27,7 @@ type
 
   ImportFilter* = object
     kind*: ImportFilterKind
-    list*: PackedSet[StrId] # `from import` or `import except` symbol list
+    list*: HashSet[StrId] # `from import` or `import except` symbol list
 
 var
   prog*: Program

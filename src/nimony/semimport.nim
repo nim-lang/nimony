@@ -142,7 +142,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
   if hasError:
     c.buildErr info, "wrong `import except` statement"
   else:
-    var excluded = initPackedSet[StrId]()
+    var excluded = initHashSet[StrId]()
     while x.kind != ParRi:
       excluded.incl getIdent(x)
     doImports c, files, ImportFilter(kind: ImportExcept, list: excluded), info
@@ -171,7 +171,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
   if hasError:
     c.buildErr info, "wrong `from import` statement"
   else:
-    var included = initPackedSet[StrId]()
+    var included = initHashSet[StrId]()
     while x.kind != ParRi:
       if x.kind == ParLe and x == $NilX:
         # from a import nil
@@ -240,7 +240,7 @@ proc doExport(c: var SemContext; sym: SymId; info: PackedLineInfo) =
       of ImportExcept:
         c.exports[moduleSym].list.excl strId
     else:
-      c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initPackedSet[StrId]())
+      c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initHashSet[StrId]())
       c.exports[moduleSym].list.incl strId
 
 proc semExport(c: var SemContext; it: var Item) =
@@ -290,14 +290,14 @@ proc doExportExcept(c: var SemContext; moduleSym, sym: SymId; info: PackedLineIn
   if moduleSym in c.exports:
     case c.exports[moduleSym].kind
     of ImportAll:
-      c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initPackedSet[StrId]())
+      c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initHashSet[StrId]())
       c.exports[moduleSym].list.incl strId
     of FromImport:
       c.exports[moduleSym].list.excl strId
     of ImportExcept:
       c.exports[moduleSym].list.incl strId
   else:
-    c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initPackedSet[StrId]())
+    c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initHashSet[StrId]())
     c.exports[moduleSym].list.incl strId
 
 proc semExportExcept(c: var SemContext; it: var Item) =
