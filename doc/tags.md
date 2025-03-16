@@ -140,10 +140,11 @@
 | `(include X+)` | NimonyStmt, NiflerKind | `include` statement |
 | `(import X+)` | NimonyStmt, NiflerKind | `import` statement |
 | `(importas X X)` | NimonyStmt, NiflerKind | `import as` statement |
-| `(fromimport X X)` | NimonyStmt, NiflerKind | `from import` statement |
+| `(fromimport X X+)` | NimonyStmt, NiflerKind | `from import` statement |
 | `(importexcept X X+)` | NimonyStmt, NiflerKind | `importexcept` statement |
-| `(export X+)` | NimonyStmt, NiflerKind | `export` statement |
-| `(exportexcept X X+)` | NimonyStmt, NiflerKind | `exportexcept` statement |
+| `(export X+)` | NimonyStmt, NiflerKind, NifIndexKind | `export` statement |
+| `(fromexport X X+)` | NifIndexKind | specific exported symbols from a module |
+| `(exportexcept X X+)` | NimonyStmt, NiflerKind, NifIndexKind | `exportexcept` statement |
 | `(comment STR)` | NimonyStmt, NiflerKind | `comment` statement |
 | `(discard X)` | NifcStmt, NimonyStmt, NiflerKind | `discard` statement |
 | `(try X (except .X X)* (fin S)?); (try S S S)` | NifcStmt, NimonyStmt, NiflerKind | `try` statement |

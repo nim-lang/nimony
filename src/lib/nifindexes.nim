@@ -84,7 +84,8 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
             skip n
         skipToEnd n
       of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, IndexIdx, PublicIdx, PrivateIdx,
-         DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx:
+         DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx,
+         ExportIdx, FromexportIdx, ExportexceptIdx:
         inc n
         inc nested
     of ParRi:
@@ -112,6 +113,7 @@ type
     hooks*: array[AttachedOp, seq[HookIndexEntry]]
     converters*: seq[(SymId, SymId)]
     toBuild*: TokenBuf
+    exportBuf*: TokenBuf
 
 proc hookName*(op: AttachedOp): string =
   case op
@@ -232,9 +234,13 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   var buildBuf = createTokenBuf()
   buildBuf.addParLe TagId(BuildIdx)
   buildBuf.add sections.toBuild
-  buildBuf.addParRi
+  buildBuf.addParRi()
   content.add toString(buildBuf)
   content.add "\n"
+
+  if sections.exportBuf.len != 0:
+    content.add toString(sections.exportBuf)
+    content.add "\n"
 
   if buildChecksum:
     var checksum = newSha1State()
@@ -263,6 +269,7 @@ type
     hooks*: Table[SymId, HooksPerType]
     converters*: seq[(string, string)] # map of dest types to converter symbols
     toBuild*: seq[(string, string, string)]
+    exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
   var previousOffset = 0
@@ -429,6 +436,21 @@ proc readIndex*(indexName: string): NifIndex =
         result.toBuild.add (typ, path, args)
         t = next(s)
         t = next(s)
+      t = next(s)
+
+    while t.tag == TagId(ExportIdx) or t.tag == TagId(FromexportIdx) or t.tag == TagId(ExportexceptIdx):
+      let kind = cast[NifIndexKind](t.tag)
+      t = next(s)
+      assert t.kind == StringLit
+      let path = pool.strings[t.litId]
+      t = next(s)
+      var names: seq[StrId] = @[]
+      while t.kind != ParRi:
+        assert t.kind == Ident
+        names.add t.litId
+        t = next(s)
+      result.exports.add (path, kind, names)
+      t = next(s)
   else:
     assert false, "expected 'index' tag"
 
