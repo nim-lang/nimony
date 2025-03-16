@@ -425,7 +425,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           # not of interest for contract analysis:
           skip pc
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
-           IncludeS, ImportS, FromS, ImportExceptS, CommentS, PragmasS,
+           IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackDeclS, StaticstmtS, AsmS, DeferS:
           raiseAssert "BUG: statement not eliminated: " & $pc.stmtKind
