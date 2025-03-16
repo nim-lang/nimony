@@ -31,6 +31,7 @@ const
 
 type
   ImportedModule* = object
+    path*: string
     iface*: Iface
 
   InstRequest* = object
@@ -99,6 +100,7 @@ type
     hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
+    exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     unoverloadableMagics*: HashSet[StrId]

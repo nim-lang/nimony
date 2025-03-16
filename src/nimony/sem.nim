@@ -20,8 +20,6 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
 import ".." / gear2 / modnames
 import ".." / models / tags
 
-# ------------------ include/import handling ------------------------
-
 proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool)
 
 proc typeMismatch(c: var SemContext; info: PackedLineInfo; got, expected: TypeCursor) =
@@ -171,6 +169,8 @@ type
     DotCall, SubscriptCall,
     DotAsgnCall, SubscriptAsgnCall
 
+proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
+
 proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
 
 proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCursor) =
@@ -239,178 +239,9 @@ proc producesNoReturn(c: var SemContext; info: PackedLineInfo; dest: var Cursor)
     # allowed in expression context
     discard
 
-proc semInclude(c: var SemContext; it: var Item) =
-  var files: seq[ImportedFilename] = @[]
-  var hasError = false
-  let info = it.n.info
-  var x = it.n
-  skip it.n
-  inc x # skip the `include`
-  while x.kind != ParRi:
-    filenameVal(x, files, hasError, allowAs = false)
+# ------------------ include/import handling ------------------------
 
-  if hasError:
-    c.buildErr info, "wrong `include` statement"
-  else:
-    for f1 in items(files):
-      let f2 = resolveFile(c.g.config.paths, getFile(info), f1.path)
-      c.meta.includedFiles.add f2
-      # check for recursive include files:
-      var isRecursive = false
-      for a in c.includeStack:
-        if a == f2:
-          isRecursive = true
-          break
-
-      if not isRecursive:
-        var buf = parseFile(f2, c.g.config.paths, c.g.config.nifcachePath)
-        c.includeStack.add f2
-        #c.m.includes.add f2
-        var n = cursorAt(buf, 0)
-        semStmt(c, n, false)
-        c.includeStack.setLen c.includeStack.len - 1
-      else:
-        var m = ""
-        for i in 0..<c.includeStack.len:
-          m.add shortenDir c.includeStack[i]
-          m.add " -> "
-        m.add shortenDir f2
-        c.buildErr info, "recursive include: " & m
-
-  producesVoid c, info, it.typ
-
-type
-  ImportModeKind = enum
-    ImportAll, FromImport, ImportExcept, ImportSystem
-
-  ImportMode = object
-    kind: ImportModeKind
-    list: PackedSet[StrId] # `from import` or `import except` symbol list
-
-proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportMode; info: PackedLineInfo) =
-  let f2 = resolveFile(c.g.config.paths, origin, f1.path)
-  if not fileExists(f2):
-    c.buildErr info, "file not found: " & f2
-    return
-  let suffix = moduleSuffix(f2, c.g.config.paths)
-  var moduleSym = SymId(0)
-  if not c.processedModules.contains(suffix):
-    c.meta.importedFiles.add f2
-    if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
-      selfExec c, f2, (if mode.kind == ImportSystem: " --isSystem" else: "")
-
-    let moduleName = pool.strings.getOrIncl(f1.name)
-    moduleSym = identToSym(c, moduleName, ModuleY)
-    c.processedModules[suffix] = moduleSym
-    let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
-    c.currentScope.addOverloadable(moduleName, s)
-    var moduleDecl = createTokenBuf(2)
-    moduleDecl.addParLe(ModuleY, info)
-    moduleDecl.addParRi()
-    publish moduleSym, moduleDecl
-  else:
-    moduleSym = c.processedModules[suffix]
-  let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule())
-  var marker = mode.list
-  loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters,
-    marker, negateMarker = mode.kind == FromImport
-
-proc cyclicImport(c: var SemContext; x: var Cursor) =
-  c.buildErr x.info, "cyclic module imports are not implemented"
-
-proc doImportMode(c: var SemContext; files: seq[ImportedFilename]; mode: ImportMode; info: PackedLineInfo) =
-  let origin = getFile(info)
-  for f in files:
-    importSingleFile c, f, origin, mode, info
-
-proc semImport(c: var SemContext; it: var Item) =
-  let info = it.n.info
-  var x = it.n
-  skip it.n
-  inc x # skip the `import`
-
-  if x.kind == ParLe and x == "pragmax":
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
-
-  var files: seq[ImportedFilename] = @[]
-  var hasError = false
-  while x.kind != ParRi:
-    filenameVal(x, files, hasError, allowAs = true)
-  if hasError:
-    c.buildErr info, "wrong `import` statement"
-  else:
-    doImportMode c, files, ImportMode(kind: ImportAll, list: initPackedSet[StrId]()), info
-
-  producesVoid c, info, it.typ
-
-proc semImportExcept(c: var SemContext; it: var Item) =
-  let info = it.n.info
-  var x = it.n
-  skip it.n
-  inc x # skip the `importexcept`
-
-  if x.kind == ParLe and x == "pragmax":
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
-
-  var files: seq[ImportedFilename] = @[]
-  var hasError = false
-  filenameVal(x, files, hasError, allowAs = true)
-  if hasError:
-    c.buildErr info, "wrong `import except` statement"
-  else:
-    var excluded = initPackedSet[StrId]()
-    while x.kind != ParRi:
-      excluded.incl getIdent(x)
-    doImportMode c, files, ImportMode(kind: ImportExcept, list: excluded), info
-
-  producesVoid c, info, it.typ
-
-proc semFromImport(c: var SemContext; it: var Item) =
-  let info = it.n.info
-  var x = it.n
-  skip it.n
-  inc x # skip the `from`
-
-  if x.kind == ParLe and x == "pragmax":
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
-
-  var files: seq[ImportedFilename] = @[]
-  var hasError = false
-  filenameVal(x, files, hasError, allowAs = true)
-  if hasError:
-    c.buildErr info, "wrong `from import` statement"
-  else:
-    var included = initPackedSet[StrId]()
-    while x.kind != ParRi:
-      if x.kind == ParLe and x == $NilX:
-        # from a import nil
-        discard
-      else:
-        included.incl getIdent(x)
-    doImportMode c, files, ImportMode(kind: FromImport, list: included), info
-
-  producesVoid c, info, it.typ
+include semimport
 
 # -------------------- declare `result` -------------------------
 
@@ -657,8 +488,6 @@ proc instantiateGenericHooks(c: var SemContext) =
     for p in procReqs: instantiateGenericProc c, p
 
 # -------------------- sem checking -----------------------------
-
-proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {})
 
 proc instantiateExprIntoBuf(c: var SemContext; buf: var TokenBuf; it: var Item; bindings: Table[SymId, Cursor]) =
   var dest = createTokenBuf(30)
@@ -1943,22 +1772,6 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; bin
       if not visible:
         # treat as undeclared
         result = ObjField(level: -1)
-
-proc findModuleSymbol(n: Cursor): SymId =
-  result = SymId(0)
-  if n.kind == Symbol:
-    let res = tryLoadSym(n.symId)
-    if res.status == LacksNothing and symKind(res.decl) == ModuleY:
-      result = n.symId
-  elif n.kind == ParLe and exprKind(n) in {OchoiceX, CchoiceX}:
-    # if any sym in choice is module sym, count it as a module reference
-    # this emulates behavior that was caused by sym order shenanigans before, could be removed
-    var n = n
-    inc n
-    while n.kind != ParRi:
-      result = findModuleSymbol(n)
-      if result != SymId(0): break
-      inc n
 
 proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
   # mirrors semIdent
@@ -5952,7 +5765,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
-      of ImportasS, ExportexceptS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
+      of ImportasS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
         buildErr c, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
       of ProcS:
@@ -6023,6 +5836,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ImportS: semImport c, it
       of ImportExceptS: semImportExcept c, it
       of FromimportS: semFromImport c, it
+      of ExportS: semExport c, it
+      of ExportExceptS: semExportExcept c, it
       of AsgnS:
         toplevelGuard c:
           semAsgn c, it
@@ -6060,7 +5875,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of RaiseS:
         toplevelGuard c:
           semRaise c, it
-      of ExportS, CommentS:
+      of CommentS:
         # XXX ignored for now
         skip it.n
       of EmitS:
@@ -6299,8 +6114,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   assert n0 == "stmts"
 
   if {SkipSystem, IsSystem} * moduleFlags == {}:
-    importSingleFile(c, ImportedFilename(path: stdlibFile("std/system"), name: "system"),
-       "", ImportMode(kind: ImportSystem, list: initPackedSet[StrId]()), n0.info)
+    let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
+    importSingleFile(c, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
   #echo "PHASE 1"
   var n1 = phaseX(c, n0, SemcheckTopLevelSyms)
