@@ -31,6 +31,7 @@ type
     r: CurrentRoutine
     typeCache: TypeCache
     facts: Facts
+    writesTo: seq[SymId]
     toPropId: Table[SymId, VarId]
     startInstr: Cursor
 
@@ -293,19 +294,57 @@ proc analyseCondition(c: var Context; pc: var Cursor): int =
   skipParRi r
   pc = r
 
+proc addAsgnFact(c: var Context; fact: LeXplusC) =
+  # we know that `a <= b + c` and `a >= b + c`:
+  c.facts.add fact
+  c.facts.add fact.geXplusC
+
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
   if pc.kind == Symbol:
+    var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
+    let symId = pc.symId
+    c.writesTo.add symId
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
-    let a = c.toPropId.getOrDefault(pc.symId)
-    let b = a
-    let c = createXint(4'i32)
-    let fact = query(a, b, c)
-    c.facts.add fact
+    fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
     inc pc
+    if pc.exprKind in {AddX, SubX}:
+      inc pc
+      if pc.kind == Symbol:
+        let symId2 = pc.symId
+        fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
+        inc pc
+        if pc.kind == IntLit:
+          fact.c = createXint(pool.integers[pc.intId])
+          addAsgnFact c, fact
+          inc pc
+        elif pc.kind == UIntLit:
+          fact.c = createXuint(pool.uintegers[pc.uintId])
+          addAsgnFact c, fact
+          inc pc
+        else:
+          skip pc
+      else:
+        skip pc
+      skipParRi pc
+    elif pc.kind == Symbol:
+      let symId2 = pc.symId
+      fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
+      addAsgnFact c, fact
+      inc pc
+    elif pc.kind == IntLit:
+      fact.c = createXint(pool.integers[pc.intId])
+      addAsgnFact c, fact
+      inc pc
+    elif pc.kind == UIntLit:
+      fact.c = createXuint(pool.uintegers[pc.uintId])
+      addAsgnFact c, fact
+      inc pc
+    else:
+      skip pc
   else:
     skip pc # skip left-hand-side
-  skip pc # skip right-hand-side
+    skip pc # skip right-hand-side
   skipParRi pc
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =

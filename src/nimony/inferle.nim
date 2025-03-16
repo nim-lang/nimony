@@ -16,8 +16,8 @@ proc `==`*(a, b: VarId): bool {.borrow.}
 
 type
   LeXplusC* = object    # semantics: a <= b + c
-    a, b: VarId
-    c: xint
+    a*, b*: VarId
+    c*: xint
 
   Facts* = object
     x: seq[LeXplusC]
