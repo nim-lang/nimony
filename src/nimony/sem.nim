@@ -8,7 +8,7 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, packedsets, strutils]
+import std / [tables, sets, syncio, formatfloat, assertions, strutils]
 from std/os import getCurrentDir
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
