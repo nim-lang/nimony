@@ -98,8 +98,6 @@ proc combineFilters(filters: seq[ImportFilter]): ImportFilter =
       of FromImport:
         result.list = intersection(result.list, f2.list)
 
-proc `$`*(x: StrId): string = pool.strings[x]
-
 proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
   var imports = @[(f1, @[filter])]
   while imports.len != 0:
