@@ -75,38 +75,44 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   var exports: seq[(string, ImportFilter)] = @[] # ignored
   importSingleFile(c, f1, origin, filter, exports, info)
 
-proc compose(f, g: ImportFilter): ImportFilter =
+proc mergeFilter(f: var ImportFilter; g: ImportFilter) =
   # applies filter f to filter g, commutative since it computes the intersection
-  case f.kind
-  of ImportAll: result = g
+  case g.kind
+  of ImportAll: discard
   of ImportExcept:
-    case g.kind
-    of ImportAll: result = f
+    case f.kind
+    of ImportAll: f = g
     of ImportExcept:
-      result = g
-      result.list.incl(f.list)
+      f.list.incl(g.list)
     of FromImport:
-      result = g
-      result.list.excl(f.list)
+      f.list.excl(g.list)
   of FromImport:
-    case g.kind
-    of ImportAll: result = f
+    case f.kind
+    of ImportAll: f = g
     of ImportExcept:
-      result = f
-      result.list.excl(g.list)
+      let exc = f.list
+      f = g
+      f.list.excl(exc)
     of FromImport:
-      result = ImportFilter(kind: FromImport, list: intersection(f.list, g.list))
+      f.list = intersection(f.list, g.list)
 
 proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
-  var imports = @[(f1, filter)]
-  while imports.len != 0:
-    var newImports: seq[(ImportedFilename, ImportFilter)] = @[]
-    for im in imports:
-      var exports: seq[(string, ImportFilter)] = @[]
-      importSingleFile(c, im[0], origin, im[1], exports, info)
+  var exports: seq[(string, ImportFilter)] = @[]
+  importSingleFile(c, f1, origin, filter, exports, info)
+  if exports.len != 0:
+    # convert to imports:
+    for i in 0 ..< exports.len:
+      mergeFilter(exports[i][1], filter)
+    while exports.len != 0:
+      var newExports: seq[(string, ImportFilter)] = @[]
       for ex in exports:
-        newImports.add (ImportedFilename(path: ex[0], name: ""), compose(ex[1], im[1]))
-    imports = newImports
+        let newExportsStart = newExports.len
+        let file = ImportedFilename(path: ex[0], name: "")
+        importSingleFile(c, file, origin, ex[1], newExports, info)
+        # convert to imports:
+        for i in newExportsStart ..< newExports.len:
+          mergeFilter(newExports[i][1], ex[1])
+      exports = newExports
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
