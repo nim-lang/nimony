@@ -456,6 +456,12 @@ proc syncCmd(newBranch: string) =
   if newBranch.len > 0:
     exec "git checkout -B " & newBranch
 
+proc pullpush(cmd: string) =
+  let (output, status) = execCmdEx("git symbolic-ref --short HEAD")
+  if status != 0:
+    quit "FAILURE: " & output
+  exec "git " & cmd & " origin " & output.strip()
+
 proc handleCmdLine =
   var primaryCmd = ""
   var args: seq[string] = @[]
@@ -555,6 +561,10 @@ proc handleCmdLine =
     removeDir "bin"
   of "sync":
     syncCmd(if args.len > 0: args[0] else: "")
+  of "pull":
+    pullpush("pull")
+  of "push":
+    pullpush("push")
   else:
     quit "invalid command: " & primaryCmd
 

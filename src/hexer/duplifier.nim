@@ -131,7 +131,7 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
         # see if we can distinguish between `x.fieldA` and `x.fieldB` which
         # cannot alias. We do know here that at least one expressions is free of
         # pointer derefs, so we can simply use `sameValues` here.
-        result = sameTrees(dest, src)
+        result = sameTreesIgnoreArrayIndexes(dest, src)
       else:
         # different roots while we know that at least one expression has
         # no harmful pointer deref:
