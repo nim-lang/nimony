@@ -6021,7 +6021,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
 proc reportErrors(c: var SemContext): int =
   result = reporters.reportErrors(c.dest)
 
-proc buildExports(c: var SemContext): TokenBuf =
+proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
     return default(TokenBuf)
   result = createTokenBuf(32)
@@ -6058,7 +6058,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
     IndexSections(hooks: move c.hookIndexLog,
       converters: move c.converterIndexMap,
       toBuild: move c.toBuild,
-      exportBuf: buildExports(c))
+      exportBuf: buildIndexExports(c))
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n == "stmts"
