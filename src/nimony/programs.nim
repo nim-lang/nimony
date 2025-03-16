@@ -56,6 +56,27 @@ proc load(suffix: string): NifModule =
   else:
     result = prog.mods[suffix]
 
+proc mergeFilter(f: var ImportFilter; g: ImportFilter) =
+  # applies filter f to filter g, commutative since it computes the intersection
+  case g.kind
+  of ImportAll: discard
+  of ImportExcept:
+    case f.kind
+    of ImportAll: f = g
+    of ImportExcept:
+      f.list.incl(g.list)
+    of FromImport:
+      f.list.excl(g.list)
+  of FromImport:
+    case f.kind
+    of ImportAll: f = g
+    of ImportExcept:
+      let exc = f.list
+      f = g
+      f.list.excl(exc)
+    of FromImport:
+      f.list = intersection(f.list, g.list)
+
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters: var Table[SymId, seq[SymId]];
@@ -95,10 +116,11 @@ proc loadInterface*(suffix: string; iface: var Iface;
       of FromexportIdx: FromImport
       of ExportexceptIdx: ImportExcept
       else: ImportAll
-    var filter = ImportFilter(kind: filterKind)
+    var exportFilter = ImportFilter(kind: filterKind)
     for s in names:
-      filter.list.incl(s)
-    exports.add (path, filter)
+      exportFilter.list.incl(s)
+    mergeFilter(exportFilter, filter)
+    exports.add (path, move exportFilter)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):
