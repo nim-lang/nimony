@@ -89,7 +89,7 @@ proc compose(f, g: ImportFilter): ImportFilter =
       result = g
       result.list.excl(f.list)
   of FromImport:
-    case result.kind
+    case g.kind
     of ImportAll: result = f
     of ImportExcept:
       result = f
