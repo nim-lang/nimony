@@ -53,59 +53,59 @@ type
     CchoiceX = (74, "cchoice")  ## closed choice
     OchoiceX = (75, "ochoice")  ## open choice
     PragmaxX = (130, "pragmax")  ## pragma expressions
-    QuotedX = (206, "quoted")  ## name in backticks
-    HderefX = (207, "hderef")  ## hidden pointer deref operation
-    DdotX = (208, "ddot")  ## deref dot
-    HaddrX = (209, "haddr")  ## hidden address of operation
-    NewrefX = (210, "newref")  ## Nim's `new` magic proc that allocates a `ref T`
-    NewobjX = (211, "newobj")  ## new object constructor
-    TupX = (212, "tup")  ## untyped tuple constructor
-    TupconstrX = (213, "tupconstr")  ## tuple constructor
-    SetconstrX = (214, "setconstr")  ## set constructor
-    TabconstrX = (215, "tabconstr")  ## table constructor
-    AshrX = (216, "ashr")
-    OconvX = (217, "oconv")  ## object conversion
-    HconvX = (218, "hconv")  ## hidden basic type conversion
-    DconvX = (219, "dconv")  ## conversion between `distinct` types
-    CallstrlitX = (220, "callstrlit")
-    InfixX = (221, "infix")
-    PrefixX = (222, "prefix")
-    HcallX = (223, "hcall")  ## hidden converter call
-    CompilesX = (224, "compiles")
-    DeclaredX = (225, "declared")
-    DefinedX = (226, "defined")
-    HighX = (227, "high")
-    LowX = (228, "low")
-    TypeofX = (229, "typeof")
-    UnpackX = (230, "unpack")
-    EnumtostrX = (231, "enumtostr")
-    IsmainmoduleX = (232, "ismainmodule")
-    DefaultobjX = (233, "defaultobj")
-    DefaulttupX = (234, "defaulttup")
-    ExprX = (235, "expr")
-    DoX = (236, "do")  ## `do` expression
-    ArratX = (237, "arrat")
-    TupatX = (238, "tupat")
-    PlussetX = (239, "plusset")
-    MinussetX = (240, "minusset")
-    MulsetX = (241, "mulset")
-    XorsetX = (242, "xorset")
-    EqsetX = (243, "eqset")
-    LesetX = (244, "leset")
-    LtsetX = (245, "ltset")
-    InsetX = (246, "inset")
-    CardX = (247, "card")
-    EmoveX = (248, "emove")
-    DestroyX = (249, "destroy")
-    DupX = (250, "dup")
-    CopyX = (251, "copy")
-    WasmovedX = (252, "wasmoved")
-    SinkhX = (253, "sinkh")
-    TraceX = (254, "trace")
+    QuotedX = (207, "quoted")  ## name in backticks
+    HderefX = (208, "hderef")  ## hidden pointer deref operation
+    DdotX = (209, "ddot")  ## deref dot
+    HaddrX = (210, "haddr")  ## hidden address of operation
+    NewrefX = (211, "newref")  ## Nim's `new` magic proc that allocates a `ref T`
+    NewobjX = (212, "newobj")  ## new object constructor
+    TupX = (213, "tup")  ## untyped tuple constructor
+    TupconstrX = (214, "tupconstr")  ## tuple constructor
+    SetconstrX = (215, "setconstr")  ## set constructor
+    TabconstrX = (216, "tabconstr")  ## table constructor
+    AshrX = (217, "ashr")
+    OconvX = (218, "oconv")  ## object conversion
+    HconvX = (219, "hconv")  ## hidden basic type conversion
+    DconvX = (220, "dconv")  ## conversion between `distinct` types
+    CallstrlitX = (221, "callstrlit")
+    InfixX = (222, "infix")
+    PrefixX = (223, "prefix")
+    HcallX = (224, "hcall")  ## hidden converter call
+    CompilesX = (225, "compiles")
+    DeclaredX = (226, "declared")
+    DefinedX = (227, "defined")
+    HighX = (228, "high")
+    LowX = (229, "low")
+    TypeofX = (230, "typeof")
+    UnpackX = (231, "unpack")
+    EnumtostrX = (232, "enumtostr")
+    IsmainmoduleX = (233, "ismainmodule")
+    DefaultobjX = (234, "defaultobj")
+    DefaulttupX = (235, "defaulttup")
+    ExprX = (236, "expr")
+    DoX = (237, "do")  ## `do` expression
+    ArratX = (238, "arrat")
+    TupatX = (239, "tupat")
+    PlussetX = (240, "plusset")
+    MinussetX = (241, "minusset")
+    MulsetX = (242, "mulset")
+    XorsetX = (243, "xorset")
+    EqsetX = (244, "eqset")
+    LesetX = (245, "leset")
+    LtsetX = (246, "ltset")
+    InsetX = (247, "inset")
+    CardX = (248, "card")
+    EmoveX = (249, "emove")
+    DestroyX = (250, "destroy")
+    DupX = (251, "dup")
+    CopyX = (252, "copy")
+    WasmovedX = (253, "wasmoved")
+    SinkhX = (254, "sinkh")
+    TraceX = (255, "trace")
 
 proc rawTagIsNimonyExpr*(raw: uint32): bool {.inline.} =
   let r = raw
-  r <= 255'u32 and r.uint8 in {1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 23'u8, 24'u8, 25'u8, 26'u8, 27'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 46'u8, 47'u8, 48'u8, 74'u8, 75'u8, 130'u8, 206'u8, 207'u8, 208'u8, 209'u8, 210'u8, 211'u8, 212'u8, 213'u8, 214'u8, 215'u8, 216'u8, 217'u8, 218'u8, 219'u8, 220'u8, 221'u8, 222'u8, 223'u8, 224'u8, 225'u8, 226'u8, 227'u8, 228'u8, 229'u8, 230'u8, 231'u8, 232'u8, 233'u8, 234'u8, 235'u8, 236'u8, 237'u8, 238'u8, 239'u8, 240'u8, 241'u8, 242'u8, 243'u8, 244'u8, 245'u8, 246'u8, 247'u8, 248'u8, 249'u8, 250'u8, 251'u8, 252'u8, 253'u8, 254'u8}
+  r <= 255'u32 and r.uint8 in {1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 14'u8, 15'u8, 16'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 23'u8, 24'u8, 25'u8, 26'u8, 27'u8, 30'u8, 31'u8, 32'u8, 33'u8, 34'u8, 35'u8, 36'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 42'u8, 43'u8, 44'u8, 45'u8, 46'u8, 47'u8, 48'u8, 74'u8, 75'u8, 130'u8, 207'u8, 208'u8, 209'u8, 210'u8, 211'u8, 212'u8, 213'u8, 214'u8, 215'u8, 216'u8, 217'u8, 218'u8, 219'u8, 220'u8, 221'u8, 222'u8, 223'u8, 224'u8, 225'u8, 226'u8, 227'u8, 228'u8, 229'u8, 230'u8, 231'u8, 232'u8, 233'u8, 234'u8, 235'u8, 236'u8, 237'u8, 238'u8, 239'u8, 240'u8, 241'u8, 242'u8, 243'u8, 244'u8, 245'u8, 246'u8, 247'u8, 248'u8, 249'u8, 250'u8, 251'u8, 252'u8, 253'u8, 254'u8, 255'u8}
 
 type
   NimonyStmt* = enum
@@ -152,22 +152,22 @@ type
     FromimportS = (141, "fromimport")  ## `from import` statement
     ImportexceptS = (142, "importexcept")  ## `importexcept` statement
     ExportS = (143, "export")  ## `export` statement
-    ExportexceptS = (144, "exportexcept")  ## `exportexcept` statement
-    CommentS = (145, "comment")  ## `comment` statement
-    DiscardS = (146, "discard")  ## `discard` statement
-    TryS = (147, "try")  ## `try` statement
-    RaiseS = (148, "raise")  ## `raise` statement
-    UnpackdeclS = (159, "unpackdecl")  ## unpack var/let/const declaration
-    StaticstmtS = (256, "staticstmt")  ## `static` statement
-    BindS = (257, "bind")  ## `bind` statement
-    MixinS = (258, "mixin")  ## `mixin` statement
-    UsingS = (259, "using")  ## `using` statement
-    AsmS = (260, "asm")  ## `asm` statement
-    DeferS = (261, "defer")  ## `defer` statement
+    ExportexceptS = (145, "exportexcept")  ## `exportexcept` statement
+    CommentS = (146, "comment")  ## `comment` statement
+    DiscardS = (147, "discard")  ## `discard` statement
+    TryS = (148, "try")  ## `try` statement
+    RaiseS = (149, "raise")  ## `raise` statement
+    UnpackdeclS = (160, "unpackdecl")  ## unpack var/let/const declaration
+    StaticstmtS = (257, "staticstmt")  ## `static` statement
+    BindS = (258, "bind")  ## `bind` statement
+    MixinS = (259, "mixin")  ## `mixin` statement
+    UsingS = (260, "using")  ## `using` statement
+    AsmS = (261, "asm")  ## `asm` statement
+    DeferS = (262, "defer")  ## `defer` statement
 
 proc rawTagIsNimonyStmt*(raw: uint32): bool {.inline.} =
   let r = raw - 47'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 4'u8, 5'u8, 6'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 23'u8, 24'u8, 25'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 45'u8, 46'u8, 47'u8, 82'u8, 89'u8, 90'u8, 91'u8, 92'u8, 93'u8, 94'u8, 95'u8, 96'u8, 97'u8, 98'u8, 99'u8, 100'u8, 101'u8, 112'u8, 209'u8, 210'u8, 211'u8, 212'u8, 213'u8, 214'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 4'u8, 5'u8, 6'u8, 8'u8, 9'u8, 10'u8, 11'u8, 12'u8, 13'u8, 17'u8, 18'u8, 19'u8, 20'u8, 21'u8, 22'u8, 23'u8, 24'u8, 25'u8, 29'u8, 30'u8, 31'u8, 32'u8, 33'u8, 37'u8, 38'u8, 39'u8, 40'u8, 41'u8, 45'u8, 46'u8, 47'u8, 82'u8, 89'u8, 90'u8, 91'u8, 92'u8, 93'u8, 94'u8, 95'u8, 96'u8, 98'u8, 99'u8, 100'u8, 101'u8, 102'u8, 113'u8, 210'u8, 211'u8, 212'u8, 213'u8, 214'u8, 215'u8}
 
 type
   NimonyType* = enum
@@ -191,34 +191,34 @@ type
     PtrT = (110, "ptr")  ## `ptr` type contructor
     ArrayT = (111, "array")  ## `array` type constructor
     VarargsT = (126, "varargs")  ## `varargs` proc annotation
-    StaticT = (152, "static")  ## `static` type or annotation
-    TupleT = (162, "tuple")  ## `tuple` type
-    OnumT = (163, "onum")  ## enum with holes type
-    RefT = (164, "ref")  ## `ref` type
-    MutT = (165, "mut")  ## `mut` type
-    OutT = (166, "out")  ## `out` type
-    LentT = (167, "lent")  ## `lent` type
-    SinkT = (168, "sink")  ## `sink` type
-    NiltT = (169, "nilt")  ## `nilt` type
-    ConceptT = (170, "concept")  ## `concept` type
-    DistinctT = (171, "distinct")  ## `distinct` type
-    ItertypeT = (172, "itertype")  ## `itertype` type
-    RangetypeT = (173, "rangetype")  ## `rangetype` type
-    UarrayT = (174, "uarray")  ## `uarray` type
-    SetT = (175, "set")  ## `set` type
-    AutoT = (176, "auto")  ## `auto` type
-    SymkindT = (177, "symkind")  ## `symkind` type
-    TypekindT = (178, "typekind")  ## `typekind` type
-    TypedescT = (179, "typedesc")  ## `typedesc` type
-    UntypedT = (180, "untyped")  ## `untyped` type
-    TypedT = (181, "typed")  ## `typed` type
-    CstringT = (182, "cstring")  ## `cstring` type
-    PointerT = (183, "pointer")  ## `pointer` type
-    OrdinalT = (184, "ordinal")  ## `ordinal` type
+    StaticT = (153, "static")  ## `static` type or annotation
+    TupleT = (163, "tuple")  ## `tuple` type
+    OnumT = (164, "onum")  ## enum with holes type
+    RefT = (165, "ref")  ## `ref` type
+    MutT = (166, "mut")  ## `mut` type
+    OutT = (167, "out")  ## `out` type
+    LentT = (168, "lent")  ## `lent` type
+    SinkT = (169, "sink")  ## `sink` type
+    NiltT = (170, "nilt")  ## `nilt` type
+    ConceptT = (171, "concept")  ## `concept` type
+    DistinctT = (172, "distinct")  ## `distinct` type
+    ItertypeT = (173, "itertype")  ## `itertype` type
+    RangetypeT = (174, "rangetype")  ## `rangetype` type
+    UarrayT = (175, "uarray")  ## `uarray` type
+    SetT = (176, "set")  ## `set` type
+    AutoT = (177, "auto")  ## `auto` type
+    SymkindT = (178, "symkind")  ## `symkind` type
+    TypekindT = (179, "typekind")  ## `typekind` type
+    TypedescT = (180, "typedesc")  ## `typedesc` type
+    UntypedT = (181, "untyped")  ## `untyped` type
+    TypedT = (182, "typed")  ## `typed` type
+    CstringT = (183, "cstring")  ## `cstring` type
+    PointerT = (184, "pointer")  ## `pointer` type
+    OrdinalT = (185, "ordinal")  ## `ordinal` type
 
 proc rawTagIsNimonyType*(raw: uint32): bool {.inline.} =
   let r = raw
-  r <= 255'u32 and r.uint8 in {1'u8, 3'u8, 15'u8, 16'u8, 18'u8, 66'u8, 95'u8, 97'u8, 98'u8, 99'u8, 104'u8, 105'u8, 106'u8, 107'u8, 108'u8, 109'u8, 110'u8, 111'u8, 126'u8, 152'u8, 162'u8, 163'u8, 164'u8, 165'u8, 166'u8, 167'u8, 168'u8, 169'u8, 170'u8, 171'u8, 172'u8, 173'u8, 174'u8, 175'u8, 176'u8, 177'u8, 178'u8, 179'u8, 180'u8, 181'u8, 182'u8, 183'u8, 184'u8}
+  r <= 255'u32 and r.uint8 in {1'u8, 3'u8, 15'u8, 16'u8, 18'u8, 66'u8, 95'u8, 97'u8, 98'u8, 99'u8, 104'u8, 105'u8, 106'u8, 107'u8, 108'u8, 109'u8, 110'u8, 111'u8, 126'u8, 153'u8, 163'u8, 164'u8, 165'u8, 166'u8, 167'u8, 168'u8, 169'u8, 170'u8, 171'u8, 172'u8, 173'u8, 174'u8, 175'u8, 176'u8, 177'u8, 178'u8, 179'u8, 180'u8, 181'u8, 182'u8, 183'u8, 184'u8, 185'u8}
 
 type
   NimonyOther* = enum
@@ -237,14 +237,14 @@ type
     OfU = (89, "of")  ## `of` branch within a `case` statement
     ParamsU = (95, "params")  ## list of proc parameters, also used as a "proc type"
     PragmasU = (129, "pragmas")  ## begin of pragma section
-    UnpackflatU = (157, "unpackflat")  ## unpack into flat variable list
-    UnpacktupU = (158, "unpacktup")  ## unpack tuple
-    ExceptU = (160, "except")  ## except subsection
-    FinU = (161, "fin")  ## finally subsection
+    UnpackflatU = (158, "unpackflat")  ## unpack into flat variable list
+    UnpacktupU = (159, "unpacktup")  ## unpack tuple
+    ExceptU = (161, "except")  ## except subsection
+    FinU = (162, "fin")  ## finally subsection
 
 proc rawTagIsNimonyOther*(raw: uint32): bool {.inline.} =
   let r = raw - 28'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 21'u8, 22'u8, 26'u8, 33'u8, 34'u8, 35'u8, 53'u8, 54'u8, 55'u8, 61'u8, 67'u8, 101'u8, 129'u8, 130'u8, 132'u8, 133'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 1'u8, 21'u8, 22'u8, 26'u8, 33'u8, 34'u8, 35'u8, 53'u8, 54'u8, 55'u8, 61'u8, 67'u8, 101'u8, 130'u8, 131'u8, 133'u8, 134'u8}
 
 type
   NimonyPragma* = enum
@@ -257,36 +257,36 @@ type
     AlignP = (131, "align")
     BitsP = (132, "bits")
     NodeclP = (135, "nodecl")  ## `nodecl` annotation
-    RaisesP = (150, "raises")  ## proc annotation
-    UntypedP = (180, "untyped")  ## `untyped` type
-    MagicP = (185, "magic")  ## `magic` pragma
-    ImportcP = (186, "importc")  ## `importc` pragma
-    ImportcppP = (187, "importcpp")  ## `importcpp` pragma
-    ExportcP = (188, "exportc")  ## `exportc` pragma
-    HeaderP = (189, "header")  ## `header` pragma
-    ThreadvarP = (190, "threadvar")  ## `threadvar` pragma
-    GlobalP = (191, "global")  ## `global` pragma
-    DiscardableP = (192, "discardable")  ## `discardable` pragma
-    NoreturnP = (193, "noreturn")  ## `noreturn` pragma
-    BorrowP = (194, "borrow")  ## `borrow` pragma
-    NoSideEffectP = (195, "noSideEffect")  ## `noSideEffect` pragma
-    NodestroyP = (196, "nodestroy")  ## `nodestroy` pragma
-    PluginP = (197, "plugin")  ## `plugin` pragma
-    BycopyP = (198, "bycopy")  ## `bycopy` pragma
-    ByrefP = (199, "byref")  ## `byref` pragma
-    NoinitP = (200, "noinit")  ## `noinit` pragma
-    RequiresP = (201, "requires")  ## `requires` pragma
-    EnsuresP = (202, "ensures")  ## `ensures` pragma
-    BuildP = (203, "build")  ## `build` pragma
-    StringP = (204, "string")  ## `string` pragma
-    ViewP = (205, "view")  ## `view` pragma
-    InjectP = (265, "inject")  ## `inject` pragma
-    GensymP = (266, "gensym")  ## `gensym` pragma
-    ErrorP = (267, "error")  ## `error` pragma
+    RaisesP = (151, "raises")  ## proc annotation
+    UntypedP = (181, "untyped")  ## `untyped` type
+    MagicP = (186, "magic")  ## `magic` pragma
+    ImportcP = (187, "importc")  ## `importc` pragma
+    ImportcppP = (188, "importcpp")  ## `importcpp` pragma
+    ExportcP = (189, "exportc")  ## `exportc` pragma
+    HeaderP = (190, "header")  ## `header` pragma
+    ThreadvarP = (191, "threadvar")  ## `threadvar` pragma
+    GlobalP = (192, "global")  ## `global` pragma
+    DiscardableP = (193, "discardable")  ## `discardable` pragma
+    NoreturnP = (194, "noreturn")  ## `noreturn` pragma
+    BorrowP = (195, "borrow")  ## `borrow` pragma
+    NoSideEffectP = (196, "noSideEffect")  ## `noSideEffect` pragma
+    NodestroyP = (197, "nodestroy")  ## `nodestroy` pragma
+    PluginP = (198, "plugin")  ## `plugin` pragma
+    BycopyP = (199, "bycopy")  ## `bycopy` pragma
+    ByrefP = (200, "byref")  ## `byref` pragma
+    NoinitP = (201, "noinit")  ## `noinit` pragma
+    RequiresP = (202, "requires")  ## `requires` pragma
+    EnsuresP = (203, "ensures")  ## `ensures` pragma
+    BuildP = (204, "build")  ## `build` pragma
+    StringP = (205, "string")  ## `string` pragma
+    ViewP = (206, "view")  ## `view` pragma
+    InjectP = (266, "inject")  ## `inject` pragma
+    GensymP = (267, "gensym")  ## `gensym` pragma
+    ErrorP = (268, "error")  ## `error` pragma
 
 proc rawTagIsNimonyPragma*(raw: uint32): bool {.inline.} =
   let r = raw - 76'u32
-  r <= 255'u32 and r.uint8 in {0'u8, 47'u8, 48'u8, 50'u8, 52'u8, 55'u8, 56'u8, 59'u8, 74'u8, 104'u8, 109'u8, 110'u8, 111'u8, 112'u8, 113'u8, 114'u8, 115'u8, 116'u8, 117'u8, 118'u8, 119'u8, 120'u8, 121'u8, 122'u8, 123'u8, 124'u8, 125'u8, 126'u8, 127'u8, 128'u8, 129'u8, 189'u8, 190'u8, 191'u8}
+  r <= 255'u32 and r.uint8 in {0'u8, 47'u8, 48'u8, 50'u8, 52'u8, 55'u8, 56'u8, 59'u8, 75'u8, 105'u8, 110'u8, 111'u8, 112'u8, 113'u8, 114'u8, 115'u8, 116'u8, 117'u8, 118'u8, 119'u8, 120'u8, 121'u8, 122'u8, 123'u8, 124'u8, 125'u8, 126'u8, 127'u8, 128'u8, 129'u8, 130'u8, 190'u8, 191'u8, 192'u8}
 
 type
   NimonySym* = enum
@@ -322,24 +322,24 @@ proc rawTagIsNimonySym*(raw: uint32): bool {.inline.} =
 type
   HookKind* = enum
     NoHook
-    DestroyH = (249, "destroy")
-    DupH = (250, "dup")
-    CopyH = (251, "copy")
-    WasmovedH = (252, "wasmoved")
-    SinkhH = (253, "sinkh")
-    TraceH = (254, "trace")
+    DestroyH = (250, "destroy")
+    DupH = (251, "dup")
+    CopyH = (252, "copy")
+    WasmovedH = (253, "wasmoved")
+    SinkhH = (254, "sinkh")
+    TraceH = (255, "trace")
 
 proc rawTagIsHookKind*(raw: uint32): bool {.inline.} =
-  raw >= 249'u32 and raw <= 254'u32
+  raw >= 250'u32 and raw <= 255'u32
 
 type
   ControlFlowKind* = enum
     NoControlFlow
-    IteF = (153, "ite")  ## if-then-else
-    GraphF = (154, "graph")  ## disjoint subgraph annotation
-    ForbindF = (155, "forbind")  ## bindings for a `for` loop but the loop itself is mapped to gotos
-    KillF = (156, "kill")  ## some.var is about to disappear (scope exit)
+    IteF = (154, "ite")  ## if-then-else
+    GraphF = (155, "graph")  ## disjoint subgraph annotation
+    ForbindF = (156, "forbind")  ## bindings for a `for` loop but the loop itself is mapped to gotos
+    KillF = (157, "kill")  ## some.var is about to disappear (scope exit)
 
 proc rawTagIsControlFlowKind*(raw: uint32): bool {.inline.} =
-  raw >= 153'u32 and raw <= 156'u32
+  raw >= 154'u32 and raw <= 157'u32
 

@@ -18,7 +18,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semuntyped, contracts
 
 import ".." / gear2 / modnames
-import ".." / models / tags
+import ".." / models / [tags, nifindex_tags]
 
 proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool)
 
@@ -6021,6 +6021,32 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
 proc reportErrors(c: var SemContext): int =
   result = reporters.reportErrors(c.dest)
 
+proc buildIndexExports(c: var SemContext): TokenBuf =
+  if c.exports.len == 0:
+    return default(TokenBuf)
+  result = createTokenBuf(32)
+  for m, ex in c.exports:
+    let path = toAbsolutePath(c.importedModules[m].path)
+    case ex.kind
+    of ImportAll:
+      result.addParLe(TagId(ExportIdx), NoLineInfo)
+      result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+      result.addParRi()
+    of FromImport:
+      if ex.list.len != 0:
+        result.addParLe(TagId(FromexportIdx), NoLineInfo)
+        result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+        for s in ex.list:
+          result.add identToken(s, NoLineInfo)
+        result.addParRi()
+    of ImportExcept:
+      let kind = if ex.list.len == 0: ExportIdx else: ExportexceptIdx
+      result.addParLe(TagId(kind), NoLineInfo)
+      result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+      for s in ex.list:
+        result.add identToken(s, NoLineInfo)
+      result.addParRi()
+
 proc writeOutput(c: var SemContext; outfile: string) =
   #var b = nifbuilder.open(outfile)
   #b.addHeader "nimony", "nim-sem"
@@ -6031,7 +6057,8 @@ proc writeOutput(c: var SemContext; outfile: string) =
   createIndex outfile, root, true,
     IndexSections(hooks: move c.hookIndexLog,
       converters: move c.converterIndexMap,
-      toBuild: move c.toBuild)
+      toBuild: move c.toBuild,
+      exportBuf: buildIndexExports(c))
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n == "stmts"
