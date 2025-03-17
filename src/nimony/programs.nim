@@ -4,9 +4,10 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, os, tables, sequtils, times, packedsets]
+import std / [syncio, os, tables, sequtils, times, sets]
 include nifprelude
 import nifindexes, symparser, reporters, builtintypes
+import ".." / models / [nifindex_tags]
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
@@ -26,7 +27,7 @@ type
 
   ImportFilter* = object
     kind*: ImportFilterKind
-    list*: PackedSet[StrId] # `from import` or `import except` symbol list
+    list*: HashSet[StrId] # `from import` or `import except` symbol list
 
 var
   prog*: Program
@@ -55,9 +56,31 @@ proc load(suffix: string): NifModule =
   else:
     result = prog.mods[suffix]
 
+proc mergeFilter(f: var ImportFilter; g: ImportFilter) =
+  # applies filter f to filter g, commutative since it computes the intersection
+  case g.kind
+  of ImportAll: discard
+  of ImportExcept:
+    case f.kind
+    of ImportAll: f = g
+    of ImportExcept:
+      f.list.incl(g.list)
+    of FromImport:
+      f.list.excl(g.list)
+  of FromImport:
+    case f.kind
+    of ImportAll: f = g
+    of ImportExcept:
+      let exc = f.list
+      f = g
+      f.list.excl(exc)
+    of FromImport:
+      f.list = intersection(f.list, g.list)
+
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters: var Table[SymId, seq[SymId]];
+                    exports: var seq[(string, ImportFilter)];
                     filter: ImportFilter) =
   let m = load(suffix)
   let alreadyLoaded = iface.len != 0
@@ -85,6 +108,19 @@ proc loadInterface*(suffix: string; iface: var Iface;
       let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
       let val = pool.syms.getOrIncl(v)
       converters.mgetOrPut(key, @[]).addUnique(val)
+  for ex in m.index.exports:
+    let (path, kind, names) = ex
+    let filterKind =
+      case kind
+      of ExportIdx: ImportAll
+      of FromexportIdx: FromImport
+      of ExportexceptIdx: ImportExcept
+      else: ImportAll
+    var exportFilter = ImportFilter(kind: filterKind)
+    for s in names:
+      exportFilter.list.incl(s)
+    mergeFilter(exportFilter, filter)
+    exports.add (path, ensureMove exportFilter)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):

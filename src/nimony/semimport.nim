@@ -40,7 +40,9 @@ proc semInclude(c: var SemContext; it: var Item) =
 
   producesVoid c, info, it.typ
 
-proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; mode: ImportFilter; info: PackedLineInfo) =
+proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
+                      mode: ImportFilter; exports: var seq[(string, ImportFilter)];
+                      info: PackedLineInfo) =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
     c.buildErr info, "file not found: " & f2
@@ -65,8 +67,23 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string; m
   else:
     moduleSym = c.processedModules[suffix]
   let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
-  var marker = mode.list
-  loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters, mode
+  loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters, exports, mode
+
+proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
+                      filter: ImportFilter;
+                      info: PackedLineInfo) =
+  var exports: seq[(string, ImportFilter)] = @[] # ignored
+  importSingleFile(c, f1, origin, filter, exports, info)
+
+proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
+  var exports: seq[(string, ImportFilter)] = @[]
+  importSingleFile(c, f1, origin, filter, exports, info)
+  while exports.len != 0:
+    var newExports: seq[(string, ImportFilter)] = @[]
+    for ex in exports:
+      let file = ImportedFilename(path: ex[0], name: "")
+      importSingleFile(c, file, origin, ex[1], newExports, info)
+    exports = newExports
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
   c.buildErr x.info, "cyclic module imports are not implemented"
@@ -74,7 +91,7 @@ proc cyclicImport(c: var SemContext; x: var Cursor) =
 proc doImports(c: var SemContext; files: seq[ImportedFilename]; mode: ImportFilter; info: PackedLineInfo) =
   let origin = getFile(info)
   for f in files:
-    importSingleFile c, f, origin, mode, info
+    importSingleFileConsiderExports c, f, origin, mode, info
 
 proc semImport(c: var SemContext; it: var Item) =
   let info = it.n.info
@@ -125,7 +142,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
   if hasError:
     c.buildErr info, "wrong `import except` statement"
   else:
-    var excluded = initPackedSet[StrId]()
+    var excluded = initHashSet[StrId]()
     while x.kind != ParRi:
       excluded.incl getIdent(x)
     doImports c, files, ImportFilter(kind: ImportExcept, list: excluded), info
@@ -154,7 +171,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
   if hasError:
     c.buildErr info, "wrong `from import` statement"
   else:
-    var included = initPackedSet[StrId]()
+    var included = initHashSet[StrId]()
     while x.kind != ParRi:
       if x.kind == ParLe and x == $NilX:
         # from a import nil
@@ -223,7 +240,7 @@ proc doExport(c: var SemContext; sym: SymId; info: PackedLineInfo) =
       of ImportExcept:
         c.exports[moduleSym].list.excl strId
     else:
-      c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initPackedSet[StrId]())
+      c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initHashSet[StrId]())
       c.exports[moduleSym].list.incl strId
 
 proc semExport(c: var SemContext; it: var Item) =
@@ -273,14 +290,14 @@ proc doExportExcept(c: var SemContext; moduleSym, sym: SymId; info: PackedLineIn
   if moduleSym in c.exports:
     case c.exports[moduleSym].kind
     of ImportAll:
-      c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initPackedSet[StrId]())
+      c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initHashSet[StrId]())
       c.exports[moduleSym].list.incl strId
     of FromImport:
       c.exports[moduleSym].list.excl strId
     of ImportExcept:
       c.exports[moduleSym].list.incl strId
   else:
-    c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initPackedSet[StrId]())
+    c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initHashSet[StrId]())
     c.exports[moduleSym].list.incl strId
 
 proc semExportExcept(c: var SemContext; it: var Item) =
