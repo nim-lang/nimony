@@ -120,7 +120,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
     for s in names:
       exportFilter.list.incl(s)
     mergeFilter(exportFilter, filter)
-    exports.add (path, move exportFilter)
+    exports.add (path, ensureMove exportFilter)
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):
