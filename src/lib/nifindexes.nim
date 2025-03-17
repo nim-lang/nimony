@@ -248,10 +248,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     let final = SecureHash checksum.finalize()
     content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
-  if fileExists(indexName) and readFile(indexName) == content:
-    discard "no change"
-  else:
-    writeFile(indexName, content)
+  writeFile(indexName, content)
 
 proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
   createIndex(infile, root, buildChecksum,
