@@ -1,3 +1,5 @@
+import std/syncio
+
 proc classify(s: string) =
   case s[0]
   of '_': echo "an identifier"
