@@ -6,7 +6,7 @@
 
 ## Create an index file for a NIF file.
 
-import std / [os, tables, assertions, syncio]
+import std / [os, tables, assertions, syncio, times]
 import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 
 #import std / [sha1]
@@ -249,7 +249,8 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
   if fileExists(indexName) and readFile(indexName) == content:
-    discard "no change"
+    discard "Only change the last modification time so that make command works correctly"
+    setLastModificationTime(indexName, times.getTime())
   else:
     writeFile(indexName, content)
 
