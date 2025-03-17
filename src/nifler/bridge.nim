@@ -666,10 +666,14 @@ proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
     var conf = createConf()
     var parser: Parser = default(Parser)
     openParser(parser, AbsoluteFile(thisfile), stream, newIdentCache(), conf)
-    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled)
-
     bench "parseAll":
       let fullTree = parseAll(parser)
+
+    if conf.errorCounter > 0:
+      closeParser(parser)
+      quit QuitFailure
+
+    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled)
 
     bench "moduleToIr":
       moduleToIr(fullTree, tc)
