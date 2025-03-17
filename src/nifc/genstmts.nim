@@ -119,8 +119,8 @@ proc genCaseCond(c: var GeneratedCode; n: var Cursor) =
   # BranchRanges ::= (ranges BranchRange+)
   if n.substructureKind == RangesU:
     inc n
-    c.add CaseKeyword
     while n.kind != ParRi:
+      c.add CaseKeyword
       if n.substructureKind == RangeU:
         inc n
         genBranchValue c, n
