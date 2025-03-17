@@ -266,6 +266,9 @@ proc toBuildList(c: DepContext): seq[CFile] =
       let customArgs = i[2]
       result.add (path, obj, customArgs)
 
+proc cachedPassCFile(config: NifConfig): string =
+  config.nifcachePath / "cachedpasscfile.txt"
+
 proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   var s = makefileHeader
   let dest =
@@ -298,13 +301,14 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string; passC, pa
     if passL.len != 0:
       s.add " " & mescape(passL)
 
+    let passCFile = mescape(c.config.cachedPassCFile())
     for cfile in buildList:
-      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) &
+      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) & " " & passCFile &
             "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
             mescape(cfile.customArgs) & " $< -o $@"
 
     # The .o files depend on all of their .c files:
-    s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) -I$(ROOT_PATH) $(CPPFLAGS) $< -o $@"
+    s.add "\n%.o: %.c " & passCFile & "\n\t$(CC) -c $(CFLAGS) -I$(ROOT_PATH) $(CPPFLAGS) $< -o $@"
 
     # entry point is special:
     let nifc = findTool("nifc")
@@ -340,7 +344,7 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
       let idxFile = c.config.indexFile(f)
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
-    s.add " " & c.config.cachedConfigFile()
+    s.add " " & mescape(c.config.cachedConfigFile())
     let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "")
     s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(c.config.parsedFile(v.files[0])) & " " &
       mescape(c.config.semmedFile(v.files[0])) & " " & mescape(c.config.indexFile(v.files[0]))
@@ -359,15 +363,25 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
 
-proc generateCachedConfigFile(c: DepContext) =
-  let path = c.config.cachedConfigFile()
-  let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile
-  let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
-                     configStr != readFile path
-                   else:
-                     true
-  if needUpdate:
-    writeFile path, configStr
+proc generateCachedConfigFile(c: DepContext; passC: string) =
+  block:
+    let path = c.config.cachedConfigFile()
+    let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile
+    let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
+                       configStr != readFile path
+                     else:
+                       true
+    if needUpdate:
+      writeFile path, configStr
+
+  block:
+    let path = c.config.cachedPassCFile()
+    let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
+                       passC != readFile path
+                     else:
+                       true
+    if needUpdate:
+      writeFile path, passC
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
@@ -388,7 +402,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
-  generateCachedConfigFile c
+  generateCachedConfigFile c, passC
   let makeFilename = generateFrontendMakefile(c, commandLineArgs)
   #echo "run with: make -f ", makeFilename
   when defined(windows):
