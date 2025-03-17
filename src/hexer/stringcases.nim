@@ -50,7 +50,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
   var pairs: seq[Key] = @[]
   var nb = n
   inc nb
-  let selectorNode = nb
+  var selectorNode = nb
   let sinfo = selectorNode.info
   let selector: SymId
   if selectorNode.kind == Symbol:
@@ -61,7 +61,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       c.dest.add symdefToken(selector, sinfo)
       c.dest.addDotToken() # pragmas
       c.dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
-      c.dest.addSubtree selectorNode
+      traverseExpr(c, selectorNode)
   skip nb # selector
 
   while nb.kind != ParRi:
@@ -99,12 +99,15 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       c.dest.copyIntoUnchecked "lab", info:
         c.dest.add symdefToken(pool.syms.getOrIncl(pairs[i][1]), info)
       inc nb
-      skip nb # skip string values
+      inc nb
+      while nb.kind != ParRi:
+        inc nb
+        inc i
+      inc nb # skip ParRi
       traverseStmt c, nb
       c.dest.copyIntoUnchecked "jmp", info:
         c.dest.add symToken(afterwards, info)
       skipParRi nb
-      inc i
     elif nb.substructureKind == ElseU:
       c.dest.copyIntoUnchecked "lab", info:
         c.dest.add symdefToken(elseLabel, info)
