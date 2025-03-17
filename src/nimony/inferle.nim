@@ -79,7 +79,7 @@ proc ltXplusC*(f: LeXplusC): LeXplusC =
   # a < b + c  --> a <= b + c - 1
   result = LeXplusC(a: f.a, b: f.b, c: f.c - createXint(1'i64))
 
-proc negFact*(f: var LeXplusC) =
+proc negateFact*(f: var LeXplusC) =
   # not (a <= b + c)
   # -->
   # a >= b + c - 1
@@ -90,7 +90,7 @@ proc negFact*(f: var LeXplusC) =
 
 proc negateFacts*(f: var Facts; start: int) =
   for i in start ..< f.x.len:
-    negFact(f.x[i])
+    negateFact(f.x[i])
 
 proc variableChangedByDiff*(f: var Facts; x: VarId; diff: xint) =
   # after `inc x` we know that x is now bigger by 1 so all
@@ -174,6 +174,19 @@ proc complexImplies(facts: Facts; v: LeXplusC): bool =
 
 proc implies*(facts: Facts; v: LeXplusC): bool =
   result = simpleImplies(facts, v) or complexImplies(facts, v)
+
+proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
+  # computes thing we know on a joint point.
+  # we know that `a <= b + c` and `a <= b + d` then we know
+  # that `a <= b + max(c, d)`
+  result = Facts()
+  for i in xstart ..< x.len:
+    for j in 0..<y.len:
+      var ya = y[j]
+      if negate:
+        ya.negateFact()
+      if x[i].a == ya.a and x[i].b == ya.b:
+        result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
 
 when isMainModule:
   proc main =
