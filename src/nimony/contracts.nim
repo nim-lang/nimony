@@ -456,13 +456,15 @@ proc pushFacts(c: var Context; bb: var BasicBlock) =
 proc checkContracts(c: var Context) =
   var bbs = computeBasicBlocks(c.cf)
   c.startInstr = readonlyCursorAt(c.cf, 0)
-  #echo "LOOKING AT: ", codeListing(c)
   var pc = c.startInstr
   var nextIter = true
   while nextIter:
     nextIter = false
-    #echo "Looking at: ", toString(pc, false)
+    # Save facts before analyzing a block
+    let savedFactsLen = c.facts.len
+
     let cont = traverseBasicBlock(c, pc)
+
     if cont.thenPart > NoBasicBlock:
       let bb = addr(bbs[cont.thenPart])
       takeFacts(c, bb[], cont.newFacts, false)
@@ -477,6 +479,9 @@ proc checkContracts(c: var Context) =
         pc = readonlyCursorAt(c.cf, cont.elsePart.int)
         pushFacts(c, bb[])
         nextIter = true
+
+    # If we're done with this branch, restore facts
+    c.facts.shrink(savedFactsLen)
 
 proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   let oldInfos = prepare(input)
