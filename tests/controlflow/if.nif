@@ -1,0 +1,8 @@
+(stmts
+    (let :other.var . . (i -1) +12)
+    (let :my.var . . (i -1) (expr (call echo "before")
+      (if (elif (eq other.var +12) (call echo +1))
+        (else +0))
+    )
+    )
+  )

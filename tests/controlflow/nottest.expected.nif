@@ -1,0 +1,14 @@
+(stmts
+ (ite
+  (eq +1 +1)
+  (goto L14)
+  (goto L9))
+ (lab :L9)
+ (call echo "true")
+ (goto L14)
+ (lab :L14)
+ (call side.effect)
+ (let :`cf0 . .
+  (i -1) +3)
+ (call echo `cf0)
+ (ret))
