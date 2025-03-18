@@ -104,11 +104,10 @@ proc writeTagsFile(output: string; data: seq[(string, int)]) =
     f.writeLine "    " & toNimName(d[0], "TagId")
   f.writeLine "const"
   f.writeLine "  TagData*: array[TagEnum, (string, int)] = ["
-  var i = 0
+  f.write "    (" & escape("InvalidTagId") & ", 0)"
   for d in data:
-    if i > 0: f.write ",\n"
+    f.write ",\n"
     f.write "    (" & escape(d[0]) & ", " & $d[1] & ")"
-    inc i
   f.writeLine "\n  ]"
 
 proc extractTagName(s: string): string =

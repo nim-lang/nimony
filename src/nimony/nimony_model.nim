@@ -8,25 +8,27 @@ import std / assertions
 include nifprelude
 import stringviews
 
-import ".." / models / [nimony_tags, callconv_tags]
+import ".." / models / [tags, nimony_tags, callconv_tags]
 export nimony_tags, callconv_tags
 
+template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
+
 proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
-  if c.kind == ParLe and rawTagIsNimonyStmt(tag(c).uint32):
-    result = cast[NimonyStmt](tag(c))
+  if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
+    result = cast[NimonyStmt](tagEnum(c))
   else:
     result = NoStmt
 
 proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   if c.kind == ParLe:
-    let tagId = c.tagId.uint32
-    if rawTagIsNimonyPragma(tagId):
-      result = cast[NimonyPragma](tagId)
+    let e = tagEnum(c)
+    if rawTagIsNimonyPragma(e):
+      result = cast[NimonyPragma](e)
     else:
       result = NoPragma
   elif c.kind == Ident:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
-    if rawTagIsNimonyPragma(tagId.uint32):
+    if rawTagIsNimonyPragma(cast[TagEnum](tagId)):
       result = cast[NimonyPragma](tagId)
     else:
       result = NoPragma
@@ -34,15 +36,15 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
     result = NoPragma
 
 proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
-  if c.kind == ParLe and rawTagIsNimonyOther(tag(c).uint32):
+  if c.kind == ParLe and rawTagIsNimonyOther(tagEnum(c)):
     result = cast[NimonyOther](tag(c))
   else:
     result = NoSub
 
 proc typeKind*(c: Cursor): NimonyType {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNimonyType(tag(c).uint32):
-      result = cast[NimonyType](tag(c))
+    if rawTagIsNimonyType(tagEnum(c)):
+      result = cast[NimonyType](tagEnum(c))
     else:
       result = NoType
   elif c.kind == DotToken:
@@ -52,13 +54,13 @@ proc typeKind*(c: Cursor): NimonyType {.inline.} =
 
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsCallConv(tag(c).uint32):
+    if rawTagIsCallConv(tagEnum(c)):
       result = cast[CallConv](tag(c))
     else:
       result = NoCallConv
   elif c.kind == Ident:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
-    if rawTagIsCallConv(tagId.uint32):
+    if rawTagIsCallConv(cast[TagEnum](tagId)):
       result = cast[CallConv](tagId)
     else:
       result = NoCallConv
@@ -67,8 +69,8 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
 
 proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNimonyExpr(tag(c).uint32):
-      result = cast[NimonyExpr](tag(c))
+    if rawTagIsNimonyExpr(tagEnum(c)):
+      result = cast[NimonyExpr](tagEnum(c))
     else:
       result = NoExpr
   else:
@@ -76,8 +78,8 @@ proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
 
 proc symKind*(c: Cursor): NimonySym {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNimonySym(tag(c).uint32):
-      result = cast[NimonySym](tag(c))
+    if rawTagIsNimonySym(tagEnum(c)):
+      result = cast[NimonySym](tagEnum(c))
     else:
       result = NoSym
   else:
@@ -85,8 +87,8 @@ proc symKind*(c: Cursor): NimonySym {.inline.} =
 
 proc cfKind*(c: Cursor): ControlFlowKind {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsControlFlowKind(tag(c).uint32):
-      result = cast[ControlFlowKind](tag(c))
+    if rawTagIsControlFlowKind(tagEnum(c)):
+      result = cast[ControlFlowKind](tagEnum(c))
     else:
       result = NoControlFlow
   else:

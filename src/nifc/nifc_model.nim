@@ -54,22 +54,24 @@ proc skipParRi*(n: var Cursor) =
       writeStackTrace()
     quit "expected ')', but got: " & $n.kind
 
+template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
+
 proc stmtKind*(c: Cursor): NifcStmt {.inline.} =
-  if c.kind == ParLe and rawTagIsNifcStmt(tag(c).uint32):
-    result = cast[NifcStmt](tag(c))
+  if c.kind == ParLe and rawTagIsNifcStmt(tagEnum(c)):
+    result = cast[NifcStmt](tagEnum(c))
   else:
     result = NoStmt
 
 proc pragmaKind*(c: Cursor): NifcPragma {.inline.} =
   if c.kind == ParLe:
-    let tagId = c.tagId.uint32
-    if rawTagIsNifcPragma(tagId):
-      result = cast[NifcPragma](tagId)
+    let e = tagEnum(c)
+    if rawTagIsNifcPragma(e):
+      result = cast[NifcPragma](e)
     else:
       result = NoPragma
   elif c.kind == Ident:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
-    if rawTagIsNifcPragma(tagId.uint32):
+    if rawTagIsNifcPragma(cast[TagEnum](tagId)):
       result = cast[NifcPragma](tagId)
     else:
       result = NoPragma
@@ -77,14 +79,14 @@ proc pragmaKind*(c: Cursor): NifcPragma {.inline.} =
     result = NoPragma
 
 proc substructureKind*(c: Cursor): NifcOther {.inline.} =
-  if c.kind == ParLe and rawTagIsNifcOther(tag(c).uint32):
+  if c.kind == ParLe and rawTagIsNifcOther(tagEnum(c)):
     result = cast[NifcOther](tag(c))
   else:
     result = NoSub
 
 proc typeKind*(c: Cursor): NifcType {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNifcType(tag(c).uint32):
+    if rawTagIsNifcType(tagEnum(c)):
       result = cast[NifcType](tag(c))
     else:
       result = NoType
@@ -94,20 +96,20 @@ proc typeKind*(c: Cursor): NifcType {.inline.} =
     result = NoType
 
 proc typeQual*(c: Cursor): NifcTypeQualifier {.inline.} =
-  if c.kind == ParLe and rawTagIsNifcTypeQualifier(tag(c).uint32):
+  if c.kind == ParLe and rawTagIsNifcTypeQualifier(tagEnum(c)):
     result = cast[NifcTypeQualifier](tag(c))
   else:
     result = NoQualifier
 
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsCallConv(tag(c).uint32):
+    if rawTagIsCallConv(tagEnum(c)):
       result = cast[CallConv](tag(c))
     else:
       result = NoCallConv
   elif c.kind == Ident:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
-    if rawTagIsCallConv(tagId.uint32):
+    if rawTagIsCallConv(cast[TagEnum](tagId)):
       result = cast[CallConv](tagId)
     else:
       result = NoCallConv
@@ -116,7 +118,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
 
 proc exprKind*(c: Cursor): NifcExpr {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNifcExpr(tag(c).uint32):
+    if rawTagIsNifcExpr(tagEnum(c)):
       result = cast[NifcExpr](tag(c))
     else:
       result = NoExpr
@@ -125,8 +127,8 @@ proc exprKind*(c: Cursor): NifcExpr {.inline.} =
 
 proc symKind*(c: Cursor): NifcSym {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNifcSym(tag(c).uint32):
-      result = cast[NifcSym](tag(c))
+    if rawTagIsNifcSym(tagEnum(c)):
+      result = cast[NifcSym](tagEnum(c))
     else:
       result = NoSym
   else:
@@ -158,7 +160,7 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
     result = false
   of ParLe:
     let tag = pool.tags.getOrIncl(decodeStr t)
-    if tag.uint32 == TypeTagId:
+    if cast[TagEnum](tag) == TypeTagId:
       m.types.add m.src.len
     copyInto(m.src, tag, currentInfo):
       while true:

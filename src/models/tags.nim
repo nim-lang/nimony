@@ -2,7 +2,7 @@
 
 type
   TagEnum* = enum
-    InvalidTagId = 0
+    InvalidTagId
     ErrTagId
     SufTagId
     AtTagId
@@ -273,6 +273,7 @@ type
     ErrorTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
+    ("InvalidTagId", 0),
     ("err", 1),
     ("suf", 2),
     ("at", 3),

@@ -101,9 +101,9 @@ const
 
 proc createLiterals(data: openArray[(string, int)]): Literals =
   result = default(Literals)
-  for d in data:
-    let t = result.tags.getOrIncl(d[0])
-    assert t.int == d[1]
+  for i in 1 ..< data.len:
+    let t = result.tags.getOrIncl(data[i][0])
+    assert t.int == data[i][1]
 
 var pool* = createLiterals(TagData)
 
