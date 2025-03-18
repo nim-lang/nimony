@@ -2,7 +2,7 @@ import std/syncio
 
 proc main() =
   let x = newSeq[int](3)
-  var s = newSeqUninit[int](0) # XXX `default(seq[int])` doesn't work due to lack of generic disambiguation
+  var s = default(seq[int])
   s.add(123)
   s.add(456)
   #s.add(newSeq[int](3)) # not defined yet
