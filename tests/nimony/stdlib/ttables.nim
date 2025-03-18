@@ -23,7 +23,7 @@ block:
   assert t.getOrDefault(456) == 654
   assert t[456] == 654
 
-  let HC123 = (1 shl 31) + 123  # Hash collision to '123'
+  const HC123 = (1 shl 31) + 123  # Hash collision to '123'
   assert not t.contains(HC123)
   assert t.getOrDefault(HC123) == 0
 
