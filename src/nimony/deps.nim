@@ -80,7 +80,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
   inc x # skip the `include`
   while x.kind != ParRi:
     var hasError = false
-    filenameVal(x, files, hasError)
+    filenameVal(x, files, hasError, allowAs = false)
 
     if hasError:
       discard "ignore wrong `include` statement"
@@ -148,21 +148,22 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
 
     var files: seq[ImportedFilename] = @[]
     var hasError = false
-    filenameVal(x, files, hasError)
+    filenameVal(x, files, hasError, allowAs = true)
     if hasError:
       discard "ignore wrong `import` statement"
     else:
       for f in files:
         importSingleFile c, f.path, info, current, false
 
-proc processFrom(c: var DepContext; it: var Cursor; current: Node) =
+proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
+  # process `from import` and `import except` which have a single module expression
   let info = it.info
   var x = it
   skip it
-  inc x # skip the `from`
+  inc x # skip the tag
   var files: seq[ImportedFilename] = @[]
   var hasError = false
-  filenameVal(x, files, hasError)
+  filenameVal(x, files, hasError, allowAs = true)
   if hasError:
     discard "ignore wrong `from` statement"
   else:
@@ -174,10 +175,10 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   case stmtKind(n)
   of ImportS:
     processImport c, n, current
-  of IncludeS, ImportExceptS:
+  of IncludeS:
     processInclude c, n, current
-  of FromimportS:
-    processFrom c, n, current
+  of FromimportS, ImportexceptS:
+    processSingleImport c, n, current
   of ExportS:
     discard "ignore `export` statement"
     skip n

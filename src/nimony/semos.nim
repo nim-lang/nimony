@@ -125,11 +125,16 @@ type ImportedFilename* = object
   name*: string ## extracted module name to define a sym for in `import`
   isSystem*: bool
 
-proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs = false) =
+proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs: bool) =
   case n.kind
-  of StringLit, Ident:
+  of StringLit:
     let s = pool.strings[n.litId]
-    # XXX `s` could be something like "foo/bar.nim" which would need to extract the name "bar"
+    # string literal could contain a path or .nim extension:
+    let name = splitFile(s).name
+    res.add ImportedFilename(path: s, name: name)
+    inc n
+  of Ident:
+    let s = pool.strings[n.litId]
     res.add ImportedFilename(path: s, name: s)
     inc n
   of Symbol:
@@ -144,7 +149,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       if n.kind == ParRi:
         hasError = true
       else:
-        filenameVal(n, res, hasError)
+        filenameVal(n, res, hasError, allowAs)
       skipToEnd n
     of QuotedX:
       let s = pool.strings[unquote(n)]
