@@ -143,10 +143,8 @@ proc `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
 # special cased in compiler as "@.1.<system suffix>" for empty seq type inference:
 template `@`*[T](a: array[0, T]): seq[T] = newSeqUninit[T](0)
 
-when false:
-  # XXX needs openArray implementation
-  converter toOpenArray*[T](x: seq[T]): openArray[T] {.inline.} =
-    toOpenArray(x.data, len(x))
+converter toOpenArray*[T](x: seq[T]): openArray[T] {.inline.} =
+  openArray[T](a: x.data, len: len(x))
 
 proc del*[T](s: var seq[T]; idx: int) {.nodestroy.} =
   let L = s.len

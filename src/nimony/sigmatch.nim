@@ -241,8 +241,10 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     skip f
   of TypeKindT:
     var aTag = a
-    if a.kind == Symbol:
-      aTag = typeImpl(a.symId)
+    if aTag.typeKind == InvokeT:
+      inc aTag
+    if aTag.kind == Symbol:
+      aTag = typeImpl(aTag.symId)
     if aTag.typeKind == TypeKindT:
       inc aTag
     inc f
