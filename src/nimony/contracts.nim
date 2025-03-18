@@ -196,7 +196,7 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
 
 proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   var fnType = skipProcTypeToParams(fnType)
-  assert fnType == "params"
+  assert fnType.isParamsTag
   inc fnType # skip `params`
   var paramMap = initTable[SymId, int]() # param to position
   while fnType.kind != ParRi:
@@ -218,7 +218,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
 proc analyseCall(c: var Context; n: var Cursor) =
   inc n # skip call instruction
   let fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  assert fnType == "params"
+  assert fnType.isParamsTag
   analyseCallArgs(c, n, fnType)
 
 #[

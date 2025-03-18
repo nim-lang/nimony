@@ -99,7 +99,7 @@ proc semImport(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `import`
 
-  if x.kind == ParLe and x == "pragmax":
+  if x.kind == ParLe and x.exprKind == PragmaxX:
     inc x
     var y = x
     skip y
@@ -126,7 +126,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `importexcept`
 
-  if x.kind == ParLe and x == "pragmax":
+  if x.kind == ParLe and x.exprKind == PragmaxX:
     inc x
     var y = x
     skip y
@@ -155,7 +155,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `from`
 
-  if x.kind == ParLe and x == "pragmax":
+  if x.kind == ParLe and x.exprKind == PragmaxX:
     inc x
     var y = x
     skip y
@@ -173,7 +173,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
   else:
     var included = initHashSet[StrId]()
     while x.kind != ParRi:
-      if x.kind == ParLe and x == $NilX:
+      if x.kind == ParLe and x.exprKind == NilX:
         # from a import nil
         discard
       else:
@@ -312,7 +312,7 @@ proc semExportExcept(c: var SemContext; it: var Item) =
   x = m.n
   let moduleSym = findModuleSymbol(cursorAt(c.dest, moduleSymStart))
   endRead(c.dest)
-  c.dest.shrink moduleSymStart 
+  c.dest.shrink moduleSymStart
   if moduleSym == SymId(0):
     c.buildErr info, "expected module for `export except`"
     return

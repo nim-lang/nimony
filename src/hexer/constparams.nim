@@ -19,6 +19,7 @@ import std / [sets, assertions]
 
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
+import ".." / models / tags
 import duplifier
 
 type
@@ -82,7 +83,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree dest, n # skip `fn`
-  assert fnType == "params"
+  assert fnType.tagEnum == ParamsTagId
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType

@@ -137,7 +137,7 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   skip it
   inc x # skip the `import`
   while x.kind != ParRi:
-    if x.kind == ParLe and x == "pragmax":
+    if x.kind == ParLe and x.exprKind == PragmaxX:
       inc x
       var y = x
       skip y

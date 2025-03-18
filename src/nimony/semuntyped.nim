@@ -137,7 +137,7 @@ proc getIdentReplaceParams(c: var UntypedCtx, n: var Cursor): bool =
     result = false
     takeToken c.c[], n
   of ParLe:
-    if n == $QuotedX:
+    if n.exprKind == QuotedX:
       takeToken c.c[], n
       result = false
       while n.kind != ParRi:
