@@ -107,14 +107,17 @@ proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
         error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
     # all branches are discardable
     result = true
-  #of TryS:
-  #  checkBranch(it[0])
-  #  for i in 1 ..< it.len:
-  #    let branch = it[i]
-  #    if branch.kind != nkFinally:
-  #      checkBranch(branch[^1])
-  #  # all branches are discardable
-  #  result = true
+  of TryS:
+    inc it # tag
+    checkBranch(it)
+    while it.substructureKind == ExceptU:
+      inc it # tag
+      skip it # `Exception as e` part
+      checkBranch(it)
+      skipParRi it
+    # ignore finally part
+    # all branches are discardable
+    result = true
   of CallS, CmdS:
     inc it
     if it.kind == Symbol:
