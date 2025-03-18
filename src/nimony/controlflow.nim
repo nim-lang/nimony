@@ -96,6 +96,7 @@ proc patch(c: var ControlFlow; p: Label) =
   # patch with current index
   let diff = c.dest.len - p.int
   assert diff != 0
+  assert c.dest[p.int].kind == GotoInstr
   c.dest[p.int].patchInt28Token int32(diff)
 
 proc trExpr(c: var ControlFlow; n: var Cursor)
@@ -106,6 +107,7 @@ type
 
 proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: Target) =
   if tar != SymId(0):
+    c.stmtBegin = c.dest.len
     c.dest.addParLe(AsgnS, n.info)
     c.dest.addSymUse tar, n.info
     trExpr c, n
@@ -194,9 +196,13 @@ proc declareBool(c: var ControlFlow; info: PackedLineInfo): TempVar =
 
 proc rollbackToStmtBegin(c: var ControlFlow): TokenBuf =
   result = createTokenBuf(40)
+  assert c.stmtBegin >= 0
   for i in c.stmtBegin ..< c.dest.len:
+    if c.dest[i].kind == GotoInstr and c.dest[i].getInt28() == 0:
+      assert false, "goto instruction in an expression?"
     result.add c.dest[i]
   c.dest.shrink c.stmtBegin
+  c.stmtBegin = -1 # mark as used up
 
 proc trStandaloneAndOr(c: var ControlFlow; n: var Cursor; opc: ExprKind) =
   assert opc == AndX or opc == OrX
@@ -231,6 +237,7 @@ proc trStandaloneAndOr(c: var ControlFlow; n: var Cursor; opc: ExprKind) =
   for i in 0 ..< fullExpr.len:
     c.dest.add fullExpr[i]
   c.useTemp temp, info
+  c.stmtBegin = c.dest.len
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
@@ -699,6 +706,7 @@ proc trStmtListExpr(c: var ControlFlow; n: var Cursor) =
     when defined(debug):
       writeStackTrace()
     quit "trStmtListExpr: type is nil"
+  c.stmtBegin = c.dest.len
   let temp = openTempVar(c, LetS, typ, NoLineInfo)
   trExpr c, n
   c.dest.addParRi() # close temp var declaration
@@ -706,6 +714,7 @@ proc trStmtListExpr(c: var ControlFlow; n: var Cursor) =
   for i in 0 ..< fullExpr.len:
     c.dest.add fullExpr[i]
   c.dest.addSymUse temp, info
+  c.stmtBegin = c.dest.len
 
 type
   ControlFlowAsExprKind = enum
@@ -720,6 +729,7 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
   let tar = openTempVar(c, VarS, typ, NoLineInfo)
   c.dest.addDotToken()
   c.dest.addParRi() # close temp var declaration
+  c.stmtBegin = c.dest.len
 
   case kind
   of IfExpr:
@@ -734,6 +744,7 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
   for i in 0 ..< fullExpr.len:
     c.dest.add fullExpr[i]
   c.dest.addSymUse tar, info
+  c.stmtBegin = c.dest.len
 
 proc trExprLoop(c: var ControlFlow; n: var Cursor) =
   c.dest.add n
@@ -916,29 +927,21 @@ when isMainModule:
   const ProcTest = """(stmts
 (proc :getOrDefault.0.tem6twvye1 . . .
   (params
-   (param :t.3 . . Table.0.Irpeyaq1.tem6twvye1 .)
-   (param :k.2 . .
-    (i -1) .))
+   (param :t.3 . . (i -1) .)
+   (param :k.2 . . (i -1) .))
   (i -1) . .
   (stmts
-   (result :result.1 . .
-    (i -1) .)
+   (result :result.1 . . (i -1) .)
    (asgn result.1
     (expr
      (let :idx.0 . .
       (i -1)
-      (call rawGet.0.tem6twvye1 t.3 k.2
-       (call hash.1.has9tn57v k.2)))
+      +1212)
      (if
       (elif
-       (expr
-        (le
-         (i -1) +0 idx.0))
-       (expr
-        (tupat
-         (hderef
-          (call \5B\5D.0.tem6twvye1
-           (dot t.3 data.0.Irpeyaq1.tem6twvye1 +0) idx.0)) +1)))
+       (le
+         (i -1) +0 idx.0)
+       (expr +1))
       (else
        (expr +0)))))
    (ret result.1))))"""

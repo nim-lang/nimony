@@ -498,3 +498,14 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   restore(input, oldInfos)
   c.typeCache.closeScope()
   result = ensureMove(c.dest)
+
+when isMainModule:
+  const test = """
+  (stmts
+    (var :x . . (i +32) .)
+    (if (elif (le . x +4) (stmts (requires (le . x +9)) (cmd echo.0 "abc"))))
+  )
+  """
+  var inp = parse(test)
+  let outp = analyzeContracts(inp)
+  echo toString(outp, false)

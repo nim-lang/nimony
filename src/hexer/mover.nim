@@ -132,6 +132,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
     case pc.kind
     of GotoInstr:
       let diff = pc.getInt28
+      assert diff != 0
       if diff < 0:
         # jump backwards:
         let back = pc +! diff
@@ -244,6 +245,7 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
 
 proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
+  #echo "Input is: ", toString(buf, false)
   let oldInfos = prepare(buf)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
