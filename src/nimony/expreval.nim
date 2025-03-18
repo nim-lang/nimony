@@ -9,7 +9,7 @@
 import std / assertions
 
 include nifprelude
-import nimony_model, decls, programs, xints, semdata, renderer
+import nimony_model, decls, programs, xints, semdata, renderer, builtintypes
 
 type
   EvalContext* = object
@@ -236,6 +236,252 @@ proc evalString(c: ptr SemContext, n: Cursor): StrId =
 
 proc evalString*(c: var SemContext, n: Cursor): StrId =
   evalString(addr c, n)
+
+proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var bool) =
+  let ordinal = getConstOrdinalValue(n)
+  if isNaN(ordinal):
+    err = true
+    return
+  let kind = typ.typeKind
+  case kind
+  of IntT, UIntT, FloatT:
+    inc typ
+    let bits = typebits(typ.load)
+    if bits < 0 and
+        ((kind == IntT and n.kind == IntLit) or
+          (kind == UIntT and n.kind == UIntLit)):
+      buf.add n
+    else:
+      buf.add parLeToken(SufX, n.info)
+      buf.add n
+      var suf =
+        case kind
+        of IntT: "i"
+        of UIntT: "u"
+        of FloatT: "f"
+        else: raiseAssert("unreachable")
+      if bits >= 0: suf.addInt(bits)
+      buf.add strToken(pool.strings.getOrIncl(suf), n.info)
+      buf.addParRi()
+  of BoolT:
+    if n.exprKind in {TrueX, FalseX}:
+      buf.addSubtree n
+    elif ordinal == zero():
+      buf.add parLeToken(FalseX, n.info)
+      buf.addParRi()
+    elif ordinal == createXint(1'i64):
+      buf.add parLeToken(TrueX, n.info)
+      buf.addParRi()
+    else: err = true
+  of CharT:
+    if n.kind == CharLit:
+      buf.add n
+    else:
+      let val = asUnsigned(ordinal, err)
+      err = err or val < 0 or val > uint64(char.high)
+      if not err:
+        buf.add charToken(char(val), n.info)
+  of EnumT, HoleyEnumT:
+    let decl = asEnumDecl(typ)
+    var fields = decl.firstField
+    err = true
+    while fields.kind != ParRi:
+      let field = takeLocal(fields, SkipFinalParRi)
+      var val = field.val
+      inc val # skip tuple tag
+      let x = getConstOrdinalValue(val)
+      if ordinal == x:
+        err = false
+        buf.add symToken(field.name.symId, n.info)
+        break
+  else:
+    err = true
+
+proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
+  let orig = typ
+  var typ = skipModifier(typ)
+  var symType = default(Cursor)
+  var opened = 0
+  while true:
+    if typ.kind == Symbol:
+      let sym = typ.symId
+      let res = tryLoadSym(sym)
+      if res.status == LacksNothing:
+        let decl = asTypeDecl(res.decl)
+        if decl.body.typeKind == DistinctT:
+          buf.add parLeToken(DconvX, n.info)
+          buf.add symToken(sym, n.info)
+          inc opened
+          typ = decl.body
+          inc typ # distinct tag
+          continue
+        else:
+          symType = typ
+          typ = decl.body
+    break
+
+  var err = false
+  case n.kind
+  of IntLit, UIntLit, CharLit:
+    annotateOrdinal(buf, typ, n, err)
+  of FloatLit:
+    if typ.typeKind == FloatT:
+      inc typ
+      let bits = typebits(typ.load)
+      if bits < 0:
+        buf.add n
+      else:
+        buf.add parLeToken(SufX, n.info)
+        buf.add n
+        buf.add strToken(pool.strings.getOrIncl("f" & $bits), n.info)
+        buf.addParRi()
+    else: err = true
+  of StringLit:
+    if isStringType(typ):
+      buf.add n
+    elif typ.typeKind == CstringT:
+      buf.add parLeToken(SufX, n.info)
+      buf.add n
+      buf.add strToken(pool.strings.getOrIncl("R"), n.info)
+      buf.addParRi()
+    else: err = true
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing:
+      case res.decl.symKind
+      of EfldY:
+        var val = asLocal(res.decl).val
+        inc val # skip tuple tag
+        annotateOrdinal(buf, typ, val, err)
+      else: err = true
+    else: err = true
+  of ParLe:
+    let exprKind = n.exprKind
+    case exprKind 
+    of TrueX, FalseX:
+      annotateOrdinal(buf, typ, n, err)
+    of SufX:
+      var raw = n
+      inc raw # skip tag
+      annotateConstantType(buf, typ, raw)
+    of NilX:
+      case typ.typeKind
+      of PointerT, PtrT, RefT, CstringT, ProctypeT, ParamsT, NiltT:
+        buf.addSubtree n
+      else: err = true
+    of NanX, InfX, NeginfX:
+      if typ.typeKind == FloatT:
+        buf.addSubtree n
+      else: err = true
+    of TupX, TupconstrX:
+      if typ.typeKind == TupleT:
+        let start = buf.len
+        buf.add parLeToken(TupconstrX, n.info)
+        buf.addSubtree typ
+        var vals = n
+        inc vals
+        if exprKind == TupconstrX:
+          skip vals # skip type
+        inc typ # tag
+        while vals.kind != ParRi:
+          if typ.kind == ParRi:
+            err = true
+            break
+          annotateConstantType(buf, getTupleFieldType(typ), vals)
+          skip typ
+          skip vals
+        if typ.kind != ParRi: err = true
+        if err:
+          buf.shrink start
+        else:
+          buf.addParRi()
+      else: err = true
+    of BracketX, AconstrX:
+      if typ.typeKind == ArrayT: # XXX seq?
+        buf.add parLeToken(AconstrX, n.info)
+        buf.addSubtree typ
+        var vals = n
+        inc vals
+        if exprKind == AconstrX:
+          skip vals # skip type
+        inc typ # tag, get to element type
+        while vals.kind != ParRi:
+          annotateConstantType(buf, typ, vals)
+          skip vals
+        buf.addParRi()
+      else: err = true
+    of CurlyX, SetconstrX:
+      if typ.typeKind == SetT:
+        buf.add parLeToken(SetconstrX, n.info)
+        buf.addSubtree typ
+        var vals = n
+        inc vals
+        if exprKind == SetconstrX:
+          skip vals # skip type
+        inc typ # tag, get to element type
+        while vals.kind != ParRi:
+          if vals.substructureKind == RangeU:
+            buf.add vals
+            inc vals
+            annotateConstantType(buf, typ, vals)
+            skip vals
+            annotateConstantType(buf, typ, vals)
+            skip vals
+            takeParRi buf, vals
+          else:
+            annotateConstantType(buf, typ, vals)
+            skip vals
+        buf.addParRi()
+      else: err = true
+    of OconstrX:
+      if typ.typeKind == ObjectT and not cursorIsNil(symType):
+        # expect object sym type for object constructor
+        let start = buf.len
+        buf.add parLeToken(OconstrX, n.info)
+        buf.addSubtree symType
+        var vals = n
+        inc vals
+        skip vals # skip type
+        inc typ # tag
+        while vals.kind != ParRi:
+          err = true
+          if vals.substructureKind == KvU:
+            buf.add vals
+            inc vals
+            if vals.kind == Symbol:
+              let fieldSym = vals.symId
+              let res = tryLoadSym(fieldSym)
+              if res.status == LacksNothing and res.decl.symKind == FldY:
+                err = false
+                buf.add vals
+                inc vals
+                annotateConstantType(buf, asLocal(res.decl).typ, vals)
+                skip vals
+          if err: break
+        if typ.kind != ParRi: err = true
+        if err:
+          buf.shrink start
+        else:
+          buf.addParRi()
+      else: err = true
+    else:
+      # not a literal
+      err = true
+  else:
+    err = true
+
+  if err:
+    if opened > 0:
+      buf.shrink buf.len - opened
+    buf.addParLe ErrT, n.info
+    buf.addDotToken()
+    let msg = "cannot annotate constant " & asNimCode(n) & " with type " & typeToString(orig)
+    buf.add strToken(pool.strings.getOrIncl(msg), n.info)
+    buf.addParRi()
+  else:
+    while opened > 0:
+      buf.addParRi()
+      dec opened
 
 type
   Bounds* = object

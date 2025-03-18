@@ -5,6 +5,7 @@
 # distribution, for details about the copyright.
 
 include nifprelude
+import nimony_model
 
 type
   BuiltinTypes* = object
@@ -112,3 +113,10 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.float64Type = result.mem.cursorAt(48)
   result.emptyTupleType = result.mem.cursorAt(51)
   result.untypedType = result.mem.cursorAt(53)
+
+proc isStringType*(a: Cursor): bool {.inline.} =
+  result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)
+  #a.typeKind == StringT: StringT now unused!
+
+proc isSomeStringType*(a: Cursor): bool {.inline.} =
+  result = a.typeKind == CstringT or isStringType(a)

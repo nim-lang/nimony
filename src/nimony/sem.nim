@@ -599,13 +599,13 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
 proc semConstExpr(c: var SemContext; it: var Item) =
   let start = c.dest.len
   semExpr c, it
+  # XXX future note: consider when the expression depends on a generic param
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
   endRead(c.dest)
-  # XXX evaluated value is untyped so adding it to c.dest is wrong,
-  # maybe should construct typed AST from evaluated value
   c.dest.shrink start
-  c.dest.add valueBuf
+  var value = beginRead(valueBuf)
+  annotateConstantType c.dest, it.typ, value
 
 proc semStmtsExprImpl(c: var SemContext; it: var Item) =
   while it.n.kind != ParRi:
@@ -2978,8 +2978,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       # no explicit type given:
       inc n # 3
       var it = Item(n: n, typ: c.types.autoType)
-      if false and kind == ConstY:
-        # XXX output from expreval is not typed so cannot be used yet
+      if kind == ConstY:
         withNewScope c:
           semConstExpr c, it # 4
       else:
@@ -2994,8 +2993,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         takeToken c, n
       else:
         var it = Item(n: n, typ: typ)
-        if false and kind == ConstY:
-          # XXX output from expreval is not typed so cannot be used yet
+        if kind == ConstY:
           withNewScope c:
             semConstExpr c, it # 4
         else:

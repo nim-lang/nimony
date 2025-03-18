@@ -13,7 +13,6 @@ include nifprelude
 import symparser
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops]
-from ".." / nimony / sigmatch import isSomeStringType, isStringType
 import hexer_context, pipeline
 import  ".." / lib / stringtrees
 
