@@ -1013,15 +1013,63 @@ when isMainModule:
  (call echo "finally")
  (ret))""")
 
-  const CaseTest = """(stmts
+  const CaseTest = ("""(stmts
     (let :other.var . . (i -1) +12)
     (let :my.var . . (i -1)
       (case other.var
-        (of (set +0 +1 +2 (range +5 +15) +80) +1)
+        (of (ranges +0 +1 +2 (range +5 +15) +80) +1)
         (else +0)
     )
     )
-  )"""
+  )""", """(stmts
+ (let :other.var . .
+  (i -1) +12)
+ (var :`cf0 . .
+  (i -1) .)
+ (ite
+  (eq
+   (i -1) other.var +0)
+  (goto L85)
+  (goto L30))
+ (lab :L30)
+ (ite
+  (eq
+   (i -1) other.var +1)
+  (goto L85)
+  (goto L41))
+ (lab :L41)
+ (ite
+  (eq
+   (i -1) other.var +2)
+  (goto L85)
+  (goto L52))
+ (lab :L52)
+ (ite
+  (le
+   (i -1) +5 other.var)
+  (goto L63)
+  (goto L74))
+ (lab :L63)
+ (ite
+  (le
+   (i -1) other.var +15)
+  (goto L85)
+  (goto L74))
+ (lab :L74)
+ (ite
+  (eq
+   (i -1) other.var +80)
+  (goto L85)
+  (goto L90))
+ (lab :L85)
+ (asgn `cf0 +1)
+ (goto L94)
+ (lab :L90)
+ (asgn `cf0 +0)
+ (lab :L94)
+ (let :my.var . .
+  (i -1) `cf0)
+ (ret))""")
 
   const AsgnTest = ("""(stmts
   (proc :my.proc . . . (params (param :i.0 .. (i -1) .))
@@ -1154,7 +1202,7 @@ when isMainModule:
   test NotTest
   test ReturnTest
   test TryTest
-  #test CaseTest
+  test CaseTest
   test AsgnTest
   test IfTest
   test ProcTest
