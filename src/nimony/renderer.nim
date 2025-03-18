@@ -54,3 +54,6 @@ proc asNimCode*(n: Cursor): string =
   else:
     # Fallback to the NIF representation as it is much better than nothing:
     result = toString(n, false)
+
+proc typeToString*(n: Cursor): string =
+  result = asNimCode(n)

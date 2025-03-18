@@ -70,9 +70,6 @@ proc concat(a: varargs[string]): string =
   result = a[0]
   for i in 1..high(a): result.add a[i]
 
-proc typeToString*(n: Cursor): string =
-  result = asNimCode(n)
-
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   if m.err: return # first error is the important one
   m.err = true
@@ -670,13 +667,6 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
       m.error InvalidMatch, f, a
   else:
     m.error InvalidMatch, f, a
-
-proc isStringType*(a: Cursor): bool {.inline.} =
-  result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)
-  #a.typeKind == StringT: StringT now unused!
-
-proc isSomeStringType*(a: Cursor): bool {.inline.} =
-  result = a.typeKind == CstringT or isStringType(a)
 
 proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
   # check that `a` is either an instantiation of seq or an invocation to it

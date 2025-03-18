@@ -5,6 +5,7 @@
 # distribution, for details about the copyright.
 
 include nifprelude
+import nimony_model
 
 type
   BuiltinTypes* = object
@@ -16,6 +17,7 @@ type
     float32Type*, float64Type*: Cursor
     emptyTupleType*: Cursor
     untypedType*: Cursor
+    cstringType*: Cursor
 
 proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -89,6 +91,9 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.mem.add tagToken"untyped" # 53
   result.mem.addParRi() # 54
 
+  result.mem.add tagToken"cstring" # 55
+  result.mem.addParRi() # 56
+
   result.mem.freeze()
 
   result.autoType = result.mem.cursorAt(0)
@@ -112,3 +117,11 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.float64Type = result.mem.cursorAt(48)
   result.emptyTupleType = result.mem.cursorAt(51)
   result.untypedType = result.mem.cursorAt(53)
+  result.cstringType = result.mem.cursorAt(55)
+
+proc isStringType*(a: Cursor): bool {.inline.} =
+  result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)
+  #a.typeKind == StringT: StringT now unused!
+
+proc isSomeStringType*(a: Cursor): bool {.inline.} =
+  result = a.typeKind == CstringT or isStringType(a)

@@ -601,14 +601,17 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
 
 proc semConstExpr(c: var SemContext; it: var Item) =
   let start = c.dest.len
+  var phase = SemcheckBodies
+  swap c.phase, phase
   semExpr c, it
+  swap c.phase, phase
+  # XXX future note: consider when the expression depends on a generic param
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)
   endRead(c.dest)
-  # XXX evaluated value is untyped so adding it to c.dest is wrong,
-  # maybe should construct typed AST from evaluated value
   c.dest.shrink start
-  c.dest.add valueBuf
+  var value = beginRead(valueBuf)
+  annotateConstantType c.dest, it.typ, value
 
 proc semStmtsExprImpl(c: var SemContext; it: var Item) =
   while it.n.kind != ParRi:
@@ -2982,7 +2985,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       inc n # 3
       var it = Item(n: n, typ: c.types.autoType)
       if false and kind == ConstY:
-        # XXX output from expreval is not typed so cannot be used yet
+        # XXX enable
         withNewScope c:
           semConstExpr c, it # 4
       else:
@@ -2998,7 +3001,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       else:
         var it = Item(n: n, typ: typ)
         if false and kind == ConstY:
-          # XXX output from expreval is not typed so cannot be used yet
+          # XXX enable
           withNewScope c:
             semConstExpr c, it # 4
         else:
@@ -4491,6 +4494,7 @@ proc semSuf(c: var SemContext, it: var Item) =
   of "f32": it.typ = c.types.float32Type
   of "f64": it.typ = c.types.float64Type
   of "R", "T": it.typ = c.types.stringType
+  of "C": it.typ = c.types.cstringType
   else:
     c.buildErr it.n.info, "unknown suffix: " & pool.strings[it.n.litId]
   takeToken c, it.n # suffix

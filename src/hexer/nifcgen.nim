@@ -13,7 +13,6 @@ include nifprelude
 import symparser
 import typekeys
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops]
-from ".." / nimony / sigmatch import isSomeStringType, isStringType
 import hexer_context, pipeline
 import  ".." / lib / stringtrees
 
@@ -1079,10 +1078,15 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       let arg = suf
       skip suf
       assert suf.kind == StringLit
-      if arg.kind == StringLit and pool.strings[suf.litId] in ["R", "T"]:
-        # cstring conversion
+      if arg.kind == StringLit:
+        # no suffix for string literal in nifc
         inc n
-        traverseExpr c, n # adds string lit directly
+        if pool.strings[suf.litId] == "C":
+          # cstring literal, add string lit directly:
+          c.dest.add n
+          inc n
+        else:
+          traverseExpr c, n
         inc n # suf
         skipParRi c, n
       else:
