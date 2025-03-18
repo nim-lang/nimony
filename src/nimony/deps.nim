@@ -340,7 +340,7 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
       let idxFile = c.config.indexFile(f)
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
-    s.add " " & c.config.cachedConfigFile()
+    s.add " " & mescape(c.config.cachedConfigFile())
     let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "")
     s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(c.config.parsedFile(v.files[0])) & " " &
       mescape(c.config.semmedFile(v.files[0])) & " " & mescape(c.config.indexFile(v.files[0]))
@@ -359,9 +359,11 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".makefile"
   writeFile result, s
 
-proc generateCachedConfigFile(c: DepContext) =
+proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
   let path = c.config.cachedConfigFile()
-  let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile
+  let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile &
+                  " --passC:" & passC & " --passL:" & passL
+
   let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
                      configStr != readFile path
                    else:
@@ -388,7 +390,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   c.nodes.add c.rootNode
   c.processedModules.incl p.modname
   parseDeps c, p, c.rootNode
-  generateCachedConfigFile c
+  generateCachedConfigFile c, passC, passL
   let makeFilename = generateFrontendMakefile(c, commandLineArgs)
   #echo "run with: make -f ", makeFilename
   when defined(windows):
