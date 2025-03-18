@@ -478,6 +478,9 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   let oldResultSym = c.resultSym
   c.resultSym = NoSymId
   var r = takeRoutine(n, SkipFinalParRi)
+  let symId = r.name.symId
+  if isLocalProcDecl(symId):
+    c.typeCache.registerLocal(symId, r.kind, r.params)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pattern

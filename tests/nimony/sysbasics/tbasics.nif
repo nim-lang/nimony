@@ -61,7 +61,7 @@
   (stmts 4
    (var :x.3 . .
     (i -1) 4 +1) 4,1
-   (var :s.0 . . 5
+   (var :s.1 . . 5
     (tuple
      (i -1)
      (i -1)
@@ -100,7 +100,7 @@
        (i -1)) ,~2
       (tuple 1,~3
        (i -1)
-       (i -1))) 1 y.0 4 s.0 7 m1.0)))) 4,20
+       (i -1))) 1 y.0 4 s.1 7 m1.0)))) 4,20
  (call ~4 foo2.0.tbawx6nu81 1 +12) ,22
  (proc 5 :foo3.0.tbawx6nu81 . . . 9
   (params 1
@@ -120,12 +120,12 @@
     (deref s2.0)))) ,27
  (block . 2,1
   (stmts 4
-   (var :s.1 . .
+   (var :s.2 . .
     (i -1) 4 +2) 4,1
    (let :m.3 . . 10,~5
     (ptr 4
      (i -1)) 9
-    (addr s.1)) 4,2
+    (addr s.2)) 4,2
    (call ~4 foo3.0.tbawx6nu81 1
     (hconv 6,~8
      (pointer) m.3)) 4,3
@@ -150,7 +150,7 @@
   (params 1
    (param :x.1 . . 3 Foo1314.0.tbawx6nu81 .)) . . . 2,1
   (stmts 4
-   (let :s.2 . . 13,~4
+   (let :s.3 . . 13,~4
     (i -1) 5
     (dot ~1 x.1 a.0.tbawx6nu81 +0)))) 4,42
  (gvar :a.1.tbawx6nu81 . . 12,~3 Foo1314.0.tbawx6nu81 11
@@ -226,4 +226,83 @@
  (discard 8
   (suf "  dw3euuyghid23u23dhiw\0A" "T")) ,69
  (discard 8
-  (suf "136t54321" "T")))
+  (suf "136t54321" "T")) ,73
+ (proc 5 :classify1.0.tbawx6nu81 . . . 14
+  (params 1
+   (param :s.0 . . 3 string.0.sysvq0asl .)) . . . 2,1
+  (stmts 2,104,lib/std/syncio.nim
+   (stmts 2,1
+    (stmts
+     (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 7,75,tests/nimony/sysbasics/tbasics.nim s.0)) ,2
+    (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 9,76
+ (call ~9 classify1.0.tbawx6nu81 1 "9123345") ,79
+ (block . 2,1
+  (stmts
+   (proc 5 :classify.0 . . . 13
+    (params 1
+     (param :s.4 . . 3 string.0.sysvq0asl .)) . . . 2,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,82,tests/nimony/sysbasics/tbasics.nim s.4)) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
+   (call ~8 classify.0 1 "9123345") ,4
+   (block . 2,1
+    (stmts
+     (proc 5 :classify2.0 . . . 14
+      (params 1
+       (param :s.5 . . 3 string.0.sysvq0asl .)) . . . 2,1
+      (stmts 2,104,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,87,tests/nimony/sysbasics/tbasics.nim s.5)) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 9,3
+     (call ~9 classify2.0 1 "9123345"))))) ,90
+ (block . 2,1
+  (stmts
+   (proc 5 :classify2.1 . . . 14
+    (params 1
+     (param :s.6 . . 3 string.0.sysvq0asl .)) . . . 2,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,93,tests/nimony/sysbasics/tbasics.nim s.6)) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 9,3
+   (call ~9 classify2.1 1 "9123345"))) ,96
+ (block . 2,1
+  (stmts
+   (proc 5 :classify.1 . . . 13
+    (params 1
+     (param :s.7 . . 3 string.0.sysvq0asl .)) . . . 2,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,99,tests/nimony/sysbasics/tbasics.nim s.7)) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
+   (call ~8 classify.1 1 "9123345"))) ,102
+ (block . 2,1
+  (stmts
+   (block . 2,1
+    (stmts
+     (proc 5 :classify.2 . . . 13
+      (params 1
+       (param :s.8 . . 3 string.0.sysvq0asl .)) . . . 2,1
+      (stmts 2,104,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,106,tests/nimony/sysbasics/tbasics.nim s.8)) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
+     (call ~8 classify.2 1 "9123345"))))) ,109
+ (proc 5 :foo2.1.tbawx6nu81 . . . 9
+  (params) . . . 2,1
+  (stmts
+   (proc 5 :classify.3 . . . 13
+    (params 1
+     (param :s.9 . . 3 string.0.sysvq0asl .)) . . . 2,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,112,tests/nimony/sysbasics/tbasics.nim s.9)) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
+   (call ~8 classify.3 1 "9123345"))) 4,115
+ (call ~4 foo2.1.tbawx6nu81))
