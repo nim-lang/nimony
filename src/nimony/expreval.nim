@@ -253,7 +253,7 @@ proc evalString*(c: var SemContext, n: Cursor): StrId =
   evalString(addr c, n)
 
 proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var bool) =
-  let ordinal = getConstOrdinalValue(n)
+  var ordinal = getConstOrdinalValue(n)
   if isNaN(ordinal):
     err = true
     return
@@ -267,17 +267,37 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
           (kind == UIntT and n.kind == UIntLit)):
       buf.add n
     else:
-      buf.add parLeToken(SufX, n.info)
-      buf.add n
-      var suf =
-        case kind
-        of IntT: "i"
-        of UIntT: "u"
-        of FloatT: "f"
-        else: raiseAssert("unreachable")
-      if bits >= 0: suf.addInt(bits)
-      buf.add strToken(pool.strings.getOrIncl(suf), n.info)
-      buf.addParRi()
+      var tok: PackedToken
+      var suf: string
+      case kind
+      of IntT:
+        suf = "i"
+        let val = asSigned(ordinal, err)
+        if err: return
+        tok = intToken(pool.integers.getOrIncl(val), n.info)
+      of UIntT:
+        suf = "u"
+        let val = asUnsigned(ordinal, err)
+        if err: return
+        tok = uintToken(pool.uintegers.getOrIncl(val), n.info)
+      of FloatT:
+        suf = "f"
+        let negative = isNegative(ordinal)
+        if negative: negate(ordinal)
+        var val = float64(asUnsigned(ordinal, err))
+        if err: return
+        if negative:
+          val = -val
+        tok = floatToken(pool.floats.getOrIncl(val), n.info)
+      else: raiseAssert("unreachable")
+      if bits >= 0:
+        suf.addInt(bits)
+        buf.add parLeToken(SufX, n.info)
+        buf.add tok
+        buf.add strToken(pool.strings.getOrIncl(suf), n.info)
+        buf.addParRi()
+      else:
+        buf.add tok
   of BoolT:
     if n.exprKind in {TrueX, FalseX}:
       buf.addSubtree n
@@ -297,6 +317,7 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
       if not err:
         buf.add charToken(char(val), n.info)
   of EnumT, HoleyEnumT:
+    # finds the field sym but could also generate a conversion
     let decl = asEnumDecl(typ)
     var fields = decl.firstField
     err = true
@@ -320,22 +341,21 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
   var typ = skipModifier(typ)
   var symType = default(Cursor)
   var opened = 0
-  while true:
-    if typ.kind == Symbol:
-      let sym = typ.symId
-      let res = tryLoadSym(sym)
-      if res.status == LacksNothing:
-        let decl = asTypeDecl(res.decl)
-        if decl.body.typeKind == DistinctT:
-          buf.add parLeToken(DconvX, n.info)
-          buf.add symToken(sym, n.info)
-          inc opened
-          typ = decl.body
-          inc typ # distinct tag
-          continue
-        else:
-          symType = typ
-          typ = decl.body
+  while typ.kind == Symbol:
+    let sym = typ.symId
+    let res = tryLoadSym(sym)
+    if res.status == LacksNothing:
+      let decl = asTypeDecl(res.decl)
+      if decl.body.typeKind == DistinctT:
+        buf.add parLeToken(DconvX, n.info)
+        buf.add symToken(sym, n.info)
+        inc opened
+        typ = decl.body
+        inc typ # distinct tag
+        continue
+      else:
+        symType = typ
+        typ = decl.body
     break
 
   var err = false
@@ -368,16 +388,29 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     if res.status == LacksNothing:
       case res.decl.symKind
       of EfldY:
-        var val = asLocal(res.decl).val
-        inc val # skip tuple tag
-        annotateOrdinal(buf, typ, val, err)
-      else: err = true
+        let field = asLocal(res.decl)
+        if field.typ.kind == Symbol and not cursorIsNil(symType) and
+            field.typ.symId == symType.symId:
+          # same type as expected
+          buf.add n
+        else:
+          # might need conversion
+          var val = field.val
+          inc val # skip tuple tag
+          annotateOrdinal(buf, typ, val, err)
+      else:
+        # other syms are not valid literals
+        err = true
     else: err = true
   of ParLe:
     let exprKind = n.exprKind
     case exprKind 
     of TrueX, FalseX:
-      annotateOrdinal(buf, typ, n, err)
+      if typ.typeKind == BoolT:
+        buf.addSubtree n
+      else:
+        # might need conversion
+        annotateOrdinal(buf, typ, n, err)
     of SufX:
       var raw = n
       inc raw # skip tag
@@ -490,6 +523,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
 
   if err:
     if opened > 0:
+      # could also replace with a general shrink to start
       buf.shrink buf.len - opened
     buf.addParLe ErrT, n.info
     buf.addDotToken()
