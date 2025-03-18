@@ -94,7 +94,7 @@ proc cfKind*(c: Cursor): ControlFlowKind {.inline.} =
   else:
     result = NoControlFlow
 
-template `==`*(n: Cursor; s: string): bool = n.kind == ParLe and pool.tags[n.tagId] == s
+template isParamsTag*(c: Cursor): bool = c.tagEnum == ParamsTagId
 
 # Outdated aliases:
 type

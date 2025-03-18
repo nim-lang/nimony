@@ -133,7 +133,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       skip n # skip the `fn`
       if n.kind != ParRi:
         var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
-        assert fnType == "params"
+        assert fnType.isParamsTag
         inc fnType
         let firstParam = asLocal(fnType)
         if firstParam.kind == ParamY:
@@ -151,7 +151,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     assert res.status == LacksNothing
     # XXX Is this check really reliable for local symbols
     # that are not guaranteed to be unique?
-    if res.decl == "param" and n.symId == c.r.firstParam:
+    if res.decl.tagEnum == ParamTagId and n.symId == c.r.firstParam:
       # There is a difference between
       # proc forward(x: var int): var int = x
       # and
@@ -253,7 +253,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
     let orig = n
     var fnType = skipProcTypeToParams(getType(c.typeCache, n))
     skip n # skip `fn`
-    assert fnType == "params"
+    assert fnType.isParamsTag
     inc fnType
     while n.kind != ParRi:
       let previousFormalParam = fnType
@@ -306,7 +306,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
 
 proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   var fnType = skipProcTypeToParams(fnType)
-  assert fnType == "params"
+  assert fnType.isParamsTag
   inc fnType
   while n.kind != ParRi:
     var e = WantT
@@ -358,7 +358,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   swap c.dest, callBuf
   takeToken c, n
   let fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  assert fnType == "params"
+  assert fnType.isParamsTag
   tr c, n, WantT # `fn` part of the call
   var retType = fnType
   skip retType

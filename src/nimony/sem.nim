@@ -838,7 +838,7 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
     skip ops # .
     skip ops # .
     skip ops #   (typevar Self ...)
-    if ops == "stmts":
+    if ops.stmtKind == StmtsS:
       inc ops
       while ops.kind != ParRi:
         let sk = ops.symKind
@@ -866,7 +866,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     let targetSym = newSymId(c, origin)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
-    assert decl.typevars == "typevars", pool.syms[origin]
+    assert decl.typevars.substructureKind == TypevarsU, pool.syms[origin]
     var typeArgsStart = -1
     buildTree signature, decl.kind, info:
       signature.add symdefToken(targetSym, info)
@@ -1345,7 +1345,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       var newArgs: seq[Item] = @[]
       var newArgBufs: seq[TokenBuf] = @[] # to keep alive
       var param = skipProcTypeToParams(m[mi].fn.typ)
-      assert param == "params"
+      assert param.isParamsTag
       inc param
       var ai = 0
       var anyConverters = false
@@ -1709,7 +1709,7 @@ proc bindSubsInvokeArgs(c: var SemContext; decl: TypeDecl; buf: var TokenBuf;
     result = initTable[SymId, Cursor]()
 
 proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[SymId, Cursor]; level = 0): ObjField =
-  assert t == "object"
+  assert t.typeKind == ObjectT
   var n = t
   inc n # skip `(object` token
   var baseType = n
@@ -2397,7 +2397,7 @@ proc semConceptType(c: var SemContext; n: var Cursor) =
   wantDot c, n
   declareConceptSelf c, n.info
   skip n # skip dot or previous `Self` declaration
-  if n != "stmts":
+  if n.stmtKind != StmtsS:
     error "(stmts) expected, but got: ", n
   takeToken c, n
   withNewScope c:
@@ -2433,7 +2433,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
       inc typevars
       while a.kind != ParRi and typevars.kind != ParRi:
         var tv = typevars
-        assert tv == "typevar"
+        assert tv.substructureKind == TypevarU
         inc tv
         assert tv.kind == SymbolDef
         inferred[tv.symId] = a
@@ -2552,7 +2552,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     decl = getTypeSection(headId)
     if decl.kind != TypeY:
       c.buildErr info, "cannot attempt to instantiate a non-type"
-    if decl.typevars != "typevars":
+    if decl.typevars.substructureKind != TypevarsU:
       c.buildErr info, "cannot attempt to instantiate a concrete type"
     else:
       ok = true
@@ -3145,7 +3145,7 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   publish c, delayed.s.name, declStart
 
 proc semGenericParam(c: var SemContext; n: var Cursor) =
-  if n == "typevar":
+  if n.substructureKind == TypevarU:
     semLocal c, n, TypevarY
   else:
     buildErr c, n.info, "expected 'typevar'"
@@ -3153,20 +3153,20 @@ proc semGenericParam(c: var SemContext; n: var Cursor) =
 proc semGenericParams(c: var SemContext; n: var Cursor) =
   if n.kind == DotToken:
     takeToken c, n
-  elif n == "typevars":
+  elif n.substructureKind == TypevarsU:
     inc c.routine.inGeneric
     takeToken c, n
     while n.kind != ParRi:
       semGenericParam c, n
     takeParRi c, n
-  elif n == $InvokeT:
+  elif n.typeKind == InvokeT:
     inc c.routine.inInst
     takeTree c, n
   else:
     buildErr c, n.info, "expected '.' or 'typevars'"
 
 proc semParam(c: var SemContext; n: var Cursor) =
-  if n == "param":
+  if n.substructureKind == ParamU:
     semLocal c, n, ParamY
   else:
     buildErr c, n.info, "expected 'param'"
@@ -3174,7 +3174,7 @@ proc semParam(c: var SemContext; n: var Cursor) =
 proc semParams(c: var SemContext; n: var Cursor) =
   if n.kind == DotToken:
     takeToken c, n
-  elif n == "params":
+  elif n.substructureKind == ParamsU:
     takeToken c, n
     while n.kind != ParRi:
       semParam c, n
@@ -3396,7 +3396,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     if it.n.kind != DotToken:
       case pass
       of checkGenericInst:
-        if it.n != "stmts":
+        if it.n.stmtKind != StmtsS:
           error "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
         takeToken c, it.n
@@ -3412,7 +3412,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           registerHook(c, obj, symId, hk, false)
 
       of checkBody:
-        if it.n != "stmts":
+        if it.n.stmtKind != StmtsS:
           error "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
         var resId = SymId(0)
@@ -3784,7 +3784,7 @@ proc semWhen(c: var SemContext; it: var Item) =
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
-  if it.n == "ranges":
+  if it.n.substructureKind == RangesU:
     takeToken c, it.n
     while it.n.kind != ParRi:
       let info = it.n.info
@@ -3815,7 +3815,7 @@ proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
 
 proc semCaseOfValueString(c: var SemContext; it: var Item; selectorType: TypeCursor;
                           seen: var HashSet[StrId]) =
-  if it.n == "ranges":
+  if it.n.substructureKind == RangesU:
     takeToken c, it.n
     while it.n.kind != ParRi:
       let info = it.n.info
@@ -4747,7 +4747,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
         if fieldNameCursor.kind == Symbol:
           let sym = fieldNameCursor.symId
           let res = tryLoadSym(sym)
-          if res.status == LacksNothing and res.decl == $FldY:
+          if res.status == LacksNothing and res.decl.substructureKind == FldU:
             # trust that it belongs to this object for now
             # level is not known but not used either, set it to 0:
             field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
@@ -4893,7 +4893,7 @@ proc getDottedIdent(n: var Cursor): string =
   let isError = n.kind == ParLe and n.tagId == ErrT
   if isError:
     inc n
-  if n.kind == ParLe and n == $DotX:
+  if n.kind == ParLe and n.exprKind == DotX:
     inc n
     result = getDottedIdent(n)
     let s = getIdent(n)
@@ -6066,7 +6066,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
       exportBuf: buildIndexExports(c))
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
-  assert n == "stmts"
+  assert n.stmtKind == StmtsS
   c.phase = x
   var n = n
   takeToken c, n
@@ -6143,7 +6143,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
   # XXX could add self module symbol here
 
-  assert n0 == "stmts"
+  assert n0.stmtKind == StmtsS
 
   if {SkipSystem, IsSystem} * moduleFlags == {}:
     let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)

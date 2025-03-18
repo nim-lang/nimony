@@ -9,6 +9,7 @@ import std / [sets, tables, assertions]
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, symparser
+import ".." / models / tags
 
 type
   Item* = object
@@ -979,7 +980,7 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
     var ftyp = param.typ
     # This is subtle but only this order of `i >= args.len` checks
     # is correct for all cases (varargs/too few args/too many args)
-    if ftyp != "varargs":
+    if ftyp.tagEnum != VarargsTagId:
       if i >= args.len: break
       skip f
     else:
@@ -1065,7 +1066,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
   matchTypevars m, fn, explicitTypeVars
 
   var f = fn.typ
-  assert f == "params"
+  assert f.isParamsTag
   inc f # "params"
   sigmatchLoop m, f, args
 
