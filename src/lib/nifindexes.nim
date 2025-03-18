@@ -11,10 +11,10 @@ import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 
 #import std / [sha1]
 import "$nim"/dist/checksums/src/checksums/sha1
-import ".." / models / nifindex_tags
+import ".." / models / [tags, nifindex_tags]
 
 proc entryKind(tag: TagId): NifIndexKind =
-  if rawTagIsNifIndexKind(tag.uint32):
+  if rawTagIsNifIndexKind(cast[TagEnum](tag)):
     result = cast[NifIndexKind](tag)
   else:
     result = NoIndexTag
