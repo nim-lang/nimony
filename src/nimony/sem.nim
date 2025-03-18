@@ -598,7 +598,10 @@ proc semConstIntExpr(c: var SemContext; n: var Cursor) =
 
 proc semConstExpr(c: var SemContext; it: var Item) =
   let start = c.dest.len
+  var phase = SemcheckBodies
+  swap c.phase, phase
   semExpr c, it
+  swap c.phase, phase
   # XXX future note: consider when the expression depends on a generic param
   var e = cursorAt(c.dest, start)
   var valueBuf = evalExpr(c, e)

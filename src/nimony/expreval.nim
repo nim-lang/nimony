@@ -101,7 +101,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     inc n
   of ParLe:
     case n.exprKind
-    of TrueX, FalseX:
+    of TrueX, FalseX, NanX, InfX, NeginfX:
       result = n
       skip n
     of AndX:
@@ -153,7 +153,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       inc n
       result = n
       skipToEnd n
-    of ConvX:
+    of ConvX, HconvX:
       let nOrig = n
       inc n
       let typ = n
@@ -328,7 +328,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     if typ.typeKind == FloatT:
       inc typ
       let bits = typebits(typ.load)
-      if bits < 0:
+      if bits < 0 or bits == 64:
         buf.add n
       else:
         buf.add parLeToken(SufX, n.info)
