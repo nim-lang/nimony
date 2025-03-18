@@ -1317,7 +1317,14 @@ proc traverseCase(c: var EContext; n: var Cursor) =
         inc n
         c.add "ranges", n.info
         while n.kind != ParRi:
-          traverseExpr c, n
+          if n.kind == ParLe and n.substructureKind == RangeU:
+            inc n
+            c.add "range", n.info
+            while n.kind != ParRi:
+              traverseExpr c, n
+            takeParRi c, n
+          else:
+            traverseExpr c, n
         takeParRi c, n
       else:
         traverseExpr c, n
