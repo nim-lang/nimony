@@ -854,7 +854,12 @@ when isMainModule:
     echo "------------------"
     echo codeListing(cf)
 
-  const BasicTest = """(stmts
+  proc test(t: (string, string)) =
+    var input = parse(t[0])
+    var cf = toControlflow(beginRead(input))
+    assert codeListing(cf) == t[1], "wrong for: " & t[0]
+
+  const BasicTest = ("""(stmts
 (if (elif (eq +11 +11) (call echo "true")))
 
 (if
@@ -870,19 +875,123 @@ when isMainModule:
 (let :my.var . . (i -1) (call echo.0 "abc" (and (eq +5 -5) (eq +6 -6))))
 )
 
-"""
-  const NotTest = """(stmts
+""", """(stmts
+ (ite
+  (eq +11 +11)
+  (goto L9)
+  (goto L14))
+ (lab :L9)
+ (call echo "true")
+ (goto L14)
+ (lab :L14)
+ (ite
+  (eq +12 +12)
+  (goto L22)
+  (goto L27))
+ (lab :L22)
+ (call echo "true")
+ (goto L52)
+ (lab :L27)
+ (ite
+  (eq +2 +3)
+  (goto L35)
+  (goto L48))
+ (lab :L35)
+ (ite
+  (eq +4 +5)
+  (goto L43)
+  (goto L48))
+ (lab :L43)
+ (call echo "elif")
+ (goto L52)
+ (lab :L48)
+ (call echo "false")
+ (lab :L52)
+ (ite
+  (eq +13 +13)
+  (goto L60)
+  (goto L65))
+ (lab :L60)
+ (call echo "while")
+ (goto L52)
+ (lab :L65)
+ (ite
+  (eq +9 +9)
+  (goto L81)
+  (goto L73))
+ (lab :L73)
+ (ite
+  (eq +4 +5)
+  (goto L81)
+  (goto L86))
+ (lab :L81)
+ (call echo "while 2")
+ (goto L65)
+ (lab :L86)
+ (var :`cf.0 . .
+  (bool) .)
+ (ite
+  (eq +5 -5)
+  (goto L102)
+  (goto L116))
+ (lab :L102)
+ (ite
+  (eq +6 -6)
+  (goto L110)
+  (goto L116))
+ (lab :L110)
+ (asgn `cf.0
+  (true))
+ (goto L121)
+ (lab :L116)
+ (asgn `cf.0
+  (false))
+ (lab :L121)
+ (let :my.var . .
+  (i -1)
+  (call echo.0 "abc" `cf.0))
+ (ret))""")
+
+  const NotTest = ("""(stmts
   (if (elif (not (eq +1 +1)) (call echo "true")))
   (call echo (expr (stmts (call side.effect)) +3))
 )
-"""
-  const ReturnTest = """(stmts
+""", """(stmts
+ (ite
+  (eq +1 +1)
+  (goto L14)
+  (goto L9))
+ (lab :L9)
+ (call echo "true")
+ (goto L14)
+ (lab :L14)
+ (call side.effect)
+ (let :`cf0 . .
+  (i -1) +3)
+ (call echo `cf0)
+ (ret))""")
+
+  const ReturnTest = ("""(stmts
   (proc :my.proc . . . (params (param :i.0 .. (i -1) .))
     (i -1) . . (stmts (result :res.0 . . (i -1) .) (ret +1)))
   (call my.proc +3))
-  """
+  """, """(stmts
+ (proc :my.proc . . .
+  (params
+   (param :i.0 . .
+    (i -1) .))
+  (i -1) . .
+  (stmts
+   (result :res.0 . .
+    (i -1) .)
+   (asgn res.0 +1)
+   (goto L37)
+   (lab :L37)
+   (ret)))
+ (call my.proc +3)
+ (ret))""")
 
-  const TryTest =  """(stmts
+  const TryTest = ("""(stmts
   (try
     (stmts (call echo "try") (raise some.exc))
     (except (as :e.0 Type)
@@ -891,7 +1000,18 @@ when isMainModule:
       (stmts (call echo "finally"))
     )
   ))
-  """
+  """, """(stmts
+ (call echo "try")
+ (asgn currexc.0.sys some.exc)
+ (goto L11)
+ (goto L20)
+ (lab :L11)
+ (as :e.0 Type)
+ (call echo "except")
+ (goto L20)
+ (lab :L20)
+ (call echo "finally")
+ (ret))""")
 
   const CaseTest = """(stmts
     (let :other.var . . (i -1) +12)
@@ -903,7 +1023,7 @@ when isMainModule:
     )
   )"""
 
-  const AsgnTest = """(stmts
+  const AsgnTest = ("""(stmts
   (proc :my.proc . . . (params (param :i.0 .. (i -1) .))
     (i -1) . . (stmts (result :res.0 . . (i -1) .) (ret +1)))
 
@@ -913,18 +1033,65 @@ when isMainModule:
 
   (asgn i.0 +1)
   )
-  """
+  """, """(stmts
+ (proc :my.proc . . .
+  (params
+   (param :i.0 . .
+    (i -1) .))
+  (i -1) . .
+  (stmts
+   (result :res.0 . .
+    (i -1) .)
+   (asgn res.0 +1)
+   (goto L37)
+   (lab :L37)
+   (ret)))
+ (let :my.var . .
+  (array
+   (i +8) +6) .)
+ (var :i.0 . .
+  (i -1) +0)
+ (let :`cf0 . .
+  (ptr
+   (i +8))
+  (addr
+   (arrat my.var i.0)))
+ (asgn
+  (deref `cf0) +56)
+ (asgn i.0 +1)
+ (ret))""")
 
-  const IfTest = """(stmts
+  const IfTest = ("""(stmts
     (let :other.var . . (i -1) +12)
     (let :my.var . . (i -1) (expr (call echo "before")
       (if (elif (eq other.var +12) (call echo +1))
         (else +0))
     )
     )
-  )"""
+  )""", """(stmts
+ (let :other.var . .
+  (i -1) +12)
+ (call echo "before")
+ (var :`cf1 . .
+  (auto) .)
+ (ite
+  (eq other.var +12)
+  (goto L30)
+  (goto L38))
+ (lab :L30)
+ (asgn `cf1
+  (call echo +1))
+ (goto L42)
+ (lab :L38)
+ (asgn `cf1 +0)
+ (lab :L42)
+ (let :`cf0 . .
+  (auto) `cf1)
+ (let :my.var . .
+  (i -1) `cf0)
+ (ret))""")
 
-  const ProcTest = """(stmts
+  const ProcTest = ("""(stmts
 (proc :getOrDefault.0.tem6twvye1 . . .
   (params
    (param :t.3 . . (i -1) .)
@@ -944,13 +1111,50 @@ when isMainModule:
        (expr +1))
       (else
        (expr +0)))))
-   (ret result.1))))"""
+   (ret result.1))))""", """
+(stmts
+ (proc :getOrDefault.0.tem6twvye1 . . .
+  (params
+   (param :t.3 . .
+    (i -1) .)
+   (param :k.2 . .
+    (i -1) .))
+  (i -1) . .
+  (stmts
+   (result :result.1 . .
+    (i -1) .)
+   (let :idx.0 . .
+    (i -1) +1212)
+   (var :`cf1 . .
+    (i -1) .)
+   (ite
+    (le
+     (i -1) +0 idx.0)
+    (goto L70)
+    (goto L84))
+   (lab :L70)
+   (let :`cf2 . .
+    (i -1) +1)
+   (asgn `cf1 `cf2)
+   (goto L97)
+   (lab :L84)
+   (let :`cf3 . .
+    (i -1) +0)
+   (asgn `cf1 `cf3)
+   (lab :L97)
+   (let :`cf0 . .
+    (i -1) `cf1)
+   (asgn result.1 `cf0)
+   (goto L111)
+   (lab :L111)
+   (ret)))
+ (ret))""")
 
-  #test BasicTest
-  #test NotTest
-  #test ReturnTest
-  #test TryTest
+  test BasicTest
+  test NotTest
+  test ReturnTest
+  test TryTest
   #test CaseTest
-  #test AsgnTest
-  #test IfTest
+  test AsgnTest
+  test IfTest
   test ProcTest
