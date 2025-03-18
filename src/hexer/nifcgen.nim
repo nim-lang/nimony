@@ -1078,11 +1078,15 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       let arg = suf
       skip suf
       assert suf.kind == StringLit
-      if arg.kind == StringLit and pool.strings[suf.litId] == "C":
-        # cstring conversion
+      if arg.kind == StringLit:
+        # no suffix for string literal in nifc
         inc n
-        c.dest.add n # add string lit directly
-        inc n
+        if pool.strings[suf.litId] == "C":
+          # cstring literal, add string lit directly:
+          c.dest.add n
+          inc n
+        else:
+          traverseExpr c, n
         inc n # suf
         skipParRi c, n
       else:
