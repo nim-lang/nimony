@@ -88,7 +88,7 @@ proc writeModel(basename: string; data: EnumImpls; first, last: EnumList) =
     f.write "\n    " & toSuffix(e)[1]
     for field in data[e]:
       f.write "\n    " & field.name
-      f.write " = (" & $field.value & ", " & escape(field.tag) & ")"
+      f.write " = (ord(" & toNimName(field.tag, "TagId") & "), " & escape(field.tag) & ")"
       if field.desc.len > 0:
         f.write "  ## " & field.desc
     if e != NiflerKind:

@@ -5,15 +5,15 @@ import tags
 type
   CallConv* = enum
     NoCallConv
-    Cdecl = (114, "cdecl")  ## `cdecl` calling convention
-    Stdcall = (115, "stdcall")  ## `stdcall` calling convention
-    Safecall = (116, "safecall")  ## `safecall` calling convention
-    Syscall = (117, "syscall")  ## `syscall` calling convention
-    Fastcall = (118, "fastcall")  ## `fastcall` calling convention
-    Thiscall = (119, "thiscall")  ## `thiscall` calling convention
-    Noconv = (120, "noconv")  ## no explicit calling convention
-    Member = (121, "member")  ## `member` calling convention
-    Nimcall = (122, "nimcall")  ## `nimcall` calling convention
+    Cdecl = (ord(CdeclTagId), "cdecl")  ## `cdecl` calling convention
+    Stdcall = (ord(StdcallTagId), "stdcall")  ## `stdcall` calling convention
+    Safecall = (ord(SafecallTagId), "safecall")  ## `safecall` calling convention
+    Syscall = (ord(SyscallTagId), "syscall")  ## `syscall` calling convention
+    Fastcall = (ord(FastcallTagId), "fastcall")  ## `fastcall` calling convention
+    Thiscall = (ord(ThiscallTagId), "thiscall")  ## `thiscall` calling convention
+    Noconv = (ord(NoconvTagId), "noconv")  ## no explicit calling convention
+    Member = (ord(MemberTagId), "member")  ## `member` calling convention
+    Nimcall = (ord(NimcallTagId), "nimcall")  ## `nimcall` calling convention
 
 proc rawTagIsCallConv*(raw: TagEnum): bool {.inline.} =
   raw >= CdeclTagId and raw <= NimcallTagId
