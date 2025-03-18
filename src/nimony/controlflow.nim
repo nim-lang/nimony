@@ -56,7 +56,11 @@ proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
     case c[i].kind
     of GotoInstr:
       b.addTree "goto"
-      b.addIdent "L" & $(i+c[i].getInt28())
+      let diff = c[i].getInt28()
+      if diff != 0:
+        b.addIdent "L" & $(i+diff)
+      else:
+        b.addIdent "L<BUG HERE>" & $i
       b.endTree()
     of Symbol:
       b.addSymbol pool.syms[c[i].symId]
@@ -80,7 +84,9 @@ proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
 proc genLabel(c: ControlFlow): Label = Label(c.dest.len)
 
 proc jmpBack(c: var ControlFlow, p: Label; info: PackedLineInfo) =
-  c.dest.add int28Token(p.int32 - c.dest.len.int32, info)
+  let diff = p.int - c.dest.len
+  assert diff < 0
+  c.dest.add int28Token(diff.int32, info)
 
 proc jmpForw(c: var ControlFlow; info: PackedLineInfo): Label =
   result = Label(c.dest.len)
@@ -88,7 +94,10 @@ proc jmpForw(c: var ControlFlow; info: PackedLineInfo): Label =
 
 proc patch(c: var ControlFlow; p: Label) =
   # patch with current index
-  c.dest[p.int].patchInt28Token int32(c.dest.len - p.int)
+  let diff = c.dest.len - p.int
+  assert diff != 0
+  assert c.dest[p.int].kind == GotoInstr
+  c.dest[p.int].patchInt28Token int32(diff)
 
 proc trExpr(c: var ControlFlow; n: var Cursor)
 proc trStmt(c: var ControlFlow; n: var Cursor)
@@ -98,6 +107,7 @@ type
 
 proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: Target) =
   if tar != SymId(0):
+    c.stmtBegin = c.dest.len
     c.dest.addParLe(AsgnS, n.info)
     c.dest.addSymUse tar, n.info
     trExpr c, n
@@ -186,9 +196,13 @@ proc declareBool(c: var ControlFlow; info: PackedLineInfo): TempVar =
 
 proc rollbackToStmtBegin(c: var ControlFlow): TokenBuf =
   result = createTokenBuf(40)
+  assert c.stmtBegin >= 0
   for i in c.stmtBegin ..< c.dest.len:
+    if c.dest[i].kind == GotoInstr and c.dest[i].getInt28() == 0:
+      assert false, "goto instruction in an expression?"
     result.add c.dest[i]
   c.dest.shrink c.stmtBegin
+  c.stmtBegin = -1 # mark as used up
 
 proc trStandaloneAndOr(c: var ControlFlow; n: var Cursor; opc: ExprKind) =
   assert opc == AndX or opc == OrX
@@ -223,6 +237,7 @@ proc trStandaloneAndOr(c: var ControlFlow; n: var Cursor; opc: ExprKind) =
   for i in 0 ..< fullExpr.len:
     c.dest.add fullExpr[i]
   c.useTemp temp, info
+  c.stmtBegin = c.dest.len
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
@@ -667,10 +682,11 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of WhenS:
     raiseAssert "`when` statement should have been eliminated"
 
-proc openTempVar(c: var ControlFlow; typ: Cursor; info: PackedLineInfo): SymId =
+proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
+  assert typ.kind != DotToken
   result = pool.syms.getOrIncl("`cf" & $c.nextVar)
   inc c.nextVar
-  c.dest.addParLe LetS, info
+  c.dest.addParLe kind, info
   c.dest.addSymDef result, info
   c.dest.addEmpty2 info # no export marker, no pragmas
   c.dest.copyTree typ
@@ -690,13 +706,15 @@ proc trStmtListExpr(c: var ControlFlow; n: var Cursor) =
     when defined(debug):
       writeStackTrace()
     quit "trStmtListExpr: type is nil"
-  let temp = openTempVar(c, typ, NoLineInfo)
+  c.stmtBegin = c.dest.len
+  let temp = openTempVar(c, LetS, typ, NoLineInfo)
   trExpr c, n
   c.dest.addParRi() # close temp var declaration
   skipParRi n
   for i in 0 ..< fullExpr.len:
     c.dest.add fullExpr[i]
   c.dest.addSymUse temp, info
+  c.stmtBegin = c.dest.len
 
 type
   ControlFlowAsExprKind = enum
@@ -708,9 +726,10 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
 
   let fullExpr = rollbackToStmtBegin c
 
-  let tar = openTempVar(c, typ, NoLineInfo)
+  let tar = openTempVar(c, VarS, typ, NoLineInfo)
   c.dest.addDotToken()
   c.dest.addParRi() # close temp var declaration
+  c.stmtBegin = c.dest.len
 
   case kind
   of IfExpr:
@@ -725,6 +744,7 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
   for i in 0 ..< fullExpr.len:
     c.dest.add fullExpr[i]
   c.dest.addSymUse tar, info
+  c.stmtBegin = c.dest.len
 
 proc trExprLoop(c: var ControlFlow; n: var Cursor) =
   c.dest.add n
@@ -831,6 +851,7 @@ when isMainModule:
   proc test(s: string) =
     var input = parse(s)
     var cf = toControlflow(beginRead(input))
+    echo "------------------"
     echo codeListing(cf)
 
   const BasicTest = """(stmts
@@ -894,9 +915,42 @@ when isMainModule:
   )
   """
 
+  const IfTest = """(stmts
+    (let :other.var . . (i -1) +12)
+    (let :my.var . . (i -1) (expr (call echo "before")
+      (if (elif (eq other.var +12) (call echo +1))
+        (else +0))
+    )
+    )
+  )"""
+
+  const ProcTest = """(stmts
+(proc :getOrDefault.0.tem6twvye1 . . .
+  (params
+   (param :t.3 . . (i -1) .)
+   (param :k.2 . . (i -1) .))
+  (i -1) . .
+  (stmts
+   (result :result.1 . . (i -1) .)
+   (asgn result.1
+    (expr
+     (let :idx.0 . .
+      (i -1)
+      +1212)
+     (if
+      (elif
+       (le
+         (i -1) +0 idx.0)
+       (expr +1))
+      (else
+       (expr +0)))))
+   (ret result.1))))"""
+
   #test BasicTest
   #test NotTest
   #test ReturnTest
   #test TryTest
   #test CaseTest
-  test AsgnTest
+  #test AsgnTest
+  #test IfTest
+  test ProcTest

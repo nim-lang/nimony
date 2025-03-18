@@ -235,7 +235,7 @@ type
     thenPart, elsePart: BasicBlockIdx
     newFacts: int
   BasicBlock = object
-    indegree: int
+    indegree, touched: int
     indegreeFacts: Facts
 
 const
@@ -440,11 +440,14 @@ proc decAndTest(x: var int): bool {.inline.} =
 
 proc takeFacts(c: var Context; bb: var BasicBlock; newFacts: int; negate: bool) =
   let start = bb.indegreeFacts.len
-  for i in c.facts.len - newFacts ..< c.facts.len:
-    bb.indegreeFacts.add c.facts[i]
+  if bb.touched == 0:
+    for i in c.facts.len - newFacts ..< c.facts.len:
+      bb.indegreeFacts.add c.facts[i]
+  else:
+    # merge the facts:
+    bb.indegreeFacts = merge(c.facts, c.facts.len - newFacts, bb.indegreeFacts, negate)
+  inc bb.touched
   c.facts.shrink c.facts.len - newFacts
-  if negate:
-    negateFacts(bb.indegreeFacts, start)
 
 proc pushFacts(c: var Context; bb: var BasicBlock) =
   for i in 0 ..< bb.indegreeFacts.len:
@@ -452,26 +455,33 @@ proc pushFacts(c: var Context; bb: var BasicBlock) =
 
 proc checkContracts(c: var Context) =
   var bbs = computeBasicBlocks(c.cf)
-  var n = readonlyCursorAt(c.cf, 0)
-  #echo "LOOKING AT: ", codeListing(c)
-  var pc = n
+  c.startInstr = readonlyCursorAt(c.cf, 0)
+  var pc = c.startInstr
   var nextIter = true
   while nextIter:
     nextIter = false
-    #echo "Looking at: ", toString(pc, false)
+    # Save facts before analyzing a block
+    let savedFactsLen = c.facts.len
+
     let cont = traverseBasicBlock(c, pc)
+
     if cont.thenPart > NoBasicBlock:
-      takeFacts(c, bbs[cont.thenPart], cont.newFacts, false)
-      if decAndTest(bbs[cont.thenPart].indegree):
+      let bb = addr(bbs[cont.thenPart])
+      takeFacts(c, bb[], cont.newFacts, false)
+      if decAndTest(bb.indegree):
         pc = readonlyCursorAt(c.cf, cont.thenPart.int)
-        pushFacts(c, bbs[cont.thenPart])
+        pushFacts(c, bb[])
         nextIter = true
     elif cont.elsePart > NoBasicBlock:
-      takeFacts(c, bbs[cont.elsePart], cont.newFacts, true)
-      if decAndTest(bbs[cont.elsePart].indegree):
+      let bb = addr(bbs[cont.elsePart])
+      takeFacts(c, bb[], cont.newFacts, true)
+      if decAndTest(bb.indegree):
         pc = readonlyCursorAt(c.cf, cont.elsePart.int)
-        pushFacts(c, bbs[cont.elsePart])
+        pushFacts(c, bb[])
         nextIter = true
+
+    # If we're done with this branch, restore facts
+    c.facts.shrink(savedFactsLen)
 
 proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   let oldInfos = prepare(input)
@@ -488,3 +498,14 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   restore(input, oldInfos)
   c.typeCache.closeScope()
   result = ensureMove(c.dest)
+
+when isMainModule:
+  const test = """
+  (stmts
+    (var :x . . (i +32) .)
+    (if (elif (le . x +4) (stmts (requires (le . x +9)) (cmd echo.0 "abc"))))
+  )
+  """
+  var inp = parse(test)
+  let outp = analyzeContracts(inp)
+  echo toString(outp, false)
