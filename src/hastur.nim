@@ -306,6 +306,36 @@ proc nimonytests(overwrite: bool) =
   else:
     echo "SUCCESS."
 
+proc controlflowTests(overwrite: bool) =
+  ## Run all the controlflow tests in the test-suite.
+  const TestDir = "tests/controlflow"
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  for x in walkDir(TestDir, relative = true):
+    if x.kind == pcFile and x.path.endsWith(".nif") and not x.path.contains(".expected.nif"):
+      inc c.total
+      let t = TestDir / x.path
+      let dest = t.changeFileExt(".out.nif")
+      let (msgs, exitcode) = execLocal("controlflow", os.quoteShell(t) & " " & os.quoteShell(dest))
+      if exitcode != 0:
+        failure c, t, "controlflow exitcode " & $exitcode, msgs
+      let expected = t.changeFileExt(".expected.nif")
+      if overwrite:
+        writeFile(dest, msgs)
+      elif expected.fileExists():
+        let expectedOutput = readFile(expected).strip
+        let destContent = readFile(dest).strip
+        let success = expectedOutput == destContent
+        if success:
+          os.removeFile(dest)
+        else:
+          failure c, t, expectedOutput, destContent
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some tests failed."
+  else:
+    echo "SUCCESS."
+
 proc test(t: string; overwrite: bool; cat: Category) =
   var c = TestCounters(total: 0, failures: 0)
   testFile c, t, overwrite, cat
@@ -396,6 +426,11 @@ proc buildNimsem(showProgress = false) =
 proc buildNimony(showProgress = false) =
   exec "nim c src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
+
+proc buildControlflow(showProgress = false) =
+  exec "nim c src/nimony/controlflow.nim", showProgress
+  let exe = "controlflow".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNifc(showProgress = false) =
@@ -504,6 +539,12 @@ proc handleCmdLine =
     nimonytests(overwrite)
     nifctests(overwrite)
     #hexertests(overwrite)
+    buildControlflow()
+    controlflowTests(overwrite)
+
+  of "controlflow", "cf":
+    buildControlflow()
+    controlflowTests(overwrite)
 
   of "build":
     const showProgress = true

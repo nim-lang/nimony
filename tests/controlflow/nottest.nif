@@ -1,0 +1,4 @@
+(stmts
+  (if (elif (not (eq +1 +1)) (call echo "true")))
+  (call echo (expr (stmts (call side.effect)) +3))
+)

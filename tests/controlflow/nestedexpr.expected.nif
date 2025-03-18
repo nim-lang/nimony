@@ -1,0 +1,37 @@
+(stmts
+ (proc :getOrDefault.0.tem6twvye1 . . .
+  (params
+   (param :t.3 . .
+    (i -1) .)
+   (param :k.2 . .
+    (i -1) .))
+  (i -1) . .
+  (stmts
+   (result :result.1 . .
+    (i -1) .)
+   (let :idx.0 . .
+    (i -1) +1212)
+   (var :`cf1 . .
+    (i -1) .)
+   (ite
+    (le
+     (i -1) +0 idx.0)
+    (goto L70)
+    (goto L84))
+   (lab :L70)
+   (let :`cf2 . .
+    (i -1) +1)
+   (asgn `cf1 `cf2)
+   (goto L97)
+   (lab :L84)
+   (let :`cf3 . .
+    (i -1) +0)
+   (asgn `cf1 `cf3)
+   (lab :L97)
+   (let :`cf0 . .
+    (i -1) `cf1)
+   (asgn result.1 `cf0)
+   (goto L111)
+   (lab :L111)
+   (ret)))
+ (ret))

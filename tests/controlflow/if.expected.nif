@@ -1,0 +1,22 @@
+(stmts
+ (let :other.var . .
+  (i -1) +12)
+ (call echo "before")
+ (var :`cf1 . .
+  (auto) .)
+ (ite
+  (eq other.var +12)
+  (goto L30)
+  (goto L38))
+ (lab :L30)
+ (asgn `cf1
+  (call echo +1))
+ (goto L42)
+ (lab :L38)
+ (asgn `cf1 +0)
+ (lab :L42)
+ (let :`cf0 . .
+  (auto) `cf1)
+ (let :my.var . .
+  (i -1) `cf0)
+ (ret))

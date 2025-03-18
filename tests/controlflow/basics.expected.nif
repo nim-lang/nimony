@@ -1,0 +1,76 @@
+(stmts
+ (ite
+  (eq +11 +11)
+  (goto L9)
+  (goto L14))
+ (lab :L9)
+ (call echo "true")
+ (goto L14)
+ (lab :L14)
+ (ite
+  (eq +12 +12)
+  (goto L22)
+  (goto L27))
+ (lab :L22)
+ (call echo "true")
+ (goto L52)
+ (lab :L27)
+ (ite
+  (eq +2 +3)
+  (goto L35)
+  (goto L48))
+ (lab :L35)
+ (ite
+  (eq +4 +5)
+  (goto L43)
+  (goto L48))
+ (lab :L43)
+ (call echo "elif")
+ (goto L52)
+ (lab :L48)
+ (call echo "false")
+ (lab :L52)
+ (ite
+  (eq +13 +13)
+  (goto L60)
+  (goto L65))
+ (lab :L60)
+ (call echo "while")
+ (goto L52)
+ (lab :L65)
+ (ite
+  (eq +9 +9)
+  (goto L81)
+  (goto L73))
+ (lab :L73)
+ (ite
+  (eq +4 +5)
+  (goto L81)
+  (goto L86))
+ (lab :L81)
+ (call echo "while 2")
+ (goto L65)
+ (lab :L86)
+ (var :`cf.0 . .
+  (bool) .)
+ (ite
+  (eq +5 -5)
+  (goto L102)
+  (goto L116))
+ (lab :L102)
+ (ite
+  (eq +6 -6)
+  (goto L110)
+  (goto L116))
+ (lab :L110)
+ (asgn `cf.0
+  (true))
+ (goto L121)
+ (lab :L116)
+ (asgn `cf.0
+  (false))
+ (lab :L121)
+ (let :my.var . .
+  (i -1)
+  (call echo.0 "abc" `cf.0))
+ (ret))

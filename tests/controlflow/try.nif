@@ -1,0 +1,9 @@
+(stmts
+  (try
+    (stmts (call echo "try") (raise some.exc))
+    (except (as :e.0 Type)
+      (stmts (call echo "except")))
+    (fin
+      (stmts (call echo "finally"))
+    )
+  ))

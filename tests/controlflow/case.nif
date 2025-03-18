@@ -1,0 +1,9 @@
+(stmts
+    (let :other.var . . (i -1) +12)
+    (let :my.var . . (i -1)
+      (case other.var
+        (of (ranges +0 +1 +2 (range +5 +15) +80) +1)
+        (else +0)
+    )
+    )
+  )

@@ -1,0 +1,21 @@
+(stmts
+(proc :getOrDefault.0.tem6twvye1 . . .
+  (params
+   (param :t.3 . . (i -1) .)
+   (param :k.2 . . (i -1) .))
+  (i -1) . .
+  (stmts
+   (result :result.1 . . (i -1) .)
+   (asgn result.1
+    (expr
+     (let :idx.0 . .
+      (i -1)
+      +1212)
+     (if
+      (elif
+       (le
+         (i -1) +0 idx.0)
+       (expr +1))
+      (else
+       (expr +0)))))
+   (ret result.1))))
