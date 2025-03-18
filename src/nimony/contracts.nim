@@ -307,52 +307,81 @@ proc addAsgnFact(c: var Context; fact: LeXplusC) =
   c.facts.add fact
   c.facts.add fact.geXplusC
 
+proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC) =
+  if pc.exprKind in {AddX, SubX}:
+    inc pc
+    if pc.kind == Symbol:
+      let symId2 = pc.symId
+      fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
+      inc pc
+      if pc.kind == IntLit:
+        fact.c = createXint(pool.integers[pc.intId])
+        addAsgnFact c, fact
+        inc pc
+      elif pc.kind == UIntLit:
+        fact.c = createXint(pool.uintegers[pc.uintId])
+        addAsgnFact c, fact
+        inc pc
+      else:
+        skip pc
+    else:
+      skip pc
+    skipParRi pc
+  elif pc.kind == Symbol:
+    let symId2 = pc.symId
+    fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
+    addAsgnFact c, fact
+    inc pc
+  elif pc.kind == IntLit:
+    fact.c = createXint(pool.integers[pc.intId])
+    addAsgnFact c, fact
+    inc pc
+  elif pc.kind == UIntLit:
+    fact.c = createXint(pool.uintegers[pc.uintId])
+    addAsgnFact c, fact
+    inc pc
+  else:
+    skip pc
+
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
   if pc.kind == Symbol:
-    var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
     let symId = pc.symId
+    var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
     c.writesTo.add symId
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
     fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
     inc pc
-    if pc.exprKind in {AddX, SubX}:
-      inc pc
-      if pc.kind == Symbol:
-        let symId2 = pc.symId
-        fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
-        inc pc
-        if pc.kind == IntLit:
-          fact.c = createXint(pool.integers[pc.intId])
-          addAsgnFact c, fact
-          inc pc
-        elif pc.kind == UIntLit:
-          fact.c = createXint(pool.uintegers[pc.uintId])
-          addAsgnFact c, fact
-          inc pc
-        else:
-          skip pc
-      else:
-        skip pc
-      skipParRi pc
-    elif pc.kind == Symbol:
-      let symId2 = pc.symId
-      fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
-      addAsgnFact c, fact
-      inc pc
-    elif pc.kind == IntLit:
-      fact.c = createXint(pool.integers[pc.intId])
-      addAsgnFact c, fact
-      inc pc
-    elif pc.kind == UIntLit:
-      fact.c = createXint(pool.uintegers[pc.uintId])
-      addAsgnFact c, fact
-      inc pc
-    else:
-      skip pc
+    rightHandSide(c, pc, fact)
   else:
     skip pc # skip left-hand-side
     skip pc # skip right-hand-side
+  skipParRi pc
+
+proc analyseAssume(c: var Context; pc: var Cursor) =
+  inc pc
+  if pc.exprKind == LeX:
+    inc pc
+    if pc.kind == Symbol:
+      let symId = pc.symId
+      var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
+      fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
+      inc pc
+      rightHandSide(c, pc, fact)
+    else:
+      skipToEnd pc
+  else:
+    skip pc
+  skipParRi pc
+
+proc analyseAssert(c: var Context; pc: var Cursor) =
+  inc pc
+  if pc.exprKind == LeX:
+    inc pc
+    # XXX To implement
+    skipToEnd pc
+  else:
+    skip pc
   skipParRi pc
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
@@ -398,6 +427,10 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         case kind
         of AsgnS:
           analyseAsgn(c, pc)
+        of AssumeS:
+          analyseAssume(c, pc)
+        of AssertS:
+          analyseAssert(c, pc)
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
           return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)

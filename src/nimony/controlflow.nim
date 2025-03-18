@@ -672,7 +672,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     skip n
   of CallS, CmdS:
     trCall c, n
-  of YldS, DiscardS, InclS, ExclS, AsmS, DeferS:
+  of YldS, DiscardS, InclS, ExclS, AsmS, DeferS, AssumeS, AssertS:
     c.dest.add n
     inc n
     while n.kind != ParRi:

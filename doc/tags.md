@@ -203,6 +203,8 @@
 | `(noinit)` | NimonyPragma | `noinit` pragma |
 | `(requires X)` | NimonyPragma | `requires` pragma |
 | `(ensures X)` | NimonyPragma | `ensures` pragma |
+| `(assume X)` | NimonyPragma, NimonyStmt | `assume` pragma |
+| `(assert X)` | NimonyPragma, NimonyStmt | `assert` pragma |
 | `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |

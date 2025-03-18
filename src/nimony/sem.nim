@@ -2155,7 +2155,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`requires`/`ensures` pragma takes a bool expression"
     c.dest.addParRi()
-  of EmitP, BuildP, StringP, RaisesP:
+  of EmitP, BuildP, StringP, RaisesP, AssumeP, AssertP:
     buildErr c, n.info, "pragma not supported"
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
@@ -5524,9 +5524,16 @@ template constGuard(c: var SemContext; body: untyped) =
   else:
     c.takeTree it.n
 
+proc semAssumeAssert(c: var SemContext; it: var Item; kind: StmtKind) =
+  let info = it.n.info
+  inc it.n
+  c.dest.addParLe(kind, info)
+  semBoolExpr c, it.n
+  takeParRi c, it.n
+
 proc semPragmaLine(c: var SemContext; it: var Item) =
   inc it.n
-  case it.n.pragmaKind:
+  case it.n.pragmaKind
   of BuildP:
     let info = it.n.info
     inc it.n
@@ -5563,6 +5570,10 @@ proc semPragmaLine(c: var SemContext; it: var Item) =
       c.toBuild.addStrLit customArgs, info
   of EmitP:
     semEmit c, it
+  of AssumeP:
+    semAssumeAssert c, it, AssumeS
+  of AssertP:
+    semAssumeAssert c, it, AssertS
   else:
     buildErr c, it.n.info, "unsupported pragmas"
 
@@ -5891,6 +5902,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of InclS, ExclS:
         toplevelGuard c:
           semInclExcl c, it
+      of AssumeS, AssertS:
+        toplevelGuard c:
+          semAssumeAssert c, it, it.n.stmtKind
     of FalseX, TrueX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:

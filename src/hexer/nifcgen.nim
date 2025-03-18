@@ -631,7 +631,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           expectIntLit c, n
           result.bits = n.intId
           inc n
-        of RequiresP, EnsuresP, StringP, RaisesP, ErrorP:
+        of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP:
           skip n
           continue
         of BuildP, EmitP:
@@ -1440,7 +1440,7 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
       traverseTypeDecl c, n
     of ContinueS, WhenS:
       error c, "unreachable: ", n
-    of PragmasS:
+    of PragmasS, AssumeS, AssertS:
       skip n
   else:
     error c, "statement expected, but got: ", n
