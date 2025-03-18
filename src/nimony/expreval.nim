@@ -355,12 +355,12 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         buf.addParRi()
     else: err = true
   of StringLit:
-    if isStringType(typ):
+    if not cursorIsNil(symType) and isStringType(symType):
       buf.add n
     elif typ.typeKind == CstringT:
       buf.add parLeToken(SufX, n.info)
       buf.add n
-      buf.add strToken(pool.strings.getOrIncl("R"), n.info)
+      buf.add strToken(pool.strings.getOrIncl("C"), n.info)
       buf.addParRi()
     else: err = true
   of Symbol:

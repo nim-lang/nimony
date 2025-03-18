@@ -1078,10 +1078,11 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       let arg = suf
       skip suf
       assert suf.kind == StringLit
-      if arg.kind == StringLit and pool.strings[suf.litId] in ["R", "T"]:
+      if arg.kind == StringLit and pool.strings[suf.litId] == "C":
         # cstring conversion
         inc n
-        traverseExpr c, n # adds string lit directly
+        c.dest.add n # add string lit directly
+        inc n
         inc n # suf
         skipParRi c, n
       else:

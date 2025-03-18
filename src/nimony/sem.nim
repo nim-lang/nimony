@@ -4489,6 +4489,7 @@ proc semSuf(c: var SemContext, it: var Item) =
   of "f32": it.typ = c.types.float32Type
   of "f64": it.typ = c.types.float64Type
   of "R", "T": it.typ = c.types.stringType
+  of "C": it.typ = c.types.cstringType
   else:
     c.buildErr it.n.info, "unknown suffix: " & pool.strings[it.n.litId]
   takeToken c, it.n # suffix
