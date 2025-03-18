@@ -100,7 +100,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     result = n
     inc n
   of ParLe:
-    case n.exprKind
+    let exprKind = n.exprKind
+    case exprKind
     of TrueX, FalseX, NanX, InfX, NeginfX:
       result = n
       skip n
@@ -179,6 +180,20 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         result = c.getTrueValue()
       else:
         result = c.getFalseValue()
+    of AconstrX, SetconstrX, TupconstrX,
+        BracketX, CurlyX, TupX:
+      let valPos = c.values.len
+      c.values.add createTokenBuf(16)
+      c.values[valPos].add n
+      inc n
+      if exprKind in {AconstrX, SetconstrX, TupconstrX}:
+        # add type
+        takeTree c.values[valPos], n
+      while n.kind != ParRi:
+        let elem = propagateError eval(c, n)
+        c.values[valPos].addSubtree elem
+      takeParRi c.values[valPos], n
+      result = cursorAt(c.values[valPos], 0)
     else:
       if n.tagId == ErrT:
         result = n
@@ -298,6 +313,9 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
     err = true
 
 proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
+  if n.kind == ParLe and n.tagId == ErrT:
+    buf.addSubtree n
+    return
   let orig = typ
   var typ = skipModifier(typ)
   var symType = default(Cursor)
