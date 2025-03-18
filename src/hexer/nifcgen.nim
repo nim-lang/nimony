@@ -1387,6 +1387,11 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
         if n.kind == StringLit:
           c.dest.add n
           inc n
+        elif n.exprkind == SufX:
+          inc n
+          assert n.kind == StringLit
+          c.dest.add n
+          skipToEnd n
         else:
           traverseExpr c, n
     of AsgnS, RetS:
