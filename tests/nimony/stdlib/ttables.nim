@@ -27,5 +27,22 @@ block:
   assert not t.contains(HC123)
   assert t.getOrDefault(HC123) == 0
 
-  #for k, v in t:
-  #  echo k, v
+block:
+  const Max = 1000
+
+  var t = initTable[int, int]()
+  for i in 1 ..< Max:
+    t[i] = -i
+  assert t.len == (Max - 1)
+  for i in 1 ..< Max:
+    assert t[i] == -i
+
+  for k, v in t.pairs:
+    assert k == -v
+    assert t.contains(k)
+    assert not t.contains(-k)
+    assert t.getOrDefault(k) == v
+    assert t.mgetOrPut(k, 0) == v
+
+  assert t.len == (Max - 1)
+  assert not t.contains(0)
