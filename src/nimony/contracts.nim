@@ -309,6 +309,9 @@ proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
   if xk in {LeX, LtX}:
     inc r
     skip r # skip type
+  else:
+    skip pc
+    return result
 
   if r.kind == IntLit:
     result.a = VarId(0)
@@ -350,13 +353,18 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
   if pc.kind == Symbol:
     let symId = pc.symId
-    var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
+    var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
     c.writesTo.add symId
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
-    fact.a = getVarId(c, symId)
     inc pc
     if rightHandSide(c, pc, fact):
-      addAsgnFact c, fact
+      if fact.a == fact.b:
+        variableChangedByDiff(c.facts, fact.a, fact.c)
+      else:
+        invalidateFactsAbout(c.facts, fact.a)
+        addAsgnFact c, fact
+    else:
+      invalidateFactsAbout(c.facts, fact.a)
   else:
     skip pc # skip left-hand-side
     skip pc # skip right-hand-side

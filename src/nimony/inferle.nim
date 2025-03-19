@@ -30,7 +30,7 @@ const
   InvalidVarId* = VarId(-1)
 
 proc isValid*(x: LeXplusC): bool {.inline.} =
-  result = x.a != InvalidVarId and x.b != InvalidVarId
+  result = x.a != InvalidVarId and x.b != InvalidVarId and not isNaN(x.c)
 
 proc len*(f: Facts): int {.inline.} = f.x.len
 proc `[]`*(f: Facts; i: int): lent LeXplusC {.inline.} = f.x[i]
