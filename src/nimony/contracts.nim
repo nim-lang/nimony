@@ -467,7 +467,9 @@ proc takeFacts(c: var Context; bb: var BasicBlock; newFacts: int; negate: bool) 
   let start = bb.indegreeFacts.len
   if bb.touched == 0:
     for i in c.facts.len - newFacts ..< c.facts.len:
-      bb.indegreeFacts.add c.facts[i]
+      var f = c.facts[i]
+      if negate: negateFact(f)
+      bb.indegreeFacts.add f
   else:
     # merge the facts:
     bb.indegreeFacts = merge(c.facts, c.facts.len - newFacts, bb.indegreeFacts, negate)
