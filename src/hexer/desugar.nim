@@ -591,7 +591,6 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSubtree a
         addUIntTypedOp dest, ShrX, -1, info:
           addUIntTypedOp dest, CastX, -1, info:
-            dest.addParRi()
             dest.addSubtree b
           dest.addUIntLit(3)
     copyIntoKind dest, AsgnS, info:

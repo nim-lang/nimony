@@ -19,3 +19,9 @@ template resem() =
   s1 = {A..B, val, F}
 
 resem()
+block:
+  var sss: set[char]
+  sss = {} # empty set
+  sss = {'a' .. 'z', '_'}
+  sss.excl('m')
+  sss.incl('u')
