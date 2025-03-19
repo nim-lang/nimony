@@ -206,7 +206,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of AtX, ArrAtX:
     result = getTypeImpl(c, n.firstSon, flags)
     case typeKind(result)
-    of ArrayT:
+    of ArrayT, SetT:
       inc result # to the element type
     of CstringT:
       result = c.builtins.charType

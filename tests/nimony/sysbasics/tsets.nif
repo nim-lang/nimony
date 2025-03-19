@@ -113,4 +113,24 @@
   (asgn ~3 s1.0.tsefy5wha 2
    (setconstr 7,~15
     (set 1 Foo.0.tsefy5wha) 1
-    (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha))))
+    (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha))) ,21
+ (block . 2,1
+  (stmts 4
+   (var :sss.0 . . 8
+    (set 1
+     (c +8)) .) 4,1
+   (asgn ~4 sss.0 2
+    (setconstr 6,~1
+     (set 1
+      (c +8)))) 4,2
+   (asgn ~4 sss.0 2
+    (setconstr 6,~2
+     (set 1
+      (c +8)) 1
+     (range 'a' 7 'z') 13 '_')) 8,3
+   (excl 4,~3
+    (set 1
+     (c +8)) ~8 sss.0 1 'm') 8,4
+   (incl 4,~4
+    (set 1
+     (c +8)) ~8 sss.0 1 'u'))))
