@@ -88,10 +88,11 @@ proc ltXplusC*(f: LeXplusC): LeXplusC =
 proc negateFact*(f: var LeXplusC) =
   # not (a <= b + c)
   # -->
-  # a >= b + c - 1
-  # a - c + 1 >= b
-  # b <= a + (1 - c)
-  f.c = createXint(1'i64) - f.c
+  # a > b + c
+  # a >= b + c + 1
+  # a - c - 1 >= b
+  # b <= a - c - 1
+  f.c = -f.c - createXint(1'i64)
   swap f.a, f.b
 
 proc negateFacts*(f: var Facts; start: int) =

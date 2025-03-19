@@ -118,6 +118,7 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
+    skip r # type
     if r.kind == Symbol:
       b = mapSymbol(c, paramMap, call, r.symId)
       inc r
@@ -267,6 +268,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
   if pc.exprKind in {AddX, SubX}:
     inc pc
+    skip pc # type
     if pc.kind == Symbol:
       let symId2 = pc.symId
       fact.b = getVarId(c, symId2)
@@ -546,7 +548,7 @@ when isMainModule:
   (stmts
     (var :x.0 . . (i +32) .)
     (if (elif (le . x.0 +4) (stmts (assert (le . x.0 +9))))
-        (else (stmts (assert (le . +5 x.0))))
+        (else (stmts (assert (le . +5 x.0)) (assert (le . +1 x.0)))))
     )
   )
   """
