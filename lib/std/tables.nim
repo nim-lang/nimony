@@ -111,10 +111,12 @@ proc mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V 
 
 proc len*[K, V](t: Table[K, V]): int {.inline.} = t.data.len
 
-iterator pairs*[K, V](t: Table[K, V]): (K, V) =
+iterator pairs*[K, V](t: Table[K, V]): (lent K, lent V) =
   for i in 0 ..< t.data.len:
-    # XXX Nim ORC bug:
-    # Does not work: `yield t.data[i]
+    yield (t.data[i][0], t.data[i][1])
+
+iterator mpairs*[K, V](t: var Table[K, V]): (lent K, var V) =
+  for i in 0 ..< t.data.len:
     yield (t.data[i][0], t.data[i][1])
 
 proc initTable*[K, V](): Table[K, V] =
