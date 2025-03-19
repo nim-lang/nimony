@@ -11,10 +11,11 @@
  (lab :L30)
  (asgn `cf1
   (call echo +1))
- (goto L42)
+ (goto L43)
  (lab :L38)
  (asgn `cf1 +0)
- (lab :L42)
+ (goto L43)
+ (lab :L43)
  (let :`cf0 . .
   (auto) `cf1)
  (let :my.var . .

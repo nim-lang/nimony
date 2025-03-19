@@ -22,16 +22,17 @@
    (let :`cf2 . .
     (i -1) +1)
    (asgn `cf1 `cf2)
-   (goto L97)
+   (goto L98)
    (lab :L84)
    (let :`cf3 . .
     (i -1) +0)
    (asgn `cf1 `cf3)
-   (lab :L97)
+   (goto L98)
+   (lab :L98)
    (let :`cf0 . .
     (i -1) `cf1)
    (asgn result.1 `cf0)
-   (goto L111)
-   (lab :L111)
+   (goto L112)
+   (lab :L112)
    (ret)))
  (ret))

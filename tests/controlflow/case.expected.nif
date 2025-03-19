@@ -40,10 +40,11 @@
   (goto L90))
  (lab :L85)
  (asgn `cf0 +1)
- (goto L94)
+ (goto L95)
  (lab :L90)
  (asgn `cf0 +0)
- (lab :L94)
+ (goto L95)
+ (lab :L95)
  (let :my.var . .
   (i -1) `cf0)
  (ret))
