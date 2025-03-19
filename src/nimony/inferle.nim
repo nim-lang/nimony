@@ -188,6 +188,12 @@ proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
   # we know that `a <= b + c` and `a <= b + d` then we know
   # that `a <= b + max(c, d)`
   result = Facts()
+  for i in 0 ..< xstart:
+    for j in 0..<y.len:
+      let ya = y[j]
+      if x[i].a == ya.a and x[i].b == ya.b:
+        result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
+
   for i in xstart ..< x.len:
     for j in 0..<y.len:
       var ya = y[j]

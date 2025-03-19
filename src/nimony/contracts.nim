@@ -236,7 +236,7 @@ type
   BasicBlockIdx = distinct int
   Continuation = object
     thenPart, elsePart: BasicBlockIdx
-    newFacts: int
+    conditionalFacts: int
   BasicBlock = object
     indegree, touched: int
     indegreeFacts: Facts
@@ -429,12 +429,12 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
       #echo "PC IS: ", pool.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
-        let newFacts = analyseCondition(c, pc)
+        let conditionalFacts = analyseCondition(c, pc)
         # now 2 goto instructions follow:
         let a = pc +! pc.getInt28
         inc pc
         let b = pc +! pc.getInt28
-        return Continuation(thenPart: toBasicBlock(c, a), elsePart: toBasicBlock(c, b), newFacts: newFacts)
+        return Continuation(thenPart: toBasicBlock(c, a), elsePart: toBasicBlock(c, b), conditionalFacts: conditionalFacts)
       else:
         let kind = pc.stmtKind
         case kind
@@ -484,18 +484,20 @@ proc decAndTest(x: var int): bool {.inline.} =
   dec x
   result = x == 0
 
-proc takeFacts(c: var Context; bb: var BasicBlock; newFacts: int; negate: bool) =
+proc takeFacts(c: var Context; bb: var BasicBlock; conditionalFacts: int; negate: bool) =
   let start = bb.indegreeFacts.len
   if bb.touched == 0:
-    for i in c.facts.len - newFacts ..< c.facts.len:
+    for i in 1 ..< c.facts.len - conditionalFacts:
+      bb.indegreeFacts.add c.facts[i]
+    for i in c.facts.len - conditionalFacts ..< c.facts.len:
       var f = c.facts[i]
       if negate: negateFact(f)
       bb.indegreeFacts.add f
   else:
     # merge the facts:
-    bb.indegreeFacts = merge(c.facts, c.facts.len - newFacts, bb.indegreeFacts, negate)
+    bb.indegreeFacts = merge(c.facts, c.facts.len - conditionalFacts, bb.indegreeFacts, negate)
   inc bb.touched
-  #c.facts.shrink c.facts.len - newFacts
+  #c.facts.shrink c.facts.len - conditionalFacts
 
 proc pushFacts(c: var Context; bb: var BasicBlock) =
   #echo "PUSHING FACTS ", bb.indegreeFacts.len
@@ -520,13 +522,13 @@ proc checkContracts(c: var Context) =
 
     if cont.thenPart > NoBasicBlock:
       let bb = addr(bbs[cont.thenPart])
-      takeFacts(c, bb[], cont.newFacts, false)
+      takeFacts(c, bb[], cont.conditionalFacts, false)
       if decAndTest(bb.indegree):
         current = cont.thenPart
         nextIter = true
     if cont.elsePart > NoBasicBlock:
       let bb = addr(bbs[cont.elsePart])
-      takeFacts(c, bb[], cont.newFacts, true)
+      takeFacts(c, bb[], cont.conditionalFacts, true)
       if decAndTest(bb.indegree):
         if not nextIter:
           current = cont.elsePart
@@ -555,9 +557,19 @@ when isMainModule:
   const test = """
   (stmts
     (var :x.0 . . (i +32) .)
-    (if (elif (le . x.0 +4) (stmts (assert (le . x.0 +9))))
-        (else (stmts (assert (le . +5 x.0)) (assert (le . +1 x.0)))))
+    (if
+      (elif (le . x.0 +4)
+       (stmts
+        (if (elif (true)
+          (stmts
+            (assert (le . x.0 +9))
+          )
+        )
+       )
+      ))
+      (else (stmts (assert (le . +5 x.0)) (assert (le . +1 x.0))))
     )
+    (assert (le . x.0 +6))
   )
   """
   var inp = parse(test)
