@@ -671,10 +671,12 @@ template moveToTopLevel(c: var EContext; mode: TraverseMode; body: typed) =
 
 proc makeLocalProcDeclName(c: var EContext; s: SymId): string =
   result = pool.syms[s]
+  extractBasename(result)
+  result.add "."
+  result.addInt c.localDeclCounters
+  inc c.localDeclCounters
   result.add "."
   result.add c.main
-  result.add "."
-  result.add "local"
 
 proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   c.openMangleScope()
@@ -1627,7 +1629,8 @@ proc expand*(infile: string, bits: int) =
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
-    bits: bits
+    bits: bits,
+    localDeclCounters: 1000
     )
   c.openMangleScope()
 

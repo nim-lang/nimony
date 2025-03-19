@@ -44,6 +44,8 @@ type
     inImpSection*: int
     resultSym*: SymId
 
+    localDeclCounters*: int
+
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId
   inc e.tmpId
