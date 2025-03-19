@@ -321,7 +321,7 @@ proc controlflowTests(overwrite: bool) =
         failure c, t, "controlflow exitcode " & $exitcode, msgs
       let expected = t.changeFileExt(".expected.nif")
       if overwrite:
-        writeFile(dest, msgs)
+        moveFile(dest, expected)
       elif expected.fileExists():
         let expectedOutput = readFile(expected).strip
         let destContent = readFile(dest).strip

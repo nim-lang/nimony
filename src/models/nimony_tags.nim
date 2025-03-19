@@ -158,6 +158,8 @@ type
     TryS = (ord(TryTagId), "try")  ## `try` statement
     RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
     UnpackdeclS = (ord(UnpackdeclTagId), "unpackdecl")  ## unpack var/let/const declaration
+    AssumeS = (ord(AssumeTagId), "assume")  ## `assume` pragma
+    AssertS = (ord(AssertTagId), "assert")  ## `assert` pragma
     StaticstmtS = (ord(StaticstmtTagId), "staticstmt")  ## `static` statement
     BindS = (ord(BindTagId), "bind")  ## `bind` statement
     MixinS = (ord(MixinTagId), "mixin")  ## `mixin` statement
@@ -166,7 +168,7 @@ type
     DeferS = (ord(DeferTagId), "defer")  ## `defer` statement
 
 proc rawTagIsNimonyStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId}
+  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId}
 
 type
   NimonyType* = enum
@@ -274,6 +276,8 @@ type
     NoinitP = (ord(NoinitTagId), "noinit")  ## `noinit` pragma
     RequiresP = (ord(RequiresTagId), "requires")  ## `requires` pragma
     EnsuresP = (ord(EnsuresTagId), "ensures")  ## `ensures` pragma
+    AssumeP = (ord(AssumeTagId), "assume")  ## `assume` pragma
+    AssertP = (ord(AssertTagId), "assert")  ## `assert` pragma
     BuildP = (ord(BuildTagId), "build")  ## `build` pragma
     StringP = (ord(StringTagId), "string")  ## `string` pragma
     ViewP = (ord(ViewTagId), "view")  ## `view` pragma
@@ -282,7 +286,7 @@ type
     ErrorP = (ord(ErrorTagId), "error")  ## `error` pragma
 
 proc rawTagIsNimonyPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {EmitTagId, InlineTagId, NoinlineTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId}
+  raw in {EmitTagId, InlineTagId, NoinlineTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId}
 
 type
   NimonySym* = enum

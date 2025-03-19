@@ -27,12 +27,16 @@ import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, t
  controlflow, inferle, xints
 
 type
+  BasicBlockIdx = distinct int
+  BasicBlock = object
+    indegree, touched: int
+    indegreeFacts: Facts
   Context = object
     cf, dest: TokenBuf
     typeCache: TypeCache
     facts: Facts
     writesTo: seq[SymId]
-    toPropId: Table[SymId, VarId]
+    #toPropId: Table[SymId, VarId]
     startInstr: Cursor
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
@@ -89,13 +93,15 @@ proc `not`(a: ProofRes): ProofRes =
   else:
     Proven
 
+template getVarId(c: var Context; symId: SymId): VarId = VarId(symId) #c.toPropId.getOrDefault(symId)
+
 proc mapSymbol(c: var Context; paramMap: Table[SymId, int]; call: Cursor; symId: SymId): VarId =
   result = VarId(0)
   let pos = paramMap.getOrDefault(symId)
   if pos > 0:
     let arg = call.argAt(pos)
     if arg.kind == Symbol:
-      result = c.toPropId.getOrDefault(arg.symId)
+      result = getVarId(c, arg.symId)
 
 proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
   var r = req
@@ -116,6 +122,7 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
+    skip r # type
     if r.kind == Symbol:
       b = mapSymbol(c, paramMap, call, r.symId)
       inc r
@@ -230,13 +237,9 @@ this bb once all its predecessors have been processed. We keep track of that by
 lookup table that counts the indegree of each bb.
 ]#
 type
-  BasicBlockIdx = distinct int
   Continuation = object
     thenPart, elsePart: BasicBlockIdx
-    newFacts: int
-  BasicBlock = object
-    indegree, touched: int
-    indegreeFacts: Facts
+    conditionalFacts: int
 
 const
   NoBasicBlock = BasicBlockIdx(-1)
@@ -252,110 +255,161 @@ proc toBasicBlock*(c: Context; pc: Cursor): BasicBlockIdx {.inline.} =
 proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx, BasicBlock] =
   result = initTable[BasicBlockIdx, BasicBlock]()
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
+  result[BasicBlockIdx(start)] = BasicBlock(indegree: 0, indegreeFacts: createFacts())
   for i in start..last:
     if c[i].kind == GotoInstr:
       let diff = c[i].getInt28
       # we ignore backward jumps for now:
       if diff > 0:
         let idx = BasicBlockIdx(i+diff)
-        result.mgetOrPut(idx, BasicBlock(indegree: 0)).indegree += 1
+        result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts())).indegree += 1
 
-proc analyseCondition(c: var Context; pc: var Cursor): int =
+proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
+  result = false
+  if pc.exprKind in {AddX, SubX}:
+    inc pc
+    skip pc # type
+    if pc.kind == Symbol:
+      let symId2 = pc.symId
+      fact.b = getVarId(c, symId2)
+      inc pc
+      if pc.kind == IntLit:
+        fact.c = fact.c + createXint(pool.integers[pc.intId])
+        result = true
+        inc pc
+      elif pc.kind == UIntLit:
+        fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+        result = true
+        inc pc
+      else:
+        skip pc
+    else:
+      skip pc
+    skipParRi pc
+  elif pc.kind == Symbol:
+    let symId2 = pc.symId
+    fact.b = getVarId(c, symId2)
+    result = true
+    inc pc
+  elif pc.kind == IntLit:
+    fact.c = fact.c + createXint(pool.integers[pc.intId])
+    result = true
+    inc pc
+  elif pc.kind == UIntLit:
+    fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+    result = true
+    inc pc
+  else:
+    skip pc
+
+proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
   var r = pc
-  var a = InvalidVarId
-  var b = InvalidVarId
-  var cnst = createXint(0'i32)
-  if r.kind == Symbol:
-    a = c.toPropId.getOrDefault(r.symId)
+  result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
+
+  var negations = 0
+  while r.exprKind == NotX:
+    inc negations
+    inc r
+
+  let xk = r.exprKind
+  if xk in {LeX, LtX}:
+    inc r
+    skip r # skip type
+  else:
+    skip pc
+    return result
+
+  if r.kind == IntLit:
+    result.a = VarId(0)
+    result.c = -createXint(pool.integers[r.intId])
+    inc r
+  elif r.kind == UIntLit:
+    result.a = VarId(0)
+    result.c = -createXint(pool.uintegers[r.uintId])
+    inc r
+  elif r.kind == Symbol:
+    result.a = getVarId(c, r.symId)
     inc r
   else:
     skip pc
-    return 0
-  if r.kind == Symbol:
-    b = c.toPropId.getOrDefault(r.symId)
-    inc r
-  elif r.kind == IntLit:
-    cnst = createXint(pool.integers[r.intId])
-    inc r
-  elif r.kind == UIntLit:
-    cnst = createXint(pool.uintegers[r.uintId])
-    inc r
-  elif (let op = r.exprKind; op in {AddX, SubX}):
-    inc r
-    if r.kind == Symbol:
-      b = c.toPropId.getOrDefault(r.symId)
-      inc r
-      if r.kind == IntLit:
-        cnst = createXint(pool.integers[r.intId])
-      elif r.kind == UIntLit:
-        cnst = createXint(pool.uintegers[r.uintId])
-      else:
-        error "expected integer literal but got: ", r
-    else:
-      error "expected symbol but got: ", r
-  let fact = query(a, b, cnst)
+    return result
+  if not rightHandSide(c, r, result):
+    result.a = InvalidVarId
+  # a < b  --> a <= b - 1:
+  if xk == LtX:
+    result.c = result.c - createXint(1'i32)
+  skipParRi r
+
+  while negations > 0:
+    negateFact(result)
+    dec negations
+    skipParRi r
+
+  pc = r
+
+proc analyseCondition(c: var Context; pc: var Cursor): int =
+  let fact = translateCond(c, pc)
   if fact.isValid:
     c.facts.add fact
     result = 1
   else:
     result = 0
-  skipParRi r
-  pc = r
 
 proc addAsgnFact(c: var Context; fact: LeXplusC) =
   # we know that `a <= b + c` and `a >= b + c`:
-  c.facts.add fact
-  c.facts.add fact.geXplusC
+  if fact.isValid:
+    c.facts.add fact
+    c.facts.add fact.geXplusC
 
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
   if pc.kind == Symbol:
-    var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
     let symId = pc.symId
+    var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
     c.writesTo.add symId
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
-    fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
     inc pc
-    if pc.exprKind in {AddX, SubX}:
-      inc pc
-      if pc.kind == Symbol:
-        let symId2 = pc.symId
-        fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
-        inc pc
-        if pc.kind == IntLit:
-          fact.c = createXint(pool.integers[pc.intId])
-          addAsgnFact c, fact
-          inc pc
-        elif pc.kind == UIntLit:
-          fact.c = createXint(pool.uintegers[pc.uintId])
-          addAsgnFact c, fact
-          inc pc
-        else:
-          skip pc
+    if rightHandSide(c, pc, fact):
+      if fact.a == fact.b:
+        variableChangedByDiff(c.facts, fact.a, fact.c)
       else:
-        skip pc
-      skipParRi pc
-    elif pc.kind == Symbol:
-      let symId2 = pc.symId
-      fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
-      addAsgnFact c, fact
-      inc pc
-    elif pc.kind == IntLit:
-      fact.c = createXint(pool.integers[pc.intId])
-      addAsgnFact c, fact
-      inc pc
-    elif pc.kind == UIntLit:
-      fact.c = createXint(pool.uintegers[pc.uintId])
-      addAsgnFact c, fact
-      inc pc
+        invalidateFactsAbout(c.facts, fact.a)
+        addAsgnFact c, fact
     else:
-      skip pc
+      invalidateFactsAbout(c.facts, fact.a)
   else:
     skip pc # skip left-hand-side
     skip pc # skip right-hand-side
   skipParRi pc
 
+proc analyseAssume(c: var Context; pc: var Cursor) =
+  inc pc
+  let fact = translateCond(c, pc)
+  if not fact.isValid:
+    error "invalid assume: ", pc
+  else:
+    c.facts.add fact
+  skipParRi pc
+
+proc analyseAssert(c: var Context; pc: var Cursor) =
+  let orig = pc
+  inc pc
+  let fact = translateCond(c, pc)
+  if not fact.isValid:
+    error "invalid assert: ", orig
+  elif implies(c.facts, fact):
+    for i in 0 ..< c.facts.len:
+      echo c.facts[i]
+    echo "OK ", fact
+  else:
+    for i in 0 ..< c.facts.len:
+      echo c.facts[i]
+    echo "fact canon ", fact
+    error "contract violation: ", orig
+  skipParRi pc
+
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
+  #echo "TRAVERSING BASIC BLOCK"
   var nested = 0
   var pc = pc
   while true:
@@ -387,17 +441,21 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
       #echo "PC IS: ", pool.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
-        let newFacts = analyseCondition(c, pc)
+        let conditionalFacts = analyseCondition(c, pc)
         # now 2 goto instructions follow:
         let a = pc +! pc.getInt28
         inc pc
         let b = pc +! pc.getInt28
-        return Continuation(thenPart: toBasicBlock(c, a), elsePart: toBasicBlock(c, b), newFacts: newFacts)
+        return Continuation(thenPart: toBasicBlock(c, a), elsePart: toBasicBlock(c, b), conditionalFacts: conditionalFacts)
       else:
         let kind = pc.stmtKind
         case kind
         of AsgnS:
           analyseAsgn(c, pc)
+        of AssumeS:
+          analyseAssume(c, pc)
+        of AssertS:
+          analyseAssert(c, pc)
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
           return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
@@ -438,56 +496,64 @@ proc decAndTest(x: var int): bool {.inline.} =
   dec x
   result = x == 0
 
-proc takeFacts(c: var Context; bb: var BasicBlock; newFacts: int; negate: bool) =
+proc takeFacts(c: var Context; bb: var BasicBlock; conditionalFacts: int; negate: bool) =
   let start = bb.indegreeFacts.len
   if bb.touched == 0:
-    for i in c.facts.len - newFacts ..< c.facts.len:
+    for i in 1 ..< c.facts.len - conditionalFacts:
       bb.indegreeFacts.add c.facts[i]
+    for i in c.facts.len - conditionalFacts ..< c.facts.len:
+      var f = c.facts[i]
+      if negate: negateFact(f)
+      bb.indegreeFacts.add f
   else:
     # merge the facts:
-    bb.indegreeFacts = merge(c.facts, c.facts.len - newFacts, bb.indegreeFacts, negate)
+    bb.indegreeFacts = merge(c.facts, c.facts.len - conditionalFacts, bb.indegreeFacts, negate)
   inc bb.touched
-  c.facts.shrink c.facts.len - newFacts
+  #c.facts.shrink c.facts.len - conditionalFacts
 
 proc pushFacts(c: var Context; bb: var BasicBlock) =
+  #echo "PUSHING FACTS ", bb.indegreeFacts.len
+  c.facts.shrink 0
   for i in 0 ..< bb.indegreeFacts.len:
     c.facts.add bb.indegreeFacts[i]
 
 proc checkContracts(c: var Context) =
   var bbs = computeBasicBlocks(c.cf)
   c.startInstr = readonlyCursorAt(c.cf, 0)
-  var pc = c.startInstr
+  var current = BasicBlockIdx(0)
   var nextIter = true
-  while nextIter:
+  var candidates = newSeq[BasicBlockIdx]()
+  while nextIter or candidates.len > 0:
+    if not nextIter:
+      current = candidates.pop()
     nextIter = false
-    # Save facts before analyzing a block
-    let savedFactsLen = c.facts.len
 
+    var pc = readonlyCursorAt(c.cf, current.int)
+    pushFacts(c, bbs[current])
     let cont = traverseBasicBlock(c, pc)
 
     if cont.thenPart > NoBasicBlock:
       let bb = addr(bbs[cont.thenPart])
-      takeFacts(c, bb[], cont.newFacts, false)
+      takeFacts(c, bb[], cont.conditionalFacts, false)
       if decAndTest(bb.indegree):
-        pc = readonlyCursorAt(c.cf, cont.thenPart.int)
-        pushFacts(c, bb[])
+        current = cont.thenPart
         nextIter = true
-    elif cont.elsePart > NoBasicBlock:
+    if cont.elsePart > NoBasicBlock:
       let bb = addr(bbs[cont.elsePart])
-      takeFacts(c, bb[], cont.newFacts, true)
+      takeFacts(c, bb[], cont.conditionalFacts, true)
       if decAndTest(bb.indegree):
-        pc = readonlyCursorAt(c.cf, cont.elsePart.int)
-        pushFacts(c, bb[])
-        nextIter = true
-
-    # If we're done with this branch, restore facts
-    c.facts.shrink(savedFactsLen)
+        if not nextIter:
+          current = cont.elsePart
+          nextIter = true
+        else:
+          candidates.add cont.elsePart
 
 proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   let oldInfos = prepare(input)
   var c = Context(typeCache: createTypeCache(),
     dest: createTokenBuf(500),
-    cf: toControlflow(beginRead input))
+    cf: toControlflow(beginRead input),
+    facts: createFacts())
   freeze c.cf
   #echo "CF IS ", codeListing(c.cf)
   c.typeCache.openScope()
@@ -502,8 +568,34 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
 when isMainModule:
   const test = """
   (stmts
-    (var :x . . (i +32) .)
-    (if (elif (le . x +4) (stmts (requires (le . x +9)) (cmd echo.0 "abc"))))
+    (var :x.0 . . (i +32) .)
+    (if
+      (elif (le . x.0 +4)
+       (stmts
+        (if (elif (true)
+          (stmts
+            (assert (le . x.0 +9))
+          )
+        )
+       )
+      ))
+      (else (stmts (assert (le . +5 x.0)) (assert (le . +1 x.0))))
+    )
+
+    (if
+      (elif (not (le . x.0 +4))
+       (stmts
+        (if (elif (true)
+          (stmts
+            (assert (le . +5 x.0)) (assert (le . +1 x.0))
+          )
+        )
+       )
+      ))
+      (else (stmts (assert (le . x.0 +9))))
+    )
+
+    (assert (le . x.0 +6))
   )
   """
   var inp = parse(test)
