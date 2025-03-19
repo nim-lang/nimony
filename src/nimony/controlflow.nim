@@ -314,6 +314,7 @@ proc trIf(c: var ControlFlow; n: var Cursor; tar: Target) =
     elif k == ElseU:
       inc n
       trStmtOrExpr c, n, tar
+      endings.add c.jmpForw(info) # this is crucial if we use the graph to compute basic blocks
       skipParRi n
     else:
       break
@@ -607,6 +608,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
   if n.substructureKind == ElseU:
     inc n
     trStmtOrExpr c, n, tar
+    endings.add c.jmpForw(n.info) # this is crucial if we use the graph to compute basic blocks
     skipParRi n
   skipParRi n
   for e in endings: c.patch e
