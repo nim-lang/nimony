@@ -14,7 +14,7 @@ type
     hashes: seq[HashEntry]
 
 proc mustRehash(length, counter: int): bool {.inline.} =
-  result = (length * 2 < counter * 3) or (length - counter < 4)
+  result = (length < counter div 2 + counter) or (length - counter < 4)
 
 proc isFilled(a: HashEntry): bool {.inline.} = a.position > 0
 
