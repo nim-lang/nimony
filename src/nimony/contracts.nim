@@ -27,6 +27,10 @@ import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, t
  controlflow, inferle, xints
 
 type
+  BasicBlockIdx = distinct int
+  BasicBlock = object
+    indegree, touched: int
+    indegreeFacts: Facts
   Context = object
     cf, dest: TokenBuf
     typeCache: TypeCache
@@ -233,13 +237,9 @@ this bb once all its predecessors have been processed. We keep track of that by
 lookup table that counts the indegree of each bb.
 ]#
 type
-  BasicBlockIdx = distinct int
   Continuation = object
     thenPart, elsePart: BasicBlockIdx
     conditionalFacts: int
-  BasicBlock = object
-    indegree, touched: int
-    indegreeFacts: Facts
 
 const
   NoBasicBlock = BasicBlockIdx(-1)
@@ -305,6 +305,12 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
 proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
   var r = pc
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
+
+  var negations = 0
+  while r.exprKind == NotX:
+    inc negations
+    inc r
+
   let xk = r.exprKind
   if xk in {LeX, LtX}:
     inc r
@@ -333,6 +339,12 @@ proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
   if xk == LtX:
     result.c = result.c - createXint(1'i32)
   skipParRi r
+
+  while negations > 0:
+    negateFact(result)
+    dec negations
+    skipParRi r
+
   pc = r
 
 proc analyseCondition(c: var Context; pc: var Cursor): int =
@@ -569,6 +581,20 @@ when isMainModule:
       ))
       (else (stmts (assert (le . +5 x.0)) (assert (le . +1 x.0))))
     )
+
+    (if
+      (elif (not (le . x.0 +4))
+       (stmts
+        (if (elif (true)
+          (stmts
+            (assert (le . +5 x.0)) (assert (le . +1 x.0))
+          )
+        )
+       )
+      ))
+      (else (stmts (assert (le . x.0 +9))))
+    )
+
     (assert (le . x.0 +6))
   )
   """
