@@ -134,6 +134,8 @@ proc growImpl(s: var string; newLen: int) =
     else:
       oomHandler newCap
       s.i = EmptyI
+  else:
+    s.i = (newLen shl LenShift) or (s.i and IsAllocatedBit)
 
 proc makeAllocated(s: var string; newLen: int) =
   let len = s.len
