@@ -254,14 +254,14 @@ proc toBasicBlock*(c: Context; pc: Cursor): BasicBlockIdx {.inline.} =
 proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx, BasicBlock] =
   result = initTable[BasicBlockIdx, BasicBlock]()
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
-  result[BasicBlockIdx(start)] = BasicBlock(indegree: 0)
+  result[BasicBlockIdx(start)] = BasicBlock(indegree: 0, indegreeFacts: createFacts())
   for i in start..last:
     if c[i].kind == GotoInstr:
       let diff = c[i].getInt28
       # we ignore backward jumps for now:
       if diff > 0:
         let idx = BasicBlockIdx(i+diff)
-        result.mgetOrPut(idx, BasicBlock(indegree: 0)).indegree += 1
+        result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts())).indegree += 1
 
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
@@ -272,11 +272,11 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
       fact.b = getVarId(c, symId2)
       inc pc
       if pc.kind == IntLit:
-        fact.c = createXint(pool.integers[pc.intId])
+        fact.c = fact.c + createXint(pool.integers[pc.intId])
         result = true
         inc pc
       elif pc.kind == UIntLit:
-        fact.c = createXint(pool.uintegers[pc.uintId])
+        fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
         result = true
         inc pc
       else:
@@ -290,11 +290,11 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     result = true
     inc pc
   elif pc.kind == IntLit:
-    fact.c = createXint(pool.integers[pc.intId])
+    fact.c = fact.c + createXint(pool.integers[pc.intId])
     result = true
     inc pc
   elif pc.kind == UIntLit:
-    fact.c = createXint(pool.uintegers[pc.uintId])
+    fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
     result = true
     inc pc
   else:
@@ -303,14 +303,20 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
 proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
   var r = pc
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
-  if r.exprKind == LeX:
+  let xk = r.exprKind
+  if xk in {LeX, LtX}:
     inc r
     skip r # skip type
-  else:
-    skip pc
-    return result
 
-  if r.kind == Symbol:
+  if r.kind == IntLit:
+    result.a = VarId(0)
+    result.c = -createXint(pool.integers[r.intId])
+    inc r
+  elif r.kind == UIntLit:
+    result.a = VarId(0)
+    result.c = -createXint(pool.uintegers[r.uintId])
+    inc r
+  elif r.kind == Symbol:
     result.a = getVarId(c, r.symId)
     inc r
   else:
@@ -318,6 +324,9 @@ proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
     return result
   if not rightHandSide(c, r, result):
     result.a = InvalidVarId
+  # a < b  --> a <= b - 1:
+  if xk == LtX:
+    result.c = result.c - createXint(1'i32)
   skipParRi r
   pc = r
 
@@ -371,7 +380,9 @@ proc analyseAssert(c: var Context; pc: var Cursor) =
       echo c.facts[i]
     echo "OK ", fact
   else:
-    #echo c.facts.len
+    for i in 0 ..< c.facts.len:
+      echo c.facts[i]
+    echo "fact canon ", fact
     error "contract violation: ", orig
   skipParRi pc
 
@@ -517,7 +528,8 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   let oldInfos = prepare(input)
   var c = Context(typeCache: createTypeCache(),
     dest: createTokenBuf(500),
-    cf: toControlflow(beginRead input))
+    cf: toControlflow(beginRead input),
+    facts: createFacts())
   freeze c.cf
   #echo "CF IS ", codeListing(c.cf)
   c.typeCache.openScope()
@@ -534,7 +546,7 @@ when isMainModule:
   (stmts
     (var :x.0 . . (i +32) .)
     (if (elif (le . x.0 +4) (stmts (assert (le . x.0 +9))))
-        (else (stmts (assert (le . x.0 +19))))
+        (else (stmts (assert (le . +5 x.0))))
     )
   )
   """
