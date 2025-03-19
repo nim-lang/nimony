@@ -262,54 +262,6 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
         let idx = BasicBlockIdx(i+diff)
         result.mgetOrPut(idx, BasicBlock(indegree: 0)).indegree += 1
 
-proc analyseCondition(c: var Context; pc: var Cursor): int =
-  var r = pc
-  var a = InvalidVarId
-  var b = InvalidVarId
-  var cnst = createXint(0'i32)
-  if r.kind == Symbol:
-    a = getVarId(c, r.symId)
-    inc r
-  else:
-    skip pc
-    return 0
-  if r.kind == Symbol:
-    b = getVarId(c, r.symId)
-    inc r
-  elif r.kind == IntLit:
-    cnst = createXint(pool.integers[r.intId])
-    inc r
-  elif r.kind == UIntLit:
-    cnst = createXint(pool.uintegers[r.uintId])
-    inc r
-  elif (let op = r.exprKind; op in {AddX, SubX}):
-    inc r
-    if r.kind == Symbol:
-      b = getVarId(c, r.symId)
-      inc r
-      if r.kind == IntLit:
-        cnst = createXint(pool.integers[r.intId])
-      elif r.kind == UIntLit:
-        cnst = createXint(pool.uintegers[r.uintId])
-      else:
-        error "expected integer literal but got: ", r
-    else:
-      error "expected symbol but got: ", r
-  let fact = query(a, b, cnst)
-  if fact.isValid:
-    c.facts.add fact
-    result = 1
-  else:
-    result = 0
-  skipParRi r
-  pc = r
-
-proc addAsgnFact(c: var Context; fact: LeXplusC) =
-  # we know that `a <= b + c` and `a >= b + c`:
-  if fact.isValid:
-    c.facts.add fact
-    c.facts.add fact.geXplusC
-
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
   if pc.exprKind in {AddX, SubX}:
@@ -347,6 +299,41 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   else:
     skip pc
 
+proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
+  var r = pc
+  result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
+  if r.exprKind == LeX:
+    inc r
+    skip r # skip type
+  else:
+    skip pc
+    return result
+
+  if r.kind == Symbol:
+    result.a = getVarId(c, r.symId)
+    inc r
+  else:
+    skip pc
+    return result
+  if not rightHandSide(c, r, result):
+    result.a = InvalidVarId
+  skipParRi r
+  pc = r
+
+proc analyseCondition(c: var Context; pc: var Cursor): int =
+  let fact = translateCond(c, pc)
+  if fact.isValid:
+    c.facts.add fact
+    result = 1
+  else:
+    result = 0
+
+proc addAsgnFact(c: var Context; fact: LeXplusC) =
+  # we know that `a <= b + c` and `a >= b + c`:
+  if fact.isValid:
+    c.facts.add fact
+    c.facts.add fact.geXplusC
+
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
   if pc.kind == Symbol:
@@ -365,48 +352,23 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
 
 proc analyseAssume(c: var Context; pc: var Cursor) =
   inc pc
-  if pc.exprKind == LeX:
-    inc pc
-    skip pc # skip type
-    if pc.kind == Symbol:
-      let symId = pc.symId
-      var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
-      fact.a = getVarId(c, symId)
-      inc pc
-      if rightHandSide(c, pc, fact):
-        addAsgnFact c, fact
-      skipParRi pc
-    else:
-      skipToEnd pc
+  let fact = translateCond(c, pc)
+  if not fact.isValid:
+    error "invalid assume: ", pc
   else:
-    skip pc
-    skipParRi pc
+    c.facts.add fact
+  skipParRi pc
 
 proc analyseAssert(c: var Context; pc: var Cursor) =
   let orig = pc
   inc pc
-  if pc.exprKind == LeX:
-    inc pc
-    skip pc # skip type
-    if pc.kind == Symbol:
-      let symId = pc.symId
-      var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
-      fact.a = getVarId(c, symId)
-      inc pc
-      if rightHandSide(c, pc, fact):
-        if not fact.isValid:
-          error "invalid assert: ", orig
-        elif implies(c.facts, fact):
-          echo "OK"
-        else:
-          error "contract violation: ", orig
-      else:
-        error "invalid assert: ", orig
-      skipParRi pc
-    else:
-      skipToEnd pc
+  let fact = translateCond(c, pc)
+  if not fact.isValid:
+    error "invalid assert: ", orig
+  elif implies(c.facts, fact):
+    echo "OK"
   else:
-    skip pc
+    error "contract violation: ", orig
   skipParRi pc
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =

@@ -30,10 +30,15 @@ const
   InvalidVarId* = VarId(-1)
 
 proc isValid*(x: LeXplusC): bool {.inline.} =
-  result = x.a != InvalidVarId
+  result = x.a != InvalidVarId and x.b != InvalidVarId
 
 proc len*(f: Facts): int {.inline.} = f.x.len
 proc `[]`*(f: Facts; i: int): lent LeXplusC {.inline.} = f.x[i]
+
+proc `$`*(f: LeXplusC): string =
+  let a = if f.a == VarId(0): "0" else: "v" & $f.a.int
+  let b = if f.b == VarId(0): "0" else: "v" & $f.b.int
+  result = a & " <= " & b & " + " & $f.c
 
 proc shrink*(f: var Facts; newLen: int) {.inline.} =
   f.x.shrink newLen
