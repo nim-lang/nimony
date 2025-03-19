@@ -7,6 +7,7 @@
 ## Infer `le` ("less or equal") properties for compile-time array index checking
 ## and also for "not nil" checking.
 
+import std/assertions
 import xints
 
 type
@@ -173,6 +174,7 @@ proc complexImplies(facts: Facts; v: LeXplusC): bool =
   traverseAllPaths(facts, v.a, v, result)
 
 proc implies*(facts: Facts; v: LeXplusC): bool =
+  assert v.isValid
   result = simpleImplies(facts, v) or complexImplies(facts, v)
 
 proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =

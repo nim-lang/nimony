@@ -32,7 +32,7 @@ type
     typeCache: TypeCache
     facts: Facts
     writesTo: seq[SymId]
-    toPropId: Table[SymId, VarId]
+    #toPropId: Table[SymId, VarId]
     startInstr: Cursor
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
@@ -89,13 +89,15 @@ proc `not`(a: ProofRes): ProofRes =
   else:
     Proven
 
+template getVarId(c: var Context; symId: SymId): VarId = VarId(symId) #c.toPropId.getOrDefault(symId)
+
 proc mapSymbol(c: var Context; paramMap: Table[SymId, int]; call: Cursor; symId: SymId): VarId =
   result = VarId(0)
   let pos = paramMap.getOrDefault(symId)
   if pos > 0:
     let arg = call.argAt(pos)
     if arg.kind == Symbol:
-      result = c.toPropId.getOrDefault(arg.symId)
+      result = getVarId(c, arg.symId)
 
 proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
   var r = req
@@ -266,13 +268,13 @@ proc analyseCondition(c: var Context; pc: var Cursor): int =
   var b = InvalidVarId
   var cnst = createXint(0'i32)
   if r.kind == Symbol:
-    a = c.toPropId.getOrDefault(r.symId)
+    a = getVarId(c, r.symId)
     inc r
   else:
     skip pc
     return 0
   if r.kind == Symbol:
-    b = c.toPropId.getOrDefault(r.symId)
+    b = getVarId(c, r.symId)
     inc r
   elif r.kind == IntLit:
     cnst = createXint(pool.integers[r.intId])
@@ -283,7 +285,7 @@ proc analyseCondition(c: var Context; pc: var Cursor): int =
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
     if r.kind == Symbol:
-      b = c.toPropId.getOrDefault(r.symId)
+      b = getVarId(c, r.symId)
       inc r
       if r.kind == IntLit:
         cnst = createXint(pool.integers[r.intId])
@@ -304,8 +306,9 @@ proc analyseCondition(c: var Context; pc: var Cursor): int =
 
 proc addAsgnFact(c: var Context; fact: LeXplusC) =
   # we know that `a <= b + c` and `a >= b + c`:
-  c.facts.add fact
-  c.facts.add fact.geXplusC
+  if fact.isValid:
+    c.facts.add fact
+    c.facts.add fact.geXplusC
 
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
@@ -313,7 +316,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     inc pc
     if pc.kind == Symbol:
       let symId2 = pc.symId
-      fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
+      fact.b = getVarId(c, symId2)
       inc pc
       if pc.kind == IntLit:
         fact.c = createXint(pool.integers[pc.intId])
@@ -330,7 +333,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     skipParRi pc
   elif pc.kind == Symbol:
     let symId2 = pc.symId
-    fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
+    fact.b = getVarId(c, symId2)
     result = true
     inc pc
   elif pc.kind == IntLit:
@@ -351,7 +354,7 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
     var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
     c.writesTo.add symId
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
-    fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
+    fact.a = getVarId(c, symId)
     inc pc
     if rightHandSide(c, pc, fact):
       addAsgnFact c, fact
@@ -364,10 +367,11 @@ proc analyseAssume(c: var Context; pc: var Cursor) =
   inc pc
   if pc.exprKind == LeX:
     inc pc
+    skip pc # skip type
     if pc.kind == Symbol:
       let symId = pc.symId
       var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
-      fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
+      fact.a = getVarId(c, symId)
       inc pc
       if rightHandSide(c, pc, fact):
         addAsgnFact c, fact
@@ -383,13 +387,18 @@ proc analyseAssert(c: var Context; pc: var Cursor) =
   inc pc
   if pc.exprKind == LeX:
     inc pc
+    skip pc # skip type
     if pc.kind == Symbol:
       let symId = pc.symId
       var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
-      fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
+      fact.a = getVarId(c, symId)
       inc pc
       if rightHandSide(c, pc, fact):
-        if not implies(c.facts, fact):
+        if not fact.isValid:
+          error "invalid assert: ", orig
+        elif implies(c.facts, fact):
+          echo "OK"
+        else:
           error "contract violation: ", orig
       else:
         error "invalid assert: ", orig
@@ -398,7 +407,7 @@ proc analyseAssert(c: var Context; pc: var Cursor) =
       skipToEnd pc
   else:
     skip pc
-    skipParRi pc
+  skipParRi pc
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
   var nested = 0
@@ -551,8 +560,8 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
 when isMainModule:
   const test = """
   (stmts
-    (var :x . . (i +32) .)
-    (if (elif (le . x +4) (stmts (assert (le . x +9)) (cmd echo.0 "abc"))))
+    (var :x.0 . . (i +32) .)
+    (if (elif (le . x.0 +4) (stmts (assert (le . x.0 +9)))))
   )
   """
   var inp = parse(test)
