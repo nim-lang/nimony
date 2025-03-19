@@ -660,6 +660,23 @@ proc traverseProcBody(c: var EContext; n: var Cursor) =
   else:
     traverseStmt c, n, TraverseAll
 
+template moveToTopLevel(c: var EContext; mode: TraverseMode; body: typed) =
+  if mode == TraverseAll:
+    swap c.dest, c.pending
+    body
+    swap c.dest, c.pending
+  else:
+    body
+
+proc makeLocalProcDeclName(c: var EContext; s: SymId): string =
+  result = pool.syms[s]
+  extractBasename(result)
+  result.add "."
+  result.addInt c.localDeclCounters
+  inc c.localDeclCounters
+  result.add "."
+  result.add c.main
+
 proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   c.openMangleScope()
   var dst = createTokenBuf(50)
@@ -673,8 +690,15 @@ proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   inc n
   let (s, sinfo) = getSymDef(c, n)
 
-  # namePos
-  c.dest.add symdefToken(s, sinfo)
+  if mode == TraverseAll:
+    # namePos
+    let newName = makeLocalProcDeclName(c, s)
+    let newSymId = pool.syms.getOrIncl(newName)
+    c.dest.add symdefToken(newSymId, sinfo)
+    registerMangleInParent(c, s, newName)
+  else:
+    # namePos
+    c.dest.add symdefToken(s, sinfo)
   c.offer s
 
   var isGeneric = false
@@ -1431,7 +1455,8 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
     of TryS, RaiseS:
       error c, "BUG: not implemented: ", n
     of FuncS, ProcS, ConverterS, MethodS:
-      traverseProc c, n, mode
+      moveToTopLevel(c, mode):
+        traverseProc c, n, mode
     of MacroS, TemplateS, IncludeS, ImportS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
@@ -1608,7 +1633,8 @@ proc expand*(infile: string, bits: int) =
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
-    bits: bits
+    bits: bits,
+    localDeclCounters: 1000
     )
   c.openMangleScope()
 

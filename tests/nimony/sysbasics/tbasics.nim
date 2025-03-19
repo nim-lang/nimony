@@ -68,3 +68,49 @@ discard """
 """
 
 discard r"""136t54321"""
+
+import std/syncio
+
+proc classify1(s: string) =
+  echo s
+
+classify1("9123345")
+
+
+block:
+  proc classify(s: string) =
+    echo s
+
+  classify("9123345")
+  block:
+    proc classify2(s: string) =
+      echo s
+
+    classify2("9123345")
+
+block:
+  proc classify2(s: string) =
+    echo s
+
+  classify2("9123345")
+
+block:
+  proc classify(s: string) =
+    echo s
+
+  classify("9123345")
+
+block:
+  block:
+    proc classify(s: string) =
+      echo s
+
+    classify("9123345")
+
+proc foo2() =
+  proc classify(s: string) =
+    echo s
+
+  classify("9123345")
+
+foo2()

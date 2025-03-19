@@ -47,6 +47,9 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto(dest, n):
     let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
     if isConcrete:
+      let symId = r.name.symId
+      if isLocalProcDecl(symId):
+        c.typeCache.registerLocal(symId, r.kind, r.params)
       rememberConstRefParams c2, r.params
       tr c2, dest, n
     else:
