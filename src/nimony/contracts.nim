@@ -254,6 +254,7 @@ proc toBasicBlock*(c: Context; pc: Cursor): BasicBlockIdx {.inline.} =
 proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx, BasicBlock] =
   result = initTable[BasicBlockIdx, BasicBlock]()
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
+  result[BasicBlockIdx(start)] = BasicBlock(indegree: 0)
   for i in start..last:
     if c[i].kind == GotoInstr:
       let diff = c[i].getInt28
@@ -366,12 +367,16 @@ proc analyseAssert(c: var Context; pc: var Cursor) =
   if not fact.isValid:
     error "invalid assert: ", orig
   elif implies(c.facts, fact):
-    echo "OK"
+    for i in 0 ..< c.facts.len:
+      echo c.facts[i]
+    echo "OK ", fact
   else:
+    #echo c.facts.len
     error "contract violation: ", orig
   skipParRi pc
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
+  #echo "TRAVERSING BASIC BLOCK"
   var nested = 0
   var pc = pc
   while true:
@@ -467,41 +472,44 @@ proc takeFacts(c: var Context; bb: var BasicBlock; newFacts: int; negate: bool) 
     # merge the facts:
     bb.indegreeFacts = merge(c.facts, c.facts.len - newFacts, bb.indegreeFacts, negate)
   inc bb.touched
-  c.facts.shrink c.facts.len - newFacts
+  #c.facts.shrink c.facts.len - newFacts
 
 proc pushFacts(c: var Context; bb: var BasicBlock) =
+  #echo "PUSHING FACTS ", bb.indegreeFacts.len
+  c.facts.shrink 0
   for i in 0 ..< bb.indegreeFacts.len:
     c.facts.add bb.indegreeFacts[i]
 
 proc checkContracts(c: var Context) =
   var bbs = computeBasicBlocks(c.cf)
   c.startInstr = readonlyCursorAt(c.cf, 0)
-  var pc = c.startInstr
+  var current = BasicBlockIdx(0)
   var nextIter = true
-  while nextIter:
+  var candidates = newSeq[BasicBlockIdx]()
+  while nextIter or candidates.len > 0:
+    if not nextIter:
+      current = candidates.pop()
     nextIter = false
-    # Save facts before analyzing a block
-    let savedFactsLen = c.facts.len
 
+    var pc = readonlyCursorAt(c.cf, current.int)
+    pushFacts(c, bbs[current])
     let cont = traverseBasicBlock(c, pc)
 
     if cont.thenPart > NoBasicBlock:
       let bb = addr(bbs[cont.thenPart])
       takeFacts(c, bb[], cont.newFacts, false)
       if decAndTest(bb.indegree):
-        pc = readonlyCursorAt(c.cf, cont.thenPart.int)
-        pushFacts(c, bb[])
+        current = cont.thenPart
         nextIter = true
-    elif cont.elsePart > NoBasicBlock:
+    if cont.elsePart > NoBasicBlock:
       let bb = addr(bbs[cont.elsePart])
       takeFacts(c, bb[], cont.newFacts, true)
       if decAndTest(bb.indegree):
-        pc = readonlyCursorAt(c.cf, cont.elsePart.int)
-        pushFacts(c, bb[])
-        nextIter = true
-
-    # If we're done with this branch, restore facts
-    c.facts.shrink(savedFactsLen)
+        if not nextIter:
+          current = cont.elsePart
+          nextIter = true
+        else:
+          candidates.add cont.elsePart
 
 proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   let oldInfos = prepare(input)
@@ -523,7 +531,9 @@ when isMainModule:
   const test = """
   (stmts
     (var :x.0 . . (i +32) .)
-    (if (elif (le . x.0 +4) (stmts (assert (le . x.0 +9)))))
+    (if (elif (le . x.0 +4) (stmts (assert (le . x.0 +9))))
+        (else (stmts (assert (le . x.0 +19))))
+    )
   )
   """
   var inp = parse(test)
