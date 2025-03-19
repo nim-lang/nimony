@@ -307,7 +307,8 @@ proc addAsgnFact(c: var Context; fact: LeXplusC) =
   c.facts.add fact
   c.facts.add fact.geXplusC
 
-proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC) =
+proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
+  result = false
   if pc.exprKind in {AddX, SubX}:
     inc pc
     if pc.kind == Symbol:
@@ -316,11 +317,11 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC) =
       inc pc
       if pc.kind == IntLit:
         fact.c = createXint(pool.integers[pc.intId])
-        addAsgnFact c, fact
+        result = true
         inc pc
       elif pc.kind == UIntLit:
         fact.c = createXint(pool.uintegers[pc.uintId])
-        addAsgnFact c, fact
+        result = true
         inc pc
       else:
         skip pc
@@ -330,15 +331,15 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC) =
   elif pc.kind == Symbol:
     let symId2 = pc.symId
     fact.b = c.toPropId.getOrDefault(symId2, InvalidVarId)
-    addAsgnFact c, fact
+    result = true
     inc pc
   elif pc.kind == IntLit:
     fact.c = createXint(pool.integers[pc.intId])
-    addAsgnFact c, fact
+    result = true
     inc pc
   elif pc.kind == UIntLit:
     fact.c = createXint(pool.uintegers[pc.uintId])
-    addAsgnFact c, fact
+    result = true
     inc pc
   else:
     skip pc
@@ -352,7 +353,8 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
     fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
     inc pc
-    rightHandSide(c, pc, fact)
+    if rightHandSide(c, pc, fact):
+      addAsgnFact c, fact
   else:
     skip pc # skip left-hand-side
     skip pc # skip right-hand-side
@@ -367,22 +369,36 @@ proc analyseAssume(c: var Context; pc: var Cursor) =
       var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
       fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
       inc pc
-      rightHandSide(c, pc, fact)
+      if rightHandSide(c, pc, fact):
+        addAsgnFact c, fact
+      skipParRi pc
     else:
       skipToEnd pc
   else:
     skip pc
-  skipParRi pc
+    skipParRi pc
 
 proc analyseAssert(c: var Context; pc: var Cursor) =
+  let orig = pc
   inc pc
   if pc.exprKind == LeX:
     inc pc
-    # XXX To implement
-    skipToEnd pc
+    if pc.kind == Symbol:
+      let symId = pc.symId
+      var fact = query(InvalidVarId, InvalidVarId, createXint(0'i32))
+      fact.a = c.toPropId.getOrDefault(symId, InvalidVarId)
+      inc pc
+      if rightHandSide(c, pc, fact):
+        if not implies(c.facts, fact):
+          error "contract violation: ", orig
+      else:
+        error "invalid assert: ", orig
+      skipParRi pc
+    else:
+      skipToEnd pc
   else:
     skip pc
-  skipParRi pc
+    skipParRi pc
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
   var nested = 0
@@ -536,7 +552,7 @@ when isMainModule:
   const test = """
   (stmts
     (var :x . . (i +32) .)
-    (if (elif (le . x +4) (stmts (requires (le . x +9)) (cmd echo.0 "abc"))))
+    (if (elif (le . x +4) (stmts (assert (le . x +9)) (cmd echo.0 "abc"))))
   )
   """
   var inp = parse(test)
