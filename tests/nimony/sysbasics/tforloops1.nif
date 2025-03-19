@@ -250,7 +250,40 @@
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 20,83,tests/nimony/sysbasics/tforloops1.nim " j ")) 2,1
       (stmts
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 27,83,tests/nimony/sysbasics/tforloops1.nim j.3)) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) 4,22
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,84
+ (block . 2,1
+  (stmts 4
+   (for 7
+    (infix \2E.<.0.sysvq0asl ~2 +1 4 +3)
+    (unpackflat
+     (let :i.9 . . 13,1,lib/std/system/iterators.nim
+      (i -1) .)) ~2,1
+    (stmts 4
+     (for 7
+      (infix \2E.<.0.sysvq0asl ~2 +2 4 +4)
+      (unpackflat
+       (let :j.4 . . 13,1,lib/std/system/iterators.nim
+        (i -1) .)) ~2,1
+      (stmts 4
+       (let :a.4 . . 15,128,lib/std/system.nim
+        (i +64) 6
+        (add 13,1,lib/std/system/iterators.nim
+         (i -1) ~2 i.9 2 j.4)) 4,1
+       (var :sum.0 . . 9,~86
+        (i -1) 11 +0) 4,2
+       (for 7
+        (infix \2E.<.0.sysvq0asl ~2 +1 4 j.4)
+        (unpackflat
+         (let :k.0 . . 13,1,lib/std/system/iterators.nim
+          (i -1) .)) ~2,1
+        (stmts 4
+         (asgn ~4 sum.0 6
+          (add 1,~88
+           (i -1) ~4 sum.0 2 a.4)))) 2,104,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 11,92,tests/nimony/sysbasics/tforloops1.nim sum.0)) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) 4,22
  (proc :inc.0.tfo6yv57p . 0,276,lib/std/system.nim .
   (at inc.1.sysvq0asl 19,~4
    (i -1)) 21,276,lib/std/system.nim

@@ -188,8 +188,11 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       e.dest.add c
       inc c
       e.breaks.add SymId(0)
+      e.dest.add c
+      inc c
       inlineLoopBody(e, c, mapping)
       discard e.breaks.pop
+      takeParRi(e, c)
     of StmtsS:
       if fromForloop:
         inc c
