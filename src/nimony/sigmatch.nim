@@ -1172,25 +1172,27 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
         result = NobodyWins
 
 type ParamsInfo = object
+  len: int
   names: Table[StrId, int]
-  decls: seq[Local]
+  isVarargs: seq[bool] # could also use a set or store the decls and check after
 
 proc buildParamsInfo(params: Cursor): ParamsInfo =
-  result = ParamsInfo(names: initTable[StrId, int]())
+  result = ParamsInfo(names: initTable[StrId, int](), len: 0)
   var f = params
   assert f.isParamsTag
   inc f # "params"
   while f.kind != ParRi:
     assert f.symKind == ParamY
     var param = takeLocal(f, SkipFinalParRi)
-    let pos = result.decls.len
-    result.decls.add param
+    let isVarargs = param.typ.tagEnum == VarargsTagId
+    result.isVarargs.add isVarargs
     let name = getIdent(param.name)
-    result.names[name] = pos
+    result.names[name] = result.len
+    inc result.len
 
 proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[Item] =
   let params = buildParamsInfo(paramsCursor)
-  var positions = newSeq[int](params.decls.len)
+  var positions = newSeq[int](params.len)
   for i in 0 ..< positions.len: positions[i] = -1
   var toOrder: seq[tuple[cont: bool, arg: Item]] = @[]
   var inVarargs = false
@@ -1211,7 +1213,7 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
         m.error0 NameNotFound
         swap m.pos, ai
         return
-    elif fi >= params.decls.len:
+    elif fi >= params.len:
       swap m.pos, ai
       m.error0 TooManyArguments
       swap m.pos, ai
@@ -1227,14 +1229,14 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
       swap m.pos, ai
       return
     toOrder.add (cont: false, arg: arg)
-    if params.decls[fi].typ.tagEnum != VarargsTagId:
+    if not params.isVarargs[fi]:
       fi = nextFi # will be checked on the next arg if it went over
     else:
       inVarargs = true
     inc ai
   result = newSeqOfCap[Item](args.len)
   fi = 0
-  while fi < params.decls.len:
+  while fi < params.len:
     ai = positions[fi]
     if ai < 0:
       # does not fail early here for missing default value
