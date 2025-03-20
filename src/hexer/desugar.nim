@@ -225,9 +225,6 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case size
   of 1, 2, 4, 8:
     case kind
-    of CardX:
-      # XXX needs countBits compilerproc
-      raiseAssert("unimplemented")
     of LtSetX:
       copyIntoKind dest, AndX, info:
         addTypedOp dest, EqX, cType, info:
@@ -283,9 +280,6 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
       raiseAssert("unreachable")
   else:
     case kind
-    of CardX:
-      # XXX originally implemented as cardSet compilerproc
-      raiseAssert("unimplemented")
     of LtSetX, LeSetX:
       dest.add parLeToken(ExprX, info)
       let resValue = [parLeToken(TrueX, info), parRiToken(info)]
@@ -387,6 +381,45 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if useTemp:
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
+
+proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n
+  let typ = n
+  if typ.typeKind != SetT:
+    error "expected set type for set op", n
+  var baseType = typ
+  inc baseType
+  var argsBuf = createTokenBuf(16)
+  swap dest, argsBuf
+  skip n # nothing to do with set type
+  let aStart = dest.len
+  tr(c, dest, n)
+  swap dest, argsBuf
+  skipParRi n
+  let a = cursorAt(argsBuf, aStart) # no temp needed
+  var err = false
+  let size = asSigned(bitsetSizeInBytes(baseType), err)
+  assert not err
+  case size
+  of 1, 2:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("countBits32.0." & SystemModuleSuffix), info)
+      addUIntTypedOp dest, CastX, 32, info:
+        dest.addSubtree a
+  of 4:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("countBits32.0." & SystemModuleSuffix), info)
+      dest.addSubtree a
+  of 8:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("countBits64.0." & SystemModuleSuffix), info)
+      dest.addSubtree a
+  else:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("cardSet.0." & SystemModuleSuffix), info)
+      dest.arrayToPointer(a, info)
+      dest.addIntLit(size, info)
 
 proc genSingleInclSmall(dest: var TokenBuf; s, elem: Cursor; size: int; info: PackedLineInfo) =
   let bits = size * 8
@@ -673,8 +706,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trSons(c, dest, n)
     of SetConstrX:
       genSetConstr(c, dest, n)
-    of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
+    of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX:
       genSetOp(c, dest, n)
+    of CardX:
+      genCard(c, dest, n)
     of TypeofX:
       takeTree dest, n
     of DdotX:
