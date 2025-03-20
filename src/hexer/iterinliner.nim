@@ -420,11 +420,47 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
   inc e.instId
   inlineIterator(e, forStmt)
 
-  e.dest.addParRi()
-  e.dest.addParRi()
+  discard e.breaks.pop()
+
+  e.dest.addParRi() # stmts
+  e.dest.addParRi() # block
 
   skip c
 
+proc transformLoopBody(e: var EContext; c: var Cursor) =
+  let loopBodyHasContinueStmt = hasContinueStmt(c)
+  if loopBodyHasContinueStmt:
+    let lab = pool.syms.getOrIncl("continueLabel." & $getTmpId(e))
+    e.dest.add tagToken($BlockS, c.info)
+    e.dest.add symdefToken(lab, c.info)
+    e.dest.add tagToken("stmts", c.info)
+    e.continues.add lab
+
+  transformStmt(e, c)
+
+  if loopBodyHasContinueStmt:
+    discard e.continues.pop()
+    e.dest.addParRi() # stmts
+    e.dest.addParRi() # block
+
+proc transformWhileStmt(e: var EContext; c: var Cursor) =
+  let lab = pool.syms.getOrIncl("whileStmtLabel." & $getTmpId(e))
+  e.dest.add tagToken($BlockS, c.info)
+  e.dest.add symdefToken(lab, c.info)
+  e.dest.add tagToken("stmts", c.info)
+
+  e.breaks.add lab
+  e.dest.add c
+  inc c
+
+  transformStmt(e, c) # condition
+  transformLoopBody(e, c)
+  takeParRi(e, c)
+
+  discard e.breaks.pop()
+
+  e.dest.addParRi() # stmts
+  e.dest.addParRi() # block
 
 proc transformStmt(e: var EContext; c: var Cursor) =
   case c.kind
@@ -461,6 +497,21 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       for i in 0..<LocalValuePos:
         takeTree(e, c)
       transformStmt(e, c)
+      takeParRi(e, c)
+    of WhileS:
+      transformWhileStmt(e, c)
+    of BreakS:
+      transformBreakStmt(e, c)
+    of ContinueS:
+      transformContinueStmt(e, c)
+    of BlockS:
+      e.dest.add c
+      inc c
+      e.breaks.add SymId(0)
+      e.dest.add c
+      inc c
+      transformStmt(e, c)
+      discard e.breaks.pop
       takeParRi(e, c)
     else:
       e.dest.add c
