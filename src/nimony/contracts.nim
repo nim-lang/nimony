@@ -302,7 +302,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   else:
     skip pc
 
-proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
+proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXplusC =
   var r = pc
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
 
@@ -313,6 +313,10 @@ proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
 
   let xk = r.exprKind
   if xk in {LeX, LtX}:
+    inc r
+    skip r # skip type
+  elif xk == EqX:
+    wasEquality = true
     inc r
     skip r # skip type
   else:
@@ -348,10 +352,15 @@ proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
   pc = r
 
 proc analyseCondition(c: var Context; pc: var Cursor): int =
-  let fact = translateCond(c, pc)
+  var wasEquality = false
+  let fact = translateCond(c, pc, wasEquality)
   if fact.isValid:
     c.facts.add fact
-    result = 1
+    if wasEquality:
+      c.facts.add fact.geXplusC
+      result = 2
+    else:
+      result = 1
   else:
     result = 0
 
@@ -384,26 +393,36 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
 
 proc analyseAssume(c: var Context; pc: var Cursor) =
   inc pc
-  let fact = translateCond(c, pc)
+  var wasEquality = false
+  let fact = translateCond(c, pc, wasEquality)
   if not fact.isValid:
     error "invalid assume: ", pc
   else:
     c.facts.add fact
+    if wasEquality:
+      c.facts.add fact.geXplusC
   skipParRi pc
 
 proc analyseAssert(c: var Context; pc: var Cursor) =
   let orig = pc
   inc pc
-  let fact = translateCond(c, pc)
+  var wasEquality = false
+  let fact = translateCond(c, pc, wasEquality)
   if not fact.isValid:
     error "invalid assert: ", orig
   elif implies(c.facts, fact):
-    for i in 0 ..< c.facts.len:
-      echo c.facts[i]
-    echo "OK ", fact
+    #for i in 0 ..< c.facts.len:
+    #  echo c.facts[i]
+    if wasEquality:
+      if implies(c.facts, fact.geXplusC):
+        echo "OK ", fact
+      else:
+        echo "BAD ", fact
+    else:
+      echo "OK ", fact
   else:
-    for i in 0 ..< c.facts.len:
-      echo c.facts[i]
+    #for i in 0 ..< c.facts.len:
+    #  echo c.facts[i]
     echo "fact canon ", fact
     error "contract violation: ", orig
   skipParRi pc
@@ -473,7 +492,17 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           inc nested
           # proceed with its value here
         of NoStmt:
-          raiseAssert "BUG: unknown statement: " & toString(pc, false)
+          if pc.pragmaKind == ErrorP:
+            inc pc
+            if pc.kind == StringLit:
+              echo "CHECKPOINT ", pool.strings[pc.litId]
+              inc pc
+              skipParRi pc
+            else:
+              raiseAssert "expected string literal after error pragma"
+              skipToEnd pc
+          else:
+            raiseAssert "BUG: unknown statement: " & toString(pc, false)
         of DiscardS:
           inc pc
           inc nested
@@ -574,6 +603,7 @@ when isMainModule:
        (stmts
         (if (elif (true)
           (stmts
+            (error "reached point 1")
             (assert (le . x.0 +9))
           )
         )
