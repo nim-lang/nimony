@@ -851,10 +851,10 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
             cands.addUnique FnCandidate(kind: ConceptProcY, sym: prc.symId, typ: d)
         skip ops
 
-proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCandidates; args: openArray[Item], genericArgs: Cursor) =
+proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCandidates; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
   for candidate in candidates.a:
     m.add createMatch(addr c)
-    sigmatch(m[^1], candidate, args, genericArgs)
+    sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
@@ -955,7 +955,7 @@ type
     callNode: PackedToken
     dest, genericDest: TokenBuf
     args: seq[Item]
-    hasGenericArgs: bool
+    hasGenericArgs, hasNamedArgs: bool
     flags: set[SemFlag]
     candidates: FnCandidates
     source: TransformedCallSource
@@ -1292,11 +1292,11 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         if typ.typeKind == ParamsT:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: typ)
           m.add createMatch(addr c)
-          sigmatch(m[^1], candidate, cs.args, genericArgs)
+          sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
       else:
         buildErr c, cs.fn.n.info, "`choice` node does not contain `symbol`"
       inc f
-    considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
+    considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs, cs.hasNamedArgs)
     if m.len == 0:
       # symchoice contained no callable symbols and no typebound ops
       assert cs.fnName != StrId(0)
@@ -1318,8 +1318,8 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     if typ.typeKind == ParamsT:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ)
       m.add createMatch(addr c)
-      sigmatch(m[^1], candidate, cs.args, genericArgs)
-      considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs)
+      sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
+      considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs, cs.hasNamedArgs)
     elif sym != SymId(0):
       # non-callable symbol, look up all overloads
       assert cs.fnName != StrId(0)
@@ -1626,7 +1626,14 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
   while it.n.kind != ParRi:
     var arg = Item(n: it.n, typ: c.types.autoType)
     argIndexes.add c.dest.len
+    let named = arg.n.substructureKind == VvU
+    if named:
+      cs.hasNamedArgs = true
+      takeToken c, arg.n
+      takeTree c, arg.n
     semExpr c, arg, {AllowEmpty}
+    if named:
+      takeParRi c, arg.n
     if arg.typ.typeKind == UntypedT:
       skipSemCheck = true
     # scope extension: If the type is Typevar and it has attached

@@ -8,7 +8,7 @@ import std / [sets, tables, assertions]
 
 import bitabs, nifreader, nifstreams, nifcursors, lineinfos
 
-import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, symparser
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, symparser, asthelpers
 import ".." / models / tags
 
 type
@@ -39,6 +39,8 @@ type
     CouldNotInferTypeVar
     TooManyArguments
     TooFewArguments
+    NameNotFound
+    ParamAlreadyGiven
 
   MatchError* = object
     info: PackedLineInfo
@@ -135,6 +137,10 @@ proc getErrorMsg*(m: Match): string =
     "too many arguments"
   of TooFewArguments:
     "too few arguments"
+  of NameNotFound:
+    "named argument not found"
+  of ParamAlreadyGiven:
+    "parameter already given"
 
 proc addErrorMsg*(dest: var string; m: Match) =
   assert m.err
@@ -988,9 +994,13 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
       if i >= args.len: break
     if args[i].n.kind == DotToken:
       # default parameter
-      assert param.val.kind != DotToken
-      assert not isVarargs
-      m.args.add dotToken(param.val.info)
+      if param.val.kind != DotToken:
+        m.args.add dotToken(param.val.info)
+      else:
+        # can end up here after named param ordering which doesn't check if params have default values
+        # XXX error message should include param name
+        m.error0 TooFewArguments
+        break
     else:
       m.argInfo = args[i].n.info
       singleArg m, ftyp, args[i]
@@ -1161,8 +1171,89 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
       else:
         result = NobodyWins
 
-# How to implement named parameters: In a preprocessing step
-# The signature is matched against the named parameters. The
-# call is then reordered to `f`'s needs. This keeps the common case fast
-# where no named parameters are used at all.
+type ParamsInfo = object
+  names: Table[StrId, int]
+  decls: seq[Local]
 
+proc buildParamsInfo(params: Cursor): ParamsInfo =
+  result = ParamsInfo(names: initTable[StrId, int]())
+  var f = params
+  assert f.isParamsTag
+  inc f # "params"
+  while f.kind != ParRi:
+    assert f.symKind == ParamY
+    var param = takeLocal(f, SkipFinalParRi)
+    let pos = result.decls.len
+    result.decls.add param
+    let name = getIdent(param.name)
+    result.names[name] = pos
+
+proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[Item] =
+  let params = buildParamsInfo(paramsCursor)
+  var positions = newSeq[int](params.decls.len)
+  for i in 0 ..< positions.len: positions[i] = -1
+  var toOrder: seq[tuple[cont: bool, arg: Item]] = @[]
+  var inVarargs = false
+  var fi = 0
+  var ai = 0
+  while ai < args.len:
+    var arg = args[ai]
+    # original nim uses this for next positional argument regardless of named arg:
+    let nextFi = fi + 1
+    if arg.n.substructureKind == VvU:
+      inc arg.n
+      let name = getIdent(arg.n) # XXX takeIdent
+      if name in params.names:
+        fi = params.names[name]
+        inVarargs = false
+      else:
+        swap m.pos, ai
+        m.error0 NameNotFound
+        swap m.pos, ai
+        return
+    elif fi >= params.decls.len:
+      swap m.pos, ai
+      m.error0 TooManyArguments
+      swap m.pos, ai
+      return
+    if inVarargs:
+      assert toOrder.len != 0
+      toOrder[^1].cont = true
+    elif positions[fi] < 0:
+      positions[fi] = toOrder.len
+    else:
+      swap m.pos, ai
+      m.error0 ParamAlreadyGiven
+      swap m.pos, ai
+      return
+    toOrder.add (cont: false, arg: arg)
+    if params.decls[fi].typ.tagEnum != VarargsTagId:
+      fi = nextFi # will be checked on the next arg if it went over
+    else:
+      inVarargs = true
+    inc ai
+  result = newSeqOfCap[Item](args.len)
+  fi = 0
+  while fi < params.decls.len:
+    ai = positions[fi]
+    if ai < 0:
+      # does not fail early here for missing default value
+      m.insertedParam = true
+      result.add Item(n: emptyNode(m.context[]), typ: m.context.types.autoType)
+    else:
+      while true:
+        result.add toOrder[ai].arg
+        if toOrder[ai].cont: 
+          inc ai
+          assert ai < toOrder.len
+        else:
+          break
+    inc fi
+
+proc sigmatchNamedArgs*(m: var Match; fn: FnCandidate; args: openArray[Item];
+                        explicitTypeVars: Cursor;
+                        hasNamedArgs: bool) =
+  if hasNamedArgs:
+    sigmatch m, fn, orderArgs(m, fn.typ, args), explicitTypeVars
+  else:
+    sigmatch m, fn, args, explicitTypeVars
