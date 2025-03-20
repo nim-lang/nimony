@@ -277,7 +277,7 @@ proc declareSym*(c: var SemContext; it: var Item; kind: SymKind): SymStatus =
       result = OkExisting
     inc it.n
   else:
-    let lit = getIdent(it.n)
+    let lit = takeIdent(it.n)
     if lit == StrId(0):
       c.buildErr info, "identifier expected"
       result = ErrNoIdent
@@ -301,7 +301,7 @@ proc declareOverloadableSym*(c: var SemContext; it: var Item; kind: SymKind): (S
     c.dest.add it.n
     inc it.n
   else:
-    let lit = getIdent(it.n)
+    let lit = takeIdent(it.n)
     if lit == StrId(0):
       c.buildErr info, "identifier expected"
       result = (SymId(0), ErrNoIdent)
@@ -345,7 +345,7 @@ proc handleSymDef*(c: var SemContext; n: var Cursor; kind: SymKind): DelayedSym 
     c.dest.add symdefToken(symId, info)
     inc n
   else:
-    let lit = getIdent(n)
+    let lit = takeIdent(n)
     if lit == StrId(0):
       c.buildErr info, "identifier expected"
       result = DelayedSym(status: ErrNoIdent, info: info)

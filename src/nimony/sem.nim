@@ -931,7 +931,7 @@ proc typeofCallIs(c: var SemContext; it: var Item; beforeCall: int; returnType: 
 
 proc getFnIdent(c: var SemContext): StrId =
   var n = beginRead(c.dest)
-  result = getIdent(n)
+  result = takeIdent(n)
   endRead(c.dest)
 
 type
@@ -1119,7 +1119,7 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
     buf.addParLe(DotX, cs.callNode.info)
     buf.addSubtree cs.args[0].n
     var callee = cs.fn.n
-    let nameId = getIdent(callee)
+    let nameId = takeIdent(callee)
     assert nameId != StrId(0)
     var name = pool.strings[nameId]
     assert name[^1] == '='
@@ -1573,7 +1573,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
     let fieldNameCursor = cs.fn.n
-    let fieldName = getIdent(cs.fn.n)
+    let fieldName = takeIdent(cs.fn.n)
     # skip optional inheritance depth:
     if cs.fn.n.kind == IntLit:
       inc cs.fn.n
@@ -1869,7 +1869,7 @@ proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
       while tup.kind != ParRi:
         var field = asTupleField(tup)
         if field.kind == KvU:
-          let name = getIdent(field.name)
+          let name = takeIdent(field.name)
           if name == fieldName:
             c.dest[exprStart] = parLeToken(TupatX, info)
             c.dest.addIntLit(i, info)
@@ -1922,7 +1922,7 @@ proc semDot(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
   let fieldNameCursor = it.n
-  let fieldName = getIdent(it.n)
+  let fieldName = takeIdent(it.n)
   # skip optional inheritance depth:
   if it.n.kind == IntLit:
     inc it.n
@@ -2194,7 +2194,7 @@ proc semIdent(c: var SemContext; n: var Cursor; flags: set[SemFlag]): Sym =
   inc n
 
 proc semQuoted(c: var SemContext; n: var Cursor; flags: set[SemFlag]): Sym =
-  let nameId = unquote(n)
+  let nameId = takeUnquoted(n)
   result = semIdentImpl(c, n, nameId, flags)
 
 proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
@@ -2315,7 +2315,7 @@ proc semTupleType(c: var SemContext; n: var Cursor) =
       if n.substructureKind == KvU:
         takeToken c, n
         let nameCursor = n
-        let name = getIdent(n)
+        let name = takeIdent(n)
         if name == StrId(0):
           c.buildErr nameCursor.info, "invalid tuple field name", nameCursor
         else:
@@ -2459,7 +2459,7 @@ proc isRangeExpr(n: Cursor): bool =
   if n.exprKind notin {CallX, InfixX}:
     return false
   inc n
-  let name = getIdent(n)
+  let name = takeIdent(n)
   result = name != StrId(0) and pool.strings[name] == ".."
 
 proc addRangeValues(c: var SemContext; n: var Cursor) =
@@ -2647,7 +2647,7 @@ proc addVarargsParameter(c: var SemContext; paramsAt: int; info: PackedLineInfo)
       while n.kind != ParRi:
         if n.symKind == ParamY:
           inc n
-          let lit = getIdent(n)
+          let lit = takeIdent(n)
           if lit != StrId(0) and pool.strings[lit] == vanon:
             # already added:
             endRead(c.dest)
@@ -2745,7 +2745,7 @@ proc isOrExpr(n: Cursor): bool =
   if result:
     var n = n
     inc n
-    let name = getIdent(n)
+    let name = takeIdent(n)
     result = name != StrId(0) and pool.strings[name] == "|"
 
 proc semTypeof(c: var SemContext; it: var Item) =
@@ -3589,7 +3589,7 @@ proc semDotAsgn(c: var SemContext; it: var Item; info: PackedLineInfo) =
   swap c.dest, dotLhsBuf
   dot.n = dotLhs.n
   dotLhs.n = cursorAt(dotLhsBuf, 0)
-  let fieldName = getIdent(dot.n)
+  let fieldName = takeIdent(dot.n)
   # skip optional inheritance depth:
   if dot.n.kind == IntLit:
     inc dot.n
@@ -4526,7 +4526,7 @@ proc semTup(c: var SemContext, it: var Item) =
         typ.add it.n
         takeToken c, it.n
         let nameCursor = it.n
-        let name = getIdent(it.n)
+        let name = takeIdent(it.n)
         let nameStart = c.dest.len
         if name == StrId(0):
           c.buildErr nameCursor.info, "invalid tuple field name", nameCursor
@@ -4738,7 +4738,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
       inc it.n
       let fieldInfo = it.n.info
       let fieldNameCursor = it.n
-      let fieldName = getIdent(it.n)
+      let fieldName = takeIdent(it.n)
       if fieldName == StrId(0):
         c.buildErr fieldInfo, "identifier expected for object field"
         skip it.n
@@ -4896,7 +4896,7 @@ proc getDottedIdent(n: var Cursor): string =
   if n.kind == ParLe and n.exprKind == DotX:
     inc n
     result = getDottedIdent(n)
-    let s = getIdent(n)
+    let s = takeIdent(n)
     if s == StrId(0) or result == "":
       result = ""
     else:
@@ -4904,7 +4904,7 @@ proc getDottedIdent(n: var Cursor): string =
     skipParRi n
   else:
     # treat as atom
-    let s = getIdent(n)
+    let s = takeIdent(n)
     if s == StrId(0):
       result = ""
     else:
@@ -4938,7 +4938,7 @@ proc semDeclared(c: var SemContext; it: var Item) =
   if isError:
     inc it.n
   # does not consider module quoted symbols for now
-  let nameId = getIdent(it.n)
+  let nameId = takeIdent(it.n)
   if isError:
     skipToEnd it.n
   skipParRi it.n

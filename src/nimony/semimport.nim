@@ -144,7 +144,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
   else:
     var excluded = initHashSet[StrId]()
     while x.kind != ParRi:
-      excluded.incl getIdent(x)
+      excluded.incl takeIdent(x)
     doImports c, files, ImportFilter(kind: ImportExcept, list: excluded), info
 
   producesVoid c, info, it.typ
@@ -177,7 +177,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
         # from a import nil
         discard
       else:
-        included.incl getIdent(x)
+        included.incl takeIdent(x)
     doImports c, files, ImportFilter(kind: FromImport, list: included), info
 
   producesVoid c, info, it.typ
@@ -204,7 +204,7 @@ proc semExportSymbol(c: var SemContext; n: var Cursor) =
     var it = Item(n: n, typ: c.types.autoType)
     semExpr c, it
   else:
-    let ident = getIdent(n)
+    let ident = takeIdent(n)
     if ident == StrId(0):
       c.buildErr info, "not an identifier"
       return
