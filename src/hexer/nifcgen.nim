@@ -668,7 +668,8 @@ template moveToTopLevel(c: var EContext; mode: TraverseMode; body: typed) =
   else:
     body
 
-proc makeLocalProcDeclName(c: var EContext; s: SymId): string =
+proc makeLocalDeclName(c: var EContext; s: SymId): string =
+  # for proc and type decls
   result = pool.syms[s]
   extractBasename(result)
   result.add "."
@@ -676,6 +677,14 @@ proc makeLocalProcDeclName(c: var EContext; s: SymId): string =
   inc c.localDeclCounters
   result.add "."
   result.add c.main
+
+proc makeLocalSymId(c: var EContext; s: SymId; registerParentScope: bool): SymId =
+  let newName = makeLocalDeclName(c, s)
+  result = pool.syms.getOrIncl(newName)
+  if registerParentScope:
+    registerMangleInParent(c, s, newName)
+  else:
+    registerMangle(c, s, newName)
 
 proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   c.openMangleScope()
@@ -692,10 +701,7 @@ proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
 
   if mode == TraverseAll:
     # namePos
-    let newName = makeLocalProcDeclName(c, s)
-    let newSymId = pool.syms.getOrIncl(newName)
-    c.dest.add symdefToken(newSymId, sinfo)
-    registerMangleInParent(c, s, newName)
+    c.dest.add symdefToken(makeLocalSymId(c, s, true), sinfo)
   else:
     # namePos
     c.dest.add symdefToken(s, sinfo)
@@ -784,7 +790,7 @@ proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   c.closeMangleScope()
   c.resultSym = oldResultSym
 
-proc traverseTypeDecl(c: var EContext; n: var Cursor) =
+proc traverseTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   var dst = createTokenBuf(50)
   swap c.dest, dst
   #let toPatch = c.dest.len
@@ -794,7 +800,10 @@ proc traverseTypeDecl(c: var EContext; n: var Cursor) =
   let (s, sinfo) = getSymDef(c, n)
   let oldOwner = setOwner(c, s)
 
-  c.dest.add symdefToken(s, sinfo)
+  if mode == TraverseAll:
+    c.dest.add symdefToken(makeLocalSymId(c, s, false), sinfo)
+  else:
+    c.dest.add symdefToken(s, sinfo)
   c.offer s
 
   var isGeneric = n.kind == ParLe
@@ -1462,7 +1471,8 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
       # pure compile-time construct, ignore:
       skip n
     of TypeS:
-      traverseTypeDecl c, n
+      moveToTopLevel(c, mode):
+        traverseTypeDecl c, n, mode
     of ContinueS, WhenS:
       error c, "unreachable: ", n
     of PragmasS, AssumeS, AssertS:
@@ -1493,7 +1503,7 @@ proc importSymbol(c: var EContext; s: SymId) =
     let kind = n.symKind
     case kind
     of TypeY:
-      traverseTypeDecl c, n
+      traverseTypeDecl c, n, TraverseSig
     of EfldY:
       # import full enum type:
       let typ = asLocal(n).typ
