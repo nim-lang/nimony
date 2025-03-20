@@ -1194,17 +1194,17 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
   let params = buildParamsInfo(paramsCursor)
   var positions = newSeq[int](params.len)
   for i in 0 ..< positions.len: positions[i] = -1
-  var toOrder: seq[tuple[cont: bool, arg: Item]] = @[]
+  var cont: seq[bool] = @[] # could be a set but uses less memory for most common arg counts
   var inVarargs = false
   var fi = 0
   var ai = 0
   while ai < args.len:
-    var arg = args[ai]
     # original nim uses this for next positional argument regardless of named arg:
     let nextFi = fi + 1
-    if arg.n.substructureKind == VvU:
-      inc arg.n
-      let name = getIdent(arg.n) # XXX takeIdent
+    var n = args[ai].n
+    if n.substructureKind == VvU:
+      inc n
+      let name = getIdent(n)
       if name in params.names:
         fi = params.names[name]
         inVarargs = false
@@ -1218,22 +1218,26 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
       m.error0 TooManyArguments
       swap m.pos, ai
       return
+
     if inVarargs:
-      assert toOrder.len != 0
-      toOrder[^1].cont = true
+      if cont.len == 0:
+        cont = newSeq[bool](args.len)
+      assert ai != 0
+      cont[ai - 1] = true
     elif positions[fi] < 0:
-      positions[fi] = toOrder.len
+      positions[fi] = ai
     else:
       swap m.pos, ai
       m.error0 ParamAlreadyGiven
       swap m.pos, ai
       return
-    toOrder.add (cont: false, arg: arg)
+
     if not params.isVarargs[fi]:
       fi = nextFi # will be checked on the next arg if it went over
     else:
       inVarargs = true
     inc ai
+
   result = newSeqOfCap[Item](args.len)
   fi = 0
   while fi < params.len:
@@ -1244,10 +1248,15 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
       result.add Item(n: emptyNode(m.context[]), typ: m.context.types.autoType)
     else:
       while true:
-        result.add toOrder[ai].arg
-        if toOrder[ai].cont: 
+        var arg = args[ai]
+        # remove name:
+        if arg.n.substructureKind == VvU:
+          inc arg.n
+          skip arg.n
+        result.add arg
+        if cont.len != 0 and cont[ai]: 
           inc ai
-          assert ai < toOrder.len
+          assert ai < args.len
         else:
           break
     inc fi
