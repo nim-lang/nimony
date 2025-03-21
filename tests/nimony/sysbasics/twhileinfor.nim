@@ -1,3 +1,4 @@
+import std/syncio
 # issue #703
 
 proc main() =
@@ -7,3 +8,13 @@ proc main() =
 
     # could not find symbol: i.0
     while i == 0: discard
+
+var input = "start"
+while input != "quit":
+  if input == "":
+    continue
+  if input == "exit":
+    break
+  input = "exit"
+
+assert input == "exit"
