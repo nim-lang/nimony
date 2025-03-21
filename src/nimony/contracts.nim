@@ -300,10 +300,12 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     result = true
     inc pc
   elif pc.kind == IntLit:
+    fact.b = VarId(0)
     fact.c = fact.c + createXint(pool.integers[pc.intId])
     result = true
     inc pc
   elif pc.kind == UIntLit:
+    fact.b = VarId(0)
     fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
     result = true
     inc pc
