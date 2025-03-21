@@ -39,6 +39,14 @@ type
     #toPropId: Table[SymId, VarId]
     startInstr: Cursor
 
+proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: bool) =
+  if report:
+    echo "known facts in this context: "
+    for i in 0 ..< c.facts.len:
+      echo c.facts[i]
+    echo "canonical fact: ", fact
+  error "contract violation: ", orig
+
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
   inc n
@@ -302,7 +310,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   else:
     skip pc
 
-proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
+proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXplusC =
   var r = pc
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
 
@@ -313,6 +321,10 @@ proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
 
   let xk = r.exprKind
   if xk in {LeX, LtX}:
+    inc r
+    skip r # skip type
+  elif xk == EqX:
+    wasEquality = true
     inc r
     skip r # skip type
   else:
@@ -348,10 +360,15 @@ proc translateCond(c: var Context; pc: var Cursor): LeXplusC =
   pc = r
 
 proc analyseCondition(c: var Context; pc: var Cursor): int =
-  let fact = translateCond(c, pc)
+  var wasEquality = false
+  let fact = translateCond(c, pc, wasEquality)
   if fact.isValid:
     c.facts.add fact
-    result = 1
+    if wasEquality:
+      c.facts.add fact.geXplusC
+      result = 2
+    else:
+      result = 1
   else:
     result = 0
 
@@ -384,28 +401,51 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
 
 proc analyseAssume(c: var Context; pc: var Cursor) =
   inc pc
-  let fact = translateCond(c, pc)
+  var wasEquality = false
+  let fact = translateCond(c, pc, wasEquality)
   if not fact.isValid:
     error "invalid assume: ", pc
   else:
     c.facts.add fact
+    if wasEquality:
+      c.facts.add fact.geXplusC
   skipParRi pc
 
 proc analyseAssert(c: var Context; pc: var Cursor) =
+  # We also support `(assert (out) (error) <condition>)` for testing purposes.
   let orig = pc
   inc pc
-  let fact = translateCond(c, pc)
+  var report = false
+  var shouldError = false
+  if pc.typeKind == OutT:
+    report = true
+    inc pc
+    skipParRi pc
+  if pc.pragmaKind == ErrorP:
+    shouldError = true
+    inc pc
+    skipParRi pc
+
+  var wasEquality = false
+  let fact = translateCond(c, pc, wasEquality)
   if not fact.isValid:
     error "invalid assert: ", orig
   elif implies(c.facts, fact):
-    for i in 0 ..< c.facts.len:
-      echo c.facts[i]
-    echo "OK ", fact
+    if wasEquality:
+      if implies(c.facts, fact.geXplusC):
+        if report: echo "OK ", fact
+      else:
+        if shouldError:
+          if report: echo "OK (could indeed not prove) ", fact
+        else:
+          contractViolation(c, orig, fact, report)
+    else:
+      if report: echo "OK ", fact
   else:
-    for i in 0 ..< c.facts.len:
-      echo c.facts[i]
-    echo "fact canon ", fact
-    error "contract violation: ", orig
+    if shouldError:
+      if report: echo "OK (could indeed not prove) ", fact
+    else:
+      contractViolation(c, orig, fact, report)
   skipParRi pc
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
@@ -566,38 +606,10 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   result = ensureMove(c.dest)
 
 when isMainModule:
-  const test = """
-  (stmts
-    (var :x.0 . . (i +32) .)
-    (if
-      (elif (le . x.0 +4)
-       (stmts
-        (if (elif (true)
-          (stmts
-            (assert (le . x.0 +9))
-          )
-        )
-       )
-      ))
-      (else (stmts (assert (le . +5 x.0)) (assert (le . +1 x.0))))
-    )
+  import std / [syncio, os]
+  proc main(infile: string) =
+    var input = parse(readFile(infile))
+    discard analyzeContracts(input)
+    #echo toString(outp, false)
 
-    (if
-      (elif (not (le . x.0 +4))
-       (stmts
-        (if (elif (true)
-          (stmts
-            (assert (le . +5 x.0)) (assert (le . +1 x.0))
-          )
-        )
-       )
-      ))
-      (else (stmts (assert (le . x.0 +9))))
-    )
-
-    (assert (le . x.0 +6))
-  )
-  """
-  var inp = parse(test)
-  let outp = analyzeContracts(inp)
-  echo toString(outp, false)
+  main(paramStr(1))
