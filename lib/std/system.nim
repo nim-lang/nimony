@@ -471,6 +471,7 @@ template len*[I, T](x: array[I, T]): int =
 # is the string equality is used by hexer/stringcases.nim.
 include "system/stringimpl"
 
+include "system/countbits_impl"
 include "system/setops"
 
 include "system/openarrays"
