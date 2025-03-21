@@ -32,7 +32,8 @@ type
     indegree, touched: int
     indegreeFacts: Facts
   Context = object
-    cf, dest: TokenBuf
+    cf, dest, toplevelStmts: TokenBuf
+    routines: seq[Cursor]
     typeCache: TypeCache
     facts: Facts
     writesTo: seq[SymId]
@@ -539,7 +540,7 @@ proc decAndTest(x: var int): bool {.inline.} =
   result = x == 0
 
 proc takeFacts(c: var Context; bb: var BasicBlock; conditionalFacts: int; negate: bool) =
-  let start = bb.indegreeFacts.len
+  #let start = bb.indegreeFacts.len
   if bb.touched == 0:
     for i in 1 ..< c.facts.len - conditionalFacts:
       bb.indegreeFacts.add c.facts[i]
@@ -559,7 +560,12 @@ proc pushFacts(c: var Context; bb: var BasicBlock) =
   for i in 0 ..< bb.indegreeFacts.len:
     c.facts.add bb.indegreeFacts[i]
 
-proc checkContracts(c: var Context) =
+proc checkContracts(c: var Context; n: Cursor) =
+  c.cf = toControlflow(n)
+  c.facts = createFacts()
+  freeze c.cf
+  #echo "CF IS ", codeListing(c.cf)
+
   var bbs = computeBasicBlocks(c.cf)
   c.startInstr = readonlyCursorAt(c.cf, 0)
   var current = BasicBlockIdx(0)
@@ -590,17 +596,68 @@ proc checkContracts(c: var Context) =
         else:
           candidates.add cont.elsePart
 
+proc traverseProc(c: var Context; n: var Cursor) =
+  let orig = n
+  let r = takeRoutine(n, SkipExclBody)
+  skip n # effects
+  if not isGeneric(r):
+    c.routines.add orig
+    var nested = 0
+    while true:
+      # don't forget about inner procs:
+      let sk = n.stmtKind
+      if sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
+        traverseProc(c, n)
+      elif sk in {MacroS, TemplateS, TypeS, CommentS, PragmasS}:
+        skip n
+      elif n.kind == ParLe:
+        inc nested
+        inc n
+      elif n.kind == ParRi:
+        dec nested
+        inc n
+        if nested == 0: break
+      else:
+        inc n
+    skipParRi n
+  else:
+    skip n # body
+    skipParRi n
+
+proc traverseToplevel(c: var Context; n: var Cursor) =
+  case n.stmtKind
+  of StmtsS:
+    c.toplevelStmts.add n
+    inc n
+    while n.kind != ParRi:
+      traverseToplevel(c, n)
+    c.toplevelStmts.add n
+    skipParRi n
+  of ProcS, FuncS, IteratorS, ConverterS, MethodS:
+    traverseProc(c, n)
+  of MacroS, TemplateS, TypeS, CommentS, PragmasS,
+     ImportasS, ExportexceptS, BindS, MixinS, UsingS,
+     ExportS,
+     IncludeS, ImportS, FromimportS, ImportExceptS:
+    skip n
+  of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS,
+     UnpackDeclS, StaticstmtS, AsmS, DeferS,
+     CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
+     GletS, TletS, LetS, CursorS, BlockS, EmitS, AsgnS, ScopeS,
+     BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
+    c.toplevelStmts.takeTree n
+
 proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   let oldInfos = prepare(input)
   var c = Context(typeCache: createTypeCache(),
-    dest: createTokenBuf(500),
-    cf: toControlflow(beginRead input),
-    facts: createFacts())
-  freeze c.cf
-  #echo "CF IS ", codeListing(c.cf)
+    dest: createTokenBuf(500))
   c.typeCache.openScope()
-
-  checkContracts(c)
+  var n = beginRead(input)
+  traverseToplevel c, n
+  for r in c.routines:
+    checkContracts(c, r)
+  var nt = beginRead c.toplevelStmts
+  checkContracts(c, nt)
 
   endRead input
   restore(input, oldInfos)
