@@ -124,9 +124,11 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
     b = mapSymbol(c, paramMap, call, r.symId)
     inc r
   elif r.kind == IntLit:
+    b = VarId(0)
     cnst = createXint(pool.integers[r.intId])
     inc r
   elif r.kind == UIntLit:
+    b = VarId(0)
     cnst = createXint(pool.uintegers[r.uintId])
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
@@ -566,9 +568,14 @@ proc checkContracts(c: var Context; n: Cursor) =
   freeze c.cf
   #echo "CF IS ", codeListing(c.cf)
 
-  var bbs = computeBasicBlocks(c.cf)
   c.startInstr = readonlyCursorAt(c.cf, 0)
-  var current = BasicBlockIdx(0)
+  var body = c.startInstr
+  if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
+    inc body
+    for i in 0 ..< BodyPos: skip body
+
+  var current = BasicBlockIdx(cursorToPosition(c.cf, body))
+  var bbs = computeBasicBlocks(c.cf, current.int)
   var nextIter = true
   var candidates = newSeq[BasicBlockIdx]()
   while nextIter or candidates.len > 0:
