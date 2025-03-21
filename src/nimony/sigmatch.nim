@@ -20,6 +20,7 @@ type
     kind*: SymKind
     sym*: SymId
     typ*: Cursor
+    fromConcept*: bool
 
   MatchErrorKind* = enum
     InvalidMatch

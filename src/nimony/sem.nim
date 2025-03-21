@@ -735,15 +735,14 @@ proc pickBestMatch(c: var SemContext; m: openArray[Match]): int =
           other = -1
   if other >= 0: result = -2 # ambiguous
 
-const
-  ConceptProcY = CchoiceY
-
 type MagicCallKind = enum
   NonMagicCall, MagicCall, MagicCallNeedsSemcheck
 
 proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[Item]): MagicCallKind =
   result = NonMagicCall
-  if fn.kind in RoutineKinds:
+  if fn.fromConcept and fn.sym != SymId(0):
+    c.dest.add identToken(symToIdent(fn.sym), fnOrig.info)
+  elif fn.kind in RoutineKinds:
     assert fn.sym != SymId(0)
     let res = tryLoadSym(fn.sym)
     if res.status == LacksNothing:
@@ -772,8 +771,6 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
             error "broken `magic`: expected ')', but got: ", n
     if result == NonMagicCall:
       c.dest.add symToken(fn.sym, fnOrig.info)
-  elif fn.kind == ConceptProcY and fn.sym != SymId(0):
-    c.dest.add identToken(symToIdent(fn.sym), fnOrig.info)
   else:
     c.dest.addSubtree fnOrig
 
@@ -848,7 +845,7 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
           if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
             var d = ops
             skipToParams d
-            cands.addUnique FnCandidate(kind: ConceptProcY, sym: prc.symId, typ: d)
+            cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
         skip ops
 
 proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCandidates; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
@@ -2407,7 +2404,10 @@ proc semConceptType(c: var SemContext; n: var Cursor) =
   if n.stmtKind != StmtsS:
     error "(stmts) expected, but got: ", n
   takeToken c, n
+  let oldScopeKind = c.currentScope.kind
   withNewScope c:
+    # make syms of routines in toplevel concept also toplevel:
+    c.currentScope.kind = oldScopeKind
     while true:
       let k = n.symKind
       if k in RoutineKinds:
@@ -3962,7 +3962,9 @@ proc semFor(c: var SemContext; it: var Item) =
   var isMacroLike = false
   if c.dest[beforeCall+1].kind == Symbol and c.isIterator(c.dest[beforeCall+1].symId):
     discard "fine"
-  elif iterCall.typ.typeKind == UntypedT:
+  elif iterCall.typ.typeKind == UntypedT or
+      # for iterators from concepts in generic context:
+      c.dest[beforeCall+1].kind == Ident:
     isMacroLike = true
   else:
     buildErr c, it.n.info, "iterator expected"

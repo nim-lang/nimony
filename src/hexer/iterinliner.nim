@@ -488,11 +488,18 @@ proc transformStmt(e: var EContext; c: var Cursor) =
     of FuncS, ProcS, ConverterS, MethodS:
       e.dest.add c
       inc c
-      for i in 0..<BodyPos:
+      takeTree(e, c) # name
+      takeTree(e, c) # exported
+      takeTree(e, c) # pattern
+      let isGeneric = c.substructureKind == TypevarsU
+      for i in 3..<BodyPos:
         takeTree(e, c)
       let oldTmpId = e.tmpId
       e.tmpId = 0
-      transformStmt(e, c)
+      if isGeneric:
+        takeTree(e, c)
+      else:
+        transformStmt(e, c)
       e.tmpId = oldTmpId
       takeParRi(e, c)
     of VarS, LetS, CursorS, ResultS:

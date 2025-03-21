@@ -76,16 +76,16 @@
   (concept . .
    (typevar :Self.0.tfitjdpcx . . . .) ~8,1
    (stmts
-    (proc 5 :<=.0 . . . 9
+    (proc 5 :<=.2.tfitjdpcx . . . 9
      (params 1
       (param :a.0 . . 6 Self.0.tfitjdpcx .) 4
       (param :b.0 . . 3 Self.0.tfitjdpcx .)) 14
      (bool) . . .) ,1
-    (proc 5 :\2B.0 . . . 8
+    (proc 5 :\2B.2.tfitjdpcx . . . 8
      (params 1
       (param :x.6 . . 6 Self.0.tfitjdpcx .) 4
       (param :y.6 . . 3 Self.0.tfitjdpcx .)) 14 Self.0.tfitjdpcx . . .) ,2
-    (proc 5 :\2D.0 . . . 8
+    (proc 5 :\2D.2.tfitjdpcx . . . 8
      (params 1
       (param :x.7 . . 6 Self.0.tfitjdpcx .) 4
       (param :y.7 . . 3 Self.0.tfitjdpcx .)) 14 Self.0.tfitjdpcx . . .)))) ,22
