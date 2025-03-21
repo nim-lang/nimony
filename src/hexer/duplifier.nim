@@ -786,22 +786,21 @@ proc trDeref(c: var Context; n: var Cursor) =
     c.dest.addIntLit(0, info) # inheritance
   takeParRi c.dest, n
 
-proc trTypeDecl(c: var Context; n: Cursor) =
-  var n = n
-  var declStart = n
-  inc n
-  let symId = n.symId
+proc trTypeDecl(c: var Context; n: var Cursor) =
+  var iter = n
+  inc iter
+  let symId = iter.symId
+  var dest = createTokenBuf()
+  takeTree(dest, n)
   if isLocalDecl(symId):
-    var dest = createTokenBuf()
-    takeTree(dest, declStart)
     publish(symId, dest)
+  c.dest.add dest
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
     trLocation c, n, e
   elif n.stmtKind == TypeS:
     trTypeDecl c, n
-    takeTree c.dest, n
   elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit, FloatLit, DotToken} or isDeclarative(n):
     takeTree c.dest, n
   else:
