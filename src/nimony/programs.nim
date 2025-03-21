@@ -289,5 +289,5 @@ proc skipParRi*(n: var Cursor) =
   else:
     error "expected ')', but got: ", n
 
-template isLocalProcDecl*(s: SymId): bool =
+template isLocalDecl*(s: SymId): bool =
   extractModule(pool.syms[s]) == ""
