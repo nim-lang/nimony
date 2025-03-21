@@ -792,9 +792,9 @@ proc trTypeDecl(c: var Context; n: var Cursor) =
   let symId = iter.symId
   var dest = createTokenBuf()
   takeTree(dest, n)
+  c.dest.add dest
   if isLocalDecl(symId):
     publish(symId, dest)
-  c.dest.add dest
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
