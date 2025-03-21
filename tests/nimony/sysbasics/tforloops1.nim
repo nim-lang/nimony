@@ -90,3 +90,8 @@ block:
       for k in 1 ..< j:
         sum = sum + a
       echo sum
+
+block:
+  let i_arr = [-100, -50, 0, 0, 123, 1000]
+  for i in items(i_arr):
+    echo i

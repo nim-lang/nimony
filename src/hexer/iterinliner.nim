@@ -310,6 +310,10 @@ proc replaceSymbol(e: var EContext; c: var Cursor; relations: var Table[SymId, S
 
 proc inlineIterator(e: var EContext; forStmt: ForStmt) =
   var iter = forStmt.iter
+  if iter.exprKind == HderefX:
+    # iterators return var/lent
+    inc iter
+  assert iter.exprKind in CallKinds
   inc iter
   let iterSym = iter.symId
   let res = tryLoadSym(iterSym)
