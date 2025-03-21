@@ -2,7 +2,7 @@ import std / [tables, sets, syncio, formatfloat, assertions]
 include nifprelude
 import nimony_model, symparser
 
-proc unquote*(c: var Cursor): StrId =
+proc takeUnquoted*(c: var Cursor): StrId =
   var r = ""
   while true:
     case c.kind
@@ -36,7 +36,7 @@ proc unquote*(c: var Cursor): StrId =
   assert r.len > 0
   result = getOrIncl(pool.strings, r)
 
-proc getIdent*(n: var Cursor): StrId =
+proc takeIdent*(n: var Cursor): StrId =
   var nested = 0
   while exprKind(n) in {OchoiceX, CchoiceX}:
     inc nested
@@ -52,7 +52,7 @@ proc getIdent*(n: var Cursor): StrId =
     inc n
   of ParLe:
     if exprKind(n) == QuotedX:
-      result = unquote(n)
+      result = takeUnquoted(n)
     else:
       result = StrId(0)
   else:
@@ -60,3 +60,7 @@ proc getIdent*(n: var Cursor): StrId =
   while nested > 0:
     if n.kind == ParRi: dec nested
     inc n
+
+proc getIdent*(n: Cursor): StrId =
+  var n = n
+  result = takeIdent(n)

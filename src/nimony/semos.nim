@@ -152,13 +152,13 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         filenameVal(n, res, hasError, allowAs)
       skipToEnd n
     of QuotedX:
-      let s = pool.strings[unquote(n)]
+      let s = pool.strings[takeUnquoted(n)]
       res.add ImportedFilename(path: s, name: s)
     of CallX, InfixX:
       var x = n
       skip n # ensure we skipped it completely
       inc x
-      let opId = getIdent(x)
+      let opId = takeIdent(x)
       if opId == StrId(0):
         hasError = true
         return
@@ -175,7 +175,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         if rhs.kind == ParRi:
           hasError = true
           return
-        let aliasId = getIdent(rhs)
+        let aliasId = takeIdent(rhs)
         if aliasId == StrId(0):
           hasError = true
           return
@@ -200,7 +200,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       var x = n
       skip n # ensure we skipped it completely
       inc x
-      let opId = getIdent(x)
+      let opId = takeIdent(x)
       if opId == StrId(0):
         hasError = true
         return
