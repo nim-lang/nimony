@@ -306,22 +306,31 @@ proc nimonytests(overwrite: bool) =
   else:
     echo "SUCCESS."
 
-proc controlflowTests(overwrite: bool) =
+proc controlflowTests(tool: string; overwrite: bool) =
   ## Run all the controlflow tests in the test-suite.
-  const TestDir = "tests/controlflow"
+  let testDir = "tests/" & tool
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
-  for x in walkDir(TestDir, relative = true):
+  for x in walkDir(testDir, relative = true):
     if x.kind == pcFile and x.path.endsWith(".nif") and not x.path.contains(".expected.nif"):
       inc c.total
-      let t = TestDir / x.path
+      let t = testDir / x.path
       let dest = t.changeFileExt(".out.nif")
-      let (msgs, exitcode) = execLocal("controlflow", os.quoteShell(t) & " " & os.quoteShell(dest))
+      let (msgs, exitcode) = execLocal(tool, os.quoteShell(t) & " " & os.quoteShell(dest))
       if exitcode != 0:
-        failure c, t, "controlflow exitcode " & $exitcode, msgs
+        failure c, t, tool & " exitcode " & $exitcode, msgs
+      let msgsFile = t.changeFileExt(".msgs")
+      if msgsFile.fileExists():
+        if overwrite:
+          writeFile(msgsFile, msgs)
+        else:
+          let expectedOutput = readFile(msgsFile).strip
+          if expectedOutput != msgs.strip:
+            failure c, t, expectedOutput, msgs
       let expected = t.changeFileExt(".expected.nif")
       if overwrite:
-        moveFile(dest, expected)
+        if expected.fileExists():
+          moveFile(dest, expected)
       elif expected.fileExists():
         let expectedOutput = readFile(expected).strip
         let destContent = readFile(dest).strip
@@ -433,6 +442,11 @@ proc buildControlflow(showProgress = false) =
   let exe = "controlflow".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
+proc buildContracts(showProgress = false) =
+  exec "nim c src/nimony/contracts.nim", showProgress
+  let exe = "contracts".addFileExt(ExeExt)
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
+
 proc buildNifc(showProgress = false) =
   exec "nim c src/nifc/nifc.nim", showProgress
   let exe = "nifc".addFileExt(ExeExt)
@@ -540,11 +554,17 @@ proc handleCmdLine =
     nifctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
-    controlflowTests(overwrite)
+    controlflowTests("controlflow", overwrite)
+    buildContracts()
+    controlflowTests("contracts", overwrite)
 
   of "controlflow", "cf":
     buildControlflow()
-    controlflowTests(overwrite)
+    controlflowTests("controlflow", overwrite)
+
+  of "contracts":
+    buildContracts()
+    controlflowTests("contracts", overwrite)
 
   of "build":
     const showProgress = true

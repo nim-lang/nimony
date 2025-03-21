@@ -39,6 +39,14 @@ type
     #toPropId: Table[SymId, VarId]
     startInstr: Cursor
 
+proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: bool) =
+  if report:
+    echo "known facts in this context: "
+    for i in 0 ..< c.facts.len:
+      echo c.facts[i]
+    echo "canonical fact: ", fact
+  error "contract violation: ", orig
+
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
   inc n
@@ -404,27 +412,40 @@ proc analyseAssume(c: var Context; pc: var Cursor) =
   skipParRi pc
 
 proc analyseAssert(c: var Context; pc: var Cursor) =
+  # We also support `(assert (out) (error) <condition>)` for testing purposes.
   let orig = pc
   inc pc
+  var report = false
+  var shouldError = false
+  if pc.typeKind == OutT:
+    report = true
+    inc pc
+    skipParRi pc
+  if pc.pragmaKind == ErrorP:
+    shouldError = true
+    inc pc
+    skipParRi pc
+
   var wasEquality = false
   let fact = translateCond(c, pc, wasEquality)
   if not fact.isValid:
     error "invalid assert: ", orig
   elif implies(c.facts, fact):
-    #for i in 0 ..< c.facts.len:
-    #  echo c.facts[i]
     if wasEquality:
       if implies(c.facts, fact.geXplusC):
-        echo "OK ", fact
+        if report: echo "OK ", fact
       else:
-        echo "BAD ", fact
+        if shouldError:
+          if report: echo "OK (could indeed not prove) ", fact
+        else:
+          contractViolation(c, orig, fact, report)
     else:
-      echo "OK ", fact
+      if report: echo "OK ", fact
   else:
-    #for i in 0 ..< c.facts.len:
-    #  echo c.facts[i]
-    echo "fact canon ", fact
-    error "contract violation: ", orig
+    if shouldError:
+      if report: echo "OK (could indeed not prove) ", fact
+    else:
+      contractViolation(c, orig, fact, report)
   skipParRi pc
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
@@ -492,17 +513,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           inc nested
           # proceed with its value here
         of NoStmt:
-          if pc.pragmaKind == ErrorP:
-            inc pc
-            if pc.kind == StringLit:
-              echo "CHECKPOINT ", pool.strings[pc.litId]
-              inc pc
-              skipParRi pc
-            else:
-              raiseAssert "expected string literal after error pragma"
-              skipToEnd pc
-          else:
-            raiseAssert "BUG: unknown statement: " & toString(pc, false)
+          raiseAssert "BUG: unknown statement: " & toString(pc, false)
         of DiscardS:
           inc pc
           inc nested
@@ -595,39 +606,10 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   result = ensureMove(c.dest)
 
 when isMainModule:
-  const test = """
-  (stmts
-    (var :x.0 . . (i +32) .)
-    (if
-      (elif (le . x.0 +4)
-       (stmts
-        (if (elif (true)
-          (stmts
-            (error "reached point 1")
-            (assert (le . x.0 +9))
-          )
-        )
-       )
-      ))
-      (else (stmts (assert (le . +5 x.0)) (assert (le . +1 x.0))))
-    )
+  import std / [syncio, os]
+  proc main(infile: string) =
+    var input = parse(readFile(infile))
+    discard analyzeContracts(input)
+    #echo toString(outp, false)
 
-    (if
-      (elif (not (le . x.0 +4))
-       (stmts
-        (if (elif (true)
-          (stmts
-            (assert (le . +5 x.0)) (assert (le . +1 x.0))
-          )
-        )
-       )
-      ))
-      (else (stmts (assert (le . x.0 +9))))
-    )
-
-    (assert (le . x.0 +6))
-  )
-  """
-  var inp = parse(test)
-  let outp = analyzeContracts(inp)
-  echo toString(outp, false)
+  main(paramStr(1))
