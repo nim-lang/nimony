@@ -810,15 +810,19 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
 
 proc toControlflow*(n: Cursor): TokenBuf =
   var c = ControlFlow(typeCache: createTypeCache())
-  assert n.stmtKind == StmtsS
   c.typeCache.openScope()
+  let sk = n.stmtKind
   var n = n
-  c.dest.add n
-  inc n
-  while n.kind != ParRi:
-    trStmt c, n
-  c.dest.addParPair RetS, NoLineInfo
-  c.dest.addParRi()
+  if sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
+    trProc c, n
+  else:
+    assert sk == StmtsS
+    c.dest.add n
+    inc n
+    while n.kind != ParRi:
+      trStmt c, n
+    c.dest.addParPair RetS, NoLineInfo
+    c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove c.dest
   #echo "result: ", codeListing(result)

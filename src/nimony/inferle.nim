@@ -185,7 +185,7 @@ proc implies*(facts: Facts; v: LeXplusC): bool =
 
 proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
   # computes thing we know on a joint point.
-  # we know that `a <= b + c` and `a <= b + d` then we know
+  # we know that `a <= b + c` or `a <= b + d` then we know
   # that `a <= b + max(c, d)`
   result = Facts()
   for i in 0 ..< xstart:
