@@ -330,7 +330,7 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
       let symId = name.symId
 
       let newName = pool.syms.getOrIncl(pool.syms[symId] & ".lf." & $e.instId)
-      createDecl(e, newName, typ, iter, name.info, "var")
+      createDecl(e, newName, typ, iter, name.info, "cursor")
       relationsMap[symId] = newName
 
       skip params
