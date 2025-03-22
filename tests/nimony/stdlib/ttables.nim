@@ -46,3 +46,10 @@ block:
 
   assert t.len == (Max - 1)
   assert not t.contains(0)
+
+  for k, v in t.mpairs:
+    v = -v
+    assert k == v
+
+  for k, v in t.pairs:
+    assert k == v
