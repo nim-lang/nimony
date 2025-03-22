@@ -4,6 +4,7 @@ include nifprelude
 import std / [assertions, tables]
 
 import ".." / nimony / [nimony_model, programs, decls]
+import duplifier
 
 
 proc hasContinueStmt(c: Cursor): bool =
@@ -330,7 +331,7 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
       let symId = name.symId
 
       let newName = pool.syms.getOrIncl(pool.syms[symId] & ".lf." & $e.instId)
-      createDecl(e, newName, typ, iter, name.info, "var")
+      createDecl(e, newName, typ, iter, name.info, if constructsValue(iter): "var" else: "cursor")
       relationsMap[symId] = newName
 
       skip params
