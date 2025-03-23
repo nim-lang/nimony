@@ -1,0 +1,6 @@
+tests/nimony/lastuse/treassign.nim(8, 7) LastUse: true
+tests/nimony/lastuse/treassign.nim(14, 7) LastUse: true
+tests/nimony/lastuse/treassign.nim(19, 7) LastUse: false
+tests/nimony/lastuse/treassign.nim(23, 7) LastUse: true
+tests/nimony/lastuse/treassign.nim(28, 9) LastUse: false
+tests/nimony/lastuse/treassign.nim(38, 11) LastUse: true

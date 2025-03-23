@@ -1,0 +1,4 @@
+tests/nimony/lastuse/tsimple.nim(9, 7) LastUse: false
+tests/nimony/lastuse/tsimple.nim(12, 9) LastUse: true
+tests/nimony/lastuse/tsimple.nim(15, 9) LastUse: true
+tests/nimony/lastuse/tsimple.nim(17, 9) LastUse: true
