@@ -177,7 +177,7 @@
    (for 7
     (infix \2E.<.0.sysvq0asl ~2 +0 4 +1)
     (unpackflat
-     (let :i.6 . . 13,1,lib/std/system/iterators.nim
+     (let :i.6 . . 13,5,lib/std/system/iterators.nim
       (i -1) .)) ~2,1
     (stmts
      (discard 8 i.6))) ,2
@@ -222,18 +222,18 @@
  (for 6
   (infix \2E.<.0.sysvq0asl ~1 +0 3 +3)
   (unpackflat
-   (let :i.8 . . 13,1,lib/std/system/iterators.nim
+   (let :i.8 . . 13,5,lib/std/system/iterators.nim
     (i -1) .)) ~2,1
   (stmts 4
    (for 6
     (infix \2E.<.0.sysvq0asl ~1 +0 3 +4)
     (unpackflat
-     (let :j.3 . . 13,1,lib/std/system/iterators.nim
+     (let :j.3 . . 13,5,lib/std/system/iterators.nim
       (i -1) .)) ~2,1
     (stmts
      (if 3
       (elif 2
-       (eq 13,1,lib/std/system/iterators.nim
+       (eq 13,5,lib/std/system/iterators.nim
         (i -1) ~2 j.3 3 +2) ~1,1
        (stmts 2,104,lib/std/syncio.nim
         (stmts 2,1
@@ -256,25 +256,25 @@
    (for 7
     (infix \2E.<.0.sysvq0asl ~2 +1 4 +3)
     (unpackflat
-     (let :i.9 . . 13,1,lib/std/system/iterators.nim
+     (let :i.9 . . 13,5,lib/std/system/iterators.nim
       (i -1) .)) ~2,1
     (stmts 4
      (for 7
       (infix \2E.<.0.sysvq0asl ~2 +2 4 +4)
       (unpackflat
-       (let :j.4 . . 13,1,lib/std/system/iterators.nim
+       (let :j.4 . . 13,5,lib/std/system/iterators.nim
         (i -1) .)) ~2,1
       (stmts 4
        (let :a.4 . . 15,128,lib/std/system.nim
         (i +64) 6
-        (add 13,1,lib/std/system/iterators.nim
+        (add 13,5,lib/std/system/iterators.nim
          (i -1) ~2 i.9 2 j.4)) 4,1
        (var :sum.0 . . 9,~86
         (i -1) 11 +0) 4,2
        (for 7
         (infix \2E.<.0.sysvq0asl ~2 +1 4 j.4)
         (unpackflat
-         (let :k.0 . . 13,1,lib/std/system/iterators.nim
+         (let :k.0 . . 13,5,lib/std/system/iterators.nim
           (i -1) .)) ~2,1
         (stmts 4
          (asgn ~4 sum.0 6
