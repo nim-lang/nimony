@@ -500,7 +500,9 @@ proc analyseAssert(c: var Context; pc: var Cursor) =
   if not fact.isValid:
     error "invalid assert: ", orig
   elif implies(c.facts, fact):
-    if wasEquality:
+    if shouldError:
+      contractViolation(c, orig, fact, report)
+    elif wasEquality:
       if implies(c.facts, fact.geXplusC):
         if report: echo "OK ", fact
       else:
@@ -610,10 +612,14 @@ proc takeFacts(c: var Context; bb: var BasicBlock; conditionalFacts: int; negate
   if bb.touched == 0:
     for i in 1 ..< c.facts.len - conditionalFacts:
       bb.indegreeFacts.add c.facts[i]
-    for i in c.facts.len - conditionalFacts ..< c.facts.len:
-      var f = c.facts[i]
-      if negate: negateFact(f)
-      bb.indegreeFacts.add f
+    if negate and conditionalFacts > 1:
+      # negation of (a and b) would be (not a or not b) so we cannot model that:
+      discard "must lose information here"
+    else:
+      for i in c.facts.len - conditionalFacts ..< c.facts.len:
+        var f = c.facts[i]
+        if negate: negateFact(f)
+        bb.indegreeFacts.add f
   else:
     # merge the facts:
     bb.indegreeFacts = merge(c.facts, c.facts.len - conditionalFacts, bb.indegreeFacts, negate)

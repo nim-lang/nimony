@@ -194,13 +194,17 @@ proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
       if x[i].a == ya.a and x[i].b == ya.b:
         result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
 
-  for i in xstart ..< x.len:
-    for j in 0..<y.len:
-      var ya = y[j]
-      if negate:
-        ya.negateFact()
-      if x[i].a == ya.a and x[i].b == ya.b:
-        result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
+  if negate and x.len - xstart > 1:
+    # negation of (a and b) would be (not a or not b) so we cannot model that:
+    discard "must lose information here"
+  else:
+    for i in xstart ..< x.len:
+      for j in 0..<y.len:
+        var ya = y[j]
+        if negate:
+          ya.negateFact()
+        if x[i].a == ya.a and x[i].b == ya.b:
+          result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
 
 when isMainModule:
   proc main =
