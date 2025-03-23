@@ -115,7 +115,7 @@ iterator pairs*[K, V](t: Table[K, V]): (lent K, lent V) =
   for i in 0 ..< t.data.len:
     yield (t.data[i][0], t.data[i][1])
 
-iterator mpairs*[K, V](t: var Table[K, V]): (lent K, var V) =
+iterator mpairs*[K, V](t: Table[K, V]): (lent K, var V) =
   for i in 0 ..< t.data.len:
     yield (t.data[i][0], t.data[i][1])
 
