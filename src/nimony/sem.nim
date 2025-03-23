@@ -5490,7 +5490,7 @@ proc semAddr(c: var SemContext; it: var Item) =
   it.n = arg.n
   takeParRi c, it.n
   let a = cursorAt(c.dest, beforeArg)
-  if isAddressable(a):
+  if isAddressable(a) or arg.typ.typeKind in {MutT, LentT}:
     endRead c.dest
   else:
     let asStr = asNimCode(a)
