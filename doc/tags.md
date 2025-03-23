@@ -270,3 +270,4 @@
 | `(inject)` | NimonyPragma | `inject` pragma |
 | `(gensym)` | NimonyPragma | `gensym` pragma |
 | `(error X?)` | NimonyPragma | `error` pragma |
+| `(report X)` | NimonyPragma | `report` pragma |

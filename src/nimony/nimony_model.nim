@@ -278,6 +278,10 @@ proc extractPragma*(n: Cursor; kind: PragmaKind): Cursor =
 proc hasPragma*(n: Cursor; kind: PragmaKind): bool =
   result = not cursorIsNil(extractPragma(n, kind))
 
+proc hasPragmaOfValue*(n: Cursor; kind: PragmaKind; val: string): bool =
+  let p = extractPragma(n, kind)
+  result = not cursorIsNil(p) and p.kind == StringLit and pool.strings[p.litId] == val
+
 proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   dest.add symToken(s, info)
 

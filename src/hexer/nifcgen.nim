@@ -631,7 +631,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           expectIntLit c, n
           result.bits = n.intId
           inc n
-        of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP:
+        of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP:
           skip n
           continue
         of BuildP, EmitP:

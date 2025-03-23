@@ -80,6 +80,8 @@ proc isLastRead(c: var Context; n: Cursor): bool =
     if canAnalyse:
       var otherUsage = NoLineInfo
       result = isLastUse(n, c.source[], otherUsage)
+      if c.reportLastUse:
+        echo infoToStr(n.info), " LastUse: ", result
 
 const
   ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX, NewrefX}
@@ -477,10 +479,12 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.dest.add n
   let oldResultSym = c.resultSym
   c.resultSym = NoSymId
+  let oldReportLastUse = c.reportLastUse
   var r = takeRoutine(n, SkipFinalParRi)
   let symId = r.name.symId
   if isLocalDecl(symId):
     c.typeCache.registerLocal(symId, r.kind, r.params)
+  c.reportLastUse = hasPragmaOfValue(r.pragmas, ReportP, "lastuse")
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pattern
@@ -501,6 +505,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
     copyTree c.dest, r.body
   c.dest.addParRi()
   c.resultSym = oldResultSym
+  c.reportLastUse = oldReportLastUse
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   not isTrivial(c.lifter[], typ)
