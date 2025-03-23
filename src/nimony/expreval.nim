@@ -68,6 +68,25 @@ proc getFalseValue(c: var EvalContext): Cursor =
     c.falseValue = cursorAt(c.values[i], 0)
   result = c.falseValue
 
+proc getConstOrdinalValue*(val: Cursor): xint =
+  case val.kind
+  of CharLit:
+    result = createXint val.uoperand
+  of IntLit:
+    result = createXint pool.integers[val.intId]
+  of UIntLit:
+    result = createXint pool.uintegers[val.uintId]
+  of ParLe:
+    case val.exprKind
+    of FalseX:
+      result = createXint(0'i64)
+    of TrueX:
+      result = createXint(1'i64)
+    else:
+      result = createNaN()
+  else:
+    result = createNaN()
+
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   template error(msg: string; info: PackedLineInfo) =
     result = c.error(msg, info)
@@ -171,6 +190,44 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       skip n # type
       result = eval(c, n)
       skipParRi n
+    of ExprX:
+      let orig = n
+      inc n # tag
+      result = eval(c, n)
+      if n.kind == ParRi:
+        inc n
+      else:
+        # was not a trivial ExprX, so we could not evaluate it
+        error "cannot evaluate expression at compile time: " & asNimCode(orig), orig.info
+    of MulX:
+      let orig = n
+      inc n # tag
+      let isSigned = n.typeKind == IntT
+      skip n # type
+      let a = getConstOrdinalValue eval(c, n)
+      let b = getConstOrdinalValue eval(c, n)
+      skipParRi n
+      if not isNaN(a) and not isNaN(b):
+        let valPos = c.values.len
+        c.values.add createTokenBuf(1)
+        let rx = a * b
+        var err = false
+        if isSigned:
+          let ri = asSigned(rx, err)
+          if err:
+            error "expression overflow at compile time: " & asNimCode(orig), orig.info
+          else:
+            c.values[valPos].add intToken(pool.integers.getOrIncl(ri), orig.info)
+            result = cursorAt(c.values[valPos], 0)
+        else:
+          let ru = asUnsigned(rx, err)
+          if err:
+            error "expression overflow at compile time: " & asNimCode(orig), orig.info
+          else:
+            c.values[valPos].add uintToken(pool.uintegers.getOrIncl(ru), orig.info)
+            result = cursorAt(c.values[valPos], 0)
+      else:
+        error "cannot evaluate expression at compile time: " & asNimCode(orig), orig.info
     of IsMainModuleX:
       inc n
       skipParRi n
@@ -208,25 +265,6 @@ proc evalExpr*(c: var SemContext, n: var Cursor): TokenBuf =
   let val = eval(ec, n)
   result = createTokenBuf(val.span)
   result.addSubtree val
-
-proc getConstOrdinalValue*(val: Cursor): xint =
-  case val.kind
-  of CharLit:
-    result = createXint val.uoperand
-  of IntLit:
-    result = createXint pool.integers[val.intId]
-  of UIntLit:
-    result = createXint pool.uintegers[val.uintId]
-  of ParLe:
-    case val.exprKind
-    of FalseX:
-      result = createXint(0'i64)
-    of TrueX:
-      result = createXint(1'i64)
-    else:
-      result = createNaN()
-  else:
-    result = createNaN()
 
 proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
   var ec = initEvalContext(c)
@@ -404,7 +442,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     else: err = true
   of ParLe:
     let exprKind = n.exprKind
-    case exprKind 
+    case exprKind
     of TrueX, FalseX:
       if typ.typeKind == BoolT:
         buf.addSubtree n
