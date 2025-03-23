@@ -87,6 +87,12 @@ proc getConstOrdinalValue*(val: Cursor): xint =
   else:
     result = createNaN()
 
+proc singleToken*(c: var EvalContext; tok: PackedToken): Cursor =
+  let i = c.values.len
+  c.values.add createTokenBuf(1)
+  c.values[i].add tok
+  result = cursorAt(c.values[i], 0)
+
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   template error(msg: string; info: PackedLineInfo) =
     result = c.error(msg, info)
@@ -182,6 +188,30 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       skipParRi n
       if typ.typeKind == CstringT and val.kind == StringLit:
         result = val
+      elif typ.typeKind == UIntT:
+        let x = getConstOrdinalValue(val)
+        var err = false
+        let u = asUnsigned(x, err)
+        if err:
+          error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
+        else:
+          result = singleToken(c, uintToken(pool.uintegers.getOrIncl(u), nOrig.info))
+      elif typ.typeKind == IntT:
+        let x = getConstOrdinalValue(val)
+        var err = false
+        let i = asSigned(x, err)
+        if err:
+          error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
+        else:
+          result = singleToken(c, intToken(pool.integers.getOrIncl(i), nOrig.info))
+      elif typ.typeKind == CharT:
+        let x = getConstOrdinalValue(val)
+        var err = false
+        let ch = asUnsigned(x, err)
+        if err or ch >= 256u:
+          error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
+        else:
+          result = singleToken(c, charToken(char(ch), nOrig.info))
       else:
         # other conversions not implemented
         error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
@@ -208,8 +238,6 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       let b = getConstOrdinalValue eval(c, n)
       skipParRi n
       if not isNaN(a) and not isNaN(b):
-        let valPos = c.values.len
-        c.values.add createTokenBuf(1)
         let rx = a * b
         var err = false
         if isSigned:
@@ -217,15 +245,13 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           if err:
             error "expression overflow at compile time: " & asNimCode(orig), orig.info
           else:
-            c.values[valPos].add intToken(pool.integers.getOrIncl(ri), orig.info)
-            result = cursorAt(c.values[valPos], 0)
+            result = singleToken(c, intToken(pool.integers.getOrIncl(ri), orig.info))
         else:
           let ru = asUnsigned(rx, err)
           if err:
             error "expression overflow at compile time: " & asNimCode(orig), orig.info
           else:
-            c.values[valPos].add uintToken(pool.uintegers.getOrIncl(ru), orig.info)
-            result = cursorAt(c.values[valPos], 0)
+            result = singleToken(c, uintToken(pool.uintegers.getOrIncl(ru), orig.info))
       else:
         error "cannot evaluate expression at compile time: " & asNimCode(orig), orig.info
     of IsMainModuleX:
