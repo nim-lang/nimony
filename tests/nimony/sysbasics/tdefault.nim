@@ -1,3 +1,5 @@
+import std/syncio
+
 discard default(string)
 discard default(int)
 
@@ -48,3 +50,28 @@ type EmptyObj = object
 let empty = EmptyObj()
 type EmptyGenericObj[T] = object
 let emptyGeneric = EmptyGenericObj[int]()
+
+block:
+  var x = default(array[2, int])
+  assert x[0] == 0
+  assert x[1] == 0
+
+  var y = default(array[2, array[2, int]])
+  assert y[0][0] == 0
+  assert y[0][1] == 0
+  assert y[1][0] == 0
+  assert y[1][1] == 0
+
+  type
+    ObjWithArray = object
+      x: array[2, int]
+
+  var obj = default(ObjWithArray)
+  assert obj.x[0] == 0
+  assert obj.x[1] == 0
+
+  var objs = default(array[2, MyObject])
+  assert objs[0].x == 0
+  assert objs[0].y == 0
+  assert objs[1].x == 0
+  assert objs[1].y == 0
