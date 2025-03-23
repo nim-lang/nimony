@@ -1,0 +1,2 @@
+tests/nimony/lastuse/tevil.nim(9, 7) LastUse: false
+tests/nimony/lastuse/tevil.nim(15, 7) LastUse: true

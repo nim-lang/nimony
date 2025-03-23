@@ -273,6 +273,7 @@ type
     InjectTagId
     GensymTagId
     ErrorTagId
+    ReportTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -545,5 +546,6 @@ const
     ("private", 267),
     ("inject", 268),
     ("gensym", 269),
-    ("error", 270)
+    ("error", 270),
+    ("report", 271)
   ]
