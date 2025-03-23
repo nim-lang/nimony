@@ -1,4 +1,3 @@
-
 const
   Prelude* = """
 /* GENERATED CODE. DO NOT EDIT. */
@@ -166,6 +165,7 @@ typedef NU8 NU;
 #if defined(__GNUC__) || defined(__clang__)
 #  pragma GCC diagnostic ignored "-Wswitch-bool"
 #  pragma GCC diagnostic ignored "-Wformat"
+#  pragma GCC diagnostic ignored "-Wpointer-sign"
 #endif
 
 
