@@ -36,6 +36,11 @@ type # we need to start a new type section here, so that ``0`` can have a type
   bool* {.magic: "Bool".} = enum ## Built-in boolean type.
     false = 0, true = 1
 
+# temporary aliases, since smaller bit types are convertible:
+type
+  SomeSignedInt = int
+  SomeUnsignedInt = uint
+
 proc `not`*(x: bool): bool {.magic: "Not", noSideEffect.}
   ## Boolean not; returns true if `x == false`.
 
@@ -85,12 +90,12 @@ proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffe
 proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 
 proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
-proc `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
+proc `[]`*[I, T; I2](x: array[I, T], i: I2): var T {.magic: "ArrAt".}
 proc `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
 proc `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
   (x[i]) = elem
-template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
+template `[]=`*[I, T; I2](x: array[I, T], i: I2; elem: T) =
   (x[i]) = elem
 template `[]=`*(x: cstring, i: int; elem: char) =
   (x[i]) = elem
@@ -150,24 +155,37 @@ proc `mod`*(x, y: int16): int16 {.magic: "ModI", noSideEffect.}
 proc `mod`*(x, y: int32): int32 {.magic: "ModI", noSideEffect.}
 proc `mod`*(x, y: int64): int64 {.magic: "ModI", noSideEffect.}
 
-type
-  SomeInteger = int # for now just an alias
+# temporarily separate overloads for SomeSignedInt/SomeUnsignedInt:
 
-proc `shr`*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int8, y: SomeSignedInt): int8 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int16, y: SomeSignedInt): int16 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int32, y: SomeSignedInt): int32 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int64, y: SomeSignedInt): int64 {.magic: "AshrI", noSideEffect.}
 
+proc `shl`*(x: int8, y: SomeSignedInt): int8 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: int16, y: SomeSignedInt): int16 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: int32, y: SomeSignedInt): int32 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: int64, y: SomeSignedInt): int64 {.magic: "ShlI", noSideEffect.}
 
-proc `shl`*(x: int8, y: SomeInteger): int8 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int16, y: SomeInteger): int16 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int32, y: SomeInteger): int32 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int64, y: SomeInteger): int64 {.magic: "ShlI", noSideEffect.}
+proc ashr*(x: int8, y: SomeSignedInt): int8 {.magic: "AshrI", noSideEffect.}
+proc ashr*(x: int16, y: SomeSignedInt): int16 {.magic: "AshrI", noSideEffect.}
+proc ashr*(x: int32, y: SomeSignedInt): int32 {.magic: "AshrI", noSideEffect.}
+proc ashr*(x: int64, y: SomeSignedInt): int64 {.magic: "AshrI", noSideEffect.}
 
-proc ashr*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int8, y: SomeUnsignedInt): int8 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int16, y: SomeUnsignedInt): int16 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int32, y: SomeUnsignedInt): int32 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int64, y: SomeUnsignedInt): int64 {.magic: "AshrI", noSideEffect.}
+
+proc `shl`*(x: int8, y: SomeUnsignedInt): int8 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: int16, y: SomeUnsignedInt): int16 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: int32, y: SomeUnsignedInt): int32 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: int64, y: SomeUnsignedInt): int64 {.magic: "ShlI", noSideEffect.}
+
+proc ashr*(x: int8, y: SomeUnsignedInt): int8 {.magic: "AshrI", noSideEffect.}
+proc ashr*(x: int16, y: SomeUnsignedInt): int16 {.magic: "AshrI", noSideEffect.}
+proc ashr*(x: int32, y: SomeUnsignedInt): int32 {.magic: "AshrI", noSideEffect.}
+proc ashr*(x: int64, y: SomeUnsignedInt): int64 {.magic: "AshrI", noSideEffect.}
 
 proc `and`*(x, y: int8): int8 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: int16): int16 {.magic: "BitandI", noSideEffect.}
@@ -194,15 +212,27 @@ proc `not`*(x: uint16): uint16 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: uint32): uint32 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: uint64): uint64 {.magic: "BitnotI", noSideEffect.}
 
-proc `shr`*(x: uint8, y: SomeInteger): uint8 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint16, y: SomeInteger): uint16 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint32, y: SomeInteger): uint32 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint64, y: SomeInteger): uint64 {.magic: "ShrI", noSideEffect.}
+# temporarily separate overloads for SomeSignedInt/SomeUnsignedInt:
 
-proc `shl`*(x: uint8, y: SomeInteger): uint8 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint16, y: SomeInteger): uint16 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint32, y: SomeInteger): uint32 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint64, y: SomeInteger): uint64 {.magic: "ShlI", noSideEffect.}
+proc `shr`*(x: uint8, y: SomeSignedInt): uint8 {.magic: "ShrI", noSideEffect.}
+proc `shr`*(x: uint16, y: SomeSignedInt): uint16 {.magic: "ShrI", noSideEffect.}
+proc `shr`*(x: uint32, y: SomeSignedInt): uint32 {.magic: "ShrI", noSideEffect.}
+proc `shr`*(x: uint64, y: SomeSignedInt): uint64 {.magic: "ShrI", noSideEffect.}
+
+proc `shl`*(x: uint8, y: SomeSignedInt): uint8 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: uint16, y: SomeSignedInt): uint16 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: uint32, y: SomeSignedInt): uint32 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: uint64, y: SomeSignedInt): uint64 {.magic: "ShlI", noSideEffect.}
+
+proc `shr`*(x: uint8, y: SomeUnsignedInt): uint8 {.magic: "ShrI", noSideEffect.}
+proc `shr`*(x: uint16, y: SomeUnsignedInt): uint16 {.magic: "ShrI", noSideEffect.}
+proc `shr`*(x: uint32, y: SomeUnsignedInt): uint32 {.magic: "ShrI", noSideEffect.}
+proc `shr`*(x: uint64, y: SomeUnsignedInt): uint64 {.magic: "ShrI", noSideEffect.}
+
+proc `shl`*(x: uint8, y: SomeUnsignedInt): uint8 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: uint16, y: SomeUnsignedInt): uint16 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: uint32, y: SomeUnsignedInt): uint32 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: uint64, y: SomeUnsignedInt): uint64 {.magic: "ShlI", noSideEffect.}
 
 proc `and`*(x, y: uint8): uint8 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: uint16): uint16 {.magic: "BitandI", noSideEffect.}

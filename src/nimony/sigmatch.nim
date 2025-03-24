@@ -230,16 +230,20 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     inc f
     result = true
     while f.kind != ParRi:
-      if not matchesConstraint(m, f, a):
+      var f2 = f
+      if not matchesConstraint(m, f2, a):
         result = false
         break
+      skip f
     skipToEnd f
   of OrT:
     inc f
     while f.kind != ParRi:
-      if matchesConstraint(m, f, a):
+      var f2 = f
+      if matchesConstraint(m, f2, a):
         result = true
         break
+      skip f
     skipToEnd f
   of ConceptT:
     # XXX Use some algorithm here that can cache the result
@@ -264,7 +268,7 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     assert f.kind == ParRi
     inc f
   of OrdinalT:
-    result = isOrdinalType(a)
+    result = isOrdinalType(a) or a.typeKind == OrdinalT
     skip f
   else:
     result = false
