@@ -67,7 +67,7 @@ proc getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
     default(V)
 
 when defined(nimony):
-  proc `[]`*[K: Keyable, V](t: var Table[K, V]; k: K): var V =
+  proc `[]`*[K: Keyable, V](t: Table[K, V]; k: K): var V =
     let idx = rawGet(t, k, hash(k))
     assert idx >= 0
     t.data[idx][1]

@@ -19,8 +19,8 @@ type
 
 proc initIntSet*(): IntSet = IntSet(t: initTable[uint, Trunk]())
 
-proc split(x: uint): (uint, uint, uint) {.inline.} =
-  (x div BitsPerTrunk, (x mod BitsPerTrunk) div UIntSize, x mod UIntSize)
+proc split(x: uint): (uint, uint, int) {.inline.} =
+  (x div BitsPerTrunk, (x mod BitsPerTrunk) div UIntSize, int(x mod UIntSize))
 
 proc incl*(s: var IntSet; x: int) =
   let (a, b, c) = split cast[uint](x)
@@ -34,8 +34,12 @@ proc excl*(s: var IntSet; x: int) =
 
 proc contains*(s: IntSet; x: int): bool =
   let (a, b, c) = split cast[uint](x)
-  let tr = s.t.getOrDefault(a)
-  result = (tr.a[b] and (1'u shl c)) != 0'u
+  if s.t.hasKey(a):
+    #let tr = s.t.getOrDefault(a)
+    let tr = addr s.t[a]
+    result = (tr.a[b] and (1'u shl c)) != 0'u
+  else:
+    result = false
 
 proc containsOrIncl*(s: var IntSet; x: int): bool =
   let (a, b, c) = split cast[uint](x)
