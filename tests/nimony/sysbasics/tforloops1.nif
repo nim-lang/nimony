@@ -17,7 +17,7 @@
       (mul
        (i -1) ~1 i.0 1 i.0)) ,2
      (yld 9
-      (mul 15,140,lib/std/system.nim
+      (mul 15,145,lib/std/system.nim
        (i +64) ~2
        (mul
         (i -1) ~1 i.0 1 i.0) 1 i.0)) 2,3
@@ -75,7 +75,7 @@
     (hconv 11,~16
      (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
    (if 3
-    (elif 2,407,lib/std/system.nim
+    (elif 2,437,lib/std/system.nim
      (expr 2,1
       (lt
        (i -1) 9,28,tests/nimony/sysbasics/tforloops1.nim +5 5,28,tests/nimony/sysbasics/tforloops1.nim x.1)) ~1,1
@@ -121,7 +121,7 @@
       (mul ~1,~9
        (i -1) ~1 i.4 1 i.4)) ,2
      (yld 9
-      (mul 15,140,lib/std/system.nim
+      (mul 15,145,lib/std/system.nim
        (i +64) ~2
        (mul ~1,~10
         (i -1) ~1 i.4 1 i.4) 1 i.4)))))) 4,45
@@ -265,7 +265,7 @@
        (let :j.4 . . 13,5,lib/std/system/iterators.nim
         (i -1) .)) ~2,1
       (stmts 4
-       (let :a.4 . . 15,128,lib/std/system.nim
+       (let :a.4 . . 15,133,lib/std/system.nim
         (i +64) 6
         (add 13,5,lib/std/system/iterators.nim
          (i -1) ~2 i.9 2 j.4)) 4,1
@@ -310,15 +310,15 @@
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 9,97,tests/nimony/sysbasics/tforloops1.nim
         (hderef i.10))) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) 4,22
- (proc :inc.0.tfo6yv57p . 0,276,lib/std/system.nim .
+ (proc :inc.0.tfo6yv57p . 0,306,lib/std/system.nim .
   (at inc.1.sysvq0asl 19,~4
-   (i -1)) 21,276,lib/std/system.nim
+   (i -1)) 21,306,lib/std/system.nim
   (params 1
    (param :x.3 . . 3
     (mut 23,19,tests/nimony/sysbasics/tforloops1.nim
-     (i -1)) .)) 0,276,lib/std/system.nim . 32,276,lib/std/system.nim
+     (i -1)) .)) 0,306,lib/std/system.nim . 32,306,lib/std/system.nim
   (pragmas 2
-   (inline)) 0,276,lib/std/system.nim . 2,278,lib/std/system.nim
+   (inline)) 0,306,lib/std/system.nim . 2,308,lib/std/system.nim
   (stmts 2
    (asgn ~2
     (hderef x.3) 4
@@ -349,12 +349,12 @@
      (if 3
       (elif 7
        (eq 7,33,lib/std/system.nim
-        (i -1) 2,465,lib/std/system.nim
+        (i -1) 2,495,lib/std/system.nim
         (expr
          (expr ,~4
           (expr
            (expr 45,2
-            (add ~32,~329
+            (add ~32,~354
              (i +64) ~23
              (sub 6,~48
               (i -1) ~5
@@ -380,12 +380,12 @@
             (uarray
              (i -1))) 32
            (addr 1 x.4))) 45
-         (kv ~45 len.4.Inff8aa1.tfo6yv57p 2,465,lib/std/system.nim
+         (kv ~45 len.4.Inff8aa1.tfo6yv57p 2,495,lib/std/system.nim
           (expr
            (expr ,~4
             (expr
              (expr 45,2
-              (add ~32,~329
+              (add ~32,~354
                (i +64) ~23
                (sub 6,~48
                 (i -1) ~5
@@ -444,7 +444,7 @@
   (pragmas 2
    (inline) 10
    (requires 19
-    (and 2,403,lib/std/system.nim
+    (and 2,433,lib/std/system.nim
      (expr 2,1
       (le
        (i -1) 75,8,lib/std/system/openarrays.nim +0 68,8,lib/std/system/openarrays.nim idx.1)) 8
