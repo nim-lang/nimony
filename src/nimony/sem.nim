@@ -1395,7 +1395,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       else:
         buildErr c, cs.callNode.info, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
-      typeofCallIs c, it, cs.beforeCall, m[idx].returnType
+      #typeofCallIs c, it, cs.beforeCall, m[idx].returnType
       if c.templateInstCounter <= MaxNestedTemplates:
         inc c.templateInstCounter
         withErrorContext c, cs.callNode.info:
