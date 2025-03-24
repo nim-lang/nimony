@@ -774,6 +774,11 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
   else:
     c.dest.addSubtree fnOrig
 
+proc typeofCallIs(c: var SemContext; it: var Item; beforeCall: int; returnType: TypeCursor) {.inline.} =
+  let expected = it.typ
+  it.typ = returnType
+  commonType c, it, beforeCall, expected
+
 proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: int;
                      m: Match) =
   var expandedInto = createTokenBuf(30)
@@ -790,11 +795,27 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
     shrink c.dest, beforeCall
     expandedInto.addParRi() # extra token so final `inc` doesn't break
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
+    let aInfo = a.n.info
     inc c.routine.inInst
     semExpr c, a
+    # make sure template body expression matches return type, mirrored with `semProcBody`:
+    let returnType =
+      if m.inferred.len == 0 or m.returnType.kind == DotToken:
+        m.returnType
+      else:
+        instantiateType(c, m.returnType, m.inferred)
+    case returnType.typeKind
+    of UntypedT:
+      # untyped return type ignored, maybe could be handled in commonType
+      discard
+    of VoidT:
+      typecheck(c, aInfo, a.typ, returnType)
+    else:
+      commonType c, a, beforeCall, returnType
     dec c.routine.inInst
-    it.typ = a.typ
+    # now match to expected type:
     it.kind = a.kind
+    typeofCallIs c, it, beforeCall, a.typ
   else:
     c.buildErr it.n.info, "could not load symbol: " & pool.syms[fnId] & "; errorCode: " & $res.status
 
@@ -920,11 +941,6 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     result = ProcInstance(targetSym: targetSym, procType: res.decl,
       returnType: n)
   assert result.returnType.kind != UnknownToken
-
-proc typeofCallIs(c: var SemContext; it: var Item; beforeCall: int; returnType: TypeCursor) {.inline.} =
-  let expected = it.typ
-  it.typ = returnType
-  commonType c, it, beforeCall, expected
 
 proc getFnIdent(c: var SemContext): StrId =
   var n = beginRead(c.dest)
@@ -1395,7 +1411,6 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       else:
         buildErr c, cs.callNode.info, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
-      #typeofCallIs c, it, cs.beforeCall, m[idx].returnType
       if c.templateInstCounter <= MaxNestedTemplates:
         inc c.templateInstCounter
         withErrorContext c, cs.callNode.info:

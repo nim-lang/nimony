@@ -57,6 +57,6 @@
   (cstring) 17
   (suf "abc" "C")) 4,20
  (gvar :zz.0.tcsj45p9m . . 8,~2
-  (cstring)
-  (hconv 12,20,tests/nimony/nosystem/tcstring.nim
-   (cstring) 18,22,tests/nimony/nosystem/tcstring.nim "xzy")))
+  (cstring) 14
+  (hconv ~6,~2
+   (cstring) "xzy")))
