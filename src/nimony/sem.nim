@@ -4267,6 +4267,22 @@ proc semTypedBinaryArithmetic(c: var SemContext; it: var Item) =
   takeParRi c, it.n
   commonType c, it, beforeExpr, typ
 
+proc semShift(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let typeStart = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  let typ = typeToCursor(c, typeStart)
+  semExpr c, it
+  var shift = Item(n: it.n, typ: c.types.autoType)
+  let shiftInfo = shift.n.info
+  semExpr c, shift
+  it.n = shift.n
+  if shift.typ.typeKind notin {IntT, UIntT}:
+    c.buildErr shiftInfo, "expected integer for shift operand"
+  takeParRi c, it.n
+  commonType c, it, beforeExpr, typ
+
 proc semCmp(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   takeToken c, it.n
@@ -5976,8 +5992,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         semDconv c, it
     of EqX, NeqX, LeX, LtX, EqSetX, LeSetX, LtSetX:
       semCmp c, it
-    of AshrX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, PlusSetX, MinusSetX, MulSetX, XorSetX:
+    of AddX, SubX, MulX, DivX, ModX, BitandX, BitorX, BitxorX, PlusSetX, MinusSetX, MulSetX, XorSetX:
       semTypedBinaryArithmetic c, it
+    of AshrX, ShrX, ShlX:
+      semShift c, it
     of BitnotX, NegX:
       semTypedUnaryArithmetic c, it
     of InSetX:

@@ -19,8 +19,8 @@ type
 
 proc initIntSet*(): IntSet = IntSet(t: initTable[uint, Trunk]())
 
-proc split(x: uint): (uint, uint, uint) {.inline.} =
-  (x div BitsPerTrunk, (x mod BitsPerTrunk) div UIntSize, x mod UIntSize)
+proc split(x: uint): (uint, uint, int) {.inline.} =
+  (x div BitsPerTrunk, (x mod BitsPerTrunk) div UIntSize, int(x mod UIntSize))
 
 proc incl*(s: var IntSet; x: int) =
   let (a, b, c) = split cast[uint](x)
