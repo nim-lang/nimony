@@ -348,8 +348,8 @@
     (expr
      (if 3
       (elif 7
-       (eq 17,111,lib/std/system.nim
-        (i +64) 2,465,lib/std/system.nim
+       (eq 7,33,lib/std/system.nim
+        (i -1) 2,465,lib/std/system.nim
         (expr
          (expr ,~4
           (expr
