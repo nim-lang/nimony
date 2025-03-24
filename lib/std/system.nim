@@ -90,7 +90,7 @@ proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffe
 proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 
 proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
-proc `[]`*[I, T; I2](x: array[I, T], i: I2): var T {.magic: "ArrAt".}
+proc `[]`*[I, T; I2](x: array[I, T], i: I2): var T {.magic: "ArrAt".} # XXX needs validation of index type in sem
 proc `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
 proc `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
