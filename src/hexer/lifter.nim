@@ -38,6 +38,7 @@ type
     nominalTypeToHook: array[AttachedOp, Table[SymId, SymId]]
     hookNames: Table[string, int]
     thisModuleSuffix: string
+    bits*: int
 
 # Phase 1: Determine if the =hook is trivial:
 
@@ -182,7 +183,7 @@ proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
     if result != SymId(0):
       return result
 
-  let key = mangle(t)
+  let key = mangle(t, c.bits)
   result = c.structuralTypeToHook[op].getOrDefault(key)
   if result == SymId(0):
     let name = generateHookName(c, op, key)
@@ -592,8 +593,8 @@ proc genMissingHooks*(c: var LiftingCtx) =
       c.calledErrorHook = NoLineInfo
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
-proc createLiftingCtx*(thisModuleSuffix: string): ref LiftingCtx =
-  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix)
+proc createLiftingCtx*(thisModuleSuffix: string, bits: int): ref LiftingCtx =
+  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op

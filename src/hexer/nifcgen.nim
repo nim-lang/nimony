@@ -325,7 +325,7 @@ proc traverseAsNamedType(c: var EContext; n: var Cursor) =
   let info = n.info
   var body = n
   let k = body.typeKind
-  let key = takeMangle n
+  let key = takeMangle(n, c.bits)
 
   var val = c.newTypes.getOrDefault(key)
   if val == SymId(0):
