@@ -57,6 +57,18 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
             mangleImpl b, c
         b.endTree()
         inc c # ParRi
+      elif tag == "u" or tag == "i" or tag == "f":
+        b.addTree(tag)
+        inc c
+        # normalize bits
+        assert c.kind == IntLit
+        let bits = pool.integers[c.intID]
+        if bits < 0 and b.bits >= 0:
+          b.addIntLit(b.bits)
+        else:
+          b.addIntLit(bits)
+        inc c
+        inc nested
       else:
         b.addTree(tag)
         inc nested
@@ -100,11 +112,11 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
       inc c
     if nested == 0: break
 
-proc takeMangle*(c: var Cursor): string =
-  var b = createMangler(30)
+proc takeMangle*(c: var Cursor; bits = -1): string =
+  var b = createMangler(30, bits)
   mangleImpl b, c
   result = b.extract()
 
-proc mangle*(c: Cursor): string =
+proc mangle*(c: Cursor; bits = -1): string =
   var c = c
-  takeMangle c
+  takeMangle c, bits
