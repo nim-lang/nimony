@@ -14,11 +14,12 @@ type
     buf: string
     nesting: int
     seen: Table[string, int]
+    bits*: int
 
 proc `=copy`(dest: var Mangler; src: Mangler) {.error.}
 
-proc createMangler*(sizeHint: int): Mangler =
-  Mangler(buf: newStringOfCap(sizeHint))
+proc createMangler*(sizeHint: int; bits = -1): Mangler =
+  Mangler(buf: newStringOfCap(sizeHint), bits: bits)
 
 proc extract*(b: sink Mangler): string =
   ## Extracts the buffer from the mangler.
