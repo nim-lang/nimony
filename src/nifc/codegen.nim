@@ -95,11 +95,12 @@ type
     flags: set[GenFlag]
     inToplevel: bool
     objConstrNeedsType: bool
+    bits: int
 
-proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]): GeneratedCode =
+proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]; bits: int): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
       fileIds: initPackedSet[FileId](), flags: flags, inToplevel: true,
-      objConstrNeedsType: true)
+      objConstrNeedsType: true, bits: bits)
   fillTokenTable(result.tokens)
 
 proc add*(c: var GeneratedCode; t: PredefinedToken) {.inline.} =
@@ -164,9 +165,9 @@ proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
 
 proc genIntLit(c: var GeneratedCode; litId: IntId) =
   let i = pool.integers[litId]
-  if i > low(int32) and i <= high(int32):
+  if i > low(int32) and i <= high(int32) and c.bits != 64:
     c.add $i
-  elif i == low(int32):
+  elif i == low(int32) and c.bits != 64:
     # Nim has the same bug for the same reasons :-)
     c.add "(-2147483647 -1)"
   elif i > low(int64):
@@ -178,7 +179,7 @@ proc genIntLit(c: var GeneratedCode; litId: IntId) =
 
 proc genUIntLit(c: var GeneratedCode; litId: UIntId) =
   let i = pool.uintegers[litId]
-  if i <= high(uint32):
+  if i <= high(uint32) and c.bits != 64:
     c.add $i
     c.add "u"
   else:
@@ -654,7 +655,7 @@ proc writeLineDir(f: var CppFile, c: var GeneratedCode) =
 proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   var m = load(inp)
   m.config = s.config
-  var c = initGeneratedCode(m, flags)
+  var c = initGeneratedCode(m, flags, s.bits)
   c.m.openScope()
 
   var co = TypeOrder()
