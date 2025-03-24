@@ -2731,7 +2731,11 @@ proc semArrayType(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
         c.buildErr index.info, "invalid array index type: " & typeToString(index)
       else:
         c.dest.addParLe(RangetypeT, info)
-        c.dest.addSubtree c.types.intType
+        let ordinal = evalExpr(c, index)
+        if ordinal[0].kind == UIntLit:
+          c.dest.addSubtree c.types.uintType
+        else:
+          c.dest.addSubtree c.types.intType
         c.dest.addIntLit 0, info
         c.dest.addIntLit length - 1, info
         c.dest.addParRi()
