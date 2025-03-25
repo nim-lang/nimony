@@ -614,18 +614,15 @@ proc semConstExpr(c: var SemContext; it: var Item) =
   var value = beginRead(valueBuf)
   annotateConstantType c.dest, it.typ, value
 
-proc semStmtsExprImpl(c: var SemContext; it: var Item) =
+proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
+  let before = c.dest.len
+  takeToken c, it.n
   while it.n.kind != ParRi:
     if not isLastSon(it.n):
       semStmt c, it.n, false
     else:
       semExpr c, it
   takeParRi c, it.n
-
-proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
-  let before = c.dest.len
-  takeToken c, it.n
-  semStmtsExprImpl c, it
   let kind =
     if classifyType(c, it.typ) in {VoidT, AutoT}:
       (if isNewScope: ScopeTagId else: StmtsTagId)
@@ -633,10 +630,15 @@ proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
   c.dest[before] = parLeToken(TagId(kind), c.dest[before].info)
 
 proc semProcBody(c: var SemContext; itB: var Item) =
-  let beforeBodyPos = c.dest.len
   let info = itB.n.info
   var it = Item(n: itB.n, typ: c.types.autoType)
-  semStmtsExprImpl c, it
+  var beforeLastSon = c.dest.len
+  while it.n.kind != ParRi:
+    if not isLastSon(it.n):
+      semStmt c, it.n, false
+    else:
+      beforeLastSon = c.dest.len
+      semExpr c, it
   if c.routine.kind == TemplateY:
     case c.routine.returnType.typeKind
     of UntypedT:
@@ -644,26 +646,19 @@ proc semProcBody(c: var SemContext; itB: var Item) =
     of VoidT:
       typecheck(c, info, it.typ, c.routine.returnType)
     else:
-      # uses closing paren of (stmts:
-      c.dest.insert [parLeToken(ExprX, info)], beforeBodyPos
-      commonType c, it, beforeBodyPos, c.routine.returnType
-      # now add closing paren
-      c.dest.addParRi()
+      commonType c, it, beforeLastSon, c.routine.returnType
   elif classifyType(c, it.typ) == VoidT:
     discard "ok"
   else:
-    # uses closing paren of (stmts:
-    c.dest.insert [parLeToken(ExprX, info)], beforeBodyPos
-    commonType c, it, beforeBodyPos, c.routine.returnType
-    # now add closing paren
-    c.dest.addParRi()
+    commonType c, it, beforeLastSon, c.routine.returnType
     # transform `expr` to `result = expr`:
     if c.routine.resId != SymId(0):
       var prefix = [
         parLeToken(AsgnS, info),
         symToken(c.routine.resId, info)]
-      c.dest.insert prefix, beforeBodyPos
+      c.dest.insert prefix, beforeLastSon
       c.dest.addParRi()
+  takeParRi c, it.n
   itB.n = it.n
 
 proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
