@@ -259,31 +259,36 @@ proc `-`*(x, y: float): float {.magic: "SubF64", noSideEffect.}
 proc `*`*(x, y: float): float {.magic: "MulF64", noSideEffect.}
 proc `/`*(x, y: float): float {.magic: "DivF64", noSideEffect.}
 
-type
-  Incable = concept
-    proc `+`(x, y: Self): Self
-  Decable = concept
-    proc `-`(x, y: Self): Self
+proc succ*[T, V: Ordinal](x: T; y: V): T {.magic: "Succ", noSideEffect.}
+proc pred*[T, V: Ordinal](x: T; y: V): T {.magic: "Pred", noSideEffect.}
+template succ*[T: Ordinal](x: T): T = succ(x, T(1))
+template pred*[T: Ordinal](x: T): T = pred(x, T(1))
 
-proc inc*[T: Incable, V: Ordinal](x: var T, y: V) {.inline.} =
+proc inc*[T, V: Ordinal](x: var T, y: V) {.inline.} =
   ## Increments the ordinal `x` by `y`.
-  x = x + T(y)
+  x = succ(x, y)
 
-proc dec*[T: Decable, V: Ordinal](x: var T, y: V) {.inline.} =
+proc dec*[T, V: Ordinal](x: var T, y: V) {.inline.} =
   ## Decrements the ordinal `x` by `y`.
-  x = x - T(y)
+  x = pred(x, y)
 
-proc inc*[T: Incable](x: var T) {.inline.} =
-  # workaround for no default params
-  x = x + T(1)
+proc inc*[T: Ordinal](x: var T) {.inline.} =
+  ## Increments the ordinal `x` by 1.
+  x = succ(x)
 
-proc dec*[T: Decable](x: var T) {.inline.} =
-  # workaround for no default params
-  x = x - T(1)
+proc dec*[T: Ordinal](x: var T) {.inline.} =
+  ## Decrements the ordinal `x` by 1.
+  x = pred(x)
 
 # comparison operators:
-proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
-  ## Checks whether values within the *same enum* have the same underlying value.
+
+# not in original nim, for better concept matches:
+proc `==`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
+
+when false:
+  # ambiguous with generic version above
+  proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
+    ## Checks whether values within the *same enum* have the same underlying value.
 
 proc `==`*(x, y: pointer): bool {.magic: "EqRef", noSideEffect.}
   ## Checks for equality between two `pointer` variables.
@@ -300,7 +305,12 @@ proc `==`*[T](x, y: ref T): bool {.magic: "EqRef", noSideEffect.}
 proc `==`*[T](x, y: ptr T): bool {.magic: "EqRef", noSideEffect.}
   ## Checks that two `ptr` variables refer to the same item.
 
-proc `<=`*[Enum: enum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
+# not in original nim, for better concept matches:
+proc `<=`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
+
+when false:
+  # ambiguous with generic version above
+  proc `<=`*[Enum: enum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
 
 proc `<=`*(x, y: char): bool {.magic: "LeCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
@@ -316,7 +326,12 @@ proc `<=`*(x, y: bool): bool {.magic: "LeB", noSideEffect.}
 proc `<=`*[T](x, y: ref T): bool {.magic: "LePtr", noSideEffect.}
 proc `<=`*(x, y: pointer): bool {.magic: "LePtr", noSideEffect.}
 
-proc `<`*[Enum: enum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
+# not in original nim, for better concept matches:
+proc `<`*[T: Ordinal](x, y: T): bool {.magic: "LtI", noSideEffect.}
+
+when false:
+  # ambiguous with generic version above
+  proc `<`*[Enum: enum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
 
 proc `<`*(x, y: char): bool {.magic: "LtCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
@@ -512,6 +527,6 @@ proc cmp*[T: Comparable](x, y: T): int =
 proc newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
 proc new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
 
-proc default*[I: Countable; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
+proc default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
   for i in low(array[I, T]) .. high(array[I, T]):
     result[i] = default(T)
