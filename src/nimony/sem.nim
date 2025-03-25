@@ -3442,8 +3442,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           error "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
         var resId = SymId(0)
-        if c.g.config.compat and c.routine.inGeneric > 0 and # includes templates
-            UntypedP in crucial.flags: # should be default eventually
+        if UntypedP in crucial.flags and c.routine.inGeneric > 0: # includes templates
+          # should eventually be default for compat mode
           let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
           var ctx = createUntypedContext(addr c, mode)
           addParams(ctx, beforeGenericParams)
