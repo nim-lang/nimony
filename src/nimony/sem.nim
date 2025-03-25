@@ -526,9 +526,10 @@ proc semBoolExpr(c: var SemContext; n: var Cursor) =
   let start = c.dest.len
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
-  if classifyType(c, it.typ) != BoolT:
+  let t = skipModifier(it.typ)
+  if classifyType(c, t) != BoolT:
     c.dest.shrink start
-    buildErr c, n.info, "expected `bool` but got: " & typeToString(it.typ)
+    buildErr c, n.info, "expected `bool` but got: " & typeToString(t)
   n = it.n
 
 proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
