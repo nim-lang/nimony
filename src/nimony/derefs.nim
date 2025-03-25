@@ -616,7 +616,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trAsgn c, n
       of LocalDecls:
         trLocal c, n
-      of ProcS, FuncS, MacroS, MethodS, ConverterS:
+      of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
         trProcDecl c, n
       of ScopeS:
         c.typeCache.openScope()

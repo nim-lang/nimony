@@ -512,6 +512,6 @@ proc cmp*[T: Comparable](x, y: T): int =
 proc newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
 proc new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
 
-proc default*[I: Iterable; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
-  for i in low(array[I, T]).int .. high(array[I, T]).int:
+proc default*[I: Countable; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
+  for i in low(array[I, T]) .. high(array[I, T]):
     result[i] = default(T)

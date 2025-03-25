@@ -1,14 +1,16 @@
 type
-  Iterable* = concept
-    iterator `..`(a, b: Self): Self
+  Countable = concept
+    proc `+`(x, y: Self): Self # Incable
+    proc `<`(x, y: Self): bool
+    proc `<=`(x, y: Self): bool
 
-iterator `..<`*(a, b: int): int {.inline.} =
+iterator `..<`*[T: Countable](a, b: T): T {.inline.} =
   var i = a
   while i < b:
     yield i
     inc i
 
-iterator `..`*(a, b: int): int {.inline.} =
+iterator `..`*[T: Countable](a, b: T): T {.inline.} =
   var i = a
   while i <= b:
     yield i
