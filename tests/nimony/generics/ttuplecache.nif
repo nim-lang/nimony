@@ -10,22 +10,20 @@
   (stmts 8
    (result :result.0 . . ~3,~1 Foo.0.Iw8bgj.ttuv4zf4c1 .) 8
    (asgn result.0
-    (expr
-     (oconstr ~3,~1 Foo.0.Iw8bgj.ttuv4zf4c1 5
-      (kv ~5 data.0.Iw8bgj.ttuv4zf4c1 2 +0)))) ~2,~1
+    (oconstr ~3,~1 Foo.0.Iw8bgj.ttuv4zf4c1 5
+     (kv ~5 data.0.Iw8bgj.ttuv4zf4c1 2 +0))) ~2,~1
    (ret result.0))) ,8
  (proc 5 :initFooTup.0.ttuv4zf4c1 . . . 15
   (params) 7 Foo.0.Ildbpdf1.ttuv4zf4c1 . . 2,2
   (stmts 15
    (result :result.1 . . ~10,~2 Foo.0.Ildbpdf1.ttuv4zf4c1 .) 15
    (asgn result.1
-    (expr
-     (oconstr ~10,~2 Foo.0.Ildbpdf1.ttuv4zf4c1 5
-      (kv ~5 data.0.Ildbpdf1.ttuv4zf4c1 2
-       (tupconstr ~16,~2
-        (tuple 1
-         (i -1) 6
-         (i -1)) 1 +0 4 +0))))) ~2,~2
+    (oconstr ~10,~2 Foo.0.Ildbpdf1.ttuv4zf4c1 5
+     (kv ~5 data.0.Ildbpdf1.ttuv4zf4c1 2
+      (tupconstr ~16,~2
+       (tuple 1
+        (i -1) 6
+        (i -1)) 1 +0 4 +0)))) ~2,~2
    (ret result.1))) ,12
  (proc 5 :initFooGeneric.0.ttuv4zf4c1 . . 19
   (typevars 1
@@ -37,10 +35,9 @@
    (result :result.2 . . 3,~1
     (at ~3 Foo.0.ttuv4zf4c1 1 T.1.ttuv4zf4c1) .) 6
    (asgn result.2
-    (expr
-     (oconstr 3,~1
-      (at ~3 Foo.0.ttuv4zf4c1 1 T.1.ttuv4zf4c1) 5
-      (kv ~5 data 2 x.0)))) ~2,~1
+    (oconstr 3,~1
+     (at ~3 Foo.0.ttuv4zf4c1 1 T.1.ttuv4zf4c1) 5
+     (kv ~5 data 2 x.0))) ~2,~1
    (ret result.2))) 4,15
  (glet :x.0.ttuv4zf4c1 . . 7,~3 Foo.0.Iv5bnz4.ttuv4zf4c1 18
   (call ~14 initFooGeneric.1.ttuv4zf4c1 1
@@ -89,9 +86,8 @@
   (stmts 6
    (result :result.3 . . 3,~1 Foo.0.Iv5bnz4.ttuv4zf4c1 .) 6
    (asgn result.3
-    (expr
-     (oconstr 3,~1 Foo.0.Iv5bnz4.ttuv4zf4c1 5
-      (kv ~5 data.0.Iv5bnz4.ttuv4zf4c1 2 x.3)))) ~2,~1
+    (oconstr 3,~1 Foo.0.Iv5bnz4.ttuv4zf4c1 5
+     (kv ~5 data.0.Iv5bnz4.ttuv4zf4c1 2 x.3))) ~2,~1
    (ret result.3))) 22,19
  (proc :initFooGeneric.2.ttuv4zf4c1 . ~22,~7 .
   (at initFooGeneric.0.ttuv4zf4c1 3
@@ -108,9 +104,8 @@
   (stmts 6
    (result :result.4 . . 3,~1 Foo.0.Iarhs7y1.ttuv4zf4c1 .) 6
    (asgn result.4
-    (expr
-     (oconstr 3,~1 Foo.0.Iarhs7y1.ttuv4zf4c1 5
-      (kv ~5 data.0.Iarhs7y1.ttuv4zf4c1 2 x.4)))) ~2,~1
+    (oconstr 3,~1 Foo.0.Iarhs7y1.ttuv4zf4c1 5
+     (kv ~5 data.0.Iarhs7y1.ttuv4zf4c1 2 x.4))) ~2,~1
    (ret result.4))) 7,5
  (type :Foo.0.Iw8bgj.ttuv4zf4c1 .
   (at Foo.0.ttuv4zf4c1 1

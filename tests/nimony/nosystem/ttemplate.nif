@@ -64,9 +64,8 @@
     (i -1) .)) 13
   (i -1) . . 32
   (stmts 2
-   (expr
-    (add ~14
-     (i -1) ~2 x.2 2 y.1)))) ,29
+   (add ~14
+    (i -1) ~2 x.2 2 y.1))) ,29
  (proc 5 :foo.0.tte5tld8n . . . 8
   (params 1
    (param :x.3 . . 3
@@ -79,13 +78,11 @@
    (var :x.5 . . string.0.sysvq0asl 4 "abc") 7,1
    (asgn ~7 result.0 23,~4
     (expr 2
-     (expr
-      (add ~14
-       (i -1) ~18,4 +4 ~2
-       (expr 2
-        (expr
-         (add ~14
-          (i -1) ~10,4 +2 ~7,4 +89))))))) 2,2
+     (add ~14
+      (i -1) ~18,4 +4 ~2
+      (expr 2
+       (add ~14
+        (i -1) ~10,4 +2 ~7,4 +89))))) 2,2
    (asgn ~2 x.5 2 "34") ~2,~1
    (ret result.0))) ,34
  (proc 5 :overloaded.0.tte5tld8n . . . 15
@@ -110,15 +107,13 @@
    (param :x.4 . . 3
     (i -1) .)) 10 T.4.tte5tld8n . . 30
   (stmts 1
-   (expr
-    (conv ~1 T.4.tte5tld8n 1 x.4)))) 4,42
+   (conv ~1 T.4.tte5tld8n 1 x.4))) 4,42
  (glet :val.0.tte5tld8n . .
   (i -1) 6 +123) ,43
  (discard 30,~3
   (expr 1
-   (expr
-    (conv ~18,3
-     (u -1) ~12,3 val.0.tte5tld8n)))) 19,19
+   (conv ~18,3
+    (u -1) ~12,3 val.0.tte5tld8n))) 19,19
  (type :MyGeneric.0.Igj236q.tte5tld8n .
   (at MyGeneric.0.tte5tld8n 1
    (i -1)) ~4,~4 . ~2,~4

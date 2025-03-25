@@ -630,21 +630,22 @@ proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
   c.dest[before] = parLeToken(TagId(kind), c.dest[before].info)
 
 proc semProcBody(c: var SemContext; itB: var Item) =
-  let info = itB.n.info
   var it = Item(n: itB.n, typ: c.types.autoType)
+  var lastSonInfo = itB.n.info
   var beforeLastSon = c.dest.len
   while it.n.kind != ParRi:
     if not isLastSon(it.n):
       semStmt c, it.n, false
     else:
       beforeLastSon = c.dest.len
+      lastSonInfo = it.n.info
       semExpr c, it
   if c.routine.kind == TemplateY:
     case c.routine.returnType.typeKind
     of UntypedT:
       discard "ok"
     of VoidT:
-      typecheck(c, info, it.typ, c.routine.returnType)
+      typecheck(c, lastSonInfo, it.typ, c.routine.returnType)
     else:
       commonType c, it, beforeLastSon, c.routine.returnType
   elif classifyType(c, it.typ) == VoidT:
@@ -654,11 +655,11 @@ proc semProcBody(c: var SemContext; itB: var Item) =
     # transform `expr` to `result = expr`:
     if c.routine.resId != SymId(0):
       var prefix = [
-        parLeToken(AsgnS, info),
-        symToken(c.routine.resId, info)]
+        parLeToken(AsgnS, lastSonInfo),
+        symToken(c.routine.resId, lastSonInfo)]
       c.dest.insert prefix, beforeLastSon
       c.dest.addParRi()
-  takeParRi c, it.n
+  takeParRi c, it.n # of (stmts)
   itB.n = it.n
 
 proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
