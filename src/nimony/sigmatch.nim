@@ -268,7 +268,15 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     assert f.kind == ParRi
     inc f
   of OrdinalT:
-    result = isOrdinalType(a) or a.typeKind == OrdinalT
+    case a.typeKind
+    of OrdinalT:
+      result = true
+    of TypeKindT:
+      var aTag = a
+      inc aTag
+      result = isOrdinalTypeKind(aTag.typeKind)
+    else:
+      result = isOrdinalType(a)
     skip f
   else:
     result = false

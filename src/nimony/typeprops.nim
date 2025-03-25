@@ -17,6 +17,9 @@ proc typebits*(config: NifConfig; n: PackedToken): int =
   if result == -1:
     result = config.bits
 
+proc isOrdinalTypeKind*(kind: TypeKind): bool {.inline.} =
+  result = kind in {EnumT, IntT, UIntT, CharT, BoolT, RangetypeT}
+
 proc isOrdinalType*(typ: TypeCursor; allowEnumWithHoles: bool = false): bool =
   case typ.kind
   of Symbol:
