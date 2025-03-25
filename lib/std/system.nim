@@ -282,13 +282,11 @@ proc dec*[T: Ordinal](x: var T) {.inline.} =
 
 # comparison operators:
 
-# not in original nim, for better concept matches:
+# not in original nim, so that it works for generic `Ordinal` types:
 proc `==`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
 
-when false:
-  # ambiguous with generic version above
-  proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
-    ## Checks whether values within the *same enum* have the same underlying value.
+proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
+  ## Checks whether values within the *same enum* have the same underlying value.
 
 proc `==`*(x, y: pointer): bool {.magic: "EqRef", noSideEffect.}
   ## Checks for equality between two `pointer` variables.
@@ -305,12 +303,10 @@ proc `==`*[T](x, y: ref T): bool {.magic: "EqRef", noSideEffect.}
 proc `==`*[T](x, y: ptr T): bool {.magic: "EqRef", noSideEffect.}
   ## Checks that two `ptr` variables refer to the same item.
 
-# not in original nim, for better concept matches:
+# not in original nim, so that it works for generic `Ordinal` types:
 proc `<=`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
 
-when false:
-  # ambiguous with generic version above
-  proc `<=`*[Enum: enum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
+proc `<=`*[Enum: enum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
 
 proc `<=`*(x, y: char): bool {.magic: "LeCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
@@ -326,12 +322,10 @@ proc `<=`*(x, y: bool): bool {.magic: "LeB", noSideEffect.}
 proc `<=`*[T](x, y: ref T): bool {.magic: "LePtr", noSideEffect.}
 proc `<=`*(x, y: pointer): bool {.magic: "LePtr", noSideEffect.}
 
-# not in original nim, for better concept matches:
+# not in original nim, so that it works for generic `Ordinal` types:
 proc `<`*[T: Ordinal](x, y: T): bool {.magic: "LtI", noSideEffect.}
 
-when false:
-  # ambiguous with generic version above
-  proc `<`*[Enum: enum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
+proc `<`*[Enum: enum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
 
 proc `<`*(x, y: char): bool {.magic: "LtCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
