@@ -93,9 +93,36 @@ proc singleToken*(c: var EvalContext; tok: PackedToken): Cursor =
   c.values[i].add tok
   result = cursorAt(c.values[i], 0)
 
+template error(msg: string; info: PackedLineInfo) {.dirty.} =
+  result = c.error(msg, info)
+
+template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  let orig = n
+  inc n # tag
+  let isSigned = n.typeKind == IntT
+  skip n # type
+  let a = getConstOrdinalValue eval(c, n)
+  let b = getConstOrdinalValue eval(c, n)
+  skipParRi n
+  if not isNaN(a) and not isNaN(b):
+    let rx = a * b
+    var err = false
+    if isSigned:
+      let ri = asSigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = singleToken(c, intToken(pool.integers.getOrIncl(ri), orig.info))
+    else:
+      let ru = asUnsigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = singleToken(c, uintToken(pool.uintegers.getOrIncl(ru), orig.info))
+  else:
+    error "cannot evaluate expression at compile time: " & asNimCode(orig), orig.info
+
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
-  template error(msg: string; info: PackedLineInfo) =
-    result = c.error(msg, info)
   template propagateError(r: Cursor): Cursor =
     let val = r
     if val.kind == ParLe and val.tagId == nifstreams.ErrT:
@@ -230,30 +257,15 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         # was not a trivial ExprX, so we could not evaluate it
         error "cannot evaluate expression at compile time: " & asNimCode(orig), orig.info
     of MulX:
-      let orig = n
-      inc n # tag
-      let isSigned = n.typeKind == IntT
-      skip n # type
-      let a = getConstOrdinalValue eval(c, n)
-      let b = getConstOrdinalValue eval(c, n)
-      skipParRi n
-      if not isNaN(a) and not isNaN(b):
-        let rx = a * b
-        var err = false
-        if isSigned:
-          let ri = asSigned(rx, err)
-          if err:
-            error "expression overflow at compile time: " & asNimCode(orig), orig.info
-          else:
-            result = singleToken(c, intToken(pool.integers.getOrIncl(ri), orig.info))
-        else:
-          let ru = asUnsigned(rx, err)
-          if err:
-            error "expression overflow at compile time: " & asNimCode(orig), orig.info
-          else:
-            result = singleToken(c, uintToken(pool.uintegers.getOrIncl(ru), orig.info))
-      else:
-        error "cannot evaluate expression at compile time: " & asNimCode(orig), orig.info
+      evalBinOp(c, n, `*`)
+    of AddX:
+      evalBinOp(c, n, `+`)
+    of SubX:
+      evalBinOp(c, n, `-`)
+    of DivX:
+      evalBinOp(c, n, `div`)
+    of ModX:
+      evalBinOp(c, n, `mod`)
     of IsMainModuleX:
       inc n
       skipParRi n
