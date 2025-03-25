@@ -20,20 +20,20 @@
  (if 3
   (elif 6
    (eq
-    (i -1) 2,474,lib/std/system.nim
+    (i -1) 2,65,lib/std/system.nim
     (expr
      (expr ,~4
       (expr
        (expr 45,2
-        (add ~32,~338
+        (add 15,50,lib/std/system/arithmetics.nim
          (i +64) ~23
-         (sub 6,~48
+         (sub 30,6,lib/std/system/defaults.nim
           (i -1) ~5
-          (conv 11,~48
+          (conv 30,6,lib/std/system/defaults.nim
            (i -1) ~13
            (conv
             (i -1) 12,2,tests/nimony/sysbasics/tconstarrlen.nim +99)) 18
-          (conv ~12,~48
+          (conv 30,6,lib/std/system/defaults.nim
            (i -1) ~13
            (conv
             (i -1) 12,2,tests/nimony/sysbasics/tconstarrlen.nim +0))) 2 +1))))) 3 Len.0.tcoacwdbr) ~1,1
