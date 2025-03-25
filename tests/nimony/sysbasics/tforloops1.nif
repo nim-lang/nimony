@@ -75,7 +75,7 @@
     (hconv 11,~16
      (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
    (if 3
-    (elif 2,422,lib/std/system.nim
+    (elif 2,416,lib/std/system.nim
      (expr 2,1
       (lt
        (i -1) 9,28,tests/nimony/sysbasics/tforloops1.nim +5 5,28,tests/nimony/sysbasics/tforloops1.nim x.1)) ~1,1
@@ -372,12 +372,12 @@
      (if 3
       (elif 7
        (eq 7,33,lib/std/system.nim
-        (i -1) 2,480,lib/std/system.nim
+        (i -1) 2,474,lib/std/system.nim
         (expr
          (expr ,~4
           (expr
            (expr 45,2
-            (add ~32,~344
+            (add ~32,~338
              (i +64) ~23
              (sub 6,~48
               (i -1) ~5
@@ -403,12 +403,12 @@
             (uarray
              (i -1))) 32
            (addr 1 x.4))) 45
-         (kv ~45 len.4.Inff8aa1.tfo6yv57p 2,480,lib/std/system.nim
+         (kv ~45 len.4.Inff8aa1.tfo6yv57p 2,474,lib/std/system.nim
           (expr
            (expr ,~4
             (expr
              (expr 45,2
-              (add ~32,~344
+              (add ~32,~338
                (i +64) ~23
                (sub 6,~48
                 (i -1) ~5
@@ -467,7 +467,7 @@
   (pragmas 2
    (inline) 10
    (requires 19
-    (and 2,418,lib/std/system.nim
+    (and 2,412,lib/std/system.nim
      (expr 2,1
       (le
        (i -1) 75,8,lib/std/system/openarrays.nim +0 68,8,lib/std/system/openarrays.nim idx.1)) 8
