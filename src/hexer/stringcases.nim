@@ -43,7 +43,7 @@ proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
               c.dest.add symToken(pool.syms.getOrIncl(x[1]), info)
 
 proc transformStringCase*(c: var EContext; n: var Cursor) =
-  c.demand pool.syms.getOrIncl("==.17." & SystemModuleSuffix)
+  c.demand pool.syms.getOrIncl("equalStrings.0." & SystemModuleSuffix)
   c.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
 
   # Prepare the list of (key, value) pairs:

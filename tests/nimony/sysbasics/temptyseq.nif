@@ -65,7 +65,7 @@
             (i -1))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.0))))) ,2
       (if 3
-       (elif 2,399,lib/std/system.nim
+       (elif 2,408,lib/std/system.nim
         (expr ,1
          (not 7
           (eq 10,6,lib/std/system/seqimpl.nim
@@ -121,7 +121,7 @@
             (f +64))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.1))))) ,2
       (if 3
-       (elif 2,399,lib/std/system.nim
+       (elif 2,408,lib/std/system.nim
         (expr ,1
          (not 7
           (eq 10,6,lib/std/system/seqimpl.nim
@@ -186,7 +186,7 @@
             (u +8))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.2))))) ,2
       (if 3
-       (elif 2,399,lib/std/system.nim
+       (elif 2,408,lib/std/system.nim
         (expr ,1
          (not 7
           (eq 10,6,lib/std/system/seqimpl.nim
@@ -252,7 +252,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.0)))) ,4
    (if 3
-    (elif 2,399,lib/std/system.nim
+    (elif 2,408,lib/std/system.nim
      (expr ,1
       (not 7
        (eq 10,6,lib/std/system/seqimpl.nim
@@ -457,7 +457,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.4)))) ,4
    (if 3
-    (elif 2,399,lib/std/system.nim
+    (elif 2,408,lib/std/system.nim
      (expr ,1
       (not 7
        (eq 10,6,lib/std/system/seqimpl.nim
@@ -662,7 +662,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.8)))) ,4
    (if 3
-    (elif 2,399,lib/std/system.nim
+    (elif 2,408,lib/std/system.nim
      (expr ,1
       (not 7
        (eq 10,6,lib/std/system/seqimpl.nim
@@ -848,23 +848,25 @@
          (dot ~3 src.5 data.0.Iq4ofkp1.temd2l7vy +0) 6 i.11)))) ,1
      (cmd inc.0.temd2l7vy 4
       (haddr i.11)))))) 4,15,lib/std/system/seqimpl.nim
- (proc :inc.0.temd2l7vy . 0,276,lib/std/system.nim .
+ (proc :inc.0.temd2l7vy . 0,275,lib/std/system.nim .
   (at inc.1.sysvq0asl 5,~10
-   (i -1)) 21,276,lib/std/system.nim
+   (i -1)) 21,275,lib/std/system.nim
   (params 1
    (param :x.5 . . 3
     (mut 9,5,lib/std/system/seqimpl.nim
-     (i -1)) .)) 0,276,lib/std/system.nim . 32,276,lib/std/system.nim
+     (i -1)) .)) 0,275,lib/std/system.nim . 32,275,lib/std/system.nim
   (pragmas 2
-   (inline)) 0,276,lib/std/system.nim . 2,278,lib/std/system.nim
-  (stmts 2
+   (inline)) 0,275,lib/std/system.nim . 2,276,lib/std/system.nim
+  (stmts 2,1
    (asgn ~2
-    (hderef x.5) 4
-    (add 9,5,lib/std/system/seqimpl.nim
-     (i -1) ~2
-     (hderef x.5) 3
-     (conv 9,5,lib/std/system/seqimpl.nim
-      (i -1) 1 +1))))) 11,97,lib/std/system/seqimpl.nim
+    (hderef x.5) 34,~13
+    (expr 4
+     (expr
+      (add 9,5,lib/std/system/seqimpl.nim
+       (i -1) ~31,13
+       (hderef x.5) 5
+       (conv 9,5,lib/std/system/seqimpl.nim
+        (i -1) 1 +1))))))) 11,97,lib/std/system/seqimpl.nim
  (proc :capInBytes.0.temd2l7vy . ~11,~89 .
   (at capInBytes.0.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
    (i -1)) 7,~89
@@ -878,7 +880,7 @@
     (i -1) .) 7
    (asgn ~7 result.6 2
     (if 3
-     (elif 2,399,lib/std/system.nim
+     (elif 2,408,lib/std/system.nim
       (expr ,1
        (not 7
         (eq 10,6,lib/std/system/seqimpl.nim
@@ -910,7 +912,7 @@
     (i -1) .) 7
    (asgn ~7 result.7 2
     (if 3
-     (elif 2,399,lib/std/system.nim
+     (elif 2,408,lib/std/system.nim
       (expr ,1
        (not 7
         (eq 10,6,lib/std/system/seqimpl.nim
@@ -942,7 +944,7 @@
     (i -1) .) 7
    (asgn ~7 result.8 2
     (if 3
-     (elif 2,399,lib/std/system.nim
+     (elif 2,408,lib/std/system.nim
       (expr ,1
        (not 7
         (eq 10,6,lib/std/system/seqimpl.nim

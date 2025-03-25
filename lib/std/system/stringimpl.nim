@@ -212,7 +212,8 @@ proc substr*(s: string; first, last: int): string =
 proc substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
 
-proc `==`*(a, b: string): bool {.exportc: "nimStrEq", inline.} =
+# used by string case:
+proc equalStrings(a, b: string): bool {.exportc: "nimStrEq", inline.} =
   if a.len == b.len:
     if a.len > 0:
       result = cmpMem(a.a, b.a, a.len) == 0
@@ -220,6 +221,9 @@ proc `==`*(a, b: string): bool {.exportc: "nimStrEq", inline.} =
       result = true
   else:
     result = false
+
+proc `==`*(a, b: string): bool {.inline.} =
+  result = equalStrings(a, b)
 
 proc nimStrAtLe(s: string; idx: int; ch: char): bool {.exportc: "nimStrAtLe", inline.} =
   result = idx < s.len and s[idx] <= ch
