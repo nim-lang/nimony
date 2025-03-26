@@ -18,9 +18,9 @@ Version 3 will be achieved via a combination of compiler phase rewrites, code re
 
 # Implementation
 
-The implementation uses NIF for everything: It is the data format used for communication between the different compiler phases.
+The implementation uses [NIF](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) for everything: It is the data format used for communication between the different compiler phases.
 
-The typical compiler pass works on streams of NIF tokens, no tree constructions are required. 
+The typical compiler pass works on streams of NIF tokens, no tree constructions are required.
 
 Arguably a token stream enforces a principled approach to compiler development where by design subtrees cannot be forgotten to be traversed and handled.
 
