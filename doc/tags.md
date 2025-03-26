@@ -271,3 +271,6 @@
 | `(gensym)` | NimonyPragma | `gensym` pragma |
 | `(error X?)` | NimonyPragma | `error` pragma |
 | `(report X)` | NimonyPragma | `report` pragma |
+| `(tags X)` | NimonyPragma | `tags` effect annotation |
+| `(deprecated X?)` | NimonyPragma | `deprecated` pragma |
+| `(sideEffect)` | NimonyPragma | explicit `sideEffect` pragma |
