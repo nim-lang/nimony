@@ -330,6 +330,7 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
 
   # every semchecked .nif file depends on all of its parsed.nif file
   # plus on the indexes of its imports:
+  var i = 0
   for v in c.nodes:
     s.add "\n" & mescape(c.config.indexFile(v.files[0])) & " " & mescape(c.config.semmedFile(v.files[0])) & ":"
     var seenDeps = initHashSet[string]()
@@ -342,9 +343,10 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
     s.add " " & mescape(c.config.cachedConfigFile())
-    let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "")
+    let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "") & (if i == 0: " --isMain" else: "")
     s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(c.config.parsedFile(v.files[0])) & " " &
       mescape(c.config.semmedFile(v.files[0])) & " " & mescape(c.config.indexFile(v.files[0]))
+    inc i
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
   var seenFiles = initHashSet[string]()
