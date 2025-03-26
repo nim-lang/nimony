@@ -274,6 +274,9 @@ type
     GensymTagId
     ErrorTagId
     ReportTagId
+    TagsTagId
+    DeprecatedTagId
+    SideEffectTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -547,5 +550,8 @@ const
     ("inject", 268),
     ("gensym", 269),
     ("error", 270),
-    ("report", 271)
+    ("report", 271),
+    ("tags", 272),
+    ("deprecated", 273),
+    ("sideEffect", 274)
   ]

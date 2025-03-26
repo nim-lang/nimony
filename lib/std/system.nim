@@ -87,3 +87,6 @@ include "system/atomics"
 
 proc newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
 proc new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
+
+template runnableExamples*(body: untyped) {.untyped.} =
+  discard "ignore runnable examples"
