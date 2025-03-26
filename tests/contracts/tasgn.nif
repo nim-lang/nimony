@@ -9,6 +9,6 @@
         (asgn x.0 +14)
       ))
     )
-    (assert (out) (le . +0 x.0))
+    (assert (report) (le . +0 x.0))
   ))
 )
