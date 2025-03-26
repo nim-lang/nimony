@@ -501,7 +501,9 @@ proc syncCmd(newBranch: string) =
     quit "FAILURE: " & output
   exec "git checkout master"
   exec "git pull origin master"
-  exec "git branch -D " & output.strip()
+  let branch = output.strip()
+  if branch != "master":
+    exec "git branch -D " & branch
   if newBranch.len > 0:
     exec "git checkout -B " & newBranch
 
