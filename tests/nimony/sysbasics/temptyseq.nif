@@ -7,8 +7,7 @@
    (discard .))) 3,2
  (call ~3 foo.0.temd2l7vy 43,144,lib/std/system/seqimpl.nim
   (expr 15
-   (expr
-    (call ~15 newSeqUninit.0.temd2l7vy 1 +0)))) ,4
+   (call ~15 newSeqUninit.0.temd2l7vy 1 +0))) ,4
  (proc 5 :bar.0.temd2l7vy . . 8
   (typevars 1
    (typevar :T.0.temd2l7vy . . . .)) 11
@@ -20,12 +19,10 @@
    (discard .))) 3,6
  (call ~3 bar.1.temd2l7vy 1 +1.23 43,144,lib/std/system/seqimpl.nim
   (expr 15
-   (expr
-    (call ~15 newSeqUninit.1.temd2l7vy 1 +0)))) 4,8
+   (call ~15 newSeqUninit.1.temd2l7vy 1 +0))) 4,8
  (gvar :s.0.temd2l7vy . . 6 seq.0.Iq4ofkp1.temd2l7vy 43,144,lib/std/system/seqimpl.nim
   (expr 15
-   (expr
-    (call ~15 newSeqUninit.2.temd2l7vy 1 +0)))) 58,144,lib/std/system/seqimpl.nim
+   (call ~15 newSeqUninit.2.temd2l7vy 1 +0))) 58,144,lib/std/system/seqimpl.nim
  (proc :newSeqUninit.0.temd2l7vy . ~58,~92 .
   (at newSeqUninit.0.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
    (i -1)) ~37,~92

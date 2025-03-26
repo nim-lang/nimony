@@ -66,6 +66,5 @@
   (stmts
    (result :result.1 . . ~15,~11
     (i -1) .)
-   (asgn result.1
-    (expr x.3)) ~31
+   (asgn result.1 x.3) ~31
    (ret result.1))))
