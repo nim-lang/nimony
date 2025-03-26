@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/twrongpragmas.nim(7, 15) Error: expected pragma
+tests/nimony/errmsgs/twrongpragmas.nim(7, 45) Error: expected pragma
+tests/nimony/errmsgs/twrongpragmas.nim(7, 57) Error: expected pragma
+tests/nimony/errmsgs/twrongpragmas.nim(7, 90) Error: expected pragma

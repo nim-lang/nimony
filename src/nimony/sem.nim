@@ -2084,12 +2084,9 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       inc n
       c.dest.addParRi()
     else:
-      if n.exprKind == ErrX:
-        takeTree c, n
-      else:
-        buildErr c, n.info, "expected pragma"
-        inc n
-      c.dest.addParRi()
+      buildErr c, n.info, "expected pragma"
+      inc n
+      while n.kind != ParRi: skip n # skip optional pragma arguments
   of MagicP:
     c.dest.add parLeToken(MagicP, n.info)
     inc n
@@ -2104,7 +2101,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`magic` pragma takes a string literal"
     c.dest.addParRi()
-  of ErrorP, ReportP:
+  of ErrorP, ReportP, DeprecatedP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     inc n
@@ -2145,7 +2142,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP:
+     InjectP, GensymP, UntypedP, SideEffectP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
@@ -2162,7 +2159,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
-  of RequiresP, EnsuresP:
+  of RequiresP, EnsuresP, AssumeP, AssertP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     inc n
@@ -2171,8 +2168,16 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`requires`/`ensures` pragma takes a bool expression"
     c.dest.addParRi()
-  of EmitP, BuildP, StringP, RaisesP, AssumeP, AssertP:
+  of TagsP, RaisesP:
+    c.dest.add parLeToken(pk, n.info)
+    inc n
+    takeTree c, n
+    c.dest.addParRi()
+  of EmitP, BuildP, StringP:
     buildErr c, n.info, "pragma not supported"
+    inc n
+    while n.kind != ParRi: skip n # skip optional pragma arguments
+    c.dest.addParRi()
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   if n.kind == DotToken:
@@ -2180,12 +2185,15 @@ proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; ki
   elif n.substructureKind == PragmasU:
     takeToken c, n
     while n.kind != ParRi:
-      let hasParRi = n.kind == ParLe
-      if n.substructureKind == KvU:
-        inc n
-      semPragma c, n, crucial, kind
-      if hasParRi:
-        skipParRi n
+      if n.exprKind == ErrX:
+        takeTree c, n
+      else:
+        let hasParRi = n.kind == ParLe
+        if n.substructureKind == KvU:
+          inc n
+        semPragma c, n, crucial, kind
+        if hasParRi:
+          skipParRi n
     takeParRi c, n
   else:
     buildErr c, n.info, "expected '.' or 'pragmas'"

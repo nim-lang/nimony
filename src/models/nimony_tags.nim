@@ -285,9 +285,12 @@ type
     GensymP = (ord(GensymTagId), "gensym")  ## `gensym` pragma
     ErrorP = (ord(ErrorTagId), "error")  ## `error` pragma
     ReportP = (ord(ReportTagId), "report")  ## `report` pragma
+    TagsP = (ord(TagsTagId), "tags")  ## `tags` effect annotation
+    DeprecatedP = (ord(DeprecatedTagId), "deprecated")  ## `deprecated` pragma
+    SideEffectP = (ord(SideEffectTagId), "sideEffect")  ## explicit `sideEffect` pragma
 
 proc rawTagIsNimonyPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {EmitTagId, InlineTagId, NoinlineTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId}
+  raw in {EmitTagId, InlineTagId, NoinlineTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId}
 
 type
   NimonySym* = enum
