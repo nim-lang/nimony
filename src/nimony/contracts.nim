@@ -481,12 +481,12 @@ proc analyseAssume(c: var Context; pc: var Cursor) =
   skipParRi pc
 
 proc analyseAssert(c: var Context; pc: var Cursor) =
-  # We also support `(assert (out) (error) <condition>)` for testing purposes.
+  # We also support `(assert (report) (error) <condition>)` for testing purposes.
   let orig = pc
   inc pc
   var report = false
   var shouldError = false
-  if pc.typeKind == OutT:
+  if pc.pragmaKind == ReportP:
     report = true
     inc pc
     skipParRi pc
