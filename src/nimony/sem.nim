@@ -2084,12 +2084,9 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       inc n
       c.dest.addParRi()
     else:
-      if n.exprKind == ErrX:
-        takeTree c, n
-      else:
-        buildErr c, n.info, "expected pragma"
-        inc n
-      c.dest.addParRi()
+      buildErr c, n.info, "expected pragma"
+      inc n
+      while n.kind != ParRi: skip n # skip optional pragma arguments
   of MagicP:
     c.dest.add parLeToken(MagicP, n.info)
     inc n
@@ -2173,6 +2170,8 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of EmitP, BuildP, StringP, RaisesP, AssumeP, AssertP:
     buildErr c, n.info, "pragma not supported"
+    inc n
+    while n.kind != ParRi: skip n # skip optional pragma arguments
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   if n.kind == DotToken:
@@ -2180,12 +2179,15 @@ proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; ki
   elif n.substructureKind == PragmasU:
     takeToken c, n
     while n.kind != ParRi:
-      let hasParRi = n.kind == ParLe
-      if n.substructureKind == KvU:
-        inc n
-      semPragma c, n, crucial, kind
-      if hasParRi:
-        skipParRi n
+      if n.exprKind == ErrX:
+        takeTree c, n
+      else:
+        let hasParRi = n.kind == ParLe
+        if n.substructureKind == KvU:
+          inc n
+        semPragma c, n, crucial, kind
+        if hasParRi:
+          skipParRi n
     takeParRi c, n
   else:
     buildErr c, n.info, "expected '.' or 'pragmas'"
