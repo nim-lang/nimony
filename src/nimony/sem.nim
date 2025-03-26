@@ -2222,7 +2222,13 @@ proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
       if n.kind == ParLe:
         # ^ export marker position has a `(`? If so, it is a magic!
         let info = c.dest[c.dest.len-1].info
-        c.dest[c.dest.len-1] = withLineInfo(n.load, info)
+        var tag = n.tagId
+        if cast[TagEnum](tag) == IsMainModuleTagId:
+          if IsMain in c.moduleFlags:
+            tag = TagId(TrueTagId)
+          else:
+            tag = TagId(FalseTagId)
+        c.dest[c.dest.len-1] = parLeToken(tag, info)
         inc n
         while true:
           c.dest.add withLineInfo(n.load, info)
