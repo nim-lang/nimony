@@ -663,9 +663,11 @@ proc traverseProcBody(c: var EContext; n: var Cursor) =
 
 template moveToTopLevel(c: var EContext; mode: TraverseMode; body: typed) =
   if mode == TraverseAll:
-    swap c.dest, c.pending
+    var temp = createTokenBuf()
+    swap c.dest, temp
     body
-    swap c.dest, c.pending
+    swap c.dest, temp
+    c.pending.add temp
   else:
     body
 

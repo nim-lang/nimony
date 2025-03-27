@@ -34,3 +34,7 @@ block:
   assert card(sss) == 26
   sss.incl('u')
   assert card(sss) == 26
+
+block:
+  proc test() =
+    discard {'a'}
