@@ -28,6 +28,7 @@ type
     ptrSize, tmpCounter: int
     typeCache: TypeCache
     needsXelim: bool
+    keepOverflowFlag: bool
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -123,6 +124,46 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeParRi dest, n
   c.typeCache.closeScope()
 
+proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  inc n # pragmax
+  inc n # pragmas
+  if n.pragmaKind == KeepOverflowFlagP:
+    skip n # keepOverflowFlag
+    skipParRi n # pragmas
+    let oldKeepOverflowFlag = c.keepOverflowFlag
+    c.keepOverflowFlag = true
+    tr(c, dest, n)
+    c.keepOverflowFlag = oldKeepOverflowFlag
+  else:
+    raiseAssert "unknown pragma block: " & toString(n, false)
+  skipParRi n # pragmax
+
+proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  let before = dest.len
+  dest.add parLeToken(ExprX, info)
+  dest.add parLeToken(StmtsS, info)
+  let typ = n.firstSon
+
+  let target = pool.syms.getOrIncl("`constRefTemp." & $c.tmpCounter)
+  inc c.tmpCounter
+  copyIntoKind dest, VarS, info:
+    addSymDef dest, target, info
+    dest.addEmpty2 info # export marker, pragma
+    copyTree dest, typ
+    dest.addDotToken() # value
+  dest.add parLeToken(pool.tags.getOrIncl("keepovf"), info)
+  dest.copyInto n:
+    tr(c, dest, n) # type
+    tr(c, dest, n) # operand A
+    tr(c, dest, n) # operand B
+  dest.addSymUse target, info
+  dest.addParRi() # "keepovf"
+  dest.addParRi() # stmts
+  dest.addSymUse target, info
+  dest.addParRi() # expr
+  c.needsXelim = true
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var nested = 0
   while true:
@@ -138,8 +179,19 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.add n
       inc n
     of ParLe:
-      if n.exprKind in CallKinds:
+      let ek = n.exprKind
+      case ek
+      of CallKinds:
         trCall c, dest, n
+      of PragmaxX:
+        trPragmaBlock c, dest, n
+      of AddX, SubX, MulX, DivX, ModX:
+        if c.keepOverflowFlag:
+          checkedArithOp c, dest, n
+        else:
+          dest.add n
+          inc n
+          inc nested
       else:
         case n.stmtKind
         of ProcS, FuncS, MacroS, MethodS, ConverterS:
