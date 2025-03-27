@@ -304,4 +304,13 @@
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-       (cmd quit.0.syn1lfpjv 5 +1))))))))
+       (cmd quit.0.syn1lfpjv 5 +1))))))) ,37
+ (block . 2,1
+  (stmts
+   (proc 5 :test.0 . . . 9
+    (params) . . . 2,1
+    (stmts
+     (discard 8
+      (setconstr 2,~12
+       (set 1
+        (c +8)) 1 'a')))))))
