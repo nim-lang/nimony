@@ -848,7 +848,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX,
        EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, CompilesX, DeclaredX,
        DefinedX, HighX, LowX, TypeofX, UnpackX, EnumtostrX, IsmainmoduleX, QuotedX,
-       AddrX, HaddrX, AlignofX, OffsetofX, ErrX:
+       AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
       trDeref c, n

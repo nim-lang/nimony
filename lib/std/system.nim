@@ -90,3 +90,5 @@ proc new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
 
 template runnableExamples*(body: untyped) {.untyped.} =
   discard "ignore runnable examples"
+
+proc overflowFlag*(): bool {.magic: "OverflowFlag".}

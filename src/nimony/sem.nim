@@ -5982,7 +5982,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of AssumeS, AssertS:
         toplevelGuard c:
           semAssumeAssert c, it, it.n.stmtKind
-    of FalseX, TrueX:
+    of FalseX, TrueX, OvfX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
       literalB c, it, c.types.floatType

@@ -29,7 +29,7 @@
 | `(curlyat X X)`        | NimonyExpr, NiflerKind | curly expression `a{i}` |
 | `(kv Y X)`             | NimonyOther, NifcOther, NiflerKind, NifIndexKind | key-value pair |
 | `(vv X X)`             | NimonyOther, NiflerKind, NifIndexKind | value-value pair (used for explicitly named arguments in function calls) |
-| `(ovf)`                | NifcExpr | access overflow flag |
+| `(ovf)`                | NimonyExpr, NifcExpr | access overflow flag |
 | `(add T X X)`          | NifcExpr, NimonyExpr | |
 | `(sub T X X)`          | NifcExpr, NimonyExpr | |
 | `(mul T X X)`          | NifcExpr, NimonyExpr | |

@@ -787,7 +787,8 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
        UnpackX, EnumToStrX, XorX,
        IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
-       DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX, BracketX, CurlyX, TupX:
+       DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
+       BracketX, CurlyX, TupX, OvfX:
       trExprLoop c, n
     of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:

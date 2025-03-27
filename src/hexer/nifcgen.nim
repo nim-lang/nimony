@@ -1162,7 +1162,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
-       BitandX, BitorX, BitxorX, BitnotX, OconvX:
+       BitandX, BitorX, BitxorX, BitnotX, OconvX, OvfX:
       c.dest.add n
       inc n
       while n.kind != ParRi:
