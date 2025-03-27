@@ -5590,8 +5590,7 @@ proc semAssumeAssert(c: var SemContext; it: var Item; kind: StmtKind) =
   semBoolExpr c, it.n
   takeParRi c, it.n
 
-proc semPragmaLine(c: var SemContext; it: var Item) =
-  inc it.n
+proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
   case it.n.pragmaKind
   of BuildP:
     let info = it.n.info
@@ -5633,6 +5632,13 @@ proc semPragmaLine(c: var SemContext; it: var Item) =
     semAssumeAssert c, it, AssumeS
   of AssertP:
     semAssumeAssert c, it, AssertS
+  of KeepOverflowFlagP:
+    if not isPragmaBlock:
+      buildErr c, it.n.info, "`keepOverflowFlag` pragma must be used in a pragma block"
+    else:
+      c.dest.add parLeToken(KeepOverflowFlagP, it.n.info)
+      c.dest.addParRi()
+    skip it.n
   else:
     buildErr c, it.n.info, "unsupported pragmas"
 
@@ -5641,8 +5647,8 @@ proc semPragmasLine(c: var SemContext; it: var Item) =
   inc it.n
   while it.n.kind == ParLe and (it.n.stmtKind in {CallS, CmdS} or
             it.n.substructureKind == KvU):
-    semPragmaLine c, it
-
+    inc it.n
+    semPragmaLine c, it, false
   skipParRi it.n
   producesVoid c, info, it.typ # in case it was not already produced
 
@@ -5789,6 +5795,18 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
     inc i
   skipParRi it.n # close unpacktup
   skipParRi it.n # close unpackdecl
+  producesVoid c, info, it.typ
+
+proc semPragmaExpr(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  c.takeToken it.n
+  assert it.n.stmtKind == PragmasS
+  c.takeToken it.n
+  while it.n.kind != ParRi:
+    semPragmaLine c, it, true
+  takeParRi c, it.n
+  semStmt(c, it.n, false)
+  takeParRi c, it.n
   producesVoid c, info, it.typ
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
@@ -5964,7 +5982,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of AssumeS, AssertS:
         toplevelGuard c:
           semAssumeAssert c, it, it.n.stmtKind
-    of FalseX, TrueX:
+    of FalseX, TrueX, OvfX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
       literalB c, it, c.types.floatType
@@ -6088,7 +6106,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semDupHook c, it
     of ErrX:
       takeTree c, it.n
-    of OconvX, PragmaxX, CurlyatX, TabconstrX, DoX,
+    of PragmaxX:
+      semPragmaExpr c, it
+    of OconvX, CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)

@@ -32,6 +32,7 @@ type
     BracketX = (ord(BracketTagId), "bracket")  ## untyped array constructor
     CurlyX = (ord(CurlyTagId), "curly")  ## untyped set constructor
     CurlyatX = (ord(CurlyatTagId), "curlyat")  ## curly expression `a{i}`
+    OvfX = (ord(OvfTagId), "ovf")  ## access overflow flag
     AddX = (ord(AddTagId), "add")
     SubX = (ord(SubTagId), "sub")
     MulX = (ord(MulTagId), "mul")
@@ -105,7 +106,7 @@ type
     TraceX = (ord(TraceTagId), "trace")
 
 proc rawTagIsNimonyExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {ErrTagId, SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, XorTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, BracketTagId, CurlyTagId, CurlyatTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, CmdTagId, CchoiceTagId, OchoiceTagId, PragmaxTagId, QuotedTagId, HderefTagId, DdotTagId, HaddrTagId, NewrefTagId, NewobjTagId, TupTagId, TupconstrTagId, SetconstrTagId, TabconstrTagId, AshrTagId, OconvTagId, HconvTagId, DconvTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, CompilesTagId, DeclaredTagId, DefinedTagId, HighTagId, LowTagId, TypeofTagId, UnpackTagId, EnumtostrTagId, IsmainmoduleTagId, DefaultobjTagId, DefaulttupTagId, ExprTagId, DoTagId, ArratTagId, TupatTagId, PlussetTagId, MinussetTagId, MulsetTagId, XorsetTagId, EqsetTagId, LesetTagId, LtsetTagId, InsetTagId, CardTagId, EmoveTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId}
+  raw in {ErrTagId, SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, XorTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, BracketTagId, CurlyTagId, CurlyatTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, CmdTagId, CchoiceTagId, OchoiceTagId, PragmaxTagId, QuotedTagId, HderefTagId, DdotTagId, HaddrTagId, NewrefTagId, NewobjTagId, TupTagId, TupconstrTagId, SetconstrTagId, TabconstrTagId, AshrTagId, OconvTagId, HconvTagId, DconvTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, CompilesTagId, DeclaredTagId, DefinedTagId, HighTagId, LowTagId, TypeofTagId, UnpackTagId, EnumtostrTagId, IsmainmoduleTagId, DefaultobjTagId, DefaulttupTagId, ExprTagId, DoTagId, ArratTagId, TupatTagId, PlussetTagId, MinussetTagId, MulsetTagId, XorsetTagId, EqsetTagId, LesetTagId, LtsetTagId, InsetTagId, CardTagId, EmoveTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId}
 
 type
   NimonyStmt* = enum

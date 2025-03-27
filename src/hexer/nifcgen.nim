@@ -12,6 +12,7 @@ import std / [hashes, os, tables, sets, assertions]
 include nifprelude
 import symparser
 import typekeys
+import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops]
 import hexer_context, pipeline
 import  ".." / lib / stringtrees
@@ -1163,7 +1164,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
-       BitandX, BitorX, BitxorX, BitnotX, OconvX:
+       BitandX, BitorX, BitxorX, BitnotX, OconvX, OvfX:
       c.dest.add n
       inc n
       while n.kind != ParRi:
@@ -1379,6 +1380,13 @@ proc traverseCase(c: var EContext; n: var Cursor) =
       error c, "expected (of) or (else) but got: ", n
   takeParRi c, n
 
+proc traverseKeepovf(c: var EContext; n: var Cursor) =
+  c.dest.add n
+  inc n
+  traverseExpr c, n # (add ...)
+  traverseExpr c, n # destination
+  takeParRi c, n
+
 proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
   case n.kind
   of DotToken:
@@ -1387,7 +1395,10 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
   of ParLe:
     case n.stmtKind
     of NoStmt:
-      error c, "unknown statement: ", n
+      if n.tagId == TagId(KeepovfTagId):
+        traverseKeepovf c, n
+      else:
+        error c, "unknown statement: ", n
     of StmtsS:
       if mode == TraverseTopLevel:
         inc n

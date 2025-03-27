@@ -251,8 +251,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       inc result # dot token
       skip result # parameters
   of FalseX, TrueX, AndX, OrX, XorX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
-     EqsetX, LesetX, LtsetX, InsetX,
-     CompilesX:
+     EqsetX, LesetX, LtsetX, InsetX, OvfX, CompilesX:
     result = c.builtins.boolType
   of NegX, NegInfX, NanX, InfX:
     result = c.builtins.floatType
