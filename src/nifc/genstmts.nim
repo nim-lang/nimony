@@ -232,10 +232,10 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
   of MulC:
     gcc.add "mul"
   of DivC:
-    gcc.add "div"
+    gcc.add "div_"
     prefix = "_Qnifc_"
   of ModC:
-    gcc.add "mod"
+    gcc.add "mod_"
     prefix = "_Qnifc_"
   else:
     error c.m, "expected arithmetic operation but got: ", n

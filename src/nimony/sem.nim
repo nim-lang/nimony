@@ -5590,7 +5590,7 @@ proc semAssumeAssert(c: var SemContext; it: var Item; kind: StmtKind) =
   semBoolExpr c, it.n
   takeParRi c, it.n
 
-proc semPragmaLine(c: var SemContext; it: var Item) =
+proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
   inc it.n
   case it.n.pragmaKind
   of BuildP:
@@ -5633,17 +5633,29 @@ proc semPragmaLine(c: var SemContext; it: var Item) =
     semAssumeAssert c, it, AssumeS
   of AssertP:
     semAssumeAssert c, it, AssertS
+  of KeepOverflowFlagP:
+    if not isPragmaBlock:
+      buildErr c, it.n.info, "`keepOverflowFlag` pragma must be used in a pragma block"
+    else:
+      c.dest.add parLeToken(KeepOverflowFlagP, it.n.info)
+      c.dest.addParRi()
+    skip it.n
   else:
     buildErr c, it.n.info, "unsupported pragmas"
 
-proc semPragmasLine(c: var SemContext; it: var Item) =
+proc semPragmasLine(c: var SemContext; it: var Item; isPragmaBlock = false) =
   let info = it.n.info
-  inc it.n
+  if isPragmaBlock:
+    takeToken c, it.n
+  else:
+    inc it.n
   while it.n.kind == ParLe and (it.n.stmtKind in {CallS, CmdS} or
             it.n.substructureKind == KvU):
-    semPragmaLine c, it
-
-  skipParRi it.n
+    semPragmaLine c, it, isPragmaBlock
+  if isPragmaBlock:
+    takeParRi c, it.n
+  else:
+    skipParRi it.n
   producesVoid c, info, it.typ # in case it was not already produced
 
 proc semInclExcl(c: var SemContext; it: var Item) =
@@ -5789,6 +5801,14 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
     inc i
   skipParRi it.n # close unpacktup
   skipParRi it.n # close unpackdecl
+  producesVoid c, info, it.typ
+
+proc semPragmaExpr(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  c.takeToken it.n
+  semPragmasLine c, it, true
+  semStmt(c, it.n, false)
+  takeParRi c, it.n
   producesVoid c, info, it.typ
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
@@ -6088,7 +6108,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semDupHook c, it
     of ErrX:
       takeTree c, it.n
-    of OconvX, PragmaxX, CurlyatX, TabconstrX, DoX,
+    of PragmaxX:
+      semPragmaExpr c, it
+    of OconvX, CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)
