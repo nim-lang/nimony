@@ -219,6 +219,76 @@ proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) 
     moveToDataSection:
       genVarDecl c, n, IsConst, toExtern
 
+proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
+  inc n # keepovf
+  let op = n.exprKind
+  var gcc = ""
+  var prefix = "__builtin_"
+  case op
+  of AddC:
+    gcc.add "add"
+  of SubC:
+    gcc.add "sub"
+  of MulC:
+    gcc.add "mul"
+  of DivC:
+    gcc.add "div"
+    prefix = "_Qnifc_"
+  of ModC:
+    gcc.add "mod"
+    prefix = "_Qnifc_"
+  else:
+    error c.m, "expected arithmetic operation but got: ", n
+  inc n # operation
+  if n.typeKind == IT:
+    gcc = prefix & "s" & gcc
+  elif n.typeKind == UT:
+    gcc = prefix & "u" & gcc
+  else:
+    error c.m, "expected integer type but got: ", n
+  inc n # type
+  var isLongLong = false
+  if n.kind == IntLit:
+    let bits = pool.integers[n.intId]
+    if bits == 64 or (bits == -1 and c.bits == 64):
+      gcc.add "ll"
+      isLongLong = true
+    else:
+      gcc.add "l"
+    inc n
+  else:
+    error c.m, "expected integer literal but got: ", n
+  c.currentProc.needsOverflowFlag = true
+  skipParRi n # end of type
+  c.add IfKeyword
+  c.add ParLe
+  gcc.add "_overflow"
+  c.add gcc
+  c.add ParLe
+  genx c, n
+  c.add Comma
+  genx c, n
+  skipParRi n
+  c.add Comma
+  if isLongLong:
+    c.add "(long long int*)"
+    c.add ParLe
+  c.add Amp
+  genLvalue c, n
+  if isLongLong:
+    c.add ParRi
+  c.add ParRi
+  c.add ParRi # end of condition
+  c.add CurlyLe
+  c.add OvfToken
+  c.add AsgnOpr
+  c.add OvfToken
+  c.add " || "
+  c.add "NIM_TRUE"
+  c.add Semicolon
+  c.add CurlyRi
+  skipParRi n
+
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
@@ -304,3 +374,5 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       genOnError(c, onErrAction)
   of ProcS, TypeS, ImpS, InclS:
     error c.m, "expected statement but got: ", n
+  of KeepovfS:
+    genKeepOverflow c, n

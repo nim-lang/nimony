@@ -316,5 +316,91 @@ typedef NU8 NU;
 #  error "Cannot define NIM_THREADVAR"
 #endif
 
-"""
+N_INLINE(NB8, _Qnifc_div_sll_overflow)(long long int a, long long int b, long long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  if (a == (long long int)(((unsigned long long int)1) << (sizeof(long long int) * 8 - 1)) && b == -1) {
+    *res = a;
+    return NIM_TRUE;
+  }
+  *res = a / b;
+  return NIM_FALSE;
+}
 
+N_INLINE(NB8, _Qnifc_div_sl_overflow)(long int a, long int b, long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  if (a == (long int)(((unsigned long int)1) << (sizeof(long int) * 8 - 1)) && b == -1) {
+    *res = a;
+    return NIM_TRUE;
+  }
+  *res = a / b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_div_ull_overflow)(unsigned long long int a, unsigned long long int b, unsigned long long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE; /* Overflow: division by zero */
+  }
+  *res = a / b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_div_ul_overflow)(unsigned long int a, unsigned long int b, unsigned long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a / b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_mod_sll_overflow)(long long int a, long long int b, long long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  if (a == (long long int)(((unsigned long long int)1) << (sizeof(long long int) * 8 - 1)) && b == -1) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a % b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_mod_sl_overflow)(long int a, long int b, long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  if (a == (long int)(((unsigned long int)1) << (sizeof(long int) * 8 - 1)) && b == -1) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a % b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_mod_ull_overflow)(unsigned long long int a, unsigned long long int b, unsigned long long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a % b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, unsigned long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a % b;
+  return NIM_FALSE;
+}
+"""
