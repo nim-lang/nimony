@@ -27,6 +27,7 @@ type
     OffsetofC = (ord(OffsetofTagId), "offsetof")  ## `offsetof` operation
     OconstrC = (ord(OconstrTagId), "oconstr")  ## object constructor
     AconstrC = (ord(AconstrTagId), "aconstr")  ## array constructor
+    OvfC = (ord(OvfTagId), "ovf")  ## access overflow flag
     AddC = (ord(AddTagId), "add")
     SubC = (ord(SubTagId), "sub")
     MulC = (ord(MulTagId), "mul")
@@ -48,7 +49,7 @@ type
     ErrvC = (ord(ErrvTagId), "errv")  ## error flag for `NIFC`
 
 proc rawTagIsNifcExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, ErrvTagId}
+  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, ErrvTagId}
 
 type
   NifcStmt* = enum
@@ -62,6 +63,7 @@ type
     TypeS = (ord(TypeTagId), "type")  ## type declaration
     EmitS = (ord(EmitTagId), "emit")  ## emit statement
     AsgnS = (ord(AsgnTagId), "asgn")  ## assignment statement
+    KeepovfS = (ord(KeepovfTagId), "keepovf")  ## keep overflow flag statement
     ScopeS = (ord(ScopeTagId), "scope")  ## explicit scope annotation, like `stmts`
     IfS = (ord(IfTagId), "if")  ## if statement header
     BreakS = (ord(BreakTagId), "break")  ## `break` statement
@@ -79,7 +81,7 @@ type
     OnerrS = (ord(OnerrTagId), "onerr")  ## error handling statement
 
 proc rawTagIsNifcStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, ImpTagId, InclTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, ImpTagId, InclTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId}
 
 type
   NifcType* = enum

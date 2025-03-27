@@ -344,8 +344,8 @@ be done with the `(keepovf)` construct:
 (var :a.0 . (i +32) +90)
 (var :b.0 . (i +32) +223231343)
 (keepovf (add (i +32) a.0 b.0) x.0)
-(if (elif (ovf) (stmts (asgn (ovf) (false)) (call printf.c "overflow\n")))
-    (else (call printf.c "no overflow\n")))
+(if (elif (ovf) (stmts (asgn (ovf) (false)) (call printf.c "overflow")))
+    (else (call printf.c "no overflow")))
 ```
 
 `keepovf` can be read as a form of tuple assignment: `(overflowFlag, x.0) = a.0 + b.0`.

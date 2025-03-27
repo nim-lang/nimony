@@ -11,6 +11,7 @@
 
 import std / [assertions, syncio, tables, sets, intsets, formatfloat, strutils, packedsets]
 from std / os import changeFileExt, splitFile, extractFilename
+from std / sequtils import insert
 
 include ".." / lib / nifprelude
 import mangler, nifc_model, cprelude, noptions, typenav
@@ -65,6 +66,7 @@ type
     CatchKeyword = "catch ("
     ThrowKeyword = "throw"
     ErrToken = "NIFC_ERR_"
+    OvfToken = "NIFC_OVF_"
     ThreadVarToken = "NIM_THREADVAR "
 
 proc fillTokenTable(tab: var BiTable[Token, string]) =
@@ -78,6 +80,9 @@ type
     gfHasError   # already generated the error variable
     gfProducesMainProc # needs main proc
     gfInCallImportC # in importC call context
+
+  CurrentProc* = object
+    needsOverflowFlag: bool
 
   GeneratedCode* = object
     m: Module
@@ -96,6 +101,7 @@ type
     inToplevel: bool
     objConstrNeedsType: bool
     bits: int
+    currentProc: CurrentProc
 
 proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]; bits: int): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
@@ -459,10 +465,22 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
 
 include genstmts
 
+proc addOverflowDecl(c: var GeneratedCode; code: var seq[Token]; beforeBody: int) =
+  let tokens = @[
+    c.tokens.getOrIncl("NB8"),
+    Token(Space),
+    Token(OvfToken),
+    Token(AsgnOpr),
+    c.tokens.getOrIncl("NIM_FALSE"),
+    Token(Semicolon)
+  ]
+  code.insert(tokens, beforeBody)
 
 proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   c.m.openScope()
   c.inToplevel = false
+  let oldProc = c.currentProc
+  c.currentProc = CurrentProc(needsOverflowFlag: false)
   let signatureBegin = c.code.len
   var prc = takeProcDecl(n)
 
@@ -555,12 +573,16 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     if isSelectAny in flags:
       genRoutineGuardBegin(c, name)
     c.add CurlyLe
+    let beforeBody = c.code.len
     genStmt c, prc.body
+    if c.currentProc.needsOverflowFlag:
+      addOverflowDecl c, c.code, beforeBody
     c.add CurlyRi
     if isSelectAny in flags:
       genRoutineGuardEnd(c)
   c.m.closeScope()
   c.inToplevel = true
+  c.currentProc = oldProc
 
 proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n
@@ -623,7 +645,7 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   of ProcS: genProcDecl c, n, false
   of VarS, GvarS, TvarS: genStmt c, n
   of ConstS: genStmt c, n
-  of DiscardS, AsgnS, ScopeS, IfS,
+  of DiscardS, AsgnS, KeepovfS, ScopeS, IfS,
       WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnErrS:
     moveToInitSection:
       genStmt c, n
@@ -691,6 +713,8 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
     f.write "}\n\n"
   elif c.init.len > 0:
     f.write "static void __attribute__((constructor)) init(void) {"
+    if c.currentProc.needsOverflowFlag:
+      addOverflowDecl c, c.init, 0
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   f.f.close

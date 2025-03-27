@@ -2159,7 +2159,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
-  of RequiresP, EnsuresP, AssumeP, AssertP:
+  of RequiresP, EnsuresP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     inc n
@@ -2173,10 +2173,14 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     inc n
     takeTree c, n
     c.dest.addParRi()
-  of EmitP, BuildP, StringP:
+  of EmitP, BuildP, StringP, AssumeP, AssertP:
     buildErr c, n.info, "pragma not supported"
     inc n
     while n.kind != ParRi: skip n # skip optional pragma arguments
+    c.dest.addParRi()
+  of KeepOverflowFlagP:
+    c.dest.add parLeToken(pk, n.info)
+    inc n
     c.dest.addParRi()
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =

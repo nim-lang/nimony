@@ -154,6 +154,10 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
       c.flags.incl gfHasError
     c.add ErrToken
     skip n
+  of OvfC:
+    c.add OvfToken
+    c.currentProc.needsOverflowFlag = true
+    skip n
   else:
     error c.m, "expected expression but got: ", n
 
@@ -386,5 +390,5 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       genx c, value
     else:
       suffixConv c, value, suffix
-  of ErrvC, AtC, DerefC, DotC, PatC:
+  of ErrvC, AtC, DerefC, DotC, PatC, OvfC:
     genLvalue c, n
