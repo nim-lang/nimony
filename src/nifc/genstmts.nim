@@ -223,6 +223,7 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
   inc n # keepovf
   let op = n.exprKind
   var gcc = ""
+  var prefix = "__builtin_"
   case op
   of AddC:
     gcc.add "add"
@@ -232,15 +233,17 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
     gcc.add "mul"
   of DivC:
     gcc.add "div"
+    prefix = "_Qnifc_"
   of ModC:
     gcc.add "mod"
+    prefix = "_Qnifc_"
   else:
     error c.m, "expected arithmetic operation but got: ", n
   inc n # operation
   if n.typeKind == IT:
-    gcc = "__builtin_s" & gcc
+    gcc = prefix & "s" & gcc
   elif n.typeKind == UT:
-    gcc = "__builtin_u" & gcc
+    gcc = prefix & "u" & gcc
   else:
     error c.m, "expected integer type but got: ", n
   inc n # type
