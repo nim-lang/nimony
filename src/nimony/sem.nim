@@ -5591,7 +5591,6 @@ proc semAssumeAssert(c: var SemContext; it: var Item; kind: StmtKind) =
   takeParRi c, it.n
 
 proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
-  inc it.n
   case it.n.pragmaKind
   of BuildP:
     let info = it.n.info
@@ -5643,19 +5642,14 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
   else:
     buildErr c, it.n.info, "unsupported pragmas"
 
-proc semPragmasLine(c: var SemContext; it: var Item; isPragmaBlock = false) =
+proc semPragmasLine(c: var SemContext; it: var Item) =
   let info = it.n.info
-  if isPragmaBlock:
-    takeToken c, it.n
-  else:
-    inc it.n
+  inc it.n
   while it.n.kind == ParLe and (it.n.stmtKind in {CallS, CmdS} or
             it.n.substructureKind == KvU):
-    semPragmaLine c, it, isPragmaBlock
-  if isPragmaBlock:
-    takeParRi c, it.n
-  else:
-    skipParRi it.n
+    inc it.n
+    semPragmaLine c, it, false
+  skipParRi it.n
   producesVoid c, info, it.typ # in case it was not already produced
 
 proc semInclExcl(c: var SemContext; it: var Item) =
@@ -5806,7 +5800,11 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
 proc semPragmaExpr(c: var SemContext; it: var Item) =
   let info = it.n.info
   c.takeToken it.n
-  semPragmasLine c, it, true
+  assert it.n.stmtKind == PragmasS
+  c.takeToken it.n
+  while it.n.kind != ParRi:
+    semPragmaLine c, it, true
+  takeParRi c, it.n
   semStmt(c, it.n, false)
   takeParRi c, it.n
   producesVoid c, info, it.typ
