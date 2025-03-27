@@ -84,10 +84,16 @@ Lvalue ::= Symbol | (deref Expr (cppref)?) |
              (at Expr Expr) | # array indexing
              (dot Expr Symbol Number) | # field access
              (pat Expr Expr) | # pointer indexing
-             (errv)
+             (errv) | (ovf)
 
 Call ::= (call Expr+)
 CallCanRaise ::= (onerr Stmt Expr+)
+
+ArithExpr ::= (add Type Expr Expr) |
+         (sub Type Expr Expr) |
+         (mul Type Expr Expr) |
+         (div Type Expr Expr) |
+         (mod Type Expr Expr)
 
 Expr ::= Number | CharLiteral | StringLiteral |
          Lvalue |
@@ -104,11 +110,7 @@ Expr ::= Number | CharLiteral | StringLiteral |
          (offsetof Type SYMBOL) |
          (oconstr Type (kv Symbol Expr)*) |  # (object constructor){...}
          (aconstr Type Expr*) |              # array constructor
-         (add Type Expr Expr) |
-         (sub Type Expr Expr) |
-         (mul Type Expr Expr) |
-         (div Type Expr Expr) |
-         (mod Type Expr Expr) |
+         ArithExpr |
          (shr Type Expr Expr) |
          (shl Type Expr Expr) |
          (bitand Type Expr Expr) |
@@ -138,6 +140,7 @@ EmitStmt ::= (emit Expr+)
 TryStmt ::= (try StmtList StmtList StmtList)
 RaiseStmt ::= (raise [Empty | Expr])
 AsgnStmt ::= (asgn Lvalue Expr)
+KeepOverflowStmt ::= (keepovf ArithExpr Lvalue)
 IfStmt ::= (if (elif Expr StmtList)+ (else StmtList)? )
 WhileStmt ::= (while Expr StmtList)
 CaseStmt ::= (case Expr (of BranchRanges StmtList)* (else StmtList)?)
@@ -154,6 +157,7 @@ Stmt ::= Call |
          TryStmt |
          RaiseStmt |
          AsgnStmt |
+         KeepOverflowStmt |
          IfStmt |
          WhileStmt |
          (break) |
@@ -230,8 +234,9 @@ Include ::= (incl StringLiteral)
 
 TopLevelConstruct ::= ExternDecl | IgnoreDecl | ProcDecl | VarDecl | ConstDecl |
                       TypeDecl | Include | EmitStmt | Call | CallCanRaise |
-                      TryStmt | RaiseStmt | AsgnStmt | IfStmt | WhileStmt |
-                      CaseStmt | LabelStmt | JumpStmt | ScopeStmt | DiscardStmt
+                      TryStmt | RaiseStmt | AsgnStmt | KeepOverflowStmt |
+                      IfStmt | WhileStmt | CaseStmt | LabelStmt | JumpStmt |
+                      ScopeStmt | DiscardStmt
 
 Module ::= (stmts TopLevelConstruct*)
 
@@ -239,8 +244,8 @@ Module ::= (stmts TopLevelConstruct*)
 
 Notes:
 
-- `IntBits` is either 8, 16, 32, 64, etc. or the `-1` which stands
-  for **m**achine word size.
+- `IntBits` is either 8, 16, 32, 64, etc. or `-1` which stands
+  for machine word size.
 - There can be more calling conventions than only `cdecl` and `stdcall`.
 - `case` is mapped to a `switch` but the generation of `break` is handled
   automatically.
@@ -325,3 +330,33 @@ NIFC supports two kinds of exception handling primitives.
 - `errv` and `onerr` Constructs: These have to be used when C++ code is not generated. Calls that may raise an exception must be wrapped in `(onerr)`. The format is `(onerr <action> <f> <args>)`, where action is typically a `jmp` instruction. In C++ exception handling mode, action should always be a dot `.`. The special variable `(errv)` of type `bool` can be set using `(asgn)` and queried like other locations, e.g., `(asgn (errv) (true)) # set the error bit`.
 
 Functions can and must be annotated with a `(raises)` pragma to indicate that they can raise a C++ exception. Likewise, they need to use the `errs` pragma if they use the `(errv)` mechanism. A function can use both annotations at the same time. That would be a C++ function that uses both `(raise)` and `(errv)`.
+
+
+Overflow checking
+-----------------
+
+NIFC supports overflow checking for arithmetic operations. The `(ovf)` tag is used
+to access the overflow flag. Arithmetic operations subject to overflow checking must
+be done with the `(keepovf)` construct:
+
+```
+(var :x.0 . (i +32) .)
+(var :a.0 . (i +32) +90)
+(var :b.0 . (i +32) +223231343)
+(keepovf (add (i +32) a.0 b.0) x.0)
+(if (elif (ovf) (stmts (asgn (ovf) (false)) (call printf.c "overflow\n")))
+    (else (call printf.c "no overflow\n")))
+```
+
+`keepovf` can be read as a form of tuple assignment: `(overflowFlag, x.0) = a.0 + b.0`.
+As `keepovf` is a statement and not an expression, a code generator typically has to
+introduce temporaries for nested expressions. This is also required for
+GCC's `__builtin_saddll_overflow` construct and the real reason for this strange design.
+
+The `(ovf)` flag is an lvalue and can be set to `(false)` to reset the flag:
+
+```
+(asgn (ovf) (false))
+```
+
+This is not optional! It is required for reliable native code generation.
