@@ -177,7 +177,7 @@ proc compareValgrindOutput(s1: string, s2: string): bool =
   let s2 = s2.splitLines()
   if s1.len != s2.len:
     return false
-  for i in 0 .. s1.len - 1:
+  for i in 3 .. s1.len - 1:
     let n1 = rfind(s1[i], "== ")
     let n2 = rfind(s2[i], "== ")
     if n2 == -1 or s1[i][n1+3..^1] != s2[i][n2+3..^1]:
