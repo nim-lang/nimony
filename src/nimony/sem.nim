@@ -750,7 +750,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX, TupatX}:
+              ArrAtX, DerefX, TupatX, SizeofX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -5555,10 +5555,10 @@ proc semAddr(c: var SemContext; it: var Item) =
 proc semSizeof(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   let expected = it.typ
-  # We don't really have any kind of restrictions on the argument here
-  # and it was semchecked already in overload resolution, so it is fine
-  # to just copy it:
-  takeTree c, it.n
+  c.takeToken(it.n)
+  # handle types
+  semLocalTypeImpl c, it.n, InLocalDecl
+  c.takeParRi(it.n)
   it.typ = c.types.intType
   commonType c, it, beforeExpr, expected
 

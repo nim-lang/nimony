@@ -70,3 +70,6 @@ let n1 = stdout.writeBuffer(addr obj1, sizeof DummyObject1)
 assert n0 == sizeof DummyObject0
 assert n1 == sizeof DummyObject1
 assert true
+
+type MyTuple = tuple[a, b, c: char]
+assert sizeof(MyTuple) == 3 # MyTuple not declared in c generated code
