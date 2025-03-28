@@ -29,9 +29,9 @@
        (i -1) 6
        (i -1)) 1 +12 5 globalX.0.tfo6zftzj1))) ,1
    (yld 6
-    (arrat ff.0 3 +0)) ,2
+    (arrat ff.0 3 +0 3,~1 +0)) ,2
    (yld 6
-    (arrat ff.0 3 +0)) ,3
+    (arrat ff.0 3 +0 3,~2 +0)) ,3
    (yld 6
     (tupconstr 2,~5
      (tuple 1
