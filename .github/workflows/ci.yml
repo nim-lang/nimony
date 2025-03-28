@@ -17,7 +17,7 @@ jobs:
             cpu: amd64
             nim_branch: devel
           - os: macos
-            cpu: amd64
+            cpu: arm64
             nim_branch: devel
           - os: windows
             cpu: amd64
@@ -28,7 +28,7 @@ jobs:
             builder: ubuntu-24.04
           - target:
               os: macos
-            builder: macos-13
+            builder: macos-15
           - target:
               os: windows
             builder: windows-latest
