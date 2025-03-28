@@ -73,3 +73,10 @@ assert true
 
 type MyTuple = tuple[a, b, c: char]
 assert sizeof(MyTuple) == 3 # MyTuple not declared in c generated code
+
+type
+  MyObject = object
+    a, b, c, d: int
+
+let my = default(MyObject)
+assert sizeof(my) == 32
