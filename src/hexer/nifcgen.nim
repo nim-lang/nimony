@@ -1073,6 +1073,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       inc n
       traverseExpr(c, n)
       traverseExpr(c, n)
+      while n.kind != ParRi: skip n
       takeParRi c, n
     of TupatX:
       c.dest.add tagToken("dot", n.info)
