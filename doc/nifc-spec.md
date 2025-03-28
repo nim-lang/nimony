@@ -351,7 +351,7 @@ be done with the `(keepovf)` construct:
 `keepovf` can be read as a form of tuple assignment: `(overflowFlag, x.0) = a.0 + b.0`.
 As `keepovf` is a statement and not an expression, a code generator typically has to
 introduce temporaries for nested expressions. This is also required for
-GCC's `__builtin_saddll_overflow` construct and the real reason for this strange design.
+GCC's `__builtin_saddll_overflow` construct and is the real reason for this strange design.
 
 The `(ovf)` flag is an lvalue and can be set to `(false)` to reset the flag:
 
