@@ -369,7 +369,7 @@
     (if 3
      (elif 7
       (eq 7,31,lib/std/system/basic_types.nim
-       (i -1) 2,65,lib/std/system.nim
+       (i -1) 2,67,lib/std/system.nim
        (expr ,~4
         (expr 45,2
          (add 15,50,lib/std/system/arithmetics.nim
@@ -398,7 +398,7 @@
            (uarray
             (i -1))) 32
           (addr 1 x.4))) 45
-        (kv ~45 len.4.Inff8aa1.tfo6yv57p 2,65,lib/std/system.nim
+        (kv ~45 len.4.Inff8aa1.tfo6yv57p 2,67,lib/std/system.nim
          (expr ,~4
           (expr 45,2
            (add 15,50,lib/std/system/arithmetics.nim
