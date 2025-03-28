@@ -71,6 +71,9 @@ proc swap*[T](x, y: var T) {.inline, nodestroy.} =
   x = y
   y = tmp
 
+template `in`*(x, y: untyped): untyped =
+  contains(y, x)
+
 template `notin`*(x, y: untyped): untyped =
   not contains(y, x)
 
