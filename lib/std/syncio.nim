@@ -25,13 +25,11 @@ var
   stdout* {.importc: "stdout", header: "<stdio.h>".}: File
   stderr* {.importc: "stderr", header: "<stdio.h>".}: File
 
-proc c_fwrite(buf: ptr UncheckedArray[char]; size, n: uint; f: File): uint {.
-  importc: "fwrite", header: "<stdio.h>".}
-proc c_fwrite(buf: ptr UncheckedArray[uint8]; size, n: uint; f: File): uint {.
-  importc: "fwrite", header: "<stdio.h>".}
 proc c_fputc(c: int32; f: File): int32 {.
   importc: "fputc", header: "<stdio.h>".}
-proc c_fread(buf: ptr UncheckedArray[uint8]; size, n: uint; f: File): uint {.
+proc c_fwrite(buf: pointer; size, n: uint; f: File): uint {.
+  importc: "fwrite", header: "<stdio.h>".}
+proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
   importc: "fread", header: "<stdio.h>".}
 
 proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
@@ -64,10 +62,10 @@ proc close*(f: File) = discard fclose(f)
 
 proc fopen(filename, mode: cstring): File {.importc: "fopen", header: "<stdio.h>".}
 
-proc writeBuffer*(f: File; buffer: ptr UncheckedArray[uint8]; size: int): int =
+proc writeBuffer*(f: File; buffer: pointer; size: int): int =
   result = cast[int](c_fwrite(buffer, 1'u, cast[uint](size), f))
 
-proc readBuffer*(f: File; buffer: ptr UncheckedArray[uint8]; size: int): int =
+proc readBuffer*(f: File; buffer: pointer; size: int): int =
   result = cast[int](c_fread(buffer, 1'u, cast[uint](size), f))
 
 proc c_ferror(f: File): int32 {.
@@ -75,7 +73,7 @@ proc c_ferror(f: File): int32 {.
 
 proc failed*(f: File): bool {.inline.} = c_ferror(f) != 0
 
-proc c_setvbuf(f: File; buffer: ptr UncheckedArray[uint8]; mode: int32; size: uint): int32 {.
+proc c_setvbuf(f: File; buffer: pointer; mode: int32; size: uint): int32 {.
   importc: "setvbuf", header: "<stdio.h>".}
 
 var IOFBF {.importc: "_IOFBF", header: "<stdio.h>".}: int32
