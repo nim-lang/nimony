@@ -13,7 +13,8 @@ include nifprelude
 import symparser
 import typekeys
 import ".." / models / tags
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
+  typeprops, langmodes]
 import hexer_context, pipeline
 import  ".." / lib / stringtrees
 
@@ -1006,6 +1007,57 @@ proc isSimpleLiteral(nb: var Cursor): bool =
     else:
       result = false
 
+proc getCompilerProc(c: var EContext; name: string): string =
+  c.demand pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
+  result = name & ".c"
+
+proc traverseArrAt(c: var EContext; n: var Cursor) =
+  c.dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
+  inc n
+  traverseExpr(c, n)
+  let beforeIndex = c.dest.len
+  let info = n.info
+  let indexExpr = n
+  let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
+  traverseExpr(c, n)
+  if n.kind != ParRi:
+    var indexDest = createTokenBuf(c.dest.len - beforeIndex)
+    for i in beforeIndex..<c.dest.len:
+      indexDest.add c.dest[i]
+    c.dest.shrink beforeIndex
+    let indexB = n
+    skip n
+    if n.kind != ParRi:
+      # we have `low(T)`:
+      let indexA = n
+      skip n
+      if BoundCheck in c.activeChecks:
+        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckAB" else: "nimIcheckAB")
+        c.dest.copyIntoUnchecked "call", info:
+          c.dest.add symToken(pool.syms.getOrIncl(abProcName), info)
+          c.dest.add indexDest
+          c.dest.addSubtree indexA
+          c.dest.addSubtree indexB
+      else:
+        let indexType = if isUnsigned: c.typeCache.builtins.uintType else: c.typeCache.builtins.intType
+        # we need the substraction regardless:
+        c.dest.addParLe SubX, info
+        c.dest.addSubtree indexType
+        c.dest.add indexDest
+        c.dest.addSubtree indexA
+        c.dest.addParRi()
+    else:
+      # we only have to care about the upper bound:
+      if BoundCheck in c.activeChecks:
+        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckB" else: "nimIcheckB")
+        c.dest.copyIntoUnchecked "call", info:
+          c.dest.add symToken(pool.syms.getOrIncl(abProcName), info)
+          c.dest.add indexDest
+          c.dest.addSubtree indexB
+      else:
+        c.dest.add indexDest
+  takeParRi c, n
+
 proc traverseExpr(c: var EContext; n: var Cursor) =
   case n.kind
   of EofToken, ParRi:
@@ -1068,13 +1120,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
     of ExprX:
       traverseStmtsExpr c, n
     of ArrAtX:
-      # XXX does not handle index type with offset low(I), maybe should be done in sem
-      c.dest.add tagToken("at", n.info)
-      inc n
-      traverseExpr(c, n)
-      traverseExpr(c, n)
-      while n.kind != ParRi: skip n
-      takeParRi c, n
+      traverseArrAt c, n
     of TupatX:
       c.dest.add tagToken("dot", n.info)
       inc n # skip tag
@@ -1652,14 +1698,15 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
   b.close()
 
 
-proc expand*(infile: string, bits: int) =
+proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   let (dir, file, ext) = splitModulePath(infile)
   var c = EContext(dir: (if dir.len == 0: getCurrentDir() else: dir), ext: ext, main: file,
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
     bits: bits,
-    localDeclCounters: 1000
+    localDeclCounters: 1000,
+    activeChecks: flags
     )
   c.openMangleScope()
 

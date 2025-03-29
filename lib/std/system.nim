@@ -100,3 +100,5 @@ template runnableExamples*(body: untyped) {.untyped.} =
   discard "ignore runnable examples"
 
 proc overflowFlag*(): bool {.magic: "OverflowFlag".}
+
+include "system/panics"

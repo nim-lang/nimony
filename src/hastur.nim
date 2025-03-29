@@ -244,9 +244,11 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
     if cat notin {Basics, Tracked}:
       let exe = file.generatedFile(ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
+      var output = file.changeFileExt(".output")
       if testProgramExitCode != 0:
-        failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode
-      let output = file.changeFileExt(".output")
+        output = file.changeFileExt(".exitcode")
+        if not output.fileExists():
+          failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode
       if output.fileExists():
         let outputSpec = readFile(output).strip
         let success = outputSpec == testProgramOutput.strip
@@ -399,8 +401,8 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     if cat notin {Basics, Tracked}:
       let exe = file.generatedFile(ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
-      assert testProgramExitCode == 0, "the test program had an invalid exitcode; unsupported"
-      addTestSpec test.changeFileExt(".output"), testProgramOutput
+      let ext = if testProgramExitCode != 0: ".exitcode" else: ".output"
+      addTestSpec test.changeFileExt(ext), testProgramOutput
 
     addTestCode test, file
     if {RecordCodegen, RecordAst} * flags != {}:

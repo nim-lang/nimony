@@ -10,7 +10,7 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
-import sem, nifconfig, semos, semdata, deps
+import sem, nifconfig, semos, semdata, deps, langmodes
 
 const
   Version = "0.2"
@@ -37,6 +37,7 @@ Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --silentMake              suppresses make output
   --nimcache:PATH           set the path used for generated files
+  --boundchecks:on|off      turn bound checks on or off
   --version                 show the version
   --help                    show this help
 """
@@ -77,6 +78,7 @@ proc handleCmdLine() =
   var isChild = false
   var passC = ""
   var passL = ""
+  var checkModes = DefaultSettings
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -118,6 +120,12 @@ proc handleCmdLine() =
         of "32": config.bits = 32
         of "16": config.bits = 16
         else: quit "invalid value for --bits"
+      of "boundchecks":
+        forwardArg = false
+        case val
+        of "on": checkModes.incl BoundCheck
+        of "off": checkModes.excl BoundCheck
+        else: quit "invalid value for --boundchecks"
       of "silentmake":
         silentMake = true
         forwardArg = false
@@ -149,6 +157,10 @@ proc handleCmdLine() =
     quit "too few command line arguments"
   elif args.len > 2 - int(cmd == FullProject):
     quit "too many command line arguments"
+
+  if checkModes != DefaultSettings:
+    commandLineArgs.add " --flags:" & genFlags(checkModes)
+
   semos.setupPaths(config, useEnv)
 
   case cmd

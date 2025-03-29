@@ -150,3 +150,5 @@ proc tryWriteFile*(file, content: string): bool =
       result = false
   else:
     result = false
+
+proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}
