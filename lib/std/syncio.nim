@@ -34,6 +34,8 @@ proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
 
 proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
 
+proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}
+
 proc write*(f: File; s: string) =
   discard c_fwrite(rawData(s), 1'u, s.len.uint, f)
 
