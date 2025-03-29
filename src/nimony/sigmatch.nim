@@ -816,7 +816,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
     of TypedescT:
       # do not skip modifier
       var a = arg.typ
-      linearMatch m, f, a, {ExactBits}
+      var f2 = f
+      inc f2
+      if f2.kind == ParRi: # just `typedesc`
+        if a.typeKind != TypedescT:
+          m.error InvalidMatch, f, a
+        skip f
+      else:
+        linearMatch m, f, a, {ExactBits}
     of VarargsT:
       discard "do not even advance f here"
       if m.firstVarargPosition < 0:
