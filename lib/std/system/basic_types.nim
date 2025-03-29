@@ -65,6 +65,7 @@ type
   range*[T]{.magic: "Range".}         ## Generic type to construct range types.
   array*[I, T]{.magic: "Array".}      ## Generic type to construct
                                       ## fixed-length arrays.
+  varargs*[T]{.magic: "Varargs".}     ## Generic type to construct a varargs type.
   set*[T]{.magic: "Set".}             ## Generic type to construct bit sets.
 
 type sink*[T]{.magic: "Sink".}
