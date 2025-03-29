@@ -1208,7 +1208,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
             let sym = arg.symId
             takeToken c, arg
             let res = tryLoadSym(sym)
-            if res.status == LacksNothing and isRoutine(res.decl.symKind):
+            if res.status == LacksNothing and res.decl.symKind == ConverterY:
               let routine = asRoutine(res.decl)
               if isGeneric(routine):
                 let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
@@ -1408,14 +1408,14 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         var convMatch = default(Match)
         if isVarargs and varargsHasConverter(f) and tryVarargsConverter(c, convMatch, f, arg):
           anyConverters = true
-          if convMatch.genericConverter:
-            # instantiate after match
-            newMatch.genericConverter = true
           # match already built call, just use it
           let bufPos = newArgBufs.len
           newArgBufs.add ensureMove(convMatch.args)
           var baseType = f
           inc baseType
+          if convMatch.genericConverter:
+            # can just instantiate here
+            baseType = instantiateType(c, baseType, convMatch.inferred)
           newArgs.add Item(n: beginRead(newArgBufs[bufPos]), typ: baseType)
         elif tryConverterMatch(c, convMatch, f, arg):
           anyConverters = true
