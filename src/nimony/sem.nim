@@ -1285,6 +1285,44 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     result = true
     convMatch = convMatches[idx]
 
+proc varargsHasConverter(t: Cursor): bool =
+  var t = t
+  assert t.typeKind == VarargsT
+  inc t
+  skip t
+  result = t.kind != ParRi
+
+proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
+  result = false
+  var baseType = f
+  assert baseType.typeKind == VarargsT
+  inc baseType
+  var conv = baseType
+  skip conv
+  assert conv.kind != ParRi
+
+  var callBuf = createTokenBuf(16)
+  callBuf.addParLe(HcallX, arg.n.info)
+  callBuf.addSubtree conv
+  callBuf.addSubtree arg.n
+  callBuf.addParRi()
+  var call = beginRead(callBuf)
+  var it = Item(n: call, typ: c.types.autoType)
+  var destBuf = createTokenBuf(16)
+  swap c.dest, destBuf
+  semCall c, it, {} # might error
+  swap c.dest, destBuf
+  it.n = beginRead(destBuf)
+
+  var match = createMatch(addr c)
+  typematch(match, baseType, it)
+  let matchKind = classifyMatch(match)
+  if matchKind >= GenericMatch:
+    if matchKind == GenericMatch:
+      match.genericConverter = true
+    result = true
+    convMatch = ensureMove(match)
+
 proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
@@ -1363,9 +1401,23 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         # varargs not handled yet
         if ai >= cs.args.len: break
         let f = asLocal(param).typ
+        let isVarargs = f.typeKind == VarargsT
+        if not isVarargs:
+          skip param
         var arg = cs.args[ai]
         var convMatch = default(Match)
-        if tryConverterMatch(c, convMatch, f, arg):
+        if isVarargs and varargsHasConverter(f) and tryVarargsConverter(c, convMatch, f, arg):
+          anyConverters = true
+          # match already built call, just use it
+          let bufPos = newArgBufs.len
+          newArgBufs.add ensureMove(convMatch.args)
+          var baseType = f
+          inc baseType
+          if convMatch.genericConverter:
+            # can just instantiate here
+            baseType = instantiateType(c, baseType, convMatch.inferred)
+          newArgs.add Item(n: beginRead(newArgBufs[bufPos]), typ: baseType)
+        elif tryConverterMatch(c, convMatch, f, arg):
           anyConverters = true
           var argBuf = createTokenBuf(16)
           argBuf.add parLeToken(HcallX, arg.n.info)
@@ -1375,11 +1427,11 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
             newMatch.genericConverter = true
           argBuf.add convMatch.args
           argBuf.addParRi()
-          newArgs.add Item(n: beginRead(argBuf), typ: convMatch.returnType)
-          newArgBufs.add argBuf
+          let bufPos = newArgBufs.len
+          newArgBufs.add ensureMove(argBuf)
+          newArgs.add Item(n: beginRead(newArgBufs[bufPos]), typ: convMatch.returnType)
         else:
           newArgs.add arg
-        skip param
         inc ai
       if anyConverters:
         sigmatch(newMatch, m[mi].fn, newArgs, genericArgs)
@@ -2904,11 +2956,10 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       takeToken c, n
       if n.kind != ParRi:
         semLocalTypeImpl c, n, InLocalDecl
-        if n.kind == DotToken:
-          takeToken c, n
-        else:
+        if n.kind != ParRi:
+          # optional converter
           var it = Item(n: n, typ: c.types.autoType)
-          semExpr c, it
+          semExpr c, it, {KeepMagics, AllowOverloads}
           # XXX Check the expression is a symchoice or a sym
           n = it.n
       takeParRi c, n
