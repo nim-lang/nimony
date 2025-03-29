@@ -93,10 +93,92 @@ proc singleToken*(c: var EvalContext; tok: PackedToken): Cursor =
   c.values[i].add tok
   result = cursorAt(c.values[i], 0)
 
+proc stringValue(c: var EvalContext; s: string; info: PackedLineInfo): Cursor {.inline.} =
+  result = singleToken(c, strToken(pool.strings.getOrIncl(s), info))
+
+proc intValue(c: var EvalContext; i: int64; info: PackedLineInfo): Cursor {.inline.} =
+  result = singleToken(c, intToken(pool.integers.getOrIncl(i), info))
+
+proc uintValue(c: var EvalContext; u: uint64; info: PackedLineInfo): Cursor {.inline.} =
+  result = singleToken(c, uintToken(pool.uintegers.getOrIncl(u), info))
+
+proc floatValue(c: var EvalContext; f: float; info: PackedLineInfo): Cursor {.inline.} =
+  result = singleToken(c, floatToken(pool.floats.getOrIncl(f), info))
+
+proc charValue(c: var EvalContext; ch: char; info: PackedLineInfo): Cursor {.inline.} =
+  result = singleToken(c, charToken(ch, info))
+
+proc boolValue(c: var EvalContext; val: bool): Cursor {.inline.} =
+  if val:
+    result = getTrueValue(c)
+  else:
+    result = getFalseValue(c)
+
 template error(msg: string; info: PackedLineInfo) {.dirty.} =
   result = c.error(msg, info)
 
-template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+template cannotEval(n: Cursor) {.dirty.} =
+  result = c.error("cannot evaluate expression at compile time: " & asNimCode(n), n.info)
+
+proc eval*(c: var EvalContext; n: var Cursor): Cursor
+
+proc evalCall(c: var EvalContext; n: Cursor): Cursor =
+  var callee = n
+  inc callee
+  if callee.kind != Symbol:
+    cannotEval(n)
+    return
+  let res = tryLoadSym(callee.symId)
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind):
+    cannotEval(n)
+    return
+  let routine = asRoutine(res.decl)
+  var op = ""
+  var pragmas = routine.pragmas
+  if pragmas.substructureKind == PragmasU:
+    inc pragmas
+    while pragmas.kind != ParRi:
+      var prag = pragmas
+      if prag.pragmaKind == SemanticsP:
+        inc prag
+        if prag.kind in {Ident, StringLit}:
+          op = pool.strings[prag.litId]
+          break
+      skip pragmas
+  if op == "":
+    cannotEval(n)
+    return
+  var args = n
+  inc args
+  skip args
+  case op
+  of "string.&":
+    let a = eval(c, args)
+    let b = eval(c, args)
+    if a.kind != StringLit or b.kind != StringLit or args.kind != ParRi:
+      cannotEval(n)
+      return
+    let val = pool.strings[a.litId] & pool.strings[b.litId]
+    result = stringValue(c, val, n.info)
+  of "string.==":
+    let a = eval(c, args)
+    let b = eval(c, args)
+    if a.kind != StringLit or b.kind != StringLit or args.kind != ParRi:
+      cannotEval(n)
+      return
+    let val = pool.strings[a.litId] == pool.strings[b.litId]
+    result = boolValue(c, val)
+  of "string.len":
+    let a = eval(c, args)
+    if a.kind != StringLit or args.kind != ParRi:
+      cannotEval(n)
+      return
+    let val = pool.strings[a.litId].len
+    result = intValue(c, val, n.info)
+  else:
+    cannotEval(n)
+
+template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
   inc n # tag
   let isSigned = n.typeKind == IntT
@@ -105,22 +187,43 @@ template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let b = getConstOrdinalValue eval(c, n)
   skipParRi n
   if not isNaN(a) and not isNaN(b):
-    let rx = a * b
+    let rx = opr(a, b)
     var err = false
     if isSigned:
       let ri = asSigned(rx, err)
       if err:
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
-        result = singleToken(c, intToken(pool.integers.getOrIncl(ri), orig.info))
+        result = intValue(c, ri, orig.info)
     else:
       let ru = asUnsigned(rx, err)
       if err:
         error "expression overflow at compile time: " & asNimCode(orig), orig.info
       else:
-        result = singleToken(c, uintToken(pool.uintegers.getOrIncl(ru), orig.info))
+        result = uintValue(c, ru, orig.info)
   else:
-    error "cannot evaluate expression at compile time: " & asNimCode(orig), orig.info
+    cannotEval orig
+
+template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  let orig = n
+  inc n # tag
+  skip n # type
+  let a = eval(c, n)
+  let b = eval(c, n)
+  skipParRi n
+  if a.kind == FloatLit and b.kind == FloatLit:
+    let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
+    result = floatValue(c, rf, orig.info)
+  else:
+    cannotEval orig
+
+template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  var t = n
+  inc t
+  if t.typeKind == FloatT:
+    evalFloatBinOp(c, n, opr)
+  else:
+    evalOrdBinOp(c, n, opr)
 
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   template propagateError(r: Cursor): Cursor =
@@ -220,28 +323,28 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         var err = false
         let u = asUnsigned(x, err)
         if err:
-          error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
+          cannotEval nOrig
         else:
-          result = singleToken(c, uintToken(pool.uintegers.getOrIncl(u), nOrig.info))
+          result = uintValue(c, u, nOrig.info)
       elif typ.typeKind == IntT:
         let x = getConstOrdinalValue(val)
         var err = false
         let i = asSigned(x, err)
         if err:
-          error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
+          cannotEval nOrig
         else:
-          result = singleToken(c, intToken(pool.integers.getOrIncl(i), nOrig.info))
+          result = intValue(c, i, nOrig.info)
       elif typ.typeKind == CharT:
         let x = getConstOrdinalValue(val)
         var err = false
         let ch = asUnsigned(x, err)
         if err or ch >= 256u:
-          error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
+          cannotEval nOrig
         else:
-          result = singleToken(c, charToken(char(ch), nOrig.info))
+          result = charValue(c, char(ch), nOrig.info)
       else:
         # other conversions not implemented
-        error "cannot evaluate expression at compile time: " & asNimCode(nOrig), nOrig.info
+        cannotEval nOrig
     of DconvX:
       inc n # tag
       skip n # type
@@ -255,7 +358,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         inc n
       else:
         # was not a trivial ExprX, so we could not evaluate it
-        error "cannot evaluate expression at compile time: " & asNimCode(orig), orig.info
+        cannotEval orig
     of MulX:
       evalBinOp(c, n, `*`)
     of AddX:
@@ -263,18 +366,22 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of SubX:
       evalBinOp(c, n, `-`)
     of DivX:
-      evalBinOp(c, n, `div`)
+      var t = n
+      inc t
+      if t.typeKind == FloatT:
+        evalFloatBinOp(c, n, `/`)
+      else:
+        evalOrdBinOp(c, n, `div`)
     of ModX:
-      evalBinOp(c, n, `mod`)
+      evalOrdBinOp(c, n, `mod`)
     of IsMainModuleX:
       inc n
       skipParRi n
       if c.c == nil:
-        error "cannot evaluate expression at compile time: " & asNimCode(n), n.info
-      elif IsMain in c.c.moduleFlags:
-        result = c.getTrueValue()
+        cannotEval n
       else:
-        result = c.getFalseValue()
+        let val = IsMain in c.c.moduleFlags
+        result = boolValue(c, val)
     of AconstrX, SetconstrX, TupconstrX,
         BracketX, CurlyX, TupX:
       let valPos = c.values.len
@@ -289,14 +396,17 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         c.values[valPos].addSubtree elem
       takeParRi c.values[valPos], n
       result = cursorAt(c.values[valPos], 0)
+    of CallKinds:
+      result = evalCall(c, n)
+      skip n
     else:
       if n.tagId == ErrT:
         result = n
         skip n
       else:
-        error "cannot evaluate expression at compile time: " & asNimCode(n), n.info
+        cannotEval n
   else:
-    error "cannot evaluate expression at compile time: " & asNimCode(n), n.info
+    cannotEval n
 
 proc evalExpr*(c: var SemContext, n: var Cursor): TokenBuf =
   var ec = initEvalContext(addr c)
