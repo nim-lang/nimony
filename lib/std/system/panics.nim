@@ -31,28 +31,29 @@ proc raiseIndexError3[T: HasWriteErr](i, a, b: T) {.noinline.} =
   writeErr a
   writeErr ".."
   writeErr b
+  writeErr "\n"
   die 1'i32
 
-proc icheckAb(i, a, b: int): int {.inline, exportc: "nimIcheckAB".} =
+proc nimIcheckAB(i, a, b: int): int {.inline, exportc: "nimIcheckAB".} =
   if i >= a and i <= b:
     result = i-a
   else:
     result = 0
     raiseIndexError3(i, a, b)
 
-proc icheckB(i, b: int): int {.inline, exportc: "nimIcheckB".} =
+proc nimIcheckB(i, b: int): int {.inline, exportc: "nimIcheckB".} =
   if i >= 0 and i <= b:
     result = i
   else:
     result = 0
     raiseIndexError3(i, 0, b)
 
-proc ucheckAb(i, a, b: uint): uint {.inline, exportc: "nimUcheckAB".} =
+proc nimUcheckAB(i, a, b: uint): uint {.inline, exportc: "nimUcheckAB".} =
   result = i-a
   if result > b:
     raiseIndexError3(i, a, b)
 
-proc ucheckB(i, b: uint): uint {.inline, exportc: "nimUcheckB".} =
+proc nimUcheckB(i, b: uint): uint {.inline, exportc: "nimUcheckB".} =
   result = i
   if result > b:
     raiseIndexError3(i, 0, b)

@@ -1007,6 +1007,10 @@ proc isSimpleLiteral(nb: var Cursor): bool =
     else:
       result = false
 
+proc getCompilerProc(c: var EContext; name: string): string =
+  c.demand pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
+  result = name & ".c"
+
 proc traverseArrAt(c: var EContext; n: var Cursor) =
   c.dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
   inc n
@@ -1028,7 +1032,7 @@ proc traverseArrAt(c: var EContext; n: var Cursor) =
       let indexA = n
       skip n
       if BoundCheck in c.activeChecks:
-        let abProcName = if isUnsigned: "nimUcheckAB.c" else: "nimIcheckAB.c"
+        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckAB" else: "nimIcheckAB")
         c.dest.copyIntoUnchecked "call", info:
           c.dest.add symToken(pool.syms.getOrIncl(abProcName), info)
           c.dest.add indexDest
@@ -1045,7 +1049,7 @@ proc traverseArrAt(c: var EContext; n: var Cursor) =
     else:
       # we only have to care about the upper bound:
       if BoundCheck in c.activeChecks:
-        let abProcName = if isUnsigned: "nimUcheckB.c" else: "nimIcheckB.c"
+        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckB" else: "nimIcheckB")
         c.dest.copyIntoUnchecked "call", info:
           c.dest.add symToken(pool.syms.getOrIncl(abProcName), info)
           c.dest.add indexDest
@@ -1694,14 +1698,15 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
   b.close()
 
 
-proc expand*(infile: string, bits: int) =
+proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   let (dir, file, ext) = splitModulePath(infile)
   var c = EContext(dir: (if dir.len == 0: getCurrentDir() else: dir), ext: ext, main: file,
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
     bits: bits,
-    localDeclCounters: 1000
+    localDeclCounters: 1000,
+    activeChecks: flags
     )
   c.openMangleScope()
 

@@ -33,6 +33,7 @@ Options:
   --noSystem                do not auto-import `system.nim`
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --nimcache:PATH           set the path used for generated files
+  --flags:FLAGS             undocumented flags
   --version                 show the version
   --help                    show this help
 """
@@ -97,6 +98,8 @@ proc handleCmdLine() =
         of "32": config.bits = 32
         of "16": config.bits = 16
         else: quit "invalid value for --bits"
+      of "flags":
+        discard "nothing to do here yet, but forward these"
       of "nimcache":
         config.nifcachePath = val
       else: writeHelp()
