@@ -241,7 +241,7 @@
 | `(defaulttup T)` | NimonyExpr | |
 | `(expr S+ X)` | NimonyExpr, NiflerKind | |
 | `(do (params...)+ T X)` | NimonyExpr, NiflerKind | `do` expression |
-| `(arrat X X)` | NimonyExpr | |
+| `(arrat X X X? X?)` | NimonyExpr | two optional exprs: `high` boundary and the `low` boundary (if != 0) |
 | `(tupat X X)` | NimonyExpr | |
 | `(plusset T X X)` | NimonyExpr | |
 | `(minusset T X X)` | NimonyExpr | |
