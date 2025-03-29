@@ -277,3 +277,4 @@
 | `(deprecated X?)` | NimonyPragma | `deprecated` pragma |
 | `(sideEffect)` | NimonyPragma | explicit `sideEffect` pragma |
 | `(keepOverflowFlag)` | NimonyPragma | keep overflow flag |
+| `(builtin STR)` | NimonyPragma | proc with builtin behavior for expreval |

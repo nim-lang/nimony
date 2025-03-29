@@ -10,7 +10,7 @@ const
   LenShift = 1
   IsAllocatedBit = 1
 
-proc len*(s: string): int {.inline, ensures: (0 <= result).} =
+proc len*(s: string): int {.inline, builtin: "string.len", ensures: (0 <= result).} =
   result = s.i shr LenShift
 
 proc high*(s: string): int {.inline.} = len(s)-1
@@ -222,7 +222,7 @@ proc equalStrings(a, b: string): bool {.exportc: "nimStrEq", inline.} =
   else:
     result = false
 
-proc `==`*(a, b: string): bool {.inline.} =
+proc `==`*(a, b: string): bool {.inline, builtin: "string.==".} =
   result = equalStrings(a, b)
 
 proc nimStrAtLe(s: string; idx: int; ch: char): bool {.exportc: "nimStrAtLe", inline.} =
@@ -271,7 +271,7 @@ template concat*(): string {.varargs.} =
     res.add s
   res
 
-proc `&`*(a, b: string): string =
+proc `&`*(a, b: string): string {.builtin: "string.&".} =
   let rlen = a.len + b.len
   let r = cast[StrData](alloc(rlen))
   if r != nil:

@@ -633,7 +633,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           result.bits = n.intId
           inc n
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
-           TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP:
+           TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, BuiltinP:
           skip n
           continue
         of BuildP, EmitP:
