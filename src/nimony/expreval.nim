@@ -133,25 +133,25 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     cannotEval(n)
     return
   let routine = asRoutine(res.decl)
-  var builtin = ""
+  var op = ""
   var pragmas = routine.pragmas
   if pragmas.substructureKind == PragmasU:
     inc pragmas
     while pragmas.kind != ParRi:
       var prag = pragmas
-      if prag.pragmaKind == BuiltinP:
+      if prag.pragmaKind == SemanticsP:
         inc prag
         if prag.kind in {Ident, StringLit}:
-          builtin = pool.strings[prag.litId]
+          op = pool.strings[prag.litId]
           break
       skip pragmas
-  if builtin == "":
+  if op == "":
     cannotEval(n)
     return
   var args = n
   inc args
   skip args
-  case builtin
+  case op
   of "string.&":
     let a = eval(c, args)
     let b = eval(c, args)

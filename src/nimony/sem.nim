@@ -2234,13 +2234,13 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, n.info)
     inc n
     c.dest.addParRi()
-  of BuiltinP:
+  of SemanticsP:
     c.dest.add parLeToken(pk, n.info)
     inc n
     if n.kind in {StringLit, Ident}:
       takeToken c, n
     else:
-      buildErr c, n.info, "`builtin` pragma takes a string literal"
+      buildErr c, n.info, "`semantics` pragma takes a string literal"
     c.dest.addParRi()
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =

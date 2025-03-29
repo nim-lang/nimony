@@ -280,7 +280,7 @@ type
     DeprecatedTagId
     SideEffectTagId
     KeepOverflowFlagTagId
-    BuiltinTagId
+    SemanticsTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -561,5 +561,5 @@ const
     ("deprecated", 275),
     ("sideEffect", 276),
     ("keepOverflowFlag", 277),
-    ("builtin", 278)
+    ("semantics", 278)
   ]
