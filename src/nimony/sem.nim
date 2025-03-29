@@ -785,7 +785,7 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
   if res.status == LacksNothing:
     let args = cursorAt(c.dest, beforeCall + 2)
     let firstVarargMatch = cursorAt(c.dest, beforeCall + 2 + m.firstVarargPosition)
-    expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred)
+    expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred, c.dest[beforeCall].info)
     # We took 2 cursors, so we have to do the `endRead` twice too:
     endRead(c.dest)
     endRead(c.dest)

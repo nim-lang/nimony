@@ -114,7 +114,8 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
 
 proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      templateDecl, args, firstVarargMatch: Cursor;
-                     inferred: ptr Table[SymId, Cursor]) =
+                     inferred: ptr Table[SymId, Cursor];
+                     info: PackedLineInfo) =
   var templ = asRoutine(templateDecl, SkipInclBody)
 
   if expandPlugin(c, dest, templ, args):
@@ -139,7 +140,12 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
       skip a
       skip f
 
-  expandTemplateImpl c, dest, e, templ.body
+  if templ.body.kind == DotToken:
+    swap c.dest, dest
+    c.buildErr info, "cannot expand template from prototype; possibly a recursive template call"
+    swap c.dest, dest
+  else:
+    expandTemplateImpl c, dest, e, templ.body
 
   for _, newVar in e.newVars:
     c.freshSyms.incl newVar
