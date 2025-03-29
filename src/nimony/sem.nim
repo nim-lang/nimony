@@ -1208,7 +1208,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
             let sym = arg.symId
             takeToken c, arg
             let res = tryLoadSym(sym)
-            if res.status == LacksNothing and res.decl.symKind == ConverterY:
+            if res.status == LacksNothing and isRoutine(res.decl.symKind):
               let routine = asRoutine(res.decl)
               if isGeneric(routine):
                 let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
