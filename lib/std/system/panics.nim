@@ -35,7 +35,7 @@ proc raiseIndexError3[T: HasWriteErr](i, a, b: T) {.noinline.} =
 
 proc icheckAb(i, a, b: int): int {.inline, exportc: "nimIcheckAB".} =
   if i >= a and i <= b:
-    result = i
+    result = i-a
   else:
     result = 0
     raiseIndexError3(i, a, b)
@@ -48,15 +48,11 @@ proc icheckB(i, b: int): int {.inline, exportc: "nimIcheckB".} =
     raiseIndexError3(i, 0, b)
 
 proc ucheckAb(i, a, b: uint): uint {.inline, exportc: "nimUcheckAB".} =
-  if i >= a and i <= b:
-    result = i
-  else:
-    result = 0
+  result = i-a
+  if result > b:
     raiseIndexError3(i, a, b)
 
 proc ucheckB(i, b: uint): uint {.inline, exportc: "nimUcheckB".} =
-  if i >= 0 and i <= b:
-    result = i
-  else:
-    result = 0
+  result = i
+  if result > b:
     raiseIndexError3(i, 0, b)

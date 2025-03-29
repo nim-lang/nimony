@@ -10,7 +10,7 @@
 import std / [tables, sets, syncio]
 
 include nifprelude
-import ".." / nimony / [nimony_model, typenav]
+import ".." / nimony / [nimony_model, typenav, langmodes]
 
 const
   RcField* = "r.0."
@@ -45,6 +45,7 @@ type
     resultSym*: SymId
 
     localDeclCounters*: int
+    activeChecks*: set[CheckMode]
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId
