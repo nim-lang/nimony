@@ -1023,7 +1023,6 @@ proc traverseArrAt(c: var EContext; n: var Cursor) =
     c.dest.shrink beforeIndex
     let indexB = n
     skip n
-    let indexType = if isUnsigned: c.typeCache.builtins.uintType else: c.typeCache.builtins.intType
     if n.kind != ParRi:
       # we have `low(T)`:
       let indexA = n
@@ -1036,6 +1035,7 @@ proc traverseArrAt(c: var EContext; n: var Cursor) =
           c.dest.addSubtree indexA
           c.dest.addSubtree indexB
       else:
+        let indexType = if isUnsigned: c.typeCache.builtins.uintType else: c.typeCache.builtins.intType
         # we need the substraction regardless:
         c.dest.addParLe SubX, info
         c.dest.addSubtree indexType
@@ -1051,7 +1051,7 @@ proc traverseArrAt(c: var EContext; n: var Cursor) =
           c.dest.add indexDest
           c.dest.addSubtree indexB
       else:
-        c.dest.addSubtree indexType
+        c.dest.add indexDest
   takeParRi c, n
 
 proc traverseExpr(c: var EContext; n: var Cursor) =
