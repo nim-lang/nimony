@@ -20,7 +20,7 @@ multiple different steps.
 - Inject dups.
 - Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct).
 - Inject destructors.
-- Map builtins like new and + to "compiler procs".
+- Map builtins like `new` and `+` to "compiler procs".
 - Translate exception handling.
 
 
@@ -46,14 +46,14 @@ import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import nifcgen, lifter, duplifier, destroyer, inliner, constparams
 
 const
-  Version = "0.2"
+  Version = "0.4"
   Usage = "Hexer Compiler. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
 Usage:
   hexer [options] [command]
 Command:
-  file.nif      expand NIF file to meet NIFC's requirements
+  file.nif      compiler semchecked NIF file to NIFC
 
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16

@@ -86,7 +86,7 @@ type
     DefaulttupX = (ord(DefaulttupTagId), "defaulttup")
     ExprX = (ord(ExprTagId), "expr")
     DoX = (ord(DoTagId), "do")  ## `do` expression
-    ArratX = (ord(ArratTagId), "arrat")
+    ArratX = (ord(ArratTagId), "arrat")  ## two optional exprs: `high` boundary and the `low` boundary (if != 0)
     TupatX = (ord(TupatTagId), "tupat")
     PlussetX = (ord(PlussetTagId), "plusset")
     MinussetX = (ord(MinussetTagId), "minusset")

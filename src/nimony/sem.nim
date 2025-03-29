@@ -5228,7 +5228,33 @@ proc semTypedAt(c: var SemContext; it: var Item) =
   if typ.typeKind == PtrT:
     inc typ
   case typ.typeKind
-  of ArrayT, UarrayT:
+  of ArrayT:
+    it.typ = typ
+    inc it.typ
+    # add array index information to the `ArrAtX` magic for easy
+    # code generation of index checking:
+    var t = it.typ # at element type
+    skip t # now at the index type
+    if t.typeKind == RangetypeT:
+      inc t # tag
+      skip t # skip base type
+      let first = t
+      skip t # now at last
+      c.dest.addSubtree t
+      var isZero: bool
+      case first.kind
+      of IntLit:
+        isZero = pool.integers[first.intId] == 0
+      of UIntLit:
+        isZero = pool.uintegers[first.uintId] == 0
+      else:
+        isZero = true
+      if not isZero:
+        c.dest.addSubtree first
+    # skip the index type information in case we re-semcheck this node
+    while it.n.kind != ParRi:
+      skip it.n
+  of UarrayT:
     it.typ = typ
     inc it.typ
   of CstringT:
