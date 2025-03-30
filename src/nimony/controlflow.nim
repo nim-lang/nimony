@@ -139,6 +139,7 @@ proc trAnd(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   fjmp.add c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
+  c.stmtBegin = c.dest.len
   trCondOp2 c, n, tjmp, fjmp, info
 
 proc trOr(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
@@ -152,6 +153,7 @@ proc trOr(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   let l1 = c.jmpForw(info)
   c.dest.addParRi()
   c.patch l1
+  c.stmtBegin = c.dest.len
   trCondOp2 c, n, tjmp, fjmp, info
 
 proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
