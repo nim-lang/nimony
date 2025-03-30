@@ -304,10 +304,11 @@ proc trProcDecl(c: var Context; n: var Cursor) =
       takeTree c.dest, n
     elif i == ProcPragmasPos and not isGeneric:
       trProcPragmas(c, n)
+    elif i == ResultPos and n.typeKind in {MutT, OutT, LentT}:
+      r.returnExpects = WantVarTResult
+      takeTree c.dest, n
     else:
       takeTree c.dest, n
-    if i == ResultPos and n.typeKind in {MutT, OutT, LentT}:
-      r.returnExpects = WantVarTResult
 
   if isGeneric:
     takeTree c.dest, n
