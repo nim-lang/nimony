@@ -125,6 +125,7 @@ const
   TypevarsPos* = 3
   ParamsPos* = 4
   ResultPos* = 5
+  ProcPragmasPos* = 6
   BodyPos* = 8
 
 proc asRoutine*(c: Cursor; mode = SkipExclBody): Routine =

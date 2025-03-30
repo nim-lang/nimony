@@ -2,7 +2,8 @@
 
 import std / [assertions]
 include nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
+  builtintypes, langmodes, renderer, reporters]
 import hexer_context
 
 type
@@ -11,6 +12,7 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     tempUseBufStack: seq[TokenBuf]
+    activeChecks: set[CheckMode]
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): SymId =
   let s = "`desugar." & $c.counter & "." & c.thisModuleSuffix
@@ -78,12 +80,51 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.typeCache.takeLocalHeader(dest, n, kind)
     tr(c, dest, n)
 
+proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  inc n # (stmts)
+  while n.kind != ParRi:
+    tr(c, dest, n)
+  skipParRi n
+
+proc trRoutineHeader(c: var Context; dest: var TokenBuf; n: var Cursor; pragmas: var Cursor): bool =
+  # returns false if the routine is generic
+  result = true # assume it is concrete
+  let sym = n.symId
+  for i in 0..<BodyPos:
+    if i == ParamsPos:
+      c.typeCache.registerParams(sym, n)
+    elif i == TypeVarsPos:
+      result = n.substructureKind != TypevarsU
+    elif i == ProcPragmasPos:
+      pragmas = n
+    takeTree dest, n
+
+proc trRequires(c: var Context; dest: var TokenBuf; pragmas: Cursor) =
+  if not cursorIsNil(pragmas) and BoundCheck in c.activeChecks:
+    let req = extractPragma(pragmas, RequiresP)
+    if not cursorIsNil(req):
+      let info = req.info
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.copyIntoKind NotX, info:
+            var n = req
+            tr(c, dest, n)
+          dest.copyIntoKind StmtsS, info:
+            dest.copyIntoKind CallS, info:
+              dest.addSymUse pool.syms.getOrIncl("panic.0." & SystemModuleSuffix), info
+              let msg = infoToStr(pragmas.info) & ": " & asNimCode(req) & " [AssertionDefect]\n"
+              dest.addStrLit msg, info
+
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   copyInto dest, n:
-    let isConcrete = c.typeCache.takeRoutineHeader(dest, n)
-    if isConcrete:
-      tr(c, dest, n)
+    var pragmas = default(Cursor)
+    let isConcrete = c.trRoutineHeader(dest, n, pragmas)
+    if isConcrete and n.stmtKind == StmtsS:
+      dest.add n # (stmts)
+      trRequires(c, dest, pragmas)
+      trProcBody(c, dest, n)
+      dest.addParRi()
     else:
       takeTree dest, n
   c.typeCache.closeScope()
@@ -728,8 +769,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ParRi:
     raiseAssert "unexpected ')' inside"
 
-proc desugar*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+proc desugar*(n: Cursor; moduleSuffix: string; activeChecks: set[CheckMode]): TokenBuf =
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks)
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n

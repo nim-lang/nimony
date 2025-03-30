@@ -42,7 +42,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n0 = move c.dest
   var c0 = beginRead(n0)
 
-  var n1 = desugar(c0, moduleSuffix)
+  var n1 = desugar(c0, moduleSuffix, c.activeChecks)
   endRead(n0)
 
   var c2 = beginRead(n1)

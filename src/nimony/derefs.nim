@@ -270,6 +270,19 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   elif n.kind == ParLe:
     recurse()
 
+proc trProcPragmas(c: var Context; n: var Cursor) =
+  # we also need to traverse the `requires` pragmas!
+  if n.kind == DotToken:
+    takeToken c, n
+  else:
+    takeToken c, n # pragmas
+    while n.kind != ParRi:
+      if n.pragmaKind == RequiresP:
+        tr c, n, WantT
+      else:
+        takeTree c.dest, n
+    takeParRi c, n
+
 proc trProcDecl(c: var Context; n: var Cursor) =
   c.typeCache.openScope()
   takeToken c, n
@@ -279,7 +292,8 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   for i in 0..<BodyPos:
     if i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
-    if i == ParamsPos:
+      takeTree c.dest, n
+    elif i == ParamsPos:
       c.typeCache.registerParams(symId, n)
       var params = n
       inc params
@@ -287,10 +301,14 @@ proc trProcDecl(c: var Context; n: var Cursor) =
       if firstParam.kind == ParamY:
         r.firstParam = firstParam.name.symId
         r.firstParamKind = firstParam.typ.typeKind
-
+      takeTree c.dest, n
+    elif i == ProcPragmasPos and not isGeneric:
+      trProcPragmas(c, n)
+    else:
+      takeTree c.dest, n
     if i == ResultPos and n.typeKind in {MutT, OutT, LentT}:
       r.returnExpects = WantVarTResult
-    takeTree c.dest, n
+
   if isGeneric:
     takeTree c.dest, n
     takeParRi c, n
