@@ -756,6 +756,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
           else:
             result = MagicCall
           # ^ export marker position has a `(`? If so, it is a magic!
+          let info = c.dest[c.dest.len-1].info
           copyKeepLineInfo c.dest[c.dest.len-1], n.load # overwrite the `(call` node with the magic itself
           inc n
           if n.kind == IntLit:
@@ -769,7 +770,11 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
               if m.inferred.len != 0:
                 paramType = instantiateType(c, paramType, m.inferred)
               removeModifier(paramType)
+              let typeStart = c.dest.len
               c.dest.addSubtree paramType
+              # op type line info does not matter, strip it for better output:
+              for tok in typeStart ..< c.dest.len:
+                c.dest[tok].info = info
             else:
               c.dest.add n
             inc n

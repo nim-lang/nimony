@@ -62,8 +62,8 @@
   (if 3
    (elif
     (not 10,9,tests/nimony/sysbasics/tsets.nim
-     (ltset 4,~3
-      (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) ~1,1
+     (ltset
+      (set Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) ~1,1
     (stmts ~2,~35
      (stmts 2,1
       (stmts
@@ -74,16 +74,16 @@
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,9
  (glet :y.0.tsefy5wha . . 10,~4
   (set 1 Foo.0.tsefy5wha) 7
-  (mulset 3,~4
-   (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) 4,10
+  (mulset
+   (set Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) 4,10
  (glet :z.0.tsefy5wha . . 10,~5
   (set 1 Foo.0.tsefy5wha) 14 y.0.tsefy5wha) 2,136,lib/std/syncio.nim
  (stmts
   (if 3
    (elif
     (not 9,12,tests/nimony/sysbasics/tsets.nim
-     (eqset 5,~6
-      (set 1 Foo.0.tsefy5wha) ~2 y.0.tsefy5wha 3
+     (eqset
+      (set Foo.0.tsefy5wha) ~2 y.0.tsefy5wha 3
       (setconstr 2,~6
        (set 1 Foo.0.tsefy5wha) 1
        (range A.0.tsefy5wha 3 C.0.tsefy5wha)))) ~1,1
@@ -99,8 +99,8 @@
   (if 3
    (elif
     (not 9,13,tests/nimony/sysbasics/tsets.nim
-     (eqset 5,~7
-      (set 1 Foo.0.tsefy5wha) ~2 z.0.tsefy5wha 3
+     (eqset
+      (set Foo.0.tsefy5wha) ~2 z.0.tsefy5wha 3
       (setconstr 2,~7
        (set 1 Foo.0.tsefy5wha) 1
        (range A.0.tsefy5wha 3 C.0.tsefy5wha)))) ~1,1
@@ -116,10 +116,10 @@
   (if 3
    (elif
     (not 14,14,tests/nimony/sysbasics/tsets.nim
-     (eqset ,~8
-      (set 1 Foo.0.tsefy5wha) ~5
-      (minusset 5,~8
-       (set 1 Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 2 s1.0.tsefy5wha) 3
+     (eqset
+      (set Foo.0.tsefy5wha) ~5
+      (minusset
+       (set Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 2 s1.0.tsefy5wha) 3
       (setconstr ~3,~8
        (set 1 Foo.0.tsefy5wha) 1 D.0.tsefy5wha))) ~1,1
     (stmts ~2,~35
@@ -134,8 +134,8 @@
   (if 3
    (elif
     (not 10,15,tests/nimony/sysbasics/tsets.nim
-     (leset 4,~9
-      (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 3 s.0.tsefy5wha)) ~1,1
+     (leset
+      (set Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 3 s.0.tsefy5wha)) ~1,1
     (stmts ~2,~35
      (stmts 2,1
       (stmts
@@ -148,10 +148,10 @@
   (if 3
    (elif
     (not 15,16,tests/nimony/sysbasics/tsets.nim
-     (eq 13,13,lib/std/system.nim
-      (i -1) ~4
-      (card 3,~10
-       (set 1 Foo.0.tsefy5wha) 1 s.0.tsefy5wha) 3 +4)) ~1,1
+     (eq
+      (i +64) ~4
+      (card
+       (set Foo.0.tsefy5wha) 1 s.0.tsefy5wha) 3 +4)) ~1,1
     (stmts ~2,~35
      (stmts 2,1
       (stmts
@@ -164,10 +164,10 @@
   (if 3
    (elif
     (not 16,17,tests/nimony/sysbasics/tsets.nim
-     (eq 13,13,lib/std/system.nim
-      (i -1) ~5
-      (card 3,~11
-       (set 1 Foo.0.tsefy5wha) 1 s1.0.tsefy5wha) 3 +3)) ~1,1
+     (eq
+      (i +64) ~5
+      (card
+       (set Foo.0.tsefy5wha) 1 s1.0.tsefy5wha) 3 +3)) ~1,1
     (stmts ~2,~35
      (stmts 2,1
       (stmts
@@ -185,10 +185,10 @@
   (if 3
    (elif
     (not 16,20,tests/nimony/sysbasics/tsets.nim
-     (eq 13,13,lib/std/system.nim
-      (i -1) ~5
-      (card 3,~14
-       (set 1 Foo.0.tsefy5wha) 1 s1.0.tsefy5wha) 3 +4)) ~1,1
+     (eq
+      (i +64) ~5
+      (card
+       (set Foo.0.tsefy5wha) 1 s1.0.tsefy5wha) 3 +4)) ~1,1
     (stmts ~2,~35
      (stmts 2,1
       (stmts
@@ -230,10 +230,10 @@
     (if 3
      (elif
       (not 19,30,tests/nimony/sysbasics/tsets.nim
-       (eq 13,13,lib/std/system.nim
-        (i -1) ~6
-        (card 1,~2
-         (set 1
+       (eq
+        (i +64) ~6
+        (card
+         (set
           (c +8)) 1 sss.0) 3 +0)) ~1,1
       (stmts ~2,~35
        (stmts 2,1
@@ -252,10 +252,10 @@
     (if 3
      (elif
       (not 19,32,tests/nimony/sysbasics/tsets.nim
-       (eq 13,13,lib/std/system.nim
-        (i -1) ~6
-        (card 1,~4
-         (set 1
+       (eq
+        (i +64) ~6
+        (card
+         (set
           (c +8)) 1 sss.0) 3 +27)) ~1,1
       (stmts ~2,~35
        (stmts 2,1
@@ -265,17 +265,17 @@
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))) 8,5
-   (excl 4,~5
-    (set 1
+   (excl
+    (set
      (c +8)) ~8 sss.0 1 'm') 2,136,lib/std/syncio.nim
    (stmts
     (if 3
      (elif
       (not 19,34,tests/nimony/sysbasics/tsets.nim
-       (eq 13,13,lib/std/system.nim
-        (i -1) ~6
-        (card 1,~6
-         (set 1
+       (eq
+        (i +64) ~6
+        (card
+         (set
           (c +8)) 1 sss.0) 3 +26)) ~1,1
       (stmts ~2,~35
        (stmts 2,1
@@ -285,17 +285,17 @@
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))) 8,7
-   (incl 4,~7
-    (set 1
+   (incl
+    (set
      (c +8)) ~8 sss.0 1 'u') 2,136,lib/std/syncio.nim
    (stmts
     (if 3
      (elif
       (not 19,36,tests/nimony/sysbasics/tsets.nim
-       (eq 13,13,lib/std/system.nim
-        (i -1) ~6
-        (card 1,~8
-         (set 1
+       (eq
+        (i +64) ~6
+        (card
+         (set
           (c +8)) 1 sss.0) 3 +26)) ~1,1
       (stmts ~2,~35
        (stmts 2,1

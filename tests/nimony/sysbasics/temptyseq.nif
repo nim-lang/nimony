@@ -36,8 +36,8 @@
    (result :result.0 . . 14,~1 seq.0.Ipe57hg.temd2l7vy .)
    (if 3
     (elif 5
-     (eq 18,~1
-      (i -1) ~5 size.3 3 +0) ~1,1
+     (eq
+      (i +64) ~5 size.3 3 +0) ~1,1
      (stmts 7
       (asgn ~7 result.0 8
        (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Ipe57hg.temd2l7vy 4
@@ -46,10 +46,10 @@
          (nil)))))) ,2
     (else 2,1
      (stmts 4
-      (let :memSize.0 . . 1,~52
-       (i -1) 15
-       (mul 5,~4
-        (i -1) ~5 size.3 8
+      (let :memSize.0 . . 2,~3
+       (i +64) 15
+       (mul
+        (i +64) ~5 size.3 8
         (sizeof 16,1,tests/nimony/sysbasics/temptyseq.nim
          (i -1)))) 7,1
       (asgn ~7 result.0 8
@@ -65,8 +65,8 @@
        (elif 2,98,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
-          (eq 10,6,lib/std/system/seqimpl.nim
-           (ptr 18
+          (eq
+           (ptr
             (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
              (i -1))) 13,59,lib/std/system/seqimpl.nim
            (dot ~6 result.0 data.0.Ipe57hg.temd2l7vy +0) 22,59,lib/std/system/seqimpl.nim
@@ -92,8 +92,8 @@
    (result :result.1 . . 14,~1 seq.0.Iw9f2pq.temd2l7vy .)
    (if 3
     (elif 5
-     (eq 18,~1
-      (i -1) ~5 size.4 3 +0) ~1,1
+     (eq
+      (i +64) ~5 size.4 3 +0) ~1,1
      (stmts 7
       (asgn ~7 result.1 8
        (oconstr ~3,~2 seq.0.Iw9f2pq.temd2l7vy 4
@@ -102,10 +102,10 @@
          (nil)))))) ,2
     (else 2,1
      (stmts 4
-      (let :memSize.1 . . 1,~52
-       (i -1) 15
-       (mul 5,~4
-        (i -1) ~5 size.4 8
+      (let :memSize.1 . . 2,~3
+       (i +64) 15
+       (mul
+        (i +64) ~5 size.4 8
         (sizeof
          (f +64)))) 7,1
       (asgn ~7 result.1 8
@@ -121,8 +121,8 @@
        (elif 2,98,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
-          (eq 10,6,lib/std/system/seqimpl.nim
-           (ptr 18
+          (eq
+           (ptr
             (uarray
              (f +64))) 13,59,lib/std/system/seqimpl.nim
            (dot ~6 result.1 data.0.Iw9f2pq.temd2l7vy +0) 22,59,lib/std/system/seqimpl.nim
@@ -157,8 +157,8 @@
    (result :result.2 . . 14,~1 seq.0.Iq4ofkp1.temd2l7vy .)
    (if 3
     (elif 5
-     (eq 18,~1
-      (i -1) ~5 size.5 3 +0) ~1,1
+     (eq
+      (i +64) ~5 size.5 3 +0) ~1,1
      (stmts 7
       (asgn ~7 result.2 8
        (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.0.Iq4ofkp1.temd2l7vy 4
@@ -167,10 +167,10 @@
          (nil)))))) ,2
     (else 2,1
      (stmts 4
-      (let :memSize.2 . . 1,~52
-       (i -1) 15
-       (mul 5,~4
-        (i -1) ~5 size.5 8
+      (let :memSize.2 . . 2,~3
+       (i +64) 15
+       (mul
+        (i +64) ~5 size.5 8
         (sizeof 11,9,tests/nimony/sysbasics/temptyseq.nim
          (u +8)))) 7,1
       (asgn ~7 result.2 8
@@ -186,8 +186,8 @@
        (elif 2,98,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
-          (eq 10,6,lib/std/system/seqimpl.nim
-           (ptr 18
+          (eq
+           (ptr
             (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
              (u +8))) 13,59,lib/std/system/seqimpl.nim
            (dot ~6 result.2 data.0.Iq4ofkp1.temd2l7vy +0) 22,59,lib/std/system/seqimpl.nim
@@ -240,7 +240,7 @@
     (i -1) 4 +0) ,1
    (while 8
     (lt
-     (i -1) ~2 i.0 3
+     (i +64) ~2 i.0 3
      (dot ~1 s.6 len.6.Ipe57hg.temd2l7vy +0)) 2,1
     (stmts 10
      (destroy 2
@@ -252,8 +252,8 @@
     (elif 2,98,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
-       (eq 10,6,lib/std/system/seqimpl.nim
-        (ptr 18
+       (eq
+        (ptr
          (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
           (i -1))) 6,16,lib/std/system/seqimpl.nim
         (dot ~1 s.6 data.0.Ipe57hg.temd2l7vy +0) 15,16,lib/std/system/seqimpl.nim
@@ -297,7 +297,7 @@
     (i -1) 4 +0) ,2
    (while 8
     (lt
-     (i -1) ~2 i.1 3
+     (i +64) ~2 i.1 3
      (dot ~1 a.3 len.6.Ipe57hg.temd2l7vy +0)) 2,1
     (stmts 17
      (asgn ~10
@@ -321,8 +321,8 @@
   (stmts
    (if 3
     (elif 10
-     (eq ~5,~86
-      (ptr 18
+     (eq
+      (ptr
        (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
         (i -1))) ~6
       (dot ~4
@@ -332,8 +332,8 @@
       (ret .)))) ,1
    (if 3
     (elif 8
-     (lt 7,31,lib/std/system/basic_types.nim
-      (i -1) ~5
+     (lt
+      (i +64) ~5
       (dot ~3 src.3 len.6.Ipe57hg.temd2l7vy +0) 6
       (dot ~4
        (hderef dest.3) len.6.Ipe57hg.temd2l7vy +0)) ~1,1
@@ -342,8 +342,8 @@
        (i -1) 7
        (dot ~3 src.3 len.6.Ipe57hg.temd2l7vy +0)) ,1
       (while 8
-       (lt 7,31,lib/std/system/basic_types.nim
-        (i -1) ~2 i.2 6
+       (lt
+        (i +64) ~2 i.2 6
         (dot ~4
          (hderef dest.3) len.6.Ipe57hg.temd2l7vy +0)) 2,1
        (stmts 10
@@ -354,20 +354,20 @@
         (cmd inc.0.temd2l7vy 4
          (haddr i.2)))))) 5,5
     (elif 16
-     (lt 7,31,lib/std/system/basic_types.nim
-      (i -1) ~12
+     (lt
+      (i +64) ~12
       (call 1 capInBytes.0.temd2l7vy ~4
        (hderef dest.3)) 10
-      (mul 7,31,lib/std/system/basic_types.nim
-       (i -1) ~5
+      (mul
+       (i +64) ~5
        (dot ~3 src.3 len.6.Ipe57hg.temd2l7vy +0) 8
        (sizeof 16,1,tests/nimony/sysbasics/temptyseq.nim
         (i -1)))) ~3,1
      (stmts 4
-      (let :oldCap.0 . . 1,~94
-       (i -1) 25
-       (div 7,31,lib/std/system/basic_types.nim
-        (i -1) ~12
+      (let :oldCap.0 . . 2,~45
+       (i +64) 25
+       (div
+        (i +64) ~12
         (call 1 capInBytes.0.temd2l7vy ~4
          (hderef dest.3)) 10
         (sizeof 16,1,tests/nimony/sysbasics/temptyseq.nim
@@ -375,13 +375,13 @@
       (let :newCap.0 . . 1,~95
        (i -1) 18
        (call ~9 recalcCap.0.sysvq0asl 1 oldCap.0 17
-        (sub 7,31,lib/std/system/basic_types.nim
-         (i -1) ~5
+        (sub
+         (i +64) ~5
          (dot ~3 src.3 len.6.Ipe57hg.temd2l7vy +0) 2 oldCap.0))) 4,2
-      (let :memSize.3 . . 1,~96
-       (i -1) 17
-       (mul 5,~27
-        (i -1) ~7 newCap.0 8
+      (let :memSize.3 . . 2,~47
+       (i +64) 17
+       (mul
+        (i +64) ~7 newCap.0 8
         (sizeof 16,1,tests/nimony/sysbasics/temptyseq.nim
          (i -1)))) 10,3
       (asgn ~6
@@ -400,8 +400,8 @@
             (hderef dest.3) data.0.Ipe57hg.temd2l7vy +0))) 12 memSize.3))) ,4
       (if 3
        (elif 10
-        (eq ~7,~97
-         (ptr 18
+        (eq
+         (ptr
           (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
            (i -1))) ~6
          (dot ~4
@@ -421,7 +421,7 @@
     (i -1) 4 +0) ,17
    (while 8
     (lt
-     (i -1) ~2 i.3 6
+     (i +64) ~2 i.3 6
      (dot ~4
       (hderef dest.3) len.6.Ipe57hg.temd2l7vy +0)) 2,1
     (stmts 2,23,lib/std/system.nim
@@ -445,7 +445,7 @@
     (i -1) 4 +0) ,1
    (while 8
     (lt
-     (i -1) ~2 i.4 3
+     (i +64) ~2 i.4 3
      (dot ~1 s.9 len.6.Iw9f2pq.temd2l7vy +0)) 2,1
     (stmts 10
      (destroy 2
@@ -457,8 +457,8 @@
     (elif 2,98,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
-       (eq 10,6,lib/std/system/seqimpl.nim
-        (ptr 18
+       (eq
+        (ptr
          (uarray
           (f +64))) 6,16,lib/std/system/seqimpl.nim
         (dot ~1 s.9 data.0.Iw9f2pq.temd2l7vy +0) 15,16,lib/std/system/seqimpl.nim
@@ -502,7 +502,7 @@
     (i -1) 4 +0) ,2
    (while 8
     (lt
-     (i -1) ~2 i.5 3
+     (i +64) ~2 i.5 3
      (dot ~1 a.4 len.6.Iw9f2pq.temd2l7vy +0)) 2,1
     (stmts 17
      (asgn ~10
@@ -526,8 +526,8 @@
   (stmts
    (if 3
     (elif 10
-     (eq ~5,~86
-      (ptr 18
+     (eq
+      (ptr
        (uarray
         (f +64))) ~6
       (dot ~4
@@ -537,8 +537,8 @@
       (ret .)))) ,1
    (if 3
     (elif 8
-     (lt 7,31,lib/std/system/basic_types.nim
-      (i -1) ~5
+     (lt
+      (i +64) ~5
       (dot ~3 src.4 len.6.Iw9f2pq.temd2l7vy +0) 6
       (dot ~4
        (hderef dest.4) len.6.Iw9f2pq.temd2l7vy +0)) ~1,1
@@ -547,8 +547,8 @@
        (i -1) 7
        (dot ~3 src.4 len.6.Iw9f2pq.temd2l7vy +0)) ,1
       (while 8
-       (lt 7,31,lib/std/system/basic_types.nim
-        (i -1) ~2 i.6 6
+       (lt
+        (i +64) ~2 i.6 6
         (dot ~4
          (hderef dest.4) len.6.Iw9f2pq.temd2l7vy +0)) 2,1
        (stmts 10
@@ -559,20 +559,20 @@
         (cmd inc.0.temd2l7vy 4
          (haddr i.6)))))) 5,5
     (elif 16
-     (lt 7,31,lib/std/system/basic_types.nim
-      (i -1) ~12
+     (lt
+      (i +64) ~12
       (call 1 capInBytes.1.temd2l7vy ~4
        (hderef dest.4)) 10
-      (mul 7,31,lib/std/system/basic_types.nim
-       (i -1) ~5
+      (mul
+       (i +64) ~5
        (dot ~3 src.4 len.6.Iw9f2pq.temd2l7vy +0) 8
        (sizeof
         (f +64)))) ~3,1
      (stmts 4
-      (let :oldCap.1 . . 1,~94
-       (i -1) 25
-       (div 7,31,lib/std/system/basic_types.nim
-        (i -1) ~12
+      (let :oldCap.1 . . 2,~45
+       (i +64) 25
+       (div
+        (i +64) ~12
         (call 1 capInBytes.1.temd2l7vy ~4
          (hderef dest.4)) 10
         (sizeof
@@ -580,13 +580,13 @@
       (let :newCap.1 . . 1,~95
        (i -1) 18
        (call ~9 recalcCap.0.sysvq0asl 1 oldCap.1 17
-        (sub 7,31,lib/std/system/basic_types.nim
-         (i -1) ~5
+        (sub
+         (i +64) ~5
          (dot ~3 src.4 len.6.Iw9f2pq.temd2l7vy +0) 2 oldCap.1))) 4,2
-      (let :memSize.4 . . 1,~96
-       (i -1) 17
-       (mul 5,~27
-        (i -1) ~7 newCap.1 8
+      (let :memSize.4 . . 2,~47
+       (i +64) 17
+       (mul
+        (i +64) ~7 newCap.1 8
         (sizeof
          (f +64)))) 10,3
       (asgn ~6
@@ -605,8 +605,8 @@
             (hderef dest.4) data.0.Iw9f2pq.temd2l7vy +0))) 12 memSize.4))) ,4
       (if 3
        (elif 10
-        (eq ~7,~97
-         (ptr 18
+        (eq
+         (ptr
           (uarray
            (f +64))) ~6
          (dot ~4
@@ -626,7 +626,7 @@
     (i -1) 4 +0) ,17
    (while 8
     (lt
-     (i -1) ~2 i.7 6
+     (i +64) ~2 i.7 6
      (dot ~4
       (hderef dest.4) len.6.Iw9f2pq.temd2l7vy +0)) 2,1
     (stmts 2,23,lib/std/system.nim
@@ -650,7 +650,7 @@
     (i -1) 4 +0) ,1
    (while 8
     (lt
-     (i -1) ~2 i.8 3
+     (i +64) ~2 i.8 3
      (dot ~1 s.12 len.6.Iq4ofkp1.temd2l7vy +0)) 2,1
     (stmts 10
      (destroy 2
@@ -662,8 +662,8 @@
     (elif 2,98,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
-       (eq 10,6,lib/std/system/seqimpl.nim
-        (ptr 18
+       (eq
+        (ptr
          (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
           (u +8))) 6,16,lib/std/system/seqimpl.nim
         (dot ~1 s.12 data.0.Iq4ofkp1.temd2l7vy +0) 15,16,lib/std/system/seqimpl.nim
@@ -707,7 +707,7 @@
     (i -1) 4 +0) ,2
    (while 8
     (lt
-     (i -1) ~2 i.9 3
+     (i +64) ~2 i.9 3
      (dot ~1 a.5 len.6.Iq4ofkp1.temd2l7vy +0)) 2,1
     (stmts 17
      (asgn ~10
@@ -731,8 +731,8 @@
   (stmts
    (if 3
     (elif 10
-     (eq ~5,~86
-      (ptr 18
+     (eq
+      (ptr
        (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
         (u +8))) ~6
       (dot ~4
@@ -742,8 +742,8 @@
       (ret .)))) ,1
    (if 3
     (elif 8
-     (lt 7,31,lib/std/system/basic_types.nim
-      (i -1) ~5
+     (lt
+      (i +64) ~5
       (dot ~3 src.5 len.6.Iq4ofkp1.temd2l7vy +0) 6
       (dot ~4
        (hderef dest.5) len.6.Iq4ofkp1.temd2l7vy +0)) ~1,1
@@ -752,8 +752,8 @@
        (i -1) 7
        (dot ~3 src.5 len.6.Iq4ofkp1.temd2l7vy +0)) ,1
       (while 8
-       (lt 7,31,lib/std/system/basic_types.nim
-        (i -1) ~2 i.10 6
+       (lt
+        (i +64) ~2 i.10 6
         (dot ~4
          (hderef dest.5) len.6.Iq4ofkp1.temd2l7vy +0)) 2,1
        (stmts 10
@@ -764,20 +764,20 @@
         (cmd inc.0.temd2l7vy 4
          (haddr i.10)))))) 5,5
     (elif 16
-     (lt 7,31,lib/std/system/basic_types.nim
-      (i -1) ~12
+     (lt
+      (i +64) ~12
       (call 1 capInBytes.2.temd2l7vy ~4
        (hderef dest.5)) 10
-      (mul 7,31,lib/std/system/basic_types.nim
-       (i -1) ~5
+      (mul
+       (i +64) ~5
        (dot ~3 src.5 len.6.Iq4ofkp1.temd2l7vy +0) 8
        (sizeof 11,9,tests/nimony/sysbasics/temptyseq.nim
         (u +8)))) ~3,1
      (stmts 4
-      (let :oldCap.2 . . 1,~94
-       (i -1) 25
-       (div 7,31,lib/std/system/basic_types.nim
-        (i -1) ~12
+      (let :oldCap.2 . . 2,~45
+       (i +64) 25
+       (div
+        (i +64) ~12
         (call 1 capInBytes.2.temd2l7vy ~4
          (hderef dest.5)) 10
         (sizeof 11,9,tests/nimony/sysbasics/temptyseq.nim
@@ -785,13 +785,13 @@
       (let :newCap.2 . . 1,~95
        (i -1) 18
        (call ~9 recalcCap.0.sysvq0asl 1 oldCap.2 17
-        (sub 7,31,lib/std/system/basic_types.nim
-         (i -1) ~5
+        (sub
+         (i +64) ~5
          (dot ~3 src.5 len.6.Iq4ofkp1.temd2l7vy +0) 2 oldCap.2))) 4,2
-      (let :memSize.5 . . 1,~96
-       (i -1) 17
-       (mul 5,~27
-        (i -1) ~7 newCap.2 8
+      (let :memSize.5 . . 2,~47
+       (i +64) 17
+       (mul
+        (i +64) ~7 newCap.2 8
         (sizeof 11,9,tests/nimony/sysbasics/temptyseq.nim
          (u +8)))) 10,3
       (asgn ~6
@@ -810,8 +810,8 @@
             (hderef dest.5) data.0.Iq4ofkp1.temd2l7vy +0))) 12 memSize.5))) ,4
       (if 3
        (elif 10
-        (eq ~7,~97
-         (ptr 18
+        (eq
+         (ptr
           (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
            (u +8))) ~6
          (dot ~4
@@ -831,7 +831,7 @@
     (i -1) 4 +0) ,17
    (while 8
     (lt
-     (i -1) ~2 i.11 6
+     (i +64) ~2 i.11 6
      (dot ~4
       (hderef dest.5) len.6.Iq4ofkp1.temd2l7vy +0)) 2,1
     (stmts 2,23,lib/std/system.nim
@@ -878,8 +878,8 @@
      (elif 2,98,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
-        (eq 10,6,lib/std/system/seqimpl.nim
-         (ptr 18
+        (eq
+         (ptr
           (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
            (i -1))) 15,9,lib/std/system/seqimpl.nim
          (dot ~1 s.15 data.0.Ipe57hg.temd2l7vy +0) 24,9,lib/std/system/seqimpl.nim
@@ -910,8 +910,8 @@
      (elif 2,98,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
-        (eq 10,6,lib/std/system/seqimpl.nim
-         (ptr 18
+        (eq
+         (ptr
           (uarray
            (f +64))) 15,9,lib/std/system/seqimpl.nim
          (dot ~1 s.16 data.0.Iw9f2pq.temd2l7vy +0) 24,9,lib/std/system/seqimpl.nim
@@ -942,8 +942,8 @@
      (elif 2,98,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
-        (eq 10,6,lib/std/system/seqimpl.nim
-         (ptr 18
+        (eq
+         (ptr
           (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
            (u +8))) 15,9,lib/std/system/seqimpl.nim
          (dot ~1 s.17 data.0.Iq4ofkp1.temd2l7vy +0) 24,9,lib/std/system/seqimpl.nim
