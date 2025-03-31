@@ -133,7 +133,7 @@
     (else 2,1
      (stmts 7
       (asgn ~7 result.1 11
-       (add ~6,~21
+       (add
         (i -1) ~6
         (call ~3 fib.1.tfitjdpcx 2
          (sub

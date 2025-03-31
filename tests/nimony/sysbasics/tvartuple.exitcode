@@ -1,7 +1,7 @@
 lib/std/system/seqimpl.nim(126, 41): (and
  (lt
-  (i -1) i.1
+  (i +64) i.1
   (dot s.1 len.6.I328b0i1.tvaa37zrk +0))
  (expr
   (le
-   (i -1) +0 i.1))) [AssertionDefect]
+   (i +64) +0 i.1))) [AssertionDefect]

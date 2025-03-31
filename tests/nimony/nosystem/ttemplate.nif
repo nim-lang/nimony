@@ -64,7 +64,7 @@
     (i -1) .)) 13
   (i -1) . . 32
   (stmts 2
-   (add ~14
+   (add
     (i -1) ~2 x.2 2 y.1))) ,29
  (proc 5 :foo.0.tte5tld8n . . . 8
   (params 1
@@ -78,10 +78,10 @@
    (var :x.5 . . string.0.sysvq0asl 4 "abc") 7,1
    (asgn ~7 result.0 23,~4
     (expr 2
-     (add ~14
+     (add
       (i -1) ~18,4 +4 ~2
       (expr 2
-       (add ~14
+       (add
         (i -1) ~10,4 +2 ~7,4 +89))))) 2,2
    (asgn ~2 x.5 2 "34") ~2,~1
    (ret result.0))) ,34
