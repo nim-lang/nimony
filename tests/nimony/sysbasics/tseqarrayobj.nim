@@ -1,6 +1,6 @@
 # issue #691
 
-import std/syncio
+import std/assertions
 
 var a: seq[array[1, int]] = @[[1]]
 var b: seq[array[1, array[1, int]]] = @[[[2]]]

@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 
 proc main() =
   let x = newSeq[int](3)

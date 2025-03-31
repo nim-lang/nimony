@@ -1,4 +1,4 @@
-import std/[syncio]
+import std/[assertions]
 
 proc testnotin(s: string): bool =
   for c in items s:

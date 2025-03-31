@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 # issue #703
 
 proc main() =

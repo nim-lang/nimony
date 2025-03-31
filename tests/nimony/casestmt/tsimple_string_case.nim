@@ -1,5 +1,5 @@
 
-import std / [syncio]
+import std / [syncio, assertions]
 
 proc effect(s: string): string =
   echo s

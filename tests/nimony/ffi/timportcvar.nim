@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 import deps/mimportcvar
 
 {.emit: "int cvar = 11;"}

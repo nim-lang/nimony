@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 
 const a = "abc"
 const b = "def"

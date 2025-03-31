@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 
 type Foo = enum
   A, B, C, D, E, F

@@ -1,4 +1,4 @@
-import std/syncio
+import std/[syncio, assertions]
 
 stdout.write "test"
 
