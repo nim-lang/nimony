@@ -234,10 +234,6 @@ proc trBlock(c: var Context; n: var Cursor) =
     trScope c, n
     swap c.currentScope, oldScope
 
-proc trScopeStmt(c: var Context; n: var Cursor) =
-  copyInto(c.dest, n):
-    trNestedScope c, n
-
 proc trIf(c: var Context; n: var Cursor) =
   copyInto(c.dest, n):
     while n.kind != ParRi:
@@ -282,8 +278,6 @@ proc tr(c: var Context; n: var Cursor) =
       trCase c, n
     of BlockS:
       trBlock c, n
-    of ScopeS:
-      trScopeStmt c, n
     of LocalDecls:
       trLocal c, n
     of WhileS:

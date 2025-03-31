@@ -616,8 +616,6 @@ proc semConstExpr(c: var SemContext; it: var Item) =
 
 proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
   let before = c.dest.len
-  if isNewScope:
-    openScope c
   takeToken c, it.n
   while it.n.kind != ParRi:
     if not isLastSon(it.n):
@@ -625,8 +623,6 @@ proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
     else:
       semExpr c, it
   takeParRi c, it.n
-  if isNewScope:
-    closeScope c
   let kind =
     if classifyType(c, it.typ) in {VoidT, AutoT}:
       (if isNewScope: ScopeTagId else: StmtsTagId)

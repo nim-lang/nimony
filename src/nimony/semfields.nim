@@ -4,7 +4,12 @@ type FieldsIter = object
   obj1, obj2: Cursor
 
 proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; body: Cursor) =
-  buf.addParLe(ScopeS, body.info)
+  # use `if true` to open a new scope without interfering with `break`:
+  buf.addParLe(IfS, body.info)
+  buf.addParLe(ElifU, body.info)
+  buf.addParLe(TrueX, body.info)
+  buf.addParRi()
+  buf.addParLe(StmtsS, body.info)
   var nested = 0
   var n = body
   while true:
@@ -36,10 +41,17 @@ proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; 
       dec nested
     if nested == 0: break
     inc n
-  buf.addParRi()
+  buf.addParRi() # (stmts)
+  buf.addParRi() # (elif)
+  buf.addParRi() # (if)
 
 proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrId; body: Cursor) =
-  buf.addParLe(ScopeS, body.info)
+  # use `if true` to open a new scope without interfering with `break`:
+  buf.addParLe(IfS, body.info)
+  buf.addParLe(ElifU, body.info)
+  buf.addParLe(TrueX, body.info)
+  buf.addParRi()
+  buf.addParLe(StmtsS, body.info)
   let intId = pool.integers.getOrIncl(i)
   var nested = 0
   var n = body
@@ -72,7 +84,9 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
       dec nested
     if nested == 0: break
     inc n
-  buf.addParRi()
+  buf.addParRi() # (stmts)
+  buf.addParRi() # (elif)
+  buf.addParRi() # (if)
 
 proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
   let fieldPairs = call.exprKind == FieldPairsX
