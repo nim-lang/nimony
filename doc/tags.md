@@ -235,6 +235,8 @@
 | `(low X)` | NimonyExpr | |
 | `(typeof X)` | NimonyExpr, NiflerKind | |
 | `(unpack)` | NimonyExpr | |
+| `(fields T X X?)` | NimonyExpr | fields iterator |
+| `(fieldpairs T X X?)` | NimonyExpr | fieldPairs iterator |
 | `(enumtostr X)` | NimonyExpr | |
 | `(ismainmodule)` | NimonyExpr | |
 | `(defaultobj T)` | NimonyExpr | |

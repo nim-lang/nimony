@@ -112,4 +112,6 @@ proc magicToTag*(m: string): (string, int) =
   of "Trace": res TraceX
   of "NewRef": res NewrefX, TypedMagic
   of "OverflowFlag": res OvfX
+  of "Fields": res FieldsX, TypedMagic
+  of "FieldPairs": res FieldPairsX, TypedMagic
   else: ("", 0)

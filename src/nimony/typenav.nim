@@ -280,7 +280,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     else:
       assert false, "cannot deref type: " & toString(result, false)
       result = c.builtins.autoType # still an error
-  of QuotedX, OchoiceX, CchoiceX, UnpackX, TypeofX, LowX, HighX, ErrX:
+  of QuotedX, OchoiceX, CchoiceX, UnpackX, FieldsX, FieldpairsX, TypeofX, LowX, HighX, ErrX:
     discard "keep the error type"
   of AddrX, HaddrX:
     let elemType = getTypeImpl(c, n.firstSon, flags)
