@@ -12,6 +12,10 @@ proc print(s1, s2: cstring) =
 proc print(s1: cstring, n: int) =
   printf("%s: %ld\n", s1, n)
 
+proc print(s1: cstring, b: bool) =
+  let bs = if b: cstring"true" else: cstring"false"
+  printf("%s: %s\n", s1, bs)
+
 type Obj = object
   a, b: int
   c: cstring
@@ -33,3 +37,8 @@ for name, f1, f2 in fieldPairs(o, o2):
   print toCString(name1), f1
   var name2 = "o2 " & name
   print toCString(name2), f2
+
+# tuple:
+var tup = (x: cstring"abc", y: 123, z: true)
+for name, f in fieldPairs(tup):
+  print name, f

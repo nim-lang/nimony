@@ -26,9 +26,9 @@ iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline.} =
         break
       dec(res, step)
 
-# tuple versions not implemented, also RootObj is replaced with untyped:
+# RootObj is replaced with untyped for now:
 
-iterator fields*[T: object](x: T): untyped {.
+iterator fields*[T: tuple|object](x: T): untyped {.
   magic: "Fields", noSideEffect.}
   ## Iterates over every field of `x`.
   ##
@@ -36,7 +36,7 @@ iterator fields*[T: object](x: T): untyped {.
   ##   The current implementation also has a bug
   ##   that affects symbol binding in the loop body.
 
-iterator fields*[T: object](x, y: T): tuple[key: string, val: untyped] {.
+iterator fields*[T: tuple|object](x, y: T): tuple[key: string, val: untyped] {.
   magic: "Fields", noSideEffect.}
   ## Iterates over every field of `x` and `y`.
   ##
@@ -44,7 +44,7 @@ iterator fields*[T: object](x, y: T): tuple[key: string, val: untyped] {.
   ##   The current implementation also has a bug that affects symbol binding
   ##   in the loop body.
 
-iterator fieldPairs*[T: object](x: T): tuple[key: string, val: untyped] {.
+iterator fieldPairs*[T: tuple|object](x: T): tuple[key: string, val: untyped] {.
   magic: "FieldPairs", noSideEffect.}
   ## Iterates over every field of `x` returning their name and value.
   ##
@@ -60,7 +60,7 @@ iterator fieldPairs*[T: object](x: T): tuple[key: string, val: untyped] {.
   ##   current implementation also has a bug that affects symbol binding in the
   ##   loop body.
 
-iterator fieldPairs*[T: object](x, y: T): tuple[
+iterator fieldPairs*[T: tuple|object](x, y: T): tuple[
   key: string, a, b: untyped] {.
   magic: "FieldPairs", noSideEffect.}
   ## Iterates over every field of `x` and `y`.

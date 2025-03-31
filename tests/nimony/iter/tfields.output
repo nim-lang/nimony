@@ -16,3 +16,6 @@ o b: 2
 o2 b: 4
 o c: xyz
 o2 c: uvw
+x: abc
+y: 123
+z: true
