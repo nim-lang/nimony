@@ -92,6 +92,7 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
   let body = it.n
   skip it.n
   skipParRi it.n
+  # it.n fully skipped
 
   if objType.typeKind in {RefT, PtrT}: inc objType
   discard skipInvoke(objType)
@@ -103,17 +104,15 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
     elif objDecl.kind == TypevarY:
       # iterating over fields of typevar, leave entire loop completely untyped
       var ctx = createUntypedContext(addr c, UntypedGeneric)
-      var bodyRead = body
-      semTemplBody ctx, bodyRead
-      it.typ = c.types.untypedType
+      var origRead = orig
+      semTemplBody ctx, origRead
+      producesVoid c, orig.info, it.typ
       return
     if objType.typeKind != ObjectT:
       c.buildErr call.info, "cannot iterate over fields of type: " & typeToString(objType)
-      skipToEnd it.n
       return
   else:
     c.buildErr call.info, "cannot iterate over fields of type: " & typeToString(objType)
-    skipToEnd it.n
     return
 
   var iterBuf = createTokenBuf(64)
