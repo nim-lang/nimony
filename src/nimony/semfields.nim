@@ -1,4 +1,3 @@
-
 type FieldsIter = object
   nameVar, fieldVar1, fieldVar2: StrId
   obj1, obj2: Cursor

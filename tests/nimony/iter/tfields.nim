@@ -29,7 +29,7 @@ for f1, f2 in fields(o, o2):
   print "o2", f2
 
 for name, f1, f2 in fieldPairs(o, o2):
-  let name1 = "o " & name
-  print cstring(name1), f1
-  let name2 = "o2 " & name
-  print cstring(name2), f2
+  var name1 = "o " & name
+  print toCString(name1), f1
+  var name2 = "o2 " & name
+  print toCString(name2), f2

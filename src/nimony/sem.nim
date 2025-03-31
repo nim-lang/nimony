@@ -4011,14 +4011,12 @@ proc semCase(c: var SemContext; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, info, it.typ
 
-proc semForLoopVar(c: var SemContext; it: var Item; loopvarType: TypeCursor): SymId =
-  result = SymId(0)
+proc semForLoopVar(c: var SemContext; it: var Item; loopvarType: TypeCursor) =
   if stmtKind(it.n) == LetS:
     let declStart = c.dest.len
     takeToken c, it.n
     let delayed = handleSymDef(c, it.n, LetY)
     c.addSym delayed
-    result = delayed.s.name
     wantDot c, it.n # export marker must be empty
     wantDot c, it.n # pragmas
     copyTree c.dest, loopvarType
@@ -4041,7 +4039,7 @@ proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
   inc tup
   while it.n.kind != ParRi and tup.kind != ParRi:
     let field = getTupleFieldType(tup)
-    discard semForLoopVar(c, it, field)
+    semForLoopVar c, it, field
     skip tup
   if it.n.kind == ParRi:
     if tup.kind == ParRi:
@@ -4088,7 +4086,7 @@ proc semFor(c: var SemContext; it: var Item) =
       if iterCall.typ.typeKind == TupleT:
         semForLoopTupleVar c, it, iterCall.typ
       else:
-        discard semForLoopVar(c, it, iterCall.typ)
+        semForLoopVar c, it, iterCall.typ
 
       takeParRi c, it.n
     of UnpacktupU:
