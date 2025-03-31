@@ -735,7 +735,7 @@ proc pickBestMatch(c: var SemContext; m: openArray[Match]): int =
 type MagicCallKind = enum
   NonMagicCall, MagicCall, MagicCallNeedsSemcheck
 
-proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[Item]): MagicCallKind =
+proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): MagicCallKind =
   result = NonMagicCall
   if fn.fromConcept and fn.sym != SymId(0):
     c.dest.add identToken(symToIdent(fn.sym), fnOrig.info)
@@ -760,7 +760,16 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; args: openArray[I
           inc n
           if n.kind == IntLit:
             if pool.integers[n.intId] == TypedMagic:
-              c.dest.addSubtree skipModifier(args[0].typ)
+              # use type of first param
+              var paramType = fn.typ
+              assert paramType.typeKind == ParamsT
+              inc paramType
+              assert paramType.symKind == ParamY
+              paramType = asLocal(paramType).typ
+              if m.inferred.len != 0:
+                paramType = instantiateType(c, paramType, m.inferred)
+              removeModifier(paramType)
+              c.dest.addSubtree paramType
             else:
               c.dest.add n
             inc n
@@ -1443,7 +1452,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   if idx >= 0:
     c.dest.add cs.callNode
     let finalFn = m[idx].fn
-    let isMagic = c.addFn(finalFn, cs.fn.n, cs.args)
+    let isMagic = c.addFn(finalFn, cs.fn.n, m[idx])
     addArgsInstConverters(c, m[idx], cs.args)
     takeParRi c, it.n
     buildTypeArgs(m[idx])
