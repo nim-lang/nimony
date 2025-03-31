@@ -616,6 +616,8 @@ proc semConstExpr(c: var SemContext; it: var Item) =
 
 proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
   let before = c.dest.len
+  if isNewScope:
+    openScope c
   takeToken c, it.n
   while it.n.kind != ParRi:
     if not isLastSon(it.n):
@@ -623,6 +625,8 @@ proc semStmtsExpr(c: var SemContext; it: var Item; isNewScope: bool) =
     else:
       semExpr c, it
   takeParRi c, it.n
+  if isNewScope:
+    closeScope c
   let kind =
     if classifyType(c, it.typ) in {VoidT, AutoT}:
       (if isNewScope: ScopeTagId else: StmtsTagId)
@@ -4007,12 +4011,14 @@ proc semCase(c: var SemContext; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, info, it.typ
 
-proc semForLoopVar(c: var SemContext; it: var Item; loopvarType: TypeCursor) =
+proc semForLoopVar(c: var SemContext; it: var Item; loopvarType: TypeCursor): SymId =
+  result = SymId(0)
   if stmtKind(it.n) == LetS:
     let declStart = c.dest.len
     takeToken c, it.n
     let delayed = handleSymDef(c, it.n, LetY)
     c.addSym delayed
+    result = delayed.s.name
     wantDot c, it.n # export marker must be empty
     wantDot c, it.n # pragmas
     copyTree c.dest, loopvarType
@@ -4035,7 +4041,7 @@ proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
   inc tup
   while it.n.kind != ParRi and tup.kind != ParRi:
     let field = getTupleFieldType(tup)
-    semForLoopVar c, it, field
+    discard semForLoopVar(c, it, field)
     skip tup
   if it.n.kind == ParRi:
     if tup.kind == ParRi:
@@ -4046,22 +4052,35 @@ proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
     buildErr c, it.n.info, "too many for loop variables"
     skipToEnd it.n
 
+include semfields
+
 proc semFor(c: var SemContext; it: var Item) =
   let info = it.n.info
+  let orig = it.n
   takeToken c, it.n
   var iterCall = Item(n: it.n, typ: c.types.autoType)
+  let callInfo = iterCall.n.info
   let beforeCall = c.dest.len
   semExpr c, iterCall, {PreferIterators, KeepMagics}
+  it.n = iterCall.n
   var isMacroLike = false
   if c.dest[beforeCall+1].kind == Symbol and c.isIterator(c.dest[beforeCall+1].symId):
     discard "fine"
+  elif c.dest[beforeCall].kind == ParLe and
+      (c.dest[beforeCall].tagId == TagId(FieldsTagId) or
+        c.dest[beforeCall].tagId == TagId(FieldPairsTagId)):
+    var callBuf = createTokenBuf(c.dest.len - beforeCall)
+    for tok in beforeCall ..< c.dest.len: callBuf.add c.dest[tok]
+    c.dest.shrink beforeCall-1
+    var call = beginRead(callBuf)
+    semForFields c, it, call, orig
+    return
   elif iterCall.typ.typeKind == UntypedT or
       # for iterators from concepts in generic context:
       c.dest[beforeCall+1].kind == Ident:
     isMacroLike = true
   else:
-    buildErr c, it.n.info, "iterator expected"
-  it.n = iterCall.n
+    buildErr c, callInfo, "iterator expected"
   withNewScope c:
     case substructureKind(it.n)
     of UnpackflatU:
@@ -4069,7 +4088,7 @@ proc semFor(c: var SemContext; it: var Item) =
       if iterCall.typ.typeKind == TupleT:
         semForLoopTupleVar c, it, iterCall.typ
       else:
-        semForLoopVar c, it, iterCall.typ
+        discard semForLoopVar(c, it, iterCall.typ)
 
       takeParRi c, it.n
     of UnpacktupU:
@@ -6151,6 +6170,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of UnpackX:
       takeToken c, it.n
       takeParRi c, it.n
+    of FieldsX, FieldpairsX:
+      takeTree c, it.n
     of OchoiceX, CchoiceX:
       takeTree c, it.n
     of HaddrX, HderefX:
