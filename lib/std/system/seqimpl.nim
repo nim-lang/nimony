@@ -32,6 +32,7 @@ proc newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
         (result.data[i]) = default(T)
         inc i
     else:
+      result.len = 0
       oomHandler memSize
 
 proc newSeqOf*[T](size: int; initValue: T): seq[T] {.nodestroy.} =
