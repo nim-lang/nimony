@@ -74,7 +74,7 @@
   (stmts
    (ret
     (dconv 6 VarId.0.tdiuhv8dm
-     (add 7,~9
+     (add
       (i -1)
       (dconv 11,~2
        (i -1) x.4)
