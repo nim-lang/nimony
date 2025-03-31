@@ -57,19 +57,19 @@
  (asgn ~3 s1.0.tsefy5wha 2
   (setconstr 9,~2
    (set 1 Foo.0.tsefy5wha) 1
-   (range A.0.tsefy5wha 3 C.0.tsefy5wha))) 2,136,lib/std/syncio.nim
+   (range A.0.tsefy5wha 3 C.0.tsefy5wha))) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
     (not 10,9,tests/nimony/sysbasics/tsets.nim
      (ltset 4,~3
       (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) ~1,1
-    (stmts ~2,~35
+    (stmts 2,102,lib/std/syncio.nim
      (stmts 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,9
  (glet :y.0.tsefy5wha . . 10,~4
@@ -77,7 +77,7 @@
   (mulset 3,~4
    (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 2 s.0.tsefy5wha)) 4,10
  (glet :z.0.tsefy5wha . . 10,~5
-  (set 1 Foo.0.tsefy5wha) 14 y.0.tsefy5wha) 2,136,lib/std/syncio.nim
+  (set 1 Foo.0.tsefy5wha) 14 y.0.tsefy5wha) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
@@ -87,14 +87,14 @@
       (setconstr 2,~6
        (set 1 Foo.0.tsefy5wha) 1
        (range A.0.tsefy5wha 3 C.0.tsefy5wha)))) ~1,1
-    (stmts ~2,~35
+    (stmts 2,102,lib/std/syncio.nim
      (stmts 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-     (cmd quit.0.syn1lfpjv 5 +1))))) 2,136,lib/std/syncio.nim
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
@@ -104,14 +104,14 @@
       (setconstr 2,~7
        (set 1 Foo.0.tsefy5wha) 1
        (range A.0.tsefy5wha 3 C.0.tsefy5wha)))) ~1,1
-    (stmts ~2,~35
+    (stmts 2,102,lib/std/syncio.nim
      (stmts 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-     (cmd quit.0.syn1lfpjv 5 +1))))) 2,136,lib/std/syncio.nim
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
@@ -122,28 +122,28 @@
        (set 1 Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 2 s1.0.tsefy5wha) 3
       (setconstr ~3,~8
        (set 1 Foo.0.tsefy5wha) 1 D.0.tsefy5wha))) ~1,1
-    (stmts ~2,~35
+    (stmts 2,102,lib/std/syncio.nim
      (stmts 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-     (cmd quit.0.syn1lfpjv 5 +1))))) 2,136,lib/std/syncio.nim
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
     (not 10,15,tests/nimony/sysbasics/tsets.nim
      (leset 4,~9
       (set 1 Foo.0.tsefy5wha) ~3 s1.0.tsefy5wha 3 s.0.tsefy5wha)) ~1,1
-    (stmts ~2,~35
+    (stmts 2,102,lib/std/syncio.nim
      (stmts 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-     (cmd quit.0.syn1lfpjv 5 +1))))) 2,136,lib/std/syncio.nim
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
@@ -152,14 +152,14 @@
       (i -1) ~4
       (card 3,~10
        (set 1 Foo.0.tsefy5wha) 1 s.0.tsefy5wha) 3 +4)) ~1,1
-    (stmts ~2,~35
+    (stmts 2,102,lib/std/syncio.nim
      (stmts 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-     (cmd quit.0.syn1lfpjv 5 +1))))) 2,136,lib/std/syncio.nim
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
@@ -168,19 +168,19 @@
       (i -1) ~5
       (card 3,~11
        (set 1 Foo.0.tsefy5wha) 1 s1.0.tsefy5wha) 3 +3)) ~1,1
-    (stmts ~2,~35
+    (stmts 2,102,lib/std/syncio.nim
      (stmts 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,17
  (glet :val.0.tsefy5wha . . 7,~14 Foo.0.tsefy5wha 6 D.0.tsefy5wha) 3,18
  (asgn ~3 s1.0.tsefy5wha 2
   (setconstr 9,~13
    (set 1 Foo.0.tsefy5wha) 1
-   (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha)) 2,136,lib/std/syncio.nim
+   (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha)) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
@@ -189,12 +189,12 @@
       (i -1) ~5
       (card 3,~14
        (set 1 Foo.0.tsefy5wha) 1 s1.0.tsefy5wha) 3 +4)) ~1,1
-    (stmts ~2,~35
+    (stmts 2,102,lib/std/syncio.nim
      (stmts 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
-       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) ,21
  (template 9 :resem.0.tsefy5wha . . . 14
@@ -225,7 +225,7 @@
    (asgn ~4 sss.0 2
     (setconstr 6,~1
      (set 1
-      (c +8)))) 2,136,lib/std/syncio.nim
+      (c +8)))) 2,4,lib/std/assertions.nim
    (stmts
     (if 3
      (elif
@@ -235,19 +235,19 @@
         (card 1,~2
          (set 1
           (c +8)) 1 sss.0) 3 +0)) ~1,1
-      (stmts ~2,~35
+      (stmts 2,102,lib/std/syncio.nim
        (stmts 2,1
         (stmts
-         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
         (stmts
-         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))) 4,3
    (asgn ~4 sss.0 2
     (setconstr 6,~3
      (set 1
       (c +8)) 1
-     (range 'a' 7 'z') 13 '_')) 2,136,lib/std/syncio.nim
+     (range 'a' 7 'z') 13 '_')) 2,4,lib/std/assertions.nim
    (stmts
     (if 3
      (elif
@@ -257,17 +257,17 @@
         (card 1,~4
          (set 1
           (c +8)) 1 sss.0) 3 +27)) ~1,1
-      (stmts ~2,~35
+      (stmts 2,102,lib/std/syncio.nim
        (stmts 2,1
         (stmts
-         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
         (stmts
-         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))) 8,5
    (excl 4,~5
     (set 1
-     (c +8)) ~8 sss.0 1 'm') 2,136,lib/std/syncio.nim
+     (c +8)) ~8 sss.0 1 'm') 2,4,lib/std/assertions.nim
    (stmts
     (if 3
      (elif
@@ -277,17 +277,17 @@
         (card 1,~6
          (set 1
           (c +8)) 1 sss.0) 3 +26)) ~1,1
-      (stmts ~2,~35
+      (stmts 2,102,lib/std/syncio.nim
        (stmts 2,1
         (stmts
-         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
         (stmts
-         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))) 8,7
    (incl 4,~7
     (set 1
-     (c +8)) ~8 sss.0 1 'u') 2,136,lib/std/syncio.nim
+     (c +8)) ~8 sss.0 1 'u') 2,4,lib/std/assertions.nim
    (stmts
     (if 3
      (elif
@@ -297,12 +297,12 @@
         (card 1,~8
          (set 1
           (c +8)) 1 sss.0) 3 +26)) ~1,1
-      (stmts ~2,~35
+      (stmts 2,102,lib/std/syncio.nim
        (stmts 2,1
         (stmts
-         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 5,34 "\5BAssertion Failure\5D ")) 2,1
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
         (stmts
-         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 31,32 "")) ,2
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))))) ,37
  (block . 2,1

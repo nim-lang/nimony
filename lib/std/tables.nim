@@ -1,5 +1,5 @@
 
-import hashes, syncio
+import hashes, assertions
 
 type
   Keyable* = concept

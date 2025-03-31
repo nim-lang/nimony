@@ -1,6 +1,6 @@
 # issue #802
 
-import std/syncio
+import std/assertions
 
 {.emit: "int x = 123;".}
 var cx {.importc: "x", nodecl.}: int32

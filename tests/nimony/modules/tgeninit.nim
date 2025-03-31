@@ -1,6 +1,6 @@
 # issue #706
 
-import std/syncio
+import std/assertions
 import deps/mgeninit
 
 assert v == 123

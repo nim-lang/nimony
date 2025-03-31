@@ -1,8 +1,8 @@
 (.nif24)
-0,1,tests/nimony/sysbasics/tforloops.nim(stmts 4
- (gvar :globalX.0.tfo6zftzj1 . .
+0,1,tests/nimony/iter/tforloops.nim(stmts 4
+ (gvar :globalX.0.tfocaa3fp1 . .
   (i -1) 10 +12) ,2
- (iterator 9 :foo.0.tfo6zftzj1 . . . 12
+ (iterator 9 :foo.0.tfocaa3fp1 . . . 12
   (params 1
    (param :x.0 . . 3
     (i -1) .)) 10
@@ -27,7 +27,7 @@
      (tupconstr ~2,~2
       (tuple 1
        (i -1) 6
-       (i -1)) 1 +12 5 globalX.0.tfo6zftzj1))) ,1
+       (i -1)) 1 +12 5 globalX.0.tfocaa3fp1))) ,1
    (yld 6
     (arrat ff.0 3 +0 3,~1 +0)) ,2
    (yld 6
@@ -42,7 +42,7 @@
      (tuple 1
       (i -1) 6
       (i -1)) 1 +22 5 +4)))) ,10
- (iterator 9 :foo1.0.tfo6zftzj1 . . . 13
+ (iterator 9 :foo1.0.tfocaa3fp1 . . . 13
   (params 1
    (param :x.1 . . 3
     (i -1) .)) 10
@@ -51,7 +51,7 @@
    (yld 6 +1) ,1
    (yld 6 x.1))) 4,14
  (for 9
-  (call ~4 foo1.0.tfo6zftzj1 1 +2)
+  (call ~4 foo1.0.tfocaa3fp1 1 +2)
   (unpackflat
    (let :m.0 . . 6,~4
     (i -1) .)) ~2,1
@@ -59,7 +59,7 @@
    (let :n.0 . . 4,~5
     (i -1) 4 m.0))) 4,18
  (for 11
-  (call ~3 foo.0.tfo6zftzj1 1 +2)
+  (call ~3 foo.0.tfocaa3fp1 1 +2)
   (unpackflat
    (let :i.0 . . 7,~16
     (i -1) .)
@@ -73,7 +73,7 @@
    (let :n.1 . . 5,~19
     (i -1) 4 s.0))) 4,23
  (for 11
-  (call ~3 foo.0.tfo6zftzj1 1 +2)
+  (call ~3 foo.0.tfocaa3fp1 1 +2)
   (unpackflat
    (let :i.1 . . 7,~21
     (i -1) .)
@@ -84,11 +84,11 @@
     (i -1) 4 i.1) 4,1
    (let :m.2 . . 10,~23
     (i -1) 4 j.1))) ,27
- (proc 5 :bar.0.tfo6zftzj1 . . . 8
+ (proc 5 :bar.0.tfocaa3fp1 . . . 8
   (params) . . . 2,1
   (stmts 4
    (for 11
-    (call ~3 foo.0.tfo6zftzj1 1 +2)
+    (call ~3 foo.0.tfocaa3fp1 1 +2)
     (unpackflat
      (let :i.2 . . 5,~26
       (i -1) .)
@@ -100,7 +100,7 @@
      (let :m.3 . . 8,~28
       (i -1) 4 j.2))) 4,4
    (for 13
-    (call ~3 foo.0.tfo6zftzj1 1 +2)
+    (call ~3 foo.0.tfocaa3fp1 1 +2)
     (unpacktup
      (let 1 :i.3 . . 5,~30
       (i -1) .)
@@ -111,4 +111,4 @@
       (i -1) 4 i.3) 4,1
      (let :m.4 . . 8,~32
       (i -1) 4 j.3))))) 3,36
- (call ~3 bar.0.tfo6zftzj1))
+ (call ~3 bar.0.tfocaa3fp1))

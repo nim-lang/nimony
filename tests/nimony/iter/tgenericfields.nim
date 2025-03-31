@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 
 proc eq[T: object](a, b: T): bool =
   result = true

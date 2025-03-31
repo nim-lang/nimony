@@ -1,5 +1,5 @@
 import deps/minlineimportc
-import std/syncio
+import std/assertions
 
 callcfunc()
 callcfuncInline()

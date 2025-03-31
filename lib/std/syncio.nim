@@ -132,11 +132,6 @@ proc readLine*(f: File; s: var string): bool =
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
 proc quit*(value: int) = exit(value.int32)
 
-template assert*(cond: bool; msg = "") =
-  if not cond:
-    echo "[Assertion Failure] ", msg
-    quit 1
-
 proc quit*(msg: string) =
   echo msg
   quit 1

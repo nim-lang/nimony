@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 
 type
   CInt = int32

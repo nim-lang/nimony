@@ -1,5 +1,5 @@
 
-import std / [syncio, intsets]
+import std / [syncio, assertions, intsets]
 
 proc main =
   echo "start"
