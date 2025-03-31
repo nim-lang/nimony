@@ -1,5 +1,6 @@
 type FieldsIter = object
   nameVar, fieldVar1, fieldVar2: StrId
+    # can be SymId if loopvars/body are processed before substituting
   obj1, obj2: Cursor
 
 proc buildFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; body: Cursor) =
@@ -11,6 +12,7 @@ proc buildFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; body:
     of UnknownToken, EofToken, DotToken, StringLit, CharLit, IntLit, UIntLit, FloatLit, Symbol, SymbolDef:
       buf.add n
     of Ident:
+      # substitute direct idents for now, symbols would work the same way 
       let s = n.litId
       if s == iter.nameVar:
         buf.add strToken(fieldName, n.info)
@@ -43,6 +45,8 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
   case it.n.substructureKind
   of UnpackflatU, UnpacktupU:
     inc it.n
+    # take direct ident names for now,
+    # defining and substituting full symbols would need prepass: 
     var names: seq[StrId] = @[]
     while it.n.kind != ParRi:
       let loopvar = takeLocal(it.n, SkipFinalParRi)
@@ -94,6 +98,7 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
   skipParRi it.n
   # it.n fully skipped
 
+  # XXX tuple not implemented
   if objType.typeKind in {RefT, PtrT}: inc objType
   discard skipInvoke(objType)
   var objDecl = default(TypeDecl)
@@ -116,17 +121,20 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
     return
 
   var iterBuf = createTokenBuf(64)
+  # use while loop so `break` works:
   iterBuf.addParLe(WhileS, body.info)
   iterBuf.addParLe(TrueX, body.info)
   iterBuf.addParRi()
   iterBuf.addParLe(StmtsS, body.info)
 
+  # same order as original nim fields iterator:
   while true:
     var obj = asObjectDecl(objType)
     var currentField = obj.firstField
     if currentField.kind != DotToken:
       while currentField.kind != ParRi:
         let field = takeLocal(currentField, SkipfinalParRi)
+        # field name is enough:
         buildFieldIter(iterBuf, iter, getIdent(field.name), body)
     objType = obj.parentType
     if objType.kind == DotToken:

@@ -36,7 +36,7 @@ iterator fields*[T: object](x: T): untyped {.
   ##   The current implementation also has a bug
   ##   that affects symbol binding in the loop body.
 
-iterator fields*[T:object](x, y: T): tuple[key: string, val: untyped] {.
+iterator fields*[T: object](x, y: T): tuple[key: string, val: untyped] {.
   magic: "Fields", noSideEffect.}
   ## Iterates over every field of `x` and `y`.
   ##
