@@ -1,4 +1,4 @@
-import std/[hashes, syncio, tables]
+import std/[hashes, assertions, tables]
 
 block:
   var t = initTable[int, int]()

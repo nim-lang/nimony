@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 
 discard default(string)
 discard default(int)

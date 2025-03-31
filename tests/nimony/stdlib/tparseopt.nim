@@ -1,4 +1,4 @@
-import std/[syncio, parseopt]
+import std/[assertions, parseopt]
 
 var
   nifcArgc {.importc: "cmdCount".}: int32

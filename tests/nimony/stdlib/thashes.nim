@@ -1,4 +1,4 @@
-import std/[hashes, syncio]
+import std/[hashes, assertions]
 
 proc compare[T: Hashable](x, y: T): bool =
   hash(x) == hash(y)
