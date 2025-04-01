@@ -5921,6 +5921,48 @@ proc semPragmaExpr(c: var SemContext; it: var Item) =
   takeParRi c, it.n
   producesVoid c, info, it.typ
 
+proc semInstanceof(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  let beforeExpr = c.dest.len
+  let expected = it.typ
+  c.takeToken(it.n)
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, arg
+  it.n = arg.n
+  # handle types
+  let beforeType = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  var ok = true
+  if c.routine.inGeneric == 0:
+    let t = cursorAt(c.dest, beforeType)
+    if t.kind == Symbol and arg.typ.kind == Symbol:
+      let xtyp = arg.typ.symId
+      ok = false
+      if xtyp == t.symId:
+        # XXX report "always true" here
+        ok = true
+      else:
+        for subtype in inheritanceChain(t.symId):
+          if xtyp == subtype:
+            ok = true
+            break
+    c.dest.endRead()
+  c.takeParRi(it.n)
+  if ok:
+    discard
+  else:
+    c.dest.shrink beforeExpr
+    let tstr = asNimCode(cursorAt(c.dest, beforeType))
+    c.dest.endRead()
+    c.buildErr info, "type of " & asNimCode(arg.n) & " is never a subtype of " & tstr
+  it.typ = c.types.boolType
+  commonType c, it, beforeExpr, expected
+
+proc semProccall(c: var SemContext; it: var Item) =
+  c.takeToken(it.n)
+  semExpr c, it
+  c.takeParRi(it.n)
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -6126,6 +6168,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of CallX, CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
       toplevelGuard c:
         semCall c, it, flags
+    of ProccallX:
+      toplevelGuard c:
+        semProccall c, it
     of DotX, DdotX:
       toplevelGuard c:
         semDot c, it, flags
@@ -6222,6 +6267,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       takeTree c, it.n
     of PragmaxX:
       semPragmaExpr c, it
+    of InstanceofX:
+      semInstanceof c, it
     of OconvX, CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement

@@ -198,7 +198,7 @@ proc isConcept(s: SymId): bool =
   #result = impl.tag == ConceptT
   result = false
 
-iterator inheritanceChain(s: SymId): SymId =
+iterator inheritanceChain*(s: SymId): SymId =
   var objbody = objtypeImpl(s)
   while true:
     let od = asObjectDecl(objbody)
@@ -1279,7 +1279,7 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
           inc arg.n
           skip arg.n
         result.add arg
-        if cont.len != 0 and cont[ai]: 
+        if cont.len != 0 and cont[ai]:
           inc ai
           assert ai < args.len
         else:

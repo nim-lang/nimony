@@ -834,7 +834,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trNewobj c, n, e, NewrefX
     of DotX, AtX, ArrAtX, PatX, TupatX:
       trLocation c, n, e
-    of ParX:
+    of ParX, ProccallX:
       trSons c, n, e
     of ExprX:
       trStmtListExpr c, n, e
@@ -848,7 +848,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX,
        EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, CompilesX, DeclaredX,
        DefinedX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
-       AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX:
+       AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
       trDeref c, n
