@@ -35,6 +35,8 @@ Options:
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
+  --cpu:SYMBOL              set the target processor (cross-compilation)
+  --os:SYMBOL               set the target operating system (cross-compilation)
   --silentMake              suppresses make output
   --nimcache:PATH           set the path used for generated files
   --boundchecks:on|off      turn bound checks on or off
@@ -68,11 +70,7 @@ proc handleCmdLine() =
   var useEnv = true
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
-  var config = NifConfig()
-  config.currentPath = getCurrentDir()
-  config.nifcachePath = "nimcache"
-  config.defines.incl "nimony"
-  config.bits = sizeof(int)*8
+  var config = initNifConfig()
   var commandLineArgs = ""
   var commandLineArgsNifc = ""
   var isChild = false
@@ -120,6 +118,12 @@ proc handleCmdLine() =
         of "32": config.bits = 32
         of "16": config.bits = 16
         else: quit "invalid value for --bits"
+      of "cpu":
+        if not config.setTargetCPU(val):
+          quit "unknown CPU: " & val
+      of "os":
+        if not config.setTargetOS(val):
+          quit "unknown OS: " & val
       of "boundchecks":
         forwardArg = false
         case val
