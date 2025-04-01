@@ -32,6 +32,8 @@ Options:
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
+  --cpu:SYMBOL              set the target processor (cross-compilation)
+  --os:SYMBOL               set the target operating system (cross-compilation)
   --nimcache:PATH           set the path used for generated files
   --flags:FLAGS             undocumented flags
   --version                 show the version
@@ -57,11 +59,7 @@ proc handleCmdLine() =
   var forceRebuild = false
   var useEnv = true
   var moduleFlags: set[ModuleFlag] = {}
-  var config = NifConfig()
-  config.currentPath = getCurrentDir()
-  config.nifcachePath = "nimcache"
-  config.defines.incl "nimony"
-  config.bits = sizeof(int)*8
+  var config = initNifConfig()
   var commandLineArgs = ""
   for kind, key, val in getopt():
     case kind
@@ -98,6 +96,12 @@ proc handleCmdLine() =
         of "32": config.bits = 32
         of "16": config.bits = 16
         else: quit "invalid value for --bits"
+      of "cpu":
+        if not config.setTargetCPU(val):
+          quit "unknown CPU: " & val
+      of "os":
+        if not config.setTargetOS(val):
+          quit "unknown OS: " & val
       of "flags":
         discard "nothing to do here yet, but forward these"
       of "nimcache":

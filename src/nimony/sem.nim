@@ -5066,7 +5066,7 @@ proc semDefined(c: var SemContext; it: var Item) =
   if name == "":
     c.buildErr info, "invalid expression for defined: " & asNimCode(orig), orig
   else:
-    let isDefined = name in c.g.config.defines
+    let isDefined = c.g.config.isDefined(name)
     let beforeExpr = c.dest.len
     c.dest.addParLe(if isDefined: TrueX else: FalseX, info)
     c.dest.addParRi()
