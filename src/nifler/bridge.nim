@@ -13,7 +13,7 @@ import std / [assertions, syncio, os]
 
 import compiler / [
   ast, options, pathutils, renderer, lineinfos,
-  parser, llstream, idents, msgs]
+  syntaxes, llstream, idents, msgs]
 
 import ".." / lib / nifbuilder
 import ".." / models / nifler_tags
@@ -664,8 +664,9 @@ proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
     quit "cannot open file: " & thisfile
   else:
     var conf = createConf()
+    let fileIdx = fileInfoIdx(conf, AbsoluteFile thisfile)
     var parser: Parser = default(Parser)
-    openParser(parser, AbsoluteFile(thisfile), stream, newIdentCache(), conf)
+    syntaxes.openParser(parser, fileIdx, stream, newIdentCache(), conf)
     bench "parseAll":
       let fullTree = parseAll(parser)
 
