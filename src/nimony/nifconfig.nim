@@ -8,7 +8,7 @@
 
 import std / [os, sets, strutils]
 
-import compiler / platform
+import platform
 
 include nifprelude
 
