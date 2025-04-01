@@ -140,7 +140,6 @@ proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  let before = dest.len
   dest.add parLeToken(ExprX, info)
   dest.add parLeToken(StmtsS, info)
   let typ = n.firstSon

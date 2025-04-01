@@ -256,7 +256,7 @@ proc nominalRoot*(t: TypeCursor, allowTypevar = false): SymId =
     else:
       break
 
-proc isViewType*(n: Cursor): bool =
+proc typeHasPragma*(n: Cursor; pragma: NimonyPragma): bool =
   var counter = 20
   var n = n
   while counter > 0 and n.kind == Symbol:
@@ -265,7 +265,7 @@ proc isViewType*(n: Cursor): bool =
     assert res.status == LacksNothing
     let impl = asTypeDecl(res.decl)
     if impl.kind == TypeY:
-      if hasPragma(impl.pragmas, ViewP):
+      if hasPragma(impl.pragmas, pragma):
         return true
       # Might be an alias, so traverse this one here:
       if impl.body.kind == Symbol:
@@ -273,3 +273,44 @@ proc isViewType*(n: Cursor): bool =
       else:
         break
   return false
+
+proc isViewType*(n: Cursor): bool =
+  typeHasPragma(n, ViewP)
+
+proc typeImpl*(s: SymId): Cursor =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  result = res.decl
+  assert result.stmtKind == TypeS
+  inc result # skip ParLe
+  for i in 1..4:
+    skip(result) # name, export marker, pragmas, generic parameter
+
+proc objtypeImpl*(s: SymId): Cursor =
+  result = typeImpl(s)
+  let k = typeKind result
+  if k in {RefT, PtrT}:
+    inc result
+
+iterator inheritanceChain*(s: SymId): SymId =
+  var objbody = objtypeImpl(s)
+  while true:
+    let od = asObjectDecl(objbody)
+    if od.kind == ObjectT:
+      var parent = od.parentType
+      if parent.typeKind in {RefT, PtrT}:
+        inc parent
+      if parent.kind == Symbol:
+        let ps = parent.symId
+        yield ps
+        objbody = objtypeImpl(ps)
+      else:
+        break
+    else:
+      break
+
+proc isInheritable*(n: Cursor): bool =
+  typeHasPragma(n, InheritableP)
+
+proc isPure*(n: Cursor): bool =
+  typeHasPragma(n, PureP)

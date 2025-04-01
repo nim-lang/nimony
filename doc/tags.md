@@ -282,3 +282,6 @@
 | `(sideEffect)` | NimonyPragma | explicit `sideEffect` pragma |
 | `(keepOverflowFlag)` | NimonyPragma | keep overflow flag |
 | `(semantics STR)` | NimonyPragma | proc with builtin behavior for expreval |
+| `(inheritable)` | NimonyPragma | `inheritable` pragma |
+| `(base)` | NimonyPragma | `base` pragma (currently ignored) |
+| `(pure)` | NimonyPragma | `pure` pragma (currently ignored) |

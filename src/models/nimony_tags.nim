@@ -295,9 +295,12 @@ type
     SideEffectP = (ord(SideEffectTagId), "sideEffect")  ## explicit `sideEffect` pragma
     KeepOverflowFlagP = (ord(KeepOverflowFlagTagId), "keepOverflowFlag")  ## keep overflow flag
     SemanticsP = (ord(SemanticsTagId), "semantics")  ## proc with builtin behavior for expreval
+    InheritableP = (ord(InheritableTagId), "inheritable")  ## `inheritable` pragma
+    BaseP = (ord(BaseTagId), "base")  ## `base` pragma (currently ignored)
+    PureP = (ord(PureTagId), "pure")  ## `pure` pragma (currently ignored)
 
 proc rawTagIsNimonyPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {EmitTagId, InlineTagId, NoinlineTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId}
+  raw in {EmitTagId, InlineTagId, NoinlineTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId}
 
 type
   NimonySym* = enum

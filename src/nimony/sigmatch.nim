@@ -156,21 +156,6 @@ proc addErrorMsg*(dest: var TokenBuf; m: Match) =
   dest.addStrLit str
   dest.addParRi()
 
-proc typeImpl(s: SymId): Cursor =
-  let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  result = res.decl
-  assert result.stmtKind == TypeS
-  inc result # skip ParLe
-  for i in 1..4:
-    skip(result) # name, export marker, pragmas, generic parameter
-
-proc objtypeImpl*(s: SymId): Cursor =
-  result = typeImpl(s)
-  let k = typeKind result
-  if k in {RefT, PtrT}:
-    inc result
-
 proc getTypeSection*(s: SymId): TypeDecl =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
@@ -197,23 +182,6 @@ proc isConcept(s: SymId): bool =
   # XXX Model Concept in the grammar
   #result = impl.tag == ConceptT
   result = false
-
-iterator inheritanceChain*(s: SymId): SymId =
-  var objbody = objtypeImpl(s)
-  while true:
-    let od = asObjectDecl(objbody)
-    if od.kind == ObjectT:
-      var parent = od.parentType
-      if parent.typeKind in {RefT, PtrT}:
-        inc parent
-      if parent.kind == Symbol:
-        let ps = parent.symId
-        yield ps
-        objbody = objtypeImpl(ps)
-      else:
-        break
-    else:
-      break
 
 proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool
 

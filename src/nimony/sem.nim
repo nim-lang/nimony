@@ -2208,7 +2208,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP, SideEffectP:
+     InjectP, GensymP, UntypedP, SideEffectP, InheritableP, PureP, BaseP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
