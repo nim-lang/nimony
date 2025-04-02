@@ -55,31 +55,43 @@ proc `<`*[T](x, y: set[T]): bool {.magic: "LtSet", noSideEffect.}
   ## A strict or proper subset `x` has all of its members in `y` but `y` has
   ## more elements than `y`.
 
+proc `==`*(x, y: int): bool {.magic: "EqI", noSideEffect.}
+  ## Compares two integers for equality.
 proc `==`*(x, y: int8): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int16): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int32): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int64): bool {.magic: "EqI", noSideEffect.}
 
+proc `<=`*(x, y: int): bool {.magic: "LeI", noSideEffect.}
+  ## Returns true if `x` is less than or equal to `y`.
 proc `<=`*(x, y: int8): bool {.magic: "LeI", noSideEffect.}
 proc `<=`*(x, y: int16): bool {.magic: "LeI", noSideEffect.}
 proc `<=`*(x, y: int32): bool {.magic: "LeI", noSideEffect.}
 proc `<=`*(x, y: int64): bool {.magic: "LeI", noSideEffect.}
 
+proc `<`*(x, y: int): bool {.magic: "LtI", noSideEffect.}
+  ## Returns true if `x` is less than `y`.
 proc `<`*(x, y: int8): bool {.magic: "LtI", noSideEffect.}
 proc `<`*(x, y: int16): bool {.magic: "LtI", noSideEffect.}
 proc `<`*(x, y: int32): bool {.magic: "LtI", noSideEffect.}
 proc `<`*(x, y: int64): bool {.magic: "LtI", noSideEffect.}
 
+proc `<=`*(x, y: uint): bool {.magic: "LeU", noSideEffect.}
+  ## Returns true if `x <= y`.
 proc `<=`*(x, y: uint8): bool {.magic: "LeU", noSideEffect.}
 proc `<=`*(x, y: uint16): bool {.magic: "LeU", noSideEffect.}
 proc `<=`*(x, y: uint32): bool {.magic: "LeU", noSideEffect.}
 proc `<=`*(x, y: uint64): bool {.magic: "LeU", noSideEffect.}
 
+proc `<`*(x, y: uint): bool {.magic: "LtU", noSideEffect.}
+  ## Returns true if `x < y`.
 proc `<`*(x, y: uint8): bool {.magic: "LtU", noSideEffect.}
 proc `<`*(x, y: uint16): bool {.magic: "LtU", noSideEffect.}
 proc `<`*(x, y: uint32): bool {.magic: "LtU", noSideEffect.}
 proc `<`*(x, y: uint64): bool {.magic: "LtU", noSideEffect.}
 
+proc `==`*(x, y: uint): bool {.magic: "EqI", noSideEffect.}
+  ## Compares two unsigned integers for equality.
 proc `==`*(x, y: uint8): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: uint16): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: uint32): bool {.magic: "EqI", noSideEffect.}
@@ -106,6 +118,8 @@ template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
 
+proc min*(x, y: int): int {.magic: "MinI", noSideEffect.} =
+  if x <= y: x else: y
 proc min*(x, y: int8): int8 {.noSideEffect, inline.} =
   if x <= y: x else: y
 proc min*(x, y: int16): int16 {.noSideEffect, inline.} =
@@ -120,6 +134,8 @@ proc min*(x, y: float32): float32 {.noSideEffect, inline.} =
 proc min*(x, y: float): float {.noSideEffect, inline.} =
   if x <= y or y != y: x else: y
 
+proc max*(x, y: int): int {.magic: "MaxI", noSideEffect.} =
+  if y <= x: x else: y
 proc max*(x, y: int8): int8 {.noSideEffect, inline.} =
   if y <= x: x else: y
 proc max*(x, y: int16): int16 {.noSideEffect, inline.} =

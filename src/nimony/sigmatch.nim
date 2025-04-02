@@ -619,9 +619,18 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
     return
   let forig = f
   inc f
+  let fOrigBits = typebits(f.load)
+  let aOrigBits = typebits(a.load)
   let cmp = cmpTypeBits(m.context, f, a)
   if cmp == 0 and sameKind:
-    discard "same types"
+    # same actual bits
+    if fOrigBits != aOrigBits:
+      m.args.addParLe HconvX, m.argInfo
+      m.args.addSubtree forig
+      if aOrigBits < 0:
+        inc m.intConvCosts
+      else:
+        inc m.convCosts
   elif cmp > 0 or (isIntLit and checkIntLitRange(m.context, forig, ex)):
     # f has more bits than a, great!
     if m.skippedMod in {MutT, OutT}:
@@ -630,13 +639,16 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
       if isIntLit:
-        if f.typeKind == FloatT:
+        if forig.typeKind == FloatT:
           inc m.convCosts
         else:
           inc m.intLitCosts
       else:
         # sameKind is true
-        inc m.intConvCosts
+        if fOrigBits < 0:
+          inc m.intConvCosts
+        else:
+          inc m.convCosts
       inc m.opened
   else:
     m.error InvalidMatch, f, a

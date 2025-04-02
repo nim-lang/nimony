@@ -21,46 +21,57 @@ proc dec*[T: Ordinal](x: var T) {.inline.} =
 # built-in operators
 
 # integer calculations:
+template `+`*(x: int): int = x
+  ## Unary `+` operator for an integer. Has no effect.
 template `+`*(x: int8): int8 = x
 template `+`*(x: int16): int16 = x
 template `+`*(x: int32): int32 = x
 template `+`*(x: int64): int64 = x
-  ## Unary `+` operator for an integer. Has no effect.
 
+proc `-`*(x: int): int {.magic: "UnaryMinusI", noSideEffect.}
+  ## Unary `-` operator for an integer. Negates `x`.
 proc `-`*(x: int8): int8 {.magic: "UnaryMinusI", noSideEffect.}
 proc `-`*(x: int16): int16 {.magic: "UnaryMinusI", noSideEffect.}
 proc `-`*(x: int32): int32 {.magic: "UnaryMinusI", noSideEffect.}
 proc `-`*(x: int64): int64 {.magic: "UnaryMinusI", noSideEffect.}
-  ## Unary `-` operator for an integer. Negates `x`.
 
+proc `not`*(x: int): int {.magic: "BitnotI", noSideEffect.}
+  ## Computes the `bitwise complement` of the integer `x`.
 proc `not`*(x: int8): int8 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: int16): int16 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: int32): int32 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: int64): int64 {.magic: "BitnotI", noSideEffect.}
 
+proc `+`*(x, y: int): int {.magic: "AddI", noSideEffect.}
+  ## Binary `+` operator for an integer.
 proc `+`*(x, y: int8): int8 {.magic: "AddI", noSideEffect.}
 proc `+`*(x, y: int16): int16 {.magic: "AddI", noSideEffect.}
 proc `+`*(x, y: int32): int32 {.magic: "AddI", noSideEffect.}
 proc `+`*(x, y: int64): int64 {.magic: "AddI", noSideEffect.}
-  ## Binary `+` operator for an integer.
 
+proc `-`*(x, y: int): int {.magic: "SubI", noSideEffect.}
+  ## Binary `-` operator for an integer.
 proc `-`*(x, y: int8): int8 {.magic: "SubI", noSideEffect.}
 proc `-`*(x, y: int16): int16 {.magic: "SubI", noSideEffect.}
 proc `-`*(x, y: int32): int32 {.magic: "SubI", noSideEffect.}
 proc `-`*(x, y: int64): int64 {.magic: "SubI", noSideEffect.}
-  ## Binary `-` operator for an integer.
 
+proc `*`*(x, y: int): int {.magic: "MulI", noSideEffect.}
+  ## Binary `*` operator for an integer.
 proc `*`*(x, y: int8): int8 {.magic: "MulI", noSideEffect.}
 proc `*`*(x, y: int16): int16 {.magic: "MulI", noSideEffect.}
 proc `*`*(x, y: int32): int32 {.magic: "MulI", noSideEffect.}
 proc `*`*(x, y: int64): int64 {.magic: "MulI", noSideEffect.}
-  ## Binary `*` operator for an integer.
 
+proc `div`*(x, y: int): int {.magic: "DivI", noSideEffect.}
+  ## Computes the integer division.
 proc `div`*(x, y: int8): int8 {.magic: "DivI", noSideEffect.}
 proc `div`*(x, y: int16): int16 {.magic: "DivI", noSideEffect.}
 proc `div`*(x, y: int32): int32 {.magic: "DivI", noSideEffect.}
 proc `div`*(x, y: int64): int64 {.magic: "DivI", noSideEffect.}
 
+proc `mod`*(x, y: int): int {.magic: "ModI", noSideEffect.}
+  ## Computes the integer modulo operation (remainder).
 proc `mod`*(x, y: int8): int8 {.magic: "ModI", noSideEffect.}
 proc `mod`*(x, y: int16): int16 {.magic: "ModI", noSideEffect.}
 proc `mod`*(x, y: int32): int32 {.magic: "ModI", noSideEffect.}
@@ -69,92 +80,119 @@ proc `mod`*(x, y: int64): int64 {.magic: "ModI", noSideEffect.}
 type
   SomeInteger = int # for now just an alias
 
+proc `shr`*(x: int, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
 proc `shr`*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
 proc `shr`*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
 proc `shr`*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
 proc `shr`*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
 
 
+proc `shl`*(x: int, y: SomeInteger): int8 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: int8, y: SomeInteger): int8 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: int16, y: SomeInteger): int16 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: int32, y: SomeInteger): int32 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: int64, y: SomeInteger): int64 {.magic: "ShlI", noSideEffect.}
 
+proc ashr*(x: int, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
 proc ashr*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
 proc ashr*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
 proc ashr*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
 proc ashr*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
 
+proc `and`*(x, y: int): int {.magic: "BitandI", noSideEffect.}
+  ## Computes the `bitwise and` of numbers `x` and `y`.
 proc `and`*(x, y: int8): int8 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: int16): int16 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: int32): int32 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: int64): int64 {.magic: "BitandI", noSideEffect.}
-  ## Computes the `bitwise and` of numbers `x` and `y`.
 
+proc `or`*(x, y: int): int {.magic: "BitorI", noSideEffect.}
+  ## Computes the `bitwise or` of numbers `x` and `y`.
 proc `or`*(x, y: int8): int8 {.magic: "BitorI", noSideEffect.}
 proc `or`*(x, y: int16): int16 {.magic: "BitorI", noSideEffect.}
 proc `or`*(x, y: int32): int32 {.magic: "BitorI", noSideEffect.}
 proc `or`*(x, y: int64): int64 {.magic: "BitorI", noSideEffect.}
-  ## Computes the `bitwise or` of numbers `x` and `y`.
 
+proc `xor`*(x, y: int): int {.magic: "BitxorI", noSideEffect.}
+  ## Computes the `bitwise xor` of numbers `x` and `y`.
 proc `xor`*(x, y: int8): int8 {.magic: "BitxorI", noSideEffect.}
 proc `xor`*(x, y: int16): int16 {.magic: "BitxorI", noSideEffect.}
 proc `xor`*(x, y: int32): int32 {.magic: "BitxorI", noSideEffect.}
 proc `xor`*(x, y: int64): int64 {.magic: "BitxorI", noSideEffect.}
-  ## Computes the `bitwise xor` of numbers `x` and `y`.
 
 # unsigned integer operations:
-
+proc `not`*(x: uint): uint {.magic: "BitnotI", noSideEffect.}
+  ## Computes the `bitwise complement` of the integer `x`.
 proc `not`*(x: uint8): uint8 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: uint16): uint16 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: uint32): uint32 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: uint64): uint64 {.magic: "BitnotI", noSideEffect.}
 
+proc `shr`*(x: uint, y: SomeInteger): uint {.magic: "ShrI", noSideEffect.}
+  ## Computes the `shift right` operation of `x` and `y`.
 proc `shr`*(x: uint8, y: SomeInteger): uint8 {.magic: "ShrI", noSideEffect.}
 proc `shr`*(x: uint16, y: SomeInteger): uint16 {.magic: "ShrI", noSideEffect.}
 proc `shr`*(x: uint32, y: SomeInteger): uint32 {.magic: "ShrI", noSideEffect.}
 proc `shr`*(x: uint64, y: SomeInteger): uint64 {.magic: "ShrI", noSideEffect.}
 
+proc `shl`*(x: uint, y: SomeInteger): uint {.magic: "ShlI", noSideEffect.}
+  ## Computes the `shift left` operation of `x` and `y`.
 proc `shl`*(x: uint8, y: SomeInteger): uint8 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: uint16, y: SomeInteger): uint16 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: uint32, y: SomeInteger): uint32 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: uint64, y: SomeInteger): uint64 {.magic: "ShlI", noSideEffect.}
 
+proc `and`*(x, y: uint): uint {.magic: "BitandI", noSideEffect.}
+  ## Computes the `bitwise and` of numbers `x` and `y`.
 proc `and`*(x, y: uint8): uint8 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: uint16): uint16 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: uint32): uint32 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: uint64): uint64 {.magic: "BitandI", noSideEffect.}
 
+proc `or`*(x, y: uint): uint {.magic: "BitorI", noSideEffect.}
+  ## Computes the `bitwise or` of numbers `x` and `y`.
 proc `or`*(x, y: uint8): uint8 {.magic: "BitorI", noSideEffect.}
 proc `or`*(x, y: uint16): uint16 {.magic: "BitorI", noSideEffect.}
 proc `or`*(x, y: uint32): uint32 {.magic: "BitorI", noSideEffect.}
 proc `or`*(x, y: uint64): uint64 {.magic: "BitorI", noSideEffect.}
 
+proc `xor`*(x, y: uint): uint {.magic: "BitxorI", noSideEffect.}
+  ## Computes the `bitwise xor` of numbers `x` and `y`.
 proc `xor`*(x, y: uint8): uint8 {.magic: "BitxorI", noSideEffect.}
 proc `xor`*(x, y: uint16): uint16 {.magic: "BitxorI", noSideEffect.}
 proc `xor`*(x, y: uint32): uint32 {.magic: "BitxorI", noSideEffect.}
 proc `xor`*(x, y: uint64): uint64 {.magic: "BitxorI", noSideEffect.}
 
+proc `+`*(x, y: uint): uint {.magic: "AddU", noSideEffect.}
+  ## Binary `+` operator for unsigned integers.
 proc `+`*(x, y: uint8): uint8 {.magic: "AddU", noSideEffect.}
 proc `+`*(x, y: uint16): uint16 {.magic: "AddU", noSideEffect.}
 proc `+`*(x, y: uint32): uint32 {.magic: "AddU", noSideEffect.}
 proc `+`*(x, y: uint64): uint64 {.magic: "AddU", noSideEffect.}
 
+proc `-`*(x, y: uint): uint {.magic: "SubU", noSideEffect.}
+  ## Binary `-` operator for unsigned integers.
 proc `-`*(x, y: uint8): uint8 {.magic: "SubU", noSideEffect.}
 proc `-`*(x, y: uint16): uint16 {.magic: "SubU", noSideEffect.}
 proc `-`*(x, y: uint32): uint32 {.magic: "SubU", noSideEffect.}
 proc `-`*(x, y: uint64): uint64 {.magic: "SubU", noSideEffect.}
 
+proc `*`*(x, y: uint): uint {.magic: "MulU", noSideEffect.}
+  ## Binary `*` operator for unsigned integers.
 proc `*`*(x, y: uint8): uint8 {.magic: "MulU", noSideEffect.}
 proc `*`*(x, y: uint16): uint16 {.magic: "MulU", noSideEffect.}
 proc `*`*(x, y: uint32): uint32 {.magic: "MulU", noSideEffect.}
 proc `*`*(x, y: uint64): uint64 {.magic: "MulU", noSideEffect.}
 
+proc `div`*(x, y: uint): uint {.magic: "DivU", noSideEffect.}
+  ## Computes the integer division for unsigned integers.
 proc `div`*(x, y: uint8): uint8 {.magic: "DivU", noSideEffect.}
 proc `div`*(x, y: uint16): uint16 {.magic: "DivU", noSideEffect.}
 proc `div`*(x, y: uint32): uint32 {.magic: "DivU", noSideEffect.}
 proc `div`*(x, y: uint64): uint64 {.magic: "DivU", noSideEffect.}
 
+proc `mod`*(x, y: uint): uint {.magic: "ModU", noSideEffect.}
+  ## Computes the integer modulo operation (remainder) for unsigned integers.
 proc `mod`*(x, y: uint8): uint8 {.magic: "ModU", noSideEffect.}
 proc `mod`*(x, y: uint16): uint16 {.magic: "ModU", noSideEffect.}
 proc `mod`*(x, y: uint32): uint32 {.magic: "ModU", noSideEffect.}
