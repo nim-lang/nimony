@@ -627,7 +627,9 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
     if fOrigBits != aOrigBits:
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
-      if aOrigBits < 0:
+      if isIntLit:
+        inc m.intLitCosts
+      elif aOrigBits < 0:
         inc m.intConvCosts
       else:
         inc m.convCosts
