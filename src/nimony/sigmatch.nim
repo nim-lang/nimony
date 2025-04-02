@@ -631,6 +631,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
         inc m.intConvCosts
       else:
         inc m.convCosts
+      inc m.opened
   elif cmp > 0 or (isIntLit and checkIntLitRange(m.context, forig, ex)):
     # f has more bits than a, great!
     if m.skippedMod in {MutT, OutT}:
