@@ -118,6 +118,9 @@ template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
 
+type Orderable = concept
+  proc `<=`(x, y: Self): bool
+
 proc min*(x, y: int): int {.noSideEffect, inline.} =
   if x <= y: x else: y
 proc min*(x, y: int8): int8 {.noSideEffect, inline.} =
@@ -133,6 +136,10 @@ proc min*(x, y: float32): float32 {.noSideEffect, inline.} =
   if x <= y or y != y: x else: y
 proc min*(x, y: float): float {.noSideEffect, inline.} =
   if x <= y or y != y: x else: y
+# originally used T: not SomeFloat:
+proc min*[T: Orderable](x, y: T): T {.inline.} =
+  ## Generic minimum operator of 2 values based on `<=`.
+  if x <= y: x else: y
 
 proc max*(x, y: int): int {.noSideEffect, inline.} =
   if y <= x: x else: y
@@ -149,6 +156,10 @@ proc max*(x, y: float32): float32 {.noSideEffect, inline.} =
   if y <= x or y != y: x else: y
 proc max*(x, y: float): float {.noSideEffect, inline.} =
   if y <= x or y != y: x else: y
+# originally used T: not SomeFloat:
+proc max*[T: Orderable](x, y: T): T {.inline.} =
+  ## Generic maximum operator of 2 values based on `<=`.
+  if y <= x: x else: y
 
 type
   Comparable* = concept

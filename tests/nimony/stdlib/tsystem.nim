@@ -11,3 +11,8 @@ assert testnotin "abc"
 assert testnotin "AZaz"
 assert not testnotin "1"
 assert not testnotin "abc "
+
+assert min("a", "b") == "a"
+assert min("b", "a") == "a"
+assert max("a", "b") == "b"
+assert max("b", "a") == "b"
