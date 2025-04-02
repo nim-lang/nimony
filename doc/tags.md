@@ -270,7 +270,7 @@
 | `(using (params...)+)` | NimonyStmt, NiflerKind | `using` statement |
 | `(asm X+)` | NimonyStmt, NiflerKind | `asm` statement |
 | `(defer X)` | NimonyStmt, NiflerKind | `defer` statement |
-| `(index (public ...) (private ...) (hooks ...) (converter ...) (build ...))` | NifIndexKind | index section |
+| `(index (public ...) (private ...) (hooks ...) (converter ...) (method ...) (build ...))` | NifIndexKind | index section |
 | `(public (kv Y INTLIT*)` | NifIndexKind | public section |
 | `(private (kv Y INTLIT*))` | NifIndexKind | private section |
 | `(inject)` | NimonyPragma | `inject` pragma |

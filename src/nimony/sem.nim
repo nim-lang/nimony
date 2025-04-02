@@ -3458,6 +3458,52 @@ proc hookToKind(name: string): HookKind =
   of "=dup": DupH
   else: NoHook
 
+proc attachConverter(c: var SemContext; symId: SymId;
+                     declStart, beforeExportMarker, beforeGenericParams: int; info: PackedLineInfo) =
+  let root = nominalRoot(c.routine.returnType)
+  if root == SymId(0) and not c.g.config.compat:
+    var errBuf = createTokenBuf(16)
+    swap c.dest, errBuf
+    buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
+    swap c.dest, errBuf
+    c.dest.insert errBuf, declStart
+  else:
+    c.converters.mgetOrPut(root, @[]).add(symId)
+    if c.dest[beforeExportMarker].kind != DotToken:
+      # exported
+      if not (c.dest[beforeGenericParams].kind == ParLe and
+          pool.tags[c.dest[beforeGenericParams].tagId] == $InvokeT):
+        # don't register instances
+        c.converterIndexMap.add((root, symId))
+
+proc attachMethod(c: var SemContext; symId: SymId;
+                  declStart, beforeParams, beforeGenericParams: int; info: PackedLineInfo) =
+  var params = cursorAt(c.dest, beforeParams)
+  var root = SymId(0)
+  if params.kind == ParLe:
+    inc params
+    if params.substructureKind == ParamU:
+      inc params
+      skip params # name
+      skip params # export marker
+      skip params # pragmas
+      root = nominalRoot(params)
+  if root == SymId(0):
+    let typ = typeToString(params)
+    c.dest.endRead()
+    var errBuf = createTokenBuf(16)
+    swap c.dest, errBuf
+    buildErr c, info, "cannot attach method to type " & typ
+    swap c.dest, errBuf
+    c.dest.insert errBuf, declStart
+  else:
+    c.dest.endRead()
+    c.methods.mgetOrPut(root, @[]).add(symId)
+    if not (c.dest[beforeGenericParams].kind == ParLe and
+        pool.tags[c.dest[beforeGenericParams].tagId] == $InvokeT):
+      # don't register instances
+      c.methodIndexMap.add((root, symId))
+
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   let info = it.n.info
   let declStart = c.dest.len
@@ -3499,22 +3545,11 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       skip it.n
 
     publishSignature c, symId, declStart
-    if kind == ConverterY and status in {OkNew, OkExistingFresh}:
-      let root = nominalRoot(c.routine.returnType)
-      if root == SymId(0) and not c.g.config.compat:
-        var errBuf = createTokenBuf(16)
-        swap c.dest, errBuf
-        buildErr c, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
-        swap c.dest, errBuf
-        c.dest.insert errBuf, declStart
-      else:
-        c.converters.mgetOrPut(root, @[]).add(symId)
-        if c.dest[beforeExportMarker].kind != DotToken:
-          # exported
-          if not (c.dest[beforeGenericParams].kind == ParLe and
-              pool.tags[c.dest[beforeGenericParams].tagId] == $InvokeT):
-            # don't register instances
-            c.converterIndexMap.add((root, symId))
+    if status in {OkNew, OkExistingFresh}:
+      if kind == ConverterY:
+        attachConverter c, symId, declStart, beforeExportMarker, beforeGenericParams, info
+      elif kind == MethodY:
+        attachMethod c, symId, declStart, beforeParams, beforeGenericParams, info
     if it.n.kind != DotToken:
       case pass
       of checkGenericInst:
@@ -6345,6 +6380,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
   createIndex outfile, root, true,
     IndexSections(hooks: move c.hookIndexLog,
       converters: move c.converterIndexMap,
+      methods: move c.methodIndexMap,
       toBuild: move c.toBuild,
       exportBuf: buildIndexExports(c))
 
