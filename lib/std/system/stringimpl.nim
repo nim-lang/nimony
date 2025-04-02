@@ -150,9 +150,16 @@ proc makeAllocated(s: var string; newLen: int) =
     oomHandler newCap
     s.i = EmptyI
 
+proc sumLen(a, b: int): int =
+  {.keepOverflowFlag.}:
+    result = a + b
+    if overflowFlag():
+      # When required length is overflowed, cause out of memory.
+      result = high(int)
+
 proc add*(s: var string; part: string) =
   let len = s.len
-  let newLen = len + part.len
+  var newLen = sumLen(len, part.len)
   if not isAllocated(s):
     makeAllocated s, newLen
   else:
@@ -272,7 +279,7 @@ template concat*(): string {.varargs.} =
   res
 
 proc `&`*(a, b: string): string {.semantics: "string.&".} =
-  let rlen = a.len + b.len
+  let rlen = sumLen(a.len, b.len)
   let r = cast[StrData](alloc(rlen))
   if r != nil:
     result = string(a: r, i: (rlen shl LenShift) or IsAllocatedBit)
