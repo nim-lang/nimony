@@ -5,6 +5,7 @@ proc main =
   var x: ref int
   new x
   x[] = 56
-  echo x[]
+  let y = x[]
+  echo y
 
 main()
