@@ -20,11 +20,18 @@ proc `=wasMoved`*[T](s: var seq[T]) {.inline.} =
   s.len = 0
   s.data = nil
 
+proc memSizeInBytes[T](size: int): int {.inline.} =
+  {.keepOverflowFlag.}:
+    result = size * sizeof(T)
+    if overflowFlag():
+      # When required memory size is overflowed, cause out of memory.
+      result = high(int)
+
 proc newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
   if size == 0:
     result = seq[T](len: size, data: nil)
   else:
-    let memSize = size * sizeof(T)
+    let memSize = memSizeInBytes[T](size)
     result = seq[T](len: size, data: cast[ptr UncheckedArray[T]](alloc(memSize)))
     if result.data != nil:
       var i = 0
@@ -39,7 +46,7 @@ proc newSeqOf*[T](size: int; initValue: T): seq[T] {.nodestroy.} =
   if size == 0:
     result = seq[T](len: size, data: nil)
   else:
-    let memSize = size * sizeof(T)
+    let memSize = memSizeInBytes[T](size)
     result = seq[T](len: size, data: cast[ptr UncheckedArray[T]](alloc(memSize)))
     if result.data != nil:
       var i = 0
@@ -54,7 +61,7 @@ proc newSeqUninit*[T](size: int): seq[T] {.nodestroy, inline.} =
   if size == 0:
     result = seq[T](len: size, data: nil)
   else:
-    let memSize = size * sizeof(T)
+    let memSize = memSizeInBytes[T](size)
     result = seq[T](len: size, data: cast[ptr UncheckedArray[T]](alloc(memSize)))
     if result.data != nil:
       discard "leave uninitialized"
@@ -72,14 +79,21 @@ proc `=dup`*[T](a: seq[T]): seq[T] {.nodestroy.} =
     inc i
 
 proc recalcCap(oldCap, addedElements: int): int {.inline.} =
-  result = oldCap + (oldCap shr 1)
-  if result < oldCap + addedElements:
-    result = oldCap + addedElements
+  {.keepOverflowFlag.}:
+    let requiredLen = oldCap + addedElements
+    if overflowFlag():
+      result = high(int)
+    else:
+      result = oldCap + (oldCap shr 1)
+      if overflowFlag():
+        result = requiredLen
+      else:
+        result = max(result, requiredLen)
 
 proc resize[T](dest: var seq[T]; addedElements: int): bool {.nodestroy.} =
   let oldCap = dest.capInBytes div sizeof(T)
   let newCap = recalcCap(oldCap, addedElements)
-  let memSize = newCap * sizeof(T)
+  let memSize = memSizeInBytes[T](newCap)
   dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
   if dest.data == nil:
     dest.len = 0
@@ -98,7 +112,7 @@ proc `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
   elif dest.capInBytes < src.len * sizeof(T):
     let oldCap = dest.capInBytes div sizeof(T)
     let newCap = recalcCap(oldCap, src.len - oldCap)
-    let memSize = newCap * sizeof(T)
+    let memSize = memSizeInBytes[T](newCap)
     dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
     if dest.data == nil:
       dest.len = 0
@@ -162,7 +176,12 @@ proc shrink*[T](s: var seq[T]; newLen: int) =
   s.len = newLen
 
 proc growUnsafe*[T](s: var seq[T]; newLen: int) =
-  if s.capInBytes <= newLen * sizeof(T):
+  {.keepOverflowFlag.}:
+    let newSize = newLen * sizeof(T)
+    if overflowFlag():
+      oomHandler high(int)
+      return
+  if s.capInBytes <= newSize:
     if not resize(s, newLen - s.len): return
   s.len = newLen
 
