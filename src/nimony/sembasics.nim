@@ -57,28 +57,19 @@ proc buildSymChoiceForDot(c: var SemContext; identifier: StrId; info: PackedLine
 proc isNonOverloadable(t: SymKind): bool {.inline.} =
   t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, CursorY, BlockY, GletY, TletY, GvarY, TvarY}
 
-proc buildSymChoiceForSelfModule(c: var SemContext;
-                                 identifier: StrId; info: PackedLineInfo) {.used.} =
-  # not used yet
-  var count = 0
+proc buildSymChoiceForSelfModule*(c: var SemContext;
+                                  identifier: StrId; info: PackedLineInfo): int =
+  result = 0
   let oldLen = c.dest.len
   c.dest.buildTree OchoiceX, info:
+    # add symbols from top scope:
     var it = c.currentScope
     while it.up != nil: it = it.up
-    var nonOverloadable = 0
     for sym in it.tab.getOrDefault(identifier):
-      # for non-overloadable symbols prefer the innermost symbol:
-      if sym.kind.isNonOverloadable:
-        inc nonOverloadable
-        if nonOverloadable == 1:
-          c.dest.addSymUse sym, info
-          inc count
-      else:
-        c.dest.addSymUse sym, info
-        inc count
-      it = it.up
+      c.dest.addSymUse sym, info
+      inc result
   # if the sym choice is empty, create an ident node:
-  if count == 0:
+  if result == 0:
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 

@@ -1864,8 +1864,11 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; bin
 proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
   # mirrors semIdent
   let insertPos = c.dest.len
-  # XXX does not handle the case where `module` is the current module
-  let count = buildSymChoiceForForeignModule(c, c.importedModules[module], ident, info)
+  let count =
+    if module == c.selfModuleSym:
+      buildSymChoiceForSelfModule(c, ident, info)
+    else:
+      buildSymChoiceForForeignModule(c, c.importedModules[module], ident, info)
   if count == 1:
     let sym = c.dest[insertPos+1].symId
     c.dest.shrink insertPos
@@ -6408,6 +6411,18 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
       else:
         quit "BUG: Could not load hook: " & pool.syms[hook]
 
+proc addSelfModuleSym(c: var SemContext; path: string) =
+  let name = moduleNameFromPath(path)
+  let nameId = pool.strings.getOrIncl(name)
+  c.selfModuleSym = identToSym(c, nameId, ModuleY)
+  let s = Sym(kind: ModuleY, name: c.selfModuleSym, pos: ImportedPos)
+  if name != "":
+    c.currentScope.addOverloadable(nameId, s)
+  var moduleDecl = createTokenBuf(2)
+  moduleDecl.addParLe(ModuleY, NoLineInfo)
+  moduleDecl.addParRi()
+  publish c.selfModuleSym, moduleDecl
+
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
   var n0 = setupProgram(infile, outfile)
@@ -6424,9 +6439,10 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
-  # XXX could add self module symbol here
 
   assert n0.stmtKind == StmtsS
+  let path = getFile(n0.info) # gets current module path, maybe there is a better way
+  addSelfModuleSym(c, path)
 
   if {SkipSystem, IsSystem} * moduleFlags == {}:
     let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
