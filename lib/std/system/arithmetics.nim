@@ -80,20 +80,20 @@ proc `mod`*(x, y: int64): int64 {.magic: "ModI", noSideEffect.}
 type
   SomeInteger = int # for now just an alias
 
-proc `shr`*(x: int, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
+proc `shr`*(x: int, y: SomeInteger): int {.magic: "AshrI", noSideEffect.}
 proc `shr`*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
 proc `shr`*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
 proc `shr`*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
 proc `shr`*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
 
 
-proc `shl`*(x: int, y: SomeInteger): int8 {.magic: "ShlI", noSideEffect.}
+proc `shl`*(x: int, y: SomeInteger): int {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: int8, y: SomeInteger): int8 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: int16, y: SomeInteger): int16 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: int32, y: SomeInteger): int32 {.magic: "ShlI", noSideEffect.}
 proc `shl`*(x: int64, y: SomeInteger): int64 {.magic: "ShlI", noSideEffect.}
 
-proc ashr*(x: int, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
+proc ashr*(x: int, y: SomeInteger): int {.magic: "AshrI", noSideEffect.}
 proc ashr*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
 proc ashr*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
 proc ashr*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}

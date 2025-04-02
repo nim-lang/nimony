@@ -24,8 +24,7 @@ when not defined(nimony):
     result = !$result
 
 proc hash*(u: uint): Hash {.inline.} = u
-when not defined(nimony):
-  proc hash*(x: int): Hash {.inline.} = cast[Hash](x)
+proc hash*(x: int): Hash {.inline.} = cast[Hash](x)
 
 proc hash*(x: int64): Hash {.inline.} = cast[Hash](x)
 proc hash*(x: int32): Hash {.inline.} = cast[Hash](int x)
