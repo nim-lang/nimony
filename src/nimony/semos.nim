@@ -125,12 +125,15 @@ type ImportedFilename* = object
   name*: string ## extracted module name to define a sym for in `import`
   isSystem*: bool
 
+proc moduleNameFromPath*(path: string): string =
+  result = splitFile(path).name
+
 proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs: bool) =
   case n.kind
   of StringLit:
     let s = pool.strings[n.litId]
     # string literal could contain a path or .nim extension:
-    let name = splitFile(s).name
+    let name = moduleNameFromPath(s)
     res.add ImportedFilename(path: s, name: name)
     inc n
   of Ident:

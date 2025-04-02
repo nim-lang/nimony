@@ -79,6 +79,7 @@ type
       ## syms of type instantiations to add their declarations to module
     includeStack*: seq[string]
     importedModules*: Table[SymId, ImportedModule]
+    selfModuleSym*: SymId
     instantiatedFrom*: seq[PackedLineInfo]
     importTab*: OrderedTable[StrId, seq[SymId]] ## mapping of identifiers to modules containing the identifier
     globals*, locals*: Table[string, int]
