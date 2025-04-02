@@ -47,6 +47,20 @@ proc write*(f: File; x: int64) =
 proc write*(f: File; x: uint64) =
   fprintf(f, cstring"%llu", x)
 
+proc write*(f: File; x: int32) =
+  fprintf(f, cstring"%ld", x)
+
+proc write*(f: File; x: uint32) =
+  fprintf(f, cstring"%lu", x)
+
+proc write*(f: File; x: int) {.inline.} =
+  # XXX originally uses `when sizeof` check
+  write(f, int64(x))
+
+proc write*(f: File; x: uint) {.inline.} =
+  # XXX originally uses `when sizeof` check
+  write(f, uint64(x))
+
 proc write*[T: enum](f: File; x: T) =
   write f, $x
 
