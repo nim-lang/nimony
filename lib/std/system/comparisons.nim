@@ -118,7 +118,7 @@ template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
 
-proc min*(x, y: int): int {.magic: "MinI", noSideEffect.} =
+proc min*(x, y: int): int {.noSideEffect, inline.} =
   if x <= y: x else: y
 proc min*(x, y: int8): int8 {.noSideEffect, inline.} =
   if x <= y: x else: y
@@ -134,7 +134,7 @@ proc min*(x, y: float32): float32 {.noSideEffect, inline.} =
 proc min*(x, y: float): float {.noSideEffect, inline.} =
   if x <= y or y != y: x else: y
 
-proc max*(x, y: int): int {.magic: "MaxI", noSideEffect.} =
+proc max*(x, y: int): int {.noSideEffect, inline.} =
   if y <= x: x else: y
 proc max*(x, y: int8): int8 {.noSideEffect, inline.} =
   if y <= x: x else: y
