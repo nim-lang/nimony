@@ -20,13 +20,13 @@
  (if 3
   (elif 6
    (eq
-    (i +64) 2,67,lib/std/system.nim
+    (i -1) 2,67,lib/std/system.nim
     (expr ,~4
      (expr 45,2
       (add
-       (i +64) ~23
+       (i -1) ~23
        (sub
-        (i +64) ~5
+        (i -1) ~5
         (conv 30,6,lib/std/system/defaults.nim
          (i -1) ~13
          (conv

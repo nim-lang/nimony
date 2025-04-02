@@ -149,7 +149,7 @@
    (elif
     (not 15,16,tests/nimony/sysbasics/tsets.nim
      (eq
-      (i +64) ~4
+      (i -1) ~4
       (card
        (set Foo.0.tsefy5wha) 1 s.0.tsefy5wha) 3 +4)) ~1,1
     (stmts 2,102,lib/std/syncio.nim
@@ -165,7 +165,7 @@
    (elif
     (not 16,17,tests/nimony/sysbasics/tsets.nim
      (eq
-      (i +64) ~5
+      (i -1) ~5
       (card
        (set Foo.0.tsefy5wha) 1 s1.0.tsefy5wha) 3 +3)) ~1,1
     (stmts 2,102,lib/std/syncio.nim
@@ -186,7 +186,7 @@
    (elif
     (not 16,20,tests/nimony/sysbasics/tsets.nim
      (eq
-      (i +64) ~5
+      (i -1) ~5
       (card
        (set Foo.0.tsefy5wha) 1 s1.0.tsefy5wha) 3 +4)) ~1,1
     (stmts 2,102,lib/std/syncio.nim
@@ -231,7 +231,7 @@
      (elif
       (not 19,30,tests/nimony/sysbasics/tsets.nim
        (eq
-        (i +64) ~6
+        (i -1) ~6
         (card
          (set
           (c +8)) 1 sss.0) 3 +0)) ~1,1
@@ -253,7 +253,7 @@
      (elif
       (not 19,32,tests/nimony/sysbasics/tsets.nim
        (eq
-        (i +64) ~6
+        (i -1) ~6
         (card
          (set
           (c +8)) 1 sss.0) 3 +27)) ~1,1
@@ -273,7 +273,7 @@
      (elif
       (not 19,34,tests/nimony/sysbasics/tsets.nim
        (eq
-        (i +64) ~6
+        (i -1) ~6
         (card
          (set
           (c +8)) 1 sss.0) 3 +26)) ~1,1
@@ -293,7 +293,7 @@
      (elif
       (not 19,36,tests/nimony/sysbasics/tsets.nim
        (eq
-        (i +64) ~6
+        (i -1) ~6
         (card
          (set
           (c +8)) 1 sss.0) 3 +26)) ~1,1

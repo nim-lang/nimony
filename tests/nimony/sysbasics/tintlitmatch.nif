@@ -37,26 +37,26 @@
   (i -1) .) ,13
  (discard 10
   (eq
-   (i +64) ~2
-   (hconv 17,58,lib/std/system.nim
-    (i +64) x.0.tin4pj0od1) 3 y.0.tin4pj0od1)) ,14
+   (i -1) ~2
+   (hconv 17,55,lib/std/system.nim
+    (i -1) x.0.tin4pj0od1) 3 y.0.tin4pj0od1)) ,14
  (discard 10
   (eq
-   (i +64) ~2 y.0.tin4pj0od1 6
-   (hconv 17,58,lib/std/system.nim
-    (i +64)
+   (i -1) ~2 y.0.tin4pj0od1 6
+   (hconv 17,55,lib/std/system.nim
+    (i -1)
     (conv 1
      (i +32) ~3 +123)))) ,15
  (discard 18
   (eq
-   (i +64) ~7
-   (hconv 17,58,lib/std/system.nim
-    (i +64)
+   (i -1) ~7
+   (hconv 17,55,lib/std/system.nim
+    (i -1)
     (conv 6,~1
      (i +32) ~3 +123)) 3 y.0.tin4pj0od1)) ,16
  (discard 16
   (eq
-   (i +64) ~5
+   (i -1) ~5
    (conv 1
     (i -1) ~3 +123) 6
    (conv ~10
@@ -73,17 +73,17 @@
    (i +32) ~7
    (conv 6,~6
     (i +32) ~3 +123) 3
-   (hconv 17,57,lib/std/system.nim
+   (hconv 17,59,lib/std/system.nim
     (i +32) +123))) ,21
  (discard 12
   (eq
    (i +32) ~4
-   (hconv 17,57,lib/std/system.nim
+   (hconv 17,59,lib/std/system.nim
     (i +32) +123) 6
    (conv ~1,~7
     (i +32) ~3 +123))) ,22
  (discard 10
   (eq
    (i +32) ~2 x.0.tin4pj0od1 3
-   (hconv 17,57,lib/std/system.nim
+   (hconv 17,59,lib/std/system.nim
     (i +32) +123))))
