@@ -2401,7 +2401,15 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
   if n.kind == DotToken:
     takeToken c, n
   else:
+    let beforeType = c.dest.len
     semLocalTypeImpl c, n, InLocalDecl
+    let inheritsFrom = cursorAt(c.dest, beforeType)
+    if c.routine.inGeneric == 0 and not isInheritable(inheritsFrom):
+      endRead(c.dest)
+      c.dest.shrink beforeType
+      c.buildErr n.info, "cannot inherit from type: " & asNimCode(inheritsFrom)
+    else:
+      endRead(c.dest)
   if n.kind == DotToken:
     takeToken c, n
   else:
@@ -5922,6 +5930,13 @@ proc semPragmaExpr(c: var SemContext; it: var Item) =
   producesVoid c, info, it.typ
 
 proc semInstanceof(c: var SemContext; it: var Item) =
+  type
+    State = enum
+      NoSubtype
+      LacksRtti
+      MaybeSubtype
+      AlwaysSubtype
+
   let info = it.n.info
   let beforeExpr = c.dest.len
   let expected = it.typ
@@ -5932,29 +5947,41 @@ proc semInstanceof(c: var SemContext; it: var Item) =
   # handle types
   let beforeType = c.dest.len
   semLocalTypeImpl c, it.n, InLocalDecl
-  var ok = true
+  var ok = MaybeSubtype
   if c.routine.inGeneric == 0:
     let t = cursorAt(c.dest, beforeType)
     if t.kind == Symbol and arg.typ.kind == Symbol:
       let xtyp = arg.typ.symId
-      ok = false
-      if xtyp == t.symId:
+      let targetSym = t.symId
+      ok = NoSubtype
+      if xtyp == targetSym:
         # XXX report "always true" here
-        ok = true
+        ok = AlwaysSubtype
       else:
-        for subtype in inheritanceChain(t.symId):
-          if xtyp == subtype:
-            ok = true
+        for xsubtype in inheritanceChain(xtyp):
+          if xsubtype == targetSym:
+            ok = AlwaysSubtype
             break
+      if ok == NoSubtype:
+        for subtype in inheritanceChain(targetSym):
+          if xtyp == subtype:
+            ok = MaybeSubtype
+            break
+        if not hasRtti(xtyp):
+          ok = LacksRtti
     c.dest.endRead()
   c.takeParRi(it.n)
-  if ok:
+  case ok
+  of MaybeSubtype, AlwaysSubtype:
     discard
-  else:
+  of NoSubtype, LacksRtti:
     c.dest.shrink beforeExpr
     let tstr = asNimCode(cursorAt(c.dest, beforeType))
     c.dest.endRead()
-    c.buildErr info, "type of " & asNimCode(arg.n) & " is never a subtype of " & tstr
+    if ok == NoSubtype:
+      c.buildErr info, "type of " & asNimCode(arg.n) & " is never a subtype of " & tstr
+    else:
+      c.buildErr info, "base type of " & asNimCode(arg.n) & " is " & tstr & " which lacks RTTI and cannot be used in an `of` check"
   it.typ = c.types.boolType
   commonType c, it, beforeExpr, expected
 

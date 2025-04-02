@@ -256,7 +256,7 @@ proc nominalRoot*(t: TypeCursor, allowTypevar = false): SymId =
     else:
       break
 
-proc typeHasPragma*(n: Cursor; pragma: NimonyPragma): bool =
+proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoType): bool =
   var counter = 20
   var n = n
   while counter > 0 and n.kind == Symbol:
@@ -265,6 +265,8 @@ proc typeHasPragma*(n: Cursor; pragma: NimonyPragma): bool =
     assert res.status == LacksNothing
     let impl = asTypeDecl(res.decl)
     if impl.kind == TypeY:
+      if bodyKindRestriction != NoType and impl.body.typeKind != bodyKindRestriction:
+        return false
       if hasPragma(impl.pragmas, pragma):
         return true
       # Might be an alias, so traverse this one here:
@@ -310,7 +312,21 @@ iterator inheritanceChain*(s: SymId): SymId =
       break
 
 proc isInheritable*(n: Cursor): bool =
-  typeHasPragma(n, InheritableP)
+  typeHasPragma(n, InheritableP, ObjectT)
 
 proc isPure*(n: Cursor): bool =
   typeHasPragma(n, PureP)
+
+proc hasRtti*(s: SymId): bool =
+  var root = s
+  for r in inheritanceChain(s):
+    root = r
+
+  let res = tryLoadSym(root)
+  assert res.status == LacksNothing
+  var n = res.decl
+  assert n.stmtKind == TypeS
+  inc n # skip ParLe
+  skip n # name
+  skip n # export marker
+  result = hasPragma(n, InheritableP) and not hasPragma(n, PureP)
