@@ -256,7 +256,7 @@ proc nominalRoot*(t: TypeCursor, allowTypevar = false): SymId =
     else:
       break
 
-proc isViewType*(n: Cursor): bool =
+proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoType): bool =
   var counter = 20
   var n = n
   while counter > 0 and n.kind == Symbol:
@@ -265,7 +265,9 @@ proc isViewType*(n: Cursor): bool =
     assert res.status == LacksNothing
     let impl = asTypeDecl(res.decl)
     if impl.kind == TypeY:
-      if hasPragma(impl.pragmas, ViewP):
+      if bodyKindRestriction != NoType and impl.body.typeKind != bodyKindRestriction:
+        return false
+      if hasPragma(impl.pragmas, pragma):
         return true
       # Might be an alias, so traverse this one here:
       if impl.body.kind == Symbol:
@@ -273,3 +275,58 @@ proc isViewType*(n: Cursor): bool =
       else:
         break
   return false
+
+proc isViewType*(n: Cursor): bool =
+  typeHasPragma(n, ViewP)
+
+proc typeImpl*(s: SymId): Cursor =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  result = res.decl
+  assert result.stmtKind == TypeS
+  inc result # skip ParLe
+  for i in 1..4:
+    skip(result) # name, export marker, pragmas, generic parameter
+
+proc objtypeImpl*(s: SymId): Cursor =
+  result = typeImpl(s)
+  let k = typeKind result
+  if k in {RefT, PtrT}:
+    inc result
+
+iterator inheritanceChain*(s: SymId): SymId =
+  var objbody = objtypeImpl(s)
+  while true:
+    let od = asObjectDecl(objbody)
+    if od.kind == ObjectT:
+      var parent = od.parentType
+      if parent.typeKind in {RefT, PtrT}:
+        inc parent
+      if parent.kind == Symbol:
+        let ps = parent.symId
+        yield ps
+        objbody = objtypeImpl(ps)
+      else:
+        break
+    else:
+      break
+
+proc isInheritable*(n: Cursor): bool =
+  typeHasPragma(n, InheritableP, ObjectT)
+
+proc isPure*(n: Cursor): bool =
+  typeHasPragma(n, PureP)
+
+proc hasRtti*(s: SymId): bool =
+  var root = s
+  for r in inheritanceChain(s):
+    root = r
+
+  let res = tryLoadSym(root)
+  assert res.status == LacksNothing
+  var n = res.decl
+  assert n.stmtKind == TypeS
+  inc n # skip ParLe
+  skip n # name
+  skip n # export marker
+  result = hasPragma(n, InheritableP) and not hasPragma(n, PureP)

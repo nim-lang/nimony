@@ -634,7 +634,8 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           result.bits = n.intId
           inc n
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
-           TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP:
+           TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
+           InheritableP, PureP, BaseP:
           skip n
           continue
         of BuildP, EmitP:
@@ -1017,7 +1018,6 @@ proc traverseArrAt(c: var EContext; n: var Cursor) =
   traverseExpr(c, n)
   let beforeIndex = c.dest.len
   let info = n.info
-  let indexExpr = n
   let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
   traverseExpr(c, n)
   if n.kind != ParRi:
@@ -1206,7 +1206,8 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
     of ErrX, NewobjX, NewrefX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX,
        InSetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DoX, CchoiceX, OchoiceX,
-       EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX:
+       EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
+       InstanceofX, ProccallX:
       error c, "BUG: not eliminated: ", n
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,

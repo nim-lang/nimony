@@ -102,3 +102,6 @@ template runnableExamples*(body: untyped) {.untyped.} =
 proc overflowFlag*(): bool {.magic: "OverflowFlag".}
 
 include "system/panics"
+
+proc `of`*[T, S](x: T; y: typedesc[S]): bool {.magic: "Of", noSideEffect.}
+proc procCall*[T](x: T): untyped {.magic: "ProcCall".}

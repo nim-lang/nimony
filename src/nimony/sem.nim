@@ -2208,17 +2208,17 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP, SideEffectP:
+     InjectP, GensymP, UntypedP, SideEffectP, BaseP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
-  of ViewP:
+  of ViewP, InheritableP, PureP:
     if kind == TypeY:
       c.dest.add parLeToken(pk, n.info)
       inc n
     else:
-      buildErr c, n.info, "`view` pragma only allowed on types"
+      buildErr c, n.info, "pragma only allowed on types"
     c.dest.addParRi()
   of VarargsP:
     crucial.hasVarargs = n.info
@@ -2401,7 +2401,15 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
   if n.kind == DotToken:
     takeToken c, n
   else:
+    let beforeType = c.dest.len
     semLocalTypeImpl c, n, InLocalDecl
+    let inheritsFrom = cursorAt(c.dest, beforeType)
+    if c.routine.inGeneric == 0 and not isInheritable(inheritsFrom):
+      endRead(c.dest)
+      c.dest.shrink beforeType
+      c.buildErr n.info, "cannot inherit from type: " & asNimCode(inheritsFrom)
+    else:
+      endRead(c.dest)
   if n.kind == DotToken:
     takeToken c, n
   else:
@@ -5921,6 +5929,67 @@ proc semPragmaExpr(c: var SemContext; it: var Item) =
   takeParRi c, it.n
   producesVoid c, info, it.typ
 
+proc semInstanceof(c: var SemContext; it: var Item) =
+  type
+    State = enum
+      NoSubtype
+      LacksRtti
+      MaybeSubtype
+      AlwaysSubtype
+
+  let info = it.n.info
+  let beforeExpr = c.dest.len
+  let expected = it.typ
+  c.takeToken(it.n)
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, arg
+  it.n = arg.n
+  # handle types
+  let beforeType = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  var ok = MaybeSubtype
+  if c.routine.inGeneric == 0:
+    let t = cursorAt(c.dest, beforeType)
+    if t.kind == Symbol and arg.typ.kind == Symbol:
+      let xtyp = arg.typ.symId
+      let targetSym = t.symId
+      ok = NoSubtype
+      if xtyp == targetSym:
+        # XXX report "always true" here
+        ok = AlwaysSubtype
+      else:
+        for xsubtype in inheritanceChain(xtyp):
+          if xsubtype == targetSym:
+            ok = AlwaysSubtype
+            break
+      if ok == NoSubtype:
+        for subtype in inheritanceChain(targetSym):
+          if xtyp == subtype:
+            ok = MaybeSubtype
+            break
+        if not hasRtti(xtyp):
+          ok = LacksRtti
+    c.dest.endRead()
+  c.takeParRi(it.n)
+  case ok
+  of MaybeSubtype, AlwaysSubtype:
+    discard
+  of NoSubtype, LacksRtti:
+    c.dest.shrink beforeExpr
+    let tstr = asNimCode(cursorAt(c.dest, beforeType))
+    c.dest.endRead()
+    if ok == NoSubtype:
+      c.buildErr info, "type of " & asNimCode(arg.n) & " is never a subtype of " & tstr
+    else:
+      c.buildErr info, "base type of " & asNimCode(arg.n) & " is " & tstr & " which lacks RTTI and cannot be used in an `of` check"
+  it.typ = c.types.boolType
+  commonType c, it, beforeExpr, expected
+
+proc semProccall(c: var SemContext; it: var Item) =
+  c.takeToken(it.n)
+  semExpr c, it
+  c.takeParRi(it.n)
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -6126,6 +6195,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of CallX, CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
       toplevelGuard c:
         semCall c, it, flags
+    of ProccallX:
+      toplevelGuard c:
+        semProccall c, it
     of DotX, DdotX:
       toplevelGuard c:
         semDot c, it, flags
@@ -6222,6 +6294,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       takeTree c, it.n
     of PragmaxX:
       semPragmaExpr c, it
+    of InstanceofX:
+      semInstanceof c, it
     of OconvX, CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement

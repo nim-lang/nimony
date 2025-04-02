@@ -76,6 +76,8 @@ type
     CompilesX = (ord(CompilesTagId), "compiles")
     DeclaredX = (ord(DeclaredTagId), "declared")
     DefinedX = (ord(DefinedTagId), "defined")
+    InstanceofX = (ord(InstanceofTagId), "instanceof")  ## only-fans operator for object privilege checking
+    ProccallX = (ord(ProccallTagId), "proccall")  ## turns method call into a proc call aka a "static" call
     HighX = (ord(HighTagId), "high")
     LowX = (ord(LowTagId), "low")
     TypeofX = (ord(TypeofTagId), "typeof")
@@ -108,7 +110,7 @@ type
     TraceX = (ord(TraceTagId), "trace")
 
 proc rawTagIsNimonyExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {ErrTagId, SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, XorTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, BracketTagId, CurlyTagId, CurlyatTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, CmdTagId, CchoiceTagId, OchoiceTagId, PragmaxTagId, QuotedTagId, HderefTagId, DdotTagId, HaddrTagId, NewrefTagId, NewobjTagId, TupTagId, TupconstrTagId, SetconstrTagId, TabconstrTagId, AshrTagId, OconvTagId, HconvTagId, DconvTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, CompilesTagId, DeclaredTagId, DefinedTagId, HighTagId, LowTagId, TypeofTagId, UnpackTagId, FieldsTagId, FieldpairsTagId, EnumtostrTagId, IsmainmoduleTagId, DefaultobjTagId, DefaulttupTagId, ExprTagId, DoTagId, ArratTagId, TupatTagId, PlussetTagId, MinussetTagId, MulsetTagId, XorsetTagId, EqsetTagId, LesetTagId, LtsetTagId, InsetTagId, CardTagId, EmoveTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId}
+  raw in {ErrTagId, SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, XorTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, BracketTagId, CurlyTagId, CurlyatTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, CmdTagId, CchoiceTagId, OchoiceTagId, PragmaxTagId, QuotedTagId, HderefTagId, DdotTagId, HaddrTagId, NewrefTagId, NewobjTagId, TupTagId, TupconstrTagId, SetconstrTagId, TabconstrTagId, AshrTagId, OconvTagId, HconvTagId, DconvTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, CompilesTagId, DeclaredTagId, DefinedTagId, InstanceofTagId, ProccallTagId, HighTagId, LowTagId, TypeofTagId, UnpackTagId, FieldsTagId, FieldpairsTagId, EnumtostrTagId, IsmainmoduleTagId, DefaultobjTagId, DefaulttupTagId, ExprTagId, DoTagId, ArratTagId, TupatTagId, PlussetTagId, MinussetTagId, MulsetTagId, XorsetTagId, EqsetTagId, LesetTagId, LtsetTagId, InsetTagId, CardTagId, EmoveTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId}
 
 type
   NimonyStmt* = enum
@@ -293,9 +295,12 @@ type
     SideEffectP = (ord(SideEffectTagId), "sideEffect")  ## explicit `sideEffect` pragma
     KeepOverflowFlagP = (ord(KeepOverflowFlagTagId), "keepOverflowFlag")  ## keep overflow flag
     SemanticsP = (ord(SemanticsTagId), "semantics")  ## proc with builtin behavior for expreval
+    InheritableP = (ord(InheritableTagId), "inheritable")  ## `inheritable` pragma
+    BaseP = (ord(BaseTagId), "base")  ## `base` pragma (currently ignored)
+    PureP = (ord(PureTagId), "pure")  ## `pure` pragma (currently ignored)
 
 proc rawTagIsNimonyPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {EmitTagId, InlineTagId, NoinlineTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId}
+  raw in {EmitTagId, InlineTagId, NoinlineTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId}
 
 type
   NimonySym* = enum
