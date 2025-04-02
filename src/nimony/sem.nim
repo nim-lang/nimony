@@ -6010,9 +6010,9 @@ proc semInstanceof(c: var SemContext; it: var Item) =
   of MaybeSubtype, AlwaysSubtype:
     discard
   of NoSubtype, LacksRtti:
-    c.dest.shrink beforeExpr
     let tstr = asNimCode(cursorAt(c.dest, beforeType))
     c.dest.endRead()
+    c.dest.shrink beforeExpr
     if ok == NoSubtype:
       c.buildErr info, "type of " & asNimCode(arg.n) & " is never a subtype of " & tstr
     else:
