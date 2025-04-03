@@ -86,6 +86,10 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       skip a # skip the object
       let fld = a
       result = getTypeImpl(m, fld)
+    of OconvC:
+      result = n.firstSon
+      skip result # skip the number
+      result = getTypeImpl(m, result)
     of DerefC:
       let x = getTypeImpl(m, n.firstSon)
       assert x.typeKind == PtrT
