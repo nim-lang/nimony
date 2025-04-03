@@ -89,7 +89,7 @@ proc open*(f: out File; filename: string;
     of fmReadWriteExisting: cstring"r+b"
     of fmAppend: cstring"ab"
 
-  var tmpFilename = filename
+  var tmpFilename = filename.terminatingZero()
   f = fopen(tmpFilename.toCString, m)
   if f != nil:
     result = true
