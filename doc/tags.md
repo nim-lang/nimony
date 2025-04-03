@@ -221,7 +221,7 @@
 | `(setconstr T X*)` | NimonyExpr | set constructor |
 | `(tabconstr X*)` | NimonyExpr, NiflerKind | table constructor |
 | `(ashr T X X)` | NimonyExpr | |
-| `(oconv T X)` | NimonyExpr | object conversion |
+| `(oconv X X)` | NimonyExpr, NifcExpr | object conversion to super type |
 | `(hconv T X)` | NimonyExpr | hidden basic type conversion |
 | `(dconv T X)` | NimonyExpr | conversion between `distinct` types |
 | `(callstrlit X+)` | NimonyExpr, NiflerKind | |
@@ -270,7 +270,7 @@
 | `(using (params...)+)` | NimonyStmt, NiflerKind | `using` statement |
 | `(asm X+)` | NimonyStmt, NiflerKind | `asm` statement |
 | `(defer X)` | NimonyStmt, NiflerKind | `defer` statement |
-| `(index (public ...) (private ...) (hooks ...) (converter ...) (build ...))` | NifIndexKind | index section |
+| `(index (public ...) (private ...) (hooks ...) (converter ...) (method ...) (build ...))` | NifIndexKind | index section |
 | `(public (kv Y INTLIT*)` | NifIndexKind | public section |
 | `(private (kv Y INTLIT*))` | NifIndexKind | private section |
 | `(inject)` | NimonyPragma | `inject` pragma |

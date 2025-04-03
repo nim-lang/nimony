@@ -167,8 +167,18 @@ proc getProcDecl*(s: SymId): Routine =
   result = asRoutine(res.decl, SkipInclBody)
 
 proc isObjectType(s: SymId): bool =
-  let impl = objtypeImpl(s)
-  result = impl.typeKind == ObjectT
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  var n = res.decl
+  if n.stmtKind == TypeS:
+    inc n # skip ParLe
+    for i in 1..4:
+      skip(n) # name, export marker, pragmas, generic parameter
+    if n.typeKind in {RefT, PtrT}:
+      inc n
+    result = n.typeKind == ObjectT
+  else:
+    result = false
 
 proc isEnumType*(n: Cursor): bool =
   if n.kind == Symbol:
@@ -555,10 +565,12 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
       m.error InvalidMatch, f, a
     elif sameSymbol(fs, a.symId):
       discard "direct match, no annotation required"
+    elif not isObjectType(a.symId):
+      m.error InvalidMatch, f, a
     else:
       var diff = 1
-      for fparent in inheritanceChain(fs):
-        if sameSymbol(fparent, a.symId):
+      for fparent in inheritanceChain(a.symId):
+        if sameSymbol(fparent, fs):
           m.args.addParLe OconvX, m.argInfo
           m.args.addIntLit diff, m.argInfo
           if m.flipped:
