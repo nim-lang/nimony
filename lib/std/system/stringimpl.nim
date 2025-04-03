@@ -102,9 +102,6 @@ proc borrowCStringUnsafe*(s: cstring): string =
   ## use `fromCString` instead.
   string(a: cast[StrData](s), i: (int(strlen(s)) shl LenShift))
 
-proc isTerminatingZero*(s: string): bool {.inline.} =
-  result = s.capacity() > s.len and s.a[s.len] == '\0'
-
 proc ensureTerminatingZero*(s: var string) =
   let len = s.len
   if isAllocated(s):

@@ -37,10 +37,3 @@ assert ctext0 == ctext1
 assert zerotext.len == strlen(ctext0).int
 assert zerotext.len == mytext.len
 printf("%s\n", ctext0)
-
-mytext.setLen(5)
-# check terminating zero
-assert s.isTerminatingZero() == true
-assert nimHello.isTerminatingZero() == true
-assert zerotext.isTerminatingZero() == true
-assert mytext.isTerminatingZero() == false
