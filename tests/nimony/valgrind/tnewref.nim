@@ -6,5 +6,6 @@ proc main =
   new x
   x[] = 56
   echo x[]
+  discard int32(x[])
 
 main()
