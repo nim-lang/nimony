@@ -555,6 +555,8 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
       m.error InvalidMatch, f, a
     elif sameSymbol(fs, a.symId):
       discard "direct match, no annotation required"
+    elif not isObjectType(a.symId):
+      m.error InvalidMatch, f, a
     else:
       var diff = 1
       for fparent in inheritanceChain(a.symId):
