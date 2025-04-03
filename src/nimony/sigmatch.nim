@@ -557,8 +557,8 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
       discard "direct match, no annotation required"
     else:
       var diff = 1
-      for fparent in inheritanceChain(fs):
-        if sameSymbol(fparent, a.symId):
+      for fparent in inheritanceChain(a.symId):
+        if sameSymbol(fparent, fs):
           m.args.addParLe OconvX, m.argInfo
           m.args.addIntLit diff, m.argInfo
           if m.flipped:
