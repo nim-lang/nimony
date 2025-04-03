@@ -133,30 +133,6 @@ proc ensureTerminatingZero*(s: var string) =
       s.a = cast[StrData](cstring"")
       s.i = EmptyI
 
-proc terminatingZero*(s: string): string =
-  let len = s.len
-  # allocate new string
-  let cap = sumLen(len, 1)
-  let raw = cast[StrData](alloc(cap))
-  if raw != nil:
-    result = string(a: raw)
-    result.i = (len shl LenShift) or IsAllocatedBit
-    # copy buffer and add zero terminator
-    copyMem(raw, s.a, len)
-    raw[len] = '\0'
-  else:
-    oomHandler cap
-    # ensure zero termination anyway:
-    result = string(i: EmptyI)
-    result.a = cast[StrData](cstring"")
-
-proc fromCString*(s: cstring): string =
-  ## Creates a Nim string from a `cstring`
-  ## by copying the underlying storage.
-  ## The created string has a null terminator
-  let aux = borrowCStringUnsafe(s)
-  result = aux.terminatingZero()
-
 proc toCString*(s: var string): cstring =
   ## Creates a `cstring` from a Nim string.
   ## You have to ensure the string live long enough
@@ -164,7 +140,7 @@ proc toCString*(s: var string): cstring =
   ensureTerminatingZero(s)
   result = cast[cstring](s.a)
 
-# --- string allocation ---
+# --- string allocation & append ---
 
 proc growImpl(s: var string; newLen: int) =
   let cap = s.cap
@@ -330,4 +306,16 @@ proc `&`*(a, b: string): string {.semantics: "string.&".} =
       copyMem addr r[a.len], b.a, b.len
   else:
     oomHandler rlen
-    result = string(a: nil, i: EmptyI)
+    # ensure an empty string
+    result = string(i: EmptyI)
+    result.a = cast[StrData](cstring"")
+
+proc terminatingZero*(s: string): string =
+  result = s & "\0"
+  result.shrink s.len
+
+proc fromCString*(s: cstring): string =
+  ## Creates a Nim string from a `cstring`
+  ## by copying the underlying storage.
+  let aux = borrowCStringUnsafe(s)
+  result = aux.terminatingZero()
