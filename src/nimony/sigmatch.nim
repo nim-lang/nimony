@@ -167,8 +167,18 @@ proc getProcDecl*(s: SymId): Routine =
   result = asRoutine(res.decl, SkipInclBody)
 
 proc isObjectType(s: SymId): bool =
-  let impl = objtypeImpl(s)
-  result = impl.typeKind == ObjectT
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  var n = res.decl
+  if n.stmtKind == TypeS:
+    inc n # skip ParLe
+    for i in 1..4:
+      skip(n) # name, export marker, pragmas, generic parameter
+    if n.typeKind in {RefT, PtrT}:
+      inc n
+    result = n.typeKind == ObjectT
+  else:
+    result = false
 
 proc isEnumType*(n: Cursor): bool =
   if n.kind == Symbol:
