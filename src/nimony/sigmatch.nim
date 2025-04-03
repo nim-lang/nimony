@@ -630,7 +630,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
       if isIntLit:
-        if f.typeKind == FloatT:
+        if forig.typeKind == FloatT:
           inc m.convCosts
         else:
           inc m.intLitCosts

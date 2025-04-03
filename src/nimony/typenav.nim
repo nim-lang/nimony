@@ -275,7 +275,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = getTypeImpl(c, result, flags) # typeof(obj.field) == typeof field
   of DerefX, HderefX:
     result = getTypeImpl(c, n.firstSon, flags)
-    if typeKind(result) in {RefT, PtrT, MutT, OutT}:
+    if typeKind(result) in {RefT, PtrT, MutT, OutT, LentT}:
       inc result
     else:
       assert false, "cannot deref type: " & toString(result, false)
