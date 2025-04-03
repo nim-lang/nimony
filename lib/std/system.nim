@@ -80,16 +80,15 @@ template `notin`*(x, y: untyped): untyped =
   not contains(y, x)
 
 include "system/iterators"
-
 include "system/defaults"
-
-include "system/stringimpl"
 
 include "system/countbits_impl"
 include "system/setops"
 
-include "system/openarrays"
+include "system/memory"
 include "system/seqimpl"
+include "system/stringimpl"
+include "system/openarrays"
 
 include "system/atomics"
 

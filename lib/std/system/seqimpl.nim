@@ -137,6 +137,9 @@ proc add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
 
 proc len*[T](s: seq[T]): int {.inline.} = s.len
 
+proc rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
+  result = s.data
+
 proc `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} = s.data[i]
 
 proc `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline.} =
@@ -157,9 +160,6 @@ proc `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
 
 # special cased in compiler as "@.1.<system suffix>" for empty seq type inference:
 template `@`*[T](a: array[0, T]): seq[T] = newSeqUninit[T](0)
-
-converter toOpenArray*[T](x: seq[T]): openArray[T] {.inline.} =
-  openArray[T](a: x.data, len: len(x))
 
 proc del*[T](s: var seq[T]; idx: int) {.nodestroy.} =
   let L = s.len

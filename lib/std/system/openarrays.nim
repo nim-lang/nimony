@@ -16,6 +16,9 @@ converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline.} 
   else:
     openArray[T](a: cast[ptr UncheckedArray[T]](addr(x)), len: len(x))
 
+converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline.} =
+  openArray[T](a: rawData(s), len: s.len)
+
 converter toOpenArray*(s: string): openArray[char] {.inline.} =
   openArray[char](a: rawData(s), len: s.len)
 
