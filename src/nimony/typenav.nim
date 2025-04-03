@@ -15,6 +15,11 @@ include nifprelude
 import std/tables
 import nimony_model, builtintypes, decls, programs
 
+const
+  RcField* = "r.0."
+  DataField* = "d.0."
+  GeneratedTypeSuffix* = ".0.t"
+
 type
   LocalInfo* = object
     kind*: SymKind
@@ -271,8 +276,26 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of DotX, DdotX:
     result = n
     inc result # skip "dot"
+    var obj = result
     skip result # obj
-    result = getTypeImpl(c, result, flags) # typeof(obj.field) == typeof field
+    # typeof(obj.field) == typeof field
+    if result.kind == Symbol:
+      let s = result.symId
+      result = lookupSymbol(c, s)
+      if cursorIsNil(result):
+        if pool.syms[s] == DataField and
+            obj.exprKind in {DerefX, HderefX}:
+          inc obj
+          let typ = getTypeImpl(c, obj, flags)
+          if typ.typeKind == RefT:
+            result = typ
+            inc result
+        if cursorIsNil(result):
+          when defined(debug):
+            writeStackTrace()
+          quit "could not find symbol: " & pool.syms[s]
+    else:
+      result = getTypeImpl(c, result, flags)
   of DerefX, HderefX:
     result = getTypeImpl(c, n.firstSon, flags)
     if typeKind(result) in {RefT, PtrT, MutT, OutT}:
