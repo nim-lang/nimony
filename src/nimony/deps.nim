@@ -25,6 +25,8 @@ type
     nimFile: string
     modname: string
 
+proc configCacheFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".config.txt"
+proc cflagsCacheFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".cflags.txt"
 proc indexFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".2.idx.nif"
 proc parsedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".1.nif"
 proc depsFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".1.deps.nif"
@@ -36,7 +38,6 @@ proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.m
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
 proc exeFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname.addFileExt ExeExt
-proc configCacheFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".config.txt"
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -250,23 +251,53 @@ const makefileHeader = """
   """ # don't delete intermediate files
 
 type
-  CFile = tuple
+  CBuildFile = tuple
     name, obj, customArgs: string
+  CBuildList = object
+    cFiles: seq[CBuildFile]
+    oFiles: seq[string]
+    passC: string
+    passL: string
 
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
   result = relativePath(result, os.getCurrentDir())
 
-proc toBuildList(c: DepContext): seq[CFile] =
-  result = @[]
+proc writeCacheFile(c: DepContext, path, content: string) =
+  let needUpdate =
+    if semos.fileExists(path) and not c.forceRebuild:
+      content != readFile path
+    else: true
+  # modify the cache file
+  if needUpdate:
+    writeFile path, content
+
+proc toBuildList(c: DepContext): CBuildList =
+  result = default(CBuildList)
   for v in c.nodes:
     let index = readIndex(mescape(c.config.indexFile(v.files[0])))
     for i in index.toBuild:
-      let path = i[1]
-      let obj = splitFile(path).name & ".o"
-      let customArgs = i[2]
-      result.add (path, obj, customArgs)
+      case i[0].toLowerAscii()
+      of "c":
+        let path = i[1]
+        let obj = splitFile(path).name & ".o"
+        let customArgs = i[2]
+        result.cFiles.add (path, obj, customArgs)
+      of "l": result.oFiles.add i[1]
+      of "passc": result.passC.add(" " & i[1])
+      of "passl": result.passL.add(" " & i[1])
+
+proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
+  var node {.cursor.} = c.rootNode
+  for n in c.nodes:
+    if n.isSystem:
+      node = n
+      break
+  # generate build list cache file
+  result = c.config.cflagsCacheFile(node.files[0])
+  let passStr = node.files[0].modname & buildList.passC
+  c.writeCacheFile(result, passStr)
 
 proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
   var s = makefileHeader
@@ -280,40 +311,47 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
       c.config.exeFile(c.rootNode.files[0])
 
   # Absolute path of root node module
-  s.add "\nROOT_PATH = " & rootPath(c)
-  # Pass arguments to C compiler
-  if len(c.config.passC) > 0:
-    s.add "\nCFLAGS +="
-    for passC in c.config.passC:
-      s.add " " & mescape(passC)
-
   s.add "\nall: " & mescape dest
-  # The .exe file depends on all .o files:
+  s.add "\nROOT_PATH = " & rootPath(c)
+  # hexer -> nifc -> c compiler -> linker
   if c.cmd in {DoCompile, DoRun}:
     let buildList = toBuildList(c)
+    let cflags = c.generateCachedPassCFile(buildList)
 
-    s.add "\n" & mescape(c.config.exeFile(c.rootNode.files[0])) & ":"
+    # Pass arguments to C compiler
+    if len(c.config.passC) > 0 or len(buildList.passC) > 0:
+      s.add "\nCFLAGS +="
+      for passC in c.config.passC:
+        s.add " " & mescape(passC)
+      s.add buildList.passC
+    # Pass arguments to C linker
+    if len(c.config.passL) > 0 or len(buildList.passL) > 0:
+      s.add "\nLDFLAGS +="
+      for passL in c.config.passL:
+        s.add " " & mescape(passL)
+      s.add buildList.passL
 
-    for cfile in buildList:
+    # The .exe file depends on all .o files:
+    s.add "\n\n" & mescape(c.config.exeFile(c.rootNode.files[0])) & ":"
+    for cfile in buildList.cFiles:
       s.add " " & mescape(c.config.nifcachePath / cfile.obj)
-
     for v in c.nodes:
       s.add " " & mescape(c.config.objFile(v.files[0]))
-    s.add "\n\t$(CC) -o $@ $^"
-    for passL in c.config.passL:
-      s.add " " & mescape(passL)
+    for o in buildList.oFiles:
+      s.add " " & o
 
-    for cfile in buildList:
-      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) &
-            "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
+    # Compile foreign c files
+    for cfile in buildList.cFiles:
+      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) & 
+            " " & mescape(cflags) & "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
             mescape(cfile.customArgs) & " $< -o $@"
-
     # The .o files depend on all of their .c files:
-    s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) -I$(ROOT_PATH) $(CPPFLAGS) $< -o $@"
+    s.add "\n%.o: %.c " & mescape(cflags)
+    s.add "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) -I$(ROOT_PATH) $< -o $@"
 
     # entry point is special:
     let nifc = findTool("nifc")
-    s.add "\n" & mescape(c.config.cFile(c.rootNode.files[0])) & ": " & mescape(c.config.nifcFile c.rootNode.files[0])
+    s.add "\n\n" & mescape(c.config.cFile(c.rootNode.files[0])) & ": " & mescape(c.config.nifcFile c.rootNode.files[0])
     s.add "\n\t" & mescape(nifc) & " c --compileOnly --isMain " & commandLineArgsNifc & " $<"
 
     # The .c files depend on their .c.nif files:
@@ -366,13 +404,7 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
 proc generateCachedConfigFile(c: DepContext) =
   let path = c.config.configCacheFile(c.rootNode.files[0])
   let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile
-
-  let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
-                     configStr != readFile path
-                   else:
-                     true
-  if needUpdate:
-    writeFile path, configStr
+  c.writeCacheFile(path, configStr)
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command) =

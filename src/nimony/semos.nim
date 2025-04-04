@@ -240,14 +240,14 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
 
 proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
   # Unpack Current File to Absolute
-  let nifcache = config.nifcachePath
   var path = absolutePath(currentFile)
   if os.fileExists(path):
     path = parentDir(path)
   # Replace matches with paths
   path = fmt.multiReplace(
     ("${path}", path),
-    ("${nifcache}", nifcache))
+    ("${project}", config.currentPath),
+    ("${nifcache}", config.nifcachePath))
   result = path.normalizedPath()
 
 # ------------------ include/import handling ------------------------

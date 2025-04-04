@@ -5768,17 +5768,19 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       buildErr c, info, "build expected 2 or 3 parameters"
 
     # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
-    let curWorkDir = os.getCurrentDir()
+    let curWorkDir = c.g.config.currentPath
     let currentDir = absoluteParentDir(info.getFile)
 
     # Extract build pragma arguments
-    let compileType = args[0]
-    var name = replaceSubs(args[1], currentDir, c.g.config).toAbsolutePath(currentDir)
+    let compileType = args[0].toLowerAscii()
+    var name = replaceSubs(args[1], currentDir, c.g.config)
     let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
-
-    if not semos.fileExists(name):
-      buildErr c, info, "cannot find: " & name
-    name = name.toRelativePath(curWorkDir)
+    # Check file exists for compile or link
+    if compileType == "c" or compileType == "l":
+      name = name.toAbsolutePath(currentDir)
+      if not semos.fileExists(name):
+        buildErr c, info, "cannot find: " & name
+      name = name.toRelativePath(curWorkDir)
 
     c.toBuild.buildTree TupX, info:
       c.toBuild.addStrLit compileType, info
