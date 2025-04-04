@@ -323,6 +323,15 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       inc i
     c.add CurlyRi
     skipParRi n
+  of OconvC:
+    inc n
+    var counter = pool.integers[n.intId]
+    skip n
+    c.genx n
+    while counter > 0:
+      c.add ".Q"
+      dec counter
+    skipParRi n
   of ParC:
     c.add ParLe
     inc n

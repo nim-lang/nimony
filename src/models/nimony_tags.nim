@@ -66,7 +66,7 @@ type
     SetconstrX = (ord(SetconstrTagId), "setconstr")  ## set constructor
     TabconstrX = (ord(TabconstrTagId), "tabconstr")  ## table constructor
     AshrX = (ord(AshrTagId), "ashr")
-    OconvX = (ord(OconvTagId), "oconv")  ## object conversion
+    OconvX = (ord(OconvTagId), "oconv")  ## object conversion to super type
     HconvX = (ord(HconvTagId), "hconv")  ## hidden basic type conversion
     DconvX = (ord(DconvTagId), "dconv")  ## conversion between `distinct` types
     CallstrlitX = (ord(CallstrlitTagId), "callstrlit")

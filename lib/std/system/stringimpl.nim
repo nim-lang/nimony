@@ -1,7 +1,5 @@
 ## String implementation.
 
-include memory
-
 type
   StrData = ptr UncheckedArray[char]
 

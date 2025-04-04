@@ -112,6 +112,7 @@ type
   IndexSections* = object
     hooks*: array[AttachedOp, seq[HookIndexEntry]]
     converters*: seq[(SymId, SymId)]
+    methods*: seq[(SymId, SymId)]
     toBuild*: TokenBuf
     exportBuf*: TokenBuf
 
@@ -231,6 +232,12 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     content.add toString(converterSectionBuf)
     content.add "\n"
 
+  if sections.methods.len != 0:
+    let methodSectionBuf = getSymbolSection(TagId(MethodIdx), sections.methods)
+
+    content.add toString(methodSectionBuf)
+    content.add "\n"
+
   var buildBuf = createTokenBuf()
   buildBuf.addParLe TagId(BuildIdx)
   buildBuf.add sections.toBuild
@@ -265,6 +272,7 @@ type
     public*, private*: Table[string, NifIndexEntry]
     hooks*: Table[SymId, HooksPerType]
     converters*: seq[(string, string)] # map of dest types to converter symbols
+    methods*: seq[(string, string)] # map of dest types to method symbols
     toBuild*: seq[(string, string, string)]
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
@@ -415,6 +423,9 @@ proc readIndex*(indexName: string): NifIndex =
         t = next(s)
     if t.tag == TagId(ConverterIdx):
       readSymbolSection(s, result.converters)
+      t = next(s)
+    if t.tag == TagId(MethodIdx):
+      readSymbolSection(s, result.methods)
       t = next(s)
 
     if t.tag == TagId(BuildIdx):
