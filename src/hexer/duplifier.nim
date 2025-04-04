@@ -670,6 +670,14 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
   c.dest.copyIntoSymUse ow.s, ow.info
   c.dest.addParRi() # finish the StmtListExpr
 
+proc trLocationNonOwner(c: var Context; n: var Cursor) =
+  c.dest.add n
+  inc n
+  tr c, n, WantNonOwner
+  while n.kind != ParRi:
+    tr(c, n, DontCare)
+  takeParRi c.dest, n
+
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # `x` does not own its value as it can be read multiple times.
   let typ = getType(c.typeCache, n)
@@ -686,15 +694,17 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
           if isAtom(n):
             takeTree c.dest, n
           else:
-            trSons c, n, DontCare
+            # TODO: it may need a temp: e.g. `return foo().x`
+            # let tmp1 = foo(); let tmp2 = tmp1.x; `=destroy`(tmp1); return tmp2
+            trLocationNonOwner c, n
       elif isAtom(n):
         takeTree c.dest, n
       else:
-        trSons c, n, DontCare
+        trLocationNonOwner c, n
   elif isAtom(n):
     takeTree c.dest, n
   else:
-    trSons c, n, DontCare
+    trLocationNonOwner c, n
 
 proc trValue(c: var Context; n: Cursor; e: Expects) =
   var n = n
