@@ -74,8 +74,6 @@ proc handleCmdLine() =
   var commandLineArgs = ""
   var commandLineArgsNifc = ""
   var isChild = false
-  var passC = ""
-  var passL = ""
   var checkModes = DefaultSettings
   for kind, key, val in getopt():
     case kind
@@ -138,10 +136,10 @@ proc handleCmdLine() =
         isChild = true
         forwardArg = false
       of "passc":
-        passC = val
+        config.passC.add(val)
         forwardArg = false
       of "passl":
-        passL = val
+        config.passL.add(val)
         forwardArg = false
       of "nimcache":
         config.nifcachePath = val
@@ -190,8 +188,7 @@ proc handleCmdLine() =
     requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
     # compile full project modules
     buildGraph config, args[0], forceRebuild, silentMake,
-      commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),
-      passC, passL
+      commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile)
 
 when isMainModule:
   handleCmdLine()
