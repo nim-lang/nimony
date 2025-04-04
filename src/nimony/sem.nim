@@ -750,7 +750,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX, TupatX, SizeofX}:
+              ArrAtX, DerefX, TupatX, SizeofX, InternalTypeNameX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -6028,6 +6028,22 @@ proc semProccall(c: var SemContext; it: var Item) =
   semExpr c, it
   c.takeParRi(it.n)
 
+proc semInternalTypeName(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  takeToken c, it.n
+  let typ = semLocalType(c, it.n)
+  if containsGenericParams(typ):
+    discard
+  else:
+    let typeName = pool.syms[typ.symId]
+    c.dest.shrink beforeExpr
+    c.dest.addStrLit typeName, info
+  takeParRi c, it.n
+  let expected = it.typ
+  it.typ = c.types.stringType
+  commonType c, it, beforeExpr, expected
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -6334,6 +6350,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semPragmaExpr c, it
     of InstanceofX:
       semInstanceof c, it
+    of InternalTypeNameX:
+      semInternalTypeName c, it
     of OconvX, CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement

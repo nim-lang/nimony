@@ -285,3 +285,4 @@
 | `(inheritable)` | NimonyPragma | `inheritable` pragma |
 | `(base)` | NimonyPragma | `base` pragma (currently ignored) |
 | `(pure)` | NimonyPragma | `pure` pragma (currently ignored) |
+| `(internalTypeName T)` | NimonyExpr | returns compiler's internal type name |
