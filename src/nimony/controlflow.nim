@@ -792,7 +792,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor) =
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX:
       trExprLoop c, n
-    of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX:
+    of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       c.dest.addDotToken()
       skip n

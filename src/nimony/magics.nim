@@ -116,4 +116,5 @@ proc magicToTag*(m: string): (string, int) =
   of "FieldPairs": res FieldPairsX, TypedMagic
   of "Of": res InstanceofX
   of "ProcCall": res ProccallX
+  of "InternalTypeName": res InternalTypeNameX
   else: ("", 0)
