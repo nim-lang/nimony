@@ -13,6 +13,8 @@ export nimony_tags, callconv_tags
 
 template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
 
+template tagEnum*(c: PackedToken): TagEnum = cast[TagEnum](tag(c))
+
 proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
   if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
     result = cast[NimonyStmt](tagEnum(c))
@@ -116,7 +118,7 @@ const
 const
   RoutineKinds* = {ProcY, FuncY, IteratorY, TemplateY, MacroY, ConverterY, MethodY}
   CallKinds* = {CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX}
-  ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
+  ConvKinds* = {HconvX, ConvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv;

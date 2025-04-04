@@ -571,7 +571,8 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
       var diff = 1
       for fparent in inheritanceChain(a.symId):
         if sameSymbol(fparent, fs):
-          m.args.addParLe OconvX, m.argInfo
+          m.args.addParLe BaseobjX, m.argInfo
+          m.args.addSubtree f
           m.args.addIntLit diff, m.argInfo
           if m.flipped:
             dec m.inheritanceCosts, diff

@@ -90,9 +90,13 @@ proc constructsValue*(n: Cursor): bool =
   var n = n
   while true:
     case n.exprKind
-    of CastX, ConvX, HconvX, DconvX, OconvX:
+    of CastX, ConvX, HconvX, DconvX:
       inc n
       skip n
+    of BaseobjX:
+      inc n
+      skip n
+      skip n # skip intlit
     of ExprX:
       inc n
       while not isLastSon(n): skip n
@@ -578,7 +582,8 @@ proc trRawConstructor(c: var Context; n: var Cursor; e: Expects) =
 proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
   copyInto c.dest, n:
     takeTree c.dest, n # type
-    tr c, n, e
+    while n.kind != ParRi:
+      tr c, n, e
 
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
@@ -824,7 +829,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trExplicitCopy c, n, attachedSink
     of TraceX:
       trExplicitTrace c, n
-    of ConvKinds, SufX:
+    of ConvKinds, BaseobjX, SufX:
       trConvExpr c, n, e
     of OconstrX:
       trObjConstr c, n, e

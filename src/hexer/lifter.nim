@@ -261,7 +261,7 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
   inc n
   # recurse for the inherited object type, if any:
   if n.kind != DotToken:
-    unravelObj c, n, paramA, paramB
+    unravelObj c, toTypeImpl(n), paramA, paramB
   skip n # inheritance is gone
   while n.kind != ParRi:
     let r = takeLocal(n, SkipFinalParRi)
