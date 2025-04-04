@@ -89,8 +89,10 @@ proc open*(f: out File; filename: string;
     of fmReadWriteExisting: cstring"r+b"
     of fmAppend: cstring"ab"
 
+  # XXX: avoid a possible double copy when the string is allocated
   var tmpFilename = filename.terminatingZero()
-  f = fopen(tmpFilename.toCString, m)
+  let rawFilename = cast[cstring](tmpFilename.rawData)
+  f = fopen(rawFilename, m)
   if f != nil:
     result = true
     if bufSize >= 0:
