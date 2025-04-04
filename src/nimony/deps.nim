@@ -285,8 +285,8 @@ proc toBuildList(c: DepContext): CBuildList =
         let customArgs = i[2]
         result.cFiles.add (path, obj, customArgs)
       of "l": result.oFiles.add i[1]
-      of "passc": result.passC.add(" " & i[1])
-      of "passl": result.passL.add(" " & i[1])
+      of "passc": result.passC.add(i[1].mescape & " ")
+      of "passl": result.passL.add(i[1].mescape & " ")
 
 proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
   var node {.cursor.} = c.rootNode
@@ -323,13 +323,13 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
       s.add "\nCFLAGS +="
       for passC in c.config.passC:
         s.add " " & mescape(passC)
-      s.add buildList.passC
+      s.add " " & buildList.passC
     # Pass arguments to C linker
     if len(c.config.passL) > 0 or len(buildList.passL) > 0:
       s.add "\nLDFLAGS +="
       for passL in c.config.passL:
         s.add " " & mescape(passL)
-      s.add buildList.passL
+      s.add " " & buildList.passL
 
     # The .exe file depends on all .o files:
     s.add "\n\n" & mescape(c.config.exeFile(c.rootNode.files[0])) & ":"
@@ -338,12 +338,12 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
     for v in c.nodes:
       s.add " " & mescape(c.config.objFile(v.files[0]))
     for o in buildList.oFiles:
-      s.add " " & o
+      s.add " " & mescape(o)
 
     # Compile foreign c files
     for cfile in buildList.cFiles:
-      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) & 
-            " " & mescape(cflags) & "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
+      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) & " " &
+            mescape(cflags) & "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
             mescape(cfile.customArgs) & " $< -o $@"
     # The .o files depend on all of their .c files:
     s.add "\n%.o: %.c " & mescape(cflags)
