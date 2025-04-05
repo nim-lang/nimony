@@ -58,6 +58,7 @@ type
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
     concreteMatch: bool
+    hasError: bool # mark that error message was set
     skippedMod: TypeKind
     argInfo: PackedLineInfo
     pos, opened: int
@@ -75,28 +76,32 @@ proc concat(a: varargs[string]): string =
   for i in 1..high(a): result.add a[i]
 
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
-  if m.err: return # first error is the important one
   m.err = true
+  if m.hasError: return # first error is the important one
+  m.hasError = true
   m.error = MatchError(info: m.argInfo, kind: k,
                        expected: expected, got: got, pos: m.pos+1)
   #writeStackTrace()
   #echo "ERROR: ", msg
 
 proc error0(m: var Match; k: MatchErrorKind) =
-  if m.err: return # first error is the important one
   m.err = true
+  if m.hasError: return # first error is the important one
+  m.hasError = true
   m.error = MatchError(info: m.argInfo, kind: k, pos: m.pos+1)
 
 proc errorTypevar(m: var Match; k: MatchErrorKind; expected, got: Cursor; typevar: SymId) =
-  if m.err: return # first error is the important one
   m.err = true
+  if m.hasError: return # first error is the important one
+  m.hasError = true
   m.error = MatchError(info: m.argInfo, kind: k,
                        typeVar: typevar,
                        expected: expected, got: got, pos: m.pos+1)
 
 proc error0Typevar(m: var Match; k: MatchErrorKind; typevar: SymId) =
-  if m.err: return # first error is the important one
   m.err = true
+  if m.hasError: return # first error is the important one
+  m.hasError = true
   m.error = MatchError(info: m.argInfo, kind: k,
                        typeVar: typevar, pos: m.pos+1)
 
@@ -193,7 +198,50 @@ proc isConcept(s: SymId): bool =
   #result = impl.tag == ConceptT
   result = false
 
+type LinearMatchFlag = enum
+  ExactBits ## do not normalize bits
+
+proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
+
 proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool
+
+proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
+  result = false
+  let fOrig = f
+  let fs = f.symId
+  inc f
+  let res = tryLoadSym(fs)
+  assert res.status == LacksNothing
+  var typeImpl = asTypeDecl(res.decl)
+  # check if symbol has typeclass behavior:
+  if typeImpl.kind == TypeY:
+    if typeImpl.body.typeKind == ConceptT:
+      return matchesConstraint(m, typeImpl.body, a)
+    if typeImpl.typevars.substructureKind == TypevarsU:
+      # matching generic base symbol, acts as typeclass
+      # XXX does not consider inheritance
+      var inst = a
+      if a.kind == Symbol:
+        if fs == a.symId:
+          return true
+        let resa = tryLoadSym(a.symId)
+        assert resa.status == LacksNothing
+        var aDecl = asTypeDecl(resa.decl)
+        if aDecl.typevars.typeKind == InvokeT:
+          inst = aDecl.typevars
+      if inst.typeKind == InvokeT:
+        inc inst
+        assert inst.kind == Symbol
+        if fs == inst.symId:
+          return true
+  # otherwise, match symbol as a regular type (includes typevar case):
+  f = fOrig
+  var a = a
+  var err = false
+  swap m.err, err
+  linearMatch m, f, a # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
+  swap m.err, err
+  result = not err
 
 proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
@@ -257,7 +305,13 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
       result = isOrdinalType(a)
     skip f
   else:
-    result = false
+    # match symbol as a regular type:
+    var a = a
+    var err = false
+    swap m.err, err
+    linearMatch m, f, a # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
+    swap m.err, err
+    result = not err
 
 proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
@@ -271,14 +325,8 @@ proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
       var typevar = asTypevar(res.decl)
       return matchesConstraint(m, f, typevar.typ)
   if f.kind == Symbol:
-    let res = tryLoadSym(f.symId)
-    assert res.status == LacksNothing
-    var typeImpl = asTypeDecl(res.decl)
-    if typeImpl.kind == TypeY:
-      result = matchesConstraint(m, typeImpl.body, a)
-    inc f
-  else:
-    result = matchesConstraintAux(m, f, a)
+    return matchSymbolConstraint(m, f, a)
+  result = matchesConstraintAux(m, f, a)
 
 proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   let res = tryLoadSym(f)
@@ -325,9 +373,6 @@ proc expectParRi(m: var Match; f: var Cursor) =
     m.error FormalTypeNotAtEndBug, f, f
 
 proc procTypeMatch(m: var Match; f, a: var Cursor)
-
-type LinearMatchFlag = enum
-  ExactBits ## do not normalize bits
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}) =
   let fOrig = f

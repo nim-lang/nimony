@@ -66,24 +66,24 @@ proc `mod`*(x, y: int16): int16 {.magic: "ModI", noSideEffect.}
 proc `mod`*(x, y: int32): int32 {.magic: "ModI", noSideEffect.}
 proc `mod`*(x, y: int64): int64 {.magic: "ModI", noSideEffect.}
 
-type
-  SomeInteger = int # for now just an alias
 
-proc `shr`*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
+# SomeInteger moved to generic param since implicit generics are not implemented yet:
+
+proc `shr`*[I: SomeInteger](x: int8, y: I): int8 {.magic: "AshrI", noSideEffect.}
+proc `shr`*[I: SomeInteger](x: int16, y: I): int16 {.magic: "AshrI", noSideEffect.}
+proc `shr`*[I: SomeInteger](x: int32, y: I): int32 {.magic: "AshrI", noSideEffect.}
+proc `shr`*[I: SomeInteger](x: int64, y: I): int64 {.magic: "AshrI", noSideEffect.}
 
 
-proc `shl`*(x: int8, y: SomeInteger): int8 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int16, y: SomeInteger): int16 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int32, y: SomeInteger): int32 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int64, y: SomeInteger): int64 {.magic: "ShlI", noSideEffect.}
+proc `shl`*[I: SomeInteger](x: int8, y: I): int8 {.magic: "ShlI", noSideEffect.}
+proc `shl`*[I: SomeInteger](x: int16, y: I): int16 {.magic: "ShlI", noSideEffect.}
+proc `shl`*[I: SomeInteger](x: int32, y: I): int32 {.magic: "ShlI", noSideEffect.}
+proc `shl`*[I: SomeInteger](x: int64, y: I): int64 {.magic: "ShlI", noSideEffect.}
 
-proc ashr*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
+proc ashr*[I: SomeInteger](x: int8, y: I): int8 {.magic: "AshrI", noSideEffect.}
+proc ashr*[I: SomeInteger](x: int16, y: I): int16 {.magic: "AshrI", noSideEffect.}
+proc ashr*[I: SomeInteger](x: int32, y: I): int32 {.magic: "AshrI", noSideEffect.}
+proc ashr*[I: SomeInteger](x: int64, y: I): int64 {.magic: "AshrI", noSideEffect.}
 
 proc `and`*(x, y: int8): int8 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: int16): int16 {.magic: "BitandI", noSideEffect.}
@@ -110,15 +110,15 @@ proc `not`*(x: uint16): uint16 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: uint32): uint32 {.magic: "BitnotI", noSideEffect.}
 proc `not`*(x: uint64): uint64 {.magic: "BitnotI", noSideEffect.}
 
-proc `shr`*(x: uint8, y: SomeInteger): uint8 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint16, y: SomeInteger): uint16 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint32, y: SomeInteger): uint32 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint64, y: SomeInteger): uint64 {.magic: "ShrI", noSideEffect.}
+proc `shr`*[I: SomeInteger](x: uint8, y: I): uint8 {.magic: "ShrI", noSideEffect.}
+proc `shr`*[I: SomeInteger](x: uint16, y: I): uint16 {.magic: "ShrI", noSideEffect.}
+proc `shr`*[I: SomeInteger](x: uint32, y: I): uint32 {.magic: "ShrI", noSideEffect.}
+proc `shr`*[I: SomeInteger](x: uint64, y: I): uint64 {.magic: "ShrI", noSideEffect.}
 
-proc `shl`*(x: uint8, y: SomeInteger): uint8 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint16, y: SomeInteger): uint16 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint32, y: SomeInteger): uint32 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint64, y: SomeInteger): uint64 {.magic: "ShlI", noSideEffect.}
+proc `shl`*[I: SomeInteger](x: uint8, y: I): uint8 {.magic: "ShlI", noSideEffect.}
+proc `shl`*[I: SomeInteger](x: uint16, y: I): uint16 {.magic: "ShlI", noSideEffect.}
+proc `shl`*[I: SomeInteger](x: uint32, y: I): uint32 {.magic: "ShlI", noSideEffect.}
+proc `shl`*[I: SomeInteger](x: uint64, y: I): uint64 {.magic: "ShlI", noSideEffect.}
 
 proc `and`*(x, y: uint8): uint8 {.magic: "BitandI", noSideEffect.}
 proc `and`*(x, y: uint16): uint16 {.magic: "BitandI", noSideEffect.}
