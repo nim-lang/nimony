@@ -113,6 +113,7 @@ jobs:
 
       - name: Install winget
         if: runner.os == 'Windows'
+        continue-on-error: true # for some reason errors if latest version already installed
         # winget included in windows-2025 and above:
         run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
 
