@@ -179,26 +179,6 @@ proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
   dest.add dotToken(info)
   dest.add dotToken(info)
 
-proc takeTree*(dest: var TokenBuf; n: var Cursor) =
-  if n.kind != ParLe:
-    dest.add n
-    inc n
-  else:
-    var nested = 0
-    while true:
-      dest.add n
-      case n.kind
-      of ParLe: inc nested
-      of ParRi:
-        dec nested
-        if nested == 0:
-          inc n
-          break
-      of EofToken:
-        raiseAssert "expected ')', but EOF reached"
-      else: discard
-      inc n
-
 proc sameTrees*(a, b: Cursor): bool =
   var a = a
   var b = b
