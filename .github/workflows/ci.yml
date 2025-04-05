@@ -31,7 +31,7 @@ jobs:
             builder: macos-15
           - target:
               os: windows
-            builder: windows-latest
+            builder: windows-2025
 
     name: '${{ matrix.target.os }}-${{ matrix.target.cpu }}-nim-${{ matrix.target.nim_branch }} (${{ matrix.branch }})'
     runs-on: ${{ matrix.builder }}
@@ -113,9 +113,8 @@ jobs:
 
       - name: Install winget
         if: runner.os == 'Windows'
-        uses: Cyberboss/install-winget@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # winget included in windows-2025 and above:
+        run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
 
       - name: Install make dependencies (Windows)
         if: runner.os == 'Windows'
