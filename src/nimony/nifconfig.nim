@@ -16,6 +16,8 @@ type
   NifConfig* = object
     defines*: HashSet[string]
     paths*, nimblePaths*: seq[string]
+    passC*: seq[string]
+    passL*: seq[string]
     currentPath*: string
     nifcachePath*: string
     bits*: int
@@ -111,6 +113,11 @@ proc getOptionsAsOneString*(config: NifConfig): string =
   result.add " --bits:" & $config.bits
   result.add " --cpu:" & platform.CPU[config.targetCPU].name
   result.add " --os:" & platform.OS[config.targetOS].name
+
+  for passC in config.passC:
+    result.add " --passC:" & passC
+  for passL in config.passL:
+    result.add " --passL:" & passL
 
 proc isDefined*(config: NifConfig; symbol: string): bool =
   if symbol in config.defines:
