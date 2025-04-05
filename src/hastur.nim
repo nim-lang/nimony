@@ -203,8 +203,7 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
         failure c, file, valgrindSpec, testProgramOutput
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
-  let t0 = epochTime()
-  echo "TESTING ", file
+  #echo "TESTING ", file
   inc c.total
   var nimonycmd = "--isMain"
   case cat
@@ -265,7 +264,6 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
     if ast.fileExists():
       let nif = generatedFile(file, ".2.nif")
       diffFiles c, file, ast, nif, overwrite
-  echo "TEST FINISHED ", file, " IN ", formatFloat(epochTime() - t0, ffDecimal, precision=2)
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
   var files: seq[string] = @[]
