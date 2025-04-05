@@ -302,7 +302,7 @@ proc nimonytests(overwrite: bool) =
     let cat = parseCategory x.path
     if x.kind == pcDir:
       testDir c, TestDir / x.path, overwrite, cat
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
@@ -341,7 +341,7 @@ proc controlflowTests(tool: string; overwrite: bool) =
           os.removeFile(dest)
         else:
           failure c, t, expectedOutput, destContent
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
