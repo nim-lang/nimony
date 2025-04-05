@@ -13,6 +13,10 @@ import platform
 include nifprelude
 
 type
+  TrackPosition* = object
+    line*, col*: int
+    filename*: string
+
   NifConfig* = object
     defines*: HashSet[string]
     paths*, nimblePaths*: seq[string]
@@ -22,6 +26,7 @@ type
     compat*: bool
     targetCPU*: TSystemCPU
     targetOS*: TSystemOS
+    toTrack*: seq[TrackPosition]
 
 proc initNifConfig*(): NifConfig =
   result = NifConfig()

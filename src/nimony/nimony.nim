@@ -16,7 +16,7 @@ const
   Version = "0.2"
   Usage = "Nimony Compiler. Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   nimony [options] [command]
 Command:
@@ -40,6 +40,7 @@ Options:
   --silentMake              suppresses make output
   --nimcache:PATH           set the path used for generated files
   --boundchecks:on|off      turn bound checks on or off
+  --track:file:line:col     track the given position for editor integration
   --version                 show the version
   --help                    show this help
 """
@@ -57,6 +58,31 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
   semcheck(src, dest, ensureMove config, moduleFlags, commandLineArgs, true)
+
+proc parseTrack(s: string): TrackPosition =
+  # --------------------------------------------------------------------------
+  # Format:  file:line:col
+  # --------------------------------------------------------------------------
+  var i = 0
+  var line = 0
+  var col = 0
+  # skip Windows drive letter:
+  if s.len > 3 and s[0] in {'a'..'z', 'A'..'Z'} and s[1] == ':' and s[2] == '\\':
+    i = 3
+  while i < s.len and s[i] != ':':
+    inc i
+  let filenameEnd = i
+  if i < s.len and s[i] == ':': inc i
+
+  while i < s.len and s[i] in {'0'..'9'}:
+    line = line * 10 + (ord(s[i]) - ord('0'))
+    inc i
+  if i < s.len and s[i] == ':': inc i
+  while i < s.len and s[i] in {'0'..'9'}:
+    col = col * 10 + (ord(s[i]) - ord('0'))
+    inc i
+  if i < s.len and s[i] == ':': inc i
+  result = TrackPosition(line: line, col: col, filename: s.substr(0, filenameEnd-1))
 
 type
   Command = enum
@@ -146,6 +172,9 @@ proc handleCmdLine() =
       of "nimcache":
         config.nifcachePath = val
         forwardArgNifc = true
+      of "track":
+        config.toTrack.add parseTrack(val)
+        forwardArg = false
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
