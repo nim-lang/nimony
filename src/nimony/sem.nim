@@ -4172,7 +4172,8 @@ proc semFor(c: var SemContext; it: var Item) =
     discard "fine"
   elif c.dest[beforeCall].kind == ParLe and
       (c.dest[beforeCall].tagId == TagId(FieldsTagId) or
-        c.dest[beforeCall].tagId == TagId(FieldPairsTagId)):
+       c.dest[beforeCall].tagId == TagId(FieldPairsTagId) or
+       c.dest[beforeCall].tagId == TagId(InternalFieldPairsTagId)):
     var callBuf = createTokenBuf(c.dest.len - beforeCall)
     for tok in beforeCall ..< c.dest.len: callBuf.add c.dest[tok]
     c.dest.shrink beforeCall-1
@@ -6354,7 +6355,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of UnpackX:
       takeToken c, it.n
       takeParRi c, it.n
-    of FieldsX, FieldpairsX:
+    of FieldsX, FieldpairsX, InternalFieldPairsX:
       takeTree c, it.n
     of OchoiceX, CchoiceX:
       takeTree c, it.n

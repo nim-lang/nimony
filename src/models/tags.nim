@@ -290,6 +290,7 @@ type
     PureTagId
     FinalTagId
     InternalTypeNameTagId
+    InternalFieldPairsTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -579,5 +580,6 @@ const
     ("base", 284),
     ("pure", 285),
     ("final", 286),
-    ("internalTypeName", 287)
+    ("internalTypeName", 287),
+    ("internalFieldPairs", 288)
   ]

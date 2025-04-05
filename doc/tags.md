@@ -287,3 +287,4 @@
 | `(pure)` | NimonyPragma | `pure` pragma (currently ignored) |
 | `(final)` | NimonyPragma | `final` pragma |
 | `(internalTypeName T)` | NimonyExpr | returns compiler's internal type name |
+| `(internalFieldPairs T X)` | NimonyExpr | variant of fieldPairs iterator returns compiler's internal field name |
