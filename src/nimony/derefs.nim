@@ -72,9 +72,13 @@ proc rootOf(n: Cursor; allowIndirection = false): SymId =
         inc n
       else:
         break
-    of DconvX, OconvX:
+    of DconvX:
       inc n
       skip n # skip the type
+    of BaseobjX:
+      inc n
+      skip n # skip intlit
+      skip n # skip type
     else: break
   case n.kind
   of Symbol, SymbolDef:
@@ -119,9 +123,13 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     of HderefX, HaddrX, DerefX, AddrX, DdotX, PatX:
       inc n
       someIndirection = true
-    of DconvX, OconvX, ConvX, CastX:
+    of DconvX, ConvX, CastX:
       inc n
       skip n # skip the type
+    of BaseobjX:
+      inc n
+      skip n # skip type
+      skip n # skip intlit
     of ExprX:
       inc n
       while true:
@@ -610,7 +618,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trTupleConstr c, n, e
     of ExprX:
       trStmtListExpr c, n, e
-    of DconvX, OconvX:
+    of DconvX, BaseobjX:
       trSons c, n, WantT
     of ParX:
       trSons c, n, e

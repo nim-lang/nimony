@@ -323,8 +323,9 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       inc i
     c.add CurlyRi
     skipParRi n
-  of OconvC:
+  of BaseobjC:
     inc n
+    skip n # type not interesting for us
     var counter = pool.integers[n.intId]
     skip n
     c.genx n

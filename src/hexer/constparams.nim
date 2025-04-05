@@ -13,6 +13,7 @@ Implements "pass by const" by introducing more hidden pointers.
 We do this right before inlining and before codegen as it interacts with the
 codegen's `maybeByConstRef` logic.
 
+Now this pass also handles method calls and transforms the `of` operator.
 ]##
 
 import std / [sets, assertions]
@@ -82,11 +83,25 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, HaddrX, info:
       tr c, dest, n
 
-proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc isMethod(c: var Context; s: SymId): bool =
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing:
+    result = res.decl.symKind == MethodY
+  else:
+    let info = getLocalInfo(c.typeCache, s)
+    result = info.kind == MethodY
+
+proc trMethodFn(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  takeTree dest, n
+
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
   dest.add n
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  takeTree dest, n # skip `fn`
+  if not forceStaticCall and n.kind == Symbol and isMethod(c, n.symId):
+    trMethodFn c, dest, n
+  else:
+    takeTree dest, n # skip `fn`
   assert fnType.tagEnum == ParamsTagId
   inc fnType
   while n.kind != ParRi:
@@ -108,6 +123,14 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       tr c, dest, n
   takeParRi dest, n
+
+proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  inc n
+  if n.exprKind in CallKinds:
+    trCall c, dest, n, true
+  else:
+    tr c, dest, n
+  skipParRi n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -181,7 +204,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let ek = n.exprKind
       case ek
       of CallKinds:
-        trCall c, dest, n
+        trCall c, dest, n, false
+      of ProcCallX:
+        trProcCall c, dest, n
       of PragmaxX:
         trPragmaBlock c, dest, n
       of AddX, SubX, MulX, DivX, ModX:

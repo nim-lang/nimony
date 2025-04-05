@@ -22,6 +22,10 @@ proc rootOf*(n: Cursor): SymId =
     of ConvKinds:
       inc n
       skip n # type part
+    of BaseobjX:
+      inc n
+      skip n # type part
+      skip n # skip intlit
     else:
       break
   if n.kind == Symbol:

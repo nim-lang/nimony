@@ -86,10 +86,6 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       skip a # skip the object
       let fld = a
       result = getTypeImpl(m, fld)
-    of OconvC:
-      result = n.firstSon
-      skip result # skip the number
-      result = getTypeImpl(m, result)
     of DerefC:
       let x = getTypeImpl(m, n.firstSon)
       assert x.typeKind == PtrT
@@ -102,7 +98,7 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       buf.addParRi()
       result = cursorAt(buf, 0)
       m.mem.add ensureMove buf
-    of ConvC, CastC, AconstrC, OconstrC:
+    of ConvC, CastC, AconstrC, OconstrC, BaseobjC:
       result = n.firstSon
     of NegC, AddC, SubC, MulC, DivC, ModC, ShrC, ShlC, BitandC, BitorC, BitxorC, BitnotC:
       result = n.firstSon

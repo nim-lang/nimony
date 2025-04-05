@@ -224,7 +224,7 @@ type
     SetconstrTagId
     TabconstrTagId
     AshrTagId
-    OconvTagId
+    BaseobjTagId
     HconvTagId
     DconvTagId
     CallstrlitTagId
@@ -512,7 +512,7 @@ const
     ("setconstr", 219),
     ("tabconstr", 220),
     ("ashr", 221),
-    ("oconv", 222),
+    ("baseobj", 222),
     ("hconv", 223),
     ("dconv", 224),
     ("callstrlit", 225),

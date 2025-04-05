@@ -408,3 +408,27 @@ proc isLastSon*(n: Cursor): bool =
   var n = n
   skip n
   result = n.kind == ParRi
+
+proc takeToken*(buf: var TokenBuf; n: var Cursor) {.inline.} =
+  buf.add n
+  inc n
+
+proc takeTree*(dest: var TokenBuf; n: var Cursor) =
+  if n.kind != ParLe:
+    dest.add n
+    inc n
+  else:
+    var nested = 0
+    while true:
+      dest.add n
+      case n.kind
+      of ParLe: inc nested
+      of ParRi:
+        dec nested
+        if nested == 0:
+          inc n
+          break
+      of EofToken:
+        raiseAssert "expected ')', but EOF reached"
+      else: discard
+      inc n

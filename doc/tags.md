@@ -221,7 +221,7 @@
 | `(setconstr T X*)` | NimonyExpr | set constructor |
 | `(tabconstr X*)` | NimonyExpr, NiflerKind | table constructor |
 | `(ashr T X X)` | NimonyExpr | |
-| `(oconv X X)` | NimonyExpr, NifcExpr | object conversion to super type |
+| `(baseobj T INTLIT X)` | NimonyExpr, NifcExpr | object conversion to base type |
 | `(hconv T X)` | NimonyExpr | hidden basic type conversion |
 | `(dconv T X)` | NimonyExpr | conversion between `distinct` types |
 | `(callstrlit X+)` | NimonyExpr, NiflerKind | |
