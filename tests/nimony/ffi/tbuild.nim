@@ -1,6 +1,7 @@
 {.build("C", "foo.c").}
-{.build("C", "foo1.c", "-fno-strict-aliasing").}
+{.build("C", "foo1.c", "-fno-strict-aliasing -msse").}
 {.build("passC", "-DNIMONY_BUILD_PASSC").}
+{.build("passC", "-DHELLO", "-DWORLD").}
 {.build("passL", "-s").}
 
 {.emit: """

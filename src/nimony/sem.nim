@@ -2199,7 +2199,8 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     if pk == HeaderP:
       let idx = c.dest.len - 1
       let tok = c.dest[idx]
-      var name = replaceSubs(pool.strings[tok.litId], info.getFile(), c.g.config)
+      # Resolve path subs and make it relative to nifcache path
+      var name = replacePathSubs(c.g.config, pool.strings[tok.litId], info.getFile())
       name = name.toRelativePath(c.g.config.nifcachePath)
       c.dest[idx] = strToken(pool.strings.getOrIncl(name), tok.info)
     # Finalize expression
@@ -5763,24 +5764,33 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
         inc it.n
 
     skipParRi it.n
-
-    if args.len != 2 and args.len != 3:
-      buildErr c, info, "build expected 2 or 3 parameters"
+    if args.len < 2:
+      buildErr c, info, "build expected at least 2 parameters"
 
     # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
     let curWorkDir = c.g.config.currentPath
     let currentDir = absoluteParentDir(info.getFile)
 
-    # Extract build pragma arguments
+    var customIndex = 2
+    var name = default(string)
     let compileType = args[0].toLowerAscii()
-    var name = replaceSubs(args[1], currentDir, c.g.config)
-    let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
-    # Check file exists for compile or link
+    # Extract build pragma compile type
     if compileType == "c" or compileType == "l":
+      name = replacePathSubs(c.g.config, args[1], currentDir)
       name = name.toAbsolutePath(currentDir)
       if not semos.fileExists(name):
         buildErr c, info, "cannot find: " & name
       name = name.toRelativePath(curWorkDir)
+    else: dec(customIndex)
+
+    # Extract build pragma extra
+    var customArgs = ""
+    for i in customIndex ..< args.len:
+      let arg = args[i].replace(" ", "\t") # XXX: hack for mescape in deps
+      customArgs.add replacePathSubs(c.g.config, arg, currentDir)
+      customArgs.add '\t' 
+    if customArgs.len > 0:
+      customArgs.setLen(customArgs.len - 1)
 
     c.toBuild.buildTree TupX, info:
       c.toBuild.addStrLit compileType, info

@@ -241,7 +241,9 @@ proc mescape(p: string): string =
     ")": "\\)",
     "*": "\\*",   # Wildcards
     "[": "\\[",   # Pattern matching
-    "]": "\\]"
+    "]": "\\]",
+    # Space Hack
+    "\t": " "
   })
 
 const makefileHeader = """
@@ -281,12 +283,12 @@ proc toBuildList(c: DepContext): CBuildList =
       case i[0].toLowerAscii()
       of "c":
         let path = i[1]
-        let obj = splitFile(path).name & ".o"
         let customArgs = i[2]
+        let obj = splitFile(path).name & ".o"
         result.cFiles.add (path, obj, customArgs)
       of "l": result.oFiles.add i[1]
-      of "passc": result.passC.add " " & i[1].mescape()
-      of "passl": result.passL.add " " & i[1].mescape()
+      of "passc": result.passC.add " " & i[2].mescape()
+      of "passl": result.passL.add " " & i[2].mescape()
 
 proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
   var node {.cursor.} = c.rootNode

@@ -6,7 +6,7 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
-from std / strutils import multiReplace, split, strip
+from std / strutils import Letters, Digits, continuesWith, split, strip
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
 import ".." / lib / nifchecksums
@@ -238,17 +238,49 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     hasError = true
     skip n
 
-proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
+# ------------------ path replacing ------------------------
+
+func replacePaths(s: string, subs: varargs[(string, string)]): string =
+  result = newStringOfCap(s.len)
+  var path = newStringofCap(s.len)
+  var fastChk: set[char] = {}
+  var i = 0
+  # Include first character of all replacements
+  for sub, by in subs.items:
+    if sub.len > 0:
+      fastChk.incl sub[0]
+  while i < s.len:
+    block sIteration:
+      # Fast check using first character
+      if s[i] in fastChk:
+        setLen(path, 0)
+        for sub, by in subs.items:
+          if sub.len > 0 and s.continuesWith(sub, i):
+            path.add by
+            inc(i, sub.len)
+            # Check following path to sub
+            if i < s.len and s[i] in {DirSep, AltSep}:
+              const pathChars = Letters + Digits + {DirSep, AltSep, CurDir, ' '}
+              while i < s.len and s[i] in pathChars:
+                path.add s[i]
+                inc(i)
+            # Add path to result
+            add result, path.normalizedPath()
+            break sIteration
+      # Add current char
+      add result, s[i]
+      inc(i)
+
+proc replacePathSubs*(config: NifConfig, fmt, currentFile: string): string =
   # Unpack Current File to Absolute
   var path = absolutePath(currentFile)
   if os.fileExists(path):
     path = parentDir(path)
   # Replace matches with paths
-  path = fmt.multiReplace(
+  result = fmt.replacePaths(
     ("${path}", path),
     ("${project}", config.currentPath),
     ("${nifcache}", config.nifcachePath))
-  result = path.normalizedPath()
 
 # ------------------ include/import handling ------------------------
 
