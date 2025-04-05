@@ -285,8 +285,8 @@ proc toBuildList(c: DepContext): CBuildList =
         let customArgs = i[2]
         result.cFiles.add (path, obj, customArgs)
       of "l": result.oFiles.add i[1]
-      of "passc": result.passC.add(i[1].mescape & " ")
-      of "passl": result.passL.add(i[1].mescape & " ")
+      of "passc": result.passC.add i[1].mescape() & " "
+      of "passl": result.passL.add i[1].mescape() & " "
 
 proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
   var node {.cursor.} = c.rootNode
@@ -339,6 +339,8 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
       s.add " " & mescape(c.config.objFile(v.files[0]))
     for o in buildList.oFiles:
       s.add " " & mescape(o)
+    # link all .o files to output .exe file
+    s.add "\n\t$(CC) -o $@ $^ $(LDFLAGS)"
 
     # Compile foreign c files
     for cfile in buildList.cFiles:
