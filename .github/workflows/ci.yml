@@ -111,8 +111,9 @@ jobs:
           echo '${{ github.workspace }}'"/external/mingw-${{ matrix.target.cpu }}/bin" >> $GITHUB_PATH
           echo '${{ github.workspace }}'"/external/dlls-${{ matrix.target.cpu }}" >> $GITHUB_PATH
 
-      #- name: Install winget
-      #  if: runner.os == 'Windows'
+      - name: Install winget
+        if: runner.os == 'Windows'
+        run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
       #  uses: Cyberboss/install-winget@v1
       #  with:
       #    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
