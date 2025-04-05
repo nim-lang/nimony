@@ -325,8 +325,9 @@ proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
       var typevar = asTypevar(res.decl)
       return matchesConstraint(m, f, typevar.typ)
   if f.kind == Symbol:
-    return matchSymbolConstraint(m, f, a)
-  result = matchesConstraintAux(m, f, a)
+    result = matchSymbolConstraint(m, f, a)
+  else:
+    result = matchesConstraintAux(m, f, a)
 
 proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   let res = tryLoadSym(f)
