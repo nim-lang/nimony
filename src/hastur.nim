@@ -203,7 +203,8 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
         failure c, file, valgrindSpec, testProgramOutput
 
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
-  #echo "TESTING ", file
+  let t0 = epochTime()
+  echo "TESTING ", file
   inc c.total
   var nimonycmd = "--isMain"
   case cat
@@ -264,6 +265,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
     if ast.fileExists():
       let nif = generatedFile(file, ".2.nif")
       diffFiles c, file, ast, nif, overwrite
+  echo "TEST FINISHED ", file, " IN ", formatFloat(epochTime() - t0, ffDecimal, precision=2)
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
   var files: seq[string] = @[]
@@ -302,7 +304,7 @@ proc nimonytests(overwrite: bool) =
     let cat = parseCategory x.path
     if x.kind == pcDir:
       testDir c, TestDir / x.path, overwrite, cat
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
@@ -341,7 +343,7 @@ proc controlflowTests(tool: string; overwrite: bool) =
           os.removeFile(dest)
         else:
           failure c, t, expectedOutput, destContent
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
