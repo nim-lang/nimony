@@ -293,8 +293,8 @@ proc toBuildList(c: DepContext): CBuildList =
           customCflags,
           cacheCflags)
       of "l": result.oFiles.add i[1]
-      of "passc": result.passC.add "\t" & i[2]
-      of "passl": result.passL.add "\t" & i[2]
+      of "passc": result.passC.add i[2] & "\t"
+      of "passl": result.passL.add i[2] & "\t"
 
 proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
   var node {.cursor.} = c.rootNode
@@ -302,14 +302,18 @@ proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
     if n.isSystem:
       node = n
       break
+  # acummulate passC
+  var cFlags: string = ""
+  for passC in c.config.passC:
+    cFlags.add passC & " "
   # generate cache file of passC
-  let prefix = node.files[0].modname
+  let prefix = node.files[0].modname & " "
   result = c.config.cflagsCacheFile(node.files[0])
-  c.writeCacheFile(result, prefix & buildList.passC)
+  c.writeCacheFile(result, prefix & cFlags & buildList.passC)
   # generate cache file of c files custom arguments
   for cfiles in buildList.cFiles:
     c.writeCacheFile(cfiles.cacheCflags,
-      prefix & " " & cfiles.customCflags)
+      prefix & cFlags & cfiles.customCflags)
 
 proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
   var s = makefileHeader
@@ -335,13 +339,13 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
       s.add "\nCFLAGS +="
       for passC in c.config.passC:
         s.add " " & mescape(passC)
-      s.add mescape(buildList.passC)
+      s.add " " & mescape(buildList.passC)
     # Pass arguments to C linker
     if len(c.config.passL) > 0 or len(buildList.passL) > 0:
       s.add "\nLDFLAGS +="
       for passL in c.config.passL:
         s.add " " & mescape(passL)
-      s.add mescape(buildList.passL)
+      s.add " " & mescape(buildList.passL)
 
     # The .exe file depends on all .o files:
     s.add "\n\n" & mescape(c.config.exeFile(c.rootNode.files[0])) & ":"
