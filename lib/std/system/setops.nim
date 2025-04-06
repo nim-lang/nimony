@@ -1,10 +1,10 @@
 func incl*[T](x: var set[T], y: T) {.magic: "Incl".}
 
+func excl*[T](x: var set[T], y: T) {.magic: "Excl".}
+
 template incl*[T](x: var set[T], y: set[T]) =
   ## Includes the set `y` in the set `x`.
   x = x + y
-
-func excl*[T](x: var set[T], y: T) {.magic: "Excl".}
 
 template excl*[T](x: var set[T], y: set[T]) =
   ## Excludes the set `y` from the set `x`.
@@ -14,6 +14,7 @@ func card*[T](x: set[T]): int {.magic: "Card".}
 
 func len*[T](x: set[T]): int {.magic: "Card".}
 
+func contains*[T](x: set[T], y: T): bool {.magic: "InSet".}
 
 func `*`*[T](x, y: set[T]): set[T] {.magic: "MulSet".}
 
@@ -21,7 +22,15 @@ func `+`*[T](x, y: set[T]): set[T] {.magic: "PlusSet".}
 
 func `-`*[T](x, y: set[T]): set[T] {.magic: "MinusSet".}
 
-func contains*[T](x: set[T], y: T): bool {.magic: "InSet".}
+func `-+-`*[T](x, y: set[T]): set[T] {.magic: "XorSet".}
+
+template toggle*[T: enum](x: var set[T], y: T) =
+  ## Toggles the element `y` in the set `x`.
+  x = x -+- {y}
+
+template toggle*[T: enum](x: var set[T], y: set[T]) =
+  ## Toggles the set `y` in the set `x`.
+  x = x -+- y
 
 proc cardSetImpl(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
   var i = 0

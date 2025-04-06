@@ -19,6 +19,15 @@ let val = D
 s1 = {A..B, val, F}
 assert card(s1) == 4
 
+s = {A..E}
+s1 = {B..F}
+assert s -+- s == {}
+assert s -+- s1 == {A, F}
+s.toggle(A); assert s == {B..E}
+s.toggle(A); assert s == {A..E}
+s.toggle({B, C, D}); assert s == {A, E}
+s.toggle({B, C, D}); assert s == {A..E}
+
 template resem() =
   s = {A, C..E, F}
   s1 = {A..B, val, F}

@@ -196,27 +196,162 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-     (cmd quit.0.syn1lfpjv 5 +1))))) ,21
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,21
+ (asgn ~2 s.0.tsefy5wha 2
+  (setconstr 10,~16
+   (set 1 Foo.0.tsefy5wha) 1
+   (range A.0.tsefy5wha 3 E.0.tsefy5wha))) 3,22
+ (asgn ~3 s1.0.tsefy5wha 2
+  (setconstr 9,~17
+   (set 1 Foo.0.tsefy5wha) 1
+   (range B.0.tsefy5wha 3 F.0.tsefy5wha))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 15,24,tests/nimony/sysbasics/tsets.nim
+     (eqset
+      (set Foo.0.tsefy5wha) ~6
+      (xorset
+       (set Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 4 s.0.tsefy5wha) 3
+      (setconstr ~4,~18
+       (set 1 Foo.0.tsefy5wha)))) ~1,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 16,25,tests/nimony/sysbasics/tsets.nim
+     (eqset
+      (set Foo.0.tsefy5wha) ~7
+      (xorset
+       (set Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 4 s1.0.tsefy5wha) 3
+      (setconstr ~5,~19
+       (set 1 Foo.0.tsefy5wha) 1 A.0.tsefy5wha 4 F.0.tsefy5wha))) ~1,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,28,lib/std/system.nim
+ (stmts 2,1
+  (asgn 0,26,tests/nimony/sysbasics/tsets.nim s.0.tsefy5wha 4
+   (xorset
+    (set 15,6,tests/nimony/sysbasics/tsets.nim Foo.0.tsefy5wha) 0,26,tests/nimony/sysbasics/tsets.nim s.0.tsefy5wha 4
+    (setconstr
+     (set 15,6,tests/nimony/sysbasics/tsets.nim Foo.0.tsefy5wha) 9,26,tests/nimony/sysbasics/tsets.nim A.0.tsefy5wha)))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 22,26,tests/nimony/sysbasics/tsets.nim
+     (eqset
+      (set Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 3
+      (setconstr ~11,~20
+       (set 1 Foo.0.tsefy5wha) 1
+       (range B.0.tsefy5wha 3 E.0.tsefy5wha)))) ~1,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,28,lib/std/system.nim
+ (stmts 2,1
+  (asgn 0,27,tests/nimony/sysbasics/tsets.nim s.0.tsefy5wha 4
+   (xorset
+    (set 15,6,tests/nimony/sysbasics/tsets.nim Foo.0.tsefy5wha) 0,27,tests/nimony/sysbasics/tsets.nim s.0.tsefy5wha 4
+    (setconstr
+     (set 15,6,tests/nimony/sysbasics/tsets.nim Foo.0.tsefy5wha) 9,27,tests/nimony/sysbasics/tsets.nim A.0.tsefy5wha)))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 22,27,tests/nimony/sysbasics/tsets.nim
+     (eqset
+      (set Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 3
+      (setconstr ~11,~21
+       (set 1 Foo.0.tsefy5wha) 1
+       (range A.0.tsefy5wha 3 E.0.tsefy5wha)))) ~1,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,32,lib/std/system.nim
+ (stmts 2,1
+  (asgn 0,28,tests/nimony/sysbasics/tsets.nim s.0.tsefy5wha 4
+   (xorset
+    (set 15,6,tests/nimony/sysbasics/tsets.nim Foo.0.tsefy5wha) 0,28,tests/nimony/sysbasics/tsets.nim s.0.tsefy5wha 9,28,tests/nimony/sysbasics/tsets.nim
+    (setconstr 5,~22
+     (set 1 Foo.0.tsefy5wha) 1 B.0.tsefy5wha 4 C.0.tsefy5wha 7 D.0.tsefy5wha)))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 30,28,tests/nimony/sysbasics/tsets.nim
+     (eqset
+      (set Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 3
+      (setconstr ~19,~22
+       (set 1 Foo.0.tsefy5wha) 1 A.0.tsefy5wha 4 E.0.tsefy5wha))) ~1,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,32,lib/std/system.nim
+ (stmts 2,1
+  (asgn 0,29,tests/nimony/sysbasics/tsets.nim s.0.tsefy5wha 4
+   (xorset
+    (set 15,6,tests/nimony/sysbasics/tsets.nim Foo.0.tsefy5wha) 0,29,tests/nimony/sysbasics/tsets.nim s.0.tsefy5wha 9,29,tests/nimony/sysbasics/tsets.nim
+    (setconstr 5,~23
+     (set 1 Foo.0.tsefy5wha) 1 B.0.tsefy5wha 4 C.0.tsefy5wha 7 D.0.tsefy5wha)))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 30,29,tests/nimony/sysbasics/tsets.nim
+     (eqset
+      (set Foo.0.tsefy5wha) ~2 s.0.tsefy5wha 3
+      (setconstr ~19,~23
+       (set 1 Foo.0.tsefy5wha) 1
+       (range A.0.tsefy5wha 3 E.0.tsefy5wha)))) ~1,1
+    (stmts 2,104,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) ,30
  (template 9 :resem.0.tsefy5wha . . . 14
   (params) . . . 2,1
   (stmts 2
    (asgn ~2 s.0.tsefy5wha 2
-    (setconstr 8,~17
+    (setconstr 8,~26
      (set 1 Foo.0.tsefy5wha) 1 A.0.tsefy5wha 4
      (range C.0.tsefy5wha 3 E.0.tsefy5wha) 10 F.0.tsefy5wha)) 3,1
    (asgn ~3 s1.0.tsefy5wha 2
-    (setconstr 7,~18
+    (setconstr 7,~27
      (set 1 Foo.0.tsefy5wha) 1
-     (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha)))) 2,22
+     (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha)))) 2,31
  (stmts 2
   (asgn ~2 s.0.tsefy5wha 2
-   (setconstr 8,~17
+   (setconstr 8,~26
     (set 1 Foo.0.tsefy5wha) 1 A.0.tsefy5wha 4
     (range C.0.tsefy5wha 3 E.0.tsefy5wha) 10 F.0.tsefy5wha)) 3,1
   (asgn ~3 s1.0.tsefy5wha 2
-   (setconstr 7,~18
+   (setconstr 7,~27
     (set 1 Foo.0.tsefy5wha) 1
-    (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha))) ,26
+    (range A.0.tsefy5wha 3 B.0.tsefy5wha) 7 val.0.tsefy5wha 12 F.0.tsefy5wha))) ,35
  (block . 2,1
   (stmts 4
    (var :sss.0 . . 8
@@ -229,7 +364,7 @@
    (stmts
     (if 3
      (elif
-      (not 19,30,tests/nimony/sysbasics/tsets.nim
+      (not 19,39,tests/nimony/sysbasics/tsets.nim
        (eq
         (i +64) ~6
         (card
@@ -251,7 +386,7 @@
    (stmts
     (if 3
      (elif
-      (not 19,32,tests/nimony/sysbasics/tsets.nim
+      (not 19,41,tests/nimony/sysbasics/tsets.nim
        (eq
         (i +64) ~6
         (card
@@ -271,7 +406,7 @@
    (stmts
     (if 3
      (elif
-      (not 19,34,tests/nimony/sysbasics/tsets.nim
+      (not 19,43,tests/nimony/sysbasics/tsets.nim
        (eq
         (i +64) ~6
         (card
@@ -291,7 +426,7 @@
    (stmts
     (if 3
      (elif
-      (not 19,36,tests/nimony/sysbasics/tsets.nim
+      (not 19,45,tests/nimony/sysbasics/tsets.nim
        (eq
         (i +64) ~6
         (card
@@ -304,7 +439,7 @@
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-       (cmd quit.0.syn1lfpjv 5 +1))))))) ,37
+       (cmd quit.0.syn1lfpjv 5 +1))))))) ,46
  (block . 2,1
   (stmts
    (proc 5 :test.0 . . . 9
