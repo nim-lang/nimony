@@ -224,9 +224,10 @@ proc containsGenericParams*(n: TypeCursor): bool =
     inc n
   return false
 
-proc nominalRoot*(t: TypeCursor, allowTypevar = false): SymId =
+proc nominalRoot*(t: TypeCursor; allowTypevar = false; skipPtrs = false): SymId =
   result = SymId(0)
   var t = t
+  var ptrs = 1
   while true:
     case t.kind
     of Symbol:
@@ -251,10 +252,19 @@ proc nominalRoot*(t: TypeCursor, allowTypevar = false): SymId =
         inc t
       of InvokeT:
         inc t
+      of RefT, PtrT:
+        if skipPtrs and ptrs > 0:
+          inc t
+          dec ptrs
+        else:
+          break
       else:
         break
     else:
       break
+
+proc getClass*(t: TypeCursor): SymId =
+  result = nominalRoot(t, false, true)
 
 proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoType): bool =
   var counter = 20

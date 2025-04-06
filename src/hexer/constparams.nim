@@ -12,7 +12,6 @@
 Implements "pass by const" by introducing more hidden pointers.
 We do this right before inlining and before codegen as it interacts with the
 codegen's `maybeByConstRef` logic.
-
 ]##
 
 import std / [sets, assertions]
@@ -43,19 +42,21 @@ proc rememberConstRefParams(c: var Context; params: Cursor) =
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
-  var c2 = Context(ptrSize: c.ptrSize, typeCache: createTypeCache(), needsXelim: c.needsXelim)
-  c2.typeCache.openScope()
+  var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim)
+
   copyInto(dest, n):
     let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
     if isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):
-        c.typeCache.registerLocal(symId, r.kind, r.params)
+        c2.typeCache.registerLocal(symId, r.kind, r.params)
+      c2.typeCache.openScope()
       rememberConstRefParams c2, r.params
       tr c2, dest, n
+      c2.typeCache.closeScope()
     else:
       takeTree dest, n
-  c2.typeCache.closeScope()
+  c.typeCache = move(c2.typeCache)
   c.needsXelim = c2.needsXelim
 
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =

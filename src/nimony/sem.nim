@@ -994,7 +994,16 @@ proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
   typeofCallIs c, it, cs.beforeCall, c.types.untypedType
   takeParRi c, it.n
 
-proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo) =
+proc addMaybeBaseobjConv(c: var SemContext; m: var Match; beforeExpr: int) =
+  if m.args[0].tagEnum == BaseobjTagId:
+    c.dest.shrink beforeExpr
+    c.dest.add m.args
+    # remove the ')' as the caller will add one for us!
+    c.dest.shrink c.dest.len - 1
+  else:
+    c.dest.add m.args
+
+proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo; beforeExpr: int) =
   const
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT}
 
@@ -1029,7 +1038,7 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
     var m = createMatch(addr c)
     typematch m, destType, matchArg
     if not m.err:
-      c.dest.add m.args
+      addMaybeBaseobjConv(c, m, beforeExpr)
     else:
       # also try the other direction:
       var m = createMatch(addr c)
@@ -1037,7 +1046,7 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
       matchArg.typ = destType
       typematch m, srcType, matchArg
       if not m.err:
-        c.dest.add m.args
+        addMaybeBaseobjConv(c, m, beforeExpr)
       else:
         c.typeMismatch info, arg.typ, destType
 
@@ -1064,11 +1073,39 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
       return
   c.dest.add parLeToken(ConvX, info)
   c.dest.copyTree destType
-  semConvArg(c, destType, cs.args[0], info)
+  semConvArg(c, destType, cs.args[0], info, beforeExpr)
   takeParRi c, it.n
   let expected = it.typ
   it.typ = destType
   commonType c, it, beforeExpr, expected
+
+proc semBaseobj(c: var SemContext; it: var Item) =
+  inc it.n # baseobj
+  let beforeExpr = c.dest.len
+  let destType = semLocalType(c, it.n)
+  if it.n.kind == IntLit:
+    # we will recompute it via `typematch` below:
+    inc it.n
+  else:
+    error("expected integer literal in `baseobj` construct")
+  var m = createMatch(addr c)
+
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  var argBuf = createTokenBuf(16)
+  swap c.dest, argBuf
+  semExpr c, arg
+  swap c.dest, argBuf
+  it.n = arg.n
+  arg.n = cursorAt(argBuf, 0)
+
+  typematch m, destType, arg
+  if not m.err and m.args[0].tagEnum == BaseobjTagId:
+    c.dest.shrink beforeExpr
+    c.dest.add m.args
+  else:
+    c.typeMismatch it.n.info, it.typ, destType
+  skipParRi it.n
+  commonType c, it, beforeExpr, destType
 
 proc semObjConstr(c: var SemContext, it: var Item)
 
@@ -1211,9 +1248,22 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
           semCall c, call, {}
       elif m.genericConverter:
         var nested = 0
-        while arg.exprKind in {HconvX, OconvX, HderefX, HaddrX}:
-          takeToken c, arg
-          inc nested
+        while true:
+          case arg.exprKind
+          of HconvX:
+            takeToken c, arg
+            c.dest.takeTree arg # skip type
+            inc nested
+          of BaseobjX:
+            takeToken c, arg
+            c.dest.takeTree arg # skip type
+            c.dest.takeTree arg # skip intlit
+            inc nested
+          of HderefX, HaddrX:
+            takeToken c, arg
+            inc nested
+          else:
+            break
         if arg.exprKind == HcallX:
           let convInfo = arg.info
           takeToken c, arg
@@ -3490,7 +3540,7 @@ proc attachMethod(c: var SemContext; symId: SymId;
       skip params # name
       skip params # export marker
       skip params # pragmas
-      root = nominalRoot(params)
+      root = getClass(params)
   if root == SymId(0):
     let typ = typeToString(params)
     c.dest.endRead()
@@ -5359,7 +5409,7 @@ proc semConv(c: var SemContext; it: var Item) =
   swap c.dest, argBuf
   it.n = arg.n
   arg.n = cursorAt(argBuf, 0)
-  semConvArg(c, destType, arg, info)
+  semConvArg(c, destType, arg, info, beforeExpr)
   takeParRi c, it.n
   let expected = it.typ
   it.typ = destType
@@ -6334,7 +6384,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semPragmaExpr c, it
     of InstanceofX:
       semInstanceof c, it
-    of OconvX, CurlyatX, TabconstrX, DoX,
+    of BaseobjX:
+      semBaseobj c, it
+    of CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)
