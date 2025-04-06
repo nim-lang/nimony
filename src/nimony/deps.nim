@@ -254,7 +254,9 @@ const makefileHeader = """
 
 type
   CBuildFile = tuple
-    name, obj, customArgs: string
+    name, obj: string
+    customCflags: string
+    cacheCflags: string
   CBuildList = object
     cFiles: seq[CBuildFile]
     oFiles: seq[string]
@@ -282,13 +284,17 @@ proc toBuildList(c: DepContext): CBuildList =
     for i in index.toBuild:
       case i[0].toLowerAscii()
       of "c":
-        let path = i[1]
-        let customArgs = i[2]
-        let obj = splitFile(path).name & ".o"
-        result.cFiles.add (path, obj, customArgs)
+        let p = c.toPair(i[1])
+        let customCflags = i[2]
+        let cacheCflags = c.config.cflagsCacheFile(p)
+        result.cFiles.add (
+          p.nimFile,
+          p.modname & ".o",
+          customCflags,
+          cacheCflags)
       of "l": result.oFiles.add i[1]
-      of "passc": result.passC.add " " & i[2].mescape()
-      of "passl": result.passL.add " " & i[2].mescape()
+      of "passc": result.passC.add "\t" & i[2]
+      of "passl": result.passL.add "\t" & i[2]
 
 proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
   var node {.cursor.} = c.rootNode
@@ -296,10 +302,14 @@ proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
     if n.isSystem:
       node = n
       break
-  # generate build list cache file
+  # generate cache file of passC
+  let prefix = node.files[0].modname
   result = c.config.cflagsCacheFile(node.files[0])
-  let passStr = node.files[0].modname & buildList.passC
-  c.writeCacheFile(result, passStr)
+  c.writeCacheFile(result, prefix & buildList.passC)
+  # generate cache file of c files custom arguments
+  for cfiles in buildList.cFiles:
+    c.writeCacheFile(cfiles.cacheCflags,
+      prefix & " " & cfiles.customCflags)
 
 proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
   var s = makefileHeader
@@ -318,20 +328,20 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
   # hexer -> nifc -> c compiler -> linker
   if c.cmd in {DoCompile, DoRun}:
     let buildList = toBuildList(c)
-    let cflags = c.generateCachedPassCFile(buildList)
+    let cacheCflags = c.generateCachedPassCFile(buildList)
 
     # Pass arguments to C compiler
     if len(c.config.passC) > 0 or len(buildList.passC) > 0:
       s.add "\nCFLAGS +="
       for passC in c.config.passC:
         s.add " " & mescape(passC)
-      s.add buildList.passC
+      s.add mescape(buildList.passC)
     # Pass arguments to C linker
     if len(c.config.passL) > 0 or len(buildList.passL) > 0:
       s.add "\nLDFLAGS +="
       for passL in c.config.passL:
         s.add " " & mescape(passL)
-      s.add buildList.passL
+      s.add mescape(buildList.passL)
 
     # The .exe file depends on all .o files:
     s.add "\n\n" & mescape(c.config.exeFile(c.rootNode.files[0])) & ":"
@@ -346,11 +356,12 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string): string =
 
     # Compile foreign c files
     for cfile in buildList.cFiles:
-      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) & " " &
-            mescape(cflags) & "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
-            mescape(cfile.customArgs) & " $< -o $@"
+      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " &
+            mescape(cfile.name) & " " & mescape(cfile.cacheCflags) & " " &
+            mescape(cacheCflags) & "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
+            mescape(cfile.customCflags) & " $< -o $@"
     # The .o files depend on all of their .c files:
-    s.add "\n%.o: %.c " & mescape(cflags)
+    s.add "\n%.o: %.c " & mescape(cacheCflags)
     s.add "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) -I$(ROOT_PATH) $< -o $@"
 
     # entry point is special:
