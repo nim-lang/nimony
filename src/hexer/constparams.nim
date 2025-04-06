@@ -86,6 +86,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add n
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
+  takeTree dest, n # skip `fn`
   assert fnType.tagEnum == ParamsTagId
   inc fnType
   while n.kind != ParRi:
