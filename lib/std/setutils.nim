@@ -2,9 +2,11 @@ func symmetricDifference*[T](x, y: set[T]): set[T] {.magic: "XorSet".}
 
 func `-+-`*[T](x, y: set[T]): set[T] {.magic: "XorSet".}
  
-template toggle*[T: Ordinal](x: var set[T], y: T) =
+proc toggle*[T: Ordinal](x: var set[T], y: T) {.inline.} =
   ## Toggles the element `y` in the set `x`.
-  x = x.symmetricDifference({y})
+  if x.contains(y):
+    x.excl(y)
+  else: x.incl(y)
 
 template toggle*[T: Ordinal](x: var set[T], y: set[T]) =
   ## Toggles the set `y` in the set `x`.
@@ -13,7 +15,7 @@ template toggle*[T: Ordinal](x: var set[T], y: set[T]) =
 # --- set complement ---
 
 func emptySet*[T: Ordinal](x: typedesc[T]): set[T] {.inline.} =
-  ## Returns an empty `set[T]`, same as `var x: set[T] = {}`
+  ## Returns an empty `set[T]`, same as `default(set[T])`
   result = {}
 
 func fullSet*[T: Ordinal](x: typedesc[T]): set[T] {.inline.} =
