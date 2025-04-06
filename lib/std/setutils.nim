@@ -20,7 +20,7 @@ func fullSet*[T: Ordinal](x: typedesc[T]): set[T] {.inline.} =
   ## Returns a `set[T]` with all elements
   {T.low .. T.high}
 
-func complement*[T: Ordinal](s: set[T]): set[T] =
+func complement*[T: Ordinal](s: set[T]): set[T] {.inline.} =
   ## Returns a `set[T]` with the elements that are not inside
   fullSet(T) - s
 
