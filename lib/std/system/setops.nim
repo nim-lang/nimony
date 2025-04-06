@@ -39,3 +39,12 @@ proc cardSetImpl(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
 
 proc cardSet(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
   result = cardSetImpl(s, len)
+
+iterator items*[T: Ordinal](x: set[T]): T =
+  ## Iterates over all elements inside the `set[T]`.
+  ## This iterator walks from `low(T)` to `high(T)`
+  ## yielding each element found
+  var i = low(T)
+  while i <= high(T):
+    if x.contains(i): yield i
+    inc(i)
