@@ -12,8 +12,6 @@
 Implements "pass by const" by introducing more hidden pointers.
 We do this right before inlining and before codegen as it interacts with the
 codegen's `maybeByConstRef` logic.
-
-Now this pass also handles method calls and transforms the `of` operator.
 ]##
 
 import std / [sets, assertions]
@@ -44,19 +42,20 @@ proc rememberConstRefParams(c: var Context; params: Cursor) =
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
-  var c2 = Context(ptrSize: c.ptrSize, typeCache: createTypeCache(), needsXelim: c.needsXelim)
+  var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim)
   c2.typeCache.openScope()
   copyInto(dest, n):
     let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
     if isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):
-        c.typeCache.registerLocal(symId, r.kind, r.params)
+        c2.typeCache.registerLocal(symId, r.kind, r.params)
       rememberConstRefParams c2, r.params
       tr c2, dest, n
     else:
       takeTree dest, n
   c2.typeCache.closeScope()
+  c.typeCache = move(c2.typeCache)
   c.needsXelim = c2.needsXelim
 
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -83,25 +82,10 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, HaddrX, info:
       tr c, dest, n
 
-proc isMethod(c: var Context; s: SymId): bool =
-  let res = tryLoadSym(s)
-  if res.status == LacksNothing:
-    result = res.decl.symKind == MethodY
-  else:
-    let info = getLocalInfo(c.typeCache, s)
-    result = info.kind == MethodY
-
-proc trMethodFn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  takeTree dest, n
-
-proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add n
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  if not forceStaticCall and n.kind == Symbol and isMethod(c, n.symId):
-    trMethodFn c, dest, n
-  else:
-    takeTree dest, n # skip `fn`
   assert fnType.tagEnum == ParamsTagId
   inc fnType
   while n.kind != ParRi:
@@ -123,14 +107,6 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: 
     else:
       tr c, dest, n
   takeParRi dest, n
-
-proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  inc n
-  if n.exprKind in CallKinds:
-    trCall c, dest, n, true
-  else:
-    tr c, dest, n
-  skipParRi n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -204,9 +180,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let ek = n.exprKind
       case ek
       of CallKinds:
-        trCall c, dest, n, false
-      of ProcCallX:
-        trProcCall c, dest, n
+        trCall c, dest, n
       of PragmaxX:
         trPragmaBlock c, dest, n
       of AddX, SubX, MulX, DivX, ModX:

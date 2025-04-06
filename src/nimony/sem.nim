@@ -3540,7 +3540,7 @@ proc attachMethod(c: var SemContext; symId: SymId;
       skip params # name
       skip params # export marker
       skip params # pragmas
-      root = nominalRoot(params)
+      root = getClass(params)
   if root == SymId(0):
     let typ = typeToString(params)
     c.dest.endRead()
