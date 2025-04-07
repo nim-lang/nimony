@@ -100,6 +100,18 @@ proc open*(f: out File; filename: string;
   else:
     result = false
 
+proc open*(filename: string,
+            mode: FileMode = fmRead, bufSize: int = -1): File =
+  ## Opens a file named `filename` with given `mode`.
+  ##
+  ## Default mode is readonly. Raises an `IOError` if the file
+  ## could not be opened.
+  result = default(File)
+  if not open(result, filename, mode, bufSize):
+    # TODO: raise exception when it is supported.
+    #raise newException(IOError, "cannot open: " & filename)
+    discard
+
 template echo*() {.varargs.} =
   for x in unpack():
     write stdout, x
