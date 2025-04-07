@@ -85,12 +85,12 @@ include "system/defaults"
 include "system/countbits_impl"
 include "system/setops"
 
+include "system/ctypes"
+
 include "system/memory"
 include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"
-
-include "system/ctypes"
 
 include "system/atomics"
 
