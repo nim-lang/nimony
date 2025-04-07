@@ -2916,6 +2916,7 @@ proc tryTypeClass(c: var SemContext; n: var Cursor): bool =
     result = false
 
 proc isOrExpr(n: Cursor): bool =
+  # old nim special cases `|` infixes in type contexts
   result = n.exprKind == InfixX
   if result:
     var n = n
