@@ -171,19 +171,19 @@ proc addCharLit*(b: var Builder; c: char) =
     b.put c
   b.put '\''
 
-proc addIntLit*(b: var Builder; i: BiggestInt) =
+proc addIntLit*(b: var Builder; i: int64) =
   addSep b
   if i >= 0:
     b.buf.add '+'
   b.put $i
 
-proc addUIntLit*(b: var Builder; u: BiggestUInt) =
+proc addUIntLit*(b: var Builder; u: uint64) =
   addSep b
   b.buf.add '+'
   b.put $u
   b.buf.add 'u'
 
-proc addFloatLit*(b: var Builder; f: BiggestFloat) =
+proc addFloatLit*(b: var Builder; f: float) =
   addSep b
   let myLen = b.buf.len
   drainPending b
@@ -282,7 +282,7 @@ template withTree*(b: var Builder; kind: string; body: untyped) =
   body
   endTree b
 
-proc addUIntLit*(b: var Builder; u: BiggestUInt; suffix: string) =
+proc addUIntLit*(b: var Builder; u: uint64; suffix: string) =
   withTree(b, "suf"):
     addUIntLit(b, u)
     addStrLit(b, suffix)
