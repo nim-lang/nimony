@@ -19,28 +19,20 @@ s.toggle({B, C, D}); assert s == {A..E}
 
 # --- set complement ---
 
-assert emptySet(Foo) == {}
-assert emptySet(Foo).isEmpty()
-assert not emptySet(Foo).isFull()
 assert fullSet(Foo) == {A, B, C, D, E, F}
-assert fullSet(Foo).isFull()
-assert not fullSet(Foo).isEmpty()
-
 assert complement({A, B, C}) == {D, E, F}
 assert complement({D, E, F}) == {A, B, C}
 
 # --- set element syntax sugar ---
 
-assert s[A] == true
-assert s[F] == false
-s[A] = false; assert s[A] != true
-s[F] = true; assert s[F] != false
+s[A] = true; assert s.contains(A) == true
+s[F] = true; assert s.contains(F) == true
+s[A] = false; assert s.contains(A) == false
+s[F] = false; assert s.contains(F) == false
 
 # --- set element iterator ---
 
-s = emptySet(Foo)
-s1 = {A, D..F}
-
+s = {}; s1 = {A, D..F}
 for foo in s1.items:
   s.incl(foo)
 assert s == s1
