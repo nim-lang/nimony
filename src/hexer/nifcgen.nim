@@ -395,7 +395,7 @@ proc traverseType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
     case n.typeKind
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
       error c, "type expected but got: ", n
-    of IntT, UIntT:
+    of IntT, UintT, FloatT, CharT:
       let start = c.dest.len
       c.dest.add n
       inc n

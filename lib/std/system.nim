@@ -90,6 +90,8 @@ include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"
 
+include "system/ctypes"
+
 include "system/atomics"
 
 proc newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
