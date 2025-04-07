@@ -5775,7 +5775,8 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
     var name = default(string)
     let compileType = args[0].toLowerAscii()
     # Extract build pragma compile type
-    if compileType == "c" or compileType == "l":
+    # XXX: for now only works for c backend
+    if compileType == "c" or compileType == "c.link":
       name = replacePathSubs(c.g.config, args[1], currentDir)
       name = name.toAbsolutePath(currentDir)
       if not semos.fileExists(name):

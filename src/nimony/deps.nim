@@ -269,12 +269,7 @@ proc rootPath(c: DepContext): string =
   result = relativePath(result, os.getCurrentDir())
 
 proc writeCacheFile(c: DepContext, path, content: string) =
-  let needUpdate =
-    if semos.fileExists(path) and not c.forceRebuild:
-      content != readFile path
-    else: true
-  # modify the cache file
-  if needUpdate:
+  if not semos.fileExists(path) or c.forceRebuild or content != readFile(path):
     writeFile path, content
 
 proc toBuildList(c: DepContext): CBuildList =
@@ -292,9 +287,9 @@ proc toBuildList(c: DepContext): CBuildList =
           p.modname & ".o",
           customCflags,
           cacheCflags)
-      of "l": result.oFiles.add i[1]
-      of "passc": result.passC.add i[2] & "\t"
-      of "passl": result.passL.add i[2] & "\t"
+      of "c.link": result.oFiles.add i[1]
+      of "c.passc": result.passC.add i[2] & "\t"
+      of "c.passl": result.passL.add i[2] & "\t"
 
 proc generateCachedPassCFile(c: DepContext, buildList: CBuildList): string =
   var node {.cursor.} = c.rootNode
