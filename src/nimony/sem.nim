@@ -4278,7 +4278,7 @@ proc fitTypeToPragmas(c: var SemContext; pragmas: CrucialPragma; typeStart: int)
     if isNominal(typ.typeKind):
       # ok
       endRead(c.dest)
-    elif typ.typeKind in {IntT, UintT}:
+    elif typ.typeKind in {IntT, UintT, FloatT, CharT}:
       let info = typ.info
       endRead(c.dest)
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
