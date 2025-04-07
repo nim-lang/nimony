@@ -246,6 +246,17 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
 proc matchAtomicConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
+  of OrT:
+    # not sure if this makes sense
+    # this implies we might need a canonical form
+    inc f
+    while f.kind != ParRi:
+      var f2 = f
+      if matchesConstraint(m, f2, a):
+        result = true
+        break
+      skip f
+    skipToEnd f
   of ConceptT:
     # XXX Use some algorithm here that can cache the result
     # so that it can remember e.g. "int fulfils Fibable". For
@@ -334,15 +345,15 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
         break
       skip f
     skipToEnd f
-  of OrT:
-    inc f
-    while f.kind != ParRi:
-      var f2 = f
-      if matchesConstraintAux(m, f2, a):
-        result = true
-        break
-      skip f
-    skipToEnd f
+  #of OrT:
+  #  inc f
+  #  while f.kind != ParRi:
+  #    var f2 = f
+  #    if matchesConstraintAux(m, f2, a):
+  #      result = true
+  #      break
+  #    skip f
+  #  skipToEnd f
   of NotT:
     # XXX handle not/not case somehow
     inc f
