@@ -45,6 +45,8 @@ iterator items*[T: Ordinal](x: set[T]): T =
   ## This iterator walks from `low(T)` to `high(T)`
   ## yielding each element found
   var i = low(T)
-  while i <= high(T):
-    if x.contains(i): yield i
-    inc(i)
+  if i <= high(T):
+    while true:
+      if x.contains(i): yield i
+      if i >= high(T): break
+      inc(i)
