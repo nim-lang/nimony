@@ -124,10 +124,13 @@ proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
   c.add ParRi
   c.add Space
   c.add CurlyLe
+  let beforeAsgn = c.code.len
+  var sections = 0
   c.add varName & " = true;"
   c.add NewLine
   if n.kind != DotToken:
     c.genStmt n
+    inc sections
   else:
     inc n
   c.add CurlyRi
@@ -135,8 +138,12 @@ proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
   # Finally section
   if n.kind != DotToken:
     c.genStmt n
+    inc sections
   else:
     inc n
+  if sections == 0:
+    c.code.shrink beforeAsgn
+    c.add CurlyRi
 
   # Rethrow original exception if needed
   c.add "if (" & varName & ") { throw; }"
