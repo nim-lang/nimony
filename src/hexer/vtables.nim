@@ -16,26 +16,21 @@
 import std/[assertions, tables]
 
 include nifprelude
-import nifindexes, symparser, treemangler, typekeys, hexer_context
-import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, renderer, typeprops]
+import nifindexes, symparser, treemangler, typekeys
+import ".." / nimony / [nimony_model, decls, programs, typenav,
+  renderer, typeprops]
 from duplifier import constructsValue
 
 type
-  VTableEntry = object
-    methodSymId: SymId
-    implSymId: SymId
-
-  TypeWithVTable = object
-    typeSymId: SymId
-    vtableSymId: SymId  # symbol for the vtable
-    parent: SymId       # parent type's symbol (empty for root types)
-    methods: seq[VTableEntry]
-
   Context* = object
-    vtables: TokenBuf
+    vtableCounter: int
     tmpCounter: int
     typeCache: TypeCache
     needsXelim: bool
+    moduleSuffix: string
+    vindex: Table[(SymId, string), int] # (class, method) -> index; \
+      # string key takes parameter types into account so it just works with overloading
+    vtables: Table[SymId, seq[SymId]]
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -116,8 +111,8 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let typ = getType(c.typeCache, n)
   let cls = getClass(typ)
   if cls == SymId(0):
-    error "cannot call method `" & pool.syms[fn] & "` on type " & typeToString(typ)
     dest.add fnNode
+    error "cannot call method `" & pool.syms[fn] & "` on type " & typeToString(typ)
   else:
     let info = n.info
     let temp = evalOnce(c, dest, n)
@@ -202,22 +197,138 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc transformVTables*(n: Cursor; needsXelim: var bool): TokenBuf =
+when false:
+  # maybe we can use this later to provide better error messages
+  proc sameMethodSignatures(a, b: Cursor): bool =
+    var a = a
+    var b = b
+    if a.substructureKind != ParamsU: return false
+    if b.substructureKind != ParamsU: return false
+    inc a
+    inc b
+    # first parameter is of the class type and must be ignored:
+    skip a
+    skip b
+    while a.kind != ParRi and b.kind != ParRi:
+      let pa = takeLocal(a, SkipFinalParRi)
+      let pb = takeLocal(b, SkipFinalParRi)
+      if not sameTrees(pa.typ, pb.typ):
+        return false
+    if a.kind == ParRi and b.kind == ParRi:
+      inc a
+      inc b
+      # check return types
+      return sameTrees(a, b)
+    else:
+      return false
+
+proc methodKey(a: Cursor): string =
+  # First parameter was the class type and has already been skipped here!
+  var a = a
+  var b = createMangler(60)
+  while a.kind != ParRi:
+    let pa = takeLocal(a, SkipFinalParRi)
+    mangle b, pa.typ
+  inc a
+  # also add return type:
+  mangle b, a
+  result = b.extract()
+
+proc registerMethod(c: var Context; r: Routine; methodName: string) =
+  var p = r.params
+  if p.kind == ParLe:
+    inc p
+    let param = takeLocal(p, SkipFinalParRi)
+    let cls = getClass(param.typ)
+    if cls == SymId(0):
+      error "cannot attach method to type " & typeToString(param.typ)
+    else:
+      let sig = methodName & ":" & methodKey(p)
+      # see if this is an override:
+      var i = 0
+      for inh in inheritanceChain(cls):
+        if i == 0 and not c.vtables.hasKey(cls):
+          # direct base class: Take total number of methods:
+          c.vtables[cls] = c.vtables.getOrDefault(inh, @[])
+
+        let key = (inh, sig)
+        let methodIndex = c.vindex.getOrDefault(key, -1)
+        if methodIndex != -1:
+          # register as override:
+          c.vtables[cls][methodIndex] = r.name.symId
+          return
+        inc i
+      # not an override, register as new method:
+      c.vtables.mgetOrPut(cls, @[]).add r.name.symId
+      c.vindex[(cls, sig)] = c.vtables[cls].len - 1
+
+proc collectMethods(c: var Context; n: var Cursor) =
+  # we only care about top level methods
+  case n.stmtKind
+  of StmtsS:
+    inc n
+    while n.kind != ParRi:
+      collectMethods c, n
+    skipParRi n
+  of MethodS:
+    let r = takeRoutine(n, SkipFinalParRi)
+    if not r.isGeneric:
+      var methodName = pool.syms[r.name.symId]
+      extractBasename methodName
+      registerMethod c, r, methodName
+  else:
+    skip n
+
+proc computeVTableName(c: var Context; cls: SymId): SymId =
+  var clsName = pool.syms[cls]
+  extractBasename clsName
+  result = pool.syms.getOrIncl(clsName & ".vt." & $c.vtableCounter & "." & c.moduleSuffix)
+  inc c.vtableCounter
+
+proc emitVTables(c: var Context; dest: var TokenBuf) =
+  # Used the `mpairs` and `mitems` here to avoid copies.
+  for cls, methods in mpairs c.vtables:
+    dest.copyIntoKind ConstS, NoLineInfo:
+      dest.addSymDef computeVTableName(c, cls), NoLineInfo
+      dest.addEmpty2() # export marker, pragmas
+      dest.copyIntoKind ArrayT, NoLineInfo:
+        dest.addParPair PointerT, NoLineInfo
+        dest.addIntLit methods.len, NoLineInfo
+      dest.addParLe AconstrX, NoLineInfo
+      # array constructor also starts with a type, yuck:
+      dest.copyIntoKind ArrayT, NoLineInfo:
+        dest.addParPair PointerT, NoLineInfo
+        dest.addIntLit methods.len, NoLineInfo
+      for m in mitems(methods):
+        dest.copyIntoKind CastX, NoLineInfo:
+          dest.addParPair PointerT, NoLineInfo
+          dest.addSymUse m, NoLineInfo
+      dest.addParRi()
+
+proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =
   var c = Context(
-    vtables: createTokenBuf(300),
     typeCache: createTypeCache(),
+    moduleSuffix: moduleSuffix,
     needsXelim: needsXelim
   )
   c.typeCache.openScope()
 
   var dest = createTokenBuf(300)
 
+  var n2 = n
+  # XXX This has the fatal flaw right now that it assumes
+  # the methods of the base class are complete before the processing
+  # of the derived class begins!
+  collectMethods c, n2
+
   var n = n
   assert n.stmtKind == StmtsS
   dest.add n
   inc n
+
+  emitVTables c, dest
+
   while n.kind != ParRi: tr c, dest, n
-  dest.add c.vtables
   dest.addParRi()
 
   c.typeCache.closeScope()
