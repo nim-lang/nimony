@@ -83,6 +83,7 @@ type
 
   CurrentProc* = object
     needsOverflowFlag: bool
+    nextTemp: int
 
   GeneratedCode* = object
     m: Module

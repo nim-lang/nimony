@@ -71,30 +71,84 @@ proc genWhile(c: var GeneratedCode; n: var Cursor) =
   c.inToplevel = oldInToplevel
 
 proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
+  #[ The generated code is equivalent to:
+    bool needsFinalRethrow = false;
+    try {
+        // original code
+    } catch (...) {
+        needsFinalRethrow = true;
+        // catch block code
+    }
+
+    // finally section
+    if (needsFinalRethrow) { throw; }
+
+    Possible cases:
+    1. No exception in original code:
+       - needsFinalRethrow stays false
+       - finally runs normally
+       - needsFinalRethrow check fails, no rethrow
+
+    2. Exception in original code, no exception in finally:
+       - needsFinalRethrow set to true
+       - finally runs normally
+       - needsFinalRethrow succeeds, original exception rethrown
+
+    3. No exception in original code, exception in finally:
+       - needsFinalRethrow stays false
+       - finally throws directly
+       - never reaches rethrow check
+
+    4. Exception in original code, exception in finally:
+       - needsFinalRethrow set to true
+       - finally throws directly
+       - never reaches rethrow check
+  ]#
   inc n
 
+  # Add needsFinalRethrow flag
+  let varName = "needsFinalRethrow" & $c.currentProc.nextTemp
+  inc c.currentProc.nextTemp
+  c.add "bool " & varName & " = false;"
+  c.add NewLine
+
+  # Try block
   c.add TryKeyword
   c.add CurlyLe
   c.genStmt n
   c.add CurlyRi
 
+  # Catch block for original exception
   c.add CatchKeyword
   c.add "..."
   c.add ParRi
   c.add Space
   c.add CurlyLe
+  let beforeAsgn = c.code.len
+  var sections = 0
+  c.add varName & " = true;"
+  c.add NewLine
   if n.kind != DotToken:
     c.genStmt n
+    inc sections
   else:
     inc n
   c.add CurlyRi
 
+  # Finally section
   if n.kind != DotToken:
-    c.add CurlyLe
     c.genStmt n
-    c.add CurlyRi
+    inc sections
   else:
     inc n
+  if sections == 0:
+    c.code.shrink beforeAsgn
+    c.add CurlyRi
+
+  # Rethrow original exception if needed
+  c.add "if (" & varName & ") { throw; }"
+  c.add NewLine
+
   skipParRi n
 
 proc genScope(c: var GeneratedCode; n: var Cursor) =
