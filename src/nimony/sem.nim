@@ -4008,7 +4008,10 @@ proc semWhen(c: var SemContext; it: var Item) =
     while it.n.substructureKind == ElifU:
       takeToken c, it.n
       let condStart = c.dest.len
+      var phase = SemcheckBodies
+      swap c.phase, phase
       semConstBoolExpr c, it.n
+      swap c.phase, phase
       let condValue = cursorAt(c.dest, condStart).exprKind
       endRead(c.dest)
       if not leaveUnresolved:
