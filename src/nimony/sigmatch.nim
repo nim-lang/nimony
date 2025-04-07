@@ -246,18 +246,6 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
 proc matchAtomicConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
-  of NotT:
-    inc f
-    if a.typeKind == NotT:
-      # not T subset of not U <=> U subset of T
-      var a2 = a
-      inc a2
-      result = matchesConstraint(m, a2, f)
-      skip f
-    else:
-      result = not matchesConstraint(m, f, a)
-      if f.kind != ParRi: result = false
-      skipToEnd f
   of ConceptT:
     # XXX Use some algorithm here that can cache the result
     # so that it can remember e.g. "int fulfils Fibable". For
@@ -310,7 +298,7 @@ proc matchAtomicConstraintComponents(m: var Match; f: var Cursor; a: Cursor): bo
     # if any of the components match, the entire type matches
     while component.kind != ParRi:
       var f2 = f
-      if matchAtomicConstraintComponents(m, f2, component):
+      if matchesConstraint(m, f2, component):
         f = f2
         return true
       skip component
@@ -322,7 +310,7 @@ proc matchAtomicConstraintComponents(m: var Match; f: var Cursor; a: Cursor): bo
     # all of the potential `or` branches have to match
     while component.kind != ParRi:
       var f2 = f
-      if not matchAtomicConstraintComponents(m, f2, component):
+      if not matchesConstraint(m, f2, component):
         f = f2
         return false
       skip component
@@ -333,7 +321,7 @@ proc matchAtomicConstraintComponents(m: var Match; f: var Cursor; a: Cursor): bo
     else:
       result = matchAtomicConstraint(m, f, a)
 
-proc matchTypeclass(m: var Match; f: var Cursor; a: Cursor): bool =
+proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
   of AndT:
@@ -341,7 +329,7 @@ proc matchTypeclass(m: var Match; f: var Cursor; a: Cursor): bool =
     result = true
     while f.kind != ParRi:
       var f2 = f
-      if not matchesConstraint(m, f2, a):
+      if not matchesConstraintAux(m, f2, a):
         result = false
         break
       skip f
@@ -350,11 +338,16 @@ proc matchTypeclass(m: var Match; f: var Cursor; a: Cursor): bool =
     inc f
     while f.kind != ParRi:
       var f2 = f
-      if matchesConstraint(m, f2, a):
+      if matchesConstraintAux(m, f2, a):
         result = true
         break
       skip f
     skipToEnd f
+  of NotT:
+    # XXX handle not/not case somehow
+    inc f
+    result = not matchesConstraintAux(m, f, a)
+    skipParRi f
   else:
     # assume typeclass is atomic
     result = matchAtomicConstraintComponents(m, f, a)
@@ -370,7 +363,7 @@ proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     if res.decl.symKind == TypevarY:
       var typevar = asTypevar(res.decl)
       return matchesConstraint(m, f, typevar.typ)
-  result = matchTypeclass(m, f, a)
+  result = matchesConstraintAux(m, f, a)
 
 proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   let res = tryLoadSym(f)
