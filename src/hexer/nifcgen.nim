@@ -410,7 +410,7 @@ proc traverseType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
         skipParRi c, n
       else:
         takeParRi c, n
-    of FloatT, CharT, BoolT, AutoT, SymKindT:
+    of BoolT, AutoT, SymKindT:
       c.loop n:
         c.dest.add n
         inc n
