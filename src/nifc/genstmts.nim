@@ -72,45 +72,45 @@ proc genWhile(c: var GeneratedCode; n: var Cursor) =
 
 proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
   #[ The generated code is equivalent to:
+    bool needsFinalRethrow = false;
     try {
         // original code
     } catch (...) {
+        needsFinalRethrow = true;
         // catch block code
     }
 
-    bool finallyThrew = false;
-    // false = need to rethrow original, true = finally threw its own exception
-
-    try {
-        // finally section
-    } catch (...) {
-        finallyThrew = true;  // Mark that finally threw its own exception
-        throw;
-    }
-    if (!finallyThrew) { throw; }  // Rethrow original exception if finally didn't throw
+    // finally section
+    if (needsFinalRethrow) { throw; }
 
     Possible cases:
     1. No exception in original code:
-       - finallyThrew stays false
+       - needsFinalRethrow stays false
        - finally runs normally
-       - !finallyThrew check fails, no rethrow
+       - needsFinalRethrow check fails, no rethrow
 
     2. Exception in original code, no exception in finally:
-       - finallyThrew stays false
+       - needsFinalRethrow set to true
        - finally runs normally
-       - !finallyThrew check succeeds, original exception rethrown
+       - needsFinalRethrow succeeds, original exception rethrown
 
     3. No exception in original code, exception in finally:
-       - finallyThrew set to true in finally's catch
-       - finally's exception thrown
-       - !finallyThrew check fails, no rethrow of original (since there was none)
+       - needsFinalRethrow stays false
+       - finally throws directly
+       - never reaches rethrow check
 
     4. Exception in original code, exception in finally:
-       - finallyThrew set to true in finally's catch
-       - finally's exception thrown
-       - !finallyThrew check fails, original exception not rethrown (finally's exception takes precedence)
+       - needsFinalRethrow set to true
+       - finally throws directly
+       - never reaches rethrow check
   ]#
   inc n
+
+  # Add needsFinalRethrow flag
+  let varName = "needsFinalRethrow" & $c.currentProc.nextTemp
+  inc c.currentProc.nextTemp
+  c.add "bool " & varName & " = false;"
+  c.add NewLine
 
   # Try block
   c.add TryKeyword
@@ -124,37 +124,22 @@ proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
   c.add ParRi
   c.add Space
   c.add CurlyLe
+  c.add varName & " = true;"
+  c.add NewLine
   if n.kind != DotToken:
     c.genStmt n
   else:
     inc n
   c.add CurlyRi
 
-  # Add finallyThrew flag
-  c.add "bool finallyThrew = false;"
-  c.add NewLine
-
   # Finally section
   if n.kind != DotToken:
-    c.add TryKeyword
-    c.add CurlyLe
     c.genStmt n
-    c.add CurlyRi
-    c.add CatchKeyword
-    c.add "..."
-    c.add ParRi
-    c.add Space
-    c.add CurlyLe
-    c.add "finallyThrew = true;"
-    c.add NewLine
-    c.add "throw;"
-    c.add NewLine
-    c.add CurlyRi
   else:
     inc n
 
   # Rethrow original exception if needed
-  c.add "if (!finallyThrew) { throw; }"
+  c.add "if (" & varName & ") { throw; }"
   c.add NewLine
 
   skipParRi n
