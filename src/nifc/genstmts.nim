@@ -71,13 +71,54 @@ proc genWhile(c: var GeneratedCode; n: var Cursor) =
   c.inToplevel = oldInToplevel
 
 proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
+  #[ The generated code is equivalent to:
+    try {
+        // original code
+    } catch (...) {
+        // catch block code
+    }
+
+    bool finallyThrew = false;
+    // false = need to rethrow original, true = finally threw its own exception
+
+    try {
+        // finally section
+    } catch (...) {
+        finallyThrew = true;  // Mark that finally threw its own exception
+        throw;
+    }
+    if (!finallyThrew) { throw; }  // Rethrow original exception if finally didn't throw
+
+    Possible cases:
+    1. No exception in original code:
+       - finallyThrew stays false
+       - finally runs normally
+       - !finallyThrew check fails, no rethrow
+
+    2. Exception in original code, no exception in finally:
+       - finallyThrew stays false
+       - finally runs normally
+       - !finallyThrew check succeeds, original exception rethrown
+
+    3. No exception in original code, exception in finally:
+       - finallyThrew set to true in finally's catch
+       - finally's exception thrown
+       - !finallyThrew check fails, no rethrow of original (since there was none)
+
+    4. Exception in original code, exception in finally:
+       - finallyThrew set to true in finally's catch
+       - finally's exception thrown
+       - !finallyThrew check fails, original exception not rethrown (finally's exception takes precedence)
+  ]#
   inc n
 
+  # Try block
   c.add TryKeyword
   c.add CurlyLe
   c.genStmt n
   c.add CurlyRi
 
+  # Catch block for original exception
   c.add CatchKeyword
   c.add "..."
   c.add ParRi
@@ -89,12 +130,33 @@ proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
     inc n
   c.add CurlyRi
 
+  # Add finallyThrew flag
+  c.add "bool finallyThrew = false;"
+  c.add NewLine
+
+  # Finally section
   if n.kind != DotToken:
+    c.add TryKeyword
     c.add CurlyLe
     c.genStmt n
     c.add CurlyRi
+    c.add CatchKeyword
+    c.add "..."
+    c.add ParRi
+    c.add Space
+    c.add CurlyLe
+    c.add "finallyThrew = true;"
+    c.add NewLine
+    c.add "throw;"
+    c.add NewLine
+    c.add CurlyRi
   else:
     inc n
+
+  # Rethrow original exception if needed
+  c.add "if (!finallyThrew) { throw; }"
+  c.add NewLine
+
   skipParRi n
 
 proc genScope(c: var GeneratedCode; n: var Cursor) =
