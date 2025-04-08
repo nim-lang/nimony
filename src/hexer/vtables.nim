@@ -18,7 +18,7 @@ import std/[assertions, tables]
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys
 import ".." / nimony / [nimony_model, decls, programs, typenav,
-  renderer, typeprops]
+  renderer, builtintypes, typeprops]
 from duplifier import constructsValue
 
 type
@@ -31,9 +31,24 @@ type
     vindex: Table[(SymId, string), int] # (class, method) -> index; \
       # string key takes parameter types into account so it just works with overloading
     vtables: Table[SymId, seq[SymId]]
+    vtableNames: Table[SymId, SymId]
+    getRttiSym: SymId
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+
+proc computeVTableName(c: var Context; cls: SymId): SymId =
+  var clsName = pool.syms[cls]
+  extractBasename clsName
+  result = pool.syms.getOrIncl(clsName & ".vt." & $c.vtableCounter & "." & c.moduleSuffix)
+  inc c.vtableCounter
+
+proc getVTableName(c: var Context; cls: SymId): SymId =
+  if c.vtableNames.hasKey(cls):
+    result = c.vtableNames[cls]
+  else:
+    result = computeVTableName(c, cls)
+    c.vtableNames[cls] = result
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
@@ -131,15 +146,27 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.kind != ParRi:
       tr c, dest, n
 
+proc trGetRtti(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n # call
+  skip n # skip "getRtti" symbol
+  assert n.kind == Symbol # we have the class name here
+  dest.addSymUse getVTableName(c, n.symId), info
+  inc n
+  skipParRi n
+
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
-  dest.add n
-  inc n # skip `(call)`
   if not forceStaticCall and n.kind == Symbol and isMethod(c, n.symId):
+    dest.takeToken n # skip `(call)`
     trMethodCall c, dest, n
+    takeParRi dest, n
+  elif n.kind == Symbol and n.symId == c.getRttiSym:
+    trGetRtti c, dest, n
   else:
+    dest.takeToken n # skip `(call)`
     while n.kind != ParRi:
       tr c, dest, n
-  takeParRi dest, n
+    takeParRi dest, n
 
 proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n # (procCall)
@@ -280,17 +307,11 @@ proc collectMethods(c: var Context; n: var Cursor) =
   else:
     skip n
 
-proc computeVTableName(c: var Context; cls: SymId): SymId =
-  var clsName = pool.syms[cls]
-  extractBasename clsName
-  result = pool.syms.getOrIncl(clsName & ".vt." & $c.vtableCounter & "." & c.moduleSuffix)
-  inc c.vtableCounter
-
 proc emitVTables(c: var Context; dest: var TokenBuf) =
   # Used the `mpairs` and `mitems` here to avoid copies.
   for cls, methods in mpairs c.vtables:
     dest.copyIntoKind ConstS, NoLineInfo:
-      dest.addSymDef computeVTableName(c, cls), NoLineInfo
+      dest.addSymDef getVTableName(c, cls), NoLineInfo
       dest.addEmpty2() # export marker, pragmas
       dest.copyIntoKind ArrayT, NoLineInfo:
         dest.addParPair PointerT, NoLineInfo
@@ -310,7 +331,8 @@ proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): T
   var c = Context(
     typeCache: createTypeCache(),
     moduleSuffix: moduleSuffix,
-    needsXelim: needsXelim
+    needsXelim: needsXelim,
+    getRttiSym: pool.syms.getOrIncl("getRtti.0." & SystemModuleSuffix)
   )
   c.typeCache.openScope()
 
