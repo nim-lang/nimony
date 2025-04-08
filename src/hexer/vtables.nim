@@ -155,9 +155,27 @@ proc trGetRtti(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n # call
   skip n # skip "getRtti" symbol
   assert n.kind == Symbol # we have the class name here
-  dest.addSymUse getVTableName(c, n.symId), info
+  dest.copyIntoKind AddrX, info:
+    dest.addSymUse getVTableName(c, n.symId), info
   inc n
   skipParRi n
+
+proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  dest.takeToken n # objconstr
+  var cls = SymId(0)
+  if n.kind == Symbol and hasRtti(n.symId):
+    cls = n.symId
+
+  dest.takeTree n # type
+  if cls != SymId(0):
+    dest.copyIntoKind KvU, info:
+      dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+      dest.copyIntoKind AddrX, info:
+        dest.addSymUse getVTableName(c, cls), info
+  while n.kind != ParRi:
+    tr c, dest, n
+  takeParRi dest, n
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
   if not forceStaticCall and n.kind == Symbol and isMethod(c, n.symId):
@@ -209,6 +227,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trCall c, dest, n, false
       of ProcCallX:
         trProcCall c, dest, n
+      of OconstrX:
+        trObjConstr c, dest, n
       else:
         case n.stmtKind
         of ProcS, FuncS, MacroS, MethodS, ConverterS:

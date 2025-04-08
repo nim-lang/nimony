@@ -106,7 +106,7 @@ proc `of`*[T, S](x: T; y: typedesc[S]): bool {.magic: "Of", noSideEffect.}
 proc procCall*[T](x: T): untyped {.magic: "ProcCall".}
 
 type
-  Rtti = object
+  Rtti* = object
     display: ptr UncheckedArray[cstring]
     vtable: UncheckedArray[pointer]
 
