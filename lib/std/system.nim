@@ -36,6 +36,25 @@ include "system/comparisons"
 proc defined*(x: untyped): bool {.magic: Defined.}
 proc declared*(x: untyped): bool {.magic: Declared.}
 
+const Int64strbufsize = 24
+# TODO: Replace c_snprintf with better algorithm.
+proc c_snprintf(str: out array[Int64strbufsize, char]; n: uint; fmt: cstring):int32 {.
+                header: "<stdio.h>", importc: "snprintf", varargs, noSideEffect.}
+
+proc `$`*(x: int64): string =
+  var buf: array[Int64strbufsize, char]
+  let n = c_snprintf(buf, Int64strbufsize.uint, "%lld", x)
+  result = newStringOfCap(n)
+  for i in 0 ..< n:
+    result.add buf[i]
+
+proc `$`*(x: uint64): string =
+  var buf: array[Int64strbufsize, char]
+  let n = c_snprintf(buf, Int64strbufsize.uint, "%llu", x)
+  result = newStringOfCap(n)
+  for i in 0 ..< n:
+    result.add buf[i]
+
 proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
