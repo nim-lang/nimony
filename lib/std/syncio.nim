@@ -110,7 +110,7 @@ proc open*(filename: string,
   if not open(result, filename, mode, bufSize):
     # TODO: raise exception when it is supported.
     #raise newException(IOError, "cannot open: " & filename)
-    discard
+    quit "cannot open: " & filename
 
 template echo*() {.varargs.} =
   for x in unpack():
