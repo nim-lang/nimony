@@ -22,6 +22,10 @@ import ".." / nimony / [nimony_model, decls, programs, typenav,
 from duplifier import constructsValue
 
 type
+  VTable = object
+    display: seq[SymId]
+    methods: seq[SymId]
+
   Context* = object
     vtableCounter: int
     tmpCounter: int
@@ -30,7 +34,7 @@ type
     moduleSuffix: string
     vindex: Table[(SymId, string), int] # (class, method) -> index; \
       # string key takes parameter types into account so it just works with overloading
-    vtables: Table[SymId, seq[SymId]]
+    vtables: Table[SymId, VTable]
     vtableNames: Table[SymId, SymId]
     getRttiSym: SymId
 
@@ -116,7 +120,7 @@ proc isMethod(c: var Context; s: SymId): bool =
     result = info.kind == MethodY
 
 proc getMethodIndex(c: var Context; cls, fn: SymId): int =
-  for i, m in pairs(c.vtables[cls]):
+  for i, m in pairs(c.vtables[cls].methods):
     if m == fn: return i
   error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
 
@@ -277,18 +281,18 @@ proc registerMethod(c: var Context; r: Routine; methodName: string) =
       for inh in inheritanceChain(cls):
         if i == 0 and not c.vtables.hasKey(cls):
           # direct base class: Take total number of methods:
-          c.vtables[cls] = c.vtables.getOrDefault(inh, @[])
+          c.vtables[cls] = c.vtables.getOrDefault(inh, VTable(display: @[], methods: @[]))
 
         let key = (inh, sig)
         let methodIndex = c.vindex.getOrDefault(key, -1)
         if methodIndex != -1:
           # register as override:
-          c.vtables[cls][methodIndex] = r.name.symId
+          c.vtables[cls].methods[methodIndex] = r.name.symId
           return
         inc i
       # not an override, register as new method:
-      c.vtables.mgetOrPut(cls, @[]).add r.name.symId
-      c.vindex[(cls, sig)] = c.vtables[cls].len - 1
+      c.vtables.mgetOrPut(cls, VTable(display: @[], methods: @[])).methods.add r.name.symId
+      c.vindex[(cls, sig)] = c.vtables[cls].methods.len - 1
 
 proc collectMethods(c: var Context; n: var Cursor) =
   # we only care about top level methods
@@ -309,19 +313,19 @@ proc collectMethods(c: var Context; n: var Cursor) =
 
 proc emitVTables(c: var Context; dest: var TokenBuf) =
   # Used the `mpairs` and `mitems` here to avoid copies.
-  for cls, methods in mpairs c.vtables:
+  for cls, vtab in mpairs c.vtables:
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo
       dest.addEmpty2() # export marker, pragmas
       dest.copyIntoKind ArrayT, NoLineInfo:
         dest.addParPair PointerT, NoLineInfo
-        dest.addIntLit methods.len, NoLineInfo
+        dest.addIntLit vtab.methods.len, NoLineInfo
       dest.addParLe AconstrX, NoLineInfo
       # array constructor also starts with a type, yuck:
       dest.copyIntoKind ArrayT, NoLineInfo:
         dest.addParPair PointerT, NoLineInfo
-        dest.addIntLit methods.len, NoLineInfo
-      for m in mitems(methods):
+        dest.addIntLit vtab.methods.len, NoLineInfo
+      for m in mitems(vtab.methods):
         dest.copyIntoKind CastX, NoLineInfo:
           dest.addParPair PointerT, NoLineInfo
           dest.addSymUse m, NoLineInfo
