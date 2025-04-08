@@ -4168,7 +4168,7 @@ proc semFor(c: var SemContext; it: var Item) =
   semExpr c, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
   var isMacroLike = false
-  if c.dest[beforeCall+1].kind == Symbol and c.isIterator(c.dest[beforeCall+1].symId):
+  if c.dest.len > beforeCall+1 and c.dest[beforeCall+1].kind == Symbol and c.isIterator(c.dest[beforeCall+1].symId):
     discard "fine"
   elif c.dest[beforeCall].kind == ParLe and
       (c.dest[beforeCall].tagId == TagId(FieldsTagId) or
@@ -4181,7 +4181,7 @@ proc semFor(c: var SemContext; it: var Item) =
     return
   elif iterCall.typ.typeKind == UntypedT or
       # for iterators from concepts in generic context:
-      c.dest[beforeCall+1].kind == Ident:
+      (c.dest.len > beforeCall+1 and c.dest[beforeCall+1].kind == Ident):
     isMacroLike = true
   else:
     buildErr c, callInfo, "iterator expected"
