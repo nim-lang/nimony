@@ -101,8 +101,9 @@ proc isMethod(c: var Context; s: SymId): bool =
     result = info.kind == MethodY
 
 proc getMethodIndex(c: var Context; cls, fn: SymId): int =
-  # XXX To implement
-  result = 0
+  for i, m in pairs(c.vtables[cls]):
+    if m == fn: return i
+  error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
 
 proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fnNode = n.load()

@@ -341,3 +341,6 @@ proc hasRtti*(s: SymId): bool =
   skip n # export marker
   skip n # type vars
   result = hasPragma(n, InheritableP) and not hasPragma(n, PureP)
+
+proc hasRtti*(pragmas: Cursor): bool =
+  hasPragma(pragmas, InheritableP) and not hasPragma(pragmas, PureP)

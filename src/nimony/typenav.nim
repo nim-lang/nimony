@@ -18,6 +18,7 @@ import nimony_model, builtintypes, decls, programs
 const
   RcField* = "r.0."
   DataField* = "d.0."
+  VTableField* = "vt.0."
   GeneratedTypeSuffix* = ".0.t"
 
 type
