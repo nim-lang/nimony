@@ -72,6 +72,19 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
     copyTree dest, typ # type
     dest.addDotToken() # value
 
+proc declareTempCursor(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
+  let info = n.info
+  let typ = getType(c.typeCache, n)
+  let s = "`x." & $c.counter & "." & c.thisModuleSuffix
+  inc c.counter
+  result = pool.syms.getOrIncl(s)
+  copyIntoKind dest, CursorS, info:
+    dest.addSymDef result, info
+    dest.addDotToken() # export, pragmas
+    dest.addDotToken()
+    copyTree dest, typ # type
+    dest.addDotToken() # value
+
 proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo): SymId =
   let s = "`x." & $c.counter & "." & c.thisModuleSuffix
   inc c.counter
@@ -356,7 +369,25 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsIgnored)
     trTry c, dest, n, tar
 
-  of RetS, DiscardS, RaiseS, YldS:
+  of RetS:
+    var tar = Target(m: IsEmpty)
+    let head = n
+    inc n
+    echo n
+    echo isComplex(n)
+    if n.exprKind == CallX:
+      # TODO: we need a cursor to the call to ensure that we can destroy safely
+      let tmp = declareTempCursor(c, dest, n)
+      trExprInto c, dest, n, tmp
+      dest.add head
+      dest.addSymUse tmp, n.info
+    else:
+      trExpr c, dest, n, tar
+      dest.add head
+      dest.add tar
+    dest.addParRi()
+    skipParRi n
+  of DiscardS, RaiseS, YldS:
     var tar = Target(m: IsEmpty)
     let head = n
     inc n
