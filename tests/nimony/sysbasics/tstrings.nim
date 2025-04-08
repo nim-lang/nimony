@@ -11,6 +11,16 @@ for i in 0..<10:
 
 assert mytext.len == 10
 
+block:
+  var mytext = newStringOfCap(10)
+  assert mytext.len == 0
+  mytext.add 'a'
+  assert mytext[0] == 'a'
+  assert mytext.len == 1
+  mytext.add 'b'
+  assert mytext == "ab"
+  assert mytext.len == 2
+
 # --- cstring tests ---
 
 func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
