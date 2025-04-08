@@ -1,8 +1,5 @@
 {.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-I${path}/../../../vendor/mimalloc/include").}
 
-type
-  csize_t* {.importc: "size_t", nodecl.} = uint
-
 proc mi_malloc(size: csize_t): pointer {.importc: "mi_malloc".}
 proc mi_calloc(nmemb: csize_t, size: csize_t): pointer {.importc: "mi_calloc".}
 proc mi_realloc(pt: pointer, size: csize_t): pointer {.importc: "mi_realloc".}

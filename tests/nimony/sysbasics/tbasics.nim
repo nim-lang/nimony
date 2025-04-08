@@ -1,3 +1,5 @@
+import std/[syncio, assertions]
+
 type
   Array = array[5, int]
 
@@ -114,3 +116,8 @@ proc foo2() =
   classify("9123345")
 
 foo2()
+
+proc bar(): string =
+  return (let x = "1212334"; x)
+
+assert bar() == "1212334"
