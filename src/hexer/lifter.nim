@@ -18,7 +18,7 @@ import std/[assertions, tables]
 
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys, hexer_context
-import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes]
+import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typeprops]
 
 type
   TypeCursor = Cursor
@@ -99,6 +99,9 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
     result = false
   of ObjectT:
     result = isTrivialObjectBody(c, r.body)
+    if result and c.op == attachedWasMoved and hasRtti(r.pragmas):
+      # We set the RTTI field in `=wasMoved` so objects with a vtable are not trivial.
+      result = false
   else:
     result = true
 
@@ -460,13 +463,28 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
     let fn = lift(c, typ)
     maybeCallHook c, fn, paramA, paramB
 
-proc unravelDispatch(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
+proc setupVTableField(c: var LiftingCtx; param: TokenBuf; cls: SymId) =
+  copyIntoKind c.dest, AsgnS, c.info:
+    copyIntoKind c.dest, DotX, c.info:
+      copyIntoKind c.dest, DerefX, c.info:
+        copyTree c.dest, param
+      copyIntoSymUse c.dest, pool.syms.getOrIncl(VTableField), c.info
+      c.dest.addIntLit(0, c.info)
+    copyIntoKind c.dest, CallX, c.info:
+      copyIntoSymUse c.dest, getCompilerProc(c, "getRtti"), c.info
+      copyIntoSymUse c.dest, cls, c.info
+
+proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenBuf) =
   #if isTrivial(c, typ):
   #  genTrivialOp c, paramA, paramB
   #  return
-  let typ = toTypeImpl typ
+  let typ = toTypeImpl orig
   case typ.typeKind
   of ObjectT:
+    if c.op == attachedWasMoved:
+      # setup VTable field:
+      if orig.kind == Symbol and hasRtti(orig.symId):
+        setupVTableField c, paramA, orig.symId
     unravelObj c, typ, paramA, paramB
   of DistinctT:
     unravelDispatch(c, typ.firstSon, paramA, paramB)

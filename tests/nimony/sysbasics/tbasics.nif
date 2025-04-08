@@ -316,7 +316,7 @@
     (not 13,123,tests/nimony/sysbasics/tbasics.nim
      (infix ==.19.sysvq0asl ~3
       (call ~3 bar.0.tbawx6nu81) 3 "1212334")) ~1,1
-    (stmts 2,104,lib/std/syncio.nim
+    (stmts 2,116,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
