@@ -369,7 +369,7 @@
     (if 3
      (elif 7
       (eq
-       (i +64) 2,67,lib/std/system.nim
+       (i +64) 2,86,lib/std/system.nim
        (expr ,~4
         (expr 45,2
          (add
@@ -398,7 +398,7 @@
            (uarray
             (i -1))) 32
           (addr 1 x.4))) 45
-        (kv ~45 len.6.Inff8aa1.tfo161bfb1 2,67,lib/std/system.nim
+        (kv ~45 len.6.Inff8aa1.tfo161bfb1 2,86,lib/std/system.nim
          (expr ,~4
           (expr 45,2
            (add
