@@ -121,8 +121,9 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           winget --version
-          Remove-Item -Recurse "${env:localappdata}\Temp\WinGet"
           Add-AppPackage -path "https://cdn.winget.microsoft.com/cache/source.msix"
+          winget --version
+          winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
           winget --version
           winget source update
           winget install --id ezwinports.make --disable-interactivity --accept-source-agreements --locale "en-US" --source msstore
