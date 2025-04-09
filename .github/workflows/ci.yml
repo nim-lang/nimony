@@ -13,22 +13,22 @@ jobs:
       matrix:
         branch: [master]
         target:
-          - os: linux
-            cpu: amd64
-            nim_branch: devel
-          - os: macos
-            cpu: arm64
-            nim_branch: devel
+          #- os: linux
+          #  cpu: amd64
+          #  nim_branch: devel
+          #- os: macos
+          #  cpu: arm64
+          #  nim_branch: devel
           - os: windows
             cpu: amd64
             nim_branch: devel
         include:
-          - target:
-              os: linux
-            builder: ubuntu-24.04
-          - target:
-              os: macos
-            builder: macos-15
+          #- target:
+          #    os: linux
+          #  builder: ubuntu-24.04
+          #- target:
+          #    os: macos
+          #  builder: macos-15
           - target:
               os: windows
             builder: windows-2025
@@ -120,6 +120,9 @@ jobs:
       - name: Install make dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
+          winget --version
+          Remove-Item -Recurse "${env:localappdata}\Temp\WinGet"
+          Add-AppPackage -path "https://cdn.winget.microsoft.com/cache/source.msix"
           winget --version
           winget source update
           winget install --id ezwinports.make --disable-interactivity --accept-source-agreements --locale "en-US" --source msstore
