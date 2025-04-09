@@ -31,6 +31,7 @@ type
   LiftingCtx* = object
     dest*: TokenBuf
     op: AttachedOp
+    routineKind: SymKind
     calledErrorHook: PackedLineInfo
     info: PackedLineInfo
     requests: seq[GenHookRequest]
@@ -481,10 +482,12 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
   let typ = toTypeImpl orig
   case typ.typeKind
   of ObjectT:
-    if c.op == attachedWasMoved:
-      # setup VTable field:
-      if orig.kind == Symbol and hasRtti(orig.symId):
+    if orig.kind == Symbol and hasRtti(orig.symId):
+      if c.op == attachedWasMoved:
+        # setup VTable field:
         setupVTableField c, paramA, orig.symId
+      elif c.op in {attachedDestroy, attachedTrace}:
+        c.routineKind = MethodY
     unravelObj c, typ, paramA, paramB
   of DistinctT:
     unravelDispatch(c, typ.firstSon, paramA, paramB)
@@ -596,6 +599,9 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       if c.dest.len == beforeUnravel:
         assert false, "empty hook created"
       maybeAddReturn c, paramA
+  # tell vtables.nim we need dynamic binding here:
+  if c.routineKind == MethodY:
+    c.dest[procStart] = parLeToken(MethodS, c.info)
 
   if c.calledErrorHook != NoLineInfo:
     c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
@@ -608,14 +614,16 @@ proc genMissingHooks*(c: var LiftingCtx) =
     let reqs = move(c.requests)
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
+      c.routineKind = ProcY
       c.calledErrorHook = NoLineInfo
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int): ref LiftingCtx =
-  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits)
+  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
+  c.routineKind = ProcY
   c.calledErrorHook = NoLineInfo
   c.info = info
   let t = if typ.typeKind == SinkT: typ.firstSon else: typ
