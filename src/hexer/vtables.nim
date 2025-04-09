@@ -198,6 +198,13 @@ proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr c, dest, n
   skipParRi n
 
+proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # `v of T` is translated into
+  # v.tag.display[inheritance level of T] == hash(T)
+  inc n # skip `instanceof`
+
+  skipParRi n
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
@@ -229,6 +236,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trProcCall c, dest, n
       of OconstrX:
         trObjConstr c, dest, n
+      of InstanceofX:
+        trInstanceof c, dest, n
       else:
         case n.stmtKind
         of ProcS, FuncS, MacroS, MethodS, ConverterS:
@@ -337,19 +346,22 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo
       dest.addEmpty2() # export marker, pragmas
-      dest.copyIntoKind ArrayT, NoLineInfo:
-        dest.addParPair PointerT, NoLineInfo
-        dest.addIntLit vtab.methods.len, NoLineInfo
-      dest.addParLe AconstrX, NoLineInfo
-      # array constructor also starts with a type, yuck:
-      dest.copyIntoKind ArrayT, NoLineInfo:
-        dest.addParPair PointerT, NoLineInfo
-        dest.addIntLit vtab.methods.len, NoLineInfo
-      for m in mitems(vtab.methods):
-        dest.copyIntoKind CastX, NoLineInfo:
+      dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
+      dest.copyIntoKind OconstrX, NoLineInfo:
+        dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
+        dest.addParLe KvU, NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl("vtable.0"), NoLineInfo
+        dest.addParLe AconstrX, NoLineInfo
+        # array constructor also starts with a type, yuck:
+        dest.copyIntoKind ArrayT, NoLineInfo:
           dest.addParPair PointerT, NoLineInfo
-          dest.addSymUse m, NoLineInfo
-      dest.addParRi()
+          dest.addIntLit vtab.methods.len, NoLineInfo
+        for m in mitems(vtab.methods):
+          dest.copyIntoKind CastX, NoLineInfo:
+            dest.addParPair PointerT, NoLineInfo
+            dest.addSymUse m, NoLineInfo
+        dest.addParRi() # AconstrX
+        dest.addParRi() # KvU
 
 proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =
   var c = Context(
