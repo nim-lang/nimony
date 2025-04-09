@@ -125,31 +125,36 @@ proc getMethodIndex(c: var Context; cls, fn: SymId): int =
     if m == fn: return i
   error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
 
+proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
+  n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY}
+
 proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fnNode = n.load()
   let fn = n.symId
   inc n # skip fn
   let typ = getType(c.typeCache, n)
+  # We assume "object slicing" here:
+  let canUseStaticCall = typ.typeKind notin {RefT, PtrT} and isLocalVar(c, n)
   let cls = getClass(typ)
   if cls == SymId(0):
     dest.add fnNode
     error "cannot call method `" & pool.syms[fn] & "` on type " & typeToString(typ)
-  else:
+  elif not canUseStaticCall:
     let info = n.info
     let temp = evalOnce(c, dest, n)
     copyIntoKind dest, ArrAtX, info:
       copyIntoKind dest, DotX, info:
         useTemp dest, temp, info
-        dest.addSymUse pool.syms.getOrIncl("vt.0"), info
+        dest.addSymUse pool.syms.getOrIncl(VTableField), info
         dest.addIntLit 0, info # this is getting stupid...
       let idx = getMethodIndex(c, cls, fn)
       dest.addIntLit idx, info
     closeTemp dest, temp
     # first arg still need to be passed to the method:
     useTemp dest, temp, info
-    # other arguments are handled by the regular code:
-    while n.kind != ParRi:
-      tr c, dest, n
+  # other arguments are handled by the regular code:
+  while n.kind != ParRi:
+    tr c, dest, n
 
 proc trGetRtti(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -179,7 +184,8 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeParRi dest, n
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
-  if not forceStaticCall and n.kind == Symbol and isMethod(c, n.symId):
+  let fn = n.firstSon
+  if not forceStaticCall and fn.kind == Symbol and isMethod(c, fn.symId):
     dest.takeToken n # skip `(call)`
     trMethodCall c, dest, n
     takeParRi dest, n
@@ -410,7 +416,8 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
   for cls, vtab in mpairs c.vtables:
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo
-      dest.addEmpty2() # export marker, pragmas
+      dest.addIdent "x", NoLineInfo # export the vtable!
+      dest.addEmpty() # pragmas
       dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
       dest.copyIntoKind OconstrX, NoLineInfo:
         dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
