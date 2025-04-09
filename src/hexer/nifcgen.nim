@@ -86,6 +86,7 @@ type
     IsTypeBody
     IsPointerOf
     IsNodecl
+    IsInheritable
 
 proc traverseType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {})
 
@@ -366,6 +367,15 @@ proc traverseAsNamedType(c: var EContext; n: var Cursor) =
   else:
     c.dest.add symToken(val, info)
 
+proc addRttiField(c: var EContext; info: PackedLineInfo) =
+  c.dest.add tagToken("fld", info)
+  c.dest.add symdefToken(pool.syms.getOrIncl(VTableField), info)
+  c.dest.addEmpty() # pragmas
+  c.dest.addParLe PtrT, info
+  c.dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
+  c.dest.addParRi() # "ptr"
+  c.dest.addParRi() # "fld"
+
 proc traverseType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   case n.kind
   of DotToken:
@@ -483,6 +493,9 @@ proc traverseType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
         let (s, sinfo) = getSym(c, n)
         c.dest.add symToken(s, sinfo)
         c.demand s
+
+      if IsInheritable in flags:
+        addRttiField c, n.info
 
       if n.kind == DotToken:
         c.dest.add n
@@ -839,7 +852,10 @@ proc traverseTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   if isGeneric:
     skip n
   else:
-    traverseType c, n, {IsTypeBody} + (if NodeclP in prag.flags: {IsNodecl} else: {})
+    var flags = {IsTypeBody}
+    if NodeclP in prag.flags: flags.incl IsNodecl
+    if InheritableP in prag.flags: flags.incl IsInheritable
+    traverseType c, n, flags
   takeParRi c, n
   swap dst, c.dest
   if NodeclP in prag.flags or isGeneric:

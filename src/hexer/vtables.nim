@@ -210,27 +210,63 @@ proc classData(typ: Cursor): (int, UHash) =
     result[1] = uhash(pool.syms[s])
 
 proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # `v of T` is translated into
-  # v.vtab.display[inheritance level of T] == hash(T)
+  # `v of T` is translated into a logical 'and' expression:
+  # let vtab = v.vtab
+  # (level < len(vtab.display)) and (vtab.display[level] == hash(T))
   let info = n.info
   inc n # skip `instanceof`
-  copyIntoKind dest, EqX, info:
-    copyIntoKind dest, UT, info:
-      dest.addIntLit 32, info
 
-    copyIntoKind dest, PatX, info:
-      copyIntoKind dest, DotX, info:
-        copyIntoKind dest, DerefX, info:
-          copyIntoKind dest, DotX, info:
-            tr c, dest, n
-            dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
-            dest.addIntLit 0, info
-        dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField), info
-        dest.addIntLit 0, info
+  let vtabTempSym = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
+  inc c.tmpCounter
+
+  c.needsXelim = true
+  copyIntoKind dest, ExprX, info:
+    copyIntoKind dest, StmtsS, info:
+      copyIntoKind dest, VarS, info:
+        dest.addSymDef vtabTempSym, info
+        dest.addEmpty2 info # export marker, pragma
+        dest.copyIntoKind PtrT, info:
+          dest.addSymUse pool.syms.getOrIncl("Rtti.0." & c.moduleSuffix), info
+
+        copyIntoKind dest, DotX, info:
+          copyIntoKind dest, DerefX, info:
+            copyIntoKind dest, DotX, info:
+              tr c, dest, n
+              dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+              dest.addIntLit 0, info
+
+      # Get the class data (level and hash)
       let (level, h) = classData(n)
       skip n # skip type
-      dest.addIntLit level, info
-    dest.addUIntLit h, info
+
+    # Create the AndX expression for the range check and hash comparison
+    copyIntoKind dest, AndX, info:
+      # First expression: level < len(vtab.display)
+      copyIntoKind dest, LtX, info:
+        copyIntoKind dest, IT, info:
+          dest.addIntLit -1, info
+
+        dest.addIntLit level, info
+        copyIntoKind dest, DotX, info:
+          copyIntoKind dest, DerefX, info:
+            dest.addSymUse vtabTempSym, info
+          dest.copyIntoSymUse pool.syms.getOrIncl(DisplayLenField), info
+          dest.addIntLit 0, info
+
+      # Second expression: vtab.display[level] == hash(T)
+      copyIntoKind dest, EqX, info:
+        copyIntoKind dest, UT, info:
+          dest.addIntLit 32, info
+
+        copyIntoKind dest, PatX, info:
+          copyIntoKind dest, DotX, info:
+            dest.addSymUse vtabTempSym, info
+            dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField), info
+            dest.addIntLit 0, info
+          dest.addIntLit level, info
+
+        dest.addUIntLit h, info
+
   skipParRi n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -339,6 +375,7 @@ proc registerMethod(c: var Context; r: Routine; methodName: string) =
         if i == 0 and not c.vtables.hasKey(cls):
           # direct base class: Take total number of methods:
           c.vtables[cls] = c.vtables.getOrDefault(inh, VTable(display: @[], methods: @[]))
+          c.vtables[cls].display.add cls # add self
 
         let key = (inh, sig)
         let methodIndex = c.vindex.getOrDefault(key, -1)
@@ -377,6 +414,11 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
       dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
       dest.copyIntoKind OconstrX, NoLineInfo:
         dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
+
+        dest.addParLe KvU, NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayLenField), NoLineInfo
+        dest.addIntLit vtab.display.len, NoLineInfo
+        dest.addParRi() # KvU
 
         dest.addParLe KvU, NoLineInfo
         dest.addSymUse pool.syms.getOrIncl(DisplayField), NoLineInfo

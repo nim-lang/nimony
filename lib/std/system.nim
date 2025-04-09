@@ -109,7 +109,8 @@ proc procCall*[T](x: T): untyped {.magic: "ProcCall".}
 
 type
   Rtti* = object
-    display: ptr UncheckedArray[cstring]
-    vtable: UncheckedArray[pointer]
+    dl: int
+    dy: ptr UncheckedArray[uint32]
+    mt: UncheckedArray[pointer]
 
 proc getRtti(dummy: pointer): ptr Rtti {.nodecl.} = discard "patched by vtables.nim"
