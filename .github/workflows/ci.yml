@@ -111,11 +111,11 @@ jobs:
           echo '${{ github.workspace }}'"/external/mingw-${{ matrix.target.cpu }}/bin" >> $GITHUB_PATH
           echo '${{ github.workspace }}'"/external/dlls-${{ matrix.target.cpu }}" >> $GITHUB_PATH
 
-      - name: Install winget
-        if: runner.os == 'Windows'
-        continue-on-error: true # for some reason errors if latest version already installed
-        # winget included in windows-2025 and above:
-        run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+      #- name: Install winget
+      #  if: runner.os == 'Windows'
+      #  continue-on-error: true # for some reason errors if latest version already installed
+      #  # winget included in windows-2025 and above:
+      #  run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
 
       - name: Install make dependencies (Windows)
         if: runner.os == 'Windows'
