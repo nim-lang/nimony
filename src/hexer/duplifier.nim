@@ -164,19 +164,44 @@ proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
 proc isSimpleExpression(n: var Cursor): bool =
   ## expressions that can be returned safely
   case n.kind
-  of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
+  of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, DotToken, Ident:
     result = true
+    inc n
   of ParLe:
-    result = n.exprKind in {FalseX, TrueX, InfX, NegInfX, NanX, NilX, SufX}
-  of ParRi:
+    case n.exprKind
+    of FalseX, TrueX, InfX, NegInfX, NanX, NilX, SufX:
+      result = true
+      skip n
+    of CastX, ConvX, HconvX, DconvX:
+      result = true
+      inc n
+      skip n # type
+      while n.kind != ParRi:
+        if not isSimpleExpression(n): return false
+      skipParRi n
+    of ExprX:
+      inc n
+      var inner = n
+      skip n
+      if n.kind == ParRi:
+        result = isSimpleExpression(inner)
+      else:
+        result = false
+      skipParRi n
+    else:
+      result = false
+      skip n
+  of ParRi, SymbolDef, UnknownToken, EofToken:
     result = false
+    inc n
 
 proc trReturn(c: var Context; n: var Cursor) =
   var ret = createTokenBuf()
   copyInto ret, n:
+    var exp = n
     if isResultUsage(c, n):
       takeTree ret, n
-    elif isSimpleExpression(n):
+    elif isSimpleExpression(exp):
       # simple enough:
       swap c.dest, ret
       tr c, n, WantOwner
