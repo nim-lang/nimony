@@ -121,6 +121,8 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           winget --version
+          winget source remove winget
+          winget source add winget https://cdn.winget.microsoft.com/cache/source2.msix
           winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
           winget --version
           winget source update
