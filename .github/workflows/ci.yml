@@ -120,6 +120,7 @@ jobs:
       - name: Install make dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
+          winget --version
           winget source update
           winget install --id ezwinports.make --disable-interactivity --accept-source-agreements --locale "en-US" --source msstore
 
