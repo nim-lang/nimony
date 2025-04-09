@@ -111,12 +111,12 @@ jobs:
           echo '${{ github.workspace }}'"/external/mingw-${{ matrix.target.cpu }}/bin" >> $GITHUB_PATH
           echo '${{ github.workspace }}'"/external/dlls-${{ matrix.target.cpu }}" >> $GITHUB_PATH
 
-    - name: Reset winget sources
-      if: runner.os == 'Windows'
-      run: |
-        winget source reset --force
-        winget source add -n msstore https://storeedgefd.dsx.mp.microsoft.com/v9.0/source/microsoftstore
-        winget source update
+      - name: Reset winget sources
+        if: runner.os == 'Windows'
+        run: |
+          winget source reset --force
+          winget source add -n msstore https://storeedgefd.dsx.mp.microsoft.com/v9.0/source/microsoftstore
+          winget source update
 
       - name: Install winget
         if: runner.os == 'Windows'
