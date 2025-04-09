@@ -185,9 +185,9 @@ proc isSimpleExpression(n: var Cursor): bool =
       skip n
       if n.kind == ParRi:
         result = isSimpleExpression(inner)
+        skipParRi n
       else:
         result = false
-      skipParRi n
     else:
       result = false
       skip n
