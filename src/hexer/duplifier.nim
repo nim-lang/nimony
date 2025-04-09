@@ -196,24 +196,27 @@ proc isSimpleExpression(n: var Cursor): bool =
     inc n
 
 proc trReturn(c: var Context; n: var Cursor) =
-  var ret = createTokenBuf()
-  copyInto ret, n:
-    var exp = n
-    if isResultUsage(c, n):
-      takeTree ret, n
-    elif isSimpleExpression(exp) or c.resultSym == NoSymId:
-      # simple enough:
-      swap c.dest, ret
+  let retVal = n.firstSon
+  var exp = retVal
+  if isResultUsage(c, retVal):
+    takeTree c.dest, n
+  elif isSimpleExpression(exp) or c.resultSym == NoSymId:
+    # simple enough:
+    copyInto(c.dest, n):
       tr c, n, WantOwner
-      swap c.dest, ret
-    else:
-      c.dest.addParLe AsgnS, n.info
-      c.dest.add symToken(c.resultSym, n.info)
-      tr c, n, WantOwner
-      c.dest.addParRi()
-      ret.add symToken(c.resultSym, n.info)
-
-  c.dest.add ret
+  else:
+    let info = n.info
+    inc n # skip ParLe
+    c.dest.addParLe StmtsS, info
+    c.dest.addParLe AsgnS, info
+    c.dest.add symToken(c.resultSym, info)
+    tr c, n, WantOwner
+    c.dest.addParRi() # end of AsgnS
+    c.dest.addParLe(RetS, info)
+    c.dest.add symToken(c.resultSym, info)
+    c.dest.addParRi() # end of RetS
+    c.dest.addParRi() # end of StmtsS
+    skipParRi(n) # skip ParRi
 
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
