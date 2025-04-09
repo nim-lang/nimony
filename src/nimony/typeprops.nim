@@ -327,6 +327,11 @@ proc isInheritable*(n: Cursor): bool =
 proc isPure*(n: Cursor): bool =
   typeHasPragma(n, PureP)
 
+proc isFinal*(n: Cursor): bool =
+  var n = n
+  if n.typeKind in {RefT, PtrT}: inc n
+  result = typeHasPragma(n, FinalP, ObjectT)
+
 proc hasRtti*(s: SymId): bool =
   var root = s
   for r in inheritanceChain(s):

@@ -126,15 +126,39 @@ proc getMethodIndex(c: var Context; cls, fn: SymId): int =
   error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
 
 proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
-  n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY}
+  n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
+
+proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
+  dest.addParLe ProctypeT, NoLineInfo
+  # This is really stupid...
+  dest.addDotToken() # name
+  dest.addDotToken() # export marker
+  dest.addDotToken() # pattern
+  dest.addDotToken() # type vars
+  var n = typ
+  # params:
+  dest.takeTree n
+  # return type:
+  dest.takeTree n
+  # calling convention is always nimcall for now:
+  dest.addParLe PragmasU, NoLineInfo
+  dest.addParPair Nimcall, NoLineInfo
+  dest.addParRi()
+
+  # ignore, effects and body:
+  dest.addDotToken() # effects
+  dest.addDotToken() # body
+  dest.addParRi()
 
 proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fnNode = n.load()
+  let fnType = getType(c.typeCache, n)
+  assert fnType.typeKind != AutoT
   let fn = n.symId
   inc n # skip fn
   let typ = getType(c.typeCache, n)
   # We assume "object slicing" here:
-  let canUseStaticCall = typ.typeKind notin {RefT, PtrT} and isLocalVar(c, n)
+  let canUseStaticCall = (typ.typeKind notin {RefT, PtrT} and isLocalVar(c, n)) or typ.isFinal
   let cls = getClass(typ)
   if cls == SymId(0):
     dest.add fnNode
@@ -142,13 +166,15 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   elif not canUseStaticCall:
     let info = n.info
     let temp = evalOnce(c, dest, n)
-    copyIntoKind dest, ArrAtX, info:
-      copyIntoKind dest, DotX, info:
-        useTemp dest, temp, info
-        dest.addSymUse pool.syms.getOrIncl(VTableField), info
-        dest.addIntLit 0, info # this is getting stupid...
-      let idx = getMethodIndex(c, cls, fn)
-      dest.addIntLit idx, info
+    copyIntoKind dest, CastX, info:
+      genProctype(c, dest, fnType)
+      copyIntoKind dest, ArrAtX, info:
+        copyIntoKind dest, DotX, info:
+          useTemp dest, temp, info
+          dest.addSymUse pool.syms.getOrIncl(VTableField), info
+          dest.addIntLit 0, info # this is getting stupid...
+        let idx = getMethodIndex(c, cls, fn)
+        dest.addIntLit idx, info
     closeTemp dest, temp
     # first arg still need to be passed to the method:
     useTemp dest, temp, info
