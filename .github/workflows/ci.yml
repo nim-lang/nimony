@@ -122,7 +122,7 @@ jobs:
         run: |
           winget source list
           winget source update winget
-          winget install --id ezwinports.make --disable-interactivity --accept-source-agreements --locale "en-US" --source msstore
+          winget install --id ezwinports.make --disable-interactivity --accept-source-agreements --locale "en-US" --source winget
 
       - name: System Info (Windows)
         if: runner.os == 'Windows'
