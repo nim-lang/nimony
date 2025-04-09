@@ -120,12 +120,7 @@ jobs:
       - name: Install make dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          winget --version
-          winget source remove winget
-          winget source add winget https://cdn.winget.microsoft.com/cache/source2.msix
-          winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
-          winget --version
-          winget source update
+          winget search "make"
           winget install --id ezwinports.make --disable-interactivity --accept-source-agreements --locale "en-US" --source msstore
 
       - name: System Info (Windows)
