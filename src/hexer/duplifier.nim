@@ -161,12 +161,34 @@ proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   if n.kind == Symbol:
     result = n.symId == c.resultSym
 
+proc isSimpleExpression(n: var Cursor): bool =
+  ## expressions that can be returned safely
+  case n.kind
+  of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
+    result = true
+  of ParLe:
+    result = n.exprKind in {FalseX, TrueX, InfX, NegInfX, NanX, NilX, SufX}
+  of ParRi:
+    result = false
+
 proc trReturn(c: var Context; n: var Cursor) =
-  copyInto c.dest, n:
+  var ret = createTokenBuf()
+  copyInto ret, n:
     if isResultUsage(c, n):
-      takeTree c.dest, n
-    else:
+      takeTree ret, n
+    elif isSimpleExpression(n):
+      # simple enough:
+      swap c.dest, ret
       tr c, n, WantOwner
+      swap c.dest, ret
+    else:
+      c.dest.addParLe AsgnS, n.info
+      c.dest.add symToken(c.resultSym, n.info)
+      tr c, n, WantOwner
+      c.dest.addParRi()
+      ret.add symToken(c.resultSym, n.info)
+
+  c.dest.add ret
 
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
