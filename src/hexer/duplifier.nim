@@ -161,12 +161,62 @@ proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   if n.kind == Symbol:
     result = n.symId == c.resultSym
 
-proc trReturn(c: var Context; n: var Cursor) =
-  copyInto c.dest, n:
-    if isResultUsage(c, n):
-      takeTree c.dest, n
+proc isSimpleExpression(n: var Cursor): bool =
+  ## expressions that can be returned safely
+  case n.kind
+  of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, DotToken, Ident:
+    result = true
+    inc n
+  of ParLe:
+    case n.exprKind
+    of FalseX, TrueX, InfX, NegInfX, NanX, NilX, SufX:
+      result = true
+      skip n
+    of CastX, ConvX, HconvX, DconvX:
+      result = true
+      inc n
+      skip n # type
+      while n.kind != ParRi:
+        if not isSimpleExpression(n): return false
+      skipParRi n
+    of ExprX:
+      inc n
+      var inner = n
+      skip n
+      if n.kind == ParRi:
+        result = isSimpleExpression(inner)
+        skipParRi n
+      else:
+        result = false
     else:
+      result = false
+      skip n
+  of ParRi, SymbolDef, UnknownToken, EofToken:
+    result = false
+    inc n
+
+proc trReturn(c: var Context; n: var Cursor) =
+  let retVal = n.firstSon
+  var exp = retVal
+  if isResultUsage(c, retVal):
+    takeTree c.dest, n
+  elif isSimpleExpression(exp) or c.resultSym == NoSymId:
+    # simple enough:
+    copyInto(c.dest, n):
       tr c, n, WantOwner
+  else:
+    let info = n.info
+    inc n # skip ParLe
+    c.dest.addParLe StmtsS, info
+    c.dest.addParLe AsgnS, info
+    c.dest.add symToken(c.resultSym, info)
+    tr c, n, WantOwner
+    c.dest.addParRi() # end of AsgnS
+    c.dest.addParLe(RetS, info)
+    c.dest.add symToken(c.resultSym, info)
+    c.dest.addParRi() # end of RetS
+    c.dest.addParRi() # end of StmtsS
+    skipParRi(n) # skip ParRi
 
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
@@ -699,8 +749,6 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
           if isAtom(n):
             takeTree c.dest, n
           else:
-            # TODO: it may need a temp: e.g. `return foo().x`
-            # let tmp1 = foo(); let tmp2 = tmp1.x; `=destroy`(tmp1); return tmp2
             trLocationNonOwner c, n
       elif isAtom(n):
         takeTree c.dest, n
