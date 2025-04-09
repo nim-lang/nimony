@@ -746,8 +746,6 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
           if isAtom(n):
             takeTree c.dest, n
           else:
-            # TODO: it may need a temp: e.g. `return foo().x`
-            # let tmp1 = foo(); let tmp2 = tmp1.x; `=destroy`(tmp1); return tmp2
             trLocationNonOwner c, n
       elif isAtom(n):
         takeTree c.dest, n
