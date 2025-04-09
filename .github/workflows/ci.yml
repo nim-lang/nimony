@@ -111,19 +111,10 @@ jobs:
           echo '${{ github.workspace }}'"/external/mingw-${{ matrix.target.cpu }}/bin" >> $GITHUB_PATH
           echo '${{ github.workspace }}'"/external/dlls-${{ matrix.target.cpu }}" >> $GITHUB_PATH
 
-      #- name: Install winget
-      #  if: runner.os == 'Windows'
-      #  continue-on-error: true # for some reason errors if latest version already installed
-      #  # winget included in windows-2025 and above:
-      #  run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
-
       - name: Install make dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          Add-AppxPackage https://cdn.winget.microsoft.com/cache/source.msix
-          winget --version
-          winget source list
-          winget install --id ezwinports.make --disable-interactivity --accept-source-agreements --locale "en-US" --source winget
+        uses: crazy-max/ghaction-chocolatey@v3
+        with:
+          args: install make
 
       - name: System Info (Windows)
         if: runner.os == 'Windows'
