@@ -201,7 +201,7 @@ proc trReturn(c: var Context; n: var Cursor) =
     var exp = n
     if isResultUsage(c, n):
       takeTree ret, n
-    elif isSimpleExpression(exp):
+    elif isSimpleExpression(exp) or c.resultSym == NoSymId:
       # simple enough:
       swap c.dest, ret
       tr c, n, WantOwner
