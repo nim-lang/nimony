@@ -36,6 +36,42 @@ include "system/comparisons"
 proc defined*(x: untyped): bool {.magic: Defined.}
 proc declared*(x: untyped): bool {.magic: Declared.}
 
+proc `$`*(x: uint64): string =
+  result = ""
+  var y = x
+  while true:
+    result.add char((y mod 10'u) + uint('0'))
+    y = y div 10'u
+    if y == 0'u: break
+  let last = result.len-1
+  var i = 0
+  let b = result.len div 2
+  while i < b:
+    let ch = result[i]
+    result[i] = result[last-i]
+    result[last-i] = ch
+    inc i
+
+proc `$`*(x: int64): string =
+  if x < 0:
+    if x == -1:
+      # -1 is so common that it deserves a string literal which avoids the allocations
+      result = "-1"
+    if x == -9223372036854775808:
+      result = "-" & $cast[uint64](x)
+    else:
+      result = "-" & $(0-x)
+  elif x < 10:
+    result.add char(x + int64('0'))
+  else:
+    result = $cast[uint64](x)
+
+proc addInt*(s: var string; x: int64) {.inline.} =
+  s.add $x
+
+proc addInt*(s: var string; x: uint64) {.inline.} =
+  s.add $x
+
 proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
