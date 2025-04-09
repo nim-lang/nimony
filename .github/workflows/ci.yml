@@ -121,8 +121,6 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           winget --version
-          Add-AppPackage -path "https://cdn.winget.microsoft.com/cache/source.msix"
-          winget --version
           winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
           winget --version
           winget source update
