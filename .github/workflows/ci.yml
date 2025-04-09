@@ -120,7 +120,7 @@ jobs:
       - name: Install make dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          Add-AppxPackage https://cdn.winget.microsoft.com/cache/source2.msix
+          Add-AppxPackage https://cdn.winget.microsoft.com/cache/source.msix
           winget --version
           winget source list
           winget install --id ezwinports.make --disable-interactivity --accept-source-agreements --locale "en-US" --source winget
