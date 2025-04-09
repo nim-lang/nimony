@@ -165,7 +165,7 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.takeToken n # objconstr
   var cls = SymId(0)
-  if n.kind == Symbol and hasRtti(n.symId):
+  if n.kind == Symbol and not isGeneratedType(pool.syms[n.symId]) and hasRtti(n.symId):
     cls = n.symId
 
   dest.takeTree n # type

@@ -13,6 +13,7 @@ import std/assertions
 include nifprelude
 
 import std/tables
+from std/strutils import endsWith
 import nimony_model, builtintypes, decls, programs
 
 const
@@ -23,6 +24,9 @@ const
   DisplayField* = "dy.0."
   MethodsField* = "mt.0."
   GeneratedTypeSuffix* = ".0.t"
+
+proc isGeneratedType*(s: string): bool =
+  result = endsWith(s, GeneratedTypeSuffix)
 
 type
   LocalInfo* = object
