@@ -322,7 +322,7 @@ iterator inheritanceChain*(s: SymId): SymId =
       break
 
 proc isInheritable*(n: Cursor): bool =
-  typeHasPragma(n, InheritableP, ObjectT)
+  typeHasPragma(n, InheritableP, ObjectT) and not typeHasPragma(n, FinalP, ObjectT)
 
 proc isPure*(n: Cursor): bool =
   typeHasPragma(n, PureP)

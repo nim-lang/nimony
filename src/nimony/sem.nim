@@ -2266,7 +2266,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
-  of ViewP, InheritableP, PureP:
+  of ViewP, InheritableP, PureP, FinalP:
     if kind == TypeY:
       c.dest.add parLeToken(pk, n.info)
       inc n
