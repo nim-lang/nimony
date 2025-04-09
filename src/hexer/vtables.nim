@@ -16,6 +16,7 @@
 import std/[assertions, tables]
 
 include nifprelude
+import ".." / lib / tinyhashes
 import nifindexes, symparser, treemangler, typekeys
 import ".." / nimony / [nimony_model, decls, programs, typenav,
   renderer, builtintypes, typeprops]
@@ -198,11 +199,38 @@ proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr c, dest, n
   skipParRi n
 
+proc classData(typ: Cursor): (int, UHash) =
+  var n = typ
+  if n.typeKind in {RefT, PtrT}:
+    inc n
+  result = (0, UHash(0))
+  if n.kind == Symbol:
+    let s = n.symId
+    for _ in inheritanceChain(s): inc result[0]
+    result[1] = uhash(pool.syms[s])
+
 proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `v of T` is translated into
-  # v.tag.display[inheritance level of T] == hash(T)
+  # v.vtab.display[inheritance level of T] == hash(T)
+  let info = n.info
   inc n # skip `instanceof`
+  copyIntoKind dest, EqX, info:
+    copyIntoKind dest, UT, info:
+      dest.addIntLit 32, info
 
+    copyIntoKind dest, PatX, info:
+      copyIntoKind dest, DotX, info:
+        copyIntoKind dest, DerefX, info:
+          copyIntoKind dest, DotX, info:
+            tr c, dest, n
+            dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+            dest.addIntLit 0, info
+        dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField), info
+        dest.addIntLit 0, info
+      let (level, h) = classData(n)
+      skip n # skip type
+      dest.addIntLit level, info
+    dest.addUIntLit h, info
   skipParRi n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -349,8 +377,22 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
       dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
       dest.copyIntoKind OconstrX, NoLineInfo:
         dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
+
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl("vtable.0"), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayField), NoLineInfo
+        dest.addParLe AconstrX, NoLineInfo
+        # array constructor also starts with a type, yuck:
+        dest.copyIntoKind ArrayT, NoLineInfo:
+          dest.copyIntoKind UT, NoLineInfo:
+            dest.addIntLit 32, NoLineInfo
+          dest.addIntLit vtab.display.len, NoLineInfo
+        for i in countdown(vtab.display.len - 1, 0):
+          dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
+        dest.addParRi() # AconstrX
+        dest.addParRi() # KvU
+
+        dest.addParLe KvU, NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(MethodsField), NoLineInfo
         dest.addParLe AconstrX, NoLineInfo
         # array constructor also starts with a type, yuck:
         dest.copyIntoKind ArrayT, NoLineInfo:
