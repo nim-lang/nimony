@@ -268,7 +268,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.boolType
   of NegX, NegInfX, NanX, InfX:
     result = c.builtins.floatType
-  of EnumToStrX, DefaultObjX, DefaultTupX:
+  of EnumToStrX, DefaultObjX, DefaultTupX, InternalTypeNameX:
     result = c.builtins.stringType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
@@ -311,7 +311,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     else:
       assert false, "cannot deref type: " & toString(result, false)
       result = c.builtins.autoType # still an error
-  of QuotedX, OchoiceX, CchoiceX, UnpackX, FieldsX, FieldpairsX, TypeofX, LowX, HighX, ErrX:
+  of QuotedX, OchoiceX, CchoiceX, UnpackX, FieldsX, FieldpairsX, TypeofX, LowX, HighX, ErrX,
+     InternalFieldPairsX:
     discard "keep the error type"
   of AddrX, HaddrX:
     let elemType = getTypeImpl(c, n.firstSon, flags)
