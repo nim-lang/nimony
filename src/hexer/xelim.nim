@@ -36,6 +36,7 @@ proc isComplex(n: Cursor): bool =
         else:
           # More than one son is always complex:
           return true
+        inc nested
       else:
         inc n
         inc nested
