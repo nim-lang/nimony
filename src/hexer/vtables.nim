@@ -163,7 +163,9 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if cls == SymId(0):
     dest.add fnNode
     error "cannot call method `" & pool.syms[fn] & "` on type " & typeToString(typ)
-  elif not canUseStaticCall:
+  elif canUseStaticCall:
+    dest.add fnNode
+  else:
     let info = n.info
     let temp = evalOnce(c, dest, n)
     copyIntoKind dest, CastX, info:
