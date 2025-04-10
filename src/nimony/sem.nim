@@ -2457,7 +2457,7 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
     let beforeType = c.dest.len
     semLocalTypeImpl c, n, InLocalDecl
     let inheritsFrom = cursorAt(c.dest, beforeType)
-    if c.routine.inGeneric == 0 and not isInheritable(inheritsFrom):
+    if c.routine.inGeneric == 0 and not isInheritable(inheritsFrom, true):
       endRead(c.dest)
       c.dest.shrink beforeType
       c.buildErr n.info, "cannot inherit from type: " & asNimCode(inheritsFrom)

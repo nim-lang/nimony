@@ -321,8 +321,17 @@ iterator inheritanceChain*(s: SymId): SymId =
     else:
       break
 
-proc isInheritable*(n: Cursor): bool =
-  typeHasPragma(n, InheritableP, ObjectT) and not typeHasPragma(n, FinalP, ObjectT)
+proc isInheritable*(n: Cursor; skipPtrs = false): bool =
+  var n = n
+  if skipPtrs and n.typeKind in {RefT, PtrT}:
+    inc n
+  if typeHasPragma(n, FinalP, ObjectT): return false
+  if n.kind == Symbol:
+    if typeHasPragma(n, InheritableP, ObjectT): return true
+    for parent in inheritanceChain(n.symId):
+      # well it has a parent and is not final so it is inheritable:
+      return true
+  return false
 
 proc isPure*(n: Cursor): bool =
   typeHasPragma(n, PureP)
