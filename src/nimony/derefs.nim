@@ -206,7 +206,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
     of VarY, GvarY, TvarY:
       result = local.typ.typeKind == LentT
     of ParamY:
-      result = local.typ.typeKind notin {MutT, OutT, LentT}
+      result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
       result = false
   elif n.kind in {StringLit, IntLit, UIntLit, FloatLit, CharLit} or
