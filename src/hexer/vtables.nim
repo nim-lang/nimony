@@ -463,10 +463,10 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         if vtab.display.len > 0:
           dest.addParLe AconstrX, NoLineInfo
           # array constructor also starts with a type, yuck:
-          dest.copyIntoKind ArrayT, NoLineInfo:
-            dest.copyIntoKind UT, NoLineInfo:
-              dest.addIntLit 32, NoLineInfo
-            dest.addIntLit vtab.display.len, NoLineInfo
+          dest.copyIntoKind PtrT, NoLineInfo:
+            dest.copyIntoKind UarrayT, NoLineInfo:
+              dest.copyIntoKind UT, NoLineInfo:
+                dest.addIntLit 32, NoLineInfo
           for i in countdown(vtab.display.len - 1, 0):
             dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
           dest.addParRi() # AconstrX
@@ -479,9 +479,8 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         if vtab.methods.len > 0:
           dest.addParLe AconstrX, NoLineInfo
           # array constructor also starts with a type, yuck:
-          dest.copyIntoKind ArrayT, NoLineInfo:
+          dest.copyIntoKind UarrayT, NoLineInfo:
             dest.addParPair PointerT, NoLineInfo
-            dest.addIntLit vtab.methods.len, NoLineInfo
           for m in mitems(vtab.methods):
             dest.copyIntoKind CastX, NoLineInfo:
               dest.addParPair PointerT, NoLineInfo
