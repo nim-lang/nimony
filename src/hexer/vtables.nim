@@ -16,6 +16,7 @@
 import std/[assertions, tables]
 
 include nifprelude
+import ".." / lib / tinyhashes
 import nifindexes, symparser, treemangler, typekeys
 import ".." / nimony / [nimony_model, decls, programs, typenav,
   renderer, builtintypes, typeprops]
@@ -124,31 +125,62 @@ proc getMethodIndex(c: var Context; cls, fn: SymId): int =
     if m == fn: return i
   error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
 
+proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
+  n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
+
+proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
+  dest.addParLe ProctypeT, NoLineInfo
+  # This is really stupid...
+  dest.addDotToken() # name
+  dest.addDotToken() # export marker
+  dest.addDotToken() # pattern
+  dest.addDotToken() # type vars
+  var n = typ
+  # params:
+  dest.takeTree n
+  # return type:
+  dest.takeTree n
+  # calling convention is always nimcall for now:
+  dest.addParLe PragmasU, NoLineInfo
+  dest.addParPair Nimcall, NoLineInfo
+  dest.addParRi()
+
+  # ignore, effects and body:
+  dest.addDotToken() # effects
+  dest.addDotToken() # body
+  dest.addParRi()
+
 proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fnNode = n.load()
+  let fnType = getType(c.typeCache, n)
+  assert fnType.typeKind != AutoT
   let fn = n.symId
   inc n # skip fn
   let typ = getType(c.typeCache, n)
+  # We assume "object slicing" here:
+  let canUseStaticCall = (typ.typeKind notin {RefT, PtrT} and isLocalVar(c, n)) or typ.isFinal
   let cls = getClass(typ)
   if cls == SymId(0):
     dest.add fnNode
     error "cannot call method `" & pool.syms[fn] & "` on type " & typeToString(typ)
-  else:
+  elif not canUseStaticCall:
     let info = n.info
     let temp = evalOnce(c, dest, n)
-    copyIntoKind dest, ArrAtX, info:
-      copyIntoKind dest, DotX, info:
-        useTemp dest, temp, info
-        dest.addSymUse pool.syms.getOrIncl("vt.0"), info
-        dest.addIntLit 0, info # this is getting stupid...
-      let idx = getMethodIndex(c, cls, fn)
-      dest.addIntLit idx, info
+    copyIntoKind dest, CastX, info:
+      genProctype(c, dest, fnType)
+      copyIntoKind dest, ArrAtX, info:
+        copyIntoKind dest, DotX, info:
+          useTemp dest, temp, info
+          dest.addSymUse pool.syms.getOrIncl(VTableField), info
+          dest.addIntLit 0, info # this is getting stupid...
+        let idx = getMethodIndex(c, cls, fn)
+        dest.addIntLit idx, info
     closeTemp dest, temp
     # first arg still need to be passed to the method:
     useTemp dest, temp, info
-    # other arguments are handled by the regular code:
-    while n.kind != ParRi:
-      tr c, dest, n
+  # other arguments are handled by the regular code:
+  while n.kind != ParRi:
+    tr c, dest, n
 
 proc trGetRtti(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -164,7 +196,7 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.takeToken n # objconstr
   var cls = SymId(0)
-  if n.kind == Symbol and hasRtti(n.symId):
+  if n.kind == Symbol and not isGeneratedType(pool.syms[n.symId]) and hasRtti(n.symId):
     cls = n.symId
 
   dest.takeTree n # type
@@ -178,7 +210,8 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeParRi dest, n
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
-  if not forceStaticCall and n.kind == Symbol and isMethod(c, n.symId):
+  let fn = n.firstSon
+  if not forceStaticCall and fn.kind == Symbol and isMethod(c, fn.symId):
     dest.takeToken n # skip `(call)`
     trMethodCall c, dest, n
     takeParRi dest, n
@@ -196,6 +229,76 @@ proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trCall c, dest, n, true
   else:
     tr c, dest, n
+  skipParRi n
+
+proc classData(typ: Cursor): (int, UHash) =
+  var n = typ
+  if n.typeKind in {RefT, PtrT}:
+    inc n
+  result = (0, UHash(0))
+  if n.kind == Symbol:
+    let s = n.symId
+    for _ in inheritanceChain(s): inc result[0]
+    result[1] = uhash(pool.syms[s])
+
+proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # `v of T` is translated into a logical 'and' expression:
+  # let vtab = v.vtab
+  # (level < len(vtab.display)) and (vtab.display[level] == hash(T))
+  let info = n.info
+  inc n # skip `instanceof`
+
+  let vtabTempSym = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
+  inc c.tmpCounter
+
+  c.needsXelim = true
+  copyIntoKind dest, ExprX, info:
+    copyIntoKind dest, StmtsS, info:
+      copyIntoKind dest, VarS, info:
+        dest.addSymDef vtabTempSym, info
+        dest.addEmpty2 info # export marker, pragma
+        dest.copyIntoKind PtrT, info:
+          dest.addSymUse pool.syms.getOrIncl("Rtti.0." & c.moduleSuffix), info
+
+        copyIntoKind dest, DotX, info:
+          copyIntoKind dest, DerefX, info:
+            copyIntoKind dest, DotX, info:
+              tr c, dest, n
+              dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+              dest.addIntLit 0, info
+
+      # Get the class data (level and hash)
+      let (level, h) = classData(n)
+      skip n # skip type
+
+    # Create the AndX expression for the range check and hash comparison
+    copyIntoKind dest, AndX, info:
+      # First expression: level < len(vtab.display)
+      copyIntoKind dest, LtX, info:
+        copyIntoKind dest, IT, info:
+          dest.addIntLit -1, info
+
+        dest.addIntLit level, info
+        copyIntoKind dest, DotX, info:
+          copyIntoKind dest, DerefX, info:
+            dest.addSymUse vtabTempSym, info
+          dest.copyIntoSymUse pool.syms.getOrIncl(DisplayLenField), info
+          dest.addIntLit 0, info
+
+      # Second expression: vtab.display[level] == hash(T)
+      copyIntoKind dest, EqX, info:
+        copyIntoKind dest, UT, info:
+          dest.addIntLit 32, info
+
+        copyIntoKind dest, PatX, info:
+          copyIntoKind dest, DotX, info:
+            dest.addSymUse vtabTempSym, info
+            dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField), info
+            dest.addIntLit 0, info
+          dest.addIntLit level, info
+
+        dest.addUIntLit h, info
+
   skipParRi n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -229,6 +332,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trProcCall c, dest, n
       of OconstrX:
         trObjConstr c, dest, n
+      of InstanceofX:
+        trInstanceof c, dest, n
       else:
         case n.stmtKind
         of ProcS, FuncS, MacroS, MethodS, ConverterS:
@@ -302,6 +407,7 @@ proc registerMethod(c: var Context; r: Routine; methodName: string) =
         if i == 0 and not c.vtables.hasKey(cls):
           # direct base class: Take total number of methods:
           c.vtables[cls] = c.vtables.getOrDefault(inh, VTable(display: @[], methods: @[]))
+          c.vtables[cls].display.add cls # add self
 
         let key = (inh, sig)
         let methodIndex = c.vindex.getOrDefault(key, -1)
@@ -336,20 +442,43 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
   for cls, vtab in mpairs c.vtables:
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo
-      dest.addEmpty2() # export marker, pragmas
-      dest.copyIntoKind ArrayT, NoLineInfo:
-        dest.addParPair PointerT, NoLineInfo
-        dest.addIntLit vtab.methods.len, NoLineInfo
-      dest.addParLe AconstrX, NoLineInfo
-      # array constructor also starts with a type, yuck:
-      dest.copyIntoKind ArrayT, NoLineInfo:
-        dest.addParPair PointerT, NoLineInfo
-        dest.addIntLit vtab.methods.len, NoLineInfo
-      for m in mitems(vtab.methods):
-        dest.copyIntoKind CastX, NoLineInfo:
+      dest.addIdent "x", NoLineInfo # export the vtable!
+      dest.addEmpty() # pragmas
+      dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
+      dest.copyIntoKind OconstrX, NoLineInfo:
+        dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
+
+        dest.addParLe KvU, NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayLenField), NoLineInfo
+        dest.addIntLit vtab.display.len, NoLineInfo
+        dest.addParRi() # KvU
+
+        dest.addParLe KvU, NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayField), NoLineInfo
+        dest.addParLe AconstrX, NoLineInfo
+        # array constructor also starts with a type, yuck:
+        dest.copyIntoKind ArrayT, NoLineInfo:
+          dest.copyIntoKind UT, NoLineInfo:
+            dest.addIntLit 32, NoLineInfo
+          dest.addIntLit vtab.display.len, NoLineInfo
+        for i in countdown(vtab.display.len - 1, 0):
+          dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
+        dest.addParRi() # AconstrX
+        dest.addParRi() # KvU
+
+        dest.addParLe KvU, NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(MethodsField), NoLineInfo
+        dest.addParLe AconstrX, NoLineInfo
+        # array constructor also starts with a type, yuck:
+        dest.copyIntoKind ArrayT, NoLineInfo:
           dest.addParPair PointerT, NoLineInfo
-          dest.addSymUse m, NoLineInfo
-      dest.addParRi()
+          dest.addIntLit vtab.methods.len, NoLineInfo
+        for m in mitems(vtab.methods):
+          dest.copyIntoKind CastX, NoLineInfo:
+            dest.addParPair PointerT, NoLineInfo
+            dest.addSymUse m, NoLineInfo
+        dest.addParRi() # AconstrX
+        dest.addParRi() # KvU
 
 proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =
   var c = Context(

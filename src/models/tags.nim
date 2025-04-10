@@ -288,6 +288,7 @@ type
     InheritableTagId
     BaseTagId
     PureTagId
+    FinalTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -575,5 +576,6 @@ const
     ("semantics", 282),
     ("inheritable", 283),
     ("base", 284),
-    ("pure", 285)
+    ("pure", 285),
+    ("final", 286)
   ]

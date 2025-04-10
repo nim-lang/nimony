@@ -13,13 +13,20 @@ import std/assertions
 include nifprelude
 
 import std/tables
+from std/strutils import endsWith
 import nimony_model, builtintypes, decls, programs
 
 const
   RcField* = "r.0."
   DataField* = "d.0."
   VTableField* = "vt.0."
+  DisplayLenField* = "dl.0"
+  DisplayField* = "dy.0."
+  MethodsField* = "mt.0."
   GeneratedTypeSuffix* = ".0.t"
+
+proc isGeneratedType*(s: string): bool =
+  result = endsWith(s, GeneratedTypeSuffix)
 
 type
   LocalInfo* = object
