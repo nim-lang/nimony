@@ -28,5 +28,5 @@ proc foo4All[T: ConceptA or ConceptB](x: T) =
   if false:
     foo1(x) # matches due to ConceptB currently matching ConceptA but shouldn't otherwise
     foo2(x) # fails as intended
-    foo3(x) # matches due to ConceptB currently matching ConceptA but shouldn't otherwise
+    foo3(x) # fails as intended
     foo4(x) # works
