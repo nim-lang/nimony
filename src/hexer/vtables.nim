@@ -42,10 +42,10 @@ type
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
-proc computeVTableName(c: var Context; cls: SymId): SymId =
+proc computeVTableName(c: var Context; cls: SymId; middle = ".vt."): SymId =
   var clsName = pool.syms[cls]
   extractBasename clsName
-  result = pool.syms.getOrIncl(clsName & ".vt." & $c.vtableCounter & "." & c.moduleSuffix)
+  result = pool.syms.getOrIncl(clsName & middle & $c.vtableCounter & "." & c.moduleSuffix)
   inc c.vtableCounter
 
 proc getVTableName(c: var Context; cls: SymId): SymId =
@@ -206,10 +206,10 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   dest.takeTree n # type
   if cls != SymId(0):
-    dest.copyIntoKind KvU, info:
-      dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
-      dest.copyIntoKind AddrX, info:
-        dest.addSymUse getVTableName(c, cls), info
+    #dest.copyIntoKind KvU, info:
+    #  dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+    dest.copyIntoKind AddrX, info:
+      dest.addSymUse getVTableName(c, cls), info
   while n.kind != ParRi:
     tr c, dest, n
   takeParRi dest, n
@@ -445,6 +445,26 @@ proc collectMethods(c: var Context; n: var Cursor) =
 proc emitVTables(c: var Context; dest: var TokenBuf) =
   # Used the `mpairs` and `mitems` here to avoid copies.
   for cls, vtab in mpairs c.vtables:
+    var displayName = SymId(0)
+    if vtab.display.len > 0:
+      displayName = computeVTableName(c, cls, ".dy.")
+      dest.copyIntoKind ConstS, NoLineInfo:
+        dest.addSymDef displayName, NoLineInfo
+        dest.addIdent "x", NoLineInfo # export the vtable!
+        dest.addEmpty() # pragmas
+        dest.copyIntoKind ArrayT, NoLineInfo:
+          dest.copyIntoKind UT, NoLineInfo:
+            dest.addIntLit 32, NoLineInfo
+          dest.addIntLit vtab.display.len, NoLineInfo
+        dest.addParLe AconstrX, NoLineInfo
+        dest.copyIntoKind ArrayT, NoLineInfo:
+          dest.copyIntoKind UT, NoLineInfo:
+            dest.addIntLit 32, NoLineInfo
+          dest.addIntLit vtab.display.len, NoLineInfo
+        for i in countdown(vtab.display.len - 1, 0):
+          dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
+        dest.addParRi() # AconstrX
+
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo
       dest.addIdent "x", NoLineInfo # export the vtable!
@@ -460,16 +480,9 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
 
         dest.addParLe KvU, NoLineInfo
         dest.addSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), NoLineInfo
-        if vtab.display.len > 0:
-          dest.addParLe AconstrX, NoLineInfo
-          # array constructor also starts with a type, yuck:
-          dest.copyIntoKind PtrT, NoLineInfo:
-            dest.copyIntoKind UarrayT, NoLineInfo:
-              dest.copyIntoKind UT, NoLineInfo:
-                dest.addIntLit 32, NoLineInfo
-          for i in countdown(vtab.display.len - 1, 0):
-            dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
-          dest.addParRi() # AconstrX
+        if displayName != SymId(0):
+          dest.copyIntoKind AddrX, NoLineInfo:
+            dest.addSymUse displayName, NoLineInfo
         else:
           dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU

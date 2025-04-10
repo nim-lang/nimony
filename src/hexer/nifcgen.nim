@@ -551,7 +551,7 @@ proc maybeByConstRef(c: var EContext; n: var Cursor) =
   if param.typ.typeKind in {TypedescT, StaticT}:
     # do not produce any code for this as it's a compile-time parameter
     skip n
-  elif passByConstRef(param.typ, param.pragmas, c.bits div 8):
+  elif passByConstRef(param.typ, param.pragmas, c.bits div 8) or typeprops.isInheritable(param.typ, false):
     var paramBuf = createTokenBuf()
     paramBuf.add tagToken("param", n.info)
     paramBuf.addSubtree param.name

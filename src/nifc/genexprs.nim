@@ -309,20 +309,21 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     var i = 0
     while n.kind != ParRi:
       if i > 0: c.add Comma
-      if n.exprKind == OconstrC:
-        # inheritance
-        c.add Dot
-        c.add "Q"
-        c.add AsgnOpr
-        c.genx n
-      else:
-        assert n.substructureKind == KvU
+      if n.substructureKind == KvU:
         inc n
         c.add Dot
         c.genx n
         c.add AsgnOpr
         c.genx n
         skipParRi n
+      elif n.exprKind == OconstrC:
+        # inheritance
+        c.add Dot
+        c.add "Q"
+        c.add AsgnOpr
+        c.genx n
+      else:
+        c.genx n
       inc i
     c.add CurlyRi
     skipParRi n
