@@ -31,3 +31,34 @@ proc testInternalFieldPairs[T: object](x: T) =
 
 testInternalFieldPairs(x)
 testInternalFieldPairs(y)
+
+const DefaultBufSize = 8
+block:
+  var b = open(DefaultBufSize)
+  b.toNif "hello"
+  echo b.extract
+
+block:
+  var b = open(DefaultBufSize)
+  b.toNif 123
+  echo b.extract
+
+block:
+  var b = open(DefaultBufSize)
+  b.toNif 123'u
+  echo b.extract
+
+block:
+  var b = open(DefaultBufSize)
+  b.toNif 123.456
+  echo b.extract
+
+block:
+  var b = open(DefaultBufSize)
+  b.toNif true
+  echo b.extract
+
+block:
+  var b = open(DefaultBufSize)
+  b.toNif false
+  echo b.extract
