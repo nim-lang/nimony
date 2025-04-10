@@ -2987,12 +2987,12 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         # XXX `or` case temporarily handled here instead of magic overload in system
         c.dest.addParLe(OrT, info)
         inc n # tag
-        inc n # `|`
+        skip n # `|`
         var nested = 1
         while nested != 0:
           if isOrExpr(n):
             inc n # tag
-            inc n # `|`
+            skip n # `|`
             inc nested
           elif n.kind == ParRi:
             inc n
@@ -3004,12 +3004,12 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         # XXX temporarily handled here instead of magic overload in system
         c.dest.addParLe(AndT, info)
         inc n # tag
-        inc n # `and`
+        skip n # `and`
         var nested = 1
         while nested != 0:
           if isAndExpr(n):
             inc n # tag
-            inc n # `and`
+            skip n # `and`
             inc nested
           elif n.kind == ParRi:
             inc n
@@ -3021,7 +3021,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         # XXX temporarily handled here instead of magic overload in system
         c.dest.addParLe(NotT, info)
         inc n # tag
-        inc n # `|`
+        skip n # `not`
         semLocalTypeImpl c, n, context
         takeParRi c, n
       elif false and isRangeExpr(n):
