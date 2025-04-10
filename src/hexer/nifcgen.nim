@@ -25,6 +25,9 @@ proc setOwner(c: var EContext; newOwner: SymId): SymId =
 
 proc demand(c: var EContext; s: SymId) =
   if not c.declared.contains(s):
+    #if pool.syms[s] == "vt.0":
+    #  writeStackTrace()
+    #  quit "wtf"
     c.requires.add s
 
 proc offer(c: var EContext; s: SymId) =
@@ -1076,6 +1079,17 @@ proc traverseArrAt(c: var EContext; n: var Cursor) =
         c.dest.add indexDest
   takeParRi c, n
 
+proc traverseFieldname(c: var EContext; n: var Cursor) =
+  if n.kind == Symbol:
+    let ext = maybeMangle(c, n.symId)
+    if ext.len != 0:
+      c.dest.addSymUse pool.syms.getOrIncl(ext), n.info
+    else:
+      c.dest.add n
+    inc n
+  else:
+    traverseExpr c, n
+
 proc traverseExpr(c: var EContext; n: var Cursor) =
   case n.kind
   of EofToken, ParRi:
@@ -1152,7 +1166,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       c.dest.add tagToken("dot", n.info)
       inc n # skip tag
       traverseExpr c, n # obj
-      traverseExpr c, n # field
+      traverseFieldname c, n # field
       traverseExpr c, n # inheritance depth
       takeParRi c, n
     of DdotX:
@@ -1161,7 +1175,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       inc n # skip tag
       traverseExpr c, n
       c.dest.addParRi()
-      traverseExpr c, n
+      traverseFieldname c, n
       traverseExpr c, n
       takeParRi c, n
     of HaddrX, AddrX:
