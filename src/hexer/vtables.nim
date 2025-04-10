@@ -172,10 +172,11 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       genProctype(c, dest, fnType)
       copyIntoKind dest, PatX, info:
         copyIntoKind dest, DotX, info:
-          copyIntoKind dest, DotX, info:
-            useTemp dest, temp, info
-            dest.addSymUse pool.syms.getOrIncl(VTableField), info
-            dest.addIntLit 0, info # this is getting stupid...
+          copyIntoKind dest, DerefX, info:
+            copyIntoKind dest, DotX, info:
+              useTemp dest, temp, info
+              dest.addSymUse pool.syms.getOrIncl(VTableField), info
+              dest.addIntLit 0, info # this is getting stupid...
           dest.addSymUse pool.syms.getOrIncl(MethodsField & SystemModuleSuffix), info
           dest.addIntLit 0, info # this is getting stupid...
         let idx = getMethodIndex(c, cls, fn)
