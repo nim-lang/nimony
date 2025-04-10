@@ -122,6 +122,7 @@ jobs:
       #  run: winget install ezwinports.make --disable-interactivity --accept-source-agreements
 
       - name: Install make dependencies with chocolatey (Windows)
+        if: runner.os == 'Windows'
         uses: crazy-max/ghaction-chocolatey@v3
         with:
           args: install make
