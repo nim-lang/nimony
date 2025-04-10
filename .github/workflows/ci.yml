@@ -13,22 +13,22 @@ jobs:
       matrix:
         branch: [master]
         target:
-          #- os: linux
-          #  cpu: amd64
-          #  nim_branch: devel
-          #- os: macos
-          #  cpu: arm64
-          #  nim_branch: devel
+          - os: linux
+            cpu: amd64
+            nim_branch: devel
+          - os: macos
+            cpu: arm64
+            nim_branch: devel
           - os: windows
             cpu: amd64
             nim_branch: devel
         include:
-          #- target:
-          #    os: linux
-          #  builder: ubuntu-24.04
-          #- target:
-          #    os: macos
-          #  builder: macos-15
+          - target:
+              os: linux
+            builder: ubuntu-24.04
+          - target:
+              os: macos
+            builder: macos-15
           - target:
               os: windows
             builder: windows-2025
@@ -111,7 +111,17 @@ jobs:
           echo '${{ github.workspace }}'"/external/mingw-${{ matrix.target.cpu }}/bin" >> $GITHUB_PATH
           echo '${{ github.workspace }}'"/external/dlls-${{ matrix.target.cpu }}" >> $GITHUB_PATH
 
-      - name: Install make dependencies (Windows)
+      #- name: Install winget
+      #  if: runner.os == 'Windows'
+      #  continue-on-error: true # for some reason errors if latest version already installed
+      #  # winget included in windows-2025 and above:
+      #  run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+
+      #- name: Install make dependencies with winget (Windows)
+      #  if: runner.os == 'Windows'
+      #  run: winget install ezwinports.make --disable-interactivity --accept-source-agreements
+
+      - name: Install make dependencies with chocolatey (Windows)
         uses: crazy-max/ghaction-chocolatey@v3
         with:
           args: install make
