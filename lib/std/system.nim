@@ -80,6 +80,9 @@ proc addInt*(s: var string; x: int64) {.inline.} =
 proc addInt*(s: var string; x: uint64) {.inline.} =
   s.add $x
 
+proc `$`*(b: bool): string =
+  if b: "true" else: "false"
+
 proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 

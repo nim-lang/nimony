@@ -28,3 +28,6 @@ assert $123'u == "123"
 assert $1234567890'u == "1234567890"
 assert $9223372036854775807'u == "9223372036854775807"
 assert $0xffffffffffffffff'u == "18446744073709551615"
+
+assert $true == "true"
+assert $false == "false"
