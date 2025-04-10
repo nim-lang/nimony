@@ -150,7 +150,7 @@ proc addSymbolDef*(b: var Builder; s: string) =
 proc addStrLit*(b: var Builder; s: string) =
   addSep b
   b.put '"'
-  for c in s:
+  for c in s.items:
     if needsEscape c:
       b.escape c
     else:
@@ -237,7 +237,7 @@ proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
     b.buf.add ','
     b.buf.addLine line
     b.buf.add ','
-    for c in file:
+    for c in file.items:
       if c.needsEscape:
         b.escape c
       else:
