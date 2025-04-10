@@ -170,10 +170,13 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let temp = evalOnce(c, dest, n)
     copyIntoKind dest, CastX, info:
       genProctype(c, dest, fnType)
-      copyIntoKind dest, ArrAtX, info:
+      copyIntoKind dest, PatX, info:
         copyIntoKind dest, DotX, info:
-          useTemp dest, temp, info
-          dest.addSymUse pool.syms.getOrIncl(VTableField), info
+          copyIntoKind dest, DotX, info:
+            useTemp dest, temp, info
+            dest.addSymUse pool.syms.getOrIncl(VTableField), info
+            dest.addIntLit 0, info # this is getting stupid...
+          dest.addSymUse pool.syms.getOrIncl(MethodsField & SystemModuleSuffix), info
           dest.addIntLit 0, info # this is getting stupid...
         let idx = getMethodIndex(c, cls, fn)
         dest.addIntLit idx, info
@@ -284,7 +287,7 @@ proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
         copyIntoKind dest, DotX, info:
           copyIntoKind dest, DerefX, info:
             dest.addSymUse vtabTempSym, info
-          dest.copyIntoSymUse pool.syms.getOrIncl(DisplayLenField), info
+          dest.copyIntoSymUse pool.syms.getOrIncl(DisplayLenField & SystemModuleSuffix), info
           dest.addIntLit 0, info
 
       # Second expression: vtab.display[level] == hash(T)
@@ -295,7 +298,7 @@ proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
         copyIntoKind dest, PatX, info:
           copyIntoKind dest, DotX, info:
             dest.addSymUse vtabTempSym, info
-            dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField), info
+            dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), info
             dest.addIntLit 0, info
           dest.addIntLit level, info
 
@@ -451,35 +454,41 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(DisplayLenField), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayLenField & SystemModuleSuffix), NoLineInfo
         dest.addIntLit vtab.display.len, NoLineInfo
         dest.addParRi() # KvU
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(DisplayField), NoLineInfo
-        dest.addParLe AconstrX, NoLineInfo
-        # array constructor also starts with a type, yuck:
-        dest.copyIntoKind ArrayT, NoLineInfo:
-          dest.copyIntoKind UT, NoLineInfo:
-            dest.addIntLit 32, NoLineInfo
-          dest.addIntLit vtab.display.len, NoLineInfo
-        for i in countdown(vtab.display.len - 1, 0):
-          dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
-        dest.addParRi() # AconstrX
+        dest.addSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), NoLineInfo
+        if vtab.display.len > 0:
+          dest.addParLe AconstrX, NoLineInfo
+          # array constructor also starts with a type, yuck:
+          dest.copyIntoKind ArrayT, NoLineInfo:
+            dest.copyIntoKind UT, NoLineInfo:
+              dest.addIntLit 32, NoLineInfo
+            dest.addIntLit vtab.display.len, NoLineInfo
+          for i in countdown(vtab.display.len - 1, 0):
+            dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
+          dest.addParRi() # AconstrX
+        else:
+          dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(MethodsField), NoLineInfo
-        dest.addParLe AconstrX, NoLineInfo
-        # array constructor also starts with a type, yuck:
-        dest.copyIntoKind ArrayT, NoLineInfo:
-          dest.addParPair PointerT, NoLineInfo
-          dest.addIntLit vtab.methods.len, NoLineInfo
-        for m in mitems(vtab.methods):
-          dest.copyIntoKind CastX, NoLineInfo:
+        dest.addSymUse pool.syms.getOrIncl(MethodsField & SystemModuleSuffix), NoLineInfo
+        if vtab.methods.len > 0:
+          dest.addParLe AconstrX, NoLineInfo
+          # array constructor also starts with a type, yuck:
+          dest.copyIntoKind ArrayT, NoLineInfo:
             dest.addParPair PointerT, NoLineInfo
-            dest.addSymUse m, NoLineInfo
-        dest.addParRi() # AconstrX
+            dest.addIntLit vtab.methods.len, NoLineInfo
+          for m in mitems(vtab.methods):
+            dest.copyIntoKind CastX, NoLineInfo:
+              dest.addParPair PointerT, NoLineInfo
+              dest.addSymUse m, NoLineInfo
+          dest.addParRi() # AconstrX
+        else:
+          dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
 
 proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =

@@ -627,7 +627,8 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           inc n
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, BorrowP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
-           InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP:
+           InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP,
+           InheritableP, PureP:
           result.flags.incl pk
           inc n
         of HeaderP:
@@ -648,7 +649,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           inc n
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
-           InheritableP, PureP, BaseP, FinalP:
+           BaseP, FinalP:
           skip n
           continue
         of BuildP, EmitP:
@@ -854,7 +855,8 @@ proc traverseTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   else:
     var flags = {IsTypeBody}
     if NodeclP in prag.flags: flags.incl IsNodecl
-    if InheritableP in prag.flags: flags.incl IsInheritable
+    if InheritableP in prag.flags and PureP notin prag.flags:
+      flags.incl IsInheritable
     traverseType c, n, flags
   takeParRi c, n
   swap dst, c.dest
