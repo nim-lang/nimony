@@ -453,15 +453,14 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.addSymDef displayName, NoLineInfo
         dest.addIdent "x", NoLineInfo # export the vtable!
         dest.addEmpty() # pragmas
-        dest.copyIntoKind ArrayT, NoLineInfo:
+        dest.copyIntoKind UarrayT, NoLineInfo:
           dest.copyIntoKind UT, NoLineInfo:
             dest.addIntLit 32, NoLineInfo
-          dest.addIntLit vtab.display.len, NoLineInfo
+          #dest.addIntLit vtab.display.len, NoLineInfo
         dest.addParLe AconstrX, NoLineInfo
-        dest.copyIntoKind ArrayT, NoLineInfo:
+        dest.copyIntoKind UarrayT, NoLineInfo:
           dest.copyIntoKind UT, NoLineInfo:
             dest.addIntLit 32, NoLineInfo
-          dest.addIntLit vtab.display.len, NoLineInfo
         for i in countdown(vtab.display.len - 1, 0):
           dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
         dest.addParRi() # AconstrX
