@@ -1,3 +1,3 @@
-import mqualifiedreexport1
+import mqualifiedreexport1 # double forward
 
-export openBar
+export openBar # single symbol

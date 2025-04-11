@@ -1,1 +1,3 @@
-proc openBar*() = discard
+import mqualifiedreexport0
+
+export openBar # single symbol
