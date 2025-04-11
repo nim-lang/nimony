@@ -2922,7 +2922,23 @@ proc isOrExpr(n: Cursor): bool =
     var n = n
     inc n
     let name = takeIdent(n)
-    result = name != StrId(0) and pool.strings[name] == "|"
+    result = name != StrId(0) and (pool.strings[name] == "|" or pool.strings[name] == "or")
+
+proc isAndExpr(n: Cursor): bool =
+  result = n.exprKind == InfixX
+  if result:
+    var n = n
+    inc n
+    let name = takeIdent(n)
+    result = name != StrId(0) and (pool.strings[name] == "and")
+
+proc isNotExpr(n: Cursor): bool =
+  result = n.exprKind == PrefixX
+  if result:
+    var n = n
+    inc n
+    let name = takeIdent(n)
+    result = name != StrId(0) and (pool.strings[name] == "not")
 
 proc semTypeof(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
@@ -2967,14 +2983,16 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       elif xkind == TupX:
         semTupleType c, n
       elif isOrExpr(n):
+        # old nim special cases `|` infixes in type contexts
+        # XXX `or` case temporarily handled here instead of magic overload in system
         c.dest.addParLe(OrT, info)
         inc n # tag
-        inc n # `|`
+        skip n # `|`
         var nested = 1
         while nested != 0:
           if isOrExpr(n):
             inc n # tag
-            inc n # `|`
+            skip n # `|`
             inc nested
           elif n.kind == ParRi:
             inc n
@@ -2982,6 +3000,30 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           else:
             semLocalTypeImpl c, n, context
         c.dest.addParRi()
+      elif isAndExpr(n):
+        # XXX temporarily handled here instead of magic overload in system
+        c.dest.addParLe(AndT, info)
+        inc n # tag
+        skip n # `and`
+        var nested = 1
+        while nested != 0:
+          if isAndExpr(n):
+            inc n # tag
+            skip n # `and`
+            inc nested
+          elif n.kind == ParRi:
+            inc n
+            dec nested
+          else:
+            semLocalTypeImpl c, n, context
+        c.dest.addParRi()
+      elif isNotExpr(n):
+        # XXX temporarily handled here instead of magic overload in system
+        c.dest.addParLe(NotT, info)
+        inc n # tag
+        skip n # `not`
+        semLocalTypeImpl c, n, context
+        takeParRi c, n
       elif false and isRangeExpr(n):
         # a..b, interpret as range type but only without AllowValues
         # to prevent conflict with HSlice
@@ -3950,6 +3992,14 @@ proc semTry(c: var SemContext; it: var Item) =
     producesVoid c, info, it.typ
 
 proc semWhen(c: var SemContext; it: var Item) =
+  case c.phase
+  of SemcheckTopLevelSyms:
+    # XXX this is too limited
+    c.takeTree it.n
+    return
+  of SemcheckSignatures, SemcheckBodies:
+    discard
+
   let start = c.dest.len
   let info = it.n.info
   takeToken c, it.n
@@ -3958,7 +4008,10 @@ proc semWhen(c: var SemContext; it: var Item) =
     while it.n.substructureKind == ElifU:
       takeToken c, it.n
       let condStart = c.dest.len
+      var phase = SemcheckBodies
+      swap c.phase, phase
       semConstBoolExpr c, it.n
+      swap c.phase, phase
       let condValue = cursorAt(c.dest, condStart).exprKind
       endRead(c.dest)
       if not leaveUnresolved:
@@ -6227,8 +6280,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         toplevelGuard c:
           semIf c, it
       of WhenS:
-        toplevelGuard c:
-          semWhen c, it
+        semWhen c, it
       of RetS:
         toplevelGuard c:
           semReturn c, it
