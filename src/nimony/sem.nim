@@ -2741,13 +2741,45 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     else:
       c.buildErr info, "cannot attempt to instantiate a non-type"
 
+  var params = decl.typevars
+  inc params
+  var paramCount = 0
+  var argCount = 0
+  var m = createMatch(addr c)
   var genericArgs = 0
   swap c.usedTypevars, genericArgs
   let beforeArgs = c.dest.len
   while n.kind != ParRi:
+    inc argCount
+    let argInfo = n.info
+    var argBuf = createTokenBuf(16)
+    swap c.dest, argBuf
     semLocalTypeImpl c, n, AllowValues
+    swap c.dest, argBuf
+    var addArg = true
+    if params.kind == ParRi:
+      # will error later from param/arg count not matching
+      discard
+    else:
+      inc paramCount
+      let constraint = takeLocal(params, SkipFinalParRi).typ
+      if constraint.kind != DotToken:
+        var arg = beginRead(argBuf)
+        var constraintMatch = constraint
+        if not matchesConstraint(m, constraintMatch, arg):
+          c.buildErr argInfo, "type " & typeToString(arg) & " does not match constraint: " & typeToString(constraint)
+          ok = false
+          addArg = false
+    if addArg:
+      c.dest.add argBuf
   swap c.usedTypevars, genericArgs
   takeParRi c, n
+  if paramCount != argCount:
+    c.dest.shrink typeStart
+    c.buildErr info, "wrong amount of generic parameters for type " & pool.syms[headId] &
+      ", expected " & $paramCount & " but got " & $argCount
+    return
+
   if ok and (genericArgs == 0 or
       # structural types are inlined even with generic arguments
       not isNominal(decl.body.typeKind)):
