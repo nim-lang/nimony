@@ -42,47 +42,51 @@ proc semInclude(c: var SemContext; it: var Item) =
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       mode: ImportFilter; exports: var seq[(string, ImportFilter)];
-                      info: PackedLineInfo) =
+                      info: PackedLineInfo): SymId =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
     c.buildErr info, "file not found: " & f2
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
-  var moduleSym = SymId(0)
+  result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
       selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
-    moduleSym = identToSym(c, moduleName, ModuleY)
-    c.processedModules[suffix] = moduleSym
-    let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
+    result = identToSym(c, moduleName, ModuleY)
+    c.processedModules[suffix] = result
+    let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
     if f1.name != "":
       c.currentScope.addOverloadable(moduleName, s)
     var moduleDecl = createTokenBuf(2)
     moduleDecl.addParLe(ModuleY, info)
     moduleDecl.addParRi()
-    publish moduleSym, moduleDecl
+    publish result, moduleDecl
   else:
-    moduleSym = c.processedModules[suffix]
-  let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
-  loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters, exports, mode
+    result = c.processedModules[suffix]
+  let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2))
+  loadInterface suffix, module.iface, result, c.importTab, c.converters, exports, mode
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
                       info: PackedLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[] # ignored
-  importSingleFile(c, f1, origin, filter, exports, info)
+  discard importSingleFile(c, f1, origin, filter, exports, info)
 
 proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[]
-  importSingleFile(c, f1, origin, filter, exports, info)
+  let source = importSingleFile(c, f1, origin, filter, exports, info)
   while exports.len != 0:
     var newExports: seq[(string, ImportFilter)] = @[]
     for ex in exports:
       let file = ImportedFilename(path: ex[0], name: "")
-      importSingleFile(c, file, origin, ex[1], newExports, info)
+      let forward = importSingleFile(c, file, origin, ex[1], newExports, info)
+      if forward in c.importedModules[source].exports:
+        mergeFilter(c.importedModules[source].exports[forward], ex[1])
+      else:
+        c.importedModules[source].exports[forward] = ex[1]
     exports = newExports
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
