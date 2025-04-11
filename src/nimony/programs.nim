@@ -56,7 +56,7 @@ proc load(suffix: string): NifModule =
   else:
     result = prog.mods[suffix]
 
-proc mergeFilter(f: var ImportFilter; g: ImportFilter) =
+proc mergeFilter*(f: var ImportFilter; g: ImportFilter) =
   # applies filter f to filter g, commutative since it computes the intersection
   case g.kind
   of ImportAll: discard
@@ -76,6 +76,12 @@ proc mergeFilter(f: var ImportFilter; g: ImportFilter) =
       f.list.excl(exc)
     of FromImport:
       f.list = intersection(f.list, g.list)
+
+proc filterAllows*(f: ImportFilter; name: StrId): bool =
+  case f.kind
+  of ImportAll: result = true
+  of ImportExcept: result = name notin f.list
+  of FromImport: result = name in f.list
 
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
