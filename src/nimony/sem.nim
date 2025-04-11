@@ -1918,7 +1918,7 @@ proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: Pac
     if module == c.selfModuleSym:
       buildSymChoiceForSelfModule(c, ident, info)
     else:
-      buildSymChoiceForForeignModule(c, c.importedModules[module], ident, info)
+      buildSymChoiceForForeignModule(c, module, ident, info)
   if count == 1:
     let sym = c.dest[insertPos+1].symId
     c.dest.shrink insertPos
