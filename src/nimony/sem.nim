@@ -2776,9 +2776,8 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
   takeParRi c, n
   if paramCount != argCount:
     c.dest.shrink typeStart
-    c.buildErr info, "type " & pool.syms[headId] &
-      " expects " & $paramCount & " generic parameters" &
-      " but got " & $argCount
+    c.buildErr info, "wrong amount of generic parameters for type " & pool.syms[headId] &
+      ", expected " & $paramCount & " but got " & $argCount
     return
 
   if ok and (genericArgs == 0 or

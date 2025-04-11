@@ -11,4 +11,4 @@ tests/nimony/generics/tgenerictypeconstraints.nim(6, 12) Error: type (f +64) doe
   (u +16)
   (u +32)
   (u +64)))
-tests/nimony/generics/tgenerictypeconstraints.nim(7, 11) Error: type Foo.0.tge70svym expects 1 generic parameters but got 2
+tests/nimony/generics/tgenerictypeconstraints.nim(7, 11) Error: wrong amount of generic parameters for type Foo.0.tge70svym, expected 1 but got 2
