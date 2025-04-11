@@ -4190,6 +4190,29 @@ proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
 
 include semfields
 
+proc isIteratorCall(c: var SemContext; beforeCall: int): bool {.inline.} =
+  result = c.dest.len > beforeCall+1
+  if result:
+    let callKind =
+      if c.dest[beforeCall].kind == ParLe and rawTagIsNimonyExpr(tagEnum(c.dest[beforeCall])):
+        cast[NimonyExpr](tagEnum(c.dest[beforeCall]))
+      else:
+        NoExpr
+    result = callKind in CallKinds and
+      c.dest[beforeCall+1].kind == Symbol and
+      c.isIterator(c.dest[beforeCall+1].symId)
+
+proc isIdentCall(c: var SemContext; beforeCall: int): bool {.inline.} =
+  result = c.dest.len > beforeCall+1
+  if result:
+    let callKind =
+      if c.dest[beforeCall].kind == ParLe and rawTagIsNimonyExpr(tagEnum(c.dest[beforeCall])):
+        cast[NimonyExpr](tagEnum(c.dest[beforeCall]))
+      else:
+        NoExpr
+    result = callKind in CallKinds and
+      c.dest[beforeCall+1].kind == Ident
+
 proc semFor(c: var SemContext; it: var Item) =
   let info = it.n.info
   let orig = it.n
@@ -4200,7 +4223,7 @@ proc semFor(c: var SemContext; it: var Item) =
   semExpr c, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
   var isMacroLike = false
-  if c.dest.len > beforeCall+1 and c.dest[beforeCall+1].kind == Symbol and c.isIterator(c.dest[beforeCall+1].symId):
+  if isIteratorCall(c, beforeCall):
     discard "fine"
   elif c.dest[beforeCall].kind == ParLe and
       (c.dest[beforeCall].tagId == TagId(FieldsTagId) or
@@ -4214,10 +4237,53 @@ proc semFor(c: var SemContext; it: var Item) =
     return
   elif iterCall.typ.typeKind == UntypedT or
       # for iterators from concepts in generic context:
-      (c.dest.len > beforeCall+1 and c.dest[beforeCall+1].kind == Ident):
+      isIdentCall(c, beforeCall):
     isMacroLike = true
   else:
-    buildErr c, callInfo, "iterator expected"
+    var vars = 0
+    var varsCursor = it.n
+    if varsCursor.substructureKind == UnpackflatU:
+      inc varsCursor
+      while varsCursor.kind != ParRi:
+        inc vars
+        skip varsCursor
+    else:
+      vars = 1
+    var name = ""
+    case vars
+    of 1:
+      name = "items"
+    of 2:
+      name = "pairs"
+    else:
+      c.dest.shrink beforeCall
+      buildErr c, callInfo, "iterator expected"
+    if name != "":
+      # try implicit iterator call
+      var callBuf = createTokenBuf(32)
+      callBuf.addParLe(CallX, callInfo)
+      swap c.dest, callBuf
+      discard buildSymChoice(c, pool.strings.getOrIncl(name), info, FindAll)
+      swap c.dest, callBuf
+      for tok in beforeCall ..< c.dest.len: callBuf.add c.dest[tok]
+      callBuf.addParRi()
+      let argType = iterCall.typ
+      iterCall = Item(n: beginRead(callBuf), typ: c.types.autoType)
+      shrink c.dest, beforeCall
+      semCall c, iterCall, {}
+      if isIteratorCall(c, beforeCall):
+        discard "fine"
+      elif iterCall.typ.typeKind == UntypedT or
+          # for iterators from concepts in generic context:
+          isIdentCall(c, beforeCall):
+        isMacroLike = true
+      else:
+        if c.dest[beforeCall].kind == ParLe and c.dest[beforeCall].tagId == ErrT:
+          # original nim gives `items` overload errors so preserve them
+          discard
+        else:
+          c.dest.shrink beforeCall
+          buildErr c, callInfo, "no implicit `" & name & "` iterator found for type " & typeToString(argType)
   withNewScope c:
     case substructureKind(it.n)
     of UnpackflatU:
