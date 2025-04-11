@@ -2758,7 +2758,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     swap c.dest, argBuf
     var addArg = true
     if params.kind == ParRi:
-      # will error later
+      # will error later from param/arg count not matching
       discard
     else:
       inc paramCount
