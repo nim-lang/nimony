@@ -203,7 +203,7 @@ type LinearMatchFlag = enum
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
 
-proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool
+proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool
 
 proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
@@ -313,7 +313,7 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     swap m.err, err
     result = not err
 
-proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
+proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
     inc f
