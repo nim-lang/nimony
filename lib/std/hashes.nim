@@ -16,12 +16,11 @@ proc `!$`*(h: Hash): Hash {.inline.} =
   result = result xor (result shr 11)
   result = result + result shl 15
 
-when not defined(nimony):
-  proc hash*(s: string): Hash =
-    result = 0'u
-    for c in items(s):
-      result = result !& uint(c)
-    result = !$result
+proc hash*(s: string): Hash =
+  result = 0'u
+  for c in items(s):
+    result = result !& uint(c)
+  result = !$result
 
 proc hash*(u: uint): Hash {.inline.} = u
 when not defined(nimony):
