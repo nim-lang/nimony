@@ -74,21 +74,24 @@ proc buildSymChoiceForSelfModule*(c: var SemContext;
     c.dest.add identToken(identifier, info)
 
 proc rawBuildSymChoiceForForeignModule(c: var SemContext; module: SymId;
-                                       identifier: StrId; info: PackedLineInfo): int =
+                                       identifier: StrId; info: PackedLineInfo;
+                                       marker: var HashSet[SymId]): int =
   result = 0
   let candidates = c.importedModules[module].iface.getOrDefault(identifier)
   for defId in candidates:
-    c.dest.add symToken(defId, info)
+    if not marker.containsOrIncl(defId):
+      c.dest.add symToken(defId, info)
     inc result
   for forward, filter in c.importedModules[module].exports:
     if filterAllows(filter, identifier):
-      inc result, rawBuildSymChoiceForForeignModule(c, forward, identifier, info)
+      inc result, rawBuildSymChoiceForForeignModule(c, forward, identifier, info, marker)
 
 proc buildSymChoiceForForeignModule*(c: var SemContext; module: SymId;
                                      identifier: StrId; info: PackedLineInfo): int =
   let oldLen = c.dest.len
   c.dest.buildTree OchoiceX, info:
-    result = rawBuildSymChoiceForForeignModule(c, module, identifier, info)
+    var marker = initHashSet[SymId]()
+    result = rawBuildSymChoiceForForeignModule(c, module, identifier, info, marker)
   # if the sym choice is empty, create an ident node:
   if result == 0:
     c.dest.shrink oldLen
