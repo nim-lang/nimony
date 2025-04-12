@@ -50,3 +50,12 @@ iterator items*[T: Ordinal](x: set[T]): T =
       if x.contains(i): yield i
       if i >= high(T): break
       inc(i)
+
+iterator items*[T: enum](x: set[T]): T =
+  # original system implementation, here so holey enums work
+  var i = low(T).int
+  if i <= high(T).int:
+    while true:
+      if x.contains(cast[T](i)): yield cast[T](i)
+      if i >= high(T).int: break
+      inc(i)
