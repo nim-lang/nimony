@@ -16,13 +16,19 @@ type
 
 template `[]`*(s: StringView; i: int): char = s.p[i]
 
-proc `==`*(a, b: StringView): bool =
+when not defined(nimony):
+  {.pragma: untyped.}
+
+template eqImpl() {.untyped.} =
   if a.len == b.len:
     for i in 0..<a.len:
       if a[i] != b[i]: return false
     result = true
   else:
     result = false
+
+proc `==`*(a, b: StringView): bool = eqImpl()
+proc `==`*(a: StringView; b: string): bool = eqImpl()
 
 proc startsWith*(s: StringView; prefix: string): bool =
   let prefixLen = prefix.len
@@ -58,9 +64,6 @@ proc toStringViewUnsafe*(s: string): StringView =
     result = StringView(p: cast[pchar](s.rawData), len: s.len)
   else:
     result = StringView(p: nil, len: 0)
-
-proc `==`*(a: StringView; b: string): bool =
-  a == b.toStringViewUnsafe
 
 proc hash*(a: StringView): Hash {.inline.} =
   when defined(nimony):
