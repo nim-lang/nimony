@@ -144,8 +144,7 @@ type
 proc isGeneric*(r: TypeDecl): bool {.inline.} =
   r.typevars.substructureKind == TypevarsU
 
-proc asTypeDecl*(c: Cursor): TypeDecl =
-  var c = c
+proc takeTypeDecl*(c: var Cursor; mode: SkipMode): TypeDecl =
   let kind = symKind c
   result = TypeDecl(kind: kind)
   if kind == TypeY:
@@ -157,8 +156,19 @@ proc asTypeDecl*(c: Cursor): TypeDecl =
     result.typevars = c
     skip c
     result.pragmas = c
-    skip c
-    result.body = c
+    if mode >= SkipInclBody:
+      skip c
+      result.body = c
+      skip c
+      if mode == SkipFinalParRi:
+        if c.kind == ParRi:
+          inc c
+        else:
+          raiseAssert "expected ')' inside (" & $result.kind
+
+proc asTypeDecl*(c: Cursor): TypeDecl =
+  var c = c
+  result = takeTypeDecl(c, SkipInclBody)
 
 type
   ObjectDecl* = object

@@ -37,6 +37,7 @@ type
       # string key takes parameter types into account so it just works with overloading
     vtables: Table[SymId, VTable]
     vtableNames: Table[SymId, SymId]
+    classes: seq[(SymId, bool)] # (class, declaredInThisModule)
     getRttiSym: SymId
 
 when not defined(nimony):
@@ -398,6 +399,10 @@ proc methodKey(a: Cursor): string =
   result = b.extract()
 
 proc registerMethod(c: var Context; r: Routine; methodName: string) =
+  # Methods are fundamentally different from other type-bound symbols in
+  # that we need to know the base class's entire vtable so that we know
+  # which slots to inherit and which to override. This means we need to
+  # load an entire vtable from the module that declares the base class.
   var p = r.params
   if p.kind == ParLe:
     inc p
@@ -426,6 +431,33 @@ proc registerMethod(c: var Context; r: Routine; methodName: string) =
       c.vtables.mgetOrPut(cls, VTable(display: @[], methods: @[])).methods.add r.name.symId
       c.vindex[(cls, sig)] = c.vtables[cls].methods.len - 1
 
+proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
+  for i in 0 ..< c.classes.len:
+    if c.classes[i][0] == cls:
+      # inThisModule must be "sticky" so do not always overwrite this value:
+      if inThisModule: c.classes[i][1] = true
+      return
+  c.classes.add (cls, inThisModule)
+
+proc collectClass(c: var Context; n: var Cursor) =
+  let d = takeTypeDecl(n, SkipFinalParRi)
+  var b = d.body
+  if b.typeKind in {RefT, PtrT}: inc b
+  var isClass = false
+  if hasPragma(d.pragmas, InheritableP):
+    isClass = true
+  elif b.typeKind == ObjectT:
+    inc b
+    isClass = b.kind != DotToken
+  if isClass:
+    let cls = d.name.symId
+    # reasonably cheap way to get a topological order:
+    var deps = newSeq[SymId]()
+    for inh in inheritanceChain(cls): deps.add inh
+    for i in countdown(deps.len - 1, 0):
+      registerClass c, deps[i], false
+    registerClass c, cls, true
+
 proc collectMethods(c: var Context; n: var Cursor) =
   # we only care about top level methods
   case n.stmtKind
@@ -440,6 +472,8 @@ proc collectMethods(c: var Context; n: var Cursor) =
       var methodName = pool.syms[r.name.symId]
       extractBasename methodName
       registerMethod c, r, methodName
+  of TypeS:
+    collectClass c, n
   else:
     skip n
 
