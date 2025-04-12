@@ -3982,6 +3982,14 @@ proc semTry(c: var SemContext; it: var Item) =
     producesVoid c, info, it.typ
 
 proc semWhen(c: var SemContext; it: var Item) =
+  case c.phase
+  of SemcheckTopLevelSyms:
+    # XXX this is too limited
+    c.takeTree it.n
+    return
+  of SemcheckSignatures, SemcheckBodies:
+    discard
+
   let start = c.dest.len
   let info = it.n.info
   takeToken c, it.n
@@ -3990,7 +3998,10 @@ proc semWhen(c: var SemContext; it: var Item) =
     while it.n.substructureKind == ElifU:
       takeToken c, it.n
       let condStart = c.dest.len
+      var phase = SemcheckBodies
+      swap c.phase, phase
       semConstBoolExpr c, it.n
+      swap c.phase, phase
       let condValue = cursorAt(c.dest, condStart).exprKind
       endRead(c.dest)
       if not leaveUnresolved:
@@ -6325,8 +6336,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         toplevelGuard c:
           semIf c, it
       of WhenS:
-        toplevelGuard c:
-          semWhen c, it
+        semWhen c, it
       of RetS:
         toplevelGuard c:
           semReturn c, it
