@@ -415,7 +415,7 @@
                (i -1) 14,95,tests/nimony/iter/tforloops1.nim +0))) 2 +1))))))))) ~2,~1
    (ret result.0))) 16,95
  (iterator :items.0.tfo161bfb1 . 0,41,lib/std/system/openarrays.nim .
-  (at items.1.sysvq0asl
+  (at items.2.sysvq0asl
    (i -1)) 18,41,lib/std/system/openarrays.nim
   (params 1
    (param :a.8 . . 12 openArray.0.Inff8aa1.tfo161bfb1 .)) 19,41,lib/std/system/openarrays.nim
