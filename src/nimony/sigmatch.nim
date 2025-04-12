@@ -288,6 +288,9 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     inc f
     assert f.kind == ParLe
     result = aTag.kind == ParLe and f.tagId == aTag.tagId
+    if not result and f.tagId == TagId(EnumTagId):
+      # enum typeclass also accepts holey enums
+      result = a.typeKind == HoleyEnumT
     inc f
     assert f.kind == ParRi
     inc f
@@ -300,7 +303,9 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
     of TypeKindT:
       var aTag = a
       inc aTag
-      result = isOrdinalTypeKind(aTag.typeKind)
+      result = isOrdinalTypeKind(aTag.typeKind) and
+        # enum typeclass can also include holey enums which are not ordinal
+        aTag.typeKind != EnumT
     else:
       result = isOrdinalType(a)
     skip f
@@ -1192,6 +1197,114 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
       if result == SecondWins: return NobodyWins
       result = FirstWins
 
+proc sumGeneric(t: Cursor): int =
+  # attempt to port sumGeneric from old compiler
+  result = 0
+  var t = t
+  while true:
+    if t.kind == Symbol:
+      let res = tryLoadSym(t.symId)
+      assert res.status == LacksNothing
+      case res.decl.symKind
+      of TypeY:
+        var decl = asTypeDecl(res.decl)
+        if decl.typevars.kind == DotToken:
+          t = decl.body
+        elif decl.typevars.substructureKind == TypevarsU:
+          t = decl.body
+        else:
+          assert decl.typevars.typeKind == InvokeT
+          t = decl.body
+          inc result
+      of TypevarY:
+        var decl = asLocal(res.decl)
+        if decl.typ.kind == DotToken:
+          inc result
+          break
+        else:
+          t = decl.typ
+      else:
+        break
+    else:
+      case t.typeKind
+      of SinkT, NotT: t = t.skipModifier
+      of ArrayT, RefT, PtrT, DistinctT, UarrayT,
+          VarargsT, SetT, RangetypeT,
+          LentT, MutT, OutT, StaticT: # XXX also openarray, seq
+        inc t # get to element type
+        inc result
+      of BoolT, CharT, EnumT, OnumT, ObjectT, PointerT, VoidT,
+          CstringT, IntT, FloatT, UIntT,
+          TypekindT: # also string
+        inc result
+        break
+      of OrT:
+        var maxBranch = 0
+        inc t
+        while t.kind != ParRi:
+          let branchSum = sumGeneric(t)
+          if branchSum > maxBranch: maxBranch = branchSum
+          skip t
+        inc result, maxBranch
+        break
+      of TypedescT:
+        inc t
+        if t.kind == ParRi: break
+        inc result
+      of UntypedT, TypedT: break
+      of InvokeT, TupleT, AndT:
+        result += ord(t.typeKind == AndT)
+        inc t
+        while t.kind != ParRi:
+          result += sumGeneric(t)
+          skip t
+        break
+      of ProctypeT, ItertypeT, ParamsT:
+        if t.typeKind in {ProctypeT, ItertypeT}:
+          t = skipProcTypeToParams(t)
+        var returnType = t
+        skip returnType
+        if returnType.kind != DotToken:
+          result += sumGeneric(returnType)
+        assert t.typeKind == ParamsT
+        inc t
+        while t.kind != ParRi:
+          let paramType = takeLocal(t, SkipFinalParRi).typ
+          result += sumGeneric(paramType)
+        break
+      of NoType, ErrT, AutoT, SymkindT, NiltT, IteratorT, OrdinalT, ConceptT:
+        #if t.isConcept:
+        #  result += t.reduceToBase.conceptBody.len
+        break
+
+proc complexDisambiguation(a, b: Match): DisambiguationResult =
+  # `complexDisambiguation` in old compiler
+  result = NobodyWins
+  var aParams = a.fn.typ
+  var bParams = b.fn.typ
+  assert aParams.typeKind == ParamsT
+  assert bParams.typeKind == ParamsT
+  inc aParams
+  inc bParams
+  while aParams.kind != ParRi and bParams.kind != ParRi:
+    let aParam = takeLocal(aParams, SkipFinalParRi)
+    let bParam = takeLocal(bParams, SkipFinalParRi)
+    var aFormal = aParam.typ
+    var bFormal = bParam.typ
+    let x = aFormal.sumGeneric
+    let y = bFormal.sumGeneric
+    if x != y:
+      if result == NobodyWins:
+        if x > y: result = FirstWins
+        else: result = SecondWins
+      elif x > y:
+        if result != FirstWins:
+          # contradiction
+          return NobodyWins
+      else:
+        if result != SecondWins:
+          return NobodyWins
+
 proc cmpMatches*(a, b: Match): DisambiguationResult =
   assert not a.err
   assert not b.err
@@ -1220,6 +1333,8 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
     else:
       if a.fn.typ.typeKind == ParamsT and b.fn.typ.typeKind == ParamsT:
         result = mutualGenericMatch(a, b)
+        if result == NobodyWins:
+          result = complexDisambiguation(a, b)
       else:
         result = NobodyWins
 
