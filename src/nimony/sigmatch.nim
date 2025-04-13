@@ -449,6 +449,14 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
               break
           skip f
           skip a
+          if f.kind != ParRi:
+            # importc part
+            while f.pragmaKind in {ImportcP, ImportcppP}:
+              skip f
+          if a.kind != ParRi:
+            # importc part
+            while a.pragmaKind in {ImportcP, ImportcppP}:
+              skip a
           expectParRi m, f
           expectParRi m, a
         else:
