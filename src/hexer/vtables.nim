@@ -26,6 +26,13 @@ type
   VTable = object
     display: seq[SymId]
     methods: seq[SymId]
+    signatureToIndex: Table[string, int]
+    parent: SymId
+
+  MethodDecl = object
+    cls: SymId
+    name: SymId
+    paramRest: Cursor
 
   Context* = object
     vtableCounter: int
@@ -33,12 +40,11 @@ type
     typeCache: TypeCache
     needsXelim: bool
     moduleSuffix: string
-    vindex: Table[(SymId, string), int] # (class, method) -> index; \
-      # string key takes parameter types into account so it just works with overloading
     vtables: Table[SymId, VTable]
     vtableNames: Table[SymId, SymId]
     classes: seq[(SymId, bool)] # (class, declaredInThisModule)
     getRttiSym: SymId
+    methodDecls: seq[MethodDecl]
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -55,6 +61,9 @@ proc getVTableName(c: var Context; cls: SymId): SymId =
   else:
     result = computeVTableName(c, cls)
     c.vtableNames[cls] = result
+
+proc loadVTable(c: var Context; cls: SymId) = discard "to implement"
+proc storeVTable(c: var Context; cls: SymId) = discard "to implement"
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
@@ -398,38 +407,39 @@ proc methodKey(a: Cursor): string =
   mangle b, a
   result = b.extract()
 
-proc registerMethod(c: var Context; r: Routine; methodName: string) =
+proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
+  let sig = methodName & ":" & methodKey(m.paramRest)
+  # see if this is an override:
+  for inh in inheritanceChain(m.cls):
+    let methodIndex = c.vtables[inh].signatureToIndex.getOrDefault(sig, -1)
+    if methodIndex != -1:
+      # register as override:
+      c.vtables[m.cls].methods[methodIndex] = m.name
+      return
+  # not an override, register as a new base method:
+  c.vtables[m.cls].methods.add m.name
+  c.vtables[m.cls].signatureToIndex[sig] = c.vtables[m.cls].methods.len - 1
+
+proc processMethods(c: var Context) =
   # Methods are fundamentally different from other type-bound symbols in
   # that we need to know the base class's entire vtable so that we know
   # which slots to inherit and which to override. This means we need to
   # load an entire vtable from the module that declares the base class.
-  var p = r.params
-  if p.kind == ParLe:
-    inc p
-    let param = takeLocal(p, SkipFinalParRi)
-    let cls = getClass(param.typ)
-    if cls == SymId(0):
-      error "cannot attach method to type " & typeToString(param.typ)
-    else:
-      let sig = methodName & ":" & methodKey(p)
-      # see if this is an override:
-      var i = 0
-      for inh in inheritanceChain(cls):
-        if i == 0 and not c.vtables.hasKey(cls):
-          # direct base class: Take total number of methods:
-          c.vtables[cls] = c.vtables.getOrDefault(inh, VTable(display: @[], methods: @[]))
-          c.vtables[cls].display.add cls # add self
-
-        let key = (inh, sig)
-        let methodIndex = c.vindex.getOrDefault(key, -1)
-        if methodIndex != -1:
-          # register as override:
-          c.vtables[cls].methods[methodIndex] = r.name.symId
-          return
-        inc i
-      # not an override, register as new method:
-      c.vtables.mgetOrPut(cls, VTable(display: @[], methods: @[])).methods.add r.name.symId
-      c.vindex[(cls, sig)] = c.vtables[cls].methods.len - 1
+  for entry in c.classes:
+    if entry[1]:
+      let cls = entry[0]
+      # inherit methods from parent class:
+      let parent = c.vtables[cls].parent
+      if parent != SymId(0):
+        loadVTable c, parent
+        c.vtables[cls].methods = c.vtables[parent].methods
+        c.vtables[cls].signatureToIndex = c.vtables[parent].signatureToIndex
+      for m in c.methodDecls:
+        if m.cls == cls:
+          var methodName = pool.syms[m.name]
+          extractBasename methodName
+          processMethod c, m, methodName
+      storeVTable c, cls
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:
@@ -453,9 +463,17 @@ proc collectClass(c: var Context; n: var Cursor) =
     let cls = d.name.symId
     # reasonably cheap way to get a topological order:
     var deps = newSeq[SymId]()
-    for inh in inheritanceChain(cls): deps.add inh
-    for i in countdown(deps.len - 1, 0):
+    var firstDep = SymId(0)
+    for inh in inheritanceChain(cls):
+      if firstDep == SymId(0): firstDep = inh
+      deps.add inh
+    # reverse:
+    for i in 0 ..< deps.len div 2:
+      swap deps[i], deps[deps.len - 1 - i]
+    for i in 0 ..< deps.len:
       registerClass c, deps[i], false
+    deps.add cls # add `self` for the display
+    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep)
     registerClass c, cls, true
 
 proc collectMethods(c: var Context; n: var Cursor) =
@@ -467,11 +485,21 @@ proc collectMethods(c: var Context; n: var Cursor) =
       collectMethods c, n
     skipParRi n
   of MethodS:
+    let orig = n
     let r = takeRoutine(n, SkipFinalParRi)
     if not r.isGeneric:
-      var methodName = pool.syms[r.name.symId]
-      extractBasename methodName
-      registerMethod c, r, methodName
+      var p = r.params
+      if p.kind == ParLe:
+        inc p
+        let param = takeLocal(p, SkipFinalParRi)
+        let cls = getClass(param.typ)
+        if cls == SymId(0):
+          error "cannot attach method to type " & typeToString(param.typ)
+        else:
+          # we might not have registered the class yet, so we use a single flat `methodDecls` list:
+          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, paramRest: p)
+      else:
+        error "method needs a first parameter of the class type: " & toString(orig, false)
   of TypeS:
     collectClass c, n
   else:
@@ -549,10 +577,8 @@ proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): T
   var dest = createTokenBuf(300)
 
   var n2 = n
-  # XXX This has the fatal flaw right now that it assumes
-  # the methods of the base class are complete before the processing
-  # of the derived class begins!
   collectMethods c, n2
+  processMethods c
 
   var n = n
   assert n.stmtKind == StmtsS
