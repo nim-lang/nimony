@@ -159,8 +159,8 @@ proc takeTypeDecl*(c: var Cursor; mode: SkipMode): TypeDecl =
     if mode >= SkipInclBody:
       skip c
       result.body = c
-      skip c
       if mode == SkipFinalParRi:
+        skip c
         if c.kind == ParRi:
           inc c
         else:
