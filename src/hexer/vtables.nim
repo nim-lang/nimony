@@ -274,14 +274,12 @@ proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSymDef vtabTempSym, info
         dest.addEmpty2 info # export marker, pragma
         dest.copyIntoKind PtrT, info:
-          dest.addSymUse pool.syms.getOrIncl("Rtti.0." & c.moduleSuffix), info
+          dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
 
         copyIntoKind dest, DotX, info:
-          copyIntoKind dest, DerefX, info:
-            copyIntoKind dest, DotX, info:
-              tr c, dest, n
-              dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
-              dest.addIntLit 0, info
+          tr c, dest, n
+          dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+          dest.addIntLit 0, info
 
       # Get the class data (level and hash)
       let (level, h) = classData(n)
@@ -308,7 +306,8 @@ proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
         copyIntoKind dest, PatX, info:
           copyIntoKind dest, DotX, info:
-            dest.addSymUse vtabTempSym, info
+            copyIntoKind dest, DerefX, info:
+              dest.addSymUse vtabTempSym, info
             dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), info
             dest.addIntLit 0, info
           dest.addIntLit level, info
