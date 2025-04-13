@@ -542,8 +542,8 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.addParLe KvU, NoLineInfo
         dest.addSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), NoLineInfo
         if displayName != SymId(0):
-          dest.copyIntoKind AddrX, NoLineInfo:
-            dest.addSymUse displayName, NoLineInfo
+          #dest.copyIntoKind AddrX, NoLineInfo:
+          dest.addSymUse displayName, NoLineInfo
         else:
           dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
