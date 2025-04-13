@@ -522,8 +522,8 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.copyIntoKind UarrayT, NoLineInfo:
           dest.copyIntoKind UT, NoLineInfo:
             dest.addIntLit 32, NoLineInfo
-        for i in countdown(vtab.display.len - 1, 0):
-          dest.addUIntLit uhash(pool.syms[vtab.display[i]]), NoLineInfo
+        for d in vtab.display:
+          dest.addUIntLit uhash(pool.syms[d]), NoLineInfo
         dest.addParRi() # AconstrX
 
     dest.copyIntoKind ConstS, NoLineInfo:
