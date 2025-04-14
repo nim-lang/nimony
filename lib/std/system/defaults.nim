@@ -16,6 +16,7 @@ template default*(x: typedesc[uint64]): uint64 = 0'u64
 template default*(x: typedesc[float32]): float32 = 0.0'f32
 template default*(x: typedesc[float64]): float64 = 0.0'f64
 template default*(x: typedesc[string]): string = ""
+# can be merged back into `T: enum` when `or` types can match themselves:
 template default*[T: OrdinalEnum](x: typedesc[T]): T = low(T)
 template default*[T: HoleyEnum](x: typedesc[T]): T = low(T)
 
