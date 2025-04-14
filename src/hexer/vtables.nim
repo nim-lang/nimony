@@ -25,7 +25,7 @@ from duplifier import constructsValue
 type
   VTable = object
     display: seq[SymId]
-    methods: seq[SymId]
+    methods: Table[SymId, int]
     signatureToIndex: Table[string, int]
     parent: SymId
 
@@ -64,9 +64,6 @@ proc getVTableName(c: var Context; cls: SymId): SymId =
   else:
     result = computeVTableName(c, cls)
     c.vtableNames[cls] = result
-
-proc loadVTable(c: var Context; cls: SymId) = discard "to implement"
-proc storeVTable(c: var Context; cls: SymId) = discard "to implement"
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
@@ -134,9 +131,47 @@ proc isMethod(c: var Context; s: SymId): bool =
     result = info.kind == MethodY
 
 proc getMethodIndex(c: var Context; cls, fn: SymId): int =
-  for i, m in pairs(c.vtables[cls].methods):
-    if m == fn: return i
-  error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
+  result = c.vtables[cls].methods.getOrDefault(fn, -1)
+  if result == -1:
+    error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
+
+proc methodsToSeq(t: Table[SymId, int]): seq[SymId] =
+  result = newSeq[SymId](t.len)
+  for k, v in pairs(t): result[v] = k
+
+type
+  NifEntry = object
+    name: SymId # index is implicit in the order of the sequence
+    signature: string
+
+proc methodsToNifEntries(v: VTable): seq[NifEntry] =
+  let ms = methodsToSeq(v.methods)
+  var signatures = newSeq[string](ms.len)
+  for k, v in pairs(v.signatureToIndex):
+    signatures[v] = k
+
+  result = newSeq[NifEntry](ms.len)
+  for i, m in pairs ms:
+    result.add NifEntry(name: m, signature: signatures[i])
+
+proc loadVTable(c: var Context; cls: SymId) = discard "to implement"
+
+proc storeVTables(c: var Context) =
+  var b = nifbuilder.open(c.moduleSuffix & ".vtabs")
+  b.addHeader("vtables.nim")
+  b.withTree "stmts":
+    for entry in c.classes:
+      if entry[1]:
+        let cls = entry[0]
+        b.withTree "vtab":
+          b.addSymbol pool.syms[cls]
+          b.withTree "stmts":
+            let entries = methodsToNifEntries(c.vtables[cls])
+            for e in entries:
+              b.withTree "kv":
+                b.addSymbol pool.syms[e.name]
+                b.addStrLit e.signature
+  b.close()
 
 proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
@@ -416,11 +451,12 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
     let methodIndex = c.vtables[inh].signatureToIndex.getOrDefault(sig, -1)
     if methodIndex != -1:
       # register as override:
-      c.vtables[m.cls].methods[methodIndex] = m.name
+      c.vtables[m.cls].methods[m.name] = methodIndex
       return
   # not an override, register as a new base method:
-  c.vtables[m.cls].methods.add m.name
-  c.vtables[m.cls].signatureToIndex[sig] = c.vtables[m.cls].methods.len - 1
+  let idx = c.vtables[m.cls].methods.len
+  c.vtables[m.cls].methods[m.name] = idx
+  c.vtables[m.cls].signatureToIndex[sig] = idx
 
 proc processMethods(c: var Context) =
   # Methods are fundamentally different from other type-bound symbols in
@@ -441,7 +477,8 @@ proc processMethods(c: var Context) =
           var methodName = pool.syms[m.name]
           extractBasename methodName
           processMethod c, m, methodName
-      storeVTable c, cls
+  if c.classes.len > 0:
+    storeVTables c
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:
@@ -475,7 +512,7 @@ proc collectClass(c: var Context; n: var Cursor) =
     for i in 0 ..< deps.len:
       registerClass c, deps[i], false
     deps.add cls # add `self` for the display
-    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep)
+    c.vtables[cls] = VTable(display: ensureMove deps, methods: initTable[SymId, int](), parent: firstDep)
     registerClass c, cls, true
 
 proc collectMethods(c: var Context; n: var Cursor) =
@@ -558,7 +595,8 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
           # array constructor also starts with a type, yuck:
           dest.copyIntoKind UarrayT, NoLineInfo:
             dest.addParPair PointerT, NoLineInfo
-          for m in mitems(vtab.methods):
+          let methods = methodsToSeq(vtab.methods)
+          for m in methods:
             dest.copyIntoKind CastX, NoLineInfo:
               dest.addParPair PointerT, NoLineInfo
               dest.addSymUse m, NoLineInfo
