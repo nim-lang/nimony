@@ -16,7 +16,8 @@ template default*(x: typedesc[uint64]): uint64 = 0'u64
 template default*(x: typedesc[float32]): float32 = 0.0'f32
 template default*(x: typedesc[float64]): float64 = 0.0'f64
 template default*(x: typedesc[string]): string = ""
-template default*[T: enum](x: typedesc[T]): T = low(T)
+template default*[T: OrdinalEnum](x: typedesc[T]): T = low(T)
+template default*[T: HoleyEnum](x: typedesc[T]): T = low(T)
 
 template default*[T: ptr](x: typedesc[T]): T = T(nil)
 template default*[T: ref](x: typedesc[T]): T = T(nil)
