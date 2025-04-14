@@ -35,7 +35,6 @@ type
     paramRest: Cursor
 
   Context* = object
-    vtableCounter: int
     tmpCounter: int
     typeCache: TypeCache
     needsXelim: bool
@@ -50,10 +49,14 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc computeVTableName(c: var Context; cls: SymId; middle = ".vt."): SymId =
-  var clsName = pool.syms[cls]
-  extractBasename clsName
-  result = pool.syms.getOrIncl(clsName & middle & $c.vtableCounter & "." & c.moduleSuffix)
-  inc c.vtableCounter
+  var clsName = extractVersionedBasename pool.syms[cls]
+  if clsName == "":
+    clsName = pool.syms[cls]
+  clsName.add '.'
+  clsName.add middle
+  clsName.add '.'
+  clsName.add c.moduleSuffix
+  result = pool.syms.getOrIncl(clsName)
 
 proc getVTableName(c: var Context; cls: SymId): SymId =
   if c.vtableNames.hasKey(cls):
