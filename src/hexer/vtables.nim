@@ -35,7 +35,6 @@ type
     paramRest: Cursor
 
   Context* = object
-    vtableCounter: int
     tmpCounter: int
     typeCache: TypeCache
     needsXelim: bool
@@ -50,10 +49,14 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc computeVTableName(c: var Context; cls: SymId; middle = ".vt."): SymId =
-  var clsName = pool.syms[cls]
-  extractBasename clsName
-  result = pool.syms.getOrIncl(clsName & middle & $c.vtableCounter & "." & c.moduleSuffix)
-  inc c.vtableCounter
+  var clsName = extractVersionedBasename pool.syms[cls]
+  if clsName == "":
+    clsName = pool.syms[cls]
+  clsName.add '.'
+  clsName.add middle
+  clsName.add '.'
+  clsName.add c.moduleSuffix
+  result = pool.syms.getOrIncl(clsName)
 
 proc getVTableName(c: var Context; cls: SymId): SymId =
   if c.vtableNames.hasKey(cls):
@@ -61,9 +64,6 @@ proc getVTableName(c: var Context; cls: SymId): SymId =
   else:
     result = computeVTableName(c, cls)
     c.vtableNames[cls] = result
-
-proc loadVTable(c: var Context; cls: SymId) = discard "to implement"
-proc storeVTable(c: var Context; cls: SymId) = discard "to implement"
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
@@ -131,9 +131,92 @@ proc isMethod(c: var Context; s: SymId): bool =
     result = info.kind == MethodY
 
 proc getMethodIndex(c: var Context; cls, fn: SymId): int =
-  for i, m in pairs(c.vtables[cls].methods):
-    if m == fn: return i
-  error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
+  result = c.vtables[cls].methods.find(fn)
+  if result == -1:
+    error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
+
+type
+  NifEntry = object
+    name: SymId # index is implicit in the order of the sequence
+    signature: string
+
+proc methodsToNifEntries(v: VTable): seq[NifEntry] =
+  assert v.signatureToIndex.len == v.methods.len
+  var signatures = newSeq[string](v.methods.len)
+  for k, v in pairs(v.signatureToIndex):
+    signatures[v] = k
+
+  result = newSeqOfCap[NifEntry](v.methods.len)
+  for i, m in pairs v.methods:
+    result.add NifEntry(name: m, signature: signatures[i])
+
+const
+  VtabsExt = ".vtabs"
+
+proc storeVTables(c: var Context) =
+  var b = nifbuilder.open(customToNif(c.moduleSuffix & VtabsExt))
+  b.addHeader("vtables.nim")
+  b.withTree "stmts":
+    for entry in c.classes:
+      if entry[1]:
+        let cls = entry[0]
+        b.withTree "vtab":
+          b.addSymbol pool.syms[cls]
+          b.withTree "stmts":
+            let entries = methodsToNifEntries(c.vtables[cls])
+            for e in entries:
+              b.withTree "kv":
+                b.addSymbol pool.syms[e.name]
+                b.addStrLit e.signature
+  b.close()
+
+proc loadVTable(c: var Context; currentCls: SymId; n: var Cursor) =
+  var vtable = VTable(methods: newSeq[SymId](), signatureToIndex: initTable[string, int]())
+  var methodIndex = 0
+  while n.substructureKind == KvU:
+    inc n
+    if n.kind == Symbol:
+      let methodName = n.symId
+      inc n
+      if n.kind == StringLit:
+        let signature = pool.strings[n.litId]
+        inc n
+        vtable.methods.add methodName
+        vtable.signatureToIndex[signature] = methodIndex
+        inc methodIndex
+      else:
+        error "expected string literal after method name"
+    else:
+      error "expected symbol after `kv`"
+    skipParRi n
+  skipParRi n # end of `stmts`
+  c.vtables[currentCls] = ensureMove vtable
+
+proc loadVTable(c: var Context; cls: SymId) =
+  let filename = customToNif(extractModule(pool.syms[cls]) & VtabsExt)
+  var stream = nifstreams.open(filename)
+  try:
+    discard processDirectives(stream.r)
+    var buf = fromStream(stream)
+    var n = beginRead(buf)
+    assert n.stmtKind == StmtsS
+    inc n
+    let vtabId = pool.tags.getOrIncl("vtab")
+    while n.tag == vtabId:
+      inc n
+      if n.kind == Symbol:
+        let currentCls = n.symId
+        inc n
+        if n.stmtKind == StmtsS:
+          inc n
+          loadVTable(c, currentCls, n)
+        else:
+          error "expected stmts after vtab"
+      else:
+        error "expected symbol after vtab"
+      skipParRi n # end of `vtab`
+  finally:
+    nifstreams.close(stream)
 
 proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
@@ -416,8 +499,9 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
       c.vtables[m.cls].methods[methodIndex] = m.name
       return
   # not an override, register as a new base method:
+  let idx = c.vtables[m.cls].methods.len
   c.vtables[m.cls].methods.add m.name
-  c.vtables[m.cls].signatureToIndex[sig] = c.vtables[m.cls].methods.len - 1
+  c.vtables[m.cls].signatureToIndex[sig] = idx
 
 proc processMethods(c: var Context) =
   # Methods are fundamentally different from other type-bound symbols in
@@ -430,7 +514,8 @@ proc processMethods(c: var Context) =
       # inherit methods from parent class:
       let parent = c.vtables[cls].parent
       if parent != SymId(0):
-        loadVTable c, parent
+        if parent notin c.vtables:
+          loadVTable c, parent
         c.vtables[cls].methods = c.vtables[parent].methods
         c.vtables[cls].signatureToIndex = c.vtables[parent].signatureToIndex
       for m in c.methodDecls:
@@ -438,7 +523,8 @@ proc processMethods(c: var Context) =
           var methodName = pool.syms[m.name]
           extractBasename methodName
           processMethod c, m, methodName
-      storeVTable c, cls
+  if c.classes.len > 0:
+    storeVTables c
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:
@@ -555,7 +641,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
           # array constructor also starts with a type, yuck:
           dest.copyIntoKind UarrayT, NoLineInfo:
             dest.addParPair PointerT, NoLineInfo
-          for m in mitems(vtab.methods):
+          for m in vtab.methods:
             dest.copyIntoKind CastX, NoLineInfo:
               dest.addParPair PointerT, NoLineInfo
               dest.addSymUse m, NoLineInfo

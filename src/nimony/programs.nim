@@ -41,6 +41,9 @@ proc suffixToNif*(suffix: string): string {.inline.} =
   # always imported from semchecked files
   prog.dir / suffix & ".2.nif"
 
+proc customToNif*(suffix: string): string {.inline.} =
+  prog.dir / suffix & ".nif"
+
 proc needsRecompile*(dep, output: string): bool =
   result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)
 
