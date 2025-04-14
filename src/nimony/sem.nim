@@ -2416,7 +2416,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         let magic = cursorAt(c.dest, start).typeKind
         endRead(c.dest)
         # magic types that are just symbols and not in the syntax:
-        if magic in {ArrayT, SetT, RangetypeT}:
+        if magic in {ArrayT, SetT, RangetypeT, EnumT, HoleyEnumT}:
           var typeclassBuf = createTokenBuf(4)
           typeclassBuf.addParLe(TypeKindT, info)
           typeclassBuf.addParLe(magic, info)
