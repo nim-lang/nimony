@@ -141,6 +141,7 @@ type
     signature: string
 
 proc methodsToNifEntries(v: VTable): seq[NifEntry] =
+  assert v.signatureToIndex.len == v.methods.len
   var signatures = newSeq[string](v.methods.len)
   for k, v in pairs(v.signatureToIndex):
     signatures[v] = k
@@ -149,10 +150,11 @@ proc methodsToNifEntries(v: VTable): seq[NifEntry] =
   for i, m in pairs v.methods:
     result.add NifEntry(name: m, signature: signatures[i])
 
-proc loadVTable(c: var Context; cls: SymId) = discard "to implement"
+const
+  VtabsExt = ".vtabs"
 
 proc storeVTables(c: var Context) =
-  var b = nifbuilder.open(c.moduleSuffix & ".vtabs")
+  var b = nifbuilder.open(customToNif(c.moduleSuffix & VtabsExt))
   b.addHeader("vtables.nim")
   b.withTree "stmts":
     for entry in c.classes:
@@ -167,6 +169,54 @@ proc storeVTables(c: var Context) =
                 b.addSymbol pool.syms[e.name]
                 b.addStrLit e.signature
   b.close()
+
+proc loadVTable(c: var Context; currentCls: SymId; n: var Cursor) =
+  var vtable = VTable(methods: newSeq[SymId](), signatureToIndex: initTable[string, int]())
+  var methodIndex = 0
+  while n.substructureKind == KvU:
+    inc n
+    if n.kind == Symbol:
+      let methodName = n.symId
+      inc n
+      if n.kind == StringLit:
+        let signature = pool.strings[n.litId]
+        inc n
+        vtable.methods.add methodName
+        vtable.signatureToIndex[signature] = methodIndex
+        inc methodIndex
+      else:
+        error "expected string literal after method name"
+    else:
+      error "expected symbol after `kv`"
+    skipParRi n
+  skipParRi n # end of `stmts`
+  c.vtables[currentCls] = ensureMove vtable
+
+proc loadVTable(c: var Context; cls: SymId) =
+  let filename = customToNif(extractModule(pool.syms[cls]) & VtabsExt)
+  var stream = nifstreams.open(filename)
+  try:
+    discard processDirectives(stream.r)
+    var buf = fromStream(stream)
+    var n = beginRead(buf)
+    assert n.stmtKind == StmtsS
+    inc n
+    let vtabId = pool.tags.getOrIncl("vtab")
+    while n.tag == vtabId:
+      inc n
+      if n.kind == Symbol:
+        let currentCls = n.symId
+        inc n
+        if n.stmtKind == StmtsS:
+          inc n
+          loadVTable(c, currentCls, n)
+        else:
+          error "expected stmts after vtab"
+      else:
+        error "expected symbol after vtab"
+      skipParRi n # end of `vtab`
+  finally:
+    nifstreams.close(stream)
 
 proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
@@ -464,7 +514,8 @@ proc processMethods(c: var Context) =
       # inherit methods from parent class:
       let parent = c.vtables[cls].parent
       if parent != SymId(0):
-        loadVTable c, parent
+        if parent notin c.vtables:
+          loadVTable c, parent
         c.vtables[cls].methods = c.vtables[parent].methods
         c.vtables[cls].signatureToIndex = c.vtables[parent].signatureToIndex
       for m in c.methodDecls:
