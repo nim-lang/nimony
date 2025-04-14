@@ -75,7 +75,7 @@
     (hconv 11,~16
      (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
    (if 3
-    (elif 2,103,lib/std/system.nim
+    (elif 2,109,lib/std/system.nim
      (expr 2,1
       (lt
        (i +64) 9,28,tests/nimony/iter/tforloops1.nim +5 5,28,tests/nimony/iter/tforloops1.nim x.1)) ~1,1
@@ -235,12 +235,12 @@
       (elif 2
        (eq
         (i +64) ~2 j.3 3 +2) ~1,1
-       (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,119,lib/std/syncio.nim
         (stmts 2,1
          (stmts
           (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,81,tests/nimony/iter/tforloops1.nim "left the loop!")) ,2
-         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-        (break .)))) 2,116,lib/std/syncio.nim
+         (cmd write.6.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+        (break .)))) 2,119,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,83,tests/nimony/iter/tforloops1.nim "A i ")) 2,1
@@ -250,7 +250,7 @@
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 20,83,tests/nimony/iter/tforloops1.nim " j ")) 2,1
       (stmts
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 27,83,tests/nimony/iter/tforloops1.nim j.3)) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,84
+      (cmd write.6.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,84
  (block . 2,1
   (stmts 4
    (for 7
@@ -279,11 +279,11 @@
         (stmts 4
          (asgn ~4 sum.0 6
           (add
-           (i +64) ~4 sum.0 2 a.5)))) 2,116,lib/std/syncio.nim
+           (i +64) ~4 sum.0 2 a.5)))) 2,119,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 11,92,tests/nimony/iter/tforloops1.nim sum.0)) ,2
-        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) ,93
+        (cmd write.6.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) ,93
  (block . 2,1
   (stmts 4
    (let :i_arr.0 . . 8
@@ -304,12 +304,12 @@
      (let :i.10 . . 19,41,lib/std/system/openarrays.nim
       (mut
        (i -1)) .)) ~2,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,119,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 9,97,tests/nimony/iter/tforloops1.nim
         (hderef i.10))) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) 4,22
+      (cmd write.6.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) 4,22
  (proc :inc.0.tfo161bfb1 . 0,12,lib/std/system.nim .
   (at inc.1.sysvq0asl 19,~4
    (i -1)) 21,12,lib/std/system.nim
@@ -459,7 +459,7 @@
   (pragmas 2
    (inline) 10
    (requires 19
-    (and 2,102,lib/std/system/comparisons.nim
+    (and 2,108,lib/std/system/comparisons.nim
      (expr 2,1
       (le
        (i +64) 75,8,lib/std/system/openarrays.nim +0 68,8,lib/std/system/openarrays.nim idx.1)) 8

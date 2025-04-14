@@ -59,7 +59,7 @@
             (i -1))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.0))))) ,2
       (if 3
-       (elif 2,98,lib/std/system/comparisons.nim
+       (elif 2,104,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
           (eq
@@ -112,7 +112,7 @@
             (f +64))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.1))))) ,2
       (if 3
-       (elif 2,98,lib/std/system/comparisons.nim
+       (elif 2,104,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
           (eq
@@ -174,7 +174,7 @@
             (u +8))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.2))))) ,2
       (if 3
-       (elif 2,98,lib/std/system/comparisons.nim
+       (elif 2,104,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
           (eq
@@ -321,7 +321,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.0)))) ,4
    (if 3
-    (elif 2,98,lib/std/system/comparisons.nim
+    (elif 2,104,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
        (eq
@@ -523,7 +523,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.4)))) ,4
    (if 3
-    (elif 2,98,lib/std/system/comparisons.nim
+    (elif 2,104,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
        (eq
@@ -725,7 +725,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.8)))) ,4
    (if 3
-    (elif 2,98,lib/std/system/comparisons.nim
+    (elif 2,104,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
        (eq
@@ -938,7 +938,7 @@
     (i -1) .) 7
    (asgn ~7 result.9 2
     (if 3
-     (elif 2,98,lib/std/system/comparisons.nim
+     (elif 2,104,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
         (eq
@@ -970,7 +970,7 @@
     (i -1) .) 7
    (asgn ~7 result.10 2
     (if 3
-     (elif 2,98,lib/std/system/comparisons.nim
+     (elif 2,104,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
         (eq
@@ -1002,7 +1002,7 @@
     (i -1) .) 7
    (asgn ~7 result.11 2
     (if 3
-     (elif 2,98,lib/std/system/comparisons.nim
+     (elif 2,104,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
         (eq
