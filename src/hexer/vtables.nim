@@ -25,7 +25,7 @@ from duplifier import constructsValue
 type
   VTable = object
     display: seq[SymId]
-    methods: Table[SymId, int]
+    methods: seq[SymId]
     signatureToIndex: Table[string, int]
     parent: SymId
 
@@ -131,13 +131,9 @@ proc isMethod(c: var Context; s: SymId): bool =
     result = info.kind == MethodY
 
 proc getMethodIndex(c: var Context; cls, fn: SymId): int =
-  result = c.vtables[cls].methods.getOrDefault(fn, -1)
+  result = c.vtables[cls].methods.find(fn)
   if result == -1:
     error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
-
-proc methodsToSeq(t: Table[SymId, int]): seq[SymId] =
-  result = newSeq[SymId](t.len)
-  for k, v in pairs(t): result[v] = k
 
 type
   NifEntry = object
@@ -145,13 +141,12 @@ type
     signature: string
 
 proc methodsToNifEntries(v: VTable): seq[NifEntry] =
-  let ms = methodsToSeq(v.methods)
-  var signatures = newSeq[string](ms.len)
+  var signatures = newSeq[string](v.methods.len)
   for k, v in pairs(v.signatureToIndex):
     signatures[v] = k
 
-  result = newSeq[NifEntry](ms.len)
-  for i, m in pairs ms:
+  result = newSeqOfCap[NifEntry](v.methods.len)
+  for i, m in pairs v.methods:
     result.add NifEntry(name: m, signature: signatures[i])
 
 proc loadVTable(c: var Context; cls: SymId) = discard "to implement"
@@ -451,11 +446,11 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
     let methodIndex = c.vtables[inh].signatureToIndex.getOrDefault(sig, -1)
     if methodIndex != -1:
       # register as override:
-      c.vtables[m.cls].methods[m.name] = methodIndex
+      c.vtables[m.cls].methods[methodIndex] = m.name
       return
   # not an override, register as a new base method:
   let idx = c.vtables[m.cls].methods.len
-  c.vtables[m.cls].methods[m.name] = idx
+  c.vtables[m.cls].methods.add m.name
   c.vtables[m.cls].signatureToIndex[sig] = idx
 
 proc processMethods(c: var Context) =
@@ -512,7 +507,7 @@ proc collectClass(c: var Context; n: var Cursor) =
     for i in 0 ..< deps.len:
       registerClass c, deps[i], false
     deps.add cls # add `self` for the display
-    c.vtables[cls] = VTable(display: ensureMove deps, methods: initTable[SymId, int](), parent: firstDep)
+    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep)
     registerClass c, cls, true
 
 proc collectMethods(c: var Context; n: var Cursor) =
@@ -595,8 +590,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
           # array constructor also starts with a type, yuck:
           dest.copyIntoKind UarrayT, NoLineInfo:
             dest.addParPair PointerT, NoLineInfo
-          let methods = methodsToSeq(vtab.methods)
-          for m in methods:
+          for m in vtab.methods:
             dest.copyIntoKind CastX, NoLineInfo:
               dest.addParPair PointerT, NoLineInfo
               dest.addSymUse m, NoLineInfo
