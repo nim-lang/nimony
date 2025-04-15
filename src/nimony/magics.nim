@@ -118,4 +118,6 @@ proc magicToTag*(m: string): (string, int) =
   of "ProcCall": res ProccallX
   of "InternalTypeName": res InternalTypeNameX
   of "InternalFieldPairs": res InternalFieldPairsX, TypedMagic
+  of "OrdinalEnum": res EnumT
+  of "HoleyEnum": res HoleyEnumT
   else: ("", 0)
