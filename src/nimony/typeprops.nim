@@ -378,7 +378,7 @@ proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
         if n.typeKind == DistinctT:
           isDistinct = true
           inc n
-        elif isNominal(n.typeKind):
+        elif n.typeKind == ObjectT:
           n = s
           break
       inc i
