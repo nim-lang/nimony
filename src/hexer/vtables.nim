@@ -28,6 +28,7 @@ type
     methods: seq[SymId]
     signatureToIndex: Table[string, int]
     parent: SymId
+    mine: bool # whether this vtable belongs to this module
 
   MethodDecl = object
     cls: SymId
@@ -49,14 +50,10 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc computeVTableName(c: var Context; cls: SymId; middle = ".vt."): SymId =
-  var clsName = extractVersionedBasename pool.syms[cls]
-  if clsName == "":
-    clsName = pool.syms[cls]
-  clsName.add '.'
-  clsName.add middle
-  clsName.add '.'
-  clsName.add c.moduleSuffix
-  result = pool.syms.getOrIncl(clsName)
+  var clsName = splitSymName pool.syms[cls]
+  clsName.name.add middle
+  clsName.name.add clsName.module
+  result = pool.syms.getOrIncl(clsName.name)
 
 proc getVTableName(c: var Context; cls: SymId): SymId =
   if c.vtableNames.hasKey(cls):
@@ -171,7 +168,7 @@ proc storeVTables(c: var Context) =
   b.close()
 
 proc loadVTable(c: var Context; currentCls: SymId; n: var Cursor) =
-  var vtable = VTable(methods: newSeq[SymId](), signatureToIndex: initTable[string, int]())
+  var vtable = VTable(methods: newSeq[SymId](), signatureToIndex: initTable[string, int](), mine: false)
   var methodIndex = 0
   while n.substructureKind == KvU:
     inc n
@@ -558,7 +555,7 @@ proc collectClass(c: var Context; n: var Cursor) =
     for i in 0 ..< deps.len:
       registerClass c, deps[i], false
     deps.add cls # add `self` for the display
-    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep)
+    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep, mine: true)
     registerClass c, cls, true
 
 proc collectMethods(c: var Context; n: var Cursor) =
@@ -593,6 +590,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
 proc emitVTables(c: var Context; dest: var TokenBuf) =
   # Used the `mpairs` and `mitems` here to avoid copies.
   for cls, vtab in mpairs c.vtables:
+    if not vtab.mine: continue
     var displayName = SymId(0)
     if vtab.display.len > 0:
       displayName = computeVTableName(c, cls, ".dy.")
