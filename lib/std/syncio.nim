@@ -48,9 +48,7 @@ proc write*(f: File; x: uint64) =
   fprintf(f, cstring"%llu", x)
 
 # can be merged back into `T: enum` when `or` types can match themselves:
-proc write*[T: OrdinalEnum](f: File; x: T) =
-  write f, $x
-proc write*[T: HoleyEnum](f: File; x: T) =
+proc write*[T: enum](f: File; x: T) =
   write f, $x
 
 proc write*(f: File; c: char) =
