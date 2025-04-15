@@ -9,7 +9,7 @@
 import std / assertions
 
 include nifprelude
-import nimony_model, decls, programs, xints, semdata, renderer, builtintypes
+import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops
 
 type
   EvalContext* = object
@@ -312,7 +312,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of ConvX, HconvX:
       let nOrig = n
       inc n
-      let typ = n
+      var isDistinct = false
+      var typ = skipDistinct(n, isDistinct)
       skip n
       let val = propagateError eval(c, n)
       skipParRi n

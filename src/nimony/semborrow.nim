@@ -10,29 +10,7 @@ import std / [tables, sets, syncio, formatfloat, assertions]
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser,
   programs, sigmatch, magics, reporters,
-  semdata, sembasics
-
-proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
-  # XXX Consider generic types here and construct `DistinctType[Params...]` for these!
-  var n = n
-  var i = 0
-  while i < 10:
-    n = skipModifier(n)
-    if n.kind == Symbol:
-      let section = getTypeSection(n.symId)
-      if section.kind == TypeY:
-        let s = n
-        n = section.body
-        if n.typeKind == DistinctT:
-          isDistinct = true
-          inc n
-        elif n.typeKind == ObjectT:
-          n = s
-          break
-      inc i
-    else:
-      break
-  result = n
+  semdata, sembasics, typeprops
 
 proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info: PackedLineInfo): TokenBuf =
   #[
