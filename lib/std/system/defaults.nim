@@ -22,6 +22,7 @@ template default*[T: HoleyEnum](x: typedesc[T]): T = low(T)
 
 template default*[T: ptr](x: typedesc[T]): T = T(nil)
 template default*[T: ref](x: typedesc[T]): T = T(nil)
+template default*(x: typedesc[pointer]): pointer = nil
 
 proc default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 proc default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
