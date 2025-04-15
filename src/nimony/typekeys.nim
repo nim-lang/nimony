@@ -1,11 +1,8 @@
+#       Nimony
+# (c) Copyright 2025 Andreas Rumpf
 #
-#
-#           Hexer Compiler
-#        (c) Copyright 2025 Andreas Rumpf
-#
-#    See the file "copying.txt", included in this
-#    distribution, for details about the copyright.
-#
+# See the file "license.txt", included in this
+# distribution, for details about the copyright.
 
 import std/assertions
 include nifprelude

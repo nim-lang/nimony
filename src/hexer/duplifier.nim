@@ -31,8 +31,8 @@ It follows that we're only interested in Call expressions here, or similar
 
 import std / [assertions]
 include nifprelude
-import nifindexes, symparser, treemangler, lifter, mover, hexer_context, typekeys
-import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes]
+import nifindexes, symparser, treemangler, lifter, mover, hexer_context
+import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 
 type
   Context = object

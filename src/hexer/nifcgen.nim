@@ -11,10 +11,9 @@ import std / [hashes, os, tables, sets, assertions]
 
 include nifprelude
 import symparser
-import typekeys
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
-  typeprops, langmodes]
+  typeprops, langmodes, typekeys]
 import hexer_context, pipeline
 import  ".." / lib / stringtrees
 
