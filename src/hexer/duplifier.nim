@@ -439,7 +439,12 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
   else:
     c.dest.addParLe AsgnS, info
     inc n
-    tr c, n, DontCare
+    if n.exprKind == HaddrX:
+      inc n
+      tr c, n, DontCare
+      skipParRi(n)
+    else:
+      tr c, n, DontCare
     tr c, n, DontCare
     takeParRi c.dest, n
 
