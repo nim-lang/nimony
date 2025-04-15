@@ -198,6 +198,16 @@ proc tryLoadAllHooks*(typ: SymId): HooksPerType =
     if m.index.hooks.hasKey(typ):
       result = m.index.hooks[typ]
 
+proc loadVTable*(typ: SymId): seq[MethodIndexEntry] =
+  let nifName = pool.syms[typ]
+  let modname = extractModule(nifName)
+  if modname != "":
+    var m = load(modname)
+    for entry in m.index.classes:
+      if entry.cls == typ:
+        return entry.methods
+  return @[]
+
 proc registerHook*(suffix: string; typ: SymId; op: AttachedOp; hook: SymId; isGeneric: bool) =
   let m: NifModule
   if not prog.mods.hasKey(suffix):

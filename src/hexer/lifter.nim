@@ -17,8 +17,8 @@ to type `(T, T)`, etc.
 import std/[assertions, tables]
 
 include nifprelude
-import nifindexes, symparser, treemangler, typekeys, hexer_context
-import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typeprops]
+import nifindexes, symparser, treemangler, hexer_context
+import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
 
 type
   TypeCursor = Cursor
