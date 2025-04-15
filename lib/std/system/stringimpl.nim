@@ -93,7 +93,7 @@ proc borrowCStringUnsafe*(s: cstring; len: int): string =
   ## use `fromCString` instead.
   string(a: cast[StrData](s), i: (len shl LenShift))
 
-proc borrowCStringUnsafe*(s: cstring): string =
+proc borrowCStringUnsafe*(s: cstring): string {.exportc: "nimBorrowCStringUnsafe".} =
   ## Creates a Nim string from a `cstring` by borrowing the
   ## underlying storage. You have to ensure the `cstring` lives
   ## long enough for this to be safe! If in doubt,

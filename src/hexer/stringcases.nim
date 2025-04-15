@@ -53,17 +53,27 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
       inc n
     else:
       raiseAssert "not a string literal"
-  elif n.exprKind == SufX:
-    inc n
-    assert n.kind == StringLit
-    result = n.litId
-    skipToEnd n
   else:
-    raiseAssert "not a string literal"
+    case n.exprKind:
+    of SufX:
+      inc n
+      assert n.kind == StringLit
+      result = n.litId
+      skipToEnd n
+    of HconvX, ConvX:
+      inc n
+      assert n.typeKind == CstringT
+      skip n
+      result = getSimpleStringLit(c, n)
+      skipParRi n
+    else:
+      raiseAssert "not a string literal"
 
 proc transformStringCase*(c: var EContext; n: var Cursor) =
   c.demand pool.syms.getOrIncl("equalStrings.0." & SystemModuleSuffix)
   c.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
+  # the other overload of `borrowCStringUnsafe`
+  c.demand pool.syms.getOrIncl("borrowCStringUnsafe.1." & SystemModuleSuffix)
 
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
@@ -72,7 +82,18 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
   var selectorNode = nb
   let sinfo = selectorNode.info
   let selector: SymId
-  if selectorNode.kind == Symbol:
+
+  let selectorType = getType(c.typeCache, selectorNode)
+  if selectorType.typeKind == CstringT:
+    selector = pool.syms.getOrIncl(":tmp.c." & $c.getTmpId)
+    c.dest.copyIntoUnchecked "var", sinfo:
+      c.dest.add symdefToken(selector, sinfo)
+      c.dest.addDotToken() # pragmas
+      c.dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
+      c.dest.copyIntoUnchecked "call", sinfo:
+        c.dest.add symToken(pool.syms.getOrIncl("nimBorrowCStringUnsafe.c"), sinfo)
+        traverseExpr(c, selectorNode)
+  elif selectorNode.kind == Symbol:
     selector = selectorNode.symId
   else:
     selector = pool.syms.getOrIncl(":tmp.c." & $c.getTmpId)

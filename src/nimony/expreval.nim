@@ -245,10 +245,10 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       var local = asLocal(sym.decl)
       case local.kind
       of ConstY:
-        return local.val
+        return eval(c, local.val)
       of EfldY:
         inc local.val # takes the first counter field
-        return local.val
+        return eval(c, local.val)
       else: discard
     error "cannot evaluate symbol at compile time: " & pool.syms[symId], info
   of StringLit, CharLit, IntLit, UIntLit, FloatLit:
