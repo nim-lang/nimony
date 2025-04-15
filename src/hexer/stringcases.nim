@@ -42,6 +42,25 @@ proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
             c.dest.copyIntoUnchecked "jmp", info:
               c.dest.add symToken(pool.syms.getOrIncl(x[1]), info)
 
+proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
+  if n.kind == StringLit:
+    result = n.litId
+    inc n
+  elif n.kind == Symbol:
+    var inlineValue = getInitValue(c.typeCache, n.symId)
+    if not cursorIsNil(inlineValue):
+      result = getSimpleStringLit(c, inlineValue)
+      inc n
+    else:
+      raiseAssert "not a string literal"
+  elif n.exprKind == SufX:
+    inc n
+    assert n.kind == StringLit
+    result = n.litId
+    skipToEnd n
+  else:
+    raiseAssert "not a string literal"
+
 proc transformStringCase*(c: var EContext; n: var Cursor) =
   c.demand pool.syms.getOrIncl("equalStrings.0." & SystemModuleSuffix)
   c.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
@@ -71,9 +90,8 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       assert nb.substructureKind == RangesU
       inc nb
       while nb.kind != ParRi:
-        assert nb.kind == StringLit
-        pairs.add (pool.strings[nb.litId], labl)
-        inc nb
+        let litId = getSimpleStringLit(c, nb)
+        pairs.add (pool.strings[litId], labl)
       inc nb # skip ParRi
       skip nb # skip action for now
       skipParRi nb
@@ -101,7 +119,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       inc nb
       inc nb
       while nb.kind != ParRi:
-        inc nb
+        skip nb
         inc i
       inc nb # skip ParRi
       traverseStmt c, nb
