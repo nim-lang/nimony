@@ -442,7 +442,7 @@ template withFromInfo(req: InstRequest; body: untyped) =
 type
   TypeDeclContext = enum
     InLocalDecl, InTypeSection, InReturnTypeDecl, AllowValues,
-    InGenericConstraint
+    InGenericConstraint, InInvokeHead
 
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext)
 
@@ -2412,7 +2412,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
       inc c.usedTypevars
     elif beforeMagic != afterMagic:
       # was magic symbol, may be typeclass, otherwise nothing to do
-      if context == InGenericConstraint:
+      if context != InInvokeHead:
         let magic = cursorAt(c.dest, start).typeKind
         endRead(c.dest)
         # magic types that are just symbols and not in the syntax:
@@ -2714,7 +2714,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
   let typeStart = c.dest.len
   let info = n.info
   takeToken c, n # copy `at`
-  semLocalTypeImpl c, n, InLocalDecl
+  semLocalTypeImpl c, n, InInvokeHead
 
   var headId: SymId = SymId(0)
   var decl = default TypeDecl

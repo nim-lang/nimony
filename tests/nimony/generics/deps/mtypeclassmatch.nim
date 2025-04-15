@@ -7,7 +7,7 @@ when false: # XXX use when concept matching is implemented
 else:
   type
     ConceptA* = Ordinal
-    ConceptB* = (enum)
+    ConceptB* = OrdinalEnum
 
 proc foo1*[T: ConceptA](x: T) =
   if false:
