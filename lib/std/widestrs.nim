@@ -196,12 +196,11 @@ when not (defined(cpu16) or defined(cpu8)):
   proc `$`*(s: WideCString): string =
     result = s $ 80
 
-  when defined(nimv2):
-    proc `$`*(s: WideCStringObj, estimate: int, replacement: int = 0xFFFD): string =
-      `$`(s.data, estimate, replacement)
+  proc `$`*(s: WideCStringObj, estimate: int, replacement: int = 0xFFFD): string =
+    `$`(s.data, estimate, replacement)
 
-    proc `$`*(s: WideCStringObj): string =
-      $(s.data)
+  proc `$`*(s: WideCStringObj): string =
+    $(s.data)
 
-    proc len*(w: WideCStringObj): int {.inline.} =
-      len(w.data)
+  proc len*(w: WideCStringObj): int {.inline.} =
+    len(w.data)
