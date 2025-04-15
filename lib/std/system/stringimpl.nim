@@ -287,6 +287,18 @@ proc newString*(len: int): string =
     oomHandler len
     result = string(a: nil, i: EmptyI)
 
+proc newStringOfCap*(len: int): string =
+  ## Returns a new string of length `0` but with capacity `cap`.
+  ##
+  ## This procedure exists only for optimization purposes; the same effect can
+  ## be achieved with the `&` operator or with `add`.
+  let a = cast[StrData](alloc(len))
+  if a != nil:
+    result = string(a: a, i: IsAllocatedBit)
+  else:
+    oomHandler len
+    result = string(a: nil, i: EmptyI)
+
 template concat*(): string {.varargs.} =
   var res = ""
   for s in unpack():

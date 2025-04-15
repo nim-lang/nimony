@@ -33,6 +33,7 @@ type
   ImportedModule* = object
     path*: string
     iface*: Iface
+    exports*: Table[SymId, ImportFilter]
 
   InstRequest* = object
     origin*: SymId

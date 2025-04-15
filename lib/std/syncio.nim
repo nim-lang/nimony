@@ -47,7 +47,10 @@ proc write*(f: File; x: int64) =
 proc write*(f: File; x: uint64) =
   fprintf(f, cstring"%llu", x)
 
-proc write*[T: enum](f: File; x: T) =
+# can be merged back into `T: enum` when `or` types can match themselves:
+proc write*[T: OrdinalEnum](f: File; x: T) =
+  write f, $x
+proc write*[T: HoleyEnum](f: File; x: T) =
   write f, $x
 
 proc write*(f: File; c: char) =
@@ -99,6 +102,18 @@ proc open*(f: out File; filename: string;
       discard c_setvbuf(f, nil, IOFBF, cast[uint](bufSize))
   else:
     result = false
+
+proc open*(filename: string,
+            mode: FileMode = fmRead, bufSize: int = -1): File =
+  ## Opens a file named `filename` with given `mode`.
+  ##
+  ## Default mode is readonly. Raises an `IOError` if the file
+  ## could not be opened.
+  result = default(File)
+  if not open(result, filename, mode, bufSize):
+    # TODO: raise exception when it is supported.
+    #raise newException(IOError, "cannot open: " & filename)
+    quit "cannot open: " & filename
 
 template echo*() {.varargs.} =
   for x in unpack():

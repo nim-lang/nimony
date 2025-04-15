@@ -41,6 +41,18 @@ proc extractModule*(s: string): string =
     dec i
   return ""
 
+proc extractVersionedBasename*(s: string): string =
+  # From "abc.12.Mod132a3bc" extract "abc.12".
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        var j = i+1
+        while j < s.len and s[j] in {'0'..'9'}: inc j
+        return substr(s, 0, j-1)
+    dec i
+  return ""
+
 proc isInstantiation*(s: string): bool =
   # abc.12.Iabcdefghi.mod2
   var i = s.len - 2
@@ -67,3 +79,8 @@ proc removeModule*(s: string): string =
         return substr(s, 0, i-1)
     dec i
   return s
+
+when isMainModule:
+  import std/assertions
+  assert extractVersionedBasename("abc.12.Mod132a3bc") == "abc.12"
+  assert extractVersionedBasename("abc.Mod132a3bc") == ""

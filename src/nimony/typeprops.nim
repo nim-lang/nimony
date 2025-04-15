@@ -321,11 +321,25 @@ iterator inheritanceChain*(s: SymId): SymId =
     else:
       break
 
-proc isInheritable*(n: Cursor): bool =
-  typeHasPragma(n, InheritableP, ObjectT)
+proc isInheritable*(n: Cursor; skipPtrs = false): bool =
+  var n = n
+  if skipPtrs and n.typeKind in {RefT, PtrT}:
+    inc n
+  if typeHasPragma(n, FinalP, ObjectT): return false
+  if n.kind == Symbol:
+    if typeHasPragma(n, InheritableP, ObjectT): return true
+    for parent in inheritanceChain(n.symId):
+      # well it has a parent and is not final so it is inheritable:
+      return true
+  return false
 
 proc isPure*(n: Cursor): bool =
   typeHasPragma(n, PureP)
+
+proc isFinal*(n: Cursor): bool =
+  var n = n
+  if n.typeKind in {RefT, PtrT}: inc n
+  result = typeHasPragma(n, FinalP, ObjectT)
 
 proc hasRtti*(s: SymId): bool =
   var root = s
@@ -341,3 +355,33 @@ proc hasRtti*(s: SymId): bool =
   skip n # export marker
   skip n # type vars
   result = hasPragma(n, InheritableP) and not hasPragma(n, PureP)
+
+proc hasRtti*(pragmas: Cursor): bool =
+  hasPragma(pragmas, InheritableP) and not hasPragma(pragmas, PureP)
+
+proc getTypeSection*(s: SymId): TypeDecl =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  result = asTypeDecl(res.decl)
+
+proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
+  # XXX Consider generic types here and construct `DistinctType[Params...]` for these!
+  var n = n
+  var i = 0
+  while i < 10:
+    n = skipModifier(n)
+    if n.kind == Symbol:
+      let section = getTypeSection(n.symId)
+      if section.kind == TypeY:
+        let s = n
+        n = section.body
+        if n.typeKind == DistinctT:
+          isDistinct = true
+          inc n
+        elif n.typeKind == ObjectT:
+          n = s
+          break
+      inc i
+    else:
+      break
+  result = n

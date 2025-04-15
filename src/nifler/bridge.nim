@@ -353,7 +353,6 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkStmtListType, nkStmtListExpr:
     relLineInfo(n, parent, c)
     c.b.addTree(ExprL)
-    c.b.addEmpty # type information of StmtListExpr
     c.b.addTree(StmtsL)
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
@@ -398,56 +397,59 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     #   EnumType
     #   (Integer value, "string value")
     relLineInfo(n, parent, c)
-    c.b.addTree(EnumL)
-    if n.len > 0:
+    if n.len == 0:
+      # typeclass, compiles to identifier for nimony
+      c.b.addIdent "enum"
+    else:
+      c.b.addTree(EnumL)
       assert n[0].kind == nkEmpty
       c.b.addEmpty # base type
-    for i in 1..<n.len:
-      let it = n[i]
+      for i in 1..<n.len:
+        let it = n[i]
 
-      var name: PNode
-      var val: PNode
-      var pragma: PNode
+        var name: PNode
+        var val: PNode
+        var pragma: PNode
 
-      if it.kind == nkEnumFieldDef:
-        let first = it[0]
-        if first.kind == nkPragmaExpr:
-          name = first[0]
-          pragma = first[1]
-        else:
+        if it.kind == nkEnumFieldDef:
+          let first = it[0]
+          if first.kind == nkPragmaExpr:
+            name = first[0]
+            pragma = first[1]
+          else:
+            name = it[0]
+            pragma = nil
+          val = it[1]
+        elif it.kind == nkPragmaExpr:
           name = it[0]
+          pragma = it[1]
+          val = nil
+        else:
+          name = it
           pragma = nil
-        val = it[1]
-      elif it.kind == nkPragmaExpr:
-        name = it[0]
-        pragma = it[1]
-        val = nil
-      else:
-        name = it
-        pragma = nil
-        val = nil
+          val = nil
 
-      relLineInfo(it, n, c)
+        relLineInfo(it, n, c)
 
-      c.b.addTree(EfldL)
+        c.b.addTree(EfldL)
 
-      toNif name, it, c
-      c.b.addEmpty # export marker
+        toNif name, it, c
+        c.b.addEmpty # export marker
 
-      if pragma == nil:
-        c.b.addEmpty
-      else:
-        toNif(pragma, it, c)
+        if pragma == nil:
+          c.b.addEmpty
+        else:
+          toNif(pragma, it, c)
 
-      c.b.addEmpty # type (filled by sema)
+        c.b.addEmpty # type (filled by sema)
 
-      if val == nil:
-        c.b.addEmpty
-      else:
-        toNif(val, it, c)
+        if val == nil:
+          c.b.addEmpty
+        else:
+          toNif(val, it, c)
+        c.b.endTree()
+
       c.b.endTree()
-
-    c.b.endTree()
 
   of nkProcDef, nkFuncDef, nkConverterDef, nkMacroDef, nkTemplateDef, nkIteratorDef, nkMethodDef:
     relLineInfo(n, parent, c)

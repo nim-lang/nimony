@@ -18,7 +18,7 @@ import std/[assertions, tables]
 
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys, hexer_context
-import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes]
+import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typeprops]
 
 type
   TypeCursor = Cursor
@@ -31,6 +31,7 @@ type
   LiftingCtx* = object
     dest*: TokenBuf
     op: AttachedOp
+    routineKind: SymKind
     calledErrorHook: PackedLineInfo
     info: PackedLineInfo
     requests: seq[GenHookRequest]
@@ -99,6 +100,9 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
     result = false
   of ObjectT:
     result = isTrivialObjectBody(c, r.body)
+    if result and c.op == attachedWasMoved and hasRtti(r.pragmas):
+      # We set the RTTI field in `=wasMoved` so objects with a vtable are not trivial.
+      result = false
   else:
     result = true
 
@@ -460,13 +464,30 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
     let fn = lift(c, typ)
     maybeCallHook c, fn, paramA, paramB
 
-proc unravelDispatch(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
+proc setupVTableField(c: var LiftingCtx; param: TokenBuf; cls: SymId) =
+  copyIntoKind c.dest, AsgnS, c.info:
+    copyIntoKind c.dest, DotX, c.info:
+      copyIntoKind c.dest, DerefX, c.info:
+        copyTree c.dest, param
+      copyIntoSymUse c.dest, pool.syms.getOrIncl(VTableField), c.info
+      c.dest.addIntLit(0, c.info)
+    copyIntoKind c.dest, CallX, c.info:
+      copyIntoSymUse c.dest, getCompilerProc(c, "getRtti"), c.info
+      copyIntoSymUse c.dest, cls, c.info
+
+proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenBuf) =
   #if isTrivial(c, typ):
   #  genTrivialOp c, paramA, paramB
   #  return
-  let typ = toTypeImpl typ
+  let typ = toTypeImpl orig
   case typ.typeKind
   of ObjectT:
+    if orig.kind == Symbol and hasRtti(orig.symId):
+      if c.op == attachedWasMoved:
+        # setup VTable field:
+        setupVTableField c, paramA, orig.symId
+      elif c.op in {attachedDestroy, attachedTrace}:
+        c.routineKind = MethodY
     unravelObj c, typ, paramA, paramB
   of DistinctT:
     unravelDispatch(c, typ.firstSon, paramA, paramB)
@@ -578,6 +599,9 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       if c.dest.len == beforeUnravel:
         assert false, "empty hook created"
       maybeAddReturn c, paramA
+  # tell vtables.nim we need dynamic binding here:
+  if c.routineKind == MethodY:
+    c.dest[procStart] = parLeToken(MethodS, c.info)
 
   if c.calledErrorHook != NoLineInfo:
     c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
@@ -590,14 +614,16 @@ proc genMissingHooks*(c: var LiftingCtx) =
     let reqs = move(c.requests)
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
+      c.routineKind = ProcY
       c.calledErrorHook = NoLineInfo
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int): ref LiftingCtx =
-  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits)
+  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
+  c.routineKind = ProcY
   c.calledErrorHook = NoLineInfo
   c.info = info
   let t = if typ.typeKind == SinkT: typ.firstSon else: typ

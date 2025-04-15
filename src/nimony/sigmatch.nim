@@ -161,11 +161,6 @@ proc addErrorMsg*(dest: var TokenBuf; m: Match) =
   dest.addStrLit str
   dest.addParRi()
 
-proc getTypeSection*(s: SymId): TypeDecl =
-  let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  result = asTypeDecl(res.decl)
-
 proc getProcDecl*(s: SymId): Routine =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
@@ -203,7 +198,7 @@ type LinearMatchFlag = enum
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
 
-proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool
+proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool
 
 proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
@@ -380,7 +375,7 @@ proc matchConstraintSplitOr(m: var Match; f: var Cursor; a: Cursor): bool =
   else:
     result = matchBooleanConstraint(m, f, a)
 
-proc matchesConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
+proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
     inc f
@@ -513,6 +508,14 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
               break
           skip f
           skip a
+          if f.kind != ParRi:
+            # importc part
+            while f.pragmaKind in {ImportcP, ImportcppP}:
+              skip f
+          if a.kind != ParRi:
+            # importc part
+            while a.pragmaKind in {ImportcP, ImportcppP}:
+              skip a
           expectParRi m, f
           expectParRi m, a
         else:

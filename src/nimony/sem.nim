@@ -750,7 +750,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX, TupatX, SizeofX}:
+              ArrAtX, DerefX, TupatX, SizeofX, InternalTypeNameX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -1918,7 +1918,7 @@ proc semQualifiedIdent(c: var SemContext; module: SymId; ident: StrId; info: Pac
     if module == c.selfModuleSym:
       buildSymChoiceForSelfModule(c, ident, info)
     else:
-      buildSymChoiceForForeignModule(c, c.importedModules[module], ident, info)
+      buildSymChoiceForForeignModule(c, module, ident, info)
   if count == 1:
     let sym = c.dest[insertPos+1].symId
     c.dest.shrink insertPos
@@ -2266,7 +2266,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
-  of ViewP, InheritableP, PureP:
+  of ViewP, InheritableP, PureP, FinalP:
     if kind == TypeY:
       c.dest.add parLeToken(pk, n.info)
       inc n
@@ -2416,7 +2416,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         let magic = cursorAt(c.dest, start).typeKind
         endRead(c.dest)
         # magic types that are just symbols and not in the syntax:
-        if magic in {ArrayT, SetT, RangetypeT}:
+        if magic in {ArrayT, SetT, RangetypeT, EnumT, HoleyEnumT}:
           var typeclassBuf = createTokenBuf(4)
           typeclassBuf.addParLe(TypeKindT, info)
           typeclassBuf.addParLe(magic, info)
@@ -2457,7 +2457,7 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
     let beforeType = c.dest.len
     semLocalTypeImpl c, n, InLocalDecl
     let inheritsFrom = cursorAt(c.dest, beforeType)
-    if c.routine.inGeneric == 0 and not isInheritable(inheritsFrom):
+    if c.routine.inGeneric == 0 and not isInheritable(inheritsFrom, true):
       endRead(c.dest)
       c.dest.shrink beforeType
       c.buildErr n.info, "cannot inherit from type: " & asNimCode(inheritsFrom)
@@ -2741,13 +2741,45 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     else:
       c.buildErr info, "cannot attempt to instantiate a non-type"
 
+  var params = decl.typevars
+  inc params
+  var paramCount = 0
+  var argCount = 0
+  var m = createMatch(addr c)
   var genericArgs = 0
   swap c.usedTypevars, genericArgs
   let beforeArgs = c.dest.len
   while n.kind != ParRi:
+    inc argCount
+    let argInfo = n.info
+    var argBuf = createTokenBuf(16)
+    swap c.dest, argBuf
     semLocalTypeImpl c, n, AllowValues
+    swap c.dest, argBuf
+    var addArg = true
+    if params.kind == ParRi:
+      # will error later from param/arg count not matching
+      discard
+    else:
+      inc paramCount
+      let constraint = takeLocal(params, SkipFinalParRi).typ
+      if constraint.kind != DotToken:
+        var arg = beginRead(argBuf)
+        var constraintMatch = constraint
+        if not matchesConstraint(m, constraintMatch, arg):
+          c.buildErr argInfo, "type " & typeToString(arg) & " does not match constraint: " & typeToString(constraint)
+          ok = false
+          addArg = false
+    if addArg:
+      c.dest.add argBuf
   swap c.usedTypevars, genericArgs
   takeParRi c, n
+  if paramCount != argCount:
+    c.dest.shrink typeStart
+    c.buildErr info, "wrong amount of generic parameters for type " & pool.syms[headId] &
+      ", expected " & $paramCount & " but got " & $argCount
+    return
+
   if ok and (genericArgs == 0 or
       # structural types are inlined even with generic arguments
       not isNominal(decl.body.typeKind)):
@@ -4211,6 +4243,29 @@ proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
 
 include semfields
 
+proc isIteratorCall(c: var SemContext; beforeCall: int): bool {.inline.} =
+  result = c.dest.len > beforeCall+1
+  if result:
+    let callKind =
+      if c.dest[beforeCall].kind == ParLe and rawTagIsNimonyExpr(tagEnum(c.dest[beforeCall])):
+        cast[NimonyExpr](tagEnum(c.dest[beforeCall]))
+      else:
+        NoExpr
+    result = callKind in CallKinds and
+      c.dest[beforeCall+1].kind == Symbol and
+      c.isIterator(c.dest[beforeCall+1].symId)
+
+proc isIdentCall(c: var SemContext; beforeCall: int): bool {.inline.} =
+  result = c.dest.len > beforeCall+1
+  if result:
+    let callKind =
+      if c.dest[beforeCall].kind == ParLe and rawTagIsNimonyExpr(tagEnum(c.dest[beforeCall])):
+        cast[NimonyExpr](tagEnum(c.dest[beforeCall]))
+      else:
+        NoExpr
+    result = callKind in CallKinds and
+      c.dest[beforeCall+1].kind == Ident
+
 proc semFor(c: var SemContext; it: var Item) =
   let info = it.n.info
   let orig = it.n
@@ -4221,11 +4276,12 @@ proc semFor(c: var SemContext; it: var Item) =
   semExpr c, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
   var isMacroLike = false
-  if c.dest[beforeCall+1].kind == Symbol and c.isIterator(c.dest[beforeCall+1].symId):
+  if isIteratorCall(c, beforeCall):
     discard "fine"
   elif c.dest[beforeCall].kind == ParLe and
       (c.dest[beforeCall].tagId == TagId(FieldsTagId) or
-        c.dest[beforeCall].tagId == TagId(FieldPairsTagId)):
+       c.dest[beforeCall].tagId == TagId(FieldPairsTagId) or
+       c.dest[beforeCall].tagId == TagId(InternalFieldPairsTagId)):
     var callBuf = createTokenBuf(c.dest.len - beforeCall)
     for tok in beforeCall ..< c.dest.len: callBuf.add c.dest[tok]
     c.dest.shrink beforeCall-1
@@ -4234,10 +4290,53 @@ proc semFor(c: var SemContext; it: var Item) =
     return
   elif iterCall.typ.typeKind == UntypedT or
       # for iterators from concepts in generic context:
-      c.dest[beforeCall+1].kind == Ident:
+      isIdentCall(c, beforeCall):
     isMacroLike = true
   else:
-    buildErr c, callInfo, "iterator expected"
+    var vars = 0
+    var varsCursor = it.n
+    if varsCursor.substructureKind == UnpackflatU:
+      inc varsCursor
+      while varsCursor.kind != ParRi:
+        inc vars
+        skip varsCursor
+    else:
+      vars = 1
+    var name = ""
+    case vars
+    of 1:
+      name = "items"
+    of 2:
+      name = "pairs"
+    else:
+      c.dest.shrink beforeCall
+      buildErr c, callInfo, "iterator expected"
+    if name != "":
+      # try implicit iterator call
+      var callBuf = createTokenBuf(32)
+      callBuf.addParLe(CallX, callInfo)
+      swap c.dest, callBuf
+      discard buildSymChoice(c, pool.strings.getOrIncl(name), info, FindAll)
+      swap c.dest, callBuf
+      for tok in beforeCall ..< c.dest.len: callBuf.add c.dest[tok]
+      callBuf.addParRi()
+      let argType = iterCall.typ
+      iterCall = Item(n: beginRead(callBuf), typ: c.types.autoType)
+      shrink c.dest, beforeCall
+      semCall c, iterCall, {}
+      if isIteratorCall(c, beforeCall):
+        discard "fine"
+      elif iterCall.typ.typeKind == UntypedT or
+          # for iterators from concepts in generic context:
+          isIdentCall(c, beforeCall):
+        isMacroLike = true
+      else:
+        if c.dest[beforeCall].kind == ParLe and c.dest[beforeCall].tagId == ErrT:
+          # original nim gives `items` overload errors so preserve them
+          discard
+        else:
+          c.dest.shrink beforeCall
+          buildErr c, callInfo, "no implicit `" & name & "` iterator found for type " & typeToString(argType)
   withNewScope c:
     case substructureKind(it.n)
     of UnpackflatU:
@@ -4331,7 +4430,7 @@ proc fitTypeToPragmas(c: var SemContext; pragmas: CrucialPragma; typeStart: int)
     if isNominal(typ.typeKind):
       # ok
       endRead(c.dest)
-    elif typ.typeKind in {IntT, UintT}:
+    elif typ.typeKind in {IntT, UintT, FloatT, CharT}:
       let info = typ.info
       endRead(c.dest)
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
@@ -6131,6 +6230,22 @@ proc semProccall(c: var SemContext; it: var Item) =
   semExpr c, it
   c.takeParRi(it.n)
 
+proc semInternalTypeName(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  takeToken c, it.n
+  let typ = semLocalType(c, it.n)
+  if containsGenericParams(typ):
+    discard
+  else:
+    let typeName = pool.syms[typ.symId]
+    c.dest.shrink beforeExpr
+    c.dest.addStrLit typeName, info
+  takeParRi c, it.n
+  let expected = it.typ
+  it.typ = c.types.stringType
+  commonType c, it, beforeExpr, expected
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -6390,7 +6505,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of UnpackX:
       takeToken c, it.n
       takeParRi c, it.n
-    of FieldsX, FieldpairsX:
+    of FieldsX, FieldpairsX, InternalFieldPairsX:
       takeTree c, it.n
     of OchoiceX, CchoiceX:
       takeTree c, it.n
@@ -6438,6 +6553,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semInstanceof c, it
     of BaseobjX:
       semBaseobj c, it
+    of InternalTypeNameX:
+      semInternalTypeName c, it
     of CurlyatX, TabconstrX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement

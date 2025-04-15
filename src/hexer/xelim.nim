@@ -36,6 +36,7 @@ proc isComplex(n: Cursor): bool =
         else:
           # More than one son is always complex:
           return true
+        inc nested
       else:
         inc n
         inc nested
@@ -189,14 +190,16 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         dest.add t0
         #copyIntoKind dest, StmtsS, info:
         if tar.m != IsIgnored:
-          trExprInto c, dest, n, tmp
+          copyIntoKind dest, StmtsS, info:
+            trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
       skipParRi n
     of ElseU:
       inc n
       if tar.m != IsIgnored:
-        trExprInto c, dest, n, tmp
+        copyIntoKind dest, StmtsS, info:
+          trExprInto c, dest, n, tmp
       else:
         trStmt c, dest, n
       skipParRi n

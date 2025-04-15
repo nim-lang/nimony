@@ -1,0 +1,16 @@
+Foo.0.tni7snh9s
+Bar.0.tni7snh9s
+Foo.0.tni7snh9s
+Bar.0.tni7snh9s
+fooFieldX.0.tni7snh9s = 123
+barFieldX.0.tni7snh9s = bar field
+barFieldY.0.tni7snh9s = 456
+fooFieldX.0.tni7snh9s = 123
+barFieldX.0.tni7snh9s = bar field
+barFieldY.0.tni7snh9s = 456
+"hello"
++123
++123u
++123.456
+(true)
+(false)

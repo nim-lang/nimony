@@ -17,7 +17,7 @@ codegen's `maybeByConstRef` logic.
 import std / [sets, assertions]
 
 include nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops]
 import ".." / models / tags
 import duplifier
 
@@ -32,12 +32,15 @@ type
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
+proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
+  result = sizeof.passByConstRef(typ, pragmas, c.ptrSize) or typeprops.isInheritable(typ, false)
+
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   var n = params
   inc n # skips (params
   while n.kind != ParRi:
     let r = takeLocal(n, SkipFinalParRi)
-    if r.name.kind == SymbolDef and passByConstRef(r.typ, r.pragmas, c.ptrSize):
+    if r.name.kind == SymbolDef and passByConstRef(c, r.typ, r.pragmas):
       c.constRefParams.incl r.name.symId
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -87,7 +90,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add n
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  takeTree dest, n # skip `fn`
+  tr c, dest, n # handle `fn`
   assert fnType.tagEnum == ParamsTagId
   inc fnType
   while n.kind != ParRi:
@@ -101,7 +104,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # do not advance formal parameter:
       fnType = previousFormalParam
       tr c, dest, n
-    elif passByConstRef(param.typ, param.pragmas, c.ptrSize):
+    elif passByConstRef(c, param.typ, param.pragmas):
       trConstRef c, dest, n
     elif pk in {TypedescT, StaticT}:
       # do not produce any code for this as it's a compile-time value:

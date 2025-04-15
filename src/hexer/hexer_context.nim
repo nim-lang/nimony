@@ -81,7 +81,7 @@ proc error*(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
 
 proc error*(e: var EContext; msg: string) {.noreturn.} =
   write stdout, "[Error] "
-  write stdout, msg
+  writeLine stdout, msg
   when defined(debug):
     echo getStackTrace()
   quit 1

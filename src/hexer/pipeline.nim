@@ -46,10 +46,14 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n1 = desugar(c0, moduleSuffix, c.activeChecks)
   endRead(n0)
 
-  var c2 = beginRead(n1)
-  let ctx = createLiftingCtx(moduleSuffix, c.bits)
-  var n2 = injectDups(c2, n1, ctx)
+  var c1 = beginRead(n1)
+  var nx = lowerExprs(c1, moduleSuffix)
   endRead(n1)
+
+  var c2 = beginRead(nx)
+  let ctx = createLiftingCtx(moduleSuffix, c.bits)
+  var n2 = injectDups(c2, nx, ctx)
+  endRead(nx)
 
   var c3 = beginRead(n2)
   var n3 = lowerExprs(c3, moduleSuffix)
@@ -74,12 +78,16 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var needsXelimAgain = false
 
   var c5 = beginRead(n4)
-  var n5 = injectConstParamDerefs(c5, c.bits div 8, needsXelimAgain)
+  var nwithvtables = transformVTables(c5, moduleSuffix, needsXelimAgain)
   endRead(n4)
 
+  var c6 = beginRead(nwithvtables)
+  var n5 = injectConstParamDerefs(c6, c.bits div 8, needsXelimAgain)
+  endRead(nwithvtables)
+
   if needsXelimAgain:
-    var c6 = beginRead(n5)
-    var n6 = lowerExprs(c6, moduleSuffix)
+    var c7 = beginRead(n5)
+    var n6 = lowerExprs(c7, moduleSuffix)
     endRead(n5)
     result = move n6
   else:

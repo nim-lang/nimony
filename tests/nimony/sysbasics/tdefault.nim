@@ -75,3 +75,14 @@ block:
   assert objs[0].y == 0
   assert objs[1].x == 0
   assert objs[1].y == 0
+
+block:
+  var p = default(pointer)
+  assert p == nil
+
+  type
+    Foo = object
+      p: pointer
+
+  var foo = default(Foo)
+  assert foo.p == nil
