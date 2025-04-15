@@ -86,6 +86,11 @@ proc `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
 
 func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 
+func len*(a: cstring): int {.inline.} =
+  ## Assume `a` is a zero terminated string and
+  ## return the lenth of `a` excluding terminating zero
+  a.strlen.int
+
 proc borrowCStringUnsafe*(s: cstring; len: int): string =
   ## Creates a Nim string from a `cstring` by borrowing the
   ## underlying storage. You have to ensure the `cstring` lives
