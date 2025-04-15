@@ -161,11 +161,6 @@ proc addErrorMsg*(dest: var TokenBuf; m: Match) =
   dest.addStrLit str
   dest.addParRi()
 
-proc getTypeSection*(s: SymId): TypeDecl =
-  let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  result = asTypeDecl(res.decl)
-
 proc getProcDecl*(s: SymId): Routine =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing

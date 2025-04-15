@@ -358,3 +358,30 @@ proc hasRtti*(s: SymId): bool =
 
 proc hasRtti*(pragmas: Cursor): bool =
   hasPragma(pragmas, InheritableP) and not hasPragma(pragmas, PureP)
+
+proc getTypeSection*(s: SymId): TypeDecl =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  result = asTypeDecl(res.decl)
+
+proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
+  # XXX Consider generic types here and construct `DistinctType[Params...]` for these!
+  var n = n
+  var i = 0
+  while i < 10:
+    n = skipModifier(n)
+    if n.kind == Symbol:
+      let section = getTypeSection(n.symId)
+      if section.kind == TypeY:
+        let s = n
+        n = section.body
+        if n.typeKind == DistinctT:
+          isDistinct = true
+          inc n
+        elif isNominal(n.typeKind):
+          n = s
+          break
+      inc i
+    else:
+      break
+  result = n
