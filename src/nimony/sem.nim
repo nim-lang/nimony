@@ -3407,8 +3407,7 @@ proc semBorrow(c: var SemContext; fn: StrId; beforeParams: int) =
   var it = Item(n: n, typ: c.types.autoType)
   let resId = declareResult(c, it.n.info)
   semProcBody c, it
-  if resId != SymId(0):
-    addReturnResult c, resId, it.n.info
+  addReturnResult c, resId, it.n.info
 
 proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
   result = @[]
@@ -3674,8 +3673,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
-        if resId != SymId(0):
-          addReturnResult c, resId, it.n.info
+        addReturnResult c, resId, it.n.info
         let name = getHookName(symId)
         let hk = hookToKind(name)
         if hk != NoHook:
@@ -4007,6 +4005,7 @@ proc semWhen(c: var SemContext; it: var Item) =
       swap c.phase, phase
       let condValue = cursorAt(c.dest, condStart).exprKind
       endRead(c.dest)
+      echo " -> ", condValue
       if not leaveUnresolved:
         if condValue == TrueX:
           c.dest.shrink start
@@ -4017,6 +4016,7 @@ proc semWhen(c: var SemContext; it: var Item) =
         elif condValue != FalseX:
           # erroring/unresolved condition, leave entire statement as unresolved
           leaveUnresolved = true
+      echo " => ", condValue
       takeTree c, it.n
       takeParRi c, it.n
   else:
