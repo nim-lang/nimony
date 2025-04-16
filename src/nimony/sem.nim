@@ -442,7 +442,7 @@ template withFromInfo(req: InstRequest; body: untyped) =
 type
   TypeDeclContext = enum
     InLocalDecl, InTypeSection, InReturnTypeDecl, AllowValues,
-    InGenericConstraint
+    InGenericConstraint, InInvokeHead
 
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext)
 
@@ -2412,7 +2412,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
       inc c.usedTypevars
     elif beforeMagic != afterMagic:
       # was magic symbol, may be typeclass, otherwise nothing to do
-      if context == InGenericConstraint:
+      if context != InInvokeHead:
         let magic = cursorAt(c.dest, start).typeKind
         endRead(c.dest)
         # magic types that are just symbols and not in the syntax:
@@ -2714,7 +2714,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
   let typeStart = c.dest.len
   let info = n.info
   takeToken c, n # copy `at`
-  semLocalTypeImpl c, n, InLocalDecl
+  semLocalTypeImpl c, n, InInvokeHead
 
   var headId: SymId = SymId(0)
   var decl = default TypeDecl
@@ -2954,7 +2954,23 @@ proc isOrExpr(n: Cursor): bool =
     var n = n
     inc n
     let name = takeIdent(n)
-    result = name != StrId(0) and pool.strings[name] == "|"
+    result = name != StrId(0) and (pool.strings[name] == "|" or pool.strings[name] == "or")
+
+proc isAndExpr(n: Cursor): bool =
+  result = n.exprKind == InfixX
+  if result:
+    var n = n
+    inc n
+    let name = takeIdent(n)
+    result = name != StrId(0) and (pool.strings[name] == "and")
+
+proc isNotExpr(n: Cursor): bool =
+  result = n.exprKind == PrefixX
+  if result:
+    var n = n
+    inc n
+    let name = takeIdent(n)
+    result = name != StrId(0) and (pool.strings[name] == "not")
 
 proc semTypeof(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
@@ -2999,14 +3015,16 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       elif xkind == TupX:
         semTupleType c, n
       elif isOrExpr(n):
+        # old nim special cases `|` infixes in type contexts
+        # XXX `or` case temporarily handled here instead of magic overload in system
         c.dest.addParLe(OrT, info)
         inc n # tag
-        inc n # `|`
+        skip n # `|`
         var nested = 1
         while nested != 0:
           if isOrExpr(n):
             inc n # tag
-            inc n # `|`
+            skip n # `|`
             inc nested
           elif n.kind == ParRi:
             inc n
@@ -3014,6 +3032,30 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
           else:
             semLocalTypeImpl c, n, context
         c.dest.addParRi()
+      elif isAndExpr(n):
+        # XXX temporarily handled here instead of magic overload in system
+        c.dest.addParLe(AndT, info)
+        inc n # tag
+        skip n # `and`
+        var nested = 1
+        while nested != 0:
+          if isAndExpr(n):
+            inc n # tag
+            skip n # `and`
+            inc nested
+          elif n.kind == ParRi:
+            inc n
+            dec nested
+          else:
+            semLocalTypeImpl c, n, context
+        c.dest.addParRi()
+      elif isNotExpr(n):
+        # XXX temporarily handled here instead of magic overload in system
+        c.dest.addParLe(NotT, info)
+        inc n # tag
+        skip n # `not`
+        semLocalTypeImpl c, n, context
+        takeParRi c, n
       elif false and isRangeExpr(n):
         # a..b, interpret as range type but only without AllowValues
         # to prevent conflict with HSlice
