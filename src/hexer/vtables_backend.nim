@@ -9,7 +9,6 @@
 
 ## VTable generation. We need to do:
 ## - Patch object constructors to setup the vtable pointer
-## - Generate vtables for all classes
 ## - Transform calls to virtual methods into calls to the vtable
 ## - Translate the `of` operator into something NIFC can understand
 
@@ -17,9 +16,9 @@ import std/[assertions, tables]
 
 include nifprelude
 import ".." / lib / tinyhashes
-import nifindexes, symparser, treemangler, typekeys
+import nifindexes, symparser, treemangler
 import ".." / nimony / [nimony_model, decls, programs, typenav,
-  renderer, builtintypes, typeprops]
+  renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
 
 type
@@ -28,6 +27,7 @@ type
     methods: seq[SymId]
     signatureToIndex: Table[string, int]
     parent: SymId
+    mine: bool # whether this vtable belongs to this module
 
   MethodDecl = object
     cls: SymId
@@ -49,14 +49,10 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc computeVTableName(c: var Context; cls: SymId; middle = ".vt."): SymId =
-  var clsName = extractVersionedBasename pool.syms[cls]
-  if clsName == "":
-    clsName = pool.syms[cls]
-  clsName.add '.'
-  clsName.add middle
-  clsName.add '.'
-  clsName.add c.moduleSuffix
-  result = pool.syms.getOrIncl(clsName)
+  var clsName = splitSymName pool.syms[cls]
+  clsName.name.add middle
+  clsName.name.add clsName.module
+  result = pool.syms.getOrIncl(clsName.name)
 
 proc getVTableName(c: var Context; cls: SymId): SymId =
   if c.vtableNames.hasKey(cls):
@@ -149,74 +145,6 @@ proc methodsToNifEntries(v: VTable): seq[NifEntry] =
   result = newSeqOfCap[NifEntry](v.methods.len)
   for i, m in pairs v.methods:
     result.add NifEntry(name: m, signature: signatures[i])
-
-const
-  VtabsExt = ".vtabs"
-
-proc storeVTables(c: var Context) =
-  var b = nifbuilder.open(customToNif(c.moduleSuffix & VtabsExt))
-  b.addHeader("vtables.nim")
-  b.withTree "stmts":
-    for entry in c.classes:
-      if entry[1]:
-        let cls = entry[0]
-        b.withTree "vtab":
-          b.addSymbol pool.syms[cls]
-          b.withTree "stmts":
-            let entries = methodsToNifEntries(c.vtables[cls])
-            for e in entries:
-              b.withTree "kv":
-                b.addSymbol pool.syms[e.name]
-                b.addStrLit e.signature
-  b.close()
-
-proc loadVTable(c: var Context; currentCls: SymId; n: var Cursor) =
-  var vtable = VTable(methods: newSeq[SymId](), signatureToIndex: initTable[string, int]())
-  var methodIndex = 0
-  while n.substructureKind == KvU:
-    inc n
-    if n.kind == Symbol:
-      let methodName = n.symId
-      inc n
-      if n.kind == StringLit:
-        let signature = pool.strings[n.litId]
-        inc n
-        vtable.methods.add methodName
-        vtable.signatureToIndex[signature] = methodIndex
-        inc methodIndex
-      else:
-        error "expected string literal after method name"
-    else:
-      error "expected symbol after `kv`"
-    skipParRi n
-  skipParRi n # end of `stmts`
-  c.vtables[currentCls] = ensureMove vtable
-
-proc loadVTable(c: var Context; cls: SymId) =
-  let filename = customToNif(extractModule(pool.syms[cls]) & VtabsExt)
-  var stream = nifstreams.open(filename)
-  try:
-    discard processDirectives(stream.r)
-    var buf = fromStream(stream)
-    var n = beginRead(buf)
-    assert n.stmtKind == StmtsS
-    inc n
-    let vtabId = pool.tags.getOrIncl("vtab")
-    while n.tag == vtabId:
-      inc n
-      if n.kind == Symbol:
-        let currentCls = n.symId
-        inc n
-        if n.stmtKind == StmtsS:
-          inc n
-          loadVTable(c, currentCls, n)
-        else:
-          error "expected stmts after vtab"
-      else:
-        error "expected symbol after vtab"
-      skipParRi n # end of `vtab`
-  finally:
-    nifstreams.close(stream)
 
 proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
@@ -452,43 +380,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-when false:
-  # maybe we can use this later to provide better error messages
-  proc sameMethodSignatures(a, b: Cursor): bool =
-    var a = a
-    var b = b
-    if a.substructureKind != ParamsU: return false
-    if b.substructureKind != ParamsU: return false
-    inc a
-    inc b
-    # first parameter is of the class type and must be ignored:
-    skip a
-    skip b
-    while a.kind != ParRi and b.kind != ParRi:
-      let pa = takeLocal(a, SkipFinalParRi)
-      let pb = takeLocal(b, SkipFinalParRi)
-      if not sameTrees(pa.typ, pb.typ):
-        return false
-    if a.kind == ParRi and b.kind == ParRi:
-      inc a
-      inc b
-      # check return types
-      return sameTrees(a, b)
-    else:
-      return false
-
-proc methodKey(a: Cursor): string =
-  # First parameter was the class type and has already been skipped here!
-  var a = a
-  var b = createMangler(60)
-  while a.kind != ParRi:
-    let pa = takeLocal(a, SkipFinalParRi)
-    mangle b, pa.typ
-  inc a
-  # also add return type:
-  mangle b, a
-  result = b.extract()
-
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
   let sig = methodName & ":" & methodKey(m.paramRest)
   # see if this is an override:
@@ -502,6 +393,16 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
   let idx = c.vtables[m.cls].methods.len
   c.vtables[m.cls].methods.add m.name
   c.vtables[m.cls].signatureToIndex[sig] = idx
+
+proc loadVTable(c: var Context; cls: SymId) =
+  let src = programs.loadVTable(cls)
+  var idx = 0
+  var dest = VTable(display: @[], methods: @[], mine: false)
+  for entry in src:
+    dest.methods.add entry.fn
+    dest.signatureToIndex[pool.strings[entry.signature]] = idx
+    inc idx
+  c.vtables[cls] = ensureMove dest
 
 proc processMethods(c: var Context) =
   # Methods are fundamentally different from other type-bound symbols in
@@ -523,8 +424,6 @@ proc processMethods(c: var Context) =
           var methodName = pool.syms[m.name]
           extractBasename methodName
           processMethod c, m, methodName
-  if c.classes.len > 0:
-    storeVTables c
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:
@@ -558,7 +457,7 @@ proc collectClass(c: var Context; n: var Cursor) =
     for i in 0 ..< deps.len:
       registerClass c, deps[i], false
     deps.add cls # add `self` for the display
-    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep)
+    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep, mine: true)
     registerClass c, cls, true
 
 proc collectMethods(c: var Context; n: var Cursor) =
@@ -593,6 +492,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
 proc emitVTables(c: var Context; dest: var TokenBuf) =
   # Used the `mpairs` and `mitems` here to avoid copies.
   for cls, vtab in mpairs c.vtables:
+    if not vtab.mine: continue
     var displayName = SymId(0)
     if vtab.display.len > 0:
       displayName = computeVTableName(c, cls, ".dy.")

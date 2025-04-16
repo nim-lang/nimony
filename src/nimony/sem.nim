@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts
+  semuntyped, contracts, vtables_frontend
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -3565,6 +3565,7 @@ proc attachMethod(c: var SemContext; symId: SymId;
                   declStart, beforeParams, beforeGenericParams: int; info: PackedLineInfo) =
   var params = cursorAt(c.dest, beforeParams)
   var root = SymId(0)
+  var signature = StrId(0)
   if params.kind == ParLe:
     inc params
     if params.substructureKind == ParamU:
@@ -3573,6 +3574,11 @@ proc attachMethod(c: var SemContext; symId: SymId;
       skip params # export marker
       skip params # pragmas
       root = getClass(params)
+      var rest = params
+      skip rest # type
+      skip rest # default value
+      skipParRi rest
+      signature = pool.strings.getOrIncl(methodKey(rest))
   if root == SymId(0):
     let typ = typeToString(params)
     c.dest.endRead()
@@ -3587,7 +3593,11 @@ proc attachMethod(c: var SemContext; symId: SymId;
     if not (c.dest[beforeGenericParams].kind == ParLe and
         pool.tags[c.dest[beforeGenericParams].tagId] == $InvokeT):
       # don't register instances
-      c.methodIndexMap.add((root, symId))
+      for i in 0..<c.classIndexMap.len:
+        if c.classIndexMap[i].cls == root:
+          c.classIndexMap[i].methods.add MethodIndexEntry(fn: symId, signature: signature)
+          return
+      c.classIndexMap.add ClassIndexEntry(cls: root, methods: @[MethodIndexEntry(fn: symId, signature: signature)])
 
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   let info = it.n.info
@@ -6562,7 +6572,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
   createIndex outfile, root, true,
     IndexSections(hooks: move c.hookIndexLog,
       converters: move c.converterIndexMap,
-      methods: move c.methodIndexMap,
+      classes: move c.classIndexMap,
       toBuild: move c.toBuild,
       exportBuf: buildIndexExports(c))
 
