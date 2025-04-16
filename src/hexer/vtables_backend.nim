@@ -388,7 +388,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if nested == 0: break
 
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
-  let sig = methodName & ":" & methodKey(m.paramRest)
+  let sig = methodKey(methodName, m.paramRest)
   # see if this is an override:
   for inh in inheritanceChain(m.cls):
     let methodIndex = c.vtables[inh].signatureToIndex.getOrDefault(sig, -1)

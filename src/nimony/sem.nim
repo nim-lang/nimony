@@ -3622,7 +3622,9 @@ proc attachMethod(c: var SemContext; symId: SymId;
       skip rest # type
       skip rest # default value
       skipParRi rest
-      signature = pool.strings.getOrIncl(methodKey(rest))
+      var methodName = pool.syms[symId]
+      extractBasename methodName
+      signature = pool.strings.getOrIncl(methodKey(methodName, rest))
   if root == SymId(0):
     let typ = typeToString(params)
     c.dest.endRead()
