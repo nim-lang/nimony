@@ -8,6 +8,7 @@
 #
 
 ## VTable generation. We need to do:
+## - Generate vtables for all classes declared in the module
 ## - Patch object constructors to setup the vtable pointer
 ## - Transform calls to virtual methods into calls to the vtable
 ## - Translate the `of` operator into something NIFC can understand
@@ -395,13 +396,30 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
   c.vtables[m.cls].signatureToIndex[sig] = idx
 
 proc loadVTable(c: var Context; cls: SymId) =
-  let src = programs.loadVTable(cls)
-  var idx = 0
+  # Interface files only store the "diff" of the vtable so we need to
+  # compute it properly here.
+  var parent = SymId(0)
+  for inh in inheritanceChain(cls):
+    if parent == SymId(0): parent = inh
+    if inh notin c.vtables:
+      loadVTable c, inh
+
+  # now apply the diff:
+  let diff = programs.loadVTable(cls)
   var dest = VTable(display: @[], methods: @[], mine: false)
-  for entry in src:
-    dest.methods.add entry.fn
-    dest.signatureToIndex[pool.strings[entry.signature]] = idx
-    inc idx
+  if parent != SymId(0):
+    dest.methods = c.vtables[parent].methods
+    dest.signatureToIndex = c.vtables[parent].signatureToIndex
+
+  for entry in diff:
+    let sig = pool.strings[entry.signature]
+    let idx = dest.signatureToIndex.getOrDefault(sig, -1)
+    if idx == -1:
+      dest.methods.add entry.fn
+      dest.signatureToIndex[sig] = dest.methods.len - 1
+    else:
+      dest.methods[idx] = entry.fn
+
   c.vtables[cls] = ensureMove dest
 
 proc processMethods(c: var Context) =
