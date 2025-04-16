@@ -4005,7 +4005,6 @@ proc semWhen(c: var SemContext; it: var Item) =
       swap c.phase, phase
       let condValue = cursorAt(c.dest, condStart).exprKind
       endRead(c.dest)
-      echo " -> ", condValue
       if not leaveUnresolved:
         if condValue == TrueX:
           c.dest.shrink start
@@ -4016,7 +4015,6 @@ proc semWhen(c: var SemContext; it: var Item) =
         elif condValue != FalseX:
           # erroring/unresolved condition, leave entire statement as unresolved
           leaveUnresolved = true
-      echo " => ", condValue
       takeTree c, it.n
       takeParRi c, it.n
   else:
