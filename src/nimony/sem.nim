@@ -2224,7 +2224,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     inc n
-    if n.kind != ParRi:
+    if n.kind notin {Ident, ParRi}:
       semConstStrExpr c, n
     c.dest.addParRi()
   of ImportcP, ImportcppP, ExportcP, HeaderP, PluginP:
@@ -2233,7 +2233,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, info)
     inc n
     let strPos = c.dest.len
-    if n.kind != ParRi:
+    if n.kind notin {Ident, ParRi}:
       semConstStrExpr c, n
     elif crucial.sym != SymId(0):
       var name = pool.syms[crucial.sym]
