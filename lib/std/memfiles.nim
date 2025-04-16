@@ -3,16 +3,20 @@
 
 import assertions, syncio
 
-# TODO: Uncomment when fixed https://github.com/nim-lang/nimony/issues/965
-#when defined(windows):
-import windows / winlean
-import widestrs
-#elif defined(posix):
-import posix / posix
-#else:
-#  {.error: "the memfiles module is not supported on your operating system!".}
+when defined(windows):
+  import windows / winlean
+  import widestrs
+elif defined(posix):
+  import posix / posix
+else:
+  {.error: "the memfiles module is not supported on your operating system!".}
 
 import std/oserrors
+
+# TODO: Remove following dummy types when fixed https://github.com/nim-lang/nimony/issues/965
+when not defined(windows):
+  type
+    Handle = bool
 
 type
   MemFile* = object      ## represents a memory mapped file

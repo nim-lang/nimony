@@ -235,12 +235,12 @@
       (elif 2
        (eq
         (i +64) ~2 j.3 3 +2) ~1,1
-       (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,119,lib/std/syncio.nim
         (stmts 2,1
          (stmts
           (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,81,tests/nimony/iter/tforloops1.nim "left the loop!")) ,2
          (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-        (break .)))) 2,116,lib/std/syncio.nim
+        (break .)))) 2,119,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,83,tests/nimony/iter/tforloops1.nim "A i ")) 2,1
@@ -279,7 +279,7 @@
         (stmts 4
          (asgn ~4 sum.0 6
           (add
-           (i +64) ~4 sum.0 2 a.5)))) 2,116,lib/std/syncio.nim
+           (i +64) ~4 sum.0 2 a.5)))) 2,119,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 11,92,tests/nimony/iter/tforloops1.nim sum.0)) ,2
@@ -304,7 +304,7 @@
      (let :i.10 . . 19,41,lib/std/system/openarrays.nim
       (mut
        (i -1)) .)) ~2,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,119,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 9,97,tests/nimony/iter/tforloops1.nim
@@ -522,7 +522,7 @@
        (oconstr 21,~2 openArray.0.Inff8aa1.tfo161bfb1 2
         (kv ~2 a.1.Inff8aa1.tfo161bfb1 2
          (nil)) 12
-        (kv ~12 len.6.Inff8aa1.tfo161bfb1 2 +0)))) ,2
+        (kv ~12 len.7.Inff8aa1.tfo161bfb1 2 +0)))) ,2
      (else 2,1
       (expr 12
        (oconstr 21,~4 openArray.0.Inff8aa1.tfo161bfb1 2
@@ -740,7 +740,7 @@
      (cmd inc.0.tfo161bfb1 4
       (haddr i.14)))))) 15,43,lib/std/system/openarrays.nim
  (func :len.0.tfo161bfb1 . ~15,~18 .
-  (at len.7.sysvq0asl
+  (at len.8.sysvq0asl
    (i -1)) ~3,~18
   (params 1
    (param :a.15 . . 12 openArray.0.Inff8aa1.tfo161bfb1 .)) 4,~18
@@ -770,8 +770,13 @@
       (le
        (i +64) 75,8,lib/std/system/openarrays.nim +0 68,8,lib/std/system/openarrays.nim idx.2)) 8
      (lt
+<<<<<<< HEAD
       (i +64) ~4 idx.2 3
       (dot ~1 x.14 len.6.Inff8aa1.tfo161bfb1 +0))))) ~10,~36 . 87,~36
+=======
+      (i +64) ~4 idx.1 3
+      (dot ~1 x.6 len.7.Inff8aa1.tfo161bfb1 +0))))) ~10,~36 . 87,~36
+>>>>>>> b62e299 (fixes compile errors)
   (stmts 3
    (result :result.4 . . ~71
     (mut
@@ -833,6 +838,7 @@
     (ptr 18
      (uarray
       (i -1))) .) ~23,2
+<<<<<<< HEAD
    (fld :len.6.Inff8aa1.tfo161bfb1 . . 5
     (i -1) .))) 37,13,lib/std/system/openarrays.nim
  (type :openArray.0.Ijejnmx1.tfo161bfb1 .
@@ -847,3 +853,7 @@
       (bool))) .) ~23,2
    (fld :len.6.Ijejnmx1.tfo161bfb1 . . 5
     (i -1) .))))
+=======
+   (fld :len.7.Inff8aa1.tfo161bfb1 . . 5
+    (i -1) .))))
+>>>>>>> b62e299 (fixes compile errors)
