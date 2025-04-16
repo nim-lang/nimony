@@ -58,12 +58,10 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
     var isDistinct = false
     discard skipDistinct(n, isDistinct)
     if isDistinct:
-      var finalConv = createTokenBuf(5)
-      finalConv.add parLeToken(RetS, info)
+      var finalConv = createTokenBuf(4)
       finalConv.add parLeToken(DconvX, info)
       finalConv.copyTree n
       result.insert finalConv, 1
-      result.add parRiToken(info)
       result.add parRiToken(info)
 
   result.add parRiToken(info)
