@@ -72,8 +72,6 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
 proc transformStringCase*(c: var EContext; n: var Cursor) =
   c.demand pool.syms.getOrIncl("equalStrings.0." & SystemModuleSuffix)
   c.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
-  # the other overload of `borrowCStringUnsafe`
-  c.demand pool.syms.getOrIncl("borrowCStringUnsafe.1." & SystemModuleSuffix)
 
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
@@ -85,6 +83,8 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
 
   let selectorType = getType(c.typeCache, selectorNode)
   if selectorType.typeKind == CstringT:
+    # the other overload of `borrowCStringUnsafe`
+    c.demand pool.syms.getOrIncl("borrowCStringUnsafe.1." & SystemModuleSuffix)
     selector = pool.syms.getOrIncl(":tmp.c." & $c.getTmpId)
     c.dest.copyIntoUnchecked "var", sinfo:
       c.dest.add symdefToken(selector, sinfo)
