@@ -43,7 +43,7 @@ when false:
     else:
       return false
 
-proc methodKey*(a: Cursor): string =
+proc methodKey*(name: string; a: Cursor): string =
   # First parameter was the class type and has already been skipped here!
   var a = a
   var b = createMangler(60)
@@ -53,4 +53,4 @@ proc methodKey*(a: Cursor): string =
   inc a
   # also add return type:
   mangle b, a
-  result = b.extract()
+  result = name & ":" & b.extract()

@@ -23,12 +23,16 @@ import ".." / nimony / [nimony_model, decls, programs, typenav,
 from duplifier import constructsValue
 
 type
+  VTableState = enum
+    Others
+    AlreadyImported
+    Mine
   VTable = object
     display: seq[SymId]
     methods: seq[SymId]
     signatureToIndex: Table[string, int]
     parent: SymId
-    mine: bool # whether this vtable belongs to this module
+    state: VTableState
 
   MethodDecl = object
     cls: SymId
@@ -96,7 +100,7 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
   if n.kind == Symbol:
     result = TempLoc(sym: n.symId, needsDeref: false, needsParRi: false)
     inc n
-    return
+    return result
 
   let info = n.info
   let takeAddr = not constructsValue(n)
@@ -131,21 +135,6 @@ proc getMethodIndex(c: var Context; cls, fn: SymId): int =
   result = c.vtables[cls].methods.find(fn)
   if result == -1:
     error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
-
-type
-  NifEntry = object
-    name: SymId # index is implicit in the order of the sequence
-    signature: string
-
-proc methodsToNifEntries(v: VTable): seq[NifEntry] =
-  assert v.signatureToIndex.len == v.methods.len
-  var signatures = newSeq[string](v.methods.len)
-  for k, v in pairs(v.signatureToIndex):
-    signatures[v] = k
-
-  result = newSeqOfCap[NifEntry](v.methods.len)
-  for i, m in pairs v.methods:
-    result.add NifEntry(name: m, signature: signatures[i])
 
 proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
@@ -210,13 +199,28 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.kind != ParRi:
     tr c, dest, n
 
+proc maybeImport(c: var Context; cls, vtabName: SymId) =
+  let state = c.vtables[cls].state
+  if state == Others:
+    c.vtables[cls].state = AlreadyImported
+    var decl = createTokenBuf(8)
+    decl.copyIntoKind ConstS, NoLineInfo:
+      decl.addSymDef vtabName, NoLineInfo
+      decl.addIdent("x", NoLineInfo) # exported
+      decl.addEmpty() # pragmas
+      decl.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
+      decl.addEmpty() # value
+    programs.publish vtabName, decl
+
 proc trGetRtti(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n # call
   skip n # skip "getRtti" symbol
   assert n.kind == Symbol # we have the class name here
+  let vtabName = getVTableName(c, n.symId)
   dest.copyIntoKind AddrX, info:
-    dest.addSymUse getVTableName(c, n.symId), info
+    dest.addSymUse vtabName, info
+    maybeImport(c, n.symId, vtabName)
   inc n
   skipParRi n
 
@@ -231,8 +235,10 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if cls != SymId(0):
     #dest.copyIntoKind KvU, info:
     #  dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+    let vtabName = getVTableName(c, cls)
     dest.copyIntoKind AddrX, info:
-      dest.addSymUse getVTableName(c, cls), info
+      dest.addSymUse vtabName, info
+    maybeImport(c, cls, vtabName)
   while n.kind != ParRi:
     tr c, dest, n
   takeParRi dest, n
@@ -382,7 +388,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if nested == 0: break
 
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
-  let sig = methodName & ":" & methodKey(m.paramRest)
+  let sig = methodKey(methodName, m.paramRest)
   # see if this is an override:
   for inh in inheritanceChain(m.cls):
     let methodIndex = c.vtables[inh].signatureToIndex.getOrDefault(sig, -1)
@@ -406,7 +412,7 @@ proc loadVTable(c: var Context; cls: SymId) =
 
   # now apply the diff:
   let diff = programs.loadVTable(cls)
-  var dest = VTable(display: @[], methods: @[], mine: false)
+  var dest = VTable(display: @[], methods: @[], state: Others)
   if parent != SymId(0):
     dest.methods = c.vtables[parent].methods
     dest.signatureToIndex = c.vtables[parent].signatureToIndex
@@ -475,7 +481,7 @@ proc collectClass(c: var Context; n: var Cursor) =
     for i in 0 ..< deps.len:
       registerClass c, deps[i], false
     deps.add cls # add `self` for the display
-    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep, mine: true)
+    c.vtables[cls] = VTable(display: ensureMove deps, methods: @[], parent: firstDep, state: Mine)
     registerClass c, cls, true
 
 proc collectMethods(c: var Context; n: var Cursor) =
@@ -510,7 +516,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
 proc emitVTables(c: var Context; dest: var TokenBuf) =
   # Used the `mpairs` and `mitems` here to avoid copies.
   for cls, vtab in mpairs c.vtables:
-    if not vtab.mine: continue
+    if vtab.state != Mine: continue
     var displayName = SymId(0)
     if vtab.display.len > 0:
       displayName = computeVTableName(c, cls, ".dy.")
