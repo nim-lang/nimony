@@ -3599,6 +3599,23 @@ proc attachMethod(c: var SemContext; symId: SymId;
           return
       c.classIndexMap.add ClassIndexEntry(cls: root, methods: @[MethodIndexEntry(fn: symId, signature: signature)])
 
+proc hookThatShouldBeMethod(c: var SemContext; hk: HookKind; beforeParams: int): bool =
+  case hk
+  of DestroyH, TraceH:
+    result = false
+    var params = cursorAt(c.dest, beforeParams)
+    if params.kind == ParLe:
+      inc params
+      if params.substructureKind == ParamU:
+        inc params
+        skip params # name
+        skip params # export marker
+        skip params # pragmas
+        result = isInheritable(params, true)
+    endRead(c.dest)
+  else:
+    result = false
+
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   let info = it.n.info
   let declStart = c.dest.len
@@ -3640,10 +3657,15 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       skip it.n
 
     publishSignature c, symId, declStart
+    let hookName = getHookName(symId)
+    let hk = hookToKind(hookName)
     if status in {OkNew, OkExistingFresh}:
       if kind == ConverterY:
         attachConverter c, symId, declStart, beforeExportMarker, beforeGenericParams, info
       elif kind == MethodY:
+        attachMethod c, symId, declStart, beforeParams, beforeGenericParams, info
+      elif hookThatShouldBeMethod(c, hk, beforeParams):
+        c.dest[declStart] = parLeToken(MethodS, info)
         attachMethod c, symId, declStart, beforeParams, beforeGenericParams, info
     if it.n.kind != DotToken:
       case pass
@@ -3656,7 +3678,6 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
 
-        let hk = hookToKind(getHookName(symId))
         if hk != NoHook:
           let params = getParamsType(c, beforeParams)
           assert params.len >= 1
@@ -3683,10 +3704,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
         c.closeScope() # close parameter scope
         if resId != SymId(0):
           addReturnResult c, resId, it.n.info
-        let name = getHookName(symId)
-        let hk = hookToKind(name)
         if hk != NoHook:
-          let objCursor = semHook(c, name, beforeParams, symId, info)
+          let objCursor = semHook(c, hookName, beforeParams, symId, info)
           let obj = getObjSymId(c, objCursor)
 
           # because it's a hook for sure
