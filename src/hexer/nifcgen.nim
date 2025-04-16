@@ -1271,7 +1271,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
   of Symbol:
     var inlineValue = getInitValue(c.typeCache, n.symId)
     var inlineValueCopy = inlineValue
-    if not cursorIsNil(inlineValue) and isSimpleLiteral(inlineValueCopy):
+    if not cursorIsNil(inlineValue) and inlineValue.kind != DotToken and isSimpleLiteral(inlineValueCopy):
       traverseExpr(c, inlineValue)
     else:
       let ext = maybeMangle(c, n.symId)

@@ -199,27 +199,28 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.kind != ParRi:
     tr c, dest, n
 
-proc maybeImport(c: var Context; cls: SymId) =
+proc maybeImport(c: var Context; cls, vtabName: SymId) =
   let state = c.vtables[cls].state
   if state == Others:
     c.vtables[cls].state = AlreadyImported
     var decl = createTokenBuf(8)
     decl.copyIntoKind ConstS, NoLineInfo:
-      decl.addSymDef getVTableName(c, cls), NoLineInfo
+      decl.addSymDef vtabName, NoLineInfo
       decl.addIdent("x", NoLineInfo) # exported
       decl.addEmpty() # pragmas
       decl.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
       decl.addEmpty() # value
-    programs.publish cls, decl
+    programs.publish vtabName, decl
 
 proc trGetRtti(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n # call
   skip n # skip "getRtti" symbol
   assert n.kind == Symbol # we have the class name here
+  let vtabName = getVTableName(c, n.symId)
   dest.copyIntoKind AddrX, info:
-    dest.addSymUse getVTableName(c, n.symId), info
-    maybeImport(c, n.symId)
+    dest.addSymUse vtabName, info
+    maybeImport(c, n.symId, vtabName)
   inc n
   skipParRi n
 
@@ -234,9 +235,10 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if cls != SymId(0):
     #dest.copyIntoKind KvU, info:
     #  dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+    let vtabName = getVTableName(c, cls)
     dest.copyIntoKind AddrX, info:
-      dest.addSymUse getVTableName(c, cls), info
-    maybeImport(c, cls)
+      dest.addSymUse vtabName, info
+    maybeImport(c, cls, vtabName)
   while n.kind != ParRi:
     tr c, dest, n
   takeParRi dest, n
