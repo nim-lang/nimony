@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tinvalidpragma.nim(1, 17) Error: too many arguments for pragma
+tests/nimony/errmsgs/tinvalidpragma.nim(2, 17) Error: expected pragma
