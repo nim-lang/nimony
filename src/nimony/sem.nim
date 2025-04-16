@@ -2321,6 +2321,10 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       buildErr c, n.info, "`semantics` pragma takes a string literal"
     c.dest.addParRi()
   if hasParRi:
+    if n.kind != ParRi:
+      if n.exprKind != ErrX:
+        buildErr c, n.info, "too many arguments for pragma"
+      while n.kind != ParRi: skip n
     skipParRi n
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
