@@ -40,13 +40,13 @@ proc cardSetImpl(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
 proc cardSet(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
   result = cardSetImpl(s, len)
 
-iterator items*[T: Ordinal](x: set[T]): T =
+iterator items*[T: Ordinal|enum](x: set[T]): T =
   ## Iterates over all elements inside the `set[T]`.
   ## This iterator walks from `low(T)` to `high(T)`
   ## yielding each element found
-  var i = low(T)
-  if i <= high(T):
+  var i = low(T).int
+  if i <= high(T).int:
     while true:
-      if x.contains(i): yield i
-      if i >= high(T): break
+      if x.contains(cast[T](i)): yield cast[T](i)
+      if i >= high(T).int: break
       inc(i)

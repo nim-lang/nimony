@@ -8,3 +8,9 @@ var x: VarId
 x = x + x
 
 let y = int8(x)
+
+
+type
+  WINBOOL* = distinct int32
+
+proc `==`(x, y: WINBOOL): bool {.borrow.}
