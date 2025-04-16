@@ -54,43 +54,44 @@ func isFail*(x: WINBOOL): bool {.inline.} =
 func isSuccess*(a: WINBOOL): bool {.inline.} =
   not isFail(a)
 
-proc closeHandle*(hObject: Handle): WINBOOL {.
-    importc: "CloseHandle", stdcall, header: "Windows.h".}
-proc getLastError*(): int32 {.
-    importc: "GetLastError", stdcall, header: "Windows.h", sideEffect.}
-proc createFileW*(lpFileName: WideCString, dwDesiredAccess, dwShareMode: DWORD,
-                  lpSecurityAttributes: pointer,
-                  dwCreationDisposition, dwFlagsAndAttributes: DWORD,
-                  hTemplateFile: Handle): Handle {.
-    importc: "CreateFileW", stdcall, header: "Windows.h".}
-proc setEndOfFile*(hFile: Handle): WINBOOL {.
-    importc: "SetEndOfFile", stdcall, header: "Windows.h".}
-proc setFilePointer*(hFile: Handle, lDistanceToMove: LONG,
-                     lpDistanceToMoveHigh: ptr LONG,
-                     dwMoveMethod: DWORD): DWORD {.
-    importc: "SetFilePointer", stdcall, header: "Windows.h".}
+when defined(windows):
+  proc closeHandle*(hObject: Handle): WINBOOL {.
+      importc: "CloseHandle", stdcall, header: "Windows.h".}
+  proc getLastError*(): int32 {.
+      importc: "GetLastError", stdcall, header: "Windows.h", sideEffect.}
+  proc createFileW*(lpFileName: WideCString, dwDesiredAccess, dwShareMode: DWORD,
+                    lpSecurityAttributes: pointer,
+                    dwCreationDisposition, dwFlagsAndAttributes: DWORD,
+                    hTemplateFile: Handle): Handle {.
+      importc: "CreateFileW", stdcall, header: "Windows.h".}
+  proc setEndOfFile*(hFile: Handle): WINBOOL {.
+      importc: "SetEndOfFile", stdcall, header: "Windows.h".}
+  proc setFilePointer*(hFile: Handle, lDistanceToMove: LONG,
+                       lpDistanceToMoveHigh: ptr LONG,
+                       dwMoveMethod: DWORD): DWORD {.
+      importc: "SetFilePointer", stdcall, header: "Windows.h".}
 
-proc getFileSize*(hFile: Handle, lpFileSizeHigh: ptr DWORD): DWORD {.
-    importc: "GetFileSize",
-    stdcall, header: "Windows.h".}
+  proc getFileSize*(hFile: Handle, lpFileSizeHigh: ptr DWORD): DWORD {.
+      importc: "GetFileSize",
+      stdcall, header: "Windows.h".}
 
-when defined(cpu32):
-  type
-    WinSizeT* = uint32
-else:
-  type
-    WinSizeT* = uint64
+  when defined(cpu32):
+    type
+      WinSizeT* = uint32
+  else:
+    type
+      WinSizeT* = uint64
 
-proc mapViewOfFileEx*(hFileMappingObject: Handle, dwDesiredAccess: DWORD,
-                      dwFileOffsetHigh, dwFileOffsetLow: DWORD,
-                      dwNumberOfBytesToMap: WinSizeT,
-                      lpBaseAddress: pointer): pointer{.
-    importc: "MapViewOfFileEx", stdcall, header: "Windows.h".}
-proc createFileMappingW*(hFile: Handle,
-                         lpFileMappingAttributes: pointer,
-                         flProtect, dwMaximumSizeHigh: DWORD,
-                         dwMaximumSizeLow: DWORD,
-                         lpName: pointer): Handle {.
-    importc: "CreateFileMappingW", stdcall, header: "Windows.h".}
-proc unmapViewOfFile*(lpBaseAddress: pointer): WINBOOL {.
-    importc: "UnmapViewOfFile", stdcall, header: "Windows.h".}
+  proc mapViewOfFileEx*(hFileMappingObject: Handle, dwDesiredAccess: DWORD,
+                        dwFileOffsetHigh, dwFileOffsetLow: DWORD,
+                        dwNumberOfBytesToMap: WinSizeT,
+                        lpBaseAddress: pointer): pointer{.
+      importc: "MapViewOfFileEx", stdcall, header: "Windows.h".}
+  proc createFileMappingW*(hFile: Handle,
+                           lpFileMappingAttributes: pointer,
+                           flProtect, dwMaximumSizeHigh: DWORD,
+                           dwMaximumSizeLow: DWORD,
+                           lpName: pointer): Handle {.
+      importc: "CreateFileMappingW", stdcall, header: "Windows.h".}
+  proc unmapViewOfFile*(lpBaseAddress: pointer): WINBOOL {.
+      importc: "UnmapViewOfFile", stdcall, header: "Windows.h".}
