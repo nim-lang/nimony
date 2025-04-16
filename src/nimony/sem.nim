@@ -2195,6 +2195,9 @@ type
     flags: set[PragmaKind]
 
 proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
+  let hasParRi = n.kind == ParLe # if false, has no arguments
+  if n.substructureKind == KvU:
+    inc n
   let pk = pragmaKind(n)
   case pk
   of NoPragma:
@@ -2205,11 +2208,12 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "expected pragma"
       inc n
-      while n.kind != ParRi: skip n # skip optional pragma arguments
+      if hasParRi:
+        while n.kind != ParRi: skip n # skip optional pragma arguments
   of MagicP:
     c.dest.add parLeToken(MagicP, n.info)
     inc n
-    if n.kind in {StringLit, Ident}:
+    if hasParRi and n.kind in {StringLit, Ident}:
       let (magicWord, bits) = magicToTag(pool.strings[n.litId])
       if magicWord == "":
         buildErr c, n.info, "unknown `magic`"
@@ -2224,7 +2228,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     inc n
-    if n.kind notin {Ident, ParRi}:
+    if hasParRi and n.kind != ParRi:
       semConstStrExpr c, n
     c.dest.addParRi()
   of ImportcP, ImportcppP, ExportcP, HeaderP, PluginP:
@@ -2233,7 +2237,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, info)
     inc n
     let strPos = c.dest.len
-    if n.kind notin {Ident, ParRi}:
+    if hasParRi and n.kind != ParRi:
       semConstStrExpr c, n
     elif crucial.sym != SymId(0):
       var name = pool.syms[crucial.sym]
@@ -2257,7 +2261,10 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
   of AlignP, BitsP:
     c.dest.add parLeToken(pk, n.info)
     inc n
-    semConstIntExpr(c, n)
+    if hasParRi and n.kind != ParRi:
+      semConstIntExpr(c, n)
+    else:
+      buildErr c, n.info, "expected int literal"
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
@@ -2282,7 +2289,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     inc n
-    if n.kind != ParRi:
+    if hasParRi and n.kind != ParRi:
       semProposition c, n, pk
     else:
       buildErr c, n.info, "`requires`/`ensures` pragma takes a bool expression"
@@ -2290,12 +2297,16 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
   of TagsP, RaisesP:
     c.dest.add parLeToken(pk, n.info)
     inc n
-    takeTree c, n
+    if hasParRi and n.kind != ParRi:
+      takeTree c, n
+    else:
+      buildErr c, n.info, "expected tags/raises list"
     c.dest.addParRi()
   of EmitP, BuildP, StringP, AssumeP, AssertP:
     buildErr c, n.info, "pragma not supported"
     inc n
-    while n.kind != ParRi: skip n # skip optional pragma arguments
+    if hasParRi:
+      while n.kind != ParRi: skip n # skip optional pragma arguments
     c.dest.addParRi()
   of KeepOverflowFlagP:
     c.dest.add parLeToken(pk, n.info)
@@ -2304,11 +2315,13 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
   of SemanticsP:
     c.dest.add parLeToken(pk, n.info)
     inc n
-    if n.kind in {StringLit, Ident}:
+    if hasParRi and n.kind in {StringLit, Ident}:
       takeToken c, n
     else:
       buildErr c, n.info, "`semantics` pragma takes a string literal"
     c.dest.addParRi()
+  if hasParRi:
+    skipParRi n
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   if n.kind == DotToken:
@@ -2319,12 +2332,7 @@ proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; ki
       if n.exprKind == ErrX:
         takeTree c, n
       else:
-        let hasParRi = n.kind == ParLe
-        if n.substructureKind == KvU:
-          inc n
         semPragma c, n, crucial, kind
-        if hasParRi:
-          skipParRi n
     takeParRi c, n
   else:
     buildErr c, n.info, "expected '.' or 'pragmas'"
