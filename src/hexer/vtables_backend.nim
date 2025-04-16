@@ -404,14 +404,16 @@ proc loadVTable(c: var Context; cls: SymId) =
     if inh notin c.vtables:
       loadVTable c, inh
 
-  c.vtables[cls].methods = c.vtables[parent].methods
-  c.vtables[cls].signatureToIndex = c.vtables[parent].signatureToIndex
   # now apply the diff:
   let diff = programs.loadVTable(cls)
   var dest = VTable(display: @[], methods: @[], mine: false)
+  if parent != SymId(0):
+    dest.methods = c.vtables[parent].methods
+    dest.signatureToIndex = c.vtables[parent].signatureToIndex
+
   for entry in diff:
     let sig = pool.strings[entry.signature]
-    let idx = c.vtables[cls].signatureToIndex.getOrDefault(sig, -1)
+    let idx = dest.signatureToIndex.getOrDefault(sig, -1)
     if idx == -1:
       dest.methods.add entry.fn
       dest.signatureToIndex[sig] = dest.methods.len - 1

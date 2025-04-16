@@ -36,7 +36,7 @@ The phases of compilation are:
 8. Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct) (hexer).
 9. Inject destructors (hexer).
 10. Map builtins like `new` and `+` to "compiler procs" (hexer).
-11. Translate exception handling (hexer).
+11. Translate exception handling (hexer). **Not implemented yet.**
 12. Generate NIFC code (hexer).
 
 These phases have been collected into different tools with dedicated names.
