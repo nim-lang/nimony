@@ -491,6 +491,17 @@ proc multiplySums(buf: var TokenBuf; a, b: var TypeCursor) =
     else:
       multiplyMinterms(buf, a, b)
 
+proc countProducts(a: TypeCursor): int =
+  result = 0
+  if a.typeKind == OrT:
+    var a = a
+    inc a
+    while a.kind != ParRi:
+      inc result
+      skip a
+  else:
+    inc result
+
 proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = false) =
   var kind = n.typeKind
   if negative:
@@ -517,7 +528,19 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
       reorderSumOfProducts(buf2, n, negative)
       var a = beginRead(buf2)
       var b = cursorAt(buf2, bStart)
-      multiplySums(buf, a, b)
+      if countProducts(a) * countProducts(b) >= 256:
+        # bail out
+        buf.addParLe(AndT, a.info)
+        buf.add buf2
+        while n.kind != ParRi:
+          if negative:
+            buf.addParLe(NotT, n.info)
+          takeTree buf, n
+          if negative:
+            buf.addParRi()
+        break
+      else:
+        multiplySums(buf, a, b)
       endRead(buf2)
       endRead(buf2)
       buf2.shrink 0
