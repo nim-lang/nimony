@@ -1840,13 +1840,38 @@ proc bindSubsInvokeArgs(c: var SemContext; decl: TypeDecl; buf: var TokenBuf;
   else:
     result = initTable[SymId, Cursor]()
 
+type ObjFieldIter = object
+  nested: int
+
+proc initObjFieldIter(): ObjFieldIter =
+  result = ObjFieldIter(nested: 1)
+
+proc nextField(iter: var ObjFieldIter, n: var Cursor): bool =
+  while iter.nested != 0:
+    if n.kind == ParRi:
+      dec iter.nested
+      if iter.nested != 0: inc n
+    elif n.stmtKind in {WhenS, CaseS, StmtsS, DiscardS} or
+        n.exprKind == NilX or n.substructureKind == ElseU:
+      inc iter.nested
+      inc n
+    elif n.substructureKind in {ElifU, OfU}:
+      inc iter.nested
+      inc n
+      skip n
+    else:
+      assert n.substructureKind == FldU
+      return true
+  result = false
+
 proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[SymId, Cursor]; level = 0): ObjField =
   assert t.typeKind == ObjectT
   var n = t
   inc n # skip `(object` token
   var baseType = n
   skip n # skip basetype
-  while n.kind == ParLe and n.substructureKind == FldU:
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
     inc n # skip FldU
     if n.kind == SymbolDef and sameIdent(n.symId, name):
       let symId = n.symId
@@ -2490,9 +2515,14 @@ proc semObjectComponent(c: var SemContext; n: var Cursor) =
       while n.kind != ParRi:
         semObjectComponent c, n
       skipParRi n
+    of DiscardS:
+      takeTree c, n
     else:
-      buildErr c, n.info, "illformed AST inside object: " & asNimCode(n)
-      skip n
+      if n.exprKind == NilX:
+        takeTree c, n
+      else:
+        buildErr c, n.info, "illformed AST inside object: " & asNimCode(n)
+        skip n
 
 proc semObjectType(c: var SemContext; n: var Cursor) =
   takeToken c, n
@@ -5195,19 +5225,19 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
       let parent = asObjectDecl(parentImpl)
       var currentField = parent.firstField
       if currentField.kind != DotToken:
-        while currentField.kind != ParRi:
-          let field = asLocal(currentField)
+        var iter = initObjFieldIter()
+        while nextField(iter, currentField):
+          let field = takeLocal(currentField, SkipFinalParRi)
           buildObjConstrField(c, field, setFields, info, bindings)
-          skip currentField
       parentType = parent.parentType
     # bring back original bindings:
     bindings = origBindings
   var currentField = obj.firstField
   if currentField.kind != DotToken:
-    while currentField.kind != ParRi:
-      let field = asLocal(currentField)
+    var iter = initObjFieldIter()
+    while nextField(iter, currentField):
+      let field = takeLocal(currentField, SkipFinalParRi)
       buildObjConstrField(c, field, setFields, info, bindings)
-      skip currentField
   c.dest.addParRi()
 
 proc semObjConstr(c: var SemContext, it: var Item) =
