@@ -385,3 +385,186 @@ proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
     else:
       break
   result = n
+
+proc isAtomTypeclass(n: TypeCursor): bool {.inline.} =
+  var n = n
+  while n.typeKind == NotT: # maybe just 1?
+    inc n
+  result = n.typeKind notin {AndT, OrT}
+
+proc isMinterm(n: TypeCursor): bool =
+  if n.typeKind == AndT:
+    result = true
+    var n = n
+    inc n
+    var nested = 1
+    while nested != 0:
+      if n.typeKind == AndT:
+        inc n
+        inc nested
+      elif n.kind == ParRi:
+        inc n
+        dec nested
+      else:
+        result = isAtomTypeclass(n)
+        if not result: break
+        skip n
+  else:
+    result = isAtomTypeclass(n)
+
+proc isSumOfProducts*(n: TypeCursor): bool =
+  if n.typeKind == OrT:
+    result = true
+    var n = n
+    inc n
+    var nested = 1
+    while nested != 0:
+      if n.typeKind == OrT:
+        inc n
+        inc nested
+      elif n.kind == ParRi:
+        inc n
+        dec nested
+      else:
+        result = isMinterm(n)
+        if not result: break
+        skip n
+  else:
+    result = isMinterm(n)
+
+proc combineMinterms(buf: var TokenBuf; a, b: TypeCursor) =
+  if a.typeKind == AndT:
+    var a = a
+    buf.add a
+    inc a
+    while a.kind != ParRi:
+      takeTree buf, a
+    if b.typeKind == AndT:
+      var b = b
+      inc b
+      while b.kind != ParRi:
+        takeTree buf, b
+    else:
+      buf.addSubtree b
+    takeParRi buf, a
+  else:
+    if b.typeKind == AndT:
+      var b = b
+      buf.add b
+      inc b
+      buf.addSubtree a
+      while b.kind != ParRi:
+        takeTree buf, b
+      takeParRi buf, b
+    else:
+      buf.addParLe(AndT, a.info)
+      buf.addSubtree a
+      buf.addSubtree b
+      buf.addParRi()
+
+proc combineSums(buf: var TokenBuf; a, b: TypeCursor) =
+  if a.typeKind == OrT:
+    var a = a
+    buf.add a
+    inc a
+    while a.kind != ParRi:
+      if b.typeKind == OrT:
+        var b = b
+        inc b
+        while b.kind != ParRi:
+          combineMinterms(buf, a, b)
+          skip b
+      else:
+        combineMinterms(buf, a, b)
+      skip a
+    takeParRi buf, a
+  else:
+    if b.typeKind == OrT:
+      var b = b
+      buf.add b
+      inc b
+      while b.kind != ParRi:
+        combineMinterms(buf, a, b)
+        skip b
+      takeParRi buf, b
+    else:
+      combineMinterms(buf, a, b)
+
+proc reorderSumOfProducts*(buf: var TokenBuf; n: TypeCursor; negative = false) =
+  var kind = n.typeKind
+  if negative:
+    case kind
+    of AndT: kind = OrT
+    of OrT: kind = AndT
+    else: discard
+  case kind
+  of NotT:
+    var n = n
+    inc n
+    reorderSumOfProducts(buf, n, not negative)
+  of AndT:
+    var buf2 = createTokenBuf(32)
+    var n = n
+    inc n
+    let sumStart = buf.len
+    reorderSumOfProducts(buf, n, negative)
+    skip n
+    while n.kind != ParRi:
+      for tok in sumStart ..< buf.len: buf2.add buf[tok]
+      buf.shrink sumStart
+      let bStart = buf2.len
+      reorderSumOfProducts(buf2, n, negative)
+      skip n
+      var a = beginRead(buf2)
+      var b = cursorAt(buf2, bStart)
+      combineSums(buf, a, b)
+      endRead(buf2)
+      endRead(buf2)
+      buf2.shrink 0
+  of OrT:
+    buf.addParLe(OrT, n.info)
+    var buf2 = createTokenBuf(16)
+    var n = n
+    inc n
+    while n.kind != ParRi:
+      reorderSumOfProducts(buf2, n, negative)
+      skip n
+      var n2 = beginRead(buf2)
+      if n2.typeKind == OrT:
+        inc n2
+        while n2.kind != ParRi:
+          takeTree buf, n2
+      else:
+        buf.addSubtree n2
+      endRead(buf2)
+      buf2.shrink 0
+    buf.addParRi()
+  else:
+    if negative:
+      buf.addParLe(NotT, n.info)
+    buf.addSubtree n
+    if negative:
+      buf.addParRi()
+
+when isMainModule:
+  when false: # tests sum of products
+    proc test(s: string) =
+      var typBuf = parse(s)
+      var buf = createTokenBuf(64)
+      var typ = beginRead(typBuf)
+      echo "input: ", typ
+      reorderSumOfProducts(buf, typ)
+      echo "output: ", beginRead(buf)
+    
+    test "A"
+    test "(and A B)"
+    test "(and (and A B) (and C D))"
+    test "(or A B)"
+    test "(or (or A B) (or C D))"
+    test "(or (and A B) (and C D))"
+    test "(and (or A B) (or C D))"
+    test "(not (or (and A B) (and C D)))"
+    test "(not (not (or (and A B) (and C D))))"
+    test "(not (and (or A B) (or C D)))"
+    test "(not (not (and (or A B) (or C D))))"
+    test "(and (or A B) (or C D) (or E F))"
