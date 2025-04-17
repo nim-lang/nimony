@@ -382,6 +382,7 @@ proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
       result = matchConstraintSplitOr(m, f, a)
     else:
       var reorderBuf = createTokenBuf(32)
+      var a = a
       reorderSumOfProducts(reorderBuf, a)
       var reordered = beginRead(reorderBuf)
       result = matchConstraintSplitOr(m, f, reordered)
