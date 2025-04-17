@@ -388,7 +388,7 @@ proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
 
 proc isAtomTypeclass(n: TypeCursor): bool {.inline.} =
   var n = n
-  while n.typeKind == NotT: # maybe just 1?
+  while n.typeKind == NotT: # reordering produces only 1 layer
     inc n
   result = n.typeKind notin {AndT, OrT}
 
