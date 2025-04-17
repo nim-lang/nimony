@@ -233,13 +233,15 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       copyInto(dest, n):
         takeTree dest, n # choices
         if tar.m != IsIgnored:
-          trExprInto c, dest, n, tmp
+          copyIntoKind dest, StmtsS, info:
+            trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
     of ElseU:
       copyInto(dest, n):
         if tar.m != IsIgnored:
-          trExprInto c, dest, n, tmp
+          copyIntoKind dest, StmtsS, info:
+            trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
     else:
@@ -258,7 +260,8 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
   copyInto(dest, n):
     if tar.m != IsIgnored:
-      trExprInto c, dest, n, tmp
+      copyIntoKind dest, StmtsS, info:
+        trExprInto c, dest, n, tmp
     else:
       trStmt c, dest, n
 
@@ -268,7 +271,8 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         copyInto(dest, n):
           takeTree dest, n # declarations
           if tar.m != IsIgnored:
-            trExprInto c, dest, n, tmp
+            copyIntoKind dest, StmtsS, info:
+              trExprInto c, dest, n, tmp
           else:
             trStmt c, dest, n
       of FinU:
@@ -337,7 +341,8 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
   copyInto(dest, n):
     takeTree dest, n # label or DotToken
     if tar.m != IsIgnored:
-      trExprInto c, dest, n, tmp
+      copyIntoKind dest, StmtsS, n.info:
+        trExprInto c, dest, n, tmp
     else:
       trStmt c, dest, n
 
