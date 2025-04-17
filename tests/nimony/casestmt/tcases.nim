@@ -1,4 +1,4 @@
-import std/syncio
+import std/[syncio, assertions]
 
 proc classify(s: string) =
   case s[0]
@@ -15,3 +15,13 @@ proc classify1(s: string) {.requires: s.len > 0.} =
   else: discard
 
 classify1("9123345")
+
+block:
+  proc foo(x: int): string =
+    case x
+    of 1: "digit"
+    else: "number"
+
+
+  var r = foo(10)
+  assert r == "number"
