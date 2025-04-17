@@ -2460,6 +2460,28 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
 proc semParams(c: var SemContext; n: var Cursor)
 proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind)
 
+type WhenMode = enum
+  NormalWhen
+  ObjectWhen
+
+proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode)
+
+proc semObjectComponent(c: var SemContext; n: var Cursor) =
+  if n.substructureKind == FldU:
+    semLocal(c, n, FldY)
+  elif n.stmtKind == WhenS:
+    var it = Item(n: n, typ: c.types.autoType)
+    semWhenImpl(c, it, ObjectWhen)
+    n = it.n
+  elif n.stmtKind == StmtsS:
+    inc n
+    while n.kind != ParRi:
+      semObjectComponent c, n
+    skipParRi n
+  else:
+    buildErr c, n.info, "illformed AST inside object: " & asNimCode(n)
+    skip n
+
 proc semObjectType(c: var SemContext; n: var Cursor) =
   takeToken c, n
   # inherits from?
@@ -2483,8 +2505,8 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
     withNewScope c:
       # copy toplevel scope status for exported fields
       c.currentScope.kind = oldScopeKind
-      while n.substructureKind == FldU:
-        semLocal(c, n, FldY)
+      while n.kind != ParRi:
+        semObjectComponent c, n
   takeParRi c, n
 
 proc semTupleType(c: var SemContext; n: var Cursor) =
@@ -4069,15 +4091,7 @@ proc semTry(c: var SemContext; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, info, it.typ
 
-proc semWhen(c: var SemContext; it: var Item) =
-  case c.phase
-  of SemcheckTopLevelSyms:
-    # XXX this is too limited
-    c.takeTree it.n
-    return
-  of SemcheckSignatures, SemcheckBodies:
-    discard
-
+proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode) =
   let start = c.dest.len
   let info = it.n.info
   takeToken c, it.n
@@ -4095,7 +4109,11 @@ proc semWhen(c: var SemContext; it: var Item) =
       if not leaveUnresolved:
         if condValue == TrueX:
           c.dest.shrink start
-          semExpr c, it
+          case mode
+          of NormalWhen:
+            semExpr c, it
+          of ObjectWhen:
+            semObjectComponent c, it.n
           skipParRi it.n # finish elif
           skipToEnd it.n
           return
@@ -4110,7 +4128,11 @@ proc semWhen(c: var SemContext; it: var Item) =
     takeToken c, it.n
     if not leaveUnresolved:
       c.dest.shrink start
-      semExpr c, it
+      case mode
+      of NormalWhen:
+        semExpr c, it
+      of ObjectWhen:
+        semObjectComponent c, it.n
       skipParRi it.n # finish else
       skipToEnd it.n
       return
@@ -4122,6 +4144,17 @@ proc semWhen(c: var SemContext; it: var Item) =
     # none of the branches evaluated, output nothing
     c.dest.shrink start
     producesVoid c, info, it.typ
+
+proc semWhen(c: var SemContext; it: var Item) =
+  case c.phase
+  of SemcheckTopLevelSyms:
+    # XXX this is too limited
+    c.takeTree it.n
+    return
+  of SemcheckSignatures, SemcheckBodies:
+    discard
+
+  semWhenImpl(c, it, NormalWhen)
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
