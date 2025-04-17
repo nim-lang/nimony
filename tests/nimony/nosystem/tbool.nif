@@ -13,7 +13,10 @@
    (efld ~7 :true.0.tbokvwxm9
     (true) .
     (bool)
-    (tup +1 "true")))) 5
+    (tup +1 "true")))) 4,3
+ (glet :x.0.tbokvwxm9 . . 3
+  (bool) 10
+  (true)) 5
  (proc :dollar`.bool.0.tbokvwxm9 x . .
   (params
    (param :e.0 . .
@@ -31,7 +34,4 @@
       (true))
      (stmts
       (ret "true"))))
-   (ret result.0))) 4,3
- (glet :x.0.tbokvwxm9 . . 1,~3
-  (bool) 10
-  (true)))
+   (ret result.0))))

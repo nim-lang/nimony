@@ -4635,7 +4635,9 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   if isEnumTypeDecl:
     var enumTypeDecl = tryLoadSym(delayed.s.name)
     assert enumTypeDecl.status == LacksNothing
+    swap c.dest, c.pending
     genEnumToStrProc(c, enumTypeDecl.decl)
+    swap c.dest, c.pending
 
   if isRefPtrObj:
     if c.phase != SemcheckTopLevelSyms:
@@ -6738,7 +6740,10 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     phase: SemcheckTopLevelSyms,
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
-    canSelfExec: canSelfExec)
+    canSelfExec: canSelfExec,
+    pending: createTokenBuf())
+
+  c.pending.add parLeToken(StmtsS, NoLineInfo)
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
@@ -6762,6 +6767,15 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   takeToken c, n
   while n.kind != ParRi:
     semStmt c, n, false
+
+  c.pending.addParRi()
+  var cur = beginRead(c.pending)
+  inc cur
+  c.phase = SemcheckBodies
+  while cur.kind != ParRi:
+    semStmt c, cur, false
+  skipParRi(cur)
+
   instantiateGenerics c
   for val in c.typeInstDecls:
     let s = fetchSym(c, val)

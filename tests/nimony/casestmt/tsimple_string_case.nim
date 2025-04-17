@@ -199,3 +199,33 @@ block:
       of "": result = f
 
     assert foo1() == a
+
+block:
+  proc foo(x: int): string =
+    case x
+    of 1: result = "digit"
+    else: result = "number"
+
+
+  var r = foo(10)
+  assert r == "number"
+
+block:
+  type
+    E = enum A, B, C
+
+  let s = A
+  echo s
+
+block:
+  type
+    E = enum A, B, C
+
+  let s = A
+  echo s
+
+type
+  E = enum A, B, C
+
+let s = A
+echo s
