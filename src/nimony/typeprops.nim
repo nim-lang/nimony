@@ -555,7 +555,7 @@ when isMainModule:
       echo "input: ", typ
       reorderSumOfProducts(buf, typ)
       echo "output: ", beginRead(buf)
-    
+
     test "A"
     test "(and A B)"
     test "(and (and A B) (and C D))"

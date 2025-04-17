@@ -8,6 +8,8 @@ tests/nimony/generics/ttypeclasswrongmatch.nim(17, 9) Error: Type mismatch at [p
 [1] T.1.ttyhdorgt1 does not match constraint T.2.mtyn9ouov1
 tests/nimony/generics/ttypeclasswrongmatch.nim(23, 9) Error: Type mismatch at [position]
 [1] T.2.ttyhdorgt1 does not match constraint T.1.mtyn9ouov1
+tests/nimony/generics/ttypeclasswrongmatch.nim(29, 9) Error: Type mismatch at [position]
+[1] T.3.ttyhdorgt1 does not match constraint T.0.mtyn9ouov1
 tests/nimony/generics/ttypeclasswrongmatch.nim(30, 9) Error: Type mismatch at [position]
 [1] T.3.ttyhdorgt1 does not match constraint T.1.mtyn9ouov1
 tests/nimony/generics/ttypeclasswrongmatch.nim(31, 9) Error: Type mismatch at [position]
