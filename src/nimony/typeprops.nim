@@ -432,103 +432,103 @@ proc isSumOfProducts*(n: TypeCursor): bool =
   else:
     result = isMinterm(n)
 
-proc combineMinterms(buf: var TokenBuf; a, b: TypeCursor) =
+proc multiplyMinterms(buf: var TokenBuf; a, b: var TypeCursor) =
   if a.typeKind == AndT:
-    var a = a
+    # flatten:
     buf.add a
     inc a
     while a.kind != ParRi:
       takeTree buf, a
     if b.typeKind == AndT:
-      var b = b
       inc b
       while b.kind != ParRi:
         takeTree buf, b
+      skipParRi b
     else:
-      buf.addSubtree b
+      takeTree buf, b
     takeParRi buf, a
   else:
     if b.typeKind == AndT:
-      var b = b
       buf.add b
       inc b
-      buf.addSubtree a
+      takeTree buf, a
       while b.kind != ParRi:
         takeTree buf, b
       takeParRi buf, b
     else:
       buf.addParLe(AndT, a.info)
-      buf.addSubtree a
-      buf.addSubtree b
+      takeTree buf, a
+      takeTree buf, b
       buf.addParRi()
 
-proc combineSums(buf: var TokenBuf; a, b: TypeCursor) =
+proc multiplySums(buf: var TokenBuf; a, b: var TypeCursor) =
+  # apply distributive property
   if a.typeKind == OrT:
-    var a = a
     buf.add a
     inc a
+    let bOrig = b
     while a.kind != ParRi:
+      b = bOrig
       if b.typeKind == OrT:
-        var b = b
         inc b
+        let aOrig = a
         while b.kind != ParRi:
-          combineMinterms(buf, a, b)
-          skip b
+          a = aOrig
+          multiplyMinterms(buf, a, b)
+        skipParRi b
       else:
-        combineMinterms(buf, a, b)
-      skip a
+        multiplyMinterms(buf, a, b)
     takeParRi buf, a
   else:
     if b.typeKind == OrT:
-      var b = b
       buf.add b
       inc b
+      let aOrig = a
       while b.kind != ParRi:
-        combineMinterms(buf, a, b)
-        skip b
+        a = aOrig
+        multiplyMinterms(buf, a, b)
       takeParRi buf, b
     else:
-      combineMinterms(buf, a, b)
+      multiplyMinterms(buf, a, b)
 
-proc reorderSumOfProducts*(buf: var TokenBuf; n: TypeCursor; negative = false) =
+proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = false) =
   var kind = n.typeKind
   if negative:
+    # de morgan
     case kind
     of AndT: kind = OrT
     of OrT: kind = AndT
     else: discard
   case kind
   of NotT:
-    var n = n
     inc n
     reorderSumOfProducts(buf, n, not negative)
+    skipParRi n
   of AndT:
     var buf2 = createTokenBuf(32)
-    var n = n
     inc n
     let sumStart = buf.len
     reorderSumOfProducts(buf, n, negative)
-    skip n
     while n.kind != ParRi:
+      # move both operands to `buf2` then fold into `buf`:
       for tok in sumStart ..< buf.len: buf2.add buf[tok]
       buf.shrink sumStart
       let bStart = buf2.len
       reorderSumOfProducts(buf2, n, negative)
-      skip n
       var a = beginRead(buf2)
       var b = cursorAt(buf2, bStart)
-      combineSums(buf, a, b)
+      multiplySums(buf, a, b)
       endRead(buf2)
       endRead(buf2)
       buf2.shrink 0
+    skipParRi n
   of OrT:
+    # flatten:
     buf.addParLe(OrT, n.info)
     var buf2 = createTokenBuf(16)
-    var n = n
     inc n
     while n.kind != ParRi:
       reorderSumOfProducts(buf2, n, negative)
-      skip n
       var n2 = beginRead(buf2)
       if n2.typeKind == OrT:
         inc n2
@@ -538,11 +538,11 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: TypeCursor; negative = false) =
         buf.addSubtree n2
       endRead(buf2)
       buf2.shrink 0
-    buf.addParRi()
+    takeParRi buf, n
   else:
     if negative:
       buf.addParLe(NotT, n.info)
-    buf.addSubtree n
+    takeTree buf, n
     if negative:
       buf.addParRi()
 
@@ -555,6 +555,7 @@ when isMainModule:
       echo "input: ", typ
       reorderSumOfProducts(buf, typ)
       echo "output: ", beginRead(buf)
+      assert isSumOfProducts(beginRead(buf))
 
     test "A"
     test "(and A B)"
