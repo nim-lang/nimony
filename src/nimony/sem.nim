@@ -1851,17 +1851,19 @@ proc nextField(iter: var ObjFieldIter, n: var Cursor): bool =
     if n.kind == ParRi:
       dec iter.nested
       if iter.nested != 0: inc n
-    elif n.stmtKind in {WhenS, CaseS, StmtsS, DiscardS} or
-        n.exprKind == NilX or n.substructureKind == ElseU:
-      inc iter.nested
-      inc n
-    elif n.substructureKind in {ElifU, OfU}:
-      inc iter.nested
-      inc n
-      skip n
     else:
-      assert n.substructureKind == FldU
-      return true
+      case n.substructureKind
+      of WhenU, CaseU, StmtsU, NilU, ElseU:
+        inc iter.nested
+        inc n
+      of ElifU, OfU:
+        inc iter.nested
+        inc n
+        skip n
+      of FldU:
+        return true
+      else:
+        error "illformed AST inside object: ", n
   result = false
 
 proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[SymId, Cursor]; level = 0): ObjField =
@@ -2498,31 +2500,27 @@ type CaseMode = enum
 proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode)
 
 proc semObjectComponent(c: var SemContext; n: var Cursor) =
-  if n.substructureKind == FldU:
+  case n.substructureKind
+  of FldU:
     semLocal(c, n, FldY)
+  of WhenU:
+    var it = Item(n: n, typ: c.types.autoType)
+    semWhenImpl(c, it, ObjectWhen)
+    n = it.n
+  of CaseU:
+    var it = Item(n: n, typ: c.types.autoType)
+    semCaseImpl(c, it, ObjectCase)
+    n = it.n
+  of StmtsU:
+    inc n
+    while n.kind != ParRi:
+      semObjectComponent c, n
+    skipParRi n
+  of NilU:
+    takeTree c, n
   else:
-    case n.stmtKind
-    of WhenS:
-      var it = Item(n: n, typ: c.types.autoType)
-      semWhenImpl(c, it, ObjectWhen)
-      n = it.n
-    of CaseS:
-      var it = Item(n: n, typ: c.types.autoType)
-      semCaseImpl(c, it, ObjectCase)
-      n = it.n
-    of StmtsS:
-      inc n
-      while n.kind != ParRi:
-        semObjectComponent c, n
-      skipParRi n
-    of DiscardS:
-      takeTree c, n
-    else:
-      if n.exprKind == NilX:
-        takeTree c, n
-      else:
-        buildErr c, n.info, "illformed AST inside object: " & asNimCode(n)
-        skip n
+    buildErr c, n.info, "illformed AST inside object: " & asNimCode(n)
+    skip n
 
 proc semObjectType(c: var SemContext; n: var Cursor) =
   takeToken c, n
