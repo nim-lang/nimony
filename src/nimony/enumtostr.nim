@@ -63,7 +63,8 @@ proc genEnumToStrProc*(c: var SemContext; typeDecl: var Cursor) =
   c.dest.add tagToken("proc", enumSymInfo)
   c.dest.add symdefToken(dollorSymId, enumSymInfo)
 
-  # Todo: defaults to (nodecl)
+  # TODO: defaults to (nodecl)
+  # TODO: static for local functions
   let exportIdent = pool.strings.getOrIncl("x")
   c.dest.add identToken(exportIdent, enumSymInfo)
   c.dest.addDotToken()

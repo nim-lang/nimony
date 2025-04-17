@@ -109,6 +109,7 @@ type
     toBuild*: TokenBuf
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
+    pending*: TokenBuf
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
