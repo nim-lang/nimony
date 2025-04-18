@@ -618,7 +618,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trTupleConstr c, n, e
     of ExprX:
       trStmtListExpr c, n, e
-    of DconvX, BaseobjX:
+    of DconvX:
+      trSons c, n, e
+    of BaseobjX:
       trSons c, n, WantT
     of ParX:
       trSons c, n, e
