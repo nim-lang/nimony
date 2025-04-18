@@ -230,6 +230,7 @@ proc rawTagIsNimonyType*(raw: TagEnum): bool {.inline.} =
 type
   NimonyOther* = enum
     NoSub
+    NilU = (ord(NilTagId), "nil")  ## nil pointer value
     KvU = (ord(KvTagId), "kv")  ## key-value pair
     VvU = (ord(VvTagId), "vv")  ## value-value pair (used for explicitly named arguments in function calls)
     RangeU = (ord(RangeTagId), "range")  ## `(range a b)` construct
@@ -238,10 +239,13 @@ type
     TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration
     EfldU = (ord(EfldTagId), "efld")  ## enum field declaration
     FldU = (ord(FldTagId), "fld")  ## field declaration
+    WhenU = (ord(WhenTagId), "when")  ## when statement header
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
     ElseU = (ord(ElseTagId), "else")  ## `else` action
     TypevarsU = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters
+    CaseU = (ord(CaseTagId), "case")  ## `case` statement
     OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement
+    StmtsU = (ord(StmtsTagId), "stmts")  ## list of statements
     ParamsU = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
     UnpackflatU = (ord(UnpackflatTagId), "unpackflat")  ## unpack into flat variable list
@@ -250,7 +254,7 @@ type
     FinU = (ord(FinTagId), "fin")  ## finally subsection
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, ElifTagId, ElseTagId, TypevarsTagId, OfTagId, ParamsTagId, PragmasTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
+  raw in {NilTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
 
 type
   NimonyPragma* = enum

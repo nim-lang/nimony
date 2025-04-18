@@ -8,7 +8,7 @@
 | `(pat X X)`            | NifcExpr, NimonyExpr | pointer indexing operation |
 | `(par X)`              | NifcExpr, NimonyExpr, NiflerKind | syntactic parenthesis |
 | `(addr X)`; `(addr X (cppref)?)`  | NifcExpr, NimonyExpr, NiflerKind | address of operation |
-| `(nil T?)`             | NifcExpr, NimonyExpr, NiflerKind | nil pointer value |
+| `(nil T?)`             | NifcExpr, NimonyExpr, NimonyOther, NiflerKind | nil pointer value |
 | `(inf T?)`             | NifcExpr, NimonyExpr | positive infinity floating point value |
 | `(neginf T?)`          | NifcExpr, NimonyExpr | negative infinity floating point value |
 | `(nan T?)`             | NifcExpr, NimonyExpr | NaN floating point value |
@@ -81,7 +81,7 @@
 | `(keepovf X X)` | NifcStmt | keep overflow flag statement |
 | `(scope S*)` | NifcStmt, NimonyStmt | explicit scope annotation, like `stmts` |
 | `(if (elif X X)+ (else X)?)` | NifcStmt, NimonyStmt, NiflerKind | if statement header |
-| `(when (elif X X)+ (else X)?)` | NimonyStmt, NiflerKind | when statement header |
+| `(when (elif X X)+ (else X)?)` | NimonyStmt, NimonyOther, NiflerKind | when statement header |
 | `(elif X X)` | NifcOther, NimonyOther, NiflerKind | pair of (condition, action) |
 | `(else X)` | NifcOther, NimonyOther, NiflerKind | `else` action |
 | `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters |
@@ -89,13 +89,13 @@
 | `(continue)` | NimonyStmt, NiflerKind | `continue` statement |
 | `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
 | `(while X S)` | NifcStmt, NimonyStmt, NiflerKind| `while` statement |
-| `(case X (of (ranges...))+ (else X)?)` | NifcStmt, NimonyStmt, NiflerKind | `case` statement |
+| `(case X (of (ranges...))+ (else X)?)` | NifcStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
 | `(of (ranges ...))` | NifcOther, NimonyOther, NiflerKind | `of` branch within a `case` statement |
 | `(lab D)` | NifcStmt, NifcSym | label, target of a `jmp` instruction |
 | `(jmp Y)` | NifcStmt | jump/goto instruction |
 | `(ret .X)` | NifcStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
-| `(stmts S*)` | NifcStmt, NimonyStmt, NiflerKind | list of statements |
+| `(stmts S*)` | NifcStmt, NimonyStmt, NimonyOther, NiflerKind | list of statements |
 | `(params (param...)*)` | NifcType, NimonyType, NimonyOther, NiflerKind | list of proc parameters, also used as a "proc type" |
 | `(union (fld ...)*)` | NifcType | union declaration |
 | `(object .T (fld ...)*)` | NifcType, NimonyType, NiflerKind | object type declaration |

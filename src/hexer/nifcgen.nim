@@ -378,6 +378,39 @@ proc addRttiField(c: var EContext; info: PackedLineInfo) =
   c.dest.addParRi() # "ptr"
   c.dest.addParRi() # "fld"
 
+proc traverseObjFields(c: var EContext; n: var Cursor; flags: set[TypeFlag]) =
+  while n.kind != ParRi:
+    case n.substructureKind
+    of FldU:
+      traverseField(c, n, flags)
+    of CaseU:
+      # XXX for now counts each case object field as separate
+      inc n
+      traverseField(c, n, flags)
+      while n.kind != ParRi:
+        case n.substructureKind
+        of OfU:
+          inc n
+          skip n
+          assert n.stmtKind == StmtsS
+          inc n
+          traverseObjFields(c, n, flags)
+          skipParRi c, n
+          skipParRi c, n
+        of ElseU:
+          inc n
+          assert n.stmtKind == StmtsS
+          inc n
+          traverseObjFields(c, n, flags)
+          skipParRi c, n
+        else:
+          error "expected `of` or `else` inside `case`"
+      skipParRi c, n
+    of NilU:
+      skip n
+    else:
+      error "illformed AST inside object: ", n
+
 proc traverseType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   case n.kind
   of DotToken:
@@ -503,8 +536,7 @@ proc traverseType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
         c.dest.add n
         inc n
       else:
-        while n.substructureKind == FldU:
-          traverseField(c, n, flags)
+        traverseObjFields(c, n, flags)
 
       takeParRi c, n
     of EnumT, HoleyEnumT:

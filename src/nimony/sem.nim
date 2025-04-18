@@ -1846,7 +1846,8 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
   inc n # skip `(object` token
   var baseType = n
   skip n # skip basetype
-  while n.kind == ParLe and n.substructureKind == FldU:
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
     inc n # skip FldU
     if n.kind == SymbolDef and sameIdent(n.symId, name):
       let symId = n.symId
@@ -2466,18 +2467,31 @@ type WhenMode = enum
 
 proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode)
 
+type CaseMode = enum
+  NormalCase
+  ObjectCase
+
+proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode)
+
 proc semObjectComponent(c: var SemContext; n: var Cursor) =
-  if n.substructureKind == FldU:
+  case n.substructureKind
+  of FldU:
     semLocal(c, n, FldY)
-  elif n.stmtKind == WhenS:
+  of WhenU:
     var it = Item(n: n, typ: c.types.autoType)
     semWhenImpl(c, it, ObjectWhen)
     n = it.n
-  elif n.stmtKind == StmtsS:
+  of CaseU:
+    var it = Item(n: n, typ: c.types.autoType)
+    semCaseImpl(c, it, ObjectCase)
+    n = it.n
+  of StmtsU:
     inc n
     while n.kind != ParRi:
       semObjectComponent c, n
     skipParRi n
+  of NilU:
+    takeTree c, n
   else:
     buildErr c, n.info, "illformed AST inside object: " & asNimCode(n)
     skip n
@@ -4247,13 +4261,25 @@ proc checkExhaustiveness(c: var SemContext; info: PackedLineInfo; selectorType: 
   else:
     buildErr c, info, "not all cases are covered"
 
-proc semCase(c: var SemContext; it: var Item) =
+proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode) =
   let info = it.n.info
   takeToken c, it.n
-  var selector = Item(n: it.n, typ: c.types.autoType)
-  semExpr c, selector
-  it.n = selector.n
-  let selectorType = skipModifier(selector.typ)
+  var selectorType = default(Cursor)
+  case mode
+  of NormalCase:
+    var selector = Item(n: it.n, typ: c.types.autoType)
+    semExpr c, selector
+    it.n = selector.n
+    selectorType = skipModifier(selector.typ)
+  of ObjectCase:
+    let selectorStart = c.dest.len
+    semLocal(c, it.n, FldY)
+    let field = cursorAt(c.dest, selectorStart)
+    let fieldType = asLocal(field).typ
+    let fieldTypePos = cursorToPosition(c.dest, fieldType)
+    endRead(c.dest)
+    selectorType = typeToCursor(c, fieldTypePos)
+    # todo disallow string/float
   let isString = isSomeStringType(selectorType)
   var seen: seq[(xint, xint)] = @[]
   var seenStr = initHashSet[StrId]()
@@ -4264,22 +4290,41 @@ proc semCase(c: var SemContext; it: var Item) =
         semCaseOfValueString c, it, selectorType, seenStr
       else:
         semCaseOfValue c, it, selectorType, seen
-      withNewScope c:
-        semStmtBranch c, it, true
+      case mode
+      of NormalCase:
+        withNewScope c:
+          semStmtBranch c, it, true
+      of ObjectCase:
+        if it.n.stmtKind == StmtsS:
+          takeToken c, it.n
+          while it.n.kind != ParRi:
+            semObjectComponent c, it.n
+          takeParRi c, it.n
+        else:
+          c.dest.addParLe(StmtsS, it.n.info)
+          semObjectComponent c, it.n
+          c.dest.addParRi()
       takeParRi c, it.n
   else:
     buildErr c, it.n.info, "illformed AST: `of` inside `case` expected"
   if it.n.substructureKind == ElseU:
     takeToken c, it.n
-    withNewScope c:
-      semStmtBranch c, it, true
+    case mode
+    of NormalCase:
+      withNewScope c:
+        semStmtBranch c, it, true
+    of ObjectCase:
+      semObjectComponent c, it.n
     takeParRi c, it.n
   elif not isString:
-    checkExhaustiveness c, it.n.info, selector.typ, seen
+    checkExhaustiveness c, it.n.info, selectorType, seen
 
   takeParRi c, it.n
   if typeKind(it.typ) == AutoT:
     producesVoid c, info, it.typ
+
+proc semCase(c: var SemContext; it: var Item) =
+  semCaseImpl(c, it, NormalCase)
 
 proc semForLoopVar(c: var SemContext; it: var Item; loopvarType: TypeCursor) =
   if stmtKind(it.n) == LetS:
@@ -5098,6 +5143,15 @@ proc buildObjConstrField(c: var SemContext; field: Local;
     callDefault c, typ, info
     c.dest.addParRi()
 
+proc buildObjConstrFields(c: var SemContext; n: var Cursor;
+                          setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                          bindings: Table[SymId, Cursor]) =
+  # XXX for now counts each case object field as separate
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    let field = takeLocal(n, SkipFinalParRi)
+    buildObjConstrField(c, field, setFields, info, bindings)
+
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
                            setFields: Table[SymId, Cursor]; info: PackedLineInfo;
                            prebuiltBindings = initTable[SymId, Cursor]()) =
@@ -5160,19 +5214,13 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
       let parent = asObjectDecl(parentImpl)
       var currentField = parent.firstField
       if currentField.kind != DotToken:
-        while currentField.kind != ParRi:
-          let field = asLocal(currentField)
-          buildObjConstrField(c, field, setFields, info, bindings)
-          skip currentField
+        buildObjConstrFields(c, currentField, setFields, info, bindings)
       parentType = parent.parentType
     # bring back original bindings:
     bindings = origBindings
   var currentField = obj.firstField
   if currentField.kind != DotToken:
-    while currentField.kind != ParRi:
-      let field = asLocal(currentField)
-      buildObjConstrField(c, field, setFields, info, bindings)
-      skip currentField
+    buildObjConstrFields(c, currentField, setFields, info, bindings)
   c.dest.addParRi()
 
 proc semObjConstr(c: var SemContext, it: var Item) =

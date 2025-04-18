@@ -7,7 +7,7 @@
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
 import std / assertions
-import nifstreams, nifcursors, nimony_model
+import nifstreams, nifcursors, nimony_model, programs
 
 proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
@@ -185,6 +185,33 @@ proc asObjectDecl*(c: Cursor): ObjectDecl =
     result.parentType = c
     skip c
     result.firstField = c
+
+type ObjFieldIter* = object
+  nested: int
+
+proc initObjFieldIter*(): ObjFieldIter =
+  result = ObjFieldIter(nested: 1)
+
+proc nextField*(iter: var ObjFieldIter, n: var Cursor): bool =
+  result = false
+  while iter.nested != 0:
+    if n.kind == ParRi:
+      dec iter.nested
+      if iter.nested != 0: inc n
+    else:
+      case n.substructureKind
+      of WhenU, CaseU, StmtsU, NilU, ElseU:
+        inc iter.nested
+        inc n
+      of ElifU, OfU:
+        inc iter.nested
+        inc n
+        skip n
+      of FldU:
+        result = true
+        break
+      else:
+        error "illformed AST inside object: ", n
 
 type
   EnumDecl* = object
