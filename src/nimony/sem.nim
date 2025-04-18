@@ -1840,32 +1840,6 @@ proc bindSubsInvokeArgs(c: var SemContext; decl: TypeDecl; buf: var TokenBuf;
   else:
     result = initTable[SymId, Cursor]()
 
-type ObjFieldIter = object
-  nested: int
-
-proc initObjFieldIter(): ObjFieldIter =
-  result = ObjFieldIter(nested: 1)
-
-proc nextField(iter: var ObjFieldIter, n: var Cursor): bool =
-  while iter.nested != 0:
-    if n.kind == ParRi:
-      dec iter.nested
-      if iter.nested != 0: inc n
-    else:
-      case n.substructureKind
-      of WhenU, CaseU, StmtsU, NilU, ElseU:
-        inc iter.nested
-        inc n
-      of ElifU, OfU:
-        inc iter.nested
-        inc n
-        skip n
-      of FldU:
-        return true
-      else:
-        error "illformed AST inside object: ", n
-  result = false
-
 proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[SymId, Cursor]; level = 0): ObjField =
   assert t.typeKind == ObjectT
   var n = t
@@ -4321,7 +4295,15 @@ proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode) =
         withNewScope c:
           semStmtBranch c, it, true
       of ObjectCase:
-        semObjectComponent c, it.n
+        if it.n.stmtKind == StmtsS:
+          takeToken c, it.n
+          while it.n.kind != ParRi:
+            semObjectComponent c, it.n
+          takeParRi c, it.n
+        else:
+          c.dest.addParLe(StmtsS, it.n.info)
+          semObjectComponent c, it.n
+          c.dest.addParRi()
       takeParRi c, it.n
   else:
     buildErr c, it.n.info, "illformed AST: `of` inside `case` expected"
@@ -5161,6 +5143,15 @@ proc buildObjConstrField(c: var SemContext; field: Local;
     callDefault c, typ, info
     c.dest.addParRi()
 
+proc buildObjConstrFields(c: var SemContext; n: var Cursor;
+                          setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                          bindings: Table[SymId, Cursor]) =
+  # XXX for now counts each case object field as separate
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    let field = takeLocal(n, SkipFinalParRi)
+    buildObjConstrField(c, field, setFields, info, bindings)
+
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
                            setFields: Table[SymId, Cursor]; info: PackedLineInfo;
                            prebuiltBindings = initTable[SymId, Cursor]()) =
@@ -5223,19 +5214,13 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
       let parent = asObjectDecl(parentImpl)
       var currentField = parent.firstField
       if currentField.kind != DotToken:
-        var iter = initObjFieldIter()
-        while nextField(iter, currentField):
-          let field = takeLocal(currentField, SkipFinalParRi)
-          buildObjConstrField(c, field, setFields, info, bindings)
+        buildObjConstrFields(c, currentField, setFields, info, bindings)
       parentType = parent.parentType
     # bring back original bindings:
     bindings = origBindings
   var currentField = obj.firstField
   if currentField.kind != DotToken:
-    var iter = initObjFieldIter()
-    while nextField(iter, currentField):
-      let field = takeLocal(currentField, SkipFinalParRi)
-      buildObjConstrField(c, field, setFields, info, bindings)
+    buildObjConstrFields(c, currentField, setFields, info, bindings)
   c.dest.addParRi()
 
 proc semObjConstr(c: var SemContext, it: var Item) =

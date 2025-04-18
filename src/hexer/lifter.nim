@@ -61,17 +61,13 @@ proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
 
 proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var n = n
-  while n.kind != ParRi:
-    if n.substructureKind == FldU:
-      let field = takeLocal(n, SkipFinalParRi)
-      if field.kind == FldY:
-        if not isTrivial(c, field.typ):
-          return false
-      else:
-        skip n
-    else:
-      if not isTrivial(c, n):
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    let field = takeLocal(n, SkipFinalParRi)
+    if field.kind == FldY:
+      if not isTrivial(c, field.typ):
         return false
+    else:
       skip n
   return true
 
@@ -83,7 +79,10 @@ proc isTrivialObjectBody(c: var LiftingCtx; body: Cursor): bool =
 
   var baseType = n
   skip n # skip basetype
-  result = isTrivialForFields(c, n)
+  if n.kind != DotToken:
+    result = isTrivialForFields(c, n)
+  else:
+    result = true
   if result:
     if baseType.kind == DotToken:
       result = true
@@ -257,6 +256,54 @@ proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): T
       copyTree result, tup
     result.add intToken(pool.integers.getOrIncl(idx), c.info)
 
+proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf) =
+  let r = takeLocal(n, SkipFinalParRi)
+  assert r.kind == FldY
+  # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
+  let fieldType = r.typ
+  case c.op
+  of attachedDestroy, attachedTrace, attachedWasMoved:
+    let a = accessObjField(c, paramA, r.name)
+    unravel c, fieldType, a, paramB
+  of attachedCopy, attachedSink, attachedDup:
+    let a = accessObjField(c, paramA, r.name, 0)
+    let b = accessObjField(c, paramB, r.name, 1)
+    unravel c, fieldType, a, b
+
+proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf) =
+  while n.kind != ParRi:
+    case n.substructureKind
+    of CaseU:
+      # XXX for now counts each case object field as separate
+      inc n
+      unravelObjField c, n, paramA, paramB
+      while n.kind != ParRi:
+        case n.substructureKind
+        of OfU:
+          inc n
+          skip n
+          assert n.stmtKind == StmtsS
+          inc n
+          unravelObjFields c, n, paramA, paramB
+          skipParRi n
+          skipParRi n
+        of ElseU:
+          inc n
+          assert n.stmtKind == StmtsS
+          inc n
+          unravelObjFields c, n, paramA, paramB
+          skipParRi n
+          skipParRi n
+        else:
+          error "expected `of` or `else` inside `case`"
+      skipParRi n
+    of FldU:
+      unravelObjField c, n, paramA, paramB
+    of NilU:
+      skip n
+    else:
+      error "illformed AST inside object: ", n
+
 proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
   var n = n
   if n.typeKind in {RefT, PtrT}:
@@ -267,19 +314,7 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
   if n.kind != DotToken:
     unravelObj c, toTypeImpl(n), paramA, paramB
   skip n # inheritance is gone
-  while n.kind != ParRi:
-    let r = takeLocal(n, SkipFinalParRi)
-    assert r.kind == FldY
-    # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
-    let fieldType = r.typ
-    case c.op
-    of attachedDestroy, attachedTrace, attachedWasMoved:
-      let a = accessObjField(c, paramA, r.name)
-      unravel c, fieldType, a, paramB
-    of attachedCopy, attachedSink, attachedDup:
-      let a = accessObjField(c, paramA, r.name, 0)
-      let b = accessObjField(c, paramB, r.name, 1)
-      unravel c, fieldType, a, b
+  unravelObjFields c, n, paramA, paramB
 
 proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =

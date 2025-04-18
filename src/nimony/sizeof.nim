@@ -106,7 +106,9 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     if n.kind != DotToken:
       getSize(c2, cache, n, ptrSize)
     skip n
-    while n.kind != ParRi:
+    # XXX for now counts every case object field as separate
+    var iter = initObjFieldIter()
+    while nextField(iter, n):
       let field = takeLocal(n, SkipFinalParRi)
       getSize c2, cache, field.typ, ptrSize
     finish c2
