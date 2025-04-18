@@ -375,6 +375,20 @@ proc matchConstraintSplitOr(m: var Match; f: var Cursor; a: Cursor): bool =
   else:
     result = matchBooleanConstraint(m, f, a)
 
+proc matchesConstraintAux(m: var Match; f: var Cursor; a: Cursor): bool =
+  if a.typeKind in {OrT, AndT, NotT}:
+    # typeclass matching typeclass, might need to be reordered to match properly:
+    if isSumOfProducts(a):
+      result = matchConstraintSplitOr(m, f, a)
+    else:
+      var reorderBuf = createTokenBuf(32)
+      var a = a
+      reorderSumOfProducts(reorderBuf, a)
+      var reordered = beginRead(reorderBuf)
+      result = matchConstraintSplitOr(m, f, reordered)
+  else:
+    result = matchBooleanConstraint(m, f, a)
+
 proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
@@ -386,7 +400,7 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
     if res.decl.symKind == TypevarY:
       var typevar = asTypevar(res.decl)
       return matchesConstraint(m, f, typevar.typ)
-  result = matchConstraintSplitOr(m, f, a)
+  result = matchesConstraintAux(m, f, a)
 
 proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   let res = tryLoadSym(f)

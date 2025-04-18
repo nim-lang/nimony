@@ -385,3 +385,210 @@ proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
     else:
       break
   result = n
+
+proc isAtomTypeclass(n: TypeCursor): bool {.inline.} =
+  var n = n
+  while n.typeKind == NotT: # reordering produces only 1 layer
+    inc n
+  result = n.typeKind notin {AndT, OrT}
+
+proc isMinterm(n: TypeCursor): bool =
+  if n.typeKind == AndT:
+    result = true
+    var n = n
+    inc n
+    var nested = 1
+    while nested != 0:
+      if n.typeKind == AndT:
+        inc n
+        inc nested
+      elif n.kind == ParRi:
+        inc n
+        dec nested
+      else:
+        result = isAtomTypeclass(n)
+        if not result: break
+        skip n
+  else:
+    result = isAtomTypeclass(n)
+
+proc isSumOfProducts*(n: TypeCursor): bool =
+  if n.typeKind == OrT:
+    result = true
+    var n = n
+    inc n
+    var nested = 1
+    while nested != 0:
+      if n.typeKind == OrT:
+        inc n
+        inc nested
+      elif n.kind == ParRi:
+        inc n
+        dec nested
+      else:
+        result = isMinterm(n)
+        if not result: break
+        skip n
+  else:
+    result = isMinterm(n)
+
+proc multiplyMinterms(buf: var TokenBuf; a, b: var TypeCursor) =
+  if a.typeKind == AndT:
+    # flatten:
+    buf.add a
+    inc a
+    while a.kind != ParRi:
+      takeTree buf, a
+    if b.typeKind == AndT:
+      inc b
+      while b.kind != ParRi:
+        takeTree buf, b
+      skipParRi b
+    else:
+      takeTree buf, b
+    takeParRi buf, a
+  else:
+    if b.typeKind == AndT:
+      buf.add b
+      inc b
+      takeTree buf, a
+      while b.kind != ParRi:
+        takeTree buf, b
+      takeParRi buf, b
+    else:
+      buf.addParLe(AndT, a.info)
+      takeTree buf, a
+      takeTree buf, b
+      buf.addParRi()
+
+proc multiplySums(buf: var TokenBuf; a, b: var TypeCursor) =
+  # apply distributive property
+  if a.typeKind == OrT:
+    buf.add a
+    inc a
+    let bOrig = b
+    while a.kind != ParRi:
+      b = bOrig
+      if b.typeKind == OrT:
+        inc b
+        let aOrig = a
+        while b.kind != ParRi:
+          a = aOrig
+          multiplyMinterms(buf, a, b)
+        skipParRi b
+      else:
+        multiplyMinterms(buf, a, b)
+    takeParRi buf, a
+  else:
+    if b.typeKind == OrT:
+      buf.add b
+      inc b
+      let aOrig = a
+      while b.kind != ParRi:
+        a = aOrig
+        multiplyMinterms(buf, a, b)
+      takeParRi buf, b
+    else:
+      multiplyMinterms(buf, a, b)
+
+proc countProducts(a: TypeCursor): int =
+  result = 0
+  if a.typeKind == OrT:
+    var a = a
+    inc a
+    while a.kind != ParRi:
+      inc result
+      skip a
+  else:
+    inc result
+
+proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = false) =
+  var kind = n.typeKind
+  if negative:
+    # de morgan
+    case kind
+    of AndT: kind = OrT
+    of OrT: kind = AndT
+    else: discard
+  case kind
+  of NotT:
+    inc n
+    reorderSumOfProducts(buf, n, not negative)
+    skipParRi n
+  of AndT:
+    var buf2 = createTokenBuf(32)
+    inc n
+    let sumStart = buf.len
+    reorderSumOfProducts(buf, n, negative)
+    while n.kind != ParRi:
+      # move both operands to `buf2` then fold into `buf`:
+      for tok in sumStart ..< buf.len: buf2.add buf[tok]
+      buf.shrink sumStart
+      let bStart = buf2.len
+      reorderSumOfProducts(buf2, n, negative)
+      var a = beginRead(buf2)
+      var b = cursorAt(buf2, bStart)
+      if countProducts(a) * countProducts(b) >= 256:
+        # bail out
+        buf.addParLe(AndT, a.info)
+        buf.add buf2
+        while n.kind != ParRi:
+          if negative:
+            buf.addParLe(NotT, n.info)
+          takeTree buf, n
+          if negative:
+            buf.addParRi()
+        break
+      else:
+        multiplySums(buf, a, b)
+      endRead(buf2)
+      endRead(buf2)
+      buf2.shrink 0
+    skipParRi n
+  of OrT:
+    # flatten:
+    buf.addParLe(OrT, n.info)
+    var buf2 = createTokenBuf(16)
+    inc n
+    while n.kind != ParRi:
+      reorderSumOfProducts(buf2, n, negative)
+      var n2 = beginRead(buf2)
+      if n2.typeKind == OrT:
+        inc n2
+        while n2.kind != ParRi:
+          takeTree buf, n2
+      else:
+        buf.addSubtree n2
+      endRead(buf2)
+      buf2.shrink 0
+    takeParRi buf, n
+  else:
+    if negative:
+      buf.addParLe(NotT, n.info)
+    takeTree buf, n
+    if negative:
+      buf.addParRi()
+
+when isMainModule:
+  when false: # tests sum of products
+    proc test(s: string) =
+      var typBuf = parse(s)
+      var buf = createTokenBuf(64)
+      var typ = beginRead(typBuf)
+      echo "input: ", typ
+      reorderSumOfProducts(buf, typ)
+      echo "output: ", beginRead(buf)
+      assert isSumOfProducts(beginRead(buf))
+
+    test "A"
+    test "(and A B)"
+    test "(and (and A B) (and C D))"
+    test "(or A B)"
+    test "(or (or A B) (or C D))"
+    test "(or (and A B) (and C D))"
+    test "(and (or A B) (or C D))"
+    test "(not (or (and A B) (and C D)))"
+    test "(not (not (or (and A B) (and C D))))"
+    test "(not (and (or A B) (or C D)))"
+    test "(not (not (and (or A B) (or C D))))"
+    test "(and (or A B) (or C D) (or E F))"
