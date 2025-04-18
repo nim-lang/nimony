@@ -161,8 +161,19 @@ proc genScope(c: var GeneratedCode; n: var Cursor) =
   c.add CurlyRi
   c.m.closeScope()
 
-proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
+proc isBranchValue(n: Cursor): bool =
+  var n = n
   if n.kind in {IntLit, UIntLit, CharLit, Symbol} or n.exprKind in {TrueC, FalseC}:
+    result = true
+  elif n.exprKind == SufC:
+    inc n
+    result = n.kind in {IntLit, UIntLit, CharLit}
+  else:
+    result = false
+
+proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
+  let branch = n
+  if isBranchValue(n):
     c.genx n
   else:
     error c.m, "expected valid `of` value but got: ", n
