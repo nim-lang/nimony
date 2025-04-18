@@ -145,7 +145,6 @@ type
   Category = enum
     Normal, # normal category
     Basics, # basic tests: These are processed with --noSystem
-    SemOnly, # uses system, but not compiled into an executable
     Tracked # tracked tests: These are processed and can contain "track info"
             # for line, col, filename extraction (useful for nimsuggest-like tests)
     Compat # compatibility mode tests
@@ -153,7 +152,7 @@ type
 
 proc toCommand(cat: Category): string =
   case cat
-  of Basics, SemOnly: "m"
+  of Basics: "m"
   of Normal, Tracked, Compat, Valgrind: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
@@ -208,7 +207,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
   inc c.total
   var nimonycmd = "--isMain"
   case cat
-  of Normal, Valgrind, SemOnly: discard
+  of Normal, Valgrind: discard
   of Basics:
     nimonycmd.add " --noSystem"
   of Tracked:
@@ -242,7 +241,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       let nimcacheC = generatedFile(file, ".c")
       diffFiles c, file, cfile, nimcacheC, overwrite
 
-    if cat notin {Basics, Tracked, SemOnly}:
+    if cat notin {Basics, Tracked}:
       let exe = file.generatedFile(ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       var output = file.changeFileExt(".output")
@@ -283,7 +282,6 @@ proc parseCategory(path: string): Category =
   case path
   of "track": Tracked
   of "nosystem": Basics
-  of "semonly": SemOnly
   of "compat": Compat
   of "valgrind": Valgrind
   else: Normal
@@ -400,7 +398,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     gitAdd test
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
-    if cat notin {Basics, Tracked, SemOnly}:
+    if cat notin {Basics, Tracked}:
       let exe = file.generatedFile(ExeExt)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       let ext = if testProgramExitCode != 0: ".exitcode" else: ".output"
