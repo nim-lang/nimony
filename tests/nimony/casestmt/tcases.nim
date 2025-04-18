@@ -25,3 +25,12 @@ block:
 
   var r = foo(10)
   assert r == "number"
+
+block:
+  proc main(a: uint32) =
+    case a
+    of 777u32: echo 12
+    else:
+      discard
+
+  main(10)
