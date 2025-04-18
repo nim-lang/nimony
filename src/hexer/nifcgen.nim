@@ -721,11 +721,15 @@ proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   inc n
   let (s, sinfo) = getSymDef(c, n)
 
+  let newSym: SymId
+
   if mode == TraverseAll:
     # namePos
-    c.dest.add symdefToken(makeLocalSymId(c, s, true), sinfo)
+    newSym = makeLocalSymId(c, s, true)
+    c.dest.add symdefToken(newSym, sinfo)
   else:
     # namePos
+    newSym = s
     c.dest.add symdefToken(s, sinfo)
   c.offer s
 
@@ -777,7 +781,7 @@ proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.addKey genPragmas, "inline", pinfo
 
   if prag.externName.len > 0:
-    c.registerMangleInParent(s, prag.externName & ".c")
+    c.registerMangleInParent(newSym, prag.externName & ".c")
     c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
   if SelectanyP in prag.flags:
     c.addKey genPragmas, "selectany", pinfo
@@ -822,9 +826,13 @@ proc traverseTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   let (s, sinfo) = getSymDef(c, n)
   let oldOwner = setOwner(c, s)
 
+  let newSym: SymId
+
   if mode == TraverseAll:
-    c.dest.add symdefToken(makeLocalSymId(c, s, false), sinfo)
+    newSym = makeLocalSymId(c, s, false)
+    c.dest.add symdefToken(newSym, sinfo)
   else:
+    newSym = s
     c.dest.add symdefToken(s, sinfo)
   c.offer s
 
@@ -849,7 +857,7 @@ proc traverseTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   c.dest.addDotToken() # adds pragmas
 
   if prag.externName.len > 0:
-    c.registerMangle(s, prag.externName & ".c")
+    c.registerMangle(newSym, prag.externName & ".c")
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
