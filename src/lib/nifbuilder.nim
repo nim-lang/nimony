@@ -185,8 +185,8 @@ proc addUIntLit*(b: var Builder; u: uint64) =
 
 proc addFloatLit*(b: var Builder; f: float) =
   addSep b
-  let myLen = b.buf.len
   drainPending b
+  let myLen = b.buf.len
   case classify(f)
   of fcInf: b.buf.add "(inf)"
   of fcNan: b.buf.add "(nan)"
