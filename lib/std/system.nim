@@ -161,3 +161,9 @@ type
     mt: UncheckedArray[pointer]
 
 proc getRtti(dummy: pointer): ptr Rtti {.nodecl.} = discard "patched by vtables.nim"
+
+func isNil*(s: cstring): bool {.inline.} = s == nil
+
+func chr*(u: range[0..255]): char {.inline.} =
+  ## Converts `u` to a `char`, same as `char(u)`.
+  char(u.int)
