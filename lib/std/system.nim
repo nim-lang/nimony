@@ -170,7 +170,7 @@ type
 
 proc getRtti(dummy: pointer): ptr Rtti {.nodecl.} = discard "patched by vtables.nim"
 
-func ord*[T: Ordinal|enum](x: T): int =
+func ord*[T: Ordinal|enum](x: T): int {.inline.} =
   ## Returns the internal `int` value of `x`, including for enum with holes
   ## and distinct ordinal types.
 
