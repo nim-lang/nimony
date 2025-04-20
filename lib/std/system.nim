@@ -8,6 +8,14 @@ proc unpackToCall(fn: untyped) {.magic: Unpack.}
 
 const
   isMainModule* {.magic: "IsMainModule".}: bool = false
+  Inf* {.magic: "Inf".}: float64 = 0.0
+    ## Contains the IEEE floating point value of positive infinity.
+  NaN* {.magic: "NaN".}: float64 = 0.0
+    ## Contains an IEEE floating point value of *Not A Number*.
+    ##
+    ## Note that you cannot compare a floating point value to this value
+    ## and expect a reasonable result - use the `isNaN` or `classify` procedure
+    ## in the `math module <math.html>`_ for checking for NaN.
 
 proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 proc `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
