@@ -169,3 +169,22 @@ type
     mt: UncheckedArray[pointer]
 
 proc getRtti(dummy: pointer): ptr Rtti {.nodecl.} = discard "patched by vtables.nim"
+
+func ord*[T: Ordinal|enum](x: T): int =
+  ## Returns the internal `int` value of `x`, including for enum with holes
+  ## and distinct ordinal types.
+
+  int(x)
+
+type
+  ComparableAndNegatable = concept
+    proc `<`(x, y: Self): bool
+    proc `-`(x: Self): Self
+
+func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
+  ## Returns the absolute value of `x`.
+  ##
+  ## If `x` is `low(x)` an overflow exception is thrown
+  ## (if overflow checking is turned on).
+
+  if x < 0: -x else: x
