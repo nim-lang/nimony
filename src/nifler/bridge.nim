@@ -52,7 +52,6 @@ proc nodeKindTranslation(k: TNodeKind): NiflerKind =
   of nkCast: CastL
   of nkLambda: ProcL
   of nkAccQuoted: QuotedL
-  of nkTableConstr: TabconstrL
   of nkStmtListType, nkStmtListExpr, nkStmtList, nkRecList, nkArgList: StmtsL
   of nkBlockStmt, nkBlockExpr, nkBlockType: BlockL
   of nkStaticStmt: StaticstmtL
@@ -614,6 +613,16 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
     c.depsEnabled = oldDepsEnabled
+  of nkTableConstr:
+    relLineInfo(n, parent, c)
+    c.b.addTree(BracketL)
+    for i in 0..<n.len:
+      assert n[i].kind == nkExprColonExpr and n[i].len == 2
+      c.b.addTree(TupL)
+      toNif(n[i][0], n, c)
+      toNif(n[i][1], n, c)
+      c.b.endTree()
+    c.b.endTree()
   of nkDiscardStmt, nkBreakStmt, nkContinueStmt, nkReturnStmt, nkRaiseStmt,
       nkBlockStmt, nkBlockExpr, nkBlockType, nkTypeClassTy, nkAsmStmt:
     relLineInfo(n, parent, c)
