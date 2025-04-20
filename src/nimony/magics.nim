@@ -120,4 +120,6 @@ proc magicToTag*(m: string): (string, int) =
   of "InternalFieldPairs": res InternalFieldPairsX, TypedMagic
   of "OrdinalEnum": res EnumT
   of "HoleyEnum": res HoleyEnumT
+  of "NaN": res NanX
+  of "Inf": res InfX
   else: ("", 0)

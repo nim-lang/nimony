@@ -12,3 +12,5 @@ assert classify(0.0 * -1.0) == fcNegZero
 assert classify(0.0 / 0.0) == fcNan
 assert classify(1.0 / 0.0) == fcInf
 assert classify(-1.0 / 0.0) == fcNegInf
+assert classify(Inf) == fcInf
+assert classify(NaN) == fcNan
