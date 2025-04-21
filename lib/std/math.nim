@@ -1,8 +1,8 @@
 import std/[assertions]
 
-# TODO change parameter types to SomeFloat when type classes work
-proc c_signbit(x: float): int {.importc: "signbit", header: "<math.h>".}
-proc c_fpclassify(x: float): int {.importc: "fpclassify", header: "<math.h>".}
+# These are C macros and can take both float and double type values.
+proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit", header: "<math.h>".}
+proc c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify", header: "<math.h>".}
 
 let
   c_fpNormal    {.importc: "FP_NORMAL", header: "<math.h>".}: int
@@ -23,7 +23,7 @@ type
     fcInf,           ## value is positive infinity
     fcNegInf         ## value is negative infinity
 
-func signbit*(x: float): bool {.inline.} =
+func signbit*[T: SomeFloat](x: T): bool {.inline.} =
   ## Returns true if `x` is negative, false otherwise.
   runnableExamples:
     assert not signbit(0.0)
@@ -33,7 +33,7 @@ func signbit*(x: float): bool {.inline.} =
 
   c_signbit(x) != 0
 
-func classify*(x: float): FloatClass {.inline.} =
+func classify*[T: SomeFloat](x: T): FloatClass {.inline.} =
   ## Classifies a floating point value.
   ##
   ## Returns `x`'s class as specified by the `FloatClass enum<#FloatClass>`_.
