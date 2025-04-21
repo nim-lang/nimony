@@ -190,4 +190,21 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 4,34
+ (gvar :bar2.0.tcauiaoif . . 6,~7 Bar.0.tcauiaoif 7 bar.0.tcauiaoif) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 14,36,tests/nimony/object/tcaseobject.nim
+     (eq
+      (bool) ~3
+      (dot ~4 bar2.0.tcauiaoif x.1.tcauiaoif +0) 3
+      (true))) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))))
