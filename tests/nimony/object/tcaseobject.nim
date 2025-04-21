@@ -31,3 +31,6 @@ assert bar.x == false
 bar = Bar(x: true)
 let e: bool = bar.x
 assert e == true
+
+var bar2 = bar
+assert bar2.x == true

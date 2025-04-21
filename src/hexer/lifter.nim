@@ -275,28 +275,51 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
     case n.substructureKind
     of CaseU:
       # XXX for now counts each case object field as separate
+      if c.op in {attachedCopy, attachedSink}:
+        # TODO: `=copy` needs to be special cased like in Nim
+        var nCopy = n
+        let prevOp = c.op
+        c.op = attachedDestroy
+        unravelObjFields(c, nCopy, paramA, paramB)
+        c.op = prevOp
+      let info = n.info
       inc n
-      unravelObjField c, n, paramA, paramB
+      var selector = n
+      if c.op != attachedDestroy:
+        # copy the selector before case stmt, but destroy after case stmt
+        unravelObjField c, selector, paramA, paramB
+
+      c.dest.addParLe CaseU, info
+
+      var selectorField = takeLocal(n, SkipFinalParRi)
+      let dest = accessObjField(c, paramA, selectorField.name)
+      c.dest.add dest
+
       while n.kind != ParRi:
         case n.substructureKind
         of OfU:
-          inc n
-          skip n
+          c.dest.takeToken(n)
+          c.dest.takeTree(n)
           assert n.stmtKind == StmtsS
-          inc n
+          c.dest.takeToken(n)
           unravelObjFields c, n, paramA, paramB
-          skipParRi n
-          skipParRi n
+          takeParRi(c.dest, n)
+          takeParRi(c.dest, n)
         of ElseU:
-          inc n
+          c.dest.takeToken(n)
           assert n.stmtKind == StmtsS
-          inc n
+          c.dest.takeToken(n)
           unravelObjFields c, n, paramA, paramB
-          skipParRi n
-          skipParRi n
+          takeParRi(c.dest, n)
+          takeParRi(c.dest, n)
         else:
           error "expected `of` or `else` inside `case`"
-      skipParRi n
+
+      takeParRi(c.dest, n) # end of case
+
+      if c.op == attachedDestroy:
+        # destroy the selector after case stmt
+        unravelObjField c, selector, paramA, paramB
     of FldU:
       unravelObjField c, n, paramA, paramB
     of NilU:
