@@ -1,1 +1,1 @@
-tests/nimony/errmsgs/tblocklineinfo.nim(4, 3) Error: expression of type `(i -1)` must be discarded
+tests/nimony/errmsgs/tblocklineinfo.nim(1, 1) Error: expression of type `(i -1)` must be discarded

@@ -346,8 +346,9 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
     else:
       trStmt c, dest, n
 
-  #if tar.m != IsIgnored:
-  #  tar.t.addSymUse tmp, info
+
+  if tar.m != IsIgnored:
+    tar.t.addSymUse tmp, n.info
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind

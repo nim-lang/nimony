@@ -21,6 +21,7 @@ import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
 
 proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool)
+proc semStmtBranch(c: var SemContext; it: var Item; isNewScope: bool)
 
 proc typeMismatch(c: var SemContext; info: PackedLineInfo; got, expected: TypeCursor) =
   c.buildErr info, "type mismatch: got: " & typeToString(got) & " but wanted: " & typeToString(expected)
@@ -2102,17 +2103,12 @@ proc semBlock(c: var SemContext; it: var Item) =
       c.addSym delayed
       publish c, delayed.s.name, declStart
 
-    if it.n.stmtKind == StmtsS:
-      takeToken c, it.n
-      while it.n.kind != ParRi:
-        semStmt c, it.n, true
-      takeParRi c, it.n
-    else:
-      semStmt c, it.n, true
+    semStmtBranch c, it, true
   dec c.routine.inBlock
 
   takeParRi c, it.n
-  producesVoid c, info, it.typ
+  if typeKind(it.typ) == AutoT:
+    producesVoid c, info, it.typ
 
 proc semBreak(c: var SemContext; it: var Item) =
   let info = it.n.info
