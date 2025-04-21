@@ -6375,6 +6375,26 @@ proc semInternalTypeName(c: var SemContext; it: var Item) =
   it.typ = c.types.stringType
   commonType c, it, beforeExpr, expected
 
+proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
+  let info = it.n.info
+  inc it.n
+  var arrayBuf = createTokenBuf(16)
+  arrayBuf.buildTree BracketX, info:
+    while it.n.kind != ParRi:
+      assert it.n.substructureKind == KvU
+      let kvInfo = it.n.info
+      inc it.n
+      arrayBuf.buildTree TupX, kvInfo:
+        arrayBuf.takeTree it.n
+        assert it.n.kind != ParRi
+        arrayBuf.takeTree it.n
+      inc it.n
+
+  var item = Item(n: beginRead(arrayBuf), typ: it.typ)
+  semBracket c, item, flags
+  it.typ = item.typ
+  inc it.n
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -6684,7 +6704,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semBaseobj c, it
     of InternalTypeNameX:
       semInternalTypeName c, it
-    of CurlyatX, TabconstrX, DoX,
+    of TabconstrX:
+      semTableConstructor c, it, flags
+    of CurlyatX, DoX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)
