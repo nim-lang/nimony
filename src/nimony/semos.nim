@@ -280,7 +280,7 @@ proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
 
 proc compilePlugin(c: var SemContext; info: PackedLineInfo; nimfile, exefile: string) =
   let nf = resolveFile(c.g.config.paths, getFile(info), nimfile)
-  let cmd = "nim c -d:nimonyPlugin -o " & quoteShell(exefile) & " " & quoteShell(nf)
+  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " " & quoteShell(nf)
   exec cmd
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string) =

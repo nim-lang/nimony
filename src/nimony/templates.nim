@@ -93,6 +93,7 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
   var p = temp.pragmas
   if p.kind != ParLe:
     return false
+  inc p
   while p.kind != ParRi:
     if p.pragmaKind == PluginP:
       inc p
