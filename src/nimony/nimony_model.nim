@@ -5,8 +5,8 @@
 # distribution, for details about the copyright.
 
 import std / assertions
-include nifprelude
-import stringviews
+include ".." / lib / nifprelude
+import ".." / lib / stringviews
 
 import ".." / models / [tags, nimony_tags, callconv_tags]
 export nimony_tags, callconv_tags

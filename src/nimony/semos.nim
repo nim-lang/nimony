@@ -278,9 +278,8 @@ proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
 
 # ------------------ plugin handling --------------------------
 
-proc compilePlugin(c: var SemContext; info: PackedLineInfo; nimfile, exefile: string) =
-  let nf = resolveFile(c.g.config.paths, getFile(info), nimfile)
-  let cmd = "nim c -o " & quoteShell(exefile) & " " & quoteShell(nf)
+proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
+  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " " & quoteShell(nf)
   exec cmd
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string) =
@@ -289,8 +288,10 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
   let inputFile = basename & ".in.nif"
   let outputFile = basename & ".out.nif"
   let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
-  if not fileExists(pluginExe):
-    compilePlugin(c, info, pluginName, pluginExe)
+
+  let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
+  if needsRecompile(nf, pluginExe):
+    compilePlugin(c, info, nf, pluginExe)
   if fileExists(inputFile) and readFile(inputFile) == input:
     # do not touch the timestamp
     discard "nothing to do here"
