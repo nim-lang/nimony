@@ -19,9 +19,8 @@ proc tr(n: Cursor): TokenBuf =
 let input = os.paramStr(1)
 let output = os.paramStr(2)
 var inp = nifstreams.open(input)
-discard processDirectives(inp.r)
 var buf = fromStream(inp)
 
 let outp = tr(beginRead buf)
 
-writeFile output, "(.nif24)\n" & toString(outp)
+writeFile output, toString(outp)

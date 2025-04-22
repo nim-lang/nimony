@@ -104,9 +104,8 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
         while a.kind != ParRi:
           b.takeTree a
         b.addParRi()
-        let content = "(.nif24)\n" & b.toString
 
-        runPlugin(c, dest, p.info, pool.strings[p.litId], content)
+        runPlugin(c, dest, p.info, pool.strings[p.litId], b.toString)
         return true
       skipToEnd p
     else:
