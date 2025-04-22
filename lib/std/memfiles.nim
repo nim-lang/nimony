@@ -25,15 +25,14 @@ type
                          ## file, if it was opened with write access.
     size*: int           ## size of the memory mapped file
 
-    # Uncomment when fixed https://github.com/nim-lang/nimony/issues/965
-    #when defined(windows):
-    fHandle*: Handle   ## **Caution**: Windows specific public field to allow
-                       ## even more low level trickery.
-    mapHandle*: Handle ## **Caution**: Windows specific public field.
-    wasOpened*: bool   ## **Caution**: Windows specific public field.
-    #else:
-    handle*: cint      ## **Caution**: Posix specific public field.
-    flags: cint        ## **Caution**: Platform specific private field.
+    when defined(windows):
+      fHandle*: Handle   ## **Caution**: Windows specific public field to allow
+                         ## even more low level trickery.
+      mapHandle*: Handle ## **Caution**: Windows specific public field.
+      wasOpened*: bool   ## **Caution**: Windows specific public field.
+    else:
+      handle*: cint      ## **Caution**: Posix specific public field.
+      flags: cint        ## **Caution**: Platform specific private field.
 
 proc setFileSize(fh: FileHandle, newFileSize = -1, oldSize = -1): OSErrorCode =
   ## Set the size of open file pointed to by `fh` to `newFileSize` if != -1,
