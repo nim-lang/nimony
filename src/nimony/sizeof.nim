@@ -26,6 +26,11 @@ proc combine(c: var SizeofValue; inner: SizeofValue) =
   c.size = c.size + inner.size
   c.overflow = c.overflow or inner.overflow
 
+proc combineCaseObject(c: var SizeofValue; inner: SizeofValue) =
+  c.maxAlign = max(c.maxAlign, inner.maxAlign)
+  c.size = max(c.size, inner.size)
+  c.overflow = c.overflow or inner.overflow
+
 proc createSizeofValue(strict: bool): SizeofValue =
   SizeofValue(size: 0, maxAlign: 1, overflow: false, strict: strict)
 
@@ -50,6 +55,51 @@ The stride of the type is the final size rounded up to alignment.
 ]#
 
 proc `<`(x: xint; b: int): bool = x < createXint(b)
+
+proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int)
+
+proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; iter: var ObjFieldIter; n: var Cursor; ptrSize: int): bool =
+  result = nextField(iter, n, keepCase = true)
+  if result:
+    if n.substructureKind == CaseU:
+      inc n
+      # selector
+      let field = takeLocal(n, SkipFinalParRi)
+      getSize c, cache, field.typ, ptrSize
+
+      var cCase = createSizeofValue(c.strict)
+      while n.kind != ParRi:
+        case n.substructureKind
+        of OfU:
+          inc n
+          # field
+          skip n
+          var cOf = createSizeofValue(c.strict)
+          inc n # stmt
+          while n.kind != ParRi:
+            discard getSizeObject(cOf, cache, iter, n, ptrSize)
+          skipParRi n # stmt
+          skipParRi n
+
+          finish cOf
+          combineCaseObject(cCase, cOf)
+        of ElseU:
+          inc n
+          # else
+          var cElse = createSizeofValue(c.strict)
+          inc n # stmt
+          while n.kind != ParRi:
+            discard getSizeObject(cElse, cache, iter, n, ptrSize)
+          skipParRi n # stmt
+          skipParRi n
+          finish cElse
+          combineCaseObject(cCase, cElse)
+        else:
+          error "illformed AST inside case object: ", n
+      combine(c, cCase)
+    else:
+      let field = takeLocal(n, SkipFinalParRi)
+      getSize c, cache, field.typ, ptrSize
 
 proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int) =
   var counter = 20
@@ -106,11 +156,9 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     if n.kind != DotToken:
       getSize(c2, cache, n, ptrSize)
     skip n
-    # XXX for now counts every case object field as separate
     var iter = initObjFieldIter()
-    while nextField(iter, n):
-      let field = takeLocal(n, SkipFinalParRi)
-      getSize c2, cache, field.typ, ptrSize
+    while getSizeObject(c2, cache, iter, n, ptrSize):
+      discard
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2

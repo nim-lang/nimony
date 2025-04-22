@@ -192,7 +192,7 @@ type ObjFieldIter* = object
 proc initObjFieldIter*(): ObjFieldIter =
   result = ObjFieldIter(nested: 1)
 
-proc nextField*(iter: var ObjFieldIter, n: var Cursor): bool =
+proc nextField*(iter: var ObjFieldIter, n: var Cursor, keepCase = false): bool =
   result = false
   while iter.nested != 0:
     if n.kind == ParRi:
@@ -200,7 +200,14 @@ proc nextField*(iter: var ObjFieldIter, n: var Cursor): bool =
       if iter.nested != 0: inc n
     else:
       case n.substructureKind
-      of WhenU, CaseU, StmtsU, NilU, ElseU:
+      of CaseU:
+        if keepCase:
+          result = true
+          break
+        else:
+          inc iter.nested
+          inc n
+      of WhenU, StmtsU, NilU, ElseU:
         inc iter.nested
         inc n
       of ElifU, OfU:

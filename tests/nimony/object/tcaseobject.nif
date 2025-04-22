@@ -29,8 +29,8 @@
       (true)) 16
      (stmts
       (nil)))))) 4,14
- (gvar :foo.0.tcauiaoif . . 6 Foo.0.tcauiaoif 9
-  (oconstr ~3 Foo.0.tcauiaoif
+ (gvar :foo.0.tcauiaoif . . 7,23 Foo.0.tcauiaoif 9
+  (oconstr ~2,23 Foo.0.tcauiaoif
    (kv x.0.tcauiaoif 45,4,lib/std/system/defaults.nim
     (expr
      (false)))
@@ -42,7 +42,7 @@
     (expr
      (false))))) 4,15
  (asgn ~4 foo.0.tcauiaoif 5
-  (oconstr 1,~1 Foo.0.tcauiaoif 2
+  (oconstr 2,22 Foo.0.tcauiaoif 2
    (kv ~2 x.0.tcauiaoif 2
     (false)) 12
    (kv ~12 y.0.tcauiaoif 2 +123)
@@ -87,7 +87,7 @@
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,20
  (asgn ~4 foo.0.tcauiaoif 5
-  (oconstr 1,~6 Foo.0.tcauiaoif 2
+  (oconstr 2,17 Foo.0.tcauiaoif 2
    (kv ~2 x.0.tcauiaoif 2
     (true))
    (kv y.0.tcauiaoif 43,6,lib/std/system/defaults.nim
@@ -207,4 +207,25 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-     (cmd quit.0.syn1lfpjv 5 +1))))))
+     (cmd quit.0.syn1lfpjv 5 +1))))) ,37
+ (proc 5 :fx.0.tcauiaoif . . . 7
+  (params 1
+   (param :x.0 . . 3 Foo.0.tcauiaoif .)) 10 Foo.0.tcauiaoif . . 2,1
+  (stmts 4
+   (result :result.0 . . 5,~1 Foo.0.tcauiaoif .) 4
+   (let :s.0 . . 5,~1 Foo.0.tcauiaoif 4 x.0) ,1
+   (ret 7 s.0) ~2,~1
+   (ret result.0))) ,41
+ (block . 2,1
+  (stmts 4
+   (var :x.1 . . 5,~5 Foo.0.tcauiaoif 7
+    (oconstr ~2,~5 Foo.0.tcauiaoif 2
+     (kv ~2 x.0.tcauiaoif 2
+      (true))
+     (kv y.0.tcauiaoif 43,6,lib/std/system/defaults.nim
+      (expr +0)) 11
+     (kv ~11 z.0.tcauiaoif 2 "abc") 21
+     (kv ~21 t.0.tcauiaoif 2
+      (false)))) ,1
+   (discard 10
+    (call ~2 fx.0.tcauiaoif 1 x.1)))))
