@@ -1208,7 +1208,8 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
       inc n # skip tag
       traverseExpr c, n # obj
       traverseFieldname c, n # field
-      traverseExpr c, n # inheritance depth
+      if n.kind != ParRi:
+        traverseExpr c, n # inheritance depth
       takeParRi c, n
     of DdotX:
       c.dest.add tagToken("dot", n.info)
