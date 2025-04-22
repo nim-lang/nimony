@@ -699,11 +699,13 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
       for fparent in inheritanceChain(a.symId):
         if sameSymbol(fparent, fs):
           m.args.addParLe BaseobjX, m.argInfo
-          m.args.addSubtree f
-          m.args.addIntLit diff, m.argInfo
           if m.flipped:
+            m.args.addSubtree a
+            m.args.addIntLit -diff, m.argInfo
             dec m.inheritanceCosts, diff
           else:
+            m.args.addSubtree f
+            m.args.addIntLit diff, m.argInfo
             inc m.inheritanceCosts, diff
           inc m.opened
           diff = 0 # mark as success

@@ -334,6 +334,30 @@ proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   skipParRi n
 
+proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
+  let info = nn.info
+  var n = nn
+  inc n # skip `baseobj`
+  let typ = n
+  skip n # skip type
+  if n.kind == IntLit and pool.integers[n.intId] < 0:
+    inc n # integer literal
+    # Negative value means we need to produce a runtime check and a cast:
+    copyIntoKind dest, DerefX, info:
+      copyIntoKind dest, CastX, info:
+        copyIntoKind dest, PtrT, info:
+          dest.addSubtree typ
+        copyIntoKind dest, AddrX, info:
+          tr c, dest, n
+    skipParRi n
+  else:
+    n = nn
+    copyInto dest, n:
+      while n.kind != ParRi:
+        tr c, dest, n
+  # store back:
+  nn = n
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
@@ -365,6 +389,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trProcCall c, dest, n
       of OconstrX:
         trObjConstr c, dest, n
+      of BaseobjX:
+        trBaseobj c, dest, n
       of InstanceofX:
         trInstanceof c, dest, n
       else:
