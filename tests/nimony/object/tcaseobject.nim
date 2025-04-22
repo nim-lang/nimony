@@ -34,3 +34,11 @@ assert e == true
 
 var bar2 = bar
 assert bar2.x == true
+
+proc fx(x: Foo): Foo =
+  let s = x
+  return s
+
+block:
+  var x = Foo(x: true, z: "abc", t: false)
+  discard fx(x)
