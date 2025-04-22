@@ -30,7 +30,7 @@ type
 
 include posix_other
 
-proc close*(a1: cint): cint {.importc: "close", header: "<unistd.h>".}
+proc fcntl*(a1: cint, a2: cint): cint {.varargs, importc, header: "<fcntl.h>", sideEffect.}
 proc open*(a1: cstring; a2: cint; mode: Mode): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
 proc open*(a1: cstring; a2: cint): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
 
@@ -56,6 +56,8 @@ when defined(osx):              # 2001 POSIX evidently does not concern Apple
 else:
   proc posix_fallocate*(a1: cint, a2, a3: Off): cint {.
     importc: "posix_fallocate", header: "<fcntl.h>".}
+
+proc close*(a1: cint): cint {.importc: "close", header: "<unistd.h>".}
 
 proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", header: "<sys/stat.h>", sideEffect.}
 
