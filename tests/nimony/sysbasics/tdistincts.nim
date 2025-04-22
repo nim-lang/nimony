@@ -1,3 +1,5 @@
+import mdistincts
+
 type
   VarId* = distinct int
 
@@ -22,3 +24,5 @@ type
   WINBOOL* = distinct int32
 
 proc `==`(x, y: WINBOOL): bool {.borrow.}
+
+discard isFail(DInt(0))

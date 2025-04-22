@@ -660,9 +660,13 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           result.externName = pool.strings[n.litId]
           inc n
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
-           VarargsP, BorrowP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
+           VarargsP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
            InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP,
            InheritableP, PureP:
+          result.flags.incl pk
+          inc n
+        of BorrowP:
+          result.flags.incl InlineP
           result.flags.incl pk
           inc n
         of HeaderP:
@@ -818,8 +822,6 @@ proc traverseProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   if SelectanyP in prag.flags:
     c.addKey genPragmas, "selectany", pinfo
 
-  if BorrowP in prag.flags:
-    c.addKey genPragmas, $InlineP, pinfo
   closeGenPragmas c, genPragmas
 
   skip n # miscPos
