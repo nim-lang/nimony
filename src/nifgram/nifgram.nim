@@ -8,7 +8,7 @@
 ## that is also in NIF notation.
 ## See nifc/nifc_grammar.nif for a real world example.
 
-import std / [strutils, tables, sets, assertions, syncio]
+import std / [strutils, tables, sets, assertions, syncio, deques]
 import "../lib" / [stringviews, nifreader]
 
 type
@@ -22,13 +22,27 @@ type
     kind: ContextKind
     startRule, currentRule: string
     ruleFlags: set[RuleFlag]
-    seen, used, usedBindings: HashSet[string]
+    seenRules, used, usedBindings: HashSet[string]
     bindings: Table[string, string]
     outp, forw, locals: string
-    nesting, tmpCounter, inBinding, inMatch: int
-    procPrefix, signature, args0, leaveBlock: string
+    nesting, tmpCounter, inBinding, inMatch, inStack: int
+    popVars: Table[string, HashSet[string]]
+
+    procPrefix, args0, leaveBlock: string
     declaredVar, collectInto, flipVar: string
     specTags, foundTags: OrderedTable[string, int] # maps to the arity for more checking
+
+proc signature(c: Context, rule: string): string {.inline.} = 
+  if c.kind == Generator:
+    result = ""
+    result.add "(c: var Context"
+    for popVar in c.popVars.getOrDefault(rule):
+      result.add ", "
+      result.add popVar
+      result.add ": string"
+    result.add "): bool"
+  else:
+    result = "(c: var Context; it: var Item): bool"
 
 proc error(c: var Context; msg: string) {.noreturn.} =
   #writeStackTrace()
@@ -78,7 +92,11 @@ proc compileOr(c: var Context; it: string): string =
   inc c.nesting
   let oldLeaveBlock = c.leaveBlock
   c.leaveBlock = "break " & lab
-
+  
+  let stackSaveVar =
+    if c.inMatch > 0: declTempOuter(c, "st", "getStack(" & c.args0 & ")")
+    else: declTemp(c, "st", "getStack(" & c.args0 & ")")
+  
   while true:
     if c.t.tk == ParLe and c.t.s == "ERR":
       ind c
@@ -97,6 +115,8 @@ proc compileOr(c: var Context; it: string): string =
     ind c
     c.outp.add "break " & lab
     dec c.nesting
+    ind c
+    c.outp.add "restoreStack(" & c.args0 & ", " & stackSaveVar & ")"
     if c.t.tk == ParRi:
       break
   dec c.nesting
@@ -244,14 +264,24 @@ proc compileKeyw(c: var Context; it: string): string =
     c.outp.add "else: "
     c.outp.add c.leaveBlock
 
+proc compilePopVar(c: var Context; it: string): string =
+  ind c
+  c.outp.add "emit(" & c.args0 & ", " & $c.t.s & ")"
+  result = "true"
+
 proc compileRuleInvokation(c: var Context; it: string): string =
   let ruleName = decodeStr(c.t)
-  if not c.seen.contains(ruleName):
+  if not c.seenRules.contains(ruleName):
     if not c.used.containsOrIncl(ruleName):
-      c.forw.add "proc " & c.procPrefix & ruleName & c.signature & "\n"
+      c.forw.add "proc " & c.procPrefix & ruleName & c.signature(ruleName) & "\n"
   else:
     c.used.incl ruleName
-  result = c.procPrefix & ruleName & "(" & c.args & ")"
+  
+  result = c.procPrefix & ruleName & "(" & c.args
+  for popVar in c.popVars[ruleName]:
+    result.add ", "
+    result.add popVar
+  result.add ")"
   if c.inBinding > 0:
     result = declTemp(c, "m", result)
 
@@ -301,6 +331,8 @@ proc compileAtom(c: var Context; it: string): string =
       result = "matchFloatLit(" & c.args & ")"
     elif c.t.s == "ANY":
       result = "matchAny(" & c.args & ")"
+    elif $c.t.s in c.popVars.getOrDefault(c.currentRule):
+      result = compilePopVar(c, it)
     else:
       result = compileRuleInvokation(c, it)
   elif c.kind == Generator and c.t.tk == StringLit:
@@ -507,6 +539,32 @@ proc compileMatch(c: var Context; it: string): string =
   dec c.inMatch
   c.leaveBlock = oldLeaveBlock
 
+proc compileStack(c: var Context; it: string): string =
+  c.t = next(c.r)
+  ind c
+  c.outp.add "startStack(" & c.args & ")"
+  inc c.inStack
+  result = compileExpr(c, it)
+  dec c.inStack
+  ind c
+  c.outp.add "endStack(" & c.args & ")"
+  result = "true"
+
+proc compilePop(c: var Context; it: string): string =
+  c.t = next(c.r)
+
+  var varName = ""
+  if c.t.tk == SymbolDef:
+    varName = decodeStr(c.t)
+    c.t = next(c.r)
+  else:
+    result = ""
+    error c, ":SYMBOLDEF after POP expected"
+
+  ind c
+  c.outp.add "var " & varName & " = popStack(" & c.args & ")"
+  result = "true"
+
 proc compileExpr(c: var Context; it: string): string =
   if c.t.tk == ParLe:
     if c.t.s == "OR":
@@ -537,6 +595,10 @@ proc compileExpr(c: var Context; it: string): string =
       result = compileLet(c, it)
     elif c.t.s == "MATCH":
       result = compileMatch(c, it)
+    elif c.t.s == "STACK":
+      result = compileStack(c, it)
+    elif c.t.s == "POP":
+      result = compilePop(c, it)
     else:
       result = compileKeyw(c, it)
     if c.t.tk == ParRi:
@@ -553,11 +615,11 @@ proc compileRule(c: var Context; it: string) =
   if c.t.tk == SymbolDef:
     c.tmpCounter = 0
     c.currentRule = $c.t.s
-    if containsOrIncl(c.seen, c.currentRule):
+    if containsOrIncl(c.seenRules, c.currentRule):
       error c, "attempt to redeclare RULE named " & c.currentRule
     ind c
     ind c
-    c.outp.add "proc " & c.procPrefix & c.currentRule & c.signature & " ="
+    c.outp.add "proc " & c.procPrefix & c.currentRule & c.signature(c.currentRule) & " ="
     inc c.nesting
     let oldOutp = move(c.outp)
     c.t = next(c.r)
@@ -643,12 +705,42 @@ proc compileRule(c: var Context; it: string) =
   else:
     error c, "SymbolDef expected, but got " & $c.t
 
+type
+  ScanContext = object
+    r: Reader
+    t: Token
+    currentRule: string
+
+    invocations: Table[string, HashSet[string]] # use pop var or rule invocation
+    ruleInvocations: Table[string, HashSet[string]] # rule invocations in rule
+    popVars: Table[string, HashSet[string]] # required pop vars to use rule
+    
+    rules: seq[string] # all declared rules
+
+
+proc error(c: var ScanContext; msg: string) {.noreturn.} =
+  #writeStackTrace()
+  quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
+
+proc skipComment[T: Context or ScanContext](c: var T) =
+  # skip comment:
+  var nested = 1
+  while true:
+    c.t = next(c.r)
+    if c.t.tk == EofToken:
+      error c, "')' expected, but got " & $c.t
+    if c.t.tk == ParLe: inc nested
+    elif c.t.tk == ParRi:
+      dec nested
+      if nested == 0:
+        c.t = next(c.r)
+        break
+
 proc compile(c: var Context) =
   c.t = next(c.r)
   if c.t.tk == ParLe and (c.t.s == "GRAMMAR" or c.t.s == "GENERATOR"):
     if c.t.s == "GENERATOR":
       c.kind = Generator
-      c.signature = "(c: var Context): bool"
       c.procPrefix = "gen"
 
     c.t = next(c.r)
@@ -661,18 +753,7 @@ proc compile(c: var Context) =
       if c.t.tk == ParLe and c.t.s == "RULE":
         compileRule(c, (if c.kind == Generator: "" else: "it"))
       elif c.t.tk == ParLe and c.t.s == "COM":
-        # skip comment:
-        var nested = 1
-        while true:
-          c.t = next(c.r)
-          if c.t.tk == EofToken:
-            error c, "')' expected, but got " & $c.t
-          if c.t.tk == ParLe: inc nested
-          elif c.t.tk == ParRi:
-            dec nested
-            if nested == 0:
-              c.t = next(c.r)
-              break
+        c.skipComment()
       else:
         break
     if c.t.tk == ParRi:
@@ -682,12 +763,166 @@ proc compile(c: var Context) =
   else:
     error c, "GRAMMAR expected but got " & $c.t
 
+proc sortedRules(c: var ScanContext): seq[string] =
+  # to get available pop vars we 
+  # use Kahn’s algorithm for topological sorting
+  # i.e we have pseudo code like this:
+  # B: end
+  # C: (call B)
+  # D: (var foo) (call C)
+  # E: (var bar) (call C)
+  # F: (var buz) (call D)
+
+  # then available pop vars:
+  # B: foo, bar, buz
+  # C: foo, bar, buz
+  # D: buz
+  # E:
+  # F:
+
+  # And call graph:
+  # 
+  # F -> D -> C -> B
+  #           ^
+  #        E -+
+  for rule, invocations in c.invocations.pairs:
+    for invoked in invocations:
+      if invoked in c.rules:
+        c.ruleInvocations[rule].incl invoked
+
+  var indegrees = initTable[string, int]() # number of incoming nodes
+  var queue = initDeque[string]()
+  
+  for rule in c.rules:
+    indegrees[rule] = 0 # indegrees should be defined for all rules
+  
+  for invocations in c.ruleInvocations.values: 
+    for invokedRule in invocations:
+      inc indegrees[invokedRule]
+
+  for rule in c.rules:
+    if indegrees[rule] == 0:
+      queue.addLast rule
+
+  var top: seq[string] = @[]
+  while queue.len > 0:
+    let u = queue.popFirst()
+    top.add u
+
+    for neighboor in c.ruleInvocations[u]:
+      dec indegrees[neighboor]
+      if indegrees[neighboor] == 0:
+        queue.addLast neighboor
+  
+  if len(top) != len(c.rules):
+    when false:
+      var missing: seq[string] = @[]
+      for rule in c.rules:
+        if rule notin top:
+          echo "MISSING: ", rule, " (in-degree: ", indegrees[rule], ")"
+
+    error c, "cyclic rule invocation detected"
+  
+  top
+
+proc scanPop(c: var ScanContext, popVars: var seq[string], popCounts: var seq[int]) =
+  c.t = next(c.r)
+  var varName = ""
+  if c.t.tk == SymbolDef:
+    varName = decodeStr(c.t)
+    c.t = next(c.r)
+  else:
+    error c, ":SYMBOLDEF after POP expected"
+  
+  popVars.add varName
+  inc popCounts[^1]
+  
+const
+  atoms = [
+    "SYMBOL", "SYMBOLDEF", "IDENT", "STRINGLITERAL",
+    "CHARLITERAL", "INTLIT", "UINTLIT", "FLOATLIT", "ANY"
+  ]
+
+proc scanRule(c: var ScanContext) =
+  c.t = next(c.r)
+  
+  if c.t.tk != SymbolDef:
+    error c, "SymbolDef expected, but got " & $c.t
+  c.currentRule = $c.t.s
+  c.rules.add c.currentRule
+  c.ruleInvocations[c.currentRule] = initHashSet[string]()
+  while c.t.tk == Ident:
+    case $c.t.s
+    of "LATEDECL", "OVERLOADABLE", "COLLECT":
+      c.t = next(c.r)
+    else: break
+  
+  # Expression: ( -> start tree, ) end tree
+  var nesting = 1
+  var popVars: seq[string] = @[]
+  var popCounts = @[0] # RULE
+  while nesting > 0:
+    c.t = next(c.r)
+    if c.t.tk == ParLe:
+      popCounts.add 0
+      if c.t.s == "POP":
+        c.scanPop(popVars, popCounts)
+        continue # skip ')' by next iteration so not increase nesting
+      else: inc nesting
+    elif c.t.tk == Ident and $c.t.s notin atoms:
+      mgetOrPut(c.popVars, $c.t.s).incl popVars.toHashSet
+      mgetOrPut(c.invocations, c.currentRule).incl $c.t.s
+    if c.t.tk == ParRi:
+      popVars.shrink(popVars.len - popCounts.pop())
+      dec nesting
+    
+  if c.t.tk == ParRi:
+    c.t = next(c.r)
+  else:
+    error c, "')' expected, but got " & $c.t
+
+proc scan(c: var ScanContext) =
+  # This pass is necessary to determine the arguments of the rules
+  # (they differ from the standard ones if POP Var was used and then the rule was called). 
+  # In addition, it allows you to determine in advance whether 
+  # a rule is being invoked or a variable is being used.
+  c.t = next(c.r)
+  if c.t.tk == ParLe and (c.t.s == "GRAMMAR" or c.t.s == "GENERATOR"):
+    c.t = next(c.r)
+    if c.t.tk == Ident:
+      c.t = next(c.r)
+    else:
+      error c, "GRAMMAR takes an IDENT that is the name of the starting rule"
+    
+    while true:
+      if c.t.tk == ParLe and c.t.s == "RULE":
+        c.scanRule()
+      elif c.t.tk == ParLe and c.t.s == "COM":
+        c.skipComment()
+      else:
+        break
+    if c.t.tk == ParRi:
+      c.t = next(c.r)
+    else:
+      error c, "')' expected, but got " & $c.t
+  else:
+    error c, "GRAMMAR expected but got " & $c.t
+
+  # the more to the right, the fewer rules it invokes. 
+  # So it can be used to propogate pop vars over rules
+  for rule in c.sortedRules():
+    for invokedRule in c.ruleInvocations[rule]:
+      mgetOrPut(c.popVars, invokedRule).incl c.popVars.getOrDefault(rule)
+
 proc main(inp, outp: string;
           specTags: sink OrderedTable[string, int]): OrderedTable[string, int] =
   var r = nifreader.open(inp)
   discard processDirectives(r)
-  var c = Context(r: r, procPrefix: "match", signature: "(c: var Context; it: var Item): bool",
+  var c = Context(r: r, procPrefix: "match",
                   args0: "c", leaveBlock: "return false", specTags: ensureMove(specTags))
+  var sc = ScanContext(r: r)
+  sc.scan
+  c.popVars = sc.popVars
   c.compile
   c.r.close
   if outp.len > 0:
@@ -698,10 +933,10 @@ proc main(inp, outp: string;
     writeLine foutp, c.outp
     foutp.close()
   for d in c.used:
-    if not c.seen.contains(d):
+    if not c.seenRules.contains(d):
       error c, "undeclared rule: " & d
 
-  for d in c.seen:
+  for d in c.seenRules:
     if not c.used.contains(d) and d != c.startRule:
       error c, "unused rule: " & d
   result = ensureMove(c.foundTags)
