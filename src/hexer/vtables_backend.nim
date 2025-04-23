@@ -335,6 +335,7 @@ proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let x = n
   skip n
   let typ = n
+  skip n # skip type
   skipParRi n
   trInstanceofImpl c, dest, x, typ, info
 
