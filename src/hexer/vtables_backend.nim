@@ -398,11 +398,12 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
 
         copyIntoKind dest, IfS, info:
           copyIntoKind dest, ElifU, info:
-            trInstanceofImpl c, dest, beginRead(buf), typ, info
-          copyIntoKind dest, StmtsS, info:
-            copyIntoKind dest, CallS, info:
-              dest.add symToken(pool.syms.getOrIncl("nimInvalidObjConv.0." & SystemModuleSuffix), info)
-              dest.addStrLit asNimCode(typ)
+            copyIntoKind dest, NotX, info:
+              trInstanceofImpl c, dest, beginRead(buf), typ, info
+            copyIntoKind dest, StmtsS, info:
+              copyIntoKind dest, CallS, info:
+                dest.add symToken(pool.syms.getOrIncl("nimInvalidObjConv.0." & SystemModuleSuffix), info)
+                dest.addStrLit asNimCode(typ)
 
       # Negative value means we need to produce a runtime check and a cast:
       copyIntoKind dest, DerefX, info:
