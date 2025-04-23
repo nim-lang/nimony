@@ -452,6 +452,11 @@ proc traverseType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
         c.dest.addSymUse pool.syms.getOrIncl(pool.strings[n.litId] & ".c"), n.info
         inc n
         skipParRi c, n
+        if n.kind != ParRi and n.pragmaKind == HeaderP:
+          inc n
+          c.headers.incl n.litId
+          inc n
+          skipParRi c, n
         skipParRi c, n
       else:
         takeParRi c, n

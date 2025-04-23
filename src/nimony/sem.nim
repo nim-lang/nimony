@@ -2190,6 +2190,7 @@ type
     bits: int
     hasVarargs: PackedLineInfo
     flags: set[PragmaKind]
+    headerFileTok: PackedToken
 
 proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   let hasParRi = n.kind == ParLe # if false, has no arguments
@@ -2253,6 +2254,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       var name = replaceSubs(pool.strings[tok.litId], info.getFile(), c.g.config)
       name = name.toRelativePath(c.g.config.nifcachePath)
       c.dest[idx] = strToken(pool.strings.getOrIncl(name), tok.info)
+      crucial.headerFileTok = c.dest[idx]
     # Finalize expression
     c.dest.addParRi()
   of AlignP, BitsP:
@@ -4554,12 +4556,19 @@ proc fitTypeToPragmas(c: var SemContext; pragmas: CrucialPragma; typeStart: int)
       let info = typ.info
       endRead(c.dest)
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
-      var tokens = [
-        parLeToken(pool.tags.getOrIncl($kind), info),
+      var tokens = @[
+        parLeToken(kind, info),
         strToken(pool.strings.getOrIncl(pragmas.externName), info),
         parRiToken(info)
       ]
-      c.dest.insert fromBuffer(tokens), typeStart+2
+      if HeaderP in pragmas.flags:
+        assert pragmas.headerFileTok.kind == StringLit
+        tokens.add [
+          parLeToken(HeaderP, info),
+          pragmas.headerFileTok,
+          parRiToken(info)
+        ]
+      c.dest.insert tokens, typeStart+2
     else:
       let err = "cannot import type " & typeToString(typ)
       let info = typ.info
