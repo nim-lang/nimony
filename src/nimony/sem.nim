@@ -3109,9 +3109,15 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         semRangeTypeFromExpr c, n, info
       else:
         semTypeExpr c, n, context, info
-    of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT,
+    of IntT, FloatT, CharT, BoolT, UIntT, NiltT, AutoT,
         SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
       takeTree c, n
+    of VoidT:
+      if context == InReturnTypeDecl:
+        skip n
+        c.dest.addDotToken()
+      else:
+        takeTree c, n
     of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UarrayT,
        StaticT, TypedescT:
       if tryTypeClass(c, n):

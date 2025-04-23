@@ -81,6 +81,8 @@ type
   untyped* {.magic: Expr.}
   typed* {.magic: Stmt.}
 
+  void* {.magic: "VoidType".} ## Meta type to denote the absence of any type.
+
 type
   Ordinal*[T] {.magic: Ordinal.} ## Generic ordinal type. Includes integer,
                                   ## bool, character, and enumeration types
