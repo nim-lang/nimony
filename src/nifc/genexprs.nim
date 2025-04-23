@@ -133,13 +133,12 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     var fld = n
     skip n
-    if n.kind != IntLit:
-      error c.m, "expected integer literal (inheritance depth) but got: ", n
-    var inh = pool.integers[n.intId]
-    inc n
-    while inh > 0:
-      c.add ".Q"
-      dec inh
+    if n.kind == IntLit:
+      var inh = pool.integers[n.intId]
+      inc n
+      while inh > 0:
+        c.add ".Q"
+        dec inh
     c.add Dot
     genx c, fld
     skipParRi n

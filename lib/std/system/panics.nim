@@ -57,3 +57,9 @@ proc nimUcheckB(i, b: uint): uint {.inline, exportc: "nimUcheckB".} =
   result = i
   if result > b:
     raiseIndexError3(i, 0, b)
+
+proc nimInvalidObjConv(name: string) {.inline, exportc: "nimInvalidObjConv".} =
+  writeErr "invalid object conversion: "
+  writeErr name
+  writeErr "\n"
+  die 1'i32

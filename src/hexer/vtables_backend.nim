@@ -275,13 +275,10 @@ proc classData(typ: Cursor): (int, UHash) =
     for _ in inheritanceChain(s): inc result[0]
     result[1] = uhash(pool.syms[s])
 
-proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: PackedLineInfo) =
   # `v of T` is translated into a logical 'and' expression:
   # let vtab = v.vtab
   # (level < len(vtab.display)) and (vtab.display[level] == hash(T))
-  let info = n.info
-  inc n # skip `instanceof`
-
   let vtabTempSym = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
   inc c.tmpCounter
 
@@ -295,13 +292,13 @@ proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
 
         copyIntoKind dest, DotX, info:
-          tr c, dest, n
+          var x = x
+          tr c, dest, x
           dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
           dest.addIntLit 0, info
 
       # Get the class data (level and hash)
-      let (level, h) = classData(n)
-      skip n # skip type
+      let (level, h) = classData(typ)
 
     # Create the AndX expression for the range check and hash comparison
     copyIntoKind dest, AndX, info:
@@ -332,7 +329,99 @@ proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
         dest.addUIntLit h, info
 
+proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n # skip `instanceof`
+  let x = n
+  skip n
+  let typ = n
+  skip n # skip type
   skipParRi n
+  trInstanceofImpl c, dest, x, typ, info
+
+type
+  MaybeTempKind = enum
+    UsesSelf
+    UsesTempVal
+    UsesTempPtr
+  MaybeTemp = object
+    kind: MaybeTempKind
+    sym: SymId
+
+proc needsTemp(c: var Context; n: Cursor): MaybeTemp =
+  if n.kind == Symbol:
+    result = MaybeTemp(kind: UsesSelf, sym: n.symId)
+  else:
+    let symId = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
+    inc c.tmpCounter
+    let kind = if constructsValue(n): UsesTempVal else: UsesTempPtr
+    result = MaybeTemp(kind: kind, sym: symId)
+
+proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
+  let info = nn.info
+  var n = nn
+  inc n # skip `baseobj`
+  let typ = n
+  skip n # skip type
+  if n.kind == IntLit and pool.integers[n.intId] < 0:
+    inc n # integer literal
+    let x = n
+    skip n # skip expression
+    copyIntoKind dest, ExprX, info:
+      copyIntoKind dest, StmtsS, info:
+        let tmp = needsTemp(c, x)
+        case tmp.kind
+        of UsesSelf:
+          discard "nothing to do"
+        of UsesTempVal:
+          copyIntoKind dest, VarS, info:
+            dest.addSymDef tmp.sym, info
+            dest.addEmpty2 info # export marker, pragma
+            dest.addSubtree getType(c.typeCache, x)
+            var x = x
+            tr c, dest, x
+        of UsesTempPtr:
+          copyIntoKind dest, VarS, info:
+            dest.addSymDef tmp.sym, info
+            dest.addEmpty2 info # export marker, pragma
+            copyIntoKind dest, PtrT, info:
+              dest.addSubtree getType(c.typeCache, x)
+            copyIntoKind dest, AddrX, info:
+              var x = x
+              tr c, dest, x
+
+        var buf = createTokenBuf(3)
+        if tmp.kind == UsesTempPtr:
+          copyIntoKind buf, DerefX, info:
+            buf.addSymUse tmp.sym, info
+        else:
+          buf.addSymUse tmp.sym, info
+
+        copyIntoKind dest, IfS, info:
+          copyIntoKind dest, ElifU, info:
+            copyIntoKind dest, NotX, info:
+              trInstanceofImpl c, dest, beginRead(buf), typ, info
+            copyIntoKind dest, StmtsS, info:
+              copyIntoKind dest, CallS, info:
+                dest.add symToken(pool.syms.getOrIncl("nimInvalidObjConv.0." & SystemModuleSuffix), info)
+                dest.addStrLit asNimCode(typ)
+
+      # Negative value means we need to produce a runtime check and a cast:
+      copyIntoKind dest, DerefX, info:
+        copyIntoKind dest, CastX, info:
+          copyIntoKind dest, PtrT, info:
+            dest.addSubtree typ
+          copyIntoKind dest, AddrX, info:
+            var bufn = beginRead(buf)
+            tr c, dest, bufn
+    skipParRi n
+  else:
+    n = nn
+    copyInto dest, n:
+      while n.kind != ParRi:
+        tr c, dest, n
+  # store back:
+  nn = n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -365,6 +454,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trProcCall c, dest, n
       of OconstrX:
         trObjConstr c, dest, n
+      of BaseobjX:
+        trBaseobj c, dest, n
       of InstanceofX:
         trInstanceof c, dest, n
       else:
