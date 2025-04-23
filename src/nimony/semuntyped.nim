@@ -537,6 +537,9 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
       inc c.noGenSym
       semTemplBody c, n
       dec c.noGenSym
+      if n.kind != ParRi:
+        # annoying inheritance depth:
+        takeTree c.c[], n
       takeParRi c.c[], n
     of QuotedX:
       let ident = getIdent(n)
