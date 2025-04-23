@@ -1,4 +1,4 @@
-type CIntType {.importc: "CIntType", header: "cinttype.h".} = int32
+type CIntTypeDef {.importc: "CIntTypeDef", header: "cinttypedef.h".} = int32
 
-var x: CIntType
+var x: CIntTypeDef
 discard x

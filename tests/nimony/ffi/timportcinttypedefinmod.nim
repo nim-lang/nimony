@@ -1,4 +1,4 @@
-import deps/mimportcinttype
+import deps/mimportcinttypedef
 
-var x: CIntType
+var x: CIntTypeDef
 discard x
