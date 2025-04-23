@@ -2293,13 +2293,20 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`requires`/`ensures` pragma takes a bool expression"
     c.dest.addParRi()
-  of TagsP, RaisesP:
+  of TagsP:
     c.dest.add parLeToken(pk, n.info)
     inc n
     if hasParRi and n.kind != ParRi:
       takeTree c, n
     else:
       buildErr c, n.info, "expected tags/raises list"
+    c.dest.addParRi()
+  of RaisesP:
+    crucial.flags.incl pk
+    c.dest.add parLeToken(pk, n.info)
+    inc n
+    if hasParRi and n.kind != ParRi:
+      takeTree c, n
     c.dest.addParRi()
   of EmitP, BuildP, StringP, AssumeP, AssertP:
     buildErr c, n.info, "pragma not supported"
@@ -4519,15 +4526,17 @@ proc semRaise(c: var SemContext; it: var Item) =
   takeToken c, it.n
   if c.routine.kind == NoSym:
     buildErr c, info, "`raise` only allowed within a routine"
+  elif not c.routine.pragmas.contains(RaisesP) and not c.g.config.compat:
+    buildErr c, info, "`raise` only allowed within a routine with `raises` pragma"
   if it.n.kind == DotToken:
     takeToken c, it.n
   else:
-    var a = Item(n: it.n, typ: c.routine.returnType)
-    # `return` within a template refers to the caller, so
-    # we allow any type here:
-    if c.routine.kind == TemplateY:
-      a.typ = c.types.autoType
+    var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, a
+    if a.typ.kind == Symbol and pool.syms[a.typ.symId] == ("ErrorCode.0." & SystemModuleSuffix):
+      discard "ok"
+    else:
+      buildErr c, info, "only type `system.ErrorCode` is allowed to be raised"
     it.n = a.n
   takeParRi c, it.n
   producesNoReturn c, info, it.typ
