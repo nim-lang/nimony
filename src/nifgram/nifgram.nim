@@ -750,34 +750,26 @@ proc skipComment[T: Context or ScanContext](c: var T) =
 
 proc compile(c: var Context) =
   c.t = next(c.r)
-  if c.t.tk == ParLe and (c.t.s == "GRAMMAR" or c.t.s == "GENERATOR"):
-    if c.t.s == "GENERATOR":
-      c.kind = Generator
-      c.procPrefix = "gen"
+  if c.t.s == "GENERATOR":
+    c.kind = Generator
+    c.procPrefix = "gen"
 
-    c.t = next(c.r)
-    if c.t.tk == Ident:
-      c.startRule = $c.t.s
-      c.t = next(c.r)
+  c.t = next(c.r)
+  c.startRule = $c.t.s
+  c.t = next(c.r) # skip ident
+
+  while true:
+    if c.t.tk == ParLe and c.t.s == "RULE":
+      compileRule(c, (if c.kind == Generator: "" else: "it"))
+    elif c.t.tk == ParLe and c.t.s == "COM":
+      c.skipComment()
     else:
-      error c, "GRAMMAR takes an IDENT that is the name of the starting rule"
-    while true:
-      if c.t.tk == ParLe and c.t.s == "RULE":
-        compileRule(c, (if c.kind == Generator: "" else: "it"))
-      elif c.t.tk == ParLe and c.t.s == "COM":
-        c.skipComment()
-      else:
-        break
-    if c.t.tk == ParRi:
-      c.t = next(c.r)
-    else:
-      error c, "')' expected, but got " & $c.t
-  else:
-    error c, "GRAMMAR expected but got " & $c.t
+      break
+  c.t = next(c.r)
 
 proc sortedRules(c: var ScanContext): seq[string] =
   # to get available pop vars we 
-  # use Kahn’s algorithm for topological sorting
+  # use Kahn's algorithm for topological sorting
   # i.e we have pseudo code like this:
   # B: end
   # C: (call B)
