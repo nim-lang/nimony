@@ -524,11 +524,11 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
           skip a
           if f.kind != ParRi:
             # importc part
-            while f.pragmaKind in {ImportcP, ImportcppP}:
+            while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
               skip f
           if a.kind != ParRi:
             # importc part
-            while a.pragmaKind in {ImportcP, ImportcppP}:
+            while a.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
               skip a
           expectParRi m, f
           expectParRi m, a
@@ -783,7 +783,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
   else:
     m.error InvalidMatch, f, a
   inc f
-  while f.pragmaKind in {ImportcP, ImportcppP}:
+  while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
     skip f
 
 proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
