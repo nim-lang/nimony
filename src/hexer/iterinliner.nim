@@ -186,11 +186,12 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       discard e.breaks.pop()
       discard e.continues.pop()
     of BlockS:
-      e.dest.add c
-      inc c
-      e.breaks.add SymId(0)
-      e.dest.add c
-      inc c
+      e.dest.takeToken(c)
+      if c.kind == SymbolDef:
+        e.breaks.add c.symId
+      else:
+        e.breaks.add SymId(0)
+      e.dest.takeToken(c)
       inlineLoopBody(e, c, mapping)
       discard e.breaks.pop
       takeParRi(e, c)
@@ -517,11 +518,12 @@ proc transformStmt(e: var EContext; c: var Cursor) =
     of ContinueS:
       transformContinueStmt(e, c)
     of BlockS:
-      e.dest.add c
-      inc c
-      e.breaks.add SymId(0)
-      e.dest.add c
-      inc c
+      e.dest.takeToken(c)
+      if c.kind == SymbolDef:
+        e.breaks.add c.symId
+      else:
+        e.breaks.add SymId(0)
+      e.dest.takeToken(c)
       transformStmt(e, c)
       discard e.breaks.pop
       takeParRi(e, c)
