@@ -27,6 +27,8 @@ type
     outp, forw, locals: string
     nesting, tmpCounter, inBinding, inMatch, inStack: int
     popVars: Table[string, HashSet[string]]
+    localPopVars: seq[string]
+    localPopCounts: seq[int] # pop vars in current exprs nesting level
 
     procPrefix, args0, leaveBlock: string
     declaredVar, collectInto, flipVar: string
@@ -331,7 +333,7 @@ proc compileAtom(c: var Context; it: string): string =
       result = "matchFloatLit(" & c.args & ")"
     elif c.t.s == "ANY":
       result = "matchAny(" & c.args & ")"
-    elif $c.t.s in c.popVars.getOrDefault(c.currentRule):
+    elif $c.t.s in c.popVars.getOrDefault(c.currentRule) or $c.t.s in c.localPopVars:
       result = compilePopVar(c, it)
     else:
       result = compileRuleInvokation(c, it)
@@ -560,6 +562,9 @@ proc compilePop(c: var Context; it: string): string =
   else:
     result = ""
     error c, ":SYMBOLDEF after POP expected"
+  
+  c.localPopVars.add varName
+  inc c.localPopCounts[^1]
 
   ind c
   c.outp.add "var " & varName & " = popStack(" & c.args & ")"
@@ -567,37 +572,40 @@ proc compilePop(c: var Context; it: string): string =
 
 proc compileExpr(c: var Context; it: string): string =
   if c.t.tk == ParLe:
-    if c.t.s == "OR":
+    c.localPopCounts.add 0
+    let op = $c.t.s
+    case op
+    of "OR":
       result = compileOr(c, it)
-    elif c.t.s == "ZERO_OR_MANY":
+    of "ZERO_OR_MANY":
       result = compileZeroOrMany(c, it)
-    elif c.t.s == "ONE_OR_MANY":
+    of "ONE_OR_MANY":
       result = compileOneOrMany(c, it)
-    elif c.t.s == "ZERO_OR_ONE":
+    of "ZERO_OR_ONE":
       result = compileZeroOrOne(c, it)
-    elif c.t.s == "SCOPE":
+    of "SCOPE":
       result = compileScope(c, it)
-    elif c.t.s == "IDENT":
+    of "IDENT":
       result = compileIdent(c, it)
-    elif c.t.s == "QUERY":
+    of "QUERY":
       result = compileQuery(c, it, "query")
-    elif c.t.s == "COND":
+    of "COND":
       result = compileQuery(c, it, "")
-    elif c.t.s == "DO":
+    of "DO":
       result = compileDo(c, it)
-    elif c.t.s == "ENTER":
+    of "ENTER":
       result = compileEnter(c, it)
-    elif c.t.s == "FLIP":
+    of "FLIP":
       result = compileFlipFlop(c, it, "flip")
-    elif c.t.s == "FLOP":
+    of "FLOP":
       result = compileFlipFlop(c, it, "flop")
-    elif c.t.s == "LET":
+    of "LET":
       result = compileLet(c, it)
-    elif c.t.s == "MATCH":
+    of "MATCH":
       result = compileMatch(c, it)
-    elif c.t.s == "STACK":
+    of "STACK":
       result = compileStack(c, it)
-    elif c.t.s == "POP":
+    of "POP":
       result = compilePop(c, it)
     else:
       result = compileKeyw(c, it)
@@ -606,6 +614,9 @@ proc compileExpr(c: var Context; it: string): string =
     else:
       result = ""
       error c, "')' expected but got " & $c.t
+
+    if op != "POP":
+      c.localPopVars.shrink(c.localPopVars.len - c.localPopCounts.pop())
   else:
     result = compileAtom(c, it)
     c.t = next(c.r)
@@ -615,6 +626,7 @@ proc compileRule(c: var Context; it: string) =
   if c.t.tk == SymbolDef:
     c.tmpCounter = 0
     c.currentRule = $c.t.s
+    c.localPopCounts = @[0]
     if containsOrIncl(c.seenRules, c.currentRule):
       error c, "attempt to redeclare RULE named " & c.currentRule
     ind c
