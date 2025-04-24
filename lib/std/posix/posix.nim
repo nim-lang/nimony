@@ -37,11 +37,11 @@ proc open*(a1: cstring; a2: cint): cint {.importc: "open", header: "<fcntl.h>", 
 proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate", header: "<unistd.h>".}
 when defined(osx):              # 2001 POSIX evidently does not concern Apple
   type FStore {.importc: "fstore_t", header: "<fcntl.h>", bycopy.} = object
-    fst_flags: uint32           ## IN: flags word
-    fst_posmode: cint           ## IN: indicates offset field
-    fst_offset,                 ## IN: start of the region
-      fst_length,               ## IN: size of the region
-      fst_bytesalloc: Off       ## OUT: number of bytes allocated
+    fst_flags {.importc.}: uint32     ## IN: flags word
+    fst_posmode {.importc.}: cint     ## IN: indicates offset field
+    fst_offset {.importc.}: Off       ## IN: start of the region
+    fst_length {.importc.}: Off       ## IN: size of the region
+    fst_bytesalloc {.importc.}: Off   ## OUT: number of bytes allocated
   var F_PEOFPOSMODE {.importc, header: "<fcntl.h>".}: cint
   var F_ALLOCATEALL {.importc, header: "<fcntl.h>".}: uint32
   var F_PREALLOCATE {.importc, header: "<fcntl.h>".}: cint
