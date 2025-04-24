@@ -2115,6 +2115,7 @@ proc semBreak(c: var SemContext; it: var Item) =
   takeToken c, it.n
   if c.routine.inLoop+c.routine.inBlock == 0:
     buildErr c, info, "`break` only possible within a `while` or `block` statement"
+    skip it.n
   else:
     if it.n.kind == DotToken:
       wantDot c, it.n
@@ -3862,6 +3863,8 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
     if KeepMagics notin flags and c.routine.kind != TemplateY:
       c.buildErr c.dest[start].info, "ambiguous identifier"
     it.typ = c.types.autoType
+  elif s.kind == BlockY:
+    it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
     let typeStart = c.dest.len
     let info = c.dest[c.dest.len-1].info
@@ -3882,8 +3885,6 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
         skipToLocalType n
       elif s.kind.isRoutine:
         skipToParams n
-      elif s.kind == BlockY:
-        discard
       elif s.kind == ModuleY:
         if AllowModuleSym notin flags:
           c.buildErr c.dest[start].info, "module symbol '" & pool.syms[s.name] & "' not allowed in this context"

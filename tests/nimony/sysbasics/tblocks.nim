@@ -6,3 +6,14 @@ proc foo =
   assert x == "?"
 
 foo()
+
+proc main =
+  block endLess:
+    let s = 12
+    break
+
+  block endLess:
+    let s = 12
+    break endLess
+
+main()
