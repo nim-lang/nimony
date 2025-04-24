@@ -34,6 +34,17 @@ type
     declaredVar, collectInto, flipVar: string
     specTags, foundTags: OrderedTable[string, int] # maps to the arity for more checking
 
+  ScanContext = object
+    r: Reader
+    t: Token
+    currentRule: string
+
+    invocations: Table[string, HashSet[string]] # use pop var or rule invocation
+    ruleInvocations: Table[string, HashSet[string]] # rule invocations in rule
+    popVars: Table[string, HashSet[string]] # required pop vars to use rule
+    
+    rules: seq[string] # all declared rules
+
 proc signature(c: Context, rule: string): string {.inline.} = 
   if c.kind == Generator:
     result = ""
@@ -49,6 +60,24 @@ proc signature(c: Context, rule: string): string {.inline.} =
 proc error(c: var Context; msg: string) {.noreturn.} =
   #writeStackTrace()
   quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
+
+proc error(c: var ScanContext; msg: string) {.noreturn.} =
+  #writeStackTrace()
+  quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
+
+proc skipComment[T: Context or ScanContext](c: var T) =
+  # skip comment:
+  var nested = 1
+  while true:
+    c.t = next(c.r)
+    if c.t.tk == EofToken:
+      error c, "')' expected, but got " & $c.t
+    if c.t.tk == ParLe: inc nested
+    elif c.t.tk == ParRi:
+      dec nested
+      if nested == 0:
+        c.t = next(c.r)
+        break
 
 proc ind(c: var Context) =
   c.outp.add '\n'
@@ -609,11 +638,8 @@ proc compileExpr(c: var Context; it: string): string =
       result = compilePop(c, it)
     else:
       result = compileKeyw(c, it)
-    if c.t.tk == ParRi:
-      c.t = next(c.r)
-    else:
-      result = ""
-      error c, "')' expected but got " & $c.t
+
+    c.t = next(c.r)
 
     if op != "POP":
       c.localPopVars.shrink(c.localPopVars.len - c.localPopCounts.pop())
@@ -623,130 +649,92 @@ proc compileExpr(c: var Context; it: string): string =
 
 proc compileRule(c: var Context; it: string) =
   c.t = next(c.r)
-  if c.t.tk == SymbolDef:
-    c.tmpCounter = 0
-    c.currentRule = $c.t.s
-    c.localPopCounts = @[0]
-    if containsOrIncl(c.seenRules, c.currentRule):
-      error c, "attempt to redeclare RULE named " & c.currentRule
-    ind c
-    ind c
-    c.outp.add "proc " & c.procPrefix & c.currentRule & c.signature(c.currentRule) & " ="
-    inc c.nesting
-    let oldOutp = move(c.outp)
-    c.t = next(c.r)
+  c.tmpCounter = 0
+  c.currentRule = $c.t.s
+  c.localPopCounts = @[0]
+  c.seenRules.incl c.currentRule
+  ind c
+  ind c
+  c.outp.add "proc " & c.procPrefix & c.currentRule & c.signature(c.currentRule) & " ="
+  inc c.nesting
+  let oldOutp = move(c.outp)
+  c.t = next(c.r)
 
-    c.ruleFlags = {}
-    c.declaredVar = ""
-    c.locals = ""
-    c.collectInto = ""
-    c.flipVar = ""
+  c.ruleFlags = {}
+  c.declaredVar = ""
+  c.locals = ""
+  c.collectInto = ""
+  c.flipVar = ""
 
-    while c.t.tk == Ident:
-      if c.t.s == "LATEDECL":
-        c.ruleFlags.incl LateDecl
-        c.t = next(c.r)
-      elif c.t.s == "OVERLOADABLE":
-        c.ruleFlags.incl Overloadable
-        c.t = next(c.r)
-      elif c.t.s == "COLLECT":
-        c.ruleFlags.incl Collect
-        c.t = next(c.r)
-      else:
-        break
-
-    let action = "handle" & upcase(c.currentRule)
-    var before = ""
-    if Collect in c.ruleFlags:
-      before = declTemp(c, "before", "@[save(" & c.args & ")]")
-      c.collectInto = before
-    else:
-      ind c
-      c.outp.add "when declared("
-      c.outp.add action
-      c.outp.add "):"
-      inc c.nesting
-      before = declTemp(c, "before", "save(" & c.args & ")")
-      dec c.nesting
-
-    compileConcat c, it
-
-    if LateDecl in c.ruleFlags:
-      if c.declaredVar.len == 0:
-        error c, "LATEDECL used but no SYMBOLDEF in rule found"
-      else:
-        let declProc =
-          if Overloadable in c.ruleFlags: "addOverloadableSym"
-          else: "addSym"
-        ind c
-        c.outp.add declProc & "(" & c.args0 & ", " & c.declaredVar & ")"
-
-    let moreArgs = before & (if c.flipVar.len > 0: (", " & c.flipVar) else: "")
-    if Collect in c.ruleFlags:
-      ind c
-      c.outp.add action & "(" & c.args & ", " & moreArgs & ")"
-    else:
-      ind c
-      c.outp.add "when declared("
-      c.outp.add action
-      c.outp.add "):"
-      inc c.nesting
-      ind c
-      c.outp.add action & "(" & c.args & ", " & moreArgs & ")"
-      dec c.nesting
-
-    ind c
-    c.outp.add "return true"
-    dec c.nesting
-
-    for k, _ in pairs(c.bindings):
-      if not c.usedBindings.contains(k):
-        error c, "unused binding: " & k
-    c.bindings.clear()
-
-    let body = move(c.outp)
-
-    c.outp = ensureMove(oldOutp)
-    c.outp.add c.locals
-    c.outp.add body
-
-    if c.t.tk == ParRi:
+  while c.t.tk == Ident:
+    if c.t.s == "LATEDECL":
+      c.ruleFlags.incl LateDecl
+      c.t = next(c.r)
+    elif c.t.s == "OVERLOADABLE":
+      c.ruleFlags.incl Overloadable
+      c.t = next(c.r)
+    elif c.t.s == "COLLECT":
+      c.ruleFlags.incl Collect
       c.t = next(c.r)
     else:
-      error c, "')' expected, but got " & $c.t
+      break
+
+  let action = "handle" & upcase(c.currentRule)
+  var before = ""
+  if Collect in c.ruleFlags:
+    before = declTemp(c, "before", "@[save(" & c.args & ")]")
+    c.collectInto = before
   else:
-    error c, "SymbolDef expected, but got " & $c.t
+    ind c
+    c.outp.add "when declared("
+    c.outp.add action
+    c.outp.add "):"
+    inc c.nesting
+    before = declTemp(c, "before", "save(" & c.args & ")")
+    dec c.nesting
 
-type
-  ScanContext = object
-    r: Reader
-    t: Token
-    currentRule: string
+  compileConcat c, it
 
-    invocations: Table[string, HashSet[string]] # use pop var or rule invocation
-    ruleInvocations: Table[string, HashSet[string]] # rule invocations in rule
-    popVars: Table[string, HashSet[string]] # required pop vars to use rule
-    
-    rules: seq[string] # all declared rules
+  if LateDecl in c.ruleFlags:
+    if c.declaredVar.len == 0:
+      error c, "LATEDECL used but no SYMBOLDEF in rule found"
+    else:
+      let declProc =
+        if Overloadable in c.ruleFlags: "addOverloadableSym"
+        else: "addSym"
+      ind c
+      c.outp.add declProc & "(" & c.args0 & ", " & c.declaredVar & ")"
 
+  let moreArgs = before & (if c.flipVar.len > 0: (", " & c.flipVar) else: "")
+  if Collect in c.ruleFlags:
+    ind c
+    c.outp.add action & "(" & c.args & ", " & moreArgs & ")"
+  else:
+    ind c
+    c.outp.add "when declared("
+    c.outp.add action
+    c.outp.add "):"
+    inc c.nesting
+    ind c
+    c.outp.add action & "(" & c.args & ", " & moreArgs & ")"
+    dec c.nesting
 
-proc error(c: var ScanContext; msg: string) {.noreturn.} =
-  #writeStackTrace()
-  quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
+  ind c
+  c.outp.add "return true"
+  dec c.nesting
 
-proc skipComment[T: Context or ScanContext](c: var T) =
-  # skip comment:
-  var nested = 1
-  while true:
-    c.t = next(c.r)
-    if c.t.tk == EofToken:
-      error c, "')' expected, but got " & $c.t
-    if c.t.tk == ParLe: inc nested
-    elif c.t.tk == ParRi:
-      dec nested
-      if nested == 0:
-        c.t = next(c.r)
-        break
+  for k, _ in pairs(c.bindings):
+    if not c.usedBindings.contains(k):
+      error c, "unused binding: " & k
+  c.bindings.clear()
+
+  let body = move(c.outp)
+
+  c.outp = ensureMove(oldOutp)
+  c.outp.add c.locals
+  c.outp.add body
+
+  c.t = next(c.r) # skip ParRi
 
 proc compile(c: var Context) =
   c.t = next(c.r)
@@ -853,6 +841,8 @@ proc scanRule(c: var ScanContext) =
   if c.t.tk != SymbolDef:
     error c, "SymbolDef expected, but got " & $c.t
   c.currentRule = $c.t.s
+  if c.currentRule in c.rules:
+    error c, "attempt to redeclare RULE named " & c.currentRule
   c.rules.add c.currentRule
   c.ruleInvocations[c.currentRule] = initHashSet[string]()
   while c.t.tk == Ident:
