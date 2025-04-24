@@ -124,9 +124,12 @@ proc compileOr(c: var Context; it: string): string =
   let oldLeaveBlock = c.leaveBlock
   c.leaveBlock = "break " & lab
   
-  let stackSaveVar =
-    if c.inMatch > 0: declTempOuter(c, "st", "getStack(" & c.args0 & ")")
-    else: declTemp(c, "st", "getStack(" & c.args0 & ")")
+  var stackSaveVar = ""
+  let needsStackSave = c.localPopVars.len > 0 or c.popVars[c.currentRule].len > 0
+  if needsStackSave:
+    stackSaveVar =
+      if c.inMatch > 0: declTempOuter(c, "st", "getStack(" & c.args0 & ")")
+      else: declTemp(c, "st", "getStack(" & c.args0 & ")")
   
   while true:
     if c.t.tk == ParLe and c.t.s == "ERR":
@@ -146,8 +149,9 @@ proc compileOr(c: var Context; it: string): string =
     ind c
     c.outp.add "break " & lab
     dec c.nesting
-    ind c
-    c.outp.add "restoreStack(" & c.args0 & ", " & stackSaveVar & ")"
+    if needsStackSave:
+      ind c
+      c.outp.add "restoreStack(" & c.args0 & ", " & stackSaveVar & ")"
     if c.t.tk == ParRi:
       break
   dec c.nesting
@@ -652,6 +656,7 @@ proc compileRule(c: var Context; it: string) =
   c.tmpCounter = 0
   c.currentRule = $c.t.s
   c.localPopCounts = @[0]
+  c.localPopVars = @[]
   c.seenRules.incl c.currentRule
   ind c
   ind c
