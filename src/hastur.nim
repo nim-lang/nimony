@@ -248,7 +248,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       if testProgramExitCode != 0:
         output = file.changeFileExt(".exitcode")
         if not output.fileExists():
-          failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode
+          failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
       if output.fileExists():
         let outputSpec = readFile(output).strip
         let success = outputSpec == testProgramOutput.strip
