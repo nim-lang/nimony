@@ -2304,11 +2304,19 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of RaisesP:
     crucial.flags.incl pk
+    let oldLen = c.dest.len
     c.dest.add parLeToken(pk, n.info)
     inc n
     if hasParRi and n.kind != ParRi:
+      var nn = n
       takeTree c, n
-    c.dest.addParRi()
+      c.dest.addParRi()
+      if nn.exprKind == BracketX and nn.firstSon.kind == ParRi:
+        # `raises: []` means "does not raise":
+        crucial.flags.excl pk
+        c.dest.shrink oldLen
+    else:
+      c.dest.addParRi()
   of EmitP, BuildP, StringP, AssumeP, AssertP:
     buildErr c, n.info, "pragma not supported"
     inc n
