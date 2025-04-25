@@ -38,7 +38,7 @@ proc rawParseInt(s: openArray[char], b: var BiggestInt): int =
     result = 0
 
 proc parseBiggestInt*(s: openArray[char], number: var BiggestInt): int {.
-  noSideEffect, raises: [ValueError].} =
+  noSideEffect.} =
   ## Parses an integer and stores the value into `number`.
   ## Result is the number of processed chars or 0 if there is no integer.
   ## `ValueError` is raised if the parsed integer is out of the valid range.
@@ -80,7 +80,7 @@ proc rawParseUInt(s: openArray[char], b: var BiggestUInt): int =
     result = 0
 
 proc parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
-  noSideEffect, raises: [ValueError].} =
+  noSideEffect.} =
   ## Parses an unsigned integer and stores the value
   ## into `number`.
   ## `ValueError` is raised if the parsed integer is out of the valid range.
