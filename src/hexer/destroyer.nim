@@ -110,8 +110,8 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       inc n
     of ParRi:
       result.add n
-      if nested == 0: break
       dec nested
+      if nested == 0: break
       inc n
     of ParLe:
       result.add n
@@ -125,7 +125,7 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
           result.add symdefToken(repl, n.info)
           inc idgen
           inc n
-    else:
+    of UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
       result.add n
       inc n
 
@@ -313,7 +313,7 @@ proc trTry(c: var Context; n: var Cursor) =
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
-        trNestedScope c, n
+        trNestedScope c, n, Other, fin
     if n.substructureKind == FinU:
       copyInto(c.dest, n):
         trNestedScope c, n

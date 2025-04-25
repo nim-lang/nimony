@@ -6038,6 +6038,19 @@ proc semDeref(c: var SemContext; it: var Item) =
     c.buildErr info, "invalid type for deref: " & typeToString(t)
   commonType c, it, beforeExpr, expected
 
+proc semFailed(c: var SemContext; it: var Item) =
+  # It is not yet clear how this should work.
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  let expected = it.typ
+  takeToken c, it.n
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, arg
+  it.n = arg.n
+  takeParRi c, it.n
+  it.typ = c.types.boolType
+  commonType c, it, beforeExpr, expected
+
 proc semAddr(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   takeToken c, it.n
@@ -6612,6 +6625,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       takeToken c, it.n
       semExpr c, it
       takeParRi c, it.n
+    of FailedX:
+      semFailed c, it
     of ParX:
       inc it.n
       semExpr c, it

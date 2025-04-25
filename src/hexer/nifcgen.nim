@@ -1286,7 +1286,7 @@ proc traverseExpr(c: var EContext; n: var Cursor) =
        InSetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
-       InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX:
+       InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX:
       error c, "BUG: not eliminated: ", n
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
