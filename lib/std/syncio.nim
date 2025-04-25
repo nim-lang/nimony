@@ -20,9 +20,6 @@ type
                          ## at the end. If the file does not exist, it
                          ## will be created.
 
-  FileHandle* = cint ## The type that represents an OS file handle; this is
-                     ## useful for low-level file access.
-
 var
   stdin* {.importc: "stdin", header: "<stdio.h>".}: File
   stdout* {.importc: "stdout", header: "<stdio.h>".}: File

@@ -34,7 +34,12 @@ type
       handle*: cint      ## **Caution**: Posix specific public field.
       flags: cint        ## **Caution**: Platform specific private field.
 
-proc setFileSize(fh: FileHandle, newFileSize = -1, oldSize = -1): OSErrorCode =
+when defined(windows):
+  type OsFileHandle = Handle
+else:
+  type OsFileHandle = cint
+
+proc setFileSize(fh: OsFileHandle, newFileSize = -1, oldSize = -1): OSErrorCode =
   ## Set the size of open file pointed to by `fh` to `newFileSize` if != -1,
   ## allocating | freeing space from the file system.  This routine returns the
   ## last OSErrorCode found rather than raising to support old rollback/clean-up
@@ -141,7 +146,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
     if result.fHandle == INVALID_HANDLE_VALUE:
       fail(osLastError(), "error opening file")
 
-    if (let e = setFileSize(result.fHandle.FileHandle, newFileSize);
+    if (let e = setFileSize(result.fHandle, newFileSize);
         e != 0.OSErrorCode): fail(e, "error setting file size")
 
     # since the strings are always 'nil', we simply always call
@@ -193,7 +198,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
       var filename = filename
       result.handle = open(filename.toCString, flags, permissionsMode)
       if result.handle != -1:
-        if (let e = setFileSize(result.handle.FileHandle, newFileSize);
+        if (let e = setFileSize(result.handle, newFileSize);
             e != 0.OSErrorCode): fail(e, "error setting file size")
     else:
       var filename = filename
