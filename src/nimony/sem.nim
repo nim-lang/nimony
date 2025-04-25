@@ -867,7 +867,7 @@ iterator findConceptsInConstraint(typ: Cursor): Cursor =
       if section.body.typeKind == ConceptT:
         yield section.body
       inc typ
-    elif typ.typeKind in {AndT, OrT}:
+    elif typ.typeKind == AndT:
       inc typ
       inc nested
     else:
