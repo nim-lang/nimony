@@ -855,31 +855,48 @@ proc addUnique(c: var FnCandidates; x: FnCandidate) =
   if not containsOrIncl(c.s, x.sym):
     c.a.add x
 
+iterator findConceptsInConstraint(typ: Cursor): Cursor =
+  var typ = typ
+  var nested = 0
+  while true:
+    if typ.kind == ParRi:
+      inc typ
+      dec nested
+    elif typ.kind == Symbol:
+      let section = getTypeSection typ.symId
+      if section.body.typeKind == ConceptT:
+        yield section.body
+      inc typ
+    elif typ.typeKind in {AndT, OrT}:
+      inc typ
+      inc nested
+    else:
+      skip typ
+    if nested == 0: break
+
 proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
   let res = tryLoadSym(typevar)
   assert res.status == LacksNothing
   let local = asLocal(res.decl)
-  if local.kind == TypevarY and local.typ.kind == Symbol:
-    let concpt = local.typ.symId
-    let section = getTypeSection concpt
-
-    var ops = section.body
-    inc ops  # (concept
-    skip ops # .
-    skip ops # .
-    skip ops #   (typevar Self ...)
-    if ops.stmtKind == StmtsS:
-      inc ops
-      while ops.kind != ParRi:
-        let sk = ops.symKind
-        if sk in RoutineKinds:
-          var prc = ops
-          inc prc # (proc
-          if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
-            var d = ops
-            skipToParams d
-            cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
-        skip ops
+  if local.kind == TypevarY and local.typ.kind != DotToken:
+    for concpt in findConceptsInConstraint(local.typ):
+      var ops = concpt
+      inc ops  # (concept
+      skip ops # .
+      skip ops # .
+      skip ops #   (typevar Self ...)
+      if ops.stmtKind == StmtsS:
+        inc ops
+        while ops.kind != ParRi:
+          let sk = ops.symKind
+          if sk in RoutineKinds:
+            var prc = ops
+            inc prc # (proc
+            if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
+              var d = ops
+              skipToParams d
+              cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
+          skip ops
 
 proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCandidates; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
   for candidate in candidates.a:
