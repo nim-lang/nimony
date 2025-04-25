@@ -76,10 +76,11 @@ type
     dest: TokenBuf
     lifter: ref LiftingCtx
 
-proc createNestedScope(kind: ScopeKind; parent: var Scope; info: PackedLineInfo; label = NoLabel): Scope =
+proc createNestedScope(kind: ScopeKind; parent: var Scope; info: PackedLineInfo;
+                       label = NoLabel; fin = default(Cursor)): Scope =
   Scope(label: label,
     kind: kind, destroyOps: @[], info: info, parent: addr(parent),
-    isTopLevel: false)
+    isTopLevel: false, finallySection: fin)
 
 proc createEntryScope(info: PackedLineInfo): Scope =
   Scope(label: NoLabel,
@@ -240,9 +241,9 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     copyTree c.dest, r.body
   c.dest.addParRi()
 
-proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
+proc trNestedScope(c: var Context; body: var Cursor; kind = Other; fin = default(Cursor)) =
   var oldScope = move c.currentScope
-  c.currentScope = createNestedScope(kind, oldScope, body.info)
+  c.currentScope = createNestedScope(kind, oldScope, body.info, NoLabel, fin)
   trScope c, body
   swap c.currentScope, oldScope
 
@@ -306,10 +307,9 @@ proc trTry(c: var Context; n: var Cursor) =
   inc nn
   skip nn # try statements
   while nn.substructureKind == ExceptU: skip nn
-  if nn.substructureKind == FinU:
-    c.currentScope.finallySection = nn
   copyInto(c.dest, n):
-    trNestedScope c, n
+    let fin = if nn.substructureKind == FinU: nn else: default(Cursor)
+    trNestedScope c, n, Other, fin
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
@@ -340,6 +340,8 @@ proc tr(c: var Context; n: var Cursor) =
       trLocal c, n
     of WhileS:
       trWhile c, n
+    of TryS:
+      trTry c, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       trProcDecl c, n
     else:
