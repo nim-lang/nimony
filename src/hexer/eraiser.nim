@@ -141,13 +141,14 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
           dest.add head
           while n.kind != ParRi:
             tr c, dest, n
+          takeParRi dest, n
         addRaiseStmt(dest, symId, info)
       dest.addSymUse symId, info
   else:
     dest.add head
     while n.kind != ParRi:
       tr c, dest, n
-  takeParRi dest, n
+    takeParRi dest, n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
