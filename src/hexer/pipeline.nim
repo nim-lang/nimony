@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -12,7 +12,7 @@ include nifprelude
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
-  constparams, vtables_backend
+  constparams, vtables_backend, eraiser
 
 proc publishHooks*(n: var Cursor) =
   var nested = 0

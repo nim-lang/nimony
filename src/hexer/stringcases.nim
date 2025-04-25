@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 

@@ -183,8 +183,6 @@ type
 
 func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
   ## Returns the absolute value of `x`.
-  ##
-  ## If `x` is `low(x)` an overflow exception is thrown
-  ## (if overflow checking is turned on).
-
   if x < 0: -x else: x
+
+include "../../vendor/errorcodes/src" / errorcodes

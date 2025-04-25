@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -924,7 +924,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       raiseAssert "nodekind should have been eliminated in desugar.nim"
     of DefaultobjX, DefaulttupX, BracketX, CurlyX, TupX:
       raiseAssert "nodekind should have been eliminated in sem.nim"
-    of PragmaxX, CurlyatX, TabconstrX, DoX:
+    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX:
       trSons c, n, e
     of NoExpr:
       let k = n.stmtKind
