@@ -11,7 +11,7 @@ when defined(windows):
 
   # See https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
   type
-    Handle* {.importc: "HANDLE", header: "<WinDef.h>".} = int
+    Handle* {.importc: "HANDLE", header: "<WinDef.h>".} = distinct int
     LONG* {.importc: "LONG", header: "<WinDef.h>".} = int32
     WINBOOL* = distinct int32
       ## `WINBOOL` uses opposite convention as posix, !=0 meaning success.
@@ -46,6 +46,10 @@ when defined(windows):
     FILE_MAP_READ* = 4'i32
     FILE_MAP_WRITE* = 2'i32
     INVALID_FILE_SIZE* = -1'i32
+
+  proc default*(x: typedesc[Handle]): Handle = Handle 0
+  proc `==`(x, y: Handle): bool {.borrow.}
+  func isNil*(x: Handle): bool = x == Handle 0
 
   proc `==`(x, y: WINBOOL): bool {.borrow.}
 

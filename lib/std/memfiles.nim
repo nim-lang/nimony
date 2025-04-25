@@ -126,8 +126,8 @@ proc open*(filename: string, mode: FileMode = fmRead,
 
     template fail(errCode: OSErrorCode, msg: untyped) =
       rollback()
-      if result.fHandle != 0: discard closeHandle(result.fHandle)
-      if result.mapHandle != 0: discard closeHandle(result.mapHandle)
+      if not result.fHandle.isNil: discard closeHandle(result.fHandle)
+      if not result.mapHandle.isNil: discard closeHandle(result.mapHandle)
       raiseOSError(errCode)
       # return false
       #raise newException(IOError, msg)
@@ -141,7 +141,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
                                 if newFileSize != -1: CREATE_ALWAYS else: OPEN_EXISTING,
                                 if readonly: FILE_ATTRIBUTE_READONLY or flags
                                 else: FILE_ATTRIBUTE_NORMAL or flags,
-                                0)
+                                Handle 0)
 
     if result.fHandle == INVALID_HANDLE_VALUE:
       fail(osLastError(), "error opening file")
@@ -156,7 +156,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
       if readonly: PAGE_READONLY else: PAGE_READWRITE,
       0, 0, nil)
 
-    if result.mapHandle == 0:
+    if result.mapHandle.isNil:
       fail(osLastError(), "error creating mapping")
 
     result.mem = mapViewOfFileEx(
@@ -257,8 +257,8 @@ proc close*(f: var MemFile) =
   f.mem = nil
 
   when defined(windows):
-    f.fHandle = 0
-    f.mapHandle = 0
+    f.fHandle = Handle 0
+    f.mapHandle = Handle 0
     f.wasOpened = false
   else:
     f.handle = -1
