@@ -75,23 +75,40 @@ proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: PackedLineInfo) =
           dest.addDotToken()
 
 proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
-  var r = asRoutine(n)
-  result = initSet[SymId]()
+  # n must be a routine!
+  result = initHashSet[SymId]()
   var nested = 0
   var n = n
+  var hasRaisesPragma = false
   while true:
     case n.kind
     of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
       inc n
     of ParLe:
-      inc nested
-      inc n
+      if n.exprKind == FailedX and n.firstSon.kind == Symbol:
+        result.incl n.firstSon.symId
+        inc nested
+        inc n
+      elif n.pragmaKind == RaisesP:
+        hasRaisesPragma = true
+        inc nested
+        inc n
+      elif n.stmtKind == ResultS and n.firstSon.kind == SymbolDef:
+        if hasRaisesPragma:
+          result.incl n.firstSon.symId
+        inc nested
+        inc n
+      elif n.symKind in RoutineKinds:
+        skip n
+      else:
+        inc nested
+        inc n
     of ParRi:
       dec nested
       inc n
     if nested == 0: break
 
-proc callCanRaise*(typeCache: TypeCache; n: Cursor): bool =
+proc callCanRaise*(typeCache: var TypeCache; n: Cursor): bool =
   var fnType = skipProcTypeToParams(getType(typeCache, n.firstSon))
   assert fnType.tagEnum == ParamsTagId
   skip fnType # params

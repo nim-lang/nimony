@@ -6041,7 +6041,6 @@ proc semDeref(c: var SemContext; it: var Item) =
 proc semFailed(c: var SemContext; it: var Item) =
   # It is not yet clear how this should work.
   let beforeExpr = c.dest.len
-  let info = it.n.info
   let expected = it.typ
   takeToken c, it.n
   var arg = Item(n: it.n, typ: c.types.autoType)
