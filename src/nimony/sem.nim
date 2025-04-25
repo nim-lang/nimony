@@ -4534,7 +4534,7 @@ proc semRaise(c: var SemContext; it: var Item) =
   else:
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, a
-    if a.typ.kind == Symbol and pool.syms[a.typ.symId] == ("ErrorCode.0." & SystemModuleSuffix):
+    if a.typ.kind == Symbol and pool.syms[a.typ.symId] == ErrorCodeName:
       discard "ok"
     else:
       buildErr c, info, "only type `system.ErrorCode` is allowed to be raised"

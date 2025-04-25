@@ -621,7 +621,18 @@ proc traverseParams(c: var EContext; n: var Cursor) =
   else:
     error c, "expected (params) but got: ", n
   # the result type
-  traverseType c, n
+  var retType = n
+  skip n
+  # n is now at the pragmas position:
+  if hasPragma(n, RaisesP):
+    # use a tuple type:
+    var ret = createTokenBuf(6)
+    ret.addParLe TupleT, retType.info
+    ret.add symToken(pool.syms.getOrIncl(ErrorCodeName), retType.info)
+    ret.addSubtree retType
+    ret.addParRi()
+    retType = cursorAt(ret, 0)
+  traverseType c, retType
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
   result = default(CollectedPragmas)
@@ -1514,6 +1525,69 @@ proc traverseKeepovf(c: var EContext; n: var Cursor) =
   traverseExpr c, n # destination
   takeParRi c, n
 
+proc trRaise(c: var EContext; n: var Cursor) =
+  let info = n.info
+  inc n
+  if c.exceptLabels.len == 0:
+    # translate `raise` to `return`:
+    c.dest.addParLe RetS, info
+    traverseExpr c, n
+    takeParRi c, n
+  else:
+    # translate `raise` to `goto`:
+    let (lab, exc) = c.exceptLabels[^1]
+    c.dest.addParLe AsgnS, info
+    c.dest.add symToken(exc, info)
+    traverseExpr c, n
+    takeParRi c, n
+    c.dest.add tagToken("jmp", info)
+    c.dest.add symToken(lab, info)
+    c.dest.addParRi()
+
+proc trTry(c: var EContext; n: var Cursor) =
+  let info = n.info
+  inc n
+  var nn = n
+  skip nn # stmts
+  let oldLen = c.exceptLabels.len
+  if nn.substructureKind == ExceptU:
+    let exc = pool.syms.getOrIncl("`exc." & $getTmpId(c))
+    let lab = pool.syms.getOrIncl("`lab." & $getTmpId(c))
+    c.exceptLabels.add (lab, exc)
+
+    c.dest.copyIntoKind VarS, nn.info:
+      c.dest.add symdefToken(exc, nn.info)
+      c.dest.addEmpty() # pragmas
+      c.dest.add symToken(pool.syms.getOrIncl(ErrorCodeName), nn.info)
+      c.dest.addEmpty() # leave it unitialized
+  traverseStmt c, n
+
+  while n.substructureKind == ExceptU:
+    let (lab, exc) = c.exceptLabels[oldLen]
+    c.dest.copyIntoKind IfS, n.info:
+      c.dest.copyIntoKind ElifU, n.info:
+        c.dest.addParPair(FalseX, n.info)
+        c.dest.copyIntoKind StmtsS, n.info:
+          c.dest.add tagToken("lab", n.info)
+          c.dest.add symdefToken(lab, n.info)
+          c.dest.addParRi()
+          inc n
+          skip n # skip `T as e` for now:
+          traverseStmt c, n
+          skipParRi n
+        c.dest.addParRi()
+      c.dest.addParRi()
+  c.exceptLabels.shrink oldLen
+
+  # Since we duplicated the finally statements before every `raise` statement we
+  # know that when control flow reaches here, no error was raised. Hence we do not
+  # need to add logic to re-raise an exception here.
+  if n.substructureKind == FinU:
+    inc n
+    traverseStmt c, n
+    skipParRi n
+  takeParRi c, n
+
 proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
   case n.kind
   of DotToken:
@@ -1602,8 +1676,10 @@ proc traverseStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
     of CaseS: traverseCase c, n
     of YldS, ForS, InclS, ExclS, DeferS, UnpackDeclS:
       error c, "BUG: not eliminated: ", n
-    of TryS, RaiseS:
-      error c, "BUG: not implemented: ", n
+    of TryS:
+      trTry c, n
+    of RaiseS:
+      trRaise c, n
     of FuncS, ProcS, ConverterS, MethodS:
       moveToTopLevel(c, mode):
         traverseProc c, n, mode

@@ -72,7 +72,7 @@ proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: PackedLineInfo) =
         dest.addSymUse target, info
       copyIntoKind dest, StmtsS, info:
         copyIntoKind dest, RaiseS, info:
-          dest.addDotToken()
+          dest.addIntLit 0, info # little hack to mark this raise as "raise after call"
 
 proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
   # n must be a routine!
