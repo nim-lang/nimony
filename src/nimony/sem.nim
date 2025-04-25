@@ -2304,11 +2304,19 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of RaisesP:
     crucial.flags.incl pk
+    let oldLen = c.dest.len
     c.dest.add parLeToken(pk, n.info)
     inc n
     if hasParRi and n.kind != ParRi:
+      var nn = n
       takeTree c, n
-    c.dest.addParRi()
+      c.dest.addParRi()
+      if nn.exprKind == BracketX and nn.firstSon.kind == ParRi:
+        # `raises: []` means "does not raise":
+        crucial.flags.excl pk
+        c.dest.shrink oldLen
+    else:
+      c.dest.addParRi()
   of EmitP, BuildP, StringP, AssumeP, AssertP:
     buildErr c, n.info, "pragma not supported"
     inc n
@@ -4534,7 +4542,7 @@ proc semRaise(c: var SemContext; it: var Item) =
   else:
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, a
-    if a.typ.kind == Symbol and pool.syms[a.typ.symId] == ("ErrorCode.0." & SystemModuleSuffix):
+    if a.typ.kind == Symbol and pool.syms[a.typ.symId] == ErrorCodeName:
       discard "ok"
     else:
       buildErr c, info, "only type `system.ErrorCode` is allowed to be raised"

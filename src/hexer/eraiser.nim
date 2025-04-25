@@ -72,7 +72,7 @@ proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: PackedLineInfo) =
         dest.addSymUse target, info
       copyIntoKind dest, StmtsS, info:
         copyIntoKind dest, RaiseS, info:
-          dest.addDotToken()
+          dest.addIntLit 0, info # little hack to mark this raise as "raise after call"
 
 proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
   # n must be a routine!
@@ -141,13 +141,14 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
           dest.add head
           while n.kind != ParRi:
             tr c, dest, n
+          takeParRi dest, n
         addRaiseStmt(dest, symId, info)
       dest.addSymUse symId, info
   else:
     dest.add head
     while n.kind != ParRi:
       tr c, dest, n
-  takeParRi dest, n
+    takeParRi dest, n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -222,7 +223,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc injectRaisesAfterCalls*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
+proc injectRaisingCalls*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
   c.typeCache.openScope()
   result = createTokenBuf(300)

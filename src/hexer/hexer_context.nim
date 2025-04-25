@@ -36,6 +36,7 @@ type
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`
+    exceptLabels*: seq[(SymId, SymId)] # how to translate `except`
     instId*: int # per forStmt
     tmpId*: int # per proc
     inImpSection*: int
