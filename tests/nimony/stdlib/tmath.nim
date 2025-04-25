@@ -22,3 +22,13 @@ assert classify(NaN) == fcNan
 assert classify(DBL_MIN / 2.0) == fcSubnormal
 assert classify(1.0'f32) == fcNormal
 assert classify(FLT_MIN / 2.0'f32) == fcSubnormal
+
+# almostEqual
+assert almostEqual(3.141592653589793, 3.1415926535897936)
+assert almostEqual(1.6777215e7'f32, 1.6777216e7'f32)
+assert almostEqual(Inf, Inf)
+assert almostEqual(-Inf, -Inf)
+assert not almostEqual(Inf, -Inf)
+assert not almostEqual(-Inf, Inf)
+assert not almostEqual(Inf, NaN)
+assert not almostEqual(NaN, NaN)
