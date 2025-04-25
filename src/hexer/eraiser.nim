@@ -222,7 +222,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc injectRaisesAfterCalls*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
+proc injectRaisingCalls*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
   c.typeCache.openScope()
   result = createTokenBuf(300)

@@ -56,8 +56,13 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   endRead(nx)
 
   var c3 = beginRead(n2)
-  var n3 = lowerExprs(c3, moduleSuffix)
+  var needsXelimIgnored = false
+  var withRaises = injectRaisingCalls(c3, c.bits div 8, needsXelimIgnored)
   endRead(n2)
+  var withRaisesCursor = beginRead(withRaises)
+
+  var n3 = lowerExprs(withRaisesCursor, moduleSuffix)
+  endRead(withRaises)
 
   var c4 = beginRead(n3)
   var n4 = injectDestructors(c4, ctx)
