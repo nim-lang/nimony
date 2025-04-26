@@ -1,4 +1,7 @@
-import std/[assertions]
+import std/[assertions, fenv]
+
+const
+  PI* = 3.1415926535897932384626433          ## The circle constant PI (Ludolph's number).
 
 # These are C macros and can take both float and double type values.
 proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit", header: "<math.h>".}
@@ -57,3 +60,31 @@ func classify*[T: SomeFloat](x: T): FloatClass {.inline.} =
   else:
     # can be implementation-defined type
     result = fcNan
+
+func almostEqual*[T: SomeFloat](x, y: T; unitsInLastPlace: int = 4): bool {.
+    untyped.} =
+  ## Checks if two float values are almost equal, using the
+  ## [machine epsilon](https://en.wikipedia.org/wiki/Machine_epsilon).
+  ##
+  ## `unitsInLastPlace` is the max number of
+  ## [units in the last place](https://en.wikipedia.org/wiki/Unit_in_the_last_place)
+  ## difference tolerated when comparing two numbers. The larger the value, the
+  ## more error is allowed. A `0` value means that two numbers must be exactly the
+  ## same to be considered equal.
+  ##
+  ## The machine epsilon has to be scaled to the magnitude of the values used
+  ## and multiplied by the desired precision in ULPs unless the difference is
+  ## subnormal.
+  ##
+  # taken from: https://en.cppreference.com/w/cpp/types/numeric_limits/epsilon
+  runnableExamples:
+    assert almostEqual(PI, 3.14159265358979)
+    assert almostEqual(Inf, Inf)
+    assert not almostEqual(NaN, NaN)
+
+  if x == y:
+    # short circuit exact equality -- needed to catch two infinities of
+    # the same sign. And perhaps speeds things up a bit sometimes.
+    return true
+  let diff = abs(x - y)
+  return diff <= epsilon(T) * abs(x + y) * T(unitsInLastPlace) or diff < minimumPositiveValue(T)

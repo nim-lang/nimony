@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -43,7 +43,7 @@ interprets this `=` as `=bitcopy`.
 
 ]##
 
-import std / assertions
+import std / [assertions, tables]
 include nifprelude
 import nifindexes, symparser, treemangler
 import ".." / nimony / [nimony_model, programs, typenav, decls]
@@ -66,6 +66,7 @@ type
     isTopLevel: bool
     destroyOps: seq[DestructorOp]
     info: PackedLineInfo
+    finallySection: Cursor
     parent: ptr Scope
 
   Context = object
@@ -75,10 +76,11 @@ type
     dest: TokenBuf
     lifter: ref LiftingCtx
 
-proc createNestedScope(kind: ScopeKind; parent: var Scope; info: PackedLineInfo; label = NoLabel): Scope =
+proc createNestedScope(kind: ScopeKind; parent: var Scope; info: PackedLineInfo;
+                       label = NoLabel; fin = default(Cursor)): Scope =
   Scope(label: label,
     kind: kind, destroyOps: @[], info: info, parent: addr(parent),
-    isTopLevel: false)
+    isTopLevel: false, finallySection: fin)
 
 proc createEntryScope(info: PackedLineInfo): Scope =
   Scope(label: NoLabel,
@@ -91,7 +93,47 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId) =
     copyIntoSymUse c.dest, destroyProc, info
     copyIntoSymUse c.dest, arg, info
 
+when not defined(nimony):
+  proc tr(c: var Context; n: var Cursor)
+
+proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
+  var n = n
+  var nested = 0
+  var newVars = initTable[SymId, SymId]()
+  var idgen = 0
+  result = createTokenBuf(30)
+  while true:
+    case n.kind
+    of Symbol:
+      let repl = newVars.getOrDefault(n.symId, n.symId)
+      result.add symToken(repl, n.info)
+      inc n
+    of ParRi:
+      result.add n
+      dec nested
+      if nested == 0: break
+      inc n
+    of ParLe:
+      result.add n
+      let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS}
+      inc n
+      inc nested
+      if isLocalDecl:
+        if n.kind == SymbolDef:
+          let repl = pool.syms.getOrIncl("`ffv." & $idgen)
+          newVars[n.symId] = repl
+          result.add symdefToken(repl, n.info)
+          inc idgen
+          inc n
+    of UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
+      result.add n
+      inc n
+
 proc leaveScope(c: var Context; s: var Scope) =
+  if s.finallySection != default(Cursor):
+    var freshVars = createFreshVars(c, s.finallySection)
+    var n = beginRead(freshVars)
+    tr c, n
   for i in countdown(s.destroyOps.high, 0):
     callDestroy c, s.destroyOps[i].destroyProc, s.destroyOps[i].arg
 
@@ -136,9 +178,6 @@ proc trReturn(c: var Context; n: var Cursor) =
     leaveScope(c, it[])
     it = it.parent
   takeTree c.dest, n
-
-when not defined(nimony):
-  proc tr(c: var Context; n: var Cursor)
 
 proc trLocal(c: var Context; n: var Cursor) =
   let info = n.info
@@ -202,9 +241,9 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     copyTree c.dest, r.body
   c.dest.addParRi()
 
-proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
+proc trNestedScope(c: var Context; body: var Cursor; kind = Other; fin = default(Cursor)) =
   var oldScope = move c.currentScope
-  c.currentScope = createNestedScope(kind, oldScope, body.info)
+  c.currentScope = createNestedScope(kind, oldScope, body.info, NoLabel, fin)
   trScope c, body
   swap c.currentScope, oldScope
 
@@ -263,12 +302,31 @@ proc trCase(c: var Context; n: var Cursor) =
       else:
         takeTree c.dest, n
 
+proc trTry(c: var Context; n: var Cursor) =
+  var nn = n
+  inc nn
+  skip nn # try statements
+  while nn.substructureKind == ExceptU: skip nn
+  copyInto(c.dest, n):
+    let fin = if nn.substructureKind == FinU: nn else: default(Cursor)
+    trNestedScope c, n, Other, fin
+    while n.substructureKind == ExceptU:
+      copyInto(c.dest, n):
+        takeTree c.dest, n # `E as e`
+        trNestedScope c, n, Other, fin
+    if n.substructureKind == FinU:
+      copyInto(c.dest, n):
+        trNestedScope c, n
+
 proc tr(c: var Context; n: var Cursor) =
   if isAtom(n) or isDeclarative(n):
     takeTree c.dest, n
   else:
     case n.stmtKind
     of RetS:
+      trReturn(c, n)
+    of RaiseS:
+      # currently the same as trReturn
       trReturn(c, n)
     of BreakS:
       trBreak(c, n)
@@ -282,6 +340,8 @@ proc tr(c: var Context; n: var Cursor) =
       trLocal c, n
     of WhileS:
       trWhile c, n
+    of TryS:
+      trTry c, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       trProcDecl c, n
     else:

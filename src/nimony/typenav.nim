@@ -3,7 +3,7 @@
 #           Nimony
 #        (c) Copyright 2024 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -264,7 +264,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       inc result # dot token
       skip result # parameters
   of FalseX, TrueX, AndX, OrX, XorX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
-     EqsetX, LesetX, LtsetX, InsetX, OvfX, CompilesX, InstanceofX:
+     EqsetX, LesetX, LtsetX, InsetX, OvfX, CompilesX, InstanceofX, FailedX:
     result = c.builtins.boolType
   of NegX, NegInfX, NanX, InfX:
     result = c.builtins.floatType

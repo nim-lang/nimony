@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -36,6 +36,7 @@ type
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`
+    exceptLabels*: seq[(SymId, SymId)] # how to translate `except`
     instId*: int # per forStmt
     tmpId*: int # per proc
     inImpSection*: int

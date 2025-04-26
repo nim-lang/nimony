@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -12,7 +12,7 @@ include nifprelude
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
-  constparams, vtables_backend
+  constparams, vtables_backend, eraiser
 
 proc publishHooks*(n: var Cursor) =
   var nested = 0
@@ -56,8 +56,13 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   endRead(nx)
 
   var c3 = beginRead(n2)
-  var n3 = lowerExprs(c3, moduleSuffix)
+  var needsXelimIgnored = false
+  var withRaises = injectRaisingCalls(c3, c.bits div 8, needsXelimIgnored)
   endRead(n2)
+  var withRaisesCursor = beginRead(withRaises)
+
+  var n3 = lowerExprs(withRaisesCursor, moduleSuffix)
+  endRead(withRaises)
 
   var c4 = beginRead(n3)
   var n4 = injectDestructors(c4, ctx)
