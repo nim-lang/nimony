@@ -35,6 +35,7 @@ type
     keepOverflowFlag: bool
     canRaise: bool
     resultSym: SymId
+    retType: Cursor
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -53,7 +54,8 @@ proc rememberConstRefParams(c: var Context; params: Cursor) =
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
   var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim,
-    resultSym: SymId(0), canRaise: hasPragma(r.pragmas, RaisesP))
+    resultSym: SymId(0), canRaise: hasPragma(r.pragmas, RaisesP),
+    retType: r.retType)
 
   copyInto(dest, n):
     let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
@@ -94,38 +96,53 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, HaddrX, info:
       tr c, dest, n
 
-proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
-  dest.addParLe TupconstrX, info
-  dest.addParLe TupleT, info
-  dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
-  dest.addSubtree typ
-  dest.addParRi()
-  dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+proc isVoidType(t: Cursor): bool {.inline.} =
+  t.kind == DotToken or t.typeKind == VoidT
+
+proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): bool =
+  if isVoidType(typ):
+    dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+    result = false
+  else:
+    dest.addParLe TupconstrX, info
+    dest.addParLe TupleT, info
+    dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
+    dest.addSubtree typ
+    dest.addParRi()
+    dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+    result = true
 
 proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
-  dest.addParLe TupconstrX, info
-  dest.addParLe TupleT, info
-  dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
-  dest.addSubtree typ
-  dest.addParRi()
+  if not isVoidType(c.retType):
+    dest.addParLe TupconstrX, info
+    dest.addParLe TupleT, info
+    dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
+    dest.addSubtree typ
+    dest.addParRi()
 
 proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
-  if c.resultSym != SymId(0):
-    dest.addSymUse c.resultSym, info
-  dest.addParRi()
+  if not isVoidType(c.retType):
+    if c.resultSym != SymId(0):
+      dest.addSymUse c.resultSym, info
+    dest.addParRi()
+
+proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  produceRaiseTuple c, dest, c.retType, n.info
+  tr c, dest, n
+  finishRaiseTuple c, dest, n.info
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTuple: bool) =
   var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
   assert fnType.tagEnum == ParamsTagId
   var pragmas = fnType
   skip pragmas
-  let returnType = pragmas
+  let retType = pragmas
   skip pragmas
   let canRaise = hasPragma(pragmas, RaisesP)
-  let needsTuple = (not targetExpectsTuple and canRaise) or
+  var needsTuple = (not targetExpectsTuple and canRaise) or
                    (targetExpectsTuple and not canRaise)
   if needsTuple:
-    produceSuccessTuple c, dest, returnType, n.info
+    needsTuple = produceSuccessTuple(c, dest, retType, n.info)
 
   dest.add n
   inc n # skip `(call)`
@@ -167,11 +184,23 @@ proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.typeCache.takeLocalHeader(dest, n, ResultY)
     tr(c, dest, n)
   # produce `result[0] = Success` statement for initialization:
-  copyIntoKind dest, AsgnS, info:
-    copyIntoKind dest, TupatX, info:
-      dest.addSymUse c.resultSym, info
-      dest.addIntLit 0, info
-    dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+  if c.canRaise:
+    copyIntoKind dest, AsgnS, info:
+      copyIntoKind dest, TupatX, info:
+        dest.addSymUse c.resultSym, info
+        dest.addIntLit 0, info
+      dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+
+proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if c.canRaise:
+    copyInto dest, n:
+      let maybeClose = produceSuccessTuple(c, dest, c.retType, n.info)
+      tr c, dest, n
+      if maybeClose:
+        dest.addParRi() # tuple constructor
+  else:
+    copyInto dest, n:
+      tr c, dest, n
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
@@ -236,9 +265,10 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyInto dest, n:
         dest.add n # result
         inc n
-        produceSuccessTuple c, dest, getType(c.typeCache, n), n.info
+        let maybeClose = produceSuccessTuple(c, dest, getType(c.typeCache, n), n.info)
         tr c, dest, n
-        dest.addParRi() # tuple constructor
+        if maybeClose:
+          dest.addParRi() # tuple constructor
   else:
     copyInto dest, n:
       tr c, dest, n
@@ -284,6 +314,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trScope c, dest, n
         of AsgnS:
           trAsgn c, dest, n
+        of RetS:
+          trRet c, dest, n
+        of RaiseS:
+          trRaise c, dest, n
         of TemplateS, TypeS:
           takeTree dest, n
         else:
@@ -298,6 +332,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc injectConstParamDerefs*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
+  c.retType = c.typeCache.builtins.voidType
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
