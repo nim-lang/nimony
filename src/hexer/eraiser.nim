@@ -25,7 +25,7 @@ There is a classic phase ordering problem here: We want to introduce `raise` sta
 injections so that resource cleanup is correctly done. But we want to introduce the tuples later so that
 we don't end up producing lots of destructors for `(ErrorCode, T)` tuples which only delegate to the `T`
 anyway and need to be inlined and removed. So instead of producing `if e != Success: raise (e, result)` we
-produce `if failed(call expr): raise <dot token>` and introduce the tuples later.
+produce `let tmp = call(); if failed(tmp): raise tmp` and introduce the tuples later.
 
 We also produce the required temporaries (as cursors so that we don't get even more copies).
 
@@ -72,7 +72,7 @@ proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: PackedLineInfo) =
         dest.addSymUse target, info
       copyIntoKind dest, StmtsS, info:
         copyIntoKind dest, RaiseS, info:
-          dest.addIntLit 0, info # little hack to mark this raise as "raise after call"
+          dest.addSymUse target, info
 
 proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
   # n must be a routine!

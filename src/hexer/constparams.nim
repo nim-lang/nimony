@@ -34,6 +34,7 @@ type
     needsXelim: bool
     keepOverflowFlag: bool
     canRaise: bool
+    nextRaiseIsSpecial: bool
     resultSym: SymId
     retType: Cursor
 
@@ -128,8 +129,25 @@ proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   produceRaiseTuple c, dest, c.retType, n.info
-  tr c, dest, n
+  copyInto dest, n:
+    if c.nextRaiseIsSpecial:
+      let info = n.info
+      copyIntoKind dest, TupatX, info:
+        tr c, dest, n
+        dest.addIntLit 0, info
+    else:
+      tr c, dest, n
   finishRaiseTuple c, dest, n.info
+  c.nextRaiseIsSpecial = false
+
+proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n
+  copyIntoKind dest, TupatX, info:
+    tr c, dest, n
+    dest.addIntLit 0, info
+  skipParRi n
+  c.nextRaiseIsSpecial = true
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTuple: bool) =
   var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
@@ -282,6 +300,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if c.constRefParams.contains(n.symId):
         copyIntoKind dest, DerefX, n.info:
           dest.add n
+      elif n.symId == c.resultSym and c.canRaise:
+        let info = n.info
+        copyIntoKind dest, TupatX, info:
+          dest.addSymUse c.resultSym, info
+          dest.addIntLit 1, info
       else:
         dest.add n
       inc n
@@ -302,6 +325,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.add n
           inc n
           inc nested
+      of FailedX:
+        trFailed c, dest, n
       else:
         case n.stmtKind
         of ProcS, FuncS, MacroS, MethodS, ConverterS:
