@@ -12,14 +12,19 @@
 Implements "pass by const" by introducing more hidden pointers.
 We do this right before inlining and before codegen as it interacts with the
 codegen's `maybeByConstRef` logic.
+
+We also now do part of the exception handling transformations here:
+- Introduce tuples for the required variables.
+- Translate `raise e` to `raise (e, result)`.
+
 ]##
 
 import std / [sets, assertions]
 
 include nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, builtintypes]
 import ".." / models / tags
-import duplifier
+import duplifier, eraiser
 
 type
   Context = object
@@ -28,6 +33,8 @@ type
     typeCache: TypeCache
     needsXelim: bool
     keepOverflowFlag: bool
+    canRaise: bool
+    resultSym: SymId
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -45,7 +52,8 @@ proc rememberConstRefParams(c: var Context; params: Cursor) =
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var r = asRoutine(n)
-  var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim)
+  var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim,
+    resultSym: SymId(0), canRaise: hasPragma(r.pragmas, RaisesP))
 
   copyInto(dest, n):
     let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
@@ -86,12 +94,43 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, HaddrX, info:
       tr c, dest, n
 
-proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
+  dest.addParLe TupconstrX, info
+  dest.addParLe TupleT, info
+  dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
+  dest.addSubtree typ
+  dest.addParRi()
+  dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+
+proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
+  dest.addParLe TupconstrX, info
+  dest.addParLe TupleT, info
+  dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
+  dest.addSubtree typ
+  dest.addParRi()
+
+proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  if c.resultSym != SymId(0):
+    dest.addSymUse c.resultSym, info
+  dest.addParRi()
+
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTuple: bool) =
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
+  assert fnType.tagEnum == ParamsTagId
+  var pragmas = fnType
+  skip pragmas
+  let returnType = pragmas
+  skip pragmas
+  let canRaise = hasPragma(pragmas, RaisesP)
+  let needsTuple = (not targetExpectsTuple and canRaise) or
+                   (targetExpectsTuple and not canRaise)
+  if needsTuple:
+    produceSuccessTuple c, dest, returnType, n.info
+
   dest.add n
   inc n # skip `(call)`
-  var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   tr c, dest, n # handle `fn`
-  assert fnType.tagEnum == ParamsTagId
+
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType
@@ -112,12 +151,27 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       tr c, dest, n
   takeParRi dest, n
+  if needsTuple:
+    dest.addParRi() # TupconstrX
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
     c.typeCache.takeLocalHeader(dest, n, kind)
     tr(c, dest, n)
+
+proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  copyInto dest, n:
+    c.resultSym = n.symId
+    c.typeCache.takeLocalHeader(dest, n, ResultY)
+    tr(c, dest, n)
+  # produce `result[0] = Success` statement for initialization:
+  copyIntoKind dest, AsgnS, info:
+    copyIntoKind dest, TupatX, info:
+      dest.addSymUse c.resultSym, info
+      dest.addIntLit 0, info
+    dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
@@ -167,6 +221,29 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParRi() # expr
   c.needsXelim = true
 
+proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  var nn = n.firstSon
+  if nn.kind == Symbol and nn.symId == c.resultSym and c.canRaise:
+    skip nn
+    if nn.exprKind in CallKinds and callCanRaise(c.typeCache, nn):
+      # nothing to do, both are in compatible tuple form:
+      copyInto dest, n:
+        dest.add n # result
+        inc n
+        trCall c, dest, n, true
+    else:
+      copyInto dest, n:
+        dest.add n # result
+        inc n
+        produceSuccessTuple c, dest, getType(c.typeCache, n), n.info
+        tr c, dest, n
+        dest.addParRi() # tuple constructor
+  else:
+    copyInto dest, n:
+      tr c, dest, n
+      tr c, dest, n
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var nested = 0
   while true:
@@ -185,7 +262,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let ek = n.exprKind
       case ek
       of CallKinds:
-        trCall c, dest, n
+        trCall c, dest, n, false
       of PragmaxX:
         trPragmaBlock c, dest, n
       of AddX, SubX, MulX, DivX, ModX:
@@ -199,10 +276,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         case n.stmtKind
         of ProcS, FuncS, MacroS, MethodS, ConverterS:
           trProcDecl c, dest, n
-        of LocalDecls:
+        of LocalDecls - {ResultS}:
           trLocal c, dest, n
+        of ResultS:
+          trResultDecl c, dest, n
         of ScopeS:
           trScope c, dest, n
+        of AsgnS:
+          trAsgn c, dest, n
         of TemplateS, TypeS:
           takeTree dest, n
         else:
