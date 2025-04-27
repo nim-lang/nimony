@@ -271,4 +271,6 @@ proc parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
   t[ti-2] = ('0'.ord + absExponent mod 10).char
   absExponent = absExponent div 10
   t[ti-3] = ('0'.ord + absExponent mod 10).char
+  # array not zeroed out:
+  t[ti] = '\0'
   number = c_strtod(cast[cstring](addr t), nil)
