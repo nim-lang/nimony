@@ -226,29 +226,7 @@ proc upcase(s: string): string =
 proc tagAsNimIdent(tag: string): string =
   upcase(tag) & "T"
 
-proc compileKeyw(c: var Context; it: string): string =
-  let tag = decodeStr(c.t)
-
-  c.foundTags[tag] = 1
-  if c.specTags.len > 0 and not c.specTags.hasKey(tag):
-    error c, "unknown tag: " & tag
-
-  let cond = "isTag(" & c.args & ", " & tagAsNimIdent(tag) & ")"
-  c.t = next(c.r)
-  if c.t.tk == ParRi and c.inMatch == 0:
-    if c.kind == Generator:
-      return "matchAndEmitTag(" & c.args & ", " & tagAsNimIdent(tag) & ", " & escape(tag) & ")"
-    return cond
-
-  result = if c.inMatch > 0: declTempOuter(c, "kw") else: declTemp(c, "kw")
-
-  ind c
-  c.outp.add "if "
-  c.outp.add cond
-  c.outp.add ":"
-
-  inc c.nesting
-
+proc compileKeywArgs(c: var Context; it, tag, resultVar: string) =
   var firstArg = c.kind == Generator
   while true:
     if c.t.tk == ParRi: break
@@ -288,9 +266,32 @@ proc compileKeyw(c: var Context; it: string): string =
       dec c.nesting
 
   ind c
-  c.outp.add result
+  c.outp.add resultVar
   c.outp.add " = matchParRi(" & c.args & ")"
 
+proc compileKeyw(c: var Context; it: string): string =
+  let tag = decodeStr(c.t)
+
+  c.foundTags[tag] = 1
+  if c.specTags.len > 0 and not c.specTags.hasKey(tag):
+    error c, "unknown tag: " & tag
+
+  let cond = "isTag(" & c.args & ", " & tagAsNimIdent(tag) & ")"
+  c.t = next(c.r)
+  if c.t.tk == ParRi and c.inMatch == 0:
+    if c.kind == Generator:
+      return "matchAndEmitTag(" & c.args & ", " & tagAsNimIdent(tag) & ", " & escape(tag) & ")"
+    return cond
+
+  result = if c.inMatch > 0: declTempOuter(c, "kw") else: declTemp(c, "kw")
+
+  ind c
+  c.outp.add "if "
+  c.outp.add cond
+  c.outp.add ":"
+
+  inc c.nesting
+  compileKeywArgs(c, it, tag, result)
   dec c.nesting
   if c.inMatch == 0:
     discard
@@ -304,7 +305,7 @@ proc compilePopVar(c: var Context; it: string): string =
   c.outp.add "emit(" & c.args0 & ", " & $c.t.s & ")"
   result = "true"
 
-proc compileRuleInvokation(c: var Context; it: string): string =
+proc compileRuleInvocation(c: var Context; it: string): string =
   let ruleName = decodeStr(c.t)
   if not c.seenRules.contains(ruleName):
     if not c.used.containsOrIncl(ruleName):
@@ -369,7 +370,7 @@ proc compileAtom(c: var Context; it: string): string =
     elif $c.t.s in c.popVars.getOrDefault(c.currentRule) or $c.t.s in c.localPopVars:
       result = compilePopVar(c, it)
     else:
-      result = compileRuleInvokation(c, it)
+      result = compileRuleInvocation(c, it)
   elif c.kind == Generator and c.t.tk == StringLit:
     result = compileEmit(c, it)
   else:
