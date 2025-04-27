@@ -19,6 +19,9 @@ There are 4 cases:
 3. `T` to `var T` transfer: Insert HiddenAddr instruction.
 4. `T` to `T` transfer: Nothing to do.
 
+Now also does some simple checks for `raise` statements:
+- Only a routine marked as `.raises` can call another routine marked as `.raises`.
+
 ]##
 
 import std / [assertions]
@@ -39,8 +42,9 @@ type
 
   CurrentRoutine = object
     returnExpects: Expects
-    firstParam: SymId
     firstParamKind: TypeKind
+    canRaise: bool
+    firstParam: SymId
     resultSym: SymId
     dangerousLocations: seq[(SymId, Cursor)] # Cursor is only used for line information
 
@@ -285,8 +289,12 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
   else:
     takeToken c, n # pragmas
     while n.kind != ParRi:
-      if n.pragmaKind == RequiresP:
+      let pk = n.pragmaKind
+      if pk == RequiresP:
         tr c, n, WantT
+      elif pk == RaisesP:
+        c.r.canRaise = true
+        takeTree c.dest, n
       else:
         takeTree c.dest, n
     takeParRi c, n
@@ -331,7 +339,12 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     takeParRi c, n
   c.typeCache.closeScope()
 
+proc callCanRaise(c: var Context; info: PackedLineInfo) =
+  if not c.r.canRaise:
+    buildLocalErr c.dest, info, "cannot call a routine marked as `.raises`"
+
 proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
+  let info = n.info
   var fnType = skipProcTypeToParams(fnType)
   assert fnType.isParamsTag
   inc fnType
@@ -353,6 +366,12 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
       # do not advance formal parameter:
       fnType = previousFormalParam
     tr c, n, e
+  while fnType.kind != ParRi: skip fnType
+  # skip return type:
+  skip fnType
+  # now at the pragmas position:
+  if hasPragma(fnType, RaisesP):
+    callCanRaise(c, info)
 
 proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   assert n.exprKind in CallKinds
@@ -584,6 +603,20 @@ proc trVarHook(c: var Context; n: var Cursor) =
     tr c, n, WantT
   takeParRi c, n
 
+proc trTry(c: var Context; n: var Cursor) =
+  takeToken c, n
+  var nn = n
+  skip nn
+  let oldCanRaise = c.r.canRaise
+  if nn.substructureKind == ExceptU:
+    c.r.canRaise = true
+  # now can raise in the `try` block:
+  tr c, n, WantT
+  c.r.canRaise = oldCanRaise
+  while n.kind != ParRi:
+    tr c, n, WantT
+  takeParRi c, n
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
@@ -645,6 +678,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trAsgn c, n
       of LocalDecls:
         trLocal c, n
+      of TryS:
+        trTry c, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
         trProcDecl c, n
       of ScopeS:
