@@ -632,7 +632,9 @@ proc traverseParams(c: var EContext; n: var Cursor) =
     ret.addSubtree retType
     ret.addParRi()
     retType = cursorAt(ret, 0)
-  traverseType c, retType
+    traverseType c, retType
+  else:
+    traverseType c, retType
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
   result = default(CollectedPragmas)
@@ -1535,35 +1537,27 @@ proc trRaise(c: var EContext; n: var Cursor) =
     takeParRi c, n
   else:
     # translate `raise` to `goto`:
-    let (lab, exc) = c.exceptLabels[^1]
-    c.dest.addParLe AsgnS, info
-    c.dest.add symToken(exc, info)
-    traverseExpr c, n
+    skip n # raise expression handled in constparams.nim
     takeParRi c, n
+    let lab = c.exceptLabels[^1]
     c.dest.add tagToken("jmp", info)
     c.dest.add symToken(lab, info)
     c.dest.addParRi()
 
 proc trTry(c: var EContext; n: var Cursor) =
+  # We only deal with the control flow here.
   let info = n.info
   inc n
   var nn = n
   skip nn # stmts
   let oldLen = c.exceptLabels.len
   if nn.substructureKind == ExceptU:
-    let exc = pool.syms.getOrIncl("`exc." & $getTmpId(c))
     let lab = pool.syms.getOrIncl("`lab." & $getTmpId(c))
-    c.exceptLabels.add (lab, exc)
-
-    c.dest.copyIntoKind VarS, nn.info:
-      c.dest.add symdefToken(exc, nn.info)
-      c.dest.addEmpty() # pragmas
-      c.dest.add symToken(pool.syms.getOrIncl(ErrorCodeName), nn.info)
-      c.dest.addEmpty() # leave it unitialized
+    c.exceptLabels.add lab
   traverseStmt c, n
 
   while n.substructureKind == ExceptU:
-    let (lab, exc) = c.exceptLabels[oldLen]
+    let lab = c.exceptLabels[oldLen]
     c.dest.copyIntoKind IfS, n.info:
       c.dest.copyIntoKind ElifU, n.info:
         c.dest.addParPair(FalseX, n.info)
@@ -1572,7 +1566,7 @@ proc trTry(c: var EContext; n: var Cursor) =
           c.dest.add symdefToken(lab, n.info)
           c.dest.addParRi()
           inc n
-          skip n # skip `T as e` for now:
+          skip n # skip `T as e`, handled in constparams.nim
           traverseStmt c, n
           skipParRi n
         c.dest.addParRi()

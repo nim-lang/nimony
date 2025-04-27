@@ -4126,10 +4126,13 @@ proc semTry(c: var SemContext; it: var Item) =
     semStmtBranch c, it, true
   while it.n.substructureKind == ExceptU:
     takeToken c, it.n
-    # XXX Implement `e as Type` properly!
-    var exc = Item(n: it.n, typ: c.types.autoType)
-    semExpr c, exc
-    it.n = exc.n
+    if it.n.kind == DotToken:
+      takeToken c, it.n
+    else:
+      # XXX Implement `e as Type` properly!
+      var exc = Item(n: it.n, typ: c.types.autoType)
+      semExpr c, exc
+      it.n = exc.n
     withNewScope c:
       semStmtBranch c, it, true
     takeParRi c, it.n
