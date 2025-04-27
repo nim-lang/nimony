@@ -47,8 +47,7 @@ type
 
 proc normalizedPopVar(popVar: string): string = 
   result = "st"
-  result.add toUpperAscii(popVar[0])
-  result.add nimIdentNormalize(substr(popVar, 1))
+  result.add nimIdentNormalize(popVar)
 
 proc signature(c: Context, rule: string): string {.inline.} = 
   if c.kind == Generator:
