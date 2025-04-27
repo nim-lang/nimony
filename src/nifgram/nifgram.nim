@@ -45,13 +45,18 @@ type
     
     rules: seq[string] # all declared rules
 
+proc normalizedPopVar(popVar: string): string = 
+  result = "st"
+  result.add toUpperAscii(popVar[0])
+  result.add nimIdentNormalize(substr(popVar, 1))
+
 proc signature(c: Context, rule: string): string {.inline.} = 
   if c.kind == Generator:
     result = ""
     result.add "(c: var Context"
     for popVar in c.popVars.getOrDefault(rule):
       result.add ", "
-      result.add popVar
+      result.add normalizedPopVar(popVar)
       result.add ": string"
     result.add "): bool"
   else:
@@ -302,7 +307,7 @@ proc compileKeyw(c: var Context; it: string): string =
 
 proc compilePopVar(c: var Context; it: string): string =
   ind c
-  c.outp.add "emit(" & c.args0 & ", " & $c.t.s & ")"
+  c.outp.add "emit(" & c.args0 & ", " & normalizedPopVar($c.t.s) & ")"
   result = "true"
 
 proc compileRuleInvocation(c: var Context; it: string): string =
@@ -316,7 +321,7 @@ proc compileRuleInvocation(c: var Context; it: string): string =
   result = c.procPrefix & ruleName & "(" & c.args
   for popVar in c.popVars[ruleName]:
     result.add ", "
-    result.add popVar
+    result.add normalizedPopVar(popVar)
   result.add ")"
   if c.inBinding > 0:
     result = declTemp(c, "m", result)
@@ -601,7 +606,7 @@ proc compilePop(c: var Context; it: string): string =
   inc c.localPopCounts[^1]
 
   ind c
-  c.outp.add "var " & varName & " = popStack(" & c.args & ")"
+  c.outp.add "var " & normalizedPopVar(varName) & " = popStack(" & c.args & ")"
   result = "true"
 
 proc compileExpr(c: var Context; it: string): string =
