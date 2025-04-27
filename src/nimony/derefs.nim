@@ -367,6 +367,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
       fnType = previousFormalParam
     tr c, n, e
   while fnType.kind != ParRi: skip fnType
+  inc fnType # skip ParRi
   # skip return type:
   skip fnType
   # now at the pragmas position:
