@@ -621,6 +621,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     for i in 0..<n.len:
       toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
+  of nkExceptBranch:
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    if n.len == 1:
+      c.b.addEmpty 1
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
