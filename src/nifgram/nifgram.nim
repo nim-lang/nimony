@@ -938,14 +938,17 @@ proc scan(c: var ScanContext) =
   var sccRules = initTable[int, seq[string]]()
   var sccPopVars =  initTable[int, HashSet[string]]()
   for rule, scc in sccs.pairs:
-    mgetOrPut(sccPopVars, scc).incl c.popVars.getOrDefault(rule) # same rules in same SCC
+    mgetOrPut(sccPopVars, scc).incl c.popVars.getOrDefault(rule) # get maximum declared pop var number
     mgetOrPut(sccRules, scc).add rule
+
+    for invokedRule in c.ruleInvocations[rule]:
+      mgetOrPut(sccPopVars, sccs[invokedRule]).incl sccPopVars[scc]
   
-  for i in 0..<c.rules.len: # N times
-    if i in sccPopVars:
-      for rule in sccRules[i]: # N times
-        for invokedRule in c.ruleInvocations[rule]:
-          mgetOrPut(c.popVars, invokedRule).incl c.popVars.getOrDefault(rule)
+  for scc in 0..<c.rules.len: # only N times
+    if scc in sccPopVars:
+      for rule in sccRules[scc]:
+        mgetOrPut(c.popVars, rule).incl sccPopVars[scc]
+    
 
 proc main(inp, outp: string;
           specTags: sink OrderedTable[string, int]): OrderedTable[string, int] =
