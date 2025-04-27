@@ -129,21 +129,25 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
   let canRaise = hasPragma(fnType, RaisesP)
   if canRaise and not inhibit:
     c.needsXelim = true
-    copyIntoKind dest, ExprX, info:
-      copyIntoKind dest, StmtsS, info:
-        let symId = pool.syms.getOrIncl("`canRaise." & $c.tmpCounter)
-        inc c.tmpCounter
-        copyIntoKind dest, CursorS, info:
-          addSymDef dest, symId, info
-          dest.addEmpty2 info # export marker, pragma
-          copyTree dest, retType
-          # value is the call expression:
-          dest.add head
-          while n.kind != ParRi:
-            tr c, dest, n
-          takeParRi dest, n
-        addRaiseStmt(dest, symId, info)
+    let isVoid = retType.kind == DotToken or retType.typeKind == VoidT
+    if not isVoid:
+       dest.addParLe(ExprX, info)
+    copyIntoKind dest, StmtsS, info:
+      let symId = pool.syms.getOrIncl("`canRaise." & $c.tmpCounter)
+      inc c.tmpCounter
+      copyIntoKind dest, CursorS, info:
+        addSymDef dest, symId, info
+        dest.addEmpty2 info # export marker, pragma
+        copyTree dest, retType
+        # value is the call expression:
+        dest.add head
+        while n.kind != ParRi:
+          tr c, dest, n
+        takeParRi dest, n
+      addRaiseStmt(dest, symId, info)
+    if not isVoid:
       dest.addSymUse symId, info
+      dest.addParRi()
   else:
     dest.add head
     while n.kind != ParRi:
