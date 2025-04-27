@@ -8,7 +8,7 @@
 ## that is also in NIF notation.
 ## See nifc/nifc_grammar.nif for a real world example.
 
-import std / [strutils, tables, sets, assertions, syncio, deques]
+import std / [strutils, tables, sets, assertions, syncio, deques, sequtils]
 import "../lib" / [stringviews, nifreader]
 
 type
@@ -760,6 +760,90 @@ proc compile(c: var Context) =
       break
   c.t = next(c.r)
 
+type
+  PeaSccContext = object
+    rindex: Table[string, int]
+    index: int
+    c: int
+    vertexStack: seq[string]
+    indexStack: seq[int]
+    root: Table[string, bool]
+    s: seq[string] # in some implementations it used with only with vS but it incorrect
+                   # (https://github.com/php/php-src/pull/12528#issue-1963500321)
+    
+    ruleInvocations {.requiresInit.}: Table[string, seq[string]] # E(v)
+
+proc beginVisiting(c: var PeaSccContext, rule: string) =
+  c.vertexStack.add rule
+  c.indexStack.add 0
+  c.root[rule] = true
+  c.rindex[rule] = c.index
+  inc c.index
+
+proc finishEdge(c: var PeaSccContext, rule: string, k: int) =
+  let w = c.ruleInvocations[rule][k]
+  if c.rindex[w] < c.rindex[rule]:
+    c.rindex[rule] = c.rindex[w]
+    c.root[rule] = false
+
+proc beginEdge(c: var PeaSccContext, rule: string, k: int): bool =
+  let w = c.ruleInvocations[rule][k]
+  if c.rindex[w] == 0:
+    c.indexStack[^1] = k + 1
+    c.beginVisiting(w)
+    true
+  else:
+    false
+
+proc finishVisiting(c: var PeaSccContext, rule: string) =
+  discard c.vertexStack.pop()
+  discard c.indexStack.pop()
+  if c.root[rule]:
+    dec c.index
+    while c.s.len > 0 and c.rindex[rule] <= c.rindex[c.s[^1]]:
+      let w = c.s.pop()
+      c.rindex[w] = c.c
+      dec c.index
+    c.rindex[rule] = c.c
+    dec c.c
+  else:
+    c.s.add rule
+
+proc visitLoop(c: var PeaSccContext) =
+  let rule = c.vertexStack[^1]
+  var i = c.indexStack[^1]
+  let verticesCnt = len(c.ruleInvocations[rule])
+  while i <= verticesCnt:
+    if i > 0: c.finishEdge(rule, i-1)
+    if i < verticesCnt and c.beginEdge(rule, i): return
+    inc i
+  c.finishVisiting(rule)
+
+proc visit(c: var PeaSccContext, rule: string) =
+  c.beginVisiting(rule)
+  while c.vertexStack.len > 0:
+    c.visitLoop()
+
+proc findSccs(c: ScanContext): Table[string, int] =
+  # find SCCs using Pearce's algorithm
+  # see https://www.sciencedirect.com/science/article/abs/pii/S0020019015001532
+  #     https://www.timl.id.au/scc
+  # 
+  var invocations = initTable[string, seq[string]]() # stupid O(n)
+  for key, value in c.ruleInvocations:
+    invocations[key] = value.toSeq
+  
+  var s = PeaSccContext(ruleInvocations: invocations)
+  for rule in invocations.keys:
+    s.rindex[rule] = 0
+  
+  s.index = 1
+  s.c = invocations.len - 1
+  for rule in invocations.keys:
+    if s.rindex[rule] == 0:
+      s.visit(rule)
+  s.rindex
+
 proc sortedRules(c: var ScanContext): seq[string] =
   # to get available pop vars we 
   # use Kahn's algorithm for topological sorting
@@ -782,10 +866,6 @@ proc sortedRules(c: var ScanContext): seq[string] =
   # F -> D -> C -> B
   #           ^
   #        E -+
-  for rule, invocations in c.invocations.pairs:
-    for invoked in invocations:
-      if invoked in c.rules:
-        c.ruleInvocations[rule].incl invoked
 
   var indegrees = initTable[string, int]() # number of incoming nodes
   var queue = initDeque[string]()
@@ -812,8 +892,7 @@ proc sortedRules(c: var ScanContext): seq[string] =
         queue.addLast neighboor
   
   if len(top) != len(c.rules):
-    when false:
-      var missing: seq[string] = @[]
+    when true:
       for rule in c.rules:
         if rule notin top:
           echo "MISSING: ", rule, " (in-degree: ", indegrees[rule], ")"
@@ -883,8 +962,6 @@ proc scanRule(c: var ScanContext) =
 proc scan(c: var ScanContext) =
   # This pass is necessary to determine the arguments of the rules
   # (they differ from the standard ones if POP Var was used and then the rule was called). 
-  # In addition, it allows you to determine in advance whether 
-  # a rule is being invoked or a variable is being used.
   c.t = next(c.r)
   if c.t.tk == ParLe and (c.t.s == "GRAMMAR" or c.t.s == "GENERATOR"):
     c.t = next(c.r)
@@ -907,11 +984,25 @@ proc scan(c: var ScanContext) =
   else:
     error c, "GRAMMAR expected but got " & $c.t
 
-  # the more to the right, the fewer rules it invokes. 
-  # So it can be used to propogate pop vars over rules
-  for rule in c.sortedRules():
-    for invokedRule in c.ruleInvocations[rule]:
-      mgetOrPut(c.popVars, invokedRule).incl c.popVars.getOrDefault(rule)
+  for rule, invocations in c.invocations.pairs:
+    for invoked in invocations:
+      if invoked in c.rules:
+        c.ruleInvocations[rule].incl invoked
+  
+  let sccs = findSccs(c)
+  # Pop vars in same SCC's is same
+  # SCC's sorted in topological order so the bigger scc, fewer rules it invokes
+  var sccRules = initTable[int, seq[string]]()
+  var sccPopVars =  initTable[int, HashSet[string]]()
+  for rule, scc in sccs.pairs:
+    mgetOrPut(sccPopVars, scc).incl c.popVars.getOrDefault(rule) # same rules in same SCC
+    mgetOrPut(sccRules, scc).add rule
+  
+  for i in 0..<c.rules.len: # N times
+    if i in sccPopVars:
+      for rule in sccRules[i]: # N times
+        for invokedRule in c.ruleInvocations[rule]:
+          mgetOrPut(c.popVars, invokedRule).incl c.popVars.getOrDefault(rule)
 
 proc main(inp, outp: string;
           specTags: sink OrderedTable[string, int]): OrderedTable[string, int] =
