@@ -305,6 +305,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   let symId = n.symId
   var isGeneric = false
   var r = CurrentRoutine(returnExpects: WantT)
+  swap c.r, r
   for i in 0..<BodyPos:
     if i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
@@ -315,13 +316,13 @@ proc trProcDecl(c: var Context; n: var Cursor) =
       inc params
       let firstParam = asLocal(params)
       if firstParam.kind == ParamY:
-        r.firstParam = firstParam.name.symId
-        r.firstParamKind = firstParam.typ.typeKind
+        c.r.firstParam = firstParam.name.symId
+        c.r.firstParamKind = firstParam.typ.typeKind
       takeTree c.dest, n
     elif i == ProcPragmasPos and not isGeneric:
       trProcPragmas(c, n)
     elif i == ResultPos and n.typeKind in {MutT, OutT, LentT}:
-      r.returnExpects = WantVarTResult
+      c.r.returnExpects = WantVarTResult
       takeTree c.dest, n
     else:
       takeTree c.dest, n
@@ -330,18 +331,17 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     takeTree c.dest, n
     takeParRi c, n
   else:
-    swap c.r, r
     var body = n
-    trSons c, n, r.returnExpects
+    trSons c, n, c.r.returnExpects
     if c.r.dangerousLocations.len > 0:
       checkForDangerousLocations c, body
-    swap c.r, r
     takeParRi c, n
+  swap c.r, r
   c.typeCache.closeScope()
 
 proc callCanRaise(c: var Context; info: PackedLineInfo) =
   if not c.r.canRaise:
-    buildLocalErr c.dest, info, "cannot call a routine marked as `.raises`"
+    buildLocalErr c.dest, info, "cannot call a routine marked as `.raises` outside of a `try`..`except` block"
 
 proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   let info = n.info
