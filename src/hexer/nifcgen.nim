@@ -632,7 +632,9 @@ proc traverseParams(c: var EContext; n: var Cursor) =
     ret.addSubtree retType
     ret.addParRi()
     retType = cursorAt(ret, 0)
-  traverseType c, retType
+    traverseType c, retType
+  else:
+    traverseType c, retType
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
   result = default(CollectedPragmas)
