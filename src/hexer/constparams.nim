@@ -29,6 +29,7 @@ import duplifier, eraiser
 type
   Context = object
     constRefParams: HashSet[SymId]
+    tupleVars: HashSet[SymId]
     exceptVars: seq[SymId]
     ptrSize, tmpCounter: int
     typeCache: TypeCache
@@ -67,6 +68,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
         c2.typeCache.registerLocal(symId, r.kind, r.params)
       c2.typeCache.openScope()
       rememberConstRefParams c2, r.params
+      c2.tupleVars = localsThatBecomeTuples(n)
       tr c2, dest, n
       c2.typeCache.closeScope()
     else:
@@ -205,8 +207,12 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
+    let symId = n.symId
     c.typeCache.takeLocalHeader(dest, n, kind)
-    tr(c, dest, n)
+    if n.exprKind in CallKinds:
+      trCall c, dest, n, c.tupleVars.contains(symId)
+    else:
+      tr(c, dest, n)
 
 proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -320,7 +326,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   var nn = n.firstSon
-  if nn.kind == Symbol and nn.symId == c.resultSym and c.canRaise:
+  if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(nn.symId)):
     skip nn
     if nn.exprKind in CallKinds and callCanRaise(c.typeCache, nn):
       # nothing to do, both are in compatible tuple form:
@@ -349,10 +355,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if c.constRefParams.contains(n.symId):
         copyIntoKind dest, DerefX, n.info:
           dest.add n
-      elif n.symId == c.resultSym and c.canRaise:
+      elif (n.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(n.symId):
         let info = n.info
         copyIntoKind dest, TupatX, info:
-          dest.addSymUse c.resultSym, info
+          dest.addSymUse n.symId, info
           dest.addIntLit 1, info
       else:
         dest.add n
