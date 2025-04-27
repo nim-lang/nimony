@@ -844,63 +844,6 @@ proc findSccs(c: ScanContext): Table[string, int] =
       s.visit(rule)
   s.rindex
 
-proc sortedRules(c: var ScanContext): seq[string] =
-  # to get available pop vars we 
-  # use Kahn's algorithm for topological sorting
-  # i.e we have pseudo code like this:
-  # B: end
-  # C: (call B)
-  # D: (var foo) (call C)
-  # E: (var bar) (call C)
-  # F: (var buz) (call D)
-
-  # then available pop vars:
-  # B: foo, bar, buz
-  # C: foo, bar, buz
-  # D: buz
-  # E:
-  # F:
-
-  # And call graph:
-  # 
-  # F -> D -> C -> B
-  #           ^
-  #        E -+
-
-  var indegrees = initTable[string, int]() # number of incoming nodes
-  var queue = initDeque[string]()
-  
-  for rule in c.rules:
-    indegrees[rule] = 0 # indegrees should be defined for all rules
-  
-  for invocations in c.ruleInvocations.values: 
-    for invokedRule in invocations:
-      inc indegrees[invokedRule]
-
-  for rule in c.rules:
-    if indegrees[rule] == 0:
-      queue.addLast rule
-
-  var top: seq[string] = @[]
-  while queue.len > 0:
-    let u = queue.popFirst()
-    top.add u
-
-    for neighboor in c.ruleInvocations[u]:
-      dec indegrees[neighboor]
-      if indegrees[neighboor] == 0:
-        queue.addLast neighboor
-  
-  if len(top) != len(c.rules):
-    when true:
-      for rule in c.rules:
-        if rule notin top:
-          echo "MISSING: ", rule, " (in-degree: ", indegrees[rule], ")"
-
-    error c, "cyclic rule invocation detected"
-  
-  top
-
 proc scanPop(c: var ScanContext, popVars: var seq[string], popCounts: var seq[int]) =
   c.t = next(c.r)
   var varName = ""
