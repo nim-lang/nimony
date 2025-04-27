@@ -29,6 +29,7 @@ import duplifier, eraiser
 type
   Context = object
     constRefParams: HashSet[SymId]
+    exceptVars: seq[SymId]
     ptrSize, tmpCounter: int
     typeCache: TypeCache
     needsXelim: bool
@@ -128,6 +129,18 @@ proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
     dest.addParRi()
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if c.exceptVars.len > 0:
+    # also bind the value to a potential `T as e` variable:
+    let info = n.info
+    copyIntoKind dest, AsgnS, info:
+      dest.addSymUse c.exceptVars[^1], info
+      if c.nextRaiseIsSpecial:
+        copyIntoKind dest, TupatX, info:
+          dest.addSubtree n.firstSon
+          dest.addIntLit 0, info
+      else:
+        dest.addSubtree n.firstSon
+
   produceRaiseTuple c, dest, c.retType, n.info
   copyInto dest, n:
     if c.nextRaiseIsSpecial:
@@ -267,6 +280,42 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addSymUse target, info
   dest.addParRi() # expr
   c.needsXelim = true
+
+proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # We only deal with the data flow here.
+  dest.add n
+  let info = n.info
+  inc n
+  var nn = n
+  skip nn # stmts
+  let oldLen = c.exceptVars.len
+  if nn.substructureKind == ExceptU:
+    inc nn
+    if nn.exprKind in CallKinds:
+      # `T as e`
+      inc nn
+      var lastPart = nn
+      while nn.kind != ParRi:
+        lastPart = nn
+        skip nn
+      if lastPart.kind == SymbolDef:
+        let exc = lastPart.symId
+        c.exceptVars.add exc
+        dest.copyIntoKind VarS, nn.info:
+          dest.add symdefToken(exc, nn.info)
+          dest.addEmpty() # export marker
+          dest.addEmpty() # pragmas
+          dest.add symToken(pool.syms.getOrIncl(ErrorCodeName), nn.info)
+          dest.addEmpty() # leave it unitialized
+  tr c, dest, n
+  c.exceptVars.shrink oldLen
+  while n.substructureKind == ExceptU:
+    copyInto dest, n:
+      tr c, dest, n
+  if n.substructureKind == FinU:
+    copyInto dest, n:
+      tr c, dest, n
+  takeParRi dest, n
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
