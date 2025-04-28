@@ -105,7 +105,6 @@ proc isVoidType(t: Cursor): bool {.inline.} =
 
 proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): bool =
   if isVoidType(typ):
-    dest.addSymUse pool.syms.getOrIncl(SuccessName), info
     result = false
   else:
     dest.addParLe TupconstrX, info
@@ -131,12 +130,15 @@ proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
     dest.addParRi()
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let isSpecial = c.nextRaiseIsSpecial
+  c.nextRaiseIsSpecial = false
+  let localIsVoid = isVoidType(getType(c.typeCache, n.firstSon))
   if c.exceptVars.len > 0:
     # also bind the value to a potential `T as e` variable:
     let info = n.info
     copyIntoKind dest, AsgnS, info:
       dest.addSymUse c.exceptVars[^1], info
-      if c.nextRaiseIsSpecial:
+      if isSpecial and not localIsVoid:
         copyIntoKind dest, TupatX, info:
           dest.addSubtree n.firstSon
           dest.addIntLit 0, info
@@ -145,7 +147,10 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   produceRaiseTuple c, dest, c.retType, n.info
   copyInto dest, n:
-    if c.nextRaiseIsSpecial:
+    if n.kind == Symbol and localIsVoid:
+      dest.addSymUse n.symId, n.info
+      inc n
+    elif isSpecial:
       let info = n.info
       copyIntoKind dest, TupatX, info:
         tr c, dest, n
@@ -153,14 +158,17 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       tr c, dest, n
   finishRaiseTuple c, dest, n.info
-  c.nextRaiseIsSpecial = false
 
 proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n
-  copyIntoKind dest, TupatX, info:
-    tr c, dest, n
-    dest.addIntLit 0, info
+  let localIsVoid = isVoidType(getType(c.typeCache, n))
+  if localIsVoid:
+    dest.takeTree n
+  else:
+    copyIntoKind dest, TupatX, info:
+      tr c, dest, n
+      dest.addIntLit 0, info
   skipParRi n
   c.nextRaiseIsSpecial = true
 
@@ -335,6 +343,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.exceptVars.shrink oldLen
   while n.substructureKind == ExceptU:
     copyInto dest, n:
+      dest.takeTree n
       tr c, dest, n
   if n.substructureKind == FinU:
     copyInto dest, n:

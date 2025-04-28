@@ -92,7 +92,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       c.dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
       c.dest.copyIntoUnchecked "call", sinfo:
         c.dest.add symToken(pool.syms.getOrIncl("nimBorrowCStringUnsafe.c"), sinfo)
-        traverseExpr(c, selectorNode)
+        trExpr(c, selectorNode)
   elif selectorNode.kind == Symbol:
     selector = selectorNode.symId
   else:
@@ -101,7 +101,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       c.dest.add symdefToken(selector, sinfo)
       c.dest.addDotToken() # pragmas
       c.dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
-      traverseExpr(c, selectorNode)
+      trExpr(c, selectorNode)
   skip nb # selector
 
   while nb.kind != ParRi:
@@ -143,7 +143,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
         skip nb
         inc i
       inc nb # skip ParRi
-      traverseStmt c, nb
+      trStmt c, nb
       c.dest.copyIntoUnchecked "jmp", info:
         c.dest.add symToken(afterwards, info)
       skipParRi nb
@@ -151,7 +151,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       c.dest.copyIntoUnchecked "lab", info:
         c.dest.add symdefToken(elseLabel, info)
       inc nb
-      traverseStmt c, nb
+      trStmt c, nb
       skipParRi nb
       hasElse = true
     else:
