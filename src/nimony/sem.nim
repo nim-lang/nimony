@@ -5192,14 +5192,74 @@ proc buildObjConstrField(c: var SemContext; field: Local;
     callDefault c, typ, info
     c.dest.addParRi()
 
+proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymId, Cursor]): bool =
+  var n = n
+  inc n
+  result = false
+  if n.substructureKind == NilU:
+    return
+  while n.kind != ParRi:
+    let local = takeLocal(n, SkipFinalParRi)
+    if local.name.symId in setFields:
+      result = true
+      break
+
+proc fieldsPresentInBranch(c: var SemContext; n: var Cursor;
+                setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                bindings: Table[SymId, Cursor]) =
+  var branches = 0
+  block matched:
+    while n.kind != ParRi:
+      case n.substructureKind
+      of OfU:
+        inc n
+        skip n
+        let hasField = fieldsPresentInInitExpr(c, n, setFields)
+        if hasField:
+          inc n # stmt
+          while n.kind != ParRi:
+            let field = takeLocal(n, SkipFinalParRi)
+            buildObjConstrField(c, field, setFields, info, bindings)
+          skipParRi n
+          inc branches
+        else:
+          skip n
+
+        skipParRi n
+      of ElseU:
+        inc n
+        let hasField = fieldsPresentInInitExpr(c, n, setFields)
+        if hasField:
+          inc n # stmt
+          while n.kind != ParRi:
+            let field = takeLocal(n, SkipFinalParRi)
+            buildObjConstrField(c, field, setFields, info, bindings)
+          skipParRi n # stmt
+          inc branches
+        else:
+          skip n
+        skipParRi n
+      else:
+        error "illformed AST inside case object: ", n
+
 proc buildObjConstrFields(c: var SemContext; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: PackedLineInfo;
                           bindings: Table[SymId, Cursor]) =
   # XXX for now counts each case object field as separate
   var iter = initObjFieldIter()
-  while nextField(iter, n):
-    let field = takeLocal(n, SkipFinalParRi)
-    buildObjConstrField(c, field, setFields, info, bindings)
+  while nextField(iter, n, keepCase = true):
+    if n.substructureKind == CaseU:
+      var body = n
+      inc body
+      # selector
+      let field = takeLocal(body, SkipFinalParRi)
+      buildObjConstrField(c, field, setFields, info, bindings)
+
+      fieldsPresentInBranch(c, body, setFields, info, bindings)
+      skip n
+    else:
+      let field = takeLocal(n, SkipFinalParRi)
+      buildObjConstrField(c, field, setFields, info, bindings)
 
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
                            setFields: Table[SymId, Cursor]; info: PackedLineInfo;
