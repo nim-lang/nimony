@@ -105,22 +105,22 @@ proc isVoidType(t: Cursor): bool {.inline.} =
 
 proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): bool =
   if isVoidType(typ):
-    dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.syms.getOrIncl(SuccessName), info
     result = false
   else:
     dest.addParLe TupconstrX, info
     dest.addParLe TupleT, info
-    dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
     dest.addSubtree typ
     dest.addParRi()
-    dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.syms.getOrIncl(SuccessName), info
     result = true
 
 proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
   if not isVoidType(c.retType):
     dest.addParLe TupconstrX, info
     dest.addParLe TupleT, info
-    dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
     dest.addSubtree typ
     dest.addParRi()
 
@@ -204,13 +204,31 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
   if needsTuple:
     dest.addParRi() # TupconstrX
 
+proc takeLocalHeader(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind: SymKind; isTuple: bool) =
+  let name = n.symId
+  takeTree dest, n # name
+  takeTree dest, n # export marker
+  takeTree dest, n # pragmas
+  c.registerLocal(name, kind, n)
+  if isVoidType(n) and isTuple:
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
+    skip n
+  else:
+    if isTuple:
+      dest.addParLe TupleT, n.info
+      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
+    takeTree dest, n # type
+    if isTuple:
+      dest.addParRi()
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
     let symId = n.symId
-    c.typeCache.takeLocalHeader(dest, n, kind)
+    let isTuple = c.tupleVars.contains(symId)
+    c.typeCache.takeLocalHeader(dest, n, kind, isTuple)
     if n.exprKind in CallKinds:
-      trCall c, dest, n, c.tupleVars.contains(symId)
+      trCall c, dest, n, isTuple
     else:
       tr(c, dest, n)
 
@@ -218,7 +236,7 @@ proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   copyInto dest, n:
     c.resultSym = n.symId
-    c.typeCache.takeLocalHeader(dest, n, ResultY)
+    c.typeCache.takeLocalHeader(dest, n, ResultY, c.canRaise)
     tr(c, dest, n)
   # produce `result[0] = Success` statement for initialization:
   if c.canRaise:
@@ -226,7 +244,7 @@ proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyIntoKind dest, TupatX, info:
         dest.addSymUse c.resultSym, info
         dest.addIntLit 0, info
-      dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+      dest.addSymUse pool.syms.getOrIncl(SuccessName), info
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.canRaise:
@@ -411,7 +429,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if nested == 0: break
 
 proc injectConstParamDerefs*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
-  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
+  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim,
+    tupleVars: localsThatBecomeTuples(n))
   c.retType = c.typeCache.builtins.voidType
   c.typeCache.openScope()
   result = createTokenBuf(300)

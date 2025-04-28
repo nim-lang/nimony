@@ -28,6 +28,7 @@ const
   StringAField* = "a.0." & SystemModuleSuffix
   StringIField* = "i.0." & SystemModuleSuffix
   ErrorCodeName* = "ErrorCode.0." & SystemModuleSuffix
+  SuccessName* = "Success.0." & SystemModuleSuffix
 
 proc createBuiltinTypes*(): BuiltinTypes =
   result = BuiltinTypes(mem: createTokenBuf(30))
