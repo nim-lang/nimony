@@ -309,11 +309,11 @@ proc trTry(c: var Context; n: var Cursor) =
   while nn.substructureKind == ExceptU: skip nn
   copyInto(c.dest, n):
     let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
-    trNestedScope c, n, Other, fin
+    trNestedScope c, n, Other
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
-        trNestedScope c, n, Other
+        trNestedScope c, n, Other, fin
     if n.substructureKind == FinU:
       copyInto(c.dest, n):
         trNestedScope c, n
