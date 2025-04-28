@@ -123,7 +123,9 @@ proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: Pa
 proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   if not isVoidType(c.retType):
     if c.resultSym != SymId(0):
-      dest.addSymUse c.resultSym, info
+      copyIntoKind dest, TupatX, info:
+        dest.addSymUse c.resultSym, info
+        dest.addIntLit 1, info
     dest.addParRi()
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -136,14 +138,16 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, AsgnS, info:
       dest.addSymUse c.exceptVars[^1], info
       if isSpecial and not localIsVoid:
+        let x = n.firstSon
+        assert x.kind == Symbol
         copyIntoKind dest, TupatX, info:
-          dest.addSubtree n.firstSon
+          dest.addSymUse x.symId, info
           dest.addIntLit 0, info
       else:
         dest.addSubtree n.firstSon
 
-  produceRaiseTuple c, dest, c.retType, n.info
   copyInto dest, n:
+    produceRaiseTuple c, dest, c.retType, n.info
     if n.kind == Symbol and localIsVoid:
       dest.addSymUse n.symId, n.info
       inc n
@@ -154,7 +158,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addIntLit 0, info
     else:
       tr c, dest, n
-  finishRaiseTuple c, dest, n.info
+    finishRaiseTuple c, dest, n.info
 
 proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -163,8 +167,10 @@ proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if localIsVoid:
     dest.takeTree n
   else:
+    assert n.kind == Symbol
     copyIntoKind dest, TupatX, info:
-      tr c, dest, n
+      dest.addSymUse n.symId, info
+      inc n
       dest.addIntLit 0, info
   skipParRi n
   c.nextRaiseIsSpecial = true
