@@ -29,6 +29,7 @@ import duplifier, eraiser
 type
   Context = object
     constRefParams: HashSet[SymId]
+    tupleVars: HashSet[SymId]
     exceptVars: seq[SymId]
     ptrSize, tmpCounter: int
     typeCache: TypeCache
@@ -67,6 +68,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
         c2.typeCache.registerLocal(symId, r.kind, r.params)
       c2.typeCache.openScope()
       rememberConstRefParams c2, r.params
+      c2.tupleVars = localsThatBecomeTuples(n)
       tr c2, dest, n
       c2.typeCache.closeScope()
     else:
@@ -98,27 +100,23 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, HaddrX, info:
       tr c, dest, n
 
-proc isVoidType(t: Cursor): bool {.inline.} =
-  t.kind == DotToken or t.typeKind == VoidT
-
 proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): bool =
   if isVoidType(typ):
-    dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
     result = false
   else:
     dest.addParLe TupconstrX, info
     dest.addParLe TupleT, info
-    dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
     dest.addSubtree typ
     dest.addParRi()
-    dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.syms.getOrIncl(SuccessName), info
     result = true
 
 proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
   if not isVoidType(c.retType):
     dest.addParLe TupconstrX, info
     dest.addParLe TupleT, info
-    dest.addSymUse pool.syms.getOrIncl("ErrorCode.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
     dest.addSubtree typ
     dest.addParRi()
 
@@ -129,12 +127,15 @@ proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
     dest.addParRi()
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let isSpecial = c.nextRaiseIsSpecial
+  c.nextRaiseIsSpecial = false
+  let localIsVoid = isVoidType(getType(c.typeCache, n.firstSon))
   if c.exceptVars.len > 0:
     # also bind the value to a potential `T as e` variable:
     let info = n.info
     copyIntoKind dest, AsgnS, info:
       dest.addSymUse c.exceptVars[^1], info
-      if c.nextRaiseIsSpecial:
+      if isSpecial and not localIsVoid:
         copyIntoKind dest, TupatX, info:
           dest.addSubtree n.firstSon
           dest.addIntLit 0, info
@@ -143,7 +144,10 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   produceRaiseTuple c, dest, c.retType, n.info
   copyInto dest, n:
-    if c.nextRaiseIsSpecial:
+    if n.kind == Symbol and localIsVoid:
+      dest.addSymUse n.symId, n.info
+      inc n
+    elif isSpecial:
       let info = n.info
       copyIntoKind dest, TupatX, info:
         tr c, dest, n
@@ -151,14 +155,17 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       tr c, dest, n
   finishRaiseTuple c, dest, n.info
-  c.nextRaiseIsSpecial = false
 
 proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n
-  copyIntoKind dest, TupatX, info:
-    tr c, dest, n
-    dest.addIntLit 0, info
+  let localIsVoid = isVoidType(getType(c.typeCache, n))
+  if localIsVoid:
+    dest.takeTree n
+  else:
+    copyIntoKind dest, TupatX, info:
+      tr c, dest, n
+      dest.addIntLit 0, info
   skipParRi n
   c.nextRaiseIsSpecial = true
 
@@ -202,17 +209,39 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
   if needsTuple:
     dest.addParRi() # TupconstrX
 
+proc takeLocalHeader(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind: SymKind; isTuple: bool) =
+  let name = n.symId
+  takeTree dest, n # name
+  takeTree dest, n # export marker
+  takeTree dest, n # pragmas
+  c.registerLocal(name, kind, n)
+  if isVoidType(n) and isTuple:
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
+    skip n
+  else:
+    if isTuple:
+      dest.addParLe TupleT, n.info
+      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
+    takeTree dest, n # type
+    if isTuple:
+      dest.addParRi()
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
-    c.typeCache.takeLocalHeader(dest, n, kind)
-    tr(c, dest, n)
+    let symId = n.symId
+    let isTuple = c.tupleVars.contains(symId)
+    c.typeCache.takeLocalHeader(dest, n, kind, isTuple)
+    if n.exprKind in CallKinds:
+      trCall c, dest, n, isTuple
+    else:
+      tr(c, dest, n)
 
 proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   copyInto dest, n:
     c.resultSym = n.symId
-    c.typeCache.takeLocalHeader(dest, n, ResultY)
+    c.typeCache.takeLocalHeader(dest, n, ResultY, c.canRaise)
     tr(c, dest, n)
   # produce `result[0] = Success` statement for initialization:
   if c.canRaise:
@@ -220,7 +249,7 @@ proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyIntoKind dest, TupatX, info:
         dest.addSymUse c.resultSym, info
         dest.addIntLit 0, info
-      dest.addSymUse pool.syms.getOrIncl("Success.0." & SystemModuleSuffix), info
+      dest.addSymUse pool.syms.getOrIncl(SuccessName), info
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.canRaise:
@@ -311,6 +340,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.exceptVars.shrink oldLen
   while n.substructureKind == ExceptU:
     copyInto dest, n:
+      dest.takeTree n
       tr c, dest, n
   if n.substructureKind == FinU:
     copyInto dest, n:
@@ -320,7 +350,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   var nn = n.firstSon
-  if nn.kind == Symbol and nn.symId == c.resultSym and c.canRaise:
+  if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(nn.symId)):
     skip nn
     if nn.exprKind in CallKinds and callCanRaise(c.typeCache, nn):
       # nothing to do, both are in compatible tuple form:
@@ -349,10 +379,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if c.constRefParams.contains(n.symId):
         copyIntoKind dest, DerefX, n.info:
           dest.add n
-      elif n.symId == c.resultSym and c.canRaise:
+      elif (n.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(n.symId):
         let info = n.info
         copyIntoKind dest, TupatX, info:
-          dest.addSymUse c.resultSym, info
+          dest.addSymUse n.symId, info
           dest.addIntLit 1, info
       else:
         dest.add n
@@ -405,7 +435,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if nested == 0: break
 
 proc injectConstParamDerefs*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
-  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
+  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim,
+    tupleVars: localsThatBecomeTuples(n))
   c.retType = c.typeCache.builtins.voidType
   c.typeCache.openScope()
   result = createTokenBuf(300)

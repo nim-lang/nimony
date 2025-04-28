@@ -654,6 +654,10 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
     discard "handled in a different pass"
     skip n
   of EmitS: genEmitStmt c, n
+  of StmtsS:
+    inc n
+    while n.kind != ParRi: genToplevel c, n
+    skipParRi n
   else:
     if n.pragmaKind == NodeclP:
       genNodecl c, n

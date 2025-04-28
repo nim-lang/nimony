@@ -29,6 +29,7 @@ type
     FormalTypeNotAtEndBug
     FormalParamsMismatch
     CallConvMismatch
+    RaisesMismatch
     UnavailableSubtypeRelation
     NotImplementedConcept
     ImplicitConversionNotMutable
@@ -121,6 +122,8 @@ proc getErrorMsg*(m: Match): string =
     "parameter lists do not match"
   of CallConvMismatch:
     "calling conventions do not match"
+  of RaisesMismatch:
+    "`.raises` mismatch"
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
   of NotImplementedConcept:
@@ -570,14 +573,16 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
   skip f
   skip a
 
-proc extractCallConv(c: var Cursor): CallConv =
-  result = Fastcall
+proc extractCallConv(c: var Cursor): (CallConv, bool) =
+  result = (Fastcall, false)
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
       let res = callConvKind(c)
       if res != NoCallConv:
-        result = res
+        result[0] = res
+      elif c.pragmaKind == RaisesP:
+        result[1] = true
       skip c
     inc c
   elif c.kind == DotToken:
@@ -638,8 +643,10 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   # match calling conventions:
   let fcc = extractCallConv(f)
   let acc = extractCallConv(a)
-  if fcc != acc:
+  if fcc[0] != acc[0]:
     m.error CallConvMismatch, f, a
+  elif fcc[1] != acc[1]:
+    m.error RaisesMismatch, f, a
   # XXX consider when f or a is (params):
   skip f # effects
   #skip a # effects
