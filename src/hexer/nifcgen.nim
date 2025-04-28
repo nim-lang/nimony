@@ -1552,34 +1552,44 @@ proc trTry(c: var EContext; n: var Cursor) =
   var nn = n
   skip nn # stmts
   let oldLen = c.exceptLabels.len
+  var hasExcept = false
   if nn.substructureKind == ExceptU:
     let lab = pool.syms.getOrIncl("`lab." & $getTmpId(c))
     c.exceptLabels.add lab
+    hasExcept = true
   trStmt c, n
+
+  if hasExcept:
+    c.dest.addParLe IfS, n.info
 
   while n.substructureKind == ExceptU:
     let lab = c.exceptLabels[oldLen]
-    c.dest.copyIntoKind IfS, n.info:
-      c.dest.copyIntoKind ElifU, n.info:
-        c.dest.addParPair(FalseX, n.info)
-        c.dest.copyIntoKind StmtsS, n.info:
-          c.dest.add tagToken("lab", n.info)
-          c.dest.add symdefToken(lab, n.info)
-          c.dest.addParRi()
-          inc n
-          skip n # skip `T as e`, handled in constparams.nim
-          trStmt c, n
-          skipParRi n
+    c.dest.copyIntoKind ElifU, n.info:
+      c.dest.addParPair(FalseX, n.info)
+      c.dest.copyIntoKind StmtsS, n.info:
+        c.dest.add tagToken("lab", n.info)
+        c.dest.add symdefToken(lab, n.info)
+        c.dest.addParRi()
+        inc n
+        skip n # skip `T as e`, handled in constparams.nim
+        trStmt c, n
+        skipParRi n
   c.exceptLabels.shrink oldLen
 
   # Since we duplicated the finally statements before every `raise` statement we
   # know that when control flow reaches here, no error was raised. Hence we do not
   # need to add logic to re-raise an exception here.
   if n.substructureKind == FinU:
+    if hasExcept:
+      c.dest.addParLe ElseU, n.info
     inc n
     trStmt c, n
     skipParRi n
+    if hasExcept:
+      c.dest.addParRi()
   skipParRi n
+  if hasExcept:
+    c.dest.addParRi()
 
 proc trStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
   case n.kind

@@ -69,7 +69,18 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c2.typeCache.openScope()
       rememberConstRefParams c2, r.params
       c2.tupleVars = localsThatBecomeTuples(n)
-      tr c2, dest, n
+      let info = n.info
+      copyIntoKind dest, StmtsS, info:
+        if n.stmtKind == StmtsS:
+          inc n
+          while n.kind != ParRi:
+            tr c2, dest, n
+          skipParRi n
+        else:
+          tr c2, dest, n
+        if c2.canRaise and isVoidType(r.retType):
+          copyIntoKind dest, RetS, info:
+            dest.addSymUse pool.syms.getOrIncl(SuccessName), info
       c2.typeCache.closeScope()
     else:
       takeTree dest, n
