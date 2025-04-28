@@ -4119,23 +4119,47 @@ proc semIf(c: var SemContext; it: var Item) =
   if typeKind(it.typ) == AutoT:
     producesVoid c, info, it.typ
 
+proc semExceptionType(c: var SemContext; it: var Item): TypeCursor =
+  let start = c.dest.len
+  result = semLocalType(c, it.n)
+  if result.kind != Symbol or pool.syms[result.symId] != ErrorCodeName:
+    c.dest.shrink start
+    buildErr c, it.n.info, "type in `except` must be `system.ErrorCode`"
+
 proc semTry(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
   withNewScope c:
     semStmtBranch c, it, true
   while it.n.substructureKind == ExceptU:
+    openScope(c)
     takeToken c, it.n
     if it.n.kind == DotToken:
       takeToken c, it.n
+    elif it.n.exprKind in CallKinds and it.n.firstSon.kind == Ident and pool.strings[it.n.firstSon.litId] == "as":
+      # `Type as e`:
+      inc it.n
+      inc it.n
+      let etyp = semExceptionType(c, it)
+      var decl = createTokenBuf(8)
+      decl.addParLe(LetS, info)
+      decl.takeTree it.n # name
+      skipParRi it.n
+      decl.addEmpty() # export marker
+      decl.addEmpty() # pragmas
+      decl.addSubtree etyp
+      decl.addEmpty() # value
+      decl.addParRi()
+      var dd = beginRead(decl)
+      semLocal c, dd, LetY
+    elif it.n.stmtKind == LetS:
+      # resem the local declaration:
+      semLocal(c, it.n, LetY)
     else:
-      # XXX Implement `e as Type` properly!
-      var exc = Item(n: it.n, typ: c.types.autoType)
-      semExpr c, exc
-      it.n = exc.n
-    withNewScope c:
-      semStmtBranch c, it, true
+      discard semExceptionType(c, it)
+    semStmtBranch c, it, true
     takeParRi c, it.n
+    closeScope(c)
   if it.n.substructureKind == FinU:
     takeToken c, it.n
     withNewScope c:
