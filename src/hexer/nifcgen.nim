@@ -1537,15 +1537,13 @@ proc trRaise(c: var EContext; n: var Cursor) =
     # translate `raise` to `return`:
     c.dest.addParLe RetS, info
     trExpr c, n
-    takeParRi c, n
   else:
     # translate `raise` to `goto`:
     skip n # raise expression handled in constparams.nim
-    takeParRi c, n
     let lab = c.exceptLabels[^1]
     c.dest.add tagToken("jmp", info)
     c.dest.add symToken(lab, info)
-    c.dest.addParRi()
+  takeParRi c, n
 
 proc trTry(c: var EContext; n: var Cursor) =
   # We only deal with the control flow here.
