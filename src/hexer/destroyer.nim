@@ -313,7 +313,7 @@ proc trTry(c: var Context; n: var Cursor) =
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
-        trNestedScope c, n, Other, fin
+        trNestedScope c, n, Other
     if n.substructureKind == FinU:
       copyInto(c.dest, n):
         trNestedScope c, n
