@@ -100,9 +100,6 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, HaddrX, info:
       tr c, dest, n
 
-proc isVoidType(t: Cursor): bool {.inline.} =
-  t.kind == DotToken or t.typeKind == VoidT
-
 proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): bool =
   if isVoidType(typ):
     result = false

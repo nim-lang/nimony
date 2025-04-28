@@ -627,10 +627,13 @@ proc trParams(c: var EContext; n: var Cursor) =
   if hasPragma(n, RaisesP):
     # use a tuple type:
     var ret = createTokenBuf(6)
-    ret.addParLe TupleT, NoLineInfo
-    ret.add symToken(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-    ret.addSubtree retType
-    ret.addParRi()
+    if isVoidType(retType):
+      ret.add symToken(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
+    else:
+      ret.addParLe TupleT, NoLineInfo
+      ret.add symToken(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
+      ret.addSubtree retType
+      ret.addParRi()
     retType = cursorAt(ret, 0)
     trType c, retType
   else:

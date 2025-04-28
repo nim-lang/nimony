@@ -451,3 +451,6 @@ proc registerLocalPtrOf*(c: var TypeCache; name: SymId; kind: SymKind; elemType:
   buf.addParRi()
   c.mem.add buf
   c.registerLocal(name, kind, cursorAt(c.mem[c.mem.len-1], 0))
+
+proc isVoidType*(t: Cursor): bool {.inline.} =
+  t.kind == DotToken or t.typeKind == VoidT
