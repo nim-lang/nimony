@@ -484,7 +484,14 @@ proc transformStmt(e: var EContext; c: var Cursor) =
     of ForS:
       transformForStmt(e, c)
     of IteratorS:
-      skip(c)
+      var iter = c
+      inc iter
+      if isLocalDecl(iter.symId):
+        var buf = createTokenBuf()
+        takeTree(buf, c)
+        publish iter.symId, buf
+      else:
+        skip(c)
     of TemplateS:
       e.dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:
