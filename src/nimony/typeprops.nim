@@ -264,7 +264,37 @@ proc nominalRoot*(t: TypeCursor; allowTypevar = false; skipPtrs = false): SymId 
       break
 
 proc getClass*(t: TypeCursor): SymId =
-  result = nominalRoot(t, false, true)
+  # similar to nominalRoot but preserves instances
+  result = SymId(0)
+  var t = t
+  var ptrs = 1
+  while true:
+    case t.kind
+    of Symbol:
+      let res = tryLoadSym(t.symId)
+      assert res.status == LacksNothing
+      if res.decl.symKind == TypeY:
+        # includes instance case
+        return t.symId
+      else:
+        # ignore typevar case
+        break
+    of ParLe:
+      case t.typeKind
+      of MutT, OutT, LentT, SinkT, StaticT, TypedescT:
+        inc t
+      of InvokeT:
+        inc t
+      of RefT, PtrT:
+        if ptrs > 0:
+          inc t
+          dec ptrs
+        else:
+          break
+      else:
+        break
+    else:
+      break
 
 proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoType): bool =
   var counter = 20
