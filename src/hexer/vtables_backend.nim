@@ -744,7 +744,8 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
               dest.addSymUse m, NoLineInfo
           dest.addParRi() # AconstrX
         else:
-          dest.addParPair NilX, NoLineInfo
+          dest.copyIntoKind AconstrX, NoLineInfo:
+            dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
 
 proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =
