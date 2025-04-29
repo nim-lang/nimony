@@ -429,39 +429,20 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
             tr c, dest, bufn
     skipParRi n
   else:
-    n = nn
     let isPtr = typ.typeKind in {RefT, PtrT}
     if isPtr:
-      if typ.typeKind == RefT:
-        dest.addParLe(CastX, info)
-        dest.addSubtree typ
-      dest.addParLe(AddrX, info)
-    copyInto dest, n:
-      if isPtr:
-        assert n.typeKind == typ.typeKind
-        inc n
-        tr c, dest, n
-        skipParRi n
-      else:
-        tr c, dest, n
+      # to preserve the refcount field position, cast entire pointer
+      # works since the supertype is always the first field
+      dest.addParLe(CastX, info)
+      dest.addSubtree typ
+      skip n
       tr c, dest, n
-      if isPtr:
-        if typ.typeKind == RefT:
-          # past duplifier, so need to do the deref transform here
-          dest.addParLe(DotX, info)
-        copyIntoKind dest, DerefX, info:
+      takeParRi dest, n
+    else:
+      n = nn
+      copyInto dest, n:
+        while n.kind != ParRi:
           tr c, dest, n
-        if typ.typeKind == RefT:
-          let dataField = pool.syms.getOrIncl(DataField)
-          dest.add symToken(dataField, info)
-          dest.addIntLit(0, info) # inheritance
-          dest.addParRi()
-      else:
-        tr c, dest, n
-    if isPtr:
-      dest.addParRi()
-      if typ.typeKind == RefT:
-        dest.addParRi()
   # store back:
   nn = n
 
