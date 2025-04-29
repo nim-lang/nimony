@@ -10,13 +10,13 @@ except:
   echo "failed"
 
 proc anotherFailure(): string {.raises.} =
-  raise Failure
+  raise OutOfMemError
 
 proc shield() =
   try:
     let x = anotherFailure()
     echo x
-  except:
-    echo "failed"
+  except ErrorCode as e:
+    echo "correct: ", e
 
 shield()
