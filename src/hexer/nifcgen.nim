@@ -378,34 +378,103 @@ proc addRttiField(c: var EContext; info: PackedLineInfo) =
   c.dest.addParRi() # "ptr"
   c.dest.addParRi() # "fld"
 
+proc trObjFields(c: var EContext; n: var Cursor; flags: set[TypeFlag])
+
+
+proc trCaseObjAsNamedType(c: var EContext; n: var Cursor; flags: set[TypeFlag]; kind: string; fields: TokenBuf): SymId =
+  let info = n.info
+  let key = takeMangle(n, c.bits)
+
+  var val = c.newTypes.getOrDefault(key)
+  if val == SymId(0):
+    val = pool.syms.getOrIncl(key & GeneratedTypeSuffix)
+    c.newTypes[key] = val
+
+    var buf = createTokenBuf(30)
+    swap c.dest, buf
+
+    c.dest.add tagToken("type", info)
+    c.dest.add symdefToken(val, info)
+    c.offer val
+
+    c.dest.addDotToken()
+
+    c.dest.add tagToken(kind, info)
+    c.dest.addDotToken()
+    c.dest.add fields
+    c.dest.addParRi()
+
+    c.dest.addParRi() # "type"
+
+    swap c.dest, buf
+    c.pending.add buf
+    programs.publish val, buf
+  result = val
+
+
+proc trCaseObjectField(c: var EContext; n: var Cursor; flags: set[TypeFlag]) =
+  let info = n.info
+  inc n
+  var selectorName = pool.syms[asLocal(n).name.symId]
+  # extractBasename(selectorName)
+
+  trField(c, n, flags)
+
+  var union = n
+  var typeSyms = newSeq[SymId]()
+  while n.kind != ParRi:
+    case n.substructureKind
+    of OfU:
+      inc n
+      skip n
+      assert n.stmtKind == StmtsS
+      var body = n
+      inc body
+      var fields = createTokenBuf()
+      swap c.dest, fields
+      trObjFields(c, body, flags)
+      swap c.dest, fields
+      typeSyms.add trCaseObjAsNamedType(c, n, flags, "object", fields)
+      skipParRi c, n
+    of ElseU:
+      inc n
+      assert n.stmtKind == StmtsS
+      var body = n
+      inc body
+      var fields = createTokenBuf()
+      swap c.dest, fields
+      trObjFields(c, body, flags)
+      swap c.dest, fields
+      typeSyms.add trCaseObjAsNamedType(c, n, flags, "object", fields)
+      skipParRi c, n
+    else:
+      error "expected `of` or `else` inside `case`"
+  var buf = createTokenBuf()
+  var counter = 0
+  for sym in typeSyms:
+    buf.add tagToken("fld", info)
+    buf.add symdefToken(pool.syms.getOrIncl("_" & selectorName & "." & $counter), info)
+    buf.addEmpty() # pragmas
+    buf.add symToken(sym, info)
+    buf.addParRi() # "fld"
+    inc counter
+
+  let unionTypeSym = trCaseObjAsNamedType(c, union, flags, "union", buf)
+  c.dest.add tagToken("fld", info)
+  c.dest.add symdefToken(pool.syms.getOrIncl("_" & selectorName), info)
+  c.dest.addEmpty() # pragmas
+  c.dest.add symToken(unionTypeSym, info)
+  c.dest.addParRi() # "fld"
+
+  skipParRi c, n
+
 proc trObjFields(c: var EContext; n: var Cursor; flags: set[TypeFlag]) =
   while n.kind != ParRi:
     case n.substructureKind
     of FldU:
       trField(c, n, flags)
     of CaseU:
-      # XXX for now counts each case object field as separate
-      inc n
-      trField(c, n, flags)
-      while n.kind != ParRi:
-        case n.substructureKind
-        of OfU:
-          inc n
-          skip n
-          assert n.stmtKind == StmtsS
-          inc n
-          trObjFields(c, n, flags)
-          skipParRi c, n
-          skipParRi c, n
-        of ElseU:
-          inc n
-          assert n.stmtKind == StmtsS
-          inc n
-          trObjFields(c, n, flags)
-          skipParRi c, n
-        else:
-          error "expected `of` or `else` inside `case`"
-      skipParRi c, n
+      trCaseObjectField(c, n, flags)
     of NilU:
       skip n
     else:
@@ -1154,6 +1223,96 @@ proc trFieldname(c: var EContext; n: var Cursor) =
   else:
     trExpr c, n
 
+
+proc accessCaseObjects(c: var EContext; lvalue: TokenBuf; selector: SymId; field: SymId; counter: int; info: PackedLineInfo) =
+  # foo.bar -> foo._x._x_1.x
+  var selectorName = pool.syms[selector]
+  # extractBasename(selectorName)
+  c.dest.add tagToken("dot", info)
+  c.dest.add tagToken("dot", info)
+  c.dest.add lvalue
+  c.dest.add symToken(pool.syms.getOrIncl("_" & selectorName), info)
+  c.dest.addIntLit(0, info)
+  c.dest.addParRi()
+  c.dest.add symToken(pool.syms.getOrIncl("_" & selectorName & "." & $counter), info)
+  c.dest.addIntLit(0, info)
+  c.dest.addParRi()
+  c.dest.add symToken(field, info)
+
+proc accessField(c: var EContext; lvalue: TokenBuf; field: SymId; info: PackedLineInfo) =
+  c.dest.add lvalue
+  c.dest.addSymUse field, info
+
+proc locateFieldInCaseObject(c: var EContext; lvalue: TokenBuf; typ: SymId, field: SymId, info: PackedLineInfo) =
+  let res = tryLoadSym(typ)
+  if res.status == LacksNothing:
+    var body = asTypeDecl(res.decl).body
+    if body.typeKind == DistinctT: # skips DistinctT
+      inc body
+    if body.typeKind == ObjectT:
+      inc body
+      if body.kind == DotToken:
+        inc body
+      else:
+        let (s, _) = getSym(c, body)
+        locateFieldInCaseObject(c, lvalue, s, field, info)
+
+      while body.kind != ParRi:
+        case body.substructureKind
+        of FldU:
+          let name = takeLocal(body, SkipFinalParRi).name.symId
+          if field == name:
+            accessField(c, lvalue, field, info)
+            return
+          else:
+            continue
+        of CaseU:
+          inc body
+          let selector = takeLocal(body, SkipFinalParRi).name.symId
+          if field == selector:
+            accessField(c, lvalue, field, info)
+            return
+          var counter = 0
+          while body.kind != ParRi:
+            case body.substructureKind
+            of OfU:
+              inc body
+              skip body
+              assert body.stmtKind == StmtsS
+              inc body
+              while body.kind != ParRi:
+                let name = takeLocal(body, SkipFinalParRi).name.symId
+                if field == name:
+                  accessCaseObjects(c, lvalue, selector, field, counter, info)
+                  return
+                else:
+                  discard
+              skipParRi(body)
+              skipParRi(body)
+            of ElseU:
+              inc body
+              assert body.stmtKind == StmtsS
+              inc body
+              while body.kind != ParRi:
+                let name = takeLocal(body, SkipFinalParRi).name.symId
+                if field == name:
+                  accessCaseObjects(c, lvalue, selector, field, counter, info)
+                  return
+                else:
+                  discard
+              skipParRi(body)
+            else:
+              accessField(c, lvalue, field, info)
+              return
+            inc counter
+        else:
+          accessField(c, lvalue, field, info)
+          return
+    else:
+      accessField(c, lvalue, field, info)
+  else:
+    accessField(c, lvalue, field, info)
+
 proc trExpr(c: var EContext; n: var Cursor) =
   case n.kind
   of EofToken, ParRi:
@@ -1229,8 +1388,19 @@ proc trExpr(c: var EContext; n: var Cursor) =
     of DotX:
       c.dest.add tagToken("dot", n.info)
       inc n # skip tag
+      let typ = getType(c.typeCache, n)
+
+      var lvalue = createTokenBuf()
+      swap c.dest, lvalue
       trExpr c, n # obj
-      trFieldname c, n # field
+      swap c.dest, lvalue
+
+      if n.kind == Symbol:
+        locateFieldInCaseObject(c, lvalue, typ.symId, n.symId, n.info)
+        inc n
+      else:
+        c.dest.add lvalue
+        trFieldname c, n # field
       if n.kind != ParRi:
         trExpr c, n # inheritance depth
       takeParRi c, n
