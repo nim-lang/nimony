@@ -30,3 +30,13 @@ method m(o: Obj2) =
 let x = RootObj(Obj2()[])
 assert x of Obj2
 test(Obj2()[])
+
+let y = (ref RootObj)(Obj2())
+assert y of Obj2
+
+#proc testRef(o: ref RootObj) =
+#  echo o of RootObj
+#  echo o of Obj
+#  m o[]
+#
+#testRef y

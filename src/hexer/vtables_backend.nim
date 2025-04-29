@@ -292,8 +292,21 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
           dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
 
         copyIntoKind dest, DotX, info:
+          let opType = getType(c.typeCache, x)
+          if opType.typeKind in {RefT, PtrT}:
+            if opType.typeKind == RefT:
+              # past duplifier, so need to do the deref transform here
+              dest.addParLe(DotX, info)
+            dest.addParLe(DerefX, info)
           var x = x
           tr c, dest, x
+          if opType.typekind in {RefT, PtrT}:
+            dest.addParRi()
+            if opType.typeKind == RefT:
+              let dataField = pool.syms.getOrIncl(DataField)
+              dest.add symToken(dataField, info)
+              dest.addIntLit(0, info) # inheritance
+              dest.addParRi()
           dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
           dest.addIntLit 0, info
 
@@ -417,9 +430,38 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
     skipParRi n
   else:
     n = nn
+    let isPtr = typ.typeKind in {RefT, PtrT}
+    if isPtr:
+      if typ.typeKind == RefT:
+        dest.addParLe(CastX, info)
+        dest.addSubtree typ
+      dest.addParLe(AddrX, info)
     copyInto dest, n:
-      while n.kind != ParRi:
+      if isPtr:
+        assert n.typeKind == typ.typeKind
+        inc n
         tr c, dest, n
+        skipParRi n
+      else:
+        tr c, dest, n
+      tr c, dest, n
+      if isPtr:
+        if typ.typeKind == RefT:
+          # past duplifier, so need to do the deref transform here
+          dest.addParLe(DotX, info)
+        copyIntoKind dest, DerefX, info:
+          tr c, dest, n
+        if typ.typeKind == RefT:
+          let dataField = pool.syms.getOrIncl(DataField)
+          dest.add symToken(dataField, info)
+          dest.addIntLit(0, info) # inheritance
+          dest.addParRi()
+      else:
+        tr c, dest, n
+    if isPtr:
+      dest.addParRi()
+      if typ.typeKind == RefT:
+        dest.addParRi()
   # store back:
   nn = n
 

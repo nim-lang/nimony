@@ -755,7 +755,7 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
     elif not isObjectType(a.symId):
       m.error InvalidMatch, f, a
     else:
-      matchObjectInheritance m, f, a, f.symId, a.symId, NoType
+      matchObjectInheritance m, f, a, f.symId, a.symId, ptrKind
     inc f
   elif f.typeKind == InvokeT:
     var aInvoke = a
@@ -773,7 +773,7 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       else:
         let fsym = fBase.symId
         let asym = if a.kind == Symbol: a.symId else: aBase.symId
-        matchObjectInheritance m, f, a, fsym, asym, NoType
+        matchObjectInheritance m, f, a, fsym, asym, ptrKind
         skip f
     else:
       m.error InvalidMatch, f, a
