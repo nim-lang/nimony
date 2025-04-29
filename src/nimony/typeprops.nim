@@ -296,6 +296,21 @@ proc getClass*(t: TypeCursor): SymId =
     else:
       break
 
+proc skipTypeInstSym*(s: SymId): SymId =
+  # if `s` is a generic instantiation, return the generic base sym, otherwise return itself
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing and res.decl.symKind == TypeY:
+    let decl = asTypeDecl(res.decl)
+    if decl.typevars.typeKind == InvokeT:
+      var base = decl.typevars
+      inc base
+      result = base.symId
+    else:
+      # generic base or not generic
+      result = s
+  else:
+    result = s
+
 proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoType): bool =
   var counter = 20
   var n = n

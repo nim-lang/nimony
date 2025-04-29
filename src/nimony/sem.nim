@@ -3702,7 +3702,7 @@ proc attachMethod(c: var SemContext; symId: SymId;
       skip params # name
       skip params # export marker
       skip params # pragmas
-      root = getClass(params)
+      root = getClass(params) # can be a generic instance symbol
       var rest = params
       skip rest # type
       skip rest # default value
@@ -6388,13 +6388,17 @@ proc semInstanceof(c: var SemContext; it: var Item) =
         # XXX report "always true" here
         ok = AlwaysSubtype
       else:
+        let targetBase = skipTypeInstSym(targetSym)
         for xsubtype in inheritanceChain(xtyp):
-          if xsubtype == targetSym:
+          let subBase = skipTypeInstSym(xsubtype)
+          if subBase == targetBase:
             ok = AlwaysSubtype
             break
       if ok == NoSubtype:
+        let xBase = skipTypeInstSym(xtyp)
         for subtype in inheritanceChain(targetSym):
-          if xtyp == subtype:
+          let subBase = skipTypeInstSym(subtype)
+          if xBase == subBase:
             ok = MaybeSubtype
             break
         if not hasRtti(xtyp):
@@ -6948,6 +6952,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     let res = declToCursor(c, s)
     if res.status == LacksNothing:
       requestHookInstance(c, res.decl)
+      # XXX also methods
       c.dest.copyTree res.decl
   instantiateGenericHooks c
   takeParRi c, n

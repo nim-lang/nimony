@@ -683,18 +683,8 @@ proc useArg(m: var Match; arg: Item) =
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item)
 
-proc baseSym(s: SymId): SymId =
-  let decl = getTypeSection(s)
-  if decl.typevars.typeKind == InvokeT:
-    var base = decl.typevars
-    inc base
-    result = base.symId
-  else:
-    # generic base or not generic
-    result = s
-
 proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
-  let fbase = baseSym(fsym)
+  let fbase = skipTypeInstSym(fsym)
   var diff = 1
   var objbody = objtypeImpl(asym)
   while true:
@@ -714,7 +704,7 @@ proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKi
       pbase = psym
     elif parent.kind == Symbol:
       psym = parent.symId
-      pbase = baseSym(psym)
+      pbase = skipTypeInstSym(psym)
     else:
       break
     if sameSymbol(fbase, pbase):
