@@ -1571,7 +1571,10 @@ proc trTry(c: var EContext; n: var Cursor) =
         c.dest.add symdefToken(lab, n.info)
         c.dest.addParRi()
         inc n
-        skip n # skip `T as e`, handled in constparams.nim
+        if n.stmtKind == LetS:
+          trStmt c, n
+        else:
+          skip n # skip `T`
         trStmt c, n
         skipParRi n
   c.exceptLabels.shrink oldLen
