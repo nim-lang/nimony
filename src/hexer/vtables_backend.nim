@@ -275,6 +275,63 @@ proc classData(typ: Cursor): (int, UHash) =
     for _ in inheritanceChain(s): inc result[0]
     result[1] = uhash(pool.syms[s])
 
+proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; ptrKind: TypeKind; level: int; base: SymId; info: PackedLineInfo) =
+  if ptrKind != NoType:
+    # cast is enough, see trBaseobj
+    dest.addParLe(CastX, info)
+    dest.addParLe(ptrKind, info)
+    dest.add symToken(base, info)
+    dest.addParRi()
+    tr c, dest, x
+    dest.addParRi()
+  else:
+    dest.addParLe(BaseobjX, info)
+    dest.add symToken(base, info)
+    dest.add intToken(pool.integers.getOrIncl(level), info)
+    tr c, dest, x
+    dest.addParRi()
+
+proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; info: PackedLineInfo) =
+  # get vtable field of `x`, might need to get root object
+  var xt = getType(c.typeCache, x)
+  let xk = xt.typeKind
+  if xk in {RefT, PtrT}:
+    inc xt
+  var xRoot = SymId(0)
+  var xLevel = 0
+  if xt.kind == Symbol:
+    for parent in inheritanceChain(xt.symId):
+      xRoot = parent
+      inc xLevel
+
+  copyIntoKind dest, DotX, info:
+    if xk == RefT:
+      # past duplifier, so need to do the deref transform here
+      dest.addParLe(DotX, info)
+      dest.addParLe(DerefX, info)
+    elif xk == PtrT:
+      dest.addParLe(DerefX, info)
+
+    if xLevel == 0:
+      var x = x
+      tr c, dest, x
+    else:
+      var x = x
+      genBaseobj c, dest, x, xk, xLevel, xRoot, info
+
+    if xk == RefT:
+      # past duplifier, so need to do the deref transform here
+      let dataField = pool.syms.getOrIncl(DataField)
+      dest.add symToken(dataField, info)
+      dest.addIntLit(0, info) # inheritance
+      dest.addParRi()
+      dest.addParRi()
+    elif xk == PtrT:
+      dest.addParRi()
+
+    dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+    dest.addIntLit 0, info
+
 proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: PackedLineInfo) =
   # `v of T` is translated into a logical 'and' expression:
   # let vtab = v.vtab
@@ -291,49 +348,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
         dest.copyIntoKind PtrT, info:
           dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
 
-        copyIntoKind dest, DotX, info:
-          var xt = getType(c.typeCache, x)
-          let xk = xt.typeKind
-          if xk in {RefT, PtrT}:
-            inc xt
-          var xRoot = SymId(0)
-          var xLevel = 0
-          if xt.kind == Symbol:
-            for parent in inheritanceChain(xt.symId):
-              xRoot = parent
-              inc xLevel
-          if xk in {RefT, PtrT}:
-            if xk == RefT:
-              # past duplifier, so need to do the deref transform here
-              dest.addParLe(DotX, info)
-            dest.addParLe(DerefX, info)
-          if xLevel == 0:
-            var x = x
-            tr c, dest, x
-          elif xk in {RefT, PtrT}:
-            dest.addParLe(CastX, info)
-            dest.addParLe(xk, info)
-            dest.add symToken(xRoot, info)
-            dest.addParRi()
-            var x = x
-            tr c, dest, x
-            dest.addParRi()
-          else:
-            dest.addParLe(BaseobjX, info)
-            dest.add symToken(xRoot, info)
-            dest.add intToken(pool.integers.getOrIncl(xLevel), info)
-            var x = x
-            tr c, dest, x
-            dest.addParRi()
-          if xk in {RefT, PtrT}:
-            dest.addParRi()
-            if xk == RefT:
-              let dataField = pool.syms.getOrIncl(DataField)
-              dest.add symToken(dataField, info)
-              dest.addIntLit(0, info) # inheritance
-              dest.addParRi()
-          dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
-          dest.addIntLit 0, info
+        genVtableField c, dest, x, info
 
       # Get the class data (level and hash)
       let (level, h) = classData(typ)
