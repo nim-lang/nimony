@@ -264,7 +264,52 @@ proc nominalRoot*(t: TypeCursor; allowTypevar = false; skipPtrs = false): SymId 
       break
 
 proc getClass*(t: TypeCursor): SymId =
-  result = nominalRoot(t, false, true)
+  # similar to nominalRoot but preserves instances
+  result = SymId(0)
+  var t = t
+  var ptrs = 1
+  while true:
+    case t.kind
+    of Symbol:
+      let res = tryLoadSym(t.symId)
+      assert res.status == LacksNothing
+      if res.decl.symKind == TypeY:
+        # includes instance case
+        return t.symId
+      else:
+        # ignore typevar case
+        break
+    of ParLe:
+      case t.typeKind
+      of MutT, OutT, LentT, SinkT, StaticT, TypedescT:
+        inc t
+      of InvokeT:
+        inc t
+      of RefT, PtrT:
+        if ptrs > 0:
+          inc t
+          dec ptrs
+        else:
+          break
+      else:
+        break
+    else:
+      break
+
+proc skipTypeInstSym*(s: SymId): SymId =
+  # if `s` is a generic instantiation, return the generic base sym, otherwise return itself
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing and res.decl.symKind == TypeY:
+    let decl = asTypeDecl(res.decl)
+    if decl.typevars.typeKind == InvokeT:
+      var base = decl.typevars
+      inc base
+      result = base.symId
+    else:
+      # generic base or not generic
+      result = s
+  else:
+    result = s
 
 proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoType): bool =
   var counter = 20
@@ -311,6 +356,8 @@ iterator inheritanceChain*(s: SymId): SymId =
     if od.kind == ObjectT:
       var parent = od.parentType
       if parent.typeKind in {RefT, PtrT}:
+        inc parent
+      if parent.typeKind == InvokeT:
         inc parent
       if parent.kind == Symbol:
         let ps = parent.symId

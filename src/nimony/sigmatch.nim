@@ -183,6 +183,15 @@ proc isObjectType(s: SymId): bool =
   else:
     result = false
 
+proc isObjectType(n: Cursor): bool =
+  var n = n
+  if n.typeKind == InvokeT:
+    inc n
+  if n.kind == Symbol:
+    result = isObjectType(n.symId)
+  else:
+    result = false
+
 proc isEnumType*(n: Cursor): bool =
   if n.kind == Symbol:
     let impl = getTypeSection(n.symId)
@@ -674,6 +683,103 @@ proc useArg(m: var Match; arg: Item) =
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item)
 
+proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
+  let fbase = skipTypeInstSym(fsym)
+  var diff = 1
+  var objbody = objtypeImpl(asym)
+  while true:
+    let od = asObjectDecl(objbody)
+    if od.kind != ObjectT:
+      m.error InvalidMatch, f, a
+      return
+    var parent = od.parentType
+    if parent.typeKind in {RefT, PtrT}:
+      inc parent
+
+    var psym = SymId(0)
+    var pbase = SymId(0)
+    if parent.typeKind == InvokeT:
+      var base = parent
+      inc base
+      psym = base.symId
+      pbase = psym
+    elif parent.kind == Symbol:
+      psym = parent.symId
+      pbase = skipTypeInstSym(psym)
+    else:
+      break
+
+    if sameSymbol(fbase, pbase):
+      if f.typeKind == InvokeT:
+        # infer generic params
+        # XXX might need to use something like `bindSubsInvokeArgs` here
+        # if `parent` contains generic parameters of the object type
+        var f2 = f
+        var p2 = parent
+        linearMatch m, f2, p2
+
+      m.args.addParLe BaseobjX, m.argInfo
+      if m.flipped:
+        if ptrKind != NoType: m.args.addParLe(ptrKind, a.info)
+        m.args.addSubtree a
+        if ptrKind != NoType: m.args.addParRi()
+        m.args.addIntLit -diff, m.argInfo
+        dec m.inheritanceCosts, diff
+      else:
+        if ptrKind != NoType: m.args.addParLe(ptrKind, f.info)
+        m.args.addSubtree f
+        if ptrKind != NoType: m.args.addParRi()
+        m.args.addIntLit diff, m.argInfo
+        inc m.inheritanceCosts, diff
+      inc m.opened
+      diff = 0 # mark as success
+      break
+    inc diff
+    objbody = objtypeImpl(psym)
+  if diff != 0:
+    m.error InvalidMatch, f, a
+  elif m.skippedMod == OutT:
+    m.error UnavailableSubtypeRelation, f, a
+
+proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind) =
+  if f.kind == Symbol:
+    # consider object sym as instantiated, can only match another object sym
+    # (generic base sym case handled in `matchesConstraint`)
+    if a.kind != Symbol:
+      m.error InvalidMatch, f, a
+    elif sameSymbol(f.symId, a.symId):
+      discard "direct match, no annotation required"
+    elif not isObjectType(a.symId):
+      m.error InvalidMatch, f, a
+    else:
+      matchObjectInheritance m, f, a, f.symId, a.symId, ptrKind
+    inc f
+  elif f.typeKind == InvokeT:
+    # check if the types are compatible first before checking for inheritance
+    var aInvoke = a
+    if a.kind == Symbol:
+      let ad = getTypeSection(a.symId)
+      if ad.kind == TypeY and ad.typevars.typeKind == InvokeT:
+        aInvoke = ad.typevars
+    var fBase = f
+    inc fBase
+    if aInvoke.typeKind == InvokeT:
+      var aBase = aInvoke
+      inc aBase
+      if sameSymbol(fBase.symId, aBase.symId):
+        linearMatch m, f, aInvoke
+      else:
+        let fsym = fBase.symId
+        let asym = if a.kind == Symbol: a.symId else: aBase.symId
+        matchObjectInheritance m, f, a, fsym, asym, ptrKind
+        skip f
+    else:
+      # already checked that this is an object type
+      assert a.kind == Symbol
+      let fsym = fBase.symId
+      let asym = a.symId
+      matchObjectInheritance m, f, a, fsym, asym, ptrKind
+
 proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
@@ -695,33 +801,8 @@ proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
     else:
       m.error ConstraintMismatch, f, a
   elif isObjectType(fs):
-    if a.kind != Symbol:
-      m.error InvalidMatch, f, a
-    elif sameSymbol(fs, a.symId):
-      discard "direct match, no annotation required"
-    elif not isObjectType(a.symId):
-      m.error InvalidMatch, f, a
-    else:
-      var diff = 1
-      for fparent in inheritanceChain(a.symId):
-        if sameSymbol(fparent, fs):
-          m.args.addParLe BaseobjX, m.argInfo
-          if m.flipped:
-            m.args.addSubtree a
-            m.args.addIntLit -diff, m.argInfo
-            dec m.inheritanceCosts, diff
-          else:
-            m.args.addSubtree f
-            m.args.addIntLit diff, m.argInfo
-            inc m.inheritanceCosts, diff
-          inc m.opened
-          diff = 0 # mark as success
-          break
-        inc diff
-      if diff != 0:
-        m.error InvalidMatch, f, a
-      elif m.skippedMod == OutT:
-        m.error UnavailableSubtypeRelation, f, a
+    var f = f
+    matchObjectTypes m, f, a, NoType
   elif isConcept(fs):
     m.error NotImplementedConcept, f, a
   else:
@@ -871,10 +952,13 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       inc f
       expectParRi m, f
     of InvokeT:
-      # handled in linearMatch
-      # XXX except for inheritance
       var a = skipModifier(arg.typ)
-      linearMatch m, f, a
+      if isObjectType(f) and isObjectType(a):
+        # specialized to handle inheritance
+        matchObjectTypes m, f, a, NoType
+      else:
+        # handled in linearMatch
+        linearMatch m, f, a
     of RangetypeT:
       # for now acts the same as base type
       var a = skipModifier(arg.typ)
@@ -922,14 +1006,23 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         linearMatch m, f, a
     of PtrT, RefT:
       var a = skipModifier(arg.typ)
-      case a.typeKind
-      of NiltT:
+      let ak = a.typeKind
+      if ak == NiltT:
         discard "ok"
         inc f
         skip f
         expectParRi m, f
+      elif ak == fk:
+        inc f
+        inc a
+        if isObjectType(f) and isObjectType(a):
+          # handle inheritance
+          matchObjectTypes m, f, a, fk
+        else:
+          linearMatch m, f, a
+        expectParRi m, f
       else:
-        linearMatch m, f, a
+        m.error InvalidMatch, f, a
     of TypedescT:
       # do not skip modifier
       var a = arg.typ

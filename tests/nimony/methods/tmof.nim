@@ -1,5 +1,5 @@
 
-import std / [syncio]
+import std / [syncio, assertions]
 
 type
   RootObj {.inheritable.} = object
@@ -21,3 +21,30 @@ proc test(o: RootObj) =
 
 test(Obj(a: 1, b: 2, c: "3"))
 test(RootObj())
+
+type Obj2 = ref object of RootObj
+
+method m(o: Obj2) =
+  echo "Obj2"
+
+let x = RootObj(Obj2()[])
+assert x of Obj2
+test(Obj2()[])
+
+let y = (ref RootObj)(Obj2())
+assert y of Obj2
+test(y[])
+
+let z = Obj2(y)
+assert z of Obj2
+test(z[])
+
+proc testRef(o: ref RootObj) =
+  echo "testing ref"
+  echo o of RootObj
+  echo o of Obj
+  echo o of Obj2
+  m o[]
+
+testRef y
+testRef z

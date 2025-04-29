@@ -107,20 +107,25 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
   let argType = getType(c.typeCache, n)
   c.needsXelim = true
 
-  copyIntoKind dest, ExprX, info:
-    copyIntoKind dest, StmtsS, info:
-      let symId = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
-      inc c.tmpCounter
-      copyIntoKind dest, VarS, info:
-        addSymDef dest, symId, info
-        dest.addEmpty2 info # export marker, pragma
+  dest.addParLe(ExprX, info) # will be closed with closeTemp
+  copyIntoKind dest, StmtsS, info:
+    let symId = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
+    inc c.tmpCounter
+    copyIntoKind dest, VarS, info:
+      addSymDef dest, symId, info
+      dest.addEmpty2 info # export marker, pragma
+      if takeAddr:
+        # type:
+        copyIntoKind dest, PtrT, info:
+          copyTree dest, argType
+        # value:
+        copyIntoKind dest, AddrX, info:
+          tr c, dest, n
+      else:
+        # type:
         copyTree dest, argType
         # value:
-        if takeAddr:
-          copyIntoKind dest, AddrX, info:
-            tr c, dest, n
-        else:
-          tr c, dest, n
+        tr c, dest, n
   result = TempLoc(sym: symId, needsDeref: takeAddr, needsParRi: true)
 
 proc isMethod(c: var Context; s: SymId): bool =
@@ -161,6 +166,13 @@ proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
   dest.addDotToken() # body
   dest.addParRi()
 
+type ClassInfo = object
+  root: SymId
+  level: int
+  ptrKind: TypeKind
+
+proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo)
+
 proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fnNode = n.load()
   let fnType = getType(c.typeCache, n)
@@ -179,15 +191,20 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     let info = n.info
     let temp = evalOnce(c, dest, n)
+    # XXX nil check for ref/ptr case, `chckNilDisp` in old compiler
     copyIntoKind dest, CastX, info:
       genProctype(c, dest, fnType)
       copyIntoKind dest, PatX, info:
         copyIntoKind dest, DotX, info:
           copyIntoKind dest, DerefX, info:
-            copyIntoKind dest, DotX, info:
-              useTemp dest, temp, info
-              dest.addSymUse pool.syms.getOrIncl(VTableField), info
-              dest.addIntLit 0, info # this is getting stupid...
+            var tempUseBuf = createTokenBuf(4)
+            useTemp tempUseBuf, temp, info
+            var root = SymId(0)
+            var level = 0
+            for parent in inheritanceChain(cls):
+              root = parent
+              inc level
+            genVtableField c, dest, beginRead(tempUseBuf), ClassInfo(root: root, level: level, ptrKind: typ.typeKind), info
           dest.addSymUse pool.syms.getOrIncl(MethodsField & SystemModuleSuffix), info
           dest.addIntLit 0, info # this is getting stupid...
         let idx = getMethodIndex(c, cls, fn)
@@ -275,6 +292,51 @@ proc classData(typ: Cursor): (int, UHash) =
     for _ in inheritanceChain(s): inc result[0]
     result[1] = uhash(pool.syms[s])
 
+proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassInfo; info: PackedLineInfo) =
+  if class.ptrKind != NoType:
+    # cast is enough, see trBaseobj
+    dest.addParLe(CastX, info)
+    dest.addParLe(class.ptrKind, info)
+    dest.add symToken(class.root, info)
+    dest.addParRi()
+    tr c, dest, x
+    dest.addParRi()
+  else:
+    dest.addParLe(BaseobjX, info)
+    dest.add symToken(class.root, info)
+    dest.add intToken(pool.integers.getOrIncl(class.level), info)
+    tr c, dest, x
+    dest.addParRi()
+
+proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo) =
+  # get vtable field of `x`, might need to get to root object
+  copyIntoKind dest, DotX, info:
+    if class.ptrKind == RefT:
+      # past duplifier, so need to do the deref transform here
+      dest.addParLe(DotX, info)
+      dest.addParLe(DerefX, info)
+    elif class.ptrKind == PtrT:
+      dest.addParLe(DerefX, info)
+
+    var x = x
+    if class.level == 0:
+      tr c, dest, x
+    else:
+      genBaseobj c, dest, x, class, info
+
+    if class.ptrKind == RefT:
+      # past duplifier, so need to do the deref transform here
+      dest.addParRi()
+      let dataField = pool.syms.getOrIncl(DataField)
+      dest.add symToken(dataField, info)
+      dest.addIntLit(0, info) # inheritance
+      dest.addParRi()
+    elif class.ptrKind == PtrT:
+      dest.addParRi()
+
+    dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+    dest.addIntLit 0, info
+
 proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: PackedLineInfo) =
   # `v of T` is translated into a logical 'and' expression:
   # let vtab = v.vtab
@@ -285,17 +347,25 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
   c.needsXelim = true
   copyIntoKind dest, ExprX, info:
     copyIntoKind dest, StmtsS, info:
+      # XXX nil check, old compiler codegen seems like it should always give `false` but it behaves like static check?
       copyIntoKind dest, VarS, info:
         dest.addSymDef vtabTempSym, info
         dest.addEmpty2 info # export marker, pragma
         dest.copyIntoKind PtrT, info:
           dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
 
-        copyIntoKind dest, DotX, info:
-          var x = x
-          tr c, dest, x
-          dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
-          dest.addIntLit 0, info
+        var xt = getType(c.typeCache, x)
+        let xk = xt.typeKind
+        if xk in {RefT, PtrT}:
+          inc xt
+        var xRoot = SymId(0)
+        var xLevel = 0
+        if xt.kind == Symbol:
+          for parent in inheritanceChain(xt.symId):
+            xRoot = parent
+            inc xLevel
+
+        genVtableField c, dest, x, ClassInfo(root: xRoot, level: xLevel, ptrKind: xk), info
 
       # Get the class data (level and hash)
       let (level, h) = classData(typ)
@@ -416,10 +486,20 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
             tr c, dest, bufn
     skipParRi n
   else:
-    n = nn
-    copyInto dest, n:
-      while n.kind != ParRi:
-        tr c, dest, n
+    let isPtr = typ.typeKind in {RefT, PtrT}
+    if isPtr:
+      # to preserve the refcount field position, cast entire pointer
+      # works since the supertype is always the first field
+      dest.addParLe(CastX, info)
+      dest.addSubtree typ
+      skip n
+      tr c, dest, n
+      takeParRi dest, n
+    else:
+      n = nn
+      copyInto dest, n:
+        while n.kind != ParRi:
+          tr c, dest, n
   # store back:
   nn = n
 
@@ -550,14 +630,17 @@ proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
 
 proc collectClass(c: var Context; n: var Cursor) =
   let d = takeTypeDecl(n, SkipFinalParRi)
-  var b = d.body
-  if b.typeKind in {RefT, PtrT}: inc b
   var isClass = false
-  if hasPragma(d.pragmas, InheritableP):
+  if d.isGeneric:
+    isClass = false
+  elif hasPragma(d.pragmas, InheritableP):
     isClass = true
-  elif b.typeKind == ObjectT:
-    inc b
-    isClass = b.kind != DotToken
+  else:
+    var b = d.body
+    if b.typeKind in {RefT, PtrT}: inc b
+    if b.typeKind == ObjectT:
+      inc b
+      isClass = b.kind != DotToken
   if isClass:
     let cls = d.name.symId
     # reasonably cheap way to get a topological order:
@@ -662,7 +745,10 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
               dest.addSymUse m, NoLineInfo
           dest.addParRi() # AconstrX
         else:
-          dest.addParPair NilX, NoLineInfo
+          # flexible array needs at least one element:
+          dest.copyIntoKind AconstrX, NoLineInfo:
+            dest.addParPair PointerT, NoLineInfo
+            dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
 
 proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =
