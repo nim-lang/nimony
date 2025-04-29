@@ -165,7 +165,9 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
     elif isSpecial:
       let info = n.info
       copyIntoKind dest, TupatX, info:
-        tr c, dest, n
+        assert n.kind == Symbol
+        dest.addSymUse n.symId, info
+        inc n
         dest.addIntLit 0, info
     else:
       tr c, dest, n
@@ -350,7 +352,11 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.exceptVars.shrink oldLen
   while n.substructureKind == ExceptU:
     copyInto dest, n:
-      dest.takeTree n
+      if n.stmtKind == LetS:
+        dest.addDotToken() # we moved the declaration before the try statement
+        skip n
+      else:
+        dest.takeTree n
       tr c, dest, n
   if n.substructureKind == FinU:
     copyInto dest, n:
