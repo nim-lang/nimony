@@ -292,17 +292,42 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
           dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
 
         copyIntoKind dest, DotX, info:
-          let opType = getType(c.typeCache, x)
-          if opType.typeKind in {RefT, PtrT}:
-            if opType.typeKind == RefT:
+          var xt = getType(c.typeCache, x)
+          let xk = xt.typeKind
+          if xk in {RefT, PtrT}:
+            inc xt
+          var xRoot = SymId(0)
+          var xLevel = 0
+          if xt.kind == Symbol:
+            for parent in inheritanceChain(xt.symId):
+              xRoot = parent
+              inc xLevel
+          if xk in {RefT, PtrT}:
+            if xk == RefT:
               # past duplifier, so need to do the deref transform here
               dest.addParLe(DotX, info)
             dest.addParLe(DerefX, info)
-          var x = x
-          tr c, dest, x
-          if opType.typekind in {RefT, PtrT}:
+          if xLevel == 0:
+            var x = x
+            tr c, dest, x
+          elif xk in {RefT, PtrT}:
+            dest.addParLe(CastX, info)
+            dest.addParLe(xk, info)
+            dest.add symToken(xRoot, info)
             dest.addParRi()
-            if opType.typeKind == RefT:
+            var x = x
+            tr c, dest, x
+            dest.addParRi()
+          else:
+            dest.addParLe(BaseobjX, info)
+            dest.add symToken(xRoot, info)
+            dest.add intToken(pool.integers.getOrIncl(xLevel), info)
+            var x = x
+            tr c, dest, x
+            dest.addParRi()
+          if xk in {RefT, PtrT}:
+            dest.addParRi()
+            if xk == RefT:
               let dataField = pool.syms.getOrIncl(DataField)
               dest.add symToken(dataField, info)
               dest.addIntLit(0, info) # inheritance

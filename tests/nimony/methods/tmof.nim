@@ -33,6 +33,11 @@ test(Obj2()[])
 
 let y = (ref RootObj)(Obj2())
 assert y of Obj2
+test(y[])
+
+let z = Obj2(y)
+assert z of Obj2
+test(z[])
 
 #proc testRef(o: ref RootObj) =
 #  echo o of RootObj
