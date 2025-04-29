@@ -185,4 +185,10 @@ func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
   ## Returns the absolute value of `x`.
   if x < 0: -x else: x
 
+func isNil*(s: cstring): bool {.inline.} = s == nil
+
+func chr*(u: range[0..255]): char {.inline.} =
+  ## Converts `u` to a `char`, same as `char(u)`.
+  char(u.int)
+
 include "../../vendor/errorcodes/src" / errorcodes
