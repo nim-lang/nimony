@@ -337,22 +337,14 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let oldLen = c.exceptVars.len
   if nn.substructureKind == ExceptU:
     inc nn
-    if nn.exprKind in CallKinds:
-      # `T as e`
-      inc nn
-      var lastPart = nn
-      while nn.kind != ParRi:
-        lastPart = nn
-        skip nn
-      if lastPart.kind == SymbolDef:
-        let exc = lastPart.symId
+    if nn.stmtKind == LetS:
+      copyInto dest, nn:
+        let exc = nn.symId
         c.exceptVars.add exc
-        dest.copyIntoKind VarS, nn.info:
-          dest.add symdefToken(exc, nn.info)
-          dest.addEmpty() # export marker
-          dest.addEmpty() # pragmas
-          dest.add symToken(pool.syms.getOrIncl(ErrorCodeName), nn.info)
-          dest.addEmpty() # leave it unitialized
+        c.typeCache.takeLocalHeader(dest, nn, LetY)
+        assert nn.kind == DotToken
+        dest.add nn
+        inc nn
   tr c, dest, n
   c.exceptVars.shrink oldLen
   while n.substructureKind == ExceptU:
@@ -439,6 +431,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trRet c, dest, n
         of RaiseS:
           trRaise c, dest, n
+        of TryS:
+          trTry c, dest, n
         of TemplateS, TypeS:
           takeTree dest, n
         else:

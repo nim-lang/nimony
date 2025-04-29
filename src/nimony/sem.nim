@@ -4140,7 +4140,9 @@ proc semTry(c: var SemContext; it: var Item) =
       # `Type as e`:
       inc it.n
       inc it.n
+      let start = c.dest.len
       let etyp = semExceptionType(c, it)
+      c.dest.shrink start
       var decl = createTokenBuf(8)
       decl.addParLe(LetS, info)
       decl.takeTree it.n # name
