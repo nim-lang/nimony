@@ -33,24 +33,12 @@
   (oconstr ~2,23 Foo.0.tcauiaoif
    (kv x.0.tcauiaoif 45,4,lib/std/system/defaults.nim
     (expr
-     (false)))
-   (kv y.0.tcauiaoif 43,6,lib/std/system/defaults.nim
-    (expr +0))
-   (kv z.0.tcauiaoif 49,18,lib/std/system/defaults.nim
-    (expr ""))
-   (kv t.0.tcauiaoif 45,4,lib/std/system/defaults.nim
-    (expr
      (false))))) 4,15
  (asgn ~4 foo.0.tcauiaoif 5
   (oconstr 2,22 Foo.0.tcauiaoif 2
    (kv ~2 x.0.tcauiaoif 2
     (false)) 12
-   (kv ~12 y.0.tcauiaoif 2 +123)
-   (kv z.0.tcauiaoif 49,18,lib/std/system/defaults.nim
-    (expr ""))
-   (kv t.0.tcauiaoif 45,4,lib/std/system/defaults.nim
-    (expr
-     (false))))) 4,16
+   (kv ~12 y.0.tcauiaoif 2 +123))) 4,16
  (glet :a.0.tcauiaoif . . 6,~13
   (bool) 13
   (dot ~3 foo.0.tcauiaoif x.0.tcauiaoif +0)) 2,4,lib/std/assertions.nim
@@ -89,9 +77,7 @@
  (asgn ~4 foo.0.tcauiaoif 5
   (oconstr 2,17 Foo.0.tcauiaoif 2
    (kv ~2 x.0.tcauiaoif 2
-    (true))
-   (kv y.0.tcauiaoif 43,6,lib/std/system/defaults.nim
-    (expr +0)) 11
+    (true)) 11
    (kv ~11 z.0.tcauiaoif 2 "abc") 21
    (kv ~21 t.0.tcauiaoif 2
     (false)))) 2,4,lib/std/assertions.nim
@@ -221,9 +207,7 @@
    (var :x.1 . . 5,~5 Foo.0.tcauiaoif 7
     (oconstr ~2,~5 Foo.0.tcauiaoif 2
      (kv ~2 x.0.tcauiaoif 2
-      (true))
-     (kv y.0.tcauiaoif 43,6,lib/std/system/defaults.nim
-      (expr +0)) 11
+      (true)) 11
      (kv ~11 z.0.tcauiaoif 2 "abc") 21
      (kv ~21 t.0.tcauiaoif 2
       (false)))) ,1
