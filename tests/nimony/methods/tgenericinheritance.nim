@@ -35,8 +35,30 @@ method foo(x: InheritGeneric2) =
   #echo "inherited 1 check: ", x of InheritGeneric1[int]
   echo "inherited 2 check: ", x of InheritGeneric2
 
-foo(GenericObj[int](#[x: 1]#))
-foo(InheritGeneric1[int](#[x: 2,]# y: 3))
-foo(GenericObj[float](#[x: 4.56]#))
-foo(InheritGeneric1[float](#[x: 7.89,]# y: 10.11))
-foo(InheritGeneric2(#[x: 12,]# z: "abc"))
+let baseInt = GenericObj[int](#[x: 1]#)
+let inherit1Int = InheritGeneric1[int](#[x: 2,]# y: 3)
+let baseFloat = GenericObj[float](#[x: 4.56]#)
+let inherit1Float = InheritGeneric1[float](#[x: 7.89,]# y: 10.11)
+let inherit2 = InheritGeneric2(#[x: 12,]# z: "abc")
+
+if false: # temporary workaround, instantiate all the methods:
+  foo(baseInt)
+  foo(inherit1Int)
+  foo(baseFloat)
+  foo(inherit1Float)
+  foo(inherit2)
+
+proc test[T](x: GenericObj[T]) =
+  foo(x)
+
+test(baseInt)
+test(inherit1Int)
+test(baseFloat)
+test(inherit1Float)
+test(inherit2)
+# same test as:
+#foo(baseInt)
+#foo(GenericObj[int](inherit1Int))
+#foo(baseFloat)
+#foo(GenericObj[float](inherit1Float))
+#foo(GenericObj[int](inherit2))

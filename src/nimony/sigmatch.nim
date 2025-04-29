@@ -755,15 +755,16 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       matchObjectInheritance m, f, a, f.symId, a.symId, ptrKind
     inc f
   elif f.typeKind == InvokeT:
+    # check if the types are compatible first before checking for inheritance
     var aInvoke = a
     if a.kind == Symbol:
       let ad = getTypeSection(a.symId)
       if ad.kind == TypeY and ad.typevars.typeKind == InvokeT:
         aInvoke = ad.typevars
+    var fBase = f
+    inc fBase
     if aInvoke.typeKind == InvokeT:
-      var fBase = f
       var aBase = aInvoke
-      inc fBase
       inc aBase
       if sameSymbol(fBase.symId, aBase.symId):
         linearMatch m, f, aInvoke
@@ -773,8 +774,11 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
         matchObjectInheritance m, f, a, fsym, asym, ptrKind
         skip f
     else:
-      m.error InvalidMatch, f, a
-      skip f
+      # already checked that this is an object type
+      assert a.kind == Symbol
+      let fsym = fBase.symId
+      let asym = a.symId
+      matchObjectInheritance m, f, a, fsym, asym, ptrKind
 
 proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)
