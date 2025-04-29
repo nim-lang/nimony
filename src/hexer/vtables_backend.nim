@@ -107,7 +107,7 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
   let argType = getType(c.typeCache, n)
   c.needsXelim = true
 
-  dest.addParLe(ExprX, info)
+  dest.addParLe(ExprX, info) # will be closed with closeTemp
   copyIntoKind dest, StmtsS, info:
     let symId = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
     inc c.tmpCounter
@@ -624,14 +624,17 @@ proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
 
 proc collectClass(c: var Context; n: var Cursor) =
   let d = takeTypeDecl(n, SkipFinalParRi)
-  var b = d.body
-  if b.typeKind in {RefT, PtrT}: inc b
   var isClass = false
-  if hasPragma(d.pragmas, InheritableP):
+  if d.isGeneric:
+    isClass = false
+  elif hasPragma(d.pragmas, InheritableP):
     isClass = true
-  elif b.typeKind == ObjectT:
-    inc b
-    isClass = b.kind != DotToken
+  else:
+    var b = d.body
+    if b.typeKind in {RefT, PtrT}: inc b
+    if b.typeKind == ObjectT:
+      inc b
+      isClass = b.kind != DotToken
   if isClass:
     let cls = d.name.symId
     # reasonably cheap way to get a topological order:
