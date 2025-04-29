@@ -779,6 +779,7 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       let fsym = fBase.symId
       let asym = a.symId
       matchObjectInheritance m, f, a, fsym, asym, ptrKind
+      skip f
 
 proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)

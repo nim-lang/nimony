@@ -4,6 +4,7 @@ type
   RootObj {.inheritable.} = object
 
 type
+  # XXX see bugs when turning these into `ref object`
   GenericObj[T] = object of RootObj
     # object constructors with inherited fields do not work yet
     #x: T
@@ -40,13 +41,6 @@ let inherit1Int = InheritGeneric1[int](#[x: 2,]# y: 3)
 let baseFloat = GenericObj[float](#[x: 4.56]#)
 let inherit1Float = InheritGeneric1[float](#[x: 7.89,]# y: 10.11)
 let inherit2 = InheritGeneric2(#[x: 12,]# z: "abc")
-
-if false: # temporary workaround, instantiate all the methods:
-  foo(baseInt)
-  foo(inherit1Int)
-  foo(baseFloat)
-  foo(inherit1Float)
-  foo(inherit2)
 
 proc test[T](x: GenericObj[T]) =
   foo(x)
