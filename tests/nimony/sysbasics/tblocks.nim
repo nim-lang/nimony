@@ -17,3 +17,16 @@ proc main =
     break endLess
 
 main()
+
+block:
+  type
+    Bytes = distinct int
+
+  var s = 22
+  var m = Bytes(s)
+  assert int(m) == 22
+
+  proc check(s: Bytes) =
+    discard
+
+  check(m)

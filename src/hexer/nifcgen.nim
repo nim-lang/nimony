@@ -875,6 +875,8 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   var dst = createTokenBuf(50)
   swap c.dest, dst
   #let toPatch = c.dest.len
+  let decl = asTypeDecl(n)
+  let isDistinct = decl.body.typeKind == DistinctT
   let vinfo = n.info
   c.add "type", vinfo
   inc n
@@ -883,7 +885,7 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
 
   let newSym: SymId
 
-  if mode == TraverseAll:
+  if mode == TraverseAll and not isDistinct:
     newSym = makeLocalSymId(c, s, false)
     c.dest.add symdefToken(newSym, sinfo)
   else:
