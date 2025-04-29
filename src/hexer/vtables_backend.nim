@@ -321,10 +321,10 @@ proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; info: PackedL
 
     if xk == RefT:
       # past duplifier, so need to do the deref transform here
+      dest.addParRi()
       let dataField = pool.syms.getOrIncl(DataField)
       dest.add symToken(dataField, info)
       dest.addIntLit(0, info) # inheritance
-      dest.addParRi()
       dest.addParRi()
     elif xk == PtrT:
       dest.addParRi()
