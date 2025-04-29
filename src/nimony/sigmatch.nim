@@ -695,6 +695,7 @@ proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKi
     var parent = od.parentType
     if parent.typeKind in {RefT, PtrT}:
       inc parent
+
     var psym = SymId(0)
     var pbase = SymId(0)
     if parent.typeKind == InvokeT:
@@ -707,12 +708,16 @@ proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKi
       pbase = skipTypeInstSym(psym)
     else:
       break
+
     if sameSymbol(fbase, pbase):
       if f.typeKind == InvokeT:
         # infer generic params
+        # XXX might need to use something like `bindSubsInvokeArgs` here
+        # if `parent` contains generic parameters of the object type
         var f2 = f
         var p2 = parent
         linearMatch m, f2, p2
+
       m.args.addParLe BaseobjX, m.argInfo
       if m.flipped:
         if ptrKind != NoType: m.args.addParLe(ptrKind, a.info)
@@ -738,6 +743,8 @@ proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKi
 
 proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind) =
   if f.kind == Symbol:
+    # consider object sym as instantiated, can only match another object sym
+    # (generic base sym case handled in `matchesConstraint`)
     if a.kind != Symbol:
       m.error InvalidMatch, f, a
     elif sameSymbol(f.symId, a.symId):

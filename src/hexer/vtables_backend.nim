@@ -114,17 +114,17 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
     copyIntoKind dest, VarS, info:
       addSymDef dest, symId, info
       dest.addEmpty2 info # export marker, pragma
-      # type:
       if takeAddr:
+        # type:
         copyIntoKind dest, PtrT, info:
           copyTree dest, argType
-      else:
-        copyTree dest, argType
-      # value:
-      if takeAddr:
+        # value:
         copyIntoKind dest, AddrX, info:
           tr c, dest, n
       else:
+        # type:
+        copyTree dest, argType
+        # value:
         tr c, dest, n
   result = TempLoc(sym: symId, needsDeref: takeAddr, needsParRi: true)
 
@@ -191,6 +191,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     let info = n.info
     let temp = evalOnce(c, dest, n)
+    # XXX nil check for ref/ptr case, `chckNilDisp` in old compiler
     copyIntoKind dest, CastX, info:
       genProctype(c, dest, fnType)
       copyIntoKind dest, PatX, info:
@@ -317,11 +318,10 @@ proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassI
     elif class.ptrKind == PtrT:
       dest.addParLe(DerefX, info)
 
+    var x = x
     if class.level == 0:
-      var x = x
       tr c, dest, x
     else:
-      var x = x
       genBaseobj c, dest, x, class, info
 
     if class.ptrKind == RefT:
@@ -347,6 +347,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
   c.needsXelim = true
   copyIntoKind dest, ExprX, info:
     copyIntoKind dest, StmtsS, info:
+      # XXX nil check, old compiler codegen seems like it should always give `false` but it behaves like static check?
       copyIntoKind dest, VarS, info:
         dest.addSymDef vtabTempSym, info
         dest.addEmpty2 info # export marker, pragma
@@ -744,7 +745,9 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
               dest.addSymUse m, NoLineInfo
           dest.addParRi() # AconstrX
         else:
+          # flexible array needs at least one element:
           dest.copyIntoKind AconstrX, NoLineInfo:
+            dest.addParPair PointerT, NoLineInfo
             dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
 
