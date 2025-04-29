@@ -312,6 +312,8 @@ iterator inheritanceChain*(s: SymId): SymId =
       var parent = od.parentType
       if parent.typeKind in {RefT, PtrT}:
         inc parent
+      if parent.typeKind == InvokeT:
+        inc parent
       if parent.kind == Symbol:
         let ps = parent.symId
         yield ps
