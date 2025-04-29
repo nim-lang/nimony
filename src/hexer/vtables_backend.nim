@@ -114,7 +114,12 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
     copyIntoKind dest, VarS, info:
       addSymDef dest, symId, info
       dest.addEmpty2 info # export marker, pragma
-      copyTree dest, argType
+      # type:
+      if takeAddr:
+        copyIntoKind dest, PtrT, info:
+          copyTree dest, argType
+      else:
+        copyTree dest, argType
       # value:
       if takeAddr:
         copyIntoKind dest, AddrX, info:

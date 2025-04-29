@@ -39,9 +39,12 @@ let z = Obj2(y)
 assert z of Obj2
 test(z[])
 
-#proc testRef(o: ref RootObj) =
-#  echo o of RootObj
-#  echo o of Obj
-#  m o[]
-#
-#testRef y
+proc testRef(o: ref RootObj) =
+  echo "testing ref"
+  echo o of RootObj
+  echo o of Obj
+  echo o of Obj2
+  m o[]
+
+testRef y
+testRef z
