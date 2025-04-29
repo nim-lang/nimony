@@ -1,5 +1,7 @@
 import mdistincts
 
+import std/assertions
+
 type
   VarId* = distinct int
 
@@ -26,3 +28,14 @@ type
 proc `==`(x, y: WINBOOL): bool {.borrow.}
 
 discard isFail(DInt(0))
+
+
+type
+  Bytes = distinct seq[int]
+
+proc add(x: var Bytes; b: int) {.borrow.}
+
+var x2 = Bytes(@[99])
+x2.add(42)
+let base = (seq[int])(x2)
+assert base.len == 2 and base[1] == 42
