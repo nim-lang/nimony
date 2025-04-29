@@ -329,10 +329,7 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # We only deal with the data flow here.
-  dest.add n
-  let info = n.info
-  inc n
-  var nn = n
+  var nn = n.firstSon
   skip nn # stmts
   let oldLen = c.exceptVars.len
   if nn.substructureKind == ExceptU:
@@ -345,6 +342,10 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         assert nn.kind == DotToken
         dest.add nn
         inc nn
+
+  dest.add n
+  let info = n.info
+  inc n
   tr c, dest, n
   c.exceptVars.shrink oldLen
   while n.substructureKind == ExceptU:

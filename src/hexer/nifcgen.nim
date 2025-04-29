@@ -1547,7 +1547,6 @@ proc trRaise(c: var EContext; n: var Cursor) =
 
 proc trTry(c: var EContext; n: var Cursor) =
   # We only deal with the control flow here.
-  echo "trTry: ", toString(n, false)
   let info = n.info
   inc n
   var nn = n
