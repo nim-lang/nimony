@@ -653,7 +653,10 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of ExprX:
       trStmtListExpr c, n, e
     of DconvX:
-      trSons c, n, e
+      takeToken c, n
+      takeTree c.dest, n # takes the type as it is
+      tr c, n, e
+      takeParRi c, n
     of BaseobjX:
       trSons c, n, WantT
     of ParX:
