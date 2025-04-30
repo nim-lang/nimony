@@ -48,3 +48,11 @@ proc testRef(o: ref RootObj) =
 
 testRef y
 testRef z
+
+proc testNil() =
+  var nilRootObj: ref RootObj = nil
+  #echo "nil of RootObj: ", nilRootObj of RootObj
+  # ^ gives always true warning, original nim just compiles it to `true` but here gives `false` at runtime
+  echo "nil of Obj: ", nilRootObj of Obj
+  echo "nil of Obj2: ", nilRootObj of Obj2
+testNil()
