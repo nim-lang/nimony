@@ -3808,9 +3808,15 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           error "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
         takeToken c, it.n
+        var resId = SymId(0)
+        if UntypedP in crucial.flags:
+          # for untyped generic procs, need to add result symbol now
+          resId = declareResult(c, it.n.info)
         semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
+        if resId != SymId(0):
+          addReturnResult c, resId, it.n.info
 
         if hk != NoHook:
           let params = getParamsType(c, beforeParams)

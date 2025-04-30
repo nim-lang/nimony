@@ -67,7 +67,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   else:
     result = c.processedModules[suffix]
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2))
-  loadInterface suffix, module.iface, result, c.importTab, c.converters, exports, mode
+  loadInterface suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, mode
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;

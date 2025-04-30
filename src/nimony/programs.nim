@@ -88,7 +88,7 @@ proc filterAllows*(f: ImportFilter; name: StrId): bool =
 
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
-                    converters: var Table[SymId, seq[SymId]];
+                    converters, methods: var Table[SymId, seq[SymId]];
                     exports: var seq[(string, ImportFilter)];
                     filter: ImportFilter) =
   let m = load(suffix)
@@ -117,6 +117,9 @@ proc loadInterface*(suffix: string; iface: var Iface;
       let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
       let val = pool.syms.getOrIncl(v)
       converters.mgetOrPut(key, @[]).addUnique(val)
+  for class in m.index.classes:
+    for mt in class.methods:
+      methods.mgetOrPut(class.cls, @[]).addUnique(mt.fn)
   for ex in m.index.exports:
     let (path, kind, names) = ex
     let filterKind =
