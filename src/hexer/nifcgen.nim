@@ -1392,14 +1392,15 @@ proc trExpr(c: var EContext; n: var Cursor) =
       c.dest.add tagToken("dot", n.info)
       inc n # skip tag
       let typ = getType(c.typeCache, n)
+      let typeId = nominalRoot(typ)
 
       var lvalue = createTokenBuf()
       swap c.dest, lvalue
       trExpr c, n # obj
       swap c.dest, lvalue
 
-      if n.kind == Symbol:
-        locateFieldInCaseObject(c, lvalue, typ.symId, n.symId, n.info)
+      if n.kind == Symbol and typeId != SymId(0) and hasCase(typeId):
+        locateFieldInCaseObject(c, lvalue, typeId, n.symId, n.info)
         inc n
       else:
         c.dest.add lvalue

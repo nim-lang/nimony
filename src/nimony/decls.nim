@@ -281,3 +281,21 @@ proc asForStmt*(c: Cursor): ForStmt =
     result.vars = c
     skip c
     result.body = c
+
+proc hasCase*(obj: SymId): bool =
+  let res = tryLoadSym(obj)
+  result = false
+  if res.status == LacksNothing:
+    var body = asTypeDecl(res.decl).body
+    if body.typeKind == ObjectT:
+      inc body
+      skip body
+      while body.kind != ParRi:
+        case body.substructureKind
+        of FldU:
+          skip body
+        of CaseU, ElseU:
+          result = true
+          break
+        else:
+          break
