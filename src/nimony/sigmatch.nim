@@ -728,6 +728,9 @@ proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKi
       else:
         if ptrKind != NoType: m.args.addParLe(ptrKind, f.info)
         m.args.addSubtree f
+        if containsGenericParams(f):
+          # needs to be instantiated, reuse genericConverter
+          m.genericConverter = true
         if ptrKind != NoType: m.args.addParRi()
         m.args.addIntLit diff, m.argInfo
         inc m.inheritanceCosts, diff

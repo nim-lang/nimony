@@ -78,6 +78,8 @@ proc isTrivialObjectBody(c: var LiftingCtx; body: Cursor): bool =
   inc n # skip `(object` token
 
   var baseType = n
+  if baseType.typeKind in {RefT, PtrT}:
+    inc baseType
   skip n # skip basetype
   if n.kind != DotToken:
     result = isTrivialForFields(c, n)
@@ -335,7 +337,10 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
   inc n
   # recurse for the inherited object type, if any:
   if n.kind != DotToken:
-    unravelObj c, toTypeImpl(n), paramA, paramB
+    var parent = n
+    if parent.typeKind in {RefT, PtrT}:
+      inc parent
+    unravelObj c, toTypeImpl(parent), paramA, paramB
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB
 
