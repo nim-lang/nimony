@@ -4,13 +4,12 @@ type
   RootObj {.inheritable.} = object
 
 type
-  # XXX see bugs when turning these into `ref object`
-  GenericObj[T] = object of RootObj
+  GenericObj[T] = ref object of RootObj
     # object constructors with inherited fields do not work yet
     #x: T
-  InheritGeneric1[T] = object of GenericObj[T]
+  InheritGeneric1[T] = ref object of GenericObj[T]
     y: T
-  InheritGeneric2 = object of GenericObj[int]
+  InheritGeneric2 = ref object of GenericObj[int]
     z: string
 
 type Writeable = concept

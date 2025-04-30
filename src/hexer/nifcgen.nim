@@ -530,7 +530,10 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
         inc n
       else:
         # inherited symbol
+        let isPtr = n.typeKind in {RefT, PtrT}
+        if isPtr: inc n
         let (s, sinfo) = getSym(c, n)
+        if isPtr: skipParRi c, n
         c.dest.add symToken(s, sinfo)
         c.demand s
 

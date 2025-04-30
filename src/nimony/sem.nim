@@ -1274,7 +1274,12 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
             inc nested
           of BaseobjX:
             takeToken c, arg
-            c.dest.takeTree arg # skip type
+            # genericConverter is reused for object conversions to generic types
+            if containsGenericParams(arg):
+              c.dest.addSubtree instantiateType(c, arg, m.inferred)
+              skip arg
+            else:
+              takeTree c, arg
             c.dest.takeTree arg # skip intlit
             inc nested
           of HderefX, HaddrX:
@@ -6988,7 +6993,10 @@ proc instantiateMethodForType(c: var SemContext; methodSym, typeInstSym: SymId) 
   let procDecl = asRoutine(res.decl)
   var firstParam = procDecl.params
   inc firstParam
-  firstParam = asLocal(firstParam).typ
+  firstParam = skipModifier(asLocal(firstParam).typ)
+  if firstParam.typeKind in {RefT, PtrT}:
+    # instance is the object type, not a ref/ptr type
+    inc firstParam
   var typBuf = createTokenBuf(2)
   typBuf.add symToken(typeInstSym, NoLineInfo)
   var paramMatch = createMatch(addr c)
