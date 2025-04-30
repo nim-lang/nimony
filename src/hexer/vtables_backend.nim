@@ -380,7 +380,6 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
     dest.addParLe(ElseU, info)
   copyIntoKind dest, ExprX, info:
     copyIntoKind dest, StmtsS, info:
-      # XXX nil check, old compiler codegen seems like it should always give `false` but it behaves like static check?
       copyIntoKind dest, VarS, info:
         dest.addSymDef vtabTempSym, info
         dest.addEmpty2 info # export marker, pragma
