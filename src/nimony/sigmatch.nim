@@ -728,6 +728,9 @@ proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKi
       else:
         if ptrKind != NoType: m.args.addParLe(ptrKind, f.info)
         m.args.addSubtree f
+        if containsGenericParams(f):
+          # needs to be instantiated, reuse genericConverter
+          m.genericConverter = true
         if ptrKind != NoType: m.args.addParRi()
         m.args.addIntLit diff, m.argInfo
         inc m.inheritanceCosts, diff
@@ -779,6 +782,7 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       let fsym = fBase.symId
       let asym = a.symId
       matchObjectInheritance m, f, a, fsym, asym, ptrKind
+      skip f
 
 proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
   let a = skipModifier(arg.typ)

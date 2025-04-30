@@ -190,8 +190,15 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.add fnNode
   else:
     let info = n.info
-    let temp = evalOnce(c, dest, n)
-    # XXX nil check for ref/ptr case, `chckNilDisp` in old compiler
+    var temp = evalOnce(c, dest, n)
+    if typ.typeKind in {RefT, PtrT}:
+      # nil check
+      if not temp.needsParRi:
+        dest.addParLe(ExprX, info)
+        temp.needsParRi = true
+      copyIntoKind dest, CallS, info:
+        dest.add symToken(pool.syms.getOrIncl("nimChckNilDisp.0." & SystemModuleSuffix), info)
+        useTemp dest, temp, info
     copyIntoKind dest, CastX, info:
       genProctype(c, dest, fnType)
       copyIntoKind dest, PatX, info:
@@ -344,28 +351,44 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
   let vtabTempSym = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
   inc c.tmpCounter
 
+  var xt = getType(c.typeCache, x)
+  let xk = xt.typeKind
+  if xk in {RefT, PtrT}:
+    inc xt
+  var xRoot = SymId(0)
+  var xLevel = 0
+  if xt.kind == Symbol:
+    for parent in inheritanceChain(xt.symId):
+      xRoot = parent
+      inc xLevel
+
   c.needsXelim = true
+  var x2 = x
+  let xTemp = evalOnce(c, dest, x2)
+  if xk in {RefT, PtrT}:
+    # nil check, always false in old compiler
+    dest.addParLe(IfS, info)
+    copyIntoKind dest, ElifU, info:
+      copyIntoKind dest, EqX, info:
+        dest.addParPair(PointerT, info)
+        copyIntoKind dest, CastX, info:
+          dest.addParPair(PointerT, info)
+          useTemp dest, xTemp, info
+        dest.addParPair(NilX, info)
+      copyIntoKind dest, ExprX, info:
+        dest.addParPair(FalseX, info)
+    dest.addParLe(ElseU, info)
   copyIntoKind dest, ExprX, info:
     copyIntoKind dest, StmtsS, info:
-      # XXX nil check, old compiler codegen seems like it should always give `false` but it behaves like static check?
       copyIntoKind dest, VarS, info:
         dest.addSymDef vtabTempSym, info
         dest.addEmpty2 info # export marker, pragma
         dest.copyIntoKind PtrT, info:
           dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
 
-        var xt = getType(c.typeCache, x)
-        let xk = xt.typeKind
-        if xk in {RefT, PtrT}:
-          inc xt
-        var xRoot = SymId(0)
-        var xLevel = 0
-        if xt.kind == Symbol:
-          for parent in inheritanceChain(xt.symId):
-            xRoot = parent
-            inc xLevel
-
-        genVtableField c, dest, x, ClassInfo(root: xRoot, level: xLevel, ptrKind: xk), info
+        var tempUseBuf = createTokenBuf(4)
+        useTemp tempUseBuf, xTemp, info
+        genVtableField c, dest, beginRead(tempUseBuf), ClassInfo(root: xRoot, level: xLevel, ptrKind: xk), info
 
       # Get the class data (level and hash)
       let (level, h) = classData(typ)
@@ -398,6 +421,11 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
           dest.addIntLit level, info
 
         dest.addUIntLit h, info
+  if xk in {RefT, PtrT}:
+    # close nil check
+    dest.addParRi()
+    dest.addParRi()
+  closeTemp dest, xTemp
 
 proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info

@@ -63,3 +63,8 @@ proc nimInvalidObjConv(name: string) {.inline, exportc: "nimInvalidObjConv".} =
   writeErr name
   writeErr "\n"
   die 1'i32
+
+proc nimChckNilDisp(p: pointer) {.inline, exportc: "nimChckNilDisp".} =
+  if p == nil:
+    writeErr "cannot dispatch; dispatcher is nil\n"
+    die 1'i32

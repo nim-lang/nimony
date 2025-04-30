@@ -1274,7 +1274,12 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
             inc nested
           of BaseobjX:
             takeToken c, arg
-            c.dest.takeTree arg # skip type
+            # genericConverter is reused for object conversions to generic types
+            if containsGenericParams(arg):
+              c.dest.addSubtree instantiateType(c, arg, m.inferred)
+              skip arg
+            else:
+              takeTree c, arg
             c.dest.takeTree arg # skip intlit
             inc nested
           of HderefX, HaddrX:
@@ -3720,9 +3725,12 @@ proc attachMethod(c: var SemContext; symId: SymId;
     c.dest.insert errBuf, declStart
   else:
     c.dest.endRead()
-    c.methods.mgetOrPut(root, @[]).add(symId)
-    if not (c.dest[beforeGenericParams].kind == ParLe and
-        pool.tags[c.dest[beforeGenericParams].tagId] == $InvokeT):
+    let methodIsInstance = c.dest[beforeGenericParams].kind == ParLe and c.dest[beforeGenericParams].tagId == TagId(InvokeT)
+    var symToRegister = symId
+    if methodIsInstance:
+      symToRegister = c.dest[beforeGenericParams+1].symId
+    c.methods.mgetOrPut(root, @[]).add(symToRegister)
+    if not methodIsInstance:
       # don't register instances
       for i in 0..<c.classIndexMap.len:
         if c.classIndexMap[i].cls == root:
@@ -3805,9 +3813,15 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           error "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
         takeToken c, it.n
+        var resId = SymId(0)
+        if UntypedP in crucial.flags:
+          # for untyped generic procs, need to add result symbol now
+          resId = declareResult(c, it.n.info)
         semProcBody c, it
         c.closeScope() # close body scope
         c.closeScope() # close parameter scope
+        if resId != SymId(0):
+          addReturnResult c, resId, it.n.info
 
         if hk != NoHook:
           let params = getParamsType(c, beforeParams)
@@ -6972,6 +6986,55 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
       else:
         quit "BUG: Could not load hook: " & pool.syms[hook]
 
+proc instantiateMethodForType(c: var SemContext; methodSym, typeInstSym: SymId) =
+  # check if instance actually matches method
+  let res = tryLoadSym(methodSym)
+  assert res.status == LacksNothing
+  let procDecl = asRoutine(res.decl)
+  var firstParam = procDecl.params
+  inc firstParam
+  firstParam = skipModifier(asLocal(firstParam).typ)
+  if firstParam.typeKind in {RefT, PtrT}:
+    # instance is the object type, not a ref/ptr type
+    inc firstParam
+  var typBuf = createTokenBuf(2)
+  typBuf.add symToken(typeInstSym, NoLineInfo)
+  var paramMatch = createMatch(addr c)
+  typematch paramMatch, firstParam, Item(n: emptyNode(c), typ: beginRead(typBuf))
+  if classifyMatch(paramMatch) in {EqualMatch, GenericMatch}:
+    # type matched, check that the method can be fully instantiated
+    var inferred = ensureMove paramMatch.inferred
+    var typevars = procDecl.typevars
+    inc typevars
+    var typeArgsBuf = createTokenBuf(32)
+    while typevars.kind != ParRi:
+      let name = takeLocal(typevars, SkipFinalParRi).name.symId
+      if name notin inferred:
+        c.buildErr res.decl.info, "cannot instantiate method " & pool.syms[methodSym] &
+          ", cannot infer generic parameter " & pool.syms[name]
+        return
+      typeArgsBuf.addSubtree inferred[name]
+    discard requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
+  else:
+    # method did not match, fine, consider it unavailable for this instance
+    discard
+
+proc requestMethods(c: var SemContext; s: SymId; decl: Cursor) =
+  let decl = asTypeDecl(decl)
+  var typevars = decl.typevars
+  assert classifyType(c, typevars) == InvokeT
+  inc typevars
+  assert typevars.kind == Symbol
+
+  let base = typevars.symId
+
+  var instanceMethods = c.methods.getOrDefault(s, @[])
+  for m in c.methods.getOrDefault(base, @[]):
+    if m notin instanceMethods:
+      instantiateMethodForType(c, m, s)
+      instanceMethods.add m
+      c.methods.mgetOrPut(s, @[]).add m
+
 proc addSelfModuleSym(c: var SemContext; path: string) =
   let name = moduleNameFromPath(path)
   let nameId = pool.strings.getOrIncl(name)
@@ -7038,7 +7101,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     let res = declToCursor(c, s)
     if res.status == LacksNothing:
       requestHookInstance(c, res.decl)
-      # XXX also methods
+      requestMethods(c, val, res.decl)
       c.dest.copyTree res.decl
   instantiateGenericHooks c
   takeParRi c, n

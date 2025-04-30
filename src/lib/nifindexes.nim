@@ -453,11 +453,15 @@ proc readClassesSection(s: var Stream; tab: var seq[ClassIndexEntry]) =
           t = next(s)
         else:
           raiseAssert "invalid (kv) construct: ')' expected"
+      if t.kind == ParRi:
+        t = next(s)
+      else:
+        assert false, "invalid (stmts) construct: ')' expected"
     tab.add ClassIndexEntry(cls: cls, methods: methods)
     if t.kind == ParRi:
       t = next(s)
     else:
-      assert false, "invalid (stmts) construct: ')' expected"
+      assert false, "invalid (kv) construct: ')' expected"
   if t.kind == ParRi: # MethodIdx
     t = next(s)
   else:
