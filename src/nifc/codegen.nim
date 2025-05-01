@@ -435,6 +435,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       c.add "__thread "
     genType c, d.typ, name
     if vk == IsConst:
+      c.add Space
       c.add ConstKeyword
     let vis = genVarPragmas(c, d.pragmas)
     if vis == StaticP:
