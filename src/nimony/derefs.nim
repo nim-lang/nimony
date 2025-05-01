@@ -236,9 +236,15 @@ proc trReturn(c: var Context; n: var Cursor) =
       tr c, n, c.r.returnExpects
   takeParRi c, n
 
+proc wantMutable(e: Expects): bool {.inline.} =
+  e in {WantVarT, WantVarTResult, WantMutableT}
+
 proc trYield(c: var Context; n: var Cursor) =
   takeToken c, n
-  tr c, n, WantForwarding # c.r.returnExpects
+  if wantMutable(c.r.returnExpects):
+    tr c, n, c.r.returnExpects
+  else:
+    tr c, n, WantForwarding # c.r.returnExpects
   takeParRi c, n
 
 proc mightBeDangerous(c: var Context; n: Cursor) =
@@ -393,8 +399,6 @@ proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
     dest.addSubtree arg
     dest.add strToken(pool.strings.getOrIncl(msg), info)
 
-proc wantMutable(e: Expects): bool {.inline.} =
-  e in {WantVarT, WantVarTResult, WantMutableT}
 
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
@@ -412,7 +416,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
 
   var needHderef = false
   if retType.typeKind in {MutT, LentT}:
-    if e == WantT:
+    if e in {WantT, WantForwarding}:
       needHderef = true
       trCallArgs(c, n, fnType)
       takeParRi c, n
