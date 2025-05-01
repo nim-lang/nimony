@@ -50,16 +50,15 @@ proc normalizedPopVar(popVar: string): string =
   result.add nimIdentNormalize(popVar)
 
 proc signature(c: Context, rule: string): string {.inline.} = 
-  if c.kind == Generator:
-    result = ""
-    result.add "(c: var Context"
-    for popVar in c.popVars.getOrDefault(rule):
-      result.add ", "
-      result.add normalizedPopVar(popVar)
-      result.add ": string"
-    result.add "): bool"
-  else:
-    result = "(c: var Context; it: var Item): bool"
+  result = ""
+  result.add "(c: var Context"
+  for popVar in c.popVars.getOrDefault(rule):
+    result.add ", "
+    result.add normalizedPopVar(popVar)
+    result.add ": string"
+  if c.kind == Grammar:
+    result.add"; it: var Item"
+  result.add "): bool"
 
 proc error(c: var Context; msg: string) {.noreturn.} =
   #writeStackTrace()
