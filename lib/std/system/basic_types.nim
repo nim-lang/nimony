@@ -103,3 +103,11 @@ proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect
 proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
 proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
 proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
+
+type
+  RootObj* {.inheritable.} =
+    object ## The root of Nim's object hierarchy.
+           ##
+           ## Objects should inherit from `RootObj` or one of its descendants.
+           ## However, objects that have no ancestor are also allowed.
+  RootRef* = ref RootObj ## Reference to `RootObj`.
