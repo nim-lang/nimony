@@ -1157,29 +1157,6 @@ proc trFieldname(c: var EContext; n: var Cursor) =
   else:
     trExpr c, n
 
-type ParentFields = object
-  depths: Table[SymId, int]
-
-proc findParentFields(fields: var ParentFields; t: Cursor; depth = 0) =
-  if t.kind == Symbol:
-    let res = tryLoadSym(t.symId)
-    if res.status == LacksNothing:
-      let td = asTypeDecl(res.decl)
-      if td.kind == TypeY and td.body.typeKind == ObjectT:
-        let obj = asObjectDecl(td.body)
-        if depth != 0:
-          if obj.firstField.kind != DotToken:
-            var iter = initObjFieldIter()
-            var n = obj.firstField
-            while nextField(iter, n):
-              let field = takeLocal(n, SkipFinalParRi)
-              assert field.name.kind == SymbolDef
-              fields.depths[field.name.symId] = depth
-        if obj.parentType.kind != DotToken:
-          var parent = obj.parentType
-          if parent.typeKind in {RefT, PtrT}: inc parent
-          findParentFields(fields, parent, depth + 1)
-
 proc trExpr(c: var EContext; n: var Cursor) =
   case n.kind
   of EofToken, ParRi:
@@ -1220,23 +1197,16 @@ proc trExpr(c: var EContext; n: var Cursor) =
     of OconstrX:
       c.dest.add tagToken("oconstr", n.info)
       inc n
-      let typeStart = c.dest.len
       trType(c, n)
-      var parentFields = default(ParentFields)
-      let t = cursorAt(c.dest, typeStart)
-      findParentFields(parentFields, t)
-      endRead(c.dest)
       while n.kind != ParRi:
         if n.substructureKind == KvU:
           c.dest.add n # KvU
           inc n
-          var depth = 0
-          if n.kind == Symbol:
-            depth = parentFields.depths.getOrDefault(n.symId)
           takeTree c, n # key
           trExpr c, n # value
-          if depth > 0:
-            c.dest.addIntLit(depth, n.info)
+          if n.kind != ParRi:
+            # optional inheritance
+            takeTree c, n
           takeParRi c, n
         else:
           trExpr c, n

@@ -695,6 +695,10 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
                 inc vals
                 annotateConstantType(buf, asLocal(res.decl).typ, vals)
                 skip vals
+                if vals.kind != ParRi:
+                  # optional inheritance
+                  takeTree buf, vals
+                takeParRi buf, vals
           if err: break
         if typ.kind != ParRi: err = true
         if err:

@@ -381,8 +381,11 @@ proc isLiteral(n: var Cursor): bool =
       while n.kind != ParRi:
         if n.substructureKind == KvU:
           inc n
-          skip n # key
           if not isLiteral(n): return false
+          skip n # key
+          if n.kind != ParRi:
+            # optional inheritance
+            skip n
           skipParRi n
         else:
           if not isLiteral(n): return false
