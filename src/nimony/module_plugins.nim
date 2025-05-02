@@ -13,6 +13,9 @@ import nimony_model, semdata
 import ".." / gear2 / modnames
 
 proc handleTypePlugins*(c: var SemContext) =
-  for k, _ in c.pendingTypePlugins:
+  for k, v in c.pendingTypePlugins:
+    c.pluginBlacklist.incl(v)
+  for k in c.pendingModulePlugins:
     c.pluginBlacklist.incl(k)
   c.pendingTypePlugins.clear()
+  c.pendingModulePlugins.shrink(0)

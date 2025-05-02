@@ -111,7 +111,8 @@ type
     debugAllowErrors*: bool
     pending*: TokenBuf
     pendingTypePlugins*: Table[SymId, StrId]
-    pluginBlacklist*: HashSet[SymId] # make 1984 fiction again
+    pendingModulePlugins*: seq[StrId]
+    pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

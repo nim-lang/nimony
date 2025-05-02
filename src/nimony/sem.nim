@@ -2481,7 +2481,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         # but see if it triggers a module plugin:
         let p = extractPragma(typ.pragmas, PluginP)
         if p != default(Cursor) and p.kind == StringLit:
-          if s.name notin c.pluginBlacklist:
+          if p.litId notin c.pluginBlacklist:
             c.pendingTypePlugins[s.name] = p.litId
       else:
         # remove symbol, inline type:
@@ -6310,8 +6310,23 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       c.dest.add parLeToken(KeepOverflowFlagP, it.n.info)
       c.dest.addParRi()
     skip it.n
+  of PluginP:
+    c.dest.add parLeToken(PragmasS, it.n.info)
+    c.dest.add identToken(pool.strings.getOrIncl("plugin"), it.n.info) #parLeToken(PluginP, it.n.info)
+    inc it.n
+    if it.n.kind == StringLit:
+      if c.routine.inGeneric == 0 and it.n.litId notin c.pluginBlacklist:
+        c.pendingModulePlugins.add it.n.litId
+      c.dest.add it.n
+      inc it.n
+    else:
+      buildErr c, it.n.info, "expected `string` but got: " & asNimCode(it.n)
+      if it.n.kind != ParRi: skip it.n
+    c.dest.addParRi()
   else:
-    buildErr c, it.n.info, "unsupported pragmas"
+    buildErr c, it.n.info, "unsupported pragma"
+    skip it.n
+    while it.n.kind != ParRi: skip it.n
 
 proc semPragmasLine(c: var SemContext; it: var Item) =
   let info = it.n.info
