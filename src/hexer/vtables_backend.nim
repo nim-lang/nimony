@@ -194,6 +194,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if typ.typeKind in {RefT, PtrT}:
       # nil check
       if not temp.needsParRi:
+        c.needsXelim = true
         dest.addParLe(ExprX, info)
         temp.needsParRi = true
       copyIntoKind dest, CallS, info:
@@ -465,6 +466,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
     inc n # integer literal
     let x = n
     skip n # skip expression
+    c.needsXelim = true
     copyIntoKind dest, ExprX, info:
       copyIntoKind dest, StmtsS, info:
         let tmp = needsTemp(c, x)
