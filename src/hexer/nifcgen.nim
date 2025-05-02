@@ -1204,6 +1204,9 @@ proc trExpr(c: var EContext; n: var Cursor) =
           inc n
           takeTree c, n # key
           trExpr c, n # value
+          if n.kind != ParRi:
+            # optional inheritance
+            takeTree c, n
           takeParRi c, n
         else:
           trExpr c, n

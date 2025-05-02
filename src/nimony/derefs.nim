@@ -579,6 +579,9 @@ proc trObjConstr(c: var Context; n: var Cursor; outerE: Expects) =
     takeTree c.dest, n # key
     let fieldType = getType(c.typeCache, n)
     tr c, n, fieldMode(fieldType.typeKind, outerE)
+    if n.kind != ParRi:
+      # optional inheritance
+      takeTree c.dest, n
     takeParRi c, n
   takeParRi c, n
 

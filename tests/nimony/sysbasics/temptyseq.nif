@@ -41,8 +41,8 @@
      (stmts 7
       (asgn ~7 result.0 8
        (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Ipe57hg.temd2l7vy 4
-        (kv ~4 len.3.Ipe57hg.temd2l7vy 2 size.3) 16
-        (kv ~16 data.0.Ipe57hg.temd2l7vy 2
+        (kv ~3 len.3.Ipe57hg.temd2l7vy 2 size.3) 16
+        (kv ~4 data.0.Ipe57hg.temd2l7vy 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
@@ -51,8 +51,8 @@
        (call ~17 memSizeInBytes.0.temd2l7vy 1 size.3)) 7,1
       (asgn ~7 result.0 8
        (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Ipe57hg.temd2l7vy 4
-        (kv ~4 len.3.Ipe57hg.temd2l7vy 2 size.3) 16
-        (kv ~16 data.0.Ipe57hg.temd2l7vy 2
+        (kv ~3 len.3.Ipe57hg.temd2l7vy 2 size.3) 16
+        (kv ~4 data.0.Ipe57hg.temd2l7vy 2
          (cast 5
           (ptr 18
            (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
@@ -94,8 +94,8 @@
      (stmts 7
       (asgn ~7 result.1 8
        (oconstr ~3,~2 seq.0.Iw9f2pq.temd2l7vy 4
-        (kv ~4 len.3.Iw9f2pq.temd2l7vy 2 size.5) 16
-        (kv ~16 data.0.Iw9f2pq.temd2l7vy 2
+        (kv ~3 len.3.Iw9f2pq.temd2l7vy 2 size.5) 16
+        (kv ~4 data.0.Iw9f2pq.temd2l7vy 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
@@ -104,8 +104,8 @@
        (call ~17 memSizeInBytes.1.temd2l7vy 1 size.5)) 7,1
       (asgn ~7 result.1 8
        (oconstr ~3,~5 seq.0.Iw9f2pq.temd2l7vy 4
-        (kv ~4 len.3.Iw9f2pq.temd2l7vy 2 size.5) 16
-        (kv ~16 data.0.Iw9f2pq.temd2l7vy 2
+        (kv ~3 len.3.Iw9f2pq.temd2l7vy 2 size.5) 16
+        (kv ~4 data.0.Iw9f2pq.temd2l7vy 2
          (cast 5
           (ptr 18
            (uarray
@@ -156,8 +156,8 @@
      (stmts 7
       (asgn ~7 result.2 8
        (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.0.Iq4ofkp1.temd2l7vy 4
-        (kv ~4 len.3.Iq4ofkp1.temd2l7vy 2 size.7) 16
-        (kv ~16 data.0.Iq4ofkp1.temd2l7vy 2
+        (kv ~3 len.3.Iq4ofkp1.temd2l7vy 2 size.7) 16
+        (kv ~4 data.0.Iq4ofkp1.temd2l7vy 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
@@ -166,8 +166,8 @@
        (call ~17 memSizeInBytes.2.temd2l7vy 1 size.7)) 7,1
       (asgn ~7 result.2 8
        (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.0.Iq4ofkp1.temd2l7vy 4
-        (kv ~4 len.3.Iq4ofkp1.temd2l7vy 2 size.7) 16
-        (kv ~16 data.0.Iq4ofkp1.temd2l7vy 2
+        (kv ~3 len.3.Iq4ofkp1.temd2l7vy 2 size.7) 16
+        (kv ~4 data.0.Iq4ofkp1.temd2l7vy 2
          (cast 5
           (ptr 18
            (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim

@@ -24,10 +24,10 @@
   (ref 11 NodeObj.0.Itet59r.tge70unlm) 13
   (newobj ~5,~5
    (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-   (kv ~5 data.0.Itet59r.tge70unlm 2 +123) 16
-   (kv ~16 left.0.Itet59r.tge70unlm 2
+   (kv ~4 data.0.Itet59r.tge70unlm 2 +123) 16
+   (kv ~4 left.0.Itet59r.tge70unlm 2
     (nil)) 28
-   (kv ~28 right.0.Itet59r.tge70unlm 2
+   (kv ~5 right.0.Itet59r.tge70unlm 2
     (nil)))) 7,9
  (asgn ~6
   (ddot ~1 x.0.tge70unlm data.0.Itet59r.tge70unlm +0) 2 +456) 7,10
@@ -35,10 +35,10 @@
   (ddot ~1 x.0.tge70unlm left.0.Itet59r.tge70unlm +0) 11
   (newobj ~6,~7
    (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-   (kv ~5 data.0.Itet59r.tge70unlm 2 +123) 16
-   (kv ~16 left.0.Itet59r.tge70unlm 2
+   (kv ~4 data.0.Itet59r.tge70unlm 2 +123) 16
+   (kv ~4 left.0.Itet59r.tge70unlm 2
     (nil)) 28
-   (kv ~28 right.0.Itet59r.tge70unlm 2
+   (kv ~5 right.0.Itet59r.tge70unlm 2
     (nil)))) 8,11
  (asgn ~7
   (ddot ~1 x.0.tge70unlm right.0.Itet59r.tge70unlm +0) 2
@@ -51,19 +51,19 @@
   (ref 11 NodeObj.0.Itet59r.tge70unlm) 13
   (newobj ~5,~10
    (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-   (kv ~5 data.0.Itet59r.tge70unlm 2 +987) 16
-   (kv ~16 left.0.Itet59r.tge70unlm 2
+   (kv ~4 data.0.Itet59r.tge70unlm 2 +987) 16
+   (kv ~4 left.0.Itet59r.tge70unlm 2
     (nil)) 28
-   (kv ~28 right.0.Itet59r.tge70unlm 2
+   (kv ~5 right.0.Itet59r.tge70unlm 2
     (nil)))) 12,14
  (asgn ~6
   (ddot ~5
    (ddot ~1 x.0.tge70unlm left.0.Itet59r.tge70unlm +0) left.0.Itet59r.tge70unlm +0) 11
   (newobj ~11,~11
    (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-   (kv ~5 data.0.Itet59r.tge70unlm 2 -123) 17
-   (kv ~17 left.0.Itet59r.tge70unlm 2 y.0.tge70unlm) 27
-   (kv ~27 right.0.Itet59r.tge70unlm 2 y.0.tge70unlm))) ,16
+   (kv ~4 data.0.Itet59r.tge70unlm 2 -123) 17
+   (kv ~4 left.0.Itet59r.tge70unlm 2 y.0.tge70unlm) 27
+   (kv ~5 right.0.Itet59r.tge70unlm 2 y.0.tge70unlm))) ,16
  (proc 5 :foo.0.tge70unlm . . 8
   (typevars 1
    (typevar :T.2.tge70unlm . . . .)) 11
@@ -79,10 +79,10 @@
     (newobj ~6,~14
      (ref 11
       (at ~7 NodeObj.0.tge70unlm ~7,13 T.2.tge70unlm)) 5
-     (kv ~5 data 2 data.0) 17
-     (kv ~17 left 2
+     (kv ~4 data 2 data.0) 17
+     (kv ~4 left 2
       (nil)) 29
-     (kv ~29 right 2
+     (kv ~5 right 2
       (nil)))) 12,1
    (asgn ~6
     (ddot ~6 result.0 data.0.tge70unlm +0) 2 data.0) ~2,~1
@@ -104,10 +104,10 @@
    (asgn ~7 result.1 9
     (newobj ~6,~14
      (ref 11 NodeObj.0.Itet59r.tge70unlm) 5
-     (kv ~5 data.0.Itet59r.tge70unlm 2 data.2) 17
-     (kv ~17 left.0.Itet59r.tge70unlm 2
+     (kv ~4 data.0.Itet59r.tge70unlm 2 data.2) 17
+     (kv ~4 left.0.Itet59r.tge70unlm 2
       (nil)) 29
-     (kv ~29 right.0.Itet59r.tge70unlm 2
+     (kv ~5 right.0.Itet59r.tge70unlm 2
       (nil)))) 12,1
    (asgn ~6
     (ddot ~6 result.1 data.0.Itet59r.tge70unlm +0) 2 data.2) ~2,~1
