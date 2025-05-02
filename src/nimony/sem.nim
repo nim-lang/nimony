@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts, vtables_frontend
+  semuntyped, contracts, vtables_frontend, module_plugins
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -2481,7 +2481,8 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         # but see if it triggers a module plugin:
         let p = extractPragma(typ.pragmas, PluginP)
         if p != default(Cursor) and p.kind == StringLit:
-          c.pendingTypePlugins[s.name] = p.litId
+          if s.name notin c.pluginBlacklist:
+            c.pendingTypePlugins[s.name] = p.litId
       else:
         # remove symbol, inline type:
         c.dest.shrink c.dest.len-1
@@ -7067,31 +7068,15 @@ proc addSelfModuleSym(c: var SemContext; path: string) =
   moduleDecl.addParRi()
   publish c.selfModuleSym, moduleDecl
 
-proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-               commandLineArgs: sink string; canSelfExec: bool) =
-  var n0 = setupProgram(infile, outfile)
-  var c = SemContext(
-    dest: createTokenBuf(),
-    types: createBuiltinTypes(),
-    thisModuleSuffix: prog.main,
-    moduleFlags: moduleFlags,
-    g: ProgramContext(config: config),
-    phase: SemcheckTopLevelSyms,
-    routine: SemRoutine(kind: NoSym),
-    commandLineArgs: commandLineArgs,
-    canSelfExec: canSelfExec,
-    pending: createTokenBuf())
-
+proc semcheckCore(c: var SemContext; n0: Cursor) =
   c.pending.add parLeToken(StmtsS, NoLineInfo)
-  for magic in ["typeof", "compiles", "defined", "declared"]:
-    c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
 
   assert n0.stmtKind == StmtsS
   let path = getFile(n0.info) # gets current module path, maybe there is a better way
   addSelfModuleSym(c, path)
 
-  if {SkipSystem, IsSystem} * moduleFlags == {}:
+  if {SkipSystem, IsSystem} * c.moduleFlags == {}:
     let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
     importSingleFile(c, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
@@ -7114,6 +7099,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   while cur.kind != ParRi:
     semStmt c, cur, false
   skipParRi(cur)
+  endRead(c.pending)
 
   instantiateGenerics c
   for val in c.typeInstDecls:
@@ -7136,6 +7122,29 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     c.dest = injectDerefs(finalBuf)
   else:
     quit 1
+
+proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
+               commandLineArgs: sink string; canSelfExec: bool) =
+  var n0 = setupProgram(infile, outfile)
+  var c = SemContext(
+    dest: createTokenBuf(),
+    types: createBuiltinTypes(),
+    thisModuleSuffix: prog.main,
+    moduleFlags: moduleFlags,
+    g: ProgramContext(config: config),
+    phase: SemcheckTopLevelSyms,
+    routine: SemRoutine(kind: NoSym),
+    commandLineArgs: commandLineArgs,
+    canSelfExec: canSelfExec,
+    pending: createTokenBuf())
+
+  for magic in ["typeof", "compiles", "defined", "declared"]:
+    c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
+
+  while true:
+    semcheckCore c, n0
+    if c.pendingTypePlugins.len == 0: break
+    handleTypePlugins c
 
   if reportErrors(c) == 0:
     writeOutput c, outfile
