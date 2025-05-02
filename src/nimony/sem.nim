@@ -5217,12 +5217,10 @@ proc callDefault(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
   semCall c, it, {}
 
 proc buildObjConstrField(c: var SemContext; field: Local;
-                         setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                         setFields: OrderedTable[SymId, Cursor]; info: PackedLineInfo;
                          bindings: Table[SymId, Cursor]) =
   let fieldSym = field.name.symId
-  if fieldSym in setFields:
-    c.dest.addSubtree setFields[fieldSym]
-  else:
+  if fieldSym notin setFields:
     c.dest.addParLe(KvU, info)
     c.dest.add symToken(fieldSym, info)
     var typ = field.typ
@@ -5234,7 +5232,7 @@ proc buildObjConstrField(c: var SemContext; field: Local;
     callDefault c, typ, info
     c.dest.addParRi()
 
-proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymId, Cursor]): bool =
+proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: OrderedTable[SymId, Cursor]): bool =
   var n = n
   inc n
   result = false
@@ -5247,7 +5245,7 @@ proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymI
       break
 
 proc fieldsPresentInBranch(c: var SemContext; n: var Cursor;
-                setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                setFields: OrderedTable[SymId, Cursor]; info: PackedLineInfo;
                 bindings: Table[SymId, Cursor]) =
   var branches = 0
   block matched:
@@ -5285,7 +5283,7 @@ proc fieldsPresentInBranch(c: var SemContext; n: var Cursor;
         error "illformed AST inside case object: ", n
 
 proc buildObjConstrFields(c: var SemContext; n: var Cursor;
-                          setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                          setFields: OrderedTable[SymId, Cursor]; info: PackedLineInfo;
                           bindings: Table[SymId, Cursor]) =
   # XXX for now counts each case object field as separate
   var iter = initObjFieldIter()
@@ -5304,7 +5302,7 @@ proc buildObjConstrFields(c: var SemContext; n: var Cursor;
       buildObjConstrField(c, field, setFields, info, bindings)
 
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
-                           setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                           setFields: OrderedTable[SymId, Cursor]; info: PackedLineInfo;
                            prebuiltBindings = initTable[SymId, Cursor]()) =
   var constrKind = NoExpr
   var objImpl = typ
@@ -5328,6 +5326,8 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
     return
   c.dest.addParLe(constrKind, info)
   c.dest.addSubtree typ
+  for _, setField in setFields:
+    c.dest.addSubtree setField
   var obj = asObjectDecl(objImpl)
   # bindings for invoked object type to get proper types for fields:
   var bindings = prebuiltBindings
@@ -5400,7 +5400,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
   # build bindings for invoked object type to get proper types for fields:
   let bindings = bindInvokeArgs(decl, invokeArgs)
   var fieldBuf = createTokenBuf(16)
-  var setFieldPositions = initTable[SymId, int]()
+  var setFieldPositions = initOrderedTable[SymId, int]() # order is important
   while it.n.kind != ParRi:
     if it.n.substructureKind != KvU:
       c.buildErr it.n.info, "expected key/value pair in object constructor"
@@ -5451,7 +5451,7 @@ proc semObjConstr(c: var SemContext, it: var Item) =
       fieldBuf.addParRi()
       skipParRi it.n
   skipParRi it.n
-  var setFields = initTable[SymId, Cursor]()
+  var setFields = initOrderedTable[SymId, Cursor]() # order is important
   for field, pos in setFieldPositions:
     setFields[field] = cursorAt(fieldBuf, pos)
   buildDefaultObjConstr(c, it.typ, setFields, info, bindings)
@@ -5465,7 +5465,7 @@ proc semObjDefault(c: var SemContext; it: var Item) =
   it.typ = semLocalType(c, it.n)
   c.dest.shrink exprStart
   skipParRi it.n
-  buildDefaultObjConstr(c, it.typ, initTable[SymId, Cursor](), info)
+  buildDefaultObjConstr(c, it.typ, default(OrderedTable[SymId, Cursor]), info)
   commonType c, it, exprStart, expected
 
 proc semNewref(c: var SemContext; it: var Item) =
