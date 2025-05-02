@@ -1,9 +1,6 @@
 import std / [syncio, assertions]
 
 type
-  RootObj {.inheritable.} = object
-
-type
   GenericObj[T] = ref object of RootObj
     # object constructors with inherited fields do not work yet
     #x: T

@@ -757,7 +757,12 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.addSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), NoLineInfo
         if displayName != SymId(0):
           #dest.copyIntoKind AddrX, NoLineInfo:
-          dest.addSymUse displayName, NoLineInfo
+          # cast to pointer type to remove `const` modifier in C
+          copyIntoKind dest, CastX, NoLineInfo:
+            copyIntoKind dest, PtrT, NoLineInfo:
+              copyIntoKind dest, UT, NoLineInfo:
+                dest.addIntLit 32, NoLineInfo
+            dest.addSymUse displayName, NoLineInfo
         else:
           dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
