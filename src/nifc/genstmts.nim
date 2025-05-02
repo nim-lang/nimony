@@ -21,6 +21,8 @@ proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
   c.add NewLine
 
 proc genIf(c: var GeneratedCode; n: var Cursor) =
+  let oldInToplevel = c.inToplevel
+  c.inToplevel = false
   var hasElse = false
   var hasElif = false
   inc n
@@ -57,6 +59,7 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
   skipParRi n
   if not hasElif and not hasElse:
     error c.m, "`if` expects `elif` or `else` but got: ", first
+  c.inToplevel = oldInToplevel
 
 proc genWhile(c: var GeneratedCode; n: var Cursor) =
   let oldInToplevel = c.inToplevel
@@ -226,6 +229,8 @@ proc genGoto(c: var GeneratedCode; n: var Cursor) =
 
 proc genSwitch(c: var GeneratedCode; n: var Cursor) =
   # (case Expr (of BranchRanges StmtList)* (else StmtList)?) |
+  let oldInToplevel = c.inToplevel
+  c.inToplevel = false
   c.add SwitchKeyword
   inc n
   let first = n
@@ -269,6 +274,7 @@ proc genSwitch(c: var GeneratedCode; n: var Cursor) =
     error c.m, "`case` expects `of` or `else` but got: ", first
   c.add CurlyRi
   skipParRi n
+  c.inToplevel = oldInToplevel
 
 proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
   case vk

@@ -13,3 +13,15 @@ proc main =
 
   generic(x, nil)
   if x == nil: discard
+
+
+let x: ref int = nil
+if false:
+  let y = x[]
+
+var s = true
+case s
+of false:
+  let y = x[]
+else:
+  let y = x
