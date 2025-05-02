@@ -110,6 +110,7 @@ type
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
+    pendingTypePlugins*: Table[SymId, StrId]
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

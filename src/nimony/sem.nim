@@ -2478,7 +2478,10 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
       let typ = asTypeDecl(res.decl)
       if isGeneric(typ) or isNominal(typ.body.typeKind):
         # types that should stay as symbols, see sigmatch.matchSymbol
-        discard
+        # but see if it triggers a module plugin:
+        let p = extractPragma(typ.pragmas, PluginP)
+        if p != default(Cursor) and p.kind == StringLit:
+          c.pendingTypePlugins[s.name] = p.litId
       else:
         # remove symbol, inline type:
         c.dest.shrink c.dest.len-1
