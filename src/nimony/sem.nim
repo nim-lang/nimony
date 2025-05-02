@@ -1159,7 +1159,9 @@ proc semCast(c: var SemContext; it: var Item) =
   # also skips to type body for symbols:
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
-  if destBase.isCastableType and srcBase.isCastableType:
+  if sameTrees(destBase, srcBase):
+    commonType c, it, beforeExpr, destType
+  elif destBase.isCastableType and srcBase.isCastableType:
     commonType c, it, beforeExpr, destType
   elif containsGenericParams(srcType) or containsGenericParams(destType):
     commonType c, it, beforeExpr, destType

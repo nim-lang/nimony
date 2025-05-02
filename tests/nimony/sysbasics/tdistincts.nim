@@ -39,3 +39,13 @@ var x2 = Bytes(@[99])
 x2.add(42)
 let base = (seq[int])(x2)
 assert base.len == 2 and base[1] == 42
+
+
+type
+  DistinctSeq2 = distinct seq[int]
+
+
+var s2 = @[1, 2, 3]
+let m2 = cast[DistinctSeq2](s2)
+let n2 = cast[seq[int]](s2)
+let n3 = cast[seq[int]](m2)
