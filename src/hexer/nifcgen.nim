@@ -1159,7 +1159,6 @@ proc trFieldname(c: var EContext; n: var Cursor) =
 
 type ParentFields = object
   depths: Table[SymId, int]
-  parents: seq[SymId]
 
 proc findParentFields(fields: var ParentFields; t: Cursor; depth = 0) =
   if t.kind == Symbol:
@@ -1169,7 +1168,6 @@ proc findParentFields(fields: var ParentFields; t: Cursor; depth = 0) =
       if td.kind == TypeY and td.body.typeKind == ObjectT:
         let obj = asObjectDecl(td.body)
         if depth != 0:
-          fields.parents.add(t.symId)
           if obj.firstField.kind != DotToken:
             var iter = initObjFieldIter()
             var n = obj.firstField
@@ -1220,7 +1218,6 @@ proc trExpr(c: var EContext; n: var Cursor) =
         trExpr(c, n)
       takeParRi c, n
     of OconstrX:
-      let oconstrTag = n
       c.dest.add tagToken("oconstr", n.info)
       inc n
       let typeStart = c.dest.len
@@ -1229,36 +1226,20 @@ proc trExpr(c: var EContext; n: var Cursor) =
       let t = cursorAt(c.dest, typeStart)
       findParentFields(parentFields, t)
       endRead(c.dest)
-      var parentConstrs: seq[TokenBuf] = @[]
       while n.kind != ParRi:
         if n.substructureKind == KvU:
-          let kvTag = n
+          c.dest.add n # KvU
           inc n
           var depth = 0
           if n.kind == Symbol:
             depth = parentFields.depths.getOrDefault(n.symId)
-          if depth > 0:
-            if depth > parentConstrs.len:
-              let oldDepth = parentConstrs.len
-              setLen(parentConstrs, depth)
-              for i in oldDepth ..< depth:
-                parentConstrs[i] = createTokenBuf(8)
-                parentConstrs[i].add oconstrTag
-                parentConstrs[i].add symToken(parentFields.parents[i], oconstrTag.info)
-            swap c.dest, parentConstrs[depth - 1]
-          c.dest.add kvTag # KvU
           takeTree c, n # key
           trExpr c, n # value
-          takeParRi c, n
           if depth > 0:
-            swap c.dest, parentConstrs[depth - 1]
+            c.dest.addIntLit(depth, n.info)
+          takeParRi c, n
         else:
           trExpr c, n
-      let depth = parentConstrs.len
-      for parentConstr in ensureMove(parentConstrs):
-        c.dest.add parentConstr
-      for _ in 0 ..< depth:
-        c.dest.addParRi()
       takeParRi c, n
     of TupConstrX:
       trTupleConstr c, n

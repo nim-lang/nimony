@@ -311,9 +311,20 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       if n.substructureKind == KvU:
         inc n
         c.add Dot
+        var depth = n
+        skip depth
+        skip depth
+        if depth.kind != ParRi:
+          # inheritance depth
+          assert depth.kind == IntLit
+          let d = pool.integers[depth.intId]
+          for _ in 0 ..< d:
+            c.add "Q"
+            c.add Dot
         c.genx n
         c.add AsgnOpr
         c.genx n
+        if n.kind != ParRi: skip n
         skipParRi n
       elif n.exprKind == OconstrC:
         # inheritance

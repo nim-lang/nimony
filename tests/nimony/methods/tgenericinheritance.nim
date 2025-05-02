@@ -13,7 +13,7 @@ type Writeable = concept
   proc write(f: File; x: Self): string
 
 method foo[T: Writeable](x: GenericObj[T]) =
-  echo "at base method : ", x.x
+  echo "at base method: ", x.x
   echo "base check: ", x of GenericObj[T]
   echo "inherited 1 check: ", x of InheritGeneric1[T]
   echo "inherited 2 check: ", x of InheritGeneric2
