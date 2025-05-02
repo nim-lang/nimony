@@ -11,7 +11,7 @@
      (fld :val.0.treckpe1i1 . . 5 T.0.treckpe1i1 .))) 4,2
    (var :obj.0 . . 6 Foo.0 9
     (oconstr ~3 Foo.0 4
-     (kv ~4 val.0.treckpe1i1 2 x.0))))) 3,5
+     (kv ~3 val.0.treckpe1i1 2 x.0))))) 3,5
  (call ~3 foo.1.treckpe1i1 1 +123) 3,6
  (call ~3 foo.2.treckpe1i1 1 "abc") ,8
  (template 9 :fooTempl.0.treckpe1i1 . . 17
@@ -25,7 +25,7 @@
      (fld :val.1.treckpe1i1 . . 5 T.1.treckpe1i1 .))) 4,2
    (var :obj.1 . . 6 Foo.1 9
     (oconstr ~3 Foo.1 4
-     (kv ~4 val.1.treckpe1i1 2 x.1))))) 2,9
+     (kv ~3 val.1.treckpe1i1 2 x.1))))) 2,9
  (stmts 9
   (type ~4 :Foo.2 . . . 2
    (object . ~9,1
@@ -33,14 +33,14 @@
      (i -1) .))) 4,2
   (gvar :obj.2 . . 6 Foo.2 9
    (oconstr ~3 Foo.2 4
-    (kv ~4 val.2.treckpe1i1 ~10,2 +123)))) 2,9
+    (kv ~3 val.2.treckpe1i1 ~10,2 +123)))) 2,9
  (stmts 9
   (type ~4 :Foo.3 . . . 2
    (object . ~9,1
     (fld :val.3.treckpe1i1 . . string.0.sysvq0asl .))) 4,2
   (gvar :obj.3 . . 6 Foo.3 9
    (oconstr ~3 Foo.3 4
-    (kv ~4 val.3.treckpe1i1 ~10,3 "abc")))) 3,5
+    (kv ~3 val.3.treckpe1i1 ~10,3 "abc")))) 3,5
  (proc :foo.1.treckpe1i1 . ~3,~5 .
   (at foo.0.treckpe1i1
    (i -1)) 8,~5
@@ -54,7 +54,7 @@
       (i -1) .))) 4,2
    (var :obj.4 . . 6 Foo.4 9
     (oconstr ~3 Foo.4 4
-     (kv ~4 val.4.treckpe1i1 2 x.4))))) 3,6
+     (kv ~3 val.4.treckpe1i1 2 x.4))))) 3,6
  (proc :foo.2.treckpe1i1 . ~3,~6 .
   (at foo.0.treckpe1i1 string.0.sysvq0asl) 8,~6
   (params 1
@@ -65,4 +65,4 @@
      (fld :val.5.treckpe1i1 . . string.0.sysvq0asl .))) 4,2
    (var :obj.5 . . 6 Foo.5 9
     (oconstr ~3 Foo.5 4
-     (kv ~4 val.5.treckpe1i1 2 x.5))))))
+     (kv ~3 val.5.treckpe1i1 2 x.5))))))

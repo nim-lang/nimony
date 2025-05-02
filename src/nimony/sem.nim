@@ -5218,7 +5218,7 @@ proc callDefault(c: var SemContext; typ: Cursor; info: PackedLineInfo) =
 
 proc buildObjConstrField(c: var SemContext; field: Local;
                          setFields: Table[SymId, Cursor]; info: PackedLineInfo;
-                         bindings: Table[SymId, Cursor]) =
+                         bindings: Table[SymId, Cursor]; depth: int) =
   let fieldSym = field.name.symId
   if fieldSym in setFields:
     c.dest.addSubtree setFields[fieldSym]
@@ -5232,6 +5232,8 @@ proc buildObjConstrField(c: var SemContext; field: Local;
       # and the field type is instantiated based on them here
       typ = instantiateType(c, typ, bindings)
     callDefault c, typ, info
+    if depth != 0:
+      c.dest.addIntLit(depth, info)
     c.dest.addParRi()
 
 proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymId, Cursor]): bool =
@@ -5248,7 +5250,7 @@ proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymI
 
 proc fieldsPresentInBranch(c: var SemContext; n: var Cursor;
                 setFields: Table[SymId, Cursor]; info: PackedLineInfo;
-                bindings: Table[SymId, Cursor]) =
+                bindings: Table[SymId, Cursor]; depth: int) =
   var branches = 0
   block matched:
     while n.kind != ParRi:
@@ -5261,7 +5263,7 @@ proc fieldsPresentInBranch(c: var SemContext; n: var Cursor;
           inc n # stmt
           while n.kind != ParRi:
             let field = takeLocal(n, SkipFinalParRi)
-            buildObjConstrField(c, field, setFields, info, bindings)
+            buildObjConstrField(c, field, setFields, info, bindings, depth)
           skipParRi n
           inc branches
         else:
@@ -5275,7 +5277,7 @@ proc fieldsPresentInBranch(c: var SemContext; n: var Cursor;
           inc n # stmt
           while n.kind != ParRi:
             let field = takeLocal(n, SkipFinalParRi)
-            buildObjConstrField(c, field, setFields, info, bindings)
+            buildObjConstrField(c, field, setFields, info, bindings, depth)
           skipParRi n # stmt
           inc branches
         else:
@@ -5286,7 +5288,7 @@ proc fieldsPresentInBranch(c: var SemContext; n: var Cursor;
 
 proc buildObjConstrFields(c: var SemContext; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: PackedLineInfo;
-                          bindings: Table[SymId, Cursor]) =
+                          bindings: Table[SymId, Cursor]; depth = 0) =
   # XXX for now counts each case object field as separate
   var iter = initObjFieldIter()
   while nextField(iter, n, keepCase = true):
@@ -5295,13 +5297,13 @@ proc buildObjConstrFields(c: var SemContext; n: var Cursor;
       inc body
       # selector
       let field = takeLocal(body, SkipFinalParRi)
-      buildObjConstrField(c, field, setFields, info, bindings)
+      buildObjConstrField(c, field, setFields, info, bindings, depth)
 
-      fieldsPresentInBranch(c, body, setFields, info, bindings)
+      fieldsPresentInBranch(c, body, setFields, info, bindings, depth)
       skip n
     else:
       let field = takeLocal(n, SkipFinalParRi)
-      buildObjConstrField(c, field, setFields, info, bindings)
+      buildObjConstrField(c, field, setFields, info, bindings, depth)
 
 proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
                            setFields: Table[SymId, Cursor]; info: PackedLineInfo;
@@ -5340,6 +5342,7 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
     let origBindings = bindings
     var bindingBuf = default(TokenBuf) # to store subsequent parent args
     var parentType = obj.parentType
+    var depth = 1
     while parentType.kind != DotToken:
       var parentImpl = parentType
       if parentImpl.typeKind in {RefT, PtrT}:
@@ -5365,8 +5368,9 @@ proc buildDefaultObjConstr(c: var SemContext; typ: Cursor;
       let parent = asObjectDecl(parentImpl)
       var currentField = parent.firstField
       if currentField.kind != DotToken:
-        buildObjConstrFields(c, currentField, setFields, info, bindings)
+        buildObjConstrFields(c, currentField, setFields, info, bindings, depth)
       parentType = parent.parentType
+      inc depth
     # bring back original bindings:
     bindings = origBindings
   var currentField = obj.firstField
@@ -5414,15 +5418,17 @@ proc semObjConstr(c: var SemContext, it: var Item) =
       let fieldName = takeIdent(it.n)
       if fieldName == StrId(0):
         c.buildErr fieldInfo, "identifier expected for object field"
-        skip it.n
+        skipUntilEnd it.n
       else:
+        var hasFieldSym = false
         var field = ObjField(level: -1)
         if fieldNameCursor.kind == Symbol:
           let sym = fieldNameCursor.symId
           let res = tryLoadSym(sym)
           if res.status == LacksNothing and res.decl.substructureKind == FldU:
             # trust that it belongs to this object for now
-            # level is not known but not used either, set it to 0:
+            # level is either given or 0
+            hasFieldSym = true
             field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
           else:
             field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
@@ -5436,9 +5442,9 @@ proc semObjConstr(c: var SemContext, it: var Item) =
             setFieldPositions[field.sym] = fieldStart
             if isGenericObj:
               # do not save generic field sym
-              fieldBuf.add identToken(fieldName, info)
+              fieldBuf.add identToken(fieldName, fieldInfo)
             else:
-              fieldBuf.add symToken(field.sym, info)
+              fieldBuf.add symToken(field.sym, fieldInfo)
             # maybe add inheritance depth too somehow?
             var val = Item(n: it.n, typ: field.typ)
             swap c.dest, fieldBuf
@@ -5448,6 +5454,15 @@ proc semObjConstr(c: var SemContext, it: var Item) =
         else:
           c.buildErr fieldInfo, "undeclared field: '" & pool.strings[fieldName] & "' for type " & typeToString(it.typ)
           skip it.n
+        if it.n.kind != ParRi:
+          # inheritance level, reuse if field already has a sym, otherwise set a new one
+          if hasFieldSym:
+            takeTree fieldBuf, it.n
+          else:
+            skip it.n
+        if not hasFieldSym and field.level > 0:
+          # add inheritance level
+          fieldBuf.addIntLit(field.level, fieldInfo)
       fieldBuf.addParRi()
       skipParRi it.n
   skipParRi it.n

@@ -652,6 +652,9 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
       copyInto c.dest, n:
         takeTree c.dest, n
         tr c, n, WantOwner
+        if n.kind != ParRi:
+          # optional inheritance
+          takeTree c.dest, n
   finishOwningTemp c.dest, ow
 
 proc trNewobjFields(c: var Context; n: var Cursor) =
@@ -660,6 +663,9 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
       copyInto c.dest, n:
         takeTree c.dest, n # keep field name
         tr(c, n, WantOwner)
+        if n.kind != ParRi:
+          # optional inheritance
+          takeTree c.dest, n
     else:
       tr(c, n, WantOwner)
   inc n # skip ParRi
