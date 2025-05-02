@@ -237,24 +237,27 @@ proc getPtrQualifier(c: var GeneratedCode; n: Cursor; isCppRef: var bool): strin
   of NoQualifier:
     error c.m, "expected pointer qualifier but got: ", n
 
-proc genType(c: var GeneratedCode; n: var Cursor; name = "")
+proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false)
 
-template maybeAddName(c: var GeneratedCode; name: string) =
+template maybeAddName(c: var GeneratedCode; name: string; isConst: bool) =
+  if isConst:
+    c.add Space
+    c.add ConstKeyword
   if name != "":
     c.add Space
     c.add name
 
-template atom(c: var GeneratedCode; s, name: string) =
+template atom(c: var GeneratedCode; s, name: string; isConst: bool) =
   c.add s
-  maybeAddName(c, name)
+  maybeAddName(c, name, isConst)
 
-proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isBool = false) =
+proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isConst: bool; isBool = false) =
   if isBool:
     inc n
     while n.kind != ParRi:
       c.add getNumberQualifier(c, n)
       skip n
-    atom(c, typeName, name)
+    atom(c, typeName, name, isConst)
     inc n
   else:
     var s = ""
@@ -266,9 +269,9 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isB
       c.add getNumberQualifier(c, n)
       skip n
     skipParRi n
-    atom(c, s, name)
+    atom(c, s, name, isConst)
 
-proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string) =
+proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string; isConst: bool) =
   inc n
   var elem = n
   skip n # element type
@@ -282,9 +285,9 @@ proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string) =
     c.add "&"
   else:
     c.add Star
-  maybeAddName(c, name)
+  maybeAddName(c, name, isConst)
 
-proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
+proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   let decl = takeProcType(n)
   var lastCallConv = NoCallConv
   if decl.pragmas.kind == ParLe:
@@ -307,7 +310,7 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
     c.add Comma
     var pragmas = decl.pragmas
     genProcTypePragmas c, pragmas, isVarargs
-    maybeAddName(c, name)
+    maybeAddName(c, name, isConst)
     c.add ParRi
   else:
     if decl.returnType.kind == DotToken:
@@ -320,7 +323,7 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
     var pragmas = decl.pragmas
     genProcTypePragmas c, pragmas, isVarargs
     c.add Star # "(*fn)"
-    maybeAddName(c, name)
+    maybeAddName(c, name, isConst)
     c.add ParRi
   c.add ParLe
   var i = 0
@@ -339,38 +342,38 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
     c.add "void"
   c.add ParRi
 
-proc genType(c: var GeneratedCode; n: var Cursor; name = "") =
+proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   case n.typeKind
   of VoidT:
-    atom(c, "void", name)
+    atom(c, "void", name, isConst)
     skip n
   of IT:
-    atomNumber(c, n, "NI", name)
+    atomNumber(c, n, "NI", name, isConst)
   of UT:
-    atomNumber(c, n, "NU", name)
+    atomNumber(c, n, "NU", name, isConst)
   of FT:
-    atomNumber(c, n, "NF", name)
+    atomNumber(c, n, "NF", name, isConst)
   of BoolT:
-    atomNumber(c, n, "NB8", name, isBool = true)
+    atomNumber(c, n, "NB8", name, isConst, isBool = true)
   of CT:
-    atomNumber(c, n, "NC", name)
+    atomNumber(c, n, "NC", name, isConst)
   of NoType:
     if n.kind == Symbol:
-      atom(c, mangle(pool.syms[n.symId]), name)
+      atom(c, mangle(pool.syms[n.symId]), name, isConst)
       inc n
     else:
       error c.m, "node is not a type: ", n
   of PtrT, APtrT:
-    atomPointer(c, n, name)
+    atomPointer(c, n, name, isConst)
   of FlexarrayT:
     inc n
     genType c, n
-    maybeAddName(c, name)
+    maybeAddName(c, name, isConst)
     c.add BracketLe
     c.add BracketRi
     skipParRi n
   of ProctypeT:
-    genProcType(c, n, name)
+    genProcType(c, n, name, isConst)
   of ParamsT, UnionT, ObjectT, EnumT, ArrayT:
     error c.m, "nominal type not allowed here: ", n
 
