@@ -16,7 +16,7 @@ const
   Digits = {'0'..'9'}
 
 type
-  TokenKind* = enum
+  NifKind* = enum
     UnknownToken, EofToken,
     DotToken, Ident, Symbol, SymbolDef,
     StringLit, CharLit, IntLit, UIntLit, FloatLit,
@@ -29,7 +29,7 @@ type
     TokenHasEscapes, FilenameHasEscapes
 
   Token* = object
-    tk*: TokenKind
+    tk*: NifKind
     flags: set[TokenFlag]
     kind*: uint16   # for clients to fill in ("known node kinds")
     s*: StringView
@@ -49,7 +49,7 @@ type
     buf: string
     line*: int32 # file position within the NIF file, not affected by line annotations
     trackDefs*: bool
-    isubs, ksubs: Table[StringView, (TokenKind, StringView)]
+    isubs, ksubs: Table[StringView, (NifKind, StringView)]
     defs: Table[string, pchar]
     meta: MetaInfo
 
@@ -495,7 +495,7 @@ proc startsWith*(r: Reader; prefix: string): bool =
   return false
 
 proc processDirectives*(r: var Reader): DirectivesResult =
-  template handleSubstitutionPair(r: var Reader; valid: set[TokenKind]; subs: typed) =
+  template handleSubstitutionPair(r: var Reader; valid: set[NifKind]; subs: typed) =
     if r.p < r.eof and ^r.p in ControlCharsOrWhite:
       let key = next(r)
       if key.tk == Ident:

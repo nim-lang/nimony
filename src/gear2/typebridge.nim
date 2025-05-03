@@ -269,7 +269,7 @@ proc toNif*(t: PType; parent: PNode; c: var WContext) =
       else:
         c.b.addEmpty
 
-proc expect(c: var Cursor; k: TokenKind) =
+proc expect(c: var Cursor; k: NifKind) =
   if c.kind == k:
     inc c
   else:
