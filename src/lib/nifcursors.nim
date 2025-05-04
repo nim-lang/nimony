@@ -29,7 +29,7 @@ proc setSpan*(c: var Cursor; beyondLast: Cursor) {.inline.} =
 
 proc load*(c: Cursor): PackedToken {.inline.} = c.p[]
 
-proc kind*(c: Cursor): TokenKind {.inline.} = c.load.kind
+proc kind*(c: Cursor): NifKind {.inline.} = c.load.kind
 
 proc info*(c: Cursor): PackedLineInfo {.inline.} = c.load.info
 proc setInfo*(c: Cursor; info: PackedLineInfo) {.inline.} = c.p[].info = info

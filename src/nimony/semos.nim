@@ -282,24 +282,36 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string)
   let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " " & quoteShell(nf)
   exec cmd
 
-proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string) =
+proc writeFileIfChanged(file, content: string) =
+  if fileExists(file) and readFile(file) == content:
+    # do not touch the timestamp
+    discard "nothing to do here"
+  else:
+    writeFile file, content
+
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string;
+                additionalInput = "") =
   let p = splitFile(pluginName)
-  let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input)
+  let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
+  let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input) & checksumA
   let inputFile = basename & ".in.nif"
   let outputFile = basename & ".out.nif"
+  let inputFileB = basename & ".types.nif"
   let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
 
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
   if needsRecompile(nf, pluginExe):
     compilePlugin(c, info, nf, pluginExe)
-  if fileExists(inputFile) and readFile(inputFile) == input:
-    # do not touch the timestamp
-    discard "nothing to do here"
-  else:
-    writeFile inputFile, input
+
+  writeFileIfChanged(inputFile, input)
+  if additionalInput.len > 0:
+    writeFileIfChanged(inputFileB, additionalInput)
 
   if needsRecompile(pluginExe, outputFile):
-    let cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
+    var cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
+    if additionalInput.len > 0:
+      cmd &= " "
+      cmd &= quoteShell(inputFileB)
     exec cmd
   var s = nifstreams.open(outputFile)
   try:

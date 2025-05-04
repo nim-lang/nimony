@@ -110,6 +110,9 @@ type
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
+    pendingTypePlugins*: Table[SymId, StrId]
+    pendingModulePlugins*: seq[StrId]
+    pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
