@@ -2511,6 +2511,36 @@ type CaseMode = enum
 
 proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode)
 
+proc semExprMissingPhases(c: var SemContext; it: var Item; firstPhase: SemPhase) =
+  if c.phase <= firstPhase:
+    var lastBuf = default(TokenBuf)
+    var usingBuf = false
+    for phase in low(SemPhase) ..< c.phase:
+      var buf = createTokenBuf()
+      swap c.dest, buf
+      var phase = phase
+      swap c.phase, phase
+      var it2 = Item(typ: it.typ)
+      if usingBuf:
+        it2.n = beginRead(lastBuf)
+      else:
+        it2.n = it.n
+      semExpr c, it2
+      if not usingBuf:
+        it.n = it2.n 
+      swap c.phase, phase
+      swap c.dest, buf
+      lastBuf = buf
+      usingBuf = true
+    let lastN = it.n
+    if usingBuf:
+      it.n = beginRead(lastBuf)
+    semExpr c, it
+    if usingBuf:
+      it.n = lastN
+  else:
+    semExpr c, it
+
 proc semObjectComponent(c: var SemContext; n: var Cursor) =
   case n.substructureKind
   of FldU:
@@ -4207,7 +4237,7 @@ proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode) =
           c.dest.shrink start
           case mode
           of NormalWhen:
-            semExpr c, it
+            semExprMissingPhases c, it, SemcheckSignatures
           of ObjectWhen:
             semObjectComponent c, it.n
           skipParRi it.n # finish elif
@@ -4226,7 +4256,7 @@ proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode) =
       c.dest.shrink start
       case mode
       of NormalWhen:
-        semExpr c, it
+        semExprMissingPhases c, it, SemcheckSignatures
       of ObjectWhen:
         semObjectComponent c, it.n
       skipParRi it.n # finish else
@@ -4244,7 +4274,10 @@ proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode) =
 proc semWhen(c: var SemContext; it: var Item) =
   case c.phase
   of SemcheckTopLevelSyms:
-    # XXX this is too limited
+    # XXX `const`s etc are not evaluated yet, so we cannot compile the `when` conditions
+    # so symbols inside of `when` are not defined until `SemcheckSignatures`
+    # effectively this means types defined in `when` cannot be used before they are declared
+    # but this was already not possible in original Nim
     c.takeTree it.n
     return
   of SemcheckSignatures, SemcheckBodies:
