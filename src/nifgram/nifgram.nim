@@ -9,7 +9,7 @@
 ## See nifc/nifc_grammar.nif for a real world example.
 
 import std / [strutils, tables, sets, assertions, syncio, sequtils]
-import "../lib" / [stringviews, nifreader, nifcursors, nifstreams, bitabs]
+import "../lib" / [nifreader, nifcursors, nifstreams, bitabs]
 
 type
   RuleFlag = enum
@@ -17,8 +17,6 @@ type
   ContextKind = enum
     Grammar, Generator
   Context = object
-    r: Reader
-    t: Token
     kind: ContextKind
     startRule, currentRule: string
     ruleFlags: set[RuleFlag]
@@ -68,20 +66,6 @@ proc error(c: var ScanContext; msg: string) {.noreturn.} =
   # quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
   quit "[Error] in RULE " & c.currentRule & ": " & msg
 
-proc skipComment(c: var Context) =
-  # skip comment:
-  var nested = 1
-  while true:
-    c.t = next(c.r)
-    if c.t.tk == EofToken:
-      error c, "')' expected, but got " & $c.t
-    if c.t.tk == ParLe: inc nested
-    elif c.t.tk == ParRi:
-      dec nested
-      if nested == 0:
-        c.t = next(c.r)
-        break
-
 proc ind(c: var Context) =
   c.outp.add '\n'
   for i in 1..c.nesting*2:
@@ -89,7 +73,7 @@ proc ind(c: var Context) =
 
 template args(c: Context): string {.dirty.} = (if it.len > 0: c.args0 & ", " & it else: c.args0)
 
-proc compileExpr(c: var Context; it: string): string
+proc compileExpr(c: var Context; it: string; n: var Cursor): string
 
 proc declTemp(c: var Context; prefix: string; value = "false"): string =
   inc c.tmpCounter
@@ -103,24 +87,24 @@ proc declTempOuter(c: var Context, prefix: string; value = "false"): string =
   c.locals.add "\n  "
   c.locals.add "var " & result & " = " & value
 
-proc compileErr(c: var Context; it: string): string =
-  c.t = next(c.r)
-  if c.t.tk == StringLit:
-    result = "error( " & c.args & ", " & escape(decodeStr(c.t)) & ")"
-    c.t = next(c.r)
+proc compileErr(c: var Context; it: string; n: var Cursor): string =
+  inc n
+  if n.kind == StringLit:
+    result = "error( " & c.args & ", " & escape(pool.strings[n.litId]) & ")"
+    inc n
   else:
     result = ""
     error c, "string literal after ERR expected"
-  if c.t.tk == ParRi:
-    c.t = next(c.r)
+  if n.kind == ParRi:
+    inc n
   else:
     error c, "')' for ERR expected"
 
-proc compileOr(c: var Context; it: string): string =
+proc compileOr(c: var Context; it: string; n: var Cursor): string =
   result = if c.inMatch > 0: declTempOuter(c, "or") else: declTemp(c, "or")
   inc c.tmpCounter
   let lab = "or" & $c.tmpCounter
-  c.t = next(c.r)
+  inc n
   ind c
   c.outp.add "block " & lab & ":"
   inc c.nesting
@@ -135,12 +119,12 @@ proc compileOr(c: var Context; it: string): string =
       else: declTemp(c, "st", "getStack(" & c.args0 & ")")
   
   while true:
-    if c.t.tk == ParLe and c.t.s == "ERR":
+    if n.kind == ParLe and pool.tags[n.tagId] == "ERR":
       ind c
-      c.outp.add compileErr(c, it)
+      c.outp.add compileErr(c, it, n)
       break
 
-    let cond = compileExpr(c, it)
+    let cond = compileExpr(c, it, n)
     ind c
     c.outp.add "if "
     c.outp.add cond
@@ -155,12 +139,12 @@ proc compileOr(c: var Context; it: string): string =
     if needsStackSave:
       ind c
       c.outp.add "restoreStack(" & c.args0 & ", " & stackSaveVar & ")"
-    if c.t.tk == ParRi:
+    if n.kind == ParRi:
       break
   dec c.nesting
   c.leaveBlock = oldLeaveBlock
 
-proc emitForLoop(c: var Context; it: string): string =
+proc emitForLoop(c: var Context; it: string, n: var Cursor): string =
   when false:
     result = forLoopVar(c, "ch")
     ind c
@@ -170,12 +154,12 @@ proc emitForLoop(c: var Context; it: string): string =
     ind c
     c.outp.add "while not peekParRi(" & c.args & "):"
 
-proc compileZeroOrMany(c: var Context; it: string): string =
+proc compileZeroOrMany(c: var Context; it: string; n: var Cursor): string =
   result = declTemp(c, "zm", "true")
-  c.t = next(c.r)
-  let tmp = emitForLoop(c, it)
+  inc n
+  let tmp = emitForLoop(c, it, n)
   inc c.nesting
-  let cond = compileExpr(c, tmp)
+  let cond = compileExpr(c, tmp, n)
   if cond != "true":
     ind c
     c.outp.add "if not "
@@ -189,12 +173,12 @@ proc compileZeroOrMany(c: var Context; it: string): string =
     dec c.nesting
   dec c.nesting
 
-proc compileOneOrMany(c: var Context; it: string): string =
+proc compileOneOrMany(c: var Context; it: string; n: var Cursor): string =
   result = declTemp(c, "om")
-  c.t = next(c.r)
-  let tmp = emitForLoop(c, it)
+  inc n
+  let tmp = emitForLoop(c, it, n)
   inc c.nesting
-  let cond = compileExpr(c, tmp)
+  let cond = compileExpr(c, tmp, n)
   if cond != "true":
     ind c
     c.outp.add "if not "
@@ -212,12 +196,12 @@ proc compileOneOrMany(c: var Context; it: string): string =
     dec c.nesting
   dec c.nesting
 
-proc compileZeroOrOne(c: var Context; it: string): string =
+proc compileZeroOrOne(c: var Context; it: string; n: var Cursor): string =
   # XXX This is not completely correct. It must add code to backtrack
   # if `cond` failed.
-  c.t = next(c.r)
+  inc n
 
-  let cond = compileExpr(c, it)
+  let cond = compileExpr(c, it, n)
   ind c
   c.outp.add "discard "
   c.outp.add cond
@@ -229,37 +213,39 @@ proc upcase(s: string): string =
 proc tagAsNimIdent(tag: string): string =
   upcase(tag) & "T"
 
-proc compileKeywArgs(c: var Context; it, tag, resultVar: string) =
+proc compileKeywArgs(c: var Context; it, tag, resultVar: string; n: var Cursor) =
   var firstArg = c.kind == Generator
   while true:
-    if c.t.tk == ParRi: break
+    if n.kind == ParRi: break
 
     if firstArg:
       firstArg = false
-      if c.t.tk != StringLit:
+      if n.kind != StringLit:
         # implicit "emit" rule: for `(tag Expr Expr)` produce
         # `emit("tag")`:
         ind c
         c.outp.add "emitTag(" & c.args & ", " & escape(tag) & ")"
-
-    let e = c.t
-
-    let cond = compileExpr(c, it)
+    let e = n
+    let cond = compileExpr(c, it, n)
     if cond != "true":
       ind c
       c.outp.add "if not "
       c.outp.add cond
       c.outp.add ":"
       inc c.nesting
-      var errmsg = decodeStr(e)
-      if errmsg == ".":
+      var errmsg = ""
+      if e.kind == DotToken:
         errmsg = "in rule " & c.currentRule & ": <empty node> expected"
-      elif errmsg in ["ZERO_OR_MANY", "ONE_OR_MANY", "OR", "ZERO_OR_ONE",
-                      "SCOPE", "ENTER", "QUERY", "COND", "DO", "LET",
-                      "MATCH"]:
-        errmsg = "invalid " & c.currentRule
+      elif e.kind == ParLe and pool.tags[e.tagId] in [
+        "ZERO_OR_MANY", "ONE_OR_MANY", "OR", "ZERO_OR_ONE",
+        "SCOPE", "ENTER", "QUERY", "COND", "DO", "LET",
+        "MATCH"]: errmsg = "invalid " & c.currentRule
       else:
-        errmsg.add " expected"
+        if e.kind == ParRi:
+          # Should not happen
+          errmsg = ") expected"
+        else:
+          errmsg.add $e & " expected"
       if c.inMatch == 0:
         ind c
         c.outp.add "error(" & c.args & ", " & escape(errmsg) & ")"
@@ -272,16 +258,16 @@ proc compileKeywArgs(c: var Context; it, tag, resultVar: string) =
   c.outp.add resultVar
   c.outp.add " = matchParRi(" & c.args & ")"
 
-proc compileKeyw(c: var Context; it: string): string =
-  let tag = decodeStr(c.t)
+proc compileKeyw(c: var Context; it: string, n: var Cursor): string =
+  let tag = pool.tags[n.tagId]
 
   c.foundTags[tag] = 1
   if c.specTags.len > 0 and not c.specTags.hasKey(tag):
     error c, "unknown tag: " & tag
 
   let cond = "isTag(" & c.args & ", " & tagAsNimIdent(tag) & ")"
-  c.t = next(c.r)
-  if c.t.tk == ParRi and c.inMatch == 0:
+  inc n
+  if n.kind == ParRi and c.inMatch == 0:
     if c.kind == Generator:
       return "matchAndEmitTag(" & c.args & ", " & tagAsNimIdent(tag) & ", " & escape(tag) & ")"
     return cond
@@ -294,7 +280,7 @@ proc compileKeyw(c: var Context; it: string): string =
   c.outp.add ":"
 
   inc c.nesting
-  compileKeywArgs(c, it, tag, result)
+  compileKeywArgs(c, it, tag, result, n)
   dec c.nesting
   if c.inMatch == 0:
     discard
@@ -303,13 +289,13 @@ proc compileKeyw(c: var Context; it: string): string =
     c.outp.add "else: "
     c.outp.add c.leaveBlock
 
-proc compilePopVar(c: var Context; it: string): string =
+proc compilePopVar(c: var Context; it: string; n: var Cursor): string =
   ind c
-  c.outp.add "emit(" & c.args0 & ", " & normalizedPopVar($c.t.s) & ")"
+  c.outp.add "emit(" & c.args0 & ", " & normalizedPopVar(pool.strings[n.litId]) & ")"
   result = "true"
 
-proc compileRuleInvocation(c: var Context; it: string): string =
-  let ruleName = decodeStr(c.t)
+proc compileRuleInvocation(c: var Context; it: string; n: var Cursor): string =
+  let ruleName = pool.strings[n.litId]
   if not c.seenRules.contains(ruleName):
     if not c.used.containsOrIncl(ruleName):
       c.forw.add "proc " & c.procPrefix & ruleName & c.signature(ruleName) & "\n"
@@ -324,7 +310,7 @@ proc compileRuleInvocation(c: var Context; it: string): string =
   if c.inBinding > 0:
     result = declTemp(c, "m", result)
 
-proc compileSymbolDef(c: var Context; it: string): string =
+proc compileSymbolDef(c: var Context; it: string, n: var Cursor): string =
   let declProc =
     if LateDecl in c.ruleFlags:
       "handleSymDef"
@@ -335,87 +321,87 @@ proc compileSymbolDef(c: var Context; it: string): string =
   c.declaredVar = declTemp(c, "sym", declProc & "(" & c.args & ")")
   result = "success(" & c.declaredVar & ")"
 
-proc compileEmit(c: var Context; it: string): string =
-  assert c.t.tk == StringLit
-  let s = decodeStr(c.t)
+proc compileEmit(c: var Context; it: string, n: var Cursor): string =
+  assert n.kind == StringLit
+  let s = pool.strings[n.litId]
   ind c
   c.outp.add "emit(" & c.args & ", " & escape(s) & ")"
   result = "true"
 
-proc compileAtom(c: var Context; it: string): string =
+proc compileAtom(c: var Context; it: string, n: var Cursor): string =
   if c.collectInto.len > 0:
     ind c
     c.outp.add c.collectInto
     c.outp.add ".add "
     c.outp.add "save(" & c.args & ")"
 
-  if c.t.tk == DotToken:
+  if n.kind == DotToken:
     result = "matchEmpty(" & c.args & ")"
-  elif c.t.tk == Ident:
-    if c.t.s == "SYMBOL":
+  elif n.kind == Ident:
+    if pool.strings[n.litId] == "SYMBOL":
       result = "lookupSym(" & c.args & ")"
-    elif c.t.s == "SYMBOLDEF":
-      result = compileSymbolDef(c, it)
-    elif c.t.s == "IDENT":
+    elif pool.strings[n.litId] == "SYMBOLDEF":
+      result = compileSymbolDef(c, it, n)
+    elif pool.strings[n.litId] == "IDENT":
       result = "matchIdent(" & c.args & ")"
-    elif c.t.s == "STRINGLITERAL":
+    elif pool.strings[n.litId] == "STRINGLITERAL":
       result = "matchStringLit(" & c.args & ")"
-    elif c.t.s == "CHARLITERAL":
+    elif pool.strings[n.litId] == "CHARLITERAL":
       result = "matchCharLit(" & c.args & ")"
-    elif c.t.s == "INTLIT":
+    elif pool.strings[n.litId] == "INTLIT":
       result = "matchIntLit(" & c.args & ")"
-    elif c.t.s == "UINTLIT":
+    elif pool.strings[n.litId] == "UINTLIT":
       result = "matchUIntLit(" & c.args & ")"
-    elif c.t.s == "FLOATLIT":
+    elif pool.strings[n.litId] == "FLOATLIT":
       result = "matchFloatLit(" & c.args & ")"
-    elif c.t.s == "ANY":
+    elif pool.strings[n.litId] == "ANY":
       result = "matchAny(" & c.args & ")"
-    elif $c.t.s in c.popVars.getOrDefault(c.currentRule) or $c.t.s in c.localPopVars:
-      result = compilePopVar(c, it)
+    elif pool.strings[n.litId] in c.popVars.getOrDefault(c.currentRule) or pool.strings[n.litId] in c.localPopVars:
+      result = compilePopVar(c, it, n)
     else:
-      result = compileRuleInvocation(c, it)
-  elif c.kind == Generator and c.t.tk == StringLit:
-    result = compileEmit(c, it)
+      result = compileRuleInvocation(c, it, n)
+  elif c.kind == Generator and n.kind == StringLit:
+    result = compileEmit(c, it, n)
   else:
     result = ""
-    error c, "IDENT expected but got " & $c.t
+    error c, "IDENT expected but got " & $n
 
-proc compileIdent(c: var Context; it: string): string =
-  c.t = next(c.r)
-  if c.t.tk == StringLit:
-    result = "matchIdent(" & c.args & ", " & escape(decodeStr(c.t)) & ")"
-    c.t = next(c.r)
+proc compileIdent(c: var Context; it: string, n: var Cursor): string =
+  inc n
+  if n.kind == StringLit:
+    result = "matchIdent(" & c.args & ", " & escape(pool.strings[n.litId]) & ")"
+    inc n
   else:
     result = ""
     error c, "string literal after IDENT expected"
 
-proc compileQuery(c: var Context; it, prefix: string): string =
-  c.t = next(c.r)
+proc compileQuery(c: var Context; it, prefix: string, n: var Cursor): string =
+  inc n
   result = ""
-  while c.t.tk in {StringLit, Ident}:
+  while n.kind in {StringLit, Ident}:
     if result.len > 0: result.add " or "
-    result.add prefix & decodeStr(c.t) & "(" & c.args & ")"
-    c.t = next(c.r)
+    result.add prefix & pool.strings[n.litId] & "(" & c.args & ")"
+    inc n
 
-  if c.t.tk != ParRi:
+  if n.kind != ParRi:
     result = ""
     error c, "string literal after QUERY|COND expected"
 
-proc compileDo(c: var Context; it: string): string =
-  c.t = next(c.r)
+proc compileDo(c: var Context; it: string, n: var Cursor): string =
+  inc n
 
-  if c.t.tk in {StringLit, Ident}:
+  if n.kind in {StringLit, Ident}:
     ind c
-    c.outp.add decodeStr(c.t) & "(" & c.args0
-    c.t = next(c.r)
+    c.outp.add pool.strings[n.litId] & "(" & c.args0
+    inc n
   else:
     error c, "string literal after DO expected"
 
   var counter = 1
-  while c.t.tk in {StringLit, Ident}:
+  while n.kind in {StringLit, Ident}:
     if counter > 0: c.outp.add ", "
-    let s = decodeStr(c.t)
-    if c.t.tk == Ident:
+    let s = pool.strings[n.litId]
+    if n.kind == Ident:
       let asNimIdent = c.bindings.getOrDefault(s)
       if asNimIdent.len > 0:
         c.outp.add asNimIdent
@@ -424,32 +410,32 @@ proc compileDo(c: var Context; it: string): string =
         error c, "undeclared binding: " & s
     else:
       c.outp.add s
-    c.t = next(c.r)
+    inc n
     inc counter
   c.outp.add ")"
-  if c.t.tk != ParRi:
+  if n.kind != ParRi:
     error c, "string literal after DO expected"
   result = "true"
 
-proc compileConcat(c: var Context; it: string) =
+proc compileConcat(c: var Context; it: string, n: var Cursor) =
   while true:
-    let cond = compileExpr(c, it)
+    let cond = compileExpr(c, it, n)
     ind c
     if cond != "true":
       c.outp.add "if not "
       c.outp.add cond
       c.outp.add ": "
       c.outp.add c.leaveBlock
-    if c.t.tk == ParRi: break
+    if n.kind == ParRi: break
 
-proc compileScope(c: var Context; it: string): string =
-  c.t = next(c.r)
+proc compileScope(c: var Context; it: string, n: var Cursor): string =
+  inc n
   ind c
   c.outp.add "openScope(c)"
   ind c
   c.outp.add "try:"
   inc c.nesting
-  compileConcat c, it
+  compileConcat c, it, n
   dec c.nesting
   ind c
   c.outp.add "finally:"
@@ -459,13 +445,13 @@ proc compileScope(c: var Context; it: string): string =
   dec c.nesting
   result = "true"
 
-proc compileEnter(c: var Context; it: string): string =
-  c.t = next(c.r)
+proc compileEnter(c: var Context; it: string, n: var Cursor): string =
+  inc n
 
   var op = ""
-  if c.t.tk == StringLit:
-    op = decodeStr(c.t)
-    c.t = next(c.r)
+  if n.kind == StringLit:
+    op = pool.strings[n.litId]
+    inc n
   else:
     result = ""
     error c, "string literal after ENTER expected"
@@ -475,7 +461,7 @@ proc compileEnter(c: var Context; it: string): string =
   ind c
   c.outp.add "try:"
   inc c.nesting
-  compileConcat c, it
+  compileConcat c, it, n
   dec c.nesting
   ind c
   c.outp.add "finally:"
@@ -485,13 +471,13 @@ proc compileEnter(c: var Context; it: string): string =
   dec c.nesting
   result = "true"
 
-proc compileFlipFlop(c: var Context; it, mode: string): string =
-  c.t = next(c.r)
+proc compileFlipFlop(c: var Context; it, mode: string, n: var Cursor): string =
+  inc n
 
   var op = ""
-  if c.t.tk == StringLit:
-    op = decodeStr(c.t)
-    c.t = next(c.r)
+  if n.kind == StringLit:
+    op = pool.strings[n.litId]
+    inc n
   else:
     error c, "string literal after FLIP|FLOP expected"
 
@@ -517,7 +503,7 @@ proc compileFlipFlop(c: var Context; it, mode: string): string =
   ind c
   c.outp.add "try:"
   inc c.nesting
-  compileConcat c, it
+  compileConcat c, it, n
   dec c.nesting
   ind c
   c.outp.add "finally:"
@@ -528,13 +514,13 @@ proc compileFlipFlop(c: var Context; it, mode: string): string =
   if isFlip:
     dec c.nesting
 
-proc compileLet(c: var Context; it: string): string =
-  c.t = next(c.r)
+proc compileLet(c: var Context; it: string, n: var Cursor): string =
+  inc n
 
   var key = ""
-  if c.t.tk == SymbolDef:
-    key = decodeStr(c.t)
-    c.t = next(c.r)
+  if n.kind == SymbolDef:
+    key = pool.strings[n.litId]
+    inc n
   else:
     result = ""
     error c, ":SYMBOLDEF after LET expected"
@@ -547,14 +533,14 @@ proc compileLet(c: var Context; it: string): string =
   c.outp.add v & " = startBinding" & "(" & c.args & ")"
 
   inc c.inBinding
-  result = compileExpr(c, it)
+  result = compileExpr(c, it, n)
   dec c.inBinding
 
   ind c
   c.outp.add "finishBinding" & "(" & c.args & ", " & v & ")"
 
-proc compileMatch(c: var Context; it: string): string =
-  c.t = next(c.r)
+proc compileMatch(c: var Context; it: string, n: var Cursor): string =
+  inc n
   let oldLeaveBlock = c.leaveBlock
 
   inc c.inMatch
@@ -570,32 +556,32 @@ proc compileMatch(c: var Context; it: string): string =
 
   inc c.nesting
 
-  result = compileExpr(c, it)
-  let actions = compileExpr(c, it)
+  result = compileExpr(c, it, n)
+  let actions = compileExpr(c, it, n)
   assert actions == "true"
 
   dec c.nesting
   dec c.inMatch
   c.leaveBlock = oldLeaveBlock
 
-proc compileStack(c: var Context; it: string): string =
-  c.t = next(c.r)
+proc compileStack(c: var Context; it: string, n: var Cursor): string =
+  inc n
   ind c
   c.outp.add "startStack(" & c.args & ")"
   inc c.inStack
-  result = compileExpr(c, it)
+  result = compileExpr(c, it, n)
   dec c.inStack
   ind c
   c.outp.add "endStack(" & c.args & ")"
   result = "true"
 
-proc compilePop(c: var Context; it: string): string =
-  c.t = next(c.r)
+proc compilePop(c: var Context; it: string, n: var Cursor): string =
+  inc n
 
   var varName = ""
-  if c.t.tk == SymbolDef:
-    varName = decodeStr(c.t)
-    c.t = next(c.r)
+  if n.kind == SymbolDef:
+    varName = pool.syms[n.symId]
+    inc n
   else:
     result = ""
     error c, ":SYMBOLDEF after POP expected"
@@ -607,58 +593,58 @@ proc compilePop(c: var Context; it: string): string =
   c.outp.add "var " & normalizedPopVar(varName) & " = popStack(" & c.args & ")"
   result = "true"
 
-proc compileExpr(c: var Context; it: string): string =
-  if c.t.tk == ParLe:
+proc compileExpr(c: var Context; it: string, n: var Cursor): string =
+  if n.kind == ParLe:
     c.localPopCounts.add 0
-    let op = $c.t.s
+    let op = pool.tags[n.tagId]
     case op
     of "OR":
-      result = compileOr(c, it)
+      result = compileOr(c, it, n)
     of "ZERO_OR_MANY":
-      result = compileZeroOrMany(c, it)
+      result = compileZeroOrMany(c, it, n)
     of "ONE_OR_MANY":
-      result = compileOneOrMany(c, it)
+      result = compileOneOrMany(c, it, n)
     of "ZERO_OR_ONE":
-      result = compileZeroOrOne(c, it)
+      result = compileZeroOrOne(c, it, n)
     of "SCOPE":
-      result = compileScope(c, it)
+      result = compileScope(c, it, n)
     of "IDENT":
-      result = compileIdent(c, it)
+      result = compileIdent(c, it, n)
     of "QUERY":
-      result = compileQuery(c, it, "query")
+      result = compileQuery(c, it, "query", n)
     of "COND":
-      result = compileQuery(c, it, "")
+      result = compileQuery(c, it, "", n)
     of "DO":
-      result = compileDo(c, it)
+      result = compileDo(c, it, n)
     of "ENTER":
-      result = compileEnter(c, it)
+      result = compileEnter(c, it, n)
     of "FLIP":
-      result = compileFlipFlop(c, it, "flip")
+      result = compileFlipFlop(c, it, "flip", n)
     of "FLOP":
-      result = compileFlipFlop(c, it, "flop")
+      result = compileFlipFlop(c, it, "flop", n)
     of "LET":
-      result = compileLet(c, it)
+      result = compileLet(c, it, n)
     of "MATCH":
-      result = compileMatch(c, it)
+      result = compileMatch(c, it, n)
     of "STACK":
-      result = compileStack(c, it)
+      result = compileStack(c, it, n)
     of "POP":
-      result = compilePop(c, it)
+      result = compilePop(c, it, n)
     else:
-      result = compileKeyw(c, it)
+      result = compileKeyw(c, it, n)
 
-    c.t = next(c.r)
+    inc n
 
     if op != "POP":
       c.localPopVars.shrink(c.localPopVars.len - c.localPopCounts.pop())
   else:
-    result = compileAtom(c, it)
-    c.t = next(c.r)
+    result = compileAtom(c, it, n)
+    inc n
 
-proc compileRule(c: var Context; it: string) =
-  c.t = next(c.r)
+proc compileRule(c: var Context; it: string, n: var Cursor) =
+  inc n
   c.tmpCounter = 0
-  c.currentRule = $c.t.s
+  c.currentRule = pool.syms[n.symId]
   c.localPopCounts = @[0]
   c.localPopVars = @[]
   c.seenRules.incl c.currentRule
@@ -667,7 +653,7 @@ proc compileRule(c: var Context; it: string) =
   c.outp.add "proc " & c.procPrefix & c.currentRule & c.signature(c.currentRule) & " ="
   inc c.nesting
   let oldOutp = move(c.outp)
-  c.t = next(c.r)
+  inc n
 
   c.ruleFlags = {}
   c.declaredVar = ""
@@ -675,16 +661,16 @@ proc compileRule(c: var Context; it: string) =
   c.collectInto = ""
   c.flipVar = ""
 
-  while c.t.tk == Ident:
-    if c.t.s == "LATEDECL":
+  while n.kind == Ident:
+    if pool.strings[n.litId] == "LATEDECL":
       c.ruleFlags.incl LateDecl
-      c.t = next(c.r)
-    elif c.t.s == "OVERLOADABLE":
+      inc n
+    elif pool.strings[n.litId] == "OVERLOADABLE":
       c.ruleFlags.incl Overloadable
-      c.t = next(c.r)
-    elif c.t.s == "COLLECT":
+      inc n
+    elif pool.strings[n.litId] == "COLLECT":
       c.ruleFlags.incl Collect
-      c.t = next(c.r)
+      inc n
     else:
       break
 
@@ -702,7 +688,7 @@ proc compileRule(c: var Context; it: string) =
     before = declTemp(c, "before", "save(" & c.args & ")")
     dec c.nesting
 
-  compileConcat c, it
+  compileConcat c, it, n
 
   if LateDecl in c.ruleFlags:
     if c.declaredVar.len == 0:
@@ -743,26 +729,26 @@ proc compileRule(c: var Context; it: string) =
   c.outp.add c.locals
   c.outp.add body
 
-  c.t = next(c.r) # skip ParRi
+  inc n # skip ParRi
 
-proc compile(c: var Context) =
-  c.t = next(c.r)
-  if c.t.s == "GENERATOR":
+proc compile(c: var Context, n: Cursor) =
+  var n = n
+  if n.kind == ParLe and pool.tags[n.tagId] == "GENERATOR":
     c.kind = Generator
     c.procPrefix = "gen"
 
-  c.t = next(c.r)
-  c.startRule = $c.t.s
-  c.t = next(c.r) # skip ident
+  inc n
+  c.startRule = pool.strings[n.litId]
+  inc n # skip ident
 
   while true:
-    if c.t.tk == ParLe and c.t.s == "RULE":
-      compileRule(c, (if c.kind == Generator: "" else: "it"))
-    elif c.t.tk == ParLe and c.t.s == "COM":
-      c.skipComment()
+    if n.kind == ParLe and pool.tags[n.tagId] == "RULE":
+      compileRule(c, (if c.kind == Generator: "" else: "it"), n)
+    elif n.kind == ParLe and pool.tags[n.tagId] == "COM":
+      skip n
     else:
       break
-  c.t = next(c.r)
+  inc n
 
 type
   PeaSccContext = object
@@ -962,12 +948,8 @@ proc main(inp, outp: string;
   var sc = ScanContext()
   sc.scan beginRead(buf)
   c.popVars = sc.popVars
-  
-  var r = nifreader.open(inp)
-  discard processDirectives(r)
-  c.r = r
-  c.compile
-  c.r.close
+  c.compile beginRead(buf)
+  stream.close()
   if outp.len > 0:
     var foutp = open(outp, fmWrite)
     writeLine foutp, "# GENERATED BY NifGram. DO NOT EDIT!"
