@@ -8,8 +8,8 @@
 ## that is also in NIF notation.
 ## See nifc/nifc_grammar.nif for a real world example.
 
-import std / [strutils, tables, sets, assertions, syncio, deques, sequtils]
-import "../lib" / [stringviews, nifreader]
+import std / [strutils, tables, sets, assertions, syncio, sequtils]
+import "../lib" / [stringviews, nifreader, nifcursors, nifstreams, bitabs]
 
 type
   RuleFlag = enum
@@ -35,8 +35,6 @@ type
     specTags, foundTags: OrderedTable[string, int] # maps to the arity for more checking
 
   ScanContext = object
-    r: Reader
-    t: Token
     currentRule: string
 
     invocations: Table[string, HashSet[string]] # use pop var or rule invocation
@@ -62,13 +60,15 @@ proc signature(c: Context, rule: string): string {.inline.} =
 
 proc error(c: var Context; msg: string) {.noreturn.} =
   #writeStackTrace()
-  quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
+  # quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
+  quit "[Error] in RULE " & c.currentRule & ": " & msg
 
 proc error(c: var ScanContext; msg: string) {.noreturn.} =
   #writeStackTrace()
-  quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
+  # quit "[Error] in RULE " & c.currentRule & "(" & $c.r.line & "): " & msg
+  quit "[Error] in RULE " & c.currentRule & ": " & msg
 
-proc skipComment[T: Context or ScanContext](c: var T) =
+proc skipComment(c: var Context) =
   # skip comment:
   var nested = 1
   while true:
@@ -848,12 +848,12 @@ proc findSccs(c: ScanContext): Table[string, int] =
       s.visit(rule)
   s.rindex
 
-proc scanPop(c: var ScanContext, popVars: var seq[string], popCounts: var seq[int]) =
-  c.t = next(c.r)
+proc scanPop(c: var ScanContext, popVars: var seq[string], popCounts: var seq[int], n: var Cursor) =
+  inc n
   var varName = ""
-  if c.t.tk == SymbolDef:
-    varName = decodeStr(c.t)
-    c.t = next(c.r)
+  if n.kind == SymbolDef:
+    varName = pool.syms[n.symId]
+    inc n
   else:
     error c, ":SYMBOLDEF after POP expected"
   
@@ -866,71 +866,66 @@ const
     "CHARLITERAL", "INTLIT", "UINTLIT", "FLOATLIT", "ANY"
   ]
 
-proc scanRule(c: var ScanContext) =
-  c.t = next(c.r)
-  
-  if c.t.tk != SymbolDef:
-    error c, "SymbolDef expected, but got " & $c.t
-  c.currentRule = $c.t.s
+proc scanRule(c: var ScanContext, n: var Cursor) =
+  inc n
+  if n.kind != SymbolDef:
+    error c, "SymbolDef expected, but got "
+  c.currentRule = pool.syms[n.symId] # TODO: save only symid in currentRule
   if c.currentRule in c.rules:
     error c, "attempt to redeclare RULE named " & c.currentRule
   c.rules.add c.currentRule
   c.ruleInvocations[c.currentRule] = initHashSet[string]()
-  while c.t.tk == Ident:
-    case $c.t.s
+  inc n
+  while n.kind == Ident:
+    case pool.strings[n.litId]
     of "LATEDECL", "OVERLOADABLE", "COLLECT":
-      c.t = next(c.r)
+      inc n
     else: break
-  
+
   # Expression: ( -> start tree, ) end tree
   var nesting = 1
   var popVars: seq[string] = @[]
   var popCounts = @[0] # RULE
   while nesting > 0:
-    c.t = next(c.r)
-    if c.t.tk == ParLe:
+    if n.kind == ParLe:
       popCounts.add 0
-      if c.t.s == "POP":
-        c.scanPop(popVars, popCounts)
+      if pool.tags[n.tagId] == "POP":
+        c.scanPop(popVars, popCounts, n)
+        inc n
         continue # skip ')' by next iteration so not increase nesting
       else: inc nesting
-    elif c.t.tk == Ident and $c.t.s notin atoms:
-      mgetOrPut(c.popVars, $c.t.s).incl popVars.toHashSet
-      mgetOrPut(c.invocations, c.currentRule).incl $c.t.s
-    if c.t.tk == ParRi:
+    elif n.kind == Ident and pool.strings[n.litId] notin atoms:
+      mgetOrPut(c.popVars, pool.strings[n.litId]).incl popVars.toHashSet
+      mgetOrPut(c.invocations, c.currentRule).incl pool.strings[n.litId]
+    if n.kind == ParRi:
       popVars.shrink(popVars.len - popCounts.pop())
       dec nesting
-    
-  if c.t.tk == ParRi:
-    c.t = next(c.r)
-  else:
-    error c, "')' expected, but got " & $c.t
+    inc n
 
-proc scan(c: var ScanContext) =
+proc scan(c: var ScanContext; n: Cursor) =
   # This pass is necessary to determine the arguments of the rules
   # (they differ from the standard ones if POP Var was used and then the rule was called). 
-  c.t = next(c.r)
-  if c.t.tk == ParLe and (c.t.s == "GRAMMAR" or c.t.s == "GENERATOR"):
-    c.t = next(c.r)
-    if c.t.tk == Ident:
-      c.t = next(c.r)
+  var n = n
+  if n.kind == ParLe and (pool.tags[n.tagId] == "GRAMMAR" or pool.tags[n.tagId] == "GENERATOR"):
+    inc n
+    if n.kind == Ident:
+      inc n
     else:
       error c, "GRAMMAR takes an IDENT that is the name of the starting rule"
-    
-    while true:
-      if c.t.tk == ParLe and c.t.s == "RULE":
-        c.scanRule()
-      elif c.t.tk == ParLe and c.t.s == "COM":
-        c.skipComment()
-      else:
-        break
-    if c.t.tk == ParRi:
-      c.t = next(c.r)
-    else:
-      error c, "')' expected, but got " & $c.t
-  else:
-    error c, "GRAMMAR expected but got " & $c.t
 
+    while true:
+      if n.kind == ParLe and pool.tags[n.tagId] == "RULE":
+        c.scanRule(n)
+      elif n.kind == ParLe and pool.tags[n.tagId] == "COM":
+        skip n
+      if n.kind == ParRi:
+        break
+  else:
+    if n.kind == ParLe:
+      error c, "GRAMMAR expected but got " & pool.tags[n.tagId]
+    else:
+      error c, "GRAMMAR expected but got " & $n
+  
   for rule, invocations in c.invocations.pairs:
     for invoked in invocations:
       if invoked in c.rules:
@@ -956,13 +951,21 @@ proc scan(c: var ScanContext) =
 
 proc main(inp, outp: string;
           specTags: sink OrderedTable[string, int]): OrderedTable[string, int] =
+  var stream = nifstreams.open(inp)
+  discard processDirectives(stream.r)
+  var buf = fromStream(stream)
+  
+  var c = Context(
+    procPrefix: "match", args0: "c", 
+    leaveBlock: "return false", specTags: ensureMove(specTags))
+  
+  var sc = ScanContext()
+  sc.scan beginRead(buf)
+  c.popVars = sc.popVars
+  
   var r = nifreader.open(inp)
   discard processDirectives(r)
-  var c = Context(r: r, procPrefix: "match",
-                  args0: "c", leaveBlock: "return false", specTags: ensureMove(specTags))
-  var sc = ScanContext(r: r)
-  sc.scan
-  c.popVars = sc.popVars
+  c.r = r
   c.compile
   c.r.close
   if outp.len > 0:
