@@ -4473,7 +4473,15 @@ proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
   inc tup
   while it.n.kind != ParRi and tup.kind != ParRi:
     let field = getTupleFieldType(tup)
-    semForLoopVar c, it, field
+    if it.n.substructureKind == UnpacktupU:
+      takeToken c, it.n
+      if field.typeKind == TupleT:
+        semForLoopTupleVar c, it, field
+      else:
+        buildErr c, it.n.info, "tuple types expected, but got: " & $field
+      takeParRi c, it.n
+    else:
+      semForLoopVar c, it, field
     skip tup
   if it.n.kind == ParRi:
     if tup.kind == ParRi:
