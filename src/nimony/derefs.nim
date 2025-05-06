@@ -238,7 +238,8 @@ proc checkTupleConstrBorrowing(c: var Context; n: Cursor) =
       if not validBorrowsFrom(c, n):
         buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
 
-      skip n
+    skip n
+
     if isKv:
       skipParRi(n)
 
