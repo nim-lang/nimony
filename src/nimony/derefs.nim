@@ -219,6 +219,30 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
   else:
     result = false
 
+proc checkTupleConstrBorrowing(c: var Context; n: Cursor) =
+  var n = n
+  inc n
+
+  var typ = n
+  assert typ.typeKind == TupleT
+  inc typ
+  skip n
+  while n.kind != ParRi:
+    let fieldType = getTupleFieldType(typ)
+    skip typ
+    let isKv = n.substructureKind == KvU
+    if isKv:
+      inc n
+      skip n # skip key
+    if fieldType.typeKind in {MutT, LentT, OutT}:
+      if not validBorrowsFrom(c, n):
+        buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
+
+    skip n
+
+    if isKv:
+      skipParRi(n)
+
 proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   result = false
   if n.kind == Symbol:
@@ -233,6 +257,8 @@ proc trReturn(c: var Context; n: var Cursor) =
     if err:
       buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
     else:
+      if n.exprKind == TupConstrX:
+        checkTupleConstrBorrowing(c, n)
       tr c, n, c.r.returnExpects
   takeParRi c, n
 
@@ -484,6 +510,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
         err = InvalidBorrow
     else:
       tr c, n, e
+      if n.exprKind == TupConstrX:
+        checkTupleConstrBorrowing(c, n)
   elif borrowsFromReadonly(c, n):
     err = LocationIsConst
   else:
