@@ -4468,7 +4468,6 @@ proc isIterator(c: var SemContext; s: SymId): bool =
   result = res.status == LacksNothing and res.decl.symKind == IteratorY
 
 proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
-  # TODO: implements mixed unpacktup and unpackflat: e.g. for i, j, (m, n) in ...
   var tup = tup
   inc tup
   while it.n.kind != ParRi and tup.kind != ParRi:
