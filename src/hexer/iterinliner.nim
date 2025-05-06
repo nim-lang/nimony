@@ -58,16 +58,19 @@ proc createTupleAccess(lvalue: SymId; i: int; info: PackedLineInfo): TokenBuf =
   result.addIntLit(i, info)
   result.addParRi()
 
-proc getForVars(e: var EContext, forVars: Cursor): seq[Local] =
-  result = @[]
+proc getForVars(e: var EContext, forVars: Cursor, result: var seq[Local]) =
   var forVars = forVars
   if forVars.substructureKind notin {UnpackflatU, UnpacktupU}:
     error e, "`unpackflat` or `unpacktup` expected, but got: ", forVars
   inc forVars # unpackflat
   while forVars.kind != ParRi:
-    let local = asLocal(forVars)
-    result.add local
-    skip forVars
+    if forVars.substructureKind == UnpacktupU:
+      getForVars(e, forVars, result)
+      skip forVars
+    else:
+      let local = asLocal(forVars)
+      result.add local
+      skip forVars
 
 proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
           local: Local; res: var Table[SymId, SymId]) =
@@ -85,7 +88,8 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
 proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
 
-  let forVars = getForVars(e, vars)
+  var forVars = newSeq[Local]()
+  getForVars(e, vars, forVars)
 
   if forVars.len == 1:
     connectSingleExprToLoopVar(e, c, forVars[0], result)

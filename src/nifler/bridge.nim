@@ -175,6 +175,19 @@ proc splitIdentDefName(n: PNode): IdentDefName =
   else:
     result.name = n
 
+proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) 
+
+proc toVarTuple(v: PNode, n: PNode; c: var TranslationContext) =
+  c.b.addTree(UnpacktupL)
+  for i in 0..<v.len-1: # ignores typedesc
+    c.b.addTree(LetL)
+
+    toNif(v[i], n, c) # name
+
+    c.b.addEmpty 4 # export marker, pragmas, type, value
+    c.b.endTree() # LetDecl
+  c.b.endTree() # UnpackIntoTuple
+
 proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   case n.kind
   of nkNone:
@@ -509,26 +522,20 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
     toNif(n[n.len-2], n, c) # iterator
 
-    if n[0].kind == nkVarTuple:
-      let v = n[0]
-      c.b.addTree(UnpacktupL)
-      for i in 0..<v.len-1: # ignores typedesc
-        c.b.addTree(LetL)
-
-        toNif(v[i], n, c) # name
-
-        c.b.addEmpty 4 # export marker, pragmas, type, value
-        c.b.endTree() # LetDecl
-      c.b.endTree() # UnpackIntoTuple
+    if n.len == 3 and n[0].kind == nkVarTuple:
+      toVarTuple(n[0], n, c)
     else:
       c.b.addTree(UnpackflatL)
       for i in 0..<n.len-2:
-        c.b.addTree(LetL)
+        if n[i].kind == nkVarTuple:
+          toVarTuple(n[i], n, c)
+        else:
+          c.b.addTree(LetL)
 
-        toNif(n[i], n, c) # name
+          toNif(n[i], n, c) # name
 
-        c.b.addEmpty 4 # export marker, pragmas, type, value
-        c.b.endTree() # LetDecl
+          c.b.addEmpty 4 # export marker, pragmas, type, value
+          c.b.endTree() # LetDecl
       c.b.endTree() # UnpackIntoFlat
 
     # for-loop-body:
