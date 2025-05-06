@@ -458,6 +458,13 @@ proc expectParRi(m: var Match; f: var Cursor) =
   else:
     m.error FormalTypeNotAtEndBug, f, f
 
+proc expectPtrParRi(m: var Match; f: var Cursor) =
+  if f.kind != ParRi: skip f # skip nil/not nil annotation
+  if f.kind == ParRi:
+    inc f
+  else:
+    m.error FormalTypeNotAtEndBug, f, f
+
 proc procTypeMatch(m: var Match; f, a: var Cursor)
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}) =
@@ -1015,7 +1022,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         discard "ok"
         inc f
         skip f
-        expectParRi m, f
+        expectPtrParRi m, f
       elif ak == fk:
         inc f
         inc a
@@ -1024,7 +1031,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
           matchObjectTypes m, f, a, fk
         else:
           linearMatch m, f, a
-        expectParRi m, f
+        expectPtrParRi m, f
       else:
         m.error InvalidMatch, f, a
     of TypedescT:

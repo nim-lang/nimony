@@ -3125,17 +3125,35 @@ proc handleNilableType(c: var SemContext; nn: var Cursor; context: TypeDeclConte
       skip n # skip `nil`
       c.dest.addParLe ptrk, info
       semLocalTypeImpl c, n, context
-      #c.dest.addParPair NilX, info
+      c.dest.addParPair NilX, info
       takeParRi c, n
       nn = n
       result = true
   elif nn.exprKind in {PrefixX, CmdX}:
     # `nil RootRef`
     var n = nn
+    let info = n.info
     inc n
     if n.exprKind == NilX:
       skip n
+      let before = c.dest.len
       semLocalTypeImpl c, n, context
+      let nd = cursorAt(c.dest, before)
+      if nd.typeKind in {RefT, PtrT}:
+        c.dest.endRead()
+        # remove ParRi of the pointer
+        c.dest.shrink c.dest.len-1
+        c.dest.addParPair NilX, info
+        c.dest.addParRi()
+      elif containsGenericParams(nd):
+        # keep as is, will be checked later after generic instantiation:
+        c.dest.endRead()
+        c.dest.shrink before
+        c.dest.addSubtree nn
+      else:
+        c.dest.endRead()
+        c.dest.shrink before
+        c.buildErr info, "`nil` only valid for a ptr/ref type"
       skipParRi n
       nn = n
       result = true
