@@ -155,6 +155,14 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       trExpr c, dest, n, tar
       trExpr c, dest, n, tar
 
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # IMPORTANT: Stores into `tar` helper!
+  var tar = Target(m: IsAppend)
+  tar.t.copyInto n:
+    while n.kind != ParRi:
+      trExpr c, dest, n, tar
+  dest.add tar
+
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # if cond: a elif condB: b else: c
   # -->
@@ -377,7 +385,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   of WhileS:
     trWhile c, dest, n
-  of AsgnS, CallS, CmdS, InclS, ExclS, AsmS, DeferS:
+  of CallS, CmdS, InclS, ExclS:
+    trCall c, dest, n
+  of AsgnS, AsmS, DeferS:
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
