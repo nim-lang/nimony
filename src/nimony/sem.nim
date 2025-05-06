@@ -3109,6 +3109,37 @@ proc semTypeof(c: var SemContext; it: var Item) =
   #writeStackTrace()
   skipParRi it.n
 
+proc handleNotnilType(c: var SemContext; nn: var Cursor; context: TypeDeclContext): bool =
+  result = false
+  let info = nn.info
+  var n = nn.firstSon # skip infix
+  skip n # skip `not` identifier
+  let before = c.dest.len
+  semLocalTypeImpl c, n, context
+  if n.exprKind == NilX:
+    skip n
+    let nd = cursorAt(c.dest, before)
+    if nd.typeKind in {RefT, PtrT}:
+      c.dest.endRead()
+      # remove ParRi of the pointer
+      c.dest.shrink c.dest.len-1
+      c.dest.addParPair NotNilU, info
+      c.dest.addParRi()
+    elif containsGenericParams(nd):
+      # keep as is, will be checked later after generic instantiation:
+      c.dest.endRead()
+      c.dest.shrink before
+      c.dest.addSubtree nn
+    else:
+      c.dest.endRead()
+      c.dest.shrink before
+      c.buildErr info, "`not nil` only valid for a ptr/ref type"
+    skipParRi n
+    nn = n
+    result = true
+  else:
+    c.dest.shrink before
+
 proc handleNilableType(c: var SemContext; nn: var Cursor; context: TypeDeclContext): bool =
   result = false
   if nn.exprKind == InfixX:
@@ -3121,6 +3152,8 @@ proc handleNilableType(c: var SemContext; nn: var Cursor; context: TypeDeclConte
     if ptrkind != StrId(0):
       if pool.strings[ptrkind] == "ref": ptrk = RefT
       elif pool.strings[ptrkind] == "ptr": ptrk = PtrT
+      elif pool.strings[ptrkind] == "not":
+        return handleNotnilType(c, nn, context)
     if ptrk != NoType and n.exprKind == NilX:
       skip n # skip `nil`
       c.dest.addParLe ptrk, info
