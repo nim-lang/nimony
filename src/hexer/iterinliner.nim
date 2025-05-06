@@ -51,29 +51,26 @@ when false:
     takeTree(e, value)
     e.dest.addParRi()
 
-proc createTupleAccess(lvalue: SymId; i: int; info: PackedLineInfo): TokenBuf =
+proc createTupleAccess(left: TokenBuf; i: int; info: PackedLineInfo): TokenBuf =
   result = createTokenBuf()
   result.add parLeToken(TupatX, info)
-  result.add symToken(lvalue, info)
+  result.add left
   result.addIntLit(i, info)
   result.addParRi()
 
-proc getForVars(e: var EContext, forVars: Cursor, result: var seq[Local]) =
+proc getForVars(e: var EContext, forVars: Cursor): seq[Cursor] =
+  result = @[]
   var forVars = forVars
   if forVars.substructureKind notin {UnpackflatU, UnpacktupU}:
     error e, "`unpackflat` or `unpacktup` expected, but got: ", forVars
-  inc forVars # unpackflat
+  inc forVars # unpackflat/unpacktup
   while forVars.kind != ParRi:
-    if forVars.substructureKind == UnpacktupU:
-      getForVars(e, forVars, result)
-      skip forVars
-    else:
-      let local = asLocal(forVars)
-      result.add local
-      skip forVars
+    result.add forVars
+    skip forVars
 
 proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
-          local: Local; res: var Table[SymId, SymId]) =
+          forVar: Cursor; res: var Table[SymId, SymId]) =
+  let local = asLocal(forVar)
   let destSym = local.name.symId
   let info = local.name.info
   case c.kind
@@ -85,11 +82,18 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
     var typ = local.typ
     createDecl(e, destSym, typ, c, info, "var")
 
+proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor) =
+  let local = asLocal(forVar)
+  let symId = local.name.symId
+  var tupBuf = createTupleAccess(left, i, info)
+  var tup = beginRead(tupBuf)
+  var fieldTyp = getTupleFieldType(typ)
+  createDecl(e, symId, fieldTyp, tup, info, "let")
+
 proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
 
-  var forVars = newSeq[Local]()
-  getForVars(e, vars, forVars)
+  let forVars = getForVars(e, vars)
 
   if forVars.len == 1:
     connectSingleExprToLoopVar(e, c, forVars[0], result)
@@ -117,12 +121,26 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
 
       inc typ # skips tuple
       for i in 0..<forVars.len:
-        let symId = forvars[i].name.symId
-        var tupBuf = createTupleAccess(tmpId, i, info)
-        var tup = beginRead(tupBuf)
-        var fieldTyp = getTupleFieldType(typ)
-        skip typ
-        createDecl(e, symId, fieldTyp, tup, info, "let")
+        if forVars[i].substructureKind == UnpacktupU:
+          var counter = 0
+          var unpackCursor = forVars[i]
+          inc unpackCursor
+          var left = createTokenBuf()
+          left.add symToken(tmpId, info)
+          let leftTupleAccess = createTupleAccess(left, i, info)
+          assert typ.typeKind == TupleT
+          inc typ
+          while unpackCursor.kind != ParRi:
+            unpackTupleAccess(e, unpackCursor, leftTupleAccess, counter, info, typ)
+            inc counter
+            skip unpackCursor
+            skip typ
+          skipParRi(typ)
+        else:
+          var left = createTokenBuf()
+          left.add symToken(tmpId, info)
+          unpackTupleAccess(e, forVars[i], left, i, info, typ)
+          skip typ
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
   e.dest.add c
