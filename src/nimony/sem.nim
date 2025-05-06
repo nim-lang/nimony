@@ -4398,7 +4398,9 @@ proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode) =
     let fieldTypePos = cursorToPosition(c.dest, fieldType)
     endRead(c.dest)
     selectorType = typeToCursor(c, fieldTypePos)
-    # todo disallow string/float
+    if not isOrdinalType(selectorType):
+      buildErr c, info, "selector must be of an ordinal type"
+
   let isString = isSomeStringType(selectorType)
   var seen: seq[(xint, xint)] = @[]
   var seenStr = initHashSet[StrId]()
