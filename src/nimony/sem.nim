@@ -4380,6 +4380,17 @@ proc checkExhaustiveness(c: var SemContext; info: PackedLineInfo; selectorType: 
   else:
     buildErr c, info, "not all cases are covered"
 
+proc semObjectCaseBranch(c: var SemContext; it: var Item) =
+  if it.n.stmtKind == StmtsS:
+    takeToken c, it.n
+    while it.n.kind != ParRi:
+      semObjectComponent c, it.n
+    takeParRi c, it.n
+  else:
+    c.dest.addParLe(StmtsS, it.n.info)
+    semObjectComponent c, it.n
+    c.dest.addParRi()
+
 proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode) =
   let info = it.n.info
   takeToken c, it.n
@@ -4416,15 +4427,7 @@ proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode) =
         withNewScope c:
           semStmtBranch c, it, true
       of ObjectCase:
-        if it.n.stmtKind == StmtsS:
-          takeToken c, it.n
-          while it.n.kind != ParRi:
-            semObjectComponent c, it.n
-          takeParRi c, it.n
-        else:
-          c.dest.addParLe(StmtsS, it.n.info)
-          semObjectComponent c, it.n
-          c.dest.addParRi()
+        semObjectCaseBranch(c, it)
       takeParRi c, it.n
   else:
     buildErr c, it.n.info, "illformed AST: `of` inside `case` expected"
@@ -4435,7 +4438,7 @@ proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode) =
       withNewScope c:
         semStmtBranch c, it, true
     of ObjectCase:
-      semObjectComponent c, it.n
+      semObjectCaseBranch(c, it)
     takeParRi c, it.n
   elif not isString:
     checkExhaustiveness c, it.n.info, selectorType, seen

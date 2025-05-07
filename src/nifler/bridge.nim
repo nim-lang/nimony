@@ -188,6 +188,15 @@ proc toVarTuple(v: PNode, n: PNode; c: var TranslationContext) =
     c.b.endTree() # LetDecl
   c.b.endTree() # UnpackIntoTuple
 
+proc handleCaseIdentDefs(n, parent: PNode; c: var TranslationContext) =
+  if n.kind == nkIdentDefs and n.len > 3:
+    # multiple ident defs, we need to add StmtsL
+    c.b.addTree(StmtsL)
+    toNif(n, parent, c)
+    c.b.endTree()
+  else:
+    toNif(n, parent, c)
+
 proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   case n.kind
   of nkNone:
@@ -360,7 +369,12 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
     c.b.endTree()
-    toNif(n[n.len-1], n, c)
+    handleCaseIdentDefs(n[n.len-1], n, c)
+    c.b.endTree()
+  of nkElse:
+    relLineInfo(n, parent, c)
+    c.b.addTree(ElseL)
+    handleCaseIdentDefs(n[n.len-1], n, c)
     c.b.endTree()
 
   of nkStmtListType, nkStmtListExpr:

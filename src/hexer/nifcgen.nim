@@ -403,6 +403,7 @@ proc trObjFields(c: var EContext; n: var Cursor; flags: set[TypeFlag]) =
           inc n
           trObjFields(c, n, flags)
           skipParRi c, n
+          skipParRi c, n
         else:
           error "expected `of` or `else` inside `case`"
       skipParRi c, n
