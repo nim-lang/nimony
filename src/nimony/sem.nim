@@ -9,7 +9,7 @@
 ## type checking.
 
 import std / [tables, sets, syncio, formatfloat, assertions, strutils]
-from std/os import getCurrentDir
+from std/os import changeFileExt, getCurrentDir
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -7079,7 +7079,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     buildErr c, it.n.info, "expression expected"
 
 proc reportErrors(c: var SemContext): int =
-  result = reporters.reportErrors(c.dest)
+  result = reporters.reportErrors(c.dest, IsMain in c.moduleFlags)
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
@@ -7107,7 +7107,7 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
         result.add identToken(s, NoLineInfo)
       result.addParRi()
 
-proc writeOutput(c: var SemContext; outfile: string) =
+proc writeOutput(c: var SemContext; infile, outfile: string) =
   #var b = nifbuilder.open(outfile)
   #b.addHeader "nimony", "nim-sem"
   #b.addRaw toString(c.dest)
@@ -7120,6 +7120,56 @@ proc writeOutput(c: var SemContext; outfile: string) =
       classes: move c.classIndexMap,
       toBuild: move c.toBuild,
       exportBuf: buildIndexExports(c))
+
+  # Update .1.deps.nif file that doesn't contain modules imported under `when false:`
+  # so that Hexer and following phases doesn't read such modules.
+  # It is cached and can be read by Nimony to generate frontend Makefile in next build.
+  # So it need to contain include statements.
+  var deps = createTokenBuf(16)
+  deps.buildTree StmtsS, NoLineInfo:
+    if c.meta.includedFiles.len != 0:
+      deps.buildTree IncludeS, NoLineInfo:
+        for i in c.meta.includedFiles:
+          deps.addStrLit i.toAbsolutePath
+    if c.importedModules.len != 0:
+      deps.buildTree ImportS, NoLineInfo:
+        for symId, i in c.importedModules:
+          deps.addStrLit i.path.toAbsolutePath
+  let depsFile = changeFileExt(infile, ".deps.nif")
+  writeFile depsFile, "(.nif24)\n" & toString(deps)
+
+proc quitWithError(c: var SemContext; outfile: string) =
+  # See https://github.com/nim-lang/nimony/issues/985#issuecomment-2849271319
+  if IsMain in c.moduleFlags:
+    quit 1
+  else:
+    writeFile outfile, "\n"   # nifreader fail to open if it is empty.
+    var errs = createTokenBuf(16)
+    var n = beginRead c.dest
+    errs.buildTree ErrT, NoLineInfo:
+      var nested = 0
+      while true:
+        case n.kind
+        of ParLe:
+          if n.tagId == ErrT:
+            errs.takeTree n
+            if nested == 0:
+              break
+            continue
+          else:
+            inc nested
+        of ParRi:
+          dec nested
+          if nested == 0:
+            break
+        of EofToken:
+          raiseAssert "expected ')', but EOF reached"
+        else: discard
+        inc n
+    endRead c.dest
+    let indexFile = changeFileExt(outfile, ".idx.nif")
+    writeFile indexFile, "(.nif24)\n" & toString(errs)
+    quit 0
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n.stmtKind == StmtsS
@@ -7242,7 +7292,7 @@ proc addSelfModuleSym(c: var SemContext; path: string) =
   moduleDecl.addParRi()
   publish c.selfModuleSym, moduleDecl
 
-proc semcheckCore(c: var SemContext; n0: Cursor) =
+proc semcheckCore(c: var SemContext; n0: Cursor; outfile: string) =
   c.pending.add parLeToken(StmtsS, NoLineInfo)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
 
@@ -7295,7 +7345,7 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
     var finalBuf = beginRead afterSem
     c.dest = injectDerefs(finalBuf)
   else:
-    quit 1
+    quitWithError c, outfile
 
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
@@ -7316,11 +7366,11 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
 
   while true:
-    semcheckCore c, n0
+    semcheckCore c, n0, outfile
     if c.pendingTypePlugins.len == 0: break
     handleTypePlugins c
 
   if reportErrors(c) == 0:
-    writeOutput c, outfile
+    writeOutput c, infile, outfile
   else:
-    quit 1
+    quitWithError c, outfile
