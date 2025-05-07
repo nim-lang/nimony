@@ -9,6 +9,7 @@
 | `(par X)`              | NifcExpr, NimonyExpr, NiflerKind | syntactic parenthesis |
 | `(addr X)`; `(addr X (cppref)?)`  | NifcExpr, NimonyExpr, NiflerKind | address of operation |
 | `(nil T?)`             | NifcExpr, NimonyExpr, NimonyOther, NiflerKind | nil pointer value |
+| `(notnil)`             | NimonyOther | `not nil` pointer annotation |
 | `(inf T?)`             | NifcExpr, NimonyExpr | positive infinity floating point value |
 | `(neginf T?)`          | NifcExpr, NimonyExpr | negative infinity floating point value |
 | `(nan T?)`             | NifcExpr, NimonyExpr | NaN floating point value |

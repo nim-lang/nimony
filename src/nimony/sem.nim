@@ -2244,6 +2244,8 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
         crucial.magic = magicWord
         crucial.bits = bits
       takeToken c, n
+    elif n.exprKind == ErrX:
+      c.dest.addSubtree n
     else:
       buildErr c, n.info, "`magic` pragma takes a string literal"
     c.dest.addParRi()
@@ -2531,7 +2533,7 @@ proc semExprMissingPhases(c: var SemContext; it: var Item; firstPhase: SemPhase)
         it2.n = it.n
       semExpr c, it2
       if not usingBuf:
-        it.n = it2.n 
+        it.n = it2.n
       swap c.phase, phase
       swap c.dest, buf
       lastBuf = buf
@@ -3107,6 +3109,88 @@ proc semTypeof(c: var SemContext; it: var Item) =
   #writeStackTrace()
   skipParRi it.n
 
+proc handleNotnilType(c: var SemContext; nn: var Cursor; context: TypeDeclContext): bool =
+  result = false
+  let info = nn.info
+  var n = nn.firstSon # skip infix
+  skip n # skip `not` identifier
+  let before = c.dest.len
+  semLocalTypeImpl c, n, context
+  if n.exprKind == NilX:
+    skip n
+    let nd = cursorAt(c.dest, before)
+    if nd.typeKind in {RefT, PtrT}:
+      c.dest.endRead()
+      # remove ParRi of the pointer
+      c.dest.shrink c.dest.len-1
+      c.dest.addParPair NotNilU, info
+      c.dest.addParRi()
+    elif containsGenericParams(nd):
+      # keep as is, will be checked later after generic instantiation:
+      c.dest.endRead()
+      c.dest.shrink before
+      c.dest.addSubtree nn
+    else:
+      c.dest.endRead()
+      c.dest.shrink before
+      c.buildErr info, "`not nil` only valid for a ptr/ref type"
+    skipParRi n
+    nn = n
+    result = true
+  else:
+    c.dest.shrink before
+
+proc handleNilableType(c: var SemContext; nn: var Cursor; context: TypeDeclContext): bool =
+  result = false
+  if nn.exprKind == InfixX:
+    # (nil ref <as ident> T)
+    var n = nn
+    inc n
+    let info = n.info
+    let ptrkind = takeIdent(n)
+    var ptrk = NoType
+    if ptrkind != StrId(0):
+      if pool.strings[ptrkind] == "ref": ptrk = RefT
+      elif pool.strings[ptrkind] == "ptr": ptrk = PtrT
+      elif pool.strings[ptrkind] == "not":
+        return handleNotnilType(c, nn, context)
+    if ptrk != NoType and n.exprKind == NilX:
+      skip n # skip `nil`
+      c.dest.addParLe ptrk, info
+      semLocalTypeImpl c, n, context
+      c.dest.addParPair NilX, info
+      takeParRi c, n
+      nn = n
+      result = true
+  elif nn.exprKind in {PrefixX, CmdX}:
+    # `nil RootRef`
+    var n = nn
+    let info = n.info
+    inc n
+    if n.exprKind == NilX:
+      skip n
+      let before = c.dest.len
+      semLocalTypeImpl c, n, context
+      let nd = cursorAt(c.dest, before)
+      if nd.typeKind in {RefT, PtrT}:
+        c.dest.endRead()
+        # remove ParRi of the pointer
+        c.dest.shrink c.dest.len-1
+        c.dest.addParPair NilX, info
+        c.dest.addParRi()
+      elif containsGenericParams(nd):
+        # keep as is, will be checked later after generic instantiation:
+        c.dest.endRead()
+        c.dest.shrink before
+        c.dest.addSubtree nn
+      else:
+        c.dest.endRead()
+        c.dest.shrink before
+        c.buildErr info, "`nil` only valid for a ptr/ref type"
+      skipParRi n
+      nn = n
+      result = true
+
 proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   case n.kind
@@ -3134,6 +3218,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         skipParRi n
       elif xkind == TupX:
         semTupleType c, n
+      elif handleNilableType(c, n, context):
+        discard "handled"
       elif isOrExpr(n):
         # old nim special cases `|` infixes in type contexts
         # XXX `or` case temporarily handled here instead of magic overload in system
@@ -3312,7 +3398,10 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       c.buildErr info, "not a type", n
       inc n
   else:
-    semTypeExpr c, n, context, info
+    if handleNilableType(c, n, context):
+      discard "handled"
+    else:
+      semTypeExpr c, n, context, info
 
 proc exportMarkerBecomesNifTag(c: var SemContext; insertPos: int; crucial: CrucialPragma) =
   assert crucial.magic.len > 0

@@ -31,6 +31,7 @@ type
   BasicBlock = object
     indegree, touched: int
     indegreeFacts: Facts
+    writesTo: seq[SymId]
   Context = object
     cf, dest, toplevelStmts: TokenBuf
     routines: seq[Cursor]
@@ -238,6 +239,7 @@ proc analyseCall(c: var Context; n: var Cursor) =
   let fnType = skipProcTypeToParams(getType(c.typeCache, n))
   assert fnType.isParamsTag
   analyseCallArgs(c, n, fnType)
+  skipParRi n
 
 #[
 We use the control flow graph for a structured traversal over the basic blocks (bb):
@@ -263,9 +265,9 @@ proc `<`*(a, b: BasicBlockIdx): bool {.borrow.}
 proc toBasicBlock*(c: Context; pc: Cursor): BasicBlockIdx {.inline.} =
   result = BasicBlockIdx(cursorToPosition(c.startInstr, pc))
 
-proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
+proc eliminateDeadInstructions(c: TokenBuf; start = 0; last = -1): seq[bool] =
   # Create a sequence to track which instructions are reachable
-  result = newSeq[bool](if last < 0: c.len else: last + 1)
+  result = newSeq[bool]((if last < 0: c.len else: last + 1) - start)
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
 
   # Initialize with the start position
@@ -279,7 +281,7 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
       continue
 
     processed.incl(pos)
-    result[pos] = true  # Mark as reachable
+    result[pos - start] = true  # Mark as reachable
 
     # Handle different instruction types
     if c[pos].kind == GotoInstr:
@@ -295,13 +297,13 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
       var p = pos + 1
       # Skip the condition, marking it as reachable
       while p <= last and c[p].kind != GotoInstr:
-        result[p] = true
+        result[p - start] = true
         inc p
 
       if p <= last and c[p].kind == GotoInstr:
         # Process the then branch target
         let thenDiff = c[p].getInt28
-        result[p] = true  # Mark the goto as reachable
+        result[p - start] = true  # Mark the goto as reachable
         worklist.add(p + thenDiff)
 
         # Move to the else branch
@@ -309,7 +311,7 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
         if p <= last and c[p].kind == GotoInstr:
           # Process the else branch target
           let elseDiff = c[p].getInt28
-          result[p] = true  # Mark the goto as reachable
+          result[p - start] = true  # Mark the goto as reachable
           worklist.add(p + elseDiff)
 
           # Don't automatically continue to the next instruction after ITE
@@ -322,22 +324,19 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
 proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx, BasicBlock] =
   result = initTable[BasicBlockIdx, BasicBlock]()
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
-  result[BasicBlockIdx(start)] = BasicBlock(indegree: 0, indegreeFacts: createFacts())
+  result[BasicBlockIdx(start)] = BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])
 
   # First, eliminate dead code
   let reachable = eliminateDeadInstructions(c, start, last)
 
   # Now compute basic blocks considering only reachable instructions
   for i in start..last:
-    if not reachable[i]:
-      continue  # Skip unreachable instructions
-
-    if c[i].kind == GotoInstr:
+    if reachable[i - start] and c[i].kind == GotoInstr:
       let diff = c[i].getInt28
       # Consider only forward jumps that lead to reachable instructions
-      if diff > 0 and i+diff <= last and reachable[i+diff]:
+      if diff > 0 and i+diff <= last and reachable[i+diff - start]:
         let idx = BasicBlockIdx(i+diff)
-        result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts())).indegree += 1
+        result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])).indegree += 1
 
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
@@ -607,9 +606,18 @@ proc decAndTest(x: var int): bool {.inline.} =
   dec x
   result = x == 0
 
+proc filter(dest: var seq[SymId]; src: seq[SymId]) =
+  var i = 0
+  while i < dest.len:
+    if dest[i] notin src:
+      dest.del(i)
+    else:
+      inc i
+
 proc takeFacts(c: var Context; bb: var BasicBlock; conditionalFacts: int; negate: bool) =
   #let start = bb.indegreeFacts.len
   if bb.touched == 0:
+    bb.writesTo = c.writesTo
     for i in 1 ..< c.facts.len - conditionalFacts:
       bb.indegreeFacts.add c.facts[i]
     if negate and conditionalFacts > 1:
@@ -623,12 +631,14 @@ proc takeFacts(c: var Context; bb: var BasicBlock; conditionalFacts: int; negate
   else:
     # merge the facts:
     bb.indegreeFacts = merge(c.facts, c.facts.len - conditionalFacts, bb.indegreeFacts, negate)
+    bb.writesTo.filter(c.writesTo)
   inc bb.touched
   #c.facts.shrink c.facts.len - conditionalFacts
 
 proc pushFacts(c: var Context; bb: var BasicBlock) =
   #echo "PUSHING FACTS ", bb.indegreeFacts.len
   c.facts.shrink 0
+  c.writesTo = bb.writesTo
   for i in 0 ..< bb.indegreeFacts.len:
     c.facts.add bb.indegreeFacts[i]
 

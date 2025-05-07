@@ -125,7 +125,7 @@ proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|Subs
                info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
 
-proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind|CallConv; info = NoLineInfo) =
+proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind|SubstructureKind|CallConv; info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
   dest.addParRi()
 
