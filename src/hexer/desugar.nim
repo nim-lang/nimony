@@ -702,6 +702,38 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
     dec nestedExpr
 
+proc trObjectConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # TODO: find a better way
+  let info = n.info
+  var typ = c.typeCache.getType(n)
+
+  if hasCase(typ.symId):
+    copyIntoKind dest, ExprX, info:
+      let tmp = declareTemp(c, dest, typ, info)
+
+      # dest.add n
+      inc n
+      # takeTree(dest, n)
+      # dest.addParRi()
+      skip n
+      dest.addDotToken()
+
+      dest.addParRi()
+
+      while n.kind != ParRi:
+        assert n.substructureKind == KvU
+        inc n
+        copyIntoKind dest, AsgnS, info:
+          copyIntoKind dest, DotX, info:
+            dest.addSymUse(tmp, info)
+            takeTree(dest, n)
+          tr(c, dest, n)
+        skipParRi(n)
+      dest.addSymUse(tmp, info)
+    skipParRi(n)
+  else:
+    trSons(c, dest, n)
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -764,6 +796,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeParRi dest, n
     of ExprX:
       trExpr c, dest, n
+    of OconstrX:
+      trObjectConstr(c, dest, n)
     else:
       trSons(c, dest, n)
   of ParRi:
