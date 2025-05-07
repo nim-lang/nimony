@@ -1,4 +1,5 @@
-import std/assertions
+import std/[assertions, syncio]
+
 
 type Foo = object
   case x: bool
@@ -42,3 +43,23 @@ proc fx(x: Foo): Foo =
 block:
   var x = Foo(x: true, z: "abc", t: false)
   discard fx(x)
+
+block:
+  type
+    TKind = enum ka, kb, kc
+    TA = object
+      case k: TKind
+      of ka:
+        x: int
+        y: int
+      of kb: a, b: string
+      else: c, d: float
+
+  var s = ka
+  case s
+  of ka:
+    var x, y = 1
+  of kb:
+    var a, b = ""
+  of kc: echo 3
+
