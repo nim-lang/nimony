@@ -90,6 +90,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters, methods: var Table[SymId, seq[SymId]];
                     exports: var seq[(string, ImportFilter)];
+                    errors: var TokenBuf;
                     filter: ImportFilter) =
   let m = load(suffix)
   let alreadyLoaded = iface.len != 0
@@ -133,6 +134,8 @@ proc loadInterface*(suffix: string; iface: var Iface;
       exportFilter.list.incl(s)
     mergeFilter(exportFilter, filter)
     exports.add (path, ensureMove exportFilter)
+  if not alreadyLoaded:
+    errors.add m.index.errors
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):

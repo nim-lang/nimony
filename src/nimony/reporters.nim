@@ -99,13 +99,17 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
-proc reportErrors*(dest: var TokenBuf): int =
+proc reportErrors*(dest: var TokenBuf; isOutputErr: bool): int =
   let errTag = pool.tags.getOrIncl("err")
   var i = 0
   var r = Reporter(verbosity: 2, noColors: not useColors())
   result = 0
   while i < dest.len:
     if dest[i].kind == ParLe and dest[i].tagId == errTag:
+      if not isOutputErr:
+        # Assumes if not isOutputErr, only need to know if there is an error,
+        # and don't need to know the number of errors.
+        return 1
       inc result
       let info = dest[i].info
       inc i

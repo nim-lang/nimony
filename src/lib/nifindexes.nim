@@ -298,6 +298,7 @@ type
     classes*: seq[ClassIndexEntry]
     toBuild*: seq[(string, string, string)]
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
+    errors*: TokenBuf  # Contains error messages when nimsem got error. See https://github.com/nim-lang/nimony/issues/985#issuecomment-2849271319
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
   var previousOffset = 0
@@ -528,8 +529,13 @@ proc readIndex*(indexName: string): NifIndex =
         t = next(s)
       result.exports.add (path, kind, names)
       t = next(s)
+  elif t.tag == ErrT:
+    result.errors = createTokenBuf()
+    result.errors.add s
   else:
     assert false, "expected 'index' tag"
+
+  close s
 
 when isMainModule:
   createIndex paramStr(1), false, NoLineInfo
