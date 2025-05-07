@@ -3768,6 +3768,7 @@ proc attachMethod(c: var SemContext; symId: SymId;
     c.methods.mgetOrPut(root, @[]).add(symToRegister)
     if not methodIsInstance:
       # don't register instances
+      methodDef(c, symId)
       for i in 0..<c.classIndexMap.len:
         if c.classIndexMap[i].cls == root:
           c.classIndexMap[i].methods.add MethodIndexEntry(fn: symId, signature: signature)

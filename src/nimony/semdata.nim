@@ -103,6 +103,7 @@ type
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
     methods*: Table[SymId, seq[SymId]]
+    methodDefs*: seq[TokenBuf]
     classIndexMap*: seq[ClassIndexEntry]
     exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
