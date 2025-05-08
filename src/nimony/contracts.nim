@@ -139,8 +139,8 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
         error "expected integer literal but got: ", r
     else:
       error "expected symbol but got: ", r
+    skipParRi r
   result = query(a, b, cnst)
-  skipParRi r
 
 proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): ProofRes =
   case req.exprKind
@@ -150,7 +150,6 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     let a = checkReq(c, paramMap, r, call)
     skip r
     let b = checkReq(c, paramMap, r, call)
-    skipParRi r
     result = a and b
   of OrX:
     var r = req
@@ -158,13 +157,11 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     let a = checkReq(c, paramMap, r, call)
     skip r
     let b = checkReq(c, paramMap, r, call)
-    skipParRi r
     result = a or b
   of NotX:
     var r = req
     inc r
     result = not checkReq(c, paramMap, r, call)
-    skipParRi r
   of EqX:
     # x == 3?
     var r = req
@@ -203,8 +200,33 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
       result = Proven
     else:
       result = Disproven
+  of ExprX:
+    var r = req
+    while r.exprKind == ExprX:
+      inc r
+      while r.kind != ParRi and not isLastSon(r): skip r
+    result = checkReq(c, paramMap, r, call)
   else:
     result = Unprovable
+
+proc analyseExpr(c: var Context; pc: var Cursor) =
+  var nested = 0
+  while true:
+    case pc.kind
+    of Symbol:
+      inc pc
+    of SymbolDef:
+      raiseAssert "BUG: symbol definition in single path"
+    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
+      inc pc
+    of ParRi:
+      assert nested > 0
+      dec nested
+      inc pc
+    of ParLe:
+      inc nested
+      inc pc
+    if nested == 0: break
 
 proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   var fnType = skipProcTypeToParams(fnType)
@@ -221,11 +243,12 @@ proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   if not cursorIsNil(req):
     # ... analyse that the input parameters match the requirements
     let res = checkReq(c, paramMap, req, n)
-    if res != Proven:
-      error "contract violation: ", req
-  else:
-    while n.kind != ParRi:
-      skip n
+    when false:
+      # XXX Enable when it works
+      if res != Proven:
+        error "contract violation: ", req
+  while n.kind != ParRi:
+    analyseExpr c, n
 
 proc analyseCall(c: var Context; n: var Cursor) =
   inc n # skip call instruction
@@ -330,25 +353,6 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
       if diff > 0 and i+diff <= last and reachable[i+diff - start]:
         let idx = BasicBlockIdx(i+diff)
         result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])).indegree += 1
-
-proc analyseExpr(c: var Context; pc: var Cursor) =
-  var nested = 0
-  while true:
-    case pc.kind
-    of Symbol:
-      inc pc
-    of SymbolDef:
-      raiseAssert "BUG: symbol definition in single path"
-    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
-      inc pc
-    of ParRi:
-      assert nested > 0
-      dec nested
-      inc pc
-    of ParLe:
-      inc nested
-      inc pc
-    if nested == 0: break
 
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
