@@ -33,7 +33,7 @@ type
     indegreeFacts: Facts
     writesTo: seq[SymId]
   Context = object
-    cf, dest, toplevelStmts: TokenBuf
+    cf, toplevelStmts: TokenBuf
     routines: seq[Cursor]
     typeCache: TypeCache
     facts: Facts
@@ -48,17 +48,6 @@ proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: boo
       echo c.facts[i]
     echo "canonical fact: ", fact
   error "contract violation: ", orig
-
-proc takeToken(c: var Context; n: var Cursor) {.inline.} =
-  c.dest.add n
-  inc n
-
-proc takeParRi(c: var Context; n: var Cursor) =
-  if n.kind == ParRi:
-    c.dest.add n
-    inc n
-  else:
-    error "expected ')', but got: ", n
 
 #[
 
@@ -338,6 +327,25 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
         let idx = BasicBlockIdx(i+diff)
         result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])).indegree += 1
 
+proc analyseExpr(c: var Context; pc: var Cursor) =
+  var nested = 0
+  while true:
+    case pc.kind
+    of Symbol:
+      inc pc
+    of SymbolDef:
+      raiseAssert "BUG: symbol definition in single path"
+    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
+      inc pc
+    of ParRi:
+      assert nested > 0
+      dec nested
+      inc pc
+    of ParLe:
+      inc nested
+      inc pc
+    if nested == 0: break
+
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
   if pc.exprKind in {AddX, SubX}:
@@ -356,9 +364,9 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
         result = true
         inc pc
       else:
-        skip pc
+        analyseExpr c, pc
     else:
-      skip pc
+      analyseExpr c, pc
     skipParRi pc
   elif pc.kind == Symbol:
     let symId2 = pc.symId
@@ -376,7 +384,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     result = true
     inc pc
   else:
-    skip pc
+    analyseExpr c, pc
 
 proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXplusC =
   var r = pc
@@ -396,7 +404,7 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     inc r
     skip r # skip type
   else:
-    skip pc
+    analyseExpr c, pc
     return result
 
   if r.kind == IntLit:
@@ -411,7 +419,7 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     result.a = getVarId(c, r.symId)
     inc r
   else:
-    skip pc
+    analyseExpr c, pc
     return result
   if not rightHandSide(c, r, result):
     result.a = InvalidVarId
@@ -463,8 +471,8 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
     else:
       invalidateFactsAbout(c.facts, fact.a)
   else:
-    skip pc # skip left-hand-side
-    skip pc # skip right-hand-side
+    analyseExpr c, pc
+    analyseExpr c, pc
   skipParRi pc
 
 proc analyseAssume(c: var Context; pc: var Cursor) =
@@ -580,8 +588,8 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           skip pc # pragmas
           c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
           skip pc # type
-          inc nested
-          # proceed with its value here
+          analyseExpr c, pc
+          skipParRi pc
         of NoStmt:
           raiseAssert "BUG: unknown statement: " & toString(pc, false)
         of DiscardS:
@@ -702,10 +710,11 @@ proc traverseProc(c: var Context; n: var Cursor) =
         inc n
       elif n.kind == ParRi:
         dec nested
-        inc n
         if nested == 0: break
+        inc n
       else:
         inc n
+        if nested == 0: break
     skipParRi n
   else:
     skip n # body
@@ -734,10 +743,9 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
 
-proc analyzeContracts*(input: var TokenBuf): TokenBuf =
+proc analyzeContracts*(input: var TokenBuf) =
   let oldInfos = prepare(input)
-  var c = Context(typeCache: createTypeCache(),
-    dest: createTokenBuf(500))
+  var c = Context(typeCache: createTypeCache())
   c.typeCache.openScope()
   var n = beginRead(input)
   traverseToplevel c, n
@@ -749,7 +757,6 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   endRead input
   restore(input, oldInfos)
   c.typeCache.closeScope()
-  result = ensureMove(c.dest)
 
 when isMainModule:
   import std / [syncio, os]
