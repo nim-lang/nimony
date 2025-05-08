@@ -781,7 +781,7 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parse(readFile(infile))
-    discard analyzeContracts(input)
+    analyzeContracts(input)
     #echo toString(outp, false)
 
   main(paramStr(1))
