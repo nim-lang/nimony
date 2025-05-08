@@ -718,7 +718,6 @@ proc trStmtListExpr(c: var ControlFlow; n: var Cursor) =
   for i in 0 ..< fullExpr.len:
     c.dest.add fullExpr[i]
   c.dest.addSymUse temp, info
-  c.stmtBegin = c.dest.len
 
 type
   ControlFlowAsExprKind = enum

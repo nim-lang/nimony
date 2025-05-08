@@ -602,7 +602,8 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           raiseAssert "BUG: unknown statement: " & toString(pc, false)
         of DiscardS:
           inc pc
-          inc nested
+          analyseExpr c, pc
+          skipParRi pc
         of CallS, CmdS:
           analyseCall(c, pc)
         of EmitS, InclS, ExclS:
