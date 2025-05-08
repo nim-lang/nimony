@@ -369,8 +369,8 @@ proc trContinue(c: var ControlFlow; n: var Cursor) =
 
 proc trFor(c: var ControlFlow; n: var Cursor) =
   let info = n.info
-  let loopStart = c.jmpForw(info)
-  c.dest.addParLe(ForBindF, info)
+  let loopStart = c.genLabel()
+  c.dest.addParLe(ForbindF, info)
   inc n
   # iterator call:
   trExpr c, n

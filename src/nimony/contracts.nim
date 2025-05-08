@@ -599,7 +599,13 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           analyseExpr c, pc
           skipParRi pc
         of NoStmt:
-          raiseAssert "BUG: unknown statement: " & toString(pc, false)
+          if pc.cfKind == ForbindF:
+            inc pc
+            analyseCall c, pc
+            skip pc
+            skipParRi pc
+          else:
+            raiseAssert "BUG: unknown statement: " & toString(pc, false)
         of DiscardS:
           inc pc
           analyseExpr c, pc
