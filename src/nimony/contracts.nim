@@ -349,8 +349,7 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
   for i in start..last:
     if reachable[i - start] and c[i].kind == GotoInstr:
       let diff = c[i].getInt28
-      # Consider only forward jumps that lead to reachable instructions
-      if diff > 0 and i+diff <= last and reachable[i+diff - start]:
+      if diff != 0 and i+diff <= last and reachable[i+diff - start]:
         let idx = BasicBlockIdx(i+diff)
         result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])).indegree += 1
 
@@ -544,7 +543,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
     of GotoInstr:
       # Every goto intruction leaves the basic block.
       let diff = pc.getInt28
-      if diff < 0:
+      when false: # if diff < 0:
         # it is a backwards jump: In Nimony we know this came from a loop in
         # the control flow graph. So we skip over it and proceed with the BB after the loop:
         inc pc
