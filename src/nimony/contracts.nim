@@ -374,6 +374,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
         analyseExpr c, pc
     else:
       analyseExpr c, pc
+      analyseExpr c, pc
     skipParRi pc
   elif pc.kind == Symbol:
     let symId2 = pc.symId
