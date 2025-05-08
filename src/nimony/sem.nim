@@ -7132,9 +7132,14 @@ proc writeOutput(c: var SemContext; infile, outfile: string) =
         for i in c.meta.includedFiles:
           deps.addStrLit i.toAbsolutePath
     if c.importedModules.len != 0:
+      let systemSymId = if {SkipSystem, IsSystem} * c.moduleFlags == {}:
+                          c.currentScope.tab[pool.strings.getOrIncl("system")][0].name
+                        else:
+                          SymId(0)
       deps.buildTree ImportS, NoLineInfo:
         for symId, i in c.importedModules:
-          deps.addStrLit i.path.toAbsolutePath
+          if symId != systemSymId:
+            deps.addStrLit i.path.toAbsolutePath
   let depsFile = changeFileExt(infile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 
