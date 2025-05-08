@@ -32,6 +32,9 @@ type
     indegree, touched: int
     indegreeFacts: Facts
     writesTo: seq[SymId]
+  ErrorMsg = object
+    info: PackedLineInfo
+    msg: string
   Context = object
     cf, toplevelStmts: TokenBuf
     routines: seq[Cursor]
@@ -40,6 +43,7 @@ type
     writesTo: seq[SymId]
     #toPropId: Table[SymId, VarId]
     startInstr: Cursor
+    errors: seq[ErrorMsg]
 
 proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
@@ -744,7 +748,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
     c.toplevelStmts.takeTree n
 
 proc analyzeContracts*(input: var TokenBuf) =
-  let oldInfos = prepare(input)
+  #let oldInfos = prepare(input)
   var c = Context(typeCache: createTypeCache())
   c.typeCache.openScope()
   var n = beginRead(input)
@@ -755,7 +759,7 @@ proc analyzeContracts*(input: var TokenBuf) =
   checkContracts(c, nt)
 
   endRead input
-  restore(input, oldInfos)
+  #restore(input, oldInfos)
   c.typeCache.closeScope()
 
 when isMainModule:
