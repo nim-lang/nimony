@@ -603,9 +603,13 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
             analyseCall c, pc
             skip pc
             skipParRi pc
+          elif pc.exprKind == PragmaxX:
+            inc pc
+            skip pc # pragmas
+            inc nested
           else:
             raiseAssert "BUG: unknown statement: " & toString(pc, false)
-        of DiscardS:
+        of DiscardS, YldS:
           inc pc
           analyseExpr c, pc
           skipParRi pc
@@ -614,7 +618,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of EmitS, InclS, ExclS:
           # not of interest for contract analysis:
           skip pc
-        of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
+        of IfS, WhenS, WhileS, ForS, CaseS, TryS, RaiseS, ExportS,
            IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackDeclS, StaticstmtS, AsmS, DeferS:
