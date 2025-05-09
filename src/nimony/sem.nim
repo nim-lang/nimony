@@ -3840,8 +3840,8 @@ proc attachMethod(c: var SemContext; symId: SymId;
       var methodName = pool.syms[symId]
       extractBasename methodName
       c.dest.endRead()
-      let pragams = cursorAt(c.dest, beforePragmas)
-      signature = pool.strings.getOrIncl(methodKey(methodName, rest, pragams))
+      let pragmas = cursorAt(c.dest, beforePragmas)
+      signature = pool.strings.getOrIncl(methodKey(methodName, rest, pragmas))
   if root == SymId(0):
     let typ = typeToString(params)
     c.dest.endRead()
