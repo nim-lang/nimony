@@ -72,6 +72,6 @@ proc methodKey*(name: string; a: Cursor): string =
   inc a
   # also add return type:
   mangle b, a
-  inc a
+  skip a
   let (callConv, hasRaises) = processPragmas(a)
   result = name & ":" & b.extract() & ":" & $callConv & ":" & hasRaises
