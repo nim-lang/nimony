@@ -273,6 +273,7 @@ type
 const
   NoBasicBlock = BasicBlockIdx(-1)
   BasicBlockReturn = BasicBlockIdx(-2)
+  LoopBack = BasicBlockIdx(-3)
 
 proc `==`*(a, b: BasicBlockIdx): bool {.borrow.}
 proc `<=`*(a, b: BasicBlockIdx): bool {.borrow.}
@@ -545,20 +546,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
       # Every goto intruction leaves the basic block.
       let diff = pc.getInt28
       if diff < 0:
-        # it is a backwards jump: In Nimony we know this came from a loop in
-        # the control flow graph. We follow it back to the IteF and take the false branch:
-        pc = pc +! diff
-        assert pc.cfKind == IteF
-        inc pc # now inside IteF
-        # skip condition
-        skip pc
-        # then branch:
-        assert pc.kind == GotoInstr
-        inc pc
-        # now at else:
-        assert pc.kind == GotoInstr
-        let newdiff = pc.getInt28
-        return Continuation(thenPart: toBasicBlock(c, pc +! newdiff), elsePart: NoBasicBlock)
+        return Continuation(thenPart: LoopBack, elsePart: NoBasicBlock)
       else:
         # ordinary goto, simply follow it:
         return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock)
