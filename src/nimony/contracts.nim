@@ -349,7 +349,7 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
   for i in start..last:
     if reachable[i - start] and c[i].kind == GotoInstr:
       let diff = c[i].getInt28
-      if diff != 0 and i+diff <= last and reachable[i+diff - start]:
+      if diff > 0 and i+diff <= last and reachable[i+diff - start]:
         let idx = BasicBlockIdx(i+diff)
         result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])).indegree += 1
 
@@ -544,11 +544,21 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
     of GotoInstr:
       # Every goto intruction leaves the basic block.
       let diff = pc.getInt28
-      when false: # if diff < 0:
+      if diff < 0:
         # it is a backwards jump: In Nimony we know this came from a loop in
-        # the control flow graph. So we skip over it and proceed with the BB after the loop:
+        # the control flow graph. We follow it back to the IteF and take the false branch:
+        pc = pc +! diff
+        assert pc.cfKind == IteF
+        inc pc # now inside IteF
+        # skip condition
+        skip pc
+        # then branch:
+        assert pc.kind == GotoInstr
         inc pc
-        return Continuation(thenPart: toBasicBlock(c, pc), elsePart: NoBasicBlock)
+        # now at else:
+        assert pc.kind == GotoInstr
+        let newdiff = pc.getInt28
+        return Continuation(thenPart: toBasicBlock(c, pc +! newdiff), elsePart: NoBasicBlock)
       else:
         # ordinary goto, simply follow it:
         return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock)
