@@ -93,6 +93,10 @@ proc loadInterface*(suffix: string; iface: var Iface;
                     errors: var TokenBuf;
                     filter: ImportFilter) =
   let m = load(suffix)
+  if m.index.errors.len > 0:
+    errors.add m.index.errors
+    return
+
   let alreadyLoaded = iface.len != 0
   var marker = filter.list
   let negateMarker = filter.kind == FromImport
@@ -134,8 +138,6 @@ proc loadInterface*(suffix: string; iface: var Iface;
       exportFilter.list.incl(s)
     mergeFilter(exportFilter, filter)
     exports.add (path, ensureMove exportFilter)
-  if not alreadyLoaded:
-    errors.add m.index.errors
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):
