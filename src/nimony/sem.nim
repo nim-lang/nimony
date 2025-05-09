@@ -7079,7 +7079,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     buildErr c, it.n.info, "expression expected"
 
 proc reportErrors(c: var SemContext): int =
-  result = reporters.reportErrors(c.dest, IsMain in c.moduleFlags)
+  result = reporters.reportErrors(c.dest, {IsMain, IsSystem} * c.moduleFlags != {})
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
@@ -7143,12 +7143,12 @@ proc writeOutput(c: var SemContext; infile, outfile: string) =
   let depsFile = changeFileExt(infile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 
-proc quitWithError(c: var SemContext; outfile: string) =
+proc quitWithError(c: var SemContext) =
   # See https://github.com/nim-lang/nimony/issues/985#issuecomment-2849271319
-  if IsMain in c.moduleFlags:
+  if {IsMain, IsSystem} * c.moduleFlags != {}:
     quit 1
   else:
-    writeFile outfile, "\n"   # nifreader fail to open if it is empty.
+    writeFile c.outfile, "\n"   # nifreader fail to open if it is empty.
     var errs = createTokenBuf(16)
     var n = beginRead c.dest
     errs.buildTree ErrT, NoLineInfo:
@@ -7172,7 +7172,7 @@ proc quitWithError(c: var SemContext; outfile: string) =
         else: discard
         inc n
     endRead c.dest
-    let indexFile = changeFileExt(outfile, ".idx.nif")
+    let indexFile = changeFileExt(c.outfile, ".idx.nif")
     writeFile indexFile, "(.nif24)\n" & toString(errs)
     quit 0
 
@@ -7297,7 +7297,7 @@ proc addSelfModuleSym(c: var SemContext; path: string) =
   moduleDecl.addParRi()
   publish c.selfModuleSym, moduleDecl
 
-proc semcheckCore(c: var SemContext; n0: Cursor; outfile: string) =
+proc semcheckCore(c: var SemContext; n0: Cursor) =
   c.pending.add parLeToken(StmtsS, NoLineInfo)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
 
@@ -7350,7 +7350,7 @@ proc semcheckCore(c: var SemContext; n0: Cursor; outfile: string) =
     var finalBuf = beginRead afterSem
     c.dest = injectDerefs(finalBuf)
   else:
-    quitWithError c, outfile
+    quitWithError c
 
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
@@ -7365,17 +7365,18 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
-    pending: createTokenBuf())
+    pending: createTokenBuf(),
+    outfile: outfile)
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
 
   while true:
-    semcheckCore c, n0, outfile
+    semcheckCore c, n0
     if c.pendingTypePlugins.len == 0: break
     handleTypePlugins c
 
   if reportErrors(c) == 0:
     writeOutput c, infile, outfile
   else:
-    quitWithError c, outfile
+    quitWithError c

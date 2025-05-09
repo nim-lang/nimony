@@ -67,7 +67,34 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   else:
     result = c.processedModules[suffix]
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2))
+  let beforeErrors = c.dest.len
   loadInterface suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, c.dest, mode
+  if c.dest.len > beforeErrors:
+    var n = cursorAt(c.dest, beforeErrors)
+    if {IsMain, IsSystem} * c.moduleFlags == {}:
+      writeFile c.outfile, "\n"
+      let indexFile = changeFileExt(c.outfile, ".idx.nif")
+      var errs = createTokenBuf(2)
+      errs.buildTree ErrT, info:
+        if n.kind == StringLit:
+          errs.add n
+        else:
+          errs.addStrLit suffix
+      writeFile indexFile, "(.nif24)\n" & toString(errs)
+      quit 0
+    else:
+      if n.kind == StringLit:
+        let errSrcModuleSuffix = pool.strings[n.litId]
+        endRead(c.dest)
+        c.dest.shrink beforeErrors
+        if errSrcModuleSuffix notin c.processedModules:
+          let errSrcIndexFile = errSrcModuleSuffix.suffixToNif.changeFileExt".idx.nif"
+          let index = readIndex errSrcIndexFile
+          assert index.errors.len > 0
+          c.dest.add index.errors
+          c.processedModules[errSrcModuleSuffix] = SymId(0)
+      else:
+        endRead(c.dest)
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
