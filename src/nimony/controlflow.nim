@@ -307,6 +307,7 @@ proc trIf(c: var ControlFlow; n: var Cursor; tar: Target) =
       inc n
       var tjmp: seq[Label] = @[]
       var fjmp: seq[Label] = @[]
+      c.stmtBegin = c.dest.len
       trIte c, n, tjmp, fjmp # condition
       for t in tjmp: c.patch t
       trStmtOrExpr c, n, tar # action

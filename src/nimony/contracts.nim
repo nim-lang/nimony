@@ -243,7 +243,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   if not cursorIsNil(req):
     # ... analyse that the input parameters match the requirements
     let res = checkReq(c, paramMap, req, n)
-    when false:
+    when isMainModule:
       # XXX Enable when it works
       if res != Proven:
         error "contract violation: ", req
