@@ -634,12 +634,14 @@ proc semProcBody(c: var SemContext; itB: var Item) =
   var it = Item(n: itB.n, typ: c.types.autoType)
   var lastSonInfo = itB.n.info
   var beforeLastSon = c.dest.len
+  var beforeLastSonCursor = default(Cursor)
   while it.n.kind != ParRi:
     if not isLastSon(it.n):
       semStmt c, it.n, false
     else:
       beforeLastSon = c.dest.len
       lastSonInfo = it.n.info
+      beforeLastSonCursor = it.n
       semExpr c, it
   if c.routine.kind == TemplateY:
     case c.routine.returnType.typeKind
@@ -652,14 +654,19 @@ proc semProcBody(c: var SemContext; itB: var Item) =
   elif classifyType(c, it.typ) == VoidT:
     discard "ok"
   else:
-    commonType c, it, beforeLastSon, c.routine.returnType
     # transform `expr` to `result = expr`:
     if c.routine.resId != SymId(0):
+      shrink c.dest, beforeLastSon
+      var it = Item(n: beforeLastSonCursor, typ: c.routine.returnType)
+      semExpr c, it
+
       var prefix = [
         parLeToken(AsgnS, lastSonInfo),
         symToken(c.routine.resId, lastSonInfo)]
       c.dest.insert prefix, beforeLastSon
       c.dest.addParRi()
+    else:
+      commonType c, it, beforeLastSon, c.routine.returnType
   takeParRi c, it.n # of (stmts)
   itB.n = it.n
 
