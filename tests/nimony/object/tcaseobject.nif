@@ -215,19 +215,19 @@
     (call ~2 fx.0.tcauiaoif 1 x.1)))) ,46
  (block . 2,1
   (stmts 8,1
-   (type ~6 :TKind.0 . . . 2
+   (type ~6 :TKind.0.tcauiaoif . . . 2
     (enum
      (u +8) 5
-     (efld :ka.0.tcauiaoif . . TKind.0
+     (efld :ka.0.tcauiaoif . . TKind.0.tcauiaoif
       (tup +0 "ka")) 9
-     (efld :kb.0.tcauiaoif . . TKind.0
+     (efld :kb.0.tcauiaoif . . TKind.0.tcauiaoif
       (tup +1 "kb")) 13
-     (efld :kc.0.tcauiaoif . . TKind.0
+     (efld :kc.0.tcauiaoif . . TKind.0.tcauiaoif
       (tup +2 "kc")))) 5,2
-   (type ~3 :TA.0 . . . 2
+   (type ~3 :TA.0.tcauiaoif . . . 2
     (object . ~3,1
      (case 5
-      (fld :k.0.tcauiaoif . . 3 TKind.0 .) ,1
+      (fld :k.0.tcauiaoif . . 3 TKind.0.tcauiaoif .) ,1
       (of
        (ranges 3 ka.0.tcauiaoif) 2,1
        (stmts
@@ -246,7 +246,7 @@
          (f +64) .) 9
         (fld :d.1.tcauiaoif . . 3
          (f +64) .)))))) 4,10
-   (var :s.1 . . 11,~9 TKind.0 4 ka.0.tcauiaoif) ,11
+   (var :s.1 . . 11,~9 TKind.0.tcauiaoif 4 ka.0.tcauiaoif) ,11
    (case 5 s.1 ,1
     (of
      (ranges 3 ka.0.tcauiaoif) 2,1
@@ -267,9 +267,9 @@
        (stmts
         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 14,64,tests/nimony/object/tcaseobject.nim +3)) ,2
        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 4,48
- (proc :dollar`.TKind.0 x . .
+ (proc :dollar`.TKind.0.tcauiaoif x . .
   (params
-   (param :e.0 . . TKind.0 .)) string.0.sysvq0asl . .
+   (param :e.0 . . TKind.0.tcauiaoif .)) string.0.sysvq0asl . .
   (stmts 8
    (result :result.1 . . ~5,~40 string.0.sysvq0asl .) 8
    (case e.0 5
