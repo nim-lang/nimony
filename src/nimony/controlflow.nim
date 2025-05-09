@@ -370,17 +370,26 @@ proc trContinue(c: var ControlFlow; n: var Cursor) =
 
 proc trFor(c: var ControlFlow; n: var Cursor) =
   let info = n.info
-  let loopStart = c.genLabel()
-  c.dest.addParLe(ForbindF, info)
   inc n
+  let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisBlock
+  let loopStart = c.genLabel()
+
+  c.dest.addParLe(IteF, info)
+  c.dest.addParPair TrueX, info
+  let tjmp = c.jmpForw(info)
+  thisBlock.breakInstrs.add c.jmpForw(info)
+  c.dest.addParRi()
+
+  # loop body is about to begin:
+  c.patch tjmp
+  c.dest.addParLe(ForbindF, info)
   # iterator call:
   trExpr c, n
   # bindings:
   takeTree c.dest, n
   c.dest.addParRi()
   # loop body:
-  let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
-  c.currentBlock = thisBlock
   trStmt c, n
   skipParRi n
   for cont in thisBlock.contInstrs: c.patch cont
