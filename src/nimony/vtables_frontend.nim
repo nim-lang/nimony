@@ -40,6 +40,28 @@ when false:
     else:
       return false
 
+proc processPragmas(n: Cursor): (CallConv, string) =
+  var n = n
+  result = (NoCallConv, "0")
+  if n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      let pk = pragmaKind(n)
+      case pk
+      of NoPragma:
+        let cc = callConvKind(n)
+        if cc != NoCallConv:
+          result[0] = cc
+          skip n
+        else:
+          # it may be a `kv`
+          skip n
+      of RaisesP:
+        result[1] = "1"
+        skip n
+      else:
+        skip n
+
 proc methodKey*(name: string; a: Cursor): string =
   # First parameter was the class type and has already been skipped here!
   var a = a
@@ -50,4 +72,6 @@ proc methodKey*(name: string; a: Cursor): string =
   inc a
   # also add return type:
   mangle b, a
-  result = name & ":" & b.extract()
+  skip a
+  let (callConv, hasRaises) = processPragmas(a)
+  result = name & ":" & b.extract() & ":" & $callConv & ":" & hasRaises
