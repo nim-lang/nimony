@@ -37,7 +37,6 @@ type
   MethodDecl = object
     cls: SymId
     name: SymId
-    pragmas: Cursor
     paramRest: Cursor
 
   Context* = object
@@ -590,7 +589,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if nested == 0: break
 
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
-  let sig = methodKey(methodName, m.paramRest, m.pragmas)
+  let sig = methodKey(methodName, m.paramRest)
   # see if this is an override:
   for inh in inheritanceChain(m.cls):
     let methodIndex = c.vtables[inh].signatureToIndex.getOrDefault(sig, -1)
@@ -710,7 +709,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
           error "cannot attach method to type " & typeToString(param.typ)
         else:
           # we might not have registered the class yet, so we use a single flat `methodDecls` list:
-          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, pragmas: r.pragmas, paramRest: p)
+          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, paramRest: p)
       else:
         error "method needs a first parameter of the class type: " & toString(orig, false)
   of TypeS:

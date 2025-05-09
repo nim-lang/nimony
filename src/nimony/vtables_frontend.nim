@@ -62,7 +62,7 @@ proc processPragmas(n: Cursor): (CallConv, string) =
       else:
         skip n
 
-proc methodKey*(name: string; a: Cursor; pragmas: Cursor): string =
+proc methodKey*(name: string; a: Cursor): string =
   # First parameter was the class type and has already been skipped here!
   var a = a
   var b = createMangler(60)
@@ -72,5 +72,6 @@ proc methodKey*(name: string; a: Cursor; pragmas: Cursor): string =
   inc a
   # also add return type:
   mangle b, a
-  let (callConv, hasRaises) = processPragmas(pragmas)
+  inc a
+  let (callConv, hasRaises) = processPragmas(a)
   result = name & ":" & b.extract() & ":" & $callConv & ":" & hasRaises

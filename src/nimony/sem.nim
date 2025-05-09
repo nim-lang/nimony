@@ -3821,7 +3821,7 @@ proc attachConverter(c: var SemContext; symId: SymId;
         c.converterIndexMap.add((root, symId))
 
 proc attachMethod(c: var SemContext; symId: SymId;
-                  declStart, beforePragmas, beforeParams, beforeGenericParams: int; info: PackedLineInfo) =
+                  declStart, beforeParams, beforeGenericParams: int; info: PackedLineInfo) =
   var params = cursorAt(c.dest, beforeParams)
   var root = SymId(0)
   var signature = StrId(0)
@@ -3839,9 +3839,7 @@ proc attachMethod(c: var SemContext; symId: SymId;
       skipParRi rest
       var methodName = pool.syms[symId]
       extractBasename methodName
-      c.dest.endRead()
-      let pragmas = cursorAt(c.dest, beforePragmas)
-      signature = pool.strings.getOrIncl(methodKey(methodName, rest, pragmas))
+      signature = pool.strings.getOrIncl(methodKey(methodName, rest))
   if root == SymId(0):
     let typ = typeToString(params)
     c.dest.endRead()
@@ -3910,7 +3908,6 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     semParams c, it.n
     c.routine.returnType = semReturnType(c, it.n)
     var crucial = CrucialPragma(sym: symId)
-    let beforePragmas = c.dest.len
     semPragmas c, it.n, crucial, kind
     c.routine.pragmas = crucial.flags
     if crucial.hasVarargs.isValid:
@@ -3930,10 +3927,10 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       if kind == ConverterY:
         attachConverter c, symId, declStart, beforeExportMarker, beforeGenericParams, info
       elif kind == MethodY:
-        attachMethod c, symId, declStart, beforePragmas, beforeParams, beforeGenericParams, info
+        attachMethod c, symId, declStart, beforeParams, beforeGenericParams, info
       elif hookThatShouldBeMethod(c, hk, beforeParams):
         c.dest[declStart] = parLeToken(MethodS, info)
-        attachMethod c, symId, declStart, beforePragmas, beforeParams, beforeGenericParams, info
+        attachMethod c, symId, declStart, beforeParams, beforeGenericParams, info
     if it.n.kind != DotToken:
       case pass
       of checkGenericInst:
