@@ -32,14 +32,18 @@ type
     indegree, touched: int
     indegreeFacts: Facts
     writesTo: seq[SymId]
+  ErrorMsg = object
+    info: PackedLineInfo
+    msg: string
   Context = object
-    cf, dest, toplevelStmts: TokenBuf
+    cf, toplevelStmts: TokenBuf
     routines: seq[Cursor]
     typeCache: TypeCache
     facts: Facts
     writesTo: seq[SymId]
     #toPropId: Table[SymId, VarId]
     startInstr: Cursor
+    errors: seq[ErrorMsg]
 
 proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
@@ -48,17 +52,6 @@ proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: boo
       echo c.facts[i]
     echo "canonical fact: ", fact
   error "contract violation: ", orig
-
-proc takeToken(c: var Context; n: var Cursor) {.inline.} =
-  c.dest.add n
-  inc n
-
-proc takeParRi(c: var Context; n: var Cursor) =
-  if n.kind == ParRi:
-    c.dest.add n
-    inc n
-  else:
-    error "expected ')', but got: ", n
 
 #[
 
@@ -146,8 +139,8 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
         error "expected integer literal but got: ", r
     else:
       error "expected symbol but got: ", r
+    skipParRi r
   result = query(a, b, cnst)
-  skipParRi r
 
 proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): ProofRes =
   case req.exprKind
@@ -157,7 +150,6 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     let a = checkReq(c, paramMap, r, call)
     skip r
     let b = checkReq(c, paramMap, r, call)
-    skipParRi r
     result = a and b
   of OrX:
     var r = req
@@ -165,13 +157,11 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     let a = checkReq(c, paramMap, r, call)
     skip r
     let b = checkReq(c, paramMap, r, call)
-    skipParRi r
     result = a or b
   of NotX:
     var r = req
     inc r
     result = not checkReq(c, paramMap, r, call)
-    skipParRi r
   of EqX:
     # x == 3?
     var r = req
@@ -210,8 +200,33 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
       result = Proven
     else:
       result = Disproven
+  of ExprX:
+    var r = req
+    while r.exprKind == ExprX:
+      inc r
+      while r.kind != ParRi and not isLastSon(r): skip r
+    result = checkReq(c, paramMap, r, call)
   else:
     result = Unprovable
+
+proc analyseExpr(c: var Context; pc: var Cursor) =
+  var nested = 0
+  while true:
+    case pc.kind
+    of Symbol:
+      inc pc
+    of SymbolDef:
+      raiseAssert "BUG: symbol definition in single path"
+    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
+      inc pc
+    of ParRi:
+      assert nested > 0
+      dec nested
+      inc pc
+    of ParLe:
+      inc nested
+      inc pc
+    if nested == 0: break
 
 proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   var fnType = skipProcTypeToParams(fnType)
@@ -228,11 +243,12 @@ proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   if not cursorIsNil(req):
     # ... analyse that the input parameters match the requirements
     let res = checkReq(c, paramMap, req, n)
-    if res != Proven:
-      error "contract violation: ", req
-  else:
-    while n.kind != ParRi:
-      skip n
+    when isMainModule:
+      # XXX Enable when it works
+      if res != Proven:
+        error "contract violation: ", req
+  while n.kind != ParRi:
+    analyseExpr c, n
 
 proc analyseCall(c: var Context; n: var Cursor) =
   inc n # skip call instruction
@@ -257,6 +273,7 @@ type
 const
   NoBasicBlock = BasicBlockIdx(-1)
   BasicBlockReturn = BasicBlockIdx(-2)
+  LoopBack = BasicBlockIdx(-3)
 
 proc `==`*(a, b: BasicBlockIdx): bool {.borrow.}
 proc `<=`*(a, b: BasicBlockIdx): bool {.borrow.}
@@ -333,7 +350,6 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
   for i in start..last:
     if reachable[i - start] and c[i].kind == GotoInstr:
       let diff = c[i].getInt28
-      # Consider only forward jumps that lead to reachable instructions
       if diff > 0 and i+diff <= last and reachable[i+diff - start]:
         let idx = BasicBlockIdx(i+diff)
         result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])).indegree += 1
@@ -356,9 +372,10 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
         result = true
         inc pc
       else:
-        skip pc
+        analyseExpr c, pc
     else:
-      skip pc
+      analyseExpr c, pc
+      analyseExpr c, pc
     skipParRi pc
   elif pc.kind == Symbol:
     let symId2 = pc.symId
@@ -376,7 +393,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     result = true
     inc pc
   else:
-    skip pc
+    analyseExpr c, pc
 
 proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXplusC =
   var r = pc
@@ -396,7 +413,7 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     inc r
     skip r # skip type
   else:
-    skip pc
+    analyseExpr c, pc
     return result
 
   if r.kind == IntLit:
@@ -411,7 +428,7 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     result.a = getVarId(c, r.symId)
     inc r
   else:
-    skip pc
+    analyseExpr c, pc
     return result
   if not rightHandSide(c, r, result):
     result.a = InvalidVarId
@@ -463,8 +480,8 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
     else:
       invalidateFactsAbout(c.facts, fact.a)
   else:
-    skip pc # skip left-hand-side
-    skip pc # skip right-hand-side
+    analyseExpr c, pc
+    analyseExpr c, pc
   skipParRi pc
 
 proc analyseAssume(c: var Context; pc: var Cursor) =
@@ -529,10 +546,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
       # Every goto intruction leaves the basic block.
       let diff = pc.getInt28
       if diff < 0:
-        # it is a backwards jump: In Nimony we know this came from a loop in
-        # the control flow graph. So we skip over it and proceed with the BB after the loop:
-        inc pc
-        return Continuation(thenPart: toBasicBlock(c, pc), elsePart: NoBasicBlock)
+        return Continuation(thenPart: LoopBack, elsePart: NoBasicBlock)
       else:
         # ordinary goto, simply follow it:
         return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock)
@@ -580,19 +594,30 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           skip pc # pragmas
           c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
           skip pc # type
-          inc nested
-          # proceed with its value here
+          analyseExpr c, pc
+          skipParRi pc
         of NoStmt:
-          raiseAssert "BUG: unknown statement: " & toString(pc, false)
-        of DiscardS:
+          if pc.cfKind == ForbindF:
+            inc pc
+            analyseCall c, pc
+            skip pc
+            skipParRi pc
+          elif pc.exprKind == PragmaxX:
+            inc pc
+            skip pc # pragmas
+            inc nested
+          else:
+            raiseAssert "BUG: unknown statement: " & toString(pc, false)
+        of DiscardS, YldS:
           inc pc
-          inc nested
+          analyseExpr c, pc
+          skipParRi pc
         of CallS, CmdS:
           analyseCall(c, pc)
         of EmitS, InclS, ExclS:
           # not of interest for contract analysis:
           skip pc
-        of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
+        of IfS, WhenS, WhileS, ForS, CaseS, TryS, RaiseS, ExportS,
            IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackDeclS, StaticstmtS, AsmS, DeferS:
@@ -702,10 +727,11 @@ proc traverseProc(c: var Context; n: var Cursor) =
         inc n
       elif n.kind == ParRi:
         dec nested
-        inc n
         if nested == 0: break
+        inc n
       else:
         inc n
+        if nested == 0: break
     skipParRi n
   else:
     skip n # body
@@ -734,10 +760,9 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
 
-proc analyzeContracts*(input: var TokenBuf): TokenBuf =
-  let oldInfos = prepare(input)
-  var c = Context(typeCache: createTypeCache(),
-    dest: createTokenBuf(500))
+proc analyzeContracts*(input: var TokenBuf) =
+  #let oldInfos = prepare(input)
+  var c = Context(typeCache: createTypeCache())
   c.typeCache.openScope()
   var n = beginRead(input)
   traverseToplevel c, n
@@ -747,15 +772,14 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   checkContracts(c, nt)
 
   endRead input
-  restore(input, oldInfos)
+  #restore(input, oldInfos)
   c.typeCache.closeScope()
-  result = ensureMove(c.dest)
 
 when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parse(readFile(infile))
-    discard analyzeContracts(input)
+    analyzeContracts(input)
     #echo toString(outp, false)
 
   main(paramStr(1))

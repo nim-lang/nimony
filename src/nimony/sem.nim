@@ -7263,11 +7263,9 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
 
   if reportErrors(c) == 0:
     var afterSem = move c.dest
-    when defined(enableContracts):
-      var afterContracts = analyzeContracts(afterSem)
-      var finalBuf = beginRead afterContracts
-    else:
-      var finalBuf = beginRead afterSem
+    when true: #defined(enableContracts):
+      analyzeContracts(afterSem)
+    var finalBuf = beginRead afterSem
     c.dest = injectDerefs(finalBuf)
   else:
     quit 1
