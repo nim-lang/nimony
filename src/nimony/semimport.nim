@@ -49,7 +49,8 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
   result = SymId(0)
-  if not c.processedModules.contains(suffix):
+  let isProcessed = c.processedModules.contains(suffix)
+  if not isProcessed:
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
       selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
@@ -95,6 +96,8 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
           c.processedModules[errSrcModuleSuffix] = SymId(0)
       else:
         endRead(c.dest)
+        if isProcessed:
+          c.dest.shrink beforeErrors
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
