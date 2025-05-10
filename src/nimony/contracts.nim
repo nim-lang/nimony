@@ -226,6 +226,8 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
       if x.kind in {VarY, LetY, CursorY}:
         if symId notin c.directlyInitialized and symId notin c.writesTo:
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
+          # do not name the same variable twice:
+          c.writesTo.add symId
       inc pc
     of SymbolDef:
       raiseAssert "BUG: symbol definition in single path"
