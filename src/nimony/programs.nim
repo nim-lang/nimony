@@ -90,8 +90,13 @@ proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters, methods: var Table[SymId, seq[SymId]];
                     exports: var seq[(string, ImportFilter)];
+                    errors: var TokenBuf;
                     filter: ImportFilter) =
   let m = load(suffix)
+  if m.index.errors.len > 0:
+    errors.add m.index.errors
+    return
+
   let alreadyLoaded = iface.len != 0
   var marker = filter.list
   let negateMarker = filter.kind == FromImport

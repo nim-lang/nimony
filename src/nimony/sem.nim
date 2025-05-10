@@ -9,7 +9,7 @@
 ## type checking.
 
 import std / [tables, sets, syncio, formatfloat, assertions, strutils]
-from std/os import getCurrentDir
+from std/os import changeFileExt, getCurrentDir
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -7079,7 +7079,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     buildErr c, it.n.info, "expression expected"
 
 proc reportErrors(c: var SemContext): int =
-  result = reporters.reportErrors(c.dest)
+  result = reporters.reportErrors(c.dest, {IsMain, IsSystem} * c.moduleFlags != {})
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
@@ -7120,6 +7120,55 @@ proc writeOutput(c: var SemContext; outfile: string) =
       classes: move c.classIndexMap,
       toBuild: move c.toBuild,
       exportBuf: buildIndexExports(c))
+
+  # Update .2.deps.nif file that doesn't contain modules imported under `when false:`
+  # so that Hexer and following phases doesn't read such modules.
+  var deps = createTokenBuf(16)
+  deps.buildTree StmtsS, NoLineInfo:
+    if c.importedModules.len != 0:
+      let systemSymId = if {SkipSystem, IsSystem} * c.moduleFlags == {}:
+                          c.currentScope.tab[pool.strings.getOrIncl("system")][0].name
+                        else:
+                          SymId(0)
+      deps.buildTree ImportS, NoLineInfo:
+        for symId, i in c.importedModules:
+          if symId != systemSymId:
+            deps.addStrLit i.path.toAbsolutePath
+  let depsFile = changeFileExt(outfile, ".deps.nif")
+  writeFile depsFile, "(.nif24)\n" & toString(deps)
+
+proc quitWithError(c: var SemContext; errors: sink TokenBuf = createTokenBuf(16)) =
+  # See https://github.com/nim-lang/nimony/issues/985#issuecomment-2849271319
+  if {IsMain, IsSystem} * c.moduleFlags != {}:
+    quit 1
+  else:
+    writeFile c.outfile, "\n"   # nifreader fail to open if it is empty.
+    var errs = ensureMove errors
+    var n = beginRead c.dest
+    errs.buildTree ErrT, NoLineInfo:
+      var nested = 0
+      while true:
+        case n.kind
+        of ParLe:
+          if n.tagId == ErrT:
+            errs.takeTree n
+            if nested == 0:
+              break
+            continue
+          else:
+            inc nested
+        of ParRi:
+          dec nested
+          if nested == 0:
+            break
+        of EofToken:
+          raiseAssert "expected ')', but EOF reached"
+        else: discard
+        inc n
+    endRead c.dest
+    let indexFile = changeFileExt(c.outfile, ".idx.nif")
+    writeFile indexFile, "(.nif24)\n" & toString(errs)
+    quit 0
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n.stmtKind == StmtsS
@@ -7290,12 +7339,12 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
     var afterSem = move c.dest
     when true: #defined(enableContracts):
       var moreErrors = analyzeContracts(afterSem)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
+      if reporters.reportErrors(moreErrors, {IsMain, IsSystem} * c.moduleFlags != {}) > 0:
+        quitWithError c, moreErrors
     var finalBuf = beginRead afterSem
     c.dest = injectDerefs(finalBuf)
   else:
-    quit 1
+    quitWithError c
 
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
@@ -7310,7 +7359,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
-    pending: createTokenBuf())
+    pending: createTokenBuf(),
+    outfile: outfile)
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
@@ -7323,4 +7373,4 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   if reportErrors(c) == 0:
     writeOutput c, outfile
   else:
-    quit 1
+    quitWithError c
