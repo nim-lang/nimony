@@ -19,13 +19,13 @@ block:
   assert carray[1] == 2
 
 block:
-  var cstruct: CStruct
+  var cstruct {.noinit.}: CStruct
   setCStruct(addr cstruct)
   assert cstruct.field[0] == 567
   assert cstruct.field[1] == 8910
 
 block:
-  var cstruct2: CStruct2
+  var cstruct2 {.noinit.}: CStruct2
   setCStruct2(addr cstruct2)
   assert cstruct2.cs.field[0] == 111
   assert cstruct2.cs.field[1] == 222

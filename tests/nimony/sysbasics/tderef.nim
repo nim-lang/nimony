@@ -1,5 +1,5 @@
 proc main =
-  var x: ptr int
+  var x: ptr int = nil
   if false:
     discard x[]
     x[] = 123
