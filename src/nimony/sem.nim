@@ -7107,7 +7107,7 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
         result.add identToken(s, NoLineInfo)
       result.addParRi()
 
-proc writeOutput(c: var SemContext; infile, outfile: string) =
+proc writeOutput(c: var SemContext; outfile: string) =
   #var b = nifbuilder.open(outfile)
   #b.addHeader "nimony", "nim-sem"
   #b.addRaw toString(c.dest)
@@ -7121,16 +7121,10 @@ proc writeOutput(c: var SemContext; infile, outfile: string) =
       toBuild: move c.toBuild,
       exportBuf: buildIndexExports(c))
 
-  # Update .1.deps.nif file that doesn't contain modules imported under `when false:`
+  # Update .2.deps.nif file that doesn't contain modules imported under `when false:`
   # so that Hexer and following phases doesn't read such modules.
-  # It is cached and can be read by Nimony to generate frontend Makefile in next build.
-  # So it need to contain include statements.
   var deps = createTokenBuf(16)
   deps.buildTree StmtsS, NoLineInfo:
-    if c.meta.includedFiles.len != 0:
-      deps.buildTree IncludeS, NoLineInfo:
-        for i in c.meta.includedFiles:
-          deps.addStrLit i.toAbsolutePath
     if c.importedModules.len != 0:
       let systemSymId = if {SkipSystem, IsSystem} * c.moduleFlags == {}:
                           c.currentScope.tab[pool.strings.getOrIncl("system")][0].name
@@ -7140,7 +7134,7 @@ proc writeOutput(c: var SemContext; infile, outfile: string) =
         for symId, i in c.importedModules:
           if symId != systemSymId:
             deps.addStrLit i.path.toAbsolutePath
-  let depsFile = changeFileExt(infile, ".deps.nif")
+  let depsFile = changeFileExt(outfile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 
 proc quitWithError(c: var SemContext; errors: sink TokenBuf = createTokenBuf(16)) =
@@ -7377,6 +7371,6 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     handleTypePlugins c
 
   if reportErrors(c) == 0:
-    writeOutput c, infile, outfile
+    writeOutput c, outfile
   else:
     quitWithError c
