@@ -6,7 +6,7 @@ proc c_snprintf(str: out array[bufsize, char]; n: uint; fmt: cstring): int32 {.h
                                     importc: "snprintf", varargs, noSideEffect.}
 
 proc addFloat*(result: var string; x: float) {.inline.} =
-  var buf: array[bufsize, char]
+  var buf {.noinit.}: array[bufsize, char]
   let n = c_snprintf(buf, bufsize.uint, "%g", x)
   let oldLen = result.len
   let newLen = oldLen + n

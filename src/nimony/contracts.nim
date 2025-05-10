@@ -18,7 +18,7 @@ another code transformation.
 
 ]##
 
-import std / [assertions, tables, intsets]
+import std / [assertions, tables, sets, intsets]
 
 include nifprelude
 
@@ -32,9 +32,6 @@ type
     indegree, touched: int
     indegreeFacts: Facts
     writesTo: seq[SymId]
-  ErrorMsg = object
-    info: PackedLineInfo
-    msg: string
   Context = object
     cf, toplevelStmts: TokenBuf
     routines: seq[Cursor]
@@ -42,8 +39,18 @@ type
     facts: Facts
     writesTo: seq[SymId]
     #toPropId: Table[SymId, VarId]
+    directlyInitialized: HashSet[SymId]
     startInstr: Cursor
-    errors: seq[ErrorMsg]
+    errors: TokenBuf
+
+proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
+  when defined(debug):
+    writeStackTrace()
+    echo infoToStr(info) & " Error: " & msg
+    quit msg
+  c.errors.buildTree ErrT, info:
+    c.errors.addDotToken()
+    c.errors.add strToken(pool.strings.getOrIncl(msg), info)
 
 proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
@@ -214,6 +221,13 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
   while true:
     case pc.kind
     of Symbol:
+      let symId = pc.symId
+      let x = getLocalInfo(c.typeCache, symId)
+      if x.kind in {VarY, LetY, CursorY}:
+        if symId notin c.directlyInitialized and symId notin c.writesTo:
+          buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
+          # do not name the same variable twice:
+          c.writesTo.add symId
       inc pc
     of SymbolDef:
       raiseAssert "BUG: symbol definition in single path"
@@ -228,16 +242,30 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
       inc pc
     if nested == 0: break
 
-proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
-  var fnType = skipProcTypeToParams(fnType)
+proc analyseCallArgs(c: var Context; n: var Cursor) =
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n))
+  analyseExpr c, n # the `fn` itself could be a proc pointer we must ensure was initialized
   assert fnType.isParamsTag
-  inc fnType # skip `params`
+  inc fnType
   var paramMap = initTable[SymId, int]() # param to position
-  while fnType.kind != ParRi:
+  while n.kind != ParRi:
+    let previousFormalParam = fnType
+    assert fnType.kind != ParRi
     let param = takeLocal(fnType, SkipFinalParRi)
     paramMap[param.name.symId] = paramMap.len+1
-  skipParRi fnType
-  skip fnType # skip return type
+    let pk = param.typ.typeKind
+    if pk == OutT:
+      if n.kind == Symbol:
+        # is now initialized:
+        c.writesTo.add n.symId
+    elif pk == VarargsT:
+      # do not advance formal parameter:
+      fnType = previousFormalParam
+    analyseExpr c, n
+  while fnType.kind != ParRi: skip fnType
+  inc fnType # skip ParRi
+  # skip return type:
+  skip fnType
   # now we have the pragmas:
   let req = extractPragma(fnType, RequiresP)
   if not cursorIsNil(req):
@@ -247,14 +275,10 @@ proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
       # XXX Enable when it works
       if res != Proven:
         error "contract violation: ", req
-  while n.kind != ParRi:
-    analyseExpr c, n
 
 proc analyseCall(c: var Context; n: var Cursor) =
   inc n # skip call instruction
-  let fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  assert fnType.isParamsTag
-  analyseCallArgs(c, n, fnType)
+  analyseCallArgs(c, n)
   skipParRi n
 
 #[
@@ -591,9 +615,12 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           let name = pc.symId
           skip pc # name
           skip pc # export marker
+          let skipInitCheck = hasPragma(pc, NoinitP)
           skip pc # pragmas
           c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
           skip pc # type
+          if pc.kind != DotToken or skipInitCheck:
+            c.directlyInitialized.incl name
           analyseExpr c, pc
           skipParRi pc
         of NoStmt:
@@ -760,13 +787,14 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
 
-proc analyzeContracts*(input: var TokenBuf) =
+proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   #let oldInfos = prepare(input)
   var c = Context(typeCache: createTypeCache())
   c.typeCache.openScope()
   var n = beginRead(input)
   traverseToplevel c, n
   for r in c.routines:
+    c.directlyInitialized.clear()
     checkContracts(c, r)
   var nt = beginRead c.toplevelStmts
   checkContracts(c, nt)
@@ -774,12 +802,13 @@ proc analyzeContracts*(input: var TokenBuf) =
   endRead input
   #restore(input, oldInfos)
   c.typeCache.closeScope()
+  result = ensureMove c.errors
 
 when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parse(readFile(infile))
-    analyzeContracts(input)
+    discard analyzeContracts(input)
     #echo toString(outp, false)
 
   main(paramStr(1))

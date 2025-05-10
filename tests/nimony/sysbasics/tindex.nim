@@ -1,7 +1,7 @@
 proc main() =
-  var arr: array[3, int]
-  var str: string
-  var cstr: cstring
+  var arr: array[3, int] = [1, 2, 3]
+  var str: string = "hello"
+  var cstr: cstring = "world"
   let x = arr[1]
   let xt: int = x
   arr[1] = x
@@ -12,7 +12,7 @@ proc main() =
   let zt: char = z
   cstr[1] = zt
 
-  var tup: tuple[a: int, b: string, c: bool]
+  var tup: tuple[a: int, b: string, c: bool] = (1, "hello", true)
   let t1 = tup[0]
   let t1t: int = t1
   tup[0] = t1t

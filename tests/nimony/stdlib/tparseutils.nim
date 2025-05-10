@@ -1,7 +1,7 @@
 import std/[assertions, math, parseutils]
 
 block:
-  var ret: int64
+  var ret: int64 = 3'i64
   assert parseBiggestInt("0", ret) == 1
   assert ret == 0
   assert parseBiggestInt("1", ret) == 1
@@ -26,7 +26,7 @@ block:
   assert ret == low(int64)
 
 block:
-  var ret: uint64
+  var ret: uint64 = 3'u64
   assert parseBiggestUInt("0", ret) == 1
   assert ret == 0'u64
   assert parseBiggestUInt("1", ret) == 1
@@ -41,7 +41,7 @@ block:
   assert ret == high(uint64)
 
 block:
-  var ret: float64
+  var ret: float64 = 3.0
   assert parseBiggestFloat("0", ret) == 1
   assert ret == 0.0
   assert parseBiggestFloat("0?", ret) == 1
