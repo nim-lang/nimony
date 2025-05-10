@@ -603,10 +603,11 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           let name = pc.symId
           skip pc # name
           skip pc # export marker
+          let skipInitCheck = hasPragma(pc, NoinitP)
           skip pc # pragmas
           c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
           skip pc # type
-          if pc.kind != DotToken:
+          if pc.kind != DotToken or skipInitCheck:
             c.directlyInitialized.incl name
           analyseExpr c, pc
           skipParRi pc
@@ -781,6 +782,7 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   var n = beginRead(input)
   traverseToplevel c, n
   for r in c.routines:
+    c.directlyInitialized.clear()
     checkContracts(c, r)
   var nt = beginRead c.toplevelStmts
   checkContracts(c, nt)
