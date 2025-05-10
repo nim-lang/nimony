@@ -18,7 +18,7 @@ another code transformation.
 
 ]##
 
-import std / [assertions, tables, intsets]
+import std / [assertions, tables, sets, intsets]
 
 include nifprelude
 
@@ -32,9 +32,6 @@ type
     indegree, touched: int
     indegreeFacts: Facts
     writesTo: seq[SymId]
-  ErrorMsg = object
-    info: PackedLineInfo
-    msg: string
   Context = object
     cf, toplevelStmts: TokenBuf
     routines: seq[Cursor]
@@ -42,8 +39,18 @@ type
     facts: Facts
     writesTo: seq[SymId]
     #toPropId: Table[SymId, VarId]
+    directlyInitialized: HashSet[SymId]
     startInstr: Cursor
-    errors: seq[ErrorMsg]
+    errors: TokenBuf
+
+proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
+  when defined(debug):
+    writeStackTrace()
+    echo infoToStr(info) & " Error: " & msg
+    quit msg
+  c.errors.buildTree ErrT, info:
+    c.errors.addDotToken()
+    c.errors.add strToken(pool.strings.getOrIncl(msg), info)
 
 proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
@@ -214,6 +221,11 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
   while true:
     case pc.kind
     of Symbol:
+      let symId = pc.symId
+      let x = getLocalInfo(c.typeCache, symId)
+      if x.kind in {VarY, LetY, CursorY}:
+        if symId notin c.directlyInitialized and symId notin c.writesTo:
+          buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
       inc pc
     of SymbolDef:
       raiseAssert "BUG: symbol definition in single path"
@@ -353,25 +365,6 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
       if diff > 0 and i+diff <= last and reachable[i+diff - start]:
         let idx = BasicBlockIdx(i+diff)
         result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])).indegree += 1
-
-proc analyseExpr(c: var Context; pc: var Cursor) =
-  var nested = 0
-  while true:
-    case pc.kind
-    of Symbol:
-      inc pc
-    of SymbolDef:
-      raiseAssert "BUG: symbol definition in single path"
-    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
-      inc pc
-    of ParRi:
-      assert nested > 0
-      dec nested
-      inc pc
-    of ParLe:
-      inc nested
-      inc pc
-    if nested == 0: break
 
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
@@ -613,6 +606,8 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           skip pc # pragmas
           c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
           skip pc # type
+          if pc.kind != DotToken:
+            c.directlyInitialized.incl name
           analyseExpr c, pc
           skipParRi pc
         of NoStmt:
@@ -779,7 +774,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
 
-proc analyzeContracts*(input: var TokenBuf) =
+proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   #let oldInfos = prepare(input)
   var c = Context(typeCache: createTypeCache())
   c.typeCache.openScope()
@@ -793,12 +788,13 @@ proc analyzeContracts*(input: var TokenBuf) =
   endRead input
   #restore(input, oldInfos)
   c.typeCache.closeScope()
+  result = ensureMove c.errors
 
 when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parse(readFile(infile))
-    analyzeContracts(input)
+    discard analyzeContracts(input)
     #echo toString(outp, false)
 
   main(paramStr(1))
