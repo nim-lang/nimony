@@ -7143,13 +7143,13 @@ proc writeOutput(c: var SemContext; infile, outfile: string) =
   let depsFile = changeFileExt(infile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 
-proc quitWithError(c: var SemContext) =
+proc quitWithError(c: var SemContext; errors: sink TokenBuf = createTokenBuf(16)) =
   # See https://github.com/nim-lang/nimony/issues/985#issuecomment-2849271319
   if {IsMain, IsSystem} * c.moduleFlags != {}:
     quit 1
   else:
     writeFile c.outfile, "\n"   # nifreader fail to open if it is empty.
-    var errs = createTokenBuf(16)
+    var errs = ensureMove errors
     var n = beginRead c.dest
     errs.buildTree ErrT, NoLineInfo:
       var nested = 0
@@ -7345,8 +7345,8 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
     var afterSem = move c.dest
     when true: #defined(enableContracts):
       var moreErrors = analyzeContracts(afterSem)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
+      if reporters.reportErrors(moreErrors, {IsMain, IsSystem} * c.moduleFlags != {}) > 0:
+        quitWithError c, moreErrors
     var finalBuf = beginRead afterSem
     c.dest = injectDerefs(finalBuf)
   else:
