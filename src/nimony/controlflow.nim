@@ -11,6 +11,7 @@ import std/[assertions, intsets]
 include nifprelude
 
 import nimony_model, programs, typenav
+from typeprops import isOrdinalType
 
 const
   GotoInstr* = InlineInt
@@ -591,6 +592,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
   let info = n.info
   inc n
   let selectorType = c.typeCache.getType(n)
+  let isExhaustive = isOrdinalType(selectorType, allowEnumWithHoles=true)
   let simpleSelector = n.kind == Symbol
   var selector: SymId
   if simpleSelector:
@@ -607,15 +609,31 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: Target) =
     c.dest.addParRi()
 
   var endings: FixupList = @[]
+  var finalBranch = default(Cursor)
+  if isExhaustive:
+    var nn = n
+    while nn.substructureKind == OfU:
+      finalBranch = nn
+      skip nn
+    if nn.substructureKind == ElseU:
+      finalBranch = default(Cursor)
   while n.substructureKind == OfU:
-    inc n
-    var tjmp: FixupList = @[]
-    var fjmp: FixupList = @[]
-    trCaseRanges c, n, selector, selectorType, tjmp, fjmp
-    for t in tjmp: c.patch t
-    trStmtOrExpr c, n, tar
-    endings.add c.jmpForw(n.info)
-    for f in fjmp: c.patch f
+    if n == finalBranch:
+      # compile the final branch like an `else` to model the exhaustiveness precisely
+      # in the control flow graph:
+      inc n
+      skip n # ranges
+      trStmtOrExpr c, n, tar
+      endings.add c.jmpForw(n.info) # this is crucial if we use the graph to compute basic blocks
+    else:
+      inc n
+      var tjmp: FixupList = @[]
+      var fjmp: FixupList = @[]
+      trCaseRanges c, n, selector, selectorType, tjmp, fjmp
+      for t in tjmp: c.patch t
+      trStmtOrExpr c, n, tar
+      endings.add c.jmpForw(n.info)
+      for f in fjmp: c.patch f
     skipParRi n
   if n.substructureKind == ElseU:
     inc n
