@@ -242,16 +242,30 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
       inc pc
     if nested == 0: break
 
-proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
-  var fnType = skipProcTypeToParams(fnType)
+proc analyseCallArgs(c: var Context; n: var Cursor) =
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n))
+  analyseExpr c, n # the `fn` itself could be a proc pointer we must ensure was initialized
   assert fnType.isParamsTag
-  inc fnType # skip `params`
+  inc fnType
   var paramMap = initTable[SymId, int]() # param to position
-  while fnType.kind != ParRi:
+  while n.kind != ParRi:
+    let previousFormalParam = fnType
+    assert fnType.kind != ParRi
     let param = takeLocal(fnType, SkipFinalParRi)
     paramMap[param.name.symId] = paramMap.len+1
-  skipParRi fnType
-  skip fnType # skip return type
+    let pk = param.typ.typeKind
+    if pk == OutT:
+      if n.kind == Symbol:
+        # is now initialized:
+        c.writesTo.add n.symId
+    elif pk == VarargsT:
+      # do not advance formal parameter:
+      fnType = previousFormalParam
+    analyseExpr c, n
+  while fnType.kind != ParRi: skip fnType
+  inc fnType # skip ParRi
+  # skip return type:
+  skip fnType
   # now we have the pragmas:
   let req = extractPragma(fnType, RequiresP)
   if not cursorIsNil(req):
@@ -261,14 +275,10 @@ proc analyseCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
       # XXX Enable when it works
       if res != Proven:
         error "contract violation: ", req
-  while n.kind != ParRi:
-    analyseExpr c, n
 
 proc analyseCall(c: var Context; n: var Cursor) =
   inc n # skip call instruction
-  let fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  assert fnType.isParamsTag
-  analyseCallArgs(c, n, fnType)
+  analyseCallArgs(c, n)
   skipParRi n
 
 #[
