@@ -7146,25 +7146,27 @@ proc quitWithError(c: var SemContext; errors: sink TokenBuf = createTokenBuf(16)
     var errs = ensureMove errors
     var n = beginRead c.dest
     errs.buildTree ErrT, NoLineInfo:
-      var nested = 0
-      while true:
-        case n.kind
-        of ParLe:
-          if n.tagId == ErrT:
-            errs.takeTree n
+      if n.tagId == ErrT:
+        errs.takeTree n
+      else:
+        var nested = 0
+        while true:
+          case n.kind
+          of ParLe:
+            if n.tagId == ErrT:
+              errs.takeTree n
+            else:
+              inc nested
+              inc n
+          of ParRi:
+            dec nested
+            inc n
             if nested == 0:
               break
-            continue
+          of EofToken:
+            raiseAssert "expected ')', but EOF reached"
           else:
-            inc nested
-        of ParRi:
-          dec nested
-          if nested == 0:
-            break
-        of EofToken:
-          raiseAssert "expected ')', but EOF reached"
-        else: discard
-        inc n
+            inc n
     endRead c.dest
     let indexFile = changeFileExt(c.outfile, ".idx.nif")
     writeFile indexFile, "(.nif24)\n" & toString(errs)
