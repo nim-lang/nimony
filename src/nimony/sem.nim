@@ -3438,13 +3438,16 @@ proc semLocalValue(c: var SemContext; it: var Item; crucial: CrucialPragma) =
 proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   let declStart = c.dest.len
   takeToken c, n
-  let delayed = handleSymDef(c, n, kind) # 0
+  var delayed = handleSymDef(c, n, kind) # 0
   let beforeExportMarker = c.dest.len
   wantExportMarker c, n # 1
   var crucial = CrucialPragma(sym: delayed.s.name)
   semPragmas c, n, crucial, kind # 2
   if crucial.magic.len > 0:
     exportMarkerBecomesNifTag c, beforeExportMarker, crucial
+  if delayed.status == OkExistingFresh and InjectP in crucial.flags:
+    # symbol is injected, add it to scope
+    delayed.status = OkNew
   case kind
   of TypevarY:
     discard semLocalType(c, n, InGenericConstraint)
@@ -3544,7 +3547,11 @@ proc evalConstStrExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): S
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
   let declStart = c.dest.len
   takeToken c, n
-  let delayed = handleSymDef(c, n, EfldY) # 0
+  var delayed = handleSymDef(c, n, EfldY) # 0
+  if delayed.status == OkExistingFresh:
+    # XXX original nim always injects enum fields regardless of the enum sym itself,
+    # this does the same here
+    delayed.status = OkNew
   let beforeExportMarker = c.dest.len
   if n.kind == DotToken:
     if state.isExported:
@@ -3891,6 +3898,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   let info = it.n.info
   let declStart = c.dest.len
   takeToken c, it.n
+  let beforeName = c.dest.len
   let (symId, status) = declareOverloadableSym(c, it, kind)
 
   let beforeExportMarker = c.dest.len
@@ -3921,6 +3929,13 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       addVarargsParameter c, beforeParams, crucial.hasVarargs
     if crucial.magic.len > 0:
       exportMarkerBecomesNifTag c, beforeExportMarker, crucial
+    if status == OkExistingFresh and InjectP in crucial.flags:
+      # symbol is injected, add it to scope
+      let s = Sym(kind: kind, name: symId, pos: beforeName)
+      var name = pool.syms[symId]
+      extractBasename(name)
+      # go up a scope for the parameter scope:
+      c.currentScope.up.addOverloadable(pool.strings.getOrIncl(name), s)
     if it.n.kind == DotToken:
       takeToken c, it.n
     else:
@@ -4861,7 +4876,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   let declStart = c.dest.len
   takeToken c, n
   # name, export marker, generic params, pragmas, body
-  let delayed = handleSymDef(c, n, TypeY) # 0
+  var delayed = handleSymDef(c, n, TypeY) # 0
   let beforeExportMarker = c.dest.len
   wantExportMarker c, n # 1
 
@@ -4885,6 +4900,9 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     isGeneric = true
 
   let crucial = semTypePragmas(c, n, delayed.s.name, beforeExportMarker)
+  if delayed.status == OkExistingFresh and InjectP in crucial.flags:
+    # symbol is injected, add it to scope
+    delayed.status = OkNew
 
   if c.phase == SemcheckSignatures or
       (delayed.status in {OkNew, OkExistingFresh} and
