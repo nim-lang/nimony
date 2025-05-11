@@ -637,12 +637,18 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
             analyseCall c, pc
             skip pc
             skipParRi pc
-          elif pc.exprKind == PragmaxX:
-            inc pc
-            skip pc # pragmas
-            inc nested
           else:
-            raiseAssert "BUG: unknown statement: " & toString(pc, false)
+            case pc.exprKind
+            of PragmaxX:
+              inc pc
+              skip pc # pragmas
+              inc nested
+            of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
+              inc pc
+              analyseExpr c, pc
+              skipParRi pc
+            else:
+              raiseAssert "BUG: unknown statement: " & toString(pc, false)
         of DiscardS, YldS:
           inc pc
           analyseExpr c, pc
