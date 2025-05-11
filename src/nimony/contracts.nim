@@ -766,6 +766,7 @@ proc traverseProc(c: var Context; n: var Cursor) =
   else:
     skip n # body
     skipParRi n
+  skipParRi n # proc decl end
 
 proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind
