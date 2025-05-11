@@ -757,15 +757,13 @@ proc traverseProc(c: var Context; n: var Cursor) =
         inc n
       elif n.kind == ParRi:
         dec nested
-        if nested == 0: break
         inc n
+        if nested == 0: break
       else:
         inc n
         if nested == 0: break
-    skipParRi n
   else:
     skip n # body
-    skipParRi n
   skipParRi n # proc decl end
 
 proc traverseToplevel(c: var Context; n: var Cursor) =
