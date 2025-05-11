@@ -214,6 +214,8 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
   else:
     result = Unprovable
 
+proc analyseCall(c: var Context; n: var Cursor)
+
 proc analyseExpr(c: var Context; pc: var Cursor) =
   var nested = 0
   while true:
@@ -236,8 +238,11 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
       dec nested
       inc pc
     of ParLe:
-      inc nested
-      inc pc
+      if pc.exprKind in CallKinds:
+        analyseCall c, pc
+      else:
+        inc nested
+        inc pc
     if nested == 0: break
 
 proc analyseCallArgs(c: var Context; n: var Cursor) =
@@ -624,7 +629,6 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           skip pc # type
           if pc.kind != DotToken or skipInitCheck:
             c.directlyInitialized.incl name
-          echo "looking at: ", toString(pc, false)
           analyseExpr c, pc
           skipParRi pc
         of NoStmt:
