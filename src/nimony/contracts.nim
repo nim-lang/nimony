@@ -13,8 +13,6 @@ code snippet.
 
 In order to not to be too annoying in the case of a contract violation, the
 compiler emits a warning (that can be suppressed or turned into an error).
-The warning also triggers a runtime check so this entire pass becomes yet
-another code transformation.
 
 ]##
 
@@ -286,7 +284,7 @@ We use the control flow graph for a structured traversal over the basic blocks (
 We start with the proc entry. We follow the bb until we arrive at a `goto` instruction
 or at a `ite` instruction which know has two goto instructions.
 We know a `goto` enters a different bb. We add this bb to a worklist. We can process
-this bb once all its predecessors have been processed. We keep track of that by
+this bb once all its predecessors have been processed. We keep track of that by a
 lookup table that counts the indegree of each bb.
 ]#
 type
@@ -491,6 +489,11 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
   if pc.kind == Symbol:
     let symId = pc.symId
+    let x = getLocalInfo(c.typeCache, symId)
+    if x.kind in {LetY, GletY, TletY}:
+      if symId in c.directlyInitialized or symId in c.writesTo:
+        c.buildErr pc.info, "invalid reassignment to `let` variable"
+
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
     c.writesTo.add symId
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
