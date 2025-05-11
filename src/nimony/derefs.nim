@@ -175,7 +175,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   else:
     result = false
 
-proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
+proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   var n = n
   while true:
     case n.exprKind
@@ -203,10 +203,13 @@ proc borrowsFromReadonly(c: var Context; n: Cursor): bool =
       result = true
     of LetY, GletY, TletY:
       let tk = local.typ.typeKind
-      result = tk notin {MutT, OutT, LentT}
-      if result and isViewType(local.typ):
-        # Special rule to make `toOpenArray` work:
-        result = borrowsFromReadonly(c, local.val)
+      if allowLet:
+        result = tk == LentT # see VarY case
+      else:
+        result = tk notin {MutT, OutT, LentT}
+        if result and isViewType(local.typ):
+          # Special rule to make `toOpenArray` work:
+          result = borrowsFromReadonly(c, local.val)
     of VarY, GvarY, TvarY:
       result = local.typ.typeKind == LentT
     of ParamY:
@@ -512,7 +515,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
       tr c, n, e
       if n.exprKind == TupConstrX:
         checkTupleConstrBorrowing(c, n)
-  elif borrowsFromReadonly(c, n):
+  elif borrowsFromReadonly(c, n, allowLet=true):
     err = LocationIsConst
   else:
     tr c, n, e

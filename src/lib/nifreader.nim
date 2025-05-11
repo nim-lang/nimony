@@ -44,7 +44,7 @@ type
 
   Reader* = object
     p: pchar
-    eof: pchar
+    eof: pointer # so that <= uses the correct comparison, not the cstring crap
     f: MemFile
     buf: string
     line*: int32 # file position within the NIF file, not affected by line annotations
