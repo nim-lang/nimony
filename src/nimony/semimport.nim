@@ -49,8 +49,8 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
   result = SymId(0)
-  let isProcessed = c.processedModules.contains(suffix)
-  if not isProcessed:
+  let isFirstProcess = suffix notin c.processedModules
+  if isFirstProcess:
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
       selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
@@ -68,36 +68,20 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   else:
     result = c.processedModules[suffix]
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2))
-  let beforeErrors = c.dest.len
-  loadInterface suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, c.dest, mode
-  if c.dest.len > beforeErrors:
-    var n = cursorAt(c.dest, beforeErrors)
-    if {IsMain, IsSystem} * c.moduleFlags == {}:
+  var errs = TokenBuf()
+  let isExpandErr = {IsMain, IsSystem} * c.moduleFlags != {}
+  if not loadInterface(suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, errs, c.processedModules,
+                       mode, isFirstProcess, isExpandErr):
+    if isExpandErr:
+      c.dest.add errs
+    else:
       writeFile c.outfile, "\n"
       let indexFile = changeFileExt(c.outfile, ".idx.nif")
-      var errs = createTokenBuf(2)
-      errs.buildTree ErrT, info:
-        if n.kind == StringLit:
-          errs.add n
-        else:
-          errs.addStrLit suffix
-      writeFile indexFile, "(.nif24)\n" & toString(errs)
+      var outErrs = createTokenBuf(2 + errs.len)
+      outErrs.buildTree ErrT, info:
+        outErrs.add errs
+      writeFile indexFile, "(.nif24)\n" & toString(outErrs)
       quit 0
-    else:
-      if n.kind == StringLit:
-        let errSrcModuleSuffix = pool.strings[n.litId]
-        endRead(c.dest)
-        c.dest.shrink beforeErrors
-        if errSrcModuleSuffix notin c.processedModules:
-          let errSrcIndexFile = errSrcModuleSuffix.suffixToNif.changeFileExt".idx.nif"
-          let index = readIndex errSrcIndexFile
-          assert index.errors.len > 0
-          c.dest.add index.errors
-          c.processedModules[errSrcModuleSuffix] = SymId(0)
-      else:
-        endRead(c.dest)
-        if isProcessed:
-          c.dest.shrink beforeErrors
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;

@@ -91,11 +91,32 @@ proc loadInterface*(suffix: string; iface: var Iface;
                     converters, methods: var Table[SymId, seq[SymId]];
                     exports: var seq[(string, ImportFilter)];
                     errors: var TokenBuf;
-                    filter: ImportFilter) =
+                    processedModules: var Table[string, SymId];
+                    filter: ImportFilter;
+                    loadErrors, expandErrors: bool): bool =
+  # returns false when imported module was not compiled successfully.
   let m = load(suffix)
   if m.index.errors.len > 0:
-    errors.add m.index.errors
-    return
+    if loadErrors:
+      if expandErrors:
+        if m.index.errors[0].kind == StringLit:
+          let errSrcModuleSuffix = pool.strings[m.index.errors[0].litId]
+          if errSrcModuleSuffix notin processedModules:
+            let errSrcIndexFile = errSrcModuleSuffix.suffixToNif.changeFileExt".idx.nif"
+            let index = readIndex errSrcIndexFile
+            errors = createTokenBuf(index.errors.len)
+            errors.add index.errors
+            processedModules[errSrcModuleSuffix] = SymId(0)
+        else:
+          errors = createTokenBuf(m.index.errors.len)
+          errors.add m.index.errors
+      else:
+        errors = createTokenBuf(1)
+        if m.index.errors[0].kind == StringLit:
+          errors.add m.index.errors
+        else:
+          errors.addStrLit suffix
+    return false
 
   let alreadyLoaded = iface.len != 0
   var marker = filter.list
@@ -138,6 +159,8 @@ proc loadInterface*(suffix: string; iface: var Iface;
       exportFilter.list.incl(s)
     mergeFilter(exportFilter, filter)
     exports.add (path, ensureMove exportFilter)
+
+  return true
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
   when defined(debug):
