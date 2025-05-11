@@ -624,6 +624,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           skip pc # type
           if pc.kind != DotToken or skipInitCheck:
             c.directlyInitialized.incl name
+          echo "looking at: ", toString(pc, false)
           analyseExpr c, pc
           skipParRi pc
         of NoStmt:
