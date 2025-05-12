@@ -217,6 +217,7 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
 proc analyseCall(c: var Context; n: var Cursor)
 
 proc analyseExpr(c: var Context; pc: var Cursor) =
+  #echo "analyseExpr ", toString(pc, false)
   var nested = 0
   while true:
     case pc.kind

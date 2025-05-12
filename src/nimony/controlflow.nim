@@ -486,7 +486,7 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
     let temp = openTempVar(c, VarS, c.typeCache.getType(n), NoLineInfo)
     c.dest.addDotToken()
     c.dest.addParRi() # close temp var declaration
-    var aa = Target(m: IsEmpty)
+    var aa = Target(m: IsVar)
     aa.t.addSymUse temp, info
     case kind
     of IfExpr:
