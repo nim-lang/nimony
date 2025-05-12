@@ -49,7 +49,8 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
   result = SymId(0)
-  if not c.processedModules.contains(suffix):
+  let isFirstProcess = suffix notin c.processedModules
+  if isFirstProcess:
     c.meta.importedFiles.add f2
     if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
       selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
@@ -67,7 +68,20 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   else:
     result = c.processedModules[suffix]
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2))
-  loadInterface suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, mode
+  var errs = TokenBuf()
+  let isExpandErr = {IsMain, IsSystem} * c.moduleFlags != {}
+  if not loadInterface(suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, errs, c.processedModules,
+                       mode, isFirstProcess, isExpandErr):
+    if isExpandErr:
+      c.dest.add errs
+    else:
+      writeFile c.outfile, "\n"
+      let indexFile = changeFileExt(c.outfile, ".idx.nif")
+      var outErrs = createTokenBuf(2 + errs.len)
+      outErrs.buildTree ErrT, info:
+        outErrs.add errs
+      writeFile indexFile, "(.nif24)\n" & toString(outErrs)
+      quit 0
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
