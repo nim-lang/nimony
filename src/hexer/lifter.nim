@@ -233,7 +233,7 @@ proc needsDeref(c: var LiftingCtx; obj: TokenBuf; paramPos: int): bool {.inline.
   result = (c.op in {attachedTrace, attachedWasMoved} or (c.op in {attachedCopy, attachedSink} and paramPos == 0)) and
     obj[0].kind == Symbol # still access to the parameter directly
 
-proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; paramPos = 0): TokenBuf =
+proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; paramPos = 0; depth = 0): TokenBuf =
   assert name.kind == SymbolDef
   let nameSym = name.symId
   result = createTokenBuf(4)
@@ -245,7 +245,7 @@ proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; paramPos = 0
     if nd:
       result.addParRi()
     copyIntoSymUse result, nameSym, c.info
-    result.addIntLit(0, c.info)
+    result.addIntLit(depth, c.info)
 
 proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): TokenBuf =
   result = createTokenBuf(4)
@@ -258,21 +258,21 @@ proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): T
       copyTree result, tup
     result.add intToken(pool.integers.getOrIncl(idx), c.info)
 
-proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf) =
+proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
   assert r.kind == FldY
   # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
   let fieldType = r.typ
   case c.op
   of attachedDestroy, attachedTrace, attachedWasMoved:
-    let a = accessObjField(c, paramA, r.name)
+    let a = accessObjField(c, paramA, r.name, depth = depth)
     unravel c, fieldType, a, paramB
   of attachedCopy, attachedSink, attachedDup:
-    let a = accessObjField(c, paramA, r.name, 0)
-    let b = accessObjField(c, paramB, r.name, 1)
+    let a = accessObjField(c, paramA, r.name, 0, depth = depth)
+    let b = accessObjField(c, paramB, r.name, 1, depth = depth)
     unravel c, fieldType, a, b
 
-proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf) =
+proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   while n.kind != ParRi:
     case n.substructureKind
     of CaseU:
@@ -282,14 +282,14 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
         var nCopy = n
         let prevOp = c.op
         c.op = attachedDestroy
-        unravelObjFields(c, nCopy, paramA, paramB)
+        unravelObjFields(c, nCopy, paramA, paramB, depth)
         c.op = prevOp
       let info = n.info
       inc n
       var selector = n
       if c.op != attachedDestroy:
         # copy the selector before case stmt, but destroy after case stmt
-        unravelObjField c, selector, paramA, paramB
+        unravelObjField c, selector, paramA, paramB, depth
 
       c.dest.addParLe CaseU, info
 
@@ -304,14 +304,14 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
           c.dest.takeTree(n)
           assert n.stmtKind == StmtsS
           c.dest.takeToken(n)
-          unravelObjFields c, n, paramA, paramB
+          unravelObjFields c, n, paramA, paramB, depth
           takeParRi(c.dest, n)
           takeParRi(c.dest, n)
         of ElseU:
           c.dest.takeToken(n)
           assert n.stmtKind == StmtsS
           c.dest.takeToken(n)
-          unravelObjFields c, n, paramA, paramB
+          unravelObjFields c, n, paramA, paramB, depth
           takeParRi(c.dest, n)
           takeParRi(c.dest, n)
         else:
@@ -321,15 +321,16 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
 
       if c.op == attachedDestroy:
         # destroy the selector after case stmt
-        unravelObjField c, selector, paramA, paramB
+        unravelObjField c, selector, paramA, paramB, depth
     of FldU:
-      unravelObjField c, n, paramA, paramB
+      unravelObjField c, n, paramA, paramB, depth
     of NilU:
       skip n
     else:
       error "illformed AST inside object: ", n
 
-proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
+
+proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: int) =
   var n = n
   if n.typeKind in {RefT, PtrT}:
     inc n
@@ -340,9 +341,9 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
     var parent = n
     if parent.typeKind in {RefT, PtrT}:
       inc parent
-    unravelObj c, toTypeImpl(parent), paramA, paramB
+    unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
   skip n # inheritance is gone
-  unravelObjFields c, n, paramA, paramB
+  unravelObjFields c, n, paramA, paramB, depth
 
 proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
@@ -551,7 +552,7 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
         setupVTableField c, paramA, orig.symId
       elif c.op in {attachedDestroy, attachedTrace}:
         c.routineKind = MethodY
-    unravelObj c, typ, paramA, paramB
+    unravelObj c, typ, paramA, paramB, 0
   of DistinctT:
     unravelDispatch(c, typ.firstSon, paramA, paramB)
   of TupleT:
