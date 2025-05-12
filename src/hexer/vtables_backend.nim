@@ -103,7 +103,7 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
     return result
 
   let info = n.info
-  let takeAddr = not constructsValue(n)
+  let takeAddr = not constructsValue(n) and n.exprKind notin {AddrX, HaddrX}
   let argType = getType(c.typeCache, n)
   c.needsXelim = true
 
@@ -191,7 +191,12 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     let info = n.info
     var temp = evalOnce(c, dest, n)
-    if typ.typeKind in {RefT, PtrT}:
+
+    var paramList = fnType
+    assert paramList.substructureKind == ParamsU
+    inc paramList
+    let param = takeLocal(paramList, SkipFinalParRi)
+    if param.typ.typeKind in {RefT, PtrT}:
       # nil check
       if not temp.needsParRi:
         c.needsXelim = true
@@ -242,10 +247,12 @@ proc trGetRtti(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n # call
   skip n # skip "getRtti" symbol
   assert n.kind == Symbol # we have the class name here
-  let vtabName = getVTableName(c, n.symId)
+  let typ = getType(c.typeCache, n)
+  let cls = getClass(typ)
+  let vtabName = getVTableName(c, cls)
   dest.copyIntoKind AddrX, info:
     dest.addSymUse vtabName, info
-    maybeImport(c, n.symId, vtabName)
+    maybeImport(c, cls, vtabName)
   inc n
   skipParRi n
 
@@ -274,7 +281,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: 
     dest.takeToken n # skip `(call)`
     trMethodCall c, dest, n
     takeParRi dest, n
-  elif n.kind == Symbol and n.symId == c.getRttiSym:
+  elif fn.kind == Symbol and fn.symId == c.getRttiSym:
     trGetRtti c, dest, n
   else:
     dest.takeToken n # skip `(call)`
