@@ -242,7 +242,7 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false)
 template maybeAddName(c: var GeneratedCode; name: string; isConst: bool) =
   if isConst:
     c.add Space
-    c.add ConstKeyword
+    c.add "const"
   if name != "":
     c.add Space
     c.add name
