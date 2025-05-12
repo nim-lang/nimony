@@ -597,6 +597,8 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
 
   if it == nil:
     raiseAssert "return outside of routine"
+  if control == nil:
+    control = it
   inc n # skip `(ret`
   if (n.kind == Symbol and n.symId == it.sym) or (n.kind == DotToken):
     discard "do not generate `result = result`"
@@ -743,6 +745,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   let typ = c.typeCache.getType(n)
   trExpr c, n, aa
   trExpr c, n, bb
+  skipParRi n
   c.dest.add head
   c.dest.add aa
   c.dest.add bb
