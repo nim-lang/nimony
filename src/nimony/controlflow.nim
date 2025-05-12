@@ -227,12 +227,7 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
   inc n
 
 proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  c.dest.add n
-  inc n
-  while n.kind != ParRi:
-    trExpr c, n, tar
-  c.dest.addParRi()
-  inc n
+  trExprLoop c, n, tar
 
 proc trVoidCall(c: var ControlFlow; n: var Cursor) =
   var tar = Target(m: IsAppend)
