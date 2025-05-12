@@ -206,32 +206,24 @@ proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLi
   c.dest.copyTree typ
 
 proc trStmtListExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  var typ = default(Cursor)
-  let info = n.info
   inc n
   while n.kind != ParRi:
-    if isLastSon(n):
-      typ = c.typeCache.getType(n)
-      break
-    trStmt c, n
-
-  if cursorIsNil(typ):
-    when defined(debug):
-      writeStackTrace()
-    quit "trStmtListExpr: type is nil"
-
-  let temp = openTempVar(c, LetS, typ, NoLineInfo)
-  trExpr c, n, tar
-  c.dest.addParRi() # close temp var declaration
+    if not isLastSon(n):
+      trStmt c, n
+    else:
+      trExpr c, n, tar
   skipParRi n
-  tar.t.addSymUse temp, info
 
 proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  c.dest.add n
+  if tar.m == IsEmpty:
+    tar.m = IsAppend
+  else:
+    assert tar.m == IsAppend
+  tar.t.add n
   inc n
   while n.kind != ParRi:
     trExpr c, n, tar
-  c.dest.addParRi()
+  tar.t.addParRi()
   inc n
 
 proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
