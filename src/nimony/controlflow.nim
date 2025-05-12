@@ -680,9 +680,23 @@ proc trResult(c: var ControlFlow; n: var Cursor) =
 
 proc trLocal(c: var ControlFlow; n: var Cursor) =
   let kind = n.symKind
+  let orig = n
+  inc n
+  let name = n.symId
+  skip n # name
+  skip n # export marker
+  skip n # pragmas
+  #c.typeCache.registerLocal(name, kind, n)
+  skip n # type
+
+  var aa = Target(m: IsEmpty)
+  trExpr c, n, aa
+  n = orig
   copyInto c.dest, n:
+    let sym = n
     takeLocalHeader c.typeCache, c.dest, n, kind
-    trUseExpr c, n
+    skip n # value
+    c.dest.add aa
 
 proc trRaise(c: var ControlFlow; n: var Cursor) =
   # we map `raise x` to `currexc = x; return`.
