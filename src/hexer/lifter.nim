@@ -528,16 +528,23 @@ proc unravel(c: var LiftingCtx; typ: TypeCursor; paramA, paramB: TokenBuf) =
     let fn = lift(c, typ)
     maybeCallHook c, fn, paramA, paramB
 
+proc depth(s: SymId): int =
+  result = 0
+  var root = s
+  for r in inheritanceChain(s):
+    root = r
+    inc result
+
 proc setupVTableField(c: var LiftingCtx; param: TokenBuf; cls: SymId) =
   copyIntoKind c.dest, AsgnS, c.info:
     copyIntoKind c.dest, DotX, c.info:
       copyIntoKind c.dest, DerefX, c.info:
         copyTree c.dest, param
       copyIntoSymUse c.dest, pool.syms.getOrIncl(VTableField), c.info
-      c.dest.addIntLit(0, c.info)
+      c.dest.addIntLit(depth(cls), c.info)
     copyIntoKind c.dest, CallX, c.info:
       copyIntoSymUse c.dest, getCompilerProc(c, "getRtti"), c.info
-      copyIntoSymUse c.dest, cls, c.info
+      copyTree c.dest, param
 
 proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenBuf) =
   #if isTrivial(c, typ):
