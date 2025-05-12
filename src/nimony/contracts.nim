@@ -573,7 +573,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
   var nested = 0
   var pc = pc
   while true:
-    #echo "PC IS: ", pc.kind
+    #echo "Instruction is ", toString(pc, false)
     case pc.kind
     of GotoInstr:
       # Every goto intruction leaves the basic block.

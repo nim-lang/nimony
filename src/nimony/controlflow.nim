@@ -265,11 +265,17 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     fjmp.add c.jmpForw(info)
     c.dest.addParRi()
 
+proc trUseExpr(c: var ControlFlow; n: var Cursor) =
+  var aa = Target(m: IsEmpty)
+  trExpr c, n, aa
+  c.dest.add aa
+
 proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if tar.m != IsIgnored:
     c.dest.addParLe(AsgnS, n.info)
+    assert tar.t.len > 0
     c.dest.add tar
-    trExpr c, n, tar
+    trUseExpr c, n
     c.dest.addParRi()
   else:
     trStmt c, n
@@ -300,11 +306,6 @@ proc trIf(c: var ControlFlow; n: var Cursor; tar: var Target) =
   skipParRi n
   for i in countdown(endings.high, 0):
     c.patch(endings[i])
-
-proc trUseExpr(c: var ControlFlow; n: var Cursor) =
-  var aa = Target(m: IsEmpty)
-  trExpr c, n, aa
-  c.dest.add aa
 
 proc trCaseRanges(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
                tjmp, fjmp: var FixupList) =
@@ -731,7 +732,9 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
 
   let typ = c.typeCache.getType(n)
   trExpr c, n, aa
+  assert aa.t.len > 0
   trExpr c, n, bb
+  assert bb.t.len > 0
   skipParRi n
   c.dest.add head
   c.dest.add aa
