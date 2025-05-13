@@ -382,25 +382,6 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
         let idx = BasicBlockIdx(i+diff)
         result.mgetOrPut(idx, BasicBlock(indegree: 0, indegreeFacts: createFacts(), writesTo: @[])).indegree += 1
 
-proc analyseExpr(c: var Context; pc: var Cursor) =
-  var nested = 0
-  while true:
-    case pc.kind
-    of Symbol:
-      inc pc
-    of SymbolDef:
-      raiseAssert "BUG: symbol definition in single path"
-    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
-      inc pc
-    of ParRi:
-      assert nested > 0
-      dec nested
-      inc pc
-    of ParLe:
-      inc nested
-      inc pc
-    if nested == 0: break
-
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
   if pc.exprKind in {AddX, SubX}:
