@@ -126,13 +126,13 @@ type
     m: Mode
     t: TokenBuf
 
-proc makeVar(c: var ControlFlow; info: PackedLineInfo; tar: var Target): TargetWrapper =
+proc makeVar(c: var ControlFlow; info: PackedLineInfo; tar: var Target; typ: Cursor): TargetWrapper =
   case tar.m
   of IsVar:
     result = TargetWrapper(m: IsVar)
   of IsEmpty, IsIgnored, IsAppend:
     result = TargetWrapper(m: tar.m, t: move(tar.t))
-    let tmp = openTempVar(c, VarS, c.typeCache.builtins.boolType, info)
+    let tmp = openTempVar(c, VarS, typ, info)
     c.dest.addDotToken()
     c.dest.addParRi()
     tar.m = IsVar
@@ -148,7 +148,7 @@ proc maybeAppend(tar: var Target; w: var TargetWrapper) =
 proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   # `tar = x and y` <=> `if x: tar = y else: tar = false`
   let info = n.info
-  var w = makeVar(c, info, tar)
+  var w = makeVar(c, info, tar, c.typeCache.builtins.boolType)
 
   inc n
   var aa = Target(m: IsEmpty)
@@ -183,7 +183,7 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
 proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   # `tar = x or y` <=> `if x: tar = true else: tar = y`
   let info = n.info
-  var w = makeVar(c, info, tar)
+  var w = makeVar(c, info, tar, c.typeCache.builtins.boolType)
 
   inc n
   var aa = Target(m: IsEmpty)
@@ -621,9 +621,11 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     discard "do not generate `result = result`"
     inc n
   else:
+    var aa = Target(m: IsEmpty)
+    trExpr c, n, aa
     c.dest.addParLe(AsgnS, n.info)
     c.dest.addSymUse it.sym, n.info
-    trUseExpr c, n
+    c.dest.add aa
     c.dest.addParRi()
   skipParRi n
   control.breakInstrs.add c.jmpForw(n.info)
@@ -729,10 +731,13 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
 
 proc trRaise(c: var ControlFlow; n: var Cursor) =
   # we map `raise x` to `currexc = x; return`.
-  c.dest.addParLe(AsgnS, n.info)
+  let info = n.info
   inc n
-  c.dest.addSymUse pool.syms.getOrIncl("currexc.0.sys"), n.info
-  trUseExpr c, n
+  var aa = Target(m: IsEmpty)
+  trExpr c, n, aa
+  c.dest.addParLe(AsgnS, info)
+  c.dest.addSymUse pool.syms.getOrIncl("currexc.0.sys"), info
+  c.dest.add aa
   c.dest.addParRi()
   skipParRi n
   var it {.cursor.} = c.currentBlock
@@ -741,7 +746,7 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
   if it == nil:
     raiseAssert "raise outside of routine"
   else:
-    it.breakInstrs.add c.jmpForw(n.info)
+    it.breakInstrs.add c.jmpForw(info)
 
 proc isComplexLhs(n: Cursor): bool =
   var n = n
