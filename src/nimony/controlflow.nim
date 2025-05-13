@@ -161,10 +161,18 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   fjmp.add c.jmpForw(info)
   c.dest.addParRi()
   for t in tjmp: c.patch t
-  trExpr c, n, tar
+  assert tar.m == IsVar
+  # tar = y
+  var bb = Target(m: IsEmpty)
+  trExpr c, n, bb
+  c.dest.copyIntoKind AsgnS, info:
+    c.dest.add tar
+    c.dest.add bb
+
   let lend = c.jmpForw(info)
   for f in fjmp: c.patch f
   assert tar.m == IsVar
+  # tar = false:
   c.dest.copyIntoKind AsgnS, info:
     c.dest.add tar
     c.dest.addParPair(FalseX, info)
@@ -189,12 +197,21 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   c.dest.addParRi()
   for t in tjmp: c.patch t
   assert tar.m == IsVar
+  # tar = true
   c.dest.copyIntoKind AsgnS, info:
     c.dest.add tar
     c.dest.addParPair(TrueX, info)
   let lend = c.jmpForw(info)
   for f in fjmp: c.patch f
-  trExpr c, n, tar
+
+  # tar = y
+  assert tar.m == IsVar
+  var bb = Target(m: IsEmpty)
+  trExpr c, n, bb
+  c.dest.copyIntoKind AsgnS, info:
+    c.dest.add tar
+    c.dest.add bb
+
   c.patch lend
   skipParRi n
   maybeAppend tar, w
@@ -254,7 +271,7 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if tar.m == IsEmpty:
     tar.m = IsAppend
   else:
-    assert tar.m == IsAppend
+    assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
   tar.t.add n
   inc n
   while n.kind != ParRi:
