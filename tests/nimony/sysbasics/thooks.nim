@@ -34,14 +34,14 @@ proc `=destroy`[T, Y](x: MyObject[T, Y]) =
   let x = 12
 
 proc foo =
-  var obj: MyObject[int, float]
+  var obj = default MyObject[int, float]
 
-  var obj2: MyObject[float, int]
+  var obj2 = default MyObject[float, int]
 
   `=destroy`(obj)
 
-  var objbase: MyObjectBase
-  var objbase2: MyObjectBase
+  var objbase = default MyObjectBase
+  var objbase2 = default MyObjectBase
   `=destroy`(objbase2)
   `=destroy`(objbase)
 

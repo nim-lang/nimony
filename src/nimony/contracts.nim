@@ -647,6 +647,9 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
             of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
               inc pc
               analyseExpr c, pc
+              # don't assume arity here
+              while pc.kind != ParRi:
+                analyseExpr c, pc
               skipParRi pc
             else:
               raiseAssert "BUG: unknown statement: " & toString(pc, false)
