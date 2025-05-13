@@ -716,7 +716,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           skip n
           continue
         of BuildP, EmitP:
-          raiseAssert "unreachable"
+          bug "unreachable"
         skipParRi c, n
       else:
         error c, "unknown pragma: ", n

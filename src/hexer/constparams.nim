@@ -301,7 +301,7 @@ proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
     c.keepOverflowFlag = oldKeepOverflowFlag
   else:
-    raiseAssert "unknown pragma block: " & toString(n, false)
+    bug "unknown pragma block: " & toString(n, false)
   skipParRi n # pragmax
 
 proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =

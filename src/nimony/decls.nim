@@ -66,7 +66,7 @@ proc takeLocal*(c: var Cursor; mode: SkipMode): Local =
         if c.kind == ParRi:
           inc c
         else:
-          raiseAssert "expected ')' inside (" & $result.kind
+          bug "expected ')' inside (" & $result.kind
 
 proc asLocal*(c: Cursor; mode = SkipInclBody): Local =
   var c = c
@@ -119,7 +119,7 @@ proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
         if c.kind == ParRi:
           inc c
         else:
-          raiseAssert "expected ')' inside (" & $result.kind
+          bug "expected ')' inside (" & $result.kind
 
 const
   TypevarsPos* = 3
@@ -164,7 +164,7 @@ proc takeTypeDecl*(c: var Cursor; mode: SkipMode): TypeDecl =
         if c.kind == ParRi:
           inc c
         else:
-          raiseAssert "expected ')' inside (" & $result.kind
+          bug "expected ')' inside (" & $result.kind
 
 proc asTypeDecl*(c: Cursor): TypeDecl =
   var c = c

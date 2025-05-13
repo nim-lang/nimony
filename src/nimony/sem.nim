@@ -2835,7 +2835,7 @@ proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind; info: Pack
       takeTree typeBuf, n
     takeParRi typeBuf, n
   else:
-    raiseAssert "unreachable" # see type kind check for magicKind
+    bug "unreachable" # see type kind check for magicKind
   var m = cursorAt(typeBuf, 0)
   semLocalTypeImpl c, m, InLocalDecl
 
@@ -3804,7 +3804,7 @@ proc semHook(c: var SemContext; name: string; beforeParams: int; symId: SymId, i
     checkTypeHook(c, params, DupH, info)
     result = params[0]
   else:
-    raiseAssert "unreachable"
+    bug "unreachable"
 
 proc hookToKind(name: string): HookKind =
   case name
@@ -6917,7 +6917,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         # XXX ignored for now
         skip it.n
       of EmitS:
-        raiseAssert "unreachable"
+        bug "unreachable"
       of PragmasS:
         toplevelGuard c:
           semPragmasLine c, it

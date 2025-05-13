@@ -476,7 +476,7 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
         if negative:
           val = -val
         tok = floatToken(pool.floats.getOrIncl(val), n.info)
-      else: raiseAssert("unreachable")
+      else: bug("unreachable")
       if bits >= 0:
         suf.addInt(bits)
         buf.add parLeToken(SufX, n.info)
@@ -771,7 +771,7 @@ proc toTypeImpl*(n: Cursor): Cursor =
       if local.kind == TypeY:
         result = local.body
     else:
-      raiseAssert "could not load: " & pool.syms[result.symId]
+      bug "could not load: " & pool.syms[result.symId]
 
 proc bitsetSizeInBytes*(baseType: Cursor): xint =
   var baseType = toTypeImpl baseType

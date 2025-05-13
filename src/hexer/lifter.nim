@@ -141,7 +141,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
      TypeKindT, UntypedT, TypedT, IteratorT, ItertypeT:
-    raiseAssert "bug here"
+    bug "bug here"
 
 # Phase 2: Do the lifting
 
@@ -220,7 +220,7 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   let typ = toTypeImpl typ
   case typ.typeKind
   of PtrT:
-    raiseAssert "ptr T should have been a 'trivial' type"
+    bug "ptr T should have been a 'trivial' type"
   of ObjectT, DistinctT, TupleT, ArrayT, RefT:
     result = requestLifting(c, c.op, orig)
   else:

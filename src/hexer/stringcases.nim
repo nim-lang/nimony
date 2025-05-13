@@ -52,7 +52,7 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
       result = getSimpleStringLit(c, inlineValue)
       inc n
     else:
-      raiseAssert "not a string literal"
+      bug "not a string literal"
   else:
     case n.exprKind:
     of SufX:
@@ -67,7 +67,7 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
       result = getSimpleStringLit(c, n)
       skipParRi n
     else:
-      raiseAssert "not a string literal"
+      bug "not a string literal"
 
 proc transformStringCase*(c: var EContext; n: var Cursor) =
   c.demand pool.syms.getOrIncl("equalStrings.0." & SystemModuleSuffix)

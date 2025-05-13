@@ -452,7 +452,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
           while n.kind != ParRi:
             trExpr c, dest, n, tar
   of ParRi:
-    raiseAssert "unexpected ')' inside"
+    bug "unexpected ')' inside"
 
 proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
