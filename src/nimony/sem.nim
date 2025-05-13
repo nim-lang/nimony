@@ -787,7 +787,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
               c.dest.add n
             inc n
           if n.kind != ParRi:
-            error "broken `magic`: expected ')', but got: ", n
+            bug "broken `magic`: expected ')', but got: ", n
     if result == NonMagicCall:
       c.dest.add symToken(fn.sym, fnOrig.info)
   else:
@@ -1112,7 +1112,7 @@ proc semBaseobj(c: var SemContext; it: var Item) =
     # we will recompute it via `typematch` below:
     inc it.n
   else:
-    error("expected integer literal in `baseobj` construct")
+    bug("expected integer literal in `baseobj` construct")
   var m = createMatch(addr c)
 
   var arg = Item(n: it.n, typ: c.types.autoType)
@@ -2696,7 +2696,7 @@ proc semConceptType(c: var SemContext; n: var Cursor) =
   declareConceptSelf c, n.info
   skip n # skip dot or previous `Self` declaration
   if n.stmtKind != StmtsS:
-    error "(stmts) expected, but got: ", n
+    bug "(stmts) expected, but got: ", n
   takeToken c, n
   let oldScopeKind = c.currentScope.kind
   withNewScope c:
@@ -3481,7 +3481,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         n = it.n
         patchType c, it.typ, beforeType
   else:
-    assert false, "bug"
+    bug "semLocal"
   c.addSym delayed
   takeParRi c, n
   if kind == LetY:
@@ -3957,7 +3957,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       case pass
       of checkGenericInst:
         if it.n.stmtKind != StmtsS:
-          error "(stmts) expected, but got ", it.n
+          bug "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
         takeToken c, it.n
         var resId = SymId(0)
@@ -3978,7 +3978,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
 
       of checkBody:
         if it.n.stmtKind != StmtsS:
-          error "(stmts) expected, but got ", it.n
+          bug "(stmts) expected, but got ", it.n
         c.openScope() # open body scope
         var resId = SymId(0)
         if UntypedP in crucial.flags and c.routine.inGeneric > 0: # includes templates
