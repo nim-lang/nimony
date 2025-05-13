@@ -52,7 +52,7 @@ proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var HashSet[SymId]) =
         while syms.kind != ParRi:
           c.dest.add syms
       else:
-        raiseAssert("unreachable")
+        bug("unreachable")
   takeParRi c, n
 
 proc semMixinStmt(c: var SemContext; n: var Cursor; toMixin: var HashSet[StrId]) =
@@ -318,7 +318,7 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
   of ItertypeT:
     semTemplBodySons c, n
   of NoType:
-    raiseAssert("unreachable")
+    bug("unreachable")
 
 proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
   let orig = n

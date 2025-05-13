@@ -157,7 +157,7 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
     dest.add n
     inc n
   of ParRi:
-    raiseAssert "unhandled ')' in inliner.nim"
+    bug "unhandled ')' in inliner.nim"
   of ParLe:
     case n.stmtKind
     of RetS:

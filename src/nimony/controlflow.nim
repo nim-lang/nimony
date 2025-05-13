@@ -486,7 +486,7 @@ proc trBlock(c: var ControlFlow; n: var Cursor; tar: var Target) =
   elif n.kind == DotToken:
     inc n
   else:
-    raiseAssert "invalid block statement"
+    bug "invalid block statement"
   trStmtOrExpr c, n, tar
   for brk in thisBlock.breakInstrs: c.patch brk
   skipParRi n
@@ -534,7 +534,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
     tar.t.add n
     inc n
   of ParRi:
-    raiseAssert "unreachable"
+    bug "unreachable"
   of ParLe:
     case n.exprKind
     of AndX:
@@ -562,7 +562,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX, FailedX:
       trExprLoop c, n, tar
     of PragmaxX:
-      raiseAssert "pragmax should be handled in trStmt"
+      bug "pragmax should be handled in trStmt"
     of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       tar.t.addDotToken()
@@ -613,7 +613,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     it = it.parent
 
   if it == nil:
-    raiseAssert "return outside of routine"
+    bug "return outside of routine"
   if control == nil:
     control = it
   inc n # skip `(ret`
@@ -637,27 +637,27 @@ proc trBreak(c: var ControlFlow; n: var Cursor) =
     while it != nil and it.kind notin {IsLoop, IsBlock}:
       if it.kind == IsRoutine:
         # we cannot cross routine boundaries!
-        raiseAssert "break outside of loop"
+        bug "break outside of loop"
       it = it.parent
     if it != nil:
       it.breakInstrs.add c.jmpForw(n.info)
     else:
-      raiseAssert "break outside of loop"
+      bug "break outside of loop"
     inc n
   elif n.kind == Symbol:
     let lab = n.symId
     while it != nil and it.sym != lab:
       if it.kind == IsRoutine:
         # we cannot cross routine boundaries!
-        raiseAssert "could not find label"
+        bug "could not find label"
       it = it.parent
     if it != nil:
       it.breakInstrs.add c.jmpForw(n.info)
     else:
-      raiseAssert "could not find label"
+      bug "could not find label"
     inc n
   else:
-    raiseAssert "invalid break statement"
+    bug "invalid break statement"
   skipParRi n
 
 proc trContinue(c: var ControlFlow; n: var Cursor) =
@@ -667,10 +667,10 @@ proc trContinue(c: var ControlFlow; n: var Cursor) =
     if it != nil:
       it.contInstrs.add c.jmpForw(n.info)
     else:
-      raiseAssert "continue outside of loop"
+      bug "continue outside of loop"
     inc n
   else:
-    raiseAssert "invalid continue statement"
+    bug "invalid continue statement"
   skipParRi n
 
 proc trFor(c: var ControlFlow; n: var Cursor) =
@@ -744,7 +744,7 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
   while it != nil and it.kind notin {IsRoutine, IsTryStmt, IsFinally}:
     it = it.parent
   if it == nil:
-    raiseAssert "raise outside of routine"
+    bug "raise outside of routine"
   else:
     it.breakInstrs.add c.jmpForw(info)
 
@@ -913,7 +913,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     c.dest.add tar
     c.dest.addParRi()
   of WhenS:
-    raiseAssert "`when` statement should have been eliminated"
+    bug "`when` statement should have been eliminated"
 
 proc toControlflow*(n: Cursor): TokenBuf =
   var c = ControlFlow(typeCache: createTypeCache())

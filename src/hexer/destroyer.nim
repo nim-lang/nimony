@@ -152,7 +152,7 @@ proc leaveNamedBlock(c: var Context; label: SymId) =
   if it != nil and it.label == label:
     leaveScope(c, it[])
   else:
-    raiseAssert "do not know which block to leave"
+    bug "do not know which block to leave"
 
 proc leaveAnonBlock(c: var Context) =
   var it = addr(c.currentScope)
@@ -162,7 +162,7 @@ proc leaveAnonBlock(c: var Context) =
   if it != nil and it.kind == WhileOrBlock:
     leaveScope(c, it[])
   else:
-    raiseAssert "do not know which block to leave"
+    bug "do not know which block to leave"
 
 proc trBreak(c: var Context; n: var Cursor) =
   let lab = n.firstSon

@@ -927,9 +927,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of DerefX, HderefX:
       trDeref c, n
     of DdotX:
-      raiseAssert "nodekind should have been eliminated in desugar.nim"
+      bug "nodekind should have been eliminated in desugar.nim"
     of DefaultobjX, DefaulttupX, BracketX, CurlyX, TupX:
-      raiseAssert "nodekind should have been eliminated in sem.nim"
+      bug "nodekind should have been eliminated in sem.nim"
     of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX:
       trSons c, n, e
     of NoExpr:

@@ -231,7 +231,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
           c.writesTo.add symId
       inc pc
     of SymbolDef:
-      raiseAssert "BUG: symbol definition in single path"
+      bug "symbol definition in single path"
     of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
       inc pc
     of ParRi:
@@ -585,13 +585,13 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock)
     of ParRi:
       if nested == 0:
-        raiseAssert "BUG: unpaired ')'"
+        bug "unpaired ')'"
       dec nested
       inc pc
     of Symbol:
       inc pc
     of SymbolDef:
-      raiseAssert "BUG: symbol definition in single path"
+      bug "symbol definition in single path"
     of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
       inc pc
     of ParLe:
@@ -652,7 +652,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
                 analyseExpr c, pc
               skipParRi pc
             else:
-              raiseAssert "BUG: unknown statement: " & toString(pc, false)
+              bug "unknown statement: " & toString(pc, false)
         of DiscardS, YldS:
           inc pc
           analyseExpr c, pc
@@ -666,7 +666,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
            IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackDeclS, StaticstmtS, AsmS, DeferS:
-          raiseAssert "BUG: statement not eliminated: " & $pc.stmtKind
+          bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
           # declarative junk we don't care about:
           skip pc

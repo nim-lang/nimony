@@ -65,7 +65,7 @@ proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
     inc n
   else:
-    error "expected ')', but got: ", n
+    bug "expected ')', but got: ", n
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
@@ -318,7 +318,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addUIntLit(uint64(mask), info)
         dest.addUIntLit(0, info)
     else:
-      raiseAssert("unreachable")
+      bug("unreachable")
   else:
     case kind
     of LtSetX, LeSetX:
@@ -387,7 +387,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
             of PlusSetX: BitorX
             of XorSetX: BitxorX
             of MulSetX, MinusSetX: BitandX
-            else: raiseAssert("unreachable")
+            else: bug("unreachable")
           addUIntTypedOp dest, op, 8, info:
             copyIntoKind dest, ArrAtX, info:
               dest.addSubtree a
@@ -418,7 +418,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addUIntLit(7, info)
         dest.addUIntLit(0, info)
     else:
-      raiseAssert("unreachable")
+      bug("unreachable")
   if useTemp:
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
@@ -767,7 +767,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       trSons(c, dest, n)
   of ParRi:
-    raiseAssert "unexpected ')' inside"
+    bug "unexpected ')' inside"
 
 proc desugar*(n: Cursor; moduleSuffix: string; activeChecks: set[CheckMode]): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks)

@@ -604,7 +604,7 @@ proc extractCallConv(c: var Cursor): (CallConv, bool) =
   elif c.kind == DotToken:
     inc c
   else:
-    raiseAssert "BUG: No pragmas found"
+    bug "No pragmas found"
 
 proc procTypeMatch(m: var Match; f, a: var Cursor) =
   if f.typeKind == ProctypeT:

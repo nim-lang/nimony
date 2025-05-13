@@ -150,7 +150,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
         pc = pc +! diff
     of ParRi:
       if nested == 0:
-        raiseAssert "BUG: unpaired ')'"
+        bug "unpaired ')'"
       dec nested
       inc pc
     of Symbol:
@@ -219,7 +219,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
            IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackDeclS, StaticstmtS, AsmS, DeferS:
-          raiseAssert "BUG: statement not eliminated: " & $pc.stmtKind
+          bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
            AssumeS, AssertS:
           # declarative junk we don't care about:
@@ -283,7 +283,7 @@ when isMainModule:
         discard
       if nested == 0: break
       inc result
-    raiseAssert "BUG: no 'ensureMove' found"
+    bug "no 'ensureMove' found"
 
   proc test(s: string; expected: bool) =
     var input = parse(s)

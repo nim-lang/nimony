@@ -116,7 +116,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       if local.kind == TypeY:
         n = local.body
     else:
-      raiseAssert "could not load: " & pool.syms[n.symId]
+      bug "could not load: " & pool.syms[n.symId]
 
   case n.typeKind
   of IntT, UIntT, FloatT:
@@ -196,7 +196,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, IteratorT, InvokeT, UarrayT, ItertypeT,
      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
-    raiseAssert "BUG: valid type kind for sizeof computation: " & $n.typeKind
+    bug "valid type kind for sizeof computation: " & $n.typeKind
 
 proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
   var c = createSizeofValue(strict)
