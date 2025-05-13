@@ -170,8 +170,8 @@ proc open*(filename: string, mode: FileMode = fmRead,
     if result.mem == nil:
       fail(osLastError(), "error mapping view")
 
-    var hi, low: int32
-    low = getFileSize(result.fHandle, addr(hi))
+    var hi {.noinit.}: int32
+    let low = getFileSize(result.fHandle, addr(hi))
     if low == INVALID_FILE_SIZE:
       fail(osLastError(), "error getting file size")
     else:
@@ -235,7 +235,7 @@ proc close*(f: var MemFile) =
   ## file system, if `f` was opened with write access.
 
   var error = false
-  var lastErr: OSErrorCode
+  var lastErr {.noinit.}: OSErrorCode
 
   when defined(windows):
     if f.wasOpened:

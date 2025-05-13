@@ -216,48 +216,6 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   skipParRi n
   maybeAppend tar, w
 
-proc trAndControlFlow(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
-  # `x and y` <=> `ite(x, T1, fjmp); T1: ite(y, tjmp, fjmp)`
-  let info = n.info
-  inc n
-  var aa = Target(m: IsEmpty)
-  trExpr c, n, aa
-  c.dest.addParLe(IteF, info)
-  c.dest.add aa
-  let t1 = c.jmpForw(info)
-  fjmp.add c.jmpForw(info)
-  c.dest.addParRi()
-  c.patch t1
-  var bb = Target(m: IsEmpty)
-  trExpr c, n, bb
-  c.dest.addParLe(IteF, info)
-  c.dest.add bb
-  tjmp.add c.jmpForw(info)
-  fjmp.add c.jmpForw(info)
-  c.dest.addParRi()
-  skipParRi n
-
-proc trOrControlFlow(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
-  # `x or y` <=> `ite(x, tjmp, F1); F1: ite(y, tjmp, fjmp)`
-  let info = n.info
-  inc n
-  var aa = Target(m: IsEmpty)
-  trExpr c, n, aa
-  c.dest.addParLe(IteF, info)
-  c.dest.add aa
-  tjmp.add c.jmpForw(info)
-  let f1 = c.jmpForw(info)
-  c.dest.addParRi()
-  c.patch f1
-  var bb = Target(m: IsEmpty)
-  trExpr c, n, bb
-  c.dest.addParLe(IteF, info)
-  c.dest.add bb
-  tjmp.add c.jmpForw(info)
-  fjmp.add c.jmpForw(info)
-  c.dest.addParRi()
-  skipParRi n
-
 proc trStmtListExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   inc n
   while n.kind != ParRi:
@@ -295,9 +253,25 @@ proc trVoidCall(c: var ControlFlow; n: var Cursor) =
 proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   case n.exprKind
   of AndX:
-    trAndControlFlow(c, n, tjmp, fjmp)
+    # `(x and y) goto (T, F)` <=>
+    #     x goto (T1, F);
+    # T1: y goto (T, F)
+    inc n
+    var tjmpOverride: seq[Label] = @[]
+    trIte c, n, tjmpOverride, fjmp
+    for t in tjmpOverride: c.patch t
+    trIte c, n, tjmp, fjmp
+    skipParRi n
   of OrX:
-    trOrControlFlow(c, n, tjmp, fjmp)
+    # `(x or y) goto (T, F)` <=>
+    #     x goto (T, F1);
+    # F1: y goto (T, F)
+    inc n
+    var fjmpOverride: seq[Label] = @[]
+    trIte c, n, tjmp, fjmpOverride
+    for f in fjmpOverride: c.patch f
+    trIte c, n, tjmp, fjmp
+    skipParRi n
   of NotX:
     # reverse the jump targets:
     inc n
@@ -309,7 +283,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     skipParRi n
   else:
     # cannot exploit a special case here:
-    let info = NoLineInfo
+    let info = NoLineInfo # NoLineInfo is crucial here!
     var bb = Target(m: IsEmpty)
     trExpr c, n, bb
     c.dest.addParLe(IteF, info)
