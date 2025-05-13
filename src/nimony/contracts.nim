@@ -214,7 +214,10 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
   else:
     result = Unprovable
 
+proc analyseCall(c: var Context; n: var Cursor)
+
 proc analyseExpr(c: var Context; pc: var Cursor) =
+  #echo "analyseExpr ", toString(pc, false)
   var nested = 0
   while true:
     case pc.kind
@@ -236,8 +239,11 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
       dec nested
       inc pc
     of ParLe:
-      inc nested
-      inc pc
+      if pc.exprKind in CallKinds:
+        analyseCall c, pc
+      else:
+        inc nested
+        inc pc
     if nested == 0: break
 
 proc analyseCallArgs(c: var Context; n: var Cursor) =
@@ -567,7 +573,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
   var nested = 0
   var pc = pc
   while true:
-    #echo "PC IS: ", pc.kind
+    #echo "Instruction is ", toString(pc, false)
     case pc.kind
     of GotoInstr:
       # Every goto intruction leaves the basic block.
@@ -632,12 +638,21 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
             analyseCall c, pc
             skip pc
             skipParRi pc
-          elif pc.exprKind == PragmaxX:
-            inc pc
-            skip pc # pragmas
-            inc nested
           else:
-            raiseAssert "BUG: unknown statement: " & toString(pc, false)
+            case pc.exprKind
+            of PragmaxX:
+              inc pc
+              skip pc # pragmas
+              inc nested
+            of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
+              inc pc
+              analyseExpr c, pc
+              # don't assume arity here
+              while pc.kind != ParRi:
+                analyseExpr c, pc
+              skipParRi pc
+            else:
+              raiseAssert "BUG: unknown statement: " & toString(pc, false)
         of DiscardS, YldS:
           inc pc
           analyseExpr c, pc
@@ -757,15 +772,14 @@ proc traverseProc(c: var Context; n: var Cursor) =
         inc n
       elif n.kind == ParRi:
         dec nested
-        if nested == 0: break
         inc n
+        if nested == 0: break
       else:
         inc n
         if nested == 0: break
-    skipParRi n
   else:
     skip n # body
-    skipParRi n
+  skipParRi n # proc decl end
 
 proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind

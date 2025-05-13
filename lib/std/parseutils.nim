@@ -243,7 +243,7 @@ proc parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
       return i
 
   # if failed: slow path with strtod.
-  var t: array[500, char] # flaviu says: 325 is the longest reasonable literal
+  var t {.noinit.}: array[500, char] # flaviu says: 325 is the longest reasonable literal
   var ti = 0
   let maxlen = t.len - 1 - "e+000".len # reserve enough space for exponent
 
