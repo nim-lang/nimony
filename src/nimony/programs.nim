@@ -134,10 +134,10 @@ proc loadInterface*(suffix: string; iface: var Iface;
     mergeFilter(exportFilter, filter)
     exports.add (path, ensureMove exportFilter)
 
-proc error*(msg: string; c: Cursor) {.noreturn.} =
+template reportImpl(msg: string; c: Cursor; level: string) =
   when defined(debug):
     writeStackTrace()
-  write stdout, "[Error] "
+  write stdout, level
   if isValid(c.info):
     write stdout, infoToStr(c.info)
     write stdout, " "
@@ -145,12 +145,24 @@ proc error*(msg: string; c: Cursor) {.noreturn.} =
   writeLine stdout, toString(c, false)
   quit 1
 
-proc error*(msg: string) {.noreturn.} =
+template reportImpl(msg: string; level: string) =
   when defined(debug):
     writeStackTrace()
   write stdout, "[Error] "
   write stdout, msg
   quit 1
+
+proc error*(msg: string; c: Cursor) {.noreturn.} =
+  reportImpl(msg, c, "[Error] ")
+
+proc error*(msg: string) {.noreturn.} =
+  reportImpl(msg, "[Error] ")
+
+proc bug*(msg: string; c: Cursor) {.noreturn.} =
+  reportImpl(msg, c, "[Bug] ")
+
+proc bug*(msg: string) {.noreturn.} =
+  reportImpl(msg, "[Bug] ")
 
 type
   LoadStatus* = enum
@@ -303,13 +315,13 @@ proc takeParRi*(dest: var TokenBuf; n: var Cursor) =
     dest.add n
     inc n
   else:
-    error "expected ')', but got: ", n
+    bug "expected ')', but got: ", n
 
 proc skipParRi*(n: var Cursor) =
   if n.kind == ParRi:
     inc n
   else:
-    error "expected ')', but got: ", n
+    bug "expected ')', but got: ", n
 
 template isLocalDecl*(s: SymId): bool =
   extractModule(pool.syms[s]) == ""

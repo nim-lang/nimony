@@ -62,7 +62,7 @@ proc takeParRi(c: var Context; n: var Cursor) =
     c.dest.add n
     inc n
   else:
-    error "expected ')', but got: ", n
+    bug "expected ')', but got: ", n
 
 proc rootOf(n: Cursor; allowIndirection = false): SymId =
   var n = n

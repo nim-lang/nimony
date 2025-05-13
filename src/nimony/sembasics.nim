@@ -394,7 +394,7 @@ proc takeParRi*(c: var SemContext; n: var Cursor) =
     c.dest.add n
     inc n
   else:
-    error "expected ')', but got: ", n
+    bug "expected ')', but got: ", n
 
 proc takeToken*(c: var SemContext; n: var Cursor) {.inline.} =
   c.dest.add n
