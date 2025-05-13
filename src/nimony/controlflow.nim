@@ -497,7 +497,7 @@ type
     IfExpr, CaseExpr, TryExpr, BlockExpr
 
 proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAsExprKind; tar: var Target) =
-  if tar.t.len == 1 and tar.t[0].kind == Symbol:
+  if tar.m != IsAppend and tar.t.len == 1 and tar.t[0].kind == Symbol:
     # no need for yet another temporary
     case kind
     of IfExpr:
