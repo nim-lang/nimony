@@ -9,7 +9,7 @@
 ## type checking.
 
 import std / [tables, sets, syncio, formatfloat, assertions, strutils]
-from std/os import getCurrentDir
+from std/os import changeFileExt, getCurrentDir
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -7120,6 +7120,17 @@ proc writeOutput(c: var SemContext; outfile: string) =
       classes: move c.classIndexMap,
       toBuild: move c.toBuild,
       exportBuf: buildIndexExports(c))
+
+  # Update .2.deps.nif file that doesn't contain modules imported under `when false:`
+  # so that Hexer and following phases doesn't read such modules.
+  var deps = createTokenBuf(16)
+  deps.buildTree StmtsS, NoLineInfo:
+    if c.importedModules.len != 0:
+      deps.buildTree ImportS, NoLineInfo:
+        for _, i in c.importedModules:
+          deps.addStrLit i.path.toAbsolutePath
+  let depsFile = changeFileExt(outfile, ".deps.nif")
+  writeFile depsFile, "(.nif24)\n" & toString(deps)
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n.stmtKind == StmtsS

@@ -217,6 +217,7 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
 proc analyseCall(c: var Context; n: var Cursor)
 
 proc analyseExpr(c: var Context; pc: var Cursor) =
+  #echo "analyseExpr ", toString(pc, false)
   var nested = 0
   while true:
     case pc.kind
@@ -572,7 +573,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
   var nested = 0
   var pc = pc
   while true:
-    #echo "PC IS: ", pc.kind
+    #echo "Instruction is ", toString(pc, false)
     case pc.kind
     of GotoInstr:
       # Every goto intruction leaves the basic block.
@@ -646,6 +647,9 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
             of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
               inc pc
               analyseExpr c, pc
+              # don't assume arity here
+              while pc.kind != ParRi:
+                analyseExpr c, pc
               skipParRi pc
             else:
               raiseAssert "BUG: unknown statement: " & toString(pc, false)

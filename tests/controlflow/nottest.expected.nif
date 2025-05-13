@@ -8,7 +8,5 @@
  (goto L14)
  (lab :L14)
  (call side.effect)
- (let :`cf0 . .
-  (i -1) +3)
- (call echo `cf0)
+ (call echo +3)
  (ret))
