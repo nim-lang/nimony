@@ -148,7 +148,7 @@ template reportImpl(msg: string; c: Cursor; level: string) =
 template reportImpl(msg: string; level: string) =
   when defined(debug):
     writeStackTrace()
-  write stdout, "[Error] "
+  write stdout, level
   write stdout, msg
   quit 1
 
