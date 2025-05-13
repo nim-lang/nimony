@@ -112,9 +112,44 @@ proc trStmt(c: var ControlFlow; n: var Cursor)
 proc add(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
 
+proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
+  assert typ.kind != DotToken
+  result = pool.syms.getOrIncl("`cf" & $c.nextVar)
+  inc c.nextVar
+  c.dest.addParLe kind, info
+  c.dest.addSymDef result, info
+  c.dest.addEmpty2 info # no export marker, no pragmas
+  c.dest.copyTree typ
+
+type
+  TargetWrapper = object
+    m: Mode
+    t: TokenBuf
+
+proc makeVar(c: var ControlFlow; info: PackedLineInfo; tar: var Target): TargetWrapper =
+  case tar.m
+  of IsVar:
+    result = TargetWrapper(m: IsVar)
+  of IsEmpty, IsIgnored, IsAppend:
+    result = TargetWrapper(m: tar.m, t: move(tar.t))
+    let tmp = openTempVar(c, VarS, c.typeCache.builtins.boolType, info)
+    c.dest.addDotToken()
+    c.dest.addParRi()
+    tar.m = IsVar
+    tar.t = createTokenBuf(1)
+    tar.t.addSymUse tmp, info
+
+proc maybeAppend(tar: var Target; w: var TargetWrapper) =
+  if w.m == IsAppend:
+    w.t.add tar.t
+    tar.t = move(w.t)
+  tar.m = w.m
+
 proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  # `x and y` <=> `if x: y else: false`
+  # `tar = x and y` <=> `if x: tar = y else: tar = false`
   let info = n.info
+  var w = makeVar(c, info, tar)
+
   inc n
   var aa = Target(m: IsEmpty)
   trExpr c, n, aa
@@ -129,13 +164,19 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   trExpr c, n, tar
   let lend = c.jmpForw(info)
   for f in fjmp: c.patch f
-  c.dest.addParPair(FalseX, info)
+  assert tar.m == IsVar
+  c.dest.copyIntoKind AsgnS, info:
+    c.dest.add tar
+    c.dest.addParPair(FalseX, info)
   c.patch lend
   skipParRi n
+  maybeAppend tar, w
 
 proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  # `x or y` <=> `if x: true else: y`
+  # `tar = x or y` <=> `if x: tar = true else: tar = y`
   let info = n.info
+  var w = makeVar(c, info, tar)
+
   inc n
   var aa = Target(m: IsEmpty)
   trExpr c, n, aa
@@ -147,12 +188,16 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   fjmp.add c.jmpForw(info)
   c.dest.addParRi()
   for t in tjmp: c.patch t
-  c.dest.addParPair(TrueX, info)
+  assert tar.m == IsVar
+  c.dest.copyIntoKind AsgnS, info:
+    c.dest.add tar
+    c.dest.addParPair(TrueX, info)
   let lend = c.jmpForw(info)
   for f in fjmp: c.patch f
   trExpr c, n, tar
   c.patch lend
   skipParRi n
+  maybeAppend tar, w
 
 proc trAndControlFlow(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   # `x and y` <=> `ite(x, T1, fjmp); T1: ite(y, tjmp, fjmp)`
@@ -195,15 +240,6 @@ proc trOrControlFlow(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupLis
   fjmp.add c.jmpForw(info)
   c.dest.addParRi()
   skipParRi n
-
-proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
-  assert typ.kind != DotToken
-  result = pool.syms.getOrIncl("`cf" & $c.nextVar)
-  inc c.nextVar
-  c.dest.addParLe kind, info
-  c.dest.addSymDef result, info
-  c.dest.addEmpty2 info # no export marker, no pragmas
-  c.dest.copyTree typ
 
 proc trStmtListExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   inc n
