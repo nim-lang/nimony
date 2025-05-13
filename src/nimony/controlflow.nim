@@ -576,7 +576,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       trExprLoop c, n, tar
     of AddrX, HaddrX:
       trExprLoop c, n, tar
-    of QuotedX, ParX, PragmaxX, CurlyatX, TabconstrX, DoX,
+    of QuotedX, ParX, CurlyatX, TabconstrX, DoX,
        NilX, FalseX, TrueX, NotX, NegX, OconstrX, NewobjX, NewrefX, TupConstrX,
        AconstrX, SetConstrX, OchoiceX, CchoiceX, AddX, SubX, MulX, DivX, ModX,
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
@@ -587,6 +587,8 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX, FailedX:
       trExprLoop c, n, tar
+    of PragmaxX:
+      raiseAssert "pragmax should be handled in trStmt"
     of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       tar.t.addDotToken()
@@ -859,8 +861,16 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
-    var aa = Target(m: IsIgnored)
-    trExpr c, n, aa
+    if n.exprKind == PragmaxX:
+      inc n
+      skip n # ignore pragmas
+      trStmt c, n
+      skipParRi n
+    else:
+      var aa = Target(m: IsAppend)
+      trExpr c, n, aa
+      if aa.t.len > 0:
+        c.dest.add aa
   of IfS:
     var aa = Target(m: IsIgnored)
     trIf c, n, aa
