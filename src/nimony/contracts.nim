@@ -513,7 +513,7 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     fact.b = VarId(0)
     fact.c = fact.c + createXint(0'i32)
     result = true
-    inc pc
+    skip pc
   else:
     analyseExpr c, pc
 
