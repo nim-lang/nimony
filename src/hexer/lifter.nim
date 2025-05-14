@@ -188,7 +188,7 @@ proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
     if result != SymId(0):
       return result
 
-  let key = mangle(t, c.bits)
+  let key = mangle(t, Frontend, c.bits)
   result = c.structuralTypeToHook[op].getOrDefault(key)
   if result == SymId(0):
     let name = generateHookName(c, op, key)

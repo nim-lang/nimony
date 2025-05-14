@@ -40,6 +40,7 @@ type
     directlyInitialized: HashSet[SymId]
     startInstr: Cursor
     errors: TokenBuf
+    procCanRaise: bool
 
 proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -273,7 +274,10 @@ proc wantNotNil(c: var Context; n: Cursor) =
     else:
       let r = analysableRoot(c, n)
       if r == NoSymId:
-        buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
+        if n.exprKind == NewobjX and c.procCanRaise:
+          discard "fine, nil value is mapped to OOM by the compiler"
+        else:
+          buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
       else:
         let fact = inferle.isNotNil(VarId r)
         if implies(c.facts, fact):
@@ -861,10 +865,14 @@ proc checkContracts(c: var Context; n: Cursor) =
   #echo "CF IS ", codeListing(c.cf)
 
   c.startInstr = readonlyCursorAt(c.cf, 0)
+  c.procCanRaise = false
   var body = c.startInstr
   if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
     inc body
-    for i in 0 ..< BodyPos: skip body
+    for i in 0 ..< BodyPos:
+      if i == ProcPragmasPos:
+        c.procCanRaise = hasPragma(body, RaisesP)
+      skip body
 
   var current = BasicBlockIdx(cursorToPosition(c.cf, body))
   var bbs = computeBasicBlocks(c.cf, current.int)

@@ -9,7 +9,11 @@ include nifprelude
 import ".." / nimony / nimony_model
 import treemangler
 
-proc mangleImpl(b: var Mangler; c: var Cursor) =
+type
+  MangleMode* = enum
+    Backend, Frontend
+
+proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   var nested = 0
   while true:
     case c.kind
@@ -20,13 +24,13 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
         skip c # name
         skip c # export marker
         skip c # pragmas
-        mangleImpl b, c # type is interesting
+        mangleImpl b, c, mm # type is interesting
         skip c # value
         inc c # ParRi
       elif tag == "array":
         b.addTree tag
         inc c
-        mangleImpl b, c # type is interesting
+        mangleImpl b, c, mm # type is interesting
         if c.kind == ParLe and c.typeKind == RangetypeT:
           inc c # RangeT
           skip c # type is irrelevant, we care about the length
@@ -39,7 +43,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
           inc c # ParRi
           b.addIntLit(last - first + 1)
         else:
-          mangleImpl b, c
+          mangleImpl b, c, mm
         inc nested
       elif tag == "tuple":
         b.addTree(tag)
@@ -48,10 +52,10 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
           if c.substructureKind == KvU:
             inc c
             skip c # name
-            mangleImpl b, c # type is interesting
+            mangleImpl b, c, mm # type is interesting
             inc c # ParRi
           else:
-            mangleImpl b, c
+            mangleImpl b, c, mm
         b.endTree()
         inc c # ParRi
       elif tag == "u" or tag == "i" or tag == "f":
@@ -66,6 +70,15 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
           b.addIntLit(bits)
         inc c
         inc nested
+      elif mm == Backend and tag in ["ref", "ptr"]:
+        b.addTree(tag)
+        inc c
+        mangleImpl b, c, mm
+        if c.kind != ParRi:
+          skip c
+        assert c.kind == ParRi
+        b.endTree()
+        inc c
       else:
         b.addTree(tag)
         inc nested
@@ -109,15 +122,15 @@ proc mangleImpl(b: var Mangler; c: var Cursor) =
       inc c
     if nested == 0: break
 
-proc takeMangle*(c: var Cursor; bits = -1): string =
+proc takeMangle*(c: var Cursor; mm: MangleMode; bits = -1): string =
   var b = createMangler(30, bits)
-  mangleImpl b, c
+  mangleImpl b, c, mm
   result = b.extract()
 
-proc mangle*(c: Cursor; bits = -1): string =
+proc mangle*(c: Cursor; mm: MangleMode; bits = -1): string =
   var c = c
-  takeMangle c, bits
+  takeMangle c, mm, bits
 
-proc mangle*(b: var Mangler; c: Cursor) =
+proc mangle*(b: var Mangler; c: Cursor; mm: MangleMode) =
   var c = c
-  mangleImpl b, c
+  mangleImpl b, c, mm
