@@ -259,6 +259,9 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
     skip n # field name
     checkNilMatch c, n, expected
     skip n # value
+    if n.kind != ParRi:
+      # optional inheritance
+      skip n
     skipParRi n
   skipParRi n
 
