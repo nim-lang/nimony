@@ -509,6 +509,11 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
     result = true
     inc pc
+  elif pc.exprKind == NilX:
+    fact.b = VarId(0)
+    fact.c = fact.c + createXint(0'i32)
+    result = true
+    inc pc
   else:
     analyseExpr c, pc
 
