@@ -232,6 +232,34 @@ proc markedNotNil(t: Cursor): bool =
   else:
     discard
 
+proc analysableRoot(c: var Context; n: Cursor): SymId =
+  var n = n
+  while true:
+    case n.exprKind
+    of DotX, TupatX, ArrAtX, HderefX:
+      # Cannot analyse expressions yet that involve derefs
+      # DerefX, AddrX, HderefX, HaddrX, PatX:
+      inc n
+    of ConvKinds:
+      inc n
+      skip n # type part
+    of BaseobjX:
+      inc n
+      skip n # type part
+      skip n # skip intlit
+    else:
+      break
+  if n.kind == Symbol:
+    result = n.symId
+    let x = getLocalInfo(c.typeCache, result)
+    if x.kind == GvarY:
+      # assume sharing of global variables between threads
+      # so `if glob != nil: use glob[]` cannot be proven correct.
+      # Maybe this needs a better solution.
+      result = NoSymId
+  else:
+    result = NoSymId
+
 proc wantNotNil(c: var Context; n: Cursor) =
   case n.exprKind
   of NilX:
@@ -242,8 +270,16 @@ proc wantNotNil(c: var Context; n: Cursor) =
     let t = getType(c.typeCache, n)
     if markedNotNil(t):
       discard "fine, per type we know it is not nil"
-    #elif n.kind
-    # XXX to implement
+    else:
+      let r = analysableRoot(c, n)
+      if r == NoSymId:
+        buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
+      else:
+        let fact = inferle.isNotNil(VarId r)
+        if implies(c.facts, fact):
+          discard "fine, did prove access correct"
+        else:
+          buildErr c, n.info, "cannot prove expression is not nil: " & asNimCode(n)
 
 proc checkNilMatch(c: var Context; n: Cursor; expected: Cursor) =
   if markedNotNil(expected):
