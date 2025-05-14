@@ -36,6 +36,7 @@ Options:
   --os:SYMBOL               set the target operating system (cross-compilation)
   --nimcache:PATH           set the path used for generated files
   --flags:FLAGS             undocumented flags
+  --ignoreErr               produces dummy empty output files when got errors
   --version                 show the version
   --help                    show this help
 """
@@ -47,11 +48,11 @@ type
   Command = enum
     None, SingleModule
 
-proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
+proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]; ignoreErr: bool) =
   if not semos.fileExists(infile):
     quit "cannot find " & infile
   else:
-    semcheck(infile, outfile, ensureMove config, moduleFlags, "", false)
+    semcheck(infile, outfile, ensureMove config, moduleFlags, "", false, ignoreErr)
 
 proc handleCmdLine() =
   var args: seq[string] = @[]
@@ -61,6 +62,7 @@ proc handleCmdLine() =
   var moduleFlags: set[ModuleFlag] = {}
   var config = initNifConfig()
   var commandLineArgs = ""
+  var ignoreErr = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -106,6 +108,8 @@ proc handleCmdLine() =
         discard "nothing to do here yet, but forward these"
       of "nimcache":
         config.nifcachePath = val
+      of "ignoreerr":
+        ignoreErr = true
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
@@ -120,7 +124,7 @@ proc handleCmdLine() =
   of None:
     quit "command missing"
   of SingleModule:
-    singleModule(args[0], args[1], args[2], ensureMove config, moduleFlags)
+    singleModule(args[0], args[1], args[2], ensureMove config, moduleFlags, ignoreErr)
 
 when isMainModule:
   handleCmdLine()

@@ -113,6 +113,9 @@ type
     pendingTypePlugins*: Table[SymId, StrId]
     pendingModulePlugins*: seq[StrId]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
+    systemSymId*: SymId
+    ignoreErr*: bool
+    outfile*: string
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
