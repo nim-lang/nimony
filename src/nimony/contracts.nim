@@ -634,6 +634,10 @@ proc addAsgnFact(c: var Context; fact: LeXplusC) =
     c.facts.add fact
     c.facts.add fact.geXplusC
 
+proc cannotBeNil(c: var Context; n: Cursor): bool {.inline.} =
+  let t = getType(c.typeCache, n)
+  result = markedAs(t, NotnilU)
+
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
   let expected = getType(c.typeCache, pc)
@@ -649,6 +653,7 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
     inc pc
     checkNilMatch c, pc, expected
+    let rhs = pc
     if rightHandSide(c, pc, fact):
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
@@ -657,6 +662,10 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
         addAsgnFact c, fact
     else:
       invalidateFactsAbout(c.facts, fact.a)
+
+    if (rhs.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, rhs):
+      # we know: x != nil after the assignment:
+      c.facts.add isNotNil(fact.a)
   else:
     analyseExpr c, pc
     checkNilMatch c, pc, expected
