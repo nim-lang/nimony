@@ -1,6 +1,6 @@
 (stmts
  (call echo "try")
- (asgn currexc.0.sys some.exc)
+ (asgn localErr.0.sysvq0asl some.exc)
  (goto L11)
  (goto L20)
  (lab :L11)
