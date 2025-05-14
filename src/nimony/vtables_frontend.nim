@@ -68,10 +68,10 @@ proc methodKey*(name: string; a: Cursor): string =
   var b = createMangler(60)
   while a.kind != ParRi:
     let pa = takeLocal(a, SkipFinalParRi)
-    mangle b, pa.typ
+    mangle b, pa.typ, Frontend
   inc a
   # also add return type:
-  mangle b, a
+  mangle b, a, Frontend
   skip a
   let (callConv, hasRaises) = processPragmas(a)
   result = name & ":" & b.extract() & ":" & $callConv & ":" & hasRaises

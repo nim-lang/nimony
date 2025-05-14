@@ -680,7 +680,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
 
   let baseType = refType.firstSon
   var refTypeCopy = refType
-  let typeKey = takeMangle(refTypeCopy, c.lifter.bits)
+  let typeKey = takeMangle(refTypeCopy, Frontend, c.lifter.bits)
   let typeSym = pool.syms.getOrIncl(typeKey & GeneratedTypeSuffix)
 
   copyIntoKind c.dest, CastX, info:

@@ -40,6 +40,7 @@ type
     directlyInitialized: HashSet[SymId]
     startInstr: Cursor
     errors: TokenBuf
+    procCanRaise: bool
 
 proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -273,7 +274,10 @@ proc wantNotNil(c: var Context; n: Cursor) =
     else:
       let r = analysableRoot(c, n)
       if r == NoSymId:
-        buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
+        if n.exprKind == NewobjX and c.procCanRaise:
+          discard "fine, nil value is mapped to OOM by the compiler"
+        else:
+          buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
       else:
         let fact = inferle.isNotNil(VarId r)
         if implies(c.facts, fact):
@@ -630,6 +634,10 @@ proc addAsgnFact(c: var Context; fact: LeXplusC) =
     c.facts.add fact
     c.facts.add fact.geXplusC
 
+proc cannotBeNil(c: var Context; n: Cursor): bool {.inline.} =
+  let t = getType(c.typeCache, n)
+  result = markedAs(t, NotnilU)
+
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
   let expected = getType(c.typeCache, pc)
@@ -645,6 +653,7 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
     inc pc
     checkNilMatch c, pc, expected
+    let rhs = pc
     if rightHandSide(c, pc, fact):
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
@@ -653,6 +662,10 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
         addAsgnFact c, fact
     else:
       invalidateFactsAbout(c.facts, fact.a)
+
+    if (rhs.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, rhs):
+      # we know: x != nil after the assignment:
+      c.facts.add isNotNil(fact.a)
   else:
     analyseExpr c, pc
     checkNilMatch c, pc, expected
@@ -861,10 +874,14 @@ proc checkContracts(c: var Context; n: Cursor) =
   #echo "CF IS ", codeListing(c.cf)
 
   c.startInstr = readonlyCursorAt(c.cf, 0)
+  c.procCanRaise = false
   var body = c.startInstr
   if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
     inc body
-    for i in 0 ..< BodyPos: skip body
+    for i in 0 ..< BodyPos:
+      if i == ProcPragmasPos:
+        c.procCanRaise = hasPragma(body, RaisesP)
+      skip body
 
   var current = BasicBlockIdx(cursorToPosition(c.cf, body))
   var bbs = computeBasicBlocks(c.cf, current.int)
