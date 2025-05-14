@@ -358,12 +358,12 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string; silentMake
       # But print warnings or other messages when nimsem completed without errors.
       # Because if a module semchecked successfully, it is not semchecked in next Makefile run.
       cmd = if silentMake:
-              "output=$$(" & cmd & " 2>&1) && echo -en \"$${output}$${output:+\\n}\" ||:"
+              "output=$$(" & cmd & " 2>&1) && printf \"$${output}$${output:+\\n}\" ||:"
             else:
               # Prints cmd only when nimsem return 0 so that Makefile output looks like it is executed only once
               # and prints only nimsem commands.
               # But doesn't work with --silentMake Nimony option.
-              "@cmd=\"" & cmd & "\";output=$$($${cmd} 2>&1) && echo -en \"$${cmd}$${output:+\\n}$${output}\\n\" ||:"
+              "@cmd=\"" & cmd & "\";output=$$($${cmd} 2>&1) && printf \"$${cmd}$${output:+\\n}$${output}\\n\" ||:"
       # If you want to see what commands actually run.
       #cmd = cmd & "||:"
     s.add "\n\t" & cmd
