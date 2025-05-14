@@ -216,21 +216,49 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
 
 proc analyseCall(c: var Context; n: var Cursor)
 
-proc markedNotNil(t: Cursor): bool =
+proc markedAs(t: Cursor; mark: NimonyOther): bool =
   result = false
   case t.typeKind
   of PtrT, RefT:
     var e = t.firstSon
     skip e # base type
-    if e.kind != ParRi and e.substructureKind == NotnilU:
+    if e.kind != ParRi and e.substructureKind == mark:
       result = true
   of CstringT, PointerT:
     let e = t.firstSon
     # no base type
-    if e.kind != ParRi and e.substructureKind == NotnilU:
+    if e.kind != ParRi and e.substructureKind == mark:
       result = true
   else:
     discard
+
+proc analysableRoot(c: var Context; n: Cursor): SymId =
+  var n = n
+  while true:
+    case n.exprKind
+    of DotX, TupatX, ArrAtX, HderefX:
+      # Cannot analyse expressions yet that involve derefs
+      # DerefX, AddrX, HderefX, HaddrX, PatX:
+      inc n
+    of ConvKinds:
+      inc n
+      skip n # type part
+    of BaseobjX:
+      inc n
+      skip n # type part
+      skip n # skip intlit
+    else:
+      break
+  if n.kind == Symbol:
+    result = n.symId
+    let x = getLocalInfo(c.typeCache, result)
+    if x.kind == GvarY:
+      # assume sharing of global variables between threads
+      # so `if glob != nil: use glob[]` cannot be proven correct.
+      # Maybe this needs a better solution.
+      result = NoSymId
+  else:
+    result = NoSymId
 
 proc wantNotNil(c: var Context; n: Cursor) =
   case n.exprKind
@@ -240,13 +268,30 @@ proc wantNotNil(c: var Context; n: Cursor) =
     discard "fine, addresses are not nil"
   else:
     let t = getType(c.typeCache, n)
-    if markedNotNil(t):
+    if markedAs(t, NotnilU):
       discard "fine, per type we know it is not nil"
-    #elif n.kind
-    # XXX to implement
+    else:
+      let r = analysableRoot(c, n)
+      if r == NoSymId:
+        buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
+      else:
+        let fact = inferle.isNotNil(VarId r)
+        if implies(c.facts, fact):
+          discard "fine, did prove access correct"
+        else:
+          buildErr c, n.info, "cannot prove expression is not nil: " & asNimCode(n)
 
 proc checkNilMatch(c: var Context; n: Cursor; expected: Cursor) =
-  if markedNotNil(expected):
+  if markedAs(expected, NotnilU):
+    wantNotNil c, n
+
+proc wantNotNilDeref(c: var Context; n: Cursor) =
+  let e = getType(c.typeCache, n)
+  # reason: derefs are only interesting when the type was marked as nilable:
+  # var x: nil ref T: deref(x) # interesting
+  # var x: ref T not nil: deref(x) # safe by construction
+  # var x: ref T: deref(x) # should be left unchecked
+  if markedAs(e, NilU):
     wantNotNil c, n
 
 proc analyseOconstr(c: var Context; n: var Cursor) =
@@ -313,14 +358,14 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         analyseCall c, pc
       of DdotX:
         inc pc
-        wantNotNil c, pc
+        wantNotNilDeref c, pc
         analyseExpr c, pc # object
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritence depth
         skipParRi pc
       of DerefX:
         inc pc
-        wantNotNil c, pc
+        wantNotNilDeref c, pc
         analyseExpr c, pc
         skipParRi pc
       of OconstrX, NewobjX:
@@ -509,6 +554,11 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
     result = true
     inc pc
+  elif pc.exprKind == NilX:
+    fact.b = VarId(0)
+    fact.c = fact.c + createXint(0'i32)
+    result = true
+    skip pc
   else:
     analyseExpr c, pc
 
