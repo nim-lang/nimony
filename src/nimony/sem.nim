@@ -3285,7 +3285,15 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         c.dest.addDotToken()
       else:
         takeTree c, n
-    of PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UarrayT,
+    of PtrT, RefT:
+      if tryTypeClass(c, n):
+        return
+      takeToken c, n
+      semLocalTypeImpl c, n, InLocalDecl
+      if n.kind != ParRi:
+        takeTree c, n # notnil, nil
+      takeParRi c, n
+    of MutT, OutT, LentT, SinkT, NotT, UarrayT,
        StaticT, TypedescT:
       if tryTypeClass(c, n):
         return
