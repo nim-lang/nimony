@@ -266,28 +266,41 @@ proc typebits*(n: PackedToken): int =
   else:
     result = 0
 
-proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
+proc toString*(tree: openArray[PackedToken]; produceLineInfo = true; useAbsolute = false): string =
   var b = nifbuilder.open(tree.len * 20)
   var stack: seq[PackedLineInfo] = @[]
+  var lastFileStr = ""
   for n in 0 ..< tree.len:
     let info = tree[n].info
     let k = tree[n].kind
     if produceLineInfo and info.isValid and k != ParRi:
-      let rawInfo = unpack(pool.man, info)
-      let file = rawInfo.file
-      var line = rawInfo.line
-      var col = rawInfo.col
-      if file.isValid:
-        var fileAsStr = ""
-        if stack.len > 0:
-          let pRawInfo = unpack(pool.man, stack[^1])
-          if file != pRawInfo.file: fileAsStr = pool.files[file]
-          if fileAsStr.len == 0:
-            line = line - pRawInfo.line
-            col = col - pRawInfo.col
-        else:
-          fileAsStr = pool.files[file]
-        b.addLineInfo(col, line, fileAsStr)
+      if useAbsolute:
+        let rawInfo = unpack(pool.man, info)
+        let file = rawInfo.file
+        if file.isValid:
+          if stack.len > 0:
+            let pRawInfo = unpack(pool.man, stack[^1])
+            if file != pRawInfo.file: lastFileStr = pool.files[file]
+          else:
+            lastFileStr = pool.files[file]
+
+          b.addLineInfo(rawInfo.col, rawInfo.line, lastFileStr)
+      else:
+        let rawInfo = unpack(pool.man, info)
+        let file = rawInfo.file
+        var line = rawInfo.line
+        var col = rawInfo.col
+        if file.isValid:
+          var fileAsStr = ""
+          if stack.len > 0:
+            let pRawInfo = unpack(pool.man, stack[^1])
+            if file != pRawInfo.file: fileAsStr = pool.files[file]
+            if fileAsStr.len == 0:
+              line = line - pRawInfo.line
+              col = col - pRawInfo.col
+          else:
+            fileAsStr = pool.files[file]
+          b.addLineInfo(col, line, fileAsStr)
 
     case k
     of DotToken:

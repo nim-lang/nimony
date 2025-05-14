@@ -236,9 +236,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   close s
 
   var content = "(.nif24)\n(index\n"
-  content.add toString(public)
+  content.add toString(public, useAbsolute = true)
   content.add "\n"
-  content.add toString(private)
+  content.add toString(private, useAbsolute = true)
   content.add "\n"
 
   for op in AttachedOp:

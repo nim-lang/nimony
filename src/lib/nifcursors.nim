@@ -344,8 +344,8 @@ proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
     dest[pos + i] = by.load
     inc by
 
-proc toString*(b: TokenBuf; produceLineInfo = true): string =
-  result = nifstreams.toString(toOpenArray(b.data, 0, b.len-1), produceLineInfo)
+proc toString*(b: TokenBuf; produceLineInfo = true; useAbsolute = false): string =
+  result = nifstreams.toString(toOpenArray(b.data, 0, b.len-1), produceLineInfo, useAbsolute)
 
 proc toString*(b: TokenBuf; first: int; produceLineInfo = true): string =
   var last = first
