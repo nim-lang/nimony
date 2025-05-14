@@ -216,18 +216,18 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
 
 proc analyseCall(c: var Context; n: var Cursor)
 
-proc markedNotNil(t: Cursor): bool =
+proc markedAs(t: Cursor; mark: NimonyOther): bool =
   result = false
   case t.typeKind
   of PtrT, RefT:
     var e = t.firstSon
     skip e # base type
-    if e.kind != ParRi and e.substructureKind == NotnilU:
+    if e.kind != ParRi and e.substructureKind == mark:
       result = true
   of CstringT, PointerT:
     let e = t.firstSon
     # no base type
-    if e.kind != ParRi and e.substructureKind == NotnilU:
+    if e.kind != ParRi and e.substructureKind == mark:
       result = true
   else:
     discard
@@ -268,7 +268,7 @@ proc wantNotNil(c: var Context; n: Cursor) =
     discard "fine, addresses are not nil"
   else:
     let t = getType(c.typeCache, n)
-    if markedNotNil(t):
+    if markedAs(t, NotnilU):
       discard "fine, per type we know it is not nil"
     else:
       let r = analysableRoot(c, n)
@@ -282,12 +282,16 @@ proc wantNotNil(c: var Context; n: Cursor) =
           buildErr c, n.info, "cannot prove expression is not nil: " & asNimCode(n)
 
 proc checkNilMatch(c: var Context; n: Cursor; expected: Cursor) =
-  if markedNotNil(expected):
+  if markedAs(expected, NotnilU):
     wantNotNil c, n
 
 proc wantNotNilDeref(c: var Context; n: Cursor) =
   let e = getType(c.typeCache, n)
-  if markedNotNil(e):
+  # reason: derefs are only interesting when the type was marked as nilable:
+  # var x: nil ref T: deref(x) # interesting
+  # var x: ref T not nil: deref(x) # safe by construction
+  # var x: ref T: deref(x) # should be left unchecked
+  if markedAs(e, NilU):
     wantNotNil c, n
 
 proc analyseOconstr(c: var Context; n: var Cursor) =
