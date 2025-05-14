@@ -285,6 +285,11 @@ proc checkNilMatch(c: var Context; n: Cursor; expected: Cursor) =
   if markedNotNil(expected):
     wantNotNil c, n
 
+proc wantNotNilDeref(c: var Context; n: Cursor) =
+  let e = getType(c.typeCache, n)
+  if markedNotNil(e):
+    wantNotNil c, n
+
 proc analyseOconstr(c: var Context; n: var Cursor) =
   inc n
   skip n # type
@@ -349,14 +354,14 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         analyseCall c, pc
       of DdotX:
         inc pc
-        wantNotNil c, pc
+        wantNotNilDeref c, pc
         analyseExpr c, pc # object
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritence depth
         skipParRi pc
       of DerefX:
         inc pc
-        wantNotNil c, pc
+        wantNotNilDeref c, pc
         analyseExpr c, pc
         skipParRi pc
       of OconstrX, NewobjX:
