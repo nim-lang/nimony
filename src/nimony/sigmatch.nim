@@ -997,8 +997,13 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         inc m.convCosts
         inc f
         expectParRi m, f
+      elif a.typeKind == CstringT:
+        inc f
+        inc a
+        expectPtrParRi m, f
+        expectPtrParRi m, a
       else:
-        linearMatch m, f, a
+        m.error InvalidMatch, f, a
     of PointerT:
       var a = skipModifier(arg.typ)
       case a.typeKind
@@ -1012,9 +1017,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         inc m.opened
         inc m.convCosts
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
+      of PointerT:
+        inc f
+        inc a
+        expectPtrParRi m, f
+        expectPtrParRi m, a
       else:
-        linearMatch m, f, a
+        m.error InvalidMatch, f, a
     of PtrT, RefT:
       var a = skipModifier(arg.typ)
       let ak = a.typeKind

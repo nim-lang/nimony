@@ -10,7 +10,7 @@
 import std/[assertions, intsets]
 include nifprelude
 
-import nimony_model, programs, typenav
+import nimony_model, programs, builtintypes, typenav
 from typeprops import isOrdinalType
 
 const
@@ -730,13 +730,13 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
     c.dest.add aa
 
 proc trRaise(c: var ControlFlow; n: var Cursor) =
-  # we map `raise x` to `currexc = x; return`.
+  # we map `raise x` to `localErr = x; return`.
   let info = n.info
   inc n
   var aa = Target(m: IsEmpty)
   trExpr c, n, aa
   c.dest.addParLe(AsgnS, info)
-  c.dest.addSymUse pool.syms.getOrIncl("currexc.0.sys"), info
+  c.dest.addSymUse pool.syms.getOrIncl("localErr.0." & SystemModuleSuffix), info
   c.dest.add aa
   c.dest.addParRi()
   skipParRi n

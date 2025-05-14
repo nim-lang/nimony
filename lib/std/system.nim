@@ -192,3 +192,5 @@ func chr*(u: range[0..255]): char {.inline.} =
   char(u.int)
 
 include "../../vendor/errorcodes/src" / errorcodes
+
+var localErr* {.threadvar.}: ErrorCode

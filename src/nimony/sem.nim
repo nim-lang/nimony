@@ -3126,7 +3126,7 @@ proc handleNotnilType(c: var SemContext; nn: var Cursor; context: TypeDeclContex
   if n.exprKind == NilX:
     skip n
     let nd = cursorAt(c.dest, before)
-    if nd.typeKind in {RefT, PtrT}:
+    if nd.typeKind in {RefT, PtrT, PointerT, CstringT}:
       c.dest.endRead()
       # remove ParRi of the pointer
       c.dest.shrink c.dest.len-1
@@ -3179,7 +3179,7 @@ proc handleNilableType(c: var SemContext; nn: var Cursor; context: TypeDeclConte
       let before = c.dest.len
       semLocalTypeImpl c, n, context
       let nd = cursorAt(c.dest, before)
-      if nd.typeKind in {RefT, PtrT}:
+      if nd.typeKind in {RefT, PtrT, PointerT, CstringT}:
         c.dest.endRead()
         # remove ParRi of the pointer
         c.dest.shrink c.dest.len-1

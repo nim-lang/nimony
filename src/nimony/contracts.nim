@@ -216,6 +216,75 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
 
 proc analyseCall(c: var Context; n: var Cursor)
 
+proc markedNotNil(t: Cursor): bool =
+  result = false
+  case t.typeKind
+  of PtrT, RefT:
+    var e = t.firstSon
+    skip e # base type
+    if e.kind != ParRi and e.substructureKind == NotnilU:
+      result = true
+  of CstringT, PointerT:
+    let e = t.firstSon
+    # no base type
+    if e.kind != ParRi and e.substructureKind == NotnilU:
+      result = true
+  else:
+    discard
+
+proc wantNotNil(c: var Context; n: Cursor) =
+  case n.exprKind
+  of NilX:
+    buildErr(c, n.info, "expected non-nil value")
+  of AddrX:
+    discard "fine, addresses are not nil"
+  else:
+    let t = getType(c.typeCache, n)
+    if markedNotNil(t):
+      discard "fine, per type we know it is not nil"
+    #elif n.kind
+    # XXX to implement
+
+proc checkNilMatch(c: var Context; n: Cursor; expected: Cursor) =
+  if markedNotNil(expected):
+    wantNotNil c, n
+
+proc analyseOconstr(c: var Context; n: var Cursor) =
+  inc n
+  skip n # type
+  while n.kind != ParRi:
+    assert n.substructureKind == KvU
+    inc n
+    let expected = getType(c.typeCache, n)
+    skip n # field name
+    checkNilMatch c, n, expected
+    skip n # value
+    if n.kind != ParRi:
+      # optional inheritance
+      skip n
+    skipParRi n
+  skipParRi n
+
+proc analyseArrayConstr(c: var Context; n: var Cursor) =
+  inc n
+  let expected = n.firstSon # element type of the array
+  skip n # type
+  while n.kind != ParRi:
+    checkNilMatch c, n, expected
+    skip n
+  skipParRi n
+
+proc analyseTupConstr(c: var Context; n: var Cursor) =
+  inc n
+  var expected = n.firstSon # type of the first field
+  skip n # type
+  while n.kind != ParRi:
+    assert expected.kind != ParRi
+    checkNilMatch c, n, getTupleFieldType(expected)
+    skip n
+    skip expected # type of the next field
+  skipParRi n
+
 proc analyseExpr(c: var Context; pc: var Cursor) =
   #echo "analyseExpr ", toString(pc, false)
   var nested = 0
@@ -239,8 +308,27 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
       dec nested
       inc pc
     of ParLe:
-      if pc.exprKind in CallKinds:
+      case pc.exprKind
+      of CallKinds:
         analyseCall c, pc
+      of DdotX:
+        inc pc
+        wantNotNil c, pc
+        analyseExpr c, pc # object
+        skip pc # field name
+        if pc.kind != ParRi: skip pc # inheritence depth
+        skipParRi pc
+      of DerefX:
+        inc pc
+        wantNotNil c, pc
+        analyseExpr c, pc
+        skipParRi pc
+      of OconstrX, NewobjX:
+        analyseOconstr c, pc
+      of AconstrX:
+        analyseArrayConstr c, pc
+      of TupconstrX:
+        analyseTupConstr c, pc
       else:
         inc nested
         inc pc
@@ -265,6 +353,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
     elif pk == VarargsT:
       # do not advance formal parameter:
       fnType = previousFormalParam
+    checkNilMatch c, n, param.typ
     analyseExpr c, n
   while fnType.kind != ParRi: skip fnType
   inc fnType # skip ParRi
@@ -493,6 +582,7 @@ proc addAsgnFact(c: var Context; fact: LeXplusC) =
 
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction
+  let expected = getType(c.typeCache, pc)
   if pc.kind == Symbol:
     let symId = pc.symId
     let x = getLocalInfo(c.typeCache, symId)
@@ -504,6 +594,7 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
     c.writesTo.add symId
     # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
     inc pc
+    checkNilMatch c, pc, expected
     if rightHandSide(c, pc, fact):
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
@@ -514,6 +605,7 @@ proc analyseAsgn(c: var Context; pc: var Cursor) =
       invalidateFactsAbout(c.facts, fact.a)
   else:
     analyseExpr c, pc
+    checkNilMatch c, pc, expected
     analyseExpr c, pc
   skipParRi pc
 
