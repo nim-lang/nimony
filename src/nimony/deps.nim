@@ -67,13 +67,13 @@ type
     includeStack: seq[string]
     processedModules: HashSet[string]
     moduleFlags: set[ModuleFlag]
-    isGeneratingFinal: bool
+    use2ndDeps: bool
 
 proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
-proc parseDeps(c: var DepContext; p: FilePair; current: Node)
+proc parseDeps(c: var DepContext; p: FilePair; current: Node; isInclude = false)
 
 proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
   var files: seq[ImportedFilename] = @[]
@@ -100,7 +100,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
           let oldActive = current.active
           current.active = current.files.len
           current.files.add c.toPair(f2)
-          parseDeps(c, c.toPair(f2), current)
+          parseDeps(c, c.toPair(f2), current, true)
           c.includeStack.add f2
           current.active = oldActive
           c.includeStack.setLen c.includeStack.len - 1
@@ -178,7 +178,6 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   of ImportS:
     processImport c, n, current
   of IncludeS:
-    assert not c.isGeneratingFinal
     processInclude c, n, current
   of FromimportS, ImportexceptS:
     processSingleImport c, n, current
@@ -215,10 +214,13 @@ proc importSystem(c: var DepContext; current: Node) =
     c.nodes.add imported
     parseDeps c, p, imported
 
-proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
+proc parseDeps(c: var DepContext; p: FilePair; current: Node; isInclude = false) =
   execNifler c, p.nimFile, c.config.parsedFile(p)
 
-  let depsFile = if c.isGeneratingFinal: c.config.deps2File(p) else: c.config.depsFile(p)
+  # include files need to use `depsFile(p)` as nimsem doesn't produces `.2.deps.nif` for include files.
+  let depsFile = if c.use2ndDeps and not isInclude: c.config.deps2File(p) else: c.config.depsFile(p)
+  if isEmptyFile depsFile:
+    return
   var stream = nifstreams.open(depsFile)
   try:
     discard processDirectives(stream.r)
@@ -328,7 +330,7 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string; passC, pa
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
 
-proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
+proc generateFrontendMakefile(c: DepContext; commandLineArgs: string; silentMake, ignoreErr: bool): string =
   var s = makefileHeader
 
   # every semchecked .nif file depends on all of its parsed.nif file
@@ -346,9 +348,25 @@ proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
       if not seenDeps.containsOrIncl(idxFile):
         s.add "  " & mescape(idxFile)
     s.add " " & mescape(c.config.cachedConfigFile())
-    let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "") & (if i == 0: " --isMain" else: "")
-    s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(c.config.parsedFile(v.files[0])) & " " &
-      mescape(c.config.semmedFile(v.files[0])) & " " & mescape(c.config.indexFile(v.files[0]))
+    let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "") & (if i == 0: " --isMain" else: "") &
+               (if ignoreErr: " --ignoreErr" else: "")
+    var cmd = mescape(c.nimsem) & " " & args & " m " & mescape(c.config.parsedFile(v.files[0])) & " " &
+              mescape(c.config.semmedFile(v.files[0])) & " " & mescape(c.config.indexFile(v.files[0]))
+    if ignoreErr:
+      # Don't print errors and ignore non-0 return values.
+      # These errors are printed in next Makefile run.
+      # But print warnings or other messages when nimsem completed without errors.
+      # Because if a module semchecked successfully, it is not semchecked in next Makefile run.
+      cmd = if silentMake:
+              "output=$$(" & cmd & " 2>&1) && printf \"$${output}$${output:+\\n}\" ||:"
+            else:
+              # Prints cmd only when nimsem return 0 so that Makefile output looks like it is executed only once
+              # and prints only nimsem commands.
+              # But doesn't work with --silentMake Nimony option.
+              "@cmd=\"" & cmd & "\";output=$$($${cmd} 2>&1) && printf \"$${cmd}$${output:+\\n}$${output}\\n\" ||:"
+      # If you want to see what commands actually run.
+      #cmd = cmd & "||:"
+    s.add "\n\t" & cmd
     inc i
 
   # every parsed.nif file is produced by a .nim file by the nifler tool:
@@ -388,10 +406,10 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
       quoteShell(cfgNif)
     parseNifConfig cfgNif, config
 
-  template initDepContext(isFinal: bool): DepContext =
+  template initDepContext(doesUse2ndDeps: bool): DepContext =
     var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
       forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
-      cmd: cmd, isGeneratingFinal: isFinal)
+      cmd: cmd, use2ndDeps: doesUse2ndDeps)
     let p = c.toPair(project)
     c.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
     c.nodes.add c.rootNode
@@ -400,7 +418,14 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     c
   var c = initDepContext(false)
   generateCachedConfigFile c, passC, passL
-  let makeFilename = generateFrontendMakefile(c, commandLineArgs)
+  # 1st frontend Makefile calls nimsem to produce `.2.deps.nif` files
+  # that doesn't contains modules imported under `when false:` and are used by 2nd frontend Makefile.
+  # 1st frontend Makefile uses `.1.deps.nif` generated by Nifler contains modules imported under `when false:`.
+  # So it can call nimsem for such modules.
+  # 2nd frontend Makefile uses `.2.deps.nif` and doesn't process such modules.
+  # 1st frontend Makefile ignores errors as errors can come from modules actually not imported and
+  # to process all modules used by the project with nimsem.
+  let makeFilename = generateFrontendMakefile(c, commandLineArgs, silentMake, true)
   #echo "run with: make -f ", makeFilename
   when defined(windows):
     putEnv("CC", "gcc")
@@ -408,6 +433,24 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   let makeCommand = "make" & (if silentMake: " -s" else: "") &
     (if forceRebuild: " -B" else: "") &
     " -f "
+  exec makeCommand & quoteShell(makeFilename)
+
+  c = initDepContext(true)
+
+  # Delete dummy empty files generated by nimsem so that modules caused errors are semchecked again.
+  for v in c.nodes:
+    block:
+      let indexFile = c.config.indexFile v.files[0]
+      let isEmpty = isEmptyFile indexFile
+      if isEmpty:
+        removeFile indexFile
+    block:
+      let deps2File = c.config.deps2File v.files[0]
+      let isEmpty = isEmptyFile deps2File
+      if isEmpty:
+        removeFile deps2File
+
+  discard generateFrontendMakefile(c, commandLineArgs, silentMake, false)
   exec makeCommand & quoteShell(makeFilename)
 
   # Parse `.2.deps.nif`.

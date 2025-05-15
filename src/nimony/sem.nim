@@ -7133,11 +7133,20 @@ proc writeOutput(c: var SemContext; outfile: string) =
   # so that Hexer and following phases doesn't read such modules.
   var deps = createTokenBuf(16)
   deps.buildTree StmtsS, NoLineInfo:
+    if c.ignoreErr:
+      # Output included files to `.2.deps.nif` as it is used to generate frontend Makefile and run nimsem again.
+      if c.meta.includedFiles.len != 0:
+        deps.buildTree IncludeS, NoLineInfo:
+          for i in c.meta.includedFiles:
+            deps.addStrLit i.toAbsolutePath
     if c.importedModules.len != 0:
       deps.buildTree ImportS, NoLineInfo:
-        for _, i in c.importedModules:
-          deps.addStrLit i.path.toAbsolutePath
-  let depsFile = changeFileExt(outfile, ".deps.nif")
+        for symId, i in c.importedModules:
+          # Exclude system module from the list of import modules
+          # because nimony/deps.nim handles system module differently from non-system modules.
+          if symId != c.systemSymId:
+            deps.addStrLit i.path.toAbsolutePath
+  let depsFile = changeFileExt(c.outfile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
@@ -7271,7 +7280,7 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
 
   if {SkipSystem, IsSystem} * c.moduleFlags == {}:
     let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
-    importSingleFile(c, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
+    c.systemSymId = importSingleFile(c, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
   #echo "PHASE 1"
   var n1 = phaseX(c, n0, SemcheckTopLevelSyms)
@@ -7317,7 +7326,14 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
     quit 1
 
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-               commandLineArgs: sink string; canSelfExec: bool) =
+               commandLineArgs: sink string; canSelfExec: bool; ignoreErr: bool = false) =
+  if ignoreErr:
+    # Output dummy empty files so that Makefile runs nimsem for all used modules even if there is an error
+    # to produce `.2.deps.nif` without modules imported under `when false:`.
+    # https://github.com/nim-lang/nimony/issues/985
+    writeFile outfile.changeFileExt(".idx.nif"), ""
+    writeFile outfile.changeFileExt(".deps.nif"), ""
+
   var n0 = setupProgram(infile, outfile)
   var c = SemContext(
     dest: createTokenBuf(),
@@ -7329,7 +7345,9 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
-    pending: createTokenBuf())
+    pending: createTokenBuf(),
+    ignoreErr: ignoreErr,
+    outfile: outfile)
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))

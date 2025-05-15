@@ -250,6 +250,11 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
     ("${nifcache}", nifcache))
   result = path.normalizedPath()
 
+proc isEmptyFile*(f: string): bool =
+  let f = syncio.open f
+  result = endOfFile f
+  close f
+
 # ------------------ include/import handling ------------------------
 
 proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =

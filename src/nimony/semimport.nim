@@ -48,6 +48,18 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
     c.buildErr info, "file not found: " & f2
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
+  if c.ignoreErr:
+    let indexFile = suffix.suffixToNif.changeFileExt".idx.nif"
+    if isEmptyFile indexFile:
+      # Importing an invalid module.
+      # Need to write `.2.deps.nif` file so that the invalid module is semchecked in 2nd frontend Makefile.
+      var deps = createTokenBuf(8)
+      deps.buildTree StmtsS, NoLineInfo:
+        deps.buildTree ImportS, NoLineInfo:
+          deps.addStrLit f2.toAbsolutePath
+      let depsFile = changeFileExt(c.outfile, ".deps.nif")
+      writeFile depsFile, "(.nif24)\n" & toString(deps)
+      quit 1
   result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
@@ -71,9 +83,9 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
-                      info: PackedLineInfo) =
+                      info: PackedLineInfo): SymId =
   var exports: seq[(string, ImportFilter)] = @[] # ignored
-  discard importSingleFile(c, f1, origin, filter, exports, info)
+  importSingleFile(c, f1, origin, filter, exports, info)
 
 proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[]
