@@ -1,0 +1,11 @@
+tests/nimony/errmsgs/tdistinctinfos.nim(4, 20) Trace: instantiation from here
+lib/std/system/comparisons.nim(105, 3) Error: Type mismatch at [position]
+[1] expected: (bool) but got: (auto)
+[1] expected: (i +8) but got: (auto)
+[1] expected: (i +16) but got: (auto)
+[1] expected: (i +32) but got: (auto)
+[1] expected: (i +64) but got: (auto)
+[1] expected: (u +8) but got: (auto)
+[1] expected: (u +16) but got: (auto)
+[1] expected: (u +32) but got: (auto)
+[1] expected: (u +64) but got: (auto)

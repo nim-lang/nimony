@@ -908,15 +908,15 @@
          (dot ~3 src.5 data.0.Iq4ofkp1.temd2l7vy +0) 6 i.11)))) ,1
      (cmd inc.0.temd2l7vy 4
       (haddr i.11)))))) 4,15,lib/std/system/seqimpl.nim
- (proc :inc.0.temd2l7vy . 0,12,lib/std/system.nim .
+ (proc :inc.0.temd2l7vy . 0,12,lib/std/system/arithmetics.nim .
   (at inc.1.sysvq0asl 5,~10
-   (i -1)) 21,12,lib/std/system.nim
+   (i -1)) 21,12,lib/std/system/arithmetics.nim
   (params 1
    (param :x.5 . . 3
     (mut 9,5,lib/std/system/seqimpl.nim
-     (i -1)) .)) 0,12,lib/std/system.nim . 32,12,lib/std/system.nim
+     (i -1)) .)) 0,12,lib/std/system/arithmetics.nim . 32,12,lib/std/system/arithmetics.nim
   (pragmas 2
-   (inline)) 0,12,lib/std/system.nim . 2,13,lib/std/system.nim
+   (inline)) 0,12,lib/std/system/arithmetics.nim . 2,13,lib/std/system/arithmetics.nim
   (stmts 2,1
    (asgn ~2
     (hderef x.5) 6

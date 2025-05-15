@@ -231,6 +231,8 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
         else:
           previousPrivateTarget = target
 
+        if tb.kind == ParLe: stack.add tb.info
+
   public.addParRi()
   private.addParRi()
   close s
