@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, strutils, os, terminal, assertions]
+import std / [syncio, strutils, os, terminal, assertions, sets]
 import nifstreams, nifcursors, bitabs, lineinfos
 
 type
@@ -21,6 +21,8 @@ type
     assertOnError*: bool
     warnings*: int
     errors*: int
+    reportedErrSources: HashSet[PackedLineInfo]
+
 
 proc useColors*(): bool = terminal.isatty(stdout)
 
@@ -108,6 +110,7 @@ proc reportErrors*(dest: var TokenBuf): int =
     if dest[i].kind == ParLe and dest[i].tagId == errTag:
       inc result
       let info = dest[i].info
+      let doReport = not r.reportedErrSources.containsOrIncl(info)
       inc i
       # original expression, optional:
       if dest[i].kind == DotToken:
@@ -118,11 +121,13 @@ proc reportErrors*(dest: var TokenBuf): int =
         endRead(dest)
       # instantiation contexts:
       while dest[i].kind == DotToken:
-        r.trace infoToStr(dest[i].info), "instantiation from here"
+        if doReport:
+          r.trace infoToStr(dest[i].info), "instantiation from here"
         inc i
       # error message:
       assert dest[i].kind == StringLit
-      r.error infoToStr(info), pool.strings[dest[i].litId]
+      if doReport:
+        r.error infoToStr(info), pool.strings[dest[i].litId]
       inc i
     else:
       inc i
