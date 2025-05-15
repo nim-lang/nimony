@@ -21,6 +21,8 @@ type
     assertOnError*: bool
     warnings*: int
     errors*: int
+    reportedErrSources: HashSet[PackedLineInfo]
+
 
 proc useColors*(): bool = terminal.isatty(stdout)
 
@@ -99,8 +101,6 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
-var reportedErrSources: HashSet[PackedLineInfo]
-
 proc reportErrors*(dest: var TokenBuf): int =
   let errTag = pool.tags.getOrIncl("err")
   var i = 0
@@ -110,11 +110,7 @@ proc reportErrors*(dest: var TokenBuf): int =
     if dest[i].kind == ParLe and dest[i].tagId == errTag:
       inc result
       let info = dest[i].info
-      if reportedErrSources.containsOrIncl(info):
-        let x = cursorAt(dest, i)
-        inc i, span(x)
-        endRead(dest)
-        continue
+      let doReport = not r.reportedErrSources.containsOrIncl(info)
       inc i
       # original expression, optional:
       if dest[i].kind == DotToken:
@@ -125,11 +121,13 @@ proc reportErrors*(dest: var TokenBuf): int =
         endRead(dest)
       # instantiation contexts:
       while dest[i].kind == DotToken:
-        r.trace infoToStr(dest[i].info), "instantiation from here"
+        if doReport:
+          r.trace infoToStr(dest[i].info), "instantiation from here"
         inc i
       # error message:
       assert dest[i].kind == StringLit
-      r.error infoToStr(info), pool.strings[dest[i].litId]
+      if doReport:
+        r.error infoToStr(info), pool.strings[dest[i].litId]
       inc i
     else:
       inc i
