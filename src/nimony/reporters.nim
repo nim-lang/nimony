@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, strutils, os, terminal, assertions]
+import std / [syncio, strutils, os, terminal, assertions, sets]
 import nifstreams, nifcursors, bitabs, lineinfos
 
 type
@@ -99,6 +99,8 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
+var reportedErrSources: HashSet[PackedLineInfo]
+
 proc reportErrors*(dest: var TokenBuf): int =
   let errTag = pool.tags.getOrIncl("err")
   var i = 0
@@ -108,6 +110,11 @@ proc reportErrors*(dest: var TokenBuf): int =
     if dest[i].kind == ParLe and dest[i].tagId == errTag:
       inc result
       let info = dest[i].info
+      if reportedErrSources.containsOrIncl(info):
+        let x = cursorAt(dest, i)
+        inc i, span(x)
+        endRead(dest)
+        continue
       inc i
       # original expression, optional:
       if dest[i].kind == DotToken:
