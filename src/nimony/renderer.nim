@@ -480,8 +480,28 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
         putWithSpace(g, tkIf, "when")
         gif(g, n)
 
-      of ProcS: # FuncS, MacroS, MethodS, ConverterS, IteratorS
+      of ProcS:
         putWithSpace(g, tkProc, "proc")
+        gproc(g, n)
+
+      of FuncS:
+        putWithSpace(g, tkFunc, "func")
+        gproc(g, n)
+
+      of MacroS:
+        putWithSpace(g, tkMacro, "macro")
+        gproc(g, n)
+
+      of MethodS:
+        putWithSpace(g, tkMethod, "method")
+        gproc(g, n)
+
+      of ConverterS:
+        putWithSpace(g, tkConverter, "converter")
+        gproc(g, n)
+
+      of IteratorS:
+        putWithSpace(g, tkIterator, "iterator")
         gproc(g, n)
 
       of DiscardS:
@@ -516,6 +536,18 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       of BreakS:
         inc n
         putWithSpace(g, tkBreak, "break")
+        gsub(g, n)
+        skipParRi(n)
+
+      of ContinueS:
+        inc n
+        putWithSpace(g, tkContinue, "continue")
+        gsub(g, n)
+        skipParRi(n)
+
+      of YldS:
+        inc n
+        putWithSpace(g, tkYield, "yield")
         gsub(g, n)
         skipParRi(n)
 
@@ -697,7 +729,7 @@ proc asNimCode*(n: Cursor): string =
   var n2 = n
   var file0 = FileId 0
 
-  discard renderTree(n2)
+  echo renderTree(n2)
 
   while true:
     if n2.info.isValid:
