@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache, symParser]
+import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache, symparser]
 
 import nimony_model, decls
 
@@ -262,6 +262,9 @@ proc gstmts(g: var TSrcGen, n: var Cursor, c: TContext, doIndent=false) =
   if doIndent: dedent(g)
   skipParRi(n)
 
+proc gcomma(g: var TSrcGen) =
+  putWithSpace(g, tkComma, ",")
+
 proc gblock(g: var TSrcGen, n: var Cursor) =
   var c: TContext = initContext()
   inc n
@@ -318,8 +321,119 @@ proc gif(g: var TSrcGen, n: var Cursor) =
 
   skipParRi(n)
 
+
+# type
+#   Routine* = object
+#     kind*: SymKind
+#     name*: Cursor
+#     exported*: Cursor
+#     pattern*: Cursor # for TR templates/macros
+#     typevars*: Cursor # generic parameters
+#     params*: Cursor
+#     retType*: Cursor
+#     pragmas*: Cursor
+#     effects*: Cursor
+#     body*: Cursor
+
 proc gproc(g: var TSrcGen, n: var Cursor) =
+  var c: TContext = initContext()
+
+  let decl = takeRoutine(n, SkipFinalParRi)
+
+  var name = decl.name
+  gsub(g, name)
+
+
+  if renderNoBody notin g.flags:
+    if decl.body.kind != DotToken:
+      put(g, tkSpaces, Space)
+      putWithSpace(g, tkEquals, "=")
+
+      c = initContext()
+      var body = decl.body
+      gstmts(g, body, c, doIndent = true)
+      putNL(g)
+    else:
+      discard
+
+proc gcall(g: var TSrcGen, n: var Cursor) =
+  inc n
+  gsub(g, n)
+  put(g, tkParLe, "(")
+
+  var afterFirst = false
+
+  while n.kind != ParRi:
+    if afterFirst:
+      gcomma(g)
+    else:
+      afterFirst = true
+    gsub(g, n)
+
+  put(g, tkParRi, ")")
+  skipParRi(n)
+
+proc gcmd(g: var TSrcGen, n: var Cursor) =
+  inc n
+  gsub(g, n)
+  put(g, tkSpaces, Space)
+
+  var afterFirst = false
+
+  while n.kind != ParRi:
+    if afterFirst:
+      gcomma(g)
+    else:
+      afterFirst = true
+    gsub(g, n)
+
+  skipParRi(n)
+
+proc ginfix(g: var TSrcGen, n: var Cursor) =
+  inc n
+
+  var opr = n
   skip n
+
+  var afterFirst = false
+
+  while n.kind != ParRi:
+    if afterFirst:
+      gsub(g, n)
+    else:
+      gsub(g, n)
+      put(g, tkSpaces, Space)
+      gsub(g, opr)
+      put(g, tkSpaces, Space)
+      afterFirst = true
+
+  skipParRi(n)
+
+proc gsufx(g: var TSrcGen, n: var Cursor) =
+  inc n
+  var value = n
+  skip n
+
+  case pool.strings[n.litId]
+  of "i": put(g, tkIntLit, toString(value, false))
+  of "i8": put(g, tkIntLit, toString(value, false) & "'i8")
+  of "i16": put(g, tkIntLit, toString(value, false) & "'i16")
+  of "i32": put(g, tkIntLit, toString(value, false) & "'i32")
+  of "i64": put(g, tkIntLit, toString(value, false) & "'i64")
+  of "u": put(g, tkUIntLit, toString(value, false) & "'u")
+  of "u8": put(g, tkUIntLit, toString(value, false) & "'u8")
+  of "u16": put(g, tkUIntLit, toString(value, false) & "'u16")
+  of "u32": put(g, tkUIntLit, toString(value, false) & "'u32")
+  of "u64": put(g, tkUIntLit, toString(value, false) & "'u64")
+  of "f": put(g, tkFloatLit, toString(value, false))
+  of "f32": put(g, tkFloatLit, toString(value, false) & "f32")
+  of "f64": put(g, tkFloatLit, toString(value, false) & "f64")
+  of "R", "T": put(g, tkStrLit, toString(value, false))
+  of "C": put(g, tkStrLit, "cstring" & toString(value, false))
+  else: discard
+
+  skip n
+  skipParRi(n)
 
 proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTopLevel = false) =
   case n.kind
@@ -375,6 +489,36 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
         inc n
         gsub(g, n)
         skipParRi(n)
+
+      of CallS:
+        gcall(g, n)
+
+      of CmdS:
+        gcmd(g, n)
+
+      of AsgnS:
+        inc n
+        gsub(g, n)
+
+        put(g, tkSpaces, Space)
+        putWithSpace(g, tkEquals, "=")
+
+        gsub(g, n)
+
+        skipParRi(n)
+
+      of RetS:
+        inc n
+        putWithSpace(g, tkReturn, "return")
+        gsub(g, n)
+        skipParRi(n)
+
+      of BreakS:
+        inc n
+        putWithSpace(g, tkBreak, "break")
+        gsub(g, n)
+        skipParRi(n)
+
       else:
         skip n
     of TrueX:
@@ -386,6 +530,130 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
     of NilX:
       put(g, tkSymbol, "nil")
       skip n
+
+    of SufX:
+      gsufx(g, n)
+
+    of InfX:
+      put(g, tkSymbol, "Inf")
+      skip n
+
+    of NeginfX:
+      put(g, tkSymbol, "-")
+      put(g, tkSymbol, "Inf")
+      skip n
+
+    of NanX:
+      put(g, tkSymbol, "NaN")
+      skip n
+
+    of AddrX:
+      inc n
+      put(g, tkAddr, "addr")
+      gsub(g, n)
+
+      skipParRi(n)
+
+    of CallX, CallstrlitX:
+      gcall(g, n)
+
+    of CmdX:
+      gcmd(g, n)
+
+    of InfixX:
+      ginfix(g, n)
+
+    of AndX, OrX, XorX:
+      let opr: string
+      case n.exprKind
+      of AndX:
+        opr = "and"
+      of OrX:
+        opr = "or"
+      of XorX:
+        opr = "xor"
+      else:
+        raiseAssert "unreachable"
+      inc n
+      gsub(g, n)
+      put(g, tkSpaces, Space)
+      put(g, tkSymbol, opr)
+      put(g, tkSpaces, Space)
+      gsub(g, n)
+      skipParRi(n)
+
+    of EqX, NeqX, LeX, LtX, AddX,
+        SubX, MulX, DivX:
+      let opr: string
+      case n.exprKind
+      of EqX:
+        opr = "=="
+      of NeqX:
+        opr = "!="
+      of LeX:
+        opr = "<="
+      of LtX:
+        opr = "<"
+      of AddX:
+        opr = "+"
+      of SubX:
+        opr = "+"
+      of MulX:
+        opr = "*"
+      of DivX:
+        opr = "/"
+      else:
+        raiseAssert "unreachable"
+      inc n
+      skip n
+      gsub(g, n)
+      put(g, tkSpaces, Space)
+      put(g, tkSymbol, opr)
+      put(g, tkSpaces, Space)
+      gsub(g, n)
+      skipParRi(n)
+
+    of ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX:
+      let opr = $n.exprKind
+      inc n
+      skip n
+      gsub(g, n)
+      put(g, tkSpaces, Space)
+      put(g, tkSymbol, opr)
+      put(g, tkSpaces, Space)
+      gsub(g, n)
+      skipParRi(n)
+
+    of ExprX:
+      inc n
+      var isFirst = true
+      while n.kind != ParRi:
+        if isFirst:
+          isFirst = false
+        else:
+          put(g, tkSemiColon, ";")
+        gsub(g, n)
+
+      skipParRi(n)
+
+    of DerefX, HaddrX:
+      inc n
+      gsub(g, n)
+      skipParRi(n)
+
+    of HconvX, DconvX:
+      inc n
+      skip n
+      gsub(g, n)
+      skipParRi(n)
+
+    of DotX:
+      inc n
+      gsub(g, n)
+      put(g, tkDot, ".")
+      gsub(g, n)
+      skip n
+      skipParRi(n)
     else:
       skip n
   of ParRi:
@@ -407,6 +675,8 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
     extractBasename(name)
     put(g, tkSymbol, name)
     inc n
+  of DotToken:
+    inc n
   else:
     inc n
 
@@ -427,7 +697,7 @@ proc asNimCode*(n: Cursor): string =
   var n2 = n
   var file0 = FileId 0
 
-  # echo renderTree(n2)
+  discard renderTree(n2)
 
   while true:
     if n2.info.isValid:
