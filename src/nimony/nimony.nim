@@ -6,6 +6,13 @@
 
 ## Nimony driver program.
 
+when defined(windows):
+  when defined(gcc):
+    when defined(x86):
+      {.link: "../../icons/nimony.res".}
+    else:
+      {.link: "../../icons/nimony_icon.o".}
+
 import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
@@ -16,7 +23,7 @@ const
   Version = "0.2"
   Usage = "Nimony Compiler. Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   nimony [options] [command]
 Command:

@@ -1,6 +1,13 @@
 ## Hastur - Tester tool for Nimony and its related subsystems (NIFC etc).
 ## (c) 2024 Andreas Rumpf
 
+when defined(windows):
+  when defined(gcc):
+    when defined(x86):
+      {.link: "../icons/hastur.res".}
+    else:
+      {.link: "../icons/hastur_icon.o".}
+
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
 import lib / [nifindexes, lineinfos]
