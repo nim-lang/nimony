@@ -3686,7 +3686,7 @@ proc semBorrow(c: var SemContext; fn: StrId; beforeParams: int) =
   var it = Item(n: n, typ: c.types.autoType)
   let resId = declareResult(c, it.n.info)
   semProcBody c, it
-  addReturnResult c, resId, it.n.info
+  addReturnResult c, resId, procBody[procBody.len - 1].info
 
 proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
   result = @[]
