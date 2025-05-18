@@ -925,24 +925,29 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
   assert res.status == LacksNothing
   let decl = asTypeDecl(res.decl)
   if decl.kind == TypeY:
-    if (s, fn) notin c.cachedTypeboundOps:
-      var ops: seq[SymId] = @[]
-      let moduleSuffix = extractModule(pool.syms[s])
-      # types from this module do not cache any ops since they will be looked up anyway:
-      if moduleSuffix != "" and moduleSuffix != c.thisModuleSuffix and
-          decl.exported.kind != DotToken:
+    let moduleSuffix = extractModule(pool.syms[s])
+    if moduleSuffix == "":
+      discard
+    elif moduleSuffix == c.thisModuleSuffix:
+      # XXX assumes normal lookup is enough, but maybe should add symbols anyway
+      discard
+    else:
+      if (s, fn) in c.cachedTypeboundOps:
+        for fnSym in c.cachedTypeboundOps[(s, fn)]:
+          let res = tryLoadSym(fnSym)
+          assert res.status == LacksNothing
+          let routine = asRoutine(res.decl)
+          cands.addUnique FnCandidate(kind: routine.kind, sym: fnSym, typ: routine.params)
+      else:
+        var ops: seq[SymId] = @[]
         for topLevelSym in loadSyms(moduleSuffix, fn):
           let res = tryLoadSym(topLevelSym)
           assert res.status == LacksNothing
           let routine = asRoutine(res.decl)
           if routine.kind in RoutineKinds and hasAttachedParam(routine.params, s):
             ops.add topLevelSym
-      c.cachedTypeboundOps[(s, fn)] = ops
-    for fnSym in c.cachedTypeboundOps[(s, fn)]:
-      let res = tryLoadSym(fnSym)
-      assert res.status == LacksNothing
-      let routine = asRoutine(res.decl)
-      cands.addUnique FnCandidate(kind: routine.kind, sym: fnSym, typ: routine.params)
+            cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
+        c.cachedTypeboundOps[(s, fn)] = ops
   elif decl.kind == TypevarY:
     maybeAddConceptMethods c, fn, s, cands
 
