@@ -334,3 +334,5 @@ proc fromCString*(s: cstring): string =
   ## by copying the underlying storage.
   let aux = borrowCStringUnsafe(s)
   result = aux.terminatingZero()
+
+template `$`*(x: string): string = x
