@@ -167,6 +167,9 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Curso
   when defined(debug):
     if not c.debugAllowErrors:
       writeStackTrace()
+      for instFrom in items(c.instantiatedFrom):
+        echo "instantiated from: ", infoToStr(instFrom)
+
       echo infoToStr(info) & " Error: " & msg
       if orig.kind != DotToken:
         echo "Source: ", toString(orig, false)
