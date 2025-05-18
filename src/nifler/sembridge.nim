@@ -13,7 +13,7 @@ import std / [assertions, syncio, os]
 
 import compiler / [
   ast, modulegraphs, modules, commands, options, pathutils, renderer, lineinfos,
-  syntaxes, llstream, idents, msgs, passes, sem, pipelines, reorder]
+  syntaxes, llstream, idents, msgs, passes, sem, pipelines, reorder, nimeval]
 
 import ".." / lib / nifbuilder
 import ".." / models / nifler_tags
@@ -22,8 +22,35 @@ proc connectCallbacks(graph: ModuleGraph) =
   graph.includeFileCallback = modules.includeModule
   graph.importModuleCallback = passes.importModule
 
+const
+  Paths = [
+    "std",
+    "deprecated/core",
+    "deprecated/pure",
+    "pure/collections",
+    "pure/concurrency",
+    "impure",
+    "wrappers",
+    "wrappers/linenoise",
+    "windows",
+    "posix",
+    "js",
+    "pure/unidecode",
+    "arch",
+    "core",
+    "pure"
+  ]
+
 proc semFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
   var conf = newConfigRef()
+
+  conf.libpath = AbsoluteDir nimeval.findNimStdLib()
+
+  conf.searchPaths.add(conf.libpath)
+  for p in Paths:
+    conf.searchPaths.add(conf.libpath / RelativeDir p)
+  conf.cmd = cmdCheck
+
   var graph = newModuleGraph(newIdentCache(), conf)
   #if not self.loadConfigsAndProcessCmdLine(cache, conf, graph):
   #  return
@@ -41,7 +68,10 @@ proc semFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
 
   var p = default(Parser)
   let fileIdx = fileInfoIdx(conf, AbsoluteFile thisfile)
-  var module = graph.getModule(fileIdx)
+
+  var module = newModule(graph, fileIdx)
+  module.flags.incl {sfSystemModule}
+  registerModule(graph, module)
 
   prepareConfigNotes(graph, module)
   var idgen = idGeneratorFromModule(module)
