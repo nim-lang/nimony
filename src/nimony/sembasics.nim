@@ -170,7 +170,7 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Curso
       echo infoToStr(info) & " Error: " & msg
       if orig.kind != DotToken:
         echo "Source: ", toString(orig, false)
-      quit 1
+      debugAskToContinue()
   c.dest.buildTree ErrT, info:
     c.dest.addSubtree orig
     for instFrom in items(c.instantiatedFrom):
@@ -187,7 +187,7 @@ proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string; orig:
     if true: # not c.debugAllowErrors: - c not given
       writeStackTrace()
       echo infoToStr(info) & " Error: " & msg
-      quit msg
+      debugAskToContinue()
   dest.buildTree ErrT, info:
     dest.addSubtree orig
     dest.add strToken(pool.strings.getOrIncl(msg), info)

@@ -423,7 +423,7 @@ proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg
-    quit msg
+    debugAskToContinue()
   dest.buildTree ErrT, info:
     dest.addSubtree arg
     dest.add strToken(pool.strings.getOrIncl(msg), info)

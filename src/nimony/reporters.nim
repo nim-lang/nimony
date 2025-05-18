@@ -60,8 +60,6 @@ proc warn*(c: var Reporter; p, arg: string) =
   inc c.warnings
 
 proc error*(c: var Reporter; p, arg: string) =
-  when defined(debug):
-    writeStackTrace()
   if c.assertOnError:
     raise newException(AssertionDefect, p & ": " & arg)
   c.message(Error, p, arg)
@@ -80,6 +78,14 @@ proc fatal*(msg: string) =
   when defined(debug):
     writeStackTrace()
   quit "[Error] " & msg
+
+when defined(debug):
+  proc debugAskToContinue*() =
+    var msg = ""
+    write stdout, "Enter 'q' to quit, anything else to continue: "
+    let ok = readLine(stdin, msg)
+    if not ok or msg == "q":
+      quit 1
 
 proc shortenDir*(x: string): string =
   var to = getCurrentDir()

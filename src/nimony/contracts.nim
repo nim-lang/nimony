@@ -46,7 +46,7 @@ proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg
-    quit msg
+    debugAskToContinue()
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
     c.errors.add strToken(pool.strings.getOrIncl(msg), info)
