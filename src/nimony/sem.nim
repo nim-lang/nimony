@@ -856,10 +856,10 @@ proc sameIdent(a, b: SymId): bool {.used.} =
 type
   FnCandidates = object
     a: seq[FnCandidate]
-    s: HashSet[SymId]
+    marker: HashSet[SymId]
 
 proc addUnique(c: var FnCandidates; x: FnCandidate) =
-  if not containsOrIncl(c.s, x.sym):
+  if not containsOrIncl(c.marker, x.sym):
     c.a.add x
 
 iterator findConceptsInConstraint(typ: Cursor): Cursor =
@@ -945,16 +945,6 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
       cands.addUnique FnCandidate(kind: routine.kind, sym: fnSym, typ: routine.params)
   elif decl.kind == TypevarY:
     maybeAddConceptMethods c, fn, s, cands
-
-proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCandidates; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
-  var alreadyMatched = initHashSet[SymId]()
-  for i in 0 ..< m.len:
-    if m[i].fn.sym != SymId(0):
-      alreadyMatched.incl m[i].fn.sym
-  for candidate in candidates.a:
-    if candidate.sym notin alreadyMatched:
-      m.add createMatch(addr c)
-      sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
@@ -1052,7 +1042,6 @@ type
     args: seq[Item]
     hasGenericArgs, hasNamedArgs: bool
     flags: set[SemFlag]
-    candidates: FnCandidates
     source: TransformedCallSource
       ## type of expression the call was transformed from
 
@@ -1274,6 +1263,23 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
 proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
+proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
+  # scope extension: If the type is Typevar and it has attached
+  # a concept, use the concepts symbols too:
+  if fnName != StrId(0):
+    var candidates = FnCandidates(marker: initHashSet[SymId]())
+    for i in 0 ..< m.len:
+      if m[i].fn.sym != SymId(0):
+        # don't add already matched symbols
+        candidates.marker.incl m[i].fn.sym
+    for arg in args:
+      let root = nominalRoot(arg.typ, allowTypevar = true)
+      if root != SymId(0):
+        addTypeboundOps c, fnName, root, candidates
+    for candidate in candidates.a:
+      m.add createMatch(addr c)
+      sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
+
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
   if not (m.genericConverter or m.checkEmptyArg or m.insertedParam):
     c.dest.add m.args
@@ -1486,7 +1492,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       else:
         buildErr c, cs.fn.n.info, "`choice` node does not contain `symbol`"
       inc f
-    considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs, cs.hasNamedArgs)
+    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
     if m.len == 0:
       # symchoice contained no callable symbols and no typebound ops
       assert cs.fnName != StrId(0)
@@ -1509,7 +1515,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ)
       m.add createMatch(addr c)
       sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
-      considerTypeboundOps(c, m, cs.candidates, cs.args, genericArgs, cs.hasNamedArgs)
+      considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
     elif sym != SymId(0):
       # non-callable symbol, look up all overloads
       assert cs.fnName != StrId(0)
@@ -1799,12 +1805,6 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       let lhsIndex = c.dest.len
       c.dest.addSubtree lhs.n
       argIndexes.add lhsIndex
-      # scope extension: If the type is Typevar and it has attached
-      # a concept, use the concepts symbols too:
-      if cs.fnName != StrId(0):
-        let root = nominalRoot(lhs.typ, allowTypevar = true)
-        if root != SymId(0):
-          addTypeboundOps c, cs.fnName, root, cs.candidates
       # lhs.n escapes here, but is not read and will be set by argIndexes:
       cs.args.add lhs
   else:
@@ -1839,12 +1839,6 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       takeParRi c, arg.n
     if arg.typ.typeKind == UntypedT:
       skipSemCheck = true
-    # scope extension: If the type is Typevar and it has attached
-    # a concept, use the concepts symbols too:
-    if cs.fnName != StrId(0):
-      let root = nominalRoot(arg.typ, allowTypevar = true)
-      if root != SymId(0):
-        addTypeboundOps c, cs.fnName, root, cs.candidates
     it.n = arg.n
     cs.args.add arg
   when defined(debug):
