@@ -101,6 +101,50 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
+proc reportErrorsImpl(n: var Cursor; r: var Reporter; errTag: TagId): int =
+  assert n.kind == ParLe and n.tagId == errTag
+  result = 1
+  let info = n.info
+  inc n
+  # original expression, optional:
+  if n.kind == DotToken:
+    inc n
+  else:
+    if n.kind == ParLe:
+      if n.tagId == errTag:
+        inc result, reportErrorsImpl(n, r, errTag)
+      else:
+        var nested = 0
+        inc n
+        while true:
+          if n.kind == ParRi:
+            inc n
+            if nested == 0: break
+            dec nested
+          elif n.kind == ParLe:
+            if n.tagId == errTag:
+              inc result, reportErrorsImpl(n, r, errTag)
+            else:
+              inc nested
+              inc n
+          else:
+            inc n
+    else:
+      inc n
+  let doReport = not r.reportedErrSources.containsOrIncl(info)
+  # instantiation contexts:
+  while n.kind == DotToken:
+    if doReport:
+      r.trace infoToStr(n.info), "instantiation from here"
+    inc n
+  # error message:
+  assert n.kind == StringLit
+  if doReport:
+    r.error infoToStr(info), pool.strings[n.litId]
+  inc n
+  assert n.kind == ParRi
+  inc n
+
 proc reportErrors*(dest: var TokenBuf): int =
   let errTag = pool.tags.getOrIncl("err")
   var i = 0
@@ -108,26 +152,9 @@ proc reportErrors*(dest: var TokenBuf): int =
   result = 0
   while i < dest.len:
     if dest[i].kind == ParLe and dest[i].tagId == errTag:
-      inc result
-      let info = dest[i].info
-      let doReport = not r.reportedErrSources.containsOrIncl(info)
-      inc i
-      # original expression, optional:
-      if dest[i].kind == DotToken:
-        inc i
-      else:
-        let x = cursorAt(dest, i)
-        inc i, span(x)
-        endRead(dest)
-      # instantiation contexts:
-      while dest[i].kind == DotToken:
-        if doReport:
-          r.trace infoToStr(dest[i].info), "instantiation from here"
-        inc i
-      # error message:
-      assert dest[i].kind == StringLit
-      if doReport:
-        r.error infoToStr(info), pool.strings[dest[i].litId]
-      inc i
+      var n = cursorAt(dest, i)
+      inc result, reportErrorsImpl(n, r, errTag)
+      endRead(dest)
+      i = dest.cursorToPosition n
     else:
       inc i
