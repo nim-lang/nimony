@@ -905,10 +905,47 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
               cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
           skip ops
 
+proc hasAttachedParam(params: Cursor; typ: SymId): bool =
+  result = false
+  var params = params
+  assert params.substructureKind == ParamsU
+  inc params
+  while params.kind != ParRi:
+    let param = takeLocal(params, SkipFinalParRi)
+    if param.val.kind != DotToken:
+      # original nim does not consider params with default values as attached for some reason
+      discard
+    else:
+      let root = nominalRoot(param.typ)
+      if root != SymId(0) and root == typ:
+        return true
+
+proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandidates) =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  let decl = asTypeDecl(res.decl)
+  if decl.kind == TypeY:
+    let moduleSuffix = extractModule(pool.syms[s])
+    if moduleSuffix != "" and moduleSuffix != c.thisModuleSuffix and
+        decl.exported.kind != DotToken:
+      for topLevelSym in loadSyms(moduleSuffix, fn):
+        let res = tryLoadSym(topLevelSym)
+        assert res.status == LacksNothing
+        let routine = asRoutine(res.decl)
+        if routine.kind in RoutineKinds and hasAttachedParam(routine.params, s):
+          cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
+  elif decl.kind == TypevarY:
+    maybeAddConceptMethods c, fn, s, cands
+
 proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; candidates: FnCandidates; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
+  var alreadyMatched = initHashSet[SymId]()
+  for i in 0 ..< m.len:
+    if m[i].fn.sym != SymId(0):
+      alreadyMatched.incl m[i].fn.sym
   for candidate in candidates.a:
-    m.add createMatch(addr c)
-    sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
+    if candidate.sym notin alreadyMatched:
+      m.add createMatch(addr c)
+      sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
@@ -1758,7 +1795,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       if cs.fnName != StrId(0):
         let root = nominalRoot(lhs.typ, allowTypevar = true)
         if root != SymId(0):
-          maybeAddConceptMethods c, cs.fnName, root, cs.candidates
+          addTypeboundOps c, cs.fnName, root, cs.candidates
       # lhs.n escapes here, but is not read and will be set by argIndexes:
       cs.args.add lhs
   else:
@@ -1798,7 +1835,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     if cs.fnName != StrId(0):
       let root = nominalRoot(arg.typ, allowTypevar = true)
       if root != SymId(0):
-        maybeAddConceptMethods c, cs.fnName, root, cs.candidates
+        addTypeboundOps c, cs.fnName, root, cs.candidates
     it.n = arg.n
     cs.args.add arg
   when defined(debug):
