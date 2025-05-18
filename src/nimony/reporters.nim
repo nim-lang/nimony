@@ -82,9 +82,9 @@ proc fatal*(msg: string) =
 when defined(debug):
   proc debugAskToContinue*() =
     var msg = ""
-    write stdout, "Enter 'q' to quit, anything else to continue: "
+    write stdout, "Continue? [y/N] "
     let ok = readLine(stdin, msg)
-    if not ok or msg == "q":
+    if not ok or msg.len == 0 or not (msg[0] == 'y' or msg[0] == 'Y'):
       quit 1
 
 proc shortenDir*(x: string): string =
