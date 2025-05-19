@@ -224,6 +224,7 @@ proc loadVTable*(typ: SymId): seq[MethodIndexEntry] =
   return @[]
 
 proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
+  # gives top level exported syms of a module
   result = @[]
   var m = load(suffix)
   for k, _ in m.index.public:

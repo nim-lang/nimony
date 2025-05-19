@@ -73,6 +73,12 @@ proc buildSymChoiceForSelfModule*(c: var SemContext;
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 
+iterator topLevelSyms*(c: var SemContext; identifier: StrId): SymId =
+  var it = c.currentScope
+  while it.up != nil: it = it.up
+  for sym in it.tab.getOrDefault(identifier):
+    yield sym.name
+
 proc rawBuildSymChoiceForForeignModule(c: var SemContext; module: SymId;
                                        identifier: StrId; info: PackedLineInfo;
                                        marker: var HashSet[SymId]): int =

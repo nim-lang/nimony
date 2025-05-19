@@ -929,8 +929,14 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
     if moduleSuffix == "":
       discard
     elif moduleSuffix == c.thisModuleSuffix:
-      # XXX assumes normal lookup is enough, but maybe should add symbols anyway
-      discard
+      # XXX probably redundant over normal lookup but `OchoiceX` does not work yet
+      # do not use cache, check symbols from toplevel scope:
+      for topLevelSym in topLevelSyms(c, fn):
+        let res = tryLoadSym(topLevelSym)
+        assert res.status == LacksNothing
+        let routine = asRoutine(res.decl)
+        if routine.kind in RoutineKinds and hasAttachedParam(routine.params, s):
+          cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
     else:
       if (s, fn) in c.cachedTypeboundOps:
         for fnSym in c.cachedTypeboundOps[(s, fn)]:
@@ -1269,18 +1275,22 @@ proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
 proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
-  # scope extension: If the type is Typevar and it has attached
+  # XXX maybe only trigger for open symchoice/ident callee, 
+  # scope extension: procs attached to argument types are also considered
+  # If the type is Typevar and it has attached
   # a concept, use the concepts symbols too:
   if fnName != StrId(0):
     var candidates = FnCandidates(marker: initHashSet[SymId]())
+    # mark already matched symbols so that they don't get added:
     for i in 0 ..< m.len:
       if m[i].fn.sym != SymId(0):
-        # don't add already matched symbols
         candidates.marker.incl m[i].fn.sym
+    # add attached ops for each arg:
     for arg in args:
       let root = nominalRoot(arg.typ, allowTypevar = true)
       if root != SymId(0):
         addTypeboundOps c, fnName, root, candidates
+    # now match them:
     for candidate in candidates.a:
       m.add createMatch(addr c)
       sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
