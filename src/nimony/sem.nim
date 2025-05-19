@@ -1275,11 +1275,11 @@ proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
 proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
-  # XXX maybe only trigger for open symchoice/ident callee, 
   # scope extension: procs attached to argument types are also considered
   # If the type is Typevar and it has attached
   # a concept, use the concepts symbols too:
   if fnName != StrId(0):
+    # XXX maybe only trigger for open symchoice/ident callee, but the latter is not tracked
     var candidates = FnCandidates(marker: initHashSet[SymId]())
     # mark already matched symbols so that they don't get added:
     for i in 0 ..< m.len:
