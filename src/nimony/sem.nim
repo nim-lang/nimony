@@ -912,13 +912,9 @@ proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   inc params
   while params.kind != ParRi:
     let param = takeLocal(params, SkipFinalParRi)
-    if param.val.kind != DotToken:
-      # original nim does not consider params with default values as attached for some reason
-      discard
-    else:
-      let root = nominalRoot(param.typ)
-      if root != SymId(0) and root == typ:
-        return true
+    let root = nominalRoot(param.typ)
+    if root != SymId(0) and root == typ:
+      return true
 
 proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandidates) =
   let res = tryLoadSym(s)
