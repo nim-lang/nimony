@@ -73,6 +73,7 @@ proc handleCmdLine() =
   var args: seq[string] = @[]
   var cmd = Command.None
   var forceRebuild = false
+  var fullRebuild = false
   var silentMake = false
   var useEnv = true
   var doRun = false
@@ -105,6 +106,9 @@ proc handleCmdLine() =
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "forcebuild", "f": forceRebuild = true
+      of "ff":
+        fullRebuild = true
+        forceRebuild = true
       of "run", "r":
         doRun = true
         forwardArg = false
@@ -182,8 +186,8 @@ proc handleCmdLine() =
       createDir(config.nifcachePath)
       createDir(binDir())
       # configure required tools
-      requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
-      requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+      requiresTool "nifler", "src/nifler/nifler.nim", fullRebuild
+      requiresTool "nifc", "src/nifc/nifc.nim", fullRebuild
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
@@ -191,10 +195,10 @@ proc handleCmdLine() =
     createDir(binDir())
     # configure required tools
     updateCompilerGitSubmodules(config)
-    requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
-    requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
-    requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
-    requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+    requiresTool "nifler", "src/nifler/nifler.nim", fullRebuild
+    requiresTool "nimsem", "src/nimony/nimsem.nim", fullRebuild
+    requiresTool "hexer", "src/hexer/hexer.nim", fullRebuild
+    requiresTool "nifc", "src/nifc/nifc.nim", fullRebuild
     # compile full project modules
     buildGraph config, args[0], forceRebuild, silentMake,
       commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),
