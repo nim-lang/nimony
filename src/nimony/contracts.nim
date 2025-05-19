@@ -598,9 +598,14 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
   elif r.kind == Symbol:
     result.a = getVarId(c, r.symId)
     inc r
+  elif r.exprKind == NilX:
+    result.a = VarId(0)
+    inc r
   else:
     analyseExpr c, pc
     return result
+  if r.exprKind == NilX:
+    wasEquality = false
   if not rightHandSide(c, r, result):
     result.a = InvalidVarId
   # a < b  --> a <= b - 1:
