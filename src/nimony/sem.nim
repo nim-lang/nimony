@@ -5759,6 +5759,7 @@ proc getDottedIdent(n: var Cursor): string =
     if s == StrId(0) or result == "":
       result = ""
     else:
+      result.add(".")
       result.add(pool.strings[s])
     skipParRi n
   else:
