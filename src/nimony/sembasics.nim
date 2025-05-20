@@ -180,11 +180,32 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Curso
       if orig.kind != DotToken:
         echo "Source: ", toString(orig, false)
       quit 1
-  c.dest.buildTree ErrT, info:
-    c.dest.addSubtree orig
-    for instFrom in items(c.instantiatedFrom):
-      c.dest.add dotToken(instFrom)
-    c.dest.add strToken(pool.strings.getOrIncl(msg), info)
+  var n = orig
+  var hasErr = false
+  if n.kind == ParLe:
+    if n.tagId == ErrT:
+      hasErr = true
+    else:
+      var nested = 0
+      while true:
+        inc n
+        if n.kind == ParRi:
+          if nested == 0: break
+          dec nested
+        elif n.kind == ParLe:
+          if n.tagId == ErrT:
+            hasErr = true
+            break
+          else:
+            inc nested
+  if hasErr:
+    c.dest.addSubtree n
+  else:
+    c.dest.buildTree ErrT, info:
+      c.dest.addSubtree orig
+      for instFrom in items(c.instantiatedFrom):
+        c.dest.add dotToken(instFrom)
+      c.dest.add strToken(pool.strings.getOrIncl(msg), info)
 
 proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string) =
   var orig = createTokenBuf(1)
