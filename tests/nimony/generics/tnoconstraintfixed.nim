@@ -9,9 +9,7 @@ proc `+=`[T: Addable](a: var T, b: T) =
 proc mean[T](vs: seq[T]): float {.untyped.} =
   result = 0
   for x in vs:
-    echo "got: ", x
     result += x
-  echo "final: ", result, " ", vs.len
   result / vs.len.float
 
 echo @[1.0, 2.0].mean
