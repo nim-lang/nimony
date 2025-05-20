@@ -1649,7 +1649,7 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
       trLocal c, n, TvarY, mode
     of ConstS:
       trLocal c, n, ConstY, mode
-    of CmdS, CallS:
+    of CallKindsS:
       c.dest.add tagToken("call", n.info)
       inc n
       c.loop n:

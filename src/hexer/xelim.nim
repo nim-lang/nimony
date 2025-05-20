@@ -385,7 +385,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   of WhileS:
     trWhile c, dest, n
-  of CallS, CmdS, InclS, ExclS:
+  of CallKindsS, InclS, ExclS:
     trCall c, dest, n
   of AsgnS, AsmS, DeferS:
     # IMPORTANT: Stores into `tar` helper!
