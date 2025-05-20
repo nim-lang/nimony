@@ -1322,7 +1322,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
                 else:
                   # in generics, cannot instantiate yet
                   c.dest.shrink c.dest.len-1
-                  c.dest.addParLe(InvokeT, convInfo)
+                  c.dest.addParLe(AtX, convInfo)
                   c.dest.add symToken(conv.sym, convInfo)
                   c.dest.add convMatch.typeArgs
                   c.dest.addParRi()
