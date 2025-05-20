@@ -211,7 +211,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
           skip pc # type
           inc nested
           # proceed with its value here
-        of NoStmt, CallS, CmdS, DiscardS, EmitS, InclS, ExclS:
+        of NoStmt, CallKindsS, DiscardS, EmitS, InclS, ExclS:
           if containsRoot(pc, x):
             otherUsage = pc
             return false

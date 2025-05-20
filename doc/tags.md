@@ -225,10 +225,10 @@
 | `(baseobj T INTLIT X)` | NimonyExpr, NifcExpr | object conversion to base type |
 | `(hconv T X)` | NimonyExpr | hidden basic type conversion |
 | `(dconv T X)` | NimonyExpr | conversion between `distinct` types |
-| `(callstrlit X+)` | NimonyExpr, NiflerKind | |
-| `(infix X X)` | NimonyExpr, NiflerKind | |
-| `(prefix X)` | NimonyExpr, NiflerKind | |
-| `(hcall X*)` | NimonyExpr | hidden converter call |
+| `(callstrlit X+)` | NimonyExpr, NimonyStmt, NiflerKind | |
+| `(infix X X)` | NimonyExpr, NimonyStmt, NiflerKind | |
+| `(prefix X)` | NimonyExpr, NimonyStmt, NiflerKind | |
+| `(hcall X*)` | NimonyExpr, NimonyStmt | hidden converter call |
 | `(compiles X)` | NimonyExpr | |
 | `(declared X)` | NimonyExpr | |
 | `(defined X)` | NimonyExpr | |

@@ -119,7 +119,7 @@ proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
     # ignore finally part
     # all branches are discardable
     result = true
-  of CallS, CmdS:
+  of CallKindsS:
     inc it
     if it.kind == Symbol:
       let sym = tryLoadSym(it.symId)
@@ -1379,9 +1379,16 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
                 if convMatch.err:
                   # adding type args errored
                   buildErr c, convInfo, getErrorMsg(convMatch)
-                else:
+                elif c.routine.inGeneric == 0:
                   let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
                   c.dest[c.dest.len-1].setSymId inst.targetSym
+                else:
+                  # in generics, cannot instantiate yet
+                  c.dest.shrink c.dest.len-1
+                  c.dest.addParLe(AtX, convInfo)
+                  c.dest.add symToken(conv.sym, convInfo)
+                  c.dest.add convMatch.typeArgs
+                  c.dest.addParRi()
         while true:
           case arg.kind
           of ParLe: inc nested
@@ -6550,7 +6557,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
 proc semPragmasLine(c: var SemContext; it: var Item) =
   let info = it.n.info
   inc it.n
-  while it.n.kind == ParLe and (it.n.stmtKind in {CallS, CmdS} or
+  while it.n.kind == ParLe and (it.n.stmtKind in CallKindsS or
             it.n.substructureKind == KvU):
     inc it.n
     semPragmaLine c, it, false
@@ -6928,7 +6935,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of ContinueS:
         toplevelGuard c:
           semContinue c, it
-      of CallS, CmdS:
+      of CallKindsS:
         toplevelGuard c:
           semCall c, it, flags
       of IncludeS: semInclude c, it

@@ -900,7 +900,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
      ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     c.dest.addDotToken()
     skip n
-  of CallS, CmdS, InclS, ExclS, AssumeS, AssertS:
+  of CallKindsS, InclS, ExclS, AssumeS, AssertS:
     trVoidCall c, n
   of YldS, DiscardS, AsmS, DeferS:
     var tar = Target(m: IsAppend)
