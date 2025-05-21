@@ -880,6 +880,7 @@ proc checkContracts(c: var Context; n: Cursor) =
 
   c.startInstr = readonlyCursorAt(c.cf, 0)
   c.procCanRaise = false
+  c.typeCache.openScope()
   var body = c.startInstr
   if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
     inc body
@@ -916,6 +917,7 @@ proc checkContracts(c: var Context; n: Cursor) =
           nextIter = true
         else:
           candidates.add cont.elsePart
+  c.typeCache.closeScope()
 
 proc traverseProc(c: var Context; n: var Cursor) =
   let orig = n
