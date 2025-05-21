@@ -198,13 +198,14 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Curso
             break
           else:
             inc nested
-  if hasErr:
-    c.dest.addSubtree n
-  else:
-    c.dest.buildTree ErrT, info:
-      c.dest.addSubtree orig
-      for instFrom in items(c.instantiatedFrom):
-        c.dest.add dotToken(instFrom)
+  c.dest.buildTree ErrT, info:
+    c.dest.addSubtree orig
+    for instFrom in items(c.instantiatedFrom):
+      c.dest.add dotToken(instFrom)
+    if hasErr:
+      inc n
+      while n.kind != ParRi: c.dest.takeTree n
+    else:
       c.dest.add strToken(pool.strings.getOrIncl(msg), info)
 
 proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string) =
