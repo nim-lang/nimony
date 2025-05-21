@@ -15,7 +15,8 @@ import std/[strutils, assertions]
 ## Rendering of Nim code from a cursor.
 
 proc skipParRi(n: var Cursor) =
-  assert n.kind == ParRi
+  if n.kind != ParRi:
+    raiseAssert $(n.exprKind, n.stmtKind, n.typeKind)
   inc n
 
 type
@@ -249,7 +250,9 @@ proc lsub(g: TSrcGen; n: Cursor): int =
   result = 0
 
 proc gsub(g: var TSrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false)
+proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTopLevel = false)
 
+proc gtype(g: var TSrcGen, n: var Cursor, c: TContext)
 
 proc gstmts(g: var TSrcGen, n: var Cursor, c: TContext, doIndent=false) =
   inc n
@@ -321,6 +324,36 @@ proc gif(g: var TSrcGen, n: var Cursor) =
 
   skipParRi(n)
 
+proc gcase(g: var TSrcGen, n: var Cursor) =
+  var c: TContext = initContext()
+  inc n
+  putWithSpace(g, tkCase, "case")
+
+  gsub(g, n)
+
+  optNL(g)
+
+  while n.kind != ParRi:
+    case n.substructureKind
+    of OfU:
+      inc n
+      optNL(g)
+      putWithSpace(g, tkOf, "of")
+      gsub(g, n) # TODO:
+      putWithSpace(g, tkColon, ":")
+      gstmts(g, n, c, doIndent = true)
+      skipParRi(n)
+    of ElseU:
+      inc n
+      optNL(g)
+      putWithSpace(g, tkElse, "else")
+      putWithSpace(g, tkColon, ":")
+      gstmts(g, n, c, doIndent = true)
+      skipParRi(n)
+    else:
+      raiseAssert "unreachable"
+
+  skipParRi(n)
 
 # type
 #   Routine* = object
@@ -343,8 +376,16 @@ proc gproc(g: var TSrcGen, n: var Cursor) =
   var name = decl.name
   gsub(g, name)
 
+  put(g, tkParLe, "(")
+
+  put(g, tkParRi, ")")
 
   if renderNoBody notin g.flags:
+    var retType = decl.retType
+    if retType.kind != DotToken:
+      putWithSpace(g, tkColon, ":")
+      gtype(g, retType, c)
+
     if decl.body.kind != DotToken:
       put(g, tkSpaces, Space)
       putWithSpace(g, tkEquals, "=")
@@ -415,11 +456,11 @@ proc gsufx(g: var TSrcGen, n: var Cursor) =
   skip n
 
   case pool.strings[n.litId]
-  of "i": put(g, tkIntLit, toString(value, false))
-  of "i8": put(g, tkIntLit, toString(value, false) & "'i8")
-  of "i16": put(g, tkIntLit, toString(value, false) & "'i16")
-  of "i32": put(g, tkIntLit, toString(value, false) & "'i32")
-  of "i64": put(g, tkIntLit, toString(value, false) & "'i64")
+  of "i": put(g, tkIntLit, $pool.integers[value.intId])
+  of "i8": put(g, tkIntLit, $pool.integers[value.intId] & "'i8")
+  of "i16": put(g, tkIntLit, $pool.integers[value.intId] & "'i16")
+  of "i32": put(g, tkIntLit, $pool.integers[value.intId] & "'i32")
+  of "i64": put(g, tkIntLit, $pool.integers[value.intId] & "'i64")
   of "u": put(g, tkUIntLit, toString(value, false) & "'u")
   of "u8": put(g, tkUIntLit, toString(value, false) & "'u8")
   of "u16": put(g, tkUIntLit, toString(value, false) & "'u16")
@@ -435,6 +476,160 @@ proc gsufx(g: var TSrcGen, n: var Cursor) =
   skip n
   skipParRi(n)
 
+# type
+#   TypeDecl* = object
+#     kind*: SymKind
+#     name*: Cursor
+#     exported*: Cursor
+#     typevars*: Cursor
+#     pragmas*: Cursor
+#     body*: Cursor
+
+
+proc takeNumberType(g: var TSrcGen, n: var Cursor, typ: string) =
+  inc n
+  var name = typ
+  let size = pool.integers[n.intId]
+  if size != -1:
+    name.add $size
+
+  inc n
+
+  if n.kind != ParRi:
+    skip n
+
+  skipParRi(n)
+
+  put(g, tkSymbol, name)
+
+
+proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
+  case n.kind
+  of ParLe:
+    case n.typekind
+    of IT:
+      takeNumberType(g, n, "int")
+    of UT:
+      takeNumberType(g, n, "uint")
+    of FT:
+      takeNumberType(g, n, "float")
+    of CT:
+      put(g, tkSymbol, "char")
+      skip n
+    of BoolT:
+      put(g, tkSymbol, "bool")
+      skip n
+    of VoidT:
+      put(g, tkSymbol, "void")
+      skip n
+    of PtrT:
+      putWithSpace(g, tkPtr, "ptr")
+      inc n
+      gtype(g, n, c)
+      skipParRi(n)
+    of RefT:
+      putWithSpace(g, tkRef, "ref")
+      inc n
+      gtype(g, n, c)
+      skipParRi(n)
+    of MutT:
+      putWithSpace(g, tkVar, "var")
+      inc n
+      gtype(g, n, c)
+      skipParRi(n)
+    of OutT:
+      putWithSpace(g, tkOut, "out")
+      inc n
+      gtype(g, n, c)
+      skipParRi(n)
+    of LentT, SinkT:
+      putWithSpace(g, tkSymbol, $n.typeKind)
+      inc n
+      gtype(g, n, c)
+      skipParRi(n)
+
+    of OrT:
+      inc n
+      var afterFirst = false
+      while n.kind != ParRi:
+        if afterFirst:
+          put(g, tkOpr, "|")
+        else:
+          afterFirst = true
+        gtype(g, n, c)
+
+      skipParRi(n)
+    else:
+      skip n
+  else:
+    gsub(g, n, c)
+
+proc longMode(g: var TSrcGen, n: var Cursor): bool =
+  result = false
+  discard "todo"
+
+proc gWhile(g: var TSrcGen, n: var Cursor) =
+  var c: TContext = initContext()
+  putWithSpace(g, tkWhile, "while")
+  inc n
+  gcond(g, n)
+  putWithSpace(g, tkColon, ":")
+  
+  gstmts(g, n, c, doIndent = true)
+
+  skipParRi(n)
+
+proc gfor(g: var TSrcGen, n: var Cursor) =
+  let forStmt = asForStmt(n)
+  skip n
+  var c: TContext = initContext()
+  putWithSpace(g, tkFor, "for")
+  # if longMode(g, n) or
+  #     (lsub(g, n[^1]) + lsub(g, n[^2]) + 6 + g.lineLen > MaxLineLen):
+  #   incl(c.flags, rfLongMode)
+  # gcomma(g, n, c, 0, - 3)
+  var vars = forStmt.vars
+  inc vars
+
+  var afterFirst = false
+  while vars.kind != ParRi:
+    let local = takeLocal(vars, SkipFinalParRi)
+    var name = local.name
+
+    if afterFirst:
+      gcomma(g)
+    else:
+      afterFirst = true
+
+    gsub(g, name, c)
+
+  put(g, tkSpaces, Space)
+  putWithSpace(g, tkIn, "in")
+
+  var iter = forStmt.iter
+  gsub(g, iter, c)
+  putWithSpace(g, tkColon, ":")
+
+  var body = forStmt.body
+  gstmts(g, body, c, doIndent = true)
+
+proc gtypedef(g: var TSrcGen, n: var Cursor, c: TContext) =
+  let decl = takeTypeDecl(n, SkipFinalParRi)
+
+  putWithSpace(g, tkType, "type")
+  indentNL(g)
+
+  var name = decl.name
+  gsub(g, name, c)
+
+  put(g, tkSpaces, Space)
+  putWithSpace(g, tkEquals, "=")
+
+  var body = decl.body
+  gtype(g, body, c)
+
+  dedent(g)
+
 proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTopLevel = false) =
   case n.kind
   of ParLe:
@@ -443,11 +638,11 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       case n.stmtKind
       of StmtsS:
         gstmts(g, n, c)
-      of VarS, LetS, CursorS, ConstS, GvarS, TvarS, GletS, TletS:
+      of VarS, LetS, CursorS, ConstS, GvarS, TvarS, GletS, TletS, ResultS:
         let descriptor: string
         let tk: TokType
         case n.stmtKind
-        of VarS, GvarS, TvarS:
+        of VarS, GvarS, TvarS, ResultS:
           descriptor = "var"
           tk = tkVar
         of CursorS, LetS, GletS, TletS:
@@ -462,15 +657,23 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
         putWithSpace(g, tk, descriptor)
         var name = decl.name
         var value = decl.val
+        var typ = decl.typ
         gsub(g, name)
+
+        if typ.kind != DotToken:
+          putWithSpace(g, tkColon, ":")
+          gtype(g, typ, c)
 
         if value.kind != DotToken:
           put(g, tkSpaces, Space)
           putWithSpace(g, tkEquals, "=")
-          gsub(g, value)
+          gsub(g, value, c)
 
       of BlockS:
         gblock(g, n)
+
+      of TypeS:
+        gtypedef(g, n, emptyContext)
 
       of IfS:
         putWithSpace(g, tkIf, "if")
@@ -479,6 +682,15 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       of WhenS:
         putWithSpace(g, tkIf, "when")
         gif(g, n)
+
+      of CaseS:
+        gcase(g, n)
+
+      of ForS:
+        gfor(g, n)
+
+      of WhileS:
+        gWhile(g, n)
 
       of ProcS:
         putWithSpace(g, tkProc, "proc")
@@ -550,6 +762,17 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
         putWithSpace(g, tkYield, "yield")
         gsub(g, n)
         skipParRi(n)
+
+      of ScopeS:
+        inc n
+        while n.kind != ParRi:
+          gsub(g, n, c)
+
+        skipParRi(n)
+
+      of NoStmt:
+        skip n
+        # raiseAssert "unreachable"
 
       else:
         skip n
@@ -668,9 +891,17 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
 
       skipParRi(n)
 
-    of DerefX, HaddrX:
+    of HDerefX, HaddrX:
       inc n
       gsub(g, n)
+      skipParRi(n)
+
+    of ConvX:
+      inc n
+      gtype(g, n, c)
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
       skipParRi(n)
 
     of HconvX, DconvX:
@@ -691,7 +922,7 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
   of ParRi:
     inc n
   of IntLit:
-    put(g, tkIntLit, toString(n, false))
+    put(g, tkIntLit, $pool.integers[n.intId])
     inc n
   of UIntLit:
     put(g, tkUIntLit, toString(n, false))
