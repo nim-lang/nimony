@@ -656,6 +656,41 @@ proc trTry(c: var Context; n: var Cursor) =
     tr c, n, WantT
   takeParRi c, n
 
+proc trForHelper(c: var Context; n: var Cursor; e: Expects) =
+  takeToken c, n
+  tr c, n, e # iterator
+  trSons c, n, WantT # decls
+  trSons c, n, WantT # loop body
+  takeParRi c, n
+
+proc trFor(c: var Context; n: var Cursor) =
+  #[
+  (for
+    (call items.0.tem6twvye1
+     (cmd toOpenArray.0.tem6twvye1
+      (dot c.0 paths.0.tem6twvye1 +0)))
+    (unpackflat
+     (let :p.0 . .
+      (mut string.0.sysvq0asl) .)) ]#
+  var nn = n.firstSon
+  skip nn # iterator
+  case substructureKind(nn)
+  of UnpackflatU, UnpacktupU:
+    inc nn
+    var e = WantT
+    while nn.kind != ParRi:
+      inc nn # LetS etc.
+      for i in 0..<LocalTypePos:
+        skip nn
+      if nn.typeKind in {OutT, MutT, LentT}:
+        e = WantForwarding # WantVarT
+      skip nn # type
+      skip nn # value
+    # now work with `n`, not `nn`
+    trForHelper c, n, e
+  else:
+    bug "illformed for loop"
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
@@ -720,6 +755,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trAsgn c, n
       of LocalDecls:
         trLocal c, n
+      of ForS:
+        trFor c, n
       of TryS:
         trTry c, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
