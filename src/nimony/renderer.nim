@@ -879,6 +879,12 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       gsub(g, n)
       skipParRi(n)
 
+    of NotX, NegX:
+      putWithSpace(g, tkOpr, $n.exprKind)
+      inc n
+      gsub(g, n)
+      skipParRi(n)
+
     of ExprX:
       inc n
       var isFirst = true
