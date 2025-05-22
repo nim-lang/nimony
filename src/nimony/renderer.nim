@@ -884,7 +884,7 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       put(g, tkParRi, ")")
       skipParRi(n)
 
-    of AtX, ArrAtX:
+    of AtX, PatX, ArrAtX:
       inc n
 
       gsub(g, n)
@@ -899,6 +899,12 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
 
       skipParRi(n)
 
+    of ParX:
+      inc n
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      skipParRi(n)
+
     of SufX:
       gsufx(g, n)
 
@@ -907,7 +913,7 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       skip n
 
     of NeginfX:
-      put(g, tkSymbol, "-")
+      put(g, tkOpr, "-")
       put(g, tkSymbol, "Inf")
       skip n
 
@@ -922,8 +928,46 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
 
       skipParRi(n)
 
-    of CallX, CallstrlitX, HighX, LowX, TypeofX:
+    of CallX, CallstrlitX, HighX, LowX, TypeofX,
+          SizeofX, AlignofX, OffsetofX:
       gcall(g, n)
+
+    of AconstrX:
+      inc n
+      skip n
+
+      put(g, tkBracketLe, "[")
+      var afterFirst = false
+      while n.kind != ParRi:
+        if afterFirst:
+          gcomma(g)
+        else:
+          afterFirst = true
+        gsub(g, n)
+
+      skipParRi(n)
+
+      put(g, tkBracketRi, "]")
+
+    of OconstrX:
+      inc n
+      gtype(g, n, c)
+      put(g, tkParLe, "(")
+      var afterFirst = false
+      while n.kind != ParRi:
+        if afterFirst:
+          gcomma(g)
+        else:
+          afterFirst = true
+        assert n.substructureKind == KvU
+        inc n
+        gsub(g, n)
+        putWithSpace(g, tkColon, ":")
+        gsub(g, n)
+        skipParRi(n)
+
+      skipParRi(n)
+      put(g, tkParRi, ")")
 
     of CmdX:
       gcmd(g, n)
