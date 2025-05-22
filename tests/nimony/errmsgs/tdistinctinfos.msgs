@@ -1,5 +1,5 @@
 tests/nimony/errmsgs/tdistinctinfos.nim(4, 20) Trace: instantiation from here
-lib/std/system/comparisons.nim(105, 10) Error: Type mismatch at [position]
+lib/std/system/comparisons.nim(105, 3) Error: Type mismatch at [position]
 [2] BUG: unhandled type: distinct
 [1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.0.sysvq0asl
 [1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.1.sysvq0asl

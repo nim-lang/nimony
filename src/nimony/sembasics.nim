@@ -199,12 +199,16 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Curso
           else:
             inc nested
   c.dest.buildTree ErrT, info:
-    c.dest.addSubtree orig
+    if hasErr:
+      inc n
+      c.dest.takeTree n
+    else:
+      c.dest.addSubtree orig
     for instFrom in items(c.instantiatedFrom):
       c.dest.add dotToken(instFrom)
     if hasErr:
-      inc n
-      while n.kind != ParRi: c.dest.takeTree n
+      while n.kind == DotToken: inc n
+      c.dest.takeTree n
     else:
       c.dest.add strToken(pool.strings.getOrIncl(msg), info)
 
