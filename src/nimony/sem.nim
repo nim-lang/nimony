@@ -6549,8 +6549,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
     skip it.n
   of PluginP:
     c.dest.add parLeToken(PragmasS, it.n.info)
-    c.dest.add parLeToken(KvU, it.n.info)
-    c.dest.add identToken(pool.strings.getOrIncl("plugin"), it.n.info) #parLeToken(PluginP, it.n.info)
+    c.dest.add parLeToken(PluginP, it.n.info)
     inc it.n
     if it.n.kind == StringLit:
       if c.routine.inGeneric == 0 and it.n.litId notin c.pluginBlacklist:
@@ -6563,8 +6562,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
     c.dest.addParRi()
   of PragmaP:
     c.dest.add parLeToken(PragmasS, it.n.info)
-    c.dest.add parLeToken(KvU, it.n.info)
-    c.dest.add identToken(pool.strings.getOrIncl("pragma"), it.n.info) #parLeToken(PragmaP, it.n.info)
+    c.dest.add parLeToken(PragmaP, it.n.info)
     inc it.n
     let name = takeIdent(it.n)
     if name == StrId(0):
@@ -6591,10 +6589,14 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
 proc semPragmasLine(c: var SemContext; it: var Item) =
   let info = it.n.info
   inc it.n
-  while it.n.kind == ParLe and (it.n.stmtKind in CallKindsS or
-            it.n.substructureKind == KvU):
-    inc it.n
-    semPragmaLine c, it, false
+  while true:
+    if it.n.kind == ParLe:
+      if it.n.stmtKind in CallKindsS or
+          it.n.substructureKind == KvU:
+        inc it.n
+      semPragmaLine c, it, false
+    else:
+      break
   skipParRi it.n
   producesVoid c, info, it.typ # in case it was not already produced
 
