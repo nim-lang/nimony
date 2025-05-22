@@ -6539,7 +6539,8 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       c.toBuild.addStrLit name, info
       c.toBuild.addStrLit customArgs, info
   of EmitP:
-    semEmit c, it
+    toplevelGuard c:
+      semEmit c, it
   of AssumeP:
     toplevelGuard c:
       semAssumeAssert c, it, AssumeS
@@ -7026,7 +7027,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         # XXX ignored for now
         skip it.n
       of EmitS:
-        pragmaGuard c:
+        toplevelGuard c:
           semEmit c, it
       of PragmasS:
         pragmaGuard c:
