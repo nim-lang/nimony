@@ -268,6 +268,32 @@ proc gstmts(g: var TSrcGen, n: var Cursor, c: TContext, doIndent=false) =
 proc gcomma(g: var TSrcGen) =
   putWithSpace(g, tkComma, ",")
 
+
+proc gpragmas(g: var TSrcGen, n: var Cursor) =
+  inc n
+  put(g, tkSpaces, Space)
+  put(g, tkCurlyDotLe, "{.")
+  var afterFirst = false
+
+  while n.kind != ParRi:
+    if afterFirst:
+      gcomma(g)
+    else:
+      afterFirst = true
+
+    put(g, tkSymbol, pool.tags[n.tagId])
+    inc n
+
+    if n.kind == ParRi:
+      skipParRi(n)
+    else:
+      putWithSpace(g, tkColon, ":")
+      gsub(g, n)
+      skipParRi(n)
+
+  put(g, tkCurlyDotRi, ".}")
+  skipParRi(n)
+
 proc gblock(g: var TSrcGen, n: var Cursor) =
   var c: TContext = initContext()
   inc n
@@ -385,6 +411,10 @@ proc gproc(g: var TSrcGen, n: var Cursor) =
     if retType.kind != DotToken:
       putWithSpace(g, tkColon, ":")
       gtype(g, retType, c)
+
+    var pragmas = decl.pragmas
+    if renderNoPragmas notin g.flags:
+      gsub(g, pragmas)
 
     if decl.body.kind != DotToken:
       put(g, tkSpaces, Space)
@@ -773,6 +803,9 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       of NoStmt:
         skip n
         # raiseAssert "unreachable"
+
+      of PragmasS:
+        gpragmas(g, n)
 
       else:
         skip n
