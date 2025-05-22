@@ -6489,6 +6489,12 @@ template constGuard(c: var SemContext; body: untyped) =
   else:
     c.takeTree it.n
 
+template pragmaGuard(c: var SemContext; body: untyped) =
+  if c.phase in {SemcheckSignatures, SemcheckBodies}:
+    body
+  else:
+    c.takeTree it.n
+
 proc semAssumeAssert(c: var SemContext; it: var Item; kind: StmtKind) =
   let info = it.n.info
   inc it.n
@@ -7022,7 +7028,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of EmitS:
         bug "unreachable"
       of PragmasS:
-        constGuard c:
+        pragmaGuard c:
           semPragmasLine c, it
       of InclS, ExclS:
         toplevelGuard c:
