@@ -1,11 +1,23 @@
 tests/nimony/errmsgs/tdistinctinfos.nim(4, 20) Trace: instantiation from here
 lib/std/system/comparisons.nim(105, 3) Error: Type mismatch at [position]
-[1] expected: (bool) but got: (auto)
-[1] expected: (i +8) but got: (auto)
-[1] expected: (i +16) but got: (auto)
-[1] expected: (i +32) but got: (auto)
-[1] expected: (i +64) but got: (auto)
-[1] expected: (u +8) but got: (auto)
-[1] expected: (u +16) but got: (auto)
-[1] expected: (u +32) but got: (auto)
-[1] expected: (u +64) but got: (auto)
+[2] BUG: unhandled type: distinct
+[1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.0.sysvq0asl
+[1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.1.sysvq0asl
+[1] expected: (pointer) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (c +8) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (bool) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (set T.32.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (ref T.33.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (ptr T.34.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (i +8) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (i +16) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (i +32) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (i +64) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (u +8) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (u +16) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (u +32) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (u +64) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (f +32) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (f +64) but got: WINBOOL.0.tdim13fdy1
+[1] expected: string.0.sysvq0asl but got: WINBOOL.0.tdim13fdy1
+[1] expected: (at openArray.0.sysvq0asl T.116.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
