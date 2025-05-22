@@ -24,7 +24,7 @@ Now also does some simple checks for `raise` statements:
 
 ]##
 
-import std / [assertions]
+import std / [assertions, tables]
 
 include nifprelude
 
@@ -46,7 +46,7 @@ type
     canRaise: bool
     firstParam: SymId
     resultSym: SymId
-    dangerousLocations: seq[(SymId, Cursor)] # Cursor is only used for line information
+    dangerousLocations: Table[SymId, PackedLineInfo]
 
   Context = object
     dest: TokenBuf
@@ -175,7 +175,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   else:
     result = false
 
-proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
+proc skipToRoot(n: Cursor): Cursor =
   var n = n
   while true:
     case n.exprKind
@@ -184,6 +184,10 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
     of DconvX, HconvX, ConvX, CastX:
       inc n
       skip n
+    of BaseobjX:
+      inc n
+      skip n # skip intlit
+      skip n # skip type
     of CallKinds:
       inc n
       skip n # skip the `fn`
@@ -194,6 +198,10 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
         break
     else:
       break
+  result = n
+
+proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
+  let n = skipToRoot(n)
   if n.kind == Symbol:
     let res = tryLoadSym(n.symId)
     assert res.status == LacksNothing
@@ -279,43 +287,50 @@ proc trYield(c: var Context; n: var Cursor) =
 proc mightBeDangerous(c: var Context; n: Cursor) =
   let root = rootOf(n)
   if root != NoSymId:
-    for d in items(c.r.dangerousLocations):
-      if d[0] == root:
-        buildLocalErr c.dest, n.info, "cannot mutate " & asNimCode(n) &
-          "; binding created here: " & infoToStr(d[1].info)
+    if c.r.dangerousLocations.hasKey(root):
+      buildLocalErr c.dest, n.info, "cannot mutate " & asNimCode(n) &
+          "; binding created here: " & infoToStr(c.r.dangerousLocations[root])
 
 proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   template recurse =
     while n.kind != ParRi:
       checkForDangerousLocations c, n
+    inc n # skip ParRi
 
-  if isDeclarative(n):
-    skip n
-  elif n.stmtKind == AsgnS:
+  case n.kind
+  of Symbol, UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     inc n
-    mightBeDangerous(c, n)
-    recurse()
-  elif n.exprKind in CallKinds:
-    inc n # skip `(call)`
-    let orig = n
-    var fnType = skipProcTypeToParams(getType(c.typeCache, n))
-    skip n # skip `fn`
-    assert fnType.isParamsTag
-    inc fnType
-    while n.kind != ParRi:
-      let previousFormalParam = fnType
-      let param = takeLocal(fnType, SkipFinalParRi)
-      let pk = param.typ.typeKind
-      if pk in {MutT, OutT, LentT}:
-        mightBeDangerous(c, n)
-      elif pk == VarargsT:
-        # do not advance formal parameter:
-        fnType = previousFormalParam
+  of ParLe:
+    if isDeclarative(n):
       skip n
-    n = orig
-    recurse()
-  elif n.kind == ParLe:
-    recurse()
+    elif n.stmtKind == AsgnS:
+      inc n
+      mightBeDangerous(c, n)
+      recurse()
+    elif n.exprKind in CallKinds:
+      inc n # skip `(call)`
+      let orig = n
+      var fnType = skipProcTypeToParams(getType(c.typeCache, n))
+      skip n # skip `fn`
+      assert fnType.isParamsTag
+      inc fnType
+      while n.kind != ParRi:
+        let previousFormalParam = fnType
+        let param = takeLocal(fnType, SkipFinalParRi)
+        let pk = param.typ.typeKind
+        if pk in {MutT, OutT, LentT}:
+          mightBeDangerous(c, n)
+        elif pk == VarargsT:
+          # do not advance formal parameter:
+          fnType = previousFormalParam
+        skip n
+      n = orig
+      recurse()
+    else:
+      inc n
+      recurse()
+  of ParRi:
+    bug "checkForDangerousLocations: ParRi"
 
 proc trProcPragmas(c: var Context; n: var Cursor) =
   # we also need to traverse the `requires` pragmas!
@@ -490,7 +505,7 @@ proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
     if dangerous:
       let s = rootOf(le)
       if s != NoSymId:
-        c.r.dangerousLocations.add (s, ri)
+        c.r.dangerousLocations[s] = ri.info
   else:
     tr c, ri, e
 
@@ -656,6 +671,46 @@ proc trTry(c: var Context; n: var Cursor) =
     tr c, n, WantT
   takeParRi c, n
 
+proc trForHelper(c: var Context; n: var Cursor; dangerous: seq[SymId]) =
+  takeToken c, n
+  if dangerous.len > 0:
+    if borrowsFromReadonly(c, n, allowLet=true):
+      for s in dangerous:
+        c.r.dangerousLocations[s] = n.info
+  tr c, n, WantT # iterator call
+  trSons c, n, WantT # decls
+  trSons c, n, WantT # loop body
+  takeParRi c, n
+
+proc trFor(c: var Context; n: var Cursor) =
+  #[
+  (for
+    (call items.0.tem6twvye1
+     (cmd toOpenArray.0.tem6twvye1
+      (dot c.0 paths.0.tem6twvye1 +0)))
+    (unpackflat
+     (let :p.0 . .
+      (mut string.0.sysvq0asl) .)) ]#
+  var nn = n.firstSon
+  skip nn # iterator
+  case substructureKind(nn)
+  of UnpackflatU, UnpacktupU:
+    inc nn
+    var dangerous: seq[SymId] = @[]
+    while nn.kind != ParRi:
+      inc nn # LetS etc.
+      let s = nn.symId
+      for i in 0..<LocalTypePos:
+        skip nn
+      if nn.typeKind in {OutT, MutT, LentT}:
+        dangerous.add(s)
+      skip nn # type
+      skip nn # value
+    # now work with `n`, not `nn`
+    trForHelper c, n, dangerous
+  else:
+    bug "illformed for loop"
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
@@ -720,6 +775,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trAsgn c, n
       of LocalDecls:
         trLocal c, n
+      of ForS:
+        trFor c, n
       of TryS:
         trTry c, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
