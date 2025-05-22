@@ -365,7 +365,21 @@ proc gcase(g: var TSrcGen, n: var Cursor) =
       inc n
       optNL(g)
       putWithSpace(g, tkOf, "of")
-      gsub(g, n) # TODO:
+      assert n.substructureKind == RangesU
+      inc n
+      while n.kind != ParRi:
+        case n.substructureKind
+        of RangeU:
+          inc n
+          gsub(g, n)
+          put(g, tkDotDot, "..")
+          gsub(g, n)
+          skipParRi(n)
+        else:
+          gsub(g, n)
+
+      skipParRi(n)
+
       putWithSpace(g, tkColon, ":")
       gstmts(g, n, c, doIndent = true)
       skipParRi(n)
@@ -403,6 +417,25 @@ proc gproc(g: var TSrcGen, n: var Cursor) =
   gsub(g, name)
 
   put(g, tkParLe, "(")
+
+  var params = decl.params
+  if params.kind != DotToken:
+    inc params
+    var afterFirst = false
+    while params.kind != ParRi:
+      if afterFirst:
+        gcomma(g)
+      else:
+        afterFirst = true
+      let param = takeLocal(params, SkipFinalParRi)
+      var name = param.name
+      gsub(g, name)
+      putWithSpace(g, tkColon, ":")
+
+      var typ = param.typ
+      gtype(g, typ, emptyContext)
+
+    skipParRi(params)
 
   put(g, tkParRi, ")")
 
