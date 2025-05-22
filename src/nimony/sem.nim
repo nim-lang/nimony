@@ -7026,7 +7026,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         # XXX ignored for now
         skip it.n
       of EmitS:
-        bug "unreachable"
+        pragmaGuard c:
+          semEmit c, it
       of PragmasS:
         pragmaGuard c:
           semPragmasLine c, it
