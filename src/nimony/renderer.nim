@@ -582,11 +582,9 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
     of CT:
       put(g, tkSymbol, "char")
       skip n
-    of BoolT:
-      put(g, tkSymbol, "bool")
-      skip n
-    of VoidT:
-      put(g, tkSymbol, "void")
+    of BoolT, VoidT, CstringT, PointerT, OrdinalT,
+          UntypedT, TypedT, TypedescT, AutoT:
+      put(g, tkSymbol, $n.typeKind)
       skip n
     of PtrT:
       putWithSpace(g, tkPtr, "ptr")
@@ -608,7 +606,7 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
       inc n
       gtype(g, n, c)
       skipParRi(n)
-    of LentT, SinkT:
+    of LentT, SinkT, DistinctT:
       putWithSpace(g, tkSymbol, $n.typeKind)
       inc n
       gtype(g, n, c)
@@ -640,6 +638,40 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
 
       skipParRi(n)
       put(g, tkBracketRi, "]")
+
+    of RangetypeT:
+      inc n
+      skip n
+      gtype(g, n, c)
+      put(g, tkDotDot, "..")
+      gtype(g, n, c)
+      skipParRi(n)
+
+    of ArrayT:
+      inc n
+
+      put(g, tkSymbol, "array")
+      put(g, tkBracketLe, "[")
+
+      gtype(g, n, c)
+      gcomma(g)
+      gtype(g, n, c)
+
+      put(g, tkBracketRi, "]")
+
+      skipParRi(n)
+
+    of UarrayT:
+      inc n
+
+      put(g, tkSymbol, "UncheckedArray")
+      put(g, tkBracketLe, "[")
+
+      gtype(g, n, c)
+
+      put(g, tkBracketRi, "]")
+
+      skipParRi(n)
 
     else:
       skip n
