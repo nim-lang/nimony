@@ -16,7 +16,7 @@ import std/[strutils, assertions]
 
 proc skipParRi(n: var Cursor) =
   if n.kind != ParRi:
-    raiseAssert $(n.exprKind, n.stmtKind, n.typeKind)
+    raiseAssert $(n.exprKind, n.stmtKind, n.typeKind, $n)
   inc n
 
 type
@@ -660,6 +660,17 @@ proc gtypedef(g: var TSrcGen, n: var Cursor, c: TContext) =
 
   dedent(g)
 
+proc gtry(g: var TSrcGen, n: var Cursor) =
+  skip n
+  raiseAssert "todo"
+  # var c: TContext = initContext()
+  # put(g, tkTry, "try")
+  # putWithSpace(g, tkColon, ":")
+  # # if longMode(g, n) or (lsub(g, n[0]) + g.lineLen > MaxLineLen):
+  # #   incl(c.flags, rfLongMode)
+  # gstmts(g, n, c, doIndent = true)
+  # # gsons(g, n, c, 1)
+
 proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTopLevel = false) =
   case n.kind
   of ParLe:
@@ -793,6 +804,16 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
         gsub(g, n)
         skipParRi(n)
 
+      of RaiseS:
+        inc n
+        putWithSpace(g, tkRaise, "raise")
+        gsub(g, n)
+        skipParRi(n)
+
+      of TryS:
+        gtry(g, n)
+
+
       of ScopeS:
         inc n
         while n.kind != ParRi:
@@ -819,6 +840,32 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       put(g, tkSymbol, "nil")
       skip n
 
+    of CastX:
+      inc n
+      put(g, tkCast, "cast")
+      put(g, tkBracketLe, "[")
+      gtype(g, n, c)
+      put(g, tkBracketRi, "]")
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
+    of AtX, ArrAtX:
+      inc n
+
+      gsub(g, n)
+      put(g, tkBracketLe, "[")
+
+      gsub(g, n)
+
+      put(g, tkBracketRi, "]")
+
+      while n.kind != ParRi:
+        skip n
+
+      skipParRi(n)
+
     of SufX:
       gsufx(g, n)
 
@@ -842,7 +889,7 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
 
       skipParRi(n)
 
-    of CallX, CallstrlitX:
+    of CallX, CallstrlitX, HighX, LowX, TypeofX:
       gcall(g, n)
 
     of CmdX:
@@ -912,7 +959,14 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       gsub(g, n)
       skipParRi(n)
 
-    of NotX, NegX:
+    of NegX:
+      putWithSpace(g, tkOpr, $n.exprKind)
+      inc n
+      skip n
+      gsub(g, n)
+      skipParRi(n)
+
+    of NotX:
       putWithSpace(g, tkOpr, $n.exprKind)
       inc n
       gsub(g, n)
@@ -933,6 +987,12 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
     of HDerefX, HaddrX:
       inc n
       gsub(g, n)
+      skipParRi(n)
+
+    of DerefX:
+      inc n
+      gsub(g, n)
+      put(g, tkOpr, "[]")
       skipParRi(n)
 
     of ConvX:
