@@ -290,6 +290,7 @@ type
     BaseTagId
     PureTagId
     FinalTagId
+    PragmaTagId
     InternalTypeNameTagId
     InternalFieldPairsTagId
     FailedTagId
@@ -583,7 +584,8 @@ const
     ("base", 285),
     ("pure", 286),
     ("final", 287),
-    ("internalTypeName", 288),
-    ("internalFieldPairs", 289),
-    ("failed", 290)
+    ("pragma", 288),
+    ("internalTypeName", 289),
+    ("internalFieldPairs", 290),
+    ("failed", 291)
   ]
