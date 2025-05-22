@@ -63,6 +63,9 @@ type
   TSubFlags = set[TSubFlag]
   TContext = tuple[spacing: int, flags: TSubFlags]
 
+  BracketKind = enum
+    bkNone, bkBracket, bkBracketAsgn, bkCurly, bkCurlyAsgn
+
 const
   Space = " "
   emptyContext: TContext = (spacing: 0, flags: {})
@@ -622,6 +625,22 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
         gtype(g, n, c)
 
       skipParRi(n)
+
+    of AtT:
+      inc n
+      var afterFirst = false
+      gtype(g, n, c)
+      put(g, tkBracketLe, "[")
+      while n.kind != ParRi:
+        if afterFirst:
+          put(g, tkComma, ",")
+        else:
+          afterFirst = true
+        gtype(g, n, c)
+
+      skipParRi(n)
+      put(g, tkBracketRi, "]")
+
     else:
       skip n
   else:
@@ -703,6 +722,36 @@ proc gtry(g: var TSrcGen, n: var Cursor) =
   # #   incl(c.flags, rfLongMode)
   # gstmts(g, n, c, doIndent = true)
   # # gsons(g, n, c, 1)
+
+proc gconstr(g: var TSrcGen, n: var Cursor, kind: BracketKind) =
+  inc n
+  skip n
+
+  case kind
+  of bkBracket:
+    put(g, tkBracketLe, "[")
+  of bkCurly:
+    put(g, tkCurlyLe, "{")
+  else:
+    raiseAssert "todo"
+
+  var afterFirst = false
+  while n.kind != ParRi:
+    if afterFirst:
+      gcomma(g)
+    else:
+      afterFirst = true
+    gsub(g, n)
+
+  skipParRi(n)
+
+  case kind
+  of bkBracket:
+    put(g, tkBracketRi, "]")
+  of bkCurly:
+    put(g, tkCurlyRi, "}")
+  else:
+    raiseAssert "todo"
 
 proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTopLevel = false) =
   case n.kind
@@ -933,21 +982,10 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       gcall(g, n)
 
     of AconstrX:
-      inc n
-      skip n
+      gconstr(g, n, bkBracket)
 
-      put(g, tkBracketLe, "[")
-      var afterFirst = false
-      while n.kind != ParRi:
-        if afterFirst:
-          gcomma(g)
-        else:
-          afterFirst = true
-        gsub(g, n)
-
-      skipParRi(n)
-
-      put(g, tkBracketRi, "]")
+    of SetconstrX:
+      gconstr(g, n, bkCurly)
 
     of OconstrX:
       inc n
