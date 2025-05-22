@@ -6539,14 +6539,11 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       c.toBuild.addStrLit name, info
       c.toBuild.addStrLit customArgs, info
   of EmitP:
-    toplevelGuard c:
-      semEmit c, it
+    semEmit c, it
   of AssumeP:
-    toplevelGuard c:
-      semAssumeAssert c, it, AssumeS
+    semAssumeAssert c, it, AssumeS
   of AssertP:
-    toplevelGuard c:
-      semAssumeAssert c, it, AssertS
+    semAssumeAssert c, it, AssertS
   of KeepOverflowFlagP:
     if not isPragmaBlock:
       buildErr c, it.n.info, "`keepOverflowFlag` pragma must be used in a pragma block"
@@ -7027,7 +7024,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         # XXX ignored for now
         skip it.n
       of EmitS:
-        toplevelGuard c:
+        pragmaGuard c:
           semEmit c, it
       of PragmasS:
         pragmaGuard c:
@@ -7036,7 +7033,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         toplevelGuard c:
           semInclExcl c, it
       of AssumeS, AssertS:
-        toplevelGuard c:
+        pragmaGuard c:
           semAssumeAssert c, it, it.n.stmtKind
     of FalseX, TrueX, OvfX:
       literalB c, it, c.types.boolType
