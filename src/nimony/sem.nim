@@ -2294,10 +2294,19 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       inc n
       c.dest.addParRi()
     else:
-      buildErr c, n.info, "expected pragma"
-      inc n
-      if hasParRi:
-        while n.kind != ParRi: skip n # skip optional pragma arguments
+      let name = getIdent(n)
+      if name != StrId(0) and name in c.userPragmas and not hasParRi:
+        # custom pragma, cannot have arguments
+        inc n
+        var read = beginRead(c.userPragmas[name])
+        while read.kind != ParRi:
+          semPragma c, read, crucial, kind
+        endRead(c.userPragmas[name])
+      else:
+        buildErr c, n.info, "expected pragma"
+        inc n
+        if hasParRi:
+          while n.kind != ParRi: skip n # skip optional pragma arguments
   of MagicP:
     c.dest.add parLeToken(MagicP, n.info)
     inc n
@@ -2408,7 +2417,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
         c.dest.shrink oldLen
     else:
       c.dest.addParRi()
-  of EmitP, BuildP, StringP, AssumeP, AssertP:
+  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP:
     buildErr c, n.info, "pragma not supported"
     inc n
     if hasParRi:
@@ -6480,6 +6489,12 @@ template constGuard(c: var SemContext; body: untyped) =
   else:
     c.takeTree it.n
 
+template pragmaGuard(c: var SemContext; body: untyped) =
+  if c.phase in {SemcheckSignatures, SemcheckBodies}:
+    body
+  else:
+    c.takeTree it.n
+
 proc semAssumeAssert(c: var SemContext; it: var Item; kind: StmtKind) =
   let info = it.n.info
   inc it.n
@@ -6538,7 +6553,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
     skip it.n
   of PluginP:
     c.dest.add parLeToken(PragmasS, it.n.info)
-    c.dest.add identToken(pool.strings.getOrIncl("plugin"), it.n.info) #parLeToken(PluginP, it.n.info)
+    c.dest.add parLeToken(PluginP, it.n.info)
     inc it.n
     if it.n.kind == StringLit:
       if c.routine.inGeneric == 0 and it.n.litId notin c.pluginBlacklist:
@@ -6549,6 +6564,27 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       buildErr c, it.n.info, "expected `string` but got: " & asNimCode(it.n)
       if it.n.kind != ParRi: skip it.n
     c.dest.addParRi()
+  of PragmaP:
+    c.dest.add parLeToken(PragmasS, it.n.info)
+    c.dest.add parLeToken(PragmaP, it.n.info)
+    inc it.n
+    let name = takeIdent(it.n)
+    if name == StrId(0):
+      buildErr c, it.n.info, "expected identifier for pragma"
+      takeParRi c, it.n
+      while it.n.kind != ParRi:
+        takeTree c, it.n
+    else:
+      var buf = createTokenBuf(16)
+      c.dest.add identToken(name, it.n.info)
+      takeParRi c, it.n
+      # take remaining pragmas:
+      while it.n.kind != ParRi:
+        buf.addSubtree it.n
+        takeTree c, it.n
+      buf.addParRi() # extra ParRi to make reading easier
+      c.userPragmas[name] = buf
+    c.dest.addParRi()
   else:
     buildErr c, it.n.info, "unsupported pragma"
     skip it.n
@@ -6557,10 +6593,14 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
 proc semPragmasLine(c: var SemContext; it: var Item) =
   let info = it.n.info
   inc it.n
-  while it.n.kind == ParLe and (it.n.stmtKind in CallKindsS or
-            it.n.substructureKind == KvU):
-    inc it.n
-    semPragmaLine c, it, false
+  while true:
+    if it.n.kind == ParLe:
+      if it.n.stmtKind in CallKindsS or
+          it.n.substructureKind == KvU:
+        inc it.n
+      semPragmaLine c, it, false
+    else:
+      break
   skipParRi it.n
   producesVoid c, info, it.typ # in case it was not already produced
 
@@ -6984,15 +7024,16 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         # XXX ignored for now
         skip it.n
       of EmitS:
-        bug "unreachable"
+        pragmaGuard c:
+          semEmit c, it
       of PragmasS:
-        toplevelGuard c:
+        pragmaGuard c:
           semPragmasLine c, it
       of InclS, ExclS:
         toplevelGuard c:
           semInclExcl c, it
       of AssumeS, AssertS:
-        toplevelGuard c:
+        pragmaGuard c:
           semAssumeAssert c, it, it.n.stmtKind
     of FalseX, TrueX, OvfX:
       literalB c, it, c.types.boolType

@@ -114,6 +114,7 @@ type
     pendingModulePlugins*: seq[StrId]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
+    userPragmas*: Table[StrId, TokenBuf]
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
