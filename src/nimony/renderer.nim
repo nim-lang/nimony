@@ -621,10 +621,31 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
     of CT:
       put(g, tkSymbol, "char")
       skip n
-    of BoolT, VoidT, CstringT, PointerT, OrdinalT,
-          UntypedT, TypedT, TypedescT, AutoT:
+    of BoolT, VoidT, CstringT, PointerT,
+          UntypedT, TypedT, AutoT:
       put(g, tkSymbol, $n.typeKind)
       skip n
+    of OrdinalT:
+      put(g, tkSymbol, "Ordinal")
+      inc n
+      if n.kind != ParRi:
+        put(g, tkBracketLe, "[")
+        gtype(g, n, c)
+        put(g, tkBracketRi, "]")
+      skipParRi(n)
+    of TypedescT:
+      put(g, tkSymbol, "typedesc")
+      inc n
+      if n.kind != ParRi:
+        put(g, tkBracketLe, "[")
+        gtype(g, n, c)
+        put(g, tkBracketRi, "]")
+      skipParRi(n)
+    of TypekindT:
+      inc n
+      put(g, tkSymbol, $n.typeKind)
+      skip n
+      skipParRi(n)
     of PtrT:
       putWithSpace(g, tkPtr, "ptr")
       inc n
