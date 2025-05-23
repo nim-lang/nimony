@@ -673,6 +673,61 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
 
       skipParRi(n)
 
+    of ObjectT:
+      putWithSpace(g, tkObject, "object")
+      let obj = asObjectDecl(n)
+      skip n
+      var fields = obj.firstField
+
+      indentNL(g)
+
+      while fields.kind != ParRi:
+        case fields.substructureKind
+        of CaseU:
+          raiseAssert "todo"
+        of FldU:
+          let local = takeLocal(fields, SkipFinalParRi)
+          var name = local.name
+          var typ = local.typ
+
+          gsub(g, name)
+          putWithSpace(g, tkColon, ":")
+          gtype(g, typ, emptyContext)
+          optNL(g)
+        else:
+          raiseAssert "todo"
+
+      dedent(g)
+
+      skipParRi(fields)
+
+    of TupleT:
+      inc n
+
+      put(g, tkTuple, "tuple")
+      put(g, tkBracketLe, "[")
+
+      var afterFirst = false
+
+      while n.kind != ParRi:
+        if afterFirst:
+          gcomma(g)
+        else:
+          afterFirst = true
+
+        case n.substructureKind
+        of KvU:
+          inc n
+          gsub(g, n)
+          putWithSpace(g, tkColon, ":")
+          gtype(g, n, c)
+          skipParRi(n)
+        else:
+          gtype(g, n, c)
+
+      skipParRi(n)
+      put(g, tkBracketRi, "]")
+
     else:
       skip n
   else:
@@ -1195,6 +1250,9 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
     var name = pool.syms[n.symId]
     extractBasename(name)
     put(g, tkSymbol, name)
+    inc n
+  of Ident:
+    put(g, tkSymbol, pool.strings[n.litId])
     inc n
   of DotToken:
     inc n
