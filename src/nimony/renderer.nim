@@ -743,7 +743,7 @@ proc gWhile(g: var TSrcGen, n: var Cursor) =
   inc n
   gcond(g, n)
   putWithSpace(g, tkColon, ":")
-  
+
   gstmts(g, n, c, doIndent = true)
 
   skipParRi(n)
@@ -791,11 +791,14 @@ proc gtypedef(g: var TSrcGen, n: var Cursor, c: TContext) =
   var name = decl.name
   gsub(g, name, c)
 
-  put(g, tkSpaces, Space)
-  putWithSpace(g, tkEquals, "=")
+  var pragmas = decl.pragmas
+  gsub(g, pragmas, c)
 
   var body = decl.body
-  gtype(g, body, c)
+  if body.kind != DotToken:
+    put(g, tkSpaces, Space)
+    putWithSpace(g, tkEquals, "=")
+    gtype(g, body, c)
 
   dedent(g)
 
