@@ -411,6 +411,31 @@ proc gcase(g: var TSrcGen, n: var Cursor) =
 #     effects*: Cursor
 #     body*: Cursor
 
+proc takeTypeVars(g: var TSrcGen, n: var Cursor) =
+  if n.substructureKind == TypevarsU:
+    inc n
+    put(g, tkBracketLe, "[")
+    var afterFirst = false
+
+    while n.kind != ParRi:
+      if afterFirst:
+        gcomma(g)
+      else:
+        afterFirst = true
+
+      let typevar = takeLocal(n, SkipFinalParRi)
+      var name = typevar.name
+      gsub(g, name)
+      var typ = typevar.typ
+      if typ.kind != DotToken:
+        putWithSpace(g, tkColon, ":")
+        gtype(g, typ, emptyContext)
+
+    skipParRi(n)
+    put(g, tkBracketRi, "]")
+  else:
+    skip n
+
 proc gproc(g: var TSrcGen, n: var Cursor) =
   var c: TContext = initContext()
 
@@ -418,6 +443,9 @@ proc gproc(g: var TSrcGen, n: var Cursor) =
 
   var name = decl.name
   gsub(g, name)
+
+  var typevars = decl.typevars
+  takeTypeVars(g, typevars)
 
   put(g, tkParLe, "(")
 
@@ -550,7 +578,6 @@ proc gsufx(g: var TSrcGen, n: var Cursor) =
 #     typevars*: Cursor
 #     pragmas*: Cursor
 #     body*: Cursor
-
 
 proc takeNumberType(g: var TSrcGen, n: var Cursor, typ: string) =
   inc n
@@ -790,6 +817,9 @@ proc gtypedef(g: var TSrcGen, n: var Cursor, c: TContext) =
 
   var name = decl.name
   gsub(g, name, c)
+
+  var typevars = decl.typevars
+  takeTypeVars(g, typevars)
 
   var pragmas = decl.pragmas
   gsub(g, pragmas, c)
