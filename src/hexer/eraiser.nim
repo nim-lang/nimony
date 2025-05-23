@@ -105,6 +105,7 @@ proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
         inc n
     of ParRi:
       dec nested
+      if nested == 0: break
       inc n
     if nested == 0: break
 
@@ -232,6 +233,7 @@ proc injectRaisingCalls*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBu
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
-  tr(c, result, n)
+  rootStmtsSons result, n:
+    tr(c, result, n)
   c.typeCache.closeScope()
   needsXelim = c.needsXelim

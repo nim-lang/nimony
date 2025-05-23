@@ -774,5 +774,6 @@ proc desugar*(n: Cursor; moduleSuffix: string; activeChecks: set[CheckMode]): To
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
-  tr c, result, n
+  rootStmtsSons result, n:
+    tr c, result, n
   c.typeCache.closeScope()

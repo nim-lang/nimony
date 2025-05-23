@@ -574,4 +574,5 @@ proc transformStmt(e: var EContext; c: var Cursor) =
     takeTree(e, c)
 
 proc elimForLoops*(e: var EContext; c: var Cursor) =
-  transformStmt(e, c)
+  rootStmtsSons e.dest, c:
+    transformStmt(e, c)

@@ -1012,7 +1012,8 @@ proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): Token
     dest: createTokenBuf(400), source: addr source)
   c.typeCache.openScope()
   var n = n
-  tr(c, n, WantNonOwner)
+  rootStmtsSons c.dest, n:
+    tr(c, n, WantNonOwner)
   genMissingHooks lifter[]
 
   var ndest = beginRead(c.dest)

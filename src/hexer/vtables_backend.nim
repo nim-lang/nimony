@@ -804,12 +804,14 @@ proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): T
 
   var dest = createTokenBuf(300)
 
+  assert n.stmtKind == StmtsS, $n.kind
   var n2 = n
-  collectMethods c, n2
+  inc n2
+  while n2.kind != ParRi:
+    collectMethods c, n2
   processMethods c
 
   var n = n
-  assert n.stmtKind == StmtsS
   dest.add n
   inc n
 
