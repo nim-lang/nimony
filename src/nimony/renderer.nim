@@ -64,7 +64,7 @@ type
   TContext = tuple[spacing: int, flags: TSubFlags]
 
   BracketKind = enum
-    bkNone, bkBracket, bkBracketAsgn, bkCurly, bkCurlyAsgn
+    bkNone, bkBracket, bkBracketAsgn, bkCurly, bkCurlyAsgn, bkPar
 
 const
   Space = " "
@@ -918,6 +918,8 @@ proc gconstr(g: var TSrcGen, n: var Cursor, kind: BracketKind) =
     put(g, tkBracketLe, "[")
   of bkCurly:
     put(g, tkCurlyLe, "{")
+  of bkPar:
+    put(g, tkParLe, "(")
   else:
     raiseAssert "todo"
 
@@ -936,6 +938,8 @@ proc gconstr(g: var TSrcGen, n: var Cursor, kind: BracketKind) =
     put(g, tkBracketRi, "]")
   of bkCurly:
     put(g, tkCurlyRi, "}")
+  of bkPar:
+    put(g, tkParRi, ")")
   else:
     raiseAssert "todo"
 
@@ -1188,6 +1192,8 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
 
       put(g, tkParRi, ")")
 
+    of TupconstrX:
+      gconstr(g, n, bkPar)
 
     of AconstrX:
       gconstr(g, n, bkBracket)
