@@ -2380,6 +2380,13 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "pragma only allowed on types"
     c.dest.addParRi()
+  of CursorP:
+    if kind in {VarY, LetY, CursorY}:
+      c.dest.add parLeToken(pk, n.info)
+      inc n
+    else:
+      buildErr c, n.info, "pragma only allowed on local variables"
+    c.dest.addParRi()
   of VarargsP:
     crucial.hasVarargs = n.info
     c.dest.add parLeToken(pk, n.info)

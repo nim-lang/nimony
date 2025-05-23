@@ -29,6 +29,7 @@ proc skipProcTypeToParams*(t: Cursor): Cursor =
     skip result # skip generics
 
 const
+  LocalPragmasPos* = 2
   LocalTypePos* = 3
   LocalValuePos* = 4
 
