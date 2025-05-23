@@ -595,6 +595,18 @@ proc takeNumberType(g: var TSrcGen, n: var Cursor, typ: string) =
 
   put(g, tkSymbol, name)
 
+proc gconcept(g: var TSrcGen, n: var Cursor, c: TContext) =
+  putWithSpace(g, tkConcept, "concept")
+
+  indentNL(g)
+  inc n
+  skip n
+  skip n
+  skip n # typevars
+  gstmts(g, n, c)
+  skipParRi(n)
+
+  dedent(g)
 
 proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
   case n.kind
@@ -727,6 +739,9 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
       dedent(g)
 
       skipParRi(fields)
+
+    of ConceptT:
+      gconcept(g, n, c)
 
     of TupleT:
       inc n
