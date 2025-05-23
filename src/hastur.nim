@@ -26,7 +26,7 @@ Commands:
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
-  test <file>          run test <file>.
+  test <file>/<dir>    run test <file> or <dir>.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
@@ -362,6 +362,16 @@ proc test(t: string; overwrite: bool; cat: Category) =
   else:
     echo "SUCCESS."
 
+proc testDirCmd(dir: string; overwrite: bool) =
+  var c = TestCounters(total: 0, failures: 0)
+  let t0 = epochTime()
+  testDir c, dir, overwrite, findCategory(dir)
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some tests failed."
+  else:
+    echo "SUCCESS."
+
 proc exec(cmd: string; showProgress = false) =
   if showProgress:
     let exitCode = execShellCmd(cmd)
@@ -613,7 +623,10 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     if args.len > 0:
-      test args[0], overwrite, findCategory(args[0])
+      if args[0].dirExists():
+        testDirCmd args[0], overwrite
+      else:
+        test args[0], overwrite, findCategory(args[0])
     else:
       quit "`test` takes an argument"
   of "record":
