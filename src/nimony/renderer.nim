@@ -1013,6 +1013,10 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
           SizeofX, AlignofX, OffsetofX:
       gcall(g, n)
 
+    of PrefixX:
+      # TODO:
+      gcall(g, n)
+
     of AconstrX:
       gconstr(g, n, bkBracket)
 
@@ -1148,6 +1152,14 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
       put(g, tkParLe, "(")
       gsub(g, n)
       put(g, tkParRi, ")")
+      skipParRi(n)
+
+    of CchoiceX, OchoiceX:
+      inc n
+      gsub(g, n)
+      while n.kind != ParRi:
+        skip n
+
       skipParRi(n)
 
     of HconvX, DconvX:
