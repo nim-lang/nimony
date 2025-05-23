@@ -55,6 +55,7 @@ const
 type
   ScopeKind = enum
     Other
+    OtherPreventFinally
     WhileOrBlock
   DestructorOp = object
     destroyProc: SymId
@@ -179,6 +180,28 @@ proc trReturn(c: var Context; n: var Cursor) =
     it = it.parent
   takeTree c.dest, n
 
+proc trRaise(c: var Context; n: var Cursor) =
+  #[
+  Consider:
+
+    try:
+      s1
+      raise
+    except:
+      echo "e"
+    finally:
+      echo "fin"
+
+    We do not want to duplicate the finally here since
+    it will run after the `except` block no matter what.
+  ]#
+  var it = addr(c.currentScope)
+  while it != nil:
+    if it.kind != OtherPreventFinally:
+      leaveScope(c, it[])
+    it = it.parent
+  takeTree c.dest, n
+
 proc trLocal(c: var Context; n: var Cursor) =
   let info = n.info
   c.dest.add n
@@ -195,7 +218,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   if destructor != NoSymId and r.kind notin {CursorY, ResultY, GvarY, TvarY, GletY, TletY, ConstY}:
     c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
-proc trScope(c: var Context; body: var Cursor) =
+proc trScope(c: var Context; body: var Cursor; kind = Other) =
   copyIntoKind c.dest, StmtsS, body.info:
     if body.stmtKind == StmtsS:
       inc body
@@ -204,7 +227,8 @@ proc trScope(c: var Context; body: var Cursor) =
       inc body
     else:
       tr c, body
-    leaveScope(c, c.currentScope)
+    if kind != OtherPreventFinally:
+      leaveScope(c, c.currentScope)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
@@ -244,7 +268,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
 proc trNestedScope(c: var Context; body: var Cursor; kind = Other; fin = default(Cursor)) =
   var oldScope = move c.currentScope
   c.currentScope = createNestedScope(kind, oldScope, body.info, NoLabel, fin)
-  trScope c, body
+  trScope c, body, kind
   swap c.currentScope, oldScope
 
 proc trWhile(c: var Context; n: var Cursor) =
@@ -306,10 +330,13 @@ proc trTry(c: var Context; n: var Cursor) =
   var nn = n
   inc nn
   skip nn # try statements
-  while nn.substructureKind == ExceptU: skip nn
+  var hasExcept = false
+  while nn.substructureKind == ExceptU:
+    hasExcept = true
+    skip nn
   copyInto(c.dest, n):
     let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
-    trNestedScope c, n, Other
+    trNestedScope c, n, (if hasExcept: OtherPreventFinally else: Other), fin
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
@@ -326,8 +353,7 @@ proc tr(c: var Context; n: var Cursor) =
     of RetS:
       trReturn(c, n)
     of RaiseS:
-      # currently the same as trReturn
-      trReturn(c, n)
+      trRaise(c, n)
     of BreakS:
       trBreak(c, n)
     of IfS:
