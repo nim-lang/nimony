@@ -555,11 +555,11 @@ proc gsufx(g: var TSrcGen, n: var Cursor) =
   of "i16": put(g, tkIntLit, $pool.integers[value.intId] & "'i16")
   of "i32": put(g, tkIntLit, $pool.integers[value.intId] & "'i32")
   of "i64": put(g, tkIntLit, $pool.integers[value.intId] & "'i64")
-  of "u": put(g, tkUIntLit, toString(value, false) & "'u")
-  of "u8": put(g, tkUIntLit, toString(value, false) & "'u8")
-  of "u16": put(g, tkUIntLit, toString(value, false) & "'u16")
-  of "u32": put(g, tkUIntLit, toString(value, false) & "'u32")
-  of "u64": put(g, tkUIntLit, toString(value, false) & "'u64")
+  of "u": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u")
+  of "u8": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u8")
+  of "u16": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u16")
+  of "u32": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u32")
+  of "u64": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u64")
   of "f": put(g, tkFloatLit, toString(value, false))
   of "f32": put(g, tkFloatLit, toString(value, false) & "f32")
   of "f64": put(g, tkFloatLit, toString(value, false) & "f64")
@@ -1286,13 +1286,16 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
     put(g, tkIntLit, $pool.integers[n.intId])
     inc n
   of UIntLit:
-    put(g, tkUIntLit, toString(n, false))
+    put(g, tkUIntLit, $pool.uintegers[n.uintId])
     inc n
   of FloatLit:
     put(g, tkFloatLit, toString(n, false))
     inc n
   of StringLit:
     put(g, tkStrLit, toString(n, false))
+    inc n
+  of CharLit:
+    put(g, tkCharLit, "'" & char(n.uoperand) & "'")
     inc n
   of Symbol, SymbolDef:
     var name = pool.syms[n.symId]
