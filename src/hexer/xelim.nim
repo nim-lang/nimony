@@ -459,12 +459,8 @@ proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
-  assert n.stmtKind == StmtsS, $n.kind
-  result.add n
-  inc n
-  while n.kind != ParRi:
+  rootStmtsSons result, n:
     trStmt c, result, n
-  result.addParRi()
   c.typeCache.closeScope()
   #echo "PRODUCED: ", result.toString(false)
 

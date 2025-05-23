@@ -565,9 +565,9 @@ proc semConstStrExpr(c: var SemContext; n: var Cursor) =
   if not isStringType(t):
     c.dest.shrink start
     buildErr c, it.n.info, "expected `string` but got: " & typeToString(t)
-  var e = cursorAt(c.dest, start)
+  var e = cursorAtLast(c.dest, start)
   var valueBuf = evalExpr(c, e)
-  endRead(c.dest)
+  endReadLast(c.dest)
   let value = cursorAt(valueBuf, 0)
   if not isConstStringValue(value):
     if value.kind == ParLe and value.tagId == ErrT:
@@ -2904,7 +2904,7 @@ proc semMagicInvoke(c: var SemContext; n: var Cursor; kind: TypeKind; info: Pack
     takeParRi typeBuf, n
   else:
     bug "unreachable" # see type kind check for magicKind
-  var m = cursorAt(typeBuf, 0)
+  var m = cursorAtLast(typeBuf, 0)
   semLocalTypeImpl c, m, InLocalDecl
 
 proc semInvoke(c: var SemContext; n: var Cursor) =
@@ -3594,9 +3594,9 @@ proc evalConstExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): Toke
   var x = Item(n: n, typ: expected)
   semExpr c, x
   n = x.n
-  var e = cursorAt(c.dest, beforeExpr)
+  var e = cursorAtLast(c.dest, beforeExpr)
   result = evalExpr(c, e)
-  endRead(c.dest)
+  endReadLast(c.dest)
 
 proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): xint =
   let info = n.info
@@ -7242,13 +7242,10 @@ proc writeOutput(c: var SemContext; outfile: string) =
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
-  assert n.stmtKind == StmtsS
   c.phase = x
   var n = n
-  takeToken c, n
-  while n.kind != ParRi:
+  rootStmtsSons c.dest, n:
     semStmt c, n, false
-  takeParRi c, n
   result = move c.dest
 
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
@@ -7392,7 +7389,6 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
   c.phase = SemcheckBodies
   while cur.kind != ParRi:
     semStmt c, cur, false
-  skipParRi(cur)
   endRead(c.pending)
 
   instantiateGenerics c
@@ -7404,7 +7400,7 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
       requestMethods(c, val, res.decl)
       c.dest.copyTree res.decl
   instantiateGenericHooks c
-  takeParRi c, n
+  c.dest.addParRi
 
   if reportErrors(c) == 0:
     var afterSem = move c.dest

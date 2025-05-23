@@ -1781,12 +1781,12 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
     b.withTree "incl":
       b.addStrLit pool.strings[h]
 
-  var n = beginRead(c.dest)
   var ownerStack = @[(SymId(0), -1)]
 
   var nested = 0
   var nextIsOwner = -1
   for nb in 0 ..< c.dest.len:
+    let n = c.dest[nb]
     let info = n.info
     if info.isValid:
       let rawInfo = unpack(pool.man, info)
@@ -1863,7 +1863,6 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
       b.addTree(tag)
       stack.add info
       inc nested
-    inc n
 
   b.endTree()
   b.close()
@@ -1903,7 +1902,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
       importSymbol(c, imp)
     inc i
   c.dest.add c.pending
-  skipParRi c, n
+  assert n.kind == ParRi
   writeOutput c, rootInfo
   c.closeMangleScope()
 

@@ -281,3 +281,10 @@ proc skipModifier*(a: Cursor): Cursor =
 
 const
   LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}
+
+template rootStmtsSons*(dest: var TokenBuf; n: var Cursor; body: untyped) =
+  assert n.stmtKind == StmtsS, $n.kind
+  dest.takeToken n
+  while n.kind != ParRi:
+    body
+  dest.addParRi()

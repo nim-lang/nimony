@@ -975,7 +975,8 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   var c = Context(typeCache: createTypeCache())
   c.typeCache.openScope()
   var n = beginRead(input)
-  traverseToplevel c, n
+  rootStmtsSons c.toplevelStmts, n:
+    traverseToplevel c, n
   for r in c.routines:
     c.directlyInitialized.clear()
     checkContracts(c, r)

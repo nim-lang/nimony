@@ -28,7 +28,8 @@ proc semInclude(c: var SemContext; it: var Item) =
         c.includeStack.add f2
         #c.m.includes.add f2
         var n = cursorAt(buf, 0)
-        semStmt(c, n, false)
+        rootStmtsSons c.dest, n:
+          semStmt(c, n, false)
         c.includeStack.setLen c.includeStack.len - 1
       else:
         var m = ""

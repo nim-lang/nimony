@@ -19,10 +19,10 @@ const
               parRiToken(NoLineInfo)]
 
 proc errCursor*(): Cursor =
-  Cursor(p: addr ErrToken[0], rem: 2)
+  Cursor(p: addr ErrToken[0], rem: 1)
 
 proc fromBuffer*(x: openArray[PackedToken]): Cursor {.inline.} =
-  Cursor(p: addr(x[0]), rem: x.len)
+  Cursor(p: addr(x[0]), rem: x.len - 1)
 
 proc setSpan*(c: var Cursor; beyondLast: Cursor) {.inline.} =
   c.rem = (cast[int](beyondLast.p) - cast[int](c.p)) div sizeof(PackedToken)
@@ -61,6 +61,7 @@ proc unsafeDec*(c: var Cursor) {.inline.} =
   inc c.rem
 
 proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
+  assert c.rem >= diff
   result = Cursor(
      p: cast[ptr PackedToken](cast[uint](c.p) + diff.uint * sizeof(PackedToken).uint),
      rem: c.rem - diff)
@@ -134,9 +135,10 @@ proc thaw*(b: var TokenBuf) =
     b.cap = -(b.cap+1)
 
 proc beginRead*(b: var TokenBuf): Cursor =
+  assert b.len > 0
   if b.readers == 0: freeze(b)
   inc b.readers
-  result = Cursor(p: addr(b.data[0]), rem: b.len)
+  result = Cursor(p: addr(b.data[0]), rem: b.len - 1)
 
 proc endRead*(b: var TokenBuf) =
   assert b.readers > 0, "unpaired endRead"
@@ -169,12 +171,12 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
   if b.readers == 0: freeze(b)
   inc b.readers
-  result = Cursor(p: addr b.data[i], rem: b.len-i)
+  result = Cursor(p: addr b.data[i], rem: b.len - i - 1)
 
 proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
   assert(not isMutable(b))
-  result = Cursor(p: addr b.data[i], rem: b.len-i)
+  result = Cursor(p: addr b.data[i], rem: b.len - i - 1)
 
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   result = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
@@ -283,8 +285,14 @@ proc addUIntLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
 proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
   dest.add identToken(pool.strings.getOrIncl(s), info)
 
+proc pop*(dest: var TokenBuf): PackedToken {.inline.} =
+  assert dest.len > 0
+
+  result = dest[dest.len - 1]
+  shrink dest, dest.len - 1
+
 proc span*(c: Cursor): int =
-  result = 0
+  result = 1
   var c = c
   if c.kind == ParLe:
     var nested = 0
@@ -295,9 +303,6 @@ proc span*(c: Cursor): int =
         if nested == 0: break
         dec nested
       elif c.kind == ParLe: inc nested
-  if c.rem > 0:
-    inc c
-    inc result
 
 proc insert*(dest: var TokenBuf; src: openArray[PackedToken]; pos: int) =
   var j = len(dest) - 1
@@ -322,7 +327,8 @@ proc insert*(dest: var TokenBuf; src: TokenBuf; pos: int) =
   insert dest, toOpenArray(src.data, 0, src.len-1), pos
 
 proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
-  let len = span(Cursor(p: addr dest.data[pos], rem: dest.len-pos))
+  assert pos >= 0 and pos < dest.len
+  let len = span(Cursor(p: addr dest.data[pos], rem: dest.len - pos - 1))
   let actualLen = min(len, dest.len - pos)
   let byLen = span(by)
   let oldLen = dest.len
@@ -340,9 +346,10 @@ proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
     dest.shrink(newLen)
   # Copy new elements
   var by = by
-  for i in 0 ..< byLen:
+  for i in 0 ..< byLen - 1:
     dest[pos + i] = by.load
     inc by
+  dest[pos + byLen - 1] = by.load
 
 proc toString*(b: TokenBuf; produceLineInfo = true): string =
   result = nifstreams.toString(toOpenArray(b.data, 0, b.len-1), produceLineInfo)
@@ -432,3 +439,61 @@ proc takeTree*(dest: var TokenBuf; n: var Cursor) =
         raiseAssert "expected ')', but EOF reached"
       else: discard
       inc n
+
+proc cursorAtLast*(b: var TokenBuf; i: int): Cursor {.inline.} =
+  ## Returns `Cursor` that can safely read last node in `b`.
+  ## Call `endReadLast` after using returned `Cursor`.
+  b.addDotToken  # adds dummy token so that `inc n` is safe
+                 # even if `n` points to the last token of `b`.
+  cursorAt(b, i)
+
+proc endReadLast*(b: var TokenBuf) {.inline.} =
+  endRead(b)
+  discard b.pop
+
+when isMainModule:
+  # test replace
+  block:
+    var dest = createTokenBuf(1)
+    dest.addDotToken()
+    block:
+      let by = [charToken('a', NoLineInfo)]
+      replace dest, fromBuffer(by), 0
+      assert dest[0] == by[0]
+    block:
+      let by2 = [parLeToken(TagId 1, NoLineInfo), parRiToken(NoLineInfo)]
+      replace dest, fromBuffer(by2), 0
+      assert dest.len == 2
+      assert dest[0] == by2[0] and dest[1] == by2[1]
+
+      let by1 = [strToken(StrId 2, NoLineInfo)]
+      replace dest, fromBuffer(by1), 0
+      assert dest.len == 1
+      assert dest[0] == by1[0]
+  block:
+    var dest = createTokenBuf(3)
+    let dest0 = parLeToken(TagId 123, NoLineInfo)
+    dest.add dest0
+    dest.addDotToken()
+    dest.addParRi
+    block:
+      let by = [charToken('a', NoLineInfo)]
+      replace dest, fromBuffer(by), 1
+      assert dest.len == 3
+      assert dest[0] == dest0
+      assert dest[1] == by[0]
+      assert dest[2].kind == ParRi
+
+      let by2 = [parLeToken(TagId 456, NoLineInfo), parRiToken(NoLineInfo)]
+      replace dest, fromBuffer(by2), 1
+      assert dest.len == 4
+      assert dest[0] == dest0
+      assert dest[1] == by2[0] and dest[2] == by2[1]
+      assert dest[3].kind == ParRi
+
+      let by1 = [strToken(StrId 789, NoLineInfo)]
+      replace dest, fromBuffer(by1), 1
+      assert dest.len == 3
+      assert dest[0] == dest0
+      assert dest[1] == by1[0]
+      assert dest[2].kind == ParRi

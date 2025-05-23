@@ -448,8 +448,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           inc nested
     of ParRi:
       dest.add n
-      inc n
       dec nested
+      if nested == 0: break
+      inc n
     if nested == 0: break
 
 proc injectConstParamDerefs*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =

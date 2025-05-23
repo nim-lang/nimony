@@ -367,6 +367,6 @@ proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
     tr(c, n)
 
   leaveScope c, c.currentScope
-  takeParRi(c.dest, n)
+  c.dest.addParRi
   genMissingHooks lifter[]
   result = ensureMove c.dest
