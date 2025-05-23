@@ -55,6 +55,7 @@ const
 type
   ScopeKind = enum
     Other
+    OtherPreventFinally
     WhileOrBlock
   DestructorOp = object
     destroyProc: SymId
@@ -176,6 +177,28 @@ proc trReturn(c: var Context; n: var Cursor) =
   var it = addr(c.currentScope)
   while it != nil:
     leaveScope(c, it[])
+    it = it.parent
+  takeTree c.dest, n
+
+proc trRaise(c: var Context; n: var Cursor) =
+  #[
+  Consider:
+
+    try:
+      s1
+      raise
+    except:
+      echo "e"
+    finally:
+      echo "fin"
+
+    We do not want to duplicate the finally here since
+    it will run after the `except` block no matter what.
+  ]#
+  var it = addr(c.currentScope)
+  while it != nil:
+    if it.kind != OtherPreventFinally:
+      leaveScope(c, it[])
     it = it.parent
   takeTree c.dest, n
 
@@ -306,10 +329,13 @@ proc trTry(c: var Context; n: var Cursor) =
   var nn = n
   inc nn
   skip nn # try statements
-  while nn.substructureKind == ExceptU: skip nn
+  var hasExcept = false
+  while nn.substructureKind == ExceptU:
+    hasExcept = true
+    skip nn
   copyInto(c.dest, n):
     let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
-    trNestedScope c, n, Other, fin
+    trNestedScope c, n, (if hasExcept: OtherPreventFinally else: Other), fin
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
@@ -326,8 +352,7 @@ proc tr(c: var Context; n: var Cursor) =
     of RetS:
       trReturn(c, n)
     of RaiseS:
-      # currently the same as trReturn
-      trReturn(c, n)
+      trRaise(c, n)
     of BreakS:
       trBreak(c, n)
     of IfS:
