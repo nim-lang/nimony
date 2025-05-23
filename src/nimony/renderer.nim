@@ -761,6 +761,36 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
 
       skipParRi(fields)
 
+    of EnumT:
+      inc n
+      putWithSpace(g, tkObject, "enum")
+
+      if n.kind != ParRi:
+
+        skip n
+
+        indentNL(g)
+
+        while n.kind != ParRi:
+          case n.substructureKind
+          of EFldU:
+            let local = takeLocal(n, SkipFinalParRi)
+            var name = local.name
+            var value = local.val
+
+            gsub(g, name)
+            put(g, tkSpaces, Space)
+            put(g, tkEquals, "=")
+            put(g, tkSpaces, Space)
+            gsub(g, value)
+            optNL(g)
+          else:
+            raiseAssert "unreachable"
+
+        dedent(g)
+
+      skipParRi(n)
+
     of ConceptT:
       gconcept(g, n, c)
 
@@ -1140,6 +1170,24 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
     of PrefixX:
       # TODO:
       gcall(g, n)
+
+    of TupX:
+      put(g, tkParLe, "(")
+
+      inc n
+
+      var afterFirst = false
+      while n.kind != ParRi:
+        if afterFirst:
+          gcomma(g)
+        else:
+          afterFirst = true
+        gsub(g, n)
+
+      skipParRi(n)
+
+      put(g, tkParRi, ")")
+
 
     of AconstrX:
       gconstr(g, n, bkBracket)
