@@ -159,9 +159,11 @@ proc error*(msg: string) {.noreturn.} =
   reportImpl(msg, "[Error] ")
 
 proc bug*(msg: string; c: Cursor) {.noreturn.} =
+  writeStackTrace()
   reportImpl(msg, c, "[Bug] ")
 
 proc bug*(msg: string) {.noreturn.} =
+  writeStackTrace()
   reportImpl(msg, "[Bug] ")
 
 type

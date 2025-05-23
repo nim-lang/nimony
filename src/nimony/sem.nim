@@ -2514,6 +2514,7 @@ proc exprToType(c: var SemContext; exprType: Cursor; start: int; context: TypeDe
   else:
     # otherwise, is a static value
     if context != AllowValues:
+      c.dest.shrink start
       c.buildErr info, "not a type"
 
 proc semTypeExpr(c: var SemContext; n: var Cursor; context: TypeDeclContext; info: PackedLineInfo) =
