@@ -218,7 +218,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   if destructor != NoSymId and r.kind notin {CursorY, ResultY, GvarY, TvarY, GletY, TletY, ConstY}:
     c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
-proc trScope(c: var Context; body: var Cursor) =
+proc trScope(c: var Context; body: var Cursor; kind = Other) =
   copyIntoKind c.dest, StmtsS, body.info:
     if body.stmtKind == StmtsS:
       inc body
@@ -227,7 +227,8 @@ proc trScope(c: var Context; body: var Cursor) =
       inc body
     else:
       tr c, body
-    leaveScope(c, c.currentScope)
+    if kind != OtherPreventFinally:
+      leaveScope(c, c.currentScope)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
@@ -267,7 +268,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
 proc trNestedScope(c: var Context; body: var Cursor; kind = Other; fin = default(Cursor)) =
   var oldScope = move c.currentScope
   c.currentScope = createNestedScope(kind, oldScope, body.info, NoLabel, fin)
-  trScope c, body
+  trScope c, body, kind
   swap c.currentScope, oldScope
 
 proc trWhile(c: var Context; n: var Cursor) =
