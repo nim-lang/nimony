@@ -10,15 +10,19 @@
 import std / [parseopt, strutils, os, assertions, times]
 import bridge, configcmd
 
+when defined(enableSem):
+  import sembridge
+
 const
   Version = "0.2"
   Usage = "Nifler - Tools related to NIF. Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   nifler [options] [command] [arguments]
 Command:
   p|parse file.nim [output.nif]         parse project.nim, produce a NIF file
+  s|sem file.nim [output.nif]           semcheck project.nim, produce a NIF file
   config project.nim [output.cfg.nif]   produce a NIF file representing the
                                         entire configuration of `project.nim`
 
@@ -72,6 +76,22 @@ proc handleCmdLine() =
         discard "nothing to do"
       else:
         parseFile inp, outp, portablePaths, deps
+  of "s", "sem":
+    when defined(enableSem):
+      if args.len == 0:
+        quit "'sem' command takes a filename"
+      else:
+        let inp = args[0]
+        let outp = if args.len >= 2: args[1].addFileExt".nif" else: changeFileExt(inp, ".nif")
+        let depsNif = outp.changeFileExt(".deps.nif")
+        if not forceRebuild and fileExists(outp) and fileExists(inp) and
+            getLastModificationTime(outp) > getLastModificationTime(inp) and
+            (not deps or (fileExists(depsNif) and getLastModificationTime(depsNif) > getLastModificationTime(inp))):
+          discard "nothing to do"
+        else:
+          semFile inp, outp, portablePaths, deps
+    else:
+      quit "`sem` is not enabled in this build"
   of "config":
     if args.len == 0:
       quit "'config' command takes a filename"
