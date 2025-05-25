@@ -6875,7 +6875,10 @@ proc semIs(c: var SemContext; it: var Item) =
   skipParRi it.n
   c.dest.shrink beforeExpr # delete LHS and RHS
   if containsGenericParams(lhs.typ) or containsGenericParams(rhs):
-    c.dest.addSubtree orig
+    c.dest.add orig
+    c.dest.addSubtree lhs.typ
+    c.dest.addSubtree rhs
+    c.dest.addParRi()
   else:
     var m = createMatch(addr c)
     typematch m, rhs, lhs
