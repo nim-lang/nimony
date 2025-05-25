@@ -4429,7 +4429,7 @@ proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode) =
       let condStart = c.dest.len
       var phase = SemcheckBodies
       swap c.phase, phase
-      semConstBoolExpr c, it.n, allowUnresolved = true
+      semConstBoolExpr c, it.n, allowUnresolved = c.routine.inGeneric > 0
       swap c.phase, phase
       let condValue = cursorAt(c.dest, condStart).exprKind
       endRead(c.dest)
