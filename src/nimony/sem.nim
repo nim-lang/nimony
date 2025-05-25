@@ -533,7 +533,7 @@ proc semBoolExpr(c: var SemContext; n: var Cursor) =
     buildErr c, n.info, "expected `bool` but got: " & typeToString(t)
   n = it.n
 
-proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
+proc semConstBoolExpr(c: var SemContext; n: var Cursor; allowUnresolved = false) =
   let start = c.dest.len
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
@@ -547,7 +547,10 @@ proc semConstBoolExpr(c: var SemContext; n: var Cursor) =
   endRead(c.dest)
   let value = cursorAt(valueBuf, 0)
   if not isConstBoolValue(value):
-    if value.kind == ParLe and value.tagId == ErrT:
+    if allowUnresolved:
+      discard
+    elif value.kind == ParLe and value.tagId == ErrT:
+      c.dest.shrink start
       c.dest.add valueBuf
     else:
       c.dest.shrink start
@@ -651,7 +654,7 @@ proc semProcBody(c: var SemContext; itB: var Item) =
       typecheck(c, lastSonInfo, it.typ, c.routine.returnType)
     else:
       commonType c, it, beforeLastSon, c.routine.returnType
-  elif classifyType(c, it.typ) == VoidT:
+  elif classifyType(c, it.typ) in {VoidT, UntypedT}:
     discard "ok"
   else:
     # transform `expr` to `result = expr`:
@@ -758,7 +761,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
-              ArrAtX, DerefX, TupatX, SizeofX, InternalTypeNameX}:
+              ArrAtX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -4426,7 +4429,7 @@ proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode) =
       let condStart = c.dest.len
       var phase = SemcheckBodies
       swap c.phase, phase
-      semConstBoolExpr c, it.n
+      semConstBoolExpr c, it.n, allowUnresolved = true
       swap c.phase, phase
       let condValue = cursorAt(c.dest, condStart).exprKind
       endRead(c.dest)
@@ -4444,7 +4447,12 @@ proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode) =
         elif condValue != FalseX:
           # erroring/unresolved condition, leave entire statement as unresolved
           leaveUnresolved = true
-      takeTree c, it.n
+      if leaveUnresolved:
+        # might have been set above
+        var ctx = createUntypedContext(addr c, UntypedGeneric)
+        semTemplBody ctx, it.n
+      else:
+        takeTree c, it.n
       takeParRi c, it.n
   else:
     buildErr c, it.n.info, "illformed AST: `elif` inside `if` expected"
@@ -4461,13 +4469,16 @@ proc semWhenImpl(c: var SemContext; it: var Item; mode: WhenMode) =
       skipToEnd it.n
       return
     else:
-      takeTree c, it.n
+      var ctx = createUntypedContext(addr c, UntypedGeneric)
+      semTemplBody ctx, it.n
     takeParRi c, it.n
   takeParRi c, it.n
   if not leaveUnresolved:
     # none of the branches evaluated, output nothing
     c.dest.shrink start
     producesVoid c, info, it.typ
+  else:
+    it.typ = c.types.untypedType
 
 proc semWhen(c: var SemContext; it: var Item) =
   case c.phase
@@ -6850,6 +6861,32 @@ proc semInternalTypeName(c: var SemContext; it: var Item) =
   it.typ = c.types.stringType
   commonType c, it, beforeExpr, expected
 
+proc semIs(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  let info = it.n.info
+  let orig = it.n
+  inc it.n
+  var lhs = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, lhs
+  it.n = lhs.n
+  if lhs.typ.typeKind == TypedescT:
+    inc lhs.typ
+  let rhs = semLocalType(c, it.n)
+  skipParRi it.n
+  c.dest.shrink beforeExpr # delete LHS and RHS
+  if containsGenericParams(lhs.typ) or containsGenericParams(rhs):
+    c.dest.addSubtree orig
+  else:
+    var m = createMatch(addr c)
+    typematch m, rhs, lhs
+    if classifyMatch(m) >= SubtypeMatch:
+      c.dest.addParPair(TrueX, info)
+    else:
+      c.dest.addParPair(FalseX, info)
+  let expected = it.typ
+  it.typ = c.types.boolType
+  commonType c, it, beforeExpr, expected
+
 proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
   let info = it.n.info
   inc it.n
@@ -7182,6 +7219,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semBaseobj c, it
     of InternalTypeNameX:
       semInternalTypeName c, it
+    of IsX:
+      semIs c, it
     of TabconstrX:
       semTableConstructor c, it, flags
     of CurlyatX, DoX,

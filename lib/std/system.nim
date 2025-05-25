@@ -134,6 +134,10 @@ template `in`*(x, y: untyped): untyped =
 template `notin`*(x, y: untyped): untyped =
   not contains(y, x)
 
+proc `is`*[T, S](x: T, y: S): bool {.magic: "Is", noSideEffect.}
+template `isnot`*(x, y: untyped): untyped =
+  not (x is y)
+
 include "system/iterators"
 include "system/defaults"
 
