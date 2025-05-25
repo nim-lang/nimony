@@ -20,4 +20,4 @@ lib/std/system/comparisons.nim(105, 3) Error: Type mismatch at [position]
 [1] expected: (f +32) but got: WINBOOL.0.tdim13fdy1
 [1] expected: (f +64) but got: WINBOOL.0.tdim13fdy1
 [1] expected: string.0.sysvq0asl but got: WINBOOL.0.tdim13fdy1
-[1] expected: (at openArray.0.sysvq0asl T.116.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+[1] expected: (at openArray.0.sysvq0asl T.117.sysvq0asl) but got: WINBOOL.0.tdim13fdy1

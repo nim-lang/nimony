@@ -122,4 +122,5 @@ proc magicToTag*(m: string): (string, int) =
   of "HoleyEnum": res HoleyEnumT
   of "NaN": res NanX
   of "Inf": res InfX
+  of "Is": res IsX
   else: ("", 0)
