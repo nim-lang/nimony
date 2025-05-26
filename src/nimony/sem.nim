@@ -156,7 +156,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             inferred: Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance
 
-proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool
+proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: CallArg): bool
 
 type
   SemFlag = enum
@@ -201,7 +201,8 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
   if m.err:
     # try converter
     var convMatch = default(Match)
-    if tryConverterMatch(c, convMatch, expected, arg):
+    let convArg = CallArg(n: arg.n, typ: arg.typ)
+    if tryConverterMatch(c, convMatch, expected, convArg):
       shrink c.dest, argBegin
       c.dest.add parLeToken(HcallX, info)
       c.dest.add symToken(convMatch.fn.sym, info)
@@ -1049,7 +1050,7 @@ type
     fnName: StrId
     callNode: PackedToken
     dest, genericDest: TokenBuf
-    args: seq[Item]
+    args: seq[CallArg]
     hasGenericArgs, hasNamedArgs: bool
     flags: set[SemFlag]
     source: TransformedCallSource
@@ -1153,7 +1154,7 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
       return
   c.dest.add parLeToken(ConvX, info)
   c.dest.copyTree destType
-  semConvArg(c, destType, cs.args[0], info, beforeExpr)
+  semConvArg(c, destType, Item(n: cs.args[0].n, typ: cs.args[0].typ), info, beforeExpr)
   takeParRi c, it.n
   let expected = it.typ
   it.typ = destType
@@ -1283,7 +1284,7 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
 proc semReturnType(c: var SemContext; n: var Cursor): TypeCursor =
   result = semLocalType(c, n, InReturnTypeDecl)
 
-proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[Item], genericArgs: Cursor, hasNamedArgs: bool) =
+proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[CallArg], genericArgs: Cursor, hasNamedArgs: bool) =
   # scope extension: procs attached to argument types are also considered
   # If the type is Typevar and it has attached
   # a concept, use the concepts symbols too:
@@ -1304,7 +1305,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; a
       m.add createMatch(addr c)
       sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
-proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[Item]) =
+proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[CallArg]) =
   if not (m.genericConverter or m.checkEmptyArg or m.insertedParam):
     c.dest.add m.args
   else:
@@ -1385,7 +1386,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
               if isGeneric(routine):
                 let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
                 var convMatch = createMatch(addr c)
-                sigmatch convMatch, conv, [Item(n: arg, typ: origArgs[i].typ)], emptyNode(c)
+                sigmatch convMatch, conv, [CallArg(n: arg, typ: origArgs[i].typ)], emptyNode(c)
                 # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
                 assert not convMatch.err
                 buildTypeArgs(convMatch)
@@ -1415,7 +1416,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
       inc i
     assert f.kind == ParRi
 
-proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
+proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: CallArg): bool =
   ## looks for a converter from `arg` to `f`, returns `true` if found and
   ## sets `convMatch` to the match to the converter
   result = false
@@ -1471,7 +1472,7 @@ proc varargsHasConverter(t: Cursor): bool =
   skip t
   result = t.kind != ParRi
 
-proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: Item): bool =
+proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: CallArg): bool =
   result = false
   var baseType = f
   assert baseType.typeKind == VarargsT
@@ -1571,7 +1572,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     for mi in 0 ..< L:
       if not m[mi].err: continue
       var newMatch = createMatch(addr c)
-      var newArgs: seq[Item] = @[]
+      var newArgs: seq[CallArg] = @[]
       var newArgBufs: seq[TokenBuf] = @[] # to keep alive
       var param = skipProcTypeToParams(m[mi].fn.typ)
       assert param.isParamsTag
@@ -1597,7 +1598,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
           if convMatch.genericConverter:
             # can just instantiate here
             baseType = instantiateType(c, baseType, convMatch.inferred)
-          newArgs.add Item(n: beginRead(newArgBufs[bufPos]), typ: baseType)
+          newArgs.add CallArg(n: beginRead(newArgBufs[bufPos]), typ: baseType)
         elif tryConverterMatch(c, convMatch, f, arg):
           anyConverters = true
           var argBuf = createTokenBuf(16)
@@ -1610,7 +1611,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
           argBuf.addParRi()
           let bufPos = newArgBufs.len
           newArgBufs.add ensureMove(argBuf)
-          newArgs.add Item(n: beginRead(newArgBufs[bufPos]), typ: convMatch.returnType)
+          newArgs.add CallArg(n: beginRead(newArgBufs[bufPos]), typ: convMatch.returnType)
         else:
           newArgs.add arg
         inc ai
@@ -1811,7 +1812,8 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     # read through the dot expression first:
     inc cs.fn.n # skip tag
     var lhsBuf = createTokenBuf(4)
-    var lhs = Item(n: cs.fn.n, typ: c.types.autoType, orig: cs.fn.n)
+    let lhsOrig = cs.fn.n
+    var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
     swap c.dest, lhsBuf
     semExpr c, lhs, {AllowModuleSym}
     swap c.dest, lhsBuf
@@ -1841,8 +1843,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
       let lhsIndex = c.dest.len
       c.dest.addSubtree lhs.n
       argIndexes.add lhsIndex
-      # lhs.n escapes here, but is not read and will be set by argIndexes:
-      cs.args.add lhs
+      cs.args.add CallArg(typ: lhs.typ, orig: lhsOrig) # n will be set by argIndexes
   else:
     semExpr(c, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads})
     cs.fnName = getFnIdent(c)
@@ -1863,7 +1864,8 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
   while it.n.kind != ParRi:
-    var arg = Item(n: it.n, typ: c.types.autoType, orig: it.n)
+    let argOrig = it.n
+    var arg = Item(n: it.n, typ: c.types.autoType)
     argIndexes.add c.dest.len
     let named = arg.n.substructureKind == VvU
     if named:
@@ -1876,7 +1878,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     if arg.typ.typeKind == UntypedT:
       skipSemCheck = true
     it.n = arg.n
-    cs.args.add arg
+    cs.args.add CallArg(typ: arg.typ, orig: argOrig) # n will be set by argIndexes
   when defined(debug):
     c.debugAllowErrors = oldDebugAllowErrors
   assert cs.args.len == argIndexes.len
