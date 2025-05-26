@@ -1054,11 +1054,14 @@ type
     flags: set[SemFlag]
     source: TransformedCallSource
       ## type of expression the call was transformed from
+    matched: bool
+    finalFn: FnCandidate
 
 proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
   c.dest.add cs.callNode
   c.dest.addSubtree cs.fn.n
   for a in cs.args:
+    # XXX call semTemplBody for orig instead?
     c.dest.addSubtree a.n
   # untyped propagates to the result type:
   typeofCallIs c, it, cs.beforeCall, c.types.untypedType
@@ -1612,6 +1615,8 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   if idx >= 0:
     c.dest.add cs.callNode
     let finalFn = m[idx].fn
+    cs.finalFn = finalFn
+    cs.matched = true
     let isMagic = c.addFn(finalFn, cs.fn.n, m[idx])
     addArgsInstConverters(c, m[idx], cs.args)
     takeParRi c, it.n
@@ -1627,6 +1632,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         # the call this is an argument of in the case of AllowEmpty
         typeofCallIs c, it, cs.beforeCall, c.types.autoType
       else:
+        cs.matched = false
         buildErr c, cs.callNode.info, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
       if c.templateInstCounter <= MaxNestedTemplates:
@@ -1746,14 +1752,7 @@ proc unoverloadableMagicCall(c: var SemContext; it: var Item; cs: var CallState;
   semExpr c, magicCall, cs.flags
   it.typ = magicCall.typ
 
-proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
-  var cs = CallState(
-    beforeCall: c.dest.len,
-    callNode: it.n.load(),
-    dest: createTokenBuf(16),
-    source: source,
-    flags: {InTypeContext, AllowEmpty}*flags
-  )
+proc semCallImpl(c: var SemContext; it: var Item; cs: var CallState) =
   inc it.n
   swap c.dest, cs.dest
   cs.fn = Item(n: it.n, typ: c.types.autoType)
@@ -1796,7 +1795,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     # read through the dot expression first:
     inc cs.fn.n # skip tag
     var lhsBuf = createTokenBuf(4)
-    var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
+    var lhs = Item(n: cs.fn.n, typ: c.types.autoType, orig: cs.fn.n)
     swap c.dest, lhsBuf
     semExpr c, lhs, {AllowModuleSym}
     swap c.dest, lhsBuf
@@ -1848,7 +1847,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
   while it.n.kind != ParRi:
-    var arg = Item(n: it.n, typ: c.types.autoType)
+    var arg = Item(n: it.n, typ: c.types.autoType, orig: it.n)
     argIndexes.add c.dest.len
     let named = arg.n.substructureKind == VvU
     if named:
@@ -1873,6 +1872,23 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     untypedCall c, it, cs
   else:
     resolveOverloads c, it, cs
+
+proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
+  var cs = CallState(
+    beforeCall: c.dest.len,
+    callNode: it.n.load(),
+    dest: createTokenBuf(16),
+    source: source,
+    flags: {InTypeContext, AllowEmpty}*flags
+  )
+  openShadowScope(c.currentScope)
+  try:
+    semCallImpl(c, it, cs)
+  finally:
+    if cs.matched and cs.finalFn.kind notin {MacroY, TemplateY}:
+      commitShadowScope(c.currentScope)
+    else:
+      rollbackShadowScope(c.currentScope)
 
 proc objBody(td: TypeDecl): Cursor {.inline.} =
   # see also `objtypeImpl`

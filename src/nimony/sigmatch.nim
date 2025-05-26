@@ -14,6 +14,7 @@ import ".." / models / tags
 type
   Item* = object
     n*, typ*: Cursor
+    orig*: Cursor ## original tree before semchecking, used for untyped args
     kind*: SymKind
 
   FnCandidate* = object
@@ -685,8 +686,11 @@ proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) {.used.} =
   else:
     m.error ConstraintMismatch, typeImpl(typeVar), a
 
-proc useArg(m: var Match; arg: Item) =
-  m.args.addSubtree arg.n
+proc useArg(m: var Match; arg: Item; f: Cursor) =
+  if f.typeKind == UntypedT and not cursorIsNil(arg.orig):
+    m.args.addSubtree arg.orig
+  else:
+    m.args.addSubtree arg.n
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: Item)
 
@@ -1190,9 +1194,10 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
   if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
     matchEmptyContainer(m, f, arg)
     return
+  let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:
-    m.useArg arg # since it was a match, copy it
+    m.useArg arg, fOrig # since it was a match, copy it
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
