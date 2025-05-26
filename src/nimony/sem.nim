@@ -1058,6 +1058,7 @@ type
     argsScopeClosed: bool
 
 proc closeArgsScope(c: var SemContext; cs: var CallState; merge = true) =
+  assert not cs.argsScopeClosed, "args scope already closed"
   if merge:
     commitShadowScope(c.currentScope)
   else:
