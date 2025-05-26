@@ -1054,10 +1054,17 @@ type
     flags: set[SemFlag]
     source: TransformedCallSource
       ## type of expression the call was transformed from
-    matched: bool
-    finalFn: FnCandidate
+    argsScopeClosed: bool
 
-proc untypedCall(c: var SemContext; it: var Item; cs: CallState) =
+proc closeArgsScope(c: var SemContext; cs: var CallState; merge = true) =
+  if merge:
+    commitShadowScope(c.currentScope)
+  else:
+    rollbackShadowScope(c.currentScope)
+  cs.argsScopeClosed = true
+
+proc untypedCall(c: var SemContext; it: var Item; cs: var CallState) =
+  closeArgsScope c, cs, merge = false
   c.dest.add cs.callNode
   c.dest.addSubtree cs.fn.n
   for a in cs.args:
@@ -1526,9 +1533,11 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     # buildErr c, fn.n.info, "attempt to call undeclared routine"
     discard
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
+    closeArgsScope c, cs
     semConvFromCall c, it, cs
     return
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 0:
+    closeArgsScope c, cs
     semObjConstrFromCall c, it, cs
     return
   else:
@@ -1615,8 +1624,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   if idx >= 0:
     c.dest.add cs.callNode
     let finalFn = m[idx].fn
-    cs.finalFn = finalFn
-    cs.matched = true
+    closeArgsScope c, cs, merge = finalFn.kind notin {MacroY, TemplateY}
     let isMagic = c.addFn(finalFn, cs.fn.n, m[idx])
     addArgsInstConverters(c, m[idx], cs.args)
     takeParRi c, it.n
@@ -1632,7 +1640,6 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         # the call this is an argument of in the case of AllowEmpty
         typeofCallIs c, it, cs.beforeCall, c.types.autoType
       else:
-        cs.matched = false
         buildErr c, cs.callNode.info, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
       if c.templateInstCounter <= MaxNestedTemplates:
@@ -1683,6 +1690,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
 
   else:
     skipParRi it.n
+    closeArgsScope c, cs, merge = false
     var errorMsg: string
     if idx == -2:
       errorMsg = "ambiguous call: '"
@@ -1752,7 +1760,15 @@ proc unoverloadableMagicCall(c: var SemContext; it: var Item; cs: var CallState;
   semExpr c, magicCall, cs.flags
   it.typ = magicCall.typ
 
-proc semCallImpl(c: var SemContext; it: var Item; cs: var CallState) =
+proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
+  var cs = CallState(
+    beforeCall: c.dest.len,
+    callNode: it.n.load(),
+    dest: createTokenBuf(16),
+    source: source,
+    flags: {InTypeContext, AllowEmpty}*flags
+  )
+  openShadowScope(c.currentScope)
   inc it.n
   swap c.dest, cs.dest
   cs.fn = Item(n: it.n, typ: c.types.autoType)
@@ -1872,23 +1888,7 @@ proc semCallImpl(c: var SemContext; it: var Item; cs: var CallState) =
     untypedCall c, it, cs
   else:
     resolveOverloads c, it, cs
-
-proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
-  var cs = CallState(
-    beforeCall: c.dest.len,
-    callNode: it.n.load(),
-    dest: createTokenBuf(16),
-    source: source,
-    flags: {InTypeContext, AllowEmpty}*flags
-  )
-  openShadowScope(c.currentScope)
-  try:
-    semCallImpl(c, it, cs)
-  finally:
-    if cs.matched and cs.finalFn.kind notin {MacroY, TemplateY}:
-      commitShadowScope(c.currentScope)
-    else:
-      rollbackShadowScope(c.currentScope)
+  assert cs.argsScopeClosed
 
 proc objBody(td: TypeDecl): Cursor {.inline.} =
   # see also `objtypeImpl`
