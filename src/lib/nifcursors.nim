@@ -28,7 +28,7 @@ proc setSpan*(c: var Cursor; beyondLast: Cursor) {.inline.} =
   c.rem = (cast[int](beyondLast.p) - cast[int](c.p)) div sizeof(PackedToken)
 
 proc load*(c: Cursor): PackedToken {.inline.} =
-  assert c.rem > 0
+  assert c.p != nil and c.rem > 0
   c.p[]
 
 proc kind*(c: Cursor): NifKind {.inline.} = c.load.kind
