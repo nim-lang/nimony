@@ -1625,6 +1625,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   if idx >= 0:
     c.dest.add cs.callNode
     let finalFn = m[idx].fn
+    # only merge symbols defined in args to scope if we did not match a macro/template:
     closeArgsScope c, cs, merge = finalFn.kind notin {MacroY, TemplateY}
     let isMagic = c.addFn(finalFn, cs.fn.n, m[idx])
     addArgsInstConverters(c, m[idx], cs.args)
@@ -1691,6 +1692,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
 
   else:
     skipParRi it.n
+    # do not add symbols defined in args on failed match:
     closeArgsScope c, cs, merge = false
     var errorMsg: string
     if idx == -2:
@@ -1769,8 +1771,9 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     source: source,
     flags: {InTypeContext, AllowEmpty}*flags
   )
-  openShadowScope(c.currentScope)
   inc it.n
+  # open temp scope for args, has to be closed after matching:
+  openShadowScope(c.currentScope)
   swap c.dest, cs.dest
   cs.fn = Item(n: it.n, typ: c.types.autoType)
   var argIndexes: seq[int] = @[]

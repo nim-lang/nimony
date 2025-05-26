@@ -691,6 +691,7 @@ proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) {.used.} =
 
 proc useArg(m: var Match; arg: CallArg; f: Cursor) =
   if f.typeKind == UntypedT and not cursorIsNil(arg.orig):
+    # pass arg tree before semchecking to untyped args:
     m.args.addSubtree arg.orig
   else:
     m.args.addSubtree arg.n
@@ -1205,13 +1206,10 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
       m.args.addParRi()
       dec m.opened
 
-proc typematch*(m: var Match; formal: Cursor; arg: CallArg) =
+proc typematch*(m: var Match; formal: Cursor; arg: Item) =
   m.argInfo = arg.n.info
   var f = formal
   singleArg m, f, CallArg(n: arg.n, typ: arg.typ)
-
-proc typematch*(m: var Match; formal: Cursor; arg: Item) =
-  typematch m, formal, CallArg(n: arg.n, typ: arg.typ)
 
 type
   TypeRelation* = enum
