@@ -1,23 +1,298 @@
 tests/nimony/errmsgs/tdistinctinfos.nim(4, 20) Trace: instantiation from here
 lib/std/system/comparisons.nim(105, 3) Error: Type mismatch at [position]
-[2] BUG: unhandled type: distinct
-[1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.0.sysvq0asl
-[1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.1.sysvq0asl
-[1] expected: (pointer) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (c +8) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (bool) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (set T.32.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (ref T.33.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (ptr T.34.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (i +8) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (i +16) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (i +32) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (i +64) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (u +8) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (u +16) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (u +32) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (u +64) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (f +32) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (f +64) but got: WINBOOL.0.tdim13fdy1
-[1] expected: string.0.sysvq0asl but got: WINBOOL.0.tdim13fdy1
-[1] expected: (at openArray.0.sysvq0asl T.117.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+(proc :==.0.sysvq0asl
+ (le -3) .
+ (typevars
+  (typevar :T.31.sysvq0asl . .
+   (ordinal) .))
+ (params
+  (param :x.138 . . T.31.sysvq0asl .)
+  (param :y.99 . . T.31.sysvq0asl .))
+ (bool)
+ (pragmas
+  (magic "LeI")
+  (noSideEffect)) . .)
+  [2] BUG: unhandled type: distinct
+(proc :==.1.sysvq0asl
+ (eq -3) .
+ (typevars
+  (typevar :Enum.0.sysvq0asl . .
+   (typekind
+    (enum)) .))
+ (params
+  (param :x.139 . . Enum.0.sysvq0asl .)
+  (param :y.100 . . Enum.0.sysvq0asl .))
+ (bool)
+ (pragmas
+  (magic "EqEnum")
+  (noSideEffect)) . .)
+  [1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.0.sysvq0asl
+(proc :==.2.sysvq0asl
+ (eq -3) .
+ (typevars
+  (typevar :Enum.1.sysvq0asl . .
+   (typekind
+    (onum)) .))
+ (params
+  (param :x.140 . . Enum.1.sysvq0asl .)
+  (param :y.101 . . Enum.1.sysvq0asl .))
+ (bool)
+ (pragmas
+  (magic "EqEnum")
+  (noSideEffect)) . .)
+  [1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.1.sysvq0asl
+(proc :==.3.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.141 . .
+   (pointer) .)
+  (param :y.102 . .
+   (pointer) .))
+ (bool)
+ (pragmas
+  (magic "EqRef")
+  (noSideEffect)) . .)
+  [1] expected: (pointer) but got: WINBOOL.0.tdim13fdy1
+(proc :==.4.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.142 . .
+   (c +8) .)
+  (param :y.103 . .
+   (c +8) .))
+ (bool)
+ (pragmas
+  (magic "EqCh")
+  (noSideEffect)) . .)
+  [1] expected: (c +8) but got: WINBOOL.0.tdim13fdy1
+(proc :==.5.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.143 . .
+   (bool) .)
+  (param :y.104 . .
+   (bool) .))
+ (bool)
+ (pragmas
+  (magic "EqB")
+  (noSideEffect)) . .)
+  [1] expected: (bool) but got: WINBOOL.0.tdim13fdy1
+(proc :==.6.sysvq0asl
+ (eqset -3) .
+ (typevars
+  (typevar :T.32.sysvq0asl . . . .))
+ (params
+  (param :x.144 . .
+   (set T.32.sysvq0asl) .)
+  (param :y.105 . .
+   (set T.32.sysvq0asl) .))
+ (bool)
+ (pragmas
+  (magic "EqSet")
+  (noSideEffect)) . .)
+  [1] expected: (set T.32.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+(proc :==.7.sysvq0asl
+ (eq -3) .
+ (typevars
+  (typevar :T.33.sysvq0asl . . . .))
+ (params
+  (param :x.145 . .
+   (ref T.33.sysvq0asl) .)
+  (param :y.106 . .
+   (ref T.33.sysvq0asl) .))
+ (bool)
+ (pragmas
+  (magic "EqRef")
+  (noSideEffect)) . .)
+  [1] expected: (ref T.33.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+(proc :==.8.sysvq0asl
+ (eq -3) .
+ (typevars
+  (typevar :T.34.sysvq0asl . . . .))
+ (params
+  (param :x.146 . .
+   (ptr T.34.sysvq0asl) .)
+  (param :y.107 . .
+   (ptr T.34.sysvq0asl) .))
+ (bool)
+ (pragmas
+  (magic "EqRef")
+  (noSideEffect)) . .)
+  [1] expected: (ptr T.34.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+(proc :==.9.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.160 . .
+   (i +8) .)
+  (param :y.121 . .
+   (i +8) .))
+ (bool)
+ (pragmas
+  (magic "EqI")
+  (noSideEffect)) . .)
+  [1] expected: (i +8) but got: WINBOOL.0.tdim13fdy1
+(proc :==.10.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.161 . .
+   (i +16) .)
+  (param :y.122 . .
+   (i +16) .))
+ (bool)
+ (pragmas
+  (magic "EqI")
+  (noSideEffect)) . .)
+  [1] expected: (i +16) but got: WINBOOL.0.tdim13fdy1
+(proc :==.11.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.162 . .
+   (i +32) .)
+  (param :y.123 . .
+   (i +32) .))
+ (bool)
+ (pragmas
+  (magic "EqI")
+  (noSideEffect)) . .)
+  [1] expected: (i +32) but got: WINBOOL.0.tdim13fdy1
+(proc :==.12.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.163 . .
+   (i +64) .)
+  (param :y.124 . .
+   (i +64) .))
+ (bool)
+ (pragmas
+  (magic "EqI")
+  (noSideEffect)) . .)
+  [1] expected: (i +64) but got: WINBOOL.0.tdim13fdy1
+(proc :==.13.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.180 . .
+   (u +8) .)
+  (param :y.141 . .
+   (u +8) .))
+ (bool)
+ (pragmas
+  (magic "EqI")
+  (noSideEffect)) . .)
+  [1] expected: (u +8) but got: WINBOOL.0.tdim13fdy1
+(proc :==.14.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.181 . .
+   (u +16) .)
+  (param :y.142 . .
+   (u +16) .))
+ (bool)
+ (pragmas
+  (magic "EqI")
+  (noSideEffect)) . .)
+  [1] expected: (u +16) but got: WINBOOL.0.tdim13fdy1
+(proc :==.15.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.182 . .
+   (u +32) .)
+  (param :y.143 . .
+   (u +32) .))
+ (bool)
+ (pragmas
+  (magic "EqI")
+  (noSideEffect)) . .)
+  [1] expected: (u +32) but got: WINBOOL.0.tdim13fdy1
+(proc :==.16.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.183 . .
+   (u +64) .)
+  (param :y.144 . .
+   (u +64) .))
+ (bool)
+ (pragmas
+  (magic "EqI")
+  (noSideEffect)) . .)
+  [1] expected: (u +64) but got: WINBOOL.0.tdim13fdy1
+(proc :==.17.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.188 . .
+   (f +32) .)
+  (param :y.149 . .
+   (f +32) .))
+ (bool)
+ (pragmas
+  (magic "EqF64")
+  (noSideEffect)) . .)
+  [1] expected: (f +32) but got: WINBOOL.0.tdim13fdy1
+(proc :==.18.sysvq0asl
+ (eq -3) . .
+ (params
+  (param :x.189 . .
+   (f +64) .)
+  (param :y.150 . .
+   (f +64) .))
+ (bool)
+ (pragmas
+  (magic "EqF64")
+  (noSideEffect)) . .)
+  [1] expected: (f +64) but got: WINBOOL.0.tdim13fdy1
+(proc :==.20.sysvq0asl x . .
+ (params
+  (param :a.12 . . string.0.sysvq0asl .)
+  (param :b.8 . . string.0.sysvq0asl .))
+ (bool)
+ (pragmas
+  (inline)
+  (semantics "string.==")) .
+ (stmts
+  (result :result.61 . .
+   (bool) .)
+  (asgn result.61
+   (call equalStrings.0.sysvq0asl a.12 b.8))
+  (ret result.61)))
+  [1] expected: string.0.sysvq0asl but got: WINBOOL.0.tdim13fdy1
+(proc :==.22.sysvq0asl x .
+ (typevars
+  (typevar :T.117.sysvq0asl . . Equatable.0.sysvq0asl .))
+ (params
+  (param :a.22 . .
+   (at openArray.0.sysvq0asl T.117.sysvq0asl) .)
+  (param :b.14 . .
+   (at openArray.0.sysvq0asl T.117.sysvq0asl) .))
+ (bool) . .
+ (stmts
+  (result :result.78 . .
+   (bool) .)
+  (if
+   (elif
+    (eq
+     (i +64)
+     (dot a.22 len.7.sysvq0asl +0)
+     (dot b.14 len.7.sysvq0asl +0))
+    (stmts
+     (for
+      (infix \2E.<.0.sysvq0asl +0
+       (dot a.22 len.7.sysvq0asl +0))
+      (unpackflat
+       (let :i.37 . .
+        (i -1) .))
+      (stmts
+       (if
+        (elif
+         (expr
+          (not
+           (infix ==
+            (call \5B\5D.9.sysvq0asl a.22 i.37)
+            (call \5B\5D.9.sysvq0asl b.14 i.37))))
+         (stmts
+          (ret
+           (false)))))))
+     (ret
+      (true)))))
+  (ret
+   (false))
+  (ret result.78)))
+  [1] expected: (at openArray.0.sysvq0asl T.117.sysvq0asl) but got: WINBOOL.0.tdim13fdy1

@@ -1,2 +1,12 @@
 tests/nimony/generics/tnoconstraintbad.nim(11, 12) Error: Type mismatch at [position]
-[2] expected: (f +64) but got: T.1.tnoqttq6k1
+(proc :\2B=.0.tnoqttq6k1 . .
+ (typevars
+  (typevar :T.0.tnoqttq6k1 . . Addable.0.tnoqttq6k1 .))
+ (params
+  (param :a.1 . .
+   (mut T.0.tnoqttq6k1) .)
+  (param :b.1 . . T.0.tnoqttq6k1 .)) . . .
+ (stmts
+  (asgn a.1
+   (infix \2B a.1 b.1))))
+  [2] expected: (f +64) but got: T.1.tnoqttq6k1
