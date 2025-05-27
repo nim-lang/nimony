@@ -27,7 +27,9 @@ proc fromBuffer*(x: openArray[PackedToken]): Cursor {.inline.} =
 proc setSpan*(c: var Cursor; beyondLast: Cursor) {.inline.} =
   c.rem = (cast[int](beyondLast.p) - cast[int](c.p)) div sizeof(PackedToken)
 
-proc load*(c: Cursor): PackedToken {.inline.} = c.p[]
+proc load*(c: Cursor): PackedToken {.inline.} =
+  assert c.p != nil and c.rem > 0
+  c.p[]
 
 proc kind*(c: Cursor): NifKind {.inline.} = c.load.kind
 
@@ -61,6 +63,7 @@ proc unsafeDec*(c: var Cursor) {.inline.} =
   inc c.rem
 
 proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
+  assert diff <= c.rem
   result = Cursor(
      p: cast[ptr PackedToken](cast[uint](c.p) + diff.uint * sizeof(PackedToken).uint),
      rem: c.rem - diff)
@@ -432,3 +435,50 @@ proc takeTree*(dest: var TokenBuf; n: var Cursor) =
         raiseAssert "expected ')', but EOF reached"
       else: discard
       inc n
+
+when isMainModule:
+  # test replace
+  block:
+    var dest = createTokenBuf(1)
+    dest.addDotToken()
+    block:
+      let by = [charToken('a', NoLineInfo)]
+      replace dest, fromBuffer(by), 0
+      assert dest[0] == by[0]
+    block:
+      let by2 = [parLeToken(TagId 1, NoLineInfo), parRiToken(NoLineInfo)]
+      replace dest, fromBuffer(by2), 0
+      assert dest.len == 2
+      assert dest[0] == by2[0] and dest[1] == by2[1]
+
+      let by1 = [strToken(StrId 2, NoLineInfo)]
+      replace dest, fromBuffer(by1), 0
+      assert dest.len == 1
+      assert dest[0] == by1[0]
+  block:
+    var dest = createTokenBuf(3)
+    let dest0 = parLeToken(TagId 123, NoLineInfo)
+    dest.add dest0
+    dest.addDotToken()
+    dest.addParRi
+    block:
+      let by = [charToken('a', NoLineInfo)]
+      replace dest, fromBuffer(by), 1
+      assert dest.len == 3
+      assert dest[0] == dest0
+      assert dest[1] == by[0]
+      assert dest[2].kind == ParRi
+
+      let by2 = [parLeToken(TagId 456, NoLineInfo), parRiToken(NoLineInfo)]
+      replace dest, fromBuffer(by2), 1
+      assert dest.len == 4
+      assert dest[0] == dest0
+      assert dest[1] == by2[0] and dest[2] == by2[1]
+      assert dest[3].kind == ParRi
+
+      let by1 = [strToken(StrId 789, NoLineInfo)]
+      replace dest, fromBuffer(by1), 1
+      assert dest.len == 3
+      assert dest[0] == dest0
+      assert dest[1] == by1[0]
+      assert dest[2].kind == ParRi
