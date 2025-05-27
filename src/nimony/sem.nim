@@ -3962,7 +3962,7 @@ proc attachMethod(c: var SemContext; symId: SymId;
       var methodName = pool.syms[symId]
       extractBasename methodName
       signature = pool.strings.getOrIncl(methodKey(methodName, rest))
-  if root == SymId(0):
+  if root == SymId(0) or not isObjectType(root):
     let typ = typeToString(params)
     c.dest.endRead()
     var errBuf = createTokenBuf(16)

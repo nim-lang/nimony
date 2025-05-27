@@ -173,7 +173,7 @@ proc getProcDecl*(s: SymId): Routine =
   assert res.status == LacksNothing
   result = asRoutine(res.decl, SkipInclBody)
 
-proc isObjectType(s: SymId): bool =
+proc isObjectType*(s: SymId): bool =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
   var n = res.decl
