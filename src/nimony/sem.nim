@@ -1713,6 +1713,13 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       errorMsg = "Type mismatch at [position]"
       for i in 0..<m.len:
         errorMsg.add "\n"
+        let res = tryLoadSym(m[i].fn.sym)
+        assert res.status == LacksNothing
+        var d = res.decl
+        if d.symKind.isLocal:
+          skipToLocalType d
+        errorMsg.add d.asNimCode
+        errorMsg.add "\n  "
         addErrorMsg errorMsg, m[i]
     else:
       errorMsg = "undeclared identifier: '"
