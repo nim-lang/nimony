@@ -78,7 +78,7 @@ proc handleCmdLine() =
       case normalize(key)
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
-      of "forcebuild", "f": forceRebuild = true
+      of "forcebuild", "f", "ff": forceRebuild = true
       of "compat": config.compat = true
       of "path", "p": config.paths.add val
       of "define", "d": config.defines.incl val
