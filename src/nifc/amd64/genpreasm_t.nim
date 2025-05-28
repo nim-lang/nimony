@@ -32,47 +32,54 @@ type
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor)
 
-proc recordDependency(m: Module; o: var TypeOrder; parent, child: Cursor) =
+proc recordDependency(m: Module; o: var TypeOrder; parent, child: Cursor;
+                      viaPointer: var bool) =
   var ch = child
-  var viaPointer = false
   while true:
-    case m.code[ch].kind
-    of APtrC, PtrC:
+    case ch.typeKind
+    of APtrT, PtrT:
       viaPointer = true
-      ch = elementType(m.code, ch)
-    of FlexarrayC:
-      ch = elementType(m.code, ch)
+      ch = elementType(ch)
+    of FlexarrayT:
+      ch = elementType(ch)
     else:
       break
 
-  case m.code[ch].kind
-  of ObjectC, UnionC:
+  case ch.typeKind
+  of ObjectT, UnionT:
+    let decl = if ch.typeKind == ObjectT: TypedefStruct else: TypedefUnion
     let obj = ch
     if viaPointer:
       discard "we know the size of a pointer anyway"
     else:
-      if not containsOrIncl(o.lookedAt, obj.int):
+      if not containsOrIncl(o.lookedAt, obj.toUniqueId):
         traverseObjectBody(m, o, obj)
-      o.ordered.add tracebackTypeC(m, ch)
-  of ArrayC:
+      o.ordered.add tracebackTypeC(ch), decl
+  of ArrayT:
     if viaPointer:
       discard "we know the size of a pointer anyway"
     else:
-      if not containsOrIncl(o.lookedAt, ch.int):
+      if not containsOrIncl(o.lookedAt, ch.toUniqueId):
         traverseObjectBody(m, o, ch)
-      o.ordered.add tracebackTypeC(m, ch)
-  of Sym:
-    # follow the symbol to its definition:
-    let id = m.code[ch].litId
-    let def = m.defs.getOrDefault(id)
-    if def.pos == NodePos(0):
-      error m, "undeclared symbol: ", m.code, ch
-    else:
-      let decl = asTypeDecl(m.code, def.pos)
-      if not containsOrIncl(o.lookedAtBodies, decl.body.int):
-        recordDependency m, o, parent, decl.body
+      o.ordered.add tracebackTypeC(ch), TypedefStruct
   else:
-    discard "uninteresting type as we only focus on the required struct declarations"
+    if ch.kind == Symbol:
+      # follow the symbol to its definition:
+      let id = ch.symId
+      let def = m.defs.getOrDefault(id)
+      if def.pos == 0:
+        if pool.syms[id].endsWith(".c"):
+          # imported from c, no need to check dependency
+          discard
+        else:
+          error m, "undeclared symbol: ", ch
+      else:
+        var n = readonlyCursorAt(m.src, def.pos)
+        let decl = asTypeDecl(n)
+        if not containsOrIncl(o.lookedAtBodies, decl.name.symId):
+          recordDependency m, o, n, decl.body, viaPointer
+    else:
+      discard "uninteresting type as we only focus on the required struct declarations"
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: TypeId) =
   for x in sons(m.code, t):
