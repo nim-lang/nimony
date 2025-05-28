@@ -658,6 +658,16 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
       if n.kind != ParRi:
         gtype(g, n, c)
       skipParRi(n)
+
+    of SetT:
+      put(g, tkSymbol, "set")
+      inc n
+      if n.kind != ParRi:
+        put(g, tkBracketLe, "[")
+        gtype(g, n, c)
+        put(g, tkBracketRi, "]")
+      skipParRi(n)
+
     of RefT:
       putWithSpace(g, tkRef, "ref")
       inc n
@@ -837,8 +847,16 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
       skipParRi(n)
       put(g, tkBracketRi, "]")
 
-    else:
+    of ErrT:
+      put(g, tkStrLit, toString(n, false))
       skip n
+
+    else:
+      case n.exprKind
+      of CchoiceX, OchoiceX:
+        gsub(g, n, c)
+      else:
+        skip n
   else:
     gsub(g, n, c)
 

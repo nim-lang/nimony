@@ -6,7 +6,7 @@ lib/std/system/comparisons.nim(105, 3) Error: Type mismatch at [position]
 [1] expected: pointer but got: WINBOOL
 [1] expected: char but got: WINBOOL
 [1] expected: bool but got: WINBOOL
-[1] expected:  but got: WINBOOL
+[1] expected: set[T] but got: WINBOOL
 [1] expected: ref T but got: WINBOOL
 [1] expected: ptr T but got: WINBOOL
 [1] expected: int8 but got: WINBOOL
