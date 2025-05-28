@@ -1276,6 +1276,8 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gsub(g, n)
         putWithSpace(g, tkColon, ":")
         gsub(g, n)
+        if n.kind != ParRi:
+          skip n
         skipParRi(n)
 
       skipParRi(n)
@@ -1384,6 +1386,19 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkOpr, "[]")
       skipParRi(n)
 
+    of BaseobjX:
+      inc n
+      put(g, tkParLe, "(")
+      gtype(g, n, c)
+      put(g, tkParRi, ")")
+
+      skip n # levels
+
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
     of ConvX:
       inc n
       gtype(g, n, c)
@@ -1407,7 +1422,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gsub(g, n)
       skipParRi(n)
 
-    of DotX:
+    of DotX, DdotX:
       inc n
       gsub(g, n)
       put(g, tkDot, ".")
