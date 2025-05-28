@@ -1695,6 +1695,9 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     skipParRi it.n
     # do not add symbols defined in args on failed match:
     closeArgsScope c, cs, merge = false
+    var errored = createTokenBuf(4)
+    buildCallSource errored, cs
+    let erroredN = cursorAt(errored, 0)
     var errorMsg: string
     if idx == -2:
       errorMsg = "ambiguous call: '"
@@ -1710,25 +1713,20 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         errorMsg.add " for type "
         errorMsg.add typeToString(cs.args[0].typ)
     elif m.len > 0:
-      errorMsg = "Type mismatch at [position]"
+      errorMsg = "Type mismatch at [position]\n"
+      errorMsg.add asNimCode erroredN
       for i in 0..<m.len:
         errorMsg.add "\n"
+        addErrorMsg errorMsg, m[i]
         let res = tryLoadSym(m[i].fn.sym)
         assert res.status == LacksNothing
-        var d = res.decl
-        if d.symKind.isLocal:
-          skipToLocalType d
-        errorMsg.add d.asNimCode
-        errorMsg.add "\n  "
-        addErrorMsg errorMsg, m[i]
+        errorMsg.add " (declared in " & res.decl.info.infoToStr & ")"
     else:
       errorMsg = "undeclared identifier: '"
       if cs.fnName != StrId(0):
         errorMsg.add pool.strings[cs.fnName]
       errorMsg.add "'"
-    var errored = createTokenBuf(4)
-    buildCallSource errored, cs
-    buildErr c, cs.callNode.info, errorMsg, cursorAt(errored, 0)
+    buildErr c, cs.callNode.info, errorMsg, erroredN
 
 proc findMagicInSyms(syms: Cursor): ExprKind =
   var syms = syms
