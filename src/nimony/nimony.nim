@@ -34,6 +34,7 @@ Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
   -p, --path:PATH           add PATH to the search path
   -f, --forcebuild          force a rebuild
+  --ff                      force a full build
   -r, --run                 also run the compiled program
   --compat                  turn on compatibility mode
   --noenv                   do not read configuration from `NIM_*`
