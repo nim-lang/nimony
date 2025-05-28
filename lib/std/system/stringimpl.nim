@@ -138,7 +138,7 @@ proc ensureTerminatingZero*(s: var string) =
 
 proc toCString*(s: var string): cstring =
   ## Creates a `cstring` from a Nim string.
-  ## You have to ensure the string live long enough
+  ## You have to ensure the string lives long enough
   ## than the returned `cstring` for this to be safe!
   ensureTerminatingZero(s)
   result = cast[cstring](s.a)
