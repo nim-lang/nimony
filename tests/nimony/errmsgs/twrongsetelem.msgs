@@ -1,2 +1,2 @@
 tests/nimony/errmsgs/twrongsetelem.nim(1, 10) Error: set element type must be ordinal
-tests/nimony/errmsgs/twrongsetelem.nim(2, 10) Error: type (u +64) is too large to be a set element type
+tests/nimony/errmsgs/twrongsetelem.nim(2, 10) Error: type uint64 is too large to be a set element type
