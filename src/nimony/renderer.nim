@@ -1429,7 +1429,7 @@ proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false
   gsub(g, n, c, isTopLevel = isTopLevel)
 
 proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): string =
-  var g: SrcGen = initSrcGen({})
+  var g: SrcGen = initSrcGen(renderFlags)
   var n = n
   if renderType:
     var c: Context = initContext()
@@ -1438,7 +1438,7 @@ proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): s
     gsub(g, n, isTopLevel = true)
   result = g.buf
 
-proc asNimCode*(n: Cursor): string =
+proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var m0: PackedLineInfo = NoLineInfo
   var m1: PackedLineInfo = NoLineInfo
   var nested = 0
@@ -1484,7 +1484,7 @@ proc asNimCode*(n: Cursor): string =
       result = toString(n, false)
   else:
     # Fallback to the NIF representation as it is much better than nothing:
-    result = renderTree(n)
+    result = renderTree(n, renderFlags = renderFlags)
 
-proc typeToString*(n: Cursor): string =
-  result = renderTree(n, renderType = true)
+proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string =
+  result = renderTree(n, renderFlags = renderFlags, renderType = true)
