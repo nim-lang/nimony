@@ -1257,6 +1257,30 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       skipParRi(n)
       put(g, tkParRi, ")")
 
+    of NewobjX:
+      inc n
+      # TODO: find the ref types
+      put(g, tkParLe, "(")
+      gtype(g, n, c)
+      put(g, tkParRi, ")")
+
+      put(g, tkParLe, "(")
+      var afterFirst = false
+      while n.kind != ParRi:
+        if afterFirst:
+          gcomma(g)
+        else:
+          afterFirst = true
+        assert n.substructureKind == KvU
+        inc n
+        gsub(g, n)
+        putWithSpace(g, tkColon, ":")
+        gsub(g, n)
+        skipParRi(n)
+
+      skipParRi(n)
+      put(g, tkParRi, ")")
+
     of CmdX:
       gcmd(g, n)
 
@@ -1376,6 +1400,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       skipParRi(n)
 
+
     of HconvX, DconvX:
       inc n
       skip n
@@ -1414,7 +1439,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
   of Symbol, SymbolDef:
     var name = pool.syms[n.symId]
     extractBasename(name)
-    put(g, tkSymbol, name)
+    put(g, tkSymbol, name.replace('.', '_'))
     inc n
   of Ident:
     put(g, tkSymbol, pool.strings[n.litId])
