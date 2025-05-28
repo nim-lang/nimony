@@ -159,9 +159,11 @@ proc error*(msg: string) {.noreturn.} =
   reportImpl(msg, "[Error] ")
 
 proc bug*(msg: string; c: Cursor) {.noreturn.} =
+  writeStackTrace()
   reportImpl(msg, c, "[Bug] ")
 
 proc bug*(msg: string) {.noreturn.} =
+  writeStackTrace()
   reportImpl(msg, "[Bug] ")
 
 type
@@ -222,6 +224,18 @@ proc loadVTable*(typ: SymId): seq[MethodIndexEntry] =
       if entry.cls == typ:
         return entry.methods
   return @[]
+
+proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
+  # gives top level exported syms of a module
+  result = @[]
+  var m = load(suffix)
+  for k, _ in m.index.public:
+    var base = k
+    extractBasename(base)
+    let strId = pool.strings.getOrIncl(base)
+    if strId == identifier:
+      let symId = pool.syms.getOrIncl(k)
+      result.add symId
 
 proc registerHook*(suffix: string; typ: SymId; op: AttachedOp; hook: SymId; isGeneric: bool) =
   let m: NifModule

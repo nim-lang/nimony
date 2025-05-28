@@ -6,6 +6,13 @@
 
 ## Nimony driver program.
 
+when defined(windows):
+  when defined(gcc):
+    when defined(x86):
+      {.link: "../../icons/nimony.res".}
+    else:
+      {.link: "../../icons/nimony_icon.o".}
+
 import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
@@ -16,7 +23,7 @@ const
   Version = "0.2"
   Usage = "Nimony Compiler. Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   nimony [options] [command]
 Command:
@@ -27,6 +34,7 @@ Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
   -p, --path:PATH           add PATH to the search path
   -f, --forcebuild          force a rebuild
+  --ff                      force a full build
   -r, --run                 also run the compiled program
   --compat                  turn on compatibility mode
   --noenv                   do not read configuration from `NIM_*`
@@ -66,6 +74,7 @@ proc handleCmdLine() =
   var args: seq[string] = @[]
   var cmd = Command.None
   var forceRebuild = false
+  var fullRebuild = false
   var silentMake = false
   var useEnv = true
   var doRun = false
@@ -98,6 +107,9 @@ proc handleCmdLine() =
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "forcebuild", "f": forceRebuild = true
+      of "ff":
+        fullRebuild = true
+        forceRebuild = true
       of "run", "r":
         doRun = true
         forwardArg = false
@@ -175,8 +187,8 @@ proc handleCmdLine() =
       createDir(config.nifcachePath)
       createDir(binDir())
       # configure required tools
-      requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
-      requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+      requiresTool "nifler", "src/nifler/nifler.nim", fullRebuild
+      requiresTool "nifc", "src/nifc/nifc.nim", fullRebuild
     processSingleModule(args[0].addFileExt(".nim"), config, moduleFlags,
                         commandLineArgs, forceRebuild)
   of FullProject:
@@ -184,10 +196,10 @@ proc handleCmdLine() =
     createDir(binDir())
     # configure required tools
     updateCompilerGitSubmodules(config)
-    requiresTool "nifler", "src/nifler/nifler.nim", forceRebuild
-    requiresTool "nimsem", "src/nimony/nimsem.nim", forceRebuild
-    requiresTool "hexer", "src/hexer/hexer.nim", forceRebuild
-    requiresTool "nifc", "src/nifc/nifc.nim", forceRebuild
+    requiresTool "nifler", "src/nifler/nifler.nim", fullRebuild
+    requiresTool "nimsem", "src/nimony/nimsem.nim", fullRebuild
+    requiresTool "hexer", "src/hexer/hexer.nim", fullRebuild
+    requiresTool "nifc", "src/nifc/nifc.nim", fullRebuild
     # compile full project modules
     buildGraph config, args[0], forceRebuild, silentMake,
       commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),

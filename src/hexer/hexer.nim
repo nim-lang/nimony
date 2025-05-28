@@ -54,7 +54,7 @@ const
 Usage:
   hexer [options] [command]
 Command:
-  file.nif      compiler semchecked NIF file to NIFC
+  file.nif      compile semchecked NIF file to NIFC
 
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16

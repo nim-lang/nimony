@@ -61,7 +61,7 @@
 | `(glet D E P T X)` | NimonyStmt, NimonySym, NifIndexKind | global let variable declaration |
 | `(tlet D E P T X)` | NimonyStmt, NimonySym, NifIndexKind | thread local let variable declaration |
 | `(let D E P T X)` | NimonySym, NimonyStmt, NiflerKind, NifIndexKind | let variable declaration |
-| `(cursor D E P T X)` | NimonySym, NimonyStmt, NifIndexKind | cursor variable declaration |
+| `(cursor D E P T X)` | NimonySym, NimonyStmt, NimonyPragma, NifIndexKind | cursor variable declaration |
 | `(typevar D E P T X)` | NimonySym, NifcOther, NimonyOther, NiflerKind | type variable declaration |
 | `(efld D E P T X)`; `(efld D X)` | NimonySym, NifcSym, NifcOther, NimonyOther, NiflerKind | enum field declaration |
 | `(fld D E P T X)`; `(fld D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | field declaration |
@@ -225,10 +225,10 @@
 | `(baseobj T INTLIT X)` | NimonyExpr, NifcExpr | object conversion to base type |
 | `(hconv T X)` | NimonyExpr | hidden basic type conversion |
 | `(dconv T X)` | NimonyExpr | conversion between `distinct` types |
-| `(callstrlit X+)` | NimonyExpr, NiflerKind | |
-| `(infix X X)` | NimonyExpr, NiflerKind | |
-| `(prefix X)` | NimonyExpr, NiflerKind | |
-| `(hcall X*)` | NimonyExpr | hidden converter call |
+| `(callstrlit X+)` | NimonyExpr, NimonyStmt, NiflerKind | |
+| `(infix X X)` | NimonyExpr, NimonyStmt, NiflerKind | |
+| `(prefix X)` | NimonyExpr, NimonyStmt, NiflerKind | |
+| `(hcall X*)` | NimonyExpr, NimonyStmt | hidden converter call |
 | `(compiles X)` | NimonyExpr | |
 | `(declared X)` | NimonyExpr | |
 | `(defined X)` | NimonyExpr | |
@@ -287,6 +287,8 @@
 | `(base)` | NimonyPragma | `base` pragma (currently ignored) |
 | `(pure)` | NimonyPragma | `pure` pragma (currently ignored) |
 | `(final)` | NimonyPragma | `final` pragma |
+| `(pragma D)` | NimonyPragma | `pragma` pragma |
 | `(internalTypeName T)` | NimonyExpr | returns compiler's internal type name |
 | `(internalFieldPairs T X)` | NimonyExpr | variant of fieldPairs iterator returns compiler's internal field name |
 | `(failed X)` | NimonyExpr | used to access the hidden failure flag for raising calls |
+| `(is X T)` | NimonyExpr | `is` operator |

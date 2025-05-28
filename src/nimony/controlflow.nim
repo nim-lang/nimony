@@ -559,7 +559,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
-       BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX, FailedX:
+       BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX, FailedX, IsX:
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
@@ -900,7 +900,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
      ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     c.dest.addDotToken()
     skip n
-  of CallS, CmdS, InclS, ExclS, AssumeS, AssertS:
+  of CallKindsS, InclS, ExclS, AssumeS, AssertS:
     trVoidCall c, n
   of YldS, DiscardS, AsmS, DeferS:
     var tar = Target(m: IsAppend)

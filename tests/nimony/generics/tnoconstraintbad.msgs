@@ -1,0 +1,2 @@
+tests/nimony/generics/tnoconstraintbad.nim(11, 12) Error: Type mismatch at [position]
+[2] expected: (f +64) but got: T.1.tnoqttq6k1

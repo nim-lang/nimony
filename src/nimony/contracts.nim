@@ -598,9 +598,14 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
   elif r.kind == Symbol:
     result.a = getVarId(c, r.symId)
     inc r
+  elif r.exprKind == NilX:
+    result.a = VarId(0)
+    inc r
   else:
     analyseExpr c, pc
     return result
+  if r.exprKind == NilX:
+    wasEquality = false
   if not rightHandSide(c, r, result):
     result.a = InvalidVarId
   # a < b  --> a <= b - 1:
@@ -812,7 +817,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           inc pc
           analyseExpr c, pc
           skipParRi pc
-        of CallS, CmdS:
+        of CallKindsS:
           analyseCall(c, pc)
         of EmitS, InclS, ExclS:
           # not of interest for contract analysis:
@@ -875,6 +880,7 @@ proc checkContracts(c: var Context; n: Cursor) =
 
   c.startInstr = readonlyCursorAt(c.cf, 0)
   c.procCanRaise = false
+  c.typeCache.openScope()
   var body = c.startInstr
   if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
     inc body
@@ -911,6 +917,7 @@ proc checkContracts(c: var Context; n: Cursor) =
           nextIter = true
         else:
           candidates.add cont.elsePart
+  c.typeCache.closeScope()
 
 proc traverseProc(c: var Context; n: var Cursor) =
   let orig = n
@@ -958,7 +965,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
     skip n
   of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS,
      UnpackDeclS, StaticstmtS, AsmS, DeferS,
-     CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
+     CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, BlockS, EmitS, AsgnS, ScopeS,
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n

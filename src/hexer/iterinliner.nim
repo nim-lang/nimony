@@ -534,12 +534,21 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       e.tmpId = oldTmpId
       takeParRi(e, c)
     of VarS, LetS, CursorS, ResultS:
+      # We transform `var x {.cursor.} = y` into `cursor x = y` here because
+      # this is the first step of the backend pipeline.
+      let before = e.dest.len
       e.dest.add c
       inc c
+      var hasCursorPragma = false
       for i in 0..<LocalValuePos:
+        if i == LocalPragmasPos:
+          if hasPragma(c, CursorP):
+            hasCursorPragma = true
         takeTree(e, c)
       transformStmt(e, c)
       takeParRi(e, c)
+      if hasCursorPragma:
+        e.dest[before] = parLeToken(CursorS, e.dest[before].info)
     of WhileS:
       transformWhileStmt(e, c)
     of BreakS:

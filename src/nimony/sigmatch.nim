@@ -16,6 +16,10 @@ type
     n*, typ*: Cursor
     kind*: SymKind
 
+  CallArg* = object
+    n*, typ*: Cursor
+    orig*: Cursor ## original tree before semchecking, used for untyped args
+
   FnCandidate* = object
     kind*: SymKind
     sym*: SymId
@@ -169,7 +173,7 @@ proc getProcDecl*(s: SymId): Routine =
   assert res.status == LacksNothing
   result = asRoutine(res.decl, SkipInclBody)
 
-proc isObjectType(s: SymId): bool =
+proc isObjectType*(s: SymId): bool =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
   var n = res.decl
@@ -685,10 +689,14 @@ proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) {.used.} =
   else:
     m.error ConstraintMismatch, typeImpl(typeVar), a
 
-proc useArg(m: var Match; arg: Item) =
-  m.args.addSubtree arg.n
+proc useArg(m: var Match; arg: CallArg; f: Cursor) =
+  if f.typeKind == UntypedT and not cursorIsNil(arg.orig):
+    # pass arg tree before semchecking to untyped args:
+    m.args.addSubtree arg.orig
+  else:
+    m.args.addSubtree arg.n
 
-proc singleArgImpl(m: var Match; f: var Cursor; arg: Item)
+proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
 
 proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
   let fbase = skipTypeInstSym(fsym)
@@ -791,7 +799,7 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       matchObjectInheritance m, f, a, fsym, asym, ptrKind
       skip f
 
-proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
+proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
   if isTypevar(fs):
@@ -847,7 +855,7 @@ proc skipExpr*(n: Cursor): Cursor =
       result = next
       skip next
 
-proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
+proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   var a = skipModifier(arg.typ)
   let ex = skipExpr(arg.n)
   let isIntLit = f.typeKind != CharT and
@@ -936,7 +944,7 @@ proc isSomeSeqType*(a: Cursor): bool {.inline.} =
   var dummy = default(Cursor)
   result = isSomeSeqType(a, dummy)
 
-proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
+proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
   case f.kind
   of Symbol:
     matchSymbol m, f, arg
@@ -951,7 +959,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       else:
         m.skippedMod = f.typeKind
       inc f
-      singleArgImpl m, f, Item(n: arg.n, typ: a)
+      singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig)
       expectParRi m, f
     of IntT, UIntT, FloatT, CharT:
       matchIntegralType m, f, arg
@@ -1128,7 +1136,7 @@ proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInf
   buf.addIntLit(-1, info)
   buf.addParRi()
 
-proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
+proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
   # XXX handle empty containers nested inside (expr)
   if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
       (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
@@ -1186,13 +1194,14 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
       # match against `auto`, untyped/varargs should still match
       singleArgImpl(m, f, arg)
 
-proc singleArg(m: var Match; f: var Cursor; arg: Item) =
+proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
   if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
     matchEmptyContainer(m, f, arg)
     return
+  let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:
-    m.useArg arg # since it was a match, copy it
+    m.useArg arg, fOrig # since it was a match, copy it
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
@@ -1200,7 +1209,7 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
 proc typematch*(m: var Match; formal: Cursor; arg: Item) =
   m.argInfo = arg.n.info
   var f = formal
-  singleArg m, f, arg
+  singleArg m, f, CallArg(n: arg.n, typ: arg.typ)
 
 type
   TypeRelation* = enum
@@ -1231,7 +1240,7 @@ proc classifyMatch*(m: Match): TypeRelation {.inline.} =
     return GenericMatch
   result = EqualMatch
 
-proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
+proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   var i = 0
   var isVarargs = false
   while f.kind != ParRi:
@@ -1286,7 +1295,7 @@ iterator typeVars(fn: SymId): SymId =
           yield tv.symId
         skip c
 
-proc collectDefaultValues(m: var Match; f: Cursor): seq[Item] =
+proc collectDefaultValues(m: var Match; f: Cursor): seq[CallArg] =
   var f = f
   result = @[]
   while f.symKind == ParamY:
@@ -1294,7 +1303,7 @@ proc collectDefaultValues(m: var Match; f: Cursor): seq[Item] =
     if param.val.kind == DotToken: break
     m.insertedParam = true
     # add dot token
-    result.add Item(n: emptyNode(m.context[]), typ: m.context.types.autoType)
+    result.add CallArg(n: emptyNode(m.context[]), typ: m.context.types.autoType)
     skip f
 
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
@@ -1325,7 +1334,7 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.error0 RoutineIsNotGeneric
       return
 
-proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
+proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
   m.fn = fn
@@ -1382,9 +1391,9 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
     var aFormal = aParam.typ
     var bFormal = bParam.typ
     var ma = createMatch(c)
-    singleArg ma, aFormal, Item(n: emptyNode(c[]), typ: bParam.typ)
+    singleArg ma, aFormal, CallArg(n: emptyNode(c[]), typ: bParam.typ)
     var mb = createMatch(c)
-    singleArg mb, bFormal, Item(n: emptyNode(c[]), typ: aParam.typ)
+    singleArg mb, bFormal, CallArg(n: emptyNode(c[]), typ: aParam.typ)
     let aMatch = classifyMatch(ma)
     let bMatch = classifyMatch(mb)
     if aMatch == GenericMatch and bMatch == NoMatch:
@@ -1446,7 +1455,7 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
     result.names[name] = result.len
     inc result.len
 
-proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[Item] =
+proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[CallArg]): seq[CallArg] =
   let params = buildParamsInfo(paramsCursor)
   var positions = newSeq[int](params.len)
   for i in 0 ..< positions.len: positions[i] = -1
@@ -1494,14 +1503,14 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
       inVarargs = true
     inc ai
 
-  result = newSeqOfCap[Item](args.len)
+  result = newSeqOfCap[CallArg](args.len)
   fi = 0
   while fi < params.len:
     ai = positions[fi]
     if ai < 0:
       # does not fail early here for missing default value
       m.insertedParam = true
-      result.add Item(n: emptyNode(m.context[]), typ: m.context.types.autoType)
+      result.add CallArg(n: emptyNode(m.context[]), typ: m.context.types.autoType)
     else:
       while true:
         var arg = args[ai]
@@ -1517,7 +1526,7 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
           break
     inc fi
 
-proc sigmatchNamedArgs*(m: var Match; fn: FnCandidate; args: openArray[Item];
+proc sigmatchNamedArgs*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                         explicitTypeVars: Cursor;
                         hasNamedArgs: bool) =
   if hasNamedArgs:
