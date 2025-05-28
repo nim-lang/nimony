@@ -734,9 +734,11 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       put(g, tkSymbol, "array")
       put(g, tkBracketLe, "[")
 
+      var base = n
+      skip n
       gtype(g, n, c)
       gcomma(g)
-      gtype(g, n, c)
+      gtype(g, base, c)
 
       put(g, tkBracketRi, "]")
 
