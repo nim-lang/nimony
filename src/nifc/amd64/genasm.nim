@@ -12,7 +12,7 @@
 import std / [assertions, syncio, tables, sets, intsets, strutils]
 from std / os import changeFileExt, splitFile, extractFilename
 
-import .. / .. / lib / [bitabs, packedtrees, lineinfos, nifstreams, nifcursors]
+import .. / .. / lib / [bitabs, lineinfos, nifstreams, nifcursors]
 import ".." / [nifc_model, typenav]
 import ".." / native / [slots, analyser]
 import asm_model, machine, emitter
