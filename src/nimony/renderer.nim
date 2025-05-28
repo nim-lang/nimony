@@ -1178,6 +1178,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       inc n
       put(g, tkParLe, "(")
       gsub(g, n)
+      put(g, tkParRi, ")")
       skipParRi(n)
 
     of SufX:
@@ -1200,6 +1201,16 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       inc n
       put(g, tkAddr, "addr")
       gsub(g, n)
+
+      skipParRi(n)
+
+    of EmoveX:
+      inc n
+      put(g, tkSymbol, "ensureMove")
+
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
 
       skipParRi(n)
 
