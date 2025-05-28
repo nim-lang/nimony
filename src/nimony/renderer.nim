@@ -8,7 +8,7 @@ import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache, s
 
 import nimony_model, decls
 
-import compiler / lexer
+import "$nim" / compiler / lexer
 
 import std/[strutils, assertions]
 
