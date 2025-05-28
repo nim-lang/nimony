@@ -23,7 +23,7 @@ type
 
 type
   Scope = object
-    vars: seq[LitId]
+    vars: seq[SymId]
 
   GeneratedCode* = object
     m: Module
@@ -35,52 +35,43 @@ type
     loopExits: seq[Label]
     generatedTypes: IntSet
     requestedSyms: HashSet[string]
-    fields: Table[LitId, AsmSlot]
-    types: Table[LitId, AsmSlot]
-    locals: Table[LitId, Location]
+    fields: Table[SymId, AsmSlot]
+    types: Table[SymId, AsmSlot]
+    locals: Table[SymId, Location]
     strings: Table[string, int]
-    floats: Table[LitId, int]
+    floats: Table[FloatId, int]
     scopes: seq[Scope]
     returnLoc: Location
     exitProcLabel: Label
-    globals: Table[LitId, Location]
-
-  LitId = nifc_model.StrId
+    globals: Table[SymId, Location]
 
 proc initGeneratedCode*(m: sink Module; intmSize: int): GeneratedCode =
   result = GeneratedCode(m: m, intmSize: intmSize)
 
-proc error(m: Module; msg: string; tree: PackedTree[NifcKind]; n: NodePos) {.noreturn.} =
+proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
   write stdout, "[Error] "
   write stdout, msg
-  writeLine stdout, toString(tree, n, m)
+  writeLine stdout, toString(n, false)
   when defined(debug):
     writeStackTrace()
   quit 1
 
 # Atoms
 
-proc genIntLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
-  c.code.addIntLit parseBiggestInt(c.m.lits.strings[litId]), info
+proc genIntLit(c: var GeneratedCode; id: IntId; info: PackedLineInfo) =
+  c.code.addIntLit pool.integers[id], info
 
 proc genIntLit(c: var GeneratedCode; i: BiggestInt; info: PackedLineInfo) =
   c.code.addIntLit i, info
 
-proc genIntLit(c: var TokenBuf; i: BiggestInt; info: PackedLineInfo) =
-  c.addIntLit i, info
-
-proc genUIntLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
-  let i = parseBiggestUInt(c.m.lits.strings[litId])
-  let id = pool.uintegers.getOrIncl(i)
+proc genUIntLit(c: var GeneratedCode; id: UIntId; info: PackedLineInfo) =
   c.code.add uintToken(id, info)
 
 proc genUIntLit(c: var GeneratedCode; i: BiggestUInt; info: PackedLineInfo) =
   let id = pool.uintegers.getOrIncl(i)
   c.code.add uintToken(id, info)
 
-proc genFloatLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
-  let i = parseFloat(c.m.lits.strings[litId])
-  let id = pool.floats.getOrIncl(i)
+proc genFloatLit(c: var GeneratedCode; id: FloatId; info: PackedLineInfo) =
   c.code.add floatToken(id, info)
 
 proc genFloatLit(c: var GeneratedCode; i: float; info: PackedLineInfo) =

@@ -18,20 +18,21 @@ proc mergeBranch(arg: var AsmSlot; value: AsmSlot) =
 type
   TypeList = object
     processed: IntSet
-    s: seq[TypeId]
+    s: seq[(Cursor, PredefinedToken)]
 
-proc add(dest: var TypeList; elem: TypeId) =
-  if not containsOrIncl(dest.processed, int(elem)):
-    dest.s.add elem
+proc add(dest: var TypeList; elem: Cursor; decl: PredefinedToken) =
+  if not containsOrIncl(dest.processed, elem.toUniqueId()):
+    dest.s.add (elem, decl)
 
 type
   TypeOrder = object
-    ordered: TypeList
-    lookedAt, lookedAtBodies: IntSet
+    forwardedDecls, ordered: TypeList
+    lookedAt: IntSet
+    lookedAtBodies: HashSet[SymId]
 
-proc traverseObjectBody(m: Module; o: var TypeOrder; t: TypeId)
+proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor)
 
-proc recordDependency(m: Module; o: var TypeOrder; parent, child: TypeId) =
+proc recordDependency(m: Module; o: var TypeOrder; parent, child: Cursor) =
   var ch = child
   var viaPointer = false
   while true:
