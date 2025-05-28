@@ -33,7 +33,7 @@ type
     rega: RegAllocator
     intmSize, inConst, labels, prologAt: int
     loopExits: seq[Label]
-    generatedTypes: IntSet
+    generatedTypes: HashSet[SymId]
     requestedSyms: HashSet[string]
     fields: Table[SymId, AsmSlot]
     types: Table[SymId, AsmSlot]
@@ -130,39 +130,54 @@ include genpreasm_t
 
 # Procs
 
-proc genWas(c: var GeneratedCode; t: Tree; ch: NodePos) =
-  c.code.buildTree(CommentT, t[ch].info):
-    c.addIdent toString(t, ch.firstSon, c.m), t[ch].info
+proc genWas(c: var GeneratedCode; n: Cursor) =
+  c.code.buildTree(CommentT, n.info):
+    c.addIdent toString(n.firstSon, false), n.info
 
 type
   ProcFlag = enum
     isSelectAny, isVarargs
 
-proc genProcPragmas(c: var GeneratedCode; t: Tree; n: NodePos;
+proc genProcPragmas(c: var GeneratedCode; n: Cursor;
                     flags: var set[ProcFlag]) =
   # ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) |
   #               (selectany) | Attribute
-  if t[n].kind == Empty:
+  var n = n
+  if n.kind == DotToken:
     discard
-  elif t[n].kind == PragmasC:
-    for ch in sons(t, n):
-      case t[ch].kind
-      of CdeclC, StdcallC, NoconvC: discard "supported calling convention"
-      of SafecallC, SyscallC, FastcallC, ThiscallC, MemberC:
-        error c.m, "unsupported calling convention: ", t, ch
-      of VarargsC:
+  elif n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind
+      #of CdeclP, StdcallP, NoconvP:
+      #  discard "supported calling convention"
+      #  skip n
+      #of SafecallP, SyscallP, FastcallP, ThiscallP, MemberP:
+      #  error c.m, "unsupported calling convention: ", n
+      #  skip n
+      of VarargsP:
         flags.incl isVarargs
-      of SelectanyC:
+        skip n
+      of SelectanyP:
         flags.incl isSelectAny
-      of InlineC, AttrC, NoinlineC:
+        skip n
+      of RaisesP, ErrsP, InlineP, AttrP, NoinlineP:
         # Ignore for PreASM
-        discard " __attribute__((noinline))"
-      of WasC: genWas(c, t, ch)
-      of RaiseC, ErrsC: discard
+        skip n
+      of WasP:
+        genWas(c, n)
+        skip n
       else:
-        error c.m, "invalid proc pragma: ", t, ch
+        case n.callConvKind
+        of Cdecl, Stdcall, Noconv, Nimcall:
+          discard "supported calling convention"
+        of Safecall, Syscall, Fastcall, Thiscall, Member:
+          error c.m, "unsupported calling convention: ", n
+        of NoCallConv:
+          error c.m, "invalid proc pragma: ", n
+        skip n
   else:
-    error c.m, "expected proc pragmas but got: ", t, n
+    error c.m, "expected proc pragmas but got: ", n
 
 proc genSymDef(c: var GeneratedCode; t: Tree; n: NodePos): string =
   if t[n].kind == SymDef:
