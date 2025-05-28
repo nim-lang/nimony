@@ -1370,7 +1370,10 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
     put(g, tkStrLit, toString(n, false))
     inc n
   of CharLit:
-    put(g, tkCharLit, "'" & char(n.uoperand) & "'")
+    var lit = "\'"
+    lit.addEscapedChar(char(n.uoperand))
+    lit.add "\'"
+    put(g, tkCharLit, lit)
     inc n
   of Symbol, SymbolDef:
     var name = pool.syms[n.symId]
@@ -1401,8 +1404,6 @@ proc asNimCode*(n: Cursor): string =
   var nested = 0
   var n2 = n
   var file0 = FileId 0
-
-  echo renderTree(n2)
 
   while true:
     if n2.info.isValid:
@@ -1443,7 +1444,7 @@ proc asNimCode*(n: Cursor): string =
       result = toString(n, false)
   else:
     # Fallback to the NIF representation as it is much better than nothing:
-    result = toString(n, false)
+    result = renderTree(n)
 
 proc typeToString*(n: Cursor): string =
   result = asNimCode(n)
