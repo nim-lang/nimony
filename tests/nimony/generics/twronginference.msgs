@@ -1,11 +1,3 @@
 tests/nimony/generics/twronginference.nim(7, 6) Error: Type mismatch at [position]
-(proc :foo.0.twrt5xaak . .
- (typevars
-  (typevar :T.1.twrt5xaak . . . .))
- (params
-  (param :x.0 . .
-   (at Foo.0.twrt5xaak T.1.twrt5xaak) .)
-  (param :y.0 . . T.1.twrt5xaak .)) . . .
- (stmts
-  (discard .)))
-  [2] expected: (i -1) but got: Foo.0.Iy40vk81.twrt5xaak
+(call foo.0.twrt5xaak x.1 x.1)
+[2] expected: (i -1) but got: Foo.0.Iy40vk81.twrt5xaak (declared in tests/nimony/generics/twronginference.nim(3, 1))
