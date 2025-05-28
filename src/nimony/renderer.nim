@@ -20,13 +20,13 @@ proc skipParRi(n: var Cursor) =
   inc n
 
 type
-  TRenderFlag* = enum
+  RenderFlag* = enum
     renderNone, renderNoBody, renderNoComments, renderDocComments,
     renderNoPragmas, renderIds, renderNoProcDefs, renderSyms, renderRunnableExamples,
     renderIr, renderNonExportedFields, renderExpandUsing, renderNoPostfix
 
-  TRenderFlags* = set[TRenderFlag]
-  TRenderTok* = object
+  RenderFlags* = set[RenderFlag]
+  RenderTok* = object
     kind*: TokType
     length*: int16
     sym*: SymId
@@ -35,20 +35,20 @@ type
     GenericParams
     ObjectDef
 
-  TRenderTokSeq* = seq[TRenderTok]
-  TSrcGen* = object
+  RenderTokSeq* = seq[RenderTok]
+  SrcGen* = object
     indent*: int
     lineLen*: int
     col: int
     pos*: int              # current position for iteration over the buffer
     idx*: int              # current token index for iteration over the buffer
-    tokens*: TRenderTokSeq
+    tokens*: RenderTokSeq
     buf*: string
     pendingNL*: int        # negative if not active; else contains the
                            # indentation value
     pendingWhitespace: int
     # comStack*: seq[PNode]  # comment stack
-    flags*: TRenderFlags
+    flags*: RenderFlags
     inside: set[Section] # Keeps track of contexts we are in
     checkAnon: bool        # we're in a context that can contain sfAnon
     inPragma: int
@@ -58,40 +58,40 @@ type
     # config*: ConfigRef
     mangler: seq[SymId]
 
-  TSubFlag = enum
+  SubFlag = enum
     rfLongMode, rfInConstExpr
-  TSubFlags = set[TSubFlag]
-  TContext = tuple[spacing: int, flags: TSubFlags]
+  SubFlags = set[SubFlag]
+  Context = tuple[spacing: int, flags: SubFlags]
 
   BracketKind = enum
     bkNone, bkBracket, bkBracketAsgn, bkCurly, bkCurlyAsgn, bkPar
 
 const
   Space = " "
-  emptyContext: TContext = (spacing: 0, flags: {})
+  emptyContext: Context = (spacing: 0, flags: {})
   IndentWidth = 2
   longIndentWid = IndentWidth * 2
   MaxLineLen = 80
   LineCommentColumn = 30
 
 
-proc initContext(): TContext =
+proc initContext(): Context =
   result = (spacing: 0, flags: {})
 
-proc initSrcGen(renderFlags: TRenderFlags): TSrcGen =
-  result = TSrcGen(tokens: @[], indent: 0,
+proc initSrcGen(renderFlags: RenderFlags): SrcGen =
+  result = SrcGen(tokens: @[], indent: 0,
                    lineLen: 0, pos: 0, idx: 0, buf: "",
                    flags: renderFlags, pendingNL: -1,
                    pendingWhitespace: -1, inside: {},
                    )
 
-proc addTok(g: var TSrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
-  g.tokens.add TRenderTok(kind: kind, length: int16(s.len), sym: sym)
+proc addTok(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
+  g.tokens.add RenderTok(kind: kind, length: int16(s.len), sym: sym)
   g.buf.add(s)
   if kind != tkSpaces:
     inc g.col, s.len
 
-proc addPendingNL(g: var TSrcGen) =
+proc addPendingNL(g: var SrcGen) =
   if g.pendingNL >= 0:
     when defined(nimpretty):
       let newlines = repeat("\n", clamp(g.pendingNewlineCount, 1, 3))
@@ -106,7 +106,7 @@ proc addPendingNL(g: var TSrcGen) =
     addTok(g, tkSpaces, spaces(g.pendingWhitespace))
     g.pendingWhitespace = -1
 
-proc putNL(g: var TSrcGen, indent: int) =
+proc putNL(g: var SrcGen, indent: int) =
   if g.pendingNL >= 0: addPendingNL(g)
   else:
     addTok(g, tkSpaces, "\n")
@@ -116,35 +116,35 @@ proc putNL(g: var TSrcGen, indent: int) =
   g.lineLen = indent
   g.pendingWhitespace = -1
 
-proc previousNL(g: TSrcGen): bool =
+proc previousNL(g: SrcGen): bool =
   result = g.pendingNL >= 0 or (g.tokens.len > 0 and
                                 g.tokens[^1].kind == tkSpaces)
 
-proc putNL(g: var TSrcGen) =
+proc putNL(g: var SrcGen) =
   putNL(g, g.indent)
 
-proc optNL(g: var TSrcGen, indent: int) =
+proc optNL(g: var SrcGen, indent: int) =
   g.pendingNL = indent
   g.lineLen = indent
   g.col = g.indent
   when defined(nimpretty): g.pendingNewlineCount = 0
 
-proc optNL(g: var TSrcGen) =
+proc optNL(g: var SrcGen) =
   optNL(g, g.indent)
 
-proc indentNL(g: var TSrcGen) =
+proc indentNL(g: var SrcGen) =
   inc(g.indent, IndentWidth)
   g.pendingNL = g.indent
   g.lineLen = g.indent
 
-proc dedent(g: var TSrcGen) =
+proc dedent(g: var SrcGen) =
   dec(g.indent, IndentWidth)
   assert(g.indent >= 0)
   if g.pendingNL > IndentWidth:
     dec(g.pendingNL, IndentWidth)
     dec(g.lineLen, IndentWidth)
 
-proc put(g: var TSrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
+proc put(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
   if kind != tkSpaces:
     addPendingNL(g)
     if s.len > 0 or kind in {tkHideableStart, tkHideableEnd}:
@@ -154,7 +154,7 @@ proc put(g: var TSrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
     inc g.col, s.len
   inc(g.lineLen, s.len)
 
-proc putComment(g: var TSrcGen, s: string) =
+proc putComment(g: var SrcGen, s: string) =
   if s.len == 0: return
   var i = 0
   let hi = s.len - 1
@@ -218,7 +218,7 @@ proc maxLineLength(s: string): int =
       inc(lineLen)
       inc(i)
 
-proc putRawStr(g: var TSrcGen, kind: TokType, s: string) =
+proc putRawStr(g: var SrcGen, kind: TokType, s: string) =
   var i = 0
   let hi = s.len - 1
   var str = ""
@@ -250,21 +250,21 @@ proc containsNL(s: string): bool =
   result = false
 
 
-proc putWithSpace(g: var TSrcGen; kind: TokType, s: string) =
+proc putWithSpace(g: var SrcGen; kind: TokType, s: string) =
   put(g, kind, s)
   put(g, tkSpaces, Space)
 
 
 
-proc lsub(g: TSrcGen; n: Cursor): int =
+proc lsub(g: SrcGen; n: Cursor): int =
   result = 0
 
-proc gsub(g: var TSrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false)
-proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTopLevel = false)
+proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false)
+proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false)
 
-proc gtype(g: var TSrcGen, n: var Cursor, c: TContext)
+proc gtype(g: var SrcGen, n: var Cursor, c: Context)
 
-proc gstmts(g: var TSrcGen, n: var Cursor, c: TContext, doIndent=false) =
+proc gstmts(g: var SrcGen, n: var Cursor, c: Context, doIndent=false) =
   inc n
   if doIndent: indentNL(g)
 
@@ -275,11 +275,11 @@ proc gstmts(g: var TSrcGen, n: var Cursor, c: TContext, doIndent=false) =
   if doIndent: dedent(g)
   skipParRi(n)
 
-proc gcomma(g: var TSrcGen) =
+proc gcomma(g: var SrcGen) =
   putWithSpace(g, tkComma, ",")
 
 
-proc gpragmas(g: var TSrcGen, n: var Cursor) =
+proc gpragmas(g: var SrcGen, n: var Cursor) =
   inc n
   put(g, tkSpaces, Space)
   put(g, tkCurlyDotLe, "{.")
@@ -304,8 +304,8 @@ proc gpragmas(g: var TSrcGen, n: var Cursor) =
   put(g, tkCurlyDotRi, ".}")
   skipParRi(n)
 
-proc gblock(g: var TSrcGen, n: var Cursor) =
-  var c: TContext = initContext()
+proc gblock(g: var SrcGen, n: var Cursor) =
+  var c: Context = initContext()
   inc n
 
   if n.kind != DotToken:
@@ -321,17 +321,17 @@ proc gblock(g: var TSrcGen, n: var Cursor) =
 
   skipParRi(n)
 
-proc gcond(g: var TSrcGen, n: var Cursor) =
+proc gcond(g: var SrcGen, n: var Cursor) =
   # if n.kind == nkStmtListExpr:
   #   put(g, tkParLe, "(")
   gsub(g, n)
   # if n.kind == nkStmtListExpr:
   #   put(g, tkParRi, ")")
 
-proc gif(g: var TSrcGen, n: var Cursor) =
+proc gif(g: var SrcGen, n: var Cursor) =
 
   inc n
-  var c: TContext = initContext()
+  var c: Context = initContext()
 
   var isFirst = true
 
@@ -360,8 +360,8 @@ proc gif(g: var TSrcGen, n: var Cursor) =
 
   skipParRi(n)
 
-proc gcase(g: var TSrcGen, n: var Cursor) =
-  var c: TContext = initContext()
+proc gcase(g: var SrcGen, n: var Cursor) =
+  var c: Context = initContext()
   inc n
   putWithSpace(g, tkCase, "case")
 
@@ -418,7 +418,7 @@ proc gcase(g: var TSrcGen, n: var Cursor) =
 #     effects*: Cursor
 #     body*: Cursor
 
-proc takeTypeVars(g: var TSrcGen, n: var Cursor) =
+proc takeTypeVars(g: var SrcGen, n: var Cursor) =
   if n.substructureKind == TypevarsU:
     inc n
     put(g, tkBracketLe, "[")
@@ -443,8 +443,8 @@ proc takeTypeVars(g: var TSrcGen, n: var Cursor) =
   else:
     skip n
 
-proc gproc(g: var TSrcGen, n: var Cursor) =
-  var c: TContext = initContext()
+proc gproc(g: var SrcGen, n: var Cursor) =
+  var c: Context = initContext()
 
   let decl = takeRoutine(n, SkipFinalParRi)
 
@@ -498,7 +498,7 @@ proc gproc(g: var TSrcGen, n: var Cursor) =
     else:
       discard
 
-proc gcall(g: var TSrcGen, n: var Cursor) =
+proc gcall(g: var SrcGen, n: var Cursor) =
   inc n
   gsub(g, n)
   put(g, tkParLe, "(")
@@ -515,7 +515,7 @@ proc gcall(g: var TSrcGen, n: var Cursor) =
   put(g, tkParRi, ")")
   skipParRi(n)
 
-proc gcmd(g: var TSrcGen, n: var Cursor) =
+proc gcmd(g: var SrcGen, n: var Cursor) =
   inc n
   gsub(g, n)
   put(g, tkSpaces, Space)
@@ -531,7 +531,7 @@ proc gcmd(g: var TSrcGen, n: var Cursor) =
 
   skipParRi(n)
 
-proc ginfix(g: var TSrcGen, n: var Cursor) =
+proc ginfix(g: var SrcGen, n: var Cursor) =
   inc n
 
   var opr = n
@@ -551,7 +551,7 @@ proc ginfix(g: var TSrcGen, n: var Cursor) =
 
   skipParRi(n)
 
-proc gsufx(g: var TSrcGen, n: var Cursor) =
+proc gsufx(g: var SrcGen, n: var Cursor) =
   inc n
   var value = n
   skip n
@@ -586,7 +586,7 @@ proc gsufx(g: var TSrcGen, n: var Cursor) =
 #     pragmas*: Cursor
 #     body*: Cursor
 
-proc takeNumberType(g: var TSrcGen, n: var Cursor, typ: string) =
+proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
   inc n
   var name = typ
   let size = pool.integers[n.intId]
@@ -602,7 +602,7 @@ proc takeNumberType(g: var TSrcGen, n: var Cursor, typ: string) =
 
   put(g, tkSymbol, name)
 
-proc gconcept(g: var TSrcGen, n: var Cursor, c: TContext) =
+proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
   putWithSpace(g, tkConcept, "concept")
 
   indentNL(g)
@@ -615,7 +615,7 @@ proc gconcept(g: var TSrcGen, n: var Cursor, c: TContext) =
 
   dedent(g)
 
-proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
+proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
   case n.kind
   of ParLe:
     case n.typekind
@@ -860,12 +860,12 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
   else:
     gsub(g, n, c)
 
-proc longMode(g: var TSrcGen, n: var Cursor): bool =
+proc longMode(g: var SrcGen, n: var Cursor): bool =
   result = false
   discard "todo"
 
-proc gWhile(g: var TSrcGen, n: var Cursor) =
-  var c: TContext = initContext()
+proc gWhile(g: var SrcGen, n: var Cursor) =
+  var c: Context = initContext()
   putWithSpace(g, tkWhile, "while")
   inc n
   gcond(g, n)
@@ -875,10 +875,10 @@ proc gWhile(g: var TSrcGen, n: var Cursor) =
 
   skipParRi(n)
 
-proc gfor(g: var TSrcGen, n: var Cursor) =
+proc gfor(g: var SrcGen, n: var Cursor) =
   let forStmt = asForStmt(n)
   skip n
-  var c: TContext = initContext()
+  var c: Context = initContext()
   putWithSpace(g, tkFor, "for")
   # if longMode(g, n) or
   #     (lsub(g, n[^1]) + lsub(g, n[^2]) + 6 + g.lineLen > MaxLineLen):
@@ -909,7 +909,7 @@ proc gfor(g: var TSrcGen, n: var Cursor) =
   var body = forStmt.body
   gstmts(g, body, c, doIndent = true)
 
-proc gtypedef(g: var TSrcGen, n: var Cursor, c: TContext) =
+proc gtypedef(g: var SrcGen, n: var Cursor, c: Context) =
   let decl = takeTypeDecl(n, SkipFinalParRi)
 
   putWithSpace(g, tkType, "type")
@@ -932,10 +932,10 @@ proc gtypedef(g: var TSrcGen, n: var Cursor, c: TContext) =
 
   dedent(g)
 
-proc gtry(g: var TSrcGen, n: var Cursor) =
+proc gtry(g: var SrcGen, n: var Cursor) =
   skip n
   raiseAssert "todo"
-  # var c: TContext = initContext()
+  # var c: Context = initContext()
   # put(g, tkTry, "try")
   # putWithSpace(g, tkColon, ":")
   # # if longMode(g, n) or (lsub(g, n[0]) + g.lineLen > MaxLineLen):
@@ -943,7 +943,7 @@ proc gtry(g: var TSrcGen, n: var Cursor) =
   # gstmts(g, n, c, doIndent = true)
   # # gsons(g, n, c, 1)
 
-proc gconstr(g: var TSrcGen, n: var Cursor, kind: BracketKind) =
+proc gconstr(g: var SrcGen, n: var Cursor, kind: BracketKind) =
   inc n
   skip n
 
@@ -977,7 +977,7 @@ proc gconstr(g: var TSrcGen, n: var Cursor, kind: BracketKind) =
   else:
     raiseAssert "todo"
 
-proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTopLevel = false) =
+proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false) =
   case n.kind
   of ParLe:
     case n.exprKind
@@ -1422,15 +1422,15 @@ proc gsub(g: var TSrcGen, n: var Cursor, c: TContext, fromStmtList = false, isTo
   else:
     inc n
 
-proc gsub(g: var TSrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false) =
-  var c: TContext = initContext()
+proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false) =
+  var c: Context = initContext()
   gsub(g, n, c, isTopLevel = isTopLevel)
 
-proc renderTree(n: Cursor, renderFlags: TRenderFlags = {}, renderType = false): string =
-  var g: TSrcGen = initSrcGen({})
+proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): string =
+  var g: SrcGen = initSrcGen({})
   var n = n
   if renderType:
-    var c: TContext = initContext()
+    var c: Context = initContext()
     gtype(g, n, c)
   else:
     gsub(g, n, isTopLevel = true)
