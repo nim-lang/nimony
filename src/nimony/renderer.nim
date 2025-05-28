@@ -78,6 +78,13 @@ const
 proc initContext(): TContext =
   result = (spacing: 0, flags: {})
 
+proc initSrcGen(renderFlags: TRenderFlags): TSrcGen =
+  result = TSrcGen(tokens: @[], indent: 0,
+                   lineLen: 0, pos: 0, idx: 0, buf: "",
+                   flags: renderFlags, pendingNL: -1,
+                   pendingWhitespace: -1, inside: {},
+                   )
+
 proc addTok(g: var TSrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
   g.tokens.add TRenderTok(kind: kind, length: int16(s.len), sym: sym)
   g.buf.add(s)
@@ -643,18 +650,19 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
       skipParRi(n)
     of TypekindT:
       inc n
-      put(g, tkSymbol, $n.typeKind)
-      skip n
+      gtype(g, n, c)
       skipParRi(n)
     of PtrT:
       putWithSpace(g, tkPtr, "ptr")
       inc n
-      gtype(g, n, c)
+      if n.kind != ParRi:
+        gtype(g, n, c)
       skipParRi(n)
     of RefT:
       putWithSpace(g, tkRef, "ref")
       inc n
-      gtype(g, n, c)
+      if n.kind != ParRi:
+        gtype(g, n, c)
       skipParRi(n)
     of MutT:
       putWithSpace(g, tkVar, "var")
@@ -701,10 +709,13 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
 
     of RangetypeT:
       inc n
-      skip n
-      gtype(g, n, c)
-      put(g, tkDotDot, "..")
-      gtype(g, n, c)
+      if n.kind != ParRi:
+        skip n
+        gtype(g, n, c)
+        put(g, tkDotDot, "..")
+        gtype(g, n, c)
+      else:
+        put(g, tkSymbol, "range")
       skipParRi(n)
 
     of ArrayT:
@@ -763,10 +774,9 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
 
     of EnumT:
       inc n
-      putWithSpace(g, tkObject, "enum")
 
       if n.kind != ParRi:
-
+        putWithSpace(g, tkEnum, "enum")
         skip n
 
         indentNL(g)
@@ -788,8 +798,14 @@ proc gtype(g: var TSrcGen, n: var Cursor, c: TContext) =
             raiseAssert "unreachable"
 
         dedent(g)
+      else:
+        put(g, tkSymbol, "OrdinalEnum")
 
       skipParRi(n)
+
+    of OnumT:
+      put(g, tkSymbol, "HoleyEnum")
+      skip n
 
     of ConceptT:
       gconcept(g, n, c)
@@ -1392,10 +1408,14 @@ proc gsub(g: var TSrcGen; n: var Cursor, fromStmtList = false, isTopLevel = fals
   var c: TContext = initContext()
   gsub(g, n, c, isTopLevel = isTopLevel)
 
-proc renderTree(n: Cursor, renderFlags: TRenderFlags = {}): string =
-  var g: TSrcGen = TSrcGen()
+proc renderTree(n: Cursor, renderFlags: TRenderFlags = {}, renderType = false): string =
+  var g: TSrcGen = initSrcGen({})
   var n = n
-  gsub(g, n, isTopLevel = true)
+  if renderType:
+    var c: TContext = initContext()
+    gtype(g, n, c)
+  else:
+    gsub(g, n, isTopLevel = true)
   result = g.buf
 
 proc asNimCode*(n: Cursor): string =
@@ -1447,4 +1467,4 @@ proc asNimCode*(n: Cursor): string =
     result = renderTree(n)
 
 proc typeToString*(n: Cursor): string =
-  result = asNimCode(n)
+  result = renderTree(n, renderType = true)
