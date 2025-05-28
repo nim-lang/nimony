@@ -1,23 +1,26 @@
 tests/nimony/errmsgs/tdistinctinfos.nim(4, 20) Trace: instantiation from here
 lib/std/system/comparisons.nim(105, 3) Error: Type mismatch at [position]
-[2] BUG: unhandled type: distinct
-[1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.0.sysvq0asl
-[1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.1.sysvq0asl
-[1] expected: (pointer) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (c +8) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (bool) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (set T.32.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (ref T.33.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (ptr T.34.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (i +8) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (i +16) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (i +32) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (i +64) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (u +8) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (u +16) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (u +32) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (u +64) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (f +32) but got: WINBOOL.0.tdim13fdy1
-[1] expected: (f +64) but got: WINBOOL.0.tdim13fdy1
-[1] expected: string.0.sysvq0asl but got: WINBOOL.0.tdim13fdy1
-[1] expected: (at openArray.0.sysvq0asl T.117.sysvq0asl) but got: WINBOOL.0.tdim13fdy1
+(infix
+ (ochoice ==.0.sysvq0asl ==.1.sysvq0asl ==.2.sysvq0asl ==.3.sysvq0asl ==.4.sysvq0asl ==.5.sysvq0asl ==.6.sysvq0asl ==.7.sysvq0asl ==.8.sysvq0asl ==.9.sysvq0asl ==.10.sysvq0asl ==.11.sysvq0asl ==.12.sysvq0asl ==.13.sysvq0asl ==.14.sysvq0asl ==.15.sysvq0asl ==.16.sysvq0asl ==.17.sysvq0asl ==.18.sysvq0asl ==.20.sysvq0asl ==.22.sysvq0asl)
+ (conv WINBOOL.0.tdim13fdy1 +0) +0)
+[2] BUG: unhandled type: distinct (declared in lib/std/system/comparisons.nim(4, 1))
+[1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.0.sysvq0asl (declared in lib/std/system/comparisons.nim(7, 1))
+[1] WINBOOL.0.tdim13fdy1 does not match constraint Enum.1.sysvq0asl (declared in lib/std/system/comparisons.nim(9, 1))
+[1] expected: (pointer) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(11, 1))
+[1] expected: (c +8) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(14, 1))
+[1] expected: (bool) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(16, 1))
+[1] expected: (set T.32.sysvq0asl) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(18, 1))
+[1] expected: (ref T.33.sysvq0asl) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(21, 1))
+[1] expected: (ptr T.34.sysvq0asl) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(23, 1))
+[1] expected: (i +8) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(64, 1))
+[1] expected: (i +16) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(65, 1))
+[1] expected: (i +32) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(66, 1))
+[1] expected: (i +64) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(67, 1))
+[1] expected: (u +8) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(89, 1))
+[1] expected: (u +16) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(90, 1))
+[1] expected: (u +32) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(91, 1))
+[1] expected: (u +64) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(92, 1))
+[1] expected: (f +32) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(100, 1))
+[1] expected: (f +64) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/comparisons.nim(101, 1))
+[1] expected: string.0.sysvq0asl but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/stringimpl.nim(250, 1))
+[1] expected: (at openArray.0.sysvq0asl T.117.sysvq0asl) but got: WINBOOL.0.tdim13fdy1 (declared in lib/std/system/openarrays.nim(47, 1))
