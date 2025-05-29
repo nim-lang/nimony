@@ -1421,6 +1421,19 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gsub(g, n)
       skipParRi(n)
 
+    of AshrX:
+      inc n
+      skip n
+      put(g, tkSymbol, "ashr")
+      put(g, tkParLe, "(")
+
+      gsub(g, n)
+      gcomma(g)
+      gsub(g, n)
+
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
     of NegX:
       putWithSpace(g, tkOpr, $n.exprKind)
       inc n
@@ -1437,12 +1450,16 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of ExprX:
       inc n
       var isFirst = true
+
+      put(g, tkParLe, "(")
       while n.kind != ParRi:
         if isFirst:
           isFirst = false
         else:
-          put(g, tkSemiColon, ";")
+          putWithSpace(g, tkSemiColon, ";")
         gsub(g, n)
+
+      put(g, tkParRi, ")")
 
       skipParRi(n)
 
