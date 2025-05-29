@@ -19,7 +19,7 @@ proc skipParRi(n: var Cursor) =
   inc n
 
 type
-  TokType* = enum
+  TokType = enum
     tkInvalid = "tkInvalid", tkEof = "[EOF]", # order is important here!
     tkSymbol = "tkSymbol", # keywords:
     tkAddr = "addr", tkAnd = "and", tkAs = "as", tkAsm = "asm",
@@ -113,9 +113,9 @@ const
   Space = " "
   emptyContext: Context = (spacing: 0, flags: {})
   IndentWidth = 2
-  longIndentWid = IndentWidth * 2
-  MaxLineLen = 80
-  LineCommentColumn = 30
+  # longIndentWid = IndentWidth * 2
+  # MaxLineLen = 80
+  # LineCommentColumn = 30
 
 
 proc initContext(): Context =
@@ -159,9 +159,10 @@ proc putNL(g: var SrcGen, indent: int) =
   g.lineLen = indent
   g.pendingWhitespace = -1
 
-proc previousNL(g: SrcGen): bool =
-  result = g.pendingNL >= 0 or (g.tokens.len > 0 and
-                                g.tokens[^1].kind == tkSpaces)
+when false:
+  proc previousNL(g: SrcGen): bool =
+    result = g.pendingNL >= 0 or (g.tokens.len > 0 and
+                                  g.tokens[^1].kind == tkSpaces)
 
 proc putNL(g: var SrcGen) =
   putNL(g, g.indent)
@@ -197,100 +198,101 @@ proc put(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
     inc g.col, s.len
   inc(g.lineLen, s.len)
 
-proc putComment(g: var SrcGen, s: string) =
-  if s.len == 0: return
-  var i = 0
-  let hi = s.len - 1
-  let isCode = (s.len >= 2) and (s[1] != ' ')
-  let ind = g.col
-  var com = "## "
-  while i <= hi:
-    case s[i]
-    of '\0':
-      break
-    of '\r':
-      put(g, tkComment, com)
-      com = "## "
-      inc(i)
-      if i <= hi and s[i] == '\n': inc(i)
-      optNL(g, ind)
-    of '\n':
-      put(g, tkComment, com)
-      com = "## "
-      inc(i)
-      optNL(g, ind)
-    of ' ', '\t':
-      com.add(s[i])
-      inc(i)
-    else:
-      # we may break the comment into a multi-line comment if the line
-      # gets too long:
-      # compute length of the following word:
-      var j = i
-      while j <= hi and s[j] > ' ': inc(j)
-      if not isCode and (g.col + (j - i) > MaxLineLen):
+when false:
+  proc putComment(g: var SrcGen, s: string) =
+    if s.len == 0: return
+    var i = 0
+    let hi = s.len - 1
+    let isCode = (s.len >= 2) and (s[1] != ' ')
+    let ind = g.col
+    var com = "## "
+    while i <= hi:
+      case s[i]
+      of '\0':
+        break
+      of '\r':
         put(g, tkComment, com)
-        optNL(g, ind)
         com = "## "
-      while i <= hi and s[i] > ' ':
+        inc(i)
+        if i <= hi and s[i] == '\n': inc(i)
+        optNL(g, ind)
+      of '\n':
+        put(g, tkComment, com)
+        com = "## "
+        inc(i)
+        optNL(g, ind)
+      of ' ', '\t':
         com.add(s[i])
         inc(i)
-  put(g, tkComment, com)
-  optNL(g)
+      else:
+        # we may break the comment into a multi-line comment if the line
+        # gets too long:
+        # compute length of the following word:
+        var j = i
+        while j <= hi and s[j] > ' ': inc(j)
+        if not isCode and (g.col + (j - i) > MaxLineLen):
+          put(g, tkComment, com)
+          optNL(g, ind)
+          com = "## "
+        while i <= hi and s[i] > ' ':
+          com.add(s[i])
+          inc(i)
+    put(g, tkComment, com)
+    optNL(g)
 
-proc maxLineLength(s: string): int =
-  result = 0
-  if s.len == 0: return 0
-  var i = 0
-  let hi = s.len - 1
-  var lineLen = 0
-  while i <= hi:
-    case s[i]
-    of '\0':
-      break
-    of '\r':
-      inc(i)
-      if i <= hi and s[i] == '\n': inc(i)
-      result = max(result, lineLen)
-      lineLen = 0
-    of '\n':
-      inc(i)
-      result = max(result, lineLen)
-      lineLen = 0
-    else:
-      inc(lineLen)
-      inc(i)
+  proc maxLineLength(s: string): int =
+    result = 0
+    if s.len == 0: return 0
+    var i = 0
+    let hi = s.len - 1
+    var lineLen = 0
+    while i <= hi:
+      case s[i]
+      of '\0':
+        break
+      of '\r':
+        inc(i)
+        if i <= hi and s[i] == '\n': inc(i)
+        result = max(result, lineLen)
+        lineLen = 0
+      of '\n':
+        inc(i)
+        result = max(result, lineLen)
+        lineLen = 0
+      else:
+        inc(lineLen)
+        inc(i)
 
-proc putRawStr(g: var SrcGen, kind: TokType, s: string) =
-  var i = 0
-  let hi = s.len - 1
-  var str = ""
-  while i <= hi:
-    case s[i]
-    of '\r':
-      put(g, kind, str)
-      str = ""
-      inc(i)
-      if i <= hi and s[i] == '\n': inc(i)
-      optNL(g, 0)
-    of '\n':
-      put(g, kind, str)
-      str = ""
-      inc(i)
-      optNL(g, 0)
-    else:
-      str.add(s[i])
-      inc(i)
-  put(g, kind, str)
+  proc putRawStr(g: var SrcGen, kind: TokType, s: string) =
+    var i = 0
+    let hi = s.len - 1
+    var str = ""
+    while i <= hi:
+      case s[i]
+      of '\r':
+        put(g, kind, str)
+        str = ""
+        inc(i)
+        if i <= hi and s[i] == '\n': inc(i)
+        optNL(g, 0)
+      of '\n':
+        put(g, kind, str)
+        str = ""
+        inc(i)
+        optNL(g, 0)
+      else:
+        str.add(s[i])
+        inc(i)
+    put(g, kind, str)
 
-proc containsNL(s: string): bool =
-  for i in 0..<s.len:
-    case s[i]
-    of '\r', '\n':
-      return true
-    else:
-      discard
-  result = false
+  proc containsNL(s: string): bool =
+    for i in 0..<s.len:
+      case s[i]
+      of '\r', '\n':
+        return true
+      else:
+        discard
+    result = false
 
 
 proc putWithSpace(g: var SrcGen; kind: TokType, s: string) =
@@ -298,9 +300,9 @@ proc putWithSpace(g: var SrcGen; kind: TokType, s: string) =
   put(g, tkSpaces, Space)
 
 
-
-proc lsub(g: SrcGen; n: Cursor): int =
-  result = 0
+when false:
+  proc lsub(g: SrcGen; n: Cursor): int =
+    result = 0
 
 proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false)
 proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false)
@@ -447,19 +449,6 @@ proc gcase(g: var SrcGen, n: var Cursor) =
       raiseAssert "unreachable"
 
   skipParRi(n)
-
-# type
-#   Routine* = object
-#     kind*: SymKind
-#     name*: Cursor
-#     exported*: Cursor
-#     pattern*: Cursor # for TR templates/macros
-#     typevars*: Cursor # generic parameters
-#     params*: Cursor
-#     retType*: Cursor
-#     pragmas*: Cursor
-#     effects*: Cursor
-#     body*: Cursor
 
 proc takeTypeVars(g: var SrcGen, n: var Cursor) =
   if n.substructureKind == TypevarsU:
@@ -619,15 +608,6 @@ proc gsufx(g: var SrcGen, n: var Cursor) =
 
   skip n
   skipParRi(n)
-
-# type
-#   TypeDecl* = object
-#     kind*: SymKind
-#     name*: Cursor
-#     exported*: Cursor
-#     typevars*: Cursor
-#     pragmas*: Cursor
-#     body*: Cursor
 
 proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
   inc n
@@ -905,9 +885,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
   else:
     gsub(g, n, c)
 
-proc longMode(g: var SrcGen, n: var Cursor): bool =
-  result = false
-  discard "todo"
+when false:
+  proc longMode(g: var SrcGen, n: var Cursor): bool =
+    result = false
 
 proc gWhile(g: var SrcGen, n: var Cursor) =
   var c: Context = initContext()
