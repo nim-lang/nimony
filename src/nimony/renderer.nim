@@ -1316,8 +1316,24 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcall(g, n)
 
     of HighX, LowX, TypeofX,
-          SizeofX, AlignofX, OffsetofX, CardX:
+          SizeofX, AlignofX, OffsetofX, CardX, UnpackX, FieldsX:
       gcallsystem(g, n, $n.exprKind)
+
+    of NewrefX:
+      inc n
+
+      put(g, tkSymbol, "newConstr")
+
+      skip n
+
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
+
+      skipParRi(n)
+
+    of FieldpairsX:
+      gcallsystem(g, n, "fieldPairs")
 
     of WasmovedX:
       gcallsystem(g, n, "=wasMoved")
