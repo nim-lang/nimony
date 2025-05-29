@@ -1037,6 +1037,17 @@ proc gconstr(g: var SrcGen, n: var Cursor, kind: BracketKind) =
   else:
     raiseAssert "todo"
 
+proc gpragmaBlock(g: var SrcGen, n: var Cursor) =
+  inc n
+  var c: Context = initContext()
+  gsub(g, n)
+  putWithSpace(g, tkColon, ":")
+  # if longMode(g, n) or (lsub(g, n[1]) + g.lineLen > MaxLineLen):
+  #   incl(c.flags, rfLongMode)
+  # gcoms(g)                    # a good place for comments
+  gstmts(g, n, c, doIndent = true)
+  skipParRi(n)
+
 proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false) =
   case n.kind
   of ParLe:
@@ -1196,8 +1207,17 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       of PragmasS:
         gpragmas(g, n)
 
+      of CommentS:
+        raiseAssert "todo"
+
       else:
-        skip n
+        if pool.tags[n.tagId] == "keepovf":
+          put(g, tkParLe, "(")
+          put(g, tkSymbol, "overflowFlag")
+          put(g, tkParRi, ")")
+          skip n
+        else:
+          skip n
     of TrueX:
       put(g, tkSymbol, "true")
       skip n
@@ -1451,7 +1471,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       inc n
       var isFirst = true
 
-      put(g, tkParLe, "(")
+      var ncopy = n
+
+      var hasChildren = false
+      if n.kind != ParRi:
+        skip ncopy
+        hasChildren = ncopy.kind != ParRi
+
+      if hasChildren:
+        put(g, tkParLe, "(")
       while n.kind != ParRi:
         if isFirst:
           isFirst = false
@@ -1459,7 +1487,8 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
           putWithSpace(g, tkSemiColon, ";")
         gsub(g, n)
 
-      put(g, tkParRi, ")")
+      if hasChildren:
+        put(g, tkParRi, ")")
 
       skipParRi(n)
 
@@ -1503,7 +1532,6 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       skipParRi(n)
 
-
     of HconvX, DconvX:
       inc n
       skip n
@@ -1517,6 +1545,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gsub(g, n)
       skip n
       skipParRi(n)
+
+    of PragmaxX:
+      gpragmaBlock(g, n)
+
     else:
       skip n
   of ParRi:
