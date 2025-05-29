@@ -323,6 +323,10 @@ proc gstmts(g: var SrcGen, n: var Cursor, c: Context, doIndent=false) =
 proc gcomma(g: var SrcGen) =
   putWithSpace(g, tkComma, ",")
 
+proc mayAddExportMarker(g: var SrcGen, n: var Cursor) =
+  if n.kind == Ident and pool.strings[n.litId] == "x":
+    put(g, tkSymbol, "*")
+  skip n
 
 proc gpragmas(g: var SrcGen, n: var Cursor) =
   inc n
@@ -482,6 +486,9 @@ proc gproc(g: var SrcGen, n: var Cursor) =
 
   var name = decl.name
   gsub(g, name)
+
+  var exportMarker = decl.exported
+  mayAddExportMarker(g, exportMarker)
 
   var typevars = decl.typevars
   takeTypeVars(g, typevars)
@@ -797,6 +804,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
           var typ = local.typ
 
           gsub(g, name)
+          var exportMarker = local.exported
+          mayAddExportMarker(g, exportMarker)
+
           putWithSpace(g, tkColon, ":")
           gtype(g, typ, emptyContext)
           optNL(g)
@@ -943,6 +953,9 @@ proc gtypedef(g: var SrcGen, n: var Cursor, c: Context) =
   var name = decl.name
   gsub(g, name, c)
 
+  var exportMarker = decl.exported
+  mayAddExportMarker(g, exportMarker)
+
   var typevars = decl.typevars
   takeTypeVars(g, typevars)
 
@@ -1053,6 +1066,9 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         var value = decl.val
         var typ = decl.typ
         gsub(g, name)
+
+        var exportMarker = decl.exported
+        mayAddExportMarker(g, exportMarker)
 
         if typ.kind != DotToken:
           putWithSpace(g, tkColon, ":")
