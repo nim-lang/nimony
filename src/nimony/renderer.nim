@@ -957,16 +957,38 @@ proc gtypedef(g: var SrcGen, n: var Cursor, c: Context) =
 
   dedent(g)
 
-proc gtry(g: var SrcGen, n: var Cursor) =
-  skip n
-  raiseAssert "todo"
-  # var c: Context = initContext()
-  # put(g, tkTry, "try")
-  # putWithSpace(g, tkColon, ":")
+proc gtry(g: var SrcGen, n: var Cursor) =  
+  var c: Context = initContext()
+  inc n
+  put(g, tkTry, "try")
+  putWithSpace(g, tkColon, ":")
   # # if longMode(g, n) or (lsub(g, n[0]) + g.lineLen > MaxLineLen):
   # #   incl(c.flags, rfLongMode)
-  # gstmts(g, n, c, doIndent = true)
-  # # gsons(g, n, c, 1)
+  gstmts(g, n, c, doIndent = true)
+  while n.substructureKind == ExceptU:
+    optNL(g)
+    inc n
+    if n.kind != DotToken:
+      putWithSpace(g, tkExcept, "except")
+      gsub(g, n, c)
+      raiseAssert "todo"
+    else:
+      put(g, tkExcept, "except")
+      inc n
+    putWithSpace(g, tkColon, ":")
+    gstmts(g, n, c, doIndent = true)
+    skipParRi(n)
+
+  if n.substructureKind == FinU:
+    optNL(g)
+    put(g, tkFinally, "finally")
+    inc n
+    putWithSpace(g, tkColon, ":")
+    gstmts(g, n, c, doIndent = true)
+    skipParRi(n)
+
+  skipParRi(n)
+
 
 proc gconstr(g: var SrcGen, n: var Cursor, kind: BracketKind) =
   inc n
@@ -1143,7 +1165,6 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       of TryS:
         gtry(g, n)
-
 
       of ScopeS:
         inc n
@@ -1488,7 +1509,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
   of Symbol, SymbolDef:
     var name = pool.syms[n.symId]
     extractBasename(name)
-    put(g, tkSymbol, name.replace('.', '_'))
+    put(g, tkSymbol, name)
     inc n
   of Ident:
     put(g, tkSymbol, pool.strings[n.litId])
