@@ -1,7 +1,1 @@
-lib/std/system/seqimpl.nim(143, 41): (and
- (lt
-  (i +64) i.1
-  (dot s.1 len.3.I328b0i1.tvaa37zrk +0))
- (expr
-  (le
-   (i +64) +0 i.1))) [AssertionDefect]
+lib/std/system/seqimpl.nim(143, 41): i < s.len and 0 <= i [AssertionDefect]

@@ -1,2 +1,2 @@
 tests/nimony/errmsgs/tifconderr.nim(17, 22) Error: undeclared identifier: 'compare'
-tests/nimony/errmsgs/tifconderr.nim(18, 12) Error: expected `bool` but got: (auto)
+tests/nimony/errmsgs/tifconderr.nim(18, 12) Error: expected `bool` but got: auto

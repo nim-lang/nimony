@@ -1,3 +1,1 @@
-tests/nimony/arc/tmove_only2.nim(19, 15) Error: '=dup' is not available for type <(array MyObj.0.tmozst6gl
- (rangetype
-  (i -1) +0 +1))>
+tests/nimony/arc/tmove_only2.nim(19, 15) Error: '=dup' is not available for type <array[0..1, MyObj]>

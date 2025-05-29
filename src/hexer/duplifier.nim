@@ -974,7 +974,7 @@ proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int
         inc arg
         if arg.kind != ParRi:
           let param = asLocal(arg)
-          m.add " for type <" & asNimCode(param.typ) & ">"
+          m.add " for type <" & typeToString(param.typ) & ">"
       r.error infoToStr(info), m
       inc result
 
