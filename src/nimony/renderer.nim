@@ -9,7 +9,7 @@ import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache, s
 import nimony_model, decls
 
 
-import std/[strutils, assertions]
+import std/[strutils, assertions, formatfloat]
 
 ## Rendering of Nim code from a cursor.
 
@@ -606,9 +606,9 @@ proc gsufx(g: var SrcGen, n: var Cursor) =
   of "u16": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u16")
   of "u32": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u32")
   of "u64": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u64")
-  of "f": put(g, tkFloatLit, toString(value, false))
-  of "f32": put(g, tkFloatLit, toString(value, false) & "f32")
-  of "f64": put(g, tkFloatLit, toString(value, false) & "f64")
+  of "f": put(g, tkFloatLit, $pool.floats[value.floatId])
+  of "f32": put(g, tkFloatLit, $pool.floats[value.floatId] & "f32")
+  of "f64": put(g, tkFloatLit, $pool.floats[value.floatId] & "f64")
   of "R", "T": put(g, tkStrLit, toString(value, false))
   of "C": put(g, tkStrLit, "cstring" & toString(value, false))
   else: discard
@@ -683,9 +683,10 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       gtype(g, n, c)
       skipParRi(n)
     of PtrT:
-      putWithSpace(g, tkPtr, "ptr")
+      put(g, tkPtr, "ptr")
       inc n
       if n.kind != ParRi:
+        put(g, tkSpaces, Space)
         gtype(g, n, c)
       skipParRi(n)
 
@@ -699,9 +700,10 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       skipParRi(n)
 
     of RefT:
-      putWithSpace(g, tkRef, "ref")
+      put(g, tkRef, "ref")
       inc n
       if n.kind != ParRi:
+        put(g, tkSpaces, Space)
         gtype(g, n, c)
       skipParRi(n)
     of MutT:
@@ -1125,6 +1127,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         putWithSpace(g, tkMacro, "macro")
         gproc(g, n)
 
+      of TemplateS:
+        putWithSpace(g, tkMacro, "template")
+        gproc(g, n)
+
       of MethodS:
         putWithSpace(g, tkMethod, "method")
         gproc(g, n)
@@ -1211,13 +1217,8 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         raiseAssert "todo"
 
       else:
-        if pool.tags[n.tagId] == "keepovf":
-          put(g, tkParLe, "(")
-          put(g, tkSymbol, "overflowFlag")
-          put(g, tkParRi, ")")
-          skip n
-        else:
-          skip n
+        # raiseAssert $pool.tags[n.tagId]
+        skip n
     of TrueX:
       put(g, tkSymbol, "true")
       skip n
@@ -1549,7 +1550,14 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of PragmaxX:
       gpragmaBlock(g, n)
 
+    of OvfX:
+      put(g, tkSymbol, "overflowFlag")
+      put(g, tkParLe, "(")
+      put(g, tkParRi, ")")
+      skip n
+
     else:
+      # raiseAssert $pool.tags[n.tagId]
       skip n
   of ParRi:
     inc n
@@ -1560,7 +1568,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     put(g, tkUIntLit, $pool.uintegers[n.uintId])
     inc n
   of FloatLit:
-    put(g, tkFloatLit, toString(n, false))
+    put(g, tkFloatLit, $pool.floats[n.floatId])
     inc n
   of StringLit:
     put(g, tkStrLit, toString(n, false))
