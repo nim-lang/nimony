@@ -554,6 +554,23 @@ proc gcall(g: var SrcGen, n: var Cursor) =
   put(g, tkParRi, ")")
   skipParRi(n)
 
+proc gcallsystem(g: var SrcGen, n: var Cursor; name: string) =
+  inc n
+  put(g, tkSymbol, name)
+  put(g, tkParLe, "(")
+
+  var afterFirst = false
+
+  while n.kind != ParRi:
+    if afterFirst:
+      gcomma(g)
+    else:
+      afterFirst = true
+    gsub(g, n)
+
+  put(g, tkParRi, ")")
+  skipParRi(n)
+
 proc gcmd(g: var SrcGen, n: var Cursor) =
   inc n
   gsub(g, n)
@@ -1240,7 +1257,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkParRi, ")")
       skipParRi(n)
 
-    of AtX, PatX, ArrAtX:
+    of AtX, PatX, TupatX, ArrAtX:
       inc n
 
       gsub(g, n)
@@ -1295,9 +1312,30 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       skipParRi(n)
 
-    of CallX, CallstrlitX, HighX, LowX, TypeofX,
-          SizeofX, AlignofX, OffsetofX:
+    of CallX, CallstrlitX:
       gcall(g, n)
+
+    of HighX, LowX, TypeofX,
+          SizeofX, AlignofX, OffsetofX, CardX:
+      gcallsystem(g, n, $n.exprKind)
+
+    of WasmovedX:
+      gcallsystem(g, n, "=wasMoved")
+
+    of DestroyX:
+      gcallsystem(g, n, "=destroy")
+
+    of DupX:
+      gcallsystem(g, n, "=dup")
+
+    of CopyX:
+      gcallsystem(g, n, "=copy")
+
+    of SinkhX:
+       gcallsystem(g, n, "=sink")
+
+    of TraceX:
+       gcallsystem(g, n, "=sink")
 
     of PrefixX:
       # TODO:
@@ -1401,25 +1439,29 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       skipParRi(n)
 
     of EqX, NeqX, LeX, LtX, AddX,
-        SubX, MulX, DivX:
+        SubX, MulX, DivX,
+        PlussetX, MinussetX, MulsetX, XorsetX,
+        EqsetX, LesetX, LtsetX:
       let opr: string
       case n.exprKind
-      of EqX:
+      of EqX, EqsetX:
         opr = "=="
       of NeqX:
         opr = "!="
-      of LeX:
+      of LeX, LesetX:
         opr = "<="
-      of LtX:
+      of LtX, LtsetX:
         opr = "<"
-      of AddX:
+      of AddX, PlussetX:
         opr = "+"
-      of SubX:
-        opr = "+"
-      of MulX:
+      of SubX, MinussetX:
+        opr = "-"
+      of MulX, MulsetX:
         opr = "*"
       of DivX:
         opr = "/"
+      of XorsetX:
+        opr = "-+-"
       else:
         raiseAssert "unreachable"
       inc n
@@ -1651,7 +1693,6 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
     if not visible:
       result = toString(n, false)
   else:
-    # Fallback to the NIF representation as it is much better than nothing:
     result = renderTree(n, renderFlags = renderFlags)
 
 proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string =
