@@ -12,7 +12,7 @@
 import std / [assertions, syncio, tables, sets, intsets, strutils]
 from std / os import changeFileExt, splitFile, extractFilename
 
-import .. / .. / lib / [bitabs, packedtrees, lineinfos, nifstreams, nifcursors]
+import .. / .. / lib / [bitabs, lineinfos, nifstreams, nifcursors]
 import ".." / [nifc_model, typenav]
 import ".." / native / [slots, analyser]
 import asm_model, machine, emitter
@@ -23,7 +23,7 @@ type
 
 type
   Scope = object
-    vars: seq[LitId]
+    vars: seq[SymId]
 
   GeneratedCode* = object
     m: Module
@@ -33,54 +33,45 @@ type
     rega: RegAllocator
     intmSize, inConst, labels, prologAt: int
     loopExits: seq[Label]
-    generatedTypes: IntSet
+    generatedTypes: HashSet[SymId]
     requestedSyms: HashSet[string]
-    fields: Table[LitId, AsmSlot]
-    types: Table[LitId, AsmSlot]
-    locals: Table[LitId, Location]
+    fields: Table[SymId, AsmSlot]
+    types: Table[SymId, AsmSlot]
+    locals: Table[SymId, Location]
     strings: Table[string, int]
-    floats: Table[LitId, int]
+    floats: Table[FloatId, int]
     scopes: seq[Scope]
     returnLoc: Location
     exitProcLabel: Label
-    globals: Table[LitId, Location]
-
-  LitId = nifc_model.StrId
+    globals: Table[SymId, Location]
 
 proc initGeneratedCode*(m: sink Module; intmSize: int): GeneratedCode =
   result = GeneratedCode(m: m, intmSize: intmSize)
 
-proc error(m: Module; msg: string; tree: PackedTree[NifcKind]; n: NodePos) {.noreturn.} =
+proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
   write stdout, "[Error] "
   write stdout, msg
-  writeLine stdout, toString(tree, n, m)
+  writeLine stdout, toString(n, false)
   when defined(debug):
     writeStackTrace()
   quit 1
 
 # Atoms
 
-proc genIntLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
-  c.code.addIntLit parseBiggestInt(c.m.lits.strings[litId]), info
+proc genIntLit(c: var GeneratedCode; id: IntId; info: PackedLineInfo) =
+  c.code.addIntLit pool.integers[id], info
 
 proc genIntLit(c: var GeneratedCode; i: BiggestInt; info: PackedLineInfo) =
   c.code.addIntLit i, info
 
-proc genIntLit(c: var TokenBuf; i: BiggestInt; info: PackedLineInfo) =
-  c.addIntLit i, info
-
-proc genUIntLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
-  let i = parseBiggestUInt(c.m.lits.strings[litId])
-  let id = pool.uintegers.getOrIncl(i)
+proc genUIntLit(c: var GeneratedCode; id: UIntId; info: PackedLineInfo) =
   c.code.add uintToken(id, info)
 
 proc genUIntLit(c: var GeneratedCode; i: BiggestUInt; info: PackedLineInfo) =
   let id = pool.uintegers.getOrIncl(i)
   c.code.add uintToken(id, info)
 
-proc genFloatLit(c: var GeneratedCode; litId: LitId; info: PackedLineInfo) =
-  let i = parseFloat(c.m.lits.strings[litId])
-  let id = pool.floats.getOrIncl(i)
+proc genFloatLit(c: var GeneratedCode; id: FloatId; info: PackedLineInfo) =
   c.code.add floatToken(id, info)
 
 proc genFloatLit(c: var GeneratedCode; i: float; info: PackedLineInfo) =
@@ -139,39 +130,54 @@ include genpreasm_t
 
 # Procs
 
-proc genWas(c: var GeneratedCode; t: Tree; ch: NodePos) =
-  c.code.buildTree(CommentT, t[ch].info):
-    c.addIdent toString(t, ch.firstSon, c.m), t[ch].info
+proc genWas(c: var GeneratedCode; n: Cursor) =
+  c.code.buildTree(CommentT, n.info):
+    c.addIdent toString(n.firstSon, false), n.info
 
 type
   ProcFlag = enum
     isSelectAny, isVarargs
 
-proc genProcPragmas(c: var GeneratedCode; t: Tree; n: NodePos;
+proc genProcPragmas(c: var GeneratedCode; n: Cursor;
                     flags: var set[ProcFlag]) =
   # ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) |
   #               (selectany) | Attribute
-  if t[n].kind == Empty:
+  var n = n
+  if n.kind == DotToken:
     discard
-  elif t[n].kind == PragmasC:
-    for ch in sons(t, n):
-      case t[ch].kind
-      of CdeclC, StdcallC, NoconvC: discard "supported calling convention"
-      of SafecallC, SyscallC, FastcallC, ThiscallC, MemberC:
-        error c.m, "unsupported calling convention: ", t, ch
-      of VarargsC:
+  elif n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind
+      #of CdeclP, StdcallP, NoconvP:
+      #  discard "supported calling convention"
+      #  skip n
+      #of SafecallP, SyscallP, FastcallP, ThiscallP, MemberP:
+      #  error c.m, "unsupported calling convention: ", n
+      #  skip n
+      of VarargsP:
         flags.incl isVarargs
-      of SelectanyC:
+        skip n
+      of SelectanyP:
         flags.incl isSelectAny
-      of InlineC, AttrC, NoinlineC:
+        skip n
+      of RaisesP, ErrsP, InlineP, AttrP, NoinlineP:
         # Ignore for PreASM
-        discard " __attribute__((noinline))"
-      of WasC: genWas(c, t, ch)
-      of RaiseC, ErrsC: discard
+        skip n
+      of WasP:
+        genWas(c, n)
+        skip n
       else:
-        error c.m, "invalid proc pragma: ", t, ch
+        case n.callConvKind
+        of Cdecl, Stdcall, Noconv, Nimcall:
+          discard "supported calling convention"
+        of Safecall, Syscall, Fastcall, Thiscall, Member:
+          error c.m, "unsupported calling convention: ", n
+        of NoCallConv:
+          error c.m, "invalid proc pragma: ", n
+        skip n
   else:
-    error c.m, "expected proc pragmas but got: ", t, n
+    error c.m, "expected proc pragmas but got: ", n
 
 proc genSymDef(c: var GeneratedCode; t: Tree; n: NodePos): string =
   if t[n].kind == SymDef:
