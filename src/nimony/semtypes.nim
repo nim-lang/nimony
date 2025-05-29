@@ -1,3 +1,5 @@
+# included in sem.nim
+
 proc semObjectComponent(c: var SemContext; n: var Cursor) =
   case n.substructureKind
   of FldU:
