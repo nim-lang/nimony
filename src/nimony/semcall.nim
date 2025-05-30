@@ -1,5 +1,244 @@
 # included in sem.nim
 
+proc fetchCallableType(c: var SemContext; n: Cursor; s: Sym): TypeCursor =
+  if s.kind == NoSym:
+    c.buildErr n.info, "undeclared identifier"
+    result = c.types.autoType
+  else:
+    let res = declToCursor(c, s)
+    if res.status == LacksNothing:
+      var d = res.decl
+      if s.kind.isLocal:
+        skipToLocalType d
+        if d.typeKind == ProctypeT:
+          skipToParams d
+      elif s.kind.isRoutine:
+        skipToParams d
+      else:
+        # consider not callable
+        discard
+      result = d
+    else:
+      c.buildErr n.info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
+      result = c.types.autoType
+
+proc pickBestMatch(c: var SemContext; m: openArray[Match]): int =
+  result = -1
+  var other = -1
+  for i in 0..<m.len:
+    if not m[i].err:
+      if result < 0:
+        result = i
+      else:
+        case cmpMatches(m[result], m[i])
+        of NobodyWins:
+          other = i
+          #echo "ambiguous ", pool.syms[m[result].fn.sym], " vs ", pool.syms[m[i].fn.sym]
+        of FirstWins:
+          discard "result remains the same"
+        of SecondWins:
+          result = i
+          other = -1
+  if other >= 0: result = -2 # ambiguous
+
+type MagicCallKind = enum
+  NonMagicCall, MagicCall, MagicCallNeedsSemcheck
+
+proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): MagicCallKind =
+  result = NonMagicCall
+  if fn.fromConcept and fn.sym != SymId(0):
+    c.dest.add identToken(symToIdent(fn.sym), fnOrig.info)
+  elif fn.kind in RoutineKinds:
+    assert fn.sym != SymId(0)
+    let res = tryLoadSym(fn.sym)
+    if res.status == LacksNothing:
+      var n = res.decl
+      inc n # skip the symbol kind
+      if n.kind == SymbolDef:
+        inc n # skip the SymbolDef
+        if n.kind == ParLe:
+          if n.exprKind in {DefinedX, DeclaredX, CompilesX, TypeofX,
+              LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
+              ArrAtX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX}:
+            # magic needs semchecking after overloading
+            result = MagicCallNeedsSemcheck
+          else:
+            result = MagicCall
+          # ^ export marker position has a `(`? If so, it is a magic!
+          let info = c.dest[c.dest.len-1].info
+          copyKeepLineInfo c.dest[c.dest.len-1], n.load # overwrite the `(call` node with the magic itself
+          inc n
+          if n.kind == IntLit:
+            if pool.integers[n.intId] == TypedMagic:
+              # use type of first param
+              var paramType = fn.typ
+              assert paramType.typeKind == ParamsT
+              inc paramType
+              assert paramType.symKind == ParamY
+              paramType = asLocal(paramType).typ
+              if m.inferred.len != 0:
+                paramType = instantiateType(c, paramType, m.inferred)
+              removeModifier(paramType)
+              let typeStart = c.dest.len
+              c.dest.addSubtree paramType
+              # op type line info does not matter, strip it for better output:
+              for tok in typeStart ..< c.dest.len:
+                c.dest[tok].info = info
+            else:
+              c.dest.add n
+            inc n
+          if n.kind != ParRi:
+            bug "broken `magic`: expected ')', but got: ", n
+    if result == NonMagicCall:
+      c.dest.add symToken(fn.sym, fnOrig.info)
+  else:
+    c.dest.addSubtree fnOrig
+
+proc typeofCallIs(c: var SemContext; it: var Item; beforeCall: int; returnType: TypeCursor) {.inline.} =
+  let expected = it.typ
+  it.typ = returnType
+  commonType c, it, beforeCall, expected
+
+proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: int;
+                     m: Match) =
+  var expandedInto = createTokenBuf(30)
+
+  let s = fetchSym(c, fnId)
+  let res = declToCursor(c, s)
+  if res.status == LacksNothing:
+    let args = cursorAt(c.dest, beforeCall + 2)
+    let firstVarargMatch = cursorAt(c.dest, beforeCall + 2 + m.firstVarargPosition)
+    expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred, c.dest[beforeCall].info)
+    # We took 2 cursors, so we have to do the `endRead` twice too:
+    endRead(c.dest)
+    endRead(c.dest)
+    shrink c.dest, beforeCall
+    expandedInto.addParRi() # extra token so final `inc` doesn't break
+    var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
+    let aInfo = a.n.info
+    inc c.routine.inInst
+    semExpr c, a
+    # make sure template body expression matches return type, mirrored with `semProcBody`:
+    let returnType =
+      if m.inferred.len == 0 or m.returnType.kind == DotToken:
+        m.returnType
+      else:
+        instantiateType(c, m.returnType, m.inferred)
+    case returnType.typeKind
+    of UntypedT:
+      # untyped return type ignored, maybe could be handled in commonType
+      discard
+    of VoidT:
+      typecheck(c, aInfo, a.typ, returnType)
+    else:
+      commonType c, a, beforeCall, returnType
+    dec c.routine.inInst
+    # now match to expected type:
+    it.kind = a.kind
+    typeofCallIs c, it, beforeCall, a.typ
+  else:
+    c.buildErr it.n.info, "could not load symbol: " & pool.syms[fnId] & "; errorCode: " & $res.status
+
+type
+  FnCandidates = object
+    a: seq[FnCandidate]
+    marker: HashSet[SymId]
+
+proc addUnique(c: var FnCandidates; x: FnCandidate) =
+  if not containsOrIncl(c.marker, x.sym):
+    c.a.add x
+
+iterator findConceptsInConstraint(typ: Cursor): Cursor =
+  var typ = typ
+  var nested = 0
+  while true:
+    if typ.kind == ParRi:
+      inc typ
+      dec nested
+    elif typ.kind == Symbol:
+      let section = getTypeSection typ.symId
+      if section.body.typeKind == ConceptT:
+        yield section.body
+      inc typ
+    elif typ.typeKind == AndT:
+      inc typ
+      inc nested
+    else:
+      skip typ
+    if nested == 0: break
+
+proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
+  let res = tryLoadSym(typevar)
+  assert res.status == LacksNothing
+  let local = asLocal(res.decl)
+  if local.kind == TypevarY and local.typ.kind != DotToken:
+    for concpt in findConceptsInConstraint(local.typ):
+      var ops = concpt
+      inc ops  # (concept
+      skip ops # .
+      skip ops # .
+      skip ops #   (typevar Self ...)
+      if ops.stmtKind == StmtsS:
+        inc ops
+        while ops.kind != ParRi:
+          let sk = ops.symKind
+          if sk in RoutineKinds:
+            var prc = ops
+            inc prc # (proc
+            if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
+              var d = ops
+              skipToParams d
+              cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
+          skip ops
+
+proc hasAttachedParam(params: Cursor; typ: SymId): bool =
+  result = false
+  var params = params
+  assert params.substructureKind == ParamsU
+  inc params
+  while params.kind != ParRi:
+    let param = takeLocal(params, SkipFinalParRi)
+    let root = nominalRoot(param.typ)
+    if root != SymId(0) and root == typ:
+      return true
+
+proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandidates) =
+  let res = tryLoadSym(s)
+  assert res.status == LacksNothing
+  let decl = asTypeDecl(res.decl)
+  if decl.kind == TypeY:
+    let moduleSuffix = extractModule(pool.syms[s])
+    if moduleSuffix == "":
+      discard
+    elif moduleSuffix == c.thisModuleSuffix:
+      # XXX probably redundant over normal lookup but `OchoiceX` does not work yet
+      # do not use cache, check symbols from toplevel scope:
+      for topLevelSym in topLevelSyms(c, fn):
+        let res = tryLoadSym(topLevelSym)
+        assert res.status == LacksNothing
+        let routine = asRoutine(res.decl)
+        if routine.kind in RoutineKinds and hasAttachedParam(routine.params, s):
+          cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
+    else:
+      if (s, fn) in c.cachedTypeboundOps:
+        for fnSym in c.cachedTypeboundOps[(s, fn)]:
+          let res = tryLoadSym(fnSym)
+          assert res.status == LacksNothing
+          let routine = asRoutine(res.decl)
+          cands.addUnique FnCandidate(kind: routine.kind, sym: fnSym, typ: routine.params)
+      else:
+        var ops: seq[SymId] = @[]
+        for topLevelSym in loadSyms(moduleSuffix, fn):
+          let res = tryLoadSym(topLevelSym)
+          assert res.status == LacksNothing
+          let routine = asRoutine(res.decl)
+          if routine.kind in RoutineKinds and hasAttachedParam(routine.params, s):
+            ops.add topLevelSym
+            cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
+        c.cachedTypeboundOps[(s, fn)] = ops
+  elif decl.kind == TypevarY:
+    maybeAddConceptMethods c, fn, s, cands
+
 type
   CallState = object
     beforeCall: int
