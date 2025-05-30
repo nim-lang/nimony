@@ -208,7 +208,12 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
   let decl = asTypeDecl(res.decl)
   if decl.kind == TypeY:
     let moduleSuffix = extractModule(pool.syms[s])
-    if moduleSuffix == "":
+    if moduleSuffix == "" or
+        # with --noSystem, magic types can have the system module suffix
+        # without the system module being loaded
+        # just ignore symbols from the system module,
+        # their bound ops should be in scope anyway
+        moduleSuffix == SystemModuleSuffix:
       discard
     elif moduleSuffix == c.thisModuleSuffix:
       # XXX probably redundant over normal lookup but `OchoiceX` does not work yet
