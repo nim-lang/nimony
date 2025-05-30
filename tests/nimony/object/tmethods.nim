@@ -29,3 +29,21 @@ block:
 
   foo(a)
   assert a.t == 5
+
+
+type
+    Base = ref object of RootObj
+    Derived = ref object of Base
+
+method inner(obj: Base) {.base.} =
+    quit "to override"
+
+method outer(obj: Base) {.base.} =
+    echo "outer"
+    obj.inner()
+
+method inner(obj: Derived) =
+    echo "inner Derived"
+
+var x: Derived = Derived()
+x.outer()
