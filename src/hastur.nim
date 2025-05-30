@@ -278,11 +278,11 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
     if x.kind == pcFile and x.path.endsWith(".nim"):
       files.add x.path
   sort files
-  if cat in {Compat, Basics}:
+  if cat == Compat:
     removeDir "nimcache"
   for f in items files:
     testFile c, f, overwrite, cat
-  if cat in {Compat, Basics}:
+  if cat == Compat:
     removeDir "nimcache"
 
 proc parseCategory(path: string): Category =
@@ -447,12 +447,12 @@ proc buildNifler(showProgress = false) =
   robustMoveFile "src/nifler/" & exe, binDir() / exe
 
 proc buildNimsem(showProgress = false) =
-  exec "nim c -d:debug src/nimony/nimsem.nim", showProgress
+  exec "nim c src/nimony/nimsem.nim", showProgress
   let exe = "nimsem".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNimony(showProgress = false) =
-  exec "nim c -d:debug src/nimony/nimony.nim", showProgress
+  exec "nim c src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
