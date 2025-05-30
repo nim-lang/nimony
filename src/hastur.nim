@@ -447,12 +447,12 @@ proc buildNifler(showProgress = false) =
   robustMoveFile "src/nifler/" & exe, binDir() / exe
 
 proc buildNimsem(showProgress = false) =
-  exec "nim c src/nimony/nimsem.nim", showProgress
+  exec "nim c -d:debug src/nimony/nimsem.nim", showProgress
   let exe = "nimsem".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNimony(showProgress = false) =
-  exec "nim c src/nimony/nimony.nim", showProgress
+  exec "nim c -d:debug src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
