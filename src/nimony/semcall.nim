@@ -804,6 +804,11 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       errorMsg.add "'"
     buildErr c, cs.callNode.info, errorMsg, erroredN
 
+proc getFnIdent(c: var SemContext): StrId =
+  var n = beginRead(c.dest)
+  result = takeIdent(n)
+  endRead(c.dest)
+
 proc findMagicInSyms(syms: Cursor): ExprKind =
   var syms = syms
   result = NoExpr

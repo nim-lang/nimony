@@ -786,11 +786,6 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       returnType: n)
   assert result.returnType.kind != UnknownToken
 
-proc getFnIdent(c: var SemContext): StrId =
-  var n = beginRead(c.dest)
-  result = takeIdent(n)
-  endRead(c.dest)
-
 type
   DotExprState = enum
     MatchedDotField ## matched a dot field, i.e. result is a dot expression
