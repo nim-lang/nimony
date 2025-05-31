@@ -1022,9 +1022,11 @@ proc gtry(g: var SrcGen, n: var Cursor) =
   skipParRi(n)
 
 
-proc gconstr(g: var SrcGen, n: var Cursor, kind: BracketKind) =
+proc gconstr(g: var SrcGen, n: var Cursor, kind: BracketKind, isUntyped = false) =
   inc n
-  skip n
+
+  if not isUntyped:
+    skip n
 
   case kind
   of bkBracket:
@@ -1316,8 +1318,13 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcall(g, n)
 
     of HighX, LowX, TypeofX,
-          SizeofX, AlignofX, OffsetofX, CardX, UnpackX, FieldsX:
+       SizeofX, AlignofX, OffsetofX,
+       CardX, UnpackX, FieldsX, CompilesX,
+       DeclaredX, DefinedX:
       gcallsystem(g, n, $n.exprKind)
+
+    of ProccallX:
+      gcallsystem(g, n, "procCall")
 
     of NewrefX:
       inc n
@@ -1353,16 +1360,18 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of TraceX:
        gcallsystem(g, n, "=sink")
 
-    of PrefixX:
-      # TODO:
-      gcall(g, n)
+    of DefaultobjX, DefaulttupX:
+      gcallsystem(g, n, "default")
 
-    of TupX:
+    of InsetX:
+      inc n
+      put(g, tkSymbol, "contains")
       put(g, tkParLe, "(")
 
-      inc n
+      skip n
 
       var afterFirst = false
+
       while n.kind != ParRi:
         if afterFirst:
           gcomma(g)
@@ -1370,9 +1379,21 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
           afterFirst = true
         gsub(g, n)
 
+      put(g, tkParRi, ")")
       skipParRi(n)
 
-      put(g, tkParRi, ")")
+    of PrefixX:
+      # TODO:
+      gcall(g, n)
+
+    of TupX:
+      gconstr(g, n, bkPar, isUntyped = true)
+
+    of BracketX:
+      gconstr(g, n, bkBracket, isUntyped = true)
+
+    of CurlyX:
+      gconstr(g, n, bkCurly, isUntyped = true)
 
     of TupconstrX:
       gconstr(g, n, bkPar)
@@ -1398,6 +1419,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gsub(g, n)
         putWithSpace(g, tkColon, ":")
         gsub(g, n)
+
+        if n.kind != ParRi:
+          skip n
+
         skipParRi(n)
 
       skipParRi(n)
@@ -1432,10 +1457,18 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of CmdX:
       gcmd(g, n)
 
+    of EnumtostrX:
+      inc n
+      put(g, tkSymbol, "$")
+
+      gsub(g, n)
+
+      skipParRi(n)
+
     of InfixX:
       ginfix(g, n)
 
-    of AndX, OrX, XorX:
+    of AndX, OrX, XorX, IsX, InstanceofX:
       let opr: string
       case n.exprKind
       of AndX:
@@ -1444,6 +1477,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         opr = "or"
       of XorX:
         opr = "xor"
+      of IsX:
+        opr = "is"
+      of InstanceofX:
+        opr = "of"
       else:
         raiseAssert "unreachable"
       inc n
@@ -1591,7 +1628,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       skipParRi(n)
 
-    of HconvX, DconvX:
+    of HconvX, DconvX, HcallX:
       inc n
       skip n
       gsub(g, n)
@@ -1602,7 +1639,9 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gsub(g, n)
       put(g, tkDot, ".")
       gsub(g, n)
-      skip n
+
+      if n.kind != ParRi:
+        skip n
       skipParRi(n)
 
     of PragmaxX:
@@ -1614,11 +1653,45 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkParRi, ")")
       skip n
 
-    else:
-      # raiseAssert $pool.tags[n.tagId]
+    of ErrX:
+      put(g, tkStrLit, toString(n, false))
       skip n
-  of ParRi:
-    inc n
+
+    of QuotedX:
+      inc n
+      put(g, tkAccent, "`")
+      gsub(g, n, c)
+      put(g, tkAccent, "`")
+      skipParRi(n)
+
+    of TabconstrX:
+      inc n
+      put(g, tkCurlyLe, "{")
+
+      if n.kind != ParRi:
+        var afterFirst = false
+        while n.kind != ParRi:
+          if afterFirst:
+            gcomma(g)
+          else:
+            afterFirst = true
+
+          assert n.substructureKind == KvU
+          inc n
+          gsub(g, n, c)
+          putWithSpace(g, tkColon, ":")
+          gsub(g, n, c)
+          skipParRi(n)
+      else:
+        put(g, tkColon, ":")
+
+      put(g, tkCurlyRi, "}")
+      skipParRi(n)
+
+    of CurlyatX, IsmainmoduleX,
+        DoX, InternalTypeNameX, InternalFieldPairsX, FailedX:
+      raiseAssert "todo"
+
   of IntLit:
     put(g, tkIntLit, $pool.integers[n.intId])
     inc n
@@ -1647,6 +1720,8 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     inc n
   of DotToken:
     inc n
+  of ParRi:
+    discard "for illformed tokens"
   else:
     inc n
 
