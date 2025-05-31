@@ -103,7 +103,7 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
     return result
 
   let info = n.info
-  let takeAddr = not constructsValue(n) and n.exprKind notin {AddrX, HaddrX}
+  let takeAddr = not constructsValue(n)
   let argType = getType(c.typeCache, n)
   c.needsXelim = true
 
@@ -111,17 +111,31 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
   copyIntoKind dest, StmtsS, info:
     let symId = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
     inc c.tmpCounter
-    copyIntoKind dest, VarS, info:
-      addSymDef dest, symId, info
-      dest.addEmpty2 info # export marker, pragma
-      if takeAddr:
+
+    if takeAddr:
+      # we can only take addresses of lvalues
+      let lvalue = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
+      inc c.tmpCounter
+
+      copyIntoKind dest, VarS, info:
+        addSymDef dest, lvalue, info
+        dest.addEmpty2 info # export marker, pragma
+        copyTree dest, argType
+        tr c, dest, n
+
+      copyIntoKind dest, VarS, info:
+        addSymDef dest, symId, info
+        dest.addEmpty2 info # export marker, pragma
         # type:
         copyIntoKind dest, PtrT, info:
           copyTree dest, argType
         # value:
         copyIntoKind dest, AddrX, info:
-          tr c, dest, n
-      else:
+          addSymUse dest, lvalue, info
+    else:
+      copyIntoKind dest, VarS, info:
+        addSymDef dest, symId, info
+        dest.addEmpty2 info # export marker, pragma
         # type:
         copyTree dest, argType
         # value:
