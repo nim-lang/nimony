@@ -362,7 +362,8 @@ proc handleSymDef*(c: var SemContext; n: var Cursor; kind: SymKind): DelayedSym 
     let lit = n.litId
     let def = identToSym(c, lit, kind)
     let s = Sym(kind: kind, name: def,
-                pos: c.dest.len)
+                pos: c.dest.len,
+                parentProcSymId: c.routine.symId)
     result = DelayedSym(status: OkNew, lit: lit, s: s, info: info)
     c.dest.add symdefToken(def, info)
     inc n
@@ -373,7 +374,7 @@ proc handleSymDef*(c: var SemContext; n: var Cursor; kind: SymKind): DelayedSym 
       elif not c.freshSyms.missingOrExcl(n.symId): OkExistingFresh
       else: OkExisting
 
-    let s = Sym(kind: kind, name: n.symId, pos: c.dest.len)
+    let s = Sym(kind: kind, name: n.symId, pos: c.dest.len, parentProcSymId: c.routine.symId)
     result = DelayedSym(status: status, lit: symToIdent(s.name), s: s, info: info)
     c.dest.add n
     inc n
@@ -393,7 +394,7 @@ proc handleSymDef*(c: var SemContext; n: var Cursor; kind: SymKind): DelayedSym 
     else:
       let def = identToSym(c, lit, kind)
       let s = Sym(kind: kind, name: def,
-                  pos: c.dest.len)
+                  pos: c.dest.len, parentProcSymId: c.routine.symId)
       result = DelayedSym(status: OkNew, lit: lit, s: s, info: info)
       c.dest.add symdefToken(def, info)
 

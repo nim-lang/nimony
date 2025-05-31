@@ -17,6 +17,7 @@ type
     kind*: SymKind
     name*: SymId
     pos*: int
+    parentProcSymId*: SymId
 
   ScopeKind* = enum
     NormalScope, ToplevelScope, ImportScope
