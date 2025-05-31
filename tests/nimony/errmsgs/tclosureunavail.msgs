@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tclosureunavail.nim(9, 5) Trace: instantiation from here
+lib/std/syncio.nim(117, 5) Error: closures are not yet implemented and cannot capture local variables outside of the procedure: x.0

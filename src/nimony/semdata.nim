@@ -22,9 +22,10 @@ type
     pragmas*: set[PragmaKind]
     resId*: SymId
     parent*: SemRoutine
+    symId*: SymId
 
-proc createSemRoutine*(kind: SymKind; parent: SemRoutine): SemRoutine =
-  result = SemRoutine(kind: kind, parent: parent, resId: SymId(0))
+proc createSemRoutine*(kind: SymKind; parent: SemRoutine; symId: SymId): SemRoutine =
+  result = SemRoutine(kind: kind, parent: parent, resId: SymId(0), symId: symId)
 
 const
   MaxNestedTemplates* = 100

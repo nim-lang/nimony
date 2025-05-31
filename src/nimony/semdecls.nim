@@ -495,7 +495,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   else:
     buildErr c, it.n.info, "TR pattern not implemented"
     skip it.n
-  c.routine = createSemRoutine(kind, c.routine)
+  c.routine = createSemRoutine(kind, c.routine, symId)
   # 'break' and 'continue' are valid in a template regardless of whether we
   # really have a loop or not:
   if kind == TemplateY:

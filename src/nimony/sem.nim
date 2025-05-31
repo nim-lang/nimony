@@ -1767,6 +1767,18 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
     c.dest.shrink typeStart
     commonType c, it, start, expected
   else:
+    if s.kind in {VarY, LetY} and s.parentProcSymId != SymId(0):
+      let res = tryLoadSym(s.parentProcSymId)
+      assert res.status == LacksNothing
+      # ignore templates as we cannot know if given variable is global or local before the template is called.
+      if res.decl.symKind != TemplateY:
+        if c.routine.symId != s.parentProcSymId:
+          let info = c.dest[c.dest.len-1].info
+          var orig = createTokenBuf(1)
+          orig.add c.dest[c.dest.len-1]
+          c.dest.shrink c.dest.len-1
+          let sym = cursorAt(orig, 0)
+          c.buildErr info, "closures are not yet implemented and cannot capture local variables outside of the procedure: " & pool.syms[s.name], sym
     let res = declToCursor(c, s)
     if KeepMagics notin flags:
       maybeInlineMagic c, res
