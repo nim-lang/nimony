@@ -67,7 +67,6 @@ type
   Dag* = object
     nodes*: seq[Node]
     nameToId*: Table[string, int]
-    changeList*: HashSet[string]
     maxDepth*: int    # maximum depth in the DAG
     commands*: seq[Command]  # bidirectional mapping of commands
     timestampCache*: Table[string, Time]  # Cache for file modification times
@@ -203,10 +202,6 @@ proc findDependencies(dag: var Dag; nodeId: int) =
       if depId != nodeId and depId notin node.deps:
         node.deps.add(depId)
 
-proc addChangedFile(dag: var Dag; filename: string) =
-  ## Add a changed file to the change list and mark for rebuild
-  dag.changeList.incl(filename)
-
 proc getFileTime(dag: var Dag; filename: string): Time =
   ## Get file modification time with caching
   if filename in dag.timestampCache:
@@ -294,7 +289,7 @@ proc runDag(dag: var Dag; parallel: bool): bool =
     var nodesByDepth = newSeq[seq[int]](dag.maxDepth + 1)
     for nodeId in sortedNodes:
       let node = dag.nodes[nodeId]
-      if dag.needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
+      if dag.needsRebuild(node):
         nodesByDepth[node.depth].add(nodeId)
 
     # Execute each depth level in parallel
@@ -325,7 +320,7 @@ proc runDag(dag: var Dag; parallel: bool): bool =
     # Sequential execution
     for nodeId in sortedNodes:
       let node = dag.nodes[nodeId]
-      if dag.needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
+      if dag.needsRebuild(node):
         echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
         echo "Command: ", expandedCmd
@@ -511,7 +506,6 @@ Commands:
 Options:
   -j, --parallel        Enable parallel builds (for 'run' command)
   --makefile <name>     Output Makefile name (default: Makefile)
-  --changed <file>      Mark file as changed for incremental builds
 
 Examples:
   nifmake run build.nif
@@ -530,7 +524,6 @@ proc main() =
     inputFile = ""
     outputMakefile = "Makefile"
     parallel = false
-    changedFiles: seq[string] = @[]
 
   for kind, key, val in getopt():
     case kind
@@ -552,7 +545,6 @@ proc main() =
       of "version", "v": writeVersion()
       of "parallel", "j": parallel = true
       of "makefile": outputMakefile = val
-      of "changed": changedFiles.add(val)
       else:
         echo "Unknown option: --", key
         quit(1)
@@ -567,11 +559,6 @@ proc main() =
       quit "Input file required for 'run' command"
 
     var dag = parseNifFile(inputFile)
-
-    # Mark changed files
-    for file in changedFiles:
-      addChangedFile(dag, file)
-
     if not runDag(dag, parallel):
       quit "Build failed"
 
