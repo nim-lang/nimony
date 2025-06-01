@@ -86,6 +86,13 @@ proc skipParRi(n: var Cursor) =
 proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '
 
+proc addFilename(result: var string; filename, prefix, suffix: string) =
+  result.addSpace()
+  if prefix.len > 0: result.add prefix
+  # This is not a bug, a suffix is always assumed to be part of the filename
+  # and so also subject to quoting:
+  result.add (suffix & filename).quoteShell
+
 proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
   result = ""
   if cmd.tokens.len == 0:
@@ -104,6 +111,7 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
       var b = 0
       inc n
       var prefix = ""
+      var suffix = ""
       if n.kind == StringLit:
         prefix = pool.strings[n.litId]
         inc n
@@ -116,22 +124,19 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
         b = pool.integers[n.intId]
         if b < 0: b = outputs.len + b
         inc n
+      if n.kind == StringLit:
+        suffix = pool.strings[n.litId]
+        inc n
       skipParRi n
       case tag
       of "input":
         for i in a..b:
           if i >= 0 and i < inputs.len:
-            addSpace(result)
-            if prefix.len > 0:
-              result.add prefix
-            result.add inputs[i].quoteShell
+            addFilename(result, inputs[i], prefix, suffix)
       of "output":
         for i in a..b:
           if i >= 0 and i < outputs.len:
-            addSpace(result)
-            if prefix.len > 0:
-              result.add prefix
-            result.add outputs[i].quoteShell
+            addFilename(result, outputs[i], prefix, suffix)
       else:
         raiseAssert "unsupported tag in `cmd` definition: " & tag
     else:

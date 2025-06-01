@@ -7,7 +7,6 @@ Nifmake is a make-like tool used by Nimony to implement parallel and incremental
 - **Incremental builds**: Only rebuilds files when dependencies change
 - **Dependency tracking**: Automatically tracks file dependencies
 - **Makefile generation**: Can generate standard Makefiles
-- **Variable expansion**: Supports `$input`, `$output`, `$inputs`, `$outputs` variables
 - **Cycle detection**: Detects circular dependencies in build graphs
 - **Declarative build descriptions using NIF**
 - **Parallel build execution**
@@ -60,7 +59,7 @@ NIF supports reusable command definitions that can be used in multiple build rul
 - A name
 - A sequence of tokens that can be:
   - String literals
-  - Special tags: `(input)`, `(output)`, `(inputs)`, `(outputs)`
+  - Special tags: `(input)`, `(output)`
 
 Example command definition:
 
@@ -77,10 +76,13 @@ This command can be used in build rules:
 )
 ```
 
-### Special Tags
+Inside a command the `input` and `output` tags take optional indexes `from` and `until` and an optional prefix and an optional suffix:
 
-- `(input N M)`: Input file(s) from index `N` to index `M`. If the indexes are left out the first input is used. An index can be negative, if so it indexes from the end, `-1` is the last entry. This means that `(input +0 -1)` covers all input files. Before the `N` there can also be a string literal which is then used as a prefix: `(input "--file:" 0 -1)` produces `--file:<input 1> --file:<input 2>...`.
-- `(output)`: Output file(s) from index `N` to index `M`. The indexing works just like it does for `(input)`.
+`(input N M)` refers to the input file(s) from index `N` to index `M`. If the indexes are left out the first input is used. An index can be negative, if so it indexes from the end, `-1` is the last entry. This means that `(input +0 -1)` covers all input files. Before the `N` there can also be a string literal which is then used as a prefix: `(input "--file:" 0 -1)` produces `--file:<input 1> --file:<input 2>...`.
+
+After the indexes a suffix can be written: `(input 0 -1 ".nim")` produces `<input 1>.nim <input 2>.nim ...`.
+
+`(output)`: Refers to the output file(s) from index `N` to index `M`. The indexing and the prefixes and suffixes work just like it does for `(input)`.
 
 
 ## Build File Format
