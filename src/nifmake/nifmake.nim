@@ -70,6 +70,7 @@ type
     changeList*: HashSet[string]
     maxDepth*: int    # maximum depth in the DAG
     commands*: seq[Command]  # bidirectional mapping of commands
+    timestampCache*: Table[string, Time]  # Cache for file modification times
 
   CliCommand = enum
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
@@ -206,7 +207,19 @@ proc addChangedFile(dag: var Dag; filename: string) =
   ## Add a changed file to the change list and mark for rebuild
   dag.changeList.incl(filename)
 
-proc needsRebuild(node: Node): bool =
+proc getFileTime(dag: var Dag; filename: string): Time =
+  ## Get file modification time with caching
+  if filename in dag.timestampCache:
+    result = dag.timestampCache[filename]
+  else:
+    if fileExists(filename):
+      result = getLastModificationTime(filename)
+      dag.timestampCache[filename] = result
+    else:
+      result = getTime()  # Use current time for non-existent files
+      dag.timestampCache[filename] = result
+
+proc needsRebuild(dag: var Dag; node: Node): bool =
   ## Check if a node needs to be rebuilt
   result = false
 
@@ -218,13 +231,13 @@ proc needsRebuild(node: Node): bool =
   # Check if any input is newer than any output
   var oldestOutput = getTime()
   for output in node.outputs:
-    let outputTime = getLastModificationTime(output)
+    let outputTime = dag.getFileTime(output)
     if outputTime < oldestOutput:
       oldestOutput = outputTime
 
   for input in node.inputs:
     if fileExists(input):
-      let inputTime = getLastModificationTime(input)
+      let inputTime = dag.getFileTime(input)
       if inputTime >= oldestOutput:
         return true
 
@@ -281,7 +294,7 @@ proc runDag(dag: var Dag; parallel: bool): bool =
     var nodesByDepth = newSeq[seq[int]](dag.maxDepth + 1)
     for nodeId in sortedNodes:
       let node = dag.nodes[nodeId]
-      if needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
+      if dag.needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
         nodesByDepth[node.depth].add(nodeId)
 
     # Execute each depth level in parallel
@@ -312,7 +325,7 @@ proc runDag(dag: var Dag; parallel: bool): bool =
     # Sequential execution
     for nodeId in sortedNodes:
       let node = dag.nodes[nodeId]
-      if needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
+      if dag.needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
         echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
         echo "Command: ", expandedCmd
@@ -447,7 +460,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
 
 proc parseNifFile(filename: string): Dag =
   ## Parse a .nif file and build the DAG
-  result = Dag()
+  result = Dag(timestampCache: initTable[string, Time]())
 
   if not fileExists(filename):
     quit "File not found: " & filename
