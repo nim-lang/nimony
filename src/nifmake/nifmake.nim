@@ -285,26 +285,24 @@ proc runDag(dag: var Dag; parallel: bool): bool =
   let sortedNodes = topologicalSort(dag)
 
   if parallel:
-    # Group nodes by depth for parallel execution
-    var nodesByDepth = newSeq[seq[int]](dag.maxDepth + 1)
-    for nodeId in sortedNodes:
-      let node = dag.nodes[nodeId]
-      if dag.needsRebuild(node):
-        nodesByDepth[node.depth].add(nodeId)
-
-    # Execute each depth level in parallel
-    for depth in 0..dag.maxDepth:
+    var i = 0
+    while i < sortedNodes.len:
+      let currentDepth = dag.nodes[sortedNodes[i]].depth
       var commands: seq[string] = @[]
       var nodeIds: seq[int] = @[]
 
-      for nodeId in nodesByDepth[depth]:
-        let node = dag.nodes[nodeId]
-        echo "Building: ", node.outputs.join(", ")
-        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
-        echo "Command: ", expandedCmd
-        commands.add(expandedCmd)
-        nodeIds.add(nodeId)
+      # Collect all commands at the current depth
+      while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
+        let node = addr dag.nodes[sortedNodes[i]]
+        if dag.needsRebuild(node[]):
+          echo "Building: ", node.outputs.join(", ")
+          let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
+          echo "Command: ", expandedCmd
+          commands.add(expandedCmd)
+          nodeIds.add(sortedNodes[i])
+        inc i
 
+      # Execute all commands at this depth in parallel
       if commands.len > 0:
         var progress = newSeq[CmdStatus](commands.len)
         proc beforeRunEvent(idx: int) = progress[idx] = Running
@@ -319,8 +317,8 @@ proc runDag(dag: var Dag; parallel: bool): bool =
   else:
     # Sequential execution
     for nodeId in sortedNodes:
-      let node = dag.nodes[nodeId]
-      if dag.needsRebuild(node):
+      let node = addr dag.nodes[nodeId]
+      if dag.needsRebuild(node[]):
         echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
         echo "Command: ", expandedCmd
