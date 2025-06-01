@@ -83,6 +83,24 @@ proc skipParRi(n: var Cursor) =
     #echo toString([n.load()])
     quit "Expected ')' but found: " & $n.kind
 
+proc binDir*(): string =
+  let appDir = getAppDir()
+  let (_, tail) = splitPath(appDir)
+  if tail == "bin":
+    result = appDir
+  else:
+    result = appDir / "bin"
+
+proc toolDir*(f: string): string =
+  result = binDir() / f
+
+proc findTool(name: string): string =
+  result = name.addFileExt(ExeExt)
+  if fileExists(result):
+    discard "ok"
+  elif not name.isAbsolute:
+    result = toolDir(result)
+
 proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '
 
@@ -99,6 +117,10 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
     quit "undeclared command: " & cmd.name
 
   var n = readonlyCursorAt(cmd.tokens, 0)
+  if n.kind == StringLit:
+    result.add quoteShell(findTool(pool.strings[n.litId]))
+    inc n
+
   while true:
     case n.kind
     of ParRi:
