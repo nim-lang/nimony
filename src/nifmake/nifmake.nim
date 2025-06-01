@@ -8,7 +8,7 @@
 ## and incremental compilation. Nifmake can run a dependency graph as specified
 ## by a .nif file or it can translate this file to a Makefile.
 
-import std/[os, strutils, sequtils, tables, hashes, times, sets, parseopt, syncio]
+import std/[os, strutils, sequtils, tables, hashes, times, sets, parseopt, syncio, osproc]
 import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
@@ -59,11 +59,13 @@ type
     outputs*: seq[string]
     deps*: seq[int] # node IDs this depends on
     state*: NodeState
+    depth*: int     # depth in the DAG for parallel execution
 
   Dag* = object
     nodes*: seq[Node]
     nameToId*: Table[string, int]
     changeList*: HashSet[string]
+    maxDepth*: int  # maximum depth in the DAG
 
   Command = enum
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
@@ -146,7 +148,7 @@ proc needsRebuild(node: Node): bool =
       if inputTime >= oldestOutput:
         return true
 
-proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]): bool =
+proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDepth: var int): bool =
   case nodes[nodeId].state
   of nsInStack:
     # Cycle detected
@@ -155,9 +157,14 @@ proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]): bool =
     result = true
   of nsUnvisited:
     nodes[nodeId].state = nsInStack
+    var nodeDepth = 0
     for depId in nodes[nodeId].deps:
-      if not visit(nodes, depId, sortedNodes):
-        return false
+      if not visit(nodes, depId, sortedNodes, maxDepth):
+        result = false
+        return
+      nodeDepth = max(nodeDepth, nodes[depId].depth)
+    nodes[nodeId].depth = nodeDepth + 1
+    maxDepth = max(maxDepth, nodes[nodeId].depth)
     nodes[nodeId].state = nsVisited
     sortedNodes.add(nodeId)
     result = true
@@ -165,10 +172,11 @@ proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]): bool =
 proc topologicalSort(dag: var Dag): seq[int] =
   ## Perform topological sort on the DAG
   result = @[]
+  dag.maxDepth = 0
 
   for i in 0..<dag.nodes.len:
     if dag.nodes[i].state == nsUnvisited:
-      if not visit(dag.nodes, i, result):
+      if not visit(dag.nodes, i, result, dag.maxDepth):
         quit "Circular dependency detected in build graph"
 
 proc executeCommand(command: string): bool =
@@ -179,23 +187,58 @@ proc executeCommand(command: string): bool =
   except:
     result = false
 
-proc runDAG(dag: var Dag; parallel: bool = false): bool =
+type
+  CmdStatus = enum
+    Enqueued, Running, Finished
+
+proc runDag(dag: var Dag; parallel: bool): bool =
   ## Execute the DAG in topological order
   result = true
   let sortedNodes = topologicalSort(dag)
 
-  for nodeId in sortedNodes:
-    let node = dag.nodes[nodeId]
+  if parallel:
+    # Group nodes by depth for parallel execution
+    var nodesByDepth = newSeq[seq[int]](dag.maxDepth + 1)
+    for nodeId in sortedNodes:
+      let node = dag.nodes[nodeId]
+      if needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
+        nodesByDepth[node.depth].add(nodeId)
 
-    if needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
-      echo "Building: ", node.outputs.join(", ")
-      echo "Command: ", node.command
+    # Execute each depth level in parallel
+    for depth in 0..dag.maxDepth:
+      var commands: seq[string] = @[]
+      var nodeIds: seq[int] = @[]
 
-      if not executeCommand(node.command):
-        echo "Error: Command failed: ", node.command
-        return false
-    else:
-      echo "Up to date: ", node.outputs.join(", ")
+      for nodeId in nodesByDepth[depth]:
+        let node = dag.nodes[nodeId]
+        echo "Building: ", node.outputs.join(", ")
+        echo "Command: ", node.command
+        commands.add(node.command)
+        nodeIds.add(nodeId)
+
+      if commands.len > 0:
+        var progress = newSeq[CmdStatus](commands.len)
+        proc beforeRunEvent(idx: int) = progress[idx] = Running
+        proc afterRunEvent(idx: int, p: Process) = progress[idx] = Finished
+
+        let maxExitCode = execProcesses(commands, beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
+        if maxExitCode != 0:
+          for i, p in pairs(progress):
+            if p == Running:
+              echo "Error: Command failed: ", commands[i]
+          return false
+  else:
+    # Sequential execution
+    for nodeId in sortedNodes:
+      let node = dag.nodes[nodeId]
+      if needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
+        echo "Building: ", node.outputs.join(", ")
+        echo "Command: ", node.command
+        if not executeCommand(node.command):
+          echo "Error: Command failed: ", node.command
+          return false
+      else:
+        echo "Up to date: ", node.outputs.join(", ")
 
 proc generateMakefile(dag: Dag; filename: string) =
   ## Generate a Makefile from the DAG
@@ -382,8 +425,8 @@ proc main() =
     for file in changedFiles:
       addChangedFile(dag, file)
 
-    if not runDAG(dag, parallel):
-      quit("Build failed", 1)
+    if not runDag(dag, parallel):
+      quit "Build failed"
 
   of cmdMakefile:
     if inputFile == "":
@@ -395,4 +438,3 @@ proc main() =
 
 when isMainModule:
   main()
-
