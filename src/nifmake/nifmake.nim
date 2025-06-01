@@ -36,10 +36,10 @@ Example for a .nif file:
 
 ```nif
 (stmts
-  (do "nifler $input $output"
-    (import "a.nim")
-    (incl "a_include.nim")
-    (result "a.1.nif")
+  (cmd :nifler "nifler" (input) (output))
+  (do nifler
+    (input "a.nim")
+    (output "a.1.nif")
   )
 )
 ```
@@ -52,22 +52,26 @@ type
     nsInStack
     nsVisited
 
+  Command* = object
+    name*: string
+    tokens*: seq[PackedToken]
+
   Node* = object
-    id*: int
-    command*: string
+    cmdIdx*: int      # index into Dag.commands
     inputs*: seq[string]
     outputs*: seq[string]
-    deps*: seq[int] # node IDs this depends on
+    deps*: seq[int]   # node IDs this depends on
     state*: NodeState
-    depth*: int     # depth in the DAG for parallel execution
+    depth*: int       # depth in the DAG for parallel execution
 
   Dag* = object
     nodes*: seq[Node]
     nameToId*: Table[string, int]
     changeList*: HashSet[string]
-    maxDepth*: int  # maximum depth in the DAG
+    maxDepth*: int    # maximum depth in the DAG
+    commands*: seq[Command]  # bidirectional mapping of commands
 
-  Command = enum
+  CliCommand = enum
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
 proc skipParRi(cursor: var Cursor) =
@@ -77,34 +81,51 @@ proc skipParRi(cursor: var Cursor) =
   else:
     quit "Expected ')' but found: " & $cursor.kind
 
-proc expandVariables(command: string; inputs, outputs: seq[string]): string =
-  ## Expand $input and $output variables in command strings
-  result = command
-  if inputs.len > 0:
-    result = result.replace("$input", inputs[0].quoteShell)
-  if outputs.len > 0:
-    result = result.replace("$output", outputs[0].quoteShell)
+proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
+  result = ""
+  for token in cmd.tokens:
+    if result.len > 0 and result[^1] != ' ':
+      result.add ' '
+    case token.kind
+    of StringLit:
+      result.add pool.strings[token.litId]
+    of ParLe:
+      let tag = pool.tags[token.tag]
+      case tag
+      of "input":
+        if inputs.len > 0:
+          result.add inputs[0].quoteShell
+      of "output":
+        if outputs.len > 0:
+          result.add outputs[0].quoteShell
+      of "inputs":
+        result.add inputs.map(quoteShell).join(" ")
+      of "outputs":
+        result.add outputs.map(quoteShell).join(" ")
+      else:
+        result.add tag
+    else:
+      discard
 
-  # Replace $inputs and $outputs with space-separated lists
-  if "$inputs" in result:
-    let inputList = inputs.map(quoteShell).join(" ")
-    result = result.replace("$inputs", inputList)
-  if "$outputs" in result:
-    let outputList = outputs.map(quoteShell).join(" ")
-    result = result.replace("$outputs", outputList)
+proc registerCommand(dag: var Dag; cmdName: string): int =
+  for i in 0..<dag.commands.len:
+    if dag.commands[i].name == cmdName:
+      return i
+  result = dag.commands.len
+  dag.commands.add(Command(name: cmdName, tokens: @[]))
 
-proc addNode(dag: var Dag; command: string;
+proc addNode(dag: var Dag; cmdName: string;
              inputs, outputs: sink seq[string]): int =
   ## Add a build node to the DAG and return its ID
   result = dag.nodes.len
-  let expandedCommand = expandVariables(command, inputs, outputs)
+  let cmdIdx = registerCommand(dag, cmdName)
   let node = Node(
-    id: result,
-    command: expandedCommand,
+    cmdIdx: cmdIdx,
     inputs: inputs,
     outputs: outputs,
     deps: @[],
-    state: nsUnvisited
+    state: nsUnvisited,
+    depth: 0
   )
   dag.nodes.add(node)
 
@@ -211,9 +232,11 @@ proc runDag(dag: var Dag; parallel: bool): bool =
 
       for nodeId in nodesByDepth[depth]:
         let node = dag.nodes[nodeId]
+        let cmd = dag.commands[node.cmdIdx]
         echo "Building: ", node.outputs.join(", ")
-        echo "Command: ", node.command
-        commands.add(node.command)
+        let expandedCmd = expandCommand(cmd, node.inputs, node.outputs)
+        echo "Command: ", expandedCmd
+        commands.add(expandedCmd)
         nodeIds.add(nodeId)
 
       if commands.len > 0:
@@ -226,16 +249,18 @@ proc runDag(dag: var Dag; parallel: bool): bool =
           for i, p in pairs(progress):
             if p == Running:
               echo "Error: Command failed: ", commands[i]
-          return false
+            return false
   else:
     # Sequential execution
     for nodeId in sortedNodes:
       let node = dag.nodes[nodeId]
       if needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
+        let cmd = dag.commands[node.cmdIdx]
         echo "Building: ", node.outputs.join(", ")
-        echo "Command: ", node.command
-        if not executeCommand(node.command):
-          echo "Error: Command failed: ", node.command
+        let expandedCmd = expandCommand(cmd, node.inputs, node.outputs)
+        echo "Command: ", expandedCmd
+        if not executeCommand(expandedCmd):
+          echo "Error: Command failed: ", expandedCmd
           return false
       else:
         echo "Up to date: ", node.outputs.join(", ")
@@ -262,7 +287,7 @@ proc generateMakefile(dag: Dag; filename: string) =
     content.add "\n"
 
     # Command line
-    content.add "\t" & node.command & "\n\n"
+    content.add "\t" & dag.commands[node.cmdIdx].name & "\n\n"
 
   # Add clean target
   content.add "clean:\n"
@@ -298,13 +323,42 @@ proc parseNifFile(filename: string): Dag =
 
     while cursor.kind != ParRi:
       if cursor.kind == ParLe:
-        # Check if this is a "do" statement
-        if pool.tags[cursor.tag] == "do":
-          inc cursor # skip opening paren
+        let tag = pool.tags[cursor.tag]
+        inc cursor # skip opening paren
 
-          # Get command string
-          if cursor.kind == StringLit:
-            let command = pool.strings[cursor.litId]
+        case tag
+        of "cmd":
+          # Parse command definition
+          if cursor.kind == SymbolDef:
+            let cmdName = pool.syms[cursor.symId]
+            inc cursor
+
+            var tokens: seq[PackedToken] = @[]
+            while cursor.kind != ParRi:
+              case cursor.kind
+              of StringLit:
+                tokens.add cursor.load()
+                inc cursor
+              of ParLe:
+                let tag = pool.tags[cursor.tag]
+                inc cursor
+                if tag in ["input", "inputs", "output", "outputs"]:
+                  tokens.add cursor.load()
+                  inc cursor
+                else:
+                  quit "unsupported tag in `cmd` definition: " & tag
+                while cursor.kind != ParRi:
+                  inc cursor
+                inc cursor
+              else:
+                quit "unsupported token in `cmd` definition: " & $cursor.kind
+            let cmdIdx = registerCommand(result, cmdName)
+            result.commands[cmdIdx].tokens = tokens
+
+        of "do":
+          # Parse build rule
+          if cursor.kind == Symbol:
+            let cmdName = pool.syms[cursor.symId]
             inc cursor
 
             var inputs: seq[string] = @[]
@@ -316,11 +370,11 @@ proc parseNifFile(filename: string): Dag =
                 let tag = pool.tags[cursor.tag]
                 inc cursor # skip opening paren
 
-                if tag == "import" or tag == "incl":
+                if tag == "input" or tag == "incl":
                   if cursor.kind == StringLit:
                     inputs.add(pool.strings[cursor.litId])
                     inc cursor
-                elif tag == "result":
+                elif tag == "output":
                   if cursor.kind == StringLit:
                     outputs.add(pool.strings[cursor.litId])
                     inc cursor
@@ -333,9 +387,9 @@ proc parseNifFile(filename: string): Dag =
                 inc cursor
 
             if outputs.len > 0:
-              discard addNode(result, command, inputs, outputs)
+              discard addNode(result, cmdName, inputs, outputs)
         else:
-          # Skip non-do statements
+          # Skip unknown statements
           while cursor.kind != ParRi:
             inc cursor
 

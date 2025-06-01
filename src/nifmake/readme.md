@@ -9,42 +9,99 @@ Nifmake is a make-like tool used by Nimony to implement parallel and incremental
 - **Makefile generation**: Can generate standard Makefiles
 - **Variable expansion**: Supports `$input`, `$output`, `$inputs`, `$outputs` variables
 - **Cycle detection**: Detects circular dependencies in build graphs
+- **Declarative build descriptions using NIF**
+- **Parallel build execution**
+- **Reusable command definitions**
 
 ## Usage
 
-```bash
-# Run a build directly
-nifmake run build.nif
+### Basic Usage
 
-# Generate a Makefile
-nifmake makefile build.nif
-
-# Generate a Makefile with custom name
-nifmake --makefile build.mk makefile build.nif
-
-# Mark files as changed for incremental builds
-nifmake --changed src/main.nim run build.nif
-
-# Enable parallel builds (future enhancement)
-nifmake --parallel run build.nif
-```
-
-## Build File Format
-
-Build files use the NIF (Nim Intermediate Format) syntax:
+Create a build description file (e.g., `build.nif`):
 
 ```nif
 (.nif24)
 (stmts
-  (do "command_template"
-    (import "input_file1")
-    (import "input_file2")
-    (incl "included_file")
-    (result "output_file")
+  (cmd :nifler "bin/nifler" "--portablePaths --deps parse" (input) (output))
+
+  (do nifler
+    (input "src/main.nim")
+    (output "nimcache/main.1.nif")
   )
-  (do "another_command"
-    (import "dependency")
-    (result "another_output")
+)
+```
+
+Run the build:
+
+```bash
+nifmake run build.nif
+```
+
+### Parallel Builds
+
+Enable parallel execution with the `-j` flag:
+
+```bash
+nifmake -j run build.nif
+```
+
+### Makefile Generation
+
+Generate a Makefile from your build description:
+
+```bash
+nifmake makefile build.nif
+```
+
+### Command System
+
+NIF supports reusable command definitions that can be used in multiple build rules. A command consists of:
+
+- A name
+- A sequence of tokens that can be:
+  - String literals
+  - Special tags: `(input)`, `(output)`, `(inputs)`, `(outputs)`
+
+Example command definition:
+
+```nif
+(cmd :compile "nim" "c" "--out:" (output) (input))
+```
+
+This command can be used in build rules:
+
+```nif
+(do compile
+  (input "src/main.nim")
+  (output "bin/main")
+)
+```
+
+### Special Tags
+
+- `(input)`: First input file
+- `(output)`: First output file
+- `(inputs)`: Space-separated list of all input files
+- `(outputs)`: Space-separated list of all output files
+
+## Build File Format
+
+Build files use the NIF syntax:
+
+```nif
+(.nif24)
+(stmts
+  (cmd :command_template "bin/tool" (inputs) (output))
+  (do command_template
+    (input "input_file1")
+    (input "input_file2")
+    (incl "included_file")
+    (output "output_file")
+  )
+  (cmd :another_command "bin/toolab" (input) (output))
+  (do another_command
+    (input "dependency")
+    (output "another_output")
   )
 )
 ```
@@ -52,48 +109,48 @@ Build files use the NIF (Nim Intermediate Format) syntax:
 ### Commands
 
 Each `do` statement defines a build rule:
-- First argument: command template with variable placeholders
-- `import`: input file dependencies
+- First argument: command name
+- `input`: input file dependencies
 - `incl`: additional input file dependencies
-- `result`: output file(s)
+- `output`: output file(s)
 
-### Variable Expansion
-
-Command templates support these variables:
-- `$input`: First input file (quoted for shell)
-- `$output`: First output file (quoted for shell)
-- `$inputs`: All input files (space-separated, quoted)
-- `$outputs`: All output files (space-separated, quoted)
 
 ## Example
 
 ```nif
 (.nif24)
 (stmts
-  (do "nifler $input $output"
-    (import "src/main.nim")
-    (result "nimcache/main.1.nif")
+  (cmd :nifler "nifler" "--portablePaths --deps parse" (input) (output))
+  (cmd :nimsem "nimsem" (input) (output))
+  (cmd :hexer "hexer" (input) (output))
+  (cmd :nifc "nifc" (input) (output))
+  (cmd :gcc "-o" (output) (input))
+
+  (do nifler
+    (input "src/main.nim")
+    (output "nimcache/main.1.nif")
   )
-  (do "nimsem $input $output"
-    (import "nimcache/main.1.nif")
-    (result "nimcache/main.2.nif")
+  (do nimsem
+    (input "nimcache/main.1.nif")
+    (output "nimcache/main.2.nif")
   )
-  (do "hexer $input $output"
-    (import "nimcache/main.2.nif")
-    (result "nimcache/main.c.nif")
+  (do hexer
+    (input "nimcache/main.2.nif")
+    (output "nimcache/main.c.nif")
   )
-  (do "nifc $input $output"
-    (import "nimcache/main.c.nif")
-    (result "nimcache/main.c")
+  (do nifc
+    (input "nimcache/main.c.nif")
+    (output "nimcache/main.c")
   )
-  (do "gcc -o $output $input"
-    (import "nimcache/main.c")
-    (result "nimcache/main")
+  (do gcc
+    (input "nimcache/main.c")
+    (output "nimcache/main")
   )
 )
 ```
 
 This creates a build pipeline: `.nim` → `.1.nif` → `.2.nif` → `.c.nif` → `.c` → executable
+
 
 ## Implementation
 
@@ -108,4 +165,3 @@ Key features:
 - Cycle detection during topological sort
 - Timestamp-based incremental builds
 - Variable expansion in command templates
-- Cross-platform shell command execution
