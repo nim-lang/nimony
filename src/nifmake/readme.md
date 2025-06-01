@@ -72,23 +72,23 @@ Command templates support these variables:
 (stmts
   (do "nifler $input $output"
     (import "src/main.nim")
-    (result "build/main.1.nif")
+    (result "nimcache/main.1.nif")
   )
   (do "nimsem $input $output"
-    (import "build/main.1.nif")
-    (result "build/main.2.nif")
+    (import "nimcache/main.1.nif")
+    (result "nimcache/main.2.nif")
   )
   (do "hexer $input $output"
-    (import "build/main.2.nif")
-    (result "build/main.c.nif")
+    (import "nimcache/main.2.nif")
+    (result "nimcache/main.c.nif")
   )
   (do "nifc $input $output"
-    (import "build/main.c.nif")
-    (result "build/main.c")
+    (import "nimcache/main.c.nif")
+    (result "nimcache/main.c")
   )
   (do "gcc -o $output $input"
-    (import "build/main.c")
-    (result "build/main")
+    (import "nimcache/main.c")
+    (result "nimcache/main")
   )
 )
 ```
