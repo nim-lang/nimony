@@ -47,14 +47,18 @@ Example for a .nif file:
 ]#
 
 type
+  NodeState = enum
+    nsUnvisited
+    nsInStack
+    nsVisited
+
   Node* = object
     id*: int
     command*: string
     inputs*: seq[string]
     outputs*: seq[string]
     deps*: seq[int] # node IDs this depends on
-    visited*: bool
-    inStack*: bool
+    state*: NodeState
 
   Dag* = object
     nodes*: seq[Node]
@@ -98,8 +102,7 @@ proc addNode(dag: var Dag; command: string;
     inputs: inputs,
     outputs: outputs,
     deps: @[],
-    visited: false,
-    inStack: false
+    state: nsUnvisited
   )
   dag.nodes.add(node)
 
@@ -143,35 +146,34 @@ proc needsRebuild(node: Node): bool =
       if inputTime >= oldestOutput:
         return true
 
-proc topologicalSort(dag: var Dag): seq[int] =
-  ## Perform topological sort on the DAG
-  var sortedNodes: seq[int] = @[]
+proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]): bool =
+  case nodes[nodeId].state
+  of nsInStack:
+    # Cycle detected
+    return false
+  of nsVisited:
+    return true
+  of nsUnvisited:
+    discard
 
-  proc visit(nodes: var seq[Node]; nodeId: int): bool =
-    if nodes[nodeId].inStack:
-      # Cycle detected
+  nodes[nodeId].state = nsInStack
+
+  for depId in nodes[nodeId].deps:
+    if not visit(nodes, depId, sortedNodes):
       return false
 
-    if nodes[nodeId].visited:
-      return true
+  nodes[nodeId].state = nsVisited
+  sortedNodes.add(nodeId)
+  return true
 
-    nodes[nodeId].inStack = true
-
-    for depId in nodes[nodeId].deps:
-      if not visit(nodes, depId):
-        return false
-
-    nodes[nodeId].inStack = false
-    nodes[nodeId].visited = true
-    sortedNodes.add(nodeId)
-    return true
+proc topologicalSort(dag: var Dag): seq[int] =
+  ## Perform topological sort on the DAG
+  result = @[]
 
   for i in 0..<dag.nodes.len:
-    if not dag.nodes[i].visited:
-      if not visit(dag.nodes, i):
+    if dag.nodes[i].state == nsUnvisited:
+      if not visit(dag.nodes, i, result):
         quit "Circular dependency detected in build graph"
-
-  return sortedNodes
 
 proc executeCommand(command: string): bool =
   ## Execute a shell command and return success status
