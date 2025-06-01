@@ -79,6 +79,8 @@ proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
     inc n
   else:
+    #writeStackTrace()
+    #echo toString([n.load()])
     quit "Expected ')' but found: " & $n.kind
 
 proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
@@ -263,7 +265,7 @@ proc runDag(dag: var Dag; parallel: bool): bool =
           for i, p in pairs(progress):
             if p == Running:
               echo "Error: Command failed: ", commands[i]
-            return false
+          return false
   else:
     # Sequential execution
     for nodeId in sortedNodes:
@@ -343,39 +345,41 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
     quit "expected symbol definition in `cmd` definition"
 
 proc parseDoRule(n: var Cursor; dag: var Dag) =
+  var cmdName: string
   if n.kind == Symbol:
-    let cmdName = pool.syms[n.symId]
+    cmdName = pool.syms[n.symId]
     inc n
+  elif n.kind == Ident:
+    cmdName = pool.strings[n.litId]
+    inc n
+  else:
+    quit "expected symbol or identifier in `do` rule"
 
-    var inputs: seq[string] = @[]
-    var outputs: seq[string] = @[]
+  var inputs: seq[string] = @[]
+  var outputs: seq[string] = @[]
 
-    # Parse imports and results
-    while n.kind != ParRi:
-      if n.kind == ParLe:
-        let tag = pool.tags[n.tag]
-        inc n # skip opening paren
+  # Parse imports and results
+  while n.kind != ParRi:
+    if n.kind == ParLe:
+      let tag = pool.tags[n.tag]
+      inc n # skip opening paren
 
-        if tag == "input":
-          if n.kind == StringLit:
-            inputs.add(pool.strings[n.litId])
-            inc n
-        elif tag == "output":
-          if n.kind == StringLit:
-            outputs.add(pool.strings[n.litId])
-            inc n
-        else:
-          quit "unsupported tag in `do` definition: " & tag
-
-        # Skip to closing paren
-        while n.kind != ParRi:
+      if tag == "input":
+        if n.kind == StringLit:
+          inputs.add(pool.strings[n.litId])
           inc n
-        inc n
+      elif tag == "output":
+        if n.kind == StringLit:
+          outputs.add(pool.strings[n.litId])
+          inc n
       else:
-        inc n
+        quit "unsupported tag in `do` definition: " & tag
 
-    if outputs.len > 0:
-      discard addNode(dag, cmdName, inputs, outputs)
+      skipParRi n
+    else:
+      quit "expected `input` or `output` in `do` definition, but found: " & $n.kind
+
+  discard addNode(dag, cmdName, inputs, outputs)
 
 proc parseNifFile(filename: string): Dag =
   ## Parse a .nif file and build the DAG
@@ -422,15 +426,15 @@ Usage:
   nifmake [options] <command> [file]
 
 Commands:
-  run <file.nif>      - Execute the build graph
-  makefile <file.nif> - Generate Makefile from build graph
-  help                - Show this help
-  version             - Show version
+  run <file.nif>        Execute the build graph
+  makefile <file.nif>   Generate Makefile from build graph
+  help                  Show this help
+  version               Show version
 
 Options:
-  -j, --parallel      - Enable parallel builds (for 'run' command)
-  --makefile <name>   - Output Makefile name (default: Makefile)
-  --changed <file>    - Mark file as changed for incremental builds
+  -j, --parallel        Enable parallel builds (for 'run' command)
+  --makefile <name>     Output Makefile name (default: Makefile)
+  --changed <file>      Mark file as changed for incremental builds
 
 Examples:
   nifmake run build.nif
