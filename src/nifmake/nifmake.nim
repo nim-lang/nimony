@@ -8,7 +8,7 @@
 ## and incremental compilation. Nifmake can run a dependency graph as specified
 ## by a .nif file or it can translate this file to a Makefile.
 
-import std/[os, strutils, sequtils, tables, hashes, times, sets, parseopt, syncio, osproc]
+import std/[assertions, os, strutils, sequtils, tables, hashes, times, sets, parseopt, syncio, osproc]
 import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
@@ -83,15 +83,18 @@ proc skipParRi(n: var Cursor) =
     #echo toString([n.load()])
     quit "Expected ')' but found: " & $n.kind
 
+proc addSpace(result: var string) {.inline.} =
+  if result.len > 0 and result[^1] != ' ': result.add ' '
+
 proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
   result = ""
   var n = readonlyCursorAt(cmd.tokens, 0)
   while n.kind != ParRi:
-    if result.len > 0 and result[^1] != ' ':
-      result.add ' '
     case n.kind
     of StringLit:
+      addSpace(result)
       result.add pool.strings[n.litId]
+      inc n
     of ParLe:
       let tag = pool.tags[n.tag]
       var a = 0
@@ -110,19 +113,17 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
       of "input":
         for i in a..b:
           if i >= 0 and i < inputs.len:
-            if result.len > 0 and result[^1] != ' ':
-              result.add ' '
+            addSpace(result)
             result.add inputs[i].quoteShell
       of "output":
         for i in a..b:
           if i >= 0 and i < outputs.len:
-            if result.len > 0 and result[^1] != ' ':
-              result.add ' '
+            addSpace(result)
             result.add outputs[i].quoteShell
       else:
-        result.add tag
+        raiseAssert "unsupported tag in `cmd` definition: " & tag
     else:
-      discard
+      raiseAssert "unsupported token in `cmd` definition: " & $n.kind
 
 proc registerCommand(dag: var Dag; cmdName: string): int =
   for i in 0..<dag.commands.len:
