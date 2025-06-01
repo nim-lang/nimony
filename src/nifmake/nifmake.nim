@@ -99,8 +99,10 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
     quit "undeclared command: " & cmd.name
 
   var n = readonlyCursorAt(cmd.tokens, 0)
-  while n.kind != ParRi:
+  while true:
     case n.kind
+    of ParRi:
+      break
     of StringLit:
       addSpace(result)
       result.add pool.strings[n.litId]
@@ -349,13 +351,18 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
           discard
         else:
           quit "unsupported tag in `cmd` definition: " & tag
+        var nested = 0
         while true:
-          let atEnd = n.kind == ParRi
+          if n.kind == ParLe:
+            inc nested
+          elif n.kind == ParRi:
+            dec nested
           tokens.add n.load()
           inc n
-          if atEnd: break
+          if nested == 0: break
       else:
         quit "unsupported token in `cmd` definition: " & $n.kind
+    tokens.addParRi()
     let cmdIdx = registerCommand(dag, cmdName)
     freeze tokens
     dag.commands[cmdIdx].tokens = tokens
