@@ -111,7 +111,6 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
       var b = 0
       inc n
       var prefix = ""
-      var suffix = ""
       if n.kind == StringLit:
         prefix = pool.strings[n.litId]
         inc n
@@ -124,6 +123,7 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
         b = pool.integers[n.intId]
         if b < 0: b = outputs.len + b
         inc n
+      var suffix = ""
       if n.kind == StringLit:
         suffix = pool.strings[n.litId]
         inc n
