@@ -1,5 +1,5 @@
 ## Hastur - Tester tool for Nimony and its related subsystems (NIFC etc).
-## (c) 2024 Andreas Rumpf
+## (c) 2024-2025 Andreas Rumpf
 
 when defined(windows):
   when defined(gcc):
@@ -17,12 +17,12 @@ const
   Version = "0.6"
   Usage = "hastur - tester tool for Nimony Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
@@ -476,6 +476,11 @@ proc buildHexer(showProgress = false) =
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
 
+proc buildNifmake(showProgress = false) =
+  exec "nim c src/nifmake/nifmake.nim", showProgress
+  let exe = "nifmake".addFileExt(ExeExt)
+  robustMoveFile "src/nifmake/" & exe, binDir() / exe
+
 proc execNifc(cmd: string) =
   exec "nifc", cmd
 
@@ -596,6 +601,7 @@ proc handleCmdLine =
       buildNimony(showProgress)
       buildNifc(showProgress)
       buildHexer(showProgress)
+      buildNifmake(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -605,6 +611,8 @@ proc handleCmdLine =
       buildNifc(showProgress)
     of "hexer":
       buildHexer(showProgress)
+    of "nifmake":
+      buildNifmake(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
