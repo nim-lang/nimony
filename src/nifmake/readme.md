@@ -79,8 +79,8 @@ This command can be used in build rules:
 
 ### Special Tags
 
-- `(input N M)`: Input file(s) from index N to index M. If the indexes are left out the first input is used. An index can be negative, if so it indexes from the end, `-1` is the last entry.
-- `(output)`: Output file(s) from index N to index M. The indexing works just like it does for `(input)`.
+- `(input N M)`: Input file(s) from index `N` to index `M`. If the indexes are left out the first input is used. An index can be negative, if so it indexes from the end, `-1` is the last entry. This means that `(input +0 -1)` covers all input files. Before the `N` there can also be a string literal which is then used as a prefix: `(input "--file:" 0 -1)` produces `--file:<input 1> --file:<input 2>...`.
+- `(output)`: Output file(s) from index `N` to index `M`. The indexing works just like it does for `(input)`.
 
 
 ## Build File Format

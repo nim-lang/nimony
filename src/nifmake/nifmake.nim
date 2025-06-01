@@ -89,7 +89,7 @@ proc addSpace(result: var string) {.inline.} =
 proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
   result = ""
   if cmd.tokens.len == 0:
-    quit "empty command: " & cmd.name
+    quit "undeclared command: " & cmd.name
 
   var n = readonlyCursorAt(cmd.tokens, 0)
   while n.kind != ParRi:
@@ -103,6 +103,10 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
       var a = 0
       var b = 0
       inc n
+      var prefix = ""
+      if n.kind == StringLit:
+        prefix = pool.strings[n.litId]
+        inc n
       if n.kind == IntLit:
         a = pool.integers[n.intId]
         if a < 0: a = inputs.len + a
@@ -118,11 +122,15 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
         for i in a..b:
           if i >= 0 and i < inputs.len:
             addSpace(result)
+            if prefix.len > 0:
+              result.add prefix
             result.add inputs[i].quoteShell
       of "output":
         for i in a..b:
           if i >= 0 and i < outputs.len:
             addSpace(result)
+            if prefix.len > 0:
+              result.add prefix
             result.add outputs[i].quoteShell
       else:
         raiseAssert "unsupported tag in `cmd` definition: " & tag
