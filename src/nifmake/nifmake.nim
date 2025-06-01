@@ -88,6 +88,9 @@ proc addSpace(result: var string) {.inline.} =
 
 proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
   result = ""
+  if cmd.tokens.len == 0:
+    quit "empty command: " & cmd.name
+
   var n = readonlyCursorAt(cmd.tokens, 0)
   while n.kind != ParRi:
     case n.kind
@@ -103,6 +106,7 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
       if n.kind == IntLit:
         a = pool.integers[n.intId]
         if a < 0: a = inputs.len + a
+        b = a
         inc n
       if n.kind == IntLit:
         b = pool.integers[n.intId]
