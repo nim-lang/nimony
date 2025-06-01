@@ -54,7 +54,7 @@ type
 
   Command* = object
     name*: string
-    tokens*: seq[PackedToken]
+    tokens*: TokenBuf
 
   Node* = object
     cmdIdx*: int      # index into Dag.commands
@@ -74,34 +74,49 @@ type
   CliCommand = enum
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
-proc skipParRi(cursor: var Cursor) =
+proc skipParRi(n: var Cursor) =
   ## Helper to skip a closing parenthesis
-  if cursor.kind == ParRi:
-    inc cursor
+  if n.kind == ParRi:
+    inc n
   else:
-    quit "Expected ')' but found: " & $cursor.kind
+    quit "Expected ')' but found: " & $n.kind
 
 proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
   result = ""
-  for token in cmd.tokens:
+  var n = readonlyCursorAt(cmd.tokens, 0)
+  while n.kind != ParRi:
     if result.len > 0 and result[^1] != ' ':
       result.add ' '
-    case token.kind
+    case n.kind
     of StringLit:
-      result.add pool.strings[token.litId]
+      result.add pool.strings[n.litId]
     of ParLe:
-      let tag = pool.tags[token.tag]
+      let tag = pool.tags[n.tag]
+      var a = 0
+      var b = 0
+      inc n
+      if n.kind == IntLit:
+        a = pool.integers[n.intId]
+        if a < 0: a = inputs.len + a
+        inc n
+      if n.kind == IntLit:
+        b = pool.integers[n.intId]
+        if b < 0: b = outputs.len + b
+        inc n
+      skipParRi n
       case tag
       of "input":
-        if inputs.len > 0:
-          result.add inputs[0].quoteShell
+        for i in a..b:
+          if i >= 0 and i < inputs.len:
+            if result.len > 0 and result[^1] != ' ':
+              result.add ' '
+            result.add inputs[i].quoteShell
       of "output":
-        if outputs.len > 0:
-          result.add outputs[0].quoteShell
-      of "inputs":
-        result.add inputs.map(quoteShell).join(" ")
-      of "outputs":
-        result.add outputs.map(quoteShell).join(" ")
+        for i in a..b:
+          if i >= 0 and i < outputs.len:
+            if result.len > 0 and result[^1] != ' ':
+              result.add ' '
+            result.add outputs[i].quoteShell
       else:
         result.add tag
     else:
@@ -112,7 +127,7 @@ proc registerCommand(dag: var Dag; cmdName: string): int =
     if dag.commands[i].name == cmdName:
       return i
   result = dag.commands.len
-  dag.commands.add(Command(name: cmdName, tokens: @[]))
+  dag.commands.add Command(name: cmdName)
 
 proc addNode(dag: var Dag; cmdName: string;
              inputs, outputs: sink seq[string]): int =
@@ -232,9 +247,8 @@ proc runDag(dag: var Dag; parallel: bool): bool =
 
       for nodeId in nodesByDepth[depth]:
         let node = dag.nodes[nodeId]
-        let cmd = dag.commands[node.cmdIdx]
         echo "Building: ", node.outputs.join(", ")
-        let expandedCmd = expandCommand(cmd, node.inputs, node.outputs)
+        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
         echo "Command: ", expandedCmd
         commands.add(expandedCmd)
         nodeIds.add(nodeId)
@@ -255,9 +269,8 @@ proc runDag(dag: var Dag; parallel: bool): bool =
     for nodeId in sortedNodes:
       let node = dag.nodes[nodeId]
       if needsRebuild(node) or node.outputs.anyIt(it in dag.changeList):
-        let cmd = dag.commands[node.cmdIdx]
         echo "Building: ", node.outputs.join(", ")
-        let expandedCmd = expandCommand(cmd, node.inputs, node.outputs)
+        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
         echo "Command: ", expandedCmd
         if not executeCommand(expandedCmd):
           echo "Error: Command failed: ", expandedCmd
@@ -299,7 +312,71 @@ proc generateMakefile(dag: Dag; filename: string) =
 
   writeFile(filename, content)
 
-# Simple NIF parsing without heavy dependencies
+proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
+  if n.kind == SymbolDef:
+    let cmdName = pool.syms[n.symId]
+    inc n
+
+    var tokens = createTokenBuf(4)
+    while n.kind != ParRi:
+      case n.kind
+      of StringLit:
+        tokens.add n.load()
+        inc n
+      of ParLe:
+        let tag = pool.tags[n.tag]
+        if tag in ["input", "output"]:
+          discard
+        else:
+          quit "unsupported tag in `cmd` definition: " & tag
+        while true:
+          let atEnd = n.kind == ParRi
+          tokens.add n.load()
+          inc n
+          if atEnd: break
+      else:
+        quit "unsupported token in `cmd` definition: " & $n.kind
+    let cmdIdx = registerCommand(dag, cmdName)
+    freeze tokens
+    dag.commands[cmdIdx].tokens = tokens
+  else:
+    quit "expected symbol definition in `cmd` definition"
+
+proc parseDoRule(n: var Cursor; dag: var Dag) =
+  if n.kind == Symbol:
+    let cmdName = pool.syms[n.symId]
+    inc n
+
+    var inputs: seq[string] = @[]
+    var outputs: seq[string] = @[]
+
+    # Parse imports and results
+    while n.kind != ParRi:
+      if n.kind == ParLe:
+        let tag = pool.tags[n.tag]
+        inc n # skip opening paren
+
+        if tag == "input":
+          if n.kind == StringLit:
+            inputs.add(pool.strings[n.litId])
+            inc n
+        elif tag == "output":
+          if n.kind == StringLit:
+            outputs.add(pool.strings[n.litId])
+            inc n
+        else:
+          quit "unsupported tag in `do` definition: " & tag
+
+        # Skip to closing paren
+        while n.kind != ParRi:
+          inc n
+        inc n
+      else:
+        inc n
+
+    if outputs.len > 0:
+      discard addNode(dag, cmdName, inputs, outputs)
+
 proc parseNifFile(filename: string): Dag =
   ## Parse a .nif file and build the DAG
   result = Dag()
@@ -312,92 +389,27 @@ proc parseNifFile(filename: string): Dag =
 
   discard processDirectives(stream.r)
 
-  # Parse using cursor API
   var buf = fromStream(stream)
-  var cursor = beginRead(buf)
+  var n = beginRead(buf)
   defer: endRead(buf)
 
   # Parse (.nif24)(stmts ...)
-  if cursor.kind == ParLe:
-    inc cursor # skip opening paren
-
-    while cursor.kind != ParRi:
-      if cursor.kind == ParLe:
-        let tag = pool.tags[cursor.tag]
-        inc cursor # skip opening paren
-
-        case tag
+  if n.kind == ParLe:
+    inc n # skip opening paren
+    while n.kind != ParRi:
+      if n.kind == ParLe:
+        case pool.tags[n.tag]
         of "cmd":
-          # Parse command definition
-          if cursor.kind == SymbolDef:
-            let cmdName = pool.syms[cursor.symId]
-            inc cursor
-
-            var tokens: seq[PackedToken] = @[]
-            while cursor.kind != ParRi:
-              case cursor.kind
-              of StringLit:
-                tokens.add cursor.load()
-                inc cursor
-              of ParLe:
-                let tag = pool.tags[cursor.tag]
-                inc cursor
-                if tag in ["input", "inputs", "output", "outputs"]:
-                  tokens.add cursor.load()
-                  inc cursor
-                else:
-                  quit "unsupported tag in `cmd` definition: " & tag
-                while cursor.kind != ParRi:
-                  inc cursor
-                inc cursor
-              else:
-                quit "unsupported token in `cmd` definition: " & $cursor.kind
-            let cmdIdx = registerCommand(result, cmdName)
-            result.commands[cmdIdx].tokens = tokens
-
+          inc n
+          parseCommandDefinition(n, result)
         of "do":
-          # Parse build rule
-          if cursor.kind == Symbol:
-            let cmdName = pool.syms[cursor.symId]
-            inc cursor
-
-            var inputs: seq[string] = @[]
-            var outputs: seq[string] = @[]
-
-            # Parse imports and results
-            while cursor.kind != ParRi:
-              if cursor.kind == ParLe:
-                let tag = pool.tags[cursor.tag]
-                inc cursor # skip opening paren
-
-                if tag == "input" or tag == "incl":
-                  if cursor.kind == StringLit:
-                    inputs.add(pool.strings[cursor.litId])
-                    inc cursor
-                elif tag == "output":
-                  if cursor.kind == StringLit:
-                    outputs.add(pool.strings[cursor.litId])
-                    inc cursor
-
-                # Skip to closing paren
-                while cursor.kind != ParRi:
-                  inc cursor
-                inc cursor
-              else:
-                inc cursor
-
-            if outputs.len > 0:
-              discard addNode(result, cmdName, inputs, outputs)
+          inc n
+          parseDoRule(n, result)
         else:
-          # Skip unknown statements
-          while cursor.kind != ParRi:
-            inc cursor
-
-        # Skip closing paren
-        if cursor.kind == ParRi:
-          inc cursor
+          quit "unknown statement: " & pool.tags[n.tag]
+        skipParRi n
       else:
-        inc cursor
+        quit "expected statement in .nif file, but found: " & $n.kind
 
   # Find dependencies between nodes
   for i in 0..<result.nodes.len:

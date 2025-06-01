@@ -79,10 +79,9 @@ This command can be used in build rules:
 
 ### Special Tags
 
-- `(input)`: First input file
-- `(output)`: First output file
-- `(inputs)`: Space-separated list of all input files
-- `(outputs)`: Space-separated list of all output files
+- `(input N M)`: Input file(s) from index N to index M. If the indexes are left out the first input is used. An index can be negative, if so it indexes from the end, `-1` is the last entry.
+- `(output)`: Output file(s) from index N to index M. The indexing works just like it does for `(input)`.
+
 
 ## Build File Format
 
@@ -91,11 +90,11 @@ Build files use the NIF syntax:
 ```nif
 (.nif24)
 (stmts
-  (cmd :command_template "bin/tool" (inputs) (output))
+  (cmd :command_template "bin/tool" (input +0 +1) (output))
   (do command_template
     (input "input_file1")
     (input "input_file2")
-    (incl "included_file")
+    (input "included_file")
     (output "output_file")
   )
   (cmd :another_command "bin/toolab" (input) (output))
@@ -111,7 +110,6 @@ Build files use the NIF syntax:
 Each `do` statement defines a build rule:
 - First argument: command name
 - `input`: input file dependencies
-- `incl`: additional input file dependencies
 - `output`: output file(s)
 
 
