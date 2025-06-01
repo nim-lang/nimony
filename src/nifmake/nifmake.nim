@@ -150,21 +150,17 @@ proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]): bool =
   case nodes[nodeId].state
   of nsInStack:
     # Cycle detected
-    return false
+    result = false
   of nsVisited:
-    return true
+    result = true
   of nsUnvisited:
-    discard
-
-  nodes[nodeId].state = nsInStack
-
-  for depId in nodes[nodeId].deps:
-    if not visit(nodes, depId, sortedNodes):
-      return false
-
-  nodes[nodeId].state = nsVisited
-  sortedNodes.add(nodeId)
-  return true
+    nodes[nodeId].state = nsInStack
+    for depId in nodes[nodeId].deps:
+      if not visit(nodes, depId, sortedNodes):
+        return false
+    nodes[nodeId].state = nsVisited
+    sortedNodes.add(nodeId)
+    result = true
 
 proc topologicalSort(dag: var Dag): seq[int] =
   ## Perform topological sort on the DAG
