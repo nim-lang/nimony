@@ -17,6 +17,7 @@
 import std/[os, tables, sets, syncio, assertions, strutils, times]
 import semos, nifconfig, nimony_model, nifindexes
 import ".." / gear2 / modnames, semdata
+import ".." / lib / nifbuilder
 
 include nifprelude
 
@@ -229,49 +230,26 @@ proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
   finally:
     nifstreams.close(stream)
 
-proc mescape(p: string): string =
-  when defined(windows):
-    result = p.replace("\\", "/")
-  else:
-    result = p.replace(":", "\\:") # Rule separators
-  result = result.multiReplace({
-    " ": "\\ ",   # Spaces
-    "#": "\\#",   # Comments
-    "$": "$$",    # Variables
-    "(": "\\(",   # Function calls
-    ")": "\\)",
-    "*": "\\*",   # Wildcards
-    "[": "\\[",   # Pattern matching
-    "]": "\\]"
-  })
-
-const makefileHeader = """
-# Auto-generated Makefile
-.PHONY: all
-.SECONDARY:
-  """ # don't delete intermediate files
-
 type
   CFile = tuple
     name, obj, customArgs: string
 
 proc rootPath(c: DepContext): string =
-  # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
+  # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
   result = relativePath(result, os.getCurrentDir())
 
 proc toBuildList(c: DepContext): seq[CFile] =
   result = @[]
   for v in c.nodes:
-    let index = readIndex(mescape(c.config.indexFile(v.files[0])))
+    let index = readIndex(c.config.indexFile(v.files[0]))
     for i in index.toBuild:
       let path = i[1]
       let obj = splitFile(path).name & ".o"
       let customArgs = i[2]
       result.add (path, obj, customArgs)
 
-proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
-  var s = makefileHeader
+proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   let dest =
     case c.cmd
     of DoCheck:
@@ -281,89 +259,297 @@ proc generateFinalMakefile(c: DepContext; commandLineArgsNifc: string; passC, pa
     of DoCompile, DoRun:
       c.config.exeFile(c.rootNode.files[0])
 
-  # Absolute path of root node module
-  s.add "\nROOT_PATH = " & rootPath(c)
-  if passC.len != 0:
-    s.add "\nCFLAGS += " & mescape(passC)
-  s.add "\nall: " & mescape dest
+  result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
+  var b = nifbuilder.open(result)
+  defer: b.close()
 
-  # The .exe file depends on all .o files:
-  if c.cmd in {DoCompile, DoRun}:
-    let buildList = toBuildList(c)
-
-    s.add "\n" & mescape(c.config.exeFile(c.rootNode.files[0])) & ":"
-
-    for cfile in buildList:
-      s.add " " & mescape(c.config.nifcachePath / cfile.obj)
-
-    for v in c.nodes:
-      s.add " " & mescape(c.config.objFile(v.files[0]))
-    s.add "\n\t$(CC) -o $@ $^"
-    if passL.len != 0:
-      s.add " " & mescape(passL)
-
-    for cfile in buildList:
-      s.add "\n" & mescape(c.config.nifcachePath / cfile.obj) & ": " & mescape(cfile.name) &
-            "\n\t$(CC) -c $(CFLAGS) $(CPPFLAGS) " &
-            mescape(cfile.customArgs) & " $< -o $@"
-
-    # The .o files depend on all of their .c files:
-    s.add "\n%.o: %.c\n\t$(CC) -c $(CFLAGS) -I$(ROOT_PATH) $(CPPFLAGS) $< -o $@"
-
-    # entry point is special:
+  b.addHeader()
+  b.withTree "stmts":
+    # Command definitions
     let nifc = findTool("nifc")
-    s.add "\n" & mescape(c.config.cFile(c.rootNode.files[0])) & ": " & mescape(c.config.nifcFile c.rootNode.files[0])
-    s.add "\n\t" & mescape(nifc) & " c --compileOnly --isMain " & commandLineArgsNifc & " $<"
-
-    # The .c files depend on their .c.nif files:
-    s.add "\n%.c: %.c.nif\n\t" & mescape(nifc) & " c --compileOnly " & commandLineArgsNifc & " $<"
-
-    # The .c.nif files depend on all of their .2.nif files:
     let hexer = findTool("hexer")
-    s.add "\n%.c.nif: %.2.nif %.2.idx.nif\n\t" & mescape(hexer) & " --bits:" & $c.config.bits & " $<"
 
-  result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.makefile"
-  writeFile result, s
+    # Command for nifc (C code generation)
+    b.withTree "cmd":
+      b.addSymbolDef "nifc"
+      b.addStrLit nifc
+      b.addStrLit "c"
+      b.addStrLit "--compileOnly"
+      if commandLineArgsNifc.len > 0:
+        for arg in commandLineArgsNifc.split(' '):
+          if arg.len > 0:
+            b.addStrLit arg
+      b.withTree "input":
+        discard
+      b.withTree "output":
+        discard
+
+    # Command for nifc with main flag (entry point)
+    b.withTree "cmd":
+      b.addSymbolDef "nifc_main"
+      b.addStrLit nifc
+      b.addStrLit "c"
+      b.addStrLit "--compileOnly"
+      b.addStrLit "--isMain"
+      if commandLineArgsNifc.len > 0:
+        for arg in commandLineArgsNifc.split(' '):
+          if arg.len > 0:
+            b.addStrLit arg
+      b.withTree "input":
+        discard
+      b.withTree "output":
+        discard
+
+    # Command for hexer
+    b.withTree "cmd":
+      b.addSymbolDef "hexer"
+      b.addStrLit hexer
+      b.addStrLit "--bits:" & $c.config.bits
+      b.withTree "input":
+        b.addIntLit 0
+      b.withTree "output":
+        discard
+
+    # Command for C compiler (object files)
+    b.withTree "cmd":
+      b.addSymbolDef "cc_obj"
+      b.addStrLit "gcc"  # Use gcc directly since environment handling is different
+      b.addStrLit "-c"
+      if passC.len > 0:
+        for arg in passC.split(' '):
+          if arg.len > 0:
+            b.addStrLit arg
+      b.addStrLit "-I" & rootPath(c)
+      b.withTree "input":
+        discard
+      b.addStrLit "-o"
+      b.withTree "output":
+        discard
+
+    # Command for C compiler with custom args
+    b.withTree "cmd":
+      b.addSymbolDef "cc_custom"
+      b.addStrLit "gcc"
+      b.addStrLit "-c"
+      b.withTree "input":
+        b.addIntLit 1  # custom args at index 1
+      b.withTree "input":
+        b.addIntLit 0  # source file at index 0
+      b.addStrLit "-o"
+      b.withTree "output":
+        discard
+
+    # Command for linking
+    if c.cmd in {DoCompile, DoRun}:
+      b.withTree "cmd":
+        b.addSymbolDef "link"
+        b.addStrLit "gcc"
+        b.addStrLit "-o"
+        b.withTree "output":
+          discard
+        b.withTree "input":
+          b.addIntLit 0
+          b.addIntLit -1  # all inputs
+        if passL.len > 0:
+          for arg in passL.split(' '):
+            if arg.len > 0:
+              b.addStrLit arg
+
+    # Build rules
+    if c.cmd in {DoCompile, DoRun}:
+      let buildList = toBuildList(c)
+
+      # Link executable
+      b.withTree "do":
+        b.addIdent "link"
+        # Input: all object files
+        for cfile in buildList:
+          b.withTree "input":
+            b.addStrLit c.config.nifcachePath / cfile.obj
+        for v in c.nodes:
+          b.withTree "input":
+            b.addStrLit c.config.objFile(v.files[0])
+        b.withTree "output":
+          b.addStrLit dest
+
+      # Build object files from C files with custom args
+      for cfile in buildList:
+        b.withTree "do":
+          b.addIdent "cc_custom"
+          b.withTree "input":
+            b.addStrLit cfile.name
+          b.withTree "input":
+            b.addStrLit cfile.customArgs
+          b.withTree "output":
+            b.addStrLit c.config.nifcachePath / cfile.obj
+
+      # Build main module C file (entry point)
+      b.withTree "do":
+        b.addIdent "nifc_main"
+        b.withTree "input":
+          b.addStrLit c.config.nifcFile(c.rootNode.files[0])
+        b.withTree "output":
+          b.addStrLit c.config.cFile(c.rootNode.files[0])
+
+      # Build object files from C files
+      for v in c.nodes:
+        b.withTree "do":
+          b.addIdent "cc_obj"
+          b.withTree "input":
+            b.addStrLit c.config.cFile(v.files[0])
+          b.withTree "output":
+            b.addStrLit c.config.objFile(v.files[0])
+
+        # Build C files from .c.nif files
+        b.withTree "do":
+          b.addIdent "nifc"
+          b.withTree "input":
+            b.addStrLit c.config.nifcFile(v.files[0])
+          b.withTree "output":
+            b.addStrLit c.config.cFile(v.files[0])
+
+        # Build .c.nif files from .2.nif files
+        b.withTree "do":
+          b.addIdent "hexer"
+          b.withTree "input":
+            b.addStrLit c.config.semmedFile(v.files[0])
+          b.withTree "input":
+            b.addStrLit c.config.indexFile(v.files[0])
+          b.withTree "output":
+            b.addStrLit c.config.nifcFile(v.files[0])
+
+    elif c.cmd == DoCheck:
+      # For check command, just verify that semantic analysis completes
+      b.withTree "cmd":
+        b.addSymbolDef "true_cmd"
+        b.addStrLit "true"  # Unix true command
+
+      b.withTree "do":
+        b.addIdent "true_cmd"
+        b.withTree "input":
+          b.addStrLit c.config.indexFile(c.rootNode.files[0])
+        b.withTree "output":
+          b.addStrLit dest
 
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
 
-proc generateFrontendMakefile(c: DepContext; commandLineArgs: string): string =
-  var s = makefileHeader
+proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
+  result = c.config.nifcachePath / c.rootNode.files[0].modname & ".build.nif"
+  var b = nifbuilder.open(result)
+  defer: b.close()
 
-  # every semchecked .nif file depends on all of its parsed.nif file
-  # plus on the indexes of its imports:
-  var i = 0
-  for v in c.nodes:
-    s.add "\n" & mescape(c.config.indexFile(v.files[0])) & " " & mescape(c.config.semmedFile(v.files[0])) & ":"
-    var seenDeps = initHashSet[string]()
-    for f in v.files:
-      let pf = c.config.parsedFile(f)
-      if not seenDeps.containsOrIncl(pf):
-        s.add " " & mescape(pf)
-    for f in v.deps:
-      let idxFile = c.config.indexFile(f)
-      if not seenDeps.containsOrIncl(idxFile):
-        s.add "  " & mescape(idxFile)
-    s.add " " & mescape(c.config.cachedConfigFile())
-    let args = commandLineArgs & (if v.isSystem: " --isSystem" else: "") & (if i == 0: " --isMain" else: "")
-    s.add "\n\t" & mescape(c.nimsem) & " " & args & " m " & mescape(c.config.parsedFile(v.files[0])) & " " &
-      mescape(c.config.semmedFile(v.files[0])) & " " & mescape(c.config.indexFile(v.files[0]))
-    inc i
+  b.addHeader()
+  b.withTree "stmts":
+    # Command definitions
+    b.withTree "cmd":
+      b.addSymbolDef "nifler"
+      b.addStrLit c.nifler
+      b.addStrLit "--portablePaths"
+      b.addStrLit "--deps"
+      b.addStrLit "parse"
+      b.withTree "input":
+        discard
+      b.withTree "output":
+        discard
 
-  # every parsed.nif file is produced by a .nim file by the nifler tool:
-  var seenFiles = initHashSet[string]()
-  for v in c.nodes:
-    for i in 0..<v.files.len:
-      let f = c.config.parsedFile(v.files[i])
-      if not seenFiles.containsOrIncl(f):
-        let nimFile = v.files[i].nimFile
-        s.add "\n" & mescape(f) & ": " & mescape(nimFile)
-        s.add "\n\t" & mescape(c.nifler) & " --portablePaths --deps parse " & mescape(nimFile) & " " &
-          mescape(f)
+    b.withTree "cmd":
+      b.addSymbolDef "nimsem"
+      b.addStrLit c.nimsem
+      if commandLineArgs.len > 0:
+        for arg in commandLineArgs.split(' '):
+          if arg.len > 0:
+            b.addStrLit arg
+      b.addStrLit "m"
+      b.withTree "input":
+        b.addIntLit 0  # main parsed file
+      b.withTree "output":
+        b.addIntLit 0  # semmed file output
+      b.withTree "output":
+        b.addIntLit 1  # index file output
 
-  result = c.config.nifcachePath / c.rootNode.files[0].modname & ".makefile"
-  writeFile result, s
+    # Command for nimsem with system flag
+    b.withTree "cmd":
+      b.addSymbolDef "nimsem_system"
+      b.addStrLit c.nimsem
+      if commandLineArgs.len > 0:
+        for arg in commandLineArgs.split(' '):
+          if arg.len > 0:
+            b.addStrLit arg
+      b.addStrLit "--isSystem"
+      b.addStrLit "m"
+      b.withTree "input":
+        b.addIntLit 0  # main parsed file
+      b.withTree "output":
+        b.addIntLit 0  # semmed file output
+      b.withTree "output":
+        b.addIntLit 1  # index file output
+
+    # Command for nimsem with main flag
+    b.withTree "cmd":
+      b.addSymbolDef "nimsem_main"
+      b.addStrLit c.nimsem
+      if commandLineArgs.len > 0:
+        for arg in commandLineArgs.split(' '):
+          if arg.len > 0:
+            b.addStrLit arg
+      b.addStrLit "--isMain"
+      b.addStrLit "m"
+      b.withTree "input":
+        b.addIntLit 0  # main parsed file
+      b.withTree "output":
+        b.addIntLit 0  # semmed file output
+      b.withTree "output":
+        b.addIntLit 1  # index file output
+
+    # Build rules for semantic checking
+    var i = 0
+    for v in c.nodes:
+      b.withTree "do":
+        # Choose the right command based on flags
+        if v.isSystem:
+          b.addIdent "nimsem_system"
+        elif i == 0:  # first node is main
+          b.addIdent "nimsem_main"
+        else:
+          b.addIdent "nimsem"
+
+        # Input: parsed file
+        var seenDeps = initHashSet[string]()
+        for f in v.files:
+          let pf = c.config.parsedFile(f)
+          if not seenDeps.containsOrIncl(pf):
+            b.withTree "input":
+              b.addStrLit pf
+        # Input: dependencies
+        for f in v.deps:
+          let idxFile = c.config.indexFile(f)
+          if not seenDeps.containsOrIncl(idxFile):
+            b.withTree "input":
+              b.addStrLit idxFile
+        # Input: cached config file
+        b.withTree "input":
+          b.addStrLit c.config.cachedConfigFile()
+        # Outputs: semmed file and index file
+        b.withTree "output":
+          b.addStrLit c.config.semmedFile(v.files[0])
+        b.withTree "output":
+          b.addStrLit c.config.indexFile(v.files[0])
+      inc i
+
+    # Build rules for parsing
+    var seenFiles = initHashSet[string]()
+    for v in c.nodes:
+      for i in 0..<v.files.len:
+        let f = c.config.parsedFile(v.files[i])
+        if not seenFiles.containsOrIncl(f):
+          let nimFile = v.files[i].nimFile
+          b.withTree "do":
+            b.addIdent "nifler"
+            b.withTree "input":
+              b.addStrLit nimFile
+            b.withTree "output":
+              b.addStrLit f
 
 proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
   let path = c.config.cachedConfigFile()
@@ -381,6 +567,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string) =
   let nifler = findTool("nifler")
+  let nifmake = findTool("nifmake")
 
   if config.compat:
     let cfgNif = config.nifcachePath / moduleSuffix(project, []) & ".cfg.nif"
@@ -400,21 +587,21 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     c
   var c = initDepContext(false)
   generateCachedConfigFile c, passC, passL
-  let makeFilename = generateFrontendMakefile(c, commandLineArgs)
-  #echo "run with: make -f ", makeFilename
+  let buildFilename = generateFrontendBuildFile(c, commandLineArgs)
+  #echo "run with: nifmake run ", buildFilename
   when defined(windows):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
-  let makeCommand = "make" & (if silentMake: " -s" else: "") &
-    (if forceRebuild: " -B" else: "") &
-    " -f "
-  exec makeCommand & quoteShell(makeFilename)
+  let nifmakeCommand = quoteShell(nifmake) &
+    (if forceRebuild: " --force" else: "") &  # Use generic force flag
+    " run "
+  exec nifmakeCommand & quoteShell(buildFilename)
 
   # Parse `.2.deps.nif`.
   # It is generated by nimsem and doesn't contains modules imported under `when false:`.
   # https://github.com/nim-lang/nimony/issues/985
   c = initDepContext(true)
-  let makeFinalFilename = generateFinalMakefile(c, commandLineArgsNifc, passC, passL)
-  exec makeCommand & quoteShell(makeFinalFilename)
+  let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
+  exec nifmakeCommand & quoteShell(buildFinalFilename)
   if cmd == DoRun:
     exec c.config.exeFile(c.rootNode.files[0])
