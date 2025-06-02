@@ -551,6 +551,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     c.processedModules.incl p.modname
     parseDeps c, p, c.rootNode
     c
+
   var c = initDepContext(false)
   generateCachedConfigFile c, passC, passL
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs)
@@ -560,7 +561,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
-    " run "
+    " -j run "
   exec nifmakeCommand & quoteShell(buildFilename)
 
   # Parse `.2.deps.nif`.
