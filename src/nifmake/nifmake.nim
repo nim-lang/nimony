@@ -74,6 +74,9 @@ type
   CliCommand = enum
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
+  CliOption = enum
+    Parallel, Force, Verbose
+
 proc skipParRi(n: var Cursor) =
   ## Helper to skip a closing parenthesis
   if n.kind == ParRi:
@@ -99,17 +102,20 @@ proc findTool(name: string): string =
   if fileExists(result):
     discard "ok"
   elif not name.isAbsolute:
-    result = toolDir(result)
+    let t = toolDir(result)
+    if fileExists(t):
+      result = t
 
 proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '
 
 proc addFilename(result: var string; filename, prefix, suffix: string) =
-  result.addSpace()
-  if prefix.len > 0: result.add prefix
-  # This is not a bug, a suffix is always assumed to be part of the filename
-  # and so also subject to quoting:
-  result.add (suffix & filename).quoteShell
+  if filename.len > 0:
+    result.addSpace()
+    if prefix.len > 0: result.add prefix
+    # This is not a bug, a suffix is always assumed to be part of the filename
+    # and so also subject to quoting:
+    result.add (suffix & filename).quoteShell
 
 proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
   result = ""
@@ -131,6 +137,7 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
       inc n
     of ParLe:
       let tag = pool.tags[n.tag]
+      let L = if tag == "output": outputs.len else: inputs.len
       var a = 0
       var b = 0
       inc n
@@ -140,12 +147,12 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
         inc n
       if n.kind == IntLit:
         a = pool.integers[n.intId]
-        if a < 0: a = inputs.len + a
+        if a < 0: a = L + a
         b = a
         inc n
       if n.kind == IntLit:
         b = pool.integers[n.intId]
-        if b < 0: b = outputs.len + b
+        if b < 0: b = L + b
         inc n
       var suffix = ""
       if n.kind == StringLit:
@@ -214,7 +221,18 @@ proc getFileTime(dag: var Dag; filename: string): Time =
       result = getTime()  # Use current time for non-existent files
       dag.timestampCache[filename] = result
 
-proc needsRebuild(dag: var Dag; node: Node): bool =
+proc removeOutdatedArtifacts(dag: var Dag; node: Node; opt: set[CliOption]) =
+  ## Remove outdated build artifacts for a node
+  for output in node.outputs:
+    if fileExists(output):
+      try:
+        removeFile(output)
+        if Verbose in opt:
+          echo "Removed outdated artifact: ", output
+      except:
+        stderr.writeLine "Warning: Could not remove outdated artifact: ", output
+
+proc needsRebuild(dag: var Dag; node: Node; opt: set[CliOption]): bool =
   ## Check if a node needs to be rebuilt
   result = false
 
@@ -234,6 +252,8 @@ proc needsRebuild(dag: var Dag; node: Node): bool =
     if fileExists(input):
       let inputTime = dag.getFileTime(input)
       if inputTime >= oldestOutput:
+        # Remove outdated artifacts before rebuilding
+        dag.removeOutdatedArtifacts(node, opt)
         return true
 
 proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDepth: var int): bool =
@@ -275,16 +295,20 @@ proc executeCommand(command: string): bool =
   except:
     result = false
 
+proc failed(arg: string) =
+  stdout.write "make: "
+  stdout.writeLine arg
+
 type
   CmdStatus = enum
     Enqueued, Running, Finished
 
-proc runDag(dag: var Dag; parallel: bool): bool =
+proc runDag(dag: var Dag; opt: set[CliOption]): bool =
   ## Execute the DAG in topological order
   result = true
   let sortedNodes = topologicalSort(dag)
 
-  if parallel:
+  if Parallel in opt:
     var i = 0
     while i < sortedNodes.len:
       let currentDepth = dag.nodes[sortedNodes[i]].depth
@@ -294,10 +318,12 @@ proc runDag(dag: var Dag; parallel: bool): bool =
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if dag.needsRebuild(node[]):
-          echo "Building: ", node.outputs.join(", ")
+        if Force in opt or dag.needsRebuild(node[], opt):
+          if Verbose in opt:
+            echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
-          echo "Command: ", expandedCmd
+          if Verbose in opt:
+            echo "Command: ", expandedCmd
           commands.add(expandedCmd)
           nodeIds.add(sortedNodes[i])
         inc i
@@ -312,21 +338,24 @@ proc runDag(dag: var Dag; parallel: bool): bool =
         if maxExitCode != 0:
           for i, p in pairs(progress):
             if p == Running:
-              echo "Error: Command failed: ", commands[i]
+              failed commands[i]
           return false
   else:
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if dag.needsRebuild(node[]):
-        echo "Building: ", node.outputs.join(", ")
+      if Force in opt or dag.needsRebuild(node[], opt):
+        if Verbose in opt:
+          echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
-        echo "Command: ", expandedCmd
+        if Verbose in opt:
+          echo "Command: ", expandedCmd
         if not executeCommand(expandedCmd):
-          echo "Error: Command failed: ", expandedCmd
+          failed expandedCmd
           return false
       else:
-        echo "Up to date: ", node.outputs.join(", ")
+        if Verbose in opt:
+          echo "Up to date: ", node.outputs.join(", ")
 
 proc mescape(p: string): string =
   when defined(windows):
@@ -504,6 +533,8 @@ Commands:
 Options:
   -j, --parallel        Enable parallel builds (for 'run' command)
   --makefile <name>     Output Makefile name (default: Makefile)
+  --force               Force rebuild of all targets
+  --verbose             Show verbose output
 
 Examples:
   nifmake run build.nif
@@ -521,7 +552,7 @@ proc main() =
     cmd = cmdHelp
     inputFile = ""
     outputMakefile = "Makefile"
-    parallel = false
+    opt: set[CliOption] = {}
 
   for kind, key, val in getopt():
     case kind
@@ -541,8 +572,10 @@ proc main() =
       case key.normalize
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
-      of "parallel", "j": parallel = true
+      of "parallel", "j": opt.incl Parallel
       of "makefile": outputMakefile = val
+      of "force": opt.incl Force
+      of "verbose": opt.incl Verbose
       else:
         echo "Unknown option: --", key
         quit(1)
@@ -557,8 +590,8 @@ proc main() =
       quit "Input file required for 'run' command"
 
     var dag = parseNifFile(inputFile)
-    if not runDag(dag, parallel):
-      quit "Build failed"
+    if not runDag(dag, opt):
+      quit 1
 
   of cmdMakefile:
     if inputFile == "":

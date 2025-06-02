@@ -1,4 +1,4 @@
-import mdistincts
+import deps/mdistincts
 
 import std/assertions
 
