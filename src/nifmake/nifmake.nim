@@ -74,6 +74,9 @@ type
   CliCommand = enum
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
+  CliOption = enum
+    Parallel, Force, Verbose
+
 proc skipParRi(n: var Cursor) =
   ## Helper to skip a closing parenthesis
   if n.kind == ParRi:
@@ -282,12 +285,12 @@ type
   CmdStatus = enum
     Enqueued, Running, Finished
 
-proc runDag(dag: var Dag; parallel: bool; force: bool): bool =
+proc runDag(dag: var Dag; opt: set[CliOption]): bool =
   ## Execute the DAG in topological order
   result = true
   let sortedNodes = topologicalSort(dag)
 
-  if parallel:
+  if Parallel in opt:
     var i = 0
     while i < sortedNodes.len:
       let currentDepth = dag.nodes[sortedNodes[i]].depth
@@ -297,10 +300,12 @@ proc runDag(dag: var Dag; parallel: bool; force: bool): bool =
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if force or dag.needsRebuild(node[]):
-          echo "Building: ", node.outputs.join(", ")
+        if Force in opt or dag.needsRebuild(node[]):
+          if Verbose in opt:
+            echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
-          echo "Command: ", expandedCmd
+          if Verbose in opt:
+            echo "Command: ", expandedCmd
           commands.add(expandedCmd)
           nodeIds.add(sortedNodes[i])
         inc i
@@ -321,15 +326,18 @@ proc runDag(dag: var Dag; parallel: bool; force: bool): bool =
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if force or dag.needsRebuild(node[]):
-        echo "Building: ", node.outputs.join(", ")
+      if Force in opt or dag.needsRebuild(node[]):
+        if Verbose in opt:
+          echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
-        echo "Command: ", expandedCmd
+        if Verbose in opt:
+          echo "Command: ", expandedCmd
         if not executeCommand(expandedCmd):
           echo "Error: Command failed: ", expandedCmd
           return false
       else:
-        echo "Up to date: ", node.outputs.join(", ")
+        if Verbose in opt:
+          echo "Up to date: ", node.outputs.join(", ")
 
 proc mescape(p: string): string =
   when defined(windows):
@@ -508,6 +516,7 @@ Options:
   -j, --parallel        Enable parallel builds (for 'run' command)
   --makefile <name>     Output Makefile name (default: Makefile)
   --force               Force rebuild of all targets
+  --verbose             Show verbose output
 
 Examples:
   nifmake run build.nif
@@ -525,8 +534,7 @@ proc main() =
     cmd = cmdHelp
     inputFile = ""
     outputMakefile = "Makefile"
-    parallel = false
-    force = false
+    opt: set[CliOption] = {}
 
   for kind, key, val in getopt():
     case kind
@@ -546,9 +554,10 @@ proc main() =
       case key.normalize
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
-      of "parallel", "j": parallel = true
+      of "parallel", "j": opt.incl Parallel
       of "makefile": outputMakefile = val
-      of "force": force = true
+      of "force": opt.incl Force
+      of "verbose": opt.incl Verbose
       else:
         echo "Unknown option: --", key
         quit(1)
@@ -563,7 +572,7 @@ proc main() =
       quit "Input file required for 'run' command"
 
     var dag = parseNifFile(inputFile)
-    if not runDag(dag, parallel, force):
+    if not runDag(dag, opt):
       quit "Build failed"
 
   of cmdMakefile:

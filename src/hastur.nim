@@ -576,6 +576,7 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     buildHexer()
+    buildNifmake()
     nimonytests(overwrite)
     nifctests(overwrite)
     #hexertests(overwrite)
