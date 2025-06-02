@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tclosureunavail.nim(17, 13) Error: cannot access local variable `x` from another routine; closures are not supported
