@@ -282,7 +282,7 @@ type
   CmdStatus = enum
     Enqueued, Running, Finished
 
-proc runDag(dag: var Dag; parallel: bool): bool =
+proc runDag(dag: var Dag; parallel: bool; force: bool): bool =
   ## Execute the DAG in topological order
   result = true
   let sortedNodes = topologicalSort(dag)
@@ -297,7 +297,7 @@ proc runDag(dag: var Dag; parallel: bool): bool =
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if dag.needsRebuild(node[]):
+        if force or dag.needsRebuild(node[]):
           echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
           echo "Command: ", expandedCmd
@@ -321,7 +321,7 @@ proc runDag(dag: var Dag; parallel: bool): bool =
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if dag.needsRebuild(node[]):
+      if force or dag.needsRebuild(node[]):
         echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
         echo "Command: ", expandedCmd
@@ -507,6 +507,7 @@ Commands:
 Options:
   -j, --parallel        Enable parallel builds (for 'run' command)
   --makefile <name>     Output Makefile name (default: Makefile)
+  --force               Force rebuild of all targets
 
 Examples:
   nifmake run build.nif
@@ -525,6 +526,7 @@ proc main() =
     inputFile = ""
     outputMakefile = "Makefile"
     parallel = false
+    force = false
 
   for kind, key, val in getopt():
     case kind
@@ -546,6 +548,7 @@ proc main() =
       of "version", "v": writeVersion()
       of "parallel", "j": parallel = true
       of "makefile": outputMakefile = val
+      of "force": force = true
       else:
         echo "Unknown option: --", key
         quit(1)
@@ -560,7 +563,7 @@ proc main() =
       quit "Input file required for 'run' command"
 
     var dag = parseNifFile(inputFile)
-    if not runDag(dag, parallel):
+    if not runDag(dag, parallel, force):
       quit "Build failed"
 
   of cmdMakefile:
