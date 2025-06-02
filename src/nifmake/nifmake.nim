@@ -133,6 +133,7 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
       inc n
     of ParLe:
       let tag = pool.tags[n.tag]
+      let L = if tag == "output": outputs.len else: inputs.len
       var a = 0
       var b = 0
       inc n
@@ -142,12 +143,12 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
         inc n
       if n.kind == IntLit:
         a = pool.integers[n.intId]
-        if a < 0: a = inputs.len + a
+        if a < 0: a = L + a
         b = a
         inc n
       if n.kind == IntLit:
         b = pool.integers[n.intId]
-        if b < 0: b = outputs.len + b
+        if b < 0: b = L + b
         inc n
       var suffix = ""
       if n.kind == StringLit:
