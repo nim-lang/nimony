@@ -110,11 +110,12 @@ proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '
 
 proc addFilename(result: var string; filename, prefix, suffix: string) =
-  result.addSpace()
-  if prefix.len > 0: result.add prefix
-  # This is not a bug, a suffix is always assumed to be part of the filename
-  # and so also subject to quoting:
-  result.add (suffix & filename).quoteShell
+  if filename.len > 0:
+    result.addSpace()
+    if prefix.len > 0: result.add prefix
+    # This is not a bug, a suffix is always assumed to be part of the filename
+    # and so also subject to quoting:
+    result.add (suffix & filename).quoteShell
 
 proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
   result = ""
