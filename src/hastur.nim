@@ -173,10 +173,11 @@ proc removeMakeErrors(output: string): string =
   result = output.strip
   for prefix in ["FAILURE:", "make:"]:
     let lastLine = rfind(result, '\n')
-    if lastLine >= 0 and lastLine + prefix.len < result.len and
-        result[lastLine + 1 .. lastLine + prefix.len] == prefix:
-      result = result[0 .. lastLine].strip
-    else: break
+    if lastLine >= 0:
+      if result.continuesWith(prefix, lastLine+1):
+        result.setLen lastLine
+    elif result.startsWith(prefix):
+      result.setLen 0
 
 proc compareValgrindOutput(s1: string, s2: string): bool =
   # ==90429==
