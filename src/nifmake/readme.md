@@ -59,12 +59,12 @@ NIF supports reusable command definitions that can be used in multiple build rul
 - A name
 - A sequence of tokens that can be:
   - String literals
-  - Special tags: `(input)`, `(output)`
+  - Special tags: `(input)`, `(output)`, `(args)`
 
 Example command definition:
 
 ```nif
-(cmd :compile "nim" "c" "--out:" (output) (input))
+(cmd :compile "nim" (arg) "c" "--out:" (output) (input))
 ```
 
 This command can be used in build rules:
@@ -84,6 +84,8 @@ After the indexes a suffix can be written: `(input 0 -1 ".nim")` produces `<inpu
 
 `(output)`: Refers to the output file(s) from index `N` to index `M`. The indexing and the prefixes and suffixes work just like it does for `(input)`.
 
+`(args)` stands for all arguments that are passed to the command via `(args)`. These are separated by spaces.
+
 
 ## Build File Format
 
@@ -92,12 +94,14 @@ Build files use the NIF syntax:
 ```nif
 (.nif24)
 (stmts
-  (cmd :command_template "bin/tool" (input +0 +1) (output))
+  (cmd :command_template "bin/tool" (args) (input +0 +1) (output))
   (do command_template
     (input "input_file1")
     (input "input_file2")
     (input "included_file")
     (output "output_file")
+    (args "lfoobar")
+    (args "-funsigned-char")
   )
   (cmd :another_command "bin/toolab" (input) (output))
   (do another_command

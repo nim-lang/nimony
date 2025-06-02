@@ -60,6 +60,7 @@ type
     cmdIdx*: int      # index into Dag.commands
     inputs*: seq[string]
     outputs*: seq[string]
+    args*: seq[string]
     deps*: seq[int]   # node IDs this depends on
     state*: NodeState
     depth*: int       # depth in the DAG for parallel execution
@@ -117,7 +118,7 @@ proc addFilename(result: var string; filename, prefix, suffix: string) =
     # and so also subject to quoting:
     result.add (suffix & filename).quoteShell
 
-proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
+proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]): string =
   result = ""
   if cmd.tokens.len == 0:
     quit "undeclared command: " & cmd.name
@@ -137,39 +138,46 @@ proc expandCommand(cmd: Command; inputs, outputs: seq[string]): string =
       inc n
     of ParLe:
       let tag = pool.tags[n.tag]
-      let L = if tag == "output": outputs.len else: inputs.len
-      var a = 0
-      var b = 0
-      inc n
-      var prefix = ""
-      if n.kind == StringLit:
-        prefix = pool.strings[n.litId]
+      if tag == "args":
+        for i in 0..<args.len:
+          addSpace(result)
+          result.add args[i]
         inc n
-      if n.kind == IntLit:
-        a = pool.integers[n.intId]
-        if a < 0: a = L + a
-        b = a
-        inc n
-      if n.kind == IntLit:
-        b = pool.integers[n.intId]
-        if b < 0: b = L + b
-        inc n
-      var suffix = ""
-      if n.kind == StringLit:
-        suffix = pool.strings[n.litId]
-        inc n
-      skipParRi n
-      case tag
-      of "input":
-        for i in a..b:
-          if i >= 0 and i < inputs.len:
-            addFilename(result, inputs[i], prefix, suffix)
-      of "output":
-        for i in a..b:
-          if i >= 0 and i < outputs.len:
-            addFilename(result, outputs[i], prefix, suffix)
+        skipParRi n
       else:
-        raiseAssert "unsupported tag in `cmd` definition: " & tag
+        let L = if tag == "output": outputs.len else: inputs.len
+        var a = 0
+        var b = 0
+        inc n
+        var prefix = ""
+        if n.kind == StringLit:
+          prefix = pool.strings[n.litId]
+          inc n
+        if n.kind == IntLit:
+          a = pool.integers[n.intId]
+          if a < 0: a = L + a
+          b = a
+          inc n
+        if n.kind == IntLit:
+          b = pool.integers[n.intId]
+          if b < 0: b = L + b
+          inc n
+        var suffix = ""
+        if n.kind == StringLit:
+          suffix = pool.strings[n.litId]
+          inc n
+        skipParRi n
+        case tag
+        of "input":
+          for i in a..b:
+            if i >= 0 and i < inputs.len:
+              addFilename(result, inputs[i], prefix, suffix)
+        of "output":
+          for i in a..b:
+            if i >= 0 and i < outputs.len:
+              addFilename(result, outputs[i], prefix, suffix)
+        else:
+          raiseAssert "unsupported tag in `cmd` definition: " & tag
     else:
       raiseAssert "unsupported token in `cmd` definition: " & $n.kind
 
@@ -181,7 +189,7 @@ proc registerCommand(dag: var Dag; cmdName: string): int =
   dag.commands.add Command(name: cmdName)
 
 proc addNode(dag: var Dag; cmdName: string;
-             inputs, outputs: sink seq[string]): int =
+             inputs, outputs, args: sink seq[string]): int =
   ## Add a build node to the DAG and return its ID
   result = dag.nodes.len
   let cmdIdx = registerCommand(dag, cmdName)
@@ -189,6 +197,7 @@ proc addNode(dag: var Dag; cmdName: string;
     cmdIdx: cmdIdx,
     inputs: inputs,
     outputs: outputs,
+    args: args,
     deps: @[],
     state: nsUnvisited,
     depth: 0
@@ -321,7 +330,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
           dag.removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
             echo "Building: ", node.outputs.join(", ")
-          let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
+          let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args)
           if Verbose in opt:
             echo "Command: ", expandedCmd
           commands.add(expandedCmd)
@@ -349,7 +358,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
         dag.removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
-        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
+        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args)
         if Verbose in opt:
           echo "Command: ", expandedCmd
         if not executeCommand(expandedCmd):
@@ -397,7 +406,7 @@ proc generateMakefile(dag: Dag; filename: string) =
     content.add "\n"
 
     # Command line
-    let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
+    let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args)
     content.add "\t" & mescape(expandedCmd) & "\n\n"
 
   # Add clean target
@@ -423,7 +432,7 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
         inc n
       of ParLe:
         let tag = pool.tags[n.tag]
-        if tag in ["input", "output"]:
+        if tag in ["input", "output", "args"]:
           discard
         else:
           quit "unsupported tag in `cmd` definition: " & tag
@@ -458,6 +467,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
 
   var inputs: seq[string] = @[]
   var outputs: seq[string] = @[]
+  var args: seq[string] = @[]
 
   # Parse imports and results
   while n.kind != ParRi:
@@ -473,6 +483,11 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
         if n.kind == StringLit:
           outputs.add(pool.strings[n.litId])
           inc n
+      elif tag == "args":
+        while n.kind != ParRi:
+          if n.kind == StringLit:
+            args.add(pool.strings[n.litId])
+          inc n
       else:
         quit "unsupported tag in `do` definition: " & tag
 
@@ -480,7 +495,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
     else:
       quit "expected `input` or `output` in `do` definition, but found: " & $n.kind
 
-  discard addNode(dag, cmdName, inputs, outputs)
+  discard addNode(dag, cmdName, inputs, outputs, args)
 
 proc parseNifFile(filename: string): Dag =
   ## Parse a .nif file and build the DAG
