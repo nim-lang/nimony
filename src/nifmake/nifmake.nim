@@ -232,7 +232,7 @@ proc removeOutdatedArtifacts(dag: var Dag; node: Node; opt: set[CliOption]) =
       except:
         stderr.writeLine "Warning: Could not remove outdated artifact: ", output
 
-proc needsRebuild(dag: var Dag; node: Node; opt: set[CliOption]): bool =
+proc needsRebuild(dag: var Dag; node: Node): bool =
   ## Check if a node needs to be rebuilt
   result = false
 
@@ -252,8 +252,6 @@ proc needsRebuild(dag: var Dag; node: Node; opt: set[CliOption]): bool =
     if fileExists(input):
       let inputTime = dag.getFileTime(input)
       if inputTime >= oldestOutput:
-        # Remove outdated artifacts before rebuilding
-        dag.removeOutdatedArtifacts(node, opt)
         return true
 
 proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDepth: var int): bool =
@@ -318,7 +316,9 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if Force in opt or dag.needsRebuild(node[], opt):
+        if Force in opt or dag.needsRebuild(node[]):
+          # Remove outdated artifacts before rebuilding
+          dag.removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
             echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
@@ -344,7 +344,9 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if Force in opt or dag.needsRebuild(node[], opt):
+      if Force in opt or dag.needsRebuild(node[]):
+        # Remove outdated artifacts before rebuilding
+        dag.removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs)
