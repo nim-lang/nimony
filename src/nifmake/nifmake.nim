@@ -282,6 +282,7 @@ proc executeCommand(command: string): bool =
     result = false
 
 proc failed(msg, arg: string) =
+  stderr.write "FAILURE: "
   stderr.write msg
   stderr.writeLine arg
 
