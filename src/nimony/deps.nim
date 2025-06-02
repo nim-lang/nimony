@@ -249,15 +249,6 @@ proc toBuildList(c: DepContext): seq[CFile] =
       result.add (path, obj, customArgs)
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
-  let dest =
-    case c.cmd
-    of DoCheck:
-      c.config.indexFile(c.rootNode.files[0])
-    of DoTranslate:
-      ""
-    of DoCompile, DoRun:
-      c.config.exeFile(c.rootNode.files[0])
-
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
   defer: b.close()
@@ -350,14 +341,19 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.withTree "do":
         b.addIdent "link"
         # Input: all object files
+        var objFiles = initHashSet[string]()
         for cfile in buildList:
-          b.withTree "input":
-            b.addStrLit c.config.nifcachePath / cfile.obj
+          let obj = c.config.nifcachePath / cfile.obj
+          if not objFiles.containsOrIncl(obj):
+            b.withTree "input":
+              b.addStrLit obj
         for v in c.nodes:
-          b.withTree "input":
-            b.addStrLit c.config.objFile(v.files[0])
+          let obj = c.config.objFile(v.files[0])
+          if not objFiles.containsOrIncl(obj):
+            b.withTree "input":
+              b.addStrLit obj
         b.withTree "output":
-          b.addStrLit dest
+          b.addStrLit c.config.exeFile(c.rootNode.files[0])
 
       # Build object files from C files with custom args
       for cfile in buildList:
