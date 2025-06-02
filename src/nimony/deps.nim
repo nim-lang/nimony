@@ -370,16 +370,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.withTree "output":
             b.addStrLit c.config.nifcachePath / cfile.obj
 
-      # Build main module C file (entry point)
-      b.withTree "do":
-        b.addIdent "nifc_main"
-        b.withTree "input":
-          b.addStrLit c.config.nifcFile(c.rootNode.files[0])
-        b.withTree "output":
-          b.addStrLit c.config.cFile(c.rootNode.files[0])
-
-      # Build object files from C files
-      for v in c.nodes:
+      for i, v in pairs c.nodes:
         b.withTree "do":
           b.addIdent "cc_obj"
           b.withTree "input":
@@ -389,7 +380,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
 
         # Build C files from .c.nif files
         b.withTree "do":
-          b.addIdent "nifc"
+          if i == 0:
+            b.addIdent "nifc_main"
+          else:
+            b.addIdent "nifc"
           b.withTree "input":
             b.addStrLit c.config.nifcFile(v.files[0])
           b.withTree "output":
@@ -404,19 +398,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.addStrLit c.config.indexFile(v.files[0])
           b.withTree "output":
             b.addStrLit c.config.nifcFile(v.files[0])
-
-    elif c.cmd == DoCheck:
-      # For check command, just verify that semantic analysis completes
-      b.withTree "cmd":
-        b.addSymbolDef "true_cmd"
-        b.addStrLit "true"  # Unix true command
-
-      b.withTree "do":
-        b.addIdent "true_cmd"
-        b.withTree "input":
-          b.addStrLit c.config.indexFile(c.rootNode.files[0])
-        b.withTree "output":
-          b.addStrLit dest
 
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
