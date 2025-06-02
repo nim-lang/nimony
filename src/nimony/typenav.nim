@@ -98,7 +98,7 @@ proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
     if it.kind == compareTo:
       crossedProc = true
     if res.kind != NoSym:
-      res.crossedProc = crossedProc
+      res.crossedProc = crossedProc and res.kind in {VarY, LetY}
       return res
     it = it.parent
     compareTo = ProcScope
