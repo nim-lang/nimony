@@ -265,19 +265,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addStrLit nifc
       b.addStrLit "c"
       b.addStrLit "--compileOnly"
-      if commandLineArgsNifc.len > 0:
-        for arg in commandLineArgsNifc.split(' '):
-          if arg.len > 0:
-            b.addStrLit arg
-      b.addKeyw "input"
-
-    # Command for nifc with main flag (entry point)
-    b.withTree "cmd":
-      b.addSymbolDef "nifc_main"
-      b.addStrLit nifc
-      b.addStrLit "c"
-      b.addStrLit "--compileOnly"
-      b.addStrLit "--isMain"
+      b.addKeyw "args"
       if commandLineArgsNifc.len > 0:
         for arg in commandLineArgsNifc.split(' '):
           if arg.len > 0:
@@ -294,7 +282,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
 
     # Command for C compiler (object files)
     b.withTree "cmd":
-      b.addSymbolDef "cc_obj"
+      b.addSymbolDef "cc"
       b.addStrLit "gcc"  # Use gcc directly since environment handling is different
       b.addStrLit "-c"
       if passC.len > 0:
@@ -302,23 +290,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           if arg.len > 0:
             b.addStrLit arg
       b.addStrLit "-I" & rootPath(c)
+      b.addKeyw "args"
       b.addKeyw "input"
-      b.addStrLit "-o"
-      b.addKeyw "output"
-
-    # Command for C compiler with custom args
-    b.withTree "cmd":
-      b.addSymbolDef "cc_custom"
-      b.addStrLit "gcc"
-      b.addStrLit "-c"
-      if passC.len > 0:
-        for arg in passC.split(' '):
-          if arg.len > 0:
-            b.addStrLit arg
-      b.withTree "input":
-        b.addIntLit 1  # custom args at index 1
-      b.withTree "input":
-        b.addIntLit 0  # source file at index 0
       b.addStrLit "-o"
       b.addKeyw "output"
 
@@ -359,31 +332,36 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         b.withTree "output":
           b.addStrLit c.config.exeFile(c.rootNode.files[0])
 
+      objFiles.clear()
       # Build object files from C files with custom args
       for cfile in buildList:
-        b.withTree "do":
-          b.addIdent "cc_custom"
-          b.withTree "input":
-            b.addStrLit cfile.name
-          b.withTree "input":
-            b.addStrLit cfile.customArgs
-          b.withTree "output":
-            b.addStrLit c.config.nifcachePath / cfile.obj
+        let obj = c.config.nifcachePath / cfile.obj
+        if not objFiles.containsOrIncl(obj):
+          b.withTree "do":
+            b.addIdent "cc"
+            b.withTree "input":
+              b.addStrLit cfile.name
+            b.withTree "args":
+              b.addStrLit cfile.customArgs
+            b.withTree "output":
+              b.addStrLit obj
 
       for i, v in pairs c.nodes:
-        b.withTree "do":
-          b.addIdent "cc_obj"
-          b.withTree "input":
-            b.addStrLit c.config.cFile(v.files[0])
-          b.withTree "output":
-            b.addStrLit c.config.objFile(v.files[0])
+        let obj = c.config.objFile(v.files[0])
+        if not objFiles.containsOrIncl(obj):
+          b.withTree "do":
+            b.addIdent "cc"
+            b.withTree "input":
+              b.addStrLit c.config.cFile(v.files[0])
+            b.withTree "output":
+              b.addStrLit obj
 
         # Build C files from .c.nif files
         b.withTree "do":
+          b.addIdent "nifc"
           if i == 0:
-            b.addIdent "nifc_main"
-          else:
-            b.addIdent "nifc"
+            b.withTree "args":
+              b.addStrLit "--isMain"
           b.withTree "input":
             b.addStrLit c.config.nifcFile(v.files[0])
           b.withTree "output":
