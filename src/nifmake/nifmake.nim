@@ -281,6 +281,10 @@ proc executeCommand(command: string): bool =
   except:
     result = false
 
+proc failed(msg, arg: string) =
+  stderr.write msg
+  stderr.writeLine arg
+
 type
   CmdStatus = enum
     Enqueued, Running, Finished
@@ -320,7 +324,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
         if maxExitCode != 0:
           for i, p in pairs(progress):
             if p == Running:
-              echo "Error: Command failed: ", commands[i]
+              failed "Error: Command failed: ", commands[i]
           return false
   else:
     # Sequential execution
@@ -333,7 +337,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
         if Verbose in opt:
           echo "Command: ", expandedCmd
         if not executeCommand(expandedCmd):
-          echo "Error: Command failed: ", expandedCmd
+          failed "Error: Command failed: ", expandedCmd
           return false
       else:
         if Verbose in opt:
