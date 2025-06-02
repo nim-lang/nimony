@@ -311,6 +311,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addSymbolDef "cc_custom"
       b.addStrLit "gcc"
       b.addStrLit "-c"
+      if passC.len > 0:
+        for arg in passC.split(' '):
+          if arg.len > 0:
+            b.addStrLit arg
       b.withTree "input":
         b.addIntLit 1  # custom args at index 1
       b.withTree "input":
