@@ -99,7 +99,9 @@ proc findTool(name: string): string =
   if fileExists(result):
     discard "ok"
   elif not name.isAbsolute:
-    result = toolDir(result)
+    let t = toolDir(result)
+    if fileExists(t):
+      result = t
 
 proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '
