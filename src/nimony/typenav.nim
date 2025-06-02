@@ -31,10 +31,14 @@ proc isGeneratedType*(s: string): bool =
 type
   LocalInfo* = object
     kind*: SymKind
+    crossedProc*: bool
     typ*: Cursor
+  ScopeKind* = enum
+    OtherScope, ProcScope, UnusedScope
   TypeScope* {.acyclic.} = ref object
     locals: Table[SymId, LocalInfo]
     parent: TypeScope
+    kind: ScopeKind
 
   TypeCache* = object
     builtins*: BuiltinTypes
@@ -47,8 +51,8 @@ proc createTypeCache*(): TypeCache =
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor) =
   c.current.locals[s] = LocalInfo(kind: kind, typ: typ)
 
-proc openScope*(c: var TypeCache) =
-  c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current)
+proc openScope*(c: var TypeCache; kind = OtherScope) =
+  c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: kind)
 
 proc closeScope*(c: var TypeCache) =
   c.current = c.current.parent
@@ -87,11 +91,17 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
 
 proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
   var it {.cursor.} = c.current
+  var crossedProc = false
+  var compareTo = UnusedScope
   while it != nil:
     var res = it.locals.getOrDefault(s)
+    if it.kind == compareTo:
+      crossedProc = true
     if res.kind != NoSym:
+      res.crossedProc = crossedProc
       return res
     it = it.parent
+    compareTo = ProcScope
   return default(LocalInfo)
 
 proc getInitValue*(c: var TypeCache; s: SymId): Cursor =

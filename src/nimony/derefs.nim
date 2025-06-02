@@ -350,7 +350,7 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
     takeParRi c, n
 
 proc trProcDecl(c: var Context; n: var Cursor) =
-  c.typeCache.openScope()
+  c.typeCache.openScope(ProcScope)
   takeToken c, n
   let symId = n.symId
   var isGeneric = false
@@ -714,7 +714,15 @@ proc trFor(c: var Context; n: var Cursor) =
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
-    trLocation c, n, e
+    let localInfo = c.typeCache.getLocalInfo(n.symId)
+    if localInfo.crossedProc:
+      let info = n.info
+      c.dest.buildTree ErrT, info:
+        c.dest.addSubtree n
+        c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; closures are not supported"), info)
+      skip n
+    else:
+      trLocation c, n, e
   of IntLit, UIntLit, FloatLit, CharLit, StringLit:
     if e.wantMutable:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
