@@ -278,10 +278,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         for arg in commandLineArgsNifc.split(' '):
           if arg.len > 0:
             b.addStrLit arg
-      b.withTree "input":
-        discard
-      b.withTree "output":
-        discard
+      b.addKeyw "input"
 
     # Command for nifc with main flag (entry point)
     b.withTree "cmd":
@@ -294,10 +291,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         for arg in commandLineArgsNifc.split(' '):
           if arg.len > 0:
             b.addStrLit arg
-      b.withTree "input":
-        discard
-      b.withTree "output":
-        discard
+      b.addKeyw "input"
 
     # Command for hexer
     b.withTree "cmd":
@@ -306,8 +300,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addStrLit "--bits:" & $c.config.bits
       b.withTree "input":
         b.addIntLit 0
-      b.withTree "output":
-        discard
 
     # Command for C compiler (object files)
     b.withTree "cmd":
@@ -319,11 +311,9 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           if arg.len > 0:
             b.addStrLit arg
       b.addStrLit "-I" & rootPath(c)
-      b.withTree "input":
-        discard
+      b.addKeyw "input"
       b.addStrLit "-o"
-      b.withTree "output":
-        discard
+      b.addKeyw "output"
 
     # Command for C compiler with custom args
     b.withTree "cmd":
@@ -335,8 +325,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.withTree "input":
         b.addIntLit 0  # source file at index 0
       b.addStrLit "-o"
-      b.withTree "output":
-        discard
+      b.addKeyw "output"
 
     # Command for linking
     if c.cmd in {DoCompile, DoRun}:
@@ -344,8 +333,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         b.addSymbolDef "link"
         b.addStrLit "gcc"
         b.addStrLit "-o"
-        b.withTree "output":
-          discard
+        b.addKeyw "output"
         b.withTree "input":
           b.addIntLit 0
           b.addIntLit -1  # all inputs
@@ -447,10 +435,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
       b.addStrLit "--portablePaths"
       b.addStrLit "--deps"
       b.addStrLit "parse"
-      b.withTree "input":
-        discard
-      b.withTree "output":
-        discard
+      b.addKeyw "input"
+      b.addKeyw "output"
 
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
