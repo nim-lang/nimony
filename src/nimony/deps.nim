@@ -138,6 +138,8 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the `import`
+  # ignore conditional imports:
+  if x.stmtKind == WhenS: return
   while x.kind != ParRi:
     if x.kind == ParLe and x.exprKind == PragmaxX:
       inc x
@@ -163,6 +165,8 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the tag
+  # ignore conditional imports:
+  if x.stmtKind == WhenS: return
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
