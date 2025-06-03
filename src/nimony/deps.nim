@@ -409,40 +409,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
           if arg.len > 0:
             b.addStrLit arg
       b.addStrLit "m"
-      b.withTree "input":
-        b.addIntLit 0  # main parsed file
-      b.withTree "output":
-        b.addIntLit 0  # semmed file output
-      b.withTree "output":
-        b.addIntLit 1  # index file output
-
-    # Command for nimsem with system flag
-    b.withTree "cmd":
-      b.addSymbolDef "nimsem_system"
-      b.addStrLit c.nimsem
-      if commandLineArgs.len > 0:
-        for arg in commandLineArgs.split(' '):
-          if arg.len > 0:
-            b.addStrLit arg
-      b.addStrLit "--isSystem"
-      b.addStrLit "m"
-      b.withTree "input":
-        b.addIntLit 0  # main parsed file
-      b.withTree "output":
-        b.addIntLit 0  # semmed file output
-      b.withTree "output":
-        b.addIntLit 1  # index file output
-
-    # Command for nimsem with main flag
-    b.withTree "cmd":
-      b.addSymbolDef "nimsem_main"
-      b.addStrLit c.nimsem
-      if commandLineArgs.len > 0:
-        for arg in commandLineArgs.split(' '):
-          if arg.len > 0:
-            b.addStrLit arg
-      b.addStrLit "--isMain"
-      b.addStrLit "m"
+      b.addKeyw "args"
       b.withTree "input":
         b.addIntLit 0  # main parsed file
       b.withTree "output":
@@ -455,12 +422,12 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
     for v in c.nodes:
       b.withTree "do":
         # Choose the right command based on flags
-        if v.isSystem:
-          b.addIdent "nimsem_system"
-        elif i == 0:  # first node is main
-          b.addIdent "nimsem_main"
-        else:
-          b.addIdent "nimsem"
+        b.addIdent "nimsem"
+        b.withTree "args":
+          if v.isSystem:
+            b.addStrLit "--isSystem"
+          elif i == 0:  # first node is main
+            b.addStrLit "--isMain"
 
         # Input: parsed file
         var seenDeps = initHashSet[string]()
