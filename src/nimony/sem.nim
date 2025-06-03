@@ -3066,11 +3066,17 @@ proc semObjConstr(c: var SemContext, it: var Item) =
     if decl.kind != TypeY:
       # includes typevar case
       c.buildErr info, "expected type for object constructor"
+      skipToEnd it.n
       return
     objType = decl.objBody
     if objType.typeKind != ObjectT:
       c.buildErr info, "expected object type for object constructor"
+      skipToEnd it.n
       return
+  else:
+    c.buildErr info, "expected type symbol for object constructor"
+    skipToEnd it.n
+    return
   # build bindings for invoked object type to get proper types for fields:
   let bindings = bindInvokeArgs(decl, invokeArgs)
   var fieldBuf = createTokenBuf(16)

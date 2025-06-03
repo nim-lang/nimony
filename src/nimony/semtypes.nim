@@ -299,7 +299,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     decl = getTypeSection(headId)
     if decl.kind != TypeY:
       c.buildErr info, "cannot attempt to instantiate a non-type"
-    if decl.typevars.substructureKind != TypevarsU:
+    elif decl.typevars.substructureKind != TypevarsU:
       c.buildErr info, "cannot attempt to instantiate a concrete type"
     else:
       ok = true
@@ -316,8 +316,10 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     else:
       c.buildErr info, "cannot attempt to instantiate a non-type"
 
-  var params = decl.typevars
-  inc params
+  var params = default(Cursor)
+  if decl.kind == TypeY:
+    params = decl.typevars
+    inc params
   var paramCount = 0
   var argCount = 0
   var m = createMatch(addr c)
@@ -332,7 +334,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
     semLocalTypeImpl c, n, AllowValues
     swap c.dest, argBuf
     var addArg = true
-    if params.kind == ParRi:
+    if cursorIsNil(params) or params.kind == ParRi:
       # will error later from param/arg count not matching
       discard
     else:
@@ -349,7 +351,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       c.dest.add argBuf
   swap c.usedTypevars, genericArgs
   takeParRi c, n
-  if paramCount != argCount:
+  if ok and paramCount != argCount:
     c.dest.shrink typeStart
     c.buildErr info, "wrong amount of generic parameters for type " & pool.syms[headId] &
       ", expected " & $paramCount & " but got " & $argCount
