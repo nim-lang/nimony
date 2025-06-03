@@ -213,7 +213,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
           buildErr c, info, getErrorMsg(convMatch)
         else:
           let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
-          c.dest[c.dest.len-1].setSymId inst.targetSym
+          c.dest[^1].setSymId inst.targetSym
       # ignore checkEmptyArg case, probably environment is generic
       c.dest.add convMatch.args
       c.dest.addParRi()
@@ -791,7 +791,7 @@ proc addMaybeBaseobjConv(c: var SemContext; m: var Match; beforeExpr: int) =
     c.dest.shrink beforeExpr
     c.dest.add m.args
     # remove the ')' as the caller will add one for us!
-    c.dest.shrink c.dest.len - 1
+    discard c.dest.pop
   else:
     c.dest.add m.args
 
@@ -1504,14 +1504,14 @@ proc maybeInlineMagic(c: var SemContext; res: LoadResult) =
       inc n # skip the SymbolDef
       if n.kind == ParLe:
         # ^ export marker position has a `(`? If so, it is a magic!
-        let info = c.dest[c.dest.len-1].info
+        let info = c.dest[^1].info
         var tag = n.tagId
         if cast[TagEnum](tag) == IsMainModuleTagId:
           if IsMain in c.moduleFlags:
             tag = TagId(TrueTagId)
           else:
             tag = TagId(FalseTagId)
-        c.dest[c.dest.len-1] = parLeToken(tag, info)
+        c.dest[^1] = parLeToken(tag, info)
         inc n
         while true:
           c.dest.add withLineInfo(n.load, info)
@@ -1579,7 +1579,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
             c.pendingTypePlugins[s.name] = p.litId
       else:
         # remove symbol, inline type:
-        c.dest.shrink c.dest.len-1
+        discard c.dest.pop
         var t = typ.body
         semLocalTypeImpl c, t, context
   else:
@@ -1742,8 +1742,7 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
   if s.kind == NoSym:
     if AllowUndeclared notin flags:
       var orig = createTokenBuf(1)
-      orig.add c.dest[c.dest.len-1]
-      c.dest.shrink c.dest.len-1
+      orig.add c.dest.pop
       let ident = cursorAt(orig, 0)
       if pool.syms.hasId(s.name):
         c.buildErr ident.info, "undeclared identifier: " & pool.syms[s.name], ident
@@ -1758,7 +1757,7 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
     let typeStart = c.dest.len
-    let info = c.dest[c.dest.len-1].info
+    let info = c.dest[^1].info
     c.dest.buildTree TypedescT, info:
       let symStart = c.dest.len
       c.dest.add symToken(s.name, info)

@@ -168,6 +168,18 @@ proc `[]=`*(b: TokenBuf; i: int; val: PackedToken) {.inline.} =
   assert i >= 0 and i < b.len
   b.data[i] = val
 
+proc `[]`*(b: TokenBuf; i: BackwardsIndex): PackedToken {.inline.} =
+  assert i.int > 0 and i.int <= b.len
+  result = b.data[b.len - i.int]
+
+proc `[]`*(b: var TokenBuf; i: BackwardsIndex): var PackedToken {.inline.} =
+  assert i.int > 0 and i.int <= b.len
+  result = b.data[b.len - i.int]
+
+proc `[]=`*(b: TokenBuf; i: BackwardsIndex; val: PackedToken) {.inline.} =
+  assert i.int > 0 and i.int <= b.len
+  b.data[b.len - i.int] = val
+
 proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
   if b.readers == 0: freeze(b)
@@ -251,6 +263,12 @@ proc shrink*(b: var TokenBuf; newLen: int) =
   assert isMutable(b), "attempt to mutate frozen TokenBuf"
   assert newLen >= 0 and newLen <= b.len
   b.len = newLen
+
+proc pop*(b: var TokenBuf): PackedToken {.inline.} =
+  assert isMutable(b), "attempt to mutate frozen TokenBuf"
+  assert b.len > 0
+  result = b.data[b.len - 1]
+  dec b.len
 
 proc grow(b: var TokenBuf; newLen: int) =
   assert isMutable(b), "attempt to mutate frozen TokenBuf"
