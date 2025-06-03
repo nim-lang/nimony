@@ -200,6 +200,7 @@ proc handleCmdLine() =
     requiresTool "nimsem", "src/nimony/nimsem.nim", fullRebuild
     requiresTool "hexer", "src/hexer/hexer.nim", fullRebuild
     requiresTool "nifc", "src/nifc/nifc.nim", fullRebuild
+    requiresTool "nifmake", "src/nifmake/nifmake.nim", fullRebuild
     # compile full project modules
     buildGraph config, args[0], forceRebuild, silentMake,
       commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),

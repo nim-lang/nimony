@@ -2104,7 +2104,9 @@ proc semWhen(c: var SemContext; it: var Item) =
   of SemcheckSignatures, SemcheckBodies:
     discard
 
+  inc c.inWhen
   semWhenImpl(c, it, NormalWhen)
+  dec c.inWhen
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =

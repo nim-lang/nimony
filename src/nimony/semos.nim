@@ -274,7 +274,9 @@ proc getFile*(info: PackedLineInfo): string =
     result = ""
 
 proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
-  exec os.getAppFilename() & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
+  let nimonyExe = findTool("nimony")
+  exec quoteShell(nimonyExe) & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
+  #exec os.getAppFilename() & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
 
 # ------------------ plugin handling --------------------------
 

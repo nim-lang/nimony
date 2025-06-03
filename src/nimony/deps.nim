@@ -138,6 +138,8 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the `import`
+  # ignore conditional imports:
+  if x.stmtKind == WhenS: return
   while x.kind != ParRi:
     if x.kind == ParLe and x.exprKind == PragmaxX:
       inc x
@@ -163,6 +165,8 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the tag
+  # ignore conditional imports:
+  if x.stmtKind == WhenS: return
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
@@ -196,12 +200,15 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
     while n.kind != ParRi:
       processDep c, n, current
 
-proc execNifler(c: var DepContext; input, output: string) =
-  if not c.forceRebuild and semos.fileExists(output) and semos.fileExists(input) and
-      getLastModificationTime(output) > getLastModificationTime(input):
+proc execNifler(c: var DepContext; f: FilePair) =
+  let output = c.config.parsedFile(f)
+  let depsFile = c.config.depsFile(f)
+  if not c.forceRebuild and semos.fileExists(output) and
+      semos.fileExists(f.nimFile) and getLastModificationTime(output) > getLastModificationTime(f.nimFile) and
+      semos.fileExists(depsFile) and getLastModificationTime(depsFile) > getLastModificationTime(f.nimFile):
     discard "nothing to do"
   else:
-    let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
+    let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(f.nimFile) & " " &
       quoteShell(output)
     exec cmd
 
@@ -210,13 +217,13 @@ proc importSystem(c: var DepContext; current: Node) =
   current.deps.add p
   if not c.processedModules.containsOrIncl(p.modname):
     #echo "NIFLING ", p.nimFile, " -> ", c.config.parsedFile(p)
-    execNifler c, p.nimFile, c.config.parsedFile(p)
+    execNifler c, p
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
     c.nodes.add imported
     parseDeps c, p, imported
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  execNifler c, p.nimFile, c.config.parsedFile(p)
+  execNifler c, p
 
   let depsFile = if c.isGeneratingFinal: c.config.deps2File(p) else: c.config.depsFile(p)
   var stream = nifstreams.open(depsFile)
@@ -405,40 +412,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
           if arg.len > 0:
             b.addStrLit arg
       b.addStrLit "m"
-      b.withTree "input":
-        b.addIntLit 0  # main parsed file
-      b.withTree "output":
-        b.addIntLit 0  # semmed file output
-      b.withTree "output":
-        b.addIntLit 1  # index file output
-
-    # Command for nimsem with system flag
-    b.withTree "cmd":
-      b.addSymbolDef "nimsem_system"
-      b.addStrLit c.nimsem
-      if commandLineArgs.len > 0:
-        for arg in commandLineArgs.split(' '):
-          if arg.len > 0:
-            b.addStrLit arg
-      b.addStrLit "--isSystem"
-      b.addStrLit "m"
-      b.withTree "input":
-        b.addIntLit 0  # main parsed file
-      b.withTree "output":
-        b.addIntLit 0  # semmed file output
-      b.withTree "output":
-        b.addIntLit 1  # index file output
-
-    # Command for nimsem with main flag
-    b.withTree "cmd":
-      b.addSymbolDef "nimsem_main"
-      b.addStrLit c.nimsem
-      if commandLineArgs.len > 0:
-        for arg in commandLineArgs.split(' '):
-          if arg.len > 0:
-            b.addStrLit arg
-      b.addStrLit "--isMain"
-      b.addStrLit "m"
+      b.addKeyw "args"
       b.withTree "input":
         b.addIntLit 0  # main parsed file
       b.withTree "output":
@@ -451,12 +425,12 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
     for v in c.nodes:
       b.withTree "do":
         # Choose the right command based on flags
-        if v.isSystem:
-          b.addIdent "nimsem_system"
-        elif i == 0:  # first node is main
-          b.addIdent "nimsem_main"
-        else:
-          b.addIdent "nimsem"
+        b.addIdent "nimsem"
+        b.withTree "args":
+          if v.isSystem:
+            b.addStrLit "--isSystem"
+          elif i == 0:  # first node is main
+            b.addStrLit "--isMain"
 
         # Input: parsed file
         var seenDeps = initHashSet[string]()
