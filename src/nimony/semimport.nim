@@ -97,12 +97,7 @@ proc doImports(c: var SemContext; files: seq[ImportedFilename]; mode: ImportFilt
   for f in files:
     importSingleFileConsiderExports c, f, origin, mode, info
 
-proc semImport(c: var SemContext; it: var Item) =
-  let info = it.n.info
-  var x = it.n
-  skip it.n
-  inc x # skip the `import`
-
+template maybeCyclic(c: var SemContext; x: var Cursor) =
   if x.kind == ParLe and x.exprKind == PragmaxX:
     inc x
     var y = x
@@ -112,6 +107,13 @@ proc semImport(c: var SemContext; it: var Item) =
       if y.kind == Ident and pool.strings[y.litId] == "cyclic":
         cyclicImport(c, x)
         return
+
+proc semImport(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  var x = it.n
+  skip it.n
+  inc x # skip the `import`
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
@@ -130,15 +132,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `importexcept`
 
-  if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
@@ -159,15 +153,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `from`
 
-  if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
