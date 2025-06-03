@@ -200,12 +200,15 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
     while n.kind != ParRi:
       processDep c, n, current
 
-proc execNifler(c: var DepContext; input, output: string) =
-  if not c.forceRebuild and semos.fileExists(output) and semos.fileExists(input) and
-      getLastModificationTime(output) > getLastModificationTime(input):
+proc execNifler(c: var DepContext; f: FilePair) =
+  let output = c.config.parsedFile(f)
+  let depsFile = c.config.depsFile(f)
+  if not c.forceRebuild and semos.fileExists(output) and
+      semos.fileExists(f.nimFile) and getLastModificationTime(output) > getLastModificationTime(f.nimFile) and
+      semos.fileExists(depsFile) and getLastModificationTime(depsFile) > getLastModificationTime(f.nimFile):
     discard "nothing to do"
   else:
-    let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(input) & " " &
+    let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(f.nimFile) & " " &
       quoteShell(output)
     exec cmd
 
@@ -214,13 +217,13 @@ proc importSystem(c: var DepContext; current: Node) =
   current.deps.add p
   if not c.processedModules.containsOrIncl(p.modname):
     #echo "NIFLING ", p.nimFile, " -> ", c.config.parsedFile(p)
-    execNifler c, p.nimFile, c.config.parsedFile(p)
+    execNifler c, p
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
     c.nodes.add imported
     parseDeps c, p, imported
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  execNifler c, p.nimFile, c.config.parsedFile(p)
+  execNifler c, p
 
   let depsFile = if c.isGeneratingFinal: c.config.deps2File(p) else: c.config.depsFile(p)
   var stream = nifstreams.open(depsFile)
