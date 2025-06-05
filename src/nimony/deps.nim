@@ -50,6 +50,7 @@ type
     id, parent: int
     active: int
     isSystem: bool
+    plugin: string
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -68,6 +69,7 @@ type
     processedModules: HashSet[string]
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
+    foundPlugins: HashSet[string]
 
 proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
@@ -88,6 +90,9 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
       discard "ignore wrong `include` statement"
     else:
       for f1 in items(files):
+        if f1.plugin.len > 0:
+          discard "ignore plugin include file, will cause an error in sem.nim"
+          continue
         let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1.path)
         # check for recursive include files:
         var isRecursive = false
@@ -133,6 +138,16 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
     else:
       current.deps.add p
 
+proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLineInfo; current: Node) =
+  let p = c.toPair(f.path)
+  # Maybe we need a plugin prefix in the modname?
+  # FilePair(nimFile: f.path, modname: f.plugin & "_" & moduleSuffix(f.path, c.config.paths))
+  if not c.processedModules.containsOrIncl(p.modname):
+    current.deps.add p
+    c.nodes.add Node(files: @[p], id: c.nodes.len,
+                     parent: current.id, isSystem: false, plugin: f.plugin)
+    c.foundPlugins.incl f.plugin
+
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
@@ -157,7 +172,10 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
       discard "ignore wrong `import` statement"
     else:
       for f in files:
-        importSingleFile c, f.path, info, current, false
+        if f.plugin.len == 0:
+          importSingleFile c, f.path, info, current, false
+        else:
+          processPluginImport c, f, info, current
 
 proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   # process `from import` and `import except` which have a single module expression
@@ -174,7 +192,10 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
     discard "ignore wrong `from` statement"
   else:
     for f in files:
-      importSingleFile c, f.path, info, current, false
+      if f.plugin.len == 0:
+        importSingleFile c, f.path, info, current, false
+      else:
+        processPluginImport c, f, info, current
       break
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
@@ -420,12 +441,27 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
       b.withTree "output":
         b.addIntLit 1  # index file output
 
+    for plugin in c.foundPlugins:
+      b.withTree "cmd":
+        b.addSymbolDef plugin
+        b.addStrLit plugin
+        b.addKeyw "args"
+        b.withTree "input":
+          b.addIntLit 0  # main parsed file
+        b.withTree "output":
+          b.addIntLit 0  # semmed file output
+        b.withTree "output":
+          b.addIntLit 1  # index file output
+
     # Build rules for semantic checking
     var i = 0
     for v in c.nodes:
       b.withTree "do":
         # Choose the right command based on flags
-        b.addIdent "nimsem"
+        if v.plugin.len > 0:
+          b.addIdent v.plugin
+        else:
+          b.addIdent "nimsem"
         b.withTree "args":
           if v.isSystem:
             b.addStrLit "--isSystem"
@@ -458,6 +494,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
     # Build rules for parsing
     var seenFiles = initHashSet[string]()
     for v in c.nodes:
+      if v.plugin.len > 0:
+        continue
       for i in 0..<v.files.len:
         let f = c.config.parsedFile(v.files[i])
         if not seenFiles.containsOrIncl(f):
