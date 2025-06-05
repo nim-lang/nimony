@@ -120,10 +120,12 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
       result = paths[i] / nimFile
       inc i
 
-type ImportedFilename* = object
-  path*: string ## stringified path from AST that has to be resolved
-  name*: string ## extracted module name to define a sym for in `import`
-  isSystem*: bool
+type
+  ImportedFilename* = object
+    path*: string ## stringified path from AST that has to be resolved
+    name*: string ## extracted module name to define a sym for in `import`
+    plugin*: string ## plugin name if any (usually empty)
+    isSystem*: bool
 
 proc moduleNameFromPath*(path: string): string =
   result = splitFile(path).name
@@ -231,6 +233,32 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         while n.kind != ParRi:
           filenameVal(n, res, hasError, allowAs)
       inc n
+    of PragmaxX:
+      let orig = n
+      inc n
+      let start = res.len
+      if n.kind == ParRi:
+        hasError = true
+      else:
+        filenameVal(n, res, hasError, allowAs)
+        var success = false
+        if n.substructureKind == PragmasU:
+          inc n
+          if n.substructureKind == KvU:
+            inc n
+            if n.kind == Ident and pool.strings[n.litId] == "plugin":
+              inc n
+              if n.kind == StringLit:
+                for i in start ..< res.len:
+                  res[i].plugin = pool.strings[n.litId]
+                  success = true
+                inc n
+                if n.kind == ParRi: inc n
+                else: hasError = true
+        if not success:
+          n = orig
+          skip n
+          hasError = true
     else:
       hasError = true
       skip n
