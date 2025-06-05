@@ -7,7 +7,8 @@
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
 import std / assertions
-import nifstreams, nifcursors, nimony_model, programs
+import ".." / lib / [nifstreams, nifcursors]
+import ".." / nimony / [nimony_model, programs]
 
 proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
