@@ -99,8 +99,8 @@ proc doImports(c: var SemContext; files: seq[ImportedFilename]; mode: ImportFilt
 
 template maybeCyclic(c: var SemContext; x: var Cursor) =
   if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
     var y = x
+    inc y
     skip y
     if y.substructureKind == PragmasU:
       inc y
