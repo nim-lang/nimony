@@ -113,6 +113,19 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
   #  result = stdFile nimFile
   if toResolve.isAbsolute:
     result = nimFile
+  elif toResolve.len > 0 and toResolve[0] == '$':
+    var key = ""
+    var i = 1
+    while i < toResolve.len:
+      if toResolve[i] in {'/', '\\'}:
+        break
+      key.add toResolve[i]
+      inc i
+    let val = getEnv(key)
+    if val.len == 0:
+      result = nimFile
+    else:
+      result = val / nimFile.substr(i)
   else:
     result = splitFile(origin).dir / nimFile
     var i = 0

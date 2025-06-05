@@ -139,9 +139,9 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
       current.deps.add p
 
 proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLineInfo; current: Node) =
-  let p = c.toPair(f.path)
-  # Maybe we need a plugin prefix in the modname?
-  # FilePair(nimFile: f.path, modname: f.plugin & "_" & moduleSuffix(f.path, c.config.paths))
+  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f.path)
+  if not semos.fileExists(f2): return
+  let p = c.toPair(f2)
   if not c.processedModules.containsOrIncl(p.modname):
     current.deps.add p
     c.nodes.add Node(files: @[p], id: c.nodes.len,
