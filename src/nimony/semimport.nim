@@ -51,8 +51,9 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
-    if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
-      selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
+    if f1.plugin.len == 0:
+      if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
+        selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
     result = identToSym(c, moduleName, ModuleY)
