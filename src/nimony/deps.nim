@@ -157,8 +157,8 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   if x.stmtKind == WhenS: return
   while x.kind != ParRi:
     if x.kind == ParLe and x.exprKind == PragmaxX:
-      inc x
       var y = x
+      inc y
       skip y
       if y.substructureKind == PragmasU:
         inc y
