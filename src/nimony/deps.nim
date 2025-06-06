@@ -408,6 +408,46 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
 
+proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: bool) =
+  b.withTree "do":
+    b.addIdent "nimsem"
+    b.withTree "args":
+      if v.isSystem:
+        b.addStrLit "--isSystem"
+      elif isMain:
+        b.addStrLit "--isMain"
+    # Input: parsed file
+    var seenDeps = initHashSet[string]()
+    for f in v.files:
+      let pf = c.config.parsedFile(f)
+      if not seenDeps.containsOrIncl(pf):
+        b.withTree "input":
+          b.addStrLit pf
+    # Input: dependencies
+    for f in v.deps:
+      let idxFile = c.config.indexFile(f)
+      if not seenDeps.containsOrIncl(idxFile):
+        b.withTree "input":
+          b.addStrLit idxFile
+    # Input: cached config file
+    b.withTree "input":
+      b.addStrLit c.config.cachedConfigFile()
+    # Outputs: semmed file and index file
+    b.withTree "output":
+      b.addStrLit c.config.semmedFile(v.files[0])
+    b.withTree "output":
+      b.addStrLit c.config.indexFile(v.files[0])
+
+proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
+  b.withTree "do":
+    b.addIdent v.plugin
+    b.withTree "input":
+      b.addStrLit v.files[0].nimFile
+    b.withTree "output":
+      b.addStrLit c.config.semmedFile(v.files[0])
+    b.withTree "output":
+      b.addStrLit c.config.indexFile(v.files[0])
+
 proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".build.nif"
   var b = nifbuilder.open(result)
@@ -456,39 +496,10 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
     # Build rules for semantic checking
     var i = 0
     for v in c.nodes:
-      b.withTree "do":
-        # Choose the right command based on flags
-        if v.plugin.len > 0:
-          b.addIdent v.plugin
-        else:
-          b.addIdent "nimsem"
-        b.withTree "args":
-          if v.isSystem:
-            b.addStrLit "--isSystem"
-          elif i == 0:  # first node is main
-            b.addStrLit "--isMain"
-
-        # Input: parsed file
-        var seenDeps = initHashSet[string]()
-        for f in v.files:
-          let pf = c.config.parsedFile(f)
-          if not seenDeps.containsOrIncl(pf):
-            b.withTree "input":
-              b.addStrLit pf
-        # Input: dependencies
-        for f in v.deps:
-          let idxFile = c.config.indexFile(f)
-          if not seenDeps.containsOrIncl(idxFile):
-            b.withTree "input":
-              b.addStrLit idxFile
-        # Input: cached config file
-        b.withTree "input":
-          b.addStrLit c.config.cachedConfigFile()
-        # Outputs: semmed file and index file
-        b.withTree "output":
-          b.addStrLit c.config.semmedFile(v.files[0])
-        b.withTree "output":
-          b.addStrLit c.config.indexFile(v.files[0])
+      if v.plugin.len == 0:
+        generateSemInstructions c, v, b, i == 0
+      else:
+        generatePluginSemInstructions c, v, b
       inc i
 
     # Build rules for parsing
