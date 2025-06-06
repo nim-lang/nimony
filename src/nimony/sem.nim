@@ -4592,6 +4592,32 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
         result.add identToken(s, NoLineInfo)
       result.addParRi()
 
+proc writeNewDepsFile(c: var SemContext; outfile: string) =
+  # Update .2.deps.nif file that doesn't contain modules imported under `when false:`
+  # so that Hexer and following phases doesn't read such modules.
+  var deps = createTokenBuf(16)
+  deps.buildTree StmtsS, NoLineInfo:
+    if c.importedModules.len != 0:
+      var usedPlugins = false
+      deps.buildTree ImportS, NoLineInfo:
+        for _, i in c.importedModules:
+          if not i.fromPlugin:
+            deps.addStrLit i.path.toAbsolutePath
+          else:
+            usedPlugins = true
+      if usedPlugins:
+        for _, i in c.importedModules:
+          if i.fromPlugin:
+            deps.buildTree ImportS, NoLineInfo:
+              deps.buildTree PragmaxX, NoLineInfo:
+                deps.buildTree PragmasS, NoLineInfo:
+                  deps.buildTree KvU, NoLineInfo:
+                    deps.addIdent "plugin"
+                    deps.addStrLit "unknown"
+                deps.addStrLit i.path.toAbsolutePath
+  let depsFile = changeFileExt(outfile, ".deps.nif")
+  writeFile depsFile, "(.nif24)\n" & toString(deps)
+
 proc writeOutput(c: var SemContext; outfile: string) =
   #var b = nifbuilder.open(outfile)
   #b.addHeader "nimony", "nim-sem"
@@ -4605,17 +4631,7 @@ proc writeOutput(c: var SemContext; outfile: string) =
       classes: move c.classIndexMap,
       toBuild: move c.toBuild,
       exportBuf: buildIndexExports(c))
-
-  # Update .2.deps.nif file that doesn't contain modules imported under `when false:`
-  # so that Hexer and following phases doesn't read such modules.
-  var deps = createTokenBuf(16)
-  deps.buildTree StmtsS, NoLineInfo:
-    if c.importedModules.len != 0:
-      deps.buildTree ImportS, NoLineInfo:
-        for _, i in c.importedModules:
-          deps.addStrLit i.path.toAbsolutePath
-  let depsFile = changeFileExt(outfile, ".deps.nif")
-  writeFile depsFile, "(.nif24)\n" & toString(deps)
+  writeNewDepsFile c, outfile
 
 proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
   assert n.stmtKind == StmtsS
