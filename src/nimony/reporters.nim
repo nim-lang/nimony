@@ -5,7 +5,7 @@
 # distribution, for details about the copyright.
 
 import std / [syncio, strutils, os, terminal, assertions, sets]
-import nifstreams, nifcursors, bitabs, lineinfos
+import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos]
 
 type
   MsgKind* = enum

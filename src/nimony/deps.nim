@@ -50,6 +50,7 @@ type
     id, parent: int
     active: int
     isSystem: bool
+    plugin: string
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -68,6 +69,7 @@ type
     processedModules: HashSet[string]
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
+    foundPlugins: HashSet[string]
 
 proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
@@ -88,6 +90,9 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
       discard "ignore wrong `include` statement"
     else:
       for f1 in items(files):
+        if f1.plugin.len > 0:
+          discard "ignore plugin include file, will cause an error in sem.nim"
+          continue
         let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1.path)
         # check for recursive include files:
         var isRecursive = false
@@ -133,6 +138,16 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
     else:
       current.deps.add p
 
+proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLineInfo; current: Node) =
+  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f.path)
+  if not semos.fileExists(f2): return
+  let p = c.toPair(f2)
+  if not c.processedModules.containsOrIncl(p.modname):
+    current.deps.add p
+    c.nodes.add Node(files: @[p], id: c.nodes.len,
+                     parent: current.id, isSystem: false, plugin: f.plugin)
+    c.foundPlugins.incl f.plugin
+
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
@@ -142,8 +157,8 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   if x.stmtKind == WhenS: return
   while x.kind != ParRi:
     if x.kind == ParLe and x.exprKind == PragmaxX:
-      inc x
       var y = x
+      inc y
       skip y
       if y.substructureKind == PragmasU:
         inc y
@@ -157,7 +172,10 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
       discard "ignore wrong `import` statement"
     else:
       for f in files:
-        importSingleFile c, f.path, info, current, false
+        if f.plugin.len == 0:
+          importSingleFile c, f.path, info, current, false
+        else:
+          processPluginImport c, f, info, current
 
 proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   # process `from import` and `import except` which have a single module expression
@@ -174,7 +192,10 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
     discard "ignore wrong `from` statement"
   else:
     for f in files:
-      importSingleFile c, f.path, info, current, false
+      if f.plugin.len == 0:
+        importSingleFile c, f.path, info, current, false
+      else:
+        processPluginImport c, f, info, current
       break
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
@@ -237,7 +258,7 @@ proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
     nifstreams.close(stream)
 
 type
-  CFile = tuple
+  CFile = object
     name, obj, customArgs: string
 
 proc rootPath(c: DepContext): string =
@@ -253,7 +274,7 @@ proc toBuildList(c: DepContext): seq[CFile] =
       let path = i[1]
       let obj = splitFile(path).name & ".o"
       let customArgs = i[2]
-      result.add (path, obj, customArgs)
+      result.add CFile(name: path, obj: obj, customArgs: customArgs)
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
@@ -387,6 +408,46 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
 
+proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: bool) =
+  b.withTree "do":
+    b.addIdent "nimsem"
+    b.withTree "args":
+      if v.isSystem:
+        b.addStrLit "--isSystem"
+      elif isMain:
+        b.addStrLit "--isMain"
+    # Input: parsed file
+    var seenDeps = initHashSet[string]()
+    for f in v.files:
+      let pf = c.config.parsedFile(f)
+      if not seenDeps.containsOrIncl(pf):
+        b.withTree "input":
+          b.addStrLit pf
+    # Input: dependencies
+    for f in v.deps:
+      let idxFile = c.config.indexFile(f)
+      if not seenDeps.containsOrIncl(idxFile):
+        b.withTree "input":
+          b.addStrLit idxFile
+    # Input: cached config file
+    b.withTree "input":
+      b.addStrLit c.config.cachedConfigFile()
+    # Outputs: semmed file and index file
+    b.withTree "output":
+      b.addStrLit c.config.semmedFile(v.files[0])
+    b.withTree "output":
+      b.addStrLit c.config.indexFile(v.files[0])
+
+proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
+  b.withTree "do":
+    b.addIdent v.plugin
+    b.withTree "input":
+      b.addStrLit v.files[0].nimFile
+    b.withTree "output":
+      b.addStrLit c.config.semmedFile(v.files[0])
+    b.withTree "output":
+      b.addStrLit c.config.indexFile(v.files[0])
+
 proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".build.nif"
   var b = nifbuilder.open(result)
@@ -420,44 +481,32 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
       b.withTree "output":
         b.addIntLit 1  # index file output
 
+    for plugin in c.foundPlugins:
+      b.withTree "cmd":
+        b.addSymbolDef plugin
+        b.addStrLit plugin
+        b.addKeyw "args"
+        b.withTree "input":
+          b.addIntLit 0  # main parsed file
+        b.withTree "output":
+          b.addIntLit 0  # semmed file output
+        b.withTree "output":
+          b.addIntLit 1  # index file output
+
     # Build rules for semantic checking
     var i = 0
     for v in c.nodes:
-      b.withTree "do":
-        # Choose the right command based on flags
-        b.addIdent "nimsem"
-        b.withTree "args":
-          if v.isSystem:
-            b.addStrLit "--isSystem"
-          elif i == 0:  # first node is main
-            b.addStrLit "--isMain"
-
-        # Input: parsed file
-        var seenDeps = initHashSet[string]()
-        for f in v.files:
-          let pf = c.config.parsedFile(f)
-          if not seenDeps.containsOrIncl(pf):
-            b.withTree "input":
-              b.addStrLit pf
-        # Input: dependencies
-        for f in v.deps:
-          let idxFile = c.config.indexFile(f)
-          if not seenDeps.containsOrIncl(idxFile):
-            b.withTree "input":
-              b.addStrLit idxFile
-        # Input: cached config file
-        b.withTree "input":
-          b.addStrLit c.config.cachedConfigFile()
-        # Outputs: semmed file and index file
-        b.withTree "output":
-          b.addStrLit c.config.semmedFile(v.files[0])
-        b.withTree "output":
-          b.addStrLit c.config.indexFile(v.files[0])
+      if v.plugin.len == 0:
+        generateSemInstructions c, v, b, i == 0
+      else:
+        generatePluginSemInstructions c, v, b
       inc i
 
     # Build rules for parsing
     var seenFiles = initHashSet[string]()
     for v in c.nodes:
+      if v.plugin.len > 0:
+        continue
       for i in 0..<v.files.len:
         let f = c.config.parsedFile(v.files[i])
         if not seenFiles.containsOrIncl(f):
@@ -481,6 +530,16 @@ proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
   if needUpdate:
     writeFile path, configStr
 
+proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
+  result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
+    forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
+    cmd: cmd, isGeneratingFinal: isFinal)
+  let p = result.toPair(project)
+  result.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
+  result.nodes.add result.rootNode
+  result.processedModules.incl p.modname
+  parseDeps result, p, result.rootNode
+
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string) =
@@ -493,18 +552,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
       quoteShell(cfgNif)
     parseNifConfig cfgNif, config
 
-  template initDepContext(isFinal: bool): DepContext =
-    var c = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
-      forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
-      cmd: cmd, isGeneratingFinal: isFinal)
-    let p = c.toPair(project)
-    c.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
-    c.nodes.add c.rootNode
-    c.processedModules.incl p.modname
-    parseDeps c, p, c.rootNode
-    c
-
-  var c = initDepContext(false)
+  var c = initDepContext(config, project, nifler, false, forceRebuild, moduleFlags, cmd)
   generateCachedConfigFile c, passC, passL
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs)
   #echo "run with: nifmake run ", buildFilename
@@ -519,7 +567,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   # Parse `.2.deps.nif`.
   # It is generated by nimsem and doesn't contains modules imported under `when false:`.
   # https://github.com/nim-lang/nimony/issues/985
-  c = initDepContext(true)
+  c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
   let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
   exec nifmakeCommand & quoteShell(buildFinalFilename)
   if cmd == DoRun:

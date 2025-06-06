@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model
 
 type

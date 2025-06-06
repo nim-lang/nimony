@@ -51,8 +51,9 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
-    if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
-      selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
+    if f1.plugin.len == 0:
+      if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
+        selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
     result = identToSym(c, moduleName, ModuleY)
@@ -66,7 +67,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
     publish result, moduleDecl
   else:
     result = c.processedModules[suffix]
-  let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2))
+  let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin.len != 0))
   loadInterface suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, mode
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
@@ -99,8 +100,8 @@ proc doImports(c: var SemContext; files: seq[ImportedFilename]; mode: ImportFilt
 
 template maybeCyclic(c: var SemContext; x: var Cursor) =
   if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
     var y = x
+    inc y
     skip y
     if y.substructureKind == PragmasU:
       inc y

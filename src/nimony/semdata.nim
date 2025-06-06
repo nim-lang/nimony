@@ -34,6 +34,7 @@ type
     path*: string
     iface*: Iface
     exports*: Table[SymId, ImportFilter]
+    fromPlugin*: bool
 
   InstRequest* = object
     origin*: SymId

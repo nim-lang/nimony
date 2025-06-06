@@ -5,8 +5,9 @@
 # distribution, for details about the copyright.
 
 import std / [syncio, os, tables, sequtils, times, sets]
-include nifprelude
-import nifindexes, symparser, reporters, builtintypes
+include ".." / lib / nifprelude
+import ".." / lib / [nifindexes, symparser]
+import reporters, builtintypes
 import ".." / models / [nifindex_tags]
 
 type
