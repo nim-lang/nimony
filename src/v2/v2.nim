@@ -14,7 +14,7 @@ Usage:
 import std/[assertions, os]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
-import ".." / nimony / [decls, nimony_model]
+import ".." / nimony / [decls, nimony_model, programs]
 
 proc getAttachedOp(symId: SymId, attackedOp: var AttachedOp): bool =
   var name = pool.syms[symId]
@@ -79,10 +79,14 @@ proc indexFromNif*(infile: string) =
       classes: move classIndexMap)
 
 proc main(nimFile, nifFile, idxFile: string) =
-  let nimcacheDir = splitFile(nifFile).dir
-  let c = "nim nif --nimcache:" & quoteShell(nimcacheDir) & " " & quoteShell(nimFile)
+  let (nimcacheDir, name, ext) = splitModulePath(nifFile)
+  let v2dir = nimcacheDir / "v2"
+  createDir v2dir
+
+  let c = "nim nif --nimcache:" & quoteShell(v2dir) & " " & quoteShell(nimFile)
   if os.execShellCmd(c) != 0:
     quit "v2: failed to compile " & nimFile
+  moveFile v2dir / name & ".nim2.nif", nifFile
   indexFromNif nifFile
 
 if paramCount() != 3:
