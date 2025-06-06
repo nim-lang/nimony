@@ -4610,11 +4610,11 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
           if i.fromPlugin:
             deps.buildTree ImportS, NoLineInfo:
               deps.buildTree PragmaxX, NoLineInfo:
+                deps.addStrLit i.path.toAbsolutePath
                 deps.buildTree PragmasS, NoLineInfo:
                   deps.buildTree KvU, NoLineInfo:
                     deps.addIdent "plugin"
                     deps.addStrLit "unknown"
-                deps.addStrLit i.path.toAbsolutePath
   let depsFile = changeFileExt(outfile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 
