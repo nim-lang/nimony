@@ -323,8 +323,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
   var paramCount = 0
   var argCount = 0
   var m = createMatch(addr c)
-  var genericArgs = 0
-  swap c.usedTypevars, genericArgs
+  let usedTypevarsInitial = c.usedTypevars
   let beforeArgs = c.dest.len
   while n.kind != ParRi:
     inc argCount
@@ -349,7 +348,8 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
           addArg = false
     if addArg:
       c.dest.add argBuf
-  swap c.usedTypevars, genericArgs
+  let usedTypevarsFinal = c.usedTypevars
+  let isConcrete = usedTypevarsInitial == usedTypevarsFinal # no generic params were used
   takeParRi c, n
   if ok and paramCount != argCount:
     c.dest.shrink typeStart
@@ -357,7 +357,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       ", expected " & $paramCount & " but got " & $argCount
     return
 
-  if ok and (genericArgs == 0 or
+  if ok and (isConcrete or
       # structural types are inlined even with generic arguments
       not isNominal(decl.body.typeKind)):
     # we have to be eager in generic type instantiations so that type-checking
