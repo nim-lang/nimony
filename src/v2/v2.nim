@@ -15,6 +15,7 @@ import std/[assertions, os]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
 import ".." / nimony / [decls, nimony_model, programs]
+import ".." / gear2 / modnames
 
 proc getAttachedOp(symId: SymId, attackedOp: var AttachedOp): bool =
   var name = pool.syms[symId]

@@ -2,15 +2,6 @@
 
 Nifmake is a make-like tool used by Nimony to implement parallel and incremental compilation. It can either run a dependency graph directly or translate it to a Makefile.
 
-## Features
-
-- **Incremental builds**: Only rebuilds files when dependencies change
-- **Dependency tracking**: Automatically tracks file dependencies
-- **Makefile generation**: Can generate standard Makefiles
-- **Cycle detection**: Detects circular dependencies in build graphs
-- **Declarative build descriptions using NIF**
-- **Parallel build execution**
-- **Reusable command definitions**
 
 ## Usage
 
