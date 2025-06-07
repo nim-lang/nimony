@@ -374,7 +374,7 @@ proc semInvoke(c: var SemContext; n: var Cursor) =
       let instSuffix = instToSuffix(c.dest, typeStart)
       let targetSym = newInstSymId(c, headId, instSuffix)
       c.instantiatedTypes[key] = targetSym
-      if genericArgs == 0:
+      if isConcrete:
         c.typeInstDecls.add targetSym
       var sub = createTokenBuf(30)
       subsGenericTypeFromArgs c, sub, info, instSuffix, headId, targetSym, decl, args
