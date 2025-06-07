@@ -15,6 +15,7 @@ import std/[assertions, os]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
 import ".." / nimony / [decls, nimony_model, programs]
+import ".." / gear2 / modnames
 
 proc getAttachedOp(symId: SymId, attackedOp: var AttachedOp): bool =
   var name = pool.syms[symId]
@@ -80,7 +81,9 @@ proc indexFromNif*(infile: string) =
 
 proc main(nimFile, nifFile, idxFile: string) =
   let (nimcacheDir, name, ext) = splitModulePath(nifFile)
-  let v2dir = nimcacheDir / "v2"
+  # Since the build process is parallel, we need to create a project specific v2 directory
+  # to avoid race conditions:
+  let v2dir = nimcacheDir / "v2_" & moduleSuffix(nimFile, [])
   createDir v2dir
 
   let c = "nim nif --nimcache:" & quoteShell(v2dir) & " " & quoteShell(nimFile)
