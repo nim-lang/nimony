@@ -5,7 +5,7 @@
 # distribution, for details about the copyright.
 
 import std / [tables]
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model
 
 const

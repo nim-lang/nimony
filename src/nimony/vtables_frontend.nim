@@ -10,10 +10,10 @@
 ## between modules that kills parallelism. So we prepare the vtables
 ## in the frontend and make them part of a module's interface.
 
-include nifprelude
-import nifindexes, symparser, treemangler, typekeys
+include ".." / lib / nifprelude
+import ".." / lib / treemangler
 import ".." / nimony / [nimony_model, decls, programs, typenav,
-  renderer, typeprops]
+  renderer, typeprops, typekeys]
 
 when false:
   # maybe we can use this later to provide better error messages
