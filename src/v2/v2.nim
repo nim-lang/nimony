@@ -81,9 +81,7 @@ proc indexFromNif*(infile: string) =
 
 proc main(nimFile, nifFile, idxFile: string) =
   let (nimcacheDir, name, ext) = splitModulePath(nifFile)
-  # Since the build process is parallel, we need to create a project specific v2 directory
-  # to avoid race conditions:
-  let v2dir = nimcacheDir / "v2_" & moduleSuffix(nimFile, [])
+  let v2dir = nimcacheDir / "v2"
   createDir v2dir
 
   let c = "nim nif --nimcache:" & quoteShell(v2dir) & " " & quoteShell(nimFile)
