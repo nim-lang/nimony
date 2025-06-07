@@ -244,7 +244,8 @@ proc importSystem(c: var DepContext; current: Node) =
     parseDeps c, p, imported
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  execNifler c, p
+  if not c.isGeneratingFinal:
+    execNifler c, p
 
   let depsFile = if c.isGeneratingFinal: c.config.deps2File(p) else: c.config.depsFile(p)
   var stream = nifstreams.open(depsFile)
