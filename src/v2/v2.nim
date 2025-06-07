@@ -14,7 +14,7 @@ Usage:
 import std/[assertions, os]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
-import ".." / nimony / [decls, nimony_model, programs]
+import ".." / nimony / [decls, nimony_model, programs, vtables_frontend]
 
 proc getAttachedOp(symId: SymId, attackedOp: var AttachedOp): bool =
   var name = pool.syms[symId]
@@ -52,20 +52,51 @@ proc indexFromNif*(infile: string) =
     if n.kind == ParLe:
       case n.stmtKind:
       of ProcS, FuncS, ConverterS, MethodS:
+        let kind = n.stmtKind
         let routine = takeRoutine(n, SkipFinalParRi)
         let symId = routine.name.symId
-        var op = default AttachedOp
-        if getAttachedOp(symId, op):
+        if kind == ConverterS:
+          if routine.exported.kind != DotToken and
+             routine.typevars.typeKind != InvokeT:
+            # don't register instances and not exported ones
+            let root = routine.retType.skipModifier.symId
+            converterIndexMap.add((root, symId))
+        elif kind == MethodS:
           var param = routine.params
-          assert param.substructureKind == ParamsU
-          inc param
-          assert param.substructureKind == ParamU
-          let typ = takeLocal(param, SkipExclBody).typ.skipModifier
-          # this assertion fails when got generics proc as generics parameters are not supported yet.
-          assert typ.kind == Symbol
-          let obj = typ.symId
-          let isGeneric = routine.typevars.substructureKind == TypevarsU
-          hookIndexLog[op].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
+          if param.substructureKind == ParamsU:
+            inc param
+            if param.substructureKind == ParamU:
+              var typ = param.takeLocal(SkipFinalParRi).typ
+              # should use `getClass` proc in `nimony/typeprops.nim`,
+              # but current `tryLoadSym` doesn't work with Nim v2 NIF.
+              #let root = typ.getClass()
+              if typ.typeKind == RefT:
+                inc typ
+              if typ.kind == Symbol:
+                let root = typ.symId
+                var methodName = pool.syms[symId]
+                extractBasename methodName
+                let signature = pool.strings.getOrIncl(methodKey(methodName, param))
+                if routine.typevars.typeKind != InvokeT:
+                  # don't register instances
+                  for i in 0..<classIndexMap.len:
+                    if classIndexMap[i].cls == root:
+                      classIndexMap[i].methods.add MethodIndexEntry(fn:symId, signature: signature)
+                      continue
+                  classIndexMap.add ClassIndexEntry(cls: root, methods: @[MethodIndexEntry(fn: symId, signature: signature)])
+        else:
+          var op = default AttachedOp
+          if getAttachedOp(symId, op):
+            var param = routine.params
+            assert param.substructureKind == ParamsU
+            inc param
+            assert param.substructureKind == ParamU
+            let typ = takeLocal(param, SkipExclBody).typ.skipModifier
+            # this assertion fails when got generics proc as generics parameters are not supported yet.
+            assert typ.kind == Symbol
+            let obj = typ.symId
+            let isGeneric = routine.typevars.substructureKind == TypevarsU
+            hookIndexLog[op].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
       else:
         skip n
     else:

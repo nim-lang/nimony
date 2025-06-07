@@ -1,5 +1,5 @@
 import std/assertions
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
 import ".." / models / tags
 
