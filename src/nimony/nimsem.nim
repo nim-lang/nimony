@@ -10,17 +10,18 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
-import sem, nifconfig, semos, semdata
+import sem, nifconfig, semos, semdata, indexgen
 
 const
   Version = "0.2"
   Usage = "Nimsem Semantic Checker. Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   nimsem [options] [command]
 Command:
   m file.nim [project.nim]    compile a single Nim module to hexer
+  x file.nif                  generate the .idx.nif file from a .nif file
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
@@ -45,7 +46,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 type
   Command = enum
-    None, SingleModule
+    None, SingleModule, GenerateIdx
 
 proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
   if not semos.fileExists(infile):
@@ -68,6 +69,8 @@ proc handleCmdLine() =
         case key.normalize:
         of "m":
           cmd = SingleModule
+        of "x":
+          cmd = GenerateIdx
         else:
           quit "command expected"
       else:
@@ -113,14 +116,18 @@ proc handleCmdLine() =
           commandLineArgs.add ":" & quoteShell(val)
 
     of cmdEnd: assert false, "cannot happen"
-  if args.len != 3:
-    quit "want exactly 3 command line arguments"
   semos.setupPaths(config, useEnv)
   case cmd
   of None:
     quit "command missing"
   of SingleModule:
+    if args.len != 3:
+      quit "want exactly 3 command line arguments"
     singleModule(args[0], args[1], args[2], ensureMove config, moduleFlags)
+  of GenerateIdx:
+    if args.len != 1:
+      quit "want exactly 1 command line argument"
+    indexFromNif(args[0])
 
 when isMainModule:
   handleCmdLine()
