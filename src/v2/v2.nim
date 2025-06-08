@@ -8,88 +8,41 @@ const
   Usage = """v2 - Nim 2.0 plugin for Nimony
 
 Usage:
-  v2 path/file.nim nimcache/modname.nif nimcache/modname.idx.nif
+  v2 path/file.nim nimcache/modname.nif
 """
 
-import std/[assertions, os]
+import std/[assertions, os, osproc, strutils]
 include ".." / lib / nifprelude
-import ".." / lib / [nifindexes, symparser]
-import ".." / nimony / [decls, nimony_model, programs]
+import ".." / lib / [nifindexes, symparser, tooldirs]
+import ".." / nimony / [programs]
+import ".." / gear2 / modnames
 
-proc getAttachedOp(symId: SymId, attackedOp: var AttachedOp): bool =
-  var name = pool.syms[symId]
-  extractBasename(name)
+proc processDir(dir: string) =
+  var nifFiles: seq[string] = @[]
+  for kind, path in walkDir(dir):
+    if kind == pcFile and path.endsWith(".nim2.nif"):
+      nifFiles.add(path)
+  for nifFile in mitems nifFiles:
+    let newName = nifFile.replace(".nim2.nif", ".2.nif")
+    moveFile nifFile, newName
+    nifFile = newName
+  var cmds: seq[string] = @[]
+  let nimsem = findTool("nimsem")
+  for newName in nifFiles:
+    cmds.add nimsem & " x " & quoteShell(newName)
+  if execProcesses(cmds) != 0:
+    quit "v2: failed to generate indexes"
 
-  attackedOp = case name
-    of "=destroy": attachedDestroy
-    of "=wasMoved": attachedWasMoved
-    of "=trace": attachedTrace
-    of "=copy": attachedCopy
-    of "=sink": attachedSink
-    of "=dup": attachedDup
-    else: return false
-
-  return true
-
-proc indexFromNif*(infile: string) =
-  ## Extract index from `infile` Nif file and write it to `*.idx.nif` file.
-  ##
-  ## See https://github.com/nim-lang/nimony/issues/1162
-  var stream = nifstreams.open(infile)
-  discard processDirectives(stream.r)
-  var buf = fromStream(stream)
-  stream.close
-
-  var n = beginRead buf
-  let root = n.info
-  var hookIndexLog = default array[AttachedOp, seq[HookIndexEntry]]
-  var converterIndexMap = default seq[(SymId, SymId)]
-  var classIndexMap = default seq[ClassIndexEntry]
-
-  assert n.stmtKind == StmtsS
-  inc n
-  while n.kind != ParRi:
-    if n.kind == ParLe:
-      case n.stmtKind:
-      of ProcS, FuncS, ConverterS, MethodS:
-        let routine = takeRoutine(n, SkipFinalParRi)
-        let symId = routine.name.symId
-        var op = default AttachedOp
-        if getAttachedOp(symId, op):
-          var param = routine.params
-          assert param.substructureKind == ParamsU
-          inc param
-          assert param.substructureKind == ParamU
-          let typ = takeLocal(param, SkipExclBody).typ.skipModifier
-          # this assertion fails when got generics proc as generics parameters are not supported yet.
-          assert typ.kind == Symbol
-          let obj = typ.symId
-          let isGeneric = routine.typevars.substructureKind == TypevarsU
-          hookIndexLog[op].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
-      else:
-        skip n
-    else:
-      skip n
-
-  endRead buf
-
-  createIndex infile, root, true,
-    IndexSections(hooks: move hookIndexLog,
-      converters: move converterIndexMap,
-      classes: move classIndexMap)
-
-proc main(nimFile, nifFile, idxFile: string) =
-  let (nimcacheDir, name, ext) = splitModulePath(nifFile)
-  let v2dir = nimcacheDir / "v2"
+proc main(nimFile, nifFile: string) =
+  let (v2dir, name, ext) = splitModulePath(nifFile)
   createDir v2dir
 
   let c = "nim nif --nimcache:" & quoteShell(v2dir) & " " & quoteShell(nimFile)
   if os.execShellCmd(c) != 0:
     quit "v2: failed to compile " & nimFile
-  moveFile v2dir / name & ".nim2.nif", nifFile
-  indexFromNif nifFile
+  processDir v2dir
 
-if paramCount() != 3:
-  quit "v2: invalid number of arguments; expected 3, got " & $paramCount()
+if paramCount() != 2:
+  quit "v2: invalid number of arguments; expected 2, got " & $paramCount()
 else:
-  main(paramStr(1), paramStr(2), paramStr(3))
+  main(paramStr(1), paramStr(2))

@@ -17,6 +17,7 @@
 import std/[os, tables, sets, syncio, assertions, strutils, times]
 import semos, nifconfig, nimony_model, nifindexes
 import ".." / gear2 / modnames, semdata
+import ".." / lib / tooldirs
 
 include nifprelude
 
@@ -25,11 +26,14 @@ type
     nimFile: string
     modname: string
 
-proc indexFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".2.idx.nif"
+proc indexFile(config: NifConfig; f: FilePair; bundle: string): string =
+  config.nifcachePath / bundle / f.modname & ".2.idx.nif"
+
 proc parsedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".1.nif"
 proc depsFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".1.deps.nif"
 proc deps2File(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".2.deps.nif"
-proc semmedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".2.nif"
+proc semmedFile(config: NifConfig; f: FilePair; bundle: string): string =
+  config.nifcachePath / bundle / f.modname & ".2.nif"
 proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c.nif"
 proc cFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c"
 proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".o"
@@ -46,7 +50,7 @@ proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: str
 type
   Node = ref object
     files: seq[FilePair]
-    deps: seq[FilePair]
+    deps: seq[int] # index into c.nodes
     id, parent: int
     active: int
     isSystem: bool
@@ -66,7 +70,7 @@ type
     nodes: seq[Node]
     rootNode: Node
     includeStack: seq[string]
-    processedModules: HashSet[string]
+    processedModules: Table[string, int] # modname -> index to c.nodes
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
@@ -125,9 +129,12 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
-  if not c.processedModules.containsOrIncl(p.modname):
-    current.deps.add p
-    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: isSystem)
+  let existingNode = c.processedModules.getOrDefault(p.modname, -1)
+  if existingNode == -1:
+    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: isSystem,
+                        plugin: current.plugin)
+    current.deps.add imported.id
+    c.processedModules[p.modname] = imported.id
     c.nodes.add imported
     parseDeps c, p, imported
   else:
@@ -136,17 +143,22 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
       discard "ignore cycle"
       echo "cycle detected: ", current.files[0].nimFile, " <-> ", p.nimFile
     else:
-      current.deps.add p
+      current.deps.add existingNode
 
 proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLineInfo; current: Node) =
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f.path)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
-  if not c.processedModules.containsOrIncl(p.modname):
-    current.deps.add p
-    c.nodes.add Node(files: @[p], id: c.nodes.len,
-                     parent: current.id, isSystem: false, plugin: f.plugin)
+  let existingNode = c.processedModules.getOrDefault(p.modname, -1)
+  if existingNode == -1:
+    var imported = Node(files: @[p], id: c.nodes.len,
+                        parent: current.id, isSystem: false, plugin: f.plugin)
+    current.deps.add imported.id
+    c.processedModules[p.modname] = imported.id
+    c.nodes.add imported
     c.foundPlugins.incl f.plugin
+  else:
+    current.deps.add existingNode
 
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
@@ -235,18 +247,25 @@ proc execNifler(c: var DepContext; f: FilePair) =
 
 proc importSystem(c: var DepContext; current: Node) =
   let p = c.toPair(stdlibFile("std/system.nim"))
-  current.deps.add p
-  if not c.processedModules.containsOrIncl(p.modname):
+  var existingNode = c.processedModules.getOrDefault(p.modname, -1)
+  if existingNode == -1:
     #echo "NIFLING ", p.nimFile, " -> ", c.config.parsedFile(p)
     execNifler c, p
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
     c.nodes.add imported
+    c.processedModules[p.modname] = imported.id
     parseDeps c, p, imported
+    existingNode = imported.id
+  current.deps.add existingNode
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  execNifler c, p
+  let depsFile: string
+  if not c.isGeneratingFinal:
+    execNifler c, p
+    depsFile = c.config.depsFile(p)
+  else:
+    depsFile = c.config.deps2File(p)
 
-  let depsFile = if c.isGeneratingFinal: c.config.deps2File(p) else: c.config.depsFile(p)
   var stream = nifstreams.open(depsFile)
   try:
     discard processDirectives(stream.r)
@@ -269,7 +288,8 @@ proc rootPath(c: DepContext): string =
 proc toBuildList(c: DepContext): seq[CFile] =
   result = @[]
   for v in c.nodes:
-    let index = readIndex(c.config.indexFile(v.files[0]))
+    #if v.plugin.len > 0: continue
+    let index = readIndex(c.config.indexFile(v.files[0], v.plugin))
     for i in index.toBuild:
       let path = i[1]
       let obj = splitFile(path).name & ".o"
@@ -399,9 +419,9 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         b.withTree "do":
           b.addIdent "hexer"
           b.withTree "input":
-            b.addStrLit c.config.semmedFile(v.files[0])
+            b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
           b.withTree "input":
-            b.addStrLit c.config.indexFile(v.files[0])
+            b.addStrLit c.config.indexFile(v.files[0], v.plugin)
           b.withTree "output":
             b.addStrLit c.config.nifcFile(v.files[0])
 
@@ -424,8 +444,8 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
         b.withTree "input":
           b.addStrLit pf
     # Input: dependencies
-    for f in v.deps:
-      let idxFile = c.config.indexFile(f)
+    for i in v.deps:
+      let idxFile = c.config.indexFile(c.nodes[i].files[0], c.nodes[i].plugin)
       if not seenDeps.containsOrIncl(idxFile):
         b.withTree "input":
           b.addStrLit idxFile
@@ -434,19 +454,26 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       b.addStrLit c.config.cachedConfigFile()
     # Outputs: semmed file and index file
     b.withTree "output":
-      b.addStrLit c.config.semmedFile(v.files[0])
+      b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
     b.withTree "output":
-      b.addStrLit c.config.indexFile(v.files[0])
+      b.addStrLit c.config.indexFile(v.files[0], v.plugin)
 
 proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
+  #[ An import plugin fills `nimcache/<plugin>` for us. It is our job to
+  generate index files for all `.nif` files in there. Both the frontend and
+  the backend needs these files. But we want the index generation to happen
+  in parallel. We cannot iterate over the files in the plugin directory as
+  it is empty until the plugin has run. So unfortunately this logic lives in
+  the v2 plugin.
+  ]#
   b.withTree "do":
     b.addIdent v.plugin
     b.withTree "input":
       b.addStrLit v.files[0].nimFile
     b.withTree "output":
-      b.addStrLit c.config.semmedFile(v.files[0])
+      b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
     b.withTree "output":
-      b.addStrLit c.config.indexFile(v.files[0])
+      b.addStrLit c.config.indexFile(v.files[0], v.plugin)
 
 proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".build.nif"
@@ -490,8 +517,9 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
           b.addIntLit 0  # main parsed file
         b.withTree "output":
           b.addIntLit 0  # semmed file output
-        b.withTree "output":
-          b.addIntLit 1  # index file output
+        # index file output is not explicitly passed to the plugin!
+        #b.withTree "output":
+        #  b.addIntLit 1  # index file output
 
     # Build rules for semantic checking
     var i = 0
@@ -537,7 +565,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   let p = result.toPair(project)
   result.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
   result.nodes.add result.rootNode
-  result.processedModules.incl p.modname
+  result.processedModules[p.modname] = 0
   parseDeps result, p, result.rootNode
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;

@@ -9,7 +9,7 @@
 ## by a .nif file or it can translate this file to a Makefile.
 
 import std/[assertions, os, strutils, sequtils, tables, hashes, times, sets, parseopt, syncio, osproc]
-import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader]
+import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader, tooldirs]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[
@@ -86,26 +86,6 @@ proc skipParRi(n: var Cursor) =
     #writeStackTrace()
     #echo toString([n.load()])
     quit "Expected ')' but found: " & $n.kind
-
-proc binDir*(): string =
-  let appDir = getAppDir()
-  let (_, tail) = splitPath(appDir)
-  if tail == "bin":
-    result = appDir
-  else:
-    result = appDir / "bin"
-
-proc toolDir*(f: string): string =
-  result = binDir() / f
-
-proc findTool(name: string): string =
-  result = name.addFileExt(ExeExt)
-  if fileExists(result):
-    discard "ok"
-  elif not name.isAbsolute:
-    let t = toolDir(result)
-    if fileExists(t):
-      result = t
 
 proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '

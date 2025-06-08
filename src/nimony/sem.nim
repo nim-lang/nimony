@@ -4601,20 +4601,20 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       var usedPlugins = false
       deps.buildTree ImportS, NoLineInfo:
         for _, i in c.importedModules:
-          if not i.fromPlugin:
+          if i.fromPlugin.len == 0:
             deps.addStrLit i.path.toAbsolutePath
           else:
             usedPlugins = true
       if usedPlugins:
         for _, i in c.importedModules:
-          if i.fromPlugin:
+          if i.fromPlugin.len > 0:
             deps.buildTree ImportS, NoLineInfo:
               deps.buildTree PragmaxX, NoLineInfo:
                 deps.addStrLit i.path.toAbsolutePath
                 deps.buildTree PragmasS, NoLineInfo:
                   deps.buildTree KvU, NoLineInfo:
                     deps.addIdent "plugin"
-                    deps.addStrLit "unknown"
+                    deps.addStrLit i.fromPlugin
   let depsFile = changeFileExt(outfile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 

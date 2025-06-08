@@ -9,7 +9,7 @@
 from std / strutils import multiReplace, split, strip
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
-import ".." / lib / nifchecksums
+import ".." / lib / [nifchecksums, tooldirs]
 
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -46,17 +46,6 @@ proc compilerDir*(): string =
     return head
   else: return tail
 
-proc binDir*(): string =
-  let appDir = getAppDir()
-  let (_, tail) = splitPath(appDir)
-  if tail == "bin":
-    result = appDir
-  else:
-    result = appDir / "bin"
-
-proc toolDir*(f: string): string =
-  result = binDir() / f
-
 proc absoluteParentDir*(f: string): string =
   result = f.absolutePath().parentDir()
 
@@ -74,11 +63,6 @@ proc toAbsolutePath*(f: string, dir: string): string =
 proc toRelativePath*(f: string, dir: string): string =
   if not f.isAbsolute: return f
   result = f.relativePath(dir)
-
-proc findTool*(name: string): string =
-  assert not name.isAbsolute
-  let exe = name.addFileExt(ExeExt)
-  result = toolDir(exe)
 
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
