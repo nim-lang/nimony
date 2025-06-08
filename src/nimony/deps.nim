@@ -134,6 +134,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: isSystem,
                         plugin: current.plugin)
     current.deps.add imported.id
+    c.processedModules[p.modname] = imported.id
     c.nodes.add imported
     parseDeps c, p, imported
   else:
@@ -153,6 +154,7 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLin
     var imported = Node(files: @[p], id: c.nodes.len,
                         parent: current.id, isSystem: false, plugin: f.plugin)
     current.deps.add imported.id
+    c.processedModules[p.modname] = imported.id
     c.nodes.add imported
     c.foundPlugins.incl f.plugin
   else:
@@ -251,6 +253,7 @@ proc importSystem(c: var DepContext; current: Node) =
     execNifler c, p
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
     c.nodes.add imported
+    c.processedModules[p.modname] = imported.id
     parseDeps c, p, imported
     existingNode = imported.id
   current.deps.add existingNode

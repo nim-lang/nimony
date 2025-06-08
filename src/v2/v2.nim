@@ -23,7 +23,7 @@ proc processDir(dir: string) =
     if kind == pcFile and path.endsWith(".nim2.nif"):
       nifFiles.add(path)
   for nifFile in mitems nifFiles:
-    let newName = nifFile.changeFileExt(".2.nif")
+    let newName = nifFile.replace(".nim2.nif", ".2.nif")
     moveFile nifFile, newName
     nifFile = newName
   var cmds: seq[string] = @[]

@@ -57,10 +57,10 @@ proc indexFromNif*(infile: string) =
           assert param.substructureKind == ParamU
           let typ = takeLocal(param, SkipExclBody).typ.skipModifier
           # this assertion fails when got generics proc as generics parameters are not supported yet.
-          assert typ.kind == Symbol
-          let obj = typ.symId
-          let isGeneric = routine.typevars.substructureKind == TypevarsU
-          hookIndexLog[op].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
+          if typ.kind == Symbol:
+            let obj = typ.symId
+            let isGeneric = routine.typevars.substructureKind == TypevarsU
+            hookIndexLog[op].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
       else:
         skip n
     else:
