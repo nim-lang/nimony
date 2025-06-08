@@ -34,8 +34,7 @@ proc processDir(dir: string) =
     quit "v2: failed to generate indexes"
 
 proc main(nimFile, nifFile: string) =
-  let (nimcacheDir, name, ext) = splitModulePath(nifFile)
-  let v2dir = nimcacheDir / "v2"
+  let (v2dir, name, ext) = splitModulePath(nifFile)
   createDir v2dir
 
   let c = "nim nif --nimcache:" & quoteShell(v2dir) & " " & quoteShell(nimFile)
