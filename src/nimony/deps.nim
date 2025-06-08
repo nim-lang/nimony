@@ -275,7 +275,7 @@ proc rootPath(c: DepContext): string =
 proc toBuildList(c: DepContext): seq[CFile] =
   result = @[]
   for v in c.nodes:
-    if v.plugin.len > 0: continue
+    #if v.plugin.len > 0: continue
     let index = readIndex(c.config.indexFile(v.files[0]))
     for i in index.toBuild:
       let path = i[1]
@@ -446,6 +446,13 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       b.addStrLit c.config.indexFile(v.files[0])
 
 proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
+  #[ An import plugin fills `nimcache/<plugin>` for us. It is our job to
+  generate index files for all `.nif` files in there. Both the frontend and
+  the backend needs these files. But we want the index generation to happen
+  in parallel. We cannot iterate over the files in the plugin directory as
+  it is empty until the plugin has run. So unfortunately this logic lives in
+  the v2 plugin.
+  ]#
   b.withTree "do":
     b.addIdent v.plugin
     b.withTree "input":
@@ -497,8 +504,9 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
           b.addIntLit 0  # main parsed file
         b.withTree "output":
           b.addIntLit 0  # semmed file output
-        b.withTree "output":
-          b.addIntLit 1  # index file output
+        # index file output is not explicitly passed to the plugin!
+        #b.withTree "output":
+        #  b.addIntLit 1  # index file output
 
     # Build rules for semantic checking
     var i = 0

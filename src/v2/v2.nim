@@ -8,16 +8,32 @@ const
   Usage = """v2 - Nim 2.0 plugin for Nimony
 
 Usage:
-  v2 path/file.nim nimcache/modname.nif nimcache/modname.idx.nif
+  v2 path/file.nim nimcache/modname.nif
 """
 
-import std/[assertions, os]
+import std/[assertions, os, osproc, strutils]
 include ".." / lib / nifprelude
-import ".." / lib / [nifindexes, symparser]
-import ".." / nimony / [decls, nimony_model, programs, indexgen]
+import ".." / lib / [nifindexes, symparser, tooldirs]
+import ".." / nimony / [programs]
 import ".." / gear2 / modnames
 
-proc main(nimFile, nifFile, idxFile: string) =
+proc processDir(dir: string) =
+  var nifFiles: seq[string] = @[]
+  for kind, path in walkDir(dir):
+    if kind == pcFile and path.endsWith(".nim2.nif"):
+      nifFiles.add(path)
+  for nifFile in mitems nifFiles:
+    let newName = nifFile.changeFileExt(".2.nif")
+    moveFile nifFile, newName
+    nifFile = newName
+  var cmds: seq[string] = @[]
+  let nimsem = findTool("nimsem")
+  for newName in nifFiles:
+    cmds.add nimsem & " x " & quoteShell(newName)
+  if execProcesses(cmds) != 0:
+    quit "v2: failed to generate indexes"
+
+proc main(nimFile, nifFile: string) =
   let (nimcacheDir, name, ext) = splitModulePath(nifFile)
   let v2dir = nimcacheDir / "v2"
   createDir v2dir
@@ -25,10 +41,9 @@ proc main(nimFile, nifFile, idxFile: string) =
   let c = "nim nif --nimcache:" & quoteShell(v2dir) & " " & quoteShell(nimFile)
   if os.execShellCmd(c) != 0:
     quit "v2: failed to compile " & nimFile
-  moveFile v2dir / name & ".nim2.nif", nifFile
-  indexFromNif nifFile
+  processDir v2dir
 
-if paramCount() != 3:
-  quit "v2: invalid number of arguments; expected 3, got " & $paramCount()
+if paramCount() != 2:
+  quit "v2: invalid number of arguments; expected 2, got " & $paramCount()
 else:
-  main(paramStr(1), paramStr(2), paramStr(3))
+  main(paramStr(1), paramStr(2))
