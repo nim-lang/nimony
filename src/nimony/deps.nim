@@ -149,8 +149,6 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLin
                         parent: current.id, isSystem: false, plugin: f.plugin)
     c.nodes.add imported
     c.foundPlugins.incl f.plugin
-    if c.isGeneratingFinal:
-      parseDeps c, p, imported
 
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
@@ -248,18 +246,8 @@ proc importSystem(c: var DepContext; current: Node) =
     parseDeps c, p, imported
 
 proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
-  #[ With the import plugin system Nimony can import Nim 2 code. Now the problem is if an imported module from
-  Nim depends on another module from Nim. deps.nim needs to understand this dependency so that it can compile
-  and link this module as well. We assume that it is safe to skip the Nimony sem check of the
-  precompiled Nim 2 module. So whereas we use the nifler tool to compute the dependencies in the first pass
-  for Nimony modules, we use it to compute the dependencies for Nim 2 modules as well, but in the second pass.
-  ]#
   let depsFile: string
   if not c.isGeneratingFinal:
-    if current.plugin.len > 0: return
-    execNifler c, p
-    depsFile = c.config.depsFile(p)
-  elif current.plugin.len > 0:
     execNifler c, p
     depsFile = c.config.depsFile(p)
   else:

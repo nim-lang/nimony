@@ -32,9 +32,9 @@ const
 type
   ImportedModule* = object
     path*: string
+    fromPlugin*: string
     iface*: Iface
     exports*: Table[SymId, ImportFilter]
-    fromPlugin*: bool
 
   InstRequest* = object
     origin*: SymId
