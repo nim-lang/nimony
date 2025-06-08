@@ -14,6 +14,7 @@ when defined(windows):
       {.link: "../../icons/nimony_icon.o".}
 
 import std / [parseopt, sets, strutils, os, assertions, syncio]
+import ".." / lib / tooldirs
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
