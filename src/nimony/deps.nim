@@ -79,7 +79,7 @@ proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
-proc parseDeps(c: var DepContext; p: FilePair; current: Node)
+proc traverseDeps(c: var DepContext; p: FilePair; current: Node)
 
 proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
   var files: seq[ImportedFilename] = @[]
@@ -109,7 +109,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
           let oldActive = current.active
           current.active = current.files.len
           current.files.add c.toPair(f2)
-          parseDeps(c, c.toPair(f2), current)
+          traverseDeps(c, c.toPair(f2), current)
           c.includeStack.add f2
           current.active = oldActive
           c.includeStack.setLen c.includeStack.len - 1
@@ -136,7 +136,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
     current.deps.add imported.id
     c.processedModules[p.modname] = imported.id
     c.nodes.add imported
-    parseDeps c, p, imported
+    traverseDeps c, p, imported
   else:
     # add the dependency anyway unless it creates a cycle:
     if wouldCreateCycle(c, current, p):
@@ -254,11 +254,11 @@ proc importSystem(c: var DepContext; current: Node) =
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
     c.nodes.add imported
     c.processedModules[p.modname] = imported.id
-    parseDeps c, p, imported
+    traverseDeps c, p, imported
     existingNode = imported.id
   current.deps.add existingNode
 
-proc parseDeps(c: var DepContext; p: FilePair; current: Node) =
+proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
   if not c.isGeneratingFinal:
     execNifler c, p
@@ -566,7 +566,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   result.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
   result.nodes.add result.rootNode
   result.processedModules[p.modname] = 0
-  parseDeps result, p, result.rootNode
+  traverseDeps result, p, result.rootNode
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
