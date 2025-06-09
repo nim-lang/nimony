@@ -423,6 +423,9 @@ proc attachConverter(c: var SemContext; symId: SymId;
 
 proc attachMethod(c: var SemContext; symId: SymId;
                   declStart, beforeParams, beforeGenericParams: int; info: PackedLineInfo) =
+  if c.currentScope.up.kind != ToplevelScope:
+    buildErr c, info, "'method' is only allowed at top level"
+
   var params = cursorAt(c.dest, beforeParams)
   var root = SymId(0)
   var signature = StrId(0)
