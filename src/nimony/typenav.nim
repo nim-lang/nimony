@@ -10,7 +10,7 @@
 ## A type navigator can recompute the type of an expression.
 
 import std/assertions
-include ".." / lib / nifprelude
+include nifprelude
 
 import std/tables
 from std/strutils import endsWith

@@ -5,9 +5,9 @@
 # distribution, for details about the copyright.
 
 import std/assertions
-include ".." / lib / nifprelude
+include nifprelude
 import ".." / nimony / nimony_model
-import ".." / lib / treemangler
+import treemangler
 
 type
   MangleMode* = enum

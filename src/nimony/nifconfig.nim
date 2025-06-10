@@ -8,9 +8,9 @@
 
 import std / [os, sets, strutils]
 
-import ".." / lib / platform
+import platform
 
-include ".." / lib / nifprelude
+include nifprelude
 
 type
   NifConfig* = object
