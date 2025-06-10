@@ -127,6 +127,7 @@
 | `(nimcall)` | CallConv | `nimcall` calling convention |
 | `(inline)` | NifcPragma, NimonyPragma, NifIndexKind | `inline` proc annotation |
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
+| `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
 | `(attr STR)` | NifcPragma | general attribute annoation |
 | `(varargs)` | NifcPragma, NimonyPragma, NimonyType | `varargs` proc annotation |
 | `(was STR)` | NifcPragma | |
@@ -292,3 +293,4 @@
 | `(internalFieldPairs T X)` | NimonyExpr | variant of fieldPairs iterator returns compiler's internal field name |
 | `(failed X)` | NimonyExpr | used to access the hidden failure flag for raising calls |
 | `(is X T)` | NimonyExpr | `is` operator |
+| `(envp T Y)` | NimonyExpr | `envp.Y` field access to hidden `env` parameter which is of type `T` |

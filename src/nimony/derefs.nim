@@ -715,7 +715,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
     let localInfo = c.typeCache.getLocalInfo(n.symId)
-    if localInfo.crossedProc and localInfo.kind in {VarY, LetY, ParamY, ResultY}:
+    if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY}:
       let info = n.info
       c.dest.buildTree ErrT, info:
         c.dest.addSubtree n

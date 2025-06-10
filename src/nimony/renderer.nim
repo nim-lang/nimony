@@ -989,7 +989,7 @@ proc gtypedef(g: var SrcGen, n: var Cursor, c: Context) =
 
   dedent(g)
 
-proc gtry(g: var SrcGen, n: var Cursor) =  
+proc gtry(g: var SrcGen, n: var Cursor) =
   var c: Context = initContext()
   inc n
   put(g, tkTry, "try")
@@ -1686,6 +1686,16 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         put(g, tkColon, ":")
 
       put(g, tkCurlyRi, "}")
+      skipParRi(n)
+
+    of EnvpX:
+      inc n
+      put(g, tkSymbol, "envp")
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put g, tkComma, ","
+      gsub(g, n)
+      put(g, tkParRi, ")")
       skipParRi(n)
 
     of CurlyatX, IsmainmoduleX,

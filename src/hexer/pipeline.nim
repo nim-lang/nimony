@@ -12,7 +12,7 @@ include nifprelude
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
-  constparams, vtables_backend, eraiser
+  constparams, vtables_backend, eraiser, lambdalifting
 
 proc publishHooks*(n: var Cursor) =
   var nested = 0
@@ -46,9 +46,13 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var desugaredBuf = desugar(desugarReader, moduleSuffix, c.activeChecks)
   endRead(initialBuf)
 
-  var lowerExprsReader1 = beginRead(desugaredBuf)
-  var nx = lowerExprs(lowerExprsReader1, moduleSuffix)
+  var lambdaLiftingReader = beginRead(desugaredBuf)
+  var lambdaLiftedBuf = elimLambdas(lambdaLiftingReader, moduleSuffix)
   endRead(desugaredBuf)
+
+  var lowerExprsReader1 = beginRead(lambdaLiftedBuf)
+  var nx = lowerExprs(lowerExprsReader1, moduleSuffix)
+  endRead(lambdaLiftedBuf)
 
   var duplicationReader = beginRead(nx)
   let ctx = createLiftingCtx(moduleSuffix, c.bits)
