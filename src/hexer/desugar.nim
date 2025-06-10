@@ -13,6 +13,7 @@ type
     thisModuleSuffix: string
     tempUseBufStack: seq[TokenBuf]
     activeChecks: set[CheckMode]
+    pending: TokenBuf
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): SymId =
   let s = "`desugar." & $c.counter & "." & c.thisModuleSuffix
@@ -67,12 +68,12 @@ proc skipParRi(n: var Cursor) =
   else:
     bug "expected ')', but got: ", n
 
-proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
 
-proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   copyInto dest, n:
     while n.kind != ParRi:
-      tr(c, dest, n)
+      tr(c, dest, n, isTopScope)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -702,7 +703,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
     dec nestedExpr
 
-proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
     takeTree dest, n
@@ -734,15 +735,22 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trLocal c, dest, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProc c, dest, n
-      of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+      of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
         ForS, CmdS, IncludeS, ImportS, FromimportS, ImportExceptS,
         ExportS, CommentS,
         PragmasS:
         takeTree dest, n
+      of TypeS:
+        if isTopScope:
+          takeTree dest, n
+        else:
+          takeTree c.pending, n
       of ScopeS:
         c.typeCache.openScope()
         trSons(c, dest, n)
         c.typeCache.closeScope()
+      of StmtsS:
+        trSons(c, dest, n, isTopScope = isTopScope)
       else:
         trSons(c, dest, n)
     of SetConstrX:
@@ -770,9 +778,16 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     bug "unexpected ')' inside"
 
 proc desugar*(n: Cursor; moduleSuffix: string; activeChecks: set[CheckMode]): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks)
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
-  tr c, result, n
+  tr c, result, n, isTopScope = true
+
+  assert result[result.len-1].kind == ParRi
+  shrink(result, result.len-1)
+
+  result.add c.pending
+  result.addParRi()
+
   c.typeCache.closeScope()
