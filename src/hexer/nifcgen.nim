@@ -882,14 +882,22 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   var dst = createTokenBuf(50)
   swap c.dest, dst
   #let toPatch = c.dest.len
+  let decl = asTypeDecl(n)
+  let isDistinct = decl.body.typeKind == DistinctT
   let vinfo = n.info
   c.add "type", vinfo
   inc n
   let (s, sinfo) = getSymDef(c, n)
   let oldOwner = setOwner(c, s)
 
-  assert mode == TraverseAll, "local type decls should be eliminated by desugar"
-  c.dest.add symdefToken(s, sinfo)
+  let newSym: SymId
+
+  if mode == TraverseAll and not isDistinct:
+    newSym = makeLocalSymId(c, s, false)
+    c.dest.add symdefToken(newSym, sinfo)
+  else:
+    newSym = s
+    c.dest.add symdefToken(s, sinfo)
   c.offer s
 
   var isGeneric = n.kind == ParLe
@@ -913,7 +921,7 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   c.dest.addDotToken() # adds pragmas
 
   if prag.externName.len > 0:
-    c.registerMangle(s, prag.externName & ".c")
+    c.registerMangle(newSym, prag.externName & ".c")
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
@@ -1698,7 +1706,8 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
       # pure compile-time construct, ignore:
       skip n
     of TypeS:
-      trTypeDecl c, n, mode
+      moveToTopLevel(c, mode):
+        trTypeDecl c, n, mode
     of ContinueS, WhenS:
       error c, "unreachable: ", n
     of PragmasS, AssumeS, AssertS:
