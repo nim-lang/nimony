@@ -34,6 +34,7 @@ type
     FormalParamsMismatch
     CallConvMismatch
     RaisesMismatch
+    ClosureMismatch
     UnavailableSubtypeRelation
     NotImplementedConcept
     ImplicitConversionNotMutable
@@ -128,6 +129,8 @@ proc getErrorMsg*(m: Match): string =
     "calling conventions do not match"
   of RaisesMismatch:
     "`.raises` mismatch"
+  of ClosureMismatch:
+    "`.closure` mismatch"
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
   of NotImplementedConcept:
@@ -593,16 +596,26 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
   skip f
   skip a
 
-proc extractCallConv(c: var Cursor): (CallConv, bool) =
-  result = (Fastcall, false)
+type
+  ProcProperties = object
+    cc: CallConv
+    usesRaises: bool
+    usesClosure: bool
+
+proc extractCallConv(c: var Cursor): ProcProperties =
+  result.cc = Fastcall
+  result.usesRaises = false
+  result.usesClosure = false
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
       let res = callConvKind(c)
       if res != NoCallConv:
-        result[0] = res
+        result.cc = res
       elif c.pragmaKind == RaisesP:
-        result[1] = true
+        result.usesRaises = true
+      elif c.pragmaKind == ClosureP:
+        result.usesClosure = true
       skip c
     inc c
   elif c.kind == DotToken:
@@ -663,10 +676,12 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   # match calling conventions:
   let fcc = extractCallConv(f)
   let acc = extractCallConv(a)
-  if fcc[0] != acc[0]:
+  if fcc.cc != acc.cc:
     m.error CallConvMismatch, f, a
-  elif fcc[1] != acc[1]:
+  elif fcc.usesRaises != acc.usesRaises:
     m.error RaisesMismatch, f, a
+  elif fcc.usesClosure != acc.usesClosure:
+    m.error ClosureMismatch, f, a
   # XXX consider when f or a is (params):
   skip f # effects
   #skip a # effects
