@@ -352,21 +352,44 @@ proc treParamsWithEnv(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tre(c, dest, n)
     addEnvParam dest, NoLineInfo
 
+proc isStaticCall(c: var Context;s: SymId): bool =
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing:
+    let fn = asRoutine(res.decl)
+    result = isRoutine(fn.kind)
+  else:
+    let local = c.typeCache.getLocalInfo(s)
+    result = isRoutine(local.kind)
+
 proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  dest.add n # the call node itself
   let info = n.info
+  dest.add n # the call node itself
   inc n
+  var fn = n
   let typ = c.typeCache.getType(n, {SkipAliases})
   let wantsEnv = isClosure(typ)
-  if wantsEnv and n.kind == Symbol:
-    # do not produce a tuple:
-    dest.add n
-    inc n
+  var isStatic = false
+  if wantsEnv:
+    isStatic = n.kind == Symbol and isStaticCall(c, n.symId)
+    if isStatic:
+      # do not produce a tuple:
+      dest.add n
+      inc n
+    else:
+      copyIntoKind dest, TupatX, info:
+        tre c, dest, n
+        dest.addIntLit 0, info
   while n.kind != ParRi:
     tre(c, dest, n)
   if wantsEnv:
-    # pass the last parameter:
-    untypedEnv dest, info, c.env
+    if isStatic:
+      # use the current environment as the last parameter:
+      untypedEnv dest, info, c.env
+    else:
+      # unpack the tuple:
+      copyIntoKind dest, TupatX, info:
+        tre c, dest, fn
+        dest.addIntLit 1, info
   skipParRi n
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -486,4 +509,3 @@ proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
     endRead(oldResult)
 
 # TODO: `nil` must be patched to be `(nil, nil)`.
-# calls must unpack the tuples
