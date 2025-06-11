@@ -478,9 +478,12 @@ proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
     var n = beginRead(oldResult)
     assert n.stmtKind == StmtsS
     result.add n # stmts
-    genObjectTypes(c, result)
     inc n
+    genObjectTypes(c, result)
     while n.kind != ParRi:
       tre(c, result, n)
     result.takeParRi n
     endRead(oldResult)
+
+# TODO: `nil` must be patched to be `(nil, nil)`.
+# calls must unpack the tuples

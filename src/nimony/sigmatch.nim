@@ -603,9 +603,7 @@ type
     usesClosure: bool
 
 proc extractCallConv(c: var Cursor): ProcProperties =
-  result.cc = Fastcall
-  result.usesRaises = false
-  result.usesClosure = false
+  result = ProcProperties(cc: Fastcall, usesRaises: false, usesClosure: false)
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
