@@ -157,7 +157,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       trProc c, dest, n
     of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-      ForS, CmdS, IncludeS, ImportS, FromimportS, ImportExceptS,
+      ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,
       PragmasS:
       takeTree dest, n
@@ -336,9 +336,10 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if i == ParamsPos:
         c.typeCache.registerLocal(sym, ProcY, n)
         treParams c, dest, init, n, c.closureProcs.contains(sym)
-      elif i == TypeVarsPos:
-        isConcrete = n.substructureKind != TypevarsU
-      takeTree dest, n
+      else:
+        if i == TypeVarsPos:
+          isConcrete = n.substructureKind != TypevarsU
+        takeTree dest, n
 
     if isConcrete:
       treProcBody(c, dest, init, n, sym)
@@ -475,7 +476,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       treProc c, dest, n
     of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
-      ForS, CmdS, IncludeS, ImportS, FromimportS, ImportExceptS,
+      ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,
       PragmasS:
       takeTree dest, n
