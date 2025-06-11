@@ -409,6 +409,35 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addIntLit 1, info
   skipParRi n
 
+proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if isClosure(n):
+    # type is really a tuple:
+    let info = n.info
+    copyIntoKind dest, TupleT, info:
+      copyIntoKind dest, ProctypeT, info:
+        for i in 1..4: dest.addDotToken()
+        let usesWrapper = n.typeKind == ProctypeT
+        if usesWrapper:
+          inc n
+          for i in 1..4: dest.takeTree n
+        if n.typeKind == ParamsT:
+          treParamsWithEnv(c, dest, n)
+        else:
+          assert n.kind == DotToken
+          inc n
+          dest.addParLe ParamsT, info
+          addEnvParam dest, info
+          dest.addParRi()
+        dest.takeTree n # return type
+        # pragmas:
+        tre c, dest, n
+        if usesWrapper:
+          skipParRi n
+      copyIntoKind dest, RefT, info:
+        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+  else:
+    treSons(c, dest, n)
+
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
@@ -445,7 +474,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       treLocal c, dest, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       treProc c, dest, n
-    of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+    of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
       ForS, CmdS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,
       PragmasS:
@@ -471,9 +500,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of TypeofX:
         takeTree dest, n
       else:
-        if n.typeKind == ParamsT and paramsWithClosurePragma(n):
-          # maybe we need to add the closure parameter?
-          treParamsWithEnv(c, dest, n)
+        if n.typeKind in {ProctypeT, ParamsT}:
+          treProcType(c, dest, n)
         else:
           treSons(c, dest, n)
   of ParRi:
