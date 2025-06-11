@@ -735,7 +735,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         trLocal c, dest, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProc c, dest, n
-      of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+      of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
         ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
         ExportS, CommentS,
         PragmasS:
