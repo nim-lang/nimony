@@ -80,7 +80,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  c.typeCache.openScope()
+  c.typeCache.openScope(ProcScope)
   copyInto dest, n:
     c.procStack.add(n.symId)
     let isConcrete = c.typeCache.takeRoutineHeader(dest, n)
@@ -327,7 +327,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
     tre(c, dest, n)
 
 proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  c.typeCache.openScope()
+  c.typeCache.openScope(ProcScope)
   var init = createTokenBuf(10)
   copyInto dest, n:
     var isConcrete = true # assume it is concrete
