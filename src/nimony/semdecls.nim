@@ -814,7 +814,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     swap c.dest, c.pending
 
   if isRefPtrObj:
-    if c.phase != SemcheckTopLevelSyms:
+    if c.phase > SemcheckTopLevelSyms:
       var topLevelDest = createTokenBuf(64)
       var topLevelRead = beginRead(innerObjDecl)
       var phase = SemcheckTopLevelSyms
@@ -824,6 +824,17 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       swap c.dest, topLevelDest
       swap c.phase, phase
       innerObjDecl = topLevelDest
+    if c.phase > SemcheckSignatures:
+      # need to go through signature phase if not applied yet since decl already has sym 
+      var sigDest = createTokenBuf(64)
+      var sigRead = beginRead(innerObjDecl)
+      var phase = SemcheckSignatures
+      swap c.phase, phase
+      swap c.dest, sigDest
+      semTypeSection c, sigRead
+      swap c.dest, sigDest
+      swap c.phase, phase
+      innerObjDecl = sigDest
     var decl = beginRead(innerObjDecl)
     semTypeSection c, decl
 
