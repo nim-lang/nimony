@@ -311,7 +311,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
           dest.addDotToken() # no pragmas
           dest.copyIntoKind RefT, NoLineInfo:
             dest.addSymUse c.env.typ, NoLineInfo
-          dest.copyIntoKind NewrefX, NoLineInfo:
+          dest.copyIntoKind NewobjX, NoLineInfo:
             dest.copyIntoKind RefT, NoLineInfo:
               dest.addSymUse c.env.typ, NoLineInfo
       elif c.closureProcs.contains(sym):
@@ -321,20 +321,18 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
       dest.add init
       while n.kind != ParRi:
         tre(c, dest, n)
-      inc n # ParRi
       c.env = oldEnv
   else:
     tre(c, dest, n)
 
 proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  c.typeCache.openScope(ProcScope)
   var init = createTokenBuf(10)
   copyInto dest, n:
     var isConcrete = true # assume it is concrete
     let sym = n.symId
     for i in 0..<BodyPos:
       if i == ParamsPos:
-        c.typeCache.registerLocal(sym, ProcY, n)
+        c.typeCache.openProcScope(sym, n)
         treParams c, dest, init, n, c.closureProcs.contains(sym)
       else:
         if i == TypeVarsPos:
@@ -368,7 +366,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   var fn = n
   let typ = c.typeCache.getType(n, {SkipAliases})
-  let wantsEnv = isClosure(typ)
+  let wantsEnv = isClosure(typ) or (n.kind == Symbol and c.closureProcs.contains(n.symId))
   var isStatic = false
   var tmp = SymId(0)
   if wantsEnv:
@@ -408,6 +406,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyIntoKind dest, TupatX, info:
         dest.addSymUse tmp, info
         dest.addIntLit 1, info
+  dest.addParRi()
   skipParRi n
 
 proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -493,8 +492,10 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
         dest.copyIntoKind DotX, info:
           dest.copyIntoKind DerefX, info:
-            dest.typedEnv info, c.env
-          skip n # type not needed...
+            dest.copyIntoKind CastX, info:
+              dest.copyIntoKind RefT, info:
+                dest.takeTree n # type
+              dest.addSymUse c.env.s, info
           assert n.kind == Symbol
           dest.takeTree n # the symbol
         skipParRi n
@@ -513,6 +514,7 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
   for local, field in c.localToEnv:
     objectTypes.mgetOrPut(field.objType, @[]).add(field)
   for objType, fields in objectTypes:
+    let beforeType = dest.len
     dest.copyIntoKind TypeS, NoLineInfo:
       dest.addSymDef objType, NoLineInfo
       dest.addDotToken() # no export marker
@@ -521,14 +523,17 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
       dest.copyIntoKind ObjectT, NoLineInfo:
         # inherits from RootObj:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), NoLineInfo
-      for field in items fields:
-        dest.copyIntoKind FldY, NoLineInfo:
-          dest.addSymDef field.field, NoLineInfo
-          dest.addDotToken() # no export marker
-          dest.addDotToken() # no pragmas
-          var n = field.typ
-          tre(c, dest, n) # type might need an environment parameter
-          dest.addDotToken() # no default value
+        for field in items fields:
+          let beforeField = dest.len
+          dest.copyIntoKind FldY, NoLineInfo:
+            dest.addSymDef field.field, NoLineInfo
+            dest.addDotToken() # no export marker
+            dest.addDotToken() # no pragmas
+            var n = field.typ
+            tre(c, dest, n) # type might need an environment parameter
+            dest.addDotToken() # no default value
+          programs.publish(field.field, dest, beforeField)
+    programs.publish(objType, dest, beforeType)
 
 proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
@@ -541,6 +546,7 @@ proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
   # second pass: generate environments
   if c.localToEnv.len > 0:
     # some closure usage has been found, so we need to generate environments
+    c.typeCache.openScope()
     let cap = result.len
     var oldResult = move result
     result = createTokenBuf(cap)
@@ -553,5 +559,8 @@ proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
       tre(c, result, n)
     result.takeParRi n
     endRead(oldResult)
+    c.typeCache.closeScope()
+
+  #echo "PRODUCED ", toString(result, false)
 
 # TODO: `nil` must be patched to be `(nil, nil)`.

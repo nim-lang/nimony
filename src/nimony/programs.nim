@@ -255,6 +255,13 @@ proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 proc publish*(s: SymId; buf: sink TokenBuf) =
   prog.mem[s] = buf
 
+proc publish*(s: SymId; dest: TokenBuf; start: int) =
+  # XXX We really need to find an elegant way to use Cursor here instead of Tokenbuf copies
+  var buf = createTokenBuf(dest.len - start + 1)
+  for i in start..<dest.len:
+    buf.add dest[i]
+  publish s, buf
+
 proc splitModulePath*(s: string): (string, string, string) =
   var (dir, main, ext) = splitFile(s)
   let dotPos = find(main, '.')
