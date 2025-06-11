@@ -299,7 +299,7 @@ proc semExportExcept(c: var SemContext; it: var Item) =
 
   let moduleSymStart = c.dest.len
   var m = Item(n: x, typ: c.types.autoType)
-  semExpr c, m # get module sym
+  semExpr c, m, {AllowModuleSym} # get module sym
   x = m.n
   let moduleSym = findModuleSymbol(cursorAt(c.dest, moduleSymStart))
   endRead(c.dest)
