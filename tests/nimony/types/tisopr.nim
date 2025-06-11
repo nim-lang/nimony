@@ -42,3 +42,16 @@ assert Foo[int, float] is Foo[int, float]
 assert Foo[float, float] is Foo[float, float]
 assert Foo[int, float] isnot Foo[float, float]
 assert Foo[int, int] isnot Bar[int, int]
+
+
+type
+  Person = tuple[name: string, age: int] # type representing a person:
+                                         # it consists of a name and an age.
+var person: Person
+person = (name: "Peter", age: 30)
+assert person.name == "Peter"
+# the same, but less readable:
+person = ("Peter", 30)
+assert person[0] == "Peter"
+assert Person is (string, int)
+assert (string, int) is Person

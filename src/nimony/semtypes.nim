@@ -50,9 +50,12 @@ proc semObjectType(c: var SemContext; n: var Cursor) =
         semObjectComponent c, n
   takeParRi c, n
 
-proc semTupleType(c: var SemContext; n: var Cursor) =
+proc semTupleType(c: var SemContext; n: var Cursor; isTupConstr = false) =
   c.dest.add parLeToken(TupleT, n.info)
   inc n
+
+  if isTupConstr:
+    skip n
   # tuple fields:
   withNewScope c:
     while n.kind != ParRi:
@@ -623,6 +626,8 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         skipParRi n
       elif xkind == TupX:
         semTupleType c, n
+      elif xkind == TupConstrX:
+        semTupleType(c, n, isTupConstr = true)
       elif handleNilableType(c, n, context):
         discard "handled"
       elif isOrExpr(n):

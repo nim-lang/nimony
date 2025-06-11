@@ -267,6 +267,9 @@ proc getTupleFieldType*(c: Cursor): Cursor =
   else:
     result = c
 
+  if result.typeKind == TypedescT:
+    inc result
+
 type
   ForStmt* = object
     kind*: StmtKind
