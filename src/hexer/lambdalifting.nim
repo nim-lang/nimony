@@ -311,7 +311,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
           dest.addDotToken() # no pragmas
           dest.copyIntoKind RefT, NoLineInfo:
             dest.addSymUse c.env.typ, NoLineInfo
-          dest.copyIntoKind NewrefX, NoLineInfo:
+          dest.copyIntoKind NewobjX, NoLineInfo:
             dest.copyIntoKind RefT, NoLineInfo:
               dest.addSymUse c.env.typ, NoLineInfo
       elif c.closureProcs.contains(sym):
