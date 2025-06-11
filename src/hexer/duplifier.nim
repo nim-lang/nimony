@@ -916,6 +916,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trDeref c, n
     of DdotX:
       bug "nodekind should have been eliminated in desugar.nim"
+    of EnvpX:
+      bug "envp should have been eliminated in lambdalifting.nim"
     of DefaultobjX, DefaulttupX, BracketX, CurlyX, TupX:
       bug "nodekind should have been eliminated in sem.nim"
     of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX:

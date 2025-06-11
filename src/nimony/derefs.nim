@@ -714,13 +714,17 @@ proc trFor(c: var Context; n: var Cursor) =
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
-    let localInfo = c.typeCache.getLocalInfo(n.symId)
-    if localInfo.crossedProc and localInfo.kind in {VarY, LetY, ParamY, ResultY}:
-      let info = n.info
-      c.dest.buildTree ErrT, info:
-        c.dest.addSubtree n
-        c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; closures are not supported"), info)
-      skip n
+    when true:
+      # Closures are now implemented
+      let localInfo = c.typeCache.getLocalInfo(n.symId)
+      if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY}:
+        let info = n.info
+        c.dest.buildTree ErrT, info:
+          c.dest.addSubtree n
+          c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; closures are not supported"), info)
+        skip n
+      else:
+        trLocation c, n, e
     else:
       trLocation c, n, e
   of IntLit, UIntLit, FloatLit, CharLit, StringLit:

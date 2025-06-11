@@ -1378,7 +1378,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP, SideEffectP, BaseP:
+     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
@@ -4559,6 +4559,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)
       takeToken c, it.n
       takeParRi c, it.n
+    of EnvpX:
+      bug "frontend should not encounter `envp`"
 
   of ParRi, EofToken, SymbolDef, UnknownToken, DotToken:
     buildErr c, it.n.info, "expression expected"

@@ -31,7 +31,7 @@ proc isGeneratedType*(s: string): bool =
 type
   LocalInfo* = object
     kind*: SymKind
-    crossedProc*: bool
+    crossedProc*: int16
     typ*: Cursor
   ScopeKind* = enum
     OtherScope, ProcScope, UnusedScope
@@ -91,14 +91,14 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
 
 proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
   var it {.cursor.} = c.current
-  var crossedProc = false
+  var crossedProc = 0
   var compareTo = UnusedScope
   while it != nil:
     var res = it.locals.getOrDefault(s)
     if it.kind == compareTo:
-      crossedProc = true
+      inc crossedProc
     if res.kind != NoSym:
-      res.crossedProc = crossedProc
+      res.crossedProc = int16(crossedProc)
       return res
     it = it.parent
     compareTo = ProcScope
@@ -417,6 +417,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       of "R", "T": result = c.builtins.stringType
       of "C": result = c.builtins.cstringType
       else: result = c.builtins.autoType
+  of EnvpX:
+    result = c.builtins.autoType
 
   assert result.kind != ParRi, "ParRi for expression: " & toString(n, false)
 
