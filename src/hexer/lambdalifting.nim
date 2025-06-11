@@ -366,7 +366,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   var fn = n
   let typ = c.typeCache.getType(n, {SkipAliases})
-  let wantsEnv = isClosure(typ)
+  let wantsEnv = isClosure(typ) or (n.kind == Symbol and c.closureProcs.contains(n.symId))
   var isStatic = false
   var tmp = SymId(0)
   if wantsEnv:
@@ -492,8 +492,10 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
         dest.copyIntoKind DotX, info:
           dest.copyIntoKind DerefX, info:
-            dest.typedEnv info, c.env
-          skip n # type not needed...
+            dest.copyIntoKind CastX, info:
+              dest.copyIntoKind RefT, info:
+                dest.takeTree n # type
+              dest.addSymUse c.env.s, info
           assert n.kind == Symbol
           dest.takeTree n # the symbol
         skipParRi n
@@ -512,6 +514,7 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
   for local, field in c.localToEnv:
     objectTypes.mgetOrPut(field.objType, @[]).add(field)
   for objType, fields in objectTypes:
+    let beforeType = dest.len
     dest.copyIntoKind TypeS, NoLineInfo:
       dest.addSymDef objType, NoLineInfo
       dest.addDotToken() # no export marker
@@ -520,14 +523,17 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
       dest.copyIntoKind ObjectT, NoLineInfo:
         # inherits from RootObj:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), NoLineInfo
-      for field in items fields:
-        dest.copyIntoKind FldY, NoLineInfo:
-          dest.addSymDef field.field, NoLineInfo
-          dest.addDotToken() # no export marker
-          dest.addDotToken() # no pragmas
-          var n = field.typ
-          tre(c, dest, n) # type might need an environment parameter
-          dest.addDotToken() # no default value
+        for field in items fields:
+          let beforeField = dest.len
+          dest.copyIntoKind FldY, NoLineInfo:
+            dest.addSymDef field.field, NoLineInfo
+            dest.addDotToken() # no export marker
+            dest.addDotToken() # no pragmas
+            var n = field.typ
+            tre(c, dest, n) # type might need an environment parameter
+            dest.addDotToken() # no default value
+          programs.publish(field.field, dest, beforeField)
+    programs.publish(objType, dest, beforeType)
 
 proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
@@ -554,5 +560,7 @@ proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
     result.takeParRi n
     endRead(oldResult)
     c.typeCache.closeScope()
+
+  #echo "PRODUCED ", toString(result, false)
 
 # TODO: `nil` must be patched to be `(nil, nil)`.
