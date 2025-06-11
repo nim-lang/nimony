@@ -369,16 +369,32 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let typ = c.typeCache.getType(n, {SkipAliases})
   let wantsEnv = isClosure(typ)
   var isStatic = false
+  var tmp = SymId(0)
   if wantsEnv:
     isStatic = n.kind == Symbol and isStaticCall(c, n.symId)
     if isStatic:
       # do not produce a tuple:
       dest.add n
       inc n
-    else:
+    elif n.kind == Symbol:
+      tmp = n.symId
       copyIntoKind dest, TupatX, info:
         tre c, dest, n
         dest.addIntLit 0, info
+    else:
+      dest.addParLe(ExprX, info)
+      copyIntoKind dest, StmtsS, info:
+        tmp = pool.syms.getOrIncl("`llTemp." & $c.counter)
+        inc c.counter
+        copyIntoKind dest, VarS, info:
+          dest.addSymDef tmp, info
+          dest.addDotToken() # no export marker
+          dest.addDotToken() # no pragmas
+          var t = typ
+          tre c, dest, t
+          tre c, dest, n # value
+      dest.addSymUse tmp, info
+      dest.addParRi() # ExprX
   while n.kind != ParRi:
     tre(c, dest, n)
   if wantsEnv:
@@ -387,8 +403,9 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       untypedEnv dest, info, c.env
     else:
       # unpack the tuple:
+      assert tmp != SymId(0)
       copyIntoKind dest, TupatX, info:
-        tre c, dest, fn
+        dest.addSymUse tmp, info
         dest.addIntLit 1, info
   skipParRi n
 
