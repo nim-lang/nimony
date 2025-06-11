@@ -66,6 +66,10 @@ proc registerParams*(c: var TypeCache; routine: SymId; params: Cursor) =
       registerLocal(c, r.name.symId, ParamY, r.typ)
   c.current.locals[routine] = LocalInfo(kind: ProcY, typ: params)
 
+proc openProcScope*(c: var TypeCache; routine: SymId; params: Cursor) =
+  registerLocal(c, routine, ProcY, params)
+  c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: ProcScope)
+
 proc firstSon(n: Cursor): Cursor {.inline.} =
   result = n
   inc result

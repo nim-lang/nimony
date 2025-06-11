@@ -326,14 +326,13 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
     tre(c, dest, n)
 
 proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  c.typeCache.openScope(ProcScope)
   var init = createTokenBuf(10)
   copyInto dest, n:
     var isConcrete = true # assume it is concrete
     let sym = n.symId
     for i in 0..<BodyPos:
       if i == ParamsPos:
-        c.typeCache.registerLocal(sym, ProcY, n)
+        c.typeCache.openProcScope(sym, n)
         treParams c, dest, init, n, c.closureProcs.contains(sym)
       else:
         if i == TypeVarsPos:
@@ -407,6 +406,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyIntoKind dest, TupatX, info:
         dest.addSymUse tmp, info
         dest.addIntLit 1, info
+  dest.addParRi()
   skipParRi n
 
 proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -540,6 +540,7 @@ proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
   # second pass: generate environments
   if c.localToEnv.len > 0:
     # some closure usage has been found, so we need to generate environments
+    c.typeCache.openScope()
     let cap = result.len
     var oldResult = move result
     result = createTokenBuf(cap)
@@ -552,5 +553,6 @@ proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
       tre(c, result, n)
     result.takeParRi n
     endRead(oldResult)
+    c.typeCache.closeScope()
 
 # TODO: `nil` must be patched to be `(nil, nil)`.
