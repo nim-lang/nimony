@@ -321,7 +321,6 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
       dest.add init
       while n.kind != ParRi:
         tre(c, dest, n)
-      inc n # ParRi
       c.env = oldEnv
   else:
     tre(c, dest, n)
