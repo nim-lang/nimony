@@ -82,8 +82,18 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope(ProcScope)
   copyInto dest, n:
-    c.procStack.add(n.symId)
-    let isConcrete = c.typeCache.takeRoutineHeader(dest, n)
+    let symId = n.symId
+    c.procStack.add(symId)
+    var isConcrete = true # assume it is concrete
+    for i in 0..<BodyPos:
+      if i == ParamsPos:
+        c.typeCache.registerParams(symId, n)
+      elif i == TypeVarsPos:
+        isConcrete = n.substructureKind != TypevarsU
+      elif i == ProcPragmasPos:
+        if hasPragma(n, ClosureP):
+          c.closureProcs.incl symId
+      takeTree dest, n
     if isConcrete:
       tr(c, dest, n)
     else:
@@ -314,6 +324,16 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
           dest.copyIntoKind NewobjX, NoLineInfo:
             dest.copyIntoKind RefT, NoLineInfo:
               dest.addSymUse c.env.typ, NoLineInfo
+        # init the environment via the `=wasMoved` hooks:
+        for _, field in c.localToEnv:
+          if field.objType == c.env.typ:
+            dest.copyIntoKind WasmovedX, NoLineInfo:
+              dest.copyIntoKind HaddrX, NoLineInfo:
+                dest.copyIntoKind DotX, NoLineInfo:
+                  dest.copyIntoKind DerefX, NoLineInfo:
+                    dest.addSymUse c.env.s, NoLineInfo
+                  dest.addSymUse field.field, NoLineInfo
+
       elif c.closureProcs.contains(sym):
         c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(sym))
       else:
@@ -398,8 +418,13 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tre(c, dest, n)
   if wantsEnv:
     if isStatic:
-      # use the current environment as the last parameter:
-      untypedEnv dest, info, c.env
+      if c.env.s != SymId(0):
+        # use the current environment as the last parameter:
+        untypedEnv dest, info, c.env
+      else:
+        # can happen for toplevel closures that have been declared .closure for interop
+        # We have no environment here, so pass `nil` instead:
+        dest.copyIntoKind NilX, info: discard
     else:
       # unpack the tuple:
       assert tmp != SymId(0)

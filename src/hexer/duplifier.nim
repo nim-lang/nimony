@@ -613,14 +613,17 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType
-    let param = takeLocal(fnType, SkipFinalParRi)
-    let pk = param.typ.typeKind
     var e2 = WantNonOwner
-    if pk == SinkT:
-      e2 = WantOwner
-    elif pk == VarargsT:
-      # do not advance formal parameter:
-      fnType = previousFormalParam
+    if fnType.kind == ParRi:
+      discard "this can happen for closure parameters"
+    else:
+      let param = takeLocal(fnType, SkipFinalParRi)
+      let pk = param.typ.typeKind
+      if pk == SinkT:
+        e2 = WantOwner
+      elif pk == VarargsT:
+        # do not advance formal parameter:
+        fnType = previousFormalParam
     tr c, n, e2
   takeParRi c.dest, n
   finishOwningTemp c.dest, ow

@@ -208,22 +208,25 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType
-    assert fnType.kind == ParLe
-    let param = takeLocal(fnType, SkipFinalParRi)
-    let pk = param.typ.typeKind
-    if pk in {MutT, OutT, LentT}:
-      tr c, dest, n
-    elif pk == VarargsT:
-      # do not advance formal parameter:
-      fnType = previousFormalParam
-      tr c, dest, n
-    elif passByConstRef(c, param.typ, param.pragmas):
-      trConstRef c, dest, n
-    elif pk in {TypedescT, StaticT}:
-      # do not produce any code for this as it's a compile-time value:
-      skip n
+    if fnType.kind == ParRi:
+      tr c, dest, n # can happen for closure parameter
     else:
-      tr c, dest, n
+      assert fnType.kind == ParLe
+      let param = takeLocal(fnType, SkipFinalParRi)
+      let pk = param.typ.typeKind
+      if pk in {MutT, OutT, LentT}:
+        tr c, dest, n
+      elif pk == VarargsT:
+        # do not advance formal parameter:
+        fnType = previousFormalParam
+        tr c, dest, n
+      elif passByConstRef(c, param.typ, param.pragmas):
+        trConstRef c, dest, n
+      elif pk in {TypedescT, StaticT}:
+        # do not produce any code for this as it's a compile-time value:
+        skip n
+      else:
+        tr c, dest, n
   takeParRi dest, n
   if needsTuple:
     dest.addParRi() # TupconstrX

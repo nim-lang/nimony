@@ -714,7 +714,7 @@ proc trFor(c: var Context; n: var Cursor) =
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
-    when true:
+    when false:
       # Closures are now implemented
       let localInfo = c.typeCache.getLocalInfo(n.symId)
       if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY}:
