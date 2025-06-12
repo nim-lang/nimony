@@ -314,6 +314,16 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
           dest.copyIntoKind NewobjX, NoLineInfo:
             dest.copyIntoKind RefT, NoLineInfo:
               dest.addSymUse c.env.typ, NoLineInfo
+        # init the environment via the `=wasMoved` hooks:
+        for _, field in c.localToEnv:
+          if field.objType == c.env.typ:
+            dest.copyIntoKind WasmovedX, NoLineInfo:
+              dest.copyIntoKind HaddrX, NoLineInfo:
+                dest.copyIntoKind DotX, NoLineInfo:
+                  dest.copyIntoKind DerefX, NoLineInfo:
+                    dest.addSymUse c.env.s, NoLineInfo
+                  dest.addSymUse field.field, NoLineInfo
+
       elif c.closureProcs.contains(sym):
         c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(sym))
       else:
