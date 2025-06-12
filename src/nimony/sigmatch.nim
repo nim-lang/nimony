@@ -597,12 +597,12 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
   skip a
 
 type
-  ProcProperties = object
-    cc: CallConv
-    usesRaises: bool
-    usesClosure: bool
+  ProcProperties* = object
+    cc*: CallConv
+    usesRaises*: bool
+    usesClosure*: bool
 
-proc extractCallConv(c: var Cursor): ProcProperties =
+proc extractProcProps*(c: var Cursor): ProcProperties =
   result = ProcProperties(cc: Fastcall, usesRaises: false, usesClosure: false)
   if c.substructureKind == PragmasU:
     inc c
@@ -672,8 +672,8 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   else:
     linearMatch m, f, a
   # match calling conventions:
-  let fcc = extractCallConv(f)
-  let acc = extractCallConv(a)
+  let fcc = extractProcProps(f)
+  let acc = extractProcProps(a)
   if fcc.cc != acc.cc:
     m.error CallConvMismatch, f, a
   elif fcc.usesRaises != acc.usesRaises:
