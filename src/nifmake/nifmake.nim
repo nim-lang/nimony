@@ -213,6 +213,8 @@ proc getFileTime(dag: var Dag; filename: string): Time =
 proc removeOutdatedArtifacts(dag: var Dag; node: Node; opt: set[CliOption]) =
   ## Remove outdated build artifacts for a node
   for output in node.outputs:
+    # Remove its cached timestamp as it is no longer valid
+    dag.timestampCache.del output
     if fileExists(output):
       try:
         removeFile(output)
