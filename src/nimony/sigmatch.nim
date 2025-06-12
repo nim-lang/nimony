@@ -957,6 +957,11 @@ proc isSomeSeqType*(a: Cursor): bool {.inline.} =
   var dummy = default(Cursor)
   result = isSomeSeqType(a, dummy)
 
+proc getTupleFieldTypeSkipTypedesc(c: Cursor): Cursor =
+  result = getTupleFieldType(c)
+  if result.typeKind == TypedescT:
+    inc result
+
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
   case f.kind
   of Symbol:
@@ -1093,8 +1098,8 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
             # len(f) > len(a)
             m.error InvalidMatch, fOrig, aOrig
           # only the type of the field is important:
-          var ffld = getTupleFieldType(f)
-          var afld = getTupleFieldType(a)
+          var ffld = getTupleFieldTypeSkipTypedesc(f)
+          var afld = getTupleFieldTypeSkipTypedesc(a)
           linearMatch m, ffld, afld
           # skip fields:
           skip f

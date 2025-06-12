@@ -4198,7 +4198,16 @@ proc semIs(c: var SemContext; it: var Item) =
   it.n = lhs.n
   if lhs.typ.typeKind == TypedescT:
     inc lhs.typ
-  let rhs = semLocalType(c, it.n)
+
+  let rhs: TypeCursor
+  if it.n.exprKind == TupConstrX:
+    inc it.n
+    rhs = semLocalType(c, it.n)
+    while it.n.kind != ParRi:
+      skip it.n
+    skipParRi it.n
+  else:
+    rhs = semLocalType(c, it.n)
   skipParRi it.n
   c.dest.shrink beforeExpr # delete LHS and RHS
   if containsGenericParams(lhs.typ) or containsGenericParams(rhs):
