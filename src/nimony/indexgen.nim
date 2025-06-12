@@ -27,6 +27,54 @@ proc getAttachedOp(symId: SymId, attackedOp: var AttachedOp): bool =
 
   return true
 
+proc indexMethod(classIndexMap: var seq[ClassIndexEntry]; symId: SymId; routine: Routine) =
+  var param = routine.params
+  if param.substructureKind == ParamsU:
+    inc param
+    if param.substructureKind == ParamU:
+      var typ = param.takeLocal(SkipFinalParRi).typ
+      # should use `getClass` proc in `nimony/typeprops.nim`,
+      # but current `tryLoadSym` doesn't work with Nim v2 NIF.
+      #let root = typ.getClass()
+      if typ.typeKind == RefT:
+        inc typ
+      if typ.kind == Symbol:
+        let root = typ.symId
+        var methodName = pool.syms[symId]
+        extractBasename methodName
+        let signature = pool.strings.getOrIncl(methodKey(methodName, param))
+        if routine.typevars.typeKind != InvokeT:
+          # don't register instances
+          for i in 0..<classIndexMap.len:
+            if classIndexMap[i].cls == root:
+              classIndexMap[i].methods.add MethodIndexEntry(fn:symId, signature: signature)
+              continue
+          classIndexMap.add ClassIndexEntry(cls: root, methods: @[MethodIndexEntry(fn: symId, signature: signature)])
+
+proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): TokenBuf =
+  result = default(TokenBuf)
+  let (dir, _, ext) = splitModulePath infile
+  if exports.len != 0:
+    result = createTokenBuf(32)
+    for suffix, syms in exports:
+      # open NIF file to get the path of source file of the module from the line info.
+      let modPath = dir / (suffix & ext)
+      var stream = nifstreams.open(modPath)
+      discard processDirectives(stream.r)
+      discard stream.next   # first stmts node doesn't have line info.
+      let t = stream.next
+      let fileId = pool.man.getFileId(t.info)
+      assert fileId.isValid
+      stream.close
+      let path = pool.files[fileId].toAbsolutePath
+      result.addParLe(TagId(FromexportIdx))
+      result.addStrLit path
+      for s in syms:
+        var isGlobal = false
+        let ident = extractBasename(pool.syms[s], isGlobal)
+        result.addIdent(ident)
+      result.addParRi()
+
 proc indexFromNif*(infile: string) =
   ## Extract index from `infile` Nif file and write it to `*.idx.nif` file.
   ##
@@ -59,28 +107,7 @@ proc indexFromNif*(infile: string) =
             let root = routine.retType.skipModifier.symId
             converterIndexMap.add((root, symId))
         elif kind == MethodS:
-          var param = routine.params
-          if param.substructureKind == ParamsU:
-            inc param
-            if param.substructureKind == ParamU:
-              var typ = param.takeLocal(SkipFinalParRi).typ
-              # should use `getClass` proc in `nimony/typeprops.nim`,
-              # but current `tryLoadSym` doesn't work with Nim v2 NIF.
-              #let root = typ.getClass()
-              if typ.typeKind == RefT:
-                inc typ
-              if typ.kind == Symbol:
-                let root = typ.symId
-                var methodName = pool.syms[symId]
-                extractBasename methodName
-                let signature = pool.strings.getOrIncl(methodKey(methodName, param))
-                if routine.typevars.typeKind != InvokeT:
-                  # don't register instances
-                  for i in 0..<classIndexMap.len:
-                    if classIndexMap[i].cls == root:
-                      classIndexMap[i].methods.add MethodIndexEntry(fn:symId, signature: signature)
-                      continue
-                  classIndexMap.add ClassIndexEntry(cls: root, methods: @[MethodIndexEntry(fn: symId, signature: signature)])
+          indexMethod(classIndexMap, symId, routine)
         else:
           var op = default AttachedOp
           if getAttachedOp(symId, op):
@@ -115,28 +142,7 @@ proc indexFromNif*(infile: string) =
 
   endRead buf
 
-  var exportBuf = default(TokenBuf)
-  let (dir, _, ext) = splitModulePath infile
-  if exports.len != 0:
-    exportBuf = createTokenBuf(32)
-    for suffix, syms in exports:
-      # open NIF file to get the path of source file of the module from the line info.
-      let modPath = dir / (suffix & ext)
-      var stream = nifstreams.open(modPath)
-      discard processDirectives(stream.r)
-      discard stream.next   # first stmts node doesn't have line info.
-      let t = stream.next
-      let fileId = pool.man.getFileId(t.info)
-      assert fileId.isValid
-      stream.close
-      let path = pool.files[fileId].toAbsolutePath
-      exportBuf.addParLe(TagId(FromexportIdx))
-      exportBuf.addStrLit path
-      for s in syms:
-        var isGlobal = false
-        let ident = extractBasename(pool.syms[s], isGlobal)
-        exportBuf.addIdent(ident)
-      exportBuf.addParRi()
+  var exportBuf = buildIndexExports(exports, infile)
 
   createIndex infile, root, true,
     IndexSections(hooks: move hookIndexLog,
