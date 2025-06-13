@@ -409,12 +409,53 @@ proc gif(g: var SrcGen, n: var Cursor) =
 
   skipParRi(n)
 
-proc gcase(g: var SrcGen, n: var Cursor) =
+proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false)
+
+proc takeField(g: var SrcGen, fields: var Cursor) =
+  let local = takeLocal(fields, SkipFinalParRi)
+  var name = local.name
+  var typ = local.typ
+
+  gsub(g, name)
+  var exportMarker = local.exported
+  mayAddExportMarker(g, exportMarker)
+
+  putWithSpace(g, tkColon, ":")
+  gtype(g, typ, emptyContext)
+  optNL(g)
+
+proc takeObjectFields(g: var SrcGen, fields: var Cursor) =
+  case fields.substructureKind
+  of CaseU:
+    gcase(g, fields, isCaseObject = true)
+  of FldU:
+    takeField(g, fields)
+  else:
+    raiseAssert "todo"
+
+proc takeCaseStmts(g: var SrcGen, n: var Cursor; c: var Context; isCaseObject = false) =
+  if isCaseObject:
+    inc n
+    indentNL(g)
+
+    while n.kind != ParRi:
+      optNL(g)
+      takeObjectFields(g, n)
+
+    dedent(g)
+    skipParRi(n)
+  else:
+    gstmts(g, n, c, doIndent = true)
+
+proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false) =
   var c: Context = initContext()
   inc n
   putWithSpace(g, tkCase, "case")
 
-  gsub(g, n)
+  if isCaseObject:
+    takeField(g, n)
+  else:
+    gsub(g, n)
 
   optNL(g)
 
@@ -440,14 +481,14 @@ proc gcase(g: var SrcGen, n: var Cursor) =
       skipParRi(n)
 
       putWithSpace(g, tkColon, ":")
-      gstmts(g, n, c, doIndent = true)
+      takeCaseStmts(g, n, c, isCaseObject = isCaseObject)
       skipParRi(n)
     of ElseU:
       inc n
       optNL(g)
-      putWithSpace(g, tkElse, "else")
+      put(g, tkElse, "else")
       putWithSpace(g, tkColon, ":")
-      gstmts(g, n, c, doIndent = true)
+      takeCaseStmts(g, n, c, isCaseObject = isCaseObject)
       skipParRi(n)
     else:
       raiseAssert "unreachable"
@@ -816,19 +857,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       while fields.kind != ParRi:
         case fields.substructureKind
         of CaseU:
-          raiseAssert "todo"
+          gcase(g, fields, isCaseObject = true)
         of FldU:
-          let local = takeLocal(fields, SkipFinalParRi)
-          var name = local.name
-          var typ = local.typ
-
-          gsub(g, name)
-          var exportMarker = local.exported
-          mayAddExportMarker(g, exportMarker)
-
-          putWithSpace(g, tkColon, ":")
-          gtype(g, typ, emptyContext)
-          optNL(g)
+          takeField(g, fields)
         else:
           raiseAssert "todo"
 
