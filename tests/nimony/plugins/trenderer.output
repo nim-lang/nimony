@@ -1,0 +1,11 @@
+
+let x: int = 1
+var y: int = 12
+proc foo(x: int): int =
+  var result: int
+  var s: int = x
+  s = 12
+  result = s
+  return result
+
+discard foo(2)
