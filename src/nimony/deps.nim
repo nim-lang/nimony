@@ -18,6 +18,7 @@ import std/[os, tables, sets, syncio, assertions, strutils, times]
 import semos, nifconfig, nimony_model, nifindexes
 import ".." / gear2 / modnames, semdata
 import ".." / lib / tooldirs
+import ".." / models / nifindex_tags
 
 include nifprelude
 
@@ -62,6 +63,9 @@ type
     DoCompile, # like `nim c` but with nifler
     DoRun # like `nim run`
 
+  CFile = object
+    name, obj, customArgs: string
+
   DepContext = object
     forceRebuild: bool
     cmd: Command
@@ -74,6 +78,7 @@ type
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
+    toBuild: seq[CFile]
 
 proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
@@ -210,6 +215,26 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
         processPluginImport c, f, info, current
       break
 
+proc processBuild(c: var DepContext; it: var Cursor) =
+  inc it
+  while it.kind != ParRi:
+    assert it.exprKind == TupX
+    var x = it
+    skip it
+    inc x
+    assert x.kind == StringLit
+    let typ = pool.strings[x.litId]
+    inc x
+    assert x.kind == StringLit
+    let path = pool.strings[x.litId]
+    let obj = splitFile(path).name & ".o"
+    inc x
+    assert x.kind == StringLit
+    let args = pool.strings[x.litId]
+    inc x
+    c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
+  inc it
+
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   case stmtKind(n)
   of ImportS:
@@ -222,6 +247,11 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   of ExportS:
     discard "ignore `export` statement"
     skip n
+  of NoStmt:
+    if n.tagId == TagId(BuildIdx):
+      processBuild c, n
+    else:
+      skip n
   else:
     #echo "IGNORING ", toString(n, false)
     skip n
@@ -276,25 +306,10 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   finally:
     nifstreams.close(stream)
 
-type
-  CFile = object
-    name, obj, customArgs: string
-
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
   result = relativePath(result, os.getCurrentDir())
-
-proc toBuildList(c: DepContext): seq[CFile] =
-  result = @[]
-  for v in c.nodes:
-    #if v.plugin.len > 0: continue
-    let index = readIndex(c.config.indexFile(v.files[0], v.plugin))
-    for i in index.toBuild:
-      let path = i[1]
-      let obj = splitFile(path).name & ".o"
-      let customArgs = i[2]
-      result.add CFile(name: path, obj: obj, customArgs: customArgs)
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
@@ -360,14 +375,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
-      let buildList = toBuildList(c)
-
       # Link executable
       b.withTree "do":
         b.addIdent "link"
         # Input: all object files
         var objFiles = initHashSet[string]()
-        for cfile in buildList:
+        for cfile in c.toBuild:
           let obj = c.config.nifcachePath / cfile.obj
           if not objFiles.containsOrIncl(obj):
             b.withTree "input":
@@ -382,7 +395,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
 
       objFiles.clear()
       # Build object files from C files with custom args
-      for cfile in buildList:
+      for cfile in c.toBuild:
         let obj = c.config.nifcachePath / cfile.obj
         if not objFiles.containsOrIncl(obj):
           b.withTree "do":

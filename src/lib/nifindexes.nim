@@ -121,7 +121,6 @@ type
     hooks*: array[AttachedOp, seq[HookIndexEntry]]
     converters*: seq[(SymId, SymId)] # string is for compat with `methods`
     classes*: seq[ClassIndexEntry]
-    toBuild*: TokenBuf
     exportBuf*: TokenBuf
 
 proc hookName*(op: AttachedOp): string =
@@ -262,13 +261,6 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     content.add toString(classesSectionBuf)
     content.add "\n"
 
-  var buildBuf = createTokenBuf()
-  buildBuf.addParLe TagId(BuildIdx)
-  buildBuf.add sections.toBuild
-  buildBuf.addParRi()
-  content.add toString(buildBuf)
-  content.add "\n"
-
   if sections.exportBuf.len != 0:
     content.add toString(sections.exportBuf)
     content.add "\n"
@@ -298,7 +290,6 @@ type
     converters*: seq[(string, string)] # map of dest types to converter symbols
     #methods*: seq[(string, string)] # map of dest types to method symbols
     classes*: seq[ClassIndexEntry]
-    toBuild*: seq[(string, string, string)]
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
@@ -497,24 +488,6 @@ proc readIndex*(indexName: string): NifIndex =
       t = next(s)
     if t.tag == TagId(MethodIdx):
       readClassesSection(s, result.classes)
-      t = next(s)
-
-    if t.tag == TagId(BuildIdx):
-      t = next(s)
-      while t.kind != EofToken and t.kind != ParRi:
-        # tup
-        t = next(s)
-        assert t.kind == StringLit
-        let typ = pool.strings[t.litId]
-        t = next(s)
-        assert t.kind == StringLit
-        let path = pool.strings[t.litId]
-        t = next(s)
-        assert t.kind == StringLit
-        let args = pool.strings[t.litId]
-        result.toBuild.add (typ, path, args)
-        t = next(s)
-        t = next(s)
       t = next(s)
 
     while t.tag == TagId(ExportIdx) or t.tag == TagId(FromexportIdx) or t.tag == TagId(ExportexceptIdx):

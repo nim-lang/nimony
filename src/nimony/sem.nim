@@ -4626,6 +4626,9 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
                   deps.buildTree KvU, NoLineInfo:
                     deps.addIdent "plugin"
                     deps.addStrLit i.fromPlugin
+    if c.toBuild.len != 0:
+      deps.buildTree TagId(BuildIdx), NoLineInfo:
+        deps.add c.toBuild
   let depsFile = changeFileExt(outfile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 
@@ -4640,7 +4643,6 @@ proc writeOutput(c: var SemContext; outfile: string) =
     IndexSections(hooks: move c.hookIndexLog,
       converters: move c.converterIndexMap,
       classes: move c.classIndexMap,
-      toBuild: move c.toBuild,
       exportBuf: buildIndexExports(c))
   writeNewDepsFile c, outfile
 
