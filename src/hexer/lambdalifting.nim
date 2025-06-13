@@ -94,6 +94,7 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       elif i == ProcPragmasPos:
         if hasPragma(n, ClosureP):
           c.closureProcs.incl symId
+          c.escapes.incl symId
       takeTree dest, n
     if isConcrete:
       tr(c, dest, n)
@@ -284,7 +285,10 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # generate an assignment:
       dest.copyIntoKind AsgnS, info:
         dest.copyIntoKind DotX, info:
-          dest.copyIntoKind DerefX, info:
+          if c.env.needsHeap:
+            dest.copyIntoKind DerefX, info:
+              dest.typedEnv info, c.env
+          else:
             dest.typedEnv info, c.env
           dest.addSymUse fld.field, info
         tre c, dest, n # value
