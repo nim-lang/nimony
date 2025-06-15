@@ -393,8 +393,16 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         # add type
         takeTree c.values[valPos], n
       while n.kind != ParRi:
-        let elem = propagateError eval(c, n)
-        c.values[valPos].addSubtree elem
+        if exprKind == SetConstrX and n.substructureKind == RangeU:
+          c.values[valPos].takeToken n
+          var a = propagateError eval(c, n)
+          c.values[valPos].addSubtree a
+          var b = propagateError eval(c, n)
+          c.values[valPos].addSubtree b
+          c.values[valPos].takeToken n
+        else:
+          let elem = propagateError eval(c, n)
+          c.values[valPos].addSubtree elem
       takeParRi c.values[valPos], n
       result = cursorAt(c.values[valPos], 0)
     of CallKinds:
