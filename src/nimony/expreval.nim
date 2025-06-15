@@ -217,6 +217,28 @@ template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty
   else:
     cannotEval orig
 
+proc evalPlusSet(c: var EvalContext; n: var Cursor): Cursor =
+  inc n # tag
+  let valPos = c.values.len
+  c.values.add createTokenBuf()
+  c.values[valPos].addParLe SetConstrX
+  c.values[valPos].takeTree n # type
+  var a = eval(c, n)
+  var b = eval(c, n)
+  assert a.exprKind == SetConstrX
+  assert b.exprKind == SetConstrX
+  inc a # tag
+  inc b
+  assert sameTrees(a, b)  # must be the same type
+  skip a
+  skip b
+  while a.kind != ParRi:
+    c.values[valPos].takeTree a
+  while b.kind != ParRi:
+    c.values[valPos].takeTree b
+  c.values[valPos].takeToken n
+  result = cursorAt(c.values[valPos], 0)
+
 template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   var t = n
   inc t
@@ -408,6 +430,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of CallKinds:
       result = evalCall(c, n)
       skip n
+    of PlusSetX:
+      result = evalPlusSet(c, n)
     else:
       if n.tagId == ErrT:
         result = n
