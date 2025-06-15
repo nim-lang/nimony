@@ -4251,11 +4251,21 @@ proc transformDefer(c: var SemContext; beforeDefer: int) =
   ## This is done early in semantic checking so other phases don't need to handle defer.
   var d = beforeDefer
   # walk back to the `scope` and put it into a `try` block:
+  var procBody = -1
   while d > 0:
-    if c.dest[d].stmtKind == ScopeS:
+    case c.dest[d].stmtKind
+    of ScopeS:
       break
+    of StmtsS:
+      procBody = d+1
+    of ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS:
+      break
+    else:
+      discard
     dec d
   if d == 0:
+    d = procBody
+  if d <= 0:
     let info = c.dest[beforeDefer].info
     c.dest.shrink beforeDefer
     buildErr c, info, "defer statement has no anchor"
@@ -4271,7 +4281,7 @@ proc transformDefer(c: var SemContext; beforeDefer: int) =
         buf.copyIntoKind ScopeS, finInfo:
           for i in beforeDefer+1 ..< c.dest.len:
             buf.add c.dest[i]
-    c.dest.shrink beforeDefer
+    c.dest.shrink d
     c.dest.add buf
 
 proc semDefer(c: var SemContext; it: var Item) =
