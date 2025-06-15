@@ -4255,6 +4255,7 @@ proc transformDefer(c: var SemContext; beforeDefer: int) =
   while d > 0:
     case c.dest[d].stmtKind
     of ScopeS:
+      inc d
       break
     of StmtsS:
       procBody = d+1
@@ -4263,7 +4264,7 @@ proc transformDefer(c: var SemContext; beforeDefer: int) =
     else:
       discard
     dec d
-  if d == 0:
+  if procBody > d:
     d = procBody
   if d <= 0:
     let info = c.dest[beforeDefer].info
@@ -4273,9 +4274,9 @@ proc transformDefer(c: var SemContext; beforeDefer: int) =
     var buf = createTokenBuf(beforeDefer - d)
     let tryInfo = c.dest[d].info
     buf.copyIntoKind TryS, tryInfo:
-      for i in d ..< beforeDefer:
-        buf.add c.dest[i]
-      buf.addParRi() # scope
+      buf.copyIntoKind StmtsS, tryInfo:
+        for i in d ..< beforeDefer:
+          buf.add c.dest[i]
       let finInfo = c.dest[beforeDefer].info
       buf.copyIntoKind FinU, finInfo:
         buf.copyIntoKind ScopeS, finInfo:
@@ -4292,13 +4293,13 @@ proc semDefer(c: var SemContext; it: var Item) =
     it.typ = c.types.voidType
     return
 
-  takeToken c, it.n
   let beforeDefer = c.dest.len
+  takeToken c, it.n
   openScope c
   semStmt c, it.n, false
   closeScope c
-  transformDefer c, beforeDefer
   takeParRi c, it.n
+  transformDefer c, beforeDefer
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind

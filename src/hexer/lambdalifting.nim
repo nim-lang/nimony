@@ -81,13 +81,14 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  c.typeCache.openScope(ProcScope)
+  #c.typeCache.openScope(ProcScope)
   copyInto dest, n:
     let symId = n.symId
     c.procStack.add(symId)
     var isConcrete = true # assume it is concrete
     for i in 0..<BodyPos:
       if i == ParamsPos:
+        c.typeCache.openProcScope(symId, n)
         c.typeCache.registerParams(symId, n)
       elif i == TypeVarsPos:
         isConcrete = n.substructureKind != TypevarsU
