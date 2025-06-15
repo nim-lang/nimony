@@ -4246,6 +4246,50 @@ proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
   it.typ = item.typ
   inc it.n
 
+proc transformDefer(c: var SemContext; beforeDefer: int) =
+  ## Transforms a defer statement into a try-finally block.
+  ## This is done early in semantic checking so other phases don't need to handle defer.
+  var d = beforeDefer
+  # walk back to the `scope` and put it into a `try` block:
+  while d > 0:
+    if c.dest[d].stmtKind == ScopeS:
+      break
+    dec d
+  if d == 0:
+    let info = c.dest[beforeDefer].info
+    c.dest.shrink beforeDefer
+    buildErr c, info, "defer statement has no anchor"
+  else:
+    var buf = createTokenBuf(beforeDefer - d)
+    let tryInfo = c.dest[d].info
+    buf.copyIntoKind TryS, tryInfo:
+      for i in d ..< beforeDefer:
+        buf.add c.dest[i]
+      buf.addParRi() # scope
+      let finInfo = c.dest[beforeDefer].info
+      buf.copyIntoKind FinU, finInfo:
+        buf.copyIntoKind ScopeS, finInfo:
+          for i in beforeDefer+1 ..< c.dest.len:
+            buf.add c.dest[i]
+    c.dest.shrink beforeDefer
+    c.dest.add buf
+
+proc semDefer(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  if c.currentScope.kind == ToplevelScope:
+    buildErr c, info, "defer statement not supported at top level"
+    skip it.n
+    it.typ = c.types.voidType
+    return
+
+  takeToken c, it.n
+  let beforeDefer = c.dest.len
+  openScope c
+  semStmt c, it.n, false
+  closeScope c
+  transformDefer c, beforeDefer
+  takeParRi c, it.n
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -4295,9 +4339,12 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
-      of ImportasS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
+      of ImportasS, StaticstmtS, BindS, MixinS, UsingS, AsmS:
         buildErr c, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
+      of DeferS:
+        toplevelGuard c:
+          semDefer c, it
       of ProcS:
         procGuard c:
           semProc c, it, ProcY, whichPass(c)
