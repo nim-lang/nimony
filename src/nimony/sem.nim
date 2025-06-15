@@ -4254,7 +4254,6 @@ proc semDefer(c: var SemContext; it: var Item) =
     it.typ = c.types.voidType
     return
 
-  let beforeDefer = c.dest.len
   takeToken c, it.n
   openScope c
   semStmt c, it.n, false
