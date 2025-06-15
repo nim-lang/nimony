@@ -40,8 +40,9 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trDefer(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let mine = c.scopeStack[^1]
 
-  dest.insert [parLeToken(TryS, n.info)], mine
+  dest.insert [parLeToken(TryS, n.info), parLeToken(StmtsS, n.info)], mine
   var fin = createTokenBuf(50)
+  fin.addParRi() # stmts body from try statement
   fin.addParLe(FinU, n.info)
   inc n
   trStmt c, fin, n
