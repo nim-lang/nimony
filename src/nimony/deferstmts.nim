@@ -21,7 +21,7 @@ type
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let beforeBody = dest.len
+  let beforeBody = dest.len+1
   c.scopeStack.add beforeBody
   if n.stmtKind in {ScopeS, StmtsS}:
     dest.takeToken n
@@ -31,7 +31,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     dest.addParLe(StmtsS, n.info)
     trStmt c, dest, n
-  if c.actionStack.len > 0 and c.actionStack[^1].id == beforeBody:
+  while c.actionStack.len > 0 and c.actionStack[^1].id == beforeBody:
     let a = c.actionStack.pop
     dest.add a.action
   dest.addParRi()
@@ -129,18 +129,22 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ParRi:
     raiseAssert "unexpected ParRi"
 
-proc transformDefer*(dest: var TokenBuf; beforeDefer: int) =
+proc transformDefer*(dest: var TokenBuf; procBody: int) =
   ## Transforms a defer statement into a try-finally block.
   ## This is done early in semantic checking so other phases don't need to handle defer.
-  var n = cursorAt(dest, beforeDefer)
+  var n = cursorAt(dest, procBody)
   assert n.stmtKind == StmtsS
   var c = Context()
-  c.scopeStack.add beforeDefer
+  c.scopeStack.add procBody
   var buf = createTokenBuf(50)
-  trStmt c, buf, n
+  buf.takeToken n
+  while n.kind != ParRi:
+    trStmt c, buf, n
   while c.actionStack.len > 0:
     let a = c.actionStack.pop
     buf.add a.action
+  buf.takeParRi n
+
   dest.endRead
-  dest.shrink beforeDefer
+  dest.shrink procBody
   dest.add buf
