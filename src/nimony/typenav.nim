@@ -101,11 +101,12 @@ proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
     var res = it.locals.getOrDefault(s)
     if it.kind == compareTo:
       inc crossedProc
+    elif it.kind == ProcScope:
+      compareTo = ProcScope
     if res.kind != NoSym:
       res.crossedProc = int16(crossedProc)
       return res
     it = it.parent
-    compareTo = ProcScope
   return default(LocalInfo)
 
 proc getInitValue*(c: var TypeCache; s: SymId): Cursor =

@@ -51,6 +51,7 @@ type
     s: SymId
     typ: SymId
     mode: EnvMode
+    needsHeap: bool
 
   EnvField = object
     objType: SymId
@@ -62,7 +63,7 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     procStack: seq[SymId]
-    closureProcs, createsEnv: HashSet[SymId]
+    closureProcs, createsEnv, escapes: HashSet[SymId]
     localToEnv: Table[SymId, EnvField]
     env: CurrentEnv
 
@@ -80,19 +81,21 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  c.typeCache.openScope(ProcScope)
+  #c.typeCache.openScope(ProcScope)
   copyInto dest, n:
     let symId = n.symId
     c.procStack.add(symId)
     var isConcrete = true # assume it is concrete
     for i in 0..<BodyPos:
       if i == ParamsPos:
+        c.typeCache.openProcScope(symId, n)
         c.typeCache.registerParams(symId, n)
       elif i == TypeVarsPos:
         isConcrete = n.substructureKind != TypevarsU
       elif i == ProcPragmasPos:
         if hasPragma(n, ClosureP):
           c.closureProcs.incl symId
+          c.escapes.incl symId
       takeTree dest, n
     if isConcrete:
       tr(c, dest, n)
@@ -118,6 +121,17 @@ proc localToField(c: var Context; n: Cursor; local, typ: SymId): SymId =
     name.add c.thisModuleSuffix
     result = pool.syms.getOrIncl(name)
     c.localToEnv[local] = EnvField(objType: typ, field: result, typ: c.typeCache.getType(n))
+
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  dest.add n
+  inc n
+  if n.kind == Symbol:
+    # if a closure proc is called, we don't want to see it as "escaping".
+    dest.add n
+    inc n
+  while n.kind != ParRi:
+    tr(c, dest, n)
+  dest.takeParRi(n)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -158,6 +172,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
       else:
         takeTree dest, n
+    elif loc.kind in {ProcY, FuncY, IteratorY, ConverterY, MethodY}:
+      # usage of a closure proc not within a call? --> The closure does escape:
+      if c.procStack.len > 0:
+        c.escapes.incl n.symId
+      takeTree dest, n
     else:
       takeTree dest, n
   of ParLe:
@@ -176,7 +195,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trSons(c, dest, n)
       c.typeCache.closeScope()
     else:
-      if n.exprKind == TypeofX:
+      case n.exprKind
+      of CallKinds:
+        trCall c, dest, n
+      of TypeofX:
         takeTree dest, n
       else:
         trSons(c, dest, n)
@@ -214,8 +236,11 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
-    dest.copyIntoKind CastX, info:
-      dest.addRootRef info
+    if env.needsHeap:
+      dest.copyIntoKind CastX, info:
+        dest.addRootRef info
+        dest.addSymUse env.s, info
+    else:
       dest.addSymUse env.s, info
   of EnvIsParam:
     # the parameter already has the erased type:
@@ -228,10 +253,13 @@ proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
     # the local already has the full type:
     dest.addSymUse env.s, info
   of EnvIsParam:
-    # the parameter has the erased type:
-    dest.copyIntoKind CastX, info:
-      dest.copyIntoKind RefT, info:
-        dest.addSymUse env.typ, info
+    if env.needsHeap:
+      # the parameter has the erased type:
+      dest.copyIntoKind CastX, info:
+        dest.copyIntoKind RefT, info:
+          dest.addSymUse env.typ, info
+        dest.addSymUse env.s, info
+    else:
       dest.addSymUse env.s, info
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -258,7 +286,10 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # generate an assignment:
       dest.copyIntoKind AsgnS, info:
         dest.copyIntoKind DotX, info:
-          dest.copyIntoKind DerefX, info:
+          if c.env.needsHeap:
+            dest.copyIntoKind DerefX, info:
+              dest.typedEnv info, c.env
+          else:
             dest.typedEnv info, c.env
           dest.addSymUse fld.field, info
         tre c, dest, n # value
@@ -273,16 +304,20 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tre c, dest, n # type (might grow an environment parameter)
       tre c, dest, n # value
 
-proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo) =
+proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
   dest.copyIntoKind ParamU, info:
     dest.addSymDef pool.syms.getOrIncl(EnvParamName), info
     dest.addDotToken() # no export marker
     dest.addDotToken() # no pragmas
-    dest.copyIntoKind RefT, info:
-      dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+    if envTyp == SymId(0):
+      dest.copyIntoKind RefT, info:
+        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+    else:
+      dest.copyIntoKind PtrT, info:
+        dest.addSymUse envTyp, info
     dest.addDotToken() # no default value
 
-proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; addEnvParam: bool) =
+proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId) =
   copyInto dest, n:
     while n.kind != ParRi:
       assert n.substructureKind == ParamU
@@ -301,43 +336,54 @@ proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; addEnvPa
           # XXX Check here for memory safety violations: Cannot capture a `var T` parameter
           init.copyIntoKind AsgnS, n.info:
             init.copyIntoKind DotX, n.info:
-              init.copyIntoKind DerefX, n.info:
+              if envTyp != SymId(0):
+                init.copyIntoKind DerefX, n.info:
+                  init.typedEnv n.info, c.env
+              else:
                 init.typedEnv n.info, c.env
               init.addSymUse fld.field, n.info
             init.addSymUse name, n.info
 
-    if addEnvParam:
-      addEnvParam dest, n.info
+    if doAddEnvParam:
+      addEnvParam dest, n.info, envTyp
 
-proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: SymId) =
+proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: SymId; needsHeap: bool) =
   if n.stmtKind == StmtsS:
     copyInto dest, n:
       let oldEnv = c.env
       if c.createsEnv.contains(sym):
-        c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvLocalName), mode: EnvIsLocal, typ: c.envTypeForProc(sym))
+        let envTyp = c.envTypeForProc(sym)
+        c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvLocalName), mode: EnvIsLocal, typ: envTyp)
         dest.copyIntoKind VarS, NoLineInfo:
           dest.addSymDef c.env.s, NoLineInfo
           dest.addDotToken() # no export marker
           dest.addDotToken() # no pragmas
-          dest.copyIntoKind RefT, NoLineInfo:
-            dest.addSymUse c.env.typ, NoLineInfo
-          dest.copyIntoKind NewobjX, NoLineInfo:
+          if needsHeap:
             dest.copyIntoKind RefT, NoLineInfo:
               dest.addSymUse c.env.typ, NoLineInfo
+            dest.copyIntoKind NewobjX, NoLineInfo:
+              dest.copyIntoKind RefT, NoLineInfo:
+                dest.addSymUse c.env.typ, NoLineInfo
+          else:
+            dest.addSymUse c.env.typ, NoLineInfo
+            dest.addDotToken() # no default value
         # init the environment via the `=wasMoved` hooks:
         for _, field in c.localToEnv:
           if field.objType == c.env.typ:
             dest.copyIntoKind WasmovedX, NoLineInfo:
               dest.copyIntoKind HaddrX, NoLineInfo:
                 dest.copyIntoKind DotX, NoLineInfo:
-                  dest.copyIntoKind DerefX, NoLineInfo:
+                  if needsHeap:
+                    dest.copyIntoKind DerefX, NoLineInfo:
+                      dest.addSymUse c.env.s, NoLineInfo
+                  else:
                     dest.addSymUse c.env.s, NoLineInfo
                   dest.addSymUse field.field, NoLineInfo
 
       elif c.closureProcs.contains(sym):
-        c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(sym))
+        c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(sym), needsHeap: needsHeap)
       else:
-        c.env = CurrentEnv(s: SymId(0), mode: EnvIsParam, typ: SymId(0))
+        c.env = CurrentEnv(s: SymId(0), mode: EnvIsParam, typ: SymId(0), needsHeap: needsHeap)
       dest.add init
       while n.kind != ParRi:
         tre(c, dest, n)
@@ -350,26 +396,31 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     var isConcrete = true # assume it is concrete
     let sym = n.symId
+    c.procStack.add(sym)
+    let closureOwner = c.procStack[0]
+    let needsHeap = c.escapes.contains(closureOwner)
     for i in 0..<BodyPos:
       if i == ParamsPos:
         c.typeCache.openProcScope(sym, n)
-        treParams c, dest, init, n, c.closureProcs.contains(sym)
+        let envType = if needsHeap: SymId(0) else: c.envTypeForProc(closureOwner)
+        treParams c, dest, init, n, c.closureProcs.contains(sym), envType
       else:
         if i == TypeVarsPos:
           isConcrete = n.substructureKind != TypevarsU
         takeTree dest, n
 
     if isConcrete:
-      treProcBody(c, dest, init, n, sym)
+      treProcBody(c, dest, init, n, sym, needsHeap)
     else:
       takeTree dest, n
+    discard c.procStack.pop()
   c.typeCache.closeScope()
 
 proc treParamsWithEnv(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     while n.kind != ParRi:
       tre(c, dest, n)
-    addEnvParam dest, NoLineInfo
+    addEnvParam dest, NoLineInfo, SymId(0)
 
 proc isStaticCall(c: var Context;s: SymId): bool =
   let res = tryLoadSym(s)
@@ -419,8 +470,12 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if wantsEnv:
     if isStatic:
       if c.env.s != SymId(0):
-        # use the current environment as the last parameter:
-        untypedEnv dest, info, c.env
+        if c.env.needsHeap:
+          # use the current environment as the last parameter:
+          untypedEnv dest, info, c.env
+        else:
+          dest.copyIntoKind AddrX, info:
+            untypedEnv dest, info, c.env
       else:
         # can happen for toplevel closures that have been declared .closure for interop
         # We have no environment here, so pass `nil` instead:
@@ -444,14 +499,14 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
         let usesWrapper = n.typeKind == ProctypeT
         if usesWrapper:
           inc n
-          for i in 1..4: dest.takeTree n
+          for i in 1..4: skip n
         if n.typeKind == ParamsT:
           treParamsWithEnv(c, dest, n)
         else:
           assert n.kind == DotToken
           inc n
           dest.addParLe ParamsT, info
-          addEnvParam dest, info
+          addEnvParam dest, info, SymId(0)
           dest.addParRi()
         dest.takeTree n # return type
         # pragmas:
@@ -517,9 +572,13 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
         dest.copyIntoKind DotX, info:
           dest.copyIntoKind DerefX, info:
-            dest.copyIntoKind CastX, info:
-              dest.copyIntoKind RefT, info:
-                dest.takeTree n # type
+            if c.env.needsHeap:
+              dest.copyIntoKind CastX, info:
+                dest.copyIntoKind RefT, info:
+                  dest.takeTree n # type
+                dest.addSymUse c.env.s, info
+            else:
+              skip n # type
               dest.addSymUse c.env.s, info
           assert n.kind == Symbol
           dest.takeTree n # the symbol

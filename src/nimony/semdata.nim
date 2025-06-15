@@ -17,6 +17,7 @@ type
   TypeCursor* = Cursor
   SemRoutine* {.acyclic.} = ref object
     kind*: SymKind
+    hasDefer*: bool
     inGeneric*, inLoop*, inBlock*, inInst*: int
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]

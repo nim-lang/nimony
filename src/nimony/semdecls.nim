@@ -543,6 +543,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       elif hookThatShouldBeMethod(c, hk, beforeParams):
         c.dest[declStart] = parLeToken(MethodS, info)
         attachMethod c, symId, declStart, beforeParams, beforeGenericParams, info
+    let beforeBody = c.dest.len
     if it.n.kind != DotToken:
       case pass
       of checkGenericInst:
@@ -622,6 +623,8 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       else:
         takeToken c, it.n
       c.closeScope() # close parameter scope
+    if c.routine.hasDefer:
+      transformDefer c.dest, beforeBody
   finally:
     c.routine = c.routine.parent
   takeParRi c, it.n
@@ -825,7 +828,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
       swap c.phase, phase
       innerObjDecl = topLevelDest
     if c.phase > SemcheckSignatures:
-      # need to go through signature phase if not applied yet since decl already has sym 
+      # need to go through signature phase if not applied yet since decl already has sym
       var sigDest = createTokenBuf(64)
       var sigRead = beginRead(innerObjDecl)
       var phase = SemcheckSignatures

@@ -21,6 +21,12 @@ proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
   else:
     result = NoStmt
 
+proc stmtKind*(c: PackedToken): NimonyStmt {.inline.} =
+  if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
+    result = cast[NimonyStmt](tagEnum(c))
+  else:
+    result = NoStmt
+
 proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   if c.kind == ParLe:
     let e = tagEnum(c)

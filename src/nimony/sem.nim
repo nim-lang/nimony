@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts, vtables_frontend, module_plugins
+  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -4246,6 +4246,21 @@ proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
   it.typ = item.typ
   inc it.n
 
+proc semDefer(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  if c.currentScope.kind == ToplevelScope:
+    buildErr c, info, "defer statement not supported at top level"
+    skip it.n
+    it.typ = c.types.voidType
+    return
+
+  takeToken c, it.n
+  openScope c
+  semStmt c, it.n, false
+  closeScope c
+  takeParRi c, it.n
+  c.routine.hasDefer = true
+
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -4295,9 +4310,12 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
-      of ImportasS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS:
+      of ImportasS, StaticstmtS, BindS, MixinS, UsingS, AsmS:
         buildErr c, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
+      of DeferS:
+        toplevelGuard c:
+          semDefer c, it
       of ProcS:
         procGuard c:
           semProc c, it, ProcY, whichPass(c)
