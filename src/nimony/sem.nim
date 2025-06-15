@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts, vtables_frontend, module_plugins
+  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -4246,45 +4246,6 @@ proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
   it.typ = item.typ
   inc it.n
 
-proc transformDefer(c: var SemContext; beforeDefer: int) =
-  ## Transforms a defer statement into a try-finally block.
-  ## This is done early in semantic checking so other phases don't need to handle defer.
-  var d = beforeDefer
-  # walk back to the `scope` and put it into a `try` block:
-  var procBody = -1
-  while d > 0:
-    case c.dest[d].stmtKind
-    of ScopeS:
-      inc d
-      break
-    of StmtsS:
-      procBody = d+1
-    of ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS:
-      break
-    else:
-      discard
-    dec d
-  if procBody > d:
-    d = procBody
-  if d <= 0:
-    let info = c.dest[beforeDefer].info
-    c.dest.shrink beforeDefer
-    buildErr c, info, "defer statement has no anchor"
-  else:
-    var buf = createTokenBuf(beforeDefer - d)
-    let tryInfo = c.dest[d].info
-    buf.copyIntoKind TryS, tryInfo:
-      buf.copyIntoKind StmtsS, tryInfo:
-        for i in d ..< beforeDefer:
-          buf.add c.dest[i]
-      let finInfo = c.dest[beforeDefer].info
-      buf.copyIntoKind FinU, finInfo:
-        buf.copyIntoKind ScopeS, finInfo:
-          for i in beforeDefer+1 ..< c.dest.len:
-            buf.add c.dest[i]
-    c.dest.shrink d
-    c.dest.add buf
-
 proc semDefer(c: var SemContext; it: var Item) =
   let info = it.n.info
   if c.currentScope.kind == ToplevelScope:
@@ -4299,7 +4260,7 @@ proc semDefer(c: var SemContext; it: var Item) =
   semStmt c, it.n, false
   closeScope c
   takeParRi c, it.n
-  transformDefer c, beforeDefer
+  c.routine.hasDefer = true
 
 proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
