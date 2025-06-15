@@ -342,8 +342,11 @@ proc trTry(c: var Context; n: var Cursor) =
         takeTree c.dest, n # `E as e`
         trNestedScope c, n, Other, fin
     if n.substructureKind == FinU:
-      copyInto(c.dest, n):
-        trNestedScope c, n
+      if hasExcept:
+        copyInto(c.dest, n):
+          trNestedScope c, n
+      else:
+        skip n
 
 proc tr(c: var Context; n: var Cursor) =
   if isAtom(n) or isDeclarative(n):
