@@ -295,7 +295,7 @@ proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
   if c.currentScope.kind == ToplevelScope or
       kind in {FldY, EfldY, TypevarY,
         # required for local enum type dollars to work at least, probably more cases:
-        TypeY}:
+        TypeY} or (c.routine.kind == NoSym and kind in {VarY, LetY}):
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)

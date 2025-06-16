@@ -65,6 +65,16 @@ proc semLocalValue(c: var SemContext; it: var Item; crucial: CrucialPragma) =
   else:
     semExpr c, it
 
+proc semTopLevelLocal(c: var SemContext; it: var Item; crucial: CrucialPragma; delayed: DelayedSym; valueBuf: var TokenBuf) =
+  valueBuf.add parLeToken(AsgnS)
+  valueBuf.add symToken(delayed.s.name, delayed.info)
+  swap c.dest, valueBuf
+  semLocalValue c, it, crucial
+  swap c.dest, valueBuf
+  valueBuf.addParRi()
+
+  c.dest.addDotToken()
+
 proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   let declStart = c.dest.len
   takeToken c, n
@@ -78,6 +88,12 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   if delayed.status == OkExistingFresh and InjectP in crucial.flags:
     # symbol is injected, add it to scope
     delayed.status = OkNew
+
+  let isTopLevelLocal = c.routine.kind == NoSym and
+      c.currentScope.kind != ToplevelScope and kind in {LetY, VarY}
+
+  var valueBuf = createTokenBuf()
+
   case kind
   of TypevarY:
     discard semLocalType(c, n, InGenericConstraint)
@@ -92,7 +108,10 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         withNewScope c:
           semConstExpr c, it # 4
       else:
-        semLocalValue c, it, crucial # 4
+        if isTopLevelLocal:
+          semTopLevelLocal(c, it, crucial, delayed, valueBuf)
+        else:
+          semLocalValue c, it, crucial # 4
       n = it.n
       let typ = skipModifier(it.typ)
       insertType c, typ, beforeType
@@ -107,7 +126,10 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
           withNewScope c:
             semConstExpr c, it # 4
         else:
-          semLocalValue c, it, crucial # 4
+          if isTopLevelLocal:
+            semTopLevelLocal(c, it, crucial, delayed, valueBuf)
+          else:
+            semLocalValue c, it, crucial # 4
         n = it.n
         patchType c, it.typ, beforeType
   else:
@@ -117,14 +139,16 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   if kind == LetY:
     if ThreadvarP in crucial.flags:
       copyKeepLineInfo c.dest[declStart], parLeToken(TletS, NoLineInfo)
-    elif GlobalP in crucial.flags or c.currentScope.kind == TopLevelScope:
+    elif GlobalP in crucial.flags or c.routine.kind == NoSym:
       copyKeepLineInfo c.dest[declStart], parLeToken(GletS, NoLineInfo)
   elif kind == VarY:
     if ThreadvarP in crucial.flags:
       copyKeepLineInfo c.dest[declStart], parLeToken(TvarS, NoLineInfo)
-    elif GlobalP in crucial.flags or c.currentScope.kind == TopLevelScope:
+    elif GlobalP in crucial.flags or c.routine.kind == NoSym:
       copyKeepLineInfo c.dest[declStart], parLeToken(GvarS, NoLineInfo)
   publish c, delayed.s.name, declStart
+
+  c.dest.add valueBuf
 
 proc semLocal(c: var SemContext; it: var Item; kind: SymKind) =
   let info = it.n.info

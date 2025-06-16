@@ -53,62 +53,68 @@
  (for 9
   (call ~4 foo1.0.tfocaa3fp1 1 +2)
   (unpackflat
-   (let :m.0 . . 6,~4
+   (let :m.0.tfocaa3fp1 . . 6,~4
     (i -1) .)) ~2,1
   (stmts 4
-   (let :n.0 . . 4,~5
-    (i -1) 4 m.0))) 4,18
+   (glet :n.0.tfocaa3fp1 . . 4,~5
+    (i -1) .)
+   (asgn 6,16,tests/nimony/iter/tforloops.nim n.0.tfocaa3fp1 10,16,tests/nimony/iter/tforloops.nim m.0.tfocaa3fp1))) 4,18
  (for 11
   (call ~3 foo.0.tfocaa3fp1 1 +2)
   (unpackflat
-   (let :i.0 . . 7,~16
+   (let :i.0.tfocaa3fp1 . . 7,~16
     (i -1) .)
-   (let 3 :j.0 . . 12,~16
+   (let 3 :j.0.tfocaa3fp1 . . 12,~16
     (i -1) .)) ~2,1
   (stmts 4
-   (let :s.0 . . 5,~17
-    (i -1) 4 i.0) 4,1
-   (let :m.1 . . 10,~18
-    (i -1) 4 j.0) 4,2
-   (let :n.1 . . 5,~19
-    (i -1) 4 s.0))) 4,23
+   (glet :s.0.tfocaa3fp1 . . 5,~17
+    (i -1) .)
+   (asgn 6,20,tests/nimony/iter/tforloops.nim s.0.tfocaa3fp1 10,20,tests/nimony/iter/tforloops.nim i.0.tfocaa3fp1) 4,1
+   (glet :m.1.tfocaa3fp1 . . 10,~18
+    (i -1) .)
+   (asgn 6,21,tests/nimony/iter/tforloops.nim m.1.tfocaa3fp1 10,21,tests/nimony/iter/tforloops.nim j.0.tfocaa3fp1) 4,2
+   (glet :n.1.tfocaa3fp1 . . 5,~19
+    (i -1) .)
+   (asgn 6,22,tests/nimony/iter/tforloops.nim n.1.tfocaa3fp1 10,22,tests/nimony/iter/tforloops.nim s.0.tfocaa3fp1))) 4,23
  (for 11
   (call ~3 foo.0.tfocaa3fp1 1 +2)
   (unpackflat
-   (let :i.1 . . 7,~21
+   (let :i.1.tfocaa3fp1 . . 7,~21
     (i -1) .)
-   (let 3 :j.1 . . 12,~21
+   (let 3 :j.1.tfocaa3fp1 . . 12,~21
     (i -1) .)) ~2,1
   (stmts 4
-   (let :s.1 . . 5,~22
-    (i -1) 4 i.1) 4,1
-   (let :m.2 . . 10,~23
-    (i -1) 4 j.1))) ,27
+   (glet :s.1.tfocaa3fp1 . . 5,~22
+    (i -1) .)
+   (asgn 6,25,tests/nimony/iter/tforloops.nim s.1.tfocaa3fp1 10,25,tests/nimony/iter/tforloops.nim i.1.tfocaa3fp1) 4,1
+   (glet :m.2.tfocaa3fp1 . . 10,~23
+    (i -1) .)
+   (asgn 6,26,tests/nimony/iter/tforloops.nim m.2.tfocaa3fp1 10,26,tests/nimony/iter/tforloops.nim j.1.tfocaa3fp1))) ,27
  (proc 5 :bar.0.tfocaa3fp1 . . . 8
   (params) . . . 2,1
   (stmts 4
    (for 11
     (call ~3 foo.0.tfocaa3fp1 1 +2)
     (unpackflat
-     (let :i.2 . . 5,~26
+     (let :i.0 . . 5,~26
       (i -1) .)
-     (let 3 :j.2 . . 10,~26
+     (let 3 :j.0 . . 10,~26
       (i -1) .)) ~2,1
     (stmts 4
-     (let :s.2 . . 3,~27
-      (i -1) 4 i.2) 4,1
-     (let :m.3 . . 8,~28
-      (i -1) 4 j.2))) 4,4
+     (let :s.0 . . 3,~27
+      (i -1) 4 i.0) 4,1
+     (let :m.0 . . 8,~28
+      (i -1) 4 j.0))) 4,4
    (for 13
     (call ~3 foo.0.tfocaa3fp1 1 +2)
     (unpacktup
-     (let 1 :i.3 . . 5,~30
+     (let 1 :i.1 . . 5,~30
       (i -1) .)
-     (let 4 :j.3 . . 10,~30
+     (let 4 :j.1 . . 10,~30
       (i -1) .)) ~2,1
     (stmts 4
-     (let :s.3 . . 3,~31
-      (i -1) 4 i.3) 4,1
-     (let :m.4 . . 8,~32
-      (i -1) 4 j.3))))) 3,36
+     (let :s.1 . . 3,~31
+      (i -1) 4 i.1) 4,1
+     (let :m.1 . . 8,~32
+      (i -1) 4 j.1))))) 3,36
  (call ~3 bar.0.tfocaa3fp1))

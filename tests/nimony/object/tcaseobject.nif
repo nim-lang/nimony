@@ -204,7 +204,8 @@
    (ret result.0))) ,42
  (block . 2,1
   (stmts 4
-   (var :x.1 . . 5,~5 Foo.0.tcauiaoif 7
+   (gvar :x.2.tcauiaoif . . 5,~5 Foo.0.tcauiaoif .)
+   (asgn 6,44,tests/nimony/object/tcaseobject.nim x.2.tcauiaoif 13,44,tests/nimony/object/tcaseobject.nim
     (oconstr ~2,~5 Foo.0.tcauiaoif 2
      (kv ~1 x.0.tcauiaoif 2
       (true)) 11
@@ -212,7 +213,7 @@
      (kv ~1 t.0.tcauiaoif 2
       (false)))) ,1
    (discard 10
-    (call ~2 fx.0.tcauiaoif 1 x.1)))) ,46
+    (call ~2 fx.0.tcauiaoif 1 x.2.tcauiaoif)))) ,46
  (block . 2,1
   (stmts 8,1
    (type ~6 :TKind.0.tcauiaoif . . . 2
@@ -231,7 +232,7 @@
       (of
        (ranges 3 ka.0.tcauiaoif) 2,1
        (stmts
-        (fld :x.2.tcauiaoif . . 3
+        (fld :x.3.tcauiaoif . . 3
          (i -1) .) ,1
         (fld :y.1.tcauiaoif . . 3
          (i -1) .))) ,4
@@ -246,20 +247,25 @@
          (f +64) .) 9
         (fld :d.1.tcauiaoif . . 3
          (f +64) .)))))) 4,10
-   (var :s.1 . . 11,~9 TKind.0.tcauiaoif 4 ka.0.tcauiaoif) ,11
-   (case 5 s.1 ,1
+   (gvar :s.0.tcauiaoif . . 11,~9 TKind.0.tcauiaoif .)
+   (asgn 6,58,tests/nimony/object/tcaseobject.nim s.0.tcauiaoif 10,58,tests/nimony/object/tcaseobject.nim ka.0.tcauiaoif) ,11
+   (case 5 s.0.tcauiaoif ,1
     (of
      (ranges 3 ka.0.tcauiaoif) 2,1
      (stmts 4
-      (var :x.2 . .
-       (i -1) 7 +1) 7
-      (var :y.0 . .
-       (i -1) 4 +1))) ,3
+      (gvar :x.4.tcauiaoif . .
+       (i -1) .)
+      (asgn 8,61,tests/nimony/object/tcaseobject.nim x.4.tcauiaoif 15,61,tests/nimony/object/tcaseobject.nim +1) 7
+      (gvar :y.2.tcauiaoif . .
+       (i -1) .)
+      (asgn 11,61,tests/nimony/object/tcaseobject.nim y.2.tcauiaoif 15,61,tests/nimony/object/tcaseobject.nim +1))) ,3
     (of
      (ranges 3 kb.0.tcauiaoif) 2,1
      (stmts 4
-      (var :a.0 . . string.0.sysvq0asl 7 "") 7
-      (var :b.0 . . string.0.sysvq0asl 4 ""))) ,5
+      (gvar :a.2.tcauiaoif . . string.0.sysvq0asl .)
+      (asgn 8,63,tests/nimony/object/tcaseobject.nim a.2.tcauiaoif 15,63,tests/nimony/object/tcaseobject.nim "") 7
+      (gvar :b.2.tcauiaoif . . string.0.sysvq0asl .)
+      (asgn 11,63,tests/nimony/object/tcaseobject.nim b.2.tcauiaoif 15,63,tests/nimony/object/tcaseobject.nim ""))) ,5
     (of
      (ranges 3 kc.0.tcauiaoif) 7
      (stmts 2,116,lib/std/syncio.nim
