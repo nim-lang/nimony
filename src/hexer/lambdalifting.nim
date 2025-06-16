@@ -41,7 +41,7 @@ import std / [assertions, sets, tables]
 include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
-  builtintypes, langmodes, renderer, reporters]
+  builtintypes, langmodes, renderer, reporters, controlflow]
 import hexer_context
 
 type
@@ -367,18 +367,21 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
           else:
             dest.addSymUse c.env.typ, NoLineInfo
             dest.addDotToken() # no default value
-        # init the environment via the `=wasMoved` hooks:
-        for _, field in c.localToEnv:
-          if field.objType == c.env.typ:
-            dest.copyIntoKind WasmovedX, NoLineInfo:
-              dest.copyIntoKind HaddrX, NoLineInfo:
-                dest.copyIntoKind DotX, NoLineInfo:
-                  if needsHeap:
-                    dest.copyIntoKind DerefX, NoLineInfo:
+        if needsHeap:
+          # Note: If the environment is on the stack, a single `wasMoved`
+          # hook will be generated for it so we don't need to do anything here.
+          # Otherwise, we need to init the environment via the `=wasMoved` hooks:
+          for _, field in c.localToEnv:
+            if field.objType == c.env.typ:
+              dest.copyIntoKind WasmovedX, NoLineInfo:
+                dest.copyIntoKind HaddrX, NoLineInfo:
+                  dest.copyIntoKind DotX, NoLineInfo:
+                    if needsHeap:
+                      dest.copyIntoKind DerefX, NoLineInfo:
+                        dest.addSymUse c.env.s, NoLineInfo
+                    else:
                       dest.addSymUse c.env.s, NoLineInfo
-                  else:
-                    dest.addSymUse c.env.s, NoLineInfo
-                  dest.addSymUse field.field, NoLineInfo
+                    dest.addSymUse field.field, NoLineInfo
 
       elif c.closureProcs.contains(sym):
         c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(sym), needsHeap: needsHeap)
