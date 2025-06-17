@@ -217,28 +217,6 @@ template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty
   else:
     cannotEval orig
 
-proc evalPlusSet(c: var EvalContext; n: var Cursor): Cursor =
-  inc n # tag
-  let valPos = c.values.len
-  c.values.add createTokenBuf()
-  c.values[valPos].addParLe SetConstrX
-  c.values[valPos].takeTree n # type
-  var a = eval(c, n)
-  var b = eval(c, n)
-  assert a.exprKind == SetConstrX
-  assert b.exprKind == SetConstrX
-  inc a # tag
-  inc b
-  assert sameTrees(a, b)  # must be the same type
-  skip a
-  skip b
-  while a.kind != ParRi:
-    c.values[valPos].takeTree a
-  while b.kind != ParRi:
-    c.values[valPos].takeTree b
-  c.values[valPos].takeToken n
-  result = cursorAt(c.values[valPos], 0)
-
 template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   var t = n
   inc t
@@ -246,6 +224,74 @@ template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
     evalFloatBinOp(c, n, opr)
   else:
     evalOrdBinOp(c, n, opr)
+
+proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
+  case typ.typeKind
+  of IT:
+    result.addIntLit x
+  of UT:
+    result.addUIntLit uint x
+  of CT:
+    result.add charToken(char x, NoLineInfo)
+  else:
+    assert false, "Got unexpected type: " & toString(typ)
+
+proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: PackedLineInfo) =
+  result.addParLe SetConstrX, info
+  result.buildTree TagId(SetT), NoLineInfo:
+    result.addSubtree elementTyp
+
+  var start = -1
+  for i in 0 ..< x.len:
+    for j in 0..7:
+      let val = i * 8 + j
+      if (x[i] and (1'u8 shl j)) == 0:
+        if start != -1:
+          if val - start < 5:
+            for k in start ..< val:
+              result.intToToken k, elementTyp
+          else:
+            result.addParLe RangeU
+            result.intToToken start, elementTyp
+            result.intToToken (val - 1), elementTyp
+            result.addParRi
+          start = -1
+      else:
+        if start == -1:
+          start = val
+
+  result.addParRi
+
+proc evalBitSet*(n, typ: Cursor): seq[uint8]
+
+proc evalPlusSet(c: var EvalContext; n: var Cursor): Cursor =
+  let info = n.info
+  inc n # tag
+  assert n.typeKind == SetT
+  var elementTyp = n
+  inc elementTyp
+  skip n # skip type
+  var a = eval(c, n)
+  var b = eval(c, n)
+  skipParRi n # skip last parRi
+  assert a.exprKind == SetConstrX, "got " & toString(a)
+  assert b.exprKind == SetConstrX, "got " & toString(b)
+  var typeA = a
+  inc typeA
+  var typeB = b
+  inc typeB
+  assert sameTrees(typeA, typeB)  # must be the same type
+  let setA = evalBitSet(a, typeA)
+  let setB = evalBitSet(b, typeB)
+  assert setA.len == setB.len
+  var setRes = newSeq[uint8](setA.len)
+  for i in 0 ..< setA.len:
+    setRes[i] = setA[i] or setB[i]
+
+  let valPos = c.values.len
+  c.values.add createTokenBuf()
+  c.values[valPos].bitSetToTokens(setRes, elementTyp, info)
+  result = cursorAt(c.values[valPos], 0)
 
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   template propagateError(r: Cursor): Cursor =
