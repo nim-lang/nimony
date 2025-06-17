@@ -13,3 +13,6 @@ renderTree:
     result = s
 
   discard foo(2)
+
+  var s = @[1, 2, 3]
+  echo s[0]

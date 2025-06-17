@@ -9,3 +9,6 @@ proc foo(x: int): int =
   return result
 
 discard foo(2)
+var s: seq = @([1, 2, 3])
+write stdout, s[0]
+write stdout, '\n'

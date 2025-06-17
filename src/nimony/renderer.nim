@@ -578,11 +578,28 @@ proc gproc(g: var SrcGen, n: var Cursor) =
     else:
       discard
 
-proc gcall(g: var SrcGen, n: var Cursor) =
-  inc n
-  gsub(g, n)
-  put(g, tkParLe, "(")
+proc bracketKind(g: SrcGen, n: Cursor): BracketKind =
+  if renderIds notin g.flags:
+    if n.exprKind in {OchoiceX, CchoiceX}:
+      var firstSon = n
+      inc firstSon
+      result = bracketKind(g, firstSon)
+    elif n.kind == Symbol:
+      var name = pool.syms[n.symId]
+      extractBasename(name)
 
+      case name
+      of "[]": result = bkBracket
+      of "[]=": result = bkBracketAsgn
+      of "{}": result = bkCurly
+      of "{}=": result = bkCurlyAsgn
+      else: result = bkNone
+    else:
+      result = bkNone
+  else:
+    result = bkNone
+
+proc gcallComma(g: var SrcGen, n: var Cursor) =
   var afterFirst = false
 
   while n.kind != ParRi:
@@ -592,8 +609,30 @@ proc gcall(g: var SrcGen, n: var Cursor) =
       afterFirst = true
     gsub(g, n)
 
-  put(g, tkParRi, ")")
-  skipParRi(n)
+proc gcall(g: var SrcGen, n: var Cursor) =
+  inc n
+  case bracketKind(g, n)
+  of bkBracket:
+    skip n
+    gsub(g, n)
+    put(g, tkBracketLe, "[")
+    gcallComma(g, n)
+    put(g, tkBracketRi, "]")
+    skipParRi(n)
+  of bkCurly:
+    skip n
+    gsub(g, n)
+    put(g, tkCurlyLe, "{")
+    gcallComma(g, n)
+    put(g, tkCurlyRi, "}")
+    skipParRi(n)
+  of bkNone, bkPar, bkBracketAsgn, bkCurlyAsgn:
+    # TODO:
+    gsub(g, n)
+    put(g, tkParLe, "(")
+    gcallComma(g, n)
+    put(g, tkParRi, ")")
+    skipParRi(n)
 
 proc gcallsystem(g: var SrcGen, n: var Cursor; name: string) =
   inc n
