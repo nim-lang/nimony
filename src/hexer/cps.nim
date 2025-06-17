@@ -48,10 +48,36 @@ a new proc for every state:
 5. The return value `result` remains and is passed out of the iterator like it is done for regular procs.
 6. Turn `goto label` into function calls. Turn `yield` into `env.cont = nextState; return`.
 
+iterator countup(a, b: int): int =         |  proc countup(): proc (a, b: int): int {.closure.} =
+  var x = a                                |    var x = a;
+                                           |    var state: proc (a, b: int): int = l1
+L1:                                        |    proc l1(a, b: int): int =
+  if x > b:                                |      if x > b:
+    goto Lend                              |        return lend(a, b)
+  else:                                    |      else:
+    goto L2                                |        return l2(a, b)
+L2:                                        |    proc l2(a, b: int): int =
+  yield x  # yield produces label L3       |      state = l3; return x
+L3:                                        |    proc l3(a, b: int): int =
+  inc x                                    |      inc x
+  goto L1                                  |      return l1(a, b)
+Lend:                                      |    proc lend(a, b: int): int =
+  discard # return x?                      |      state = nil # return x?
+
+for i in countup(0, 10):                   |  let it = createClosure(countup)
+  echo i                                   |  while true:
+                                           |    let value = it(0, 10)
+                                           |    if finished(it): break
+                                           |    echo value
+
 ]##
+
+proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor) =
+  var cf = toControlflow(iter, keepReturns = true)
 
 proc treIterator(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var init = createTokenBuf(10)
+  let iter = n
   copyInto dest, n:
     var isConcrete = true # assume it is concrete
     let sym = n.symId
@@ -69,7 +95,7 @@ proc treIterator(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
 
     if isConcrete:
-      treProcBody(c, dest, init, n, sym, needsHeap)
+      treIteratorBody(c, dest, init, iter, sym, needsHeap)
     else:
       takeTree dest, n
     discard c.procStack.pop()
