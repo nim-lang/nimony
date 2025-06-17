@@ -75,7 +75,7 @@
     (hconv 11,~16
      (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
    (if 3
-    (elif 2,112,lib/std/system/comparisons.nim
+    (elif 2,114,lib/std/system/comparisons.nim
      (expr 2,1
       (lt
        (i +64) 9,28,tests/nimony/iter/tforloops1.nim +5 5,28,tests/nimony/iter/tforloops1.nim x.1)) ~1,1
@@ -765,7 +765,7 @@
   (pragmas 2
    (inline) 10
    (requires 19
-    (and 2,108,lib/std/system/comparisons.nim
+    (and 2,110,lib/std/system/comparisons.nim
      (expr 2,1
       (le
        (i +64) 75,8,lib/std/system/openarrays.nim +0 68,8,lib/std/system/openarrays.nim idx.2)) 8
@@ -807,7 +807,7 @@
   (pragmas 2
    (inline) 10
    (requires 19
-    (and 2,108,lib/std/system/comparisons.nim
+    (and 2,110,lib/std/system/comparisons.nim
      (expr 2,1
       (le
        (i +64) 75,8,lib/std/system/openarrays.nim +0 68,8,lib/std/system/openarrays.nim idx.3)) 8
