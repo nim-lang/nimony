@@ -61,6 +61,8 @@ proc `<`*[T](x, y: set[T]): bool {.magic: "LtSet", noSideEffect.}
   ## A strict or proper subset `x` has all of its members in `y` but `y` has
   ## more elements than `y`.
 
+proc `<`*(x, y: pointer): bool {.magic: "LtPtr", noSideEffect.}
+
 proc `==`*(x, y: int8): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int16): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int32): bool {.magic: "EqI", noSideEffect.}
