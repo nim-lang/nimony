@@ -1930,8 +1930,8 @@ proc semDiscard(c: var SemContext; it: var Item) =
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, a
     it.n = a.n
-    if classifyType(c, it.typ) == VoidT:
-      buildErr c, exInfo, "expression of type `" & typeToString(it.typ) & "` must not be discarded"
+    if classifyType(c, a.typ) == VoidT:
+      buildErr c, exInfo, "expression of type `" & typeToString(a.typ) & "` must not be discarded"
   takeParRi c, it.n
   producesVoid c, info, it.typ
 

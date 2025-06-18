@@ -981,6 +981,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         gsub(g, n, c)
       else:
         skip n
+  of DotToken:
+    put(g, tkSymbol, "void")
+    inc n
   else:
     gsub(g, n, c)
 
