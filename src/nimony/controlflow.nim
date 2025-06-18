@@ -925,7 +925,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     bug "`when` statement should have been eliminated"
 
 proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
-  var c = ControlFlow(typeCache: createTypeCache(); keepReturns: keepReturns)
+  var c = ControlFlow(typeCache: createTypeCache(), keepReturns: keepReturns)
   c.typeCache.openScope()
   let sk = n.stmtKind
   var n = n
