@@ -50,3 +50,6 @@ proc `==`*[T: Equatable](a, b: openArray[T]): bool =
       if a[i] != b[i]: return false
     return true
   return false
+
+proc toOpenArray*[T](x: ptr UncheckedArray[T]; first, last: int): openArray[T] =
+  openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x) + uint(first * sizeof(T))), len: last - first + 1)
