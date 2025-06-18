@@ -299,10 +299,13 @@ proc trUseExpr(c: var ControlFlow; n: var Cursor) =
 
 proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if tar.m != IsIgnored:
+    var aa = Target(m: IsEmpty)
+    # it may be a `ExprX` so we generate statements before `AsgnS`
+    trExpr c, n, aa
     c.dest.addParLe(AsgnS, n.info)
     assert tar.t.len > 0
     c.dest.add tar
-    trUseExpr c, n
+    c.dest.add aa
     c.dest.addParRi()
   else:
     trStmt c, n
