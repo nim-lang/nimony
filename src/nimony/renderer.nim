@@ -1139,6 +1139,27 @@ proc gpragmaBlock(g: var SrcGen, n: var Cursor) =
   gstmts(g, n, c, doIndent = true)
   skipParRi(n)
 
+proc isUseSpace(n: Cursor): bool =
+  template isAlpha(s: Cursor): bool =
+    pool.strings[s.litId][0] in {'a'..'z', 'A'..'Z'}
+
+  result = true
+  var n = n
+
+  assert n.kind != ParRi
+  let firstSon = n
+  skip n
+
+  if n.kind != ParRi:
+    let secondSon = n
+    skip n
+    if n.kind == ParRi:
+      assert firstSon.kind == Ident and secondSon.kind == Ident
+      # handle `=destroy`, `'big' and handle setters, e.g. `foo=`
+      if (pool.strings[firstSon.litId] in ["=", "'"] and isAlpha(secondSon)) or
+          (pool.strings[secondSon.litId] == "=" and isAlpha(firstSon)):
+        result = false
+
 proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false) =
   case n.kind
   of ParLe:
@@ -1729,8 +1750,19 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
     of QuotedX:
       inc n
+
+      let useSpace = isUseSpace(n)
       put(g, tkAccent, "`")
-      gsub(g, n, c)
+
+      var afterFirst = false
+      while n.kind != ParRi:
+        if afterFirst:
+          if useSpace:
+            put(g, tkSpaces, Space)
+        else:
+          afterFirst = true
+        gsub(g, n, c)
+
       put(g, tkAccent, "`")
       skipParRi(n)
 

@@ -12,3 +12,12 @@ discard foo(2)
 var s: seq = @([1, 2, 3])
 write stdout, s[0]
 write stdout, '\n'
+type
+  Foo = object
+    id: int
+proc =destroy(x: Foo) =
+  discard
+
+block:
+  var m: Foo = Foo(id: 12)
+  =destroy(m)
