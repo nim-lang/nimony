@@ -92,9 +92,14 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
   trExpr c, dest, n, tar
 
   let info = n.info
-  copyIntoKind dest, AsgnS, info:
-    dest.addSymUse v, info
+
+  var rest = beginRead(tar.t)
+  if isNoReturn(rest):
     dest.add tar
+  else:
+    copyIntoKind dest, AsgnS, info:
+      dest.addSymUse v, info
+      dest.add tar
 
 proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
