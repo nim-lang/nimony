@@ -12,7 +12,7 @@ proc semProcBody(c: var SemContext; itB: var Item) =
       beforeLastSon = c.dest.len
       lastSonInfo = it.n.info
       beforeLastSonCursor = it.n
-      semExpr c, it
+      semExpr c, it, {AllowEmpty}
   if c.routine.kind == TemplateY:
     case c.routine.returnType.typeKind
     of UntypedT:
