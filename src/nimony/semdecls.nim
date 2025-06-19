@@ -87,6 +87,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
     if n.kind == DotToken:
       # no explicit type given:
       inc n # 3
+      let orig = n
       var it = Item(n: n, typ: c.types.autoType)
       if kind == ConstY:
         withNewScope c:
@@ -95,6 +96,8 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         semLocalValue c, it, crucial # 4
       n = it.n
       let typ = skipModifier(it.typ)
+      if classifyType(c, typ) == VoidT:
+         c.buildErr n.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)"
       insertType c, typ, beforeType
     else:
       let typ = semLocalType(c, n) # 3
