@@ -93,6 +93,8 @@ proc constructsValue*(n: Cursor): bool =
     of CastX, ConvX, HconvX, DconvX:
       inc n
       skip n
+    of DerefX, HDerefX:
+      inc n
     of BaseobjX:
       inc n
       skip n
@@ -846,7 +848,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
       tr c, n, e
       skipParRi n
   else:
-    let m = "not the last usage of: " & asNimCode(n)
+    let m = "not the last usage of: " & asNimCode(arg)
     c.dest.buildTree ErrT, info:
       c.dest.addSubtree n
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
