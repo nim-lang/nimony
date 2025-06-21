@@ -283,3 +283,115 @@ proc asForStmt*(c: Cursor): ForStmt =
     result.vars = c
     skip c
     result.body = c
+
+
+proc implicitlyDiscardable*(n: Cursor, noreturnOnly = false): bool =
+  template checkBranch(branch) =
+    if not implicitlyDiscardable(branch, noreturnOnly):
+      return false
+
+  var it = n
+  #const
+  #  skipForDiscardable = {nkStmtList, nkStmtListExpr,
+  #    nkOfBranch, nkElse, nkFinally, nkExceptBranch,
+  #    nkElifBranch, nkElifExpr, nkElseExpr, nkBlockStmt, nkBlockExpr,
+  #    nkHiddenStdConv, nkHiddenSubConv, nkHiddenDeref}
+  while it.kind == ParLe and stmtKind(it) in {StmtsS, BlockS}:
+    inc it
+    var last = it
+    while true:
+      skip it
+      if it.kind == ParRi:
+        it = last
+        break
+      else:
+        last = it
+
+  if it.kind != ParLe: return false
+  case stmtKind(it)
+  of IfS:
+    inc it
+    while it.kind != ParRi:
+      case it.substructureKind
+      of ElifU:
+        inc it
+        skip it # condition
+        checkBranch(it)
+        skip it
+        skipParRi it
+      of ElseU:
+        inc it
+        checkBranch(it)
+        skip it
+        skipParRi it
+      else:
+        error "illformed AST: `elif` or `else` inside `if` expected, got ", it
+    # all branches are discardable
+    result = true
+  of CaseS:
+    inc it
+    while it.kind != ParRi:
+      case it.substructureKind
+      of OfU:
+        inc it
+        skip it # ranges
+        checkBranch(it)
+        skip it
+        skipParRi it
+      of ElifU:
+        inc it
+        skip it # condition
+        checkBranch(it)
+        skip it
+        skipParRi it
+      of ElseU:
+        inc it
+        checkBranch(it)
+        skip it
+        skipParRi it
+      else:
+        error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
+    # all branches are discardable
+    result = true
+  of TryS:
+    inc it # tag
+    checkBranch(it)
+    while it.substructureKind == ExceptU:
+      inc it # tag
+      skip it # `Exception as e` part
+      checkBranch(it)
+      skipParRi it
+    # ignore finally part
+    # all branches are discardable
+    result = true
+  of CallKindsS:
+    inc it
+    if it.kind == Symbol:
+      let sym = tryLoadSym(it.symId)
+      if sym.status == LacksNothing:
+        var decl = sym.decl
+        if isRoutine(symKind(decl)):
+          inc decl
+          skip decl # name
+          skip decl # exported
+          skip decl # pattern
+          skip decl # typevars
+          skip decl # params
+          skip decl # retType
+          # decl should now be pragmas:
+          inc decl
+          let accepted =
+            if noreturnOnly: {NoreturnP}
+            else: {DiscardableP, NoreturnP}
+          while decl.kind != ParRi:
+            if pragmaKind(decl) in accepted:
+              return true
+            skip decl
+    result = false
+  of RetS, BreakS, ContinueS, RaiseS:
+    result = true
+  else:
+    result = false
+
+proc isNoReturn*(n: Cursor): bool {.inline.} =
+  result = implicitlyDiscardable(n, noreturnOnly = true)
