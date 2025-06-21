@@ -148,15 +148,14 @@ block:
     assert y == 1
   foo()
 
-# TODO:
-# block:
-#   proc foo =
-#     var x = @[1, 2, 3]
-#     let y = ensureMove x[0] # move
-#     assert y == 1
-#     # when not defined(js):
-#     #   assert x == @[0, 2, 3]
-#   foo()
+block:
+  proc foo =
+    var x = @[1, 2, 3]
+    let y = ensureMove x[0] # move
+    assert y == 1
+    # when not defined(js):
+    #   assert x == @[0, 2, 3]
+  foo()
 
 block:
   proc foo =
@@ -167,11 +166,10 @@ block:
     #   assert x == @[0, 2, 3]
   foo()
 
-# TODO:
-# block:
-#   proc foo =
-#     var x = @["1", "2", "3"]
-#     let y = ensureMove x[0] # move
-#     assert y == "1"
-#   foo()
+block:
+  proc foo =
+    var x = @["1", "2", "3"]
+    let y = ensureMove x[0] # move
+    assert y == "1"
+  foo()
 
