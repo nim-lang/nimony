@@ -2569,14 +2569,17 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   c.dest.addParLe(AconstrX, info)
   if it.n.kind == ParRi:
     # empty array
-    if it.typ.typeKind == AutoT:
+    case it.typ.typeKind
+    of AutoT:
       if AllowEmpty in flags:
         # keep it.typ as auto
         c.dest.addSubtree it.typ
       else:
         buildErr c, info, "empty array needs a specified type"
-    else:
+    of ArrayT:
       c.dest.addSubtree it.typ
+    else:
+       buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
     takeParRi c, it.n
     return
 
@@ -2625,14 +2628,17 @@ proc semCurly(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   c.dest.addParLe(SetConstrX, info)
   if it.n.kind == ParRi:
     # empty set
-    if it.typ.typeKind == AutoT:
+    case it.typ.typeKind
+    of AutoT:
       if AllowEmpty in flags:
         # keep it.typ as auto
         c.dest.addSubtree it.typ
       else:
         buildErr c, info, "empty set needs a specified type"
-    else:
+    of SetT:
       c.dest.addSubtree it.typ
+    else:
+      buildErr c, info, "invalid expected type for set constructor: " & typeToString(it.typ)
     takeParRi c, it.n
     return
 
