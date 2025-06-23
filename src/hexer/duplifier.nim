@@ -394,7 +394,13 @@ proc trAsgn(c: var Context; n: var Cursor) =
           callDup c, n
 
 proc getHookType(c: var Context; n: Cursor): Cursor =
-  result = skipModifier(getType(c.typeCache, n.firstSon))
+  var n = n
+  inc n
+  if n.exprKind == HaddrX:
+    # skips `HaddrX` to get the correct type; otherwise
+    # we get a `ptr` type
+    inc n
+  result = skipModifier(getType(c.typeCache, n))
 
 proc trExplicitDestroy(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
