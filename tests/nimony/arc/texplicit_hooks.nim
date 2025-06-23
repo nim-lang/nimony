@@ -14,3 +14,21 @@ proc main =
   `=wasMoved`(a)
 
 main()
+
+
+block:
+  type
+    TestObj = object
+      id: string
+
+    myseq = object
+      f: TestObj
+
+  var
+    x: myseq = myseq()
+  x.f = TestObj(id: "12")
+
+  assert x.f.id == "12"
+
+  `=wasMoved`(x.f)
+  assert x.f.id == ""
