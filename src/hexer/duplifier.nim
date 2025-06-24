@@ -456,6 +456,121 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
     tr c, n, DontCare
     takeParRi c.dest, n
 
+proc addDefaultValue(c: var Context; typ: Cursor; info: PackedLineInfo): bool
+
+proc addDefaultTypeDecl(c: var Context; n: Cursor; symId: SymId; info: PackedLineInfo): bool =
+  let r = asTypeDecl(n)
+  assert(not r.isGeneric)
+  case r.body.typeKind
+  of ObjectT:
+    c.dest.addParLe(OconstrX, info)
+    c.dest.addSymUse(symId, info)
+    c.dest.addParRi()
+    result = true
+  else:
+    result = addDefaultValue(c, r.body, info)
+
+proc addDefaultValue(c: var Context; typ: Cursor; info: PackedLineInfo): bool =
+  if typ.kind == Symbol:
+    let res = tryLoadSym(typ.symId)
+    if res.status == LacksNothing:
+      return addDefaultTypeDecl(c, res.decl, typ.symId, info)
+    else:
+      quit "could not load: " & pool.syms[typ.symId]
+
+  case typ.typeKind
+  of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
+    raiseAssert "type expected but got: " & $typ
+  of IntT:
+    var bitsCursor = typ
+    inc bitsCursor # skip int tag
+    let rawBits = typebits(bitsCursor.load)
+    case rawBits
+    of -1:
+      c.dest.add intToken(pool.integers.getOrIncl(0), info)
+    else:
+      c.dest.addParLe(SufX, info)
+      c.dest.add intToken(pool.integers.getOrIncl(0), info)
+      c.dest.add strToken(pool.strings.getOrIncl("i" & $rawBits), info)
+      c.dest.addParRi()
+    result = true
+  of UIntT:
+    var bitsCursor = typ
+    inc bitsCursor # skip int tag
+    let rawBits = typebits(bitsCursor.load)
+    case rawBits
+    of -1:
+      c.dest.add uintToken(pool.uintegers.getOrIncl(0'u64), info)
+    else:
+      c.dest.addParLe(SufX, info)
+      c.dest.add uintToken(pool.uintegers.getOrIncl(0'u64), info)
+      c.dest.add strToken(pool.strings.getOrIncl("u" & $rawBits), info)
+      c.dest.addParRi()
+    result = true
+  of CharT:
+    c.dest.add charToken('\0', info)
+    result = true
+  of BoolT:
+    c.dest.addParLe(FalseX, info)
+    c.dest.addParRi()
+    result = true
+  of FloatT:
+    var bitsCursor = typ
+    inc bitsCursor # skip int tag
+    let rawBits = typebits(bitsCursor.load)
+    c.dest.addParLe(SufX, info)
+    c.dest.add floatToken(pool.floats.getOrIncl(0.0'f64), info)
+    c.dest.add strToken(pool.strings.getOrIncl("f" & $rawBits), info)
+    c.dest.addParRi()
+    result = true
+  of PtrT, PointerT, CStringT:
+    c.dest.addParLe(NilX, info)
+    c.dest.addParRi()
+    result = true
+  of SinkT, LentT:
+    result = addDefaultValue(c, typ.firstSon, info)
+  of ArrayT:
+    result = true
+    var arr = typ
+    inc arr
+
+    let elemType = arr
+    skip arr
+
+    assert arr.typeKind == RangetypeT
+    inc arr
+    skip arr
+    let lowBound = pool.integers[arr.intId]
+    inc arr
+    let highBound = pool.integers[arr.intId]
+
+    let length = highBound-lowBound+1
+
+    c.dest.addParLe(AconstrX, info)
+    c.dest.addSubtree typ
+
+    for i in 0..<length:
+      if not addDefaultValue(c, elemType, info):
+        return false
+
+    c.dest.addParRi()
+
+  of TupleT:
+    result = true
+    var tup = typ
+    inc tup
+    c.dest.addParLe(TupConstrX, info)
+    c.dest.addSubtree typ
+    while tup.kind != ParRi:
+      let field = getTupleFieldType(tup)
+      if not addDefaultValue(c, field, info):
+        return false
+      skip tup
+    c.dest.addParRi()
+  else:
+    # TODO: enums, etc
+    result = false
+
 proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
   let info = n.info
@@ -467,7 +582,25 @@ proc trExplicitWasMoved(c: var Context; n: var Cursor) =
       tr c, n, DontCare
   else:
     inc n
-    skip n
+    var hasDefault = false
+
+    var zeroMem = createTokenBuf()
+
+    swap c.dest, zeroMem
+    copyIntoKind c.dest, AsgnS, info:
+      let hasHaddrX = n.exprKind == HaddrX
+      if hasHaddrX:
+        inc n
+
+      takeTree c.dest, n
+
+      if hasHaddrX:
+        skipParRi(n)
+      hasDefault = addDefaultValue(c, typ, info)
+
+    swap c.dest, zeroMem
+    c.dest.add zeroMem
+
   skipParRi n
 
 proc trExplicitTrace(c: var Context; n: var Cursor) =
