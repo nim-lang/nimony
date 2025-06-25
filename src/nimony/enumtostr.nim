@@ -34,7 +34,7 @@ proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId, enumSy
 
     inc enumDecl # skips tupleConstr
     inc enumDecl # skips counter field
-    let fieldValue = enumDecl.litId
+    var fieldValue = enumDecl
     inc enumDecl # skips fieldValue
     inc enumDecl # Skips ParRi
 
@@ -45,7 +45,12 @@ proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId, enumSy
 
     c.dest.add tagToken("stmts", enumDeclInfo)
     c.dest.add tagToken("ret", enumDeclInfo)
-    c.dest.add strToken(fieldValue, enumDeclInfo)
+    if fieldValue.kind == StringLit:
+      c.dest.add strToken(fieldValue.litId, enumDeclInfo)
+    else:
+      # handle errors
+      c.dest.addSubtree fieldValue
+
     c.dest.addParRi() # ret
     c.dest.addParRi() # stmts
 
