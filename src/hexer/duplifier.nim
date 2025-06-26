@@ -308,7 +308,7 @@ proc callWasMoved(c: var Context; sym: SymId; info: PackedLineInfo; typ: Cursor)
 
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
-  `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
+  `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp` #`f()` can read `x`
   `x = lastUse y` is turned into either
 
     `=destroy(x); x =bitcopy y; =wasMoved(y)` # no self assignments possible
@@ -346,13 +346,15 @@ proc trAsgn(c: var Context; n: var Cursor) =
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
     if constructsValue(ri):
-      # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
+      # `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp`.
+      let tmp = tempOfTrArg(c, ri, leType)
       if isNotFirstAsgn:
         callDestroy(c, destructor, lhs)
       copyInto c.dest, n:
         copyTree c.dest, lhs
+        copyIntoSymUse c.dest, tmp, ri.info
         n = ri
-        tr c, n, WillBeOwned
+        skip n
     elif isLastRead(c, ri):
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
