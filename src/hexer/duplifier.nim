@@ -145,6 +145,32 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
         # no harmful pointer deref:
         result = false
 
+proc potentialAliasing(le, ri: Cursor): bool =
+  var destHdrefs = false
+  let d = lvalueRoot(le, destHdrefs)
+  if d == NoSymId:
+    result = true # too bad, cannot analyse
+  else:
+    result = false
+    var nested = 0
+    var n = ri
+    while true:
+      case n.kind
+      of Symbol:
+        if n.symId == d:
+          result = true
+          break
+        inc n
+      of ParLe:
+        inc nested
+        inc n
+      of ParRi:
+        dec nested
+        inc n
+      else:
+        inc n
+      if nested == 0: break
+
 # -----------------------------------------------------------
 
 when not defined(nimony):
@@ -346,15 +372,24 @@ proc trAsgn(c: var Context; n: var Cursor) =
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
     if constructsValue(ri):
-      # `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp`.
-      let tmp = tempOfTrArg(c, ri, leType)
-      if isNotFirstAsgn:
-        callDestroy(c, destructor, lhs)
-      copyInto c.dest, n:
-        copyTree c.dest, lhs
-        copyIntoSymUse c.dest, tmp, ri.info
-        n = ri
-        skip n
+      if not potentialAliasing(le, ri):
+        # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
+        if isNotFirstAsgn:
+          callDestroy(c, destructor, lhs)
+        copyInto c.dest, n:
+          copyTree c.dest, lhs
+          n = ri
+          tr c, n, WillBeOwned
+      else:
+        # `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp`.
+        let tmp = tempOfTrArg(c, ri, leType)
+        if isNotFirstAsgn:
+          callDestroy(c, destructor, lhs)
+        copyInto c.dest, n:
+          copyTree c.dest, lhs
+          copyIntoSymUse c.dest, tmp, ri.info
+          n = ri
+          skip n
     elif isLastRead(c, ri):
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
