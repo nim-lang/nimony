@@ -86,7 +86,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
 const
   ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX, NewrefX}
 
-proc constructsValue*(n: Cursor): bool =
+proc constructsValue*(n: Cursor; derefConstructs = true): bool =
   var n = n
   while true:
     case n.exprKind
@@ -94,6 +94,8 @@ proc constructsValue*(n: Cursor): bool =
       inc n
       skip n
     of DerefX, HDerefX:
+      if not derefConstructs:
+        return false
       inc n
     of BaseobjX:
       inc n
@@ -371,7 +373,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     const isNotFirstAsgn = true
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
-    if constructsValue(ri):
+    if constructsValue(ri, derefConstructs = false):
       if not potentialAliasing(le, ri):
         # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
         if isNotFirstAsgn:
@@ -844,7 +846,7 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
       if k == CursorS:
         trValue c, r.val, DontCare
         c.dest.addParRi()
-      elif constructsValue(r.val):
+      elif constructsValue(r.val, derefConstructs = false):
         trValue c, r.val, WillBeOwned
         c.dest.addParRi()
 
@@ -874,7 +876,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
   let typ = getType(c.typeCache, n)
   let arg = n.firstSon
   let info = n.info
-  if constructsValue(arg):
+  if constructsValue(arg, derefConstructs = false):
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
