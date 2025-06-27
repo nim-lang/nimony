@@ -198,3 +198,14 @@ func chr*(u: range[0..255]): char {.inline.} =
 include "../../vendor/errorcodes/src" / errorcodes
 
 var localErr* {.threadvar.}: ErrorCode
+
+type
+  ContinuationProc* = proc (coro: ptr CoroutineBase): Continuation {.nimcall.}
+  Continuation* = object
+    fn*: ContinuationProc
+    env*: ptr CoroutineBase
+  CoroutineBase* = object of RootObj
+    caller*: Continuation
+
+method cancel*(coro: ptr CoroutineBase) =
+  discard "to override"
