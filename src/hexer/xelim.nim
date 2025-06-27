@@ -89,12 +89,16 @@ proc add(dest: var TokenBuf; tar: Target) =
 
 proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
   var tar = Target(m: IsEmpty)
+  let typ = getType(c.typeCache, n)
   trExpr c, dest, n, tar
 
-  let info = n.info
-  copyIntoKind dest, AsgnS, info:
-    dest.addSymUse v, info
+  if typ.typeKind in {VoidT, AutoT}:
     dest.add tar
+  else:
+    let info = n.info
+    copyIntoKind dest, AsgnS, info:
+      dest.addSymUse v, info
+      dest.add tar
 
 proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:

@@ -13,3 +13,17 @@ renderTree:
     result = s
 
   discard foo(2)
+
+  var s = @[1, 2, 3]
+  echo s[0]
+
+  type
+    Foo = object
+      id: int
+
+  proc `=destroy`(x: Foo) =
+    discard
+
+  block:
+    var m = Foo(id: 12)
+    `=destroy`(m)

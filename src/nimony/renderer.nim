@@ -578,11 +578,28 @@ proc gproc(g: var SrcGen, n: var Cursor) =
     else:
       discard
 
-proc gcall(g: var SrcGen, n: var Cursor) =
-  inc n
-  gsub(g, n)
-  put(g, tkParLe, "(")
+proc bracketKind(g: SrcGen, n: Cursor): BracketKind =
+  if renderIds notin g.flags:
+    if n.exprKind in {OchoiceX, CchoiceX}:
+      var firstSon = n
+      inc firstSon
+      result = bracketKind(g, firstSon)
+    elif n.kind == Symbol:
+      var name = pool.syms[n.symId]
+      extractBasename(name)
 
+      case name
+      of "[]": result = bkBracket
+      of "[]=": result = bkBracketAsgn
+      of "{}": result = bkCurly
+      of "{}=": result = bkCurlyAsgn
+      else: result = bkNone
+    else:
+      result = bkNone
+  else:
+    result = bkNone
+
+proc gcallComma(g: var SrcGen, n: var Cursor) =
   var afterFirst = false
 
   while n.kind != ParRi:
@@ -592,8 +609,30 @@ proc gcall(g: var SrcGen, n: var Cursor) =
       afterFirst = true
     gsub(g, n)
 
-  put(g, tkParRi, ")")
-  skipParRi(n)
+proc gcall(g: var SrcGen, n: var Cursor) =
+  inc n
+  case bracketKind(g, n)
+  of bkBracket:
+    skip n
+    gsub(g, n)
+    put(g, tkBracketLe, "[")
+    gcallComma(g, n)
+    put(g, tkBracketRi, "]")
+    skipParRi(n)
+  of bkCurly:
+    skip n
+    gsub(g, n)
+    put(g, tkCurlyLe, "{")
+    gcallComma(g, n)
+    put(g, tkCurlyRi, "}")
+    skipParRi(n)
+  of bkNone, bkPar, bkBracketAsgn, bkCurlyAsgn:
+    # TODO:
+    gsub(g, n)
+    put(g, tkParLe, "(")
+    gcallComma(g, n)
+    put(g, tkParRi, ")")
+    skipParRi(n)
 
 proc gcallsystem(g: var SrcGen, n: var Cursor; name: string) =
   inc n
@@ -942,6 +981,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         gsub(g, n, c)
       else:
         skip n
+  of DotToken:
+    put(g, tkSymbol, "void")
+    inc n
   else:
     gsub(g, n, c)
 
@@ -1099,6 +1141,27 @@ proc gpragmaBlock(g: var SrcGen, n: var Cursor) =
   # gcoms(g)                    # a good place for comments
   gstmts(g, n, c, doIndent = true)
   skipParRi(n)
+
+proc isUseSpace(n: Cursor): bool =
+  template isAlpha(s: Cursor): bool =
+    pool.strings[s.litId][0] in {'a'..'z', 'A'..'Z'}
+
+  result = true
+  var n = n
+
+  assert n.kind != ParRi
+  let firstSon = n
+  skip n
+
+  if n.kind != ParRi:
+    let secondSon = n
+    skip n
+    if n.kind == ParRi:
+      assert firstSon.kind == Ident and secondSon.kind == Ident
+      # handle `=destroy`, `'big' and handle setters, e.g. `foo=`
+      if (pool.strings[firstSon.litId] in ["=", "'"] and isAlpha(secondSon)) or
+          (pool.strings[secondSon.litId] == "=" and isAlpha(firstSon)):
+        result = false
 
 proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false) =
   case n.kind
@@ -1690,8 +1753,19 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
     of QuotedX:
       inc n
+
+      let useSpace = isUseSpace(n)
       put(g, tkAccent, "`")
-      gsub(g, n, c)
+
+      var afterFirst = false
+      while n.kind != ParRi:
+        if afterFirst:
+          if useSpace:
+            put(g, tkSpaces, Space)
+        else:
+          afterFirst = true
+        gsub(g, n, c)
+
       put(g, tkAccent, "`")
       skipParRi(n)
 

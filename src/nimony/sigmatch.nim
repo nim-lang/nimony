@@ -1113,8 +1113,10 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       of NiltT:
         discard "ok"
         skip f
-      else:
+      of {ProctypeT, ParamsT}:
         procTypeMatch m, f, a
+      else:
+        m.error InvalidMatch, f, a
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, VoidT, NiltT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f

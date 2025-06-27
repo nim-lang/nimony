@@ -40,9 +40,9 @@ proc combineType(c: var SemContext; info: PackedLineInfo; dest: var Cursor; src:
   else:
     c.typeMismatch info, src, dest
 
-proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
+proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false): bool =
   template checkBranch(branch) =
-    if not implicitlyDiscardable(branch, noreturnOnly):
+    if not implicitlyDiscardable(branch, dest, noreturnOnly):
       return false
 
   var it = n
@@ -51,7 +51,10 @@ proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
   #    nkOfBranch, nkElse, nkFinally, nkExceptBranch,
   #    nkElifBranch, nkElifExpr, nkElseExpr, nkBlockStmt, nkBlockExpr,
   #    nkHiddenStdConv, nkHiddenSubConv, nkHiddenDeref}
-  while it.kind == ParLe and stmtKind(it) in {StmtsS, BlockS}:
+  while it.kind == ParLe and (stmtKind(it) in {StmtsS, BlockS} or exprKind(it) == ExprX):
+    if exprKind(it) == ExprX and dest.len != 0:
+      let pos = cursorToPosition(dest, it)
+      dest[pos] = parLeToken(StmtsS, dest[pos].info)
     inc it
     var last = it
     while true:
@@ -149,7 +152,8 @@ proc implicitlyDiscardable(n: Cursor, noreturnOnly = false): bool =
     result = false
 
 proc isNoReturn(n: Cursor): bool {.inline.} =
-  result = implicitlyDiscardable(n, noreturnOnly = true)
+  var dummy = default(TokenBuf)
+  result = implicitlyDiscardable(n, dummy, noreturnOnly = true)
 
 proc requestRoutineInstance(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
@@ -644,7 +648,7 @@ proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
   else:
     # analyze the expression that was just produced:
     let ex = cursorAt(c.dest, exPos)
-    let discardable = implicitlyDiscardable(ex)
+    let discardable = implicitlyDiscardable(ex, c.dest)
     endRead(c.dest)
     if not discardable:
       buildErr c, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
@@ -1930,8 +1934,8 @@ proc semDiscard(c: var SemContext; it: var Item) =
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, a
     it.n = a.n
-    if classifyType(c, it.typ) == VoidT:
-      buildErr c, exInfo, "expression of type `" & typeToString(it.typ) & "` must not be discarded"
+    if classifyType(c, a.typ) == VoidT:
+      buildErr c, exInfo, "expression of type `" & typeToString(a.typ) & "` must not be discarded"
   takeParRi c, it.n
   producesVoid c, info, it.typ
 
@@ -2569,14 +2573,17 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   c.dest.addParLe(AconstrX, info)
   if it.n.kind == ParRi:
     # empty array
-    if it.typ.typeKind == AutoT:
+    case it.typ.typeKind
+    of AutoT:
       if AllowEmpty in flags:
         # keep it.typ as auto
         c.dest.addSubtree it.typ
       else:
         buildErr c, info, "empty array needs a specified type"
-    else:
+    of ArrayT:
       c.dest.addSubtree it.typ
+    else:
+       buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
     takeParRi c, it.n
     return
 
@@ -2625,14 +2632,17 @@ proc semCurly(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   c.dest.addParLe(SetConstrX, info)
   if it.n.kind == ParRi:
     # empty set
-    if it.typ.typeKind == AutoT:
+    case it.typ.typeKind
+    of AutoT:
       if AllowEmpty in flags:
         # keep it.typ as auto
         c.dest.addSubtree it.typ
       else:
         buildErr c, info, "empty set needs a specified type"
-    else:
+    of SetT:
       c.dest.addSubtree it.typ
+    else:
+      buildErr c, info, "invalid expected type for set constructor: " & typeToString(it.typ)
     takeParRi c, it.n
     return
 

@@ -86,13 +86,17 @@ proc isLastRead(c: var Context; n: Cursor): bool =
 const
   ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX, NewrefX}
 
-proc constructsValue*(n: Cursor): bool =
+proc constructsValue*(n: Cursor; derefConstructs = true): bool =
   var n = n
   while true:
     case n.exprKind
     of CastX, ConvX, HconvX, DconvX:
       inc n
       skip n
+    of DerefX, HDerefX:
+      if not derefConstructs:
+        return false
+      inc n
     of BaseobjX:
       inc n
       skip n
@@ -142,6 +146,32 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
         # different roots while we know that at least one expression has
         # no harmful pointer deref:
         result = false
+
+proc potentialAliasing(le, ri: Cursor): bool =
+  var destHdrefs = false
+  let d = lvalueRoot(le, destHdrefs)
+  if d == NoSymId:
+    result = true # too bad, cannot analyse
+  else:
+    result = false
+    var nested = 0
+    var n = ri
+    while true:
+      case n.kind
+      of Symbol:
+        if n.symId == d:
+          result = true
+          break
+        inc n
+      of ParLe:
+        inc nested
+        inc n
+      of ParRi:
+        dec nested
+        inc n
+      else:
+        inc n
+      if nested == 0: break
 
 # -----------------------------------------------------------
 
@@ -306,7 +336,7 @@ proc callWasMoved(c: var Context; sym: SymId; info: PackedLineInfo; typ: Cursor)
 
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
-  `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
+  `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp` #`f()` can read `x`
   `x = lastUse y` is turned into either
 
     `=destroy(x); x =bitcopy y; =wasMoved(y)` # no self assignments possible
@@ -343,14 +373,25 @@ proc trAsgn(c: var Context; n: var Cursor) =
     const isNotFirstAsgn = true
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
-    if constructsValue(ri):
-      # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
-      if isNotFirstAsgn:
-        callDestroy(c, destructor, lhs)
-      copyInto c.dest, n:
-        copyTree c.dest, lhs
-        n = ri
-        tr c, n, WillBeOwned
+    if constructsValue(ri, derefConstructs = false):
+      if not potentialAliasing(le, ri):
+        # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
+        if isNotFirstAsgn:
+          callDestroy(c, destructor, lhs)
+        copyInto c.dest, n:
+          copyTree c.dest, lhs
+          n = ri
+          tr c, n, WillBeOwned
+      else:
+        # `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp`.
+        let tmp = tempOfTrArg(c, ri, leType)
+        if isNotFirstAsgn:
+          callDestroy(c, destructor, lhs)
+        copyInto c.dest, n:
+          copyTree c.dest, lhs
+          copyIntoSymUse c.dest, tmp, ri.info
+          n = ri
+          skip n
     elif isLastRead(c, ri):
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
@@ -392,7 +433,13 @@ proc trAsgn(c: var Context; n: var Cursor) =
           callDup c, n
 
 proc getHookType(c: var Context; n: Cursor): Cursor =
-  result = skipModifier(getType(c.typeCache, n.firstSon))
+  var n = n
+  inc n
+  if n.exprKind == HaddrX:
+    # skips `HaddrX` to get the correct type; otherwise
+    # we get a `ptr` type
+    inc n
+  result = skipModifier(getType(c.typeCache, n))
 
 proc trExplicitDestroy(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
@@ -799,7 +846,7 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
       if k == CursorS:
         trValue c, r.val, DontCare
         c.dest.addParRi()
-      elif constructsValue(r.val):
+      elif constructsValue(r.val, derefConstructs = false):
         trValue c, r.val, WillBeOwned
         c.dest.addParRi()
 
@@ -829,7 +876,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
   let typ = getType(c.typeCache, n)
   let arg = n.firstSon
   let info = n.info
-  if constructsValue(arg):
+  if constructsValue(arg, derefConstructs = true):
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
@@ -846,7 +893,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
       tr c, n, e
       skipParRi n
   else:
-    let m = "not the last usage of: " & asNimCode(n)
+    let m = "not the last usage of: " & asNimCode(arg)
     c.dest.buildTree ErrT, info:
       c.dest.addSubtree n
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
