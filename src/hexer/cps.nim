@@ -7,8 +7,6 @@
 #    distribution, for details about the copyright.
 #
 
-# included by lambdalifting.nim
-
 ##[
 We need to transform:
 
@@ -63,10 +61,55 @@ Becomes:
 
 ]##
 
-proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor) =
+import std / [assertions, sets, tables]
+include ".." / lib / nifprelude
+import ".." / lib / symparser
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
+  builtintypes, langmodes, renderer, reporters, controlflow]
+import hexer_context
+
+const
+  RootObjName = "CoroutineBase.0." & SystemModuleSuffix
+  EnvParamName = "`ep.0"
+
+type
+  EnvField = object
+    objType: SymId
+    field: SymId
+    typ: Cursor
+
+  Context = object
+    counter: int
+    typeCache: TypeCache
+    thisModuleSuffix: string
+    procStack: seq[SymId]
+    localToEnv: Table[SymId, EnvField]
+
+proc coroTypeForProc(c: var Context; procId: SymId): SymId =
+  let s = extractVersionedBasename(pool.syms[procId])
+  result = pool.syms.getOrIncl(s & ".coro." & c.thisModuleSuffix)
+
+proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+
+proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  copyInto dest, n:
+    while n.kind != ParRi:
+      tr(c, dest, n)
+
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # XXX To implement
+  trSons(c, dest, n)
+
+proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let kind = n.symKind
+  copyInto dest, n:
+    c.typeCache.takeLocalHeader(dest, n, kind)
+    tr(c, dest, n)
+
+proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
   var cf = toControlflow(iter, keepReturns = true)
 
-proc treIterator(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var init = createTokenBuf(10)
   let iter = n
   copyInto dest, n:
@@ -74,22 +117,64 @@ proc treIterator(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let sym = n.symId
     c.procStack.add(sym)
     let closureOwner = c.procStack[0]
-    let needsHeap = c.escapes.contains(closureOwner)
+    var isClosure = false
     for i in 0..<BodyPos:
       if i == ParamsPos:
         c.typeCache.openProcScope(sym, n)
-        let envType = if needsHeap: SymId(0) else: c.envTypeForProc(closureOwner)
-        treParams c, dest, init, n, c.closureProcs.contains(sym), envType
-      else:
-        if i == TypeVarsPos:
-          isConcrete = n.substructureKind != TypevarsU
-        takeTree dest, n
+      elif i == ProcPragmasPos:
+        if kind == IteratorY and hasPragma(n, ClosureP):
+          isClosure = true
+      elif i == TypevarsPos:
+        isConcrete = n.substructureKind != TypevarsU
+      takeTree dest, n
 
-    if isConcrete:
-      treIteratorBody(c, dest, init, iter, sym, needsHeap)
+    if isConcrete and isClosure:
+      treIteratorBody(c, dest, init, iter, sym)
     else:
       takeTree dest, n
     discard c.procStack.pop()
   c.typeCache.closeScope()
 
+proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  case n.kind
+  of DotToken, UnknownToken, EofToken, Ident, SymbolDef,
+     IntLit, UIntLit, FloatLit, CharLit, StringLit:
+    takeTree dest, n
+  of Symbol:
+    takeTree dest, n
+  of ParLe:
+    case n.stmtKind
+    of LocalDecls:
+      trLocal c, dest, n
+    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+      trCoroutine c, dest, n, NoSym
+    of IteratorS:
+      trCoroutine c, dest, n, IteratorY
+    of TemplateS, TypeS, EmitS, BreakS, ContinueS,
+      ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
+      ExportS, CommentS,
+      PragmasS:
+      takeTree dest, n
+    of ScopeS:
+      c.typeCache.openScope()
+      trSons(c, dest, n)
+      c.typeCache.closeScope()
+    else:
+      case n.exprKind
+      of CallKinds:
+        trCall c, dest, n
+      of TypeofX:
+        takeTree dest, n
+      else:
+        trSons(c, dest, n)
+  of ParRi:
+    bug "unexpected ')' inside"
 
+proc transformToCps*(n: var Cursor; moduleSuffix: string): TokenBuf =
+  var c = Context(thisModuleSuffix: moduleSuffix)
+  result = createTokenBuf()
+  assert n.stmtKind == StmtsS
+  result.takeToken n
+  while n.kind != ParRi:
+    tr(c, result, n)
+  result.takeToken n # ParRi
