@@ -188,10 +188,10 @@
     (range A.0.tseflljd71 3 B.0.tseflljd71) 7 val.0.tseflljd71 12 F.0.tseflljd71))) ,26
  (block . 2,1
   (stmts 4
-   (var :sss.0 . . 8
+   (gvar :sss.0.tseflljd71 . . 8
     (set 1
      (c +8)) .) 4,1
-   (asgn ~4 sss.0 2
+   (asgn ~4 sss.0.tseflljd71 2
     (setconstr 6,~1
      (set 1
       (c +8)))) 2,4,lib/std/assertions.nim
@@ -203,7 +203,7 @@
         (i +64) ~6
         (card
          (set
-          (c +8)) 1 sss.0) 3 +0)) ~1,1
+          (c +8)) 1 sss.0.tseflljd71) 3 +0)) ~1,1
       (stmts 2,116,lib/std/syncio.nim
        (stmts 2,1
         (stmts
@@ -212,7 +212,7 @@
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))) 4,3
-   (asgn ~4 sss.0 2
+   (asgn ~4 sss.0.tseflljd71 2
     (setconstr 6,~3
      (set 1
       (c +8)) 1
@@ -225,7 +225,7 @@
         (i +64) ~6
         (card
          (set
-          (c +8)) 1 sss.0) 3 +27)) ~1,1
+          (c +8)) 1 sss.0.tseflljd71) 3 +27)) ~1,1
       (stmts 2,116,lib/std/syncio.nim
        (stmts 2,1
         (stmts
@@ -236,7 +236,7 @@
        (cmd quit.0.syn1lfpjv 5 +1))))) 8,5
    (excl
     (set
-     (c +8)) ~8 sss.0 1 'm') 2,4,lib/std/assertions.nim
+     (c +8)) ~8 sss.0.tseflljd71 1 'm') 2,4,lib/std/assertions.nim
    (stmts
     (if 3
      (elif
@@ -245,7 +245,7 @@
         (i +64) ~6
         (card
          (set
-          (c +8)) 1 sss.0) 3 +26)) ~1,1
+          (c +8)) 1 sss.0.tseflljd71) 3 +26)) ~1,1
       (stmts 2,116,lib/std/syncio.nim
        (stmts 2,1
         (stmts
@@ -256,7 +256,7 @@
        (cmd quit.0.syn1lfpjv 5 +1))))) 8,7
    (incl
     (set
-     (c +8)) ~8 sss.0 1 'u') 2,4,lib/std/assertions.nim
+     (c +8)) ~8 sss.0.tseflljd71 1 'u') 2,4,lib/std/assertions.nim
    (stmts
     (if 3
      (elif
@@ -265,7 +265,7 @@
         (i +64) ~6
         (card
          (set
-          (c +8)) 1 sss.0) 3 +26)) ~1,1
+          (c +8)) 1 sss.0.tseflljd71) 3 +26)) ~1,1
       (stmts 2,116,lib/std/syncio.nim
        (stmts 2,1
         (stmts
