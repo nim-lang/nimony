@@ -357,6 +357,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkLambda:
     relLineInfo(n, parent, c)
     c.b.addTree(ProcL)
+    c.b.addEmpty # adds name placeholder
     for i in 0..<n.len:
       toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
