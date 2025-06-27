@@ -27,6 +27,7 @@ type
     lookedAtBodies: HashSet[SymId]
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor)
+proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor)
 
 proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
                           viaPointer: var bool) =
@@ -63,6 +64,13 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
   of EnumT:
     # enums do not depend on anything so always safe to generate them
     o.ordered.add tracebackTypeC(ch), TypedefKeyword
+  of ProctypeT:
+    if viaPointer:
+      o.forwardedDecls.add parent, TypedefKeyword
+    else:
+      if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
+        traverseProctypeBody(m, o, ch)
+      o.ordered.add tracebackTypeC(ch), TypedefKeyword
   else:
     if ch.kind == Symbol:
       # follow the symbol to its definition:
@@ -105,12 +113,14 @@ proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor) =
   var n = t
   let procType = takeProcType(n)
   var param = procType.params
+  # we only have weak deps to the param types:
+  var viaPointer = true
   if param.kind == ParLe:
     param = param.firstSon
     while param.kind != ParRi:
       let paramDecl = takeParamDecl(param)
-      recordDependency m, o, t, paramDecl.typ
-  recordDependency m, o, t, procType.returnType
+      recordDependencyImpl m, o, t, paramDecl.typ, viaPointer
+  recordDependencyImpl m, o, t, procType.returnType, viaPointer
 
 proc traverseTypes(m: Module; o: var TypeOrder) =
   for ch in m.types:
