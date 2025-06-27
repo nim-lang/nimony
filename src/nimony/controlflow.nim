@@ -43,6 +43,7 @@ type
     nextVar: int
     currentBlock: BlockOrLoop
     typeCache: TypeCache
+    keepReturns: bool
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
@@ -620,8 +621,15 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     bug "return outside of routine"
   if control == nil:
     control = it
+  let info = n.info
   inc n # skip `(ret`
-  if (n.kind == Symbol and n.symId == it.sym) or (n.kind == DotToken):
+  if c.keepReturns:
+    var aa = Target(m: IsEmpty)
+    trExpr c, n, aa
+    c.dest.addParLe(RetS, info)
+    c.dest.add aa
+    c.dest.addParRi()
+  elif (n.kind == Symbol and n.symId == it.sym) or (n.kind == DotToken):
     discard "do not generate `result = result`"
     inc n
   else:
@@ -919,8 +927,8 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of WhenS:
     bug "`when` statement should have been eliminated"
 
-proc toControlflow*(n: Cursor): TokenBuf =
-  var c = ControlFlow(typeCache: createTypeCache())
+proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
+  var c = ControlFlow(typeCache: createTypeCache(), keepReturns: keepReturns)
   c.typeCache.openScope()
   let sk = n.stmtKind
   var n = n

@@ -13,9 +13,9 @@ include nifprelude
 import symparser
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
-  typeprops, langmodes, typekeys]
+  typeprops, langmodes, typekeys, sigmatch]
 import hexer_context, pipeline
-import  ".." / lib / stringtrees
+import  ".." / lib / [stringtrees, treemangler]
 
 
 proc setOwner(c: var EContext; newOwner: SymId): SymId =
@@ -273,7 +273,7 @@ proc trProcTypeBody(c: var EContext; n: var Cursor) =
   c.dest.addDotToken() # name
   inc n # proc
   # name, export marker, pattern, type vars:
-  for i in 0..<4: skip n
+  for i in 0..<ParamsPos: skip n
   trParams c, n
 
   let pinfo = n.info
@@ -326,11 +326,42 @@ proc trRefBody(c: var EContext; n: var Cursor; key: string) =
 
   c.dest.addParRi() # "object"
 
+proc takeMangleProctype(c: var EContext; n: var Cursor): string =
+  inc n
+  # name, export marker, pattern, type vars:
+  for i in 0..<ParamsPos: skip n
+
+  var b = createMangler(60)
+  if n.kind != DotToken:
+    inc n # params tag
+    while n.kind != ParRi:
+      let m = n
+      let pa = takeLocal(n, SkipFinalParRi)
+      assert pa.kind == ParamY
+      mangle b, pa.typ, Backend
+  inc n # DotToken or ParRi
+  # also add return type:
+  mangle b, n, Backend
+  skip n
+  # handle pragmas:
+  let props = extractProcProps(n)
+  b.addKeyw $props.cc
+  b.addKeyw $props.usesRaises
+  b.addKeyw $props.usesClosure
+  result = b.extract()
+  skip n # effects
+  skip n # body
+  skipParRi c, n
+
 proc trAsNamedType(c: var EContext; n: var Cursor) =
   let info = n.info
   var body = n
   let k = body.typeKind
-  let key = takeMangle(n, Backend, c.bits)
+  let key: string
+  if k == ProctypeT:
+    key = takeMangleProctype(c, n)
+  else:
+    key = takeMangle(n, Backend, c.bits)
 
   var val = c.newTypes.getOrDefault(key)
   if val == SymId(0):
