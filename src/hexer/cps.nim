@@ -19,25 +19,23 @@ We need to transform:
 into:
 
   type
-    SpecializedBase* = object
-      next: proc (x: int; env: ref SpecializedBase): int {.nimcall.}
-    Env* = object of SpecializedBase
-      i: int
+    ItCoroutine* = object of CoroutineBase
+      x, i: int
+      dest: ptr int
 
-  proc it(x: int; env: ref SpecializedBase): int =
-    var env = cast[ref Env](env)
-    if env.i < x:
-      result = env.i
-      env.i += 1
+  proc itNext(coro: ptr ItCoroutine): Continuation =
+    coro.i += 1
+    result = Continuation(fn: itStart, env: coro)
+
+  proc itStart(coro: ptr ItCoroutine): Continuation =
+    if coro.i < coro.x:
+      result = Continuation(fn: itNext, env: coro)
     else:
-      result = 0
-      env.next = nil
+      result = Continuation(fn: nil, env: nil)
 
-  proc create(x: int): ref Env =
-    result = Env(i: 0, next: it)
-
-But in general this transformation is much more complex as we need to create
-a new proc for every state:
+  proc createItCoroutine(this: ptr ItCoroutine; x: int; dest: ptr int; caller: Continuation): Continuation =
+    this = ItCoroutine(x: x, i: 0, caller: caller, dest: dest)
+    result = Continuation(fn: itStart, env: this)
 
 
 1. Compile the AST/NIF to a CFG with goto instructions (src/nimony/controlflow does that already). Pay special
@@ -48,32 +46,20 @@ a new proc for every state:
 5. The return value `result` remains and is passed out of the iterator like it is done for regular procs.
 6. Turn `goto label` into function calls. Turn `yield` into `env.cont = nextState; return`.
 
-type
-  Generator[T] = object
-    cont: proc (a, b: int): Generator[T]
-    value: T
+Usage of the closure iterator in a for loop than becomes an easy trampoline:
 
-iterator countup(a, b: int): int =         |  proc countup(): proc (a, b: int): Generator[int] {.closure.} =
-  var x = a                                |    var x = a
-                                           |    var state: proc (a, b: int): Generator[int] = l1
-L1:                                        |    proc l1(a, b: int): Generator[int] =
-  if x > b:                                |      if x > b:
-    goto Lend                              |        return lend(a, b)
-  else:                                    |      else:
-    goto L2                                |        return l2(a, b)
-L2:                                        |    proc l2(a, b: int): Generator[int] =
-  yield x  # yield produces label L3       |      return Generator[int](cont: l3, value: x)
-L3:                                        |    proc l3(a, b: int): Generator[int] =
-  inc x                                    |      inc x
-  goto L1                                  |      return l1(a, b)
-Lend:                                      |    proc lend(a, b: int): Generator[int] =
-  discard # return x?                      |      return Generator[int](cont: nil, value: x)
+  for forLoopVar in it(10): echo forLoopVar
 
-for i in countup(0, 10):                   |  let it = countup()
-  echo i                                   |  while true:
-                                           |    let i = it(0, 10)
-                                           |    if i.cont == nil: break
-                                           |    echo i.value
+Becomes:
+
+  const StopContinuation = Continuation(fn: nil, env: nil)
+
+  var forLoopVar: int
+  var itCoroutine: ItCoroutine
+  var it = createItCoroutine(addr itCoroutine, 10, addr forLoopVar, StopContinuation)
+  while it.fn != nil:
+    echo forLoopVar
+    it = it.fn(it.env)
 
 ]##
 
