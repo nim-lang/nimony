@@ -140,9 +140,10 @@ type
     RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation
     ErrsP = (ord(ErrsTagId), "errs")  ## proc annotation
     StaticP = (ord(StaticTagId), "static")  ## `static` type or annotation
+    PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
 
 proc rawTagIsNifcPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, VarargsTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, VarargsTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, PackedTagId}
 
 type
   NifcTypeQualifier* = enum
