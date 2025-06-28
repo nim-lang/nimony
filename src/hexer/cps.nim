@@ -68,6 +68,11 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval
   builtintypes, langmodes, renderer, reporters, controlflow]
 import hexer_context
 
+# TODO:
+# - create start state that sets up the environment with the parameters
+# - transform `for` loops into trampoline code
+# - transform calls to .cps procs
+
 const
   ContinuationProcName = "ContinuationProc.0." & SystemModuleSuffix
   RootObjName = "CoroutineBase.0." & SystemModuleSuffix
@@ -129,12 +134,33 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trSons(c, dest, n)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let kind = n.symKind
-  copyInto dest, n:
-    if kind == ResultY:
-      c.currentProc.resultSym = n.symId
-    c.typeCache.takeLocalHeader(dest, n, kind)
-    tr(c, dest, n)
+  let sym = n.firstSon.symId
+
+  let field = c.currentProc.localToEnv.getOrDefault(sym)
+  if field.def != field.use:
+    let info = n.info
+    inc n
+    skip n # name
+    skip n # exported
+    skip n # pragmas
+    skip n # type
+    if n.kind == DotToken:
+      inc n
+    else:
+      dest.copyIntoKind AsgnS, info:
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+          dest.addSymUse field.field, info
+        tr(c, dest, n)
+    skipParRi n
+  else:
+    let kind = n.symKind
+    copyInto dest, n:
+      if kind == ResultY:
+        c.currentProc.resultSym = n.symId
+      c.typeCache.takeLocalHeader(dest, n, kind)
+      tr(c, dest, n)
 
 proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
   const info = NoLineInfo
