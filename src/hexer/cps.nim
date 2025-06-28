@@ -172,9 +172,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc transformToCps*(n: var Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(thisModuleSuffix: moduleSuffix)
+  c.typeCache.openScope()
   result = createTokenBuf()
   assert n.stmtKind == StmtsS
   result.takeToken n
   while n.kind != ParRi:
     tr(c, result, n)
   result.takeToken n # ParRi
+  c.typeCache.closeScope()
