@@ -108,6 +108,8 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
   var cf = toControlflow(iter, keepReturns = true)
+  var n = beginRead(cf)
+
 
 proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var init = createTokenBuf(10)
