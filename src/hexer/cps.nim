@@ -75,6 +75,7 @@ const
   ResultFieldName = "`result.0"
   FnFieldName = "fn.0." & SystemModuleSuffix
   EnvFieldName = "env.0." & SystemModuleSuffix
+  CallerFieldName = "caller.0." & SystemModuleSuffix
 
 type
   EnvField = object
@@ -84,14 +85,19 @@ type
     def: int
     use: int
 
+  ProcContext = object
+    localToEnv: Table[SymId, EnvField]
+    yieldConts: Table[int, int]
+    labels: Table[int, int]
+    cf: TokenBuf
+    resultSym: SymId
+
   Context = object
     counter: int
     typeCache: TypeCache
     thisModuleSuffix: string
     procStack: seq[SymId]
-    localToEnv: Table[SymId, EnvField]
-    yieldConts: Table[int, int]
-    cf: TokenBuf
+    currentProc: ProcContext
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
@@ -125,6 +131,8 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
+    if kind == ResultY:
+      c.currentProc.resultSym = n.symId
     c.typeCache.takeLocalHeader(dest, n, kind)
     tr(c, dest, n)
 
@@ -150,23 +158,7 @@ proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
   dest.addDotToken() # effects
   dest.addParLe StmtsS, info # body
 
-proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let pos = cursorToPosition(c.cf, n)
-  let state = c.yieldConts.getOrDefault(pos, -1)
-  assert state != -1
-  # yield ex
-  # -->
-  # this.res[] = ex
-  # return Continuation(fn: stateToProcName(c, sym, nextState), env: this)
-  let info = n.info
-  dest.copyIntoKind AsgnS, info:
-    inc n # yield
-    dest.copyIntoKind DerefX, info:
-      dest.copyIntoKind DotX, info:
-        dest.copyIntoKind DerefX, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-        dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
-    tr c, dest, n
+proc returnNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   dest.copyIntoKind RetS, info:
     dest.copyIntoKind OconstrX, info:
       dest.copyIntoKind KvU, info:
@@ -178,15 +170,62 @@ proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
         dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
-proc escapingLocals(c: var Context; n: Cursor; labels: Table[int, int]) =
+proc gotoNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
+  # generate: `return state(this)`
+  dest.copyIntoKind RetS, info:
+    dest.copyIntoKind CallS, info:
+      dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
+      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+
+proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
+  inc n # yield/return
+  if n.kind == DotToken or (n.kind == Symbol and n.symId == c.currentProc.resultSym):
+    inc n
+  else:
+    dest.copyIntoKind AsgnS, info:
+      dest.copyIntoKind DerefX, info:
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+          dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
+      tr c, dest, n
+  skipParRi n
+
+proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # yield ex
+  # -->
+  # this.res[] = ex
+  # return Continuation(fn: stateToProcName(c, sym, nextState), env: this)
+  let pos = cursorToPosition(c.currentProc.cf, n)
+  let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
+  assert state != -1
+  let info = n.info
+  returnValue(c, dest, n, info)
+  returnNextState(c, dest, state, info)
+
+proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # return x -->
+  # this.res[] = x
+  # return this.caller
+  let info = n.info
+  returnValue(c, dest, n, info)
+  dest.copyIntoKind RetS, info:
+      dest.copyIntoKind DerefX, info:
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+          dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+          dest.addIntLit 1, info # field is in superclass
+
+proc escapingLocals(c: var Context; n: Cursor) =
   if n.kind == DotToken: return
   var currentState = 0
   var n = n
   var nested = 0
   while true:
     if nested <= 1:
-      let pos = cursorToPosition(c.cf, n)
-      let state = labels.getOrDefault(pos, -1)
+      let pos = cursorToPosition(c.currentProc.cf, n)
+      let state = c.currentProc.labels.getOrDefault(pos, -1)
       if state != -1:
         currentState = state
 
@@ -198,7 +237,7 @@ proc escapingLocals(c: var Context; n: Cursor; labels: Table[int, int]) =
       skip n # exported
       let pragmas = n
       skip n # pragmas
-      c.localToEnv[mine] = EnvField(
+      c.currentProc.localToEnv[mine] = EnvField(
         objType: coroTypeForProc(c, c.procStack[^1]),
         field: localToFieldname(c, mine),
         pragmas: pragmas,
@@ -215,51 +254,51 @@ proc escapingLocals(c: var Context; n: Cursor; labels: Table[int, int]) =
       of ParLe:
         inc nested
       of Symbol:
-        if c.localToEnv.hasKey(n.symId):
-          c.localToEnv[n.symId].use = currentState
+        if c.currentProc.localToEnv.hasKey(n.symId):
+          c.currentProc.localToEnv[n.symId].use = currentState
       else:
         discard
       inc n
 
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
-  c.cf = toControlflow(iter, keepReturns = true)
-  let reachable = eliminateDeadInstructions(c.cf)
+  c.currentProc.cf = toControlflow(iter, keepReturns = true)
+  let reachable = eliminateDeadInstructions(c.currentProc.cf)
 
   # Now compute basic blocks considering only reachable instructions
-  var labels = initTable[int, int]()
+  c.currentProc.labels = initTable[int, int]()
   var nextLabel = 0
-  for i in 0..<c.cf.len:
+  for i in 0..<c.currentProc.cf.len:
     if reachable[i]:
-      if c.cf[i].kind == GotoInstr:
-        let diff = c.cf[i].getInt28
-        if diff > 0 and i+diff < c.cf.len and reachable[i+diff]:
-          labels[i+diff] = nextLabel
+      if c.currentProc.cf[i].kind == GotoInstr:
+        let diff = c.currentProc.cf[i].getInt28
+        if diff > 0 and i+diff < c.currentProc.cf.len and reachable[i+diff]:
+          c.currentProc.labels[i+diff] = nextLabel
           inc nextLabel
-      elif c.cf[i].stmtKind == YldS:
+      elif c.currentProc.cf[i].stmtKind == YldS:
         # after a yield we also have a suspension point (a label):
         var nested = 1
-        c.yieldConts[i] = nextLabel
-        for j in i+1..<c.cf.len:
-          case c.cf[j].kind
+        c.currentProc.yieldConts[i] = nextLabel
+        for j in i+1..<c.currentProc.cf.len:
+          case c.currentProc.cf[j].kind
           of ParLe: inc nested
           of ParRi:
             dec nested
             if nested == 0:
-              labels[j+1] = nextLabel
+              c.currentProc.labels[j+1] = nextLabel
               inc nextLabel
           else:
             discard
 
   # analyze which locals are used across basic blocks:
-  var n = beginRead(c.cf)
-  escapingLocals(c, n, labels)
+  var n = beginRead(c.currentProc.cf)
+  escapingLocals(c, n)
 
   # compile the state machine:
   assert n.stmtKind == StmtsS
   dest.takeToken n
   while n.kind != ParRi:
-    let pos = cursorToPosition(c.cf, n)
-    let state = labels.getOrDefault(pos, -1)
+    let pos = cursorToPosition(c.currentProc.cf, n)
+    let state = c.currentProc.labels.getOrDefault(pos, -1)
     if state != -1:
       dest.addParRi() # stmts
       dest.addParRi() # proc decl
@@ -268,6 +307,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   dest.takeToken n # ParRi
 
 proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
+  var currentProc = ProcContext()
+  swap(c.currentProc, currentProc)
   var init = createTokenBuf(10)
   let iter = n
   copyInto dest, n:
@@ -292,14 +333,31 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
       takeTree dest, n
     discard c.procStack.pop()
   c.typeCache.closeScope()
+  swap(c.currentProc, currentProc)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of DotToken, UnknownToken, EofToken, Ident, SymbolDef,
+  of DotToken, EofToken, Ident, SymbolDef,
      IntLit, UIntLit, FloatLit, CharLit, StringLit:
     takeTree dest, n
   of Symbol:
-    takeTree dest, n
+    let field = c.currentProc.localToEnv.getOrDefault(n.symId)
+    if field.def != field.use:
+      let info = n.info
+      dest.copyIntoKind DotX, info:
+        dest.copyIntoKind DerefX, info:
+          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+        dest.addSymUse field.field, info
+    else:
+      takeTree dest, n
+  of GotoInstr:
+    let diff = n.getInt28
+    let target = cursorToPosition(c.currentProc.cf, n) + diff
+    let state = c.currentProc.labels.getOrDefault(target, -1)
+    if state != -1:
+      gotoNextState(c, dest, state, n.info)
+    else:
+      bug "goto target not found"
   of ParLe:
     case n.stmtKind
     of LocalDecls:
@@ -315,6 +373,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     of YldS:
       trYield c, dest, n
+    of RetS:
+      trReturn c, dest, n
     of ScopeS:
       c.typeCache.openScope()
       trSons(c, dest, n)
