@@ -10,6 +10,7 @@
 import std/[assertions, intsets]
 include nifprelude
 
+import ".." / models / tags
 import nimony_model, programs, builtintypes, typenav
 from typeprops import isOrdinalType
 
@@ -945,6 +946,62 @@ proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
   c.typeCache.closeScope()
   result = ensureMove c.dest
   #echo "result: ", codeListing(result)
+
+proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
+  # Create a sequence to track which instructions are reachable
+  result = newSeq[bool]((if last < 0: c.len else: last + 1) - start)
+  let last = if last < 0: c.len-1 else: min(last, c.len-1)
+
+  # Initialize with the start position
+  var worklist = @[start]
+  var processed = initIntSet()
+
+  # Process the worklist
+  while worklist.len > 0:
+    let pos = worklist.pop()
+    if pos > last or pos in processed:
+      continue
+
+    processed.incl(pos)
+    result[pos - start] = true  # Mark as reachable
+
+    # Handle different instruction types
+    if c[pos].kind == GotoInstr:
+      let diff = c[pos].getInt28
+      if diff != 0:
+        worklist.add(pos + diff)  # Add the target of the jump
+        # For forward jumps, everything between the goto and its target is potentially unreachable
+        if diff > 0:
+          # Don't automatically continue to the next instruction after a goto
+          continue
+    elif cast[TagEnum](c[pos].tag) == IteTagId:
+      # For if-then-else, process the condition and both branches
+      var p = pos + 1
+      # Skip the condition, marking it as reachable
+      while p <= last and c[p].kind != GotoInstr:
+        result[p - start] = true
+        inc p
+
+      if p <= last and c[p].kind == GotoInstr:
+        # Process the then branch target
+        let thenDiff = c[p].getInt28
+        result[p - start] = true  # Mark the goto as reachable
+        worklist.add(p + thenDiff)
+
+        # Move to the else branch
+        inc p
+        if p <= last and c[p].kind == GotoInstr:
+          # Process the else branch target
+          let elseDiff = c[p].getInt28
+          result[p - start] = true  # Mark the goto as reachable
+          worklist.add(p + elseDiff)
+
+          # Don't automatically continue to the next instruction after ITE
+          continue
+
+    # For regular instructions or after processing special instructions,
+    # continue to the next instruction
+    worklist.add(pos + 1)
 
 const
   PayloadOffset* = 1'u32 # so that we don't use 0 as a payload

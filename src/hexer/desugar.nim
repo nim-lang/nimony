@@ -94,7 +94,7 @@ proc trRoutineHeader(c: var Context; dest: var TokenBuf; n: var Cursor; pragmas:
   for i in 0..<BodyPos:
     if i == ParamsPos:
       c.typeCache.registerParams(sym, n)
-    elif i == TypeVarsPos:
+    elif i == TypevarsPos:
       result = n.substructureKind != TypevarsU
     elif i == ProcPragmasPos:
       pragmas = n

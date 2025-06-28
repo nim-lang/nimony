@@ -449,7 +449,7 @@ proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor): bo
   for i in 0..<BodyPos:
     if i == ParamsPos:
       c.registerParams(sym, n)
-    elif i == TypeVarsPos:
+    elif i == TypevarsPos:
       result = n.substructureKind != TypevarsU
     takeTree dest, n
 
