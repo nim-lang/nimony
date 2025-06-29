@@ -487,12 +487,21 @@ proc hookThatShouldBeMethod(c: var SemContext; hk: HookKind; beforeParams: int):
   else:
     result = false
 
-proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
+proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind; newName = NoSymId) =
   let info = it.n.info
   let declStart = c.dest.len
   takeToken c, it.n
   let beforeName = c.dest.len
-  let (symId, status) = declareOverloadableSym(c, it, kind)
+
+  let symId: SymId
+  let status: SymStatus
+  if it.n.kind == DotToken:
+    symId = newName
+    status = OkNew
+    c.dest.add symdefToken(symId, it.n.info)
+    inc it.n
+  else:
+    (symId, status) = declareOverloadableSym(c, it, kind)
 
   let beforeExportMarker = c.dest.len
   wantExportMarker c, it.n
@@ -633,6 +642,24 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   takeParRi c, it.n
   producesVoid c, info, it.typ
   publish c, symId, declStart
+
+proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
+  var n = it.n
+  var typ = asRoutine(n).params
+  inc n
+  if n.kind == DotToken:
+    let name = identToSym(c, "`anonproc", ProcY)
+
+    swap c.dest, c.pending
+    semProcImpl c, it, kind, pass, name
+    swap c.dest, c.pending
+
+
+    c.dest.add symToken(name, n.info)
+    it.typ = typ
+
+  else:
+    semProcImpl c, it, kind, pass
 
 proc semTypePragmas(c: var SemContext; n: var Cursor; sym: SymId; beforeExportMarker: int): CrucialPragma =
   result = CrucialPragma(sym: sym)
