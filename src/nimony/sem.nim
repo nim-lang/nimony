@@ -3914,10 +3914,33 @@ proc semAddr(c: var SemContext; it: var Item) =
 proc semSizeof(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   let expected = it.typ
+  let info = it.n.info
   c.takeToken(it.n)
+  let beforeType = c.dest.len
   # handle types
   semLocalTypeImpl c, it.n, InLocalDecl
   c.takeParRi(it.n)
+  var e = cursorAt(c.dest, beforeType)
+  let canCalcSize = block:
+    if e.kind == Symbol:
+      let sym = tryLoadSym(e.symId)
+      if sym.status == LacksNothing and sym.decl.symKind == TypeY:
+        true
+      else:
+        false
+    else:
+      e.typeKind notin {AutoT}  # got AutoT when sizeof(undefined symbol)
+  if canCalcSize:
+    # set last argument to false if you want to get the size of object or tuple
+    let size = getSize(e, c.g.config.bits div 8, true)
+    endRead c.dest
+    var err = false
+    let sz = size.asSigned err
+    if not err:
+      c.dest.shrink beforeExpr
+      c.dest.addIntLit sz, info
+  else:
+    endRead c.dest
   it.typ = c.types.intType
   commonType c, it, beforeExpr, expected
 
