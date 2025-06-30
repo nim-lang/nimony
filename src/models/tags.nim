@@ -297,6 +297,7 @@ type
     FailedTagId
     IsTagId
     EnvpTagId
+    PackedTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -593,5 +594,6 @@ const
     ("internalFieldPairs", 291),
     ("failed", 292),
     ("is", 293),
-    ("envp", 294)
+    ("envp", 294),
+    ("packed", 295)
   ]

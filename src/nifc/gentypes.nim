@@ -463,6 +463,21 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
       error c.m, "expected `efld` but got: ", n
   inc n # ParRi
 
+proc parseTypePragmas(c: var GeneratedCode; n: Cursor): set[NifcPragma] =
+  result = {}
+  var n = n
+  if n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind:
+      of PackedP:
+        result.incl PackedP
+        skip n
+      else:
+        error c.m, "got unexpected pragma: ", n
+  elif n.kind != DotToken:
+    error c.m, "expected type pragmas but got: ", n
+
 proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
   for (d, declKeyword) in o.forwardedDecls.s:
     var n = d
@@ -503,7 +518,16 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
         genType c, decl.body, s
         c.add Semicolon
       else:
+        let prag = parseTypePragmas(c, decl.pragmas)
         c.add declKeyword
+        if PackedP in prag:
+          # `alignas` is in C23 standard but `alignas(1)` doesn't reduce minimum alignment and
+          # work like `packed` attribute.
+          # `[[gnu::packed]]` is not supported by MSVC and old GCC/Clang.
+          # `#pragma pack(push, 1)` is supported by GCC, Clang and MSVC, but a not in C standard
+          # and `aligned (x)` attribute in struct fields are ignored.
+          # `__attribute__ ((__packed__))` is not supported by MSVC.
+          c.add "__attribute__ ((__packed__)) "
         c.add s
         c.add CurlyLe
         # XXX generate attributes and pragmas here

@@ -150,7 +150,37 @@ proc isMethod(c: var Context; s: SymId): bool =
     let info = getLocalInfo(c.typeCache, s)
     result = info.kind == MethodY
 
+proc loadVTable(c: var Context; cls: SymId) =
+  # Interface files only store the "diff" of the vtable so we need to
+  # compute it properly here.
+  var parent = SymId(0)
+  for inh in inheritanceChain(cls):
+    if parent == SymId(0): parent = inh
+    if inh notin c.vtables:
+      loadVTable c, inh
+
+  # now apply the diff:
+  let diff = programs.loadVTable(cls)
+  var dest = VTable(display: @[], methods: @[], state: Others)
+  if parent != SymId(0):
+    dest.methods = c.vtables[parent].methods
+    dest.signatureToIndex = c.vtables[parent].signatureToIndex
+
+  for entry in diff:
+    let sig = pool.strings[entry.signature]
+    let idx = dest.signatureToIndex.getOrDefault(sig, -1)
+    if idx == -1:
+      dest.methods.add entry.fn
+      dest.signatureToIndex[sig] = dest.methods.len - 1
+    else:
+      dest.methods[idx] = entry.fn
+
+  c.vtables[cls] = ensureMove dest
+
 proc getMethodIndex(c: var Context; cls, fn: SymId): int =
+  if not c.vtables.hasKey(cls):
+    c.loadVTable(cls)
+
   result = c.vtables[cls].methods.find(fn)
   if result == -1:
     error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
@@ -244,6 +274,9 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr c, dest, n
 
 proc maybeImport(c: var Context; cls, vtabName: SymId) =
+  if not c.vtables.hasKey(cls):
+    c.loadVTable(cls)
+
   let state = c.vtables[cls].state
   if state == Others:
     c.vtables[cls].state = AlreadyImported
@@ -622,33 +655,6 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
   let idx = c.vtables[m.cls].methods.len
   c.vtables[m.cls].methods.add m.name
   c.vtables[m.cls].signatureToIndex[sig] = idx
-
-proc loadVTable(c: var Context; cls: SymId) =
-  # Interface files only store the "diff" of the vtable so we need to
-  # compute it properly here.
-  var parent = SymId(0)
-  for inh in inheritanceChain(cls):
-    if parent == SymId(0): parent = inh
-    if inh notin c.vtables:
-      loadVTable c, inh
-
-  # now apply the diff:
-  let diff = programs.loadVTable(cls)
-  var dest = VTable(display: @[], methods: @[], state: Others)
-  if parent != SymId(0):
-    dest.methods = c.vtables[parent].methods
-    dest.signatureToIndex = c.vtables[parent].signatureToIndex
-
-  for entry in diff:
-    let sig = pool.strings[entry.signature]
-    let idx = dest.signatureToIndex.getOrDefault(sig, -1)
-    if idx == -1:
-      dest.methods.add entry.fn
-      dest.signatureToIndex[sig] = dest.methods.len - 1
-    else:
-      dest.methods[idx] = entry.fn
-
-  c.vtables[cls] = ensureMove dest
 
 proc processMethods(c: var Context) =
   # Methods are fundamentally different from other type-bound symbols in

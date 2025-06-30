@@ -14,12 +14,15 @@ proc align(address, alignment: int): int {.inline.} =
 
 type
   SizeofValue* = object
-    size, maxAlign: int
+    size, maxAlign: int   # when maxAlign == 0, it is packed and fields of the object are placed without paddings.
     overflow, strict: bool
 
 proc update(c: var SizeofValue; size, align: int) =
-  c.maxAlign = max(c.maxAlign, align)
-  c.size = align(c.size, align) + size
+  if c.maxAlign == 0:
+    c.size += size
+  else:
+    c.maxAlign = max(c.maxAlign, align)
+    c.size = align(c.size, align) + size
 
 proc combine(c: var SizeofValue; inner: SizeofValue) =
   c.maxAlign = max(c.maxAlign, inner.maxAlign)
@@ -31,11 +34,12 @@ proc combineCaseObject(c: var SizeofValue; inner: SizeofValue) =
   c.size = max(c.size, inner.size)
   c.overflow = c.overflow or inner.overflow
 
-proc createSizeofValue(strict: bool): SizeofValue =
-  SizeofValue(size: 0, maxAlign: 1, overflow: false, strict: strict)
+proc createSizeofValue(strict: bool, packed = false): SizeofValue =
+  SizeofValue(size: 0, maxAlign: if packed: 0 else: 1, overflow: false, strict: strict)
 
 proc finish(c: var SizeofValue) =
-  c.size = align(c.size, c.maxAlign)
+  if c.maxAlign != 0:
+    c.size = align(c.size, c.maxAlign)
 
 #[
 Structs and tuples currently share the same layout algorithm,
@@ -54,11 +58,30 @@ The final size and alignment are the size and alignment of the aggregate.
 The stride of the type is the final size rounded up to alignment.
 ]#
 
+type
+  TypePragmas = object
+    pragmas: set[NimonyPragma]
+
+proc parseTypePragmas(n: Cursor): TypePragmas =
+  result = default TypePragmas
+  var n = n
+  if n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind:
+      of PackedP:
+        result.pragmas.incl PackedP
+        skip n
+      else:
+        skip n
+  elif n.kind != DotToken:
+    error "illformed AST inside type section: ", n
+
 proc `<`(x: xint; b: int): bool = x < createXint(b)
 
 proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int)
 
-proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; iter: var ObjFieldIter; n: var Cursor; ptrSize: int): bool =
+proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; iter: var ObjFieldIter; n: var Cursor; ptrSize: int; pragmas: TypePragmas): bool =
   result = nextField(iter, n, keepCase = true)
   if result:
     if n.substructureKind == CaseU:
@@ -77,7 +100,7 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
           var cOf = createSizeofValue(c.strict)
           inc n # stmt
           while n.kind != ParRi:
-            discard getSizeObject(cOf, cache, iter, n, ptrSize)
+            discard getSizeObject(cOf, cache, iter, n, ptrSize, pragmas)
           skipParRi n # stmt
           skipParRi n
 
@@ -89,7 +112,7 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
           var cElse = createSizeofValue(c.strict)
           inc n # stmt
           while n.kind != ParRi:
-            discard getSizeObject(cElse, cache, iter, n, ptrSize)
+            discard getSizeObject(cElse, cache, iter, n, ptrSize, pragmas)
           skipParRi n # stmt
           skipParRi n
           finish cElse
@@ -105,6 +128,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   var counter = 20
   var n = n
   let cacheKey = if n.kind == Symbol: n.symId else: NoSymId
+  var pragmas = default(TypePragmas)
   while counter > 0 and n.kind == Symbol:
     if cache.hasKey(n.symId):
       let c2 = cache[n.symId]
@@ -115,6 +139,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       var local = asTypeDecl(sym.decl)
       if local.kind == TypeY:
         n = local.body
+        if n.kind != Symbol:
+          pragmas = parseTypePragmas local.pragmas
     else:
       bug "could not load: " & pool.syms[n.symId]
 
@@ -152,12 +178,12 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       c.overflow = true
     var n = n
     inc n
-    var c2 = createSizeofValue(c.strict)
-    if n.kind != DotToken:
+    var c2 = createSizeofValue(c.strict, PackedP in pragmas.pragmas)
+    if n.kind != DotToken:  # base type
       getSize(c2, cache, n, ptrSize)
     skip n
     var iter = initObjFieldIter()
-    while getSizeObject(c2, cache, iter, n, ptrSize):
+    while getSizeObject(c2, cache, iter, n, ptrSize, pragmas):
       discard
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2

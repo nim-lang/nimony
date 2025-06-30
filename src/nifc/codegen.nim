@@ -235,7 +235,7 @@ proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
     inc n
     while n.kind != ParRi:
       case n.pragmaKind
-      of NoPragma, AlignP, BitsP, VectorP, NodeclP, StaticP:
+      of NoPragma, AlignP, BitsP, VectorP, NodeclP, StaticP, PackedP:
         if n.callConvKind != NoCallConv:
           skip n
         else:
