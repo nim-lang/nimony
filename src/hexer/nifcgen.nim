@@ -721,7 +721,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
            InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP,
-           InheritableP, PureP, ClosureP:
+           InheritableP, PureP, ClosureP, PackedP:
           result.flags.incl pk
           inc n
         of BorrowP:
@@ -949,7 +949,11 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
 
   let prag = parsePragmas(c, n)
 
-  c.dest.addDotToken() # adds pragmas
+  if PackedP in prag.flags:
+    c.dest.copyIntoKind(PragmasU, NoLineInfo):
+      c.dest.copyIntoKind(PackedP, NoLineInfo): discard
+  else:
+    c.dest.addDotToken() # pragmas
 
   if prag.externName.len > 0:
     c.registerMangle(newSym, prag.externName & ".c")
