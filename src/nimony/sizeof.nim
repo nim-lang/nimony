@@ -73,7 +73,7 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
         result.pragmas.incl PackedP
         skip n
       else:
-        error "got unexpected pragma: ", n
+        skip n
   elif n.kind != DotToken:
     error "illformed AST inside type section: ", n
 
