@@ -294,3 +294,4 @@
 | `(failed X)` | NimonyExpr | used to access the hidden failure flag for raising calls |
 | `(is X T)` | NimonyExpr | `is` operator |
 | `(envp T Y)` | NimonyExpr | `envp.Y` field access to hidden `env` parameter which is of type `T` |
+| `(packed)`   | NifcPragma, NimonyPragma | `packed` pragma |
