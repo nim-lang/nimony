@@ -650,10 +650,11 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     var typ = asRoutine(it.n).params
     let name = identToSym(c, "`anonproc", ProcY)
 
-    swap c.dest, c.pending
+    var anons = createTokenBuf()
+    swap c.dest, anons
     semProcImpl c, it, kind, pass, name
-    swap c.dest, c.pending
-
+    swap c.dest, anons
+    c.pending.add anons
 
     c.dest.add symToken(name, n.info)
     it.typ = typ
