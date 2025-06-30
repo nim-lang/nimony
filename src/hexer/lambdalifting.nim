@@ -41,7 +41,7 @@ import std / [assertions, sets, tables]
 include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
-  builtintypes, langmodes, renderer, reporters, controlflow]
+  builtintypes, langmodes, renderer, reporters]
 import hexer_context
 
 type
@@ -90,7 +90,7 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if i == ParamsPos:
         c.typeCache.openProcScope(symId, n)
         c.typeCache.registerParams(symId, n)
-      elif i == TypeVarsPos:
+      elif i == TypevarsPos:
         isConcrete = n.substructureKind != TypevarsU
       elif i == ProcPragmasPos:
         if hasPragma(n, ClosureP):
@@ -408,7 +408,7 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
         let envType = if needsHeap: SymId(0) else: c.envTypeForProc(closureOwner)
         treParams c, dest, init, n, c.closureProcs.contains(sym), envType
       else:
-        if i == TypeVarsPos:
+        if i == TypevarsPos:
           isConcrete = n.substructureKind != TypevarsU
         takeTree dest, n
 
