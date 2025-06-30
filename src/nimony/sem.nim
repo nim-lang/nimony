@@ -1382,7 +1382,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PackedP:
+     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PackedP, PassiveP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
@@ -2487,12 +2487,15 @@ proc semRaise(c: var SemContext; it: var Item) =
 proc semYield(c: var SemContext; it: var Item) =
   let info = it.n.info
   takeToken c, it.n
-  if c.routine.kind != IteratorY:
+  if c.routine.kind != IteratorY and not c.routine.pragmas.contains(PassiveP):
     buildErr c, info, "`yield` only allowed within an `iterator`"
   if it.n.kind == DotToken:
     takeToken c, it.n
   else:
-    var a = Item(n: it.n, typ: c.routine.returnType)
+    let expectedType =
+      if c.routine.pragmas.contains(PassiveP): c.types.autoType
+      else: c.routine.returnType
+    var a = Item(n: it.n, typ: expectedType)
     semExpr c, a
     it.n = a.n
   takeParRi c, it.n

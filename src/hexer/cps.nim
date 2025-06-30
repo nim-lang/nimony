@@ -33,7 +33,7 @@ into:
 
   proc createItCoroutine(this: ptr ItCoroutine; x: int; dest: ptr int; caller: Continuation): Continuation =
     this[] = ItCoroutine(x: x, i: 0, dest: dest, caller: caller)
-    return Continuation(fn: itStart, env: this)
+    return itStart(this)
 
 
 1. Compile the AST/NIF to a CFG with goto instructions (src/nimony/controlflow does that already). Pay special
@@ -69,7 +69,6 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval
 import hexer_context
 
 # TODO:
-# - create start state that sets up the environment with the parameters
 # - transform `for` loops into trampoline code
 # - transform calls to .cps procs
 
@@ -128,8 +127,10 @@ type
     cf: TokenBuf
     reachable: seq[bool]
     resultSym: SymId
+    upcomingState: int
 
   Context = object
+    nextContinuationSym: SymId
     counter: int
     typeCache: TypeCache
     thisModuleSuffix: string
@@ -161,9 +162,25 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.kind != ParRi:
       tr(c, dest, n)
 
+proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
+  assert state >= 0
+  dest.copyIntoKind OconstrX, info:
+    dest.copyIntoKind KvU, info:
+      dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+      dest.copyIntoKind CastX, info:
+        dest.addSymUse pool.syms.getOrIncl(ContinuationProcName), info
+        dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
+    dest.copyIntoKind KvU, info:
+      dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # XXX To implement
-  trSons(c, dest, n)
+  let fn = n.firstSon
+  if fn.kind == Symbol and fn.symId == c.nextContinuationSym:
+    contNextState(c, dest, c.currentProc.upcomingState, n.info)
+    skip n
+  else:
+    trSons(c, dest, n)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let sym = n.firstSon.symId
@@ -215,18 +232,6 @@ proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
   dest.addDotToken() # effects
   dest.addParLe StmtsS, info # body
 
-proc returnNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
-  dest.copyIntoKind RetS, info:
-    dest.copyIntoKind OconstrX, info:
-      dest.copyIntoKind KvU, info:
-        dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
-        dest.copyIntoKind CastX, info:
-          dest.addSymUse pool.syms.getOrIncl(ContinuationProcName), info
-          dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
-      dest.copyIntoKind KvU, info:
-        dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-
 proc gotoNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   # generate: `return state(this)`
   dest.copyIntoKind RetS, info:
@@ -238,6 +243,8 @@ proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packed
   inc n # yield/return
   if n.kind == DotToken or (n.kind == Symbol and n.symId == c.currentProc.resultSym):
     inc n
+  elif isVoidType(getType(c.typeCache, n)):
+    tr c, dest, n
   else:
     dest.copyIntoKind AsgnS, info:
       dest.copyIntoKind DerefX, info:
@@ -256,9 +263,13 @@ proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let pos = cursorToPosition(c.currentProc.cf, n)
   let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
   assert state != -1
+  let oldState = c.currentProc.upcomingState
+  c.currentProc.upcomingState = state
   let info = n.info
   returnValue(c, dest, n, info)
-  returnNextState(c, dest, state, info)
+  dest.copyIntoKind RetS, info:
+    contNextState(c, dest, state, info)
+  c.currentProc.upcomingState = oldState
 
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return x -->
@@ -478,7 +489,7 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId; params
 
 
 proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
-  var currentProc = ProcContext()
+  var currentProc = ProcContext(upcomingState: -1)
   swap(c.currentProc, currentProc)
   var init = createTokenBuf(20)
   let iter = n
@@ -497,7 +508,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
       elif i == ReturnTypePos:
         paramsEnd = dest.len
       elif i == ProcPragmasPos:
-        if kind == IteratorY and hasPragma(n, ClosureP):
+        if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
           isClosure = true
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd
       elif i == TypevarsPos:
@@ -582,7 +593,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     bug "unexpected ')' inside"
 
 proc transformToCps*(n: var Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(thisModuleSuffix: moduleSuffix)
+  var c = Context(thisModuleSuffix: moduleSuffix,
+    nextContinuationSym: pool.syms.getOrIncl("nextContinuation.0." & SystemModuleSuffix))
   c.typeCache.openScope()
   result = createTokenBuf()
   assert n.stmtKind == StmtsS

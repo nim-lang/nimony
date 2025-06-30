@@ -209,3 +209,8 @@ type
 
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
+
+proc nextContinuation*(): Continuation {.semantics: "nextContinuation".} =
+  ## Special builtin that returns the next continuation within a coroutine.
+  ## Do not use unless you know what you are doing.
+  result = Continuation(fn: nil, env: nil)
