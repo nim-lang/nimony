@@ -21,6 +21,7 @@ proc len*(s: string): int {.inline, semantics: "string.len", ensures: (0 <= resu
   result = s.i shr LenShift
 
 proc high*(s: string): int {.inline.} = len(s)-1
+proc low*(s: string): int {.inline.} = 0
 
 proc cap(s: string): int {.inline.} = allocatedSize(s.a)
 
