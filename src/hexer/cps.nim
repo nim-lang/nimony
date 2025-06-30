@@ -515,11 +515,6 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   swap(c.currentProc, currentProc)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let pos = cursorToPosition(c.currentProc.cf, n)
-  if not c.currentProc.reachable[pos]:
-    skip n
-    return
-
   case n.kind
   of DotToken, EofToken, Ident, SymbolDef,
      IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -541,6 +536,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeTree dest, n
   of GotoInstr:
+    let pos = cursorToPosition(c.currentProc.cf, n)
+    # XXX Find a better solution for this.
+    if not c.currentProc.reachable[pos]:
+      skip n
+      return
     let diff = n.getInt28
     let target = pos + diff
     let state = c.currentProc.labels.getOrDefault(target, -1)
