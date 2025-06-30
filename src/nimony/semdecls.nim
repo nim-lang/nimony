@@ -646,6 +646,7 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   if it.n.firstSon.kind == DotToken:
     # anon routine
+    let info = it.n.firstSon.info
     var typ = asRoutine(it.n).params
     let name = identToSym(c, "`anonproc", ProcY)
 
@@ -655,7 +656,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     swap c.dest, anons
     c.pending.add anons
 
-    c.dest.add symToken(name, n.info)
+    c.dest.add symToken(name, info)
     it.typ = typ
 
   else:
