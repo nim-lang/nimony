@@ -287,3 +287,15 @@ proc skipModifier*(a: Cursor): Cursor =
 
 const
   LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}
+
+proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
+  var typ = typ
+  if typ.typeKind == ProctypeT:
+    inc typ
+    for i in 1..4: skip typ
+  if typ.typeKind == ParamsT:
+    skip typ
+    skip typ # return type
+    result = hasPragma(typ, kind)
+  else:
+    result = false

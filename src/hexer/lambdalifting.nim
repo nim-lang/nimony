@@ -205,17 +205,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ParRi:
     bug "unexpected ')' inside"
 
-proc isClosure(typ: Cursor): bool =
-  var typ = typ
-  if typ.typeKind == ProctypeT:
-    inc typ
-    for i in 1..4: skip typ
-  if typ.typeKind == ParamsT:
-    skip typ
-    skip typ # return type
-    result = hasPragma(typ, ClosureP)
-  else:
-    result = false
+proc isClosure(typ: Cursor): bool {.inline.} = procHasPragma(typ, ClosureP)
 
 proc paramsWithClosurePragma(typ: Cursor): bool =
   var typ = typ

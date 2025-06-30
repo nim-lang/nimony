@@ -56,8 +56,10 @@ Becomes:
   var itCoroutine: ItCoroutine
   var it = createItCoroutine(addr itCoroutine, 10, addr forLoopVar, StopContinuation)
   while it.fn != nil:
-    echo forLoopVar
-    it = it.fn(it.env)
+    if it.env == addr itCoroutine:
+      echo forLoopVar
+    it = scheduler.tick it
+    #it.fn(it.env)
 
 ]##
 
@@ -70,7 +72,7 @@ import hexer_context
 
 # TODO:
 # - transform `for` loops into trampoline code
-# - transform calls to .cps procs
+# - transform calls to .passive procs
 
 #[
 
@@ -174,11 +176,22 @@ proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedL
       dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
+proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # TODO:
+  bug "not implemented"
+
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.firstSon
-  if fn.kind == Symbol and fn.symId == c.nextContinuationSym:
-    contNextState(c, dest, c.currentProc.upcomingState, n.info)
-    skip n
+  if fn.kind == Symbol:
+    if fn.symId == c.nextContinuationSym:
+      contNextState(c, dest, c.currentProc.upcomingState, n.info)
+      skip n
+    else:
+      let typ = c.typeCache.getType(fn, {SkipAliases})
+      if procHasPragma(typ, PassiveP):
+        trPassiveCall(c, dest, n)
+      else:
+        trSons(c, dest, n)
   else:
     trSons(c, dest, n)
 
