@@ -1382,12 +1382,12 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PackedP, PassiveP:
+     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
-  of ViewP, InheritableP, PureP, FinalP:
+  of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP:
     if kind == TypeY:
       c.dest.add parLeToken(pk, n.info)
       inc n
