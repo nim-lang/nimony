@@ -89,6 +89,7 @@ type
     IsPointerOf
     IsNodecl
     IsInheritable
+    IsUnion
 
 proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {})
 
@@ -558,22 +559,29 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
     of TupleT:
       trAsNamedType c, n
     of ObjectT:
-      c.dest.add n
-      inc n
-      if n.kind == DotToken:
-        c.dest.add n
+      if IsUnion in flags:
+        c.dest.add tagToken("union", n.info)
+        inc n
+        # Union types don't inherit any types.
+        assert n.kind == DotToken
         inc n
       else:
-        # inherited symbol
-        let isPtr = n.typeKind in {RefT, PtrT}
-        if isPtr: inc n
-        let (s, sinfo) = getSym(c, n)
-        if isPtr: skipParRi c, n
-        c.dest.add symToken(s, sinfo)
-        c.demand s
+        c.dest.add n
+        inc n
+        if n.kind == DotToken:
+          c.dest.add n
+          inc n
+        else:
+          # inherited symbol
+          let isPtr = n.typeKind in {RefT, PtrT}
+          if isPtr: inc n
+          let (s, sinfo) = getSym(c, n)
+          if isPtr: skipParRi c, n
+          c.dest.add symToken(s, sinfo)
+          c.demand s
 
-      if IsInheritable in flags:
-        addRttiField c, n.info
+        if IsInheritable in flags:
+          addRttiField c, n.info
 
       if n.kind == DotToken:
         c.dest.add n
@@ -721,7 +729,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
            InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP,
-           InheritableP, PureP, ClosureP, PackedP:
+           InheritableP, PureP, ClosureP, PackedP, UnionP:
           result.flags.incl pk
           inc n
         of BorrowP:
@@ -966,6 +974,8 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
     if NodeclP in prag.flags: flags.incl IsNodecl
     if InheritableP in prag.flags and PureP notin prag.flags:
       flags.incl IsInheritable
+    if UnionP in prag.flags:
+      flags.incl IsUnion
     trType c, n, flags
   takeParRi c, n
   swap dst, c.dest
