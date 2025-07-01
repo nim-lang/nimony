@@ -274,7 +274,11 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf) =
   let info = arg[0].info
   copyIntoKind c.dest, CallS, info:
     copyIntoSymUse c.dest, destroyProc, info
-    copyTree c.dest, arg
+    if isMutFirstParam(destroyProc):
+      copyIntoKind c.dest, HaddrX, info:
+        copyTree c.dest, arg
+    else:
+      copyTree c.dest, arg
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo) =
   copyIntoKind c.dest, CallS, info:

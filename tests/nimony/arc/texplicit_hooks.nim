@@ -32,3 +32,8 @@ block:
 
   `=wasMoved`(x.f)
   assert x.f.id == ""
+
+type
+  Foo = object
+proc `=destroy`(x: var Foo) = discard
+proc `=dup`(x: Foo): Foo = x
