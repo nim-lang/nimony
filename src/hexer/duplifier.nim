@@ -270,11 +270,15 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
       copyIntoSymUse result, tmp, info
     c.typeCache.registerLocalPtrOf(tmp, VarY, typ)
 
-proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf) =
+proc callDestroy(c: var Context; destroyProc: SymId; arg: var TokenBuf) =
   let info = arg[0].info
   copyIntoKind c.dest, CallS, info:
     copyIntoSymUse c.dest, destroyProc, info
-    copyTree c.dest, arg
+    if isMutFirstParam(destroyProc):
+      copyIntoKind c.dest, HaddrX, info:
+        copyTree c.dest, arg
+    else:
+      copyTree c.dest, arg
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo) =
   copyIntoKind c.dest, CallS, info:
