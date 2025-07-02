@@ -67,14 +67,15 @@ proc getVTableName(c: var Context; cls: SymId): SymId =
     c.vtableNames[cls] = result
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let decl = n
   var r = asRoutine(n)
   c.typeCache.openScope()
   copyInto(dest, n):
-    let isConcrete = c.typeCache.takeRoutineHeader(dest, n)
+    let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
     if isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):
-        c.typeCache.registerLocal(symId, r.kind, r.params)
+        c.typeCache.registerLocal(symId, r.kind, decl)
       tr c, dest, n
     else:
       takeTree dest, n
@@ -189,8 +190,7 @@ proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
 
 proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
-  dest.addParLe ProctypeT, NoLineInfo
-  # This is really stupid...
+  dest.addParLe ProcT, NoLineInfo
   dest.addDotToken() # name
   dest.addDotToken() # export marker
   dest.addDotToken() # pattern

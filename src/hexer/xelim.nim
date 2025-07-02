@@ -336,8 +336,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
+  let decl = n
   copyInto dest, n:
-    let isConcrete = takeRoutineHeader(c.typeCache, dest, n)
+    let isConcrete = takeRoutineHeader(c.typeCache, dest, decl, n)
     if isConcrete:
       trStmt c, dest, n
     else:

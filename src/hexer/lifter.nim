@@ -119,10 +119,10 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   case typ.typeKind
   of IntT, UIntT, FloatT, BoolT, CharT, PtrT,
      MutT, OutT, SetT,
-     EnumT, HoleyEnumT, VoidT, AutoT, SymKindT, ProctypeT,
+     EnumT, HoleyEnumT, VoidT, AutoT, SymKindT,
      CstringT, PointerT, OrdinalT,
      UarrayT, VarargsT, RangetypeT, TypedescT,
-     ParamsT:
+     RoutineTypes:
     result = true
   of RefT:
     result = false
@@ -140,7 +140,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       skip tup
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
-     TypeKindT, UntypedT, TypedT, IteratorT, ItertypeT:
+     TypeKindT, UntypedT, TypedT, ItertypeT:
     bug "bug here"
 
 # Phase 2: Do the lifting
@@ -623,7 +623,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     addSymDef c.dest, sym, c.info
     c.dest.addEmpty3 c.info # export marker, pattern, generics
 
-    c.dest.addParLe ParamsT, c.info
+    c.dest.addParLe ParamsU, c.info
     case c.op
     of attachedDestroy:
       addParam c, paramA, typ

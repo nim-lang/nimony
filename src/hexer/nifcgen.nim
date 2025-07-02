@@ -358,7 +358,7 @@ proc trAsNamedType(c: var EContext; n: var Cursor) =
   var body = n
   let k = body.typeKind
   let key: string
-  if k == ProctypeT:
+  if k in RoutineTypes:
     key = takeMangleProctype(c, n)
   else:
     key = takeMangle(n, Backend, c.bits)
@@ -381,7 +381,7 @@ proc trAsNamedType(c: var EContext; n: var Cursor) =
       trTupleBody c, body
     of ArrayT:
       trArrayBody c, body
-    of ProctypeT:
+    of RoutineTypes:
       trProcTypeBody c, body
     of RefT:
       trRefBody c, body, key
@@ -516,7 +516,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
         trType c, n, {IsPointerOf}
     of RefT:
       trAsNamedType c, n
-    of ArrayT, ProctypeT:
+    of ArrayT, RoutineTypes:
       if IsNodecl in flags:
         trArrayBody c, n
       else:
@@ -617,8 +617,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
           trAsNamedType(c, arrCursor)
       skip n
       skipParRi c, n
-    of VoidT, VarargsT, NiltT, ConceptT,
-       IteratorT, InvokeT, ParamsT, ItertypeT:
+    of VoidT, VarargsT, NiltT, ConceptT, InvokeT, ItertypeT:
       error c, "unimplemented type: ", n
   else:
     error c, "type expected but got: ", n
@@ -649,7 +648,7 @@ proc trParams(c: var EContext; n: var Cursor) =
   if n.kind == DotToken:
     c.dest.add n
     inc n
-  elif n.kind == ParLe and n.typeKind == ParamsT:
+  elif n.kind == ParLe and n.substructureKind == ParamsU:
     c.dest.add n
     inc n
     loop c, n:

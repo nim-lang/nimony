@@ -155,7 +155,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
-  of RefT, PtrT, MutT, OutT, ProctypeT, NiltT, CstringT, PointerT, LentT, ParamsT:
+  of RefT, PtrT, MutT, OutT, RoutineTypes, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.firstSon, ptrSize
@@ -220,7 +220,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of RangetypeT:
     getSize c, cache, n.firstSon, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
-     ConceptT, StaticT, IteratorT, InvokeT, UarrayT, ItertypeT,
+     ConceptT, StaticT, InvokeT, UarrayT, ItertypeT,
      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
     bug "valid type kind for sizeof computation: " & $n.typeKind
 

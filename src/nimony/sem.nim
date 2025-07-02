@@ -654,19 +654,6 @@ proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
       buildErr c, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
   n = it.n
 
-template skipToLocalType(n) =
-  inc n # skip ParLe
-  inc n # skip name
-  skip n # skip export marker
-  skip n # skip pragmas
-
-template skipToParams(n) =
-  inc n # skip ParLe
-  skip n # skip name
-  skip n # skip export marker
-  skip n # skip pattern
-  skip n # skip generics
-
 proc sameIdent(sym: SymId; str: StrId): bool =
   # XXX speed this up by using the `fieldCache` idea
   var name = pool.syms[sym]
@@ -744,8 +731,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     let res = tryLoadSym(targetSym)
     assert res.status == LacksNothing
     var n = res.decl
-    skipToParams n
-    skip n
+    skipToReturnType n
     result = ProcInstance(targetSym: targetSym, procType: res.decl,
       returnType: n)
   assert result.returnType.kind != UnknownToken
@@ -1656,12 +1642,12 @@ proc addVarargsParameter(c: var SemContext; paramsAt: int; info: PackedLineInfo)
     parRiToken(info)
   ]
   if c.dest[paramsAt].kind == DotToken:
-    c.dest[paramsAt] = parLeToken(ParamsT, info)
+    c.dest[paramsAt] = parLeToken(ParamsU, info)
     varargsParam.add parRiToken(info)
     c.dest.insert fromBuffer(varargsParam), paramsAt+1
   else:
     var n = cursorAt(c.dest, paramsAt)
-    if n.typeKind == ParamsT:
+    if n.substructureKind == ParamsU:
       inc n
       while n.kind != ParRi:
         if n.symKind == ParamY:
@@ -1779,7 +1765,8 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
       if s.kind.isLocal or s.kind == EfldY:
         skipToLocalType n
       elif s.kind.isRoutine:
-        skipToParams n
+        #skipToParams n
+        discard "proc begin is also its type"
       elif s.kind == ModuleY:
         if AllowModuleSym notin flags:
           c.buildErr c.dest[start].info, "module symbol '" & pool.syms[s.name] & "' not allowed in this context"
@@ -4316,8 +4303,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UarrayT, SetT, StaticT, TypedescT,
-            TupleT, ArrayT, RangetypeT, VarargsT, ProctypeT, IteratorT, UntypedT, TypedT,
-            CstringT, PointerT, TypeKindT, OrdinalT, ParamsT, ItertypeT:
+            TupleT, ArrayT, RangetypeT, VarargsT, UntypedT, TypedT,
+            CstringT, PointerT, TypeKindT, OrdinalT, RoutineTypes, ItertypeT:
           # every valid local type expression
           semLocalTypeExpr c, it
         of OrT, AndT, NotT, InvokeT:

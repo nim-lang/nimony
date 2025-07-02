@@ -82,14 +82,15 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   #c.typeCache.openScope(ProcScope)
+  let decl = n
   copyInto dest, n:
     let symId = n.symId
     c.procStack.add(symId)
     var isConcrete = true # assume it is concrete
     for i in 0..<BodyPos:
       if i == ParamsPos:
-        c.typeCache.openProcScope(symId, n)
-        c.typeCache.registerParams(symId, n)
+        c.typeCache.openProcScope(symId, decl, n)
+        c.typeCache.registerParams(symId, decl, n)
       elif i == TypevarsPos:
         isConcrete = n.substructureKind != TypevarsU
       elif i == ProcPragmasPos:
@@ -386,6 +387,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
 
 proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var init = createTokenBuf(10)
+  let decl = n
   copyInto dest, n:
     var isConcrete = true # assume it is concrete
     let sym = n.symId
@@ -394,7 +396,7 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let needsHeap = c.escapes.contains(closureOwner)
     for i in 0..<BodyPos:
       if i == ParamsPos:
-        c.typeCache.openProcScope(sym, n)
+        c.typeCache.openProcScope(sym, decl, n)
         let envType = if needsHeap: SymId(0) else: c.envTypeForProc(closureOwner)
         treParams c, dest, init, n, c.closureProcs.contains(sym), envType
       else:
@@ -487,18 +489,18 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # type is really a tuple:
     let info = n.info
     copyIntoKind dest, TupleT, info:
-      copyIntoKind dest, ProctypeT, info:
+      copyIntoKind dest, ProcT, info:
         for i in 1..4: dest.addDotToken()
-        let usesWrapper = n.typeKind == ProctypeT
+        let usesWrapper = n.typeKind in RoutineTypes
         if usesWrapper:
           inc n
           for i in 1..4: skip n
-        if n.typeKind == ParamsT:
+        if n.substructureKind == ParamsU:
           treParamsWithEnv(c, dest, n)
         else:
           assert n.kind == DotToken
           inc n
-          dest.addParLe ParamsT, info
+          dest.addParLe ParamsU, info
           addEnvParam dest, info, SymId(0)
           dest.addParRi()
         dest.takeTree n # return type
@@ -517,7 +519,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # is this the usage of a proc symbol that is a closure? If so,
     # turn it into a `(fn, env)` tuple and generate the environment.
     var typ = c.typeCache.getType(n, {SkipAliases})
-    if typ.typeKind == ProctypeT:
+    if typ.typeKind in RoutineTypes:
       inc typ
       for i in 1..4: skip typ
     let info = n.info
@@ -579,7 +581,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of TypeofX:
         takeTree dest, n
       else:
-        if n.typeKind in {ProctypeT, ParamsT}:
+        if n.typeKind in RoutineTypes:
           treProcType(c, dest, n)
         else:
           treSons(c, dest, n)

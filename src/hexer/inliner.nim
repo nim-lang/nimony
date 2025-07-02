@@ -57,6 +57,7 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let decl = n
   c.typeCache.openScope()
   dest.add n
   var r = takeRoutine(n, SkipExclBody)
@@ -67,7 +68,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyTree dest, r.pattern
   copyTree dest, r.typevars
   copyTree dest, r.params
-  c.typeCache.registerParams(r.name.symId, r.params)
+  c.typeCache.registerParams(r.name.symId, decl, r.params)
   copyTree dest, r.pragmas
   copyTree dest, r.effects
   skip n # effects

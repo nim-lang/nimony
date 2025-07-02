@@ -581,7 +581,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     var isClosure = false
     for i in 0..<BodyPos:
       if i == ParamsPos:
-        c.typeCache.openProcScope(sym, n)
+        c.typeCache.openProcScope(sym, iter, n)
         paramsBegin = dest.len
       elif i == ReturnTypePos:
         paramsEnd = dest.len

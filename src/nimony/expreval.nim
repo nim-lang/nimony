@@ -682,7 +682,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       annotateConstantType(buf, typ, raw)
     of NilX:
       case typ.typeKind
-      of PointerT, PtrT, RefT, CstringT, ProctypeT, ParamsT, NiltT:
+      of PointerT, PtrT, RefT, CstringT, RoutineTypes, NiltT:
         buf.addSubtree n
       else: err = true
     of NanX, InfX, NeginfX:

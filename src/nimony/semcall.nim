@@ -10,13 +10,6 @@ proc fetchCallableType(c: var SemContext; n: Cursor; s: Sym): TypeCursor =
       var d = res.decl
       if s.kind.isLocal:
         skipToLocalType d
-        if d.typeKind == ProctypeT:
-          skipToParams d
-      elif s.kind.isRoutine:
-        skipToParams d
-      else:
-        # consider not callable
-        discard
       result = d
     else:
       c.buildErr n.info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
@@ -72,7 +65,10 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
             if pool.integers[n.intId] == TypedMagic:
               # use type of first param
               var paramType = fn.typ
-              assert paramType.typeKind == ParamsT
+              assert paramType.typeKind in RoutineTypes
+              inc paramType
+              for i in 1..4: skip paramType
+              assert paramType.substructureKind == ParamsU
               inc paramType
               assert paramType.symKind == ParamY
               paramType = asLocal(paramType).typ
@@ -187,7 +183,7 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
             inc prc # (proc
             if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
               var d = ops
-              skipToParams d
+              #skipToParams d
               cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
           skip ops
 
@@ -393,7 +389,11 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
   else:
     m.args.addParRi()
     var f = m.fn.typ
-    inc f # params tag
+    if f.typeKind in RoutineTypes:
+      inc f # skip ParLe
+      for i in 1..4: skip f
+    assert f.substructureKind == ParamsU
+    inc f # "params"
     var arg = beginRead(m.args)
     var i = 0
     while arg.kind != ParRi:
@@ -599,7 +599,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         let sym = f.symId
         let s = fetchSym(c, sym)
         let typ = fetchCallableType(c, f, s)
-        if typ.typeKind == ParamsT:
+        if typ.typeKind in RoutineTypes:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: typ)
           m.add createMatch(addr c)
           sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
@@ -626,8 +626,8 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   else:
     # Keep in mind that proc vars are a thing:
     let sym = if cs.fn.n.kind == Symbol: cs.fn.n.symId else: SymId(0)
-    let typ = skipProcTypeToParams(cs.fn.typ)
-    if typ.typeKind == ParamsT:
+    let typ = cs.fn.typ
+    if typ.typeKind in RoutineTypes:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ)
       m.add createMatch(addr c)
       sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
@@ -925,7 +925,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     let dotState = tryBuiltinDot(c, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared, AllowOverloads})
     if dotState == FailedDot or
         # also ignore non-proc fields:
-        (dotState == MatchedDotField and cs.fn.typ.typeKind != ProctypeT):
+        (dotState == MatchedDotField and cs.fn.typ.typeKind notin RoutineTypes):
       cs.source = MethodCall
       # turn a.b(...) into b(a, ...)
       # first, delete the output of `tryBuiltinDot`:

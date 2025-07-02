@@ -401,9 +401,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkProcTy, nkIteratorTy:
     relLineInfo(n, parent, c)
     if n.kind == nkProcTy:
-      c.b.addTree(ProctypeL)
+      c.b.addTree(ProcL)
     else:
-      c.b.addTree(ItertypeL)
+      c.b.addTree(IteratorL)
 
     c.b.addEmpty 4 # 0: name
     # 1: export marker

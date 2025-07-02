@@ -87,13 +87,13 @@ proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
   skipParRi n
 
-proc trRoutineHeader(c: var Context; dest: var TokenBuf; n: var Cursor; pragmas: var Cursor): bool =
+proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cursor; pragmas: var Cursor): bool =
   # returns false if the routine is generic
   result = true # assume it is concrete
   let sym = n.symId
   for i in 0..<BodyPos:
     if i == ParamsPos:
-      c.typeCache.registerParams(sym, n)
+      c.typeCache.registerParams(sym, decl, n)
     elif i == TypevarsPos:
       result = n.substructureKind != TypevarsU
     elif i == ProcPragmasPos:
@@ -118,9 +118,10 @@ proc trRequires(c: var Context; dest: var TokenBuf; pragmas: Cursor) =
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
+  let decl = n
   copyInto dest, n:
     var pragmas = default(Cursor)
-    let isConcrete = c.trRoutineHeader(dest, n, pragmas)
+    let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
     if isConcrete and n.stmtKind == StmtsS:
       dest.add n # (stmts)
       trRequires(c, dest, pragmas)

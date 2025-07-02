@@ -832,11 +832,12 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
     endRead c.dest
 
 proc trProc(c: var ControlFlow; n: var Cursor) =
+  let decl = n
   let thisProc = BlockOrLoop(kind: IsRoutine, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisProc
   c.typeCache.openScope()
   copyInto c.dest, n:
-    let isConcrete = takeRoutineHeader(c.typeCache, c.dest, n)
+    let isConcrete = takeRoutineHeader(c.typeCache, c.dest, decl, n)
     if isConcrete:
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
