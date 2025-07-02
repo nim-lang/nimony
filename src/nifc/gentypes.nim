@@ -107,9 +107,29 @@ proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor) =
       inc n
     else:
       error m, "expected `Symbol` or `.` for inheritance but got: ", n
-  while n.substructureKind == FldU:
-    let decl = takeFieldDecl(n)
-    recordDependency m, o, t, decl.typ
+  var nested = 1
+  while true:
+    case n.kind:
+    of ParRi:
+      dec nested
+      inc n
+      if nested == 0: break
+    of ParLe:
+      if n.substructureKind == FldU:
+        let decl = takeFieldDecl(n)
+        recordDependency m, o, t, decl.typ
+      elif n.typeKind in {ObjectT, UnionT}: # anonymous object/union
+        inc nested
+        if n.typeKind == ObjectT:
+          inc n
+          assert n.kind == DotToken, "anonymous objects cannot inherit any types"
+          inc n
+        else:
+          inc n
+      else:
+        error m, "unexpected node inside object: ", n
+    else:
+      error m, "unexpected token inside object: ", n
 
 proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor) =
   var n = t
@@ -408,20 +428,41 @@ proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
     else:
       error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
 
-  while n.kind != ParRi:
-    if n.substructureKind == FldU:
-      var decl = takeFieldDecl(n)
-      let f = mangleField(c, decl.name)
-      var bits = 0'i64
-      genFieldPragmas c, decl.pragmas, bits
-      genType c, decl.typ, f
-      if bits > 0:
-        c.add " : "
-        c.add $bits
+  var nested = 1
+  while true:
+    case n.kind:
+    of ParRi:
+      dec nested
+      inc n
+      if nested == 0: break
+      c.add CurlyRi   # close anonymous struct/union
       c.add Semicolon
+    of ParLe:
+      if n.substructureKind == FldU:
+        var decl = takeFieldDecl(n)
+        let f = mangleField(c, decl.name)
+        var bits = 0'i64
+        genFieldPragmas c, decl.pragmas, bits
+        genType c, decl.typ, f
+        if bits > 0:
+          c.add " : "
+          c.add $bits
+        c.add Semicolon
+      elif n.typeKind == ObjectT:
+        inc nested
+        inc n
+        inc n # base
+        c.add AnonStruct
+        c.add CurlyLe
+      elif n.typeKind == UnionT:
+        inc nested
+        inc n
+        c.add AnonUnion
+        c.add CurlyLe
+      else:
+        error c.m, "expected `fld` but got: ", n
     else:
       error c.m, "expected `fld` but got: ", n
-  inc n # ParRi
 
 proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
   # (efld SymbolDef Expr)

@@ -68,6 +68,8 @@ type
     ErrToken = "NIFC_ERR_"
     OvfToken = "NIFC_OVF_"
     ThreadVarToken = "NIM_THREADVAR "
+    AnonStruct = "struct "
+    AnonUnion = "union "
 
 proc fillTokenTable(tab: var BiTable[Token, string]) =
   for e in EmptyToken..high(PredefinedToken):
