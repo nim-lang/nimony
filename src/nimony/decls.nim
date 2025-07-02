@@ -283,3 +283,14 @@ proc asForStmt*(c: Cursor): ForStmt =
     result.vars = c
     skip c
     result.body = c
+
+proc isMutFirstParam*(destroyProc: SymId): bool =
+  result = false
+  let res = tryLoadSym(destroyProc)
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    var params = routine.params
+    inc params
+    let firstParam = asLocal(params)
+    if firstParam.typ.typeKind in {MutT, OutT}:
+      result = true

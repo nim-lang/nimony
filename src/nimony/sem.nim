@@ -1368,17 +1368,18 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PackedP, PassiveP:
+     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
     inc n
-  of ViewP, InheritableP, PureP, FinalP:
+  of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP:
     if kind == TypeY:
       c.dest.add parLeToken(pk, n.info)
       inc n
     else:
       buildErr c, n.info, "pragma only allowed on types"
+      inc n
     c.dest.addParRi()
   of CursorP:
     if kind in {VarY, LetY, CursorY}:
@@ -1386,6 +1387,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       inc n
     else:
       buildErr c, n.info, "pragma only allowed on local variables"
+      inc n
     c.dest.addParRi()
   of VarargsP:
     crucial.hasVarargs = n.info

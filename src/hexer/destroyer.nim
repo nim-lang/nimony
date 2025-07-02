@@ -92,7 +92,11 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId) =
   let info = c.currentScope.info
   copyIntoKind c.dest, CallS, info:
     copyIntoSymUse c.dest, destroyProc, info
-    copyIntoSymUse c.dest, arg, info
+    if isMutFirstParam(destroyProc):
+      copyIntoKind c.dest, HaddrX, info:
+        copyIntoSymUse c.dest, arg, info
+    else:
+      copyIntoSymUse c.dest, arg, info
 
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor)

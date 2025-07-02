@@ -95,16 +95,18 @@ proc recordDependency(m: Module; o: var TypeOrder; parent, child: Cursor) =
   recordDependencyImpl m, o, parent, child, viaPointer
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor) =
+  let kind = t.typeKind
   var n = t
   inc n
-  if n.kind == Symbol:
-    # inheritance
-    recordDependency m, o, t, n
-    inc n
-  elif n.kind == DotToken:
-    inc n
-  else:
-    error m, "expected `Symbol` or `.` for inheritance but got: ", n
+  if kind == ObjectT:
+    if n.kind == Symbol:
+      # inheritance
+      recordDependency m, o, t, n
+      inc n
+    elif n.kind == DotToken:
+      inc n
+    else:
+      error m, "expected `Symbol` or `.` for inheritance but got: ", n
   while n.substructureKind == FldU:
     let decl = takeFieldDecl(n)
     recordDependency m, o, t, decl.typ
@@ -395,14 +397,16 @@ proc mangleField(c: var GeneratedCode; n: Cursor): string =
     error c.m, "field name must be a SymDef, but got: ", n
 
 proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
+  let kind = n.typeKind
   inc n
-  if n.kind == DotToken:
-    inc n
-  elif n.kind == Symbol:
-    genType c, n, "Q"
-    c.add Semicolon
-  else:
-    error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
+  if kind == ObjectT:
+    if n.kind == DotToken:
+      inc n
+    elif n.kind == Symbol:
+      genType c, n, "Q"
+      c.add Semicolon
+    else:
+      error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
 
   while n.kind != ParRi:
     if n.substructureKind == FldU:

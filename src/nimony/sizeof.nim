@@ -69,8 +69,8 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
     inc n
     while n.kind != ParRi:
       case n.pragmaKind:
-      of PackedP:
-        result.pragmas.incl PackedP
+      of {PackedP, UnionP}:
+        result.pragmas.incl n.pragmaKind
         skip n
       else:
         skip n
@@ -85,6 +85,7 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
   result = nextField(iter, n, keepCase = true)
   if result:
     if n.substructureKind == CaseU:
+      assert UnionP notin pragmas.pragmas, "Case objects cannot work with union pragma."
       inc n
       # selector
       let field = takeLocal(n, SkipFinalParRi)
@@ -122,7 +123,12 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
       combine(c, cCase)
     else:
       let field = takeLocal(n, SkipFinalParRi)
-      getSize c, cache, field.typ, ptrSize
+      if UnionP in pragmas.pragmas:
+        var c2 = createSizeofValue(c.strict)
+        getSize c2, cache, field.typ, ptrSize
+        combineCaseObject(c, c2)
+      else:
+        getSize c, cache, field.typ, ptrSize
 
 proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int) =
   var counter = 20
