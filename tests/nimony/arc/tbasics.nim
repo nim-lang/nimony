@@ -119,3 +119,78 @@ type
 var x = cast[MyEnum](0)
 let s = $x
 assert s == ""
+
+# bug #18002
+type
+  TTypeAttachedOp = enum
+    attachedAsgn
+    attachedSink
+    attachedTrace
+
+  PNode = ref object
+    discard
+
+proc genAddrOf(n: PNode) =
+  assert n != nil, "moved?!"
+
+proc atomicClosureOp =
+  let x = PNode()
+
+  genAddrOf:
+    block:
+      x
+
+  case attachedTrace
+  of attachedSink: discard
+  of attachedAsgn: discard
+  of attachedTrace: genAddrOf(x)
+
+atomicClosureOp()
+
+# misc
+proc smoltest(x: bool): bool =
+  result = false
+  while true:
+    if true: return x
+
+discard smoltest(true)
+
+
+# block: # bug #23627
+type
+  TestObj = object of RootObj
+
+  Test2 = object of RootObj
+    foo: TestObj
+
+  TestTestObj = object of RootObj
+    bar: TestObj
+
+proc `=destroy`(x: TestTestObj) =
+  echo "Destructor for TestTestObj"
+  let test = Test2(foo: TestObj())
+
+proc testCaseT() =
+  let tt1 = TestTestObj(bar: TestObj())
+
+
+proc mainxx() =
+  testCaseT()
+
+mainxx()
+
+
+
+proc takeSink(x: sink string): bool = true
+
+proc b(x: sink string): string =
+  if takeSink(x):
+    return x & "abc"
+  else:
+    result = ""
+
+proc bbb(inp: string) =
+  let y = inp & "xyz"
+  assert b(y) == "123xyzabc"
+
+bbb("123")
