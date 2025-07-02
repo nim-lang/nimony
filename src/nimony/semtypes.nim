@@ -788,7 +788,11 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       var crucial = default CrucialPragma
       semPragmas c, n, crucial, ProcY
       wantDot c, n # exceptions
-      wantDot c, n # body
+      # make it robust against Nifler's output
+      if n.kind == ParRi:
+        c.dest.addDotToken()
+      else:
+        wantDot c, n # body
       # close it here so that pragmas like `requires` can refer to the params:
       c.closeScope()
       takeParRi c, n

@@ -975,6 +975,64 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       put(g, tkStrLit, toString(n, false))
       skip n
 
+    of RoutineTypes:
+      case n.typeKind
+      of ProcT:
+        putWithSpace(g, tkProc, "proc")
+      of IteratorT:
+        putWithSpace(g, tkIterator, "iterator")
+      of ConverterT:
+        putWithSpace(g, tkConverter, "converter")
+      of MacroT:
+        putWithSpace(g, tkMacro, "macro")
+      of TemplateT:
+        putWithSpace(g, tkTemplate, "template")
+      of MethodT:
+        putWithSpace(g, tkMethod, "method")
+      of FuncT:
+        putWithSpace(g, tkFunc, "func")
+      else:
+        raiseAssert "cannot happen"
+      inc n
+
+      for i in 1..4: skip n
+      if n.substructureKind == ParamsU:
+        put(g, tkParLe, "(")
+        inc n
+        while n.kind != ParRi:
+          let decl = takeLocal(n, SkipFinalParRi)
+          var name = decl.name
+          var value = decl.val
+          var typ = decl.typ
+          gsub(g, name, c)
+
+          if typ.kind != DotToken:
+            putWithSpace(g, tkColon, ":")
+            gtype(g, typ, c)
+
+          if value.kind != DotToken:
+            put(g, tkSpaces, Space)
+            putWithSpace(g, tkEquals, "=")
+            gsub(g, value, c)
+
+          if n.kind != ParRi:
+            putWithSpace(g, tkComma, ",")
+        inc n
+        put(g, tkParRi, ")")
+      # return type
+      if n.kind != DotToken:
+        putWithSpace(g, tkColon, ":")
+        gtype(g, n, c)
+      else:
+        inc n
+      if n.kind != DotToken:
+        # pragmas
+        gsub(g, n, c)
+      else:
+        inc n
+      skip n # effects
+      skip n # body
+      skipParRi(n)
     else:
       case n.exprKind
       of CchoiceX, OchoiceX:

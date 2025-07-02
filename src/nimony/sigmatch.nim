@@ -603,7 +603,7 @@ type
     usesClosure*: bool
 
 proc extractProcProps*(c: var Cursor): ProcProperties =
-  result = ProcProperties(cc: Fastcall, usesRaises: false, usesClosure: false)
+  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false)
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
@@ -1037,7 +1037,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         discard "ok"
         inc f
         expectParRi m, f
-      of PtrT, CstringT:
+      of PtrT, CstringT, RoutineTypes:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
