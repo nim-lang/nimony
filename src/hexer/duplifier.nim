@@ -907,7 +907,7 @@ proc trDeref(c: var Context; n: var Cursor) =
   let info = n.info
   inc n
   let typ = getType(c.typeCache, n, {SkipAliases})
-  let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
+  let isRef = not cursorIsNil(typ) and typ.skipModifier.typeKind == RefT
   if isRef:
     c.dest.addParLe DotX, info
   c.dest.addParLe DerefX, info
