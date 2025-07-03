@@ -440,6 +440,7 @@ proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor
 proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: var Cursor): bool =
   # returns false if the routine is generic
   result = true # assume it is concrete
+  assert n.kind == SymbolDef, "expected SymbolDef, got: " & toString(n, false)
   let sym = n.symId
   for i in 0..<BodyPos:
     if i == ParamsPos:

@@ -201,6 +201,7 @@ type
     TemplateT = (ord(TemplateTagId), "template")  ## template declaration
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration (soon obsolete, use params instead)
     IT = (ord(ITagId), "i")  ## `int` builtin type
     UT = (ord(UTagId), "u")  ## `uint` builtin type
     FT = (ord(FTagId), "f")  ## `float` builtin type
@@ -236,7 +237,7 @@ type
     OrdinalT = (ord(OrdinalTagId), "ordinal")  ## `ordinal` type
 
 proc rawTagIsNimonyType*(raw: TagEnum): bool {.inline.} =
-  raw in {ErrTagId, AtTagId, AndTagId, OrTagId, NotTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, ObjectTagId, EnumTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, VarargsTagId, StaticTagId, TupleTagId, OnumTagId, RefTagId, MutTagId, OutTagId, LentTagId, SinkTagId, NiltTagId, ConceptTagId, DistinctTagId, ItertypeTagId, RangetypeTagId, UarrayTagId, SetTagId, AutoTagId, SymkindTagId, TypekindTagId, TypedescTagId, UntypedTagId, TypedTagId, CstringTagId, PointerTagId, OrdinalTagId}
+  raw in {ErrTagId, AtTagId, AndTagId, OrTagId, NotTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, VarargsTagId, StaticTagId, TupleTagId, OnumTagId, RefTagId, MutTagId, OutTagId, LentTagId, SinkTagId, NiltTagId, ConceptTagId, DistinctTagId, ItertypeTagId, RangetypeTagId, UarrayTagId, SetTagId, AutoTagId, SymkindTagId, TypekindTagId, TypedescTagId, UntypedTagId, TypedTagId, CstringTagId, PointerTagId, OrdinalTagId}
 
 type
   NimonyOther* = enum

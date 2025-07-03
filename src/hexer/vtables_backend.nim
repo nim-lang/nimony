@@ -190,7 +190,7 @@ proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
 
 proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
-  dest.addParLe ProcT, NoLineInfo
+  dest.addParLe ProctypeT, NoLineInfo
   dest.addDotToken() # name
   dest.addDotToken() # export marker
   dest.addDotToken() # pattern
@@ -219,7 +219,7 @@ proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassI
 
 proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fnNode = n.load()
-  let fnType = getType(c.typeCache, n)
+  var fnType = getType(c.typeCache, n)
   assert fnType.typeKind != AutoT
   let fn = n.symId
   inc n # skip fn
@@ -235,6 +235,10 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     let info = n.info
     var temp = evalOnce(c, dest, n)
+
+    if fnType.typeKind in RoutineTypes:
+      inc fnType
+      for i in 1..4: skip fnType
 
     var paramList = fnType
     assert paramList.substructureKind == ParamsU
