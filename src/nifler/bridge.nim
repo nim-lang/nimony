@@ -591,6 +591,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       let last {.cursor.} = n[n.len-1]
       if last.kind == nkRecList:
         for child in last:
+          c.section = FldL
           toNif(child, n, c)
       elif last.kind != nkEmpty:
         toNif(last, n, c)
