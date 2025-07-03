@@ -1554,6 +1554,11 @@ proc sigmatchNamedArgs*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                         explicitTypeVars: Cursor;
                         hasNamedArgs: bool) =
   if hasNamedArgs:
-    sigmatch m, fn, orderArgs(m, fn.typ, args), explicitTypeVars
+    var params = fn.typ
+    if params.typeKind in RoutineTypes:
+      inc params
+      for i in 1..4: skip params
+    assert params.substructureKind == ParamsU
+    sigmatch m, fn, orderArgs(m, params, args), explicitTypeVars
   else:
     sigmatch m, fn, args, explicitTypeVars
