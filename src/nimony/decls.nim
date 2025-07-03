@@ -22,7 +22,7 @@ proc isNominal*(t: TypeKind): bool {.inline.} =
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   result = t
-  if result.typeKind == ProctypeT:
+  if result.typeKind in RoutineTypes:
     inc result # skip ParLe
     skip result # skip name
     skip result # skip export marker

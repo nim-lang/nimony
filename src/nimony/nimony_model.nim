@@ -127,6 +127,7 @@ const
   CallKindsS* = {CallS, CallstrlitS, CmdS, PrefixS, InfixS, HcallS}
   ConvKinds* = {HconvX, ConvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
+  RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv;
                info = NoLineInfo) =
@@ -287,3 +288,26 @@ proc skipModifier*(a: Cursor): Cursor =
 
 const
   LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}
+
+template skipToLocalType*(n) =
+  inc n # skip ParLe
+  inc n # skip name
+  skip n # skip export marker
+  skip n # skip pragmas
+
+template skipToReturnType*(n) =
+  inc n # skip ParLe
+  skip n # skip name
+  skip n # skip export marker
+  skip n # skip pattern
+  skip n # skip generics
+  skip n # skip params
+
+proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
+  var typ = typ
+  if typ.typeKind in RoutineTypes:
+    skipToReturnType typ
+    skip typ # return type
+    result = hasPragma(typ, kind)
+  else:
+    result = false

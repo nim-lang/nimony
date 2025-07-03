@@ -57,7 +57,7 @@ type
     ParamsL = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
     ObjectL = (ord(ObjectTagId), "object")  ## object type declaration
     EnumL = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeL = (ord(ProctypeTagId), "proctype")  ## proc type declaration (soon obsolete, use params instead)
+    ProctypeL = (ord(ProctypeTagId), "proctype")  ## proc type declaration
     PtrL = (ord(PtrTagId), "ptr")  ## `ptr` type contructor
     PragmasL = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
     PragmaxL = (ord(PragmaxTagId), "pragmax")  ## pragma expressions

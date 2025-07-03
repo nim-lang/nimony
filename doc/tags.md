@@ -65,13 +65,13 @@
 | `(typevar D E P T X)` | NimonySym, NifcOther, NimonyOther, NiflerKind | type variable declaration |
 | `(efld D E P T X)`; `(efld D X)` | NimonySym, NifcSym, NifcOther, NimonyOther, NiflerKind | enum field declaration |
 | `(fld D E P T X)`; `(fld D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | field declaration |
-| `(proc D ...)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndexKind | proc declaration |
-| `(func D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | function declaration |
+| `(proc D ...)` | NifcStmt, NimonyStmt, NimonySym, NimonyType, NifcSym, NiflerKind, NifIndexKind | proc declaration |
+| `(func D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | function declaration |
 | `(iterator D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | iterator declaration |
-| `(converter D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | converter declaration |
-| `(method D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | method declaration |
-| `(macro D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | macro declaration |
-| `(template D ...)` | NimonyStmt, NimonySym, NiflerKind, NifIndexKind | template declaration |
+| `(converter D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | converter declaration |
+| `(method D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | method declaration |
+| `(macro D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | macro declaration |
+| `(template D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | template declaration |
 | `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NiflerKind, NifIndexKind | type declaration |
 | `(block .D X)` | NimonyStmt, NimonySym, NiflerKind | block declaration |
 | `(module)` | NimonySym | module declaration |
@@ -97,11 +97,11 @@
 | `(ret .X)` | NifcStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
 | `(stmts S*)` | NifcStmt, NimonyStmt, NimonyOther, NiflerKind | list of statements |
-| `(params (param...)*)` | NifcType, NimonyType, NimonyOther, NiflerKind | list of proc parameters, also used as a "proc type" |
+| `(params (param...)*)` | NifcType, NimonyOther, NiflerKind | list of proc parameters, also used as a "proc type" |
 | `(union (fld ...)*)`; `(union)` | NifcType, NimonyPragma | first one is Nifc union declaration, second one is Nimony union pragma |
 | `(object .T (fld ...)*)` | NifcType, NimonyType, NiflerKind | object type declaration |
 | `(enum (efld...)*)` | NifcType, NimonyType, NiflerKind | enum type declaration |
-| `(proctype . (params...) T P)` | NifcType, NimonyType, NiflerKind | proc type declaration (soon obsolete, use params instead) |
+| `(proctype . (params...) T P)` | NifcType, NimonyType, NiflerKind | proc type declaration |
 | `(atomic)` | NifcTypeQualifier | `atomic` type qualifier for NIFC |
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |

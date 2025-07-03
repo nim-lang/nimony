@@ -56,8 +56,10 @@ Becomes:
   var itCoroutine: ItCoroutine
   var it = createItCoroutine(addr itCoroutine, 10, addr forLoopVar, StopContinuation)
   while it.fn != nil:
-    echo forLoopVar
-    it = it.fn(it.env)
+    if it.env == addr itCoroutine:
+      echo forLoopVar
+    it = scheduler.tick it
+    #it.fn(it.env)
 
 ]##
 
@@ -70,7 +72,9 @@ import hexer_context
 
 # TODO:
 # - transform `for` loops into trampoline code
-# - transform calls to .cps procs
+# - transform calls to .passive procs
+# - the control flow graph must duplicate `finally` blocks
+# - the control flow graph must model procs that can raise
 
 #[
 
@@ -120,6 +124,9 @@ type
     def: int
     use: int
 
+  RoutineKind = enum
+    IsNormal, IsIterator, IsPassive
+
   ProcContext = object
     localToEnv: Table[SymId, EnvField]
     yieldConts: Table[int, int]
@@ -128,9 +135,11 @@ type
     reachable: seq[bool]
     resultSym: SymId
     upcomingState: int
+    counter: int
+    kind: RoutineKind
 
   Context = object
-    nextContinuationSym: SymId
+    afterYieldSym: SymId
     counter: int
     typeCache: TypeCache
     thisModuleSuffix: string
@@ -165,6 +174,7 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   assert state >= 0
   dest.copyIntoKind OconstrX, info:
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
     dest.copyIntoKind KvU, info:
       dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
       dest.copyIntoKind CastX, info:
@@ -174,11 +184,79 @@ proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedL
       dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
+proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId) =
+  case c.currentProc.kind
+  of IsNormal:
+    # passive call from within a normal proc:
+    #[
+    var res: int
+    var itCoroutine: ItCoroutine
+    complete createItCoroutine(addr itCoroutine, 10, addr res, StopContinuation)
+    # we know afterwards the result is available
+    ]#
+    let info = n.info
+    # declare coroutine variable:
+    let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
+    inc c.currentProc.counter
+    copyIntoKind dest, VarS, info:
+      dest.addSymDef coroVar, info
+      dest.addDotToken() # exported
+      dest.addDotToken() # pragmas
+      dest.addSymUse coroTypeForProc(c, sym), info
+      dest.addDotToken() # default value
+    let retType = getType(c.typeCache, n)
+    let resultVar = if not isVoidType(retType): pool.syms.getOrIncl("`coroResult." & $c.currentProc.counter) else: SymId(0)
+    if resultVar != SymId(0):
+      inc c.currentProc.counter
+      copyIntoKind dest, VarS, info:
+        dest.addSymDef resultVar, info
+        dest.addDotToken() # exported
+        dest.addDotToken() # pragmas
+        dest.copyTree retType
+        dest.addDotToken() # default value
+
+    copyIntoKind dest, CallS, info:
+      dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
+
+      # emit constructor call:
+      copyIntoKind dest, CallS, info:
+        dest.addSymUse sym, info
+        dest.copyIntoKind AddrX, info:
+          dest.addSymUse coroVar, info
+        inc n
+        while n.kind != ParRi:
+          tr(c, dest, n)
+        inc n
+        if resultVar != SymId(0):
+          dest.copyIntoKind AddrX, info:
+            dest.addSymUse resultVar, info
+        # add StopContinuation:
+        dest.copyIntoKind OconstrX, info:
+          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+          dest.copyIntoKind KvU, info:
+            dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+            dest.addParPair NilX, info
+          dest.copyIntoKind KvU, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+            dest.addParPair NilX, info
+  of IsIterator:
+    bug "not implemented"
+  of IsPassive:
+    bug "not implemented"
+
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.firstSon
-  if fn.kind == Symbol and fn.symId == c.nextContinuationSym:
-    contNextState(c, dest, c.currentProc.upcomingState, n.info)
-    skip n
+  if fn.kind == Symbol:
+    let sym = fn.symId
+    if sym == c.afterYieldSym:
+      contNextState(c, dest, c.currentProc.upcomingState, n.info)
+      skip n
+    else:
+      let typ = c.typeCache.getType(fn, {SkipAliases})
+      if procHasPragma(typ, PassiveP):
+        trPassiveCall(c, dest, n, sym)
+      else:
+        trSons(c, dest, n)
   else:
     trSons(c, dest, n)
 
@@ -489,7 +567,7 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId; params
 
 
 proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
-  var currentProc = ProcContext(upcomingState: -1)
+  var currentProc = ProcContext(upcomingState: -1, kind: IsNormal)
   swap(c.currentProc, currentProc)
   var init = createTokenBuf(20)
   let iter = n
@@ -503,13 +581,14 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     var isClosure = false
     for i in 0..<BodyPos:
       if i == ParamsPos:
-        c.typeCache.openProcScope(sym, n)
+        c.typeCache.openProcScope(sym, iter, n)
         paramsBegin = dest.len
       elif i == ReturnTypePos:
         paramsEnd = dest.len
       elif i == ProcPragmasPos:
         if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
           isClosure = true
+          c.currentProc.kind = (if kind == IteratorY: IsIterator else: IsPassive)
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd
       elif i == TypevarsPos:
         isConcrete = n.substructureKind != TypevarsU
@@ -594,7 +673,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc transformToCps*(n: var Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(thisModuleSuffix: moduleSuffix,
-    nextContinuationSym: pool.syms.getOrIncl("nextContinuation.0." & SystemModuleSuffix))
+    afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix))
   c.typeCache.openScope()
   result = createTokenBuf()
   assert n.stmtKind == StmtsS

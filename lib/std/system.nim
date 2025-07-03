@@ -210,7 +210,30 @@ type
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
 
-proc nextContinuation*(): Continuation {.semantics: "nextContinuation".} =
-  ## Special builtin that returns the next continuation within a coroutine.
+proc afterYield*(): Continuation {.semantics: "afterYield".} =
+  ## Special builtin that returns the next continuation within a `yield` statement.
   ## Do not use unless you know what you are doing.
   result = Continuation(fn: nil, env: nil)
+
+proc trivialTick(c: Continuation): Continuation =
+  result = c.fn(c.env)
+
+type
+  Scheduler* = proc (c: Continuation): Continuation {.nimcall.}
+    ## A scheduler is a function that takes a continuation and returns a new continuation.
+
+var scheduler: Scheduler = trivialTick
+proc setScheduler*(handler: Scheduler) {.inline.} =
+  # XXX needs atomic store here
+  scheduler = handler
+
+proc advance*(c: Continuation): Continuation =
+  ## Single steps through a list of continuations. Usually this does not need
+  ## to be called directly. Used by the compiler to run a coroutine.
+  result = scheduler(c)
+
+proc complete*(c: Continuation) =
+  ## Used by the compiler to run a coroutine until completion.
+  var c = c
+  while c.fn != nil:
+    c = scheduler(c)

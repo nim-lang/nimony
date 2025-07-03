@@ -350,6 +350,7 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
     takeParRi c, n
 
 proc trProcDecl(c: var Context; n: var Cursor) =
+  let decl = n
   c.typeCache.openScope(ProcScope)
   takeToken c, n
   let symId = n.symId
@@ -361,7 +362,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
       isGeneric = n.substructureKind == TypevarsU
       takeTree c.dest, n
     elif i == ParamsPos:
-      c.typeCache.registerParams(symId, n)
+      c.typeCache.registerParams(symId, decl, n)
       var params = n
       inc params
       let firstParam = asLocal(params)

@@ -274,7 +274,7 @@ proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
   result = @[]
   if c.dest[paramsAt].kind != DotToken:
     var n = cursorAt(c.dest, paramsAt)
-    if n.typeKind == ParamsT:
+    if n.substructureKind == ParamsU:
       inc n
       while n.kind != ParRi:
         if n.symKind == ParamY:

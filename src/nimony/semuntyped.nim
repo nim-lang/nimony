@@ -310,7 +310,7 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
     closeScope(c)
   of DistinctT:
     semTemplBodySons c, n
-  of ProctypeT, IteratorT, ParamsT:
+  of RoutineTypes:
     # open scope for param decls
     openScope(c)
     semTemplBodySons c, n

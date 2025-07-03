@@ -55,17 +55,18 @@ proc rememberConstRefParams(c: var Context; params: Cursor) =
       c.constRefParams.incl r.name.symId
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let decl = n
   var r = asRoutine(n)
   var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim,
     resultSym: SymId(0), canRaise: hasPragma(r.pragmas, RaisesP),
     retType: r.retType)
 
   copyInto(dest, n):
-    let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
+    let isConcrete = c2.typeCache.takeRoutineHeader(dest, decl, n)
     if isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):
-        c2.typeCache.registerLocal(symId, r.kind, r.params)
+        c2.typeCache.registerLocal(symId, r.kind, decl)
       c2.typeCache.openScope()
       rememberConstRefParams c2, r.params
       c2.tupleVars = localsThatBecomeTuples(n)

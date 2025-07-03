@@ -590,10 +590,11 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   let oldResultSym = c.resultSym
   c.resultSym = NoSymId
   let oldReportLastUse = c.reportLastUse
+  let decl = n
   var r = takeRoutine(n, SkipFinalParRi)
   let symId = r.name.symId
   if isLocalDecl(symId):
-    c.typeCache.registerLocal(symId, r.kind, r.params)
+    c.typeCache.registerLocal(symId, r.kind, decl)
   c.reportLastUse = hasPragmaOfValue(r.pragmas, ReportP, "lastuse")
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -605,7 +606,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
     c.typeCache.openScope()
-    c.typeCache.registerParams(r.name.symId, r.params)
+    c.typeCache.registerParams(r.name.symId, decl, r.params)
     if parentNodestroy or hasPragma(r.pragmas, NodestroyP):
       trOnlyEssentials c, r.body
     else:
@@ -660,7 +661,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree c.dest, n # skip `fn`
-  assert fnType.typeKind == ParamsT
+  assert fnType.substructureKind == ParamsU
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType

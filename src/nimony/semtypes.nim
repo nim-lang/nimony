@@ -773,17 +773,14 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         takeToken c, n
         semLocalTypeImpl c, n, InLocalDecl
         takeParRi c, n
-    of ProctypeT, IteratorT, ParamsT:
+    of RoutineTypes:
       if tryTypeClass(c, n):
         return
-      if typeKind(n) != ParamsT:
-        takeToken c, n
-        wantDot c, n # name
-        wantDot c, n # export marker
-        wantDot c, n # pattern
-        wantDot c, n # generics
-      else:
-        takeToken c, n
+      takeToken c, n
+      wantDot c, n # name
+      wantDot c, n # export marker
+      wantDot c, n # pattern
+      wantDot c, n # generics
       let beforeParams = c.dest.len
       c.openScope()
       semParams c, n
@@ -791,7 +788,11 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       var crucial = default CrucialPragma
       semPragmas c, n, crucial, ProcY
       wantDot c, n # exceptions
-      wantDot c, n # body
+      # make it robust against Nifler's output
+      if n.kind == ParRi:
+        c.dest.addDotToken()
+      else:
+        wantDot c, n # body
       # close it here so that pragmas like `requires` can refer to the params:
       c.closeScope()
       takeParRi c, n
