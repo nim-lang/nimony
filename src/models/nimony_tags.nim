@@ -201,7 +201,7 @@ type
     TemplateT = (ord(TemplateTagId), "template")  ## template declaration
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration (soon obsolete, use params instead)
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration
     IT = (ord(ITagId), "i")  ## `int` builtin type
     UT = (ord(UTagId), "u")  ## `uint` builtin type
     FT = (ord(FTagId), "f")  ## `float` builtin type

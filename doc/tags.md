@@ -101,7 +101,7 @@
 | `(union (fld ...)*)`; `(union)` | NifcType, NimonyPragma | first one is Nifc union declaration, second one is Nimony union pragma |
 | `(object .T (fld ...)*)` | NifcType, NimonyType, NiflerKind | object type declaration |
 | `(enum (efld...)*)` | NifcType, NimonyType, NiflerKind | enum type declaration |
-| `(proctype . (params...) T P)` | NifcType, NimonyType, NiflerKind | proc type declaration (soon obsolete, use params instead) |
+| `(proctype . (params...) T P)` | NifcType, NimonyType, NiflerKind | proc type declaration |
 | `(atomic)` | NifcTypeQualifier | `atomic` type qualifier for NIFC |
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |
