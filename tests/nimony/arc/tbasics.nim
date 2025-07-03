@@ -194,3 +194,20 @@ proc bbb(inp: string) =
   assert b(y) == "123xyzabc"
 
 bbb("123")
+
+type
+  Ref = ref object
+    id: int
+
+block:
+  proc inc(x: sink Ref) =
+    inc x.id
+
+
+  proc foo =
+    var x = Ref(id: 8)
+    inc(x)
+    inc(x)
+
+  foo()
+
