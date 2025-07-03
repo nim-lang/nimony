@@ -136,7 +136,7 @@ proc lookupSymbol(c: var TypeCache; s: SymId): Cursor =
     else:
       let fn = asRoutine(res.decl)
       if isRoutine(fn.kind):
-        result = fn.params
+        result = res.decl
       else:
         # XXX This is not good enough
         result = c.builtins.autoType
