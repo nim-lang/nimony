@@ -328,7 +328,7 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
       copyIntoKind c.dest, HaddrX, info:
-        copyTree c.dest, n
+        tr c, n, WillBeOwned
 
 proc callWasMoved(c: var Context; sym: SymId; info: PackedLineInfo; typ: Cursor) =
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
