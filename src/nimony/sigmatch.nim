@@ -1404,7 +1404,11 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   let c = a.context
   var aParams = a.fn.typ
   var bParams = b.fn.typ
+  inc aParams
+  for i in 1..4: skip aParams
   assert aParams.substructureKind == ParamsU
+  inc bParams
+  for i in 1..4: skip bParams
   assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
@@ -1454,7 +1458,7 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
     elif diff > 0:
       result = SecondWins
     else:
-      if a.fn.typ.substructureKind == ParamsU and b.fn.typ.substructureKind == ParamsU:
+      if a.fn.typ.typeKind in RoutineTypes and b.fn.typ.typeKind in RoutineTypes:
         result = mutualGenericMatch(a, b)
       else:
         result = NobodyWins

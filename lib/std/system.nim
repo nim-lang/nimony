@@ -98,8 +98,8 @@ proc addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 proc sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
 
-#template sizeof*[T](_: T): int =
-#  sizeof(T)
+template sizeof*[T](_: T): int =
+  sizeof(T)
 
 proc `=destroy`*[T](x: T) {.magic: "Destroy", noSideEffect.}
 proc `=dup`*[T](x: T): T {.magic: "Dup", noSideEffect.}
