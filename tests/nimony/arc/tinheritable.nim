@@ -1,3 +1,5 @@
+import std/syncio
+
 type
   Node = ref object
     le, ri: Node
