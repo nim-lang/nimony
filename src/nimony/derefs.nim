@@ -776,6 +776,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         skip n
       else:
         trSons c, n, WantT
+    of DerefX:
+      if e.wantMutable:
+        # allows ptr indirection: e.g. `inc x.id[]` for `id: ptr int`
+        c.dest.addParLe(HaddrX, n.info)
+        trSons c, n, WantT
+        c.dest.addParRi()
+      else:
+        trSons c, n, WantT
 
     else:
       case n.stmtKind
