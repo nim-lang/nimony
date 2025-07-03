@@ -422,6 +422,7 @@ proc trObjFields(c: var EContext; n: var Cursor; flags: set[TypeFlag]) =
       # XXX for now counts each case object field as separate
       inc n
       trField(c, n, flags)
+      c.dest.add tagToken("union", n.info)
       while n.kind != ParRi:
         case n.substructureKind
         of OfU:
@@ -429,18 +430,31 @@ proc trObjFields(c: var EContext; n: var Cursor; flags: set[TypeFlag]) =
           skip n
           assert n.stmtKind == StmtsS
           inc n
-          trObjFields(c, n, flags)
+          if n.exprKind == NilX:
+            skip n
+          else:
+            c.dest.add tagToken("object", n.info)
+            c.dest.addDotToken  # base type
+            trObjFields(c, n, flags)
+            c.dest.addParRi # end of object
           skipParRi c, n
           skipParRi c, n
         of ElseU:
           inc n
           assert n.stmtKind == StmtsS
           inc n
-          trObjFields(c, n, flags)
+          if n.exprKind == NilX:
+            skip n
+          else:
+            c.dest.add tagToken("object", n.info)
+            c.dest.addDotToken  # base type
+            trObjFields(c, n, flags)
+            c.dest.addParRi # end of object
           skipParRi c, n
           skipParRi c, n
         else:
           error "expected `of` or `else` inside `case`"
+      c.dest.addParRi # end of union
       skipParRi c, n
     of NilU:
       skip n
