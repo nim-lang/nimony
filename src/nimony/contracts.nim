@@ -544,7 +544,7 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     inc r
   elif r.exprKind == NilX:
     result.a = VarId(0)
-    inc r
+    skip r
   else:
     analyseExpr c, pc
     return result
