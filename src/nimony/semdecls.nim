@@ -647,17 +647,16 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   if it.n.firstSon.kind == DotToken:
     # anon routine
     let info = it.n.firstSon.info
-    var typ = asRoutine(it.n).params
     let name = identToSym(c, "`anonproc", ProcY)
 
     var anons = createTokenBuf()
     swap c.dest, anons
     semProcImpl c, it, kind, pass, name
     swap c.dest, anons
+    let insertPos = c.pending.len
     c.pending.add anons
-
     c.dest.add symToken(name, info)
-    it.typ = typ
+    it.typ = typeToCursor(c, c.pending, insertPos)
 
   else:
     semProcImpl c, it, kind, pass
