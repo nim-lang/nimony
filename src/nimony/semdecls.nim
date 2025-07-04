@@ -640,7 +640,8 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
   finally:
     c.routine = c.routine.parent
   takeParRi c, it.n
-  producesVoid c, info, it.typ
+  if newName == NoSymId:
+    producesVoid c, info, it.typ
   publish c, symId, declStart
 
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
@@ -654,9 +655,12 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     semProcImpl c, it, kind, pass, name
     swap c.dest, anons
     let insertPos = c.pending.len
-    c.pending.add anons
+    c.dest.add parLeToken(ExprX, info)
+    let anonTypePos = c.dest.len
+    c.dest.add anons
     c.dest.add symToken(name, info)
-    it.typ = typeToCursor(c, c.pending, insertPos)
+    c.dest.addParRi()
+    it.typ = typeToCursor(c, c.dest, anonTypePos)
 
   else:
     semProcImpl c, it, kind, pass
