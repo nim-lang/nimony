@@ -46,3 +46,12 @@ proc hello(): proc (name: string): string =
 
 var mm = hello()
 discard mm("World")
+
+
+var weg: ptr int
+
+if weg == nil:
+  discard "X is nil!"
+
+if nil == weg: # Crashes the compiler
+  discard "X is nil!"
