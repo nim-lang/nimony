@@ -530,12 +530,10 @@ proc fetchSym(c: var SemContext; s: SymId): Sym =
     result = Sym(kind: NoSym, name: s, pos: InvalidPos)
 
 proc semBoolExpr(c: var SemContext; n: var Cursor) =
-  let start = c.dest.len
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, it
   let t = skipModifier(it.typ)
   if classifyType(c, t) != BoolT:
-    c.dest.shrink start
     buildErr c, n.info, "expected `bool` but got: " & typeToString(t)
   n = it.n
 
