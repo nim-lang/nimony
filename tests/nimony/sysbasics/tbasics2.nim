@@ -38,3 +38,11 @@ for item in arr:
   s.add item
 
 assert s == "fedcba"
+
+
+proc hello(): proc (name: string): string =
+  result = proc (name: string): string =
+    "Hello "
+
+var mm = hello()
+discard mm("World")
