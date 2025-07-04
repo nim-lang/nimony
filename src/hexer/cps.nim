@@ -78,8 +78,7 @@ import hexer_context
 
 #[
 
-Compatibility with Nim is not easy. It seems to be the case that we need to produce
-full-fledged adapter objects:
+Compatibility with Nim is not easy. We need to produce full-fledged adapter objects:
 
 var it = (iter)
 while not finished(it):

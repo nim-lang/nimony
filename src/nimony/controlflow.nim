@@ -240,7 +240,27 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
   inc n
 
 proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  trExprLoop c, n, tar
+  if c.keepReturns and tar.m in {IsAppend, IsEmpty}:
+    # bind to a temporary variable:
+    let tmp = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    inc c.nextVar
+    let info = n.info
+    c.dest.addParLe LetS, info
+    c.dest.addSymDef tmp, info
+    c.dest.addEmpty2 info # no export marker, no pragmas
+    let typ = c.typeCache.getType(n)
+    c.dest.copyTree typ
+
+    var callTarget = Target(m: IsAppend)
+    trExprLoop c, n, callTarget
+    c.dest.add callTarget
+    c.dest.addParRi()
+
+    if tar.m == IsEmpty:
+      tar = Target(m: IsVar)
+    tar.t.addSymUse tmp, info
+  else:
+    trExprLoop c, n, tar
 
 proc trVoidCall(c: var ControlFlow; n: var Cursor) =
   var tar = Target(m: IsAppend)
@@ -1032,9 +1052,9 @@ proc testOrSetMark*(n: Cursor): bool {.inline.} =
 
 when isMainModule:
   import std / [syncio, os]
-  proc main(infile, outputfile: string) =
+  proc main(infile, outputfile: string; keepReturns: bool) =
     var input = parse(readFile(infile))
-    var cf = toControlflow(beginRead(input))
+    var cf = toControlflow(beginRead(input), keepReturns=keepReturns)
     writeFile(outputfile, codeListing(cf))
 
-  main(paramStr(1), paramStr(2))
+  main(paramStr(1), paramStr(2), paramCount() > 2)
