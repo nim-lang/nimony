@@ -15,17 +15,14 @@ template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
 
 template tagEnum*(c: PackedToken): TagEnum = cast[TagEnum](tag(c))
 
-proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
-  if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
-    result = cast[NimonyStmt](tagEnum(c))
-  else:
-    result = NoStmt
-
 proc stmtKind*(c: PackedToken): NimonyStmt {.inline.} =
   if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
     result = cast[NimonyStmt](tagEnum(c))
   else:
     result = NoStmt
+
+proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
+  result = stmtKind(c.load())
 
 proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   if c.kind == ParLe:
@@ -75,7 +72,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
   else:
     result = NoCallConv
 
-proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
+proc exprKind*(c: PackedToken): NimonyExpr {.inline.} =
   if c.kind == ParLe:
     if rawTagIsNimonyExpr(tagEnum(c)):
       result = cast[NimonyExpr](tagEnum(c))
@@ -83,6 +80,9 @@ proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
       result = NoExpr
   else:
     result = NoExpr
+
+proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
+  result = exprKind(c.load())
 
 proc symKind*(c: Cursor): NimonySym {.inline.} =
   if c.kind == ParLe:

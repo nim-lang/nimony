@@ -240,7 +240,7 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
   inc n
 
 proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  if c.keepReturns and tar.m in {IsAppend, IsEmpty}:
+  if c.keepReturns and tar.m == IsAppend:
     # bind to a temporary variable:
     let tmp = pool.syms.getOrIncl("`cf" & $c.nextVar)
     inc c.nextVar
