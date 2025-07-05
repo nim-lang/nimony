@@ -121,7 +121,7 @@ proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
     else:
       break
 
-proc lookupSymbol(c: var TypeCache; s: SymId): Cursor =
+proc lookupSymbol*(c: var TypeCache; s: SymId): Cursor =
   var it {.cursor.} = c.current
   while it != nil:
     let res = it.locals.getOrDefault(s)
