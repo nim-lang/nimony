@@ -217,6 +217,28 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string) =
   orig.addDotToken()
   c.buildErr info, msg, cursorAt(orig, 0)
 
+proc combineErr*(c: var SemContext; pos: int; info: PackedLineInfo; msg: string; orig: Cursor) =
+  ## Builds ErrT node and combine it with the node at `pos` so that no nodes are added outside of
+  ## the node at `pos`.
+  ## When there is no node at `pos`, New ErrT node is added to `c.dest`.
+  ## Assumes the node at `pos` is the last node.
+  var needsParRi = false
+  if c.dest.len > pos:
+    needsParRi = true
+    if c.dest[pos].stmtKind == StmtsS:
+      assert c.dest[c.dest.len - 1].kind == ParRi
+      c.dest.shrink(c.dest.len - 1)
+    else:
+      c.dest.insert [parLeToken(StmtsS, c.dest[pos].info)], pos
+  buildErr c, info, msg, orig
+  if needsParRi:
+    c.dest.addParRi
+
+proc combineErr*(c: var SemContext; pos: int; info: PackedLineInfo; msg: string) =
+  var orig = createTokenBuf(1)
+  orig.addDotToken()
+  c.combineErr pos, info, msg, cursorAt(orig, 0)
+
 proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
     if true: # not c.debugAllowErrors: - c not given

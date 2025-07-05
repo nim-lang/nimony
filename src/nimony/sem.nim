@@ -535,8 +535,7 @@ proc semBoolExpr(c: var SemContext; n: var Cursor) =
   semExpr c, it
   let t = skipModifier(it.typ)
   if classifyType(c, t) != BoolT:
-    c.dest.shrink start
-    buildErr c, n.info, "expected `bool` but got: " & typeToString(t)
+    combineErr c, start, n.info, "expected `bool` but got: " & typeToString(t)
   n = it.n
 
 proc semConstBoolExpr(c: var SemContext; n: var Cursor; allowUnresolved = false) =
