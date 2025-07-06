@@ -118,6 +118,7 @@ type
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     userPragmas*: Table[StrId, TokenBuf]
+    usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
