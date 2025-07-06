@@ -92,6 +92,9 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       if kind == ConstY:
         withNewScope c:
           semConstExpr c, it # 4
+      elif kind == ParamY and n.kind == DotToken and delayed.lit in c.usingStmtMap:
+        it.typ = c.usingStmtMap[delayed.lit]
+        c.dest.takeToken it.n
       else:
         semLocalValue c, it, crucial # 4
       n = it.n
@@ -968,3 +971,48 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
   skipParRi it.n # close unpacktup
   skipParRi it.n # close unpackdecl
   producesVoid c, info, it.typ
+
+proc semUsing(c: var SemContext; n: var Cursor) =
+  takeToken c, n
+  while n.kind != ParRi:
+    assert n.substructureKind == FldU
+    takeToken c, n
+    var ident = StrId(0)
+    if n.kind == Ident:
+      ident = n.litId
+      takeToken c, n
+    else:
+      c.buildErr n.info, "identifier is expected", n
+      skip n
+
+    # export marker
+    if n.kind == DotToken:
+      takeToken c, n
+    else:
+      c.buildErr n.info, "identifiers under using statements cannot be exported", n
+      skip n
+
+    # pragma
+    # currently no pragmas can be used in using statements
+    if n.kind == DotToken:
+      takeToken c, n
+    elif n.substructureKind == PragmasU:
+      c.buildErr n.info, "using statements supports no pragmas", n
+      skip n
+    else:
+      c.buildErr n.info, "illformed AST inside using statement", n
+      skip n
+
+    let typ = semLocalType(c, n)
+    if ident != StrId(0):
+      c.usingStmtMap[ident] = typ
+
+    if n.kind == DotToken:
+      takeToken c, n
+    else:
+      c.buildErr n.info, "illformed AST inside using statement", n
+      skip n
+
+    takeParRi c, n
+
+  takeParRi c, n

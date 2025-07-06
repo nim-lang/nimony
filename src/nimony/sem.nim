@@ -4312,7 +4312,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
-      of ImportasS, StaticstmtS, BindS, MixinS, UsingS, AsmS:
+      of ImportasS, StaticstmtS, BindS, MixinS, AsmS:
         buildErr c, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
       of DeferS:
@@ -4439,6 +4439,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       of AssumeS, AssertS:
         pragmaGuard c:
           semAssumeAssert c, it, it.n.stmtKind
+      of UsingS:
+        semUsing c, it.n
     of FalseX, TrueX, OvfX:
       literalB c, it, c.types.boolType
     of InfX, NegInfX, NanX:
