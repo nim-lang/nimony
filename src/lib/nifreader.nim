@@ -6,8 +6,10 @@
 
 ## High performance ("zero copies") NIF file reader.
 
-import std / [memfiles, tables, parseutils, assertions, syncio, hashes]
+import std / [memfiles, tables, parseutils, assertions, hashes]
 import stringviews
+when defined(nimony):
+  import std/syncio
 
 const
   ControlChars = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', ':'}
@@ -88,7 +90,6 @@ proc open*(filename: string): Reader =
     except:
       when defined(debug) and not defined(nimony): writeStackTrace()
       quit "[Error] cannot open: " & filename
-      default MemFile
   result = Reader(f: f, p: nil)
   result.p = cast[pchar](result.f.mem)
   result.eof = result.p +! result.f.size
