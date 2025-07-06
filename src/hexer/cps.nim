@@ -183,7 +183,7 @@ proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedL
       dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
-proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId) =
+proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId; target: Cursor) =
   case c.currentProc.kind
   of IsNormal:
     # passive call from within a normal proc:
@@ -204,15 +204,9 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       dest.addSymUse coroTypeForProc(c, sym), info
       dest.addDotToken() # default value
     let retType = getType(c.typeCache, n)
-    let resultVar = if not isVoidType(retType): pool.syms.getOrIncl("`coroResult." & $c.currentProc.counter) else: SymId(0)
-    if resultVar != SymId(0):
-      inc c.currentProc.counter
-      copyIntoKind dest, VarS, info:
-        dest.addSymDef resultVar, info
-        dest.addDotToken() # exported
-        dest.addDotToken() # pragmas
-        dest.copyTree retType
-        dest.addDotToken() # default value
+    let hasResult = not isVoidType(retType)
+    if hasResult:
+      assert not cursorIsNil(target), "passive call without target"
 
     copyIntoKind dest, CallS, info:
       dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
@@ -226,9 +220,9 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         while n.kind != ParRi:
           tr(c, dest, n)
         inc n
-        if resultVar != SymId(0):
+        if hasResult:
           dest.copyIntoKind AddrX, info:
-            dest.addSymUse resultVar, info
+            dest.copyTree target
         # add StopContinuation:
         dest.copyIntoKind OconstrX, info:
           dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
@@ -238,10 +232,29 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
           dest.copyIntoKind KvU, info:
             dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
             dest.addParPair NilX, info
-  of IsIterator:
-    bug "not implemented"
-  of IsPassive:
-    bug "not implemented"
+  of IsIterator, IsPassive:
+    # passive call from within a passive proc:
+    # We use a single stackframe variable that acts as a union storage
+    # for all the different passive calls that might happen.
+    # We need to generate code that is very close to a `yield` statement:
+    # target = call fn, args
+    # -->
+    # return fnConstructor(addr frame, args, addr target, Continuation(nextState, this))
+    let pos = cursorToPosition(c.currentProc.cf, n)
+    let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
+    assert state != -1
+    let info = n.info
+    copyIntoKind dest, RetS, info:
+      bug "not implemented"
+
+proc passiveCallFn(c: var Context; n: Cursor): SymId =
+  if n.exprKind notin CallKinds: return SymId(0)
+  let fn = n.firstSon
+  if fn.kind == Symbol:
+    let typ = c.typeCache.getType(fn, {SkipAliases})
+    if procHasPragma(typ, PassiveP):
+      return fn.symId
+  return SymId(0)
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.firstSon
@@ -253,11 +266,36 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       let typ = c.typeCache.getType(fn, {SkipAliases})
       if procHasPragma(typ, PassiveP):
-        trPassiveCall(c, dest, n, sym)
+        bug "passive call without target"
       else:
         trSons(c, dest, n)
   else:
     trSons(c, dest, n)
+
+proc trLocalValue(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Cursor) =
+  let fn = passiveCallFn(c, n)
+  if fn != SymId(0):
+    trPassiveCall(c, dest, n, fn, lhs)
+  else:
+    dest.copyIntoKind AsgnS, n.info:
+      dest.copyTree lhs
+      tr(c, dest, n)
+
+
+proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  var rhs = n.firstSon
+  skip rhs
+  let fn = passiveCallFn(c, rhs)
+  if fn == SymId(0):
+    copyInto dest, n:
+      tr c, dest, n
+      tr c, dest, n
+  else:
+    var lhsTransformed = createTokenBuf(6)
+    inc n
+    tr c, lhsTransformed, n
+    trPassiveCall(c, dest, rhs, fn, beginRead lhsTransformed)
+    skipParRi n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let sym = n.firstSon.symId
@@ -275,17 +313,27 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if n.kind == DotToken:
       inc n
     else:
-      dest.copyIntoKind AsgnS, info:
-        dest.copyIntoKind DotX, info:
-          dest.copyIntoKind DerefX, info:
-            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-          dest.addSymUse field.field, info
-        tr(c, dest, n)
+      var lhs = createTokenBuf(6)
+      lhs.copyIntoKind DotX, info:
+        lhs.copyIntoKind DerefX, info:
+          lhs.addSymUse pool.syms.getOrIncl(EnvParamName), info
+        lhs.addSymUse field.field, info
+      trLocalValue(c, dest, n, beginRead lhs)
     skipParRi n
   else:
+    var pcall = SymId(0)
+    var callExpr = default(Cursor)
     copyInto dest, n:
+      let target = n
       c.typeCache.takeLocalHeader(dest, n, kind)
-      tr(c, dest, n)
+      pcall = passiveCallFn(c, n)
+      if pcall != SymId(0):
+        callExpr = n
+        dest.addDotToken()
+      else:
+        tr(c, dest, n)
+    if pcall != SymId(0):
+      trPassiveCall c, dest, callExpr, pcall, target
 
 proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
   const info = NoLineInfo
@@ -663,6 +711,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trYield c, dest, n
     of RetS:
       trReturn c, dest, n
+    of AsgnS:
+      trAsgn c, dest, n
     of ScopeS:
       c.typeCache.openScope()
       trSons(c, dest, n)
