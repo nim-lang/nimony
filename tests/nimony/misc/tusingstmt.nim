@@ -1,3 +1,5 @@
+import deps/musingstmt
+
 type
   Foo = object
     discard
@@ -19,3 +21,10 @@ var f = Foo()
 test f, [1, 2]
 test2 f, [1, 2]
 test3 f, [1, 2]
+
+# test imported procs
+let c = MUsing()
+let y = [0.1, 0.2, 0.3]
+mtest1(c, y)
+mtest2(c, y)
+mtest3(c, y, 0)
