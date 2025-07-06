@@ -72,7 +72,6 @@ import hexer_context
 
 # TODO:
 # - transform `for` loops into trampoline code
-# - transform calls to .passive procs
 # - the control flow graph must duplicate `finally` blocks
 # - the control flow graph must model procs that can raise
 
@@ -113,12 +112,12 @@ const
   ResultParamName = "`result.0"
   ResultFieldNamePrefix = "`result.0."
   CallerParamName = "`caller.0"
-  ThisParamName = "`this.0"
 
 type
   EnvField = object
     objType: SymId
     field: SymId
+    typeAsSym: SymId
     pragmas, typ: Cursor
     def: int
     use: int
@@ -184,6 +183,10 @@ proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedL
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId; target: Cursor) =
+  let retType = getType(c.typeCache, n)
+  let hasResult = not isVoidType(retType)
+  if hasResult:
+    assert not cursorIsNil(target), "passive call without target"
   case c.currentProc.kind
   of IsNormal:
     # passive call from within a normal proc:
@@ -203,14 +206,9 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       dest.addDotToken() # pragmas
       dest.addSymUse coroTypeForProc(c, sym), info
       dest.addDotToken() # default value
-    let retType = getType(c.typeCache, n)
-    let hasResult = not isVoidType(retType)
-    if hasResult:
-      assert not cursorIsNil(target), "passive call without target"
 
     copyIntoKind dest, CallS, info:
       dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
-
       # emit constructor call:
       copyIntoKind dest, CallS, info:
         dest.addSymUse sym, info
@@ -239,13 +237,48 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     # We need to generate code that is very close to a `yield` statement:
     # target = call fn, args
     # -->
-    # return fnConstructor(addr frame, args, addr target, Continuation(nextState, this))
+    # return fnConstructor(addr this.frame, args, addr target, Continuation(nextState, this))
     let pos = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
     assert state != -1
     let info = n.info
+
+    let field: SymId
+    # We use the caller `fn` as the key here so that at least the storage is
+    # shared between all passive calls to the same function.
+    # TODO: We should use some untyped storage here!
+    if not c.currentProc.localToEnv.hasKey(sym):
+      let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
+      inc c.currentProc.counter
+      field = localToFieldname(c, coroVar)
+      c.currentProc.localToEnv[sym] = EnvField(
+        objType: coroTypeForProc(c, c.procStack[^1]),
+        field: field,
+        typeAsSym: coroTypeForProc(c, sym),
+        def: 0,
+        use: -1)
+    else:
+      field = c.currentProc.localToEnv[sym].field
+
     copyIntoKind dest, RetS, info:
-      bug "not implemented"
+      # emit constructor call:
+      copyIntoKind dest, CallS, info:
+        dest.addSymUse sym, info
+
+        dest.copyIntoKind AddrX, info:
+          dest.copyIntoKind DotX, info:
+            dest.copyIntoKind DerefX, info:
+              dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+            dest.addSymUse field, info
+
+        inc n
+        while n.kind != ParRi:
+          tr(c, dest, n)
+        inc n
+        if hasResult:
+          dest.copyIntoKind AddrX, info:
+            dest.copyTree target
+        contNextState c, dest, state, info
 
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
   if n.exprKind notin CallKinds: return SymId(0)
@@ -527,10 +560,15 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
           copyIntoKind dest, FldU, info:
             dest.addSymDef value.field, info
             dest.addDotToken() # exported
-            dest.copyTree value.pragmas
+            if cursorIsNil(value.pragmas):
+              dest.addDotToken()
+            else:
+              dest.copyTree value.pragmas
             if key == c.currentProc.resultSym:
               dest.copyIntoKind PtrT, info:
                 dest.copyTree value.typ
+            elif value.typeAsSym != SymId(0):
+              dest.addSymUse value.typeAsSym, info
             else:
               dest.copyTree value.typ
             dest.addDotToken() # default value
@@ -544,7 +582,7 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId; params
 
   dest.shrink paramsBegin
   var n = beginRead(params)
-  let thisParam = pool.syms.getOrIncl(ThisParamName)
+  let thisParam = pool.syms.getOrIncl(EnvParamName)
   dest.copyIntoKind ParamsU, info:
     # first parameter is always the `this` pointer:
     dest.copyIntoKind ParamU, info:
