@@ -46,3 +46,33 @@ proc hello(): proc (name: string): string =
 
 var mm = hello()
 discard mm("World")
+
+
+proc hello2(): int =
+  result = 123
+
+iterator hello2(): int =
+  yield 1
+
+
+for i in hello2():
+  assert i == 1
+
+let s2 = hello2()
+assert s2 == 123
+
+
+block:
+  proc hello3(): int =
+    result = 123
+
+  iterator hello3(): int =
+    yield 1
+
+
+  for i in hello3():
+    assert i == 1
+
+  let s = hello3()
+  assert s == 123
+

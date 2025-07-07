@@ -1432,7 +1432,7 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
       if result == SecondWins: return NobodyWins
       result = FirstWins
 
-proc cmpMatches*(a, b: Match): DisambiguationResult =
+proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
   assert not a.err
   assert not b.err
   if a.convCosts < b.convCosts:
@@ -1462,6 +1462,18 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
         result = mutualGenericMatch(a, b)
       else:
         result = NobodyWins
+
+  if result == NobodyWins:
+    if a.fn.typ.typeKind == IteratorT and b.fn.typ.typeKind != IteratorT:
+      if preferIterators:
+        result = FirstWins
+      else:
+        result = SecondWins
+    elif b.fn.typ.typeKind == IteratorT and a.fn.typ.typeKind != IteratorT:
+      if preferIterators:
+        result = SecondWins
+      else:
+        result = FirstWins
 
 type
   ParamsInfo = object
