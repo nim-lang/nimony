@@ -44,6 +44,7 @@ type
     nextVar: int
     currentBlock: BlockOrLoop
     typeCache: TypeCache
+    resultSym: SymId
     keepReturns: bool
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
@@ -739,6 +740,7 @@ proc trResult(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
     if c.currentBlock.kind == IsRoutine:
       c.currentBlock.sym = n.symId
+    c.resultSym = n.symId
     takeLocalHeader c.typeCache, c.dest, n, ResultY
     trUseExpr c, n
 
@@ -853,7 +855,10 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
 
 proc addRet(c: var ControlFlow) =
   c.dest.addParLe(RetS, NoLineInfo)
-  c.dest.addDotToken()
+  if c.resultSym != SymId(0):
+    c.dest.addSymUse c.resultSym, NoLineInfo
+  else:
+    c.dest.addDotToken()
   c.dest.addParRi()
 
 proc trProc(c: var ControlFlow; n: var Cursor) =

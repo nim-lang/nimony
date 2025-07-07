@@ -299,7 +299,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       let typ = c.typeCache.getType(fn, {SkipAliases})
       if procHasPragma(typ, PassiveP):
-        bug "passive call without target"
+        trPassiveCall(c, dest, n, sym, default(Cursor))
       else:
         trSons(c, dest, n)
   else:
@@ -691,6 +691,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
 
     if isConcrete and isClosure:
       treIteratorBody(c, dest, init, iter, sym)
+      skip n # we used the body from the control flow graph
     else:
       takeTree dest, n
     discard c.procStack.pop()
