@@ -589,7 +589,6 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
   for i in paramsEnd..<dest.len: retType.add dest[i]
 
   dest.shrink paramsBegin
-  var n = origParams
   let thisParam = pool.syms.getOrIncl(EnvParamName)
   dest.copyIntoKind ParamsU, info:
     # first parameter is always the `this` pointer:
@@ -607,17 +606,18 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
     init.addParLe OconstrX, info
     init.addSymUse coroTypeForProc(c, sym), info
 
+    var n = origParams
     # copy original parameters:
     if n.kind != DotToken:
       inc n
       while n.kind != ParRi:
         assert n.substructureKind == ParamU
-        inc n
+        dest.takeToken n
         let paramSym = n.symId
-        skip n # name
-        skip n # exported
+        dest.takeTree n # name
+        dest.takeTree n # exported
         let pragmas = n
-        skip n # pragmas
+        dest.takeTree n # pragmas
         let field = localToFieldname(c, paramSym)
         c.currentProc.localToEnv[paramSym] = EnvField(
           objType: coroTypeForProc(c, sym),
@@ -627,9 +627,9 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
           def: -1,
           use: 0)
         c.typeCache.registerLocal(paramSym, ParamY, n)
-        skip n # type
-        skip n # default value
-        skipParRi n
+        dest.takeTree n # type
+        dest.takeTree n # default value
+        dest.takeParRi n # ParRi
 
         init.copyIntoKind KvU, info:
           init.addSymUse field, info
