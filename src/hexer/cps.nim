@@ -215,6 +215,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         dest.copyIntoKind AddrX, info:
           dest.addSymUse coroVar, info
         inc n
+        skip n # fn already handled
         while n.kind != ParRi:
           tr(c, dest, n)
         inc n
@@ -272,6 +273,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
             dest.addSymUse field, info
 
         inc n
+        skip n # fn already handled
         while n.kind != ParRi:
           tr(c, dest, n)
         inc n
