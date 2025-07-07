@@ -582,15 +582,14 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
           programs.publish(value.field, dest, beforeField)
   programs.publish(objType, dest, beforeType)
 
-proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId; paramsBegin, paramsEnd: int) =
+proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
+                    paramsBegin, paramsEnd: int; origParams: Cursor) =
   let info = dest[paramsBegin].info
-  var params = createTokenBuf(14)
-  for i in paramsBegin..<paramsEnd: params.add dest[i]
   var retType = createTokenBuf(4)
   for i in paramsEnd..<dest.len: retType.add dest[i]
 
   dest.shrink paramsBegin
-  var n = beginRead(params)
+  var n = origParams
   let thisParam = pool.syms.getOrIncl(EnvParamName)
   dest.copyIntoKind ParamsU, info:
     # first parameter is always the `this` pointer:
@@ -675,6 +674,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   let iter = n
   var paramsEnd = -1
   var paramsBegin = -1
+  var origParams = default(Cursor)
   copyInto dest, n:
     var isConcrete = true # assume it is concrete
     let sym = n.symId
@@ -683,6 +683,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     var isCoroutine = false
     for i in 0..<BodyPos:
       if i == ParamsPos:
+        origParams = n
         c.typeCache.openProcScope(sym, iter, n)
         paramsBegin = dest.len
       elif i == ReturnTypePos:
@@ -691,7 +692,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
         if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
           isCoroutine = true
           c.currentProc.kind = (if kind == IteratorY: IsIterator else: IsPassive)
-          patchParamList c, dest, init, sym, paramsBegin, paramsEnd
+          patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
       elif i == TypevarsPos:
         isConcrete = n.substructureKind != TypevarsU
       takeTree dest, n
