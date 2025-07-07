@@ -1463,11 +1463,17 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
       else:
         result = NobodyWins
 
-  if result == NobodyWins and preferIterators:
+  if result == NobodyWins:
     if a.fn.typ.typeKind == IteratorT and b.fn.typ.typeKind != IteratorT:
-      result = FirstWins
+      if preferIterators:
+        result = FirstWins
+      else:
+        result = SecondWins
     elif b.fn.typ.typeKind == IteratorT and a.fn.typ.typeKind != IteratorT:
-      result = SecondWins
+      if preferIterators:
+        result = SecondWins
+      else:
+        result = FirstWins
 
 type
   ParamsInfo = object
