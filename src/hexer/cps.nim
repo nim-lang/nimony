@@ -549,8 +549,10 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
 
 proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
   const info = NoLineInfo
+  let beforeType = dest.len
+  let objType = coroTypeForProc(c, sym)
   copyIntoKind dest, TypeS, info:
-    dest.addSymDef coroTypeForProc(c, sym), info
+    dest.addSymDef objType, info
     dest.addDotToken() # exported
     dest.addDotToken() # typevars
     dest.addDotToken() # pragmas
@@ -559,6 +561,7 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
       dest.addSymUse pool.syms.getOrIncl(RootObjName), info
       for key, value in c.currentProc.localToEnv.pairs:
         if value.def != value.use:
+          let beforeField = dest.len
           copyIntoKind dest, FldU, info:
             dest.addSymDef value.field, info
             dest.addDotToken() # exported
@@ -574,6 +577,8 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
             else:
               dest.copyTree value.typ
             dest.addDotToken() # default value
+          programs.publish(value.field, dest, beforeField)
+  programs.publish(objType, dest, beforeType)
 
 proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId; paramsBegin, paramsEnd: int) =
   let info = dest[paramsBegin].info
@@ -673,7 +678,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     let sym = n.symId
     c.procStack.add(sym)
     let closureOwner = c.procStack[0]
-    var isClosure = false
+    var isCoroutine = false
     for i in 0..<BodyPos:
       if i == ParamsPos:
         c.typeCache.openProcScope(sym, iter, n)
@@ -682,21 +687,21 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
         paramsEnd = dest.len
       elif i == ProcPragmasPos:
         if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
-          isClosure = true
+          isCoroutine = true
           c.currentProc.kind = (if kind == IteratorY: IsIterator else: IsPassive)
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd
       elif i == TypevarsPos:
         isConcrete = n.substructureKind != TypevarsU
       takeTree dest, n
 
-    if isConcrete and isClosure:
+    if isConcrete and isCoroutine:
       treIteratorBody(c, dest, init, iter, sym)
       skip n # we used the body from the control flow graph
     else:
       takeTree dest, n
     discard c.procStack.pop()
   c.typeCache.closeScope()
-  if isClosure:
+  if isCoroutine:
     generateCoroutineType(c, dest, sym)
   swap(c.currentProc, currentProc)
 
