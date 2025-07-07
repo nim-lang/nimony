@@ -278,7 +278,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.boolType
   of NegX, NegInfX, NanX, InfX:
     result = c.builtins.floatType
-  of EnumToStrX, DefaultObjX, DefaultTupX, InternalTypeNameX:
+  of EnumToStrX, DefaultObjX, DefaultTupX, InternalTypeNameX, AstToStrX:
     result = c.builtins.stringType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType

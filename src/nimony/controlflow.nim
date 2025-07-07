@@ -590,7 +590,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
-    of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:
+    of CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       tar.t.addDotToken()
       skip n

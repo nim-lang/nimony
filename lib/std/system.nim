@@ -44,6 +44,11 @@ include "system/comparisons"
 proc defined*(x: untyped): bool {.magic: Defined.}
 proc declared*(x: untyped): bool {.magic: Declared.}
 
+func astToStr*[T](x: T): string {.magic: AstToStr.}
+  ## Converts the AST of `x` into a string representation. This is very useful
+  ## for debugging.
+
+
 const
   # Use string literals for one digit numbers to avoid the allocations as they are so common.
   NegTen = [
