@@ -255,8 +255,8 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         objType: coroTypeForProc(c, c.procStack[^1]),
         field: field,
         typeAsSym: coroTypeForProc(c, sym),
-        def: 0,
-        use: -1)
+        def: -1,
+        use: 0)
     else:
       field = c.currentProc.localToEnv[sym].field
 
@@ -623,8 +623,8 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId; params
           field: field,
           pragmas: pragmas,
           typ: n,
-          def: 0,
-          use: -1)
+          def: -1,
+          use: 0)
         c.typeCache.registerLocal(paramSym, ParamY, n)
         skip n # type
         skip n # default value
