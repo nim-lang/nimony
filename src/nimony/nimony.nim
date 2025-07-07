@@ -87,6 +87,8 @@ proc handleCmdLine() =
   var passC = ""
   var passL = ""
   var checkModes = DefaultSettings
+  var forwardArgsToExecutable = false
+  var executableArgs = ""
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -99,75 +101,91 @@ proc handleCmdLine() =
         else:
           quit "command expected"
       else:
-        args.add key
+        if forwardArgsToExecutable:
+          executableArgs.add " " & quoteShell(key)
+        else:
+          args.add key
+          if cmd == FullProject and doRun and args.len >= 1:
+            forwardArgsToExecutable = true
 
     of cmdLongOption, cmdShortOption:
-      var forwardArg = true
-      var forwardArgNifc = false
-      case normalize(key)
-      of "help", "h": writeHelp()
-      of "version", "v": writeVersion()
-      of "forcebuild", "f": forceRebuild = true
-      of "ff":
-        fullRebuild = true
-        forceRebuild = true
-      of "run", "r":
-        doRun = true
-        forwardArg = false
-      of "compat": config.compat = true
-      of "path", "p": config.paths.add val
-      of "define", "d": config.defines.incl val
-      of "noenv": useEnv = false
-      of "nosystem": moduleFlags.incl SkipSystem
-      of "issystem":
-        moduleFlags.incl IsSystem
-        forwardArg = false
-      of "ismain":
-        moduleFlags.incl IsMain
-        forwardArg = false
-      of "bits":
-        case val
-        of "64": config.bits = 64
-        of "32": config.bits = 32
-        of "16": config.bits = 16
-        else: quit "invalid value for --bits"
-      of "cpu":
-        if not config.setTargetCPU(val):
-          quit "unknown CPU: " & val
-      of "os":
-        if not config.setTargetOS(val):
-          quit "unknown OS: " & val
-      of "boundchecks":
-        forwardArg = false
-        case val
-        of "on": checkModes.incl BoundCheck
-        of "off": checkModes.excl BoundCheck
-        else: quit "invalid value for --boundchecks"
-      of "silentmake":
-        silentMake = true
-        forwardArg = false
-      of "ischild":
-        # undocumented command line option, by design
-        isChild = true
-        forwardArg = false
-      of "passc":
-        passC = val
-        forwardArg = false
-      of "passl":
-        passL = val
-        forwardArg = false
-      of "nimcache":
-        config.nifcachePath = val
-        forwardArgNifc = true
-      else: writeHelp()
-      if forwardArg:
-        commandLineArgs.add " --" & key
+      if forwardArgsToExecutable:
+        executableArgs.add " --" & key
         if val.len > 0:
-          commandLineArgs.add ":" & quoteShell(val)
-      if forwardArgNifc:
-        commandLineArgsNifc.add " --" & key
-        if val.len > 0:
-          commandLineArgsNifc.add ":" & quoteShell(val)
+          executableArgs.add ":" & quoteShell(val)
+      else:
+        var forwardArg = true
+        var forwardArgNifc = false
+        case normalize(key)
+        of "help", "h": writeHelp()
+        of "version", "v": writeVersion()
+        of "forcebuild", "f": forceRebuild = true
+        of "ff":
+          fullRebuild = true
+          forceRebuild = true
+        of "run", "r":
+          doRun = true
+          if cmd == FullProject and args.len >= 1:
+            forwardArgsToExecutable = true
+          forwardArg = false
+        of "compat": config.compat = true
+        of "path", "p": config.paths.add val
+        of "define", "d": config.defines.incl val
+        of "noenv": useEnv = false
+        of "nosystem": moduleFlags.incl SkipSystem
+        of "issystem":
+          moduleFlags.incl IsSystem
+          forwardArg = false
+        of "ismain":
+          moduleFlags.incl IsMain
+          forwardArg = false
+        of "bits":
+          case val
+          of "64": config.bits = 64
+          of "32": config.bits = 32
+          of "16": config.bits = 16
+          else: quit "invalid value for --bits"
+        of "cpu":
+          if not config.setTargetCPU(val):
+            quit "unknown CPU: " & val
+        of "os":
+          if not config.setTargetOS(val):
+            quit "unknown OS: " & val
+        of "boundchecks":
+          forwardArg = false
+          case val
+          of "on": checkModes.incl BoundCheck
+          of "off": checkModes.excl BoundCheck
+          else: quit "invalid value for --boundchecks"
+        of "silentmake":
+          silentMake = true
+          forwardArg = false
+        of "ischild":
+          # undocumented command line option, by design
+          isChild = true
+          forwardArg = false
+        of "passc":
+          if passC.len > 0:
+            passC.add " "
+          passC.add val
+          forwardArg = false
+        of "passl":
+          if passL.len > 0:
+            passL.add " "
+          passL.add val
+          forwardArg = false
+        of "nimcache":
+          config.nifcachePath = val
+          forwardArgNifc = true
+        else: writeHelp()
+        if forwardArg:
+          commandLineArgs.add " --" & key
+          if val.len > 0:
+            commandLineArgs.add ":" & quoteShell(val)
+        if forwardArgNifc:
+          commandLineArgsNifc.add " --" & key
+          if val.len > 0:
+            commandLineArgsNifc.add ":" & quoteShell(val)
 
     of cmdEnd: assert false, "cannot happen"
   if args.len == 0:
@@ -205,7 +223,7 @@ proc handleCmdLine() =
     # compile full project modules
     buildGraph config, args[0], forceRebuild, silentMake,
       commandLineArgs, commandLineArgsNifc, moduleFlags, (if doRun: DoRun else: DoCompile),
-      passC, passL
+      passC, passL, executableArgs
 
 when isMainModule:
   handleCmdLine()

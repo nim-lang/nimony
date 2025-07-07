@@ -583,7 +583,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
-    passC, passL: string) =
+    passC, passL: string, executableArgs: string) =
   let nifler = findTool("nifler")
   let nifmake = findTool("nifmake")
 
@@ -612,4 +612,4 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
   exec nifmakeCommand & quoteShell(buildFinalFilename)
   if cmd == DoRun:
-    exec c.config.exeFile(c.rootNode.files[0])
+    exec c.config.exeFile(c.rootNode.files[0]) & executableArgs
