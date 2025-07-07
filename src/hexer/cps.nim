@@ -438,12 +438,11 @@ proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   returnValue(c, dest, n, info)
   dest.copyIntoKind RetS, info:
-    dest.copyIntoKind DerefX, info:
-      dest.copyIntoKind DotX, info:
-        dest.copyIntoKind DerefX, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-        dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
-        dest.addIntLit 1, info # field is in superclass
+    dest.copyIntoKind DotX, info:
+      dest.copyIntoKind DerefX, info:
+        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+      dest.addIntLit 1, info # field is in superclass
 
 proc escapingLocals(c: var Context; n: Cursor) =
   if n.kind == DotToken: return
