@@ -10,6 +10,6 @@
    (asgn res.0 +1)
    (goto L37)
    (lab :L37)
-   (ret)))
+   (ret res.0)))
  (call my.proc +3)
- (ret))
+ (ret res.0))

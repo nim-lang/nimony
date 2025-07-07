@@ -69,4 +69,4 @@
  (let :my.var . .
   (i -1)
   (call echo.0 "abc" `cf0))
- (ret))
+ (ret .))
