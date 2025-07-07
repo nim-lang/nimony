@@ -851,6 +851,11 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   else:
     endRead c.dest
 
+proc addRet(c: var ControlFlow) =
+  c.dest.addParLe(RetS, NoLineInfo)
+  c.dest.addDotToken()
+  c.dest.addParRi()
+
 proc trProc(c: var ControlFlow; n: var Cursor) =
   let decl = n
   let thisProc = BlockOrLoop(kind: IsRoutine, sym: SymId(0), parent: c.currentBlock)
@@ -862,7 +867,7 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
       for ret in thisProc.breakInstrs: c.patch ret
-      c.dest.addParPair RetS, NoLineInfo
+      addRet c
     else:
       takeTree c.dest, n
       for ret in thisProc.breakInstrs: c.patch ret
@@ -962,7 +967,7 @@ proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
     inc n
     while n.kind != ParRi:
       trStmt c, n
-    c.dest.addParPair RetS, NoLineInfo
+    addRet c
     c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove c.dest
