@@ -15,7 +15,7 @@ proc fetchCallableType(c: var SemContext; n: Cursor; s: Sym): TypeCursor =
       c.buildErr n.info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
       result = c.types.autoType
 
-proc pickBestMatch(c: var SemContext; m: openArray[Match]): int =
+proc pickBestMatch(c: var SemContext; m: openArray[Match]; flags: set[SemFlag] = {}): int =
   result = -1
   var other = -1
   for i in 0..<m.len:
@@ -23,7 +23,7 @@ proc pickBestMatch(c: var SemContext; m: openArray[Match]): int =
       if result < 0:
         result = i
       else:
-        case cmpMatches(m[result], m[i])
+        case cmpMatches(m[result], m[i], preferIterators = PreferIterators in flags)
         of NobodyWins:
           other = i
           #echo "ambiguous ", pool.syms[m[result].fn.sym], " vs ", pool.syms[m[i].fn.sym]
@@ -645,7 +645,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       return
     else:
       buildErr c, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
-  var idx = pickBestMatch(c, m)
+  var idx = pickBestMatch(c, m, cs.flags)
 
   if idx < 0:
     # try converters
@@ -702,7 +702,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         m.add newMatch
         matchAdded = true
     if matchAdded: # m.len != L
-      idx = pickBestMatch(c, m)
+      idx = pickBestMatch(c, m, cs.flags)
 
   if idx >= 0:
     c.dest.add cs.callNode
@@ -861,7 +861,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     callNode: it.n.load(),
     dest: createTokenBuf(16),
     source: source,
-    flags: {InTypeContext, AllowEmpty}*flags
+    flags: {InTypeContext, AllowEmpty, PreferIterators}*flags
   )
   inc it.n
   # open temp scope for args, has to be closed after matching:
