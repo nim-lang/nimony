@@ -85,7 +85,10 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
       else:
         var n = readonlyCursorAt(m.src, def.pos)
         let decl = asTypeDecl(n)
-        if not containsOrIncl(o.lookedAtBodies, decl.name.symId):
+        if not containsOrIncl(o.lookedAtBodies, decl.name.symId) or viaPointer:
+          # For `viaPointer` we must traverse it again, in a shallow manner or
+          # else we might miss crucial forward declarations. This case is triggered
+          # by the `Continuation` type.
           recordDependencyImpl m, o, n, decl.body, viaPointer
     else:
       discard "uninteresting type as we only focus on the required struct declarations"
