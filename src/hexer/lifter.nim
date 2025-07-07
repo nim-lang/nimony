@@ -114,7 +114,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       if hasHook(c, typ.symId): return false
       return isTrivialTypeDecl(c, res.decl)
     else:
-      quit "could not load: " & pool.syms[typ.symId]
+      bug "could not load: " & pool.syms[typ.symId]
 
   case typ.typeKind
   of IntT, UIntT, FloatT, BoolT, CharT, PtrT,

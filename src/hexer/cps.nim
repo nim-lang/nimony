@@ -215,6 +215,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         dest.copyIntoKind AddrX, info:
           dest.addSymUse coroVar, info
         inc n
+        skip n # fn already handled
         while n.kind != ParRi:
           tr(c, dest, n)
         inc n
@@ -255,8 +256,8 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         objType: coroTypeForProc(c, c.procStack[^1]),
         field: field,
         typeAsSym: coroTypeForProc(c, sym),
-        def: 0,
-        use: -1)
+        def: -1,
+        use: 0)
     else:
       field = c.currentProc.localToEnv[sym].field
 
@@ -272,6 +273,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
             dest.addSymUse field, info
 
         inc n
+        skip n # fn already handled
         while n.kind != ParRi:
           tr(c, dest, n)
         inc n
@@ -299,7 +301,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       let typ = c.typeCache.getType(fn, {SkipAliases})
       if procHasPragma(typ, PassiveP):
-        bug "passive call without target"
+        trPassiveCall(c, dest, n, sym, default(Cursor))
       else:
         trSons(c, dest, n)
   else:
@@ -436,12 +438,12 @@ proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   returnValue(c, dest, n, info)
   dest.copyIntoKind RetS, info:
-      dest.copyIntoKind DerefX, info:
-        dest.copyIntoKind DotX, info:
-          dest.copyIntoKind DerefX, info:
-            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-          dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
-          dest.addIntLit 1, info # field is in superclass
+    dest.copyIntoKind DerefX, info:
+      dest.copyIntoKind DotX, info:
+        dest.copyIntoKind DerefX, info:
+          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+        dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+        dest.addIntLit 1, info # field is in superclass
 
 proc escapingLocals(c: var Context; n: Cursor) =
   if n.kind == DotToken: return
@@ -530,6 +532,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   # analyze which locals are used across basic blocks:
   var n = beginRead(c.currentProc.cf)
   escapingLocals(c, n)
+  inc n # ProcS
+  for i in 0..<BodyPos: skip n
 
   # compile the state machine:
   assert n.stmtKind == StmtsS
@@ -547,8 +551,10 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
 
 proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
   const info = NoLineInfo
+  let beforeType = dest.len
+  let objType = coroTypeForProc(c, sym)
   copyIntoKind dest, TypeS, info:
-    dest.addSymDef coroTypeForProc(c, sym), info
+    dest.addSymDef objType, info
     dest.addDotToken() # exported
     dest.addDotToken() # typevars
     dest.addDotToken() # pragmas
@@ -557,6 +563,7 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
       dest.addSymUse pool.syms.getOrIncl(RootObjName), info
       for key, value in c.currentProc.localToEnv.pairs:
         if value.def != value.use:
+          let beforeField = dest.len
           copyIntoKind dest, FldU, info:
             dest.addSymDef value.field, info
             dest.addDotToken() # exported
@@ -572,16 +579,16 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
             else:
               dest.copyTree value.typ
             dest.addDotToken() # default value
+          programs.publish(value.field, dest, beforeField)
+  programs.publish(objType, dest, beforeType)
 
-proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId; paramsBegin, paramsEnd: int) =
+proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
+                    paramsBegin, paramsEnd: int; origParams: Cursor) =
   let info = dest[paramsBegin].info
-  var params = createTokenBuf(14)
-  for i in paramsBegin..<paramsEnd: params.add dest[i]
   var retType = createTokenBuf(4)
   for i in paramsEnd..<dest.len: retType.add dest[i]
 
   dest.shrink paramsBegin
-  var n = beginRead(params)
   let thisParam = pool.syms.getOrIncl(EnvParamName)
   dest.copyIntoKind ParamsU, info:
     # first parameter is always the `this` pointer:
@@ -599,29 +606,30 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId; params
     init.addParLe OconstrX, info
     init.addSymUse coroTypeForProc(c, sym), info
 
+    var n = origParams
     # copy original parameters:
     if n.kind != DotToken:
       inc n
       while n.kind != ParRi:
         assert n.substructureKind == ParamU
-        inc n
+        dest.takeToken n
         let paramSym = n.symId
-        skip n # name
-        skip n # exported
+        dest.takeTree n # name
+        dest.takeTree n # exported
         let pragmas = n
-        skip n # pragmas
+        dest.takeTree n # pragmas
         let field = localToFieldname(c, paramSym)
         c.currentProc.localToEnv[paramSym] = EnvField(
           objType: coroTypeForProc(c, sym),
           field: field,
           pragmas: pragmas,
           typ: n,
-          def: 0,
-          use: -1)
+          def: -1,
+          use: 0)
         c.typeCache.registerLocal(paramSym, ParamY, n)
-        skip n # type
-        skip n # default value
-        skipParRi n
+        dest.takeTree n # type
+        dest.takeTree n # default value
+        dest.takeParRi n # ParRi
 
         init.copyIntoKind KvU, info:
           init.addSymUse field, info
@@ -666,34 +674,37 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   let iter = n
   var paramsEnd = -1
   var paramsBegin = -1
+  var origParams = default(Cursor)
   copyInto dest, n:
     var isConcrete = true # assume it is concrete
     let sym = n.symId
     c.procStack.add(sym)
     let closureOwner = c.procStack[0]
-    var isClosure = false
+    var isCoroutine = false
     for i in 0..<BodyPos:
       if i == ParamsPos:
+        origParams = n
         c.typeCache.openProcScope(sym, iter, n)
         paramsBegin = dest.len
       elif i == ReturnTypePos:
         paramsEnd = dest.len
       elif i == ProcPragmasPos:
         if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
-          isClosure = true
+          isCoroutine = true
           c.currentProc.kind = (if kind == IteratorY: IsIterator else: IsPassive)
-          patchParamList c, dest, init, sym, paramsBegin, paramsEnd
+          patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
       elif i == TypevarsPos:
         isConcrete = n.substructureKind != TypevarsU
       takeTree dest, n
 
-    if isConcrete and isClosure:
+    if isConcrete and isCoroutine:
       treIteratorBody(c, dest, init, iter, sym)
+      skip n # we used the body from the control flow graph
     else:
       takeTree dest, n
     discard c.procStack.pop()
   c.typeCache.closeScope()
-  if isClosure:
+  if isCoroutine:
     generateCoroutineType(c, dest, sym)
   swap(c.currentProc, currentProc)
 

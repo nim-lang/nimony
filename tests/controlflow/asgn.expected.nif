@@ -10,7 +10,7 @@
    (asgn res.0 +1)
    (goto L37)
    (lab :L37)
-   (ret)))
+   (ret res.0)))
  (let :my.var . .
   (array
    (i +8) +6) .)
@@ -24,4 +24,4 @@
  (asgn
   (deref `cf0) +56)
  (asgn i.0 +1)
- (ret))
+ (ret res.0))

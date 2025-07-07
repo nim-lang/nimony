@@ -44,6 +44,7 @@ type
     nextVar: int
     currentBlock: BlockOrLoop
     typeCache: TypeCache
+    resultSym: SymId
     keepReturns: bool
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
@@ -739,6 +740,7 @@ proc trResult(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
     if c.currentBlock.kind == IsRoutine:
       c.currentBlock.sym = n.symId
+    c.resultSym = n.symId
     takeLocalHeader c.typeCache, c.dest, n, ResultY
     trUseExpr c, n
 
@@ -851,6 +853,14 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   else:
     endRead c.dest
 
+proc addRet(c: var ControlFlow) =
+  c.dest.addParLe(RetS, NoLineInfo)
+  if c.resultSym != SymId(0):
+    c.dest.addSymUse c.resultSym, NoLineInfo
+  else:
+    c.dest.addDotToken()
+  c.dest.addParRi()
+
 proc trProc(c: var ControlFlow; n: var Cursor) =
   let decl = n
   let thisProc = BlockOrLoop(kind: IsRoutine, sym: SymId(0), parent: c.currentBlock)
@@ -862,7 +872,7 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
       for ret in thisProc.breakInstrs: c.patch ret
-      c.dest.addParPair RetS, NoLineInfo
+      addRet c
     else:
       takeTree c.dest, n
       for ret in thisProc.breakInstrs: c.patch ret
@@ -962,7 +972,7 @@ proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
     inc n
     while n.kind != ParRi:
       trStmt c, n
-    c.dest.addParPair RetS, NoLineInfo
+    addRet c
     c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove c.dest

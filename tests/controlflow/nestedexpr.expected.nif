@@ -28,5 +28,5 @@
    (asgn result.1 `cf0)
    (goto L85)
    (lab :L85)
-   (ret)))
- (ret))
+   (ret result.1)))
+ (ret result.1))
