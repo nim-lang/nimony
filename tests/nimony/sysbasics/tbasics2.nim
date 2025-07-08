@@ -76,3 +76,13 @@ block:
   let s = hello3()
   assert s == 123
 
+block:
+  proc foo =
+    let a = 999
+
+    proc abend(): int =
+      return a
+
+    let res = abend
+
+  foo()
