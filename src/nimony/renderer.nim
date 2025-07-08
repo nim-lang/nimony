@@ -991,6 +991,8 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         putWithSpace(g, tkMethod, "method")
       of FuncT:
         putWithSpace(g, tkFunc, "func")
+      of ProctypeT:
+        putWithSpace(g, tkProc, "proc")
       else:
         raiseAssert "cannot happen"
       inc n
