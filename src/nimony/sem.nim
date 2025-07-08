@@ -1374,13 +1374,22 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
     inc n
   of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP:
-    if kind == TypeY:
+    var hasErr = false
+    if kind != TypeY:
+      buildErr c, n.info, $pk & " pragma is only allowed on types"
+      hasErr = true
+    elif pk in {InheritableP, FinalP, PackedP, UnionP}:
+      var n2 = n
+      skipToEnd n2
+      if n2.typeKind in {RefT, PtrT}:
+        inc n2
+      if n2.typeKind != ObjectT:
+        buildErr c, n.info, $pk & " pragma is only allowed on object types", n
+        hasErr = true
+    if not hasErr:
       c.dest.add parLeToken(pk, n.info)
-      inc n
-    else:
-      buildErr c, n.info, "pragma only allowed on types"
-      inc n
-    c.dest.addParRi()
+      c.dest.addParRi()
+    inc n
   of CursorP:
     if kind in {VarY, LetY, CursorY}:
       c.dest.add parLeToken(pk, n.info)
