@@ -657,7 +657,6 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     swap c.dest, anons
     semProcImpl c, it, kind, pass, name
     swap c.dest, anons
-    let insertPos = c.pending.len
     c.dest.add parLeToken(ExprX, info)
     let anonTypePos = c.dest.len
     c.dest.add anons

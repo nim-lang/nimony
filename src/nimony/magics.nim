@@ -18,6 +18,7 @@ proc magicToTag*(m: string): (string, int) =
   case m
   of "Defined": res DefinedX
   of "Declared": res DeclaredX
+  of "AstToStr": res AstToStrX
   of "IsMainModule": res IsMainModuleX
   of "Compiles": res CompilesX
   of "ArrGet": res AtX

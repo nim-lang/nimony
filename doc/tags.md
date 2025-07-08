@@ -233,6 +233,7 @@
 | `(compiles X)` | NimonyExpr | |
 | `(declared X)` | NimonyExpr | |
 | `(defined X)` | NimonyExpr | |
+| `(astToStr X)` | NimonyExpr | converts AST to string |
 | `(instanceof X T)` | NimonyExpr | only-fans operator for object privilege checking |
 | `(proccall X)` | NimonyExpr | turns method call into a proc call aka a "static" call |
 | `(high X)` | NimonyExpr | |

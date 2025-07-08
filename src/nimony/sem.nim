@@ -3322,6 +3322,20 @@ proc semDeclared(c: var SemContext; it: var Item) =
     it.typ = c.types.boolType
     commonType c, it, beforeExpr, expected
 
+proc semAstToStr(c: var SemContext; it: var Item) =
+  inc it.n
+  let info = it.n.info
+  let astStr = asNimCode(it.n)
+  skip it.n
+  skipParRi it.n
+
+  let beforeExpr = c.dest.len
+  c.dest.addStrLit(astStr, info)
+
+  let expected = it.typ
+  it.typ = c.types.stringType
+  commonType c, it, beforeExpr, expected
+
 proc semIsMainModule(c: var SemContext; it: var Item) =
   let info = it.n.info
   inc it.n
@@ -4521,6 +4535,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semDefined c, it
     of DeclaredX:
       semDeclared c, it
+    of AstToStrX:
+      semAstToStr c, it
     of IsMainModuleX:
       semIsMainModule c, it
     of AtX:

@@ -1474,7 +1474,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of HighX, LowX, TypeofX,
        SizeofX, AlignofX, OffsetofX,
        CardX, UnpackX, FieldsX, CompilesX,
-       DeclaredX, DefinedX:
+       DeclaredX, DefinedX, AstToStrX:
       gcallsystem(g, n, $n.exprKind)
 
     of ProccallX:
