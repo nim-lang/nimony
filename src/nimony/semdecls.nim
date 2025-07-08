@@ -1015,3 +1015,22 @@ proc semUsing(c: var SemContext; n: var Cursor) =
     takeParRi c, n
 
   takeParRi c, n
+
+proc semDo(c: var SemContext; it: var Item; pass: PassKind) =
+  let info = it.n.info
+  inc it.n
+  var anons = createTokenBuf()
+  # transform the do notation to an anon proc
+  anons.addParLe(ProcS, info)
+  anons.addEmpty info # name
+  anons.addEmpty3 info # export, pattern, typevars
+  anons.takeTree it.n  # params
+  anons.takeTree it.n  # return type
+  anons.addEmpty info  # pragma
+  anons.addEmpty info  # effects
+  anons.takeTree it.n  # body
+  anons.takeParRi it.n
+  var anonIt = Item(n: beginRead(anons), typ: it.typ)
+  semProc c, anonIt, ProcY, pass
+  endRead anons
+  it.typ = anonIt.typ
