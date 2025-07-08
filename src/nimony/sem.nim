@@ -4584,7 +4584,10 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semIs c, it
     of TabconstrX:
       semTableConstructor c, it, flags
-    of CurlyatX, DoX,
+    of DoX:
+      procGuard c:
+        semDo c, it, whichPass(c)
+    of CurlyatX,
        CompilesX, AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)
