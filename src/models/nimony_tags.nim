@@ -76,7 +76,7 @@ type
     CompilesX = (ord(CompilesTagId), "compiles")
     DeclaredX = (ord(DeclaredTagId), "declared")
     DefinedX = (ord(DefinedTagId), "defined")
-    AstToStrX = (ord(AstToStrTagId), "AstToStr")  ## converts AST to string
+    AstToStrX = (ord(AstToStrTagId), "astToStr")  ## converts AST to string
     InstanceofX = (ord(InstanceofTagId), "instanceof")  ## only-fans operator for object privilege checking
     ProccallX = (ord(ProccallTagId), "proccall")  ## turns method call into a proc call aka a "static" call
     HighX = (ord(HighTagId), "high")

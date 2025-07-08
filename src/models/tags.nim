@@ -536,7 +536,7 @@ const
     ("compiles", 231),
     ("declared", 232),
     ("defined", 233),
-    ("AstToStr", 234),
+    ("astToStr", 234),
     ("instanceof", 235),
     ("proccall", 236),
     ("high", 237),
