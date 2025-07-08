@@ -538,6 +538,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.copyIntoKind DerefX, info:
             dest.typedEnv info, c.env
           dest.addSymUse repWith.field, info
+        inc n
       else:
         takeTree dest, n
   of DotToken, UnknownToken, EofToken, Ident, SymbolDef,
