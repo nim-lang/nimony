@@ -157,7 +157,11 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
         copyIntoKind c.dest, HaddrX, c.info:
           copyTree c.dest, paramA
     of attachedDestroy:
-      copyTree c.dest, paramA
+      if isMutFirstParam(s):
+        copyIntoKind c.dest, HaddrX, c.info:
+          copyTree c.dest, paramA
+      else:
+        copyTree c.dest, paramA
     of attachedDup:
       copyTree c.dest, paramB
     of attachedCopy, attachedTrace, attachedSink:
