@@ -2919,60 +2919,85 @@ proc buildObjConstrField(c: var SemContext; field: Local;
       c.dest.addIntLit(depth, info)
     c.dest.addParRi()
 
-proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymId, Cursor]): bool =
+proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymId, Cursor]): (bool, SymId) =
   var n = n
   inc n
-  result = false
+  result = (false, SymId(0))
   if n.substructureKind == NilU:
     return
   while n.kind != ParRi:
     let local = takeLocal(n, SkipFinalParRi)
     if local.name.symId in setFields:
-      result = true
+      result = (true, local.name.symId)
       break
 
-proc fieldsPresentInBranch(c: var SemContext; n: var Cursor;
+proc asNimSym(symId: SymId): string =
+  result = pool.syms[symId]
+  extractBasename(result)
+
+template conflictingBranchesError(c: var SemContext, info: PackedLineInfo, prevFields: SymId, currentFields: SymId) = 
+  c.buildErr info, "The fields '" & asNimSym(prevFields) & 
+              "' and '" & asNimSym(currentFields) & "' cannot be initialized together, " &
+              "because they are from conflicting branches in the case object."
+
+template badDiscriminatorError(c: var SemContext, info: PackedLineInfo, field: SymId, discriminator: SymId) =
+  c.buildErr info, 
+    ("cannot prove that it's safe to initialize '$1' with " &
+    "the runtime value for the discriminator '$2'.") %
+    [asNimSym(field), asNimSym(discriminator)]
+
+proc fieldsPresentInBranch(c: var SemContext; n: var Cursor; selector: SymId;
                 setFields: Table[SymId, Cursor]; info: PackedLineInfo;
                 bindings: Table[SymId, Cursor]; depth: int) =
-  var branches = 0
+  var lastFieldSymId = SymId(0)
   block matched:
     while n.kind != ParRi:
       case n.substructureKind
       of OfU:
         inc n
         skip n
-        let hasField = fieldsPresentInInitExpr(c, n, setFields)
+        let (hasField, presentFieldSymId) = fieldsPresentInInitExpr(c, n, setFields)
         if hasField:
+          if lastFieldSymId != SymId(0):
+            conflictingBranchesError c, info, lastFieldSymId, presentFieldSymId
           inc n # stmt
           while n.kind != ParRi:
             let field = takeLocal(n, SkipFinalParRi)
             buildObjConstrField(c, field, setFields, info, bindings, depth)
           skipParRi n
-          inc branches
+          lastFieldSymId = presentFieldSymId
         else:
           skip n
 
         skipParRi n
       of ElseU:
         inc n
-        let hasField = fieldsPresentInInitExpr(c, n, setFields)
+        let (hasField, presentFieldSymId) = fieldsPresentInInitExpr(c, n, setFields)
         if hasField:
+          if lastFieldSymId != SymId(0):
+            conflictingBranchesError c, info, lastFieldSymId, presentFieldSymId
           inc n # stmt
           while n.kind != ParRi:
             let field = takeLocal(n, SkipFinalParRi)
             buildObjConstrField(c, field, setFields, info, bindings, depth)
           skipParRi n # stmt
-          inc branches
+          lastFieldSymId = presentFieldSymId
         else:
           skip n
         skipParRi n
       else:
         error "illformed AST inside case object: ", n
 
+  if selector in setFields:
+    let discriminatorVal = setFields[selector]
+  elif lastFieldSymId != SymId(0):
+    badDiscriminatorError(c, info, lastFieldSymId, selector)
+  else:
+    discard
+
 proc buildObjConstrFields(c: var SemContext; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: PackedLineInfo;
                           bindings: Table[SymId, Cursor]; depth = 0) =
-  # XXX for now counts each case object field as separate
   var iter = initObjFieldIter()
   while nextField(iter, n, keepCase = true):
     if n.substructureKind == CaseU:
@@ -2982,7 +3007,7 @@ proc buildObjConstrFields(c: var SemContext; n: var Cursor;
       let field = takeLocal(body, SkipFinalParRi)
       buildObjConstrField(c, field, setFields, info, bindings, depth)
 
-      fieldsPresentInBranch(c, body, setFields, info, bindings, depth)
+      fieldsPresentInBranch(c, body, field.name.symId, setFields, info, bindings, depth)
       skip n
     else:
       let field = takeLocal(n, SkipFinalParRi)
