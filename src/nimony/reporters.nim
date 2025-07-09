@@ -101,7 +101,7 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
-proc reportErrors*(dest: var TokenBuf; noReport = false): int =
+proc reportErrors*(dest: var TokenBuf): int =
   let errTag = pool.tags.getOrIncl("err")
   var i = 0
   var r = Reporter(verbosity: 2, noColors: not useColors())
@@ -121,12 +121,12 @@ proc reportErrors*(dest: var TokenBuf; noReport = false): int =
         endRead(dest)
       # instantiation contexts:
       while dest[i].kind == DotToken:
-        if doReport and not noReport:
+        if doReport:
           r.trace infoToStr(dest[i].info), "instantiation from here"
         inc i
       # error message:
       assert dest[i].kind == StringLit
-      if doReport and not noReport:
+      if doReport:
         r.error infoToStr(info), pool.strings[dest[i].litId]
       inc i
     else:

@@ -3322,9 +3322,19 @@ proc semDeclared(c: var SemContext; it: var Item) =
     it.typ = c.types.boolType
     commonType c, it, beforeExpr, expected
 
-proc reportErrors(c: var SemContext, noReport = false): int =
-  result = reporters.reportErrors(c.dest, noReport = noReport)
+proc reportErrors(c: var SemContext): int =
+  result = reporters.reportErrors(c.dest)
 
+proc hasError(dest: TokenBuf): bool =
+  let errTag = pool.tags.getOrIncl("err")
+  var i = 0
+  result = false
+  while i < dest.len:
+    if dest[i].kind == ParLe and dest[i].tagId == errTag:
+      result = true
+      break
+    else:
+      inc i
 
 proc semCompiles(c: var SemContext; it: var Item) =
   inc it.n
@@ -3349,7 +3359,7 @@ proc semCompiles(c: var SemContext; it: var Item) =
 
   c.currentScope = oldScope
 
-  let hasError = reportErrors(c, noReport = true)
+  let hasError = hasError(c.dest)
   shrink c.dest, beforeExpr
   c.currentScope = oldScope
   c.procRequests.setLen(oldProcRequestsLen)
@@ -3367,7 +3377,7 @@ proc semCompiles(c: var SemContext; it: var Item) =
   skipParRi(it.n)
 
   let expected = it.typ
-  c.dest.addParLe(if hasError == 0: TrueX else: FalseX, info)
+  c.dest.addParLe(if hasError: FalseX else: TrueX, info)
   c.dest.addParRi()
   it.typ = c.types.boolType
   commonType c, it, beforeExpr, expected
