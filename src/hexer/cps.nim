@@ -712,6 +712,17 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     generateCoroutineType(c, dest, sym)
   swap(c.currentProc, currentProc)
 
+proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n
+  dest.copyIntoKind IfS, info:
+    dest.copyIntoKind ElifU, info:
+      tr c, dest, n
+      tr c, dest, n
+    dest.copyIntoKind ElseU, info:
+      tr c, dest, n
+  dest.takeParRi n
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, EofToken, Ident, SymbolDef,
@@ -777,7 +788,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of TypeofX:
         takeTree dest, n
       else:
-        trSons(c, dest, n)
+        if n.cfKind == IteF:
+          trIte c, dest, n
+        else:
+          trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
 
