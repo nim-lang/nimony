@@ -150,7 +150,7 @@ proc coroTypeForProc(c: Context; procId: SymId): SymId =
 
 proc stateToProcName(c: Context; sym: SymId; state: int): SymId =
   let s = extractVersionedBasename(pool.syms[sym])
-  result = pool.syms.getOrIncl(s & "." & $state & "." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(s & ".s" & $state & "." & c.thisModuleSuffix)
 
 proc localToFieldname(c: var Context; local: SymId): SymId =
   var name = pool.syms[local]
@@ -372,6 +372,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
   const info = NoLineInfo
+  let procBegin = dest.len
   dest.addParLe ProcS, info
   let name = stateToProcName(c, sym, state)
   dest.addSymDef name, info
@@ -390,7 +391,11 @@ proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
   dest.addSymUse pool.syms.getOrIncl("Continuation.0." & SystemModuleSuffix), info
   dest.addDotToken() # pragmas
   dest.addDotToken() # effects
+
+  publishSignature dest, name, procBegin
+
   dest.addParLe StmtsS, info # body
+  programs.publish(name, dest, procBegin)
 
 proc gotoNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   # generate: `return state(this)`
