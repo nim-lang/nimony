@@ -37,3 +37,6 @@ assert guten == """
 
 let s: int = 12
 let m: int = 23"""
+
+assert not compiles(3 + "1" + 4)
+assert compiles(3 + 4)

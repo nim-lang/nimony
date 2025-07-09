@@ -3331,6 +3331,67 @@ proc semDeclared(c: var SemContext; it: var Item) =
     it.typ = c.types.boolType
     commonType c, it, beforeExpr, expected
 
+proc reportErrors(c: var SemContext): int =
+  result = reporters.reportErrors(c.dest)
+
+proc hasError(dest: TokenBuf): bool =
+  let errTag = pool.tags.getOrIncl("err")
+  var i = 0
+  result = false
+  while i < dest.len:
+    if dest[i].kind == ParLe and dest[i].tagId == errTag:
+      result = true
+      break
+    else:
+      inc i
+
+proc semCompiles(c: var SemContext; it: var Item) =
+  inc it.n
+  let info = it.n.info
+
+  let beforeExpr = c.dest.len
+
+  let oldScope = c.currentScope
+  let oldProcRequestsLen = c.procRequests.len
+  let oldTypeInstDeclsLen = c.typeInstDecls.len
+  let oldInstantiatedFrom = c.instantiatedFrom.len
+  let oldInWhen = c.inWhen
+  let oldTemplateInstCounter = c.templateInstCounter
+  let oldPending = c.pending.len
+  let oldIncludeStackLen = c.includeStack.len
+  let oldDebugAllowErrors = c.debugAllowErrors
+  c.debugAllowErrors = true
+
+  c.openScope()
+  var arg = Item(n: it.n, typ: c.types.autoType)
+  semExpr(c, arg)
+
+  c.currentScope = oldScope
+
+  let hasError = hasError(c.dest)
+  shrink c.dest, beforeExpr
+  c.currentScope = oldScope
+  c.procRequests.setLen(oldProcRequestsLen)
+  c.typeInstDecls.setLen(oldTypeInstDeclsLen)
+  c.instantiatedFrom.setLen(oldInstantiatedFrom)
+  c.includeStack.setLen(oldIncludeStackLen)
+
+  c.inWhen = oldInWhen
+  c.templateInstCounter = oldTemplateInstCounter
+  c.pending.shrink(oldPending)
+  c.debugAllowErrors = oldDebugAllowErrors
+
+
+  skip it.n
+  skipParRi(it.n)
+
+  let expected = it.typ
+  c.dest.addParLe(if hasError: FalseX else: TrueX, info)
+  c.dest.addParRi()
+  it.typ = c.types.boolType
+  commonType c, it, beforeExpr, expected
+
+
 proc semAstToStr(c: var SemContext; it: var Item) =
   inc it.n
   let info = it.n.info
@@ -4612,8 +4673,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
     of DoX:
       procGuard c:
         semDo c, it, whichPass(c)
-    of CurlyatX,
-       CompilesX, AlignofX, OffsetofX:
+    of CompilesX:
+      semCompiles c, it
+    of CurlyatX, AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, it.n.info, "to implement: " & $exprKind(it.n)
       takeToken c, it.n
@@ -4624,8 +4686,6 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
   of ParRi, EofToken, SymbolDef, UnknownToken, DotToken:
     buildErr c, it.n.info, "expression expected"
 
-proc reportErrors(c: var SemContext): int =
-  result = reporters.reportErrors(c.dest)
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
