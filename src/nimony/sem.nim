@@ -1378,7 +1378,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     if kind != TypeY:
       buildErr c, n.info, $pk & " pragma is only allowed on types"
       hasErr = true
-    elif pk in {InheritableP, FinalP, PackedP, UnionP}:
+    elif pk in {ViewP, InheritableP, FinalP, PackedP, UnionP}:
       var n2 = n
       skipToEnd n2
       if n2.typeKind in {RefT, PtrT}:

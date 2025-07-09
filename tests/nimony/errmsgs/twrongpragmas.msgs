@@ -9,3 +9,4 @@ tests/nimony/errmsgs/twrongpragmas.nim(16, 16) Error: inheritable pragma is only
 tests/nimony/errmsgs/twrongpragmas.nim(17, 16) Error: final pragma is only allowed on object types
 tests/nimony/errmsgs/twrongpragmas.nim(17, 23) Error: union pragma is only allowed on object types
 tests/nimony/errmsgs/twrongpragmas.nim(17, 30) Error: packed pragma is only allowed on object types
+tests/nimony/errmsgs/twrongpragmas.nim(18, 16) Error: view pragma is only allowed on object types

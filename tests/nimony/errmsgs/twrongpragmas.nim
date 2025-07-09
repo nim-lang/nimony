@@ -15,3 +15,4 @@ proc procWithPragmaOnlyForObj() {.final, union.} = discard
 type
   FooNonObj1 {.inheritable.} = int
   FooNonObj2 {.final, union, packed.} = int
+  FooNonObj3 {.view.} = int
