@@ -431,14 +431,6 @@ proc publish*(c: var SemContext; s: SymId; start: int) =
     buf.add c.dest[i]
   programs.publish s, buf
 
-proc publishSignature*(c: var SemContext; s: SymId; start: int) =
-  var buf = createTokenBuf(c.dest.len - start + 3)
-  for i in start..<c.dest.len:
-    buf.add c.dest[i]
-  buf.addDotToken() # body is empty for a signature
-  buf.addParRi()
-  programs.publish s, buf
-
 # -------------------------------------------------------------------------------------------------
 
 proc takeTree*(c: var SemContext; n: var Cursor) =

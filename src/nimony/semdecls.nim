@@ -547,7 +547,7 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
       buildErr c, it.n.info, "`effects` must be empty"
       skip it.n
 
-    publishSignature c, symId, declStart
+    publishSignature c.dest, symId, declStart
     let hookName = getHookName(symId)
     let hk = hookToKind(hookName)
     if status in {OkNew, OkExistingFresh}:
