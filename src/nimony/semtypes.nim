@@ -77,6 +77,7 @@ type
     enumType: SymId
     thisValue: xint
     hasHole: bool
+    declaredNames: HashSet[StrId]
 
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState)
 
