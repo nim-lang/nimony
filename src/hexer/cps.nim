@@ -489,8 +489,10 @@ proc escapingLocals(c: var Context; n: Cursor) =
       of ParLe:
         inc nested
       of Symbol:
-        if c.currentProc.localToEnv.hasKey(n.symId):
-          c.currentProc.localToEnv[n.symId].use = currentState
+        let def = c.currentProc.localToEnv.getOrDefault(n.symId, EnvField(def: -2)).def
+        if def != -2:
+          if def != currentState:
+            c.currentProc.localToEnv[n.symId].use = currentState
       else:
         discard
       inc n
@@ -534,21 +536,25 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
 
   # analyze which locals are used across basic blocks:
   var n = beginRead(c.currentProc.cf)
-  escapingLocals(c, n)
   inc n # ProcS
   for i in 0..<BodyPos: skip n
+  escapingLocals(c, n)
 
   # compile the state machine:
   assert n.stmtKind == StmtsS
   dest.takeToken n
   dest.add init
+  var subProcs = 0
   while n.kind != ParRi:
     let pos = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.labels.getOrDefault(pos, -1)
     if state != -1:
+      if subProcs == 0:
+        gotoNextState(c, dest, state, n.info)
       dest.addParRi() # stmts
       dest.addParRi() # proc decl
       newLocalProc c, dest, state, sym
+      inc subProcs
     tr c, dest, n
 
 proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
