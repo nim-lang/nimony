@@ -143,6 +143,7 @@ type
     thisModuleSuffix: string
     procStack: seq[SymId]
     currentProc: ProcContext
+    continuationProcImpl: Cursor
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
@@ -171,12 +172,14 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   assert state >= 0
+  if cursorIsNil(c.continuationProcImpl):
+    bug "could not load system.ContinuationProc"
   dest.copyIntoKind OconstrX, info:
     dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
     dest.copyIntoKind KvU, info:
       dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
       dest.copyIntoKind CastX, info:
-        dest.addSymUse pool.syms.getOrIncl(ContinuationProcName), info
+        dest.copyTree c.continuationProcImpl
         dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
     dest.copyIntoKind KvU, info:
       dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
@@ -489,8 +492,10 @@ proc escapingLocals(c: var Context; n: Cursor) =
       of ParLe:
         inc nested
       of Symbol:
-        if c.currentProc.localToEnv.hasKey(n.symId):
-          c.currentProc.localToEnv[n.symId].use = currentState
+        let def = c.currentProc.localToEnv.getOrDefault(n.symId, EnvField(def: -2)).def
+        if def != -2:
+          if def != currentState:
+            c.currentProc.localToEnv[n.symId].use = currentState
       else:
         discard
       inc n
@@ -513,7 +518,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
     if c.currentProc.reachable[i]:
       if c.currentProc.cf[i].kind == GotoInstr:
         let diff = c.currentProc.cf[i].getInt28
-        if diff > 0 and i+diff < c.currentProc.cf.len and c.currentProc.reachable[i+diff]:
+        if i+diff > 0 and i+diff < c.currentProc.cf.len and c.currentProc.reachable[i+diff]:
           c.currentProc.labels[i+diff] = nextLabel
           inc nextLabel
       elif c.currentProc.cf[i].stmtKind == YldS or
@@ -529,26 +534,31 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
             if nested == 0:
               c.currentProc.labels[j+1] = nextLabel
               inc nextLabel
+              break
           else:
             discard
 
   # analyze which locals are used across basic blocks:
   var n = beginRead(c.currentProc.cf)
-  escapingLocals(c, n)
   inc n # ProcS
   for i in 0..<BodyPos: skip n
+  escapingLocals(c, n)
 
   # compile the state machine:
   assert n.stmtKind == StmtsS
   dest.takeToken n
   dest.add init
+  var subProcs = 0
   while n.kind != ParRi:
     let pos = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.labels.getOrDefault(pos, -1)
     if state != -1:
+      if subProcs == 0:
+        gotoNextState(c, dest, state, n.info)
       dest.addParRi() # stmts
       dest.addParRi() # proc decl
       newLocalProc c, dest, state, sym
+      inc subProcs
     tr c, dest, n
 
 proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
@@ -796,9 +806,19 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ParRi:
     bug "unexpected ')' inside"
 
+proc generateContinuationProcImpl(): Cursor =
+  let symId = pool.syms.getOrIncl("ContinuationProc.0." & SystemModuleSuffix)
+  let impl = programs.tryLoadSym(symId)
+  if impl.status == LacksNothing:
+    let t = asTypeDecl(impl.decl)
+    if t.kind == TypeY:
+      return t.body
+  return default(Cursor)
+
 proc transformToCps*(n: var Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(thisModuleSuffix: moduleSuffix,
-    afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix))
+    afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix),
+    continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
   result = createTokenBuf()
   assert n.stmtKind == StmtsS
