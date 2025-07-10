@@ -136,7 +136,8 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       var field = asEnumDecl(decl.body).firstField
       var last = field
       while field.kind != ParRi:
-        last = field
+        if field.substructureKind == EfldU:
+          last = field
         skip field
       var lastVal = asLocal(last).val
       inc lastVal # skip tuple tag
