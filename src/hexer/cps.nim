@@ -534,6 +534,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
             if nested == 0:
               c.currentProc.labels[j+1] = nextLabel
               inc nextLabel
+              break
           else:
             discard
 
