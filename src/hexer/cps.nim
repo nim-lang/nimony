@@ -513,7 +513,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
     if c.currentProc.reachable[i]:
       if c.currentProc.cf[i].kind == GotoInstr:
         let diff = c.currentProc.cf[i].getInt28
-        if diff > 0 and i+diff < c.currentProc.cf.len and c.currentProc.reachable[i+diff]:
+        if i+diff > 0 and i+diff < c.currentProc.cf.len and c.currentProc.reachable[i+diff]:
           c.currentProc.labels[i+diff] = nextLabel
           inc nextLabel
       elif c.currentProc.cf[i].stmtKind == YldS or
