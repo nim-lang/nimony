@@ -40,6 +40,9 @@ proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId, enumSy
 
     inc enumDecl # Skips ParRi
 
+    while enumDecl.kind == ParLe and enumDecl.tagId == ErrT:
+      skip enumDecl
+
     c.dest.add symToken(symId, symInfo)
     c.dest.addParRi() # set
 

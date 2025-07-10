@@ -145,6 +145,10 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
     # XXX original nim always injects enum fields regardless of the enum sym itself,
     # this does the same here
     delayed.status = OkNew
+  if state.declaredNames.contains delayed.lit:
+    delayed.status = ErrRedef
+  else:
+    state.declaredNames.incl delayed.lit
   let beforeExportMarker = c.dest.len
   if n.kind == DotToken:
     if state.isExported:
@@ -211,8 +215,11 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
           state.thisValue = explicitValue
         c.dest.add strToken(delayed.lit, n.info)
         c.dest.addParRi()
-  c.addSym delayed
   takeParRi c, n
+  if delayed.status == OkNew:
+    addOverloadable(c.currentScope, delayed.lit, delayed.s)
+  elif delayed.status == ErrRedef:
+    c.buildErr delayed.info, "attempt to redeclare: " & pool.strings[delayed.lit]
   publish c, delayed.s.name, declStart
 
 proc semGenericParam(c: var SemContext; n: var Cursor) =
