@@ -143,6 +143,7 @@ type
     thisModuleSuffix: string
     procStack: seq[SymId]
     currentProc: ProcContext
+    continuationProcImpl: Cursor
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
@@ -171,12 +172,14 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   assert state >= 0
+  if cursorIsNil(c.continuationProcImpl):
+    bug "could not load system.ContinuationProc"
   dest.copyIntoKind OconstrX, info:
     dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
     dest.copyIntoKind KvU, info:
       dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
       dest.copyIntoKind CastX, info:
-        dest.addSymUse pool.syms.getOrIncl(ContinuationProcName), info
+        dest.copyTree c.continuationProcImpl
         dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
     dest.copyIntoKind KvU, info:
       dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
@@ -802,9 +805,19 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ParRi:
     bug "unexpected ')' inside"
 
+proc generateContinuationProcImpl(): Cursor =
+  let symId = pool.syms.getOrIncl("ContinuationProc.0." & SystemModuleSuffix)
+  let impl = programs.tryLoadSym(symId)
+  if impl.status == LacksNothing:
+    let t = asTypeDecl(impl.decl)
+    if t.kind == TypeY:
+      return t.body
+  return default(Cursor)
+
 proc transformToCps*(n: var Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(thisModuleSuffix: moduleSuffix,
-    afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix))
+    afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix),
+    continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
   result = createTokenBuf()
   assert n.stmtKind == StmtsS
