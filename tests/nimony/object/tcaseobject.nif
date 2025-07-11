@@ -33,7 +33,9 @@
   (oconstr ~2,23 Foo.0.tcauiaoif
    (kv x.0.tcauiaoif 45,4,lib/std/system/defaults.nim
     (expr
-     (false))))) 4,16
+     (false)))
+   (kv y.0.tcauiaoif 43,6,lib/std/system/defaults.nim
+    (expr +0)))) 4,16
  (asgn ~4 foo.0.tcauiaoif 5
   (oconstr 2,22 Foo.0.tcauiaoif 2
    (kv ~1 x.0.tcauiaoif 2
