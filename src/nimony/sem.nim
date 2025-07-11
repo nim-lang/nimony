@@ -2990,6 +2990,8 @@ proc fieldsPresentInBranch(c: var SemContext; n: var Cursor; selector: Local;
   var lastFieldSymId = SymId(0)
   var isBranchSelected = false
   let selectorSymId = selector.name.symId
+
+  var bestBranch = default(Cursor)
   block matched:
     while n.kind != ParRi:
       case n.substructureKind
@@ -3006,6 +3008,9 @@ proc fieldsPresentInBranch(c: var SemContext; n: var Cursor; selector: Local;
         else:
           state = NoSelector
         skip n
+
+        if bestBranch == default(Cursor):
+          bestBranch = n
         let (hasField, presentFieldSymId) = fieldsPresentInInitExpr(c, n, setFields)
         if hasField:
           if lastFieldSymId != SymId(0):
@@ -3042,8 +3047,18 @@ proc fieldsPresentInBranch(c: var SemContext; n: var Cursor; selector: Local;
       else:
         error "illformed AST inside case object: ", n
 
-  if selectorSymId notin setFields and lastFieldSymId != SymId(0):
-    badDiscriminatorError(c, info, lastFieldSymId, selectorSymId)
+  if selectorSymId notin setFields:
+    if lastFieldSymId != SymId(0):
+      badDiscriminatorError(c, info, lastFieldSymId, selectorSymId)
+    elif bestBranch != default(Cursor):
+      inc bestBranch # stmt
+      while bestBranch.kind != ParRi:
+        if bestBranch.substructureKind == NilU:
+          skip bestBranch
+          break
+        let field = takeLocal(bestBranch, SkipFinalParRi)
+        buildObjConstrField(c, field, setFields, info, bindings, depth)
+      skipParRi bestBranch
 
 proc buildObjConstrFields(c: var SemContext; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: PackedLineInfo;
