@@ -1,0 +1,4 @@
+`
+proc foo1() {..} =
+  discard
+`
