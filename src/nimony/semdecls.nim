@@ -728,12 +728,12 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           dec nested
         elif n.kind == ParLe: inc nested
       inBuf.addParRi
-      var it2 = Item(typ: it.typ)
+      var it2 = Item()
       swap c.dest, outBuf
       for i in 0 ..< macroInvocsPos.len:
         inBuf.addParRi  # close StmtsS added in addCall proc
         inBuf.addParRi  # close CallX
-        it2.n = cursorAt(inBuf, inBufReadPos[^1])
+        it2 = Item(n: cursorAt(inBuf, inBufReadPos[^1]), typ: c.types.autoType)
         #echo "macro invoc in: ", toString it2.n
         #let lastDestLen = c.dest.len
         semCall c, it2, {}
