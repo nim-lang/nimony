@@ -2,3 +2,24 @@
 proc foo1() {..} =
   discard
 `
+`
+proc foo2() {..} =
+  discard
+
+proc foo2() {..} =
+  discard
+`
+`
+proc foo3() {..} =
+  discard
+
+proc foo3() {..} =
+  discard
+`
+`
+proc foo3() {..} =
+  discard
+
+proc foo3() {..} =
+  discard
+`
