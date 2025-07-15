@@ -198,6 +198,7 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Curso
             break
           else:
             inc nested
+  let info = if hasErr: n.info else: info
   c.dest.buildTree ErrT, info:
     if hasErr:
       inc n
