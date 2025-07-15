@@ -104,8 +104,10 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
     return result
 
   let info = n.info
-  let takeAddr = not constructsValue(n) and n.exprKind notin {AddrX, HaddrX}
+  var takeAddr = not constructsValue(n) and n.exprKind notin {AddrX, HaddrX}
   let argType = getType(c.typeCache, n)
+  if argType.typeKind in {RefT, PtrT}:
+    takeAddr = false
   c.needsXelim = true
 
   dest.addParLe(ExprX, info) # will be closed with closeTemp
