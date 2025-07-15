@@ -104,8 +104,10 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
     return result
 
   let info = n.info
-  let takeAddr = not constructsValue(n)
+  var takeAddr = not constructsValue(n) and n.exprKind notin {AddrX, HaddrX}
   let argType = getType(c.typeCache, n)
+  if argType.typeKind in {RefT, PtrT}:
+    takeAddr = false
   c.needsXelim = true
 
   dest.addParLe(ExprX, info) # will be closed with closeTemp
@@ -113,30 +115,17 @@ proc evalOnce(c: var Context; dest: var TokenBuf; n: var Cursor): TempLoc =
     let symId = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
     inc c.tmpCounter
 
-    if takeAddr:
-      # we can only take addresses of lvalues
-      let lvalue = pool.syms.getOrIncl("`vtableTemp." & $c.tmpCounter)
-      inc c.tmpCounter
-
-      copyIntoKind dest, VarS, info:
-        addSymDef dest, lvalue, info
-        dest.addEmpty2 info # export marker, pragma
-        copyTree dest, argType
-        tr c, dest, n
-
-      copyIntoKind dest, VarS, info:
-        addSymDef dest, symId, info
-        dest.addEmpty2 info # export marker, pragma
+    copyIntoKind dest, VarS, info:
+      addSymDef dest, symId, info
+      dest.addEmpty2 info # export marker, pragma
+      if takeAddr:
         # type:
         copyIntoKind dest, PtrT, info:
           copyTree dest, argType
         # value:
         copyIntoKind dest, AddrX, info:
-          addSymUse dest, lvalue, info
-    else:
-      copyIntoKind dest, VarS, info:
-        addSymDef dest, symId, info
-        dest.addEmpty2 info # export marker, pragma
+          tr c, dest, n
+      else:
         # type:
         copyTree dest, argType
         # value:
