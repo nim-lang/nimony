@@ -117,7 +117,7 @@ proc add(dest: var TokenBuf; tar: Target) =
 
 proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
   assert typ.kind != DotToken
-  result = pool.syms.getOrIncl("`cf" & $c.nextVar)
+  result = pool.syms.getOrIncl("`cf." & $c.nextVar)
   inc c.nextVar
   c.dest.addParLe kind, info
   c.dest.addSymDef result, info
@@ -243,7 +243,7 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
 proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if c.keepReturns and tar.m == IsAppend:
     # bind to a temporary variable:
-    let tmp = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    let tmp = pool.syms.getOrIncl("`cf." & $c.nextVar)
     inc c.nextVar
     let info = n.info
     c.dest.addParLe LetS, info
@@ -429,7 +429,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
 
-    selector = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    selector = pool.syms.getOrIncl("`cf." & $c.nextVar)
     inc c.nextVar
     c.dest.addParLe VarS, info
     c.dest.addSymDef selector, info
@@ -828,7 +828,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   if isComplexLhs(lhs):
     var stmts = createTokenBuf(40)
 
-    let tmp = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    let tmp = pool.syms.getOrIncl("`cf." & $c.nextVar)
     inc c.nextVar
     stmts.addParLe LetS, info
     stmts.addSymDef tmp, info
