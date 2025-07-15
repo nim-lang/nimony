@@ -264,8 +264,19 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     else:
       field = c.currentProc.localToEnv[sym].field
 
-    copyIntoKind dest, RetS, info:
-      # emit constructor call:
+    # We cannot generate `return fnConstruct(args)` directly here because
+    # the rest of the pipeline already assumes code
+    # like `let tmp = fnConstruct(args); return tmp` so that is what we
+    # generate here:
+    let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+    inc c.currentProc.counter
+    copyIntoKind dest, VarS, info:
+      dest.addSymDef contVar, info
+      dest.addDotToken() # exported
+      dest.addDotToken() # pragmas
+      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+
+      # value: emit constructor call:
       copyIntoKind dest, CallS, info:
         dest.addSymUse sym, info
 
@@ -284,6 +295,9 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
           dest.copyIntoKind AddrX, info:
             dest.copyTree target
         contNextState c, dest, state, info
+
+    copyIntoKind dest, RetS, info:
+      dest.addSymUse contVar, info
 
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
   if n.exprKind notin CallKinds: return SymId(0)
@@ -373,6 +387,14 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if pcall != SymId(0):
       trPassiveCall c, dest, callExpr, pcall, target
 
+proc declareContinuationResult(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  dest.copyIntoKind ResultS, info:
+    dest.addSymDef pool.syms.getOrIncl("result.0"), info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    dest.addDotToken() # default value
+
 proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
   const info = NoLineInfo
   let procBegin = dest.len
@@ -391,13 +413,14 @@ proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
       dest.addDotToken() # default value
 
   # return type is always `Continuation`:
-  dest.addSymUse pool.syms.getOrIncl("Continuation.0." & SystemModuleSuffix), info
+  dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
   dest.addDotToken() # pragmas
   dest.addDotToken() # effects
 
   publishSignature dest, name, procBegin
 
   dest.addParLe StmtsS, info # body
+  declareContinuationResult c, dest, info
 
 proc gotoNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   # generate: `return state(this)`
@@ -548,6 +571,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   assert n.stmtKind == StmtsS
   dest.takeToken n
   dest.add init
+  declareContinuationResult c, dest, NoLineInfo
   var subProcs = 0
   while n.kind != ParRi:
     let pos = cursorToPosition(c.currentProc.cf, n)
@@ -771,8 +795,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc n
   of ParLe:
     case n.stmtKind
-    of LocalDecls:
+    of LocalDecls - {ResultS}:
       trLocal c, dest, n
+    of ResultS:
+      if c.currentProc.kind == IsNormal:
+        trLocal c, dest, n
+      else:
+        skip n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       trCoroutine c, dest, n, NoSym
     of IteratorS:
