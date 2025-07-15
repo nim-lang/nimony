@@ -27,7 +27,7 @@ type
     IsFinally
   BlockOrLoop {.acyclic.} = ref object
     kind: BlockKind
-    sym: SymId # block label or for a routine its `result` symbol
+    sym: SymId # block label
     parent: BlockOrLoop
     breakInstrs: seq[Label]
     contInstrs: seq[Label]
@@ -651,14 +651,14 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     c.dest.addParLe(RetS, info)
     c.dest.add aa
     c.dest.addParRi()
-  elif (n.kind == Symbol and n.symId == it.sym) or (n.kind == DotToken):
+  elif (n.kind == Symbol and n.symId == c.resultSym) or (n.kind == DotToken):
     discard "do not generate `result = result`"
     inc n
   else:
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, n.info)
-    c.dest.addSymUse it.sym, n.info
+    c.dest.addSymUse c.resultSym, n.info
     c.dest.add aa
     c.dest.addParRi()
   skipParRi n
@@ -738,8 +738,6 @@ proc trFor(c: var ControlFlow; n: var Cursor) =
 
 proc trResult(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
-    if c.currentBlock.kind == IsRoutine:
-      c.currentBlock.sym = n.symId
     c.resultSym = n.symId
     takeLocalHeader c.typeCache, c.dest, n, ResultY
     trUseExpr c, n
