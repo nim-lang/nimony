@@ -674,9 +674,13 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
             skip n
           else:
             let hasParRi = n.kind == ParLe
+            let start = n
+            if n.exprKind == CallX:
+              inc n
             let name = getIdent(n)
             if name != StrId(0) and not (name in c.userPragmas and not hasParRi):
-              macroInvocsPos.add n
+              macroInvocsPos.add start
+              n = start
               skip n
             else:
               skip n
@@ -698,7 +702,16 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
                    info: PackedLineInfo) {.inline.} =
         bufReadPos.add buf.len
         buf.addParLe CallX, info
-        buf.add identToken(getIdent(macroInvocsPos[^i]), macroInvocsPos[^i].info)
+        var n = macroInvocsPos[^i]
+        let isCall = n.exprKind == CallX
+        if isCall:
+          inc n
+        assert n.kind == Ident
+        buf.add identToken(getIdent(n), n.info)
+        if isCall:
+          inc n
+          while n.kind != ParRi:
+            buf.takeTree n
         buf.addParLe StmtsS, info
 
       # adds last one in macroInvocsPos to buf first as it is invoked last.
@@ -721,12 +734,11 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
           skip n
           inc i
         else:
-          inBuf.add n
-          inc n
+          if n.kind == ParLe: inc nested
+          inBuf.takeToken n
         if n.kind == ParRi:
-          if nested == 0: break
           dec nested
-        elif n.kind == ParLe: inc nested
+          if nested == 0: break
       inBuf.addParRi
       var it2 = Item()
       swap c.dest, outBuf
@@ -752,7 +764,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       c.dest.add inBuf
       it.n = n
       it.typ = it2.typ
-      inc it.n
+      skipParRi it.n
     else:
       c.takeTree it.n
   elif it.n.firstSon.kind == DotToken:
