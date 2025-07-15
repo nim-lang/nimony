@@ -4600,7 +4600,9 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
           semRaise c, it
       of CommentS:
         # XXX ignored for now
+        let info = it.n.info
         skip it.n
+        producesVoid c, info, it.typ
       of EmitS:
         pragmaGuard c:
           semEmit c, it

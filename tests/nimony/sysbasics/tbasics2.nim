@@ -107,3 +107,11 @@ proc `=destroy`(x: var X) =
 
 var o = O(kind: d, d: X(v: 12345))
 assert o.d.v == 12345
+
+block:
+  proc foo(): int =
+    result = 12
+    ## 1234
+
+
+  assert foo() == 12
