@@ -1219,15 +1219,6 @@ proc trFieldname(c: var EContext; n: var Cursor) =
   else:
     trExpr c, n
 
-proc trCharLit(c: var EContext, n: var Cursor, typeBuf: TokenBuf) =
-  if n.kind == CharLit:
-    c.dest.add tagToken("conv", n.info)
-    c.dest.add typeBuf
-    trExpr(c, n)
-    c.dest.addParRi()
-  else:
-    trExpr(c, n)
-
 proc trExpr(c: var EContext; n: var Cursor) =
   case n.kind
   of EofToken, ParRi:
@@ -1237,19 +1228,11 @@ proc trExpr(c: var EContext; n: var Cursor) =
     of EqX, NeqX, LeX, LtX:
       c.dest.add n
       inc n
-      let isCharType = n.typeKind == CharT
-
-      var typeBuf = createTokenBuf()
-      swap c.dest, typeBuf
+      let beforeType = c.dest.len
       trType(c, n)
-      swap c.dest, typeBuf
-
-      if isCharType:
-        trCharLit(c, n, typeBuf)
-        trCharLit(c, n, typeBuf)
-      else:
-        trExpr(c, n)
-        trExpr(c, n)
+      c.dest.shrink beforeType
+      trExpr(c, n)
+      trExpr(c, n)
       takeParRi c, n
     of CastX:
       c.dest.add n
