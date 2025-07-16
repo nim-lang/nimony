@@ -217,7 +217,7 @@ proc validateUtf8*(s: openArray[char]): int =
       return i
   return -1
 
-template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true) =
+template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untyped =
   ## Copies UTF-8 representation of ``c`` into the preallocated string ``s``
   ## starting at position ``pos``.
   ##
@@ -344,7 +344,7 @@ proc runeOffset*(s: openArray[char], pos: Natural, start: Natural = 0): int =
     i = 0
     o = start
   while i < pos:
-    o += runeLenAt(s, o)
+    o = o + runeLenAt(s, o)
     if o >= s.len:
       return -1
     inc i
@@ -372,9 +372,9 @@ proc runeReverseOffset*(s: openArray[char], rev: Positive): (int, int) =
   let times = 2*rev.int-s.runeLen # transformed from rev.int - a < s.runeLen - rev.int
   while o < s.len:
     let r = runeLenAt(s, o)
-    o += r
+    o = o + r
     if a > times:
-      x += r
+      x = x + r
     dec a
   result = if a > 0: (-a, rev.int-a) else: (x, -a+rev.int)
 
@@ -832,7 +832,7 @@ iterator utf8*(s: openArray[char]): string =
   while o < s.len:
     let n = runeLenAt(s, o)
     yield substr(s.toOpenArray(o, (o+n-1)))
-    o += n
+    o = o + n
 
 proc toRunes*(s: openArray[char]): seq[Rune] =
   ## Obtains a sequence containing the Runes in ``s``.
