@@ -115,3 +115,16 @@ block:
 
 
   assert foo() == 12
+
+proc herz(s1: char) =
+  assert char('\255') == s1
+
+proc hand =
+  let s1 = char('\255')
+  let s2 = '\255'
+  assert s1 == s2
+  assert s1 == '\255'
+  assert '\255' == s1
+  herz('\255')
+
+hand()
