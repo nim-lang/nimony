@@ -424,7 +424,7 @@ int main(int argc, char **argv) {
 x_1_tpakvxko41 = (Foo_0_tpakvxko41){
   .c_0_tpakvxko41 = 'a', .x_0_tpakvxko41 = IL64(123)}
 ;
-if ((!((x_1_tpakvxko41.c_0_tpakvxko41 == 'a') && (x_1_tpakvxko41.x_0_tpakvxko41 == IL64(123))))){
+if ((!((x_1_tpakvxko41.c_0_tpakvxko41 == ((NC8)'a')) && (x_1_tpakvxko41.x_0_tpakvxko41 == IL64(123))))){
   write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
     .a_0_sysvq0asl = (NC8*)"[Assertion Failure] ", .i_0_sysvq0asl = IL64(40)}
   );
