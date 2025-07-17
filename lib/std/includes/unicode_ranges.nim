@@ -2004,9 +2004,3 @@ const
     Rune 0x0205F,
     Rune 0x03000,
   ]
-
-proc `<=%`(x, y: int8): bool {.inline.} = cast[uint8](x) <= cast[uint8](y)
-proc `<=%`(x, y: int16): bool {.inline.} = cast[uint16](x) <= cast[uint16](y)
-proc `<=%`(x, y: int32): bool {.inline.} = cast[uint32](x) <= cast[uint32](y)
-proc `<=%`(x, y: int64): bool {.inline.} = cast[uint64](x) <= cast[uint64](y)
-

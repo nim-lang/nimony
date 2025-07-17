@@ -22,13 +22,39 @@ import syncio, assertions, strutils
 ## * `unidecode module <unidecode.html>`_
 ## * `encodings module <encodings.html>`_
 
-# include "system/inclrtl"
-# import std/strbasics
-template toOa(s: string): openArray[char] = s.toOpenArray(0, s.high)
+#----------------------------------------------------
+## TODO: move these to system
 
 template chr(x: int32): char =
   ## TODO: fixes type inference
   chr(int(x))
+
+# proc `<=%`(x, y: int): bool {.inline.} =
+#   ## Treats `x` and `y` as unsigned and compares them.
+#   ## Returns true if `unsigned(x) <= unsigned(y)`.
+#   cast[uint](x) <= cast[uint](y)
+proc `<=%`(x, y: int8): bool {.inline.} = cast[uint8](x) <= cast[uint8](y)
+proc `<=%`(x, y: int16): bool {.inline.} = cast[uint16](x) <= cast[uint16](y)
+proc `<=%`(x, y: int32): bool {.inline.} = cast[uint32](x) <= cast[uint32](y)
+proc `<=%`(x, y: int64): bool {.inline.} = cast[uint64](x) <= cast[uint64](y)
+
+# proc `<%`(x, y: int): bool {.inline.} =
+#   ## Treats `x` and `y` as unsigned and compares them.
+#   ## Returns true if `unsigned(x) < unsigned(y)`.
+#   cast[uint](x) < cast[uint](y)
+proc `<%`(x, y: int8): bool {.inline.} = cast[uint8](x) < cast[uint8](y)
+proc `<%`(x, y: int16): bool {.inline.} = cast[uint16](x) < cast[uint16](y)
+proc `<%`(x, y: int32): bool {.inline.} = cast[uint32](x) < cast[uint32](y)
+proc `<%`(x, y: int64): bool {.inline.} = cast[uint64](x) < cast[uint64](y)
+
+
+template high[T](s: openArray[T]): int =
+  len(s)-1
+
+#----------------------------------------------------
+
+template toOa(s: string): openArray[char] = s.toOpenArray(0, s.high)
+
 
 proc substr(s: openArray[char], first, last: int): string =
   # Copied substr from system
@@ -217,7 +243,7 @@ proc validateUtf8*(s: openArray[char]): int =
       return i
   return -1
 
-template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untyped =
+template fastToUTF8Copy*(c: Rune, s: var string, pos: int, doInc = true): untyped {.untyped.} =
   ## Copies UTF-8 representation of ``c`` into the preallocated string ``s``
   ## starting at position ``pos``.
   ##
@@ -647,7 +673,8 @@ proc isCombining*(c: Rune): bool =
     (c >= 0x20d0 and c <= 0x20ff) or
     (c >= 0xfe20 and c <= 0xfe2f))
 
-template runeCheck(s, runeProc: typed) =
+
+proc runeCheck(s: openArray[char], runeProc: proc (c: Rune): bool {.noSideEffect, nimcall.}): bool =
   ## Common code for isAlpha and isSpace.
   result = if len(s) == 0: false else: true
   var
@@ -657,12 +684,17 @@ template runeCheck(s, runeProc: typed) =
     fastRuneAt(s, i, rune, doInc = true)
     result = runeProc(rune) and result
 
+proc isAlphaImpl(c: Rune): bool =
+  # TODO: fixes templates # bug #1305
+  result = isAlpha(c)
+
 proc isAlpha*(s: openArray[char]): bool {.noSideEffect.} =
   ## Returns true if ``s`` contains all alphabetic runes.
   runnableExamples:
     let a = "añyóng"
     assert a.isAlpha
-  runeCheck(s, isAlpha)
+  runeCheck(s, isAlphaImpl)
+
 
 proc isSpace*(s: openArray[char]): bool {.noSideEffect.} =
   ## Returns true if ``s`` contains all whitespace runes.
@@ -672,7 +704,7 @@ proc isSpace*(s: openArray[char]): bool {.noSideEffect.} =
   runeCheck(s, isWhiteSpace)
 
 
-template convertRune(s, runeProc: typed) =
+proc convertRune(s: openArray[char], runeProc: proc (c: Rune): Rune {.noSideEffect, nimcall.}): string =
   ## Convert runes in ``s`` using ``runeProc`` as the converter.
   result = newString(len(s))
   var
@@ -684,17 +716,23 @@ template convertRune(s, runeProc: typed) =
     rune = runeProc(rune)
     fastToUTF8Copy(rune, result, resultIndex, doInc = true)
 
+proc toUpperImpl(c: Rune): Rune =
+  result = toUpper(c)
+
 proc toUpper*(s: openArray[char]): string {.noSideEffect.} =
   ## Converts ``s`` into upper-case runes.
   runnableExamples:
     assert toUpper("abγ") == "ABΓ"
-  convertRune(s, toUpper)
+  convertRune(s, toUpperImpl)
+
+proc toLowerImpl(c: Rune): Rune =
+  result = toLower(c)
 
 proc toLower*(s: openArray[char]): string {.noSideEffect.} =
   ## Converts ``s`` into lower-case runes.
   runnableExamples:
     assert toLower("ABΓ") == "abγ"
-  convertRune(s, toLower)
+  convertRune(s, toLowerImpl)
 
 proc swapCase*(s: openArray[char]): string {.noSideEffect.} =
   ## Swaps the case of runes in ``s``.
@@ -843,7 +881,7 @@ proc toRunes*(s: openArray[char]): seq[Rune] =
     let a = toRunes("aáä")
     assert a == @["a".runeAt(0), "á".runeAt(0), "ä".runeAt(0)]
 
-  result = newSeq[Rune]()
+  result = newSeq[Rune](0)
   for r in s.runes:
     result.add(r)
 
@@ -886,7 +924,7 @@ proc reversed*(s: openArray[char]): string =
     blockPos = 0
     r: Rune
 
-  template reverseUntil(pos: typed) =
+  template reverseUntil(pos: int) =
     var j = pos - 1
     while j > blockPos:
       result[newPos] = s[j]
@@ -962,7 +1000,7 @@ proc stringHasSep(s: openArray[char], index: int, sep: Rune): bool =
   fastRuneAt(s, index, rune, false)
   return sep == rune
 
-template splitCommon(s: openArray[char], sep: openArray[Rune], maxsplit: int) =
+template splitCommon(s: openArray[char], sep: openArray[Rune], maxsplit: int) {.untyped.} =
   ## Common code for split procedures.
   let
     sLen = len(s)
