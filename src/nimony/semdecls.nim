@@ -684,43 +684,25 @@ proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
           else:
             skip n
 
-proc addCall(buf: var TokenBuf;
-             bufReadPos: var seq[int];
-             i: int;
-             macroInvocsPos: seq[Cursor];
-             info: PackedLineInfo) =
-  # adds CallX to invoke all macros/templates at first
-  # to avoid inserting them on the top of buf after the invocations.
-  bufReadPos.add buf.len
-  buf.addParLe CallX, info
-  var n = macroInvocsPos[^i]
-  let isCall = n.exprKind == CallX
-  if isCall:
-    inc n
-  assert n.kind == Ident
-  buf.add n
-  if isCall:
-    inc n
-    while n.kind != ParRi:
-      buf.takeTree n
-  buf.addParLe StmtsS, info
-
 proc transformMacroInvoc(c: var SemContext; it: var Item; macroInvocsPos: seq[Cursor]) =
   # transform `proc foo() {.macrofoo, macrobar.}` to `macrobar: macrofoo: proc foo()`.
   var inBuf = createTokenBuf()
-  var outBuf = createTokenBuf()
-  var inBufReadPos = newSeqOfCap[int](macroInvocsPos.len div 2)
-  var outBufReadPos = newSeqOfCap[int](macroInvocsPos.len div 2)
 
   # adds last one in macroInvocsPos to buf first as it is invoked last.
   let info = it.n.info
-  var offset = 0
-  if macroInvocsPos.len mod 2 == 1:
-    addCall inBuf, inBufReadPos, 1, macroInvocsPos, info
-    offset = 1
-  for i in 0 ..< (macroInvocsPos.len div 2):
-    addCall outBuf, outBufReadPos, i * 2 + 1 + offset, macroInvocsPos, info
-    addCall  inBuf,  inBufReadPos, i * 2 + 2 + offset, macroInvocsPos, info
+  for i in 0 ..< macroInvocsPos.len:
+    inBuf.addParLe CallX, info
+    var n = macroInvocsPos[^(i + 1)]
+    let isCall = n.exprKind == CallX
+    if isCall:
+      inc n
+    assert n.kind == Ident
+    inBuf.add n
+    if isCall:
+      inc n
+      while n.kind != ParRi:
+        inBuf.takeTree n
+    inBuf.addParLe StmtsS, info
 
   var n = it.n
   # copies the proc def to inBuf excepts all macros and templates to avoid
@@ -738,28 +720,21 @@ proc transformMacroInvoc(c: var SemContext; it: var Item; macroInvocsPos: seq[Cu
       dec nested
       if nested == 0: break
   inBuf.addParRi
-  var it2 = Item()
-  swap c.dest, outBuf
   for i in 0 ..< macroInvocsPos.len:
-    inBuf.addParRi  # close StmtsS added in addCall proc
+    inBuf.addParRi  # close StmtsS
     inBuf.addParRi  # close CallX
-    it2 = Item(n: cursorAt(inBuf, inBufReadPos[^1]), typ: c.types.autoType)
-    #echo "macro invoc in: ", toString it2.n
-    #let lastDestLen = c.dest.len
-    semCall c, it2, {}
-    endRead inBuf
-    shrink inBuf, inBufReadPos.pop
-    #[
-    if c.dest.len > lastDestLen:
-      echo "macro invoc out: ", toString cursorAt(c.dest, lastDestLen)
-      endRead c.dest
-    else:
-      echo "macro invoc out: empty"
-    ]#
-    swap c.dest, inBuf
-    swap inBufReadPos, outBufReadPos
-  swap c.dest, outBuf
-  c.dest.add inBuf
+  var it2 = Item(n: cursorAt(inBuf, 0), typ: c.types.autoType)
+  #echo "macro invoc in: ", toString it2.n
+  #let lastDestLen = c.dest.len
+  semCall c, it2, {}
+  endRead inBuf
+  #[
+  if c.dest.len > lastDestLen:
+    echo "macro invoc out: ", toString cursorAt(c.dest, lastDestLen)
+    endRead c.dest
+  else:
+    echo "macro invoc out: empty"
+  ]#
   it.n = n
   it.typ = it2.typ
   skipParRi it.n
