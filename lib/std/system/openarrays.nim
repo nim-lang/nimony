@@ -53,3 +53,7 @@ proc `==`*[T: Equatable](a, b: openArray[T]): bool =
 
 proc toOpenArray*[T](x: ptr UncheckedArray[T]; first, last: int): openArray[T] =
   openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x) + uint(first * sizeof(T))), len: last - first + 1)
+
+proc toOpenArray*[T](x: openArray[T]; first, last: int): openArray[T] =
+  openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x.a) + uint(first * sizeof(T))), len: last - first + 1)
+
