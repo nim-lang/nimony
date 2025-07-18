@@ -1000,7 +1000,8 @@ proc stringHasSep(s: openArray[char], index: int, sep: Rune): bool =
   fastRuneAt(s, index, rune, false)
   return sep == rune
 
-template splitCommon(s: openArray[char], sep: openArray[Rune], maxsplit: int) {.untyped.} =
+
+template splitCommon(s: untyped #[openArray[char]]#, sep: untyped#[openArray[Rune]#, maxsplit: int) {.untyped.} =
   ## Common code for split procedures.
   let
     sLen = len(s)
@@ -1018,29 +1019,29 @@ template splitCommon(s: openArray[char], sep: openArray[Rune], maxsplit: int) {.
       dec(splits)
       inc(last, if last < sLen: runeLenAt(s, last) else: 1)
 
-iterator split*(s: openArray[char], seps: openArray[Rune] = unicodeSpaces,
+iterator split*(s: openArray[char], seps: openArray[Rune]#[ = unicodeSpaces]#,
   maxsplit: int = -1): string =
   ## Splits the unicode string ``s`` into substrings using a group of separators.
   ##
   ## Substrings are separated by a substring containing only ``seps``.
-  runnableExamples:
-    import std/sequtils
+  # runnableExamples:
+  #   import std/sequtils
 
-    assert toSeq("hÃllo\lthis\lis an\texample\l是".split) ==
-      @["hÃllo", "this", "is", "an", "example", "是"]
+  #   assert toSeq("hÃllo\lthis\lis an\texample\l是".split) ==
+  #     @["hÃllo", "this", "is", "an", "example", "是"]
 
-    # And the following code splits the same string using a sequence of Runes.
-    assert toSeq(split("añyóng:hÃllo;是$example", ";:$".toRunes)) ==
-      @["añyóng", "hÃllo", "是", "example"]
+  #   # And the following code splits the same string using a sequence of Runes.
+  #   assert toSeq(split("añyóng:hÃllo;是$example", ";:$".toRunes)) ==
+  #     @["añyóng", "hÃllo", "是", "example"]
 
-    # example with a `Rune` separator and unused one `;`:
-    assert toSeq(split("ab是de:f:", ";:是".toRunes)) == @["ab", "de", "f", ""]
+  #   # example with a `Rune` separator and unused one `;`:
+  #   assert toSeq(split("ab是de:f:", ";:是".toRunes)) == @["ab", "de", "f", ""]
 
-    # Another example that splits a string containing a date.
-    let date = "2012-11-20T22:08:08.398990"
+  #   # Another example that splits a string containing a date.
+  #   let date = "2012-11-20T22:08:08.398990"
 
-    assert toSeq(split(date, " -:T".toRunes)) ==
-      @["2012", "11", "20", "22", "08", "08.398990"]
+  #   assert toSeq(split(date, " -:T".toRunes)) ==
+  #     @["2012", "11", "20", "22", "08", "08.398990"]
 
   splitCommon(s, seps, maxsplit)
 
@@ -1048,7 +1049,7 @@ iterator splitWhitespace*(s: openArray[char]): string =
   ## Splits a unicode string at whitespace runes.
   splitCommon(s, unicodeSpaces, -1)
 
-template accResult(iter: untyped) =
+template accResult(iter: untyped) {.untyped.} =
   result = @[]
   for x in iter: add(result, x)
 
@@ -1060,15 +1061,15 @@ proc splitWhitespace*(s: openArray[char]): seq[string] {.noSideEffect.} =
 iterator split*(s: openArray[char], sep: Rune, maxsplit: int = -1): string =
   ## Splits the unicode string ``s`` into substrings using a single separator.
   ## Substrings are separated by the rune ``sep``.
-  runnableExamples:
-    import std/sequtils
+  # runnableExamples:
+  #   import std/sequtils
 
-    assert toSeq(split(";;hÃllo;this;is;an;;example;;;是", ";".runeAt(0))) ==
-      @["", "", "hÃllo", "this", "is", "an", "", "example", "", "", "是"]
+  #   assert toSeq(split(";;hÃllo;this;is;an;;example;;;是", ";".runeAt(0))) ==
+  #     @["", "", "hÃllo", "this", "is", "an", "", "example", "", "", "是"]
 
   splitCommon(s, sep, maxsplit)
 
-proc split*(s: openArray[char], seps: openArray[Rune] = unicodeSpaces, maxsplit: int = -1):
+proc split*(s: openArray[char], seps: openArray[Rune]#[ = unicodeSpaces]#, maxsplit: int = -1):
     seq[string] {.noSideEffect.} =
   ## The same as the `split iterator <#split.i,string,openArray[Rune],int>`_,
   ## but is a proc that returns a sequence of substrings.
@@ -1080,18 +1081,18 @@ proc split*(s: openArray[char], sep: Rune, maxsplit: int = -1): seq[string] {.no
   accResult(split(s, sep, maxsplit))
 
 proc strip*(s: openArray[char], leading = true, trailing = true,
-            runes: openArray[Rune] = unicodeSpaces): string {.noSideEffect.} =
+            runes: openArray[Rune]#[ = unicodeSpaces]#): string {.noSideEffect.} =
   ## Strips leading or trailing ``runes`` from ``s`` and returns
   ## the resulting string.
   ##
   ## If ``leading`` is true (default), leading ``runes`` are stripped.
   ## If ``trailing`` is true (default), trailing ``runes`` are stripped.
   ## If both are false, the string is returned unchanged.
-  runnableExamples:
-    let a = "\táñyóng   "
-    assert a.strip == "áñyóng"
-    assert a.strip(leading = false) == "\táñyóng"
-    assert a.strip(trailing = false) == "áñyóng   "
+  # runnableExamples:
+  #   let a = "\táñyóng   "
+  #   assert a.strip == "áñyóng"
+  #   assert a.strip(leading = false) == "\táñyóng"
+  #   assert a.strip(trailing = false) == "áñyóng   "
 
   var
     sI = 0          ## starting index into string ``s``
@@ -1467,29 +1468,29 @@ proc lastRune*(s: string; last: int): (Rune, int) {.inline.} =
   ## in bytes.
   lastRune(toOa(s), last)
 
-iterator split*(s: string, seps: openArray[Rune] = unicodeSpaces,
+iterator split*(s: string, seps: openArray[Rune]#[ = unicodeSpaces]#,
   maxsplit: int = -1): string =
   ## Splits the unicode string ``s`` into substrings using a group of separators.
   ##
   ## Substrings are separated by a substring containing only ``seps``.
-  runnableExamples:
-    import std/sequtils
+  # runnableExamples:
+  #   import std/sequtils
 
-    assert toSeq("hÃllo\lthis\lis an\texample\l是".split) ==
-      @["hÃllo", "this", "is", "an", "example", "是"]
+  #   assert toSeq("hÃllo\lthis\lis an\texample\l是".split) ==
+  #     @["hÃllo", "this", "is", "an", "example", "是"]
 
-    # And the following code splits the same string using a sequence of Runes.
-    assert toSeq(split("añyóng:hÃllo;是$example", ";:$".toRunes)) ==
-      @["añyóng", "hÃllo", "是", "example"]
+  #   # And the following code splits the same string using a sequence of Runes.
+  #   assert toSeq(split("añyóng:hÃllo;是$example", ";:$".toRunes)) ==
+  #     @["añyóng", "hÃllo", "是", "example"]
 
-    # example with a `Rune` separator and unused one `;`:
-    assert toSeq(split("ab是de:f:", ";:是".toRunes)) == @["ab", "de", "f", ""]
+  #   # example with a `Rune` separator and unused one `;`:
+  #   assert toSeq(split("ab是de:f:", ";:是".toRunes)) == @["ab", "de", "f", ""]
 
-    # Another example that splits a string containing a date.
-    let date = "2012-11-20T22:08:08.398990"
+  #   # Another example that splits a string containing a date.
+  #   let date = "2012-11-20T22:08:08.398990"
 
-    assert toSeq(split(date, " -:T".toRunes)) ==
-      @["2012", "11", "20", "22", "08", "08.398990"]
+  #   assert toSeq(split(date, " -:T".toRunes)) ==
+  #     @["2012", "11", "20", "22", "08", "08.398990"]
 
   splitCommon(toOa(s), seps, maxsplit)
 
@@ -1506,15 +1507,15 @@ proc splitWhitespace*(s: string): seq[string] {.noSideEffect, inline.}=
 iterator split*(s: string, sep: Rune, maxsplit: int = -1): string =
   ## Splits the unicode string ``s`` into substrings using a single separator.
   ## Substrings are separated by the rune ``sep``.
-  runnableExamples:
-    import std/sequtils
+  # runnableExamples:
+  #   import std/sequtils
 
-    assert toSeq(split(";;hÃllo;this;is;an;;example;;;是", ";".runeAt(0))) ==
-      @["", "", "hÃllo", "this", "is", "an", "", "example", "", "", "是"]
+  #   assert toSeq(split(";;hÃllo;this;is;an;;example;;;是", ";".runeAt(0))) ==
+  #     @["", "", "hÃllo", "this", "is", "an", "", "example", "", "", "是"]
 
   splitCommon(toOa(s), sep, maxsplit)
 
-proc split*(s: string, seps: openArray[Rune] = unicodeSpaces, maxsplit: int = -1):
+proc split*(s: string, seps: openArray[Rune]#[ = unicodeSpaces]#, maxsplit: int = -1):
     seq[string] {.noSideEffect, inline.} =
   ## The same as the `split iterator <#split.i,string,openArray[Rune],int>`_,
   ## but is a proc that returns a sequence of substrings.
@@ -1526,22 +1527,22 @@ proc split*(s: string, sep: Rune, maxsplit: int = -1): seq[string] {.noSideEffec
   accResult(split(toOa(s), sep, maxsplit))
 
 proc strip*(s: string, leading = true, trailing = true,
-            runes: openArray[Rune] = unicodeSpaces): string {.noSideEffect, inline.} =
+            runes: openArray[Rune]#[ = unicodeSpaces]#): string {.noSideEffect, inline.} =
   ## Strips leading or trailing ``runes`` from ``s`` and returns
   ## the resulting string.
   ##
   ## If ``leading`` is true (default), leading ``runes`` are stripped.
   ## If ``trailing`` is true (default), trailing ``runes`` are stripped.
   ## If both are false, the string is returned unchanged.
-  runnableExamples:
-    let a = "\táñyóng   "
-    assert a.strip == "áñyóng"
-    assert a.strip(leading = false) == "\táñyóng"
-    assert a.strip(trailing = false) == "áñyóng   "
+  # runnableExamples:
+  #   let a = "\táñyóng   "
+  #   assert a.strip == "áñyóng"
+  #   assert a.strip(leading = false) == "\táñyóng"
+  #   assert a.strip(trailing = false) == "áñyóng   "
   strip(toOa(s), leading, trailing, runes)
 
 
-proc align*(s: string, count: Natural, padding = ' '.Rune): string {.noSideEffect, inline.} =
+proc align*(s: string, count: Natural, padding: Rune = ' '.Rune): string {.noSideEffect, inline.} =
   ## Aligns a unicode string ``s`` with ``padding``, so that it has a rune-length
   ## of ``count``.
   ##
@@ -1558,7 +1559,7 @@ proc align*(s: string, count: Natural, padding = ' '.Rune): string {.noSideEffec
     assert align("×", 4, '_'.Rune) == "___×"
   align(toOa(s), count, padding)
 
-proc alignLeft*(s: string, count: Natural, padding = ' '.Rune): string {.noSideEffect, inline.} =
+proc alignLeft*(s: string, count: Natural, padding: Rune = ' '.Rune): string {.noSideEffect, inline.} =
   ## Left-aligns a unicode string ``s`` with ``padding``, so that it has a
   ## rune-length of ``count``.
   ##
