@@ -51,7 +51,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
         inc n # skip the SymbolDef
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, AstToStrX, CompilesX, TypeofX,
-              LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
+              LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX, DefaultdistinctX,
               ArrAtX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck

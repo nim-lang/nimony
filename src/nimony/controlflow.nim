@@ -582,7 +582,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
        CastX, ConvX, BaseobjX, HconvX, DconvX, InfX, NegInfX, NanX, SufX,
        UnpackX, FieldsX, FieldpairsX, EnumToStrX, XorX,
-       IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
+       IsMainModuleX, DefaultObjX, DefaultTupX, DefaultDistinctX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX,

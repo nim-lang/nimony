@@ -1517,7 +1517,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of TraceX:
        gcallsystem(g, n, "=sink")
 
-    of DefaultobjX, DefaulttupX:
+    of DefaultobjX, DefaulttupX, DefaultdistinctX:
       gcallsystem(g, n, "default")
 
     of InsetX:

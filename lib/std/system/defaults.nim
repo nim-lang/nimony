@@ -22,6 +22,7 @@ template default*[T: ptr](x: typedesc[T]): T = T(nil)
 template default*[T: ref](x: typedesc[T]): T = T(nil)
 template default*(x: typedesc[pointer]): pointer = nil
 
+proc default*[T: distinct](x: typedesc[T]): T {.magic: DefaultDistinct.}
 proc default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 proc default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
