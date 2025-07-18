@@ -1021,6 +1021,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
             putWithSpace(g, tkComma, ",")
         inc n
         put(g, tkParRi, ")")
+      else:
+        skip n
+
       # return type
       if n.kind != DotToken:
         putWithSpace(g, tkColon, ":")
