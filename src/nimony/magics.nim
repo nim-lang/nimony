@@ -39,6 +39,7 @@ proc magicToTag*(m: string): (string, int) =
   of "BitxorI": res BitxorX, TypedMagic
   of "BitnotI": res BitnotX, TypedMagic
   of "UnaryMinusI", "UnaryMinusF64": res NegX, TypedMagic
+  of "Delay": res DelayX, TypedMagic
   of "And": res AndX
   of "Or": res OrX
   of "Not": res NotX

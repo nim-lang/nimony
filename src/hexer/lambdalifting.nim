@@ -208,11 +208,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc isClosure(typ: Cursor): bool {.inline.} = procHasPragma(typ, ClosureP)
 
-proc paramsWithClosurePragma(typ: Cursor): bool =
-  var typ = typ
-  skip typ
-  skip typ # return type
-  result = hasPragma(typ, ClosureP)
+when false:
+  proc paramsWithClosurePragma(typ: Cursor): bool =
+    var typ = typ
+    skip typ
+    skip typ # return type
+    result = hasPragma(typ, ClosureP)
 
 const
   RootObjName = "RootObj.0." & SystemModuleSuffix
@@ -430,7 +431,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add n # the call node itself
   inc n
-  var fn = n
+  #var fn = n
   let typ = c.typeCache.getType(n, {SkipAliases})
   let wantsEnv = isClosure(typ) or (n.kind == Symbol and c.closureProcs.contains(n.symId))
   var isStatic = false

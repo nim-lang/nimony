@@ -299,6 +299,33 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     copyIntoKind dest, RetS, info:
       dest.addSymUse contVar, info
 
+proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  inc n
+  skip n # skip type; it is `Continuation` and uninteresting here
+  let retType = getType(c.typeCache, n)
+  let hasResult = not isVoidType(retType)
+
+  var target = default(Cursor)
+  var nested = 1
+  if n.stmtKind == AsgnS:
+    inc n
+    target = n
+    skip n
+    nested = 2
+
+  if hasResult:
+    assert not cursorIsNil(target), "passive call without target"
+
+  if n.exprKind in CallKinds and n.firstSon.kind == Symbol:
+    let fn = n.firstSon.symId
+    trPassiveCall c, dest, n, fn, target
+  else:
+    dest.copyIntoKind ErrT, n.info:
+      dest.addStrLit "`delay` takes a call expression"
+    skip n
+  for i in 0..<nested:
+    skipParRi n
+
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
   if n.exprKind notin CallKinds: return SymId(0)
   let fn = n.firstSon
@@ -715,7 +742,6 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   var isConcrete = true # assume it is concrete
   let sym = n.symId
   c.procStack.add(sym)
-  let closureOwner = c.procStack[0]
   var isCoroutine = false
   for i in 0..<BodyPos:
     if i == ParamsPos:
@@ -827,6 +853,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trCall c, dest, n
       of TypeofX:
         takeTree dest, n
+      of DelayX:
+        trDelay c, dest, n
       else:
         if n.cfKind == IteF:
           trIte c, dest, n
@@ -836,7 +864,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     bug "unexpected ')' inside"
 
 proc generateContinuationProcImpl(): Cursor =
-  let symId = pool.syms.getOrIncl("ContinuationProc.0." & SystemModuleSuffix)
+  let symId = pool.syms.getOrIncl(ContinuationProcName)
   let impl = programs.tryLoadSym(symId)
   if impl.status == LacksNothing:
     let t = asTypeDecl(impl.decl)

@@ -1458,6 +1458,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       skipParRi(n)
 
+    of DelayX:
+      inc n
+      skip n # don't render the type `Continuation` here
+      put(g, tkSymbol, "delay")
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
     of EmoveX:
       inc n
       put(g, tkSymbol, "ensureMove")
