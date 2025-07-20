@@ -770,7 +770,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
            BaseP, FinalP, PragmaP, CursorP, PassiveP:
           skip n
           continue
-        of BuildP, EmitP:
+        of BuildP, EmitP, PushP, PopP:
           bug "unreachable"
         skipParRi c, n
       else:

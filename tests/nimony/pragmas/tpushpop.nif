@@ -1,0 +1,54 @@
+(.nif24)
+0,1,tests/nimony/pragmas/tpushpop.nim(stmts 41,2
+ (type ~39 :TestStruct1.0.tpu1210461 . . ~27
+  (pragmas ~7,~2
+   (header 8 "pushpop.h") 2
+   (importc 9 "TestStruct1")) 2
+  (object . ~39,1
+   (fld :x.0.tpu1210461 .
+    (pragmas 3,~3
+     (header 8 "pushpop.h")) 37,40,lib/std/system/ctypes.nim
+    (i +32
+     (importc "int")) .))) 4,6
+ (gvar :tests1.0.tpu1210461 . . 8 TestStruct1.0.tpu1210461 .) ,9
+ (proc 5 :cos.0.tpu1210461 . . . 8
+  (params 1
+   (param :x.0 .
+    (pragmas ~2,~1
+     (header 8 "<math.h>")) 43,48,lib/std/system/ctypes.nim
+    (f +64
+     (importc "double")) .)) 43,48,lib/std/system/ctypes.nim
+  (f +64
+   (importc "double")) 30
+  (pragmas ~23,~1
+   (header 8 "<math.h>") 2
+   (importc 9 "cos") 18
+   (cdecl)) . .) ,11
+ (proc 5 :sin.0.tpu1210461 . . . 8
+  (params 1
+   (param :x.1 .
+    (pragmas ~2,~3
+     (header 8 "<math.h>")) 43,48,lib/std/system/ctypes.nim
+    (f +64
+     (importc "double")) .)) 43,48,lib/std/system/ctypes.nim
+  (f +64
+   (importc "double")) 30
+  (pragmas ~23,~3
+   (header 8 "<math.h>") ~23,~1
+   (cdecl) 2
+   (importc 9 "sin")) . .) ,16
+ (proc 5 :foo.0.tpu1210461 . . . 8
+  (params 1
+   (param :x.2 .
+    (pragmas ~2,~1
+     (discardable)) 3
+    (i -1) .)) 10
+  (i -1)
+  (pragmas 7,~1
+   (discardable)) . 24
+  (stmts
+   (result :result.0 . . ~12
+    (i -1) .)
+   (asgn result.0 x.2) ~24
+   (ret result.0))) 3,19
+ (call ~3 foo.0.tpu1210461 1 +1))
