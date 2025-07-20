@@ -3304,6 +3304,23 @@ proc semTupleDefault(c: var SemContext; it: var Item) =
   buildDefaultTuple(c, it.typ, info)
   commonType c, it, exprStart, expected
 
+proc semDefaultDistinct(c: var SemContext; it: var Item) =
+  let exprStart = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  inc it.n
+  it.typ = semLocalType(c, it.n)
+  c.dest.shrink exprStart
+  skipParRi it.n
+  var isDistinct = false
+  let srcBase = skipDistinct(it.typ, isDistinct)
+
+  c.dest.add parLeToken(DconvX, info)
+  c.dest.add it.typ
+  callDefault c, srcBase, info
+  c.dest.addParRi()
+  commonType c, it, exprStart, expected
+
 proc semTupAt(c: var SemContext; it: var Item) =
   # has already been semchecked but we do it again:
   let exprStart = c.dest.len
@@ -4730,6 +4747,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semObjDefault c, it
     of DefaultTupX:
       semTupleDefault c, it
+    of DefaultDistinctX:
+      semDefaultDistinct c, it
     of LowX:
       semLow c, it
     of HighX:
