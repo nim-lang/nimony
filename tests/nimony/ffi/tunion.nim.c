@@ -413,6 +413,6 @@ NC8 **cmdLine;
 int main(int argc, char **argv) {
   cmdCount = argc;
   cmdLine = (NC8**)argv;
-x_1_tun261nex.c_0_tun261nex = 'a';
+x_1_tun261nex.c_0_tun261nex = (NC8)'a';
 }
 

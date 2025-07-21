@@ -770,7 +770,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
            BaseP, FinalP, PragmaP, CursorP, PassiveP:
           skip n
           continue
-        of BuildP, EmitP:
+        of BuildP, EmitP, PushP, PopP:
           bug "unreachable"
         skipParRi c, n
       else:
@@ -1370,7 +1370,7 @@ proc trExpr(c: var EContext; n: var Cursor) =
       takeParRi c, n
     of ErrX, NewobjX, NewrefX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX,
        InSetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX,
-       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DoX, CchoiceX, OchoiceX,
+       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX:
       error c, "BUG: not eliminated: ", n

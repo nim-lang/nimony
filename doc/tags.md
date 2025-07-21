@@ -246,6 +246,7 @@
 | `(ismainmodule)` | NimonyExpr | |
 | `(defaultobj T)` | NimonyExpr | |
 | `(defaulttup T)` | NimonyExpr | |
+| `(defaultdistinct T)` | NimonyExpr | |
 | `(expr S+ X)` | NimonyExpr, NiflerKind | |
 | `(do (params...)+ T X)` | NimonyExpr, NiflerKind | `do` expression |
 | `(arrat X X X? X?)` | NimonyExpr | two optional exprs: `high` boundary and the `low` boundary (if != 0) |
@@ -297,3 +298,5 @@
 | `(envp T Y)` | NimonyExpr | `envp.Y` field access to hidden `env` parameter which is of type `T` |
 | `(packed)`   | NifcPragma, NimonyPragma | `packed` pragma |
 | `(passive)`  | NimonyPragma | `passive` pragma |
+| `(push P)`   | NimonyPragma | `push` pragma |
+| `(pop)`      | NimonyPragma | `pop` pragma |

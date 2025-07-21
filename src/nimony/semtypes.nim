@@ -767,7 +767,9 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       else:
         semConceptType c, n
     of DistinctT:
-      if context != InTypeSection:
+      if tryTypeClass(c, n):
+        discard
+      elif context != InTypeSection:
         c.buildErr info, "`distinct` type must be defined in a `type` section"
         skip n
       else:
