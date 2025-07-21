@@ -191,7 +191,8 @@ proc addFloatLit*(b: var Builder; f: float) =
   of fcInf: b.buf.add "(inf)"
   of fcNan: b.buf.add "(nan)"
   of fcNegInf: b.buf.add "(neginf)"
-  of fcNormal, fcSubnormal, fcZero, fcNegZero:
+  of fcNegZero: b.buf.add "-0.0"
+  of fcNormal, fcSubnormal, fcZero:
     if f >= 0.0:
       b.buf.add '+'
     b.buf.addFloat f
@@ -323,6 +324,8 @@ when isMainModule:
         b.addSymbol "foo.3.mymod"
         b.addIntLit 3423
         b.addFloatLit 50.4
+        # issue #1313
+        b.addFloatLit -0.0
 
     if b.attachedToFile:
       b.close
