@@ -898,7 +898,7 @@ proc cmpRunesIgnoreCase*(a, b: openArray[char]): int =
     # slow path:
     fastRuneAt(a, i, ar)
     fastRuneAt(b, j, br)
-    when sizeof(int) < 4:
+    when  (defined(cpu16) or defined(cpu8)):
       const lo = low(int).int32
       const hi = high(int).int32
       result = clamp(RuneImpl(toLower(ar)) - RuneImpl(toLower(br)), lo, hi).int
