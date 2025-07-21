@@ -298,3 +298,5 @@
 | `(envp T Y)` | NimonyExpr | `envp.Y` field access to hidden `env` parameter which is of type `T` |
 | `(packed)`   | NifcPragma, NimonyPragma | `packed` pragma |
 | `(passive)`  | NimonyPragma | `passive` pragma |
+| `(push P)`   | NimonyPragma | `push` pragma |
+| `(pop)`      | NimonyPragma | `pop` pragma |

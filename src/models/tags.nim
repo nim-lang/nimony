@@ -301,6 +301,8 @@ type
     EnvpTagId
     PackedTagId
     PassiveTagId
+    PushTagId
+    PopTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -601,5 +603,7 @@ const
     ("is", 295),
     ("envp", 296),
     ("packed", 297),
-    ("passive", 298)
+    ("passive", 298),
+    ("push", 299),
+    ("pop", 300)
   ]
