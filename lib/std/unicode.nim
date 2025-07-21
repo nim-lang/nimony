@@ -904,7 +904,7 @@ proc cmpRunesIgnoreCase*(a, b: openArray[char]): int =
       result = clamp(RuneImpl(toLower(ar)) - RuneImpl(toLower(br)), lo, hi).int
     else:
       result = RuneImpl(toLower(ar)) - RuneImpl(toLower(br))
-    if result != 0: return
+    if result != 0: return result
   result = a.len - b.len
 
 proc reversed*(s: openArray[char]): string =
