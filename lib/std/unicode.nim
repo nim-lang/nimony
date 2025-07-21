@@ -24,6 +24,9 @@ import syncio, assertions, strutils
 
 #----------------------------------------------------
 ## TODO: move these to system
+type
+  Natural = int
+  Positive = int
 
 template chr(x: int32): char =
   ## TODO: fixes type inference
@@ -51,6 +54,19 @@ proc `<%`(x, y: int64): bool {.inline.} = cast[uint64](x) < cast[uint64](y)
 template high[T](s: openArray[T]): int =
   len(s)-1
 
+proc add(x: var string, y: openArray[char]) =
+  ## Concatenates `x` and `y` in place. `y` must not overlap with `x` to
+  ## allow future `memcpy` optimizations.
+  # Use `{.noalias.}` ?
+  let n = x.len
+  x.setLen n + y.len
+    # pending #19727
+    # setLen unnecessarily zeros memory
+  var i = 0
+  while i < y.len:
+    x[n + i] = y[i]
+    i.inc
+
 #----------------------------------------------------
 
 template toOa(s: string): openArray[char] = s.toOpenArray(0, s.high)
@@ -59,13 +75,13 @@ template toOa(s: string): openArray[char] = s.toOpenArray(0, s.high)
 proc substr(s: openArray[char], first, last: int): string =
   # Copied substr from system
   let first = max(first, 0)
-  let L = max(min(last, s.len-1) - first + 1, 0)
+  let L = max(min(last, high(s)) - first + 1, 0)
   result = newString(L)
   for i in 0 .. L-1:
     result[i] = s[i+first]
 
 proc substr(s: openArray[char]): string =
-  result = substr(s, 0, s.len-1)
+  result = substr(s, 0, high(s))
 
 type
   RuneImpl = int32 # underlying type of Rune
@@ -95,10 +111,6 @@ proc runeLen*(s: openArray[char]): int =
     elif uint(s[i]) shr 1 == 0b1111110: inc(i, 6)
     else: inc i
     inc(result)
-
-type
-  Natural = int
-  Positive = int
 
 proc runeLenAt*(s: openArray[char], i: Natural): int =
   ## Returns the number of bytes the rune starting at ``s[i]`` takes.
@@ -1148,19 +1160,6 @@ proc repeat*(c: Rune, count: Natural): string {.noSideEffect.} =
   result = newStringOfCap(count * s.len)
   for i in 0 ..< count:
     result.add s
-
-proc add(x: var string, y: openArray[char]) =
-  ## Concatenates `x` and `y` in place. `y` must not overlap with `x` to
-  ## allow future `memcpy` optimizations.
-  # Use `{.noalias.}` ?
-  let n = x.len
-  x.setLen n + y.len
-    # pending #19727
-    # setLen unnecessarily zeros memory
-  var i = 0
-  while i < y.len:
-    x[n + i] = y[i]
-    i.inc
 
 proc align*(s: openArray[char], count: Natural, padding = ' '.Rune): string {.
   noSideEffect.} =
