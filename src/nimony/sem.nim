@@ -2469,7 +2469,11 @@ proc semReturn(c: var SemContext; it: var Item) =
   if c.routine.kind == NoSym:
     buildErr c, info, "`return` only allowed within a routine"
   if it.n.kind == DotToken:
-    takeToken c, it.n
+    if c.routine.returnType.typeKind != VoidT:
+      c.dest.addSymUse c.routine.resId, info
+      inc it.n # skips the dot
+    else:
+      takeToken c, it.n
   else:
     var a = Item(n: it.n, typ: c.routine.returnType)
     # `return` within a template refers to the caller, so

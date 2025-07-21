@@ -128,3 +128,12 @@ proc hand =
   herz('\255')
 
 hand()
+
+block:
+  proc foo(): int =
+    result = 1
+    return
+
+
+  assert foo() == 1
+
