@@ -50,7 +50,7 @@
  (proc 5 :overloaded.0.t2er4ggt1 . . . 15
   (params) . . . 2,1
   (stmts 4
-   (let :someInt.0 . . 7,~8
+   (let :someInt.0 . . 10,~8
     (i -1) 13
     (add
      (i -1) 1 +23 5 +90)) ,1
