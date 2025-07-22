@@ -772,7 +772,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     else:
       var returnType = m[idx].returnType
 
-      var returnTypeBuf = createTokenBuf(16)
+      var returnTypeBuf = createTokenBuf()
       swap c.dest, returnTypeBuf
       returnType = semReturnType(c, returnType)
       swap c.dest, returnTypeBuf
