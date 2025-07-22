@@ -4316,12 +4316,27 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       discard "empty push"
     else:
       c.pragmaStack.add n
-    skipUntilEnd it.n
+    # semcheck push/pop pragmas in both SemcheckSignatures and SemcheckBodies phases
+    # so that pushed pragmas works for both procs and variables
+    if c.phase == SemcheckBodies:
+      skipUntilEnd it.n
+    else:
+      c.dest.addParLe PragmasS, it.n.info
+      c.takeToken it.n
+      while it.n.kind != ParRi:
+        c.takeTree it.n
+      c.dest.addParRi
   of PopP:
     if c.pragmaStack.len > 0:
       discard c.pragmaStack.pop
     else:
       buildErr c, it.n.info, "{.pop.} without a corresponding {.push.}"
+    if c.phase == SemcheckBodies:
+      inc it.n
+    else:
+      c.dest.addParLe PragmasS, it.n.info
+      c.takeToken it.n
+      c.dest.addParRi
     inc it.n
   of PassLP:
     inc it.n
@@ -4995,6 +5010,8 @@ proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
     semStmt c, n, false
   takeParRi c, n
   result = move c.dest
+  # clear pragmaStack in case {.pop.} was not called
+  c.pragmaStack.setLen(0)
 
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
