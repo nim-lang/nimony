@@ -51,7 +51,7 @@ proc addFn(c: var SemContext; fn: FnCandidate; fnOrig: Cursor; m: var Match): Ma
         inc n # skip the SymbolDef
         if n.kind == ParLe:
           if n.exprKind in {DefinedX, DeclaredX, AstToStrX, CompilesX, TypeofX,
-              LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX,
+              LowX, HighX, AddrX, EnumToStrX, DefaultObjX, DefaultTupX, DefaultdistinctX,
               ArrAtX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
@@ -770,7 +770,14 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
           returnType = instantiateType(c, matched.returnType, matched.inferred)
       typeofCallIs c, it, cs.beforeCall, returnType
     else:
-      typeofCallIs c, it, cs.beforeCall, m[idx].returnType
+      var returnType = m[idx].returnType
+
+      var returnTypeBuf = createTokenBuf()
+      swap c.dest, returnTypeBuf
+      returnType = semReturnType(c, returnType)
+      swap c.dest, returnTypeBuf
+    
+      typeofCallIs c, it, cs.beforeCall, returnType
 
   else:
     skipParRi it.n

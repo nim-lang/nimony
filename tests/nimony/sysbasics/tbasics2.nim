@@ -115,3 +115,47 @@ block:
 
 
   assert foo() == 12
+
+proc herz(s1: char) =
+  assert char('\255') == s1
+
+proc hand =
+  let s1 = char('\255')
+  let s2 = '\255'
+  assert s1 == s2
+  assert s1 == '\255'
+  assert '\255' == s1
+  herz('\255')
+
+hand()
+
+block:
+  proc foo(): int =
+    result = 1
+    return
+
+
+  assert foo() == 1
+
+
+block:
+  proc foo(x: seq[int] = @[1, 2, 3]): int =
+    let s = x[1]
+    result = s
+
+  assert foo() == 2
+
+block:
+
+  proc foo(x: openArray[int]): int =
+    let s = x[1]
+    result = s.int
+
+
+  template herz(sep: openArray[int]): int =
+    foo(sep)
+
+  proc bar =
+    assert herz([1, 2, 3]) == 2
+
+  bar()

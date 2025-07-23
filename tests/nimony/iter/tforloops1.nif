@@ -38,10 +38,10 @@
  (for 11
   (call ~6 powers.0.tfo161bfb1 1 +5)
   (unpackflat
-   (let :i.1 . . 6,~11
+   (let :i.1 . . 15,~11
     (i -1) .)) ~2,1
   (stmts 4
-   (let :m.0 . . 4,~12
+   (let :m.0 . . 13,~12
     (i -1) 4 i.1) 6,2
    (call ~6 printf.0.tfo161bfb1 1
     (hconv 11,~6
@@ -66,10 +66,10 @@
  (for 12
   (call ~7 countup.0.tfo161bfb1 1 +1 4 +5)
   (unpackflat
-   (let :x.1 . . 9,~6
+   (let :x.1 . . 15,~22
     (i -1) .)) ~2,1
   (stmts 4
-   (let :m.1 . . 7,~7
+   (let :m.1 . . 13,~23
     (i -1) 4 x.1) 6,1
    (call ~6 printf.0.tfo161bfb1 1
     (hconv 11,~16
@@ -113,7 +113,7 @@
    (for 13
     (call ~8 countup2.0.tfo161bfb1 1 n.2)
     (unpackflat
-     (let :i.4 . . 4,~7
+     (let :i.4 . . 13,~38
       (i -1) .)) ~2,1
     (stmts
      (yld 6 i.4) ,1
@@ -128,7 +128,7 @@
  (for 12
   (call ~7 powers2.0.tfo161bfb1 1 +6)
   (unpackflat
-   (let :i.5 . . 6,~6
+   (let :i.5 . . 15,~43
     (i -1) .)) ~2,1
   (stmts 6
    (call ~6 printf.0.tfo161bfb1 1
@@ -150,20 +150,20 @@
    (for 13
     (call ~8 countup3.0.tfo161bfb1 1 b.1)
     (unpackflat
-     (let :j.0 . . 4,~4
+     (let :j.0 . . 13,~50
       (i -1) .)) ~2,1
     (stmts
      (yld 6 j.0))))) 4,55
  (for 12
   (call ~7 powers3.0.tfo161bfb1 1 +5)
   (unpackflat
-   (let :m.2 . . 6,~4
+   (let :m.2 . . 15,~53
     (i -1) .)) ~2,1
   (stmts 4
    (for 13
     (call ~8 countup3.0.tfo161bfb1 1 +4)
     (unpackflat
-     (let :n.3 . . 4,~8
+     (let :n.3 . . 13,~54
       (i -1) .)) ~2,1
     (stmts 6
      (call ~6 printf.0.tfo161bfb1 1
@@ -198,20 +198,20 @@
    (for 13
     (call ~8 countup4.0.tfo161bfb1 1 a.3)
     (unpackflat
-     (let :j.1 . . 4,~4
+     (let :j.1 . . 13,~67
       (i -1) .)) ~2,1
     (stmts
      (yld 6 j.1))))) 4,72
  (for 12
   (call ~7 powers4.0.tfo161bfb1 1 +5)
   (unpackflat
-   (let :i.7 . . 6,~4
+   (let :i.7 . . 15,~70
     (i -1) .)) ~2,1
   (stmts 4
    (for 13
     (call ~8 countup4.0.tfo161bfb1 1 +4)
     (unpackflat
-     (let :j.2 . . 4,~8
+     (let :j.2 . . 13,~71
       (i -1) .)) ~2,1
     (stmts 6
      (call ~6 printf.0.tfo161bfb1 1
@@ -265,7 +265,7 @@
        (let :j.4 . . 11,~84
         (i -1) .)) ~2,1
       (stmts 4
-       (let :a.5 . . 15,44,lib/std/system/arithmetics.nim
+       (let :a.5 . . 15,56,lib/std/system/arithmetics.nim
         (i +64) 6
         (add
          (i +64) ~2 i.9 2 j.4)) 4,1
@@ -378,7 +378,7 @@
    (for 8
     (call ~3 foo.0)
     (unpackflat
-     (let :p.0 . . ~2,~5
+     (let :p.0 . . 13,~116
       (i -1) .)) ~2,1
     (stmts 2,116,lib/std/syncio.nim
      (stmts 2,1
@@ -394,7 +394,7 @@
    (for 17
     (call ~12 permutations.0)
     (unpackflat
-     (let :p.1 . . ~2,~3
+     (let :p.1 . . 13,~123
       (i -1) .)) ~2,1
     (stmts
      (break .))) ,30

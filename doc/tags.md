@@ -246,6 +246,7 @@
 | `(ismainmodule)` | NimonyExpr | |
 | `(defaultobj T)` | NimonyExpr | |
 | `(defaulttup T)` | NimonyExpr | |
+| `(defaultdistinct T)` | NimonyExpr | |
 | `(delay T X)` | NimonyExpr | `delay` builtin for delayed continuation creation |
 | `(expr S+ X)` | NimonyExpr, NiflerKind | |
 | `(do (params...)+ T X)` | NimonyExpr, NiflerKind | `do` expression |
@@ -298,3 +299,5 @@
 | `(envp T Y)` | NimonyExpr | `envp.Y` field access to hidden `env` parameter which is of type `T` |
 | `(packed)`   | NifcPragma, NimonyPragma | `packed` pragma |
 | `(passive)`  | NimonyPragma | `passive` pragma |
+| `(push P)`   | NimonyPragma | `push` pragma |
+| `(pop)`      | NimonyPragma | `pop` pragma |

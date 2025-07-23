@@ -254,6 +254,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       inc n
     of CharLit:
       let ch = n.charLit
+      c.add "(NC8)"
       var s = "'"
       toCChar ch, s
       s.add "'"

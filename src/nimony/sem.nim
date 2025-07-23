@@ -1435,7 +1435,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
         c.dest.shrink oldLen
     else:
       c.dest.addParRi()
-  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP:
+  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP:
     buildErr c, n.info, "pragma not supported"
     inc n
     if hasParRi:
@@ -1461,16 +1461,35 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     skipParRi n
 
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
-  if n.kind == DotToken:
-    takeToken c, n
-  elif n.substructureKind == PragmasU:
-    takeToken c, n
-    while n.kind != ParRi:
-      if n.exprKind == ErrX:
-        takeTree c, n
+  if n.kind == DotToken or n.substructureKind == PragmasU:
+    let hasPushedPragma = c.pragmaStack.len != 0
+    if hasPushedPragma:
+      c.dest.addParLe PragmasU, n.info
+      for ns in c.pragmaStack:
+        var n2 = ns
+        while n2.kind != ParRi:
+          if not kind.isRoutine and callConvKind(n2) != NoCallConv:
+            skip n2
+          else:
+            semPragma c, n2, crucial, kind
+
+    if n.kind == DotToken:
+      if hasPushedPragma:
+        inc n
+        c.dest.addParRi
       else:
-        semPragma c, n, crucial, kind
-    takeParRi c, n
+        takeToken c, n
+    elif n.substructureKind == PragmasU:
+      if hasPushedPragma:
+        inc n
+      else:
+        takeToken c, n
+      while n.kind != ParRi:
+        if n.exprKind == ErrX:
+          takeTree c, n
+        else:
+          semPragma c, n, crucial, kind
+      takeParRi c, n
   else:
     buildErr c, n.info, "expected '.' or 'pragmas'"
 
@@ -2450,7 +2469,11 @@ proc semReturn(c: var SemContext; it: var Item) =
   if c.routine.kind == NoSym:
     buildErr c, info, "`return` only allowed within a routine"
   if it.n.kind == DotToken:
-    takeToken c, it.n
+    if c.routine.returnType.typeKind != VoidT:
+      c.dest.addSymUse c.routine.resId, info
+      inc it.n # skips the dot
+    else:
+      takeToken c, it.n
   else:
     var a = Item(n: it.n, typ: c.routine.returnType)
     # `return` within a template refers to the caller, so
@@ -3312,6 +3335,23 @@ proc semTupleDefault(c: var SemContext; it: var Item) =
   c.dest.shrink exprStart
   skipParRi it.n
   buildDefaultTuple(c, it.typ, info)
+  commonType c, it, exprStart, expected
+
+proc semDefaultDistinct(c: var SemContext; it: var Item) =
+  let exprStart = c.dest.len
+  let expected = it.typ
+  let info = it.n.info
+  inc it.n
+  it.typ = semLocalType(c, it.n)
+  c.dest.shrink exprStart
+  skipParRi it.n
+  var isDistinct = false
+  let srcBase = skipDistinct(it.typ, isDistinct)
+
+  c.dest.add parLeToken(DconvX, info)
+  c.dest.add it.typ
+  callDefault c, srcBase, info
+  c.dest.addParRi()
   commonType c, it, exprStart, expected
 
 proc semTupAt(c: var SemContext; it: var Item) =
@@ -4211,6 +4251,20 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       buf.addParRi() # extra ParRi to make reading easier
       c.userPragmas[name] = buf
     c.dest.addParRi()
+  of PushP:
+    var n = it.n
+    inc n
+    if n.kind == ParRi:
+      discard "empty push"
+    else:
+      c.pragmaStack.add n
+    skipUntilEnd it.n
+  of PopP:
+    if c.pragmaStack.len > 0:
+      discard c.pragmaStack.pop
+    else:
+      buildErr c, it.n.info, "{.pop.} without a corresponding {.push.}"
+    inc it.n
   else:
     buildErr c, it.n.info, "unsupported pragma"
     skip it.n
@@ -4219,14 +4273,12 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
 proc semPragmasLine(c: var SemContext; it: var Item) =
   let info = it.n.info
   inc it.n
-  while true:
+  while it.n.kind != ParRi:
     if it.n.kind == ParLe:
       if it.n.stmtKind in CallKindsS or
           it.n.substructureKind == KvU:
         inc it.n
-      semPragmaLine c, it, false
-    else:
-      break
+    semPragmaLine c, it, false
   skipParRi it.n
   producesVoid c, info, it.typ # in case it was not already produced
 
@@ -4742,6 +4794,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semObjDefault c, it
     of DefaultTupX:
       semTupleDefault c, it
+    of DefaultDistinctX:
+      semDefaultDistinct c, it
     of LowX:
       semLow c, it
     of HighX:
