@@ -2590,6 +2590,16 @@ proc semTypedUnaryArithmetic(c: var SemContext; it: var Item) =
   takeParRi c, it.n
   commonType c, it, beforeExpr, typ
 
+proc semDelay(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let typeStart = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  let typ = typeToCursor(c, typeStart)
+  semStmt c, it.n, false
+  takeParRi c, it.n
+  commonType c, it, beforeExpr, typ
+
 proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   let exprStart = c.dest.len
   let info = it.n.info
@@ -2958,13 +2968,13 @@ proc asNimSym(symId: SymId): string =
   result = pool.syms[symId]
   extractBasename(result)
 
-template conflictingBranchesError(c: var SemContext, info: PackedLineInfo, prevFields: SymId, currentFields: SymId) = 
-  c.buildErr info, "The fields '" & asNimSym(prevFields) & 
+template conflictingBranchesError(c: var SemContext, info: PackedLineInfo, prevFields: SymId, currentFields: SymId) =
+  c.buildErr info, "The fields '" & asNimSym(prevFields) &
               "' and '" & asNimSym(currentFields) & "' cannot be initialized together, " &
               "because they are from conflicting branches in the case object."
 
 template badDiscriminatorError(c: var SemContext, info: PackedLineInfo, field: SymId, discriminator: SymId) =
-  c.buildErr info, 
+  c.buildErr info,
     ("cannot prove that it's safe to initialize '$1' with " &
     "the runtime value for the discriminator '$2'.") %
     [asNimSym(field), asNimSym(discriminator)]
@@ -4723,6 +4733,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semShift c, it
     of BitnotX, NegX:
       semTypedUnaryArithmetic c, it
+    of DelayX:
+      semDelay c, it
     of InSetX:
       semInSet c, it
     of CardX:

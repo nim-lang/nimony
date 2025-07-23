@@ -175,7 +175,6 @@ proc isBranchValue(n: Cursor): bool =
     result = false
 
 proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
-  let branch = n
   if isBranchValue(n):
     c.genx n
   else:

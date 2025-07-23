@@ -336,7 +336,6 @@ proc takeMangleProctype(c: var EContext; n: var Cursor): string =
   if n.kind != DotToken:
     inc n # params tag
     while n.kind != ParRi:
-      let m = n
       let pa = takeLocal(n, SkipFinalParRi)
       assert pa.kind == ParamY
       mangle b, pa.typ, Backend
@@ -1372,7 +1371,7 @@ proc trExpr(c: var EContext; n: var Cursor) =
        InSetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
-       InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX:
+       InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX:
       error c, "BUG: not eliminated: ", n
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
