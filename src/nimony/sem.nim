@@ -2590,6 +2590,20 @@ proc semTypedUnaryArithmetic(c: var SemContext; it: var Item) =
   takeParRi c, it.n
   commonType c, it, beforeExpr, typ
 
+proc handleOpenArrayType(typ: Cursor; elem: var Item): bool =
+  result = false
+  if typ.kind == Symbol:
+    let res = tryLoadSym(typ.symId)
+    if res.status == LacksNothing:
+      let decl = asTypeDecl(res.decl)
+      if decl.typevars.typeKind == InvokeT:
+        var root = decl.typevars
+        inc root
+        result = root.kind == Symbol and pool.syms[root.symId] == "openArray.0." & SystemModuleSuffix
+        if result:
+          inc root
+          elem.typ = root
+
 proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   let exprStart = c.dest.len
   let info = it.n.info
@@ -2607,7 +2621,20 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     of ArrayT:
       c.dest.addSubtree it.typ
     else:
-       buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
+      var elem = Item(n: it.n, typ: c.types.autoType)
+      if handleOpenArrayType(it.typ, elem):
+        let typeStart = c.dest.len
+        c.dest.buildTree ArrayT, info:
+          c.dest.addSubtree elem.typ
+          c.dest.addParLe(RangetypeT, info)
+          c.dest.addSubtree c.types.intType
+          c.dest.addIntLit(0, info)
+          c.dest.addIntLit(0, info)
+          c.dest.addParRi()
+
+        it.typ = typeToCursor(c, typeStart)
+      else:
+        buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
     takeParRi c, it.n
     return
 
@@ -2622,7 +2649,10 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     freshElemType = false
   of AutoT: discard
   else:
-    buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
+    if handleOpenArrayType(it.typ, elem):
+      freshElemType = false
+    else:
+      buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
   # XXX index types, `index: value` etc not implemented
   semExpr c, elem
   if freshElemType:

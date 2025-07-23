@@ -159,3 +159,16 @@ block:
     assert herz([1, 2, 3]) == 2
 
   bar()
+
+block:
+  proc foo(x: openArray[int] = [1, 2, 3]): int =
+    let s = x[1]
+    result = s.int
+
+  assert foo() == 2
+
+block:
+  proc foo(x: openArray[int] = []) =
+    discard
+
+  foo()
