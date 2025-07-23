@@ -1,0 +1,4 @@
+(.nif24)
+0,2,tests/nimony/nosystem/tfloatliterals0.nim(stmts
+ (discard 8 -0.0) ,1
+ (discard 8 +0.0))
