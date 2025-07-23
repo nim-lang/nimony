@@ -132,6 +132,10 @@ typedef NU8 NU;
 #define NIM_TRUE true
 #define NIM_FALSE false
 
+// Include math.h to use `NAN` that should be defined in C compilers supports C99.
+#include <math.h>
+
+// Define NAN in case math.h doesn't define it.
 // NAN definition copied from math.h included in the Windows SDK version 10.0.14393.0
 #ifndef NAN
 #  ifndef _HUGE_ENUF
