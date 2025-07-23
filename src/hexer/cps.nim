@@ -185,7 +185,8 @@ proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedL
       dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
-proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId; target: Cursor) =
+proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId; target: Cursor;
+                   inhibitComplete = false) =
   let retType = getType(c.typeCache, n)
   let hasResult = not isVoidType(retType)
   if hasResult:
@@ -200,6 +201,9 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     # we know afterwards the result is available
     ]#
     let info = n.info
+    if inhibitComplete:
+      dest.addParLe ExprX, info
+      dest.addParLe StmtsS, info
     # declare coroutine variable:
     let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
     inc c.currentProc.counter
@@ -210,30 +214,35 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       dest.addSymUse coroTypeForProc(c, sym), info
       dest.addDotToken() # default value
 
-    copyIntoKind dest, CallS, info:
+    if inhibitComplete:
+      dest.addParRi() # StmtsS
+    else:
+      dest.addParLe CallS, info
       dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
-      # emit constructor call:
-      copyIntoKind dest, CallS, info:
-        dest.addSymUse sym, info
+
+    # emit constructor call:
+    copyIntoKind dest, CallS, info:
+      dest.addSymUse sym, info
+      dest.copyIntoKind AddrX, info:
+        dest.addSymUse coroVar, info
+      inc n
+      skip n # fn already handled
+      while n.kind != ParRi:
+        tr(c, dest, n)
+      inc n
+      if hasResult:
         dest.copyIntoKind AddrX, info:
-          dest.addSymUse coroVar, info
-        inc n
-        skip n # fn already handled
-        while n.kind != ParRi:
-          tr(c, dest, n)
-        inc n
-        if hasResult:
-          dest.copyIntoKind AddrX, info:
-            dest.copyTree target
-        # add StopContinuation:
-        dest.copyIntoKind OconstrX, info:
-          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-          dest.copyIntoKind KvU, info:
-            dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
-            dest.addParPair NilX, info
-          dest.copyIntoKind KvU, info:
-            dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-            dest.addParPair NilX, info
+          dest.copyTree target
+      # add StopContinuation:
+      dest.copyIntoKind OconstrX, info:
+        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.copyIntoKind KvU, info:
+          dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+          dest.addParPair NilX, info
+        dest.copyIntoKind KvU, info:
+          dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+          dest.addParPair NilX, info
+    dest.addParRi() # ExprX or CallS
   of IsIterator, IsPassive:
     # passive call from within a passive proc:
     # We use a single stackframe variable that acts as a union storage
@@ -264,61 +273,54 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     else:
       field = c.currentProc.localToEnv[sym].field
 
-    # We cannot generate `return fnConstruct(args)` directly here because
-    # the rest of the pipeline already assumes code
-    # like `let tmp = fnConstruct(args); return tmp` so that is what we
-    # generate here:
-    let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
-    inc c.currentProc.counter
-    copyIntoKind dest, VarS, info:
+    var contVar = SymId(0)
+    if not inhibitComplete:
+      # We cannot generate `return fnConstruct(args)` directly here because
+      # the rest of the pipeline already assumes code
+      # like `let tmp = fnConstruct(args); return tmp` so that is what we
+      # generate here:
+      contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+      inc c.currentProc.counter
+      dest.addParLe VarS, info
       dest.addSymDef contVar, info
       dest.addDotToken() # exported
       dest.addDotToken() # pragmas
       dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
 
-      # value: emit constructor call:
-      copyIntoKind dest, CallS, info:
-        dest.addSymUse sym, info
+    # value: emit constructor call:
+    copyIntoKind dest, CallS, info:
+      dest.addSymUse sym, info
 
+      dest.copyIntoKind AddrX, info:
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+          dest.addSymUse field, info
+
+      inc n
+      skip n # fn already handled
+      while n.kind != ParRi:
+        tr(c, dest, n)
+      inc n
+      if hasResult:
         dest.copyIntoKind AddrX, info:
-          dest.copyIntoKind DotX, info:
-            dest.copyIntoKind DerefX, info:
-              dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-            dest.addSymUse field, info
+          dest.copyTree target
+      contNextState c, dest, state, info
 
-        inc n
-        skip n # fn already handled
-        while n.kind != ParRi:
-          tr(c, dest, n)
-        inc n
-        if hasResult:
-          dest.copyIntoKind AddrX, info:
-            dest.copyTree target
-        contNextState c, dest, state, info
+    if not inhibitComplete:
+      dest.addParRi() # VarS
 
-    copyIntoKind dest, RetS, info:
-      dest.addSymUse contVar, info
+      copyIntoKind dest, RetS, info:
+        dest.addSymUse contVar, info
 
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   skip n # skip type; it is `Continuation` and uninteresting here
-  let retType = getType(c.typeCache, n)
-  let hasResult = not isVoidType(retType)
-
-  var target = default(Cursor)
-  var nested = 1
-  if n.stmtKind == AsgnS:
-    inc n
-    target = n
-    skip n
-    nested = 2
-
-  if hasResult:
-    assert not cursorIsNil(target), "passive call without target"
+  const nested = 1
 
   if n.exprKind in CallKinds and n.firstSon.kind == Symbol:
     let fn = n.firstSon.symId
-    trPassiveCall c, dest, n, fn, target
+    trPassiveCall c, dest, n, fn, default(Cursor), inhibitComplete = true
   else:
     dest.copyIntoKind ErrT, n.info:
       dest.addStrLit "`delay` takes a call expression"
