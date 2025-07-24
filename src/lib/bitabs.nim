@@ -7,7 +7,7 @@
 ## A BiTable is a table that can be seen as an optimized pair
 ## of `(Table[Id, Val], Table[Val, Id])`.
 
-import std/[hashes, math]
+import std/hashes
 
 when defined(nimPreviewSlimSystem):
   import std/assertions
@@ -53,15 +53,6 @@ proc enlarge[Id, T](t: var BiTable[Id, T]) =
         j = nextTry(j, maxHash(t))
       t.keys[j] = move n[i]
 
-proc equal[T, U](x: T, y: U): bool {.inline.} =
-  when T is SomeFloat:
-    # we need to distinguish `0.0` and `-0.0` even if `0.0 == -0.0`.
-    # Their bit patterns are different.
-    # signbit and copySign procs returns the different value.
-    x == y and signbit(x) == signbit(y)
-  else:
-    x == y
-
 proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
   let origH = hash(v)
   var h = origH and maxHash(t)
@@ -69,7 +60,7 @@ proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
     while true:
       let litId = t.keys[h]
       if not isFilled(litId): break
-      if equal(v, t.vals[idToIdx t.keys[h]]): return litId
+      if v == t.vals[idToIdx t.keys[h]]: return litId
       h = nextTry(h, maxHash(t))
   return Id(0)
 
@@ -80,7 +71,7 @@ template getOrInclImpl() {.dirty.} =
     while true:
       let litId = t.keys[h]
       if not isFilled(litId): break
-      if equal(v, t.vals[idToIdx t.keys[h]]): return litId
+      if v == t.vals[idToIdx t.keys[h]]: return litId
       h = nextTry(h, maxHash(t))
     # not found, we need to insert it:
     if mustRehash(t.keys.len, t.vals.len):
@@ -137,6 +128,17 @@ proc memSize*[Id, T](t: BiTable[Id, T]): int =
     echo "SHORT STRINGS ", shorts
   else:
     t.vals.len * sizeof(T) + t.keys.len * sizeof(Id)
+
+type
+  # we need to distinguish `0.0` and `-0.0` even if `0.0 == -0.0`
+  # as signbit and copySign procs returns the different value.
+  BiTableFloat*[Id] = distinct BiTable[Id, uint64]
+
+proc getOrIncl*[Id](t: var BiTableFloat[Id]; v: float64): Id {.inline .} =
+  BiTable[Id, uint64](t).getOrIncl(cast[uint64](v))
+
+proc `[]`*[Id](t: BiTableFloat[Id]; litId: Id): float64 {.inline.} =
+  cast[float64](BiTable[Id, uint64](t)[litId])
 
 when isMainModule:
 
