@@ -101,3 +101,33 @@ block: # almostEqual
   assert not almostEqual(-Inf, Inf)
   assert not almostEqual(Inf, NaN)
   assert not almostEqual(NaN, NaN)
+
+block: # sgn
+  assert sgn(1'i8) == 1
+  assert sgn(1'i16) == 1
+  assert sgn(1'i32) == 1
+  assert sgn(1'i64) == 1
+  assert sgn(1'u8) == 1
+  assert sgn(1'u16) == 1
+  assert sgn(1'u32) == 1
+  assert sgn(1'u64) == 1
+  assert sgn(-12342.8844'f32) == -1
+  assert sgn(123.9834'f64) == 1
+  assert sgn(0'i32) == 0
+  assert sgn(0'f32) == 0
+  assert sgn(-0.0'f64) == 0
+  assert sgn(-Inf) == -1
+  assert sgn(Inf) == 1
+  assert sgn(NaN) == 0
+
+#block: #frexp
+when false:
+  # needs `==` for tuples
+  assert frexp(8.0) == (0.5, 4)
+  assert frexp(-8.0) == (-0.5, 4)
+  assert frexp(0.0) == (0.0, 0)
+
+  # special cases:
+  assert frexp(-0.0).frac.signbit # signbit preserved for +-0
+  assert frexp(Inf).frac == Inf # +- Inf preserved
+  assert frexp(NaN).frac.isNaN

@@ -24,6 +24,7 @@ proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
 proc c_copysign[T: SomeFloat](x, y: T): T {.importc: "copysign".}
 proc c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify".}
 proc c_isnan[T: SomeFloat](x: T): int {.importc: "isnan".}
+func c_frexp[T: SomeFloat](x: T; exponent: ptr cint): T {.importc: "frexp".}
 {.pop.}
 
 # use push pragma when it is supported
@@ -128,3 +129,35 @@ func almostEqual*[T: SomeFloat](x, y: T; unitsInLastPlace: int = 4): bool {.
     return true
   let diff = abs(x - y)
   return diff <= epsilon(T) * abs(x + y) * T(unitsInLastPlace) or diff < minimumPositiveValue(T)
+
+func sgn*[T: SomeNumber and Comparable](x: T): int {.inline.} =
+  ## Sign function.
+  ##
+  ## Returns:
+  ## * `-1` for negative numbers and `NegInf`,
+  ## * `1` for positive numbers and `Inf`,
+  ## * `0` for positive zero, negative zero and `NaN`
+  runnableExamples:
+    assert sgn(5) == 1
+    assert sgn(0) == 0
+    assert sgn(-4.1) == -1
+
+  ord(T(0) < x) - ord(x < T(0))
+
+func frexp*[T: SomeFloat](x: T): tuple[frac: T, exp: int] {.inline.} =
+  ## Splits `x` into a normalized fraction `frac` and an integral power of 2 `exp`,
+  ## such that `abs(frac) in 0.5..<1` and `x == frac * 2 ^ exp`, except for special
+  ## cases shown below.
+  runnableExamples:
+    assert frexp(8.0) == (0.5, 4)
+    assert frexp(-8.0) == (-0.5, 4)
+    assert frexp(0.0) == (0.0, 0)
+
+    # special cases:
+    assert frexp(-0.0).frac.signbit # signbit preserved for +-0
+    assert frexp(Inf).frac == Inf # +- Inf preserved
+    assert frexp(NaN).frac.isNaN
+
+  var exp = cint(0)
+  let frac = c_frexp(x, addr exp)
+  result = (frac: frac, exp: exp.int)
