@@ -2,11 +2,31 @@ import std/[assertions, fenv]
 
 const
   PI* = 3.1415926535897932384626433          ## The circle constant PI (Ludolph's number).
+  TAU* = 2.0 * PI                            ## The circle constant TAU (= 2 * PI).
+  E* = 2.71828182845904523536028747          ## Euler's number.
 
+  MaxFloat64Precision* = 16                  ## Maximum number of meaningful digits
+                                             ## after the decimal point for Nim's
+                                             ## `float64` type.
+  MaxFloat32Precision* = 8                   ## Maximum number of meaningful digits
+                                             ## after the decimal point for Nim's
+                                             ## `float32` type.
+  MaxFloatPrecision* = MaxFloat64Precision   ## Maximum number of
+                                             ## meaningful digits
+                                             ## after the decimal point
+                                             ## for Nim's `float` type.
+  MinFloatNormal* = 2.225073858507201e-308   ## Smallest normal number for Nim's
+                                             ## `float` type (= 2^-1022).
+
+{.push header: "<math.h>".}
 # These are C macros and can take both float and double type values.
-proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit", header: "<math.h>".}
-proc c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify", header: "<math.h>".}
+proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
+proc c_copysign[T: SomeFloat](x, y: T): T {.importc: "copysign".}
+proc c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify".}
+proc c_isnan[T: SomeFloat](x: T): int {.importc: "isnan".}
+{.pop.}
 
+# use push pragma when it is supported
 let
   c_fpNormal    {.importc: "FP_NORMAL", header: "<math.h>".}: int
   c_fpSubnormal {.importc: "FP_SUBNORMAL", header: "<math.h>".}: int
@@ -36,6 +56,17 @@ func signbit*[T: SomeFloat](x: T): bool {.inline.} =
 
   c_signbit(x) != 0
 
+func copySign*[T: SomeFloat](x, y: T): T {.inline.} =
+  ## Returns a value with the magnitude of `x` and the sign of `y`;
+  ## this works even if x or y are NaN, infinity or zero, all of which can carry a sign.
+  runnableExamples:
+    assert copySign(10.0, 1.0) == 10.0
+    assert copySign(10.0, -1.0) == -10.0
+    assert copySign(-Inf, -0.0) == -Inf
+    assert copySign(NaN, 1.0).isNaN
+    assert copySign(1.0, copySign(NaN, -1.0)) == -1.0
+  c_copysign(x, y)
+
 func classify*[T: SomeFloat](x: T): FloatClass {.inline.} =
   ## Classifies a floating point value.
   ##
@@ -60,6 +91,15 @@ func classify*[T: SomeFloat](x: T): FloatClass {.inline.} =
   else:
     # can be implementation-defined type
     result = fcNan
+
+func isNaN*[T: SomeFloat](x: T): bool {.inline.} =
+  ## Returns whether `x` is a `NaN`, more efficiently than via `classify(x) == fcNan`.
+  runnableExamples:
+    assert NaN.isNaN
+    assert not Inf.isNaN
+    assert not isNaN(3.1415926)
+
+  c_isnan(x) != 0
 
 func almostEqual*[T: SomeFloat](x, y: T; unitsInLastPlace: int = 4): bool {.
     untyped.} =
