@@ -2668,7 +2668,7 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     if tryConverterMatch(c, convMatch, expected, convArg):
       discard "matching converter found (e.g. `toOpenArray`)"
     else:
-      buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
+      buildErr c, info, "invalid expected type for array constructor: " & typeToString(expected)
 
   c.dest.shrink typeStart
   c.dest.insert it.typ, typeInsertPos
