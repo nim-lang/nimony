@@ -2603,6 +2603,8 @@ proc semDelay(c: var SemContext; it: var Item) =
 proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   let exprStart = c.dest.len
   let info = it.n.info
+
+  var orig = it.n
   inc it.n
   c.dest.addParLe(AconstrX, info)
   if it.n.kind == ParRi:
@@ -2632,7 +2634,8 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     freshElemType = false
   of AutoT: discard
   else:
-    buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
+    discard
+
   # XXX index types, `index: value` etc not implemented
   semExpr c, elem
   if freshElemType:
@@ -2655,6 +2658,18 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     c.dest.addParRi()
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
+
+  case expected.typeKind
+  of AutoT, ArrayT:
+    discard
+  else:
+    var convMatch = default(Match)
+    let convArg = CallArg(n: orig, typ: it.typ)
+    if tryConverterMatch(c, convMatch, expected, convArg):
+      discard "matching converter found (e.g. `toOpenArray`)"
+    else:
+      buildErr c, info, "invalid expected type for array constructor: " & typeToString(expected)
+
   c.dest.shrink typeStart
   c.dest.insert it.typ, typeInsertPos
   commonType c, it, exprStart, expected
