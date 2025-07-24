@@ -2129,32 +2129,54 @@ proc semWhen(c: var SemContext; it: var Item) =
   semWhenImpl(c, it, NormalWhen)
   dec c.inWhen
 
-proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
+proc semCaseOfValueImpl(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
-  if it.n.substructureKind == RangesU:
-    takeToken c, it.n
-    while it.n.kind != ParRi:
-      let info = it.n.info
-      if isRangeExpr(it.n):
-        inc it.n # call tag
-        skip it.n # `..`
-        c.dest.buildTree RangeU, it.n.info:
-          let a = evalConstIntExpr(c, it.n, selectorType)
-          let b = evalConstIntExpr(c, it.n, selectorType)
-          if seen.doesOverlapOrIncl(a, b):
-            buildErr c, info, "overlapping values"
-        inc it.n # right paren of call
-      elif it.n.substructureKind == RangeU:
-        takeToken c, it.n
+  while it.n.kind != ParRi:
+    let info = it.n.info
+    if isRangeExpr(it.n):
+      inc it.n # call tag
+      skip it.n # `..`
+      c.dest.buildTree RangeU, it.n.info:
         let a = evalConstIntExpr(c, it.n, selectorType)
         let b = evalConstIntExpr(c, it.n, selectorType)
         if seen.doesOverlapOrIncl(a, b):
           buildErr c, info, "overlapping values"
-        takeParRi c, it.n
+      inc it.n # right paren of call
+    elif it.n.substructureKind == RangeU:
+      takeToken c, it.n
+      let a = evalConstIntExpr(c, it.n, selectorType)
+      let b = evalConstIntExpr(c, it.n, selectorType)
+      if seen.doesOverlapOrIncl(a, b):
+        buildErr c, info, "overlapping values"
+      takeParRi c, it.n
+    else:
+      if it.n.exprKind == CurlyX:
+
+        var beforeSetType = c.dest.len
+        c.dest.buildTree SetT, info:
+          c.dest.addSubtree selectorType
+
+        var curlyExpr = Item(n: it.n, typ: typeToCursor(c, beforeSetType))
+
+        shrink(c.dest, beforeSetType)
+        inc it.n
+
+        var beforeExpr = c.dest.len
+        semExpr c, curlyExpr
+        shrink(c.dest, beforeExpr)
+
+        semCaseOfValueImpl(c, it, selectorType, seen)
+        skipParRi(it.n)
       else:
         let a = evalConstIntExpr(c, it.n, selectorType)
         if seen.containsOrIncl(a):
           buildErr c, info, "value already handled"
+
+proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
+                    seen: var seq[(xint, xint)]) =
+  if it.n.substructureKind == RangesU:
+    takeToken c, it.n
+    semCaseOfValueImpl(c, it, selectorType, seen)
     takeParRi c, it.n
   else:
     buildErr c, it.n.info, "`ranges` within `of` expected"
