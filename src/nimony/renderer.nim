@@ -607,7 +607,16 @@ proc gcallComma(g: var SrcGen, n: var Cursor) =
       gcomma(g)
     else:
       afterFirst = true
-    gsub(g, n)
+
+    if n.substructureKind == VvU:
+      inc n
+      gsub(g, n)
+      put(g, tkSpaces, Space)
+      put(g, tkEquals, "=")
+      put(g, tkSpaces, Space)
+      gsub(g, n)
+    else:
+      gsub(g, n)
 
 proc gcall(g: var SrcGen, n: var Cursor) =
   inc n
