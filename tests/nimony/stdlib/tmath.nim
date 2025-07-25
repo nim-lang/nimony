@@ -131,3 +131,31 @@ when false:
   assert frexp(-0.0).frac.signbit # signbit preserved for +-0
   assert frexp(Inf).frac == Inf # +- Inf preserved
   assert frexp(NaN).frac.isNaN
+
+block: #floor
+  assert floor(2.9) == 2.0
+  assert floor(2.1) == 2.0
+  assert floor(0.0) == 0.0
+  assert floor(-2.1) == -3.0
+  assert floor(-2.9) == -3.0
+
+block: #ceil
+  assert ceil(2.9) == 3.0
+  assert ceil(2.1) == 3.0
+  assert ceil(0.0) == 0.0
+  assert ceil(-2.1) == -2.0
+  assert ceil(-2.9) == -2.0
+
+block: #round
+  assert round(2.9) == 3.0
+  assert round(2.1) == 2.0
+  assert round(0.0) == 0.0
+  assert round(-2.1) == -2.0
+  assert round(-2.9) == -3.0
+
+block: #trunc
+  assert trunc(2.9) == 2.0
+  assert trunc(2.1) == 2.0
+  assert trunc(0.0) == 0.0
+  assert trunc(-2.1) == -2.0
+  assert trunc(-2.9) == -2.0
