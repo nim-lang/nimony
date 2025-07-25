@@ -1,5 +1,15 @@
 import std/[assertions, fenv]
 
+type
+  Arithmetic = concept
+    proc `+`(x, y: Self): Self
+    proc `-`(x, y: Self): Self
+    proc `*`(x, y: Self): Self
+    proc `div`(x, y: Self): Self
+    proc `mod`(x, y: Self): Self
+    proc `<`(x, y: Self): bool
+    proc `>`(x, y: Self): bool
+
 const
   PI* = 3.1415926535897932384626433          ## The circle constant PI (Ludolph's number).
   TAU* = 2.0 * PI                            ## The circle constant TAU (= 2 * PI).
@@ -210,4 +220,54 @@ func trunc*[T: SomeFloat](x: T): T {.importc: "trunc".} =
   runnableExamples:
     doAssert trunc(PI) == 3.0
     doAssert trunc(-1.85) == -1.0
+
+func `mod`*[T: SomeFloat](x, y: T): T {.importc: "fmod".} =
+  ## Computes the modulo operation for float values (the remainder of `x` divided by `y`).
+  ##
+  ## **See also:**
+  ## * `floorMod func <#floorMod,T,T>`_ for Python-like (`%` operator) behavior
+  runnableExamples:
+    doAssert  6.5 mod  2.5 ==  1.5
+    doAssert -6.5 mod  2.5 == -1.5
+    doAssert  6.5 mod -2.5 ==  1.5
+    doAssert -6.5 mod -2.5 == -1.5
 {.pop.}
+
+func floorMod*[T: SomeNumber and Arithmetic](x, y: T): T {.inline.} =
+  ## Floor modulo is conceptually defined as `x - (floorDiv(x, y) * y)`.
+  ##
+  ## This func behaves the same as the `%` operator in Python.
+  ##
+  ## **See also:**
+  ## * `mod func <#mod,float64,float64>`_
+  ## * `floorDiv func <#floorDiv,T,T>`_
+  runnableExamples:
+    doAssert floorMod( 13,  3) ==  1
+    doAssert floorMod(-13,  3) ==  2
+    doAssert floorMod( 13, -3) == -2
+    doAssert floorMod(-13, -3) == -1
+
+  result = x mod y
+  if (result > T(0) and y < T(0)) or (result < T(0) and y > T(0)):
+    result = result + y
+
+func floorDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
+  ## Floor division is conceptually defined as `floor(x / y)`.
+  ##
+  ## This is different from the `system.div <system.html#div,int,int>`_
+  ## operator, which is defined as `trunc(x / y)`.
+  ## That is, `div` rounds towards `0` and `floorDiv` rounds down.
+  ##
+  ## **See also:**
+  ## * `system.div proc <system.html#div,int,int>`_ for integer division
+  ## * `floorMod func <#floorMod,T,T>`_ for Python-like (`%` operator) behavior
+  runnableExamples:
+    doAssert floorDiv( 13,  3) ==  4
+    doAssert floorDiv(-13,  3) == -5
+    doAssert floorDiv( 13, -3) == -5
+    doAssert floorDiv(-13, -3) ==  4
+
+  result = x div y
+  let r = x mod y
+  if (r > T(0) and y < T(0)) or (r < T(0) and y > T(0)):
+    result = result - T(1)
