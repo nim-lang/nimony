@@ -159,3 +159,28 @@ block: #trunc
   assert trunc(0.0) == 0.0
   assert trunc(-2.1) == -2.0
   assert trunc(-2.9) == -2.0
+
+block: # mod
+  assert  6.5 mod  2.5 ==  1.5
+  assert -6.5 mod  2.5 == -1.5
+  assert  6.5 mod -2.5 ==  1.5
+  assert -6.5 mod -2.5 == -1.5
+
+block: # floorMod/floorDiv
+  assert floorDiv(8, 3) == 2
+  assert floorMod(8, 3) == 2
+
+  assert floorDiv(8, -3) == -3
+  assert floorMod(8, -3) == -1
+
+  assert floorDiv(-8, 3) == -3
+  assert floorMod(-8, 3) == 1
+
+  assert floorDiv(-8, -3) == 2
+  assert floorMod(-8, -3) == -2
+
+  assert floorMod(8.0, -3.0) == -1.0
+  assert floorMod(-8.5, 3.0) == 0.5
+
+  assert floorDiv(int.high, 1) == int.high
+  assert floorMod(int.high, 1) == 0
