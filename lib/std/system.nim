@@ -261,3 +261,19 @@ func `==`*[T: tuple|object](x, y: T): bool =
   for xf, yf in fields(x, y):
     if xf != yf: return false
   return true
+
+func `==`*[T: Equatable](x, y: seq[T]): bool =
+  ## Generic equals operator for sequences: relies on a equals operator for
+  ## the element type `T`.
+  if y.rawData == x.rawData:
+    return true
+
+  if x.len != y.len:
+    return false
+
+  for i in 0..x.len-1:
+    if x[i] != y[i]:
+      return false
+
+  return true
+
