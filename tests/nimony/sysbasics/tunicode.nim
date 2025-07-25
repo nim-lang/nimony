@@ -175,21 +175,21 @@ block stripTests:
   assert(strip(" ") == "")
   assert(strip("y") == "y")
   assert(strip("  foofoofoo  ") == "foofoofoo")
-#   assert(strip("sfoofoofoos", runes = ['s'.Rune]) == "foofoofoo")
+  assert(strip("sfoofoofoos", runes = toOpenArray(['s'.Rune], 0, 0)) == "foofoofoo")
 
-#   block:
-#     let stripTestRunes = ['b'.Rune, 'a'.Rune, 'r'.Rune]
-#     assert(strip("barfoofoofoobar", runes = stripTestRunes) == "foofoofoo")
-#   assert(strip("sfoofoofoos", leading = false, runes = ['s'.Rune]) == "sfoofoofoo")
-#   assert(strip("sfoofoofoos", trailing = false, runes = ['s'.Rune]) == "foofoofoos")
+  block:
+    let stripTestRunes = ['b'.Rune, 'a'.Rune, 'r'.Rune]
+    assert(strip("barfoofoofoobar", runes = toOpenArray(stripTestRunes, 0, stripTestRunes.len-1)) == "foofoofoo")
+    assert(strip("sfoofoofoos", leading = false, runes = toOpenArray(['s'.Rune], 0, 1)) == "sfoofoofoo")
+    assert(strip("sfoofoofoos", trailing = false, runes = toOpenArray(['s'.Rune], 0, 1)) == "foofoofoos")
 
-#   block:
-#     let stripTestRunes = ["«".asRune, "»".asRune]
-#     assert(strip("«TEXT»", runes = stripTestRunes) == "TEXT")
-#   assert(strip("copyright©", leading = false, runes = ["©".asRune]) == "copyright")
-#   assert(strip("¿Question?", trailing = false, runes = ["¿".asRune]) == "Question?")
-#   assert(strip("×text×", leading = false, runes = ["×".asRune]) == "×text")
-#   assert(strip("×text×", trailing = false, runes = ["×".asRune]) == "text×")
+  block:
+    let stripTestRunes = ["«".asRune, "»".asRune]
+    assert(strip("«TEXT»", runes = toOpenArray(stripTestRunes, 0, len(stripTestRunes)-1)) == "TEXT")
+    assert(strip("copyright©", leading = false, runes = toOpenArray(["©".asRune], 0, 1)) == "copyright")
+    assert(strip("¿Question?", trailing = false, runes = toOpenArray(["¿".asRune], 0, 1)) == "Question?")
+    assert(strip("×text×", leading = false, runes = toOpenArray(["×".asRune], 0, 1)) == "×text")
+    assert(strip("×text×", trailing = false, runes = toOpenArray(["×".asRune], 0, 1)) == "text×")
 
 block repeatTests:
   assert repeat('c'.Rune, 5) == "ccccc"
