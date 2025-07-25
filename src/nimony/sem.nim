@@ -2129,32 +2129,54 @@ proc semWhen(c: var SemContext; it: var Item) =
   semWhenImpl(c, it, NormalWhen)
   dec c.inWhen
 
-proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
+proc semCaseOfValueImpl(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
-  if it.n.substructureKind == RangesU:
-    takeToken c, it.n
-    while it.n.kind != ParRi:
-      let info = it.n.info
-      if isRangeExpr(it.n):
-        inc it.n # call tag
-        skip it.n # `..`
-        c.dest.buildTree RangeU, it.n.info:
-          let a = evalConstIntExpr(c, it.n, selectorType)
-          let b = evalConstIntExpr(c, it.n, selectorType)
-          if seen.doesOverlapOrIncl(a, b):
-            buildErr c, info, "overlapping values"
-        inc it.n # right paren of call
-      elif it.n.substructureKind == RangeU:
-        takeToken c, it.n
+  while it.n.kind != ParRi:
+    let info = it.n.info
+    if isRangeExpr(it.n):
+      inc it.n # call tag
+      skip it.n # `..`
+      c.dest.buildTree RangeU, it.n.info:
         let a = evalConstIntExpr(c, it.n, selectorType)
         let b = evalConstIntExpr(c, it.n, selectorType)
         if seen.doesOverlapOrIncl(a, b):
           buildErr c, info, "overlapping values"
-        takeParRi c, it.n
+      inc it.n # right paren of call
+    elif it.n.substructureKind == RangeU:
+      takeToken c, it.n
+      let a = evalConstIntExpr(c, it.n, selectorType)
+      let b = evalConstIntExpr(c, it.n, selectorType)
+      if seen.doesOverlapOrIncl(a, b):
+        buildErr c, info, "overlapping values"
+      takeParRi c, it.n
+    else:
+      if it.n.exprKind == CurlyX:
+
+        var beforeSetType = c.dest.len
+        c.dest.buildTree SetT, info:
+          c.dest.addSubtree selectorType
+
+        var curlyExpr = Item(n: it.n, typ: typeToCursor(c, beforeSetType))
+
+        shrink(c.dest, beforeSetType)
+        inc it.n
+
+        var beforeExpr = c.dest.len
+        semExpr c, curlyExpr
+        shrink(c.dest, beforeExpr)
+
+        semCaseOfValueImpl(c, it, selectorType, seen)
+        skipParRi(it.n)
       else:
         let a = evalConstIntExpr(c, it.n, selectorType)
         if seen.containsOrIncl(a):
           buildErr c, info, "value already handled"
+
+proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
+                    seen: var seq[(xint, xint)]) =
+  if it.n.substructureKind == RangesU:
+    takeToken c, it.n
+    semCaseOfValueImpl(c, it, selectorType, seen)
     takeParRi c, it.n
   else:
     buildErr c, it.n.info, "`ranges` within `of` expected"
@@ -2469,7 +2491,11 @@ proc semReturn(c: var SemContext; it: var Item) =
   if c.routine.kind == NoSym:
     buildErr c, info, "`return` only allowed within a routine"
   if it.n.kind == DotToken:
-    takeToken c, it.n
+    if c.routine.returnType.typeKind != VoidT:
+      c.dest.addSymUse c.routine.resId, info
+      inc it.n # skips the dot
+    else:
+      takeToken c, it.n
   else:
     var a = Item(n: it.n, typ: c.routine.returnType)
     # `return` within a template refers to the caller, so
@@ -2586,9 +2612,21 @@ proc semTypedUnaryArithmetic(c: var SemContext; it: var Item) =
   takeParRi c, it.n
   commonType c, it, beforeExpr, typ
 
+proc semDelay(c: var SemContext; it: var Item) =
+  let beforeExpr = c.dest.len
+  takeToken c, it.n
+  let typeStart = c.dest.len
+  semLocalTypeImpl c, it.n, InLocalDecl
+  let typ = typeToCursor(c, typeStart)
+  semStmt c, it.n, false
+  takeParRi c, it.n
+  commonType c, it, beforeExpr, typ
+
 proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
   let exprStart = c.dest.len
   let info = it.n.info
+
+  var orig = it.n
   inc it.n
   c.dest.addParLe(AconstrX, info)
   if it.n.kind == ParRi:
@@ -2618,7 +2656,8 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     freshElemType = false
   of AutoT: discard
   else:
-    buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
+    discard
+
   # XXX index types, `index: value` etc not implemented
   semExpr c, elem
   if freshElemType:
@@ -2641,6 +2680,18 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
     c.dest.addParRi()
   let expected = it.typ
   it.typ = typeToCursor(c, typeStart)
+
+  case expected.typeKind
+  of AutoT, ArrayT:
+    discard
+  else:
+    var convMatch = default(Match)
+    let convArg = CallArg(n: orig, typ: it.typ)
+    if tryConverterMatch(c, convMatch, expected, convArg):
+      discard "matching converter found (e.g. `toOpenArray`)"
+    else:
+      buildErr c, info, "invalid expected type for array constructor: " & typeToString(expected)
+
   c.dest.shrink typeStart
   c.dest.insert it.typ, typeInsertPos
   commonType c, it, exprStart, expected
@@ -2954,13 +3005,13 @@ proc asNimSym(symId: SymId): string =
   result = pool.syms[symId]
   extractBasename(result)
 
-template conflictingBranchesError(c: var SemContext, info: PackedLineInfo, prevFields: SymId, currentFields: SymId) = 
-  c.buildErr info, "The fields '" & asNimSym(prevFields) & 
+template conflictingBranchesError(c: var SemContext, info: PackedLineInfo, prevFields: SymId, currentFields: SymId) =
+  c.buildErr info, "The fields '" & asNimSym(prevFields) &
               "' and '" & asNimSym(currentFields) & "' cannot be initialized together, " &
               "because they are from conflicting branches in the case object."
 
 template badDiscriminatorError(c: var SemContext, info: PackedLineInfo, field: SymId, discriminator: SymId) =
-  c.buildErr info, 
+  c.buildErr info,
     ("cannot prove that it's safe to initialize '$1' with " &
     "the runtime value for the discriminator '$2'.") %
     [asNimSym(field), asNimSym(discriminator)]
@@ -4719,6 +4770,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
       semShift c, it
     of BitnotX, NegX:
       semTypedUnaryArithmetic c, it
+    of DelayX:
+      semDelay c, it
     of InSetX:
       semInSet c, it
     of CardX:

@@ -229,6 +229,10 @@ proc afterYield*(): Continuation {.semantics: "afterYield".} =
   ## Do not use unless you know what you are doing.
   result = Continuation(fn: nil, env: nil)
 
+proc delay*(x: untyped): Continuation {.magic: "Delay".}
+  ## Delays the execution of a `.passive` proc and returns a continuation representation
+  ## this call. Think of it as a `toTask` builtin.
+
 proc trivialTick(c: Continuation): Continuation =
   result = c.fn(c.env)
 
@@ -251,3 +255,9 @@ proc complete*(c: Continuation) =
   var c = c
   while c.fn != nil:
     c = scheduler(c)
+
+func `==`*[T: tuple|object](x, y: T): bool =
+  ## Return true only if each fields of `x` and `y` are equal.
+  for xf, yf in fields(x, y):
+    if xf != yf: return false
+  return true

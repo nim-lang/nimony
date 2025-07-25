@@ -285,7 +285,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
      CastX, ConvX, HconvX, DconvX, BaseobjX,
-     OconstrX, NewobjX, AconstrX, SetConstrX, TupConstrX, NewrefX:
+     OconstrX, NewobjX, AconstrX, SetConstrX, TupConstrX, NewrefX, DelayX:
     result = n.firstSon
   of ParX, EmoveX, ProccallX:
     result = getTypeImpl(c, n.firstSon, flags)

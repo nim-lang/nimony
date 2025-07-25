@@ -586,7 +586,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX:
+       FailedX, IsX, EnvpX, DelayX:
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
@@ -746,7 +746,6 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
   let kind = n.symKind
   let orig = n
   inc n
-  let name = n.symId
   skip n # name
   skip n # export marker
   skip n # pragmas
@@ -757,7 +756,6 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
   trExpr c, n, aa
   n = orig
   copyInto c.dest, n:
-    let sym = n
     takeLocalHeader c.typeCache, c.dest, n, kind
     skip n # value
     c.dest.add aa

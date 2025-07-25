@@ -22,3 +22,4 @@ WINBOOL(0) == 0
 [1] expected: float64 but got: WINBOOL (declared in lib/std/system/comparisons.nim(103, 1))
 [1] expected: string but got: WINBOOL (declared in lib/std/system/stringimpl.nim(251, 1))
 [1] expected: openArray[T] but got: WINBOOL (declared in lib/std/system/openarrays.nim(47, 1))
+[1] WINBOOL does not match constraint T (declared in lib/std/system.nim(259, 1))

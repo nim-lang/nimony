@@ -1461,6 +1461,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       skipParRi(n)
 
+    of DelayX:
+      inc n
+      skip n # don't render the type `Continuation` here
+      put(g, tkSymbol, "delay")
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
     of EmoveX:
       inc n
       put(g, tkSymbol, "ensureMove")
@@ -1625,7 +1634,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of InfixX:
       ginfix(g, n)
 
-    of AndX, OrX, XorX, IsX, InstanceofX:
+    of AndX, OrX, XorX:
       let opr: string
       case n.exprKind
       of AndX:
@@ -1634,6 +1643,19 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         opr = "or"
       of XorX:
         opr = "xor"
+      else:
+        raiseAssert "unreachable"
+      inc n
+      gsub(g, n)
+      put(g, tkSpaces, Space)
+      put(g, tkSymbol, opr)
+      put(g, tkSpaces, Space)
+      gsub(g, n)
+      skipParRi(n)
+
+    of IsX, InstanceofX:
+      let opr: string
+      case n.exprKind
       of IsX:
         opr = "is"
       of InstanceofX:
@@ -1645,7 +1667,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkSpaces, Space)
       put(g, tkSymbol, opr)
       put(g, tkSpaces, Space)
-      gsub(g, n)
+      gtype(g, n, c)
       skipParRi(n)
 
     of EqX, NeqX, LeX, LtX, AddX,

@@ -40,3 +40,40 @@ let m: int = 23"""
 
 assert not compiles(3 + "1" + 4)
 assert compiles(3 + 4)
+
+block:  # `==` for tuple|object
+  var a = (1, true, "foo")
+  var b = (1, true, "foo")
+  var c = (1, true, "bar")
+
+  assert a == b
+  assert a != c
+
+  type
+    Foo = object
+      x: int
+      y: tuple[z: bool, w: string]
+
+  var f = Foo(x: 1, y: (true, "foo"))
+  var g = Foo(x: 1, y: (true, "foo"))
+  var h = Foo(x: 1, y: (true, "bar"))
+
+  assert f == g
+  assert f != h
+
+  type
+    Base = ref object of RootObj
+      x: int
+
+    Bar = ref object of Base
+      y: bool
+      z: string
+
+  var i = Bar(x: 1, y: true, z: "foo")
+  var j = Bar(x: 1, y: true, z: "foo")
+  var k = Bar(x: 2, y: true, z: "foo")
+  var l = Bar(x: 1, y: false, z: "foo")
+
+  assert i[] == j[]
+  assert i[] != k[]
+  assert i[] != l[]

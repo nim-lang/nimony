@@ -59,7 +59,7 @@
  (for 20
   (call ~7 countup.0.tfov349y21 1 +0 4 +44)
   (unpackflat
-   (let :mycounter.0 . . 9,~6
+   (let :mycounter.0 . . 12,~11
     (i -1) .)) ~2,1
   (stmts
    (discard 8 mycounter.0))))

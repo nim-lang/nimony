@@ -34,3 +34,17 @@ block:
       discard
 
   main(10)
+
+block:
+  var x = 'x'
+  var value = 0
+
+  case x
+  of 'a':
+    value = 1
+  of {'c', 'b', 'g'..'z'}:
+    value = 2
+  else:
+    value = 3
+
+  assert value == 2

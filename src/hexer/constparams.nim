@@ -350,7 +350,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc nn
 
   dest.add n
-  let info = n.info
   inc n
   tr c, dest, n
   c.exceptVars.shrink oldLen
