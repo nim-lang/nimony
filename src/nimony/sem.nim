@@ -1435,7 +1435,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
         c.dest.shrink oldLen
     else:
       c.dest.addParRi()
-  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP:
+  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP:
     buildErr c, n.info, "pragma not supported"
     inc n
     if hasParRi:
@@ -4302,6 +4302,14 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
     else:
       buildErr c, it.n.info, "{.pop.} without a corresponding {.push.}"
     inc it.n
+  of PassLP:
+    inc it.n
+    let start = c.dest.len
+    let s = evalConstStrExpr(c, it.n, c.types.stringType)
+    if s != StrId(0):
+      c.dest.shrink start
+      c.passL.add pool.strings[s]
+    skipParRi it.n
   else:
     buildErr c, it.n.info, "unsupported pragma"
     skip it.n
@@ -4934,6 +4942,10 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
     if c.toBuild.len != 0:
       deps.buildTree TagId(BuildIdx), NoLineInfo:
         deps.add c.toBuild
+    if c.passL.len != 0:
+      deps.buildTree TagId(PassLP), NoLineInfo:
+        for i in c.passL:
+          deps.addStrLit i
   let depsFile = changeFileExt(outfile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)
 

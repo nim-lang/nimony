@@ -304,6 +304,7 @@ type
     PassiveTagId
     PushTagId
     PopTagId
+    PassLTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -607,5 +608,6 @@ const
     ("packed", 298),
     ("passive", 299),
     ("push", 300),
-    ("pop", 301)
+    ("pop", 301),
+    ("passL", 302)
   ]
