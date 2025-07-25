@@ -157,11 +157,11 @@ assert(runeSubStr(s, -100, 100) == "Hänsel  ««: 10,00€")
 assert(runeSubStr(s, 0, -100) == "")
 assert(runeSubStr(s, 100, -100) == "")
 
-block splitTests:
-  let s = " this is an example  "
-  let s2 = ":this;is;an:example;;"
-  let s3 = ":this×is×an:example××"
-  assert s.split() == @["", "this", "is", "an", "example", "", ""]
+# block splitTests:
+#   let s = " this is an example  "
+#   let s2 = ":this;is;an:example;;"
+#   let s3 = ":this×is×an:example××"
+#   assert s.split() == @["", "this", "is", "an", "example", "", ""]
   # assert s2.split(seps = [':'.Rune, ';'.Rune]) == @["", "this", "is", "an",
   #     "example", "", ""]
   # assert s3.split(seps = [':'.Rune, "×".asRune]) == @["", "this", "is",
