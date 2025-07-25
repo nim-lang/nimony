@@ -255,3 +255,9 @@ proc complete*(c: Continuation) =
   var c = c
   while c.fn != nil:
     c = scheduler(c)
+
+func `==`*[T: tuple|object](x, y: T): bool =
+  ## Return true only if each fields of `x` and `y` are equal.
+  for xf, yf in fields(x, y):
+    if xf != yf: return false
+  return true
