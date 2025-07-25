@@ -1031,7 +1031,7 @@ template splitCommon(s: untyped #[openArray[char]]#, sep: untyped#[openArray[Run
       dec(splits)
       inc(last, if last < sLen: runeLenAt(s, last) else: 1)
 
-iterator split*(s: openArray[char], seps: openArray[Rune]#[ = unicodeSpaces]#,
+iterator split*(s: openArray[char], seps: openArray[Rune] = unicodeSpaces,
   maxsplit: int = -1): string =
   ## Splits the unicode string ``s`` into substrings using a group of separators.
   ##
@@ -1081,7 +1081,7 @@ iterator split*(s: openArray[char], sep: Rune, maxsplit: int = -1): string =
 
   splitCommon(s, sep, maxsplit)
 
-proc split*(s: openArray[char], seps: openArray[Rune]#[ = unicodeSpaces]#, maxsplit: int = -1):
+proc split*(s: openArray[char], seps: openArray[Rune] = unicodeSpaces, maxsplit: int = -1):
     seq[string] {.noSideEffect.} =
   ## The same as the `split iterator <#split.i,string,openArray[Rune],int>`_,
   ## but is a proc that returns a sequence of substrings.
@@ -1093,7 +1093,7 @@ proc split*(s: openArray[char], sep: Rune, maxsplit: int = -1): seq[string] {.no
   accResult(split(s, sep, maxsplit))
 
 proc strip*(s: openArray[char], leading = true, trailing = true,
-            runes: openArray[Rune]#[ = unicodeSpaces]#): string {.noSideEffect.} =
+            runes: openArray[Rune] = unicodeSpaces): string {.noSideEffect.} =
   ## Strips leading or trailing ``runes`` from ``s`` and returns
   ## the resulting string.
   ##
@@ -1467,7 +1467,7 @@ proc lastRune*(s: string; last: int): (Rune, int) {.inline.} =
   ## in bytes.
   lastRune(toOa(s), last)
 
-iterator split*(s: string, seps: openArray[Rune]#[ = unicodeSpaces]#,
+iterator split*(s: string, seps: openArray[Rune] = unicodeSpaces,
   maxsplit: int = -1): string =
   ## Splits the unicode string ``s`` into substrings using a group of separators.
   ##
@@ -1514,7 +1514,7 @@ iterator split*(s: string, sep: Rune, maxsplit: int = -1): string =
 
   splitCommon(toOa(s), sep, maxsplit)
 
-proc split*(s: string, seps: openArray[Rune]#[ = unicodeSpaces]#, maxsplit: int = -1):
+proc split*(s: string, seps: openArray[Rune] = unicodeSpaces, maxsplit: int = -1):
     seq[string] {.noSideEffect, inline.} =
   ## The same as the `split iterator <#split.i,string,openArray[Rune],int>`_,
   ## but is a proc that returns a sequence of substrings.
@@ -1526,7 +1526,7 @@ proc split*(s: string, sep: Rune, maxsplit: int = -1): seq[string] {.noSideEffec
   accResult(split(toOa(s), sep, maxsplit))
 
 proc strip*(s: string, leading = true, trailing = true,
-            runes: openArray[Rune]#[ = unicodeSpaces]#): string {.noSideEffect, inline.} =
+            runes: openArray[Rune] = unicodeSpaces): string {.noSideEffect, inline.} =
   ## Strips leading or trailing ``runes`` from ``s`` and returns
   ## the resulting string.
   ##
