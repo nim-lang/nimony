@@ -161,3 +161,53 @@ func frexp*[T: SomeFloat](x: T): tuple[frac: T, exp: int] {.inline.} =
   var exp = cint(0)
   let frac = c_frexp(x, addr exp)
   result = (frac: frac, exp: exp.int)
+
+{.push header: "<math.h>".}
+func floor*[T: SomeFloat](x: T): T {.importc: "floor".} =
+  ## Computes the floor function (i.e. the largest integer not greater than `x`).
+  ##
+  ## **See also:**
+  ## * `ceil func <#ceil,float64>`_
+  ## * `round func <#round,float64>`_
+  ## * `trunc func <#trunc,float64>`_
+  runnableExamples:
+    doAssert floor(2.1)  == 2.0
+    doAssert floor(2.9)  == 2.0
+    doAssert floor(-3.5) == -4.0
+
+func ceil*[T: SomeFloat](x: T): T {.importc: "ceil".} =
+  ## Computes the ceiling function (i.e. the smallest integer not smaller
+  ## than `x`).
+  ##
+  ## **See also:**
+  ## * `floor func <#floor,float64>`_
+  ## * `round func <#round,float64>`_
+  ## * `trunc func <#trunc,float64>`_
+  runnableExamples:
+    doAssert ceil(2.1)  == 3.0
+    doAssert ceil(2.9)  == 3.0
+    doAssert ceil(-2.1) == -2.0
+
+func round*[T: SomeFloat](x: T): T {.importc: "round".} =
+  ## Returns the nearest integer value to `x`, rounding halfway cases away from zero.
+  ##
+  ## **See also:**
+  ## * `floor func <#floor,float64>`_
+  ## * `ceil func <#ceil,float64>`_
+  ## * `trunc func <#trunc,float64>`_
+  runnableExamples:
+    doAssert round(3.4) == 3.0
+    doAssert round(3.5) == 4.0
+    doAssert round(4.5) == 5.0
+
+func trunc*[T: SomeFloat](x: T): T {.importc: "trunc".} =
+  ## Returns the nearest integer not greater in magnitude than `x`.
+  ##
+  ## **See also:**
+  ## * `floor func <#floor,float64>`_
+  ## * `ceil func <#ceil,float64>`_
+  ## * `round func <#round,float64>`_
+  runnableExamples:
+    doAssert trunc(PI) == 3.0
+    doAssert trunc(-1.85) == -1.0
+{.pop.}
