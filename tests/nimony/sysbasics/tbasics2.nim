@@ -166,3 +166,9 @@ block:
     result = s.int
 
   assert foo() == 2
+
+block:
+  var s = [1, 2, 3]
+
+  assert s.low == 0
+  assert s.high == 2
