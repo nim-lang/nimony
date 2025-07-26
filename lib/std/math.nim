@@ -4,6 +4,8 @@ type
   Arithmetic = concept
     proc `+`(x, y: Self): Self
     proc `-`(x, y: Self): Self
+    proc inc(x: var Self, y: Self)
+    proc dec(x: var Self, y: Self)
     proc `*`(x, y: Self): Self
     proc `div`(x, y: Self): Self
     proc `mod`(x, y: Self): Self
@@ -271,3 +273,89 @@ func floorDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
   let r = x mod y
   if (r > T(0) and y < T(0)) or (r < T(0) and y > T(0)):
     result = result - T(1)
+
+func euclDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.}=
+  ## Returns euclidean division of `x` by `y`.
+  runnableExamples:
+    doAssert euclDiv(13, 3) == 4
+    doAssert euclDiv(-13, 3) == -5
+    doAssert euclDiv(13, -3) == -4
+    doAssert euclDiv(-13, -3) == 5
+
+  result = x div y
+  if x mod y < 0:
+    if y > T(0):
+      dec result
+    else:
+      inc result
+
+func euclMod*[T: SomeNumber and Arithmetic](x, y: T): T {.inline.} =
+  ## Returns euclidean modulo of `x` by `y`.
+  ## `euclMod(x, y)` is non-negative.
+  runnableExamples:
+    doAssert euclMod(13, 3) == 1
+    doAssert euclMod(-13, 3) == 2
+    doAssert euclMod(13, -3) == 1
+    doAssert euclMod(-13, -3) == 2
+
+  result = x mod y
+  if result < 0:
+    result = result + abs(y)
+
+template ceilDivUint[T: SomeUnsignedInt and Arithmetic](x, y: T): T =
+  # If the divisor is const, the backend C/C++ compiler generates code without a `div`
+  # instruction, as it is slow on most CPUs.
+  # If the divisor is a power of 2 and a const unsigned integer type, the
+  # compiler generates faster code.
+  # If the divisor is const and a signed integer, generated code becomes slower
+  # than the code with unsigned integers, because division with signed integers
+  # need to works for both positive and negative value without `idiv`/`sdiv`.
+  # That is why this code convert parameters to unsigned.
+  # This post contains a comparison of the performance of signed/unsigned integers:
+  # https://github.com/nim-lang/Nim/pull/18596#issuecomment-894420984.
+  # If signed integer arguments were not converted to unsigned integers,
+  # `ceilDiv` wouldn't work for any positive signed integer value, because
+  # `x + (y - 1)` can overflow.
+  (x + (y - T(1))) div y
+
+template ceilDivSigned[T: SomeInteger](x, y: T; U: untyped): T {.untyped.} =
+  T(ceilDivUint(x.U, y.U))
+
+func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
+  ## Ceil division is conceptually defined as `ceil(x / y)`.
+  ##
+  ## Assumes `x >= 0` and `y > 0` (and `x + y - 1 <= high(T)` if T is SomeUnsignedInt).
+  ##
+  ## This is different from the `system.div <system.html#div,int,int>`_
+  ## operator, which works like `trunc(x / y)`.
+  ## That is, `div` rounds towards `0` and `ceilDiv` rounds up.
+  ##
+  ## This function has the above input limitation, because that allows the
+  ## compiler to generate faster code and it is rarely used with
+  ## negative values or unsigned integers close to `high(T)/2`.
+  ## If you need a `ceilDiv` that works with any input, see:
+  ## https://github.com/demotomohiro/divmath.
+  ##
+  ## **See also:**
+  ## * `system.div proc <system.html#div,int,int>`_ for integer division
+  ## * `floorDiv func <#floorDiv,T,T>`_ for integer division which rounds down.
+  runnableExamples:
+    assert ceilDiv(12, 3) ==  4
+    assert ceilDiv(13, 3) ==  5
+
+  assert x >= T(0) and y > T(0)
+  when T is SomeUnsignedInt:
+    assert x + y - T(1) >= x
+
+  result =  when T is int:
+              ceilDivSigned(x, y, uint)
+            elif T is int64:
+              ceilDivSigned(x, y, uint64)
+            elif T is int32:
+              ceilDivSigned(x, y, uint32)
+            elif T is int16:
+              ceilDivSigned(x, y, uint16)
+            elif T is int8:
+              ceilDivSigned(x, y, uint8)
+            else:
+              ceilDivUint(x, y)
