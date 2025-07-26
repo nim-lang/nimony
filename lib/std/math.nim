@@ -30,6 +30,9 @@ const
   MinFloatNormal* = 2.225073858507201e-308   ## Smallest normal number for Nim's
                                              ## `float` type (= 2^-1022).
 
+when defined(posix) and not defined(genode) and not defined(macosx):
+  {.passL: "-lm".}
+
 {.push header: "<math.h>".}
 # These are C macros and can take both float and double type values.
 proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
