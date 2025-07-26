@@ -183,9 +183,9 @@ func floor*[T: SomeFloat](x: T): T {.importc: "floor".} =
   ## * `round func <#round,float64>`_
   ## * `trunc func <#trunc,float64>`_
   runnableExamples:
-    doAssert floor(2.1)  == 2.0
-    doAssert floor(2.9)  == 2.0
-    doAssert floor(-3.5) == -4.0
+    assert floor(2.1)  == 2.0
+    assert floor(2.9)  == 2.0
+    assert floor(-3.5) == -4.0
 
 func ceil*[T: SomeFloat](x: T): T {.importc: "ceil".} =
   ## Computes the ceiling function (i.e. the smallest integer not smaller
@@ -196,9 +196,9 @@ func ceil*[T: SomeFloat](x: T): T {.importc: "ceil".} =
   ## * `round func <#round,float64>`_
   ## * `trunc func <#trunc,float64>`_
   runnableExamples:
-    doAssert ceil(2.1)  == 3.0
-    doAssert ceil(2.9)  == 3.0
-    doAssert ceil(-2.1) == -2.0
+    assert ceil(2.1)  == 3.0
+    assert ceil(2.9)  == 3.0
+    assert ceil(-2.1) == -2.0
 
 func round*[T: SomeFloat](x: T): T {.importc: "round".} =
   ## Returns the nearest integer value to `x`, rounding halfway cases away from zero.
@@ -208,9 +208,9 @@ func round*[T: SomeFloat](x: T): T {.importc: "round".} =
   ## * `ceil func <#ceil,float64>`_
   ## * `trunc func <#trunc,float64>`_
   runnableExamples:
-    doAssert round(3.4) == 3.0
-    doAssert round(3.5) == 4.0
-    doAssert round(4.5) == 5.0
+    assert round(3.4) == 3.0
+    assert round(3.5) == 4.0
+    assert round(4.5) == 5.0
 
 func trunc*[T: SomeFloat](x: T): T {.importc: "trunc".} =
   ## Returns the nearest integer not greater in magnitude than `x`.
@@ -220,8 +220,8 @@ func trunc*[T: SomeFloat](x: T): T {.importc: "trunc".} =
   ## * `ceil func <#ceil,float64>`_
   ## * `round func <#round,float64>`_
   runnableExamples:
-    doAssert trunc(PI) == 3.0
-    doAssert trunc(-1.85) == -1.0
+    assert trunc(PI) == 3.0
+    assert trunc(-1.85) == -1.0
 
 func `mod`*[T: SomeFloat](x, y: T): T {.importc: "fmod".} =
   ## Computes the modulo operation for float values (the remainder of `x` divided by `y`).
@@ -229,10 +229,10 @@ func `mod`*[T: SomeFloat](x, y: T): T {.importc: "fmod".} =
   ## **See also:**
   ## * `floorMod func <#floorMod,T,T>`_ for Python-like (`%` operator) behavior
   runnableExamples:
-    doAssert  6.5 mod  2.5 ==  1.5
-    doAssert -6.5 mod  2.5 == -1.5
-    doAssert  6.5 mod -2.5 ==  1.5
-    doAssert -6.5 mod -2.5 == -1.5
+    assert  6.5 mod  2.5 ==  1.5
+    assert -6.5 mod  2.5 == -1.5
+    assert  6.5 mod -2.5 ==  1.5
+    assert -6.5 mod -2.5 == -1.5
 {.pop.}
 
 func floorMod*[T: SomeNumber and Arithmetic](x, y: T): T {.inline.} =
@@ -244,10 +244,10 @@ func floorMod*[T: SomeNumber and Arithmetic](x, y: T): T {.inline.} =
   ## * `mod func <#mod,float64,float64>`_
   ## * `floorDiv func <#floorDiv,T,T>`_
   runnableExamples:
-    doAssert floorMod( 13,  3) ==  1
-    doAssert floorMod(-13,  3) ==  2
-    doAssert floorMod( 13, -3) == -2
-    doAssert floorMod(-13, -3) == -1
+    assert floorMod( 13,  3) ==  1
+    assert floorMod(-13,  3) ==  2
+    assert floorMod( 13, -3) == -2
+    assert floorMod(-13, -3) == -1
 
   result = x mod y
   if (result > T(0) and y < T(0)) or (result < T(0) and y > T(0)):
@@ -264,10 +264,10 @@ func floorDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
   ## * `system.div proc <system.html#div,int,int>`_ for integer division
   ## * `floorMod func <#floorMod,T,T>`_ for Python-like (`%` operator) behavior
   runnableExamples:
-    doAssert floorDiv( 13,  3) ==  4
-    doAssert floorDiv(-13,  3) == -5
-    doAssert floorDiv( 13, -3) == -5
-    doAssert floorDiv(-13, -3) ==  4
+    assert floorDiv( 13,  3) ==  4
+    assert floorDiv(-13,  3) == -5
+    assert floorDiv( 13, -3) == -5
+    assert floorDiv(-13, -3) ==  4
 
   result = x div y
   let r = x mod y
@@ -277,10 +277,10 @@ func floorDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
 func euclDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.}=
   ## Returns euclidean division of `x` by `y`.
   runnableExamples:
-    doAssert euclDiv(13, 3) == 4
-    doAssert euclDiv(-13, 3) == -5
-    doAssert euclDiv(13, -3) == -4
-    doAssert euclDiv(-13, -3) == 5
+    assert euclDiv(13, 3) == 4
+    assert euclDiv(-13, 3) == -5
+    assert euclDiv(13, -3) == -4
+    assert euclDiv(-13, -3) == 5
 
   result = x div y
   if x mod y < 0:
@@ -293,10 +293,10 @@ func euclMod*[T: SomeNumber and Arithmetic](x, y: T): T {.inline.} =
   ## Returns euclidean modulo of `x` by `y`.
   ## `euclMod(x, y)` is non-negative.
   runnableExamples:
-    doAssert euclMod(13, 3) == 1
-    doAssert euclMod(-13, 3) == 2
-    doAssert euclMod(13, -3) == 1
-    doAssert euclMod(-13, -3) == 2
+    assert euclMod(13, 3) == 1
+    assert euclMod(-13, 3) == 2
+    assert euclMod(13, -3) == 1
+    assert euclMod(-13, -3) == 2
 
   result = x mod y
   if result < 0:
