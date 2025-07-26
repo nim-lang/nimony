@@ -4,7 +4,7 @@ let
   FLT_MIN {.importc: "FLT_MIN", header: "<float.h>".}: float32
   DBL_MIN {.importc: "DBL_MIN", header: "<float.h>".}: float64
 
-block:  #signbit
+block:  # signbit
   assert not signbit(0.0)
   assert signbit(-0.0)
   assert signbit(0.0 * -1.0)
@@ -120,40 +120,39 @@ block: # sgn
   assert sgn(Inf) == 1
   assert sgn(NaN) == 0
 
-#block: #frexp
-when false:
-  # needs `==` for tuples
+block: # frexp
   assert frexp(8.0) == (0.5, 4)
   assert frexp(-8.0) == (-0.5, 4)
   assert frexp(0.0) == (0.0, 0)
+  assert frexp(14.0) == (0.5 + 0.25 + 0.125, 4)
 
   # special cases:
   assert frexp(-0.0).frac.signbit # signbit preserved for +-0
   assert frexp(Inf).frac == Inf # +- Inf preserved
   assert frexp(NaN).frac.isNaN
 
-block: #floor
+block: # floor
   assert floor(2.9) == 2.0
   assert floor(2.1) == 2.0
   assert floor(0.0) == 0.0
   assert floor(-2.1) == -3.0
   assert floor(-2.9) == -3.0
 
-block: #ceil
+block: # ceil
   assert ceil(2.9) == 3.0
   assert ceil(2.1) == 3.0
   assert ceil(0.0) == 0.0
   assert ceil(-2.1) == -2.0
   assert ceil(-2.9) == -2.0
 
-block: #round
+block: # round
   assert round(2.9) == 3.0
   assert round(2.1) == 2.0
   assert round(0.0) == 0.0
   assert round(-2.1) == -2.0
   assert round(-2.9) == -3.0
 
-block: #trunc
+block: # trunc
   assert trunc(2.9) == 2.0
   assert trunc(2.1) == 2.0
   assert trunc(0.0) == 0.0
