@@ -120,6 +120,7 @@ type
     userPragmas*: Table[StrId, TokenBuf]
     usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
     pragmaStack*: seq[Cursor] # used to implement {.push.} and {.pop.}
+    passL*: seq[string]
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

@@ -301,3 +301,4 @@
 | `(passive)`  | NimonyPragma | `passive` pragma |
 | `(push P)`   | NimonyPragma | `push` pragma |
 | `(pop)`      | NimonyPragma | `pop` pragma |
+| `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
