@@ -362,3 +362,16 @@ func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
               ceilDivSigned(x, y, uint8)
             else:
               ceilDivUint(x, y)
+
+func divmod*[T: SomeInteger and Arithmetic](x, y: T): (T, T) {.inline.} =
+  ## Computes both division and modulus.
+  ## Return structure is: (quotient, remainder)
+  runnableExamples:
+    assert divmod(5, 2) == (2, 1)
+    assert divmod(5, -3) == (-1, 2)
+
+  # It seems there is no reasons to use `div` in stdlib.h like Nim 2.
+  # https://stackoverflow.com/questions/4565272/why-use-div-or-ldiv-in-c-c
+  # See Notes on:
+  # https://en.cppreference.com/w/c/numeric/math/div.html
+  (x div y, x mod y)

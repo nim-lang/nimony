@@ -253,3 +253,10 @@ block: # ceilDiv
     doAssertRaises(AssertionDefect): discard ceilDiv(254'u8, 3'u8)
     doAssertRaises(AssertionDefect): discard ceilDiv(255'u8, 2'u8)
   ]#
+
+  block: # divmod
+    assert divmod(int.high, 1) == (int.high, 0)
+    assert divmod(-1073741823, 17) == (-63161283, -12)
+    assert divmod(int32.high, 1.int32) == (int32.high, 0.int32)
+    assert divmod(1073741823.int32, 5.int32) == (214748364.int32, 3.int32)
+    assert divmod(4611686018427387903.int64, 5.int64) == (922337203685477580.int64, 3.int64)
