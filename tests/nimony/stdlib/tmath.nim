@@ -254,9 +254,24 @@ block: # ceilDiv
     doAssertRaises(AssertionDefect): discard ceilDiv(255'u8, 2'u8)
   ]#
 
-  block: # divmod
-    assert divmod(int.high, 1) == (int.high, 0)
-    assert divmod(-1073741823, 17) == (-63161283, -12)
-    assert divmod(int32.high, 1.int32) == (int32.high, 0.int32)
-    assert divmod(1073741823.int32, 5.int32) == (214748364.int32, 3.int32)
-    assert divmod(4611686018427387903.int64, 5.int64) == (922337203685477580.int64, 3.int64)
+block: # divmod
+  assert divmod(int.high, 1) == (int.high, 0)
+  assert divmod(-1073741823, 17) == (-63161283, -12)
+  assert divmod(int32.high, 1.int32) == (int32.high, 0.int32)
+  assert divmod(1073741823.int32, 5.int32) == (214748364.int32, 3.int32)
+  assert divmod(4611686018427387903.int64, 5.int64) == (922337203685477580.int64, 3.int64)
+
+block: # sum
+  let empty: seq[int] = @[]
+  assert sum(empty) == 0
+  assert sum([1, 2, 3, 4]) == 10
+  assert sum([-4, 3, 5]) == 4
+
+block: # prod
+  let empty: seq[int] = @[]
+  assert prod(empty) == 1
+  assert prod([1, 2, 3, 4]) == 24
+  assert prod([-4, 3, 5]) == -60
+  assert almostEqual(prod([1.5, 3.4]), 5.1)
+  let x: seq[float] = @[]
+  assert prod(x) == 1.0

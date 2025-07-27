@@ -375,3 +375,31 @@ func divmod*[T: SomeInteger and Arithmetic](x, y: T): (T, T) {.inline.} =
   # See Notes on:
   # https://en.cppreference.com/w/c/numeric/math/div.html
   (x div y, x mod y)
+
+func sum*[T: HasDefault and Arithmetic](x: openArray[T]): T =
+  ## Computes the sum of the elements in `x`.
+  ##
+  ## If `x` is empty, 0 is returned.
+  ##
+  ## **See also:**
+  ## * `prod func <#prod,openArray[T]>`_
+  runnableExamples:
+    assert sum([1, 2, 3, 4]) == 10
+    assert sum([-4, 3, 5]) == 4
+  result = default(T)
+  for i in items(x): result = result + i
+
+func prod*[T: HasDefault and Arithmetic](x: openArray[T]): T =
+  ## Computes the product of the elements in `x`.
+  ##
+  ## If `x` is empty, 1 is returned.
+  ##
+  ## **See also:**
+  ## * `sum func <#sum,openArray[T]>`_
+  ## * `fac func <#fac,int>`_
+  runnableExamples:
+    assert prod([1, 2, 3, 4]) == 24
+    assert prod([-4, 3, 5]) == -60
+
+  result = T(1)
+  for i in items(x): result = result * i
