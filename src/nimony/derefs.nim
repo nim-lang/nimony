@@ -222,6 +222,9 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
       result = local.typ.typeKind == LentT
     of ParamY:
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
+      if result and isViewType(local.typ):
+        # Special rule to make `toOpenArray` work:
+        result = borrowsFromReadonly(c, local.val)
     else:
       result = false
   elif n.kind in {StringLit, IntLit, UIntLit, FloatLit, CharLit} or
