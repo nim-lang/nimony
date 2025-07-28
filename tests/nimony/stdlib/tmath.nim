@@ -275,3 +275,32 @@ block: # prod
   assert almostEqual(prod([1.5, 3.4]), 5.1)
   let x: seq[float] = @[]
   assert prod(x) == 1.0
+
+block: # sqrt
+  assert sqrt(-1.0).isNaN
+  assert sqrt(0.0) == 0.0
+  assert sqrt(1.0) == 1.0
+  assert almostEqual(sqrt(4.0), 2.0)
+  assert almostEqual(sqrt(4.0'f32), 2.0'f32)
+  assert almostEqual(sqrt(9.0), 3.0)
+
+block: # cbrt
+  assert cbrt(-1.0) == -1.0
+  assert cbrt(-1.0'f32) == -1.0'f32
+  assert cbrt(0.0) == 0.0
+  assert cbrt(1.0) == 1.0
+  assert almostEqual(cbrt(8.0), 2.0)
+  assert almostEqual(cbrt(27.0), 3.0)
+
+block: # pow
+  assert pow(1.0, 1.0) == 1.0
+  assert pow(2.0, 0.0) == 1.0
+  assert pow(2.0, -1.0) == 0.5
+  assert pow(2.0, 2.0) == 4.0
+  assert pow(2.0'f32, 2.0'f32) == 4.0'f32
+
+block: # hypot
+  assert almostEqual(hypot(3.0, 4.0), 5.0)
+  assert almostEqual(hypot(3.0'f32, 4.0'f32), 5.0'f32)
+  assert almostEqual(hypot(6.0, 8.0), 10.0)
+  assert almostEqual(hypot(6.0'f32, 8.0'f32), 10.0'f32)

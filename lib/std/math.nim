@@ -407,3 +407,41 @@ func prod*[T: HasDefault and Arithmetic](x: openArray[T]): T =
 
   result = T(1)
   for i in items(x): result = result * i
+
+{.push header: CMathHeader.}
+func sqrt*[T: SomeFloat](x: T): T {.importc: "sqrt".} =
+  ## Computes the square root of `x`.
+  ##
+  ## **See also:**
+  ## * `cbrt func <#cbrt,float64>`_ for the cube root
+  runnableExamples:
+    assert almostEqual(sqrt(4.0), 2.0)
+    assert almostEqual(sqrt(1.44), 1.2)
+func cbrt*[T: SomeFloat](x: T): T {.importc: "cbrt".} =
+  ## Computes the cube root of `x`.
+  ##
+  ## **See also:**
+  ## * `sqrt func <#sqrt,float64>`_ for the square root
+  runnableExamples:
+    assert almostEqual(cbrt(8.0), 2.0)
+    assert almostEqual(cbrt(2.197), 1.3)
+    assert almostEqual(cbrt(-27.0), -3.0)
+func pow*[T: SomeFloat](x, y: T): T {.importc: "pow".} =
+  ## Computes `x` raised to the power of `y`.
+  ##
+  ## You may use the `^ func <#^, T, U>`_ instead.
+  ##
+  ## **See also:**
+  ## * `^ (SomeNumber, Natural) func <#^,T,Natural>`_
+  ## * `^ (SomeNumber, SomeFloat) func <#^,T,U>`_
+  ## * `sqrt func <#sqrt,float64>`_
+  ## * `cbrt func <#cbrt,float64>`_
+  runnableExamples:
+    assert almostEqual(pow(100, 1.5), 1000.0)
+    assert almostEqual(pow(16.0, 0.5), 4.0)
+func hypot*[T: SomeFloat](x, y: T): T {.importc: "hypot".} =
+  ## Computes the length of the hypotenuse of a right-angle triangle with
+  ## `x` as its base and `y` as its height. Equivalent to `sqrt(x*x + y*y)`.
+  runnableExamples:
+    assert almostEqual(hypot(3.0, 4.0), 5.0)
+{.pop.}
