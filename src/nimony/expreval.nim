@@ -325,7 +325,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   of ParLe:
     let exprKind = n.exprKind
     case exprKind
-    of TrueX, FalseX, NanX, InfX, NeginfX:
+    of TrueX, FalseX, NanX, InfX, NeginfX, NilX:
       result = n
       skip n
     of AndX:
