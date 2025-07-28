@@ -444,4 +444,50 @@ func hypot*[T: SomeFloat](x, y: T): T {.importc: "hypot".} =
   ## `x` as its base and `y` as its height. Equivalent to `sqrt(x*x + y*y)`.
   runnableExamples:
     assert almostEqual(hypot(3.0, 4.0), 5.0)
+func exp*[T: SomeFloat](x: T): T {.importc: "exp".} =
+  ## Computes the exponential function of `x` (`e^x`).
+  ##
+  ## **See also:**
+  ## * `ln func <#ln,float64>`_
+  runnableExamples:
+    assert almostEqual(exp(1.0), E)
+    assert almostEqual(ln(exp(4.0)), 4.0)
+    assert almostEqual(exp(0.0), 1.0)
+func ln*[T: SomeFloat](x: T): T {.importc: "log".} =
+  ## Computes the [natural logarithm](https://en.wikipedia.org/wiki/Natural_logarithm)
+  ## of `x`.
+  ##
+  ## **See also:**
+  ## * `log func <#log,T,T>`_
+  ## * `log10 func <#log10,float64>`_
+  ## * `log2 func <#log2,float64>`_
+  ## * `exp func <#exp,float64>`_
+  runnableExamples:
+    assert almostEqual(ln(exp(4.0)), 4.0)
+    assert almostEqual(ln(1.0), 0.0)
+    assert almostEqual(ln(0.0), -Inf)
+    assert ln(-7.0).isNaN
+func log2*[T: SomeFloat](x: T): T {.importc: "log2".} =
+  ## Computes the binary logarithm (base 2) of `x`.
+  ##
+  ## **See also:**
+  ## * `log func <#log,T,T>`_
+  ## * `log10 func <#log10,float64>`_
+  ## * `ln func <#ln,float64>`_
+  runnableExamples:
+    assert almostEqual(log2(8.0), 3.0)
+    assert almostEqual(log2(1.0), 0.0)
+    assert almostEqual(log2(0.0), -Inf)
+    assert log2(-2.0).isNaN
+func log10*[T: SomeFloat](x: T): T {.importc: "log10".} =
+  ## Computes the common logarithm (base 10) of `x`.
+  ##
+  ## **See also:**
+  ## * `ln func <#ln,float64>`_
+  ## * `log func <#log,T,T>`_
+  ## * `log2 func <#log2,float64>`_
+  runnableExamples:
+    assert almostEqual(log10(100.0) , 2.0)
+    assert almostEqual(log10(0.0), -Inf)
+    assert log10(-100.0).isNaN
 {.pop.}

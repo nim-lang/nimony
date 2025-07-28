@@ -304,3 +304,41 @@ block: # hypot
   assert almostEqual(hypot(3.0'f32, 4.0'f32), 5.0'f32)
   assert almostEqual(hypot(6.0, 8.0), 10.0)
   assert almostEqual(hypot(6.0'f32, 8.0'f32), 10.0'f32)
+
+block: # exp
+  assert exp(0.0) == 1.0
+  assert almostEqual(exp(1.0), E)
+  assert almostEqual(exp(2.0), E * E)
+  assert almostEqual(exp(1.0'f32), float32(E))
+
+block: # ln
+  assert almostEqual(ln(1.0), 0.0)
+  assert almostEqual(ln(1.0'f32), 0.0'f32)
+  assert almostEqual(ln(E), 1.0)
+  assert ln(0.0) == -Inf
+  assert ln(-0.0) == -Inf
+  assert ln(-12.0).isNaN
+
+block: # log2
+  assert log2(8.0'f64) == 3.0'f64
+  assert log2(4.0'f64) == 2.0'f64
+  assert log2(2.0'f64) == 1.0'f64
+  assert log2(1.0'f64) == 0.0'f64
+  assert classify(log2(0.0'f64)) == fcNegInf
+
+  assert log2(8.0'f32) == 3.0'f32
+  assert log2(4.0'f32) == 2.0'f32
+  assert log2(2.0'f32) == 1.0'f32
+  assert log2(1.0'f32) == 0.0'f32
+  assert classify(log2(0.0'f32)) == fcNegInf
+
+block: # log10
+  assert log10(10.0) == 1.0
+  assert log10(10.0'f32) == 1.0'f32
+  assert log10(100.0) == 2.0
+  assert log10(100.0'f32) == 2.0'f32
+  assert log10(0.0).classify == fcNegInf
+  assert log10(-0.0).classify == fcNegInf
+  assert log10(0.0'f32).classify == fcNegInf
+  assert log10(-12.0).isNaN
+  assert log10(-12.0'f32).isNaN
