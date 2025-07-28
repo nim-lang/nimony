@@ -22,6 +22,17 @@ type
 const
   NilLibHandle: LibHandle = nil
 
+when defined(windows):
+  proc GetLastError(): int32 {.importc, header: "<windows.h>", nodecl.}
+  const ERROR_BAD_EXE_FORMAT = 193
+
+  proc `%%`(x, y: int): int {.inline.} =
+    ## Treats `x` and `y` as unsigned and compute the modulo of `x` and `y`.
+    ##
+    ## The result is truncated to fit into the result.
+    ## This implements modulo arithmetic. No overflow errors are possible.
+    cast[int](cast[uint](x) mod cast[uint](y))
+
 proc nimLoadLibraryError(path: string) =
   # carefully written to avoid memory allocation:
   const prefix = "could not load: "
@@ -115,18 +126,19 @@ elif defined(windows) or defined(dos):
   # =======================================================================
   # Native Windows Implementation
   # =======================================================================
-  #
+
   when defined(cpp):
     type
-      THINSTANCE {.importc: "HINSTANCE".} = object
+      THINSTANCE {.importc: "HINSTANCE", header: "<windows.h>".} = object
         x: pointer
     proc getProcAddress(lib: THINSTANCE, name: cstring): ProcAddr {.
         importcpp: "(void*)GetProcAddress(@)", header: "<windows.h>", stdcall.}
   else:
+    # TODO: use `importc: "HINSTANCE"` when available
     type
-      THINSTANCE {.importc: "HINSTANCE".} = pointer
-    proc getProcAddress(lib: THINSTANCE, name: cstring): ProcAddr {.
-        importc: "GetProcAddress", header: "<windows.h>", stdcall.}
+      THINSTANCE = pointer
+  proc getProcAddress(lib: THINSTANCE, name: cstring): ProcAddr {.
+      importc: "GetProcAddress", header: "<windows.h>", stdcall.}
 
   proc freeLibrary(lib: THINSTANCE) {.
       importc: "FreeLibrary", header: "<windows.h>", stdcall.}
@@ -137,13 +149,13 @@ elif defined(windows) or defined(dos):
     freeLibrary(cast[THINSTANCE](lib))
 
   proc nimLoadLibrary(path: string): LibHandle =
-    result = cast[LibHandle](winLoadLibrary(path))
+    result = cast[LibHandle](winLoadLibrary(path.cstring))
 
   proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr =
     result = getProcAddress(cast[THINSTANCE](lib), name)
     if result != nil: return
     const decoratedLength = 250
-    var decorated: array[decoratedLength, char]
+    var decorated: array[decoratedLength, char] = default(array[decoratedLength, char])
     decorated[0] = '_'
     var m = 1
     while m < (decoratedLength - 5):
@@ -151,7 +163,7 @@ elif defined(windows) or defined(dos):
       decorated[m] = name[m - 1]
       inc(m)
     decorated[m] = '@'
-    for i in countup(0, 50):
+    for i in 0..50:
       var k = i * 4
       if k div 100 == 0:
         if k div 10 == 0:
