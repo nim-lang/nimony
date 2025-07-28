@@ -33,7 +33,11 @@ const
 when defined(posix) and not defined(genode) and not defined(macosx):
   {.passL: "-lm".}
 
-{.push header: "<math.h>".}
+# tgmath.h provides type-generic macros and they reduces a number of C functions to import.
+# But it requires C compiler supports C99.
+const CMathHeader = "<tgmath.h>"
+
+{.push header: CMathHeader.}
 # These are C macros and can take both float and double type values.
 proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
 proc c_copysign[T: SomeFloat](x, y: T): T {.importc: "copysign".}
@@ -44,11 +48,11 @@ func c_frexp[T: SomeFloat](x: T; exponent: ptr cint): T {.importc: "frexp".}
 
 # use push pragma when it is supported
 let
-  c_fpNormal    {.importc: "FP_NORMAL", header: "<math.h>".}: int
-  c_fpSubnormal {.importc: "FP_SUBNORMAL", header: "<math.h>".}: int
-  c_fpZero      {.importc: "FP_ZERO", header: "<math.h>".}: int
-  c_fpInfinite  {.importc: "FP_INFINITE", header: "<math.h>".}: int
-  c_fpNan       {.importc: "FP_NAN", header: "<math.h>".}: int
+  c_fpNormal    {.importc: "FP_NORMAL", header: CMathHeader.}: int
+  c_fpSubnormal {.importc: "FP_SUBNORMAL", header: CMathHeader.}: int
+  c_fpZero      {.importc: "FP_ZERO", header: CMathHeader.}: int
+  c_fpInfinite  {.importc: "FP_INFINITE", header: CMathHeader.}: int
+  c_fpNan       {.importc: "FP_NAN", header: CMathHeader.}: int
 
 type
   FloatClass* = enum ## Describes the class a floating point value belongs to.
@@ -177,7 +181,7 @@ func frexp*[T: SomeFloat](x: T): tuple[frac: T, exp: int] {.inline.} =
   let frac = c_frexp(x, addr exp)
   result = (frac: frac, exp: exp.int)
 
-{.push header: "<math.h>".}
+{.push header: CMathHeader.}
 func floor*[T: SomeFloat](x: T): T {.importc: "floor".} =
   ## Computes the floor function (i.e. the largest integer not greater than `x`).
   ##
