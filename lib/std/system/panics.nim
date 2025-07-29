@@ -15,6 +15,7 @@ proc fprintf(f: ptr RawCFile; fmt: cstring) {.varargs, importc: "fprintf", heade
 proc writeErr(x: int64) = fprintf(cstderr, cstring"%lld", x)
 proc writeErr(x: uint64) = fprintf(cstderr, cstring"%llu", x)
 proc writeErr(s: string) = discard c_fwrite(rawData(s), 1'u, s.len.uint, cstderr)
+proc writeErr(s: cstring) = discard c_fwrite(s, 1'u, s.len.uint, cstderr)
 
 proc panic*(s: string) {.noinline.} =
   writeErr s
