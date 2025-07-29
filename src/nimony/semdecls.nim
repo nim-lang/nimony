@@ -95,7 +95,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       elif kind == ParamY and it.n.kind == DotToken:
         if delayed.lit in c.usingStmtMap:
           it.typ = c.usingStmtMap[delayed.lit]
-        elif c.routine.kind == TemplateY or c.routine.kind == MacroY:
+        elif c.routine.kind in {TemplateY, MacroY}:
           it.typ = c.types.untypedType
         else:
           buildErr c, it.n.info, "type or init value expected"
