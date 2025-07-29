@@ -92,8 +92,13 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       if kind == ConstY:
         withNewScope c:
           semConstExpr c, it # 4
-      elif kind == ParamY and n.kind == DotToken and delayed.lit in c.usingStmtMap:
-        it.typ = c.usingStmtMap[delayed.lit]
+      elif kind == ParamY and it.n.kind == DotToken:
+        if delayed.lit in c.usingStmtMap:
+          it.typ = c.usingStmtMap[delayed.lit]
+        elif c.routine.kind == TemplateY or c.routine.kind == MacroY:
+          it.typ = c.types.untypedType
+        else:
+          buildErr c, it.n.info, "type or init value expected"
         c.dest.takeToken it.n
       else:
         semLocalValue c, it, crucial # 4
