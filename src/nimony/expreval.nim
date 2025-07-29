@@ -491,7 +491,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of CallKinds:
       result = evalCall(c, n)
       skip n
-    of PlusSetX, MinusSetX:
+    of PlusSetX, MinusSetX, XorSetX, MulSetX:
       result = evalSetOp(c, n, n.exprKind)
     else:
       if n.tagId == ErrT:
