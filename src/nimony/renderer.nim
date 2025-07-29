@@ -468,15 +468,7 @@ proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false) =
       assert n.substructureKind == RangesU
       inc n
       while n.kind != ParRi:
-        case n.substructureKind
-        of RangeU:
-          inc n
-          gsub(g, n)
-          put(g, tkDotDot, "..")
-          gsub(g, n)
-          skipParRi(n)
-        else:
-          gsub(g, n)
+        gsub(g, n)
 
       skipParRi(n)
 
@@ -1392,7 +1384,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         skipParRi(n)
 
       of NoStmt:
-        skip n
+        case n.substructureKind
+        of RangeU:
+          inc n
+          gsub(g, n)
+          put(g, tkDotDot, "..")
+          gsub(g, n)
+          skipParRi(n)
+        else:
+          skip n
         # raiseAssert "unreachable"
 
       of PragmasS:
