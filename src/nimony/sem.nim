@@ -1743,6 +1743,30 @@ proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): x
     else:
       buildErr c, info, "expected constant integer value but got: " & asNimCode(value)
 
+proc evalConstCaseBranch(c: var SemContext; it: var Item; expected: TypeCursor; seen: var seq[(xint, xint)]; info: PackedLineInfo) =
+  let info = it.n.info
+  var orig = it.n
+
+  var ignored = createTokenBuf()
+  swap c.dest, ignored
+  var valueBuf = evalConstExpr(c, it.n, c.types.autoType)
+  swap c.dest, ignored
+
+  var value = beginRead(valueBuf)
+  case value.exprKind
+  of SetConstrX:
+    inc value
+    skip value
+    while value.kind != ParRi:
+      let a = evalConstIntExpr(c, value, expected)
+      if seen.containsOrIncl(a):
+        buildErr c, info, "value already handled"
+    skipParRi value
+  else:
+    let a = evalConstIntExpr(c, orig, expected)
+    if seen.containsOrIncl(a):
+      buildErr c, info, "value already handled"
+
 proc evalConstStrExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): StrId =
   let info = n.info
   var valueBuf = evalConstExpr(c, n, expected)
@@ -2151,7 +2175,6 @@ proc semCaseOfValueImpl(c: var SemContext; it: var Item; selectorType: TypeCurso
       takeParRi c, it.n
     else:
       if it.n.exprKind == CurlyX:
-
         var beforeSetType = c.dest.len
         c.dest.buildTree SetT, info:
           c.dest.addSubtree selectorType
@@ -2168,9 +2191,7 @@ proc semCaseOfValueImpl(c: var SemContext; it: var Item; selectorType: TypeCurso
         semCaseOfValueImpl(c, it, selectorType, seen)
         skipParRi(it.n)
       else:
-        let a = evalConstIntExpr(c, it.n, selectorType)
-        if seen.containsOrIncl(a):
-          buildErr c, info, "value already handled"
+        evalConstCaseBranch(c, it, selectorType, seen, info)
 
 proc semCaseOfValue(c: var SemContext; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)]) =
