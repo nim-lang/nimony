@@ -48,3 +48,27 @@ block:
     value = 3
 
   assert value == 2
+
+const toEscapedChars = {'\32'} + {'\\', '\'', '\"'}
+
+block:
+  var x = '\"'
+  var branch = 0
+  case x
+  of toEscapedChars:
+    branch = 1
+  else:
+    branch = 2
+  assert branch == 1
+
+
+proc hoo =
+  var x = 'a'
+  var branch = 0
+  case x
+  of toEscapedChars:
+    branch = 1
+  else:
+    branch = 2
+  assert branch == 2
+hoo()
