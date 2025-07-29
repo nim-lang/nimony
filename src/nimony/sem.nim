@@ -4888,6 +4888,8 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
 
   of ParRi, EofToken, SymbolDef, UnknownToken, DotToken:
     buildErr c, it.n.info, "expression expected"
+    if it.n.kind == DotToken:
+      inc it.n
 
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
