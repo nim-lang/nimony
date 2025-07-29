@@ -491,3 +491,79 @@ func log10*[T: SomeFloat](x: T): T {.importc: "log10".} =
     assert almostEqual(log10(0.0), -Inf)
     assert log10(-100.0).isNaN
 {.pop.}
+
+# remove this when Natural type is added to system
+type
+  Natural = int
+
+func `^`*[T: SomeNumber and Arithmetic](x: T; y: Natural): T =
+  ## Computes `x` to the power of `y`.
+  ##
+  ## The exponent `y` must be non-negative, use
+  ## `pow <#pow,float64,float64>`_ for negative exponents.
+  ##
+  ## **See also:**
+  ## * `^ func <#^,T,U>`_ for negative exponent or floats
+  ## * `pow func <#pow,float64,float64>`_ for `float32` or `float64` output
+  ## * `sqrt func <#sqrt,float64>`_
+  ## * `cbrt func <#cbrt,float64>`_
+  runnableExamples:
+    assert -3 ^ 0 == 1
+    assert -3 ^ 1 == -3
+    assert -3 ^ 2 == 9
+
+  case y
+  of 0: result = 1
+  of 1: result = x
+  of 2: result = x * x
+  of 3: result = x * x * x
+  else:
+    var (x, y) = (x, y)
+    result = 1
+    while true:
+      if (y and 1) != 0:
+        result *= x
+      y = y shr 1
+      if y == 0:
+        break
+      x *= x
+
+func isPowerOfTwo*(x: int): bool =
+  ## Returns `true`, if `x` is a power of two, `false` otherwise.
+  ##
+  ## Zero and negative numbers are not a power of two.
+  ##
+  ## **See also:**
+  ## * `nextPowerOfTwo func <#nextPowerOfTwo,int>`_
+  runnableExamples:
+    assert isPowerOfTwo(16)
+    assert not isPowerOfTwo(5)
+    assert not isPowerOfTwo(0)
+    assert not isPowerOfTwo(-16)
+
+  return (x > 0) and ((x and (x - 1)) == 0)
+
+func nextPowerOfTwo*(x: int): int =
+  ## Returns `x` rounded up to the nearest power of two.
+  ##
+  ## Zero and negative numbers get rounded up to 1.
+  ##
+  ## **See also:**
+  ## * `isPowerOfTwo func <#isPowerOfTwo,int>`_
+  runnableExamples:
+    assert nextPowerOfTwo(16) == 16
+    assert nextPowerOfTwo(5) == 8
+    assert nextPowerOfTwo(0) == 1
+    assert nextPowerOfTwo(-16) == 1
+
+  result = x - 1
+  when defined(cpu64):
+    result = result or (result shr 32)
+  when defined(cpu64) or defined(cpu32):
+    result = result or (result shr 16)
+  when defined(cpu64) or defined(cpu32) or defined(cpu16):
+    result = result or (result shr 8)
+  result = result or (result shr 4)
+  result = result or (result shr 2)
+  result = result or (result shr 1)
+  result += 1 + ord(x <= 0)

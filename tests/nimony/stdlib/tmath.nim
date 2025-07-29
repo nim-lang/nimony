@@ -342,3 +342,52 @@ block: # log10
   assert log10(0.0'f32).classify == fcNegInf
   assert log10(-12.0).isNaN
   assert log10(-12.0'f32).isNaN
+
+block: # `^`
+  assert 5 ^ 2 == 25
+  assert 0.5 ^ 2 == 0.25
+  assert 0.5'f32 ^ 2 == 0.25'f32
+  assert 2 ^ 3 == 8
+  assert 0 ^ 0 == 1
+  assert 0 ^ 1 == 0
+  assert 1 ^ 1 == 1
+  assert -1 ^ 0 == 1
+  assert -1 ^ 1 == -1
+  assert -1 ^ 2 == 1
+  assert -1 ^ 11 == -1
+  assert -1 ^ 111 == -1
+  assert -1 ^ 112 == 1
+  assert 10 ^ 5 == 100000
+
+block: # isPowerOfTwo
+  assert not isPowerOfTwo(-16)
+  assert not isPowerOfTwo(-3)
+  assert not isPowerOfTwo(-2)
+  assert not isPowerOfTwo(-1)
+  assert not isPowerOfTwo(0)
+  assert isPowerOfTwo(1)
+  assert isPowerOfTwo(2)
+  assert not isPowerOfTwo(3)
+  assert isPowerOfTwo(4)
+  assert not isPowerOfTwo(5)
+  assert not isPowerOfTwo(6)
+  assert isPowerOfTwo(16)
+  assert isPowerOfTwo(int.high div 2 + 1)
+  assert not isPowerOfTwo(int.high)
+
+block: # nextPowerOfTwo
+  assert nextPowerOfTwo(-16) == 1
+  assert nextPowerOfTwo(0) == 1
+  assert nextPowerOfTwo(1) == 1
+  assert nextPowerOfTwo(2) == 2
+  assert nextPowerOfTwo(3) == 4
+  assert nextPowerOfTwo(4) == 4
+  assert nextPowerOfTwo(5) == 8
+  assert nextPowerOfTwo(6) == 8
+  assert nextPowerOfTwo(7) == 8
+  assert nextPowerOfTwo(8) == 8
+  assert nextPowerOfTwo(9) == 16
+  assert nextPowerOfTwo(15) == 16
+  assert nextPowerOfTwo(16) == 16
+  assert nextPowerOfTwo(17) == 32
+  assert nextPowerOfTwo(int.high div 2) == int.high div 2 + 1
