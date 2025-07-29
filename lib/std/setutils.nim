@@ -1,7 +1,7 @@
 func symmetricDifference*[T](x, y: set[T]): set[T] {.magic: "XorSet".}
 
 func `-+-`*[T](x, y: set[T]): set[T] {.magic: "XorSet".}
- 
+
 proc toggle*[T: Ordinal](x: var set[T], y: T) {.inline.} =
   ## Toggles the element `y` in the set `x`.
   if x.contains(y):
