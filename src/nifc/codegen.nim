@@ -424,7 +424,7 @@ proc genVarInitValue(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     c.add Semicolon
 
-proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
+proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   genCLineDir(c, info(n))
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
@@ -440,7 +440,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       c.add "__thread "
     genType c, d.typ, name, isConst = vk == IsConst
     let vis = genVarPragmas(c, d.pragmas)
-    if vis == StaticP:
+    if vis == StaticP or useStatic:
       c.code.insert(Token(StaticKeyword), beforeDecl)
     let beforeInit = c.code.len
 
@@ -648,7 +648,7 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   of InclS: genInclude c, n
   of ProcS: genProcDecl c, n, false
   of VarS, GvarS, TvarS: genStmt c, n
-  of ConstS: genStmt c, n
+  of ConstS: genVar c, n, IsConst
   of DiscardS, AsgnS, KeepovfS, ScopeS, IfS,
       WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnErrS:
     moveToInitSection:

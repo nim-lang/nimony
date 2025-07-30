@@ -275,7 +275,7 @@ proc genSwitch(c: var GeneratedCode; n: var Cursor) =
   skipParRi n
   c.inToplevel = oldInToplevel
 
-proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
+proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   case vk
   of IsLocal:
     genVarDecl c, n, IsLocal, toExtern
@@ -287,7 +287,7 @@ proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) 
       genVarDecl c, n, IsThreadlocal, toExtern
   of IsConst:
     moveToDataSection:
-      genVarDecl c, n, IsConst, toExtern
+      genVarDecl c, n, IsConst, toExtern, useStatic
 
 proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
   inc n # keepovf
@@ -386,7 +386,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of TvarS:
     genVar c, n, IsThreadlocal
   of ConstS:
-    genVar c, n, IsConst
+    genVar c, n, IsConst, useStatic = true
   of EmitS:
     genEmitStmt c, n
   of AsgnS:
