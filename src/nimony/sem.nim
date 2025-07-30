@@ -1743,6 +1743,9 @@ proc evalConstIntExpr(c: var SemContext; n: var Cursor; expected: TypeCursor): x
     else:
       buildErr c, info, "expected constant integer value but got: " & asNimCode(value)
 
+proc semCaseOfValueImpl(c: var SemContext; it: var Item; selectorType: TypeCursor;
+                    seen: var seq[(xint, xint)])
+
 proc evalConstCaseBranch(c: var SemContext; it: var Item; expected: TypeCursor; seen: var seq[(xint, xint)]; info: PackedLineInfo) =
   let info = it.n.info
   var orig = it.n
@@ -1757,11 +1760,8 @@ proc evalConstCaseBranch(c: var SemContext; it: var Item; expected: TypeCursor; 
   of SetConstrX:
     inc value
     skip value
-    while value.kind != ParRi:
-      let a = evalConstIntExpr(c, value, expected)
-      if seen.containsOrIncl(a):
-        buildErr c, info, "value already handled"
-    skipParRi value
+    var dummy = Item(n: value, typ: expected)
+    semCaseOfValueImpl(c, dummy, expected, seen)
   else:
     let a = evalConstIntExpr(c, orig, expected)
     if seen.containsOrIncl(a):
