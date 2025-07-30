@@ -192,6 +192,7 @@
 | `(magic STR)` | NimonyPragma | `magic` pragma |
 | `(importc X)` | NimonyPragma | `importc` pragma |
 | `(importcpp X)` | NimonyPragma | `importcpp` pragma |
+| `(dynlib)` | NimonyPragma | `dynlib` pragma |
 | `(exportc X)` | NimonyPragma | `exportc` pragma |
 | `(header X)` | NimonyPragma | `header` pragma |
 | `(threadvar)` | NimonyPragma | `threadvar` pragma |
