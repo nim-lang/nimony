@@ -403,3 +403,33 @@ block: # radToDeg
   assert almostEqual(radToDeg(0.0), 0.0)
   assert almostEqual(radToDeg(PI/4.0), 45.0)
   assert almostEqual(radToDeg(PI), 180.0)
+
+block: # sin
+  assert almostEqual(sin(-PI/6.0), -0.5)
+  assert almostEqual(sin(0.0), 0.0)
+  assert almostEqual(sin(PI/6.0), 0.5)
+  assert almostEqual(sin(PI/2.0), 1.0)
+  assert almostEqual(sin(float32((-PI/6.0))), -0.5'f32)
+  assert almostEqual(sin(0.0'f32), 0.0'f32)
+  assert almostEqual(sin(float32(PI/6.0)), 0.5'f32)
+  assert almostEqual(sin(float32(PI/2.0)), 1.0'f32)
+
+block: # cos
+  assert almostEqual(cos(-PI/3.0), 0.5)
+  assert almostEqual(cos(0.0), 1.0)
+  assert almostEqual(cos(PI/3.0), 0.5)
+  assert almostEqual(cos(PI), -1.0)
+  assert almostEqual(cos(float32(-PI/3.0)), 0.5'f32)
+  assert almostEqual(cos(0.0'f32), 1.0'f32)
+  assert almostEqual(cos(float32(PI/3.0)), 0.5'f32)
+  assert almostEqual(cos(float32(PI)), -1.0'f32)
+
+block: # tan
+  assert almostEqual(tan(-PI/4.0), -1.0)
+  assert almostEqual(tan(0.0), 0.0)
+  assert almostEqual(tan(PI/4.0), 1.0)
+  assert almostEqual(tan(PI/3.0), sqrt(3.0))
+  assert almostEqual(tan(float32(-PI/4.0)), -1.0'f32)
+  assert almostEqual(tan(0.0'f32), 0.0'f32)
+  assert almostEqual(tan(float32(PI/4.0)), 1.0'f32)
+  assert almostEqual(tan(float32(PI/3.0)), sqrt(3.0'f32))

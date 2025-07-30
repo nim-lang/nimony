@@ -590,3 +590,30 @@ func radToDeg*[T: SomeFloat and Arithmetic](r: T): T {.inline.} =
     assert almostEqual(radToDeg(2 * PI), 360.0)
 
   result = r / T(RadPerDeg)
+
+{.push header: CMathHeader.}
+func sin*[T: SomeFloat](x: T): T {.importc: "sin".} =
+  ## Computes the sine of `x`.
+  ##
+  ## **See also:**
+  ## * `arcsin func <#arcsin,float64>`_
+  runnableExamples:
+    assert almostEqual(sin(PI / 6), 0.5)
+    assert almostEqual(sin(degToRad(90.0)), 1.0)
+func cos*[T: SomeFloat](x: T): T {.importc: "cos".} =
+  ## Computes the cosine of `x`.
+  ##
+  ## **See also:**
+  ## * `arccos func <#arccos,float64>`_
+  runnableExamples:
+    assert almostEqual(cos(2 * PI), 1.0)
+    assert almostEqual(cos(degToRad(60.0)), 0.5)
+func tan*[T: SomeFloat](x: T): T {.importc: "tan".} =
+  ## Computes the tangent of `x`.
+  ##
+  ## **See also:**
+  ## * `arctan func <#arctan,float64>`_
+  runnableExamples:
+    assert almostEqual(tan(degToRad(45.0)), 1.0)
+    assert almostEqual(tan(PI / 4), 1.0)
+{.pop.}
