@@ -433,3 +433,43 @@ block: # tan
   assert almostEqual(tan(0.0'f32), 0.0'f32)
   assert almostEqual(tan(float32(PI/4.0)), 1.0'f32)
   assert almostEqual(tan(float32(PI/3.0)), sqrt(3.0'f32))
+
+block: # arcsin
+  assert almostEqual(arcsin(-0.5), -PI/6.0)
+  assert almostEqual(arcsin(0.0), 0.0)
+  assert almostEqual(arcsin(0.5), PI/6.0)
+  assert almostEqual(arcsin(1.0), PI/2.0)
+  assert almostEqual(arcsin(-0.5'f32), float32(-PI/6.0))
+  assert almostEqual(arcsin(0.0'f32), 0.0'f32)
+  assert almostEqual(arcsin(0.5'f32), float32(PI/6.0))
+  assert almostEqual(arcsin(1.0'f32), float32(PI/2.0))
+
+block: # arccos
+  assert almostEqual(arccos(1.0), 0.0)
+  assert almostEqual(arccos(0.5), PI/3.0)
+  assert almostEqual(arccos(-0.5), PI*2.0/3.0)
+  assert almostEqual(arccos(-1.0), PI)
+  assert almostEqual(arccos(1.0'f32), 0.0'f32)
+  assert almostEqual(arccos(0.5'f32), float32(PI/3.0))
+  assert almostEqual(arccos(-0.5'f32), float32(PI*2.0/3.0))
+  assert almostEqual(arccos(-1.0'f32), float32(PI))
+
+block: # arctan
+  assert almostEqual(arctan(-1.0), -PI/4.0)
+  assert almostEqual(arctan(0.0), 0.0)
+  assert almostEqual(arctan(1.0), PI/4.0)
+  assert almostEqual(arctan(sqrt(3.0)), PI/3.0)
+  assert almostEqual(arctan(-1.0'f32), float32(-PI/4.0))
+  assert almostEqual(arctan(0.0'f32), 0.0'f32)
+  assert almostEqual(arctan(1.0'f32), float32(PI/4.0))
+  assert almostEqual(arctan(sqrt(3.0'f32)), float32(PI/3.0))
+
+block: # arctan2
+  assert almostEqual(arctan2(-1.0, -1.0), -PI*3.0/4.0)
+  assert almostEqual(arctan2(0.0, 1.0), 0.0)
+  assert almostEqual(arctan2(1.0, 1.0), PI/4.0)
+  assert almostEqual(arctan2(1.0, -1.0), PI*3.0/4.0)
+  assert almostEqual(arctan2(-1.0'f32, -1.0'f32), float32(-PI*3.0/4.0))
+  assert almostEqual(arctan2(0.0'f32, 1.0'f32), 0.0'f32)
+  assert almostEqual(arctan2(1.0'f32, 1.0'f32), float32(PI/4.0))
+  assert almostEqual(arctan2(1.0'f32, -1.0'f32), float32(PI*3.0/4.0))

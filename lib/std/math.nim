@@ -616,4 +616,40 @@ func tan*[T: SomeFloat](x: T): T {.importc: "tan".} =
   runnableExamples:
     assert almostEqual(tan(degToRad(45.0)), 1.0)
     assert almostEqual(tan(PI / 4), 1.0)
+func arcsin*[T: SomeFloat](x: T): T {.importc: "asin".} =
+  ## Computes the arc sine of `x`.
+  ##
+  ## **See also:**
+  ## * `sin func <#sin,float64>`_
+  runnableExamples:
+    assert almostEqual(radToDeg(arcsin(0.0)), 0.0)
+    assert almostEqual(radToDeg(arcsin(1.0)), 90.0)
+func arccos*[T: SomeFloat](x: T): T {.importc: "acos".} =
+  ## Computes the arc cosine of `x`.
+  ##
+  ## **See also:**
+  ## * `cos func <#cos,float64>`_
+  runnableExamples:
+    assert almostEqual(radToDeg(arccos(0.0)), 90.0)
+    assert almostEqual(radToDeg(arccos(1.0)), 0.0)
+func arctan*[T: SomeFloat](x: T): T {.importc: "atan".} =
+  ## Calculate the arc tangent of `x`.
+  ##
+  ## **See also:**
+  ## * `arctan2 func <#arctan2,float64,float64>`_
+  ## * `tan func <#tan,float64>`_
+  runnableExamples:
+    assert almostEqual(arctan(1.0), 0.7853981633974483)
+    assert almostEqual(radToDeg(arctan(1.0)), 45.0)
+func arctan2*[T: SomeFloat](y, x: T): T {.importc: "atan2".} =
+  ## Calculate the arc tangent of `y/x`.
+  ##
+  ## It produces correct results even when the resulting angle is near
+  ## `PI/2` or `-PI/2` (`x` near 0).
+  ##
+  ## **See also:**
+  ## * `arctan func <#arctan,float64>`_
+  runnableExamples:
+    assert almostEqual(arctan2(1.0, 0.0), PI / 2.0)
+    assert almostEqual(radToDeg(arctan2(1.0, 0.0)), 90.0)
 {.pop.}
