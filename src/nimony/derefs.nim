@@ -429,6 +429,8 @@ proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   assert n.exprKind in CallKinds
   var n = n
   inc n
+  assert n.kind != ParRi
+  skip n
   if n.kind != ParRi:
     result = not borrowsFromReadonly(c, n)
   else:
