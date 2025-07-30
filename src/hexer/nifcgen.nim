@@ -771,6 +771,8 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           continue
         of BuildP, EmitP, PushP, PopP, PassLP:
           bug "unreachable"
+        of DynlibP:
+          bug "todo"
         skipParRi c, n
       else:
         error c, "unknown pragma: ", n

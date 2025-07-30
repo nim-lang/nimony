@@ -1453,6 +1453,8 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`semantics` pragma takes a string literal"
     c.dest.addParRi()
+  of DynlibP:
+    bug "todo"
   if hasParRi:
     if n.kind != ParRi:
       if n.exprKind != ErrX:
