@@ -7,7 +7,7 @@ type
 
 proc `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} = x.a[idx]
 
-proc `[]=`*[T](x: openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
+proc `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem
 
 converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline.} =
