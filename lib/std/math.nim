@@ -9,6 +9,7 @@ type
     proc `*`(x, y: Self): Self
     proc `div`(x, y: Self): Self
     proc `mod`(x, y: Self): Self
+    proc `/`(x, y: Self): Self
     proc `<`(x, y: Self): bool
     proc `>`(x, y: Self): bool
 
@@ -567,3 +568,25 @@ func nextPowerOfTwo*(x: int): int =
   result = result or (result shr 2)
   result = result or (result shr 1)
   result += 1 + ord(x <= 0)
+
+const RadPerDeg = PI / 180.0  ## Number of radians per degree.
+
+func degToRad*[T: SomeFloat and Arithmetic](d: T): T {.inline.} =
+  ## Converts from degrees to radians.
+  ##
+  ## **See also:**
+  ## * `radToDeg func <#radToDeg,T>`_
+  runnableExamples:
+    assert almostEqual(degToRad(180.0), PI)
+
+  result = d * T(RadPerDeg)
+
+func radToDeg*[T: SomeFloat and Arithmetic](r: T): T {.inline.} =
+  ## Converts from radians to degrees.
+  ##
+  ## **See also:**
+  ## * `degToRad func <#degToRad,T>`_
+  runnableExamples:
+    assert almostEqual(radToDeg(2 * PI), 360.0)
+
+  result = r / T(RadPerDeg)

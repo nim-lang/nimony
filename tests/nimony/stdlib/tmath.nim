@@ -391,3 +391,15 @@ block: # nextPowerOfTwo
   assert nextPowerOfTwo(16) == 16
   assert nextPowerOfTwo(17) == 32
   assert nextPowerOfTwo(int.high div 2) == int.high div 2 + 1
+
+block: # degToRad
+  assert almostEqual(degToRad(-45.0), -PI/4.0)
+  assert almostEqual(degToRad(0.0), 0.0)
+  assert almostEqual(degToRad(45.0), PI/4.0)
+  assert almostEqual(degToRad(180.0), PI)
+
+block: # radToDeg
+  assert almostEqual(radToDeg(-PI/4.0), -45.0)
+  assert almostEqual(radToDeg(0.0), 0.0)
+  assert almostEqual(radToDeg(PI/4.0), 45.0)
+  assert almostEqual(radToDeg(PI), 180.0)
