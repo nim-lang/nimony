@@ -343,6 +343,24 @@ block: # log10
   assert log10(-12.0).isNaN
   assert log10(-12.0'f32).isNaN
 
+block: # log
+  assert log(9.0, 3.0) == 2.0
+  assert log(0.125, 0.5) == 3.0
+  assert log(2.0, 4.0) == 0.5
+  assert log(0.25, 4.0) == -1.0
+  assert log(1.0, 100.0) == 0.0
+  assert log(100000.0, 10.0) == 5.0
+  assert log(-1.0, 2.0).isNaN
+  assert log(4.0, -2.0).isNaN
+  assert log(9'f32, 3'f32) == 2'f32
+  assert log(0.125'f32, 0.5'f32) == 3'f32
+  assert log(2'f32, 4'f32) == 0.5'f32
+  assert log(0.25'f32, 4'f32) == -1'f32
+  assert log(1'f32, 100'f32) == 0'f32
+  assert log(100000'f32, 10'f32) == 5'f32
+  assert log(-1'f32, 2'f32).isNaN
+  assert log(4'f32, -2'f32).isNaN
+
 block: # `^`
   assert 5 ^ 2 == 25
   assert 0.5 ^ 2 == 0.25

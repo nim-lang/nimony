@@ -493,6 +493,21 @@ func log10*[T: SomeFloat](x: T): T {.importc: "log10".} =
     assert log10(-100.0).isNaN
 {.pop.}
 
+func log*[T: SomeFloat](x, base: T): T {.untyped.} =
+  ## Computes the logarithm of `x` to base `base`.
+  ##
+  ## **See also:**
+  ## * `ln func <#ln,float64>`_
+  ## * `log10 func <#log10,float64>`_
+  ## * `log2 func <#log2,float64>`_
+  runnableExamples:
+    assert almostEqual(log(9.0, 3.0), 2.0)
+    assert almostEqual(log(0.0, 2.0), -Inf)
+    assert log(-7.0, 4.0).isNaN
+    assert log(8.0, -2.0).isNaN
+
+  ln(x) / ln(base)
+
 # remove this when Natural type is added to system
 type
   Natural = int
