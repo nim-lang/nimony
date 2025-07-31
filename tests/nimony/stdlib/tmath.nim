@@ -267,6 +267,23 @@ block: # sum
   assert sum([1, 2, 3, 4]) == 10
   assert sum([-4, 3, 5]) == 4
 
+block: # cumsum
+  block:  # int
+    var counts = [1, 2, 3, 4]
+    counts.cumsum
+    assert counts == [1, 3, 6, 10]
+    var empty: seq[int] = @[]
+    empty.cumsum
+    assert empty == @[]
+
+  block: # float
+    var counts = [1.0, 2.0, 3.0, 4.0]
+    counts.cumsum
+    assert counts == [1.0, 3.0, 6.0, 10.0]
+    var empty: seq[float] = @[]
+    empty.cumsum
+    assert empty == @[]
+
 block: # prod
   let empty: seq[int] = @[]
   assert prod(empty) == 1
@@ -275,6 +292,17 @@ block: # prod
   assert almostEqual(prod([1.5, 3.4]), 5.1)
   let x: seq[float] = @[]
   assert prod(x) == 1.0
+
+block: # cumprod
+  block: # int
+    var counts = [1, 2, 3, 4]
+    counts.cumprod
+    assert counts == [1, 2, 6, 24]
+
+  block: # float
+    var counts = [1.0, 2.0, 3.0, 4.0]
+    counts.cumprod
+    assert counts == [1.0, 2.0, 6.0, 24.0]
 
 block: # sqrt
   assert sqrt(-1.0).isNaN
