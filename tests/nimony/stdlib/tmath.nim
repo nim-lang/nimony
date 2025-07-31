@@ -515,9 +515,39 @@ block: # cosh
 block: # tanh
   assert almostEqual(tanh(0.0), 0.0)
   assert almostEqual(tanh(0.5 * ln(3.0)), 0.5)
-  assert almostEqual(tanh(0.5 * ln(1.0/3.0)), -0.5)
+  assert almostEqual(tanh(-0.5 * ln(3.0)), -0.5)
   assert almostEqual(tanh(0.5 * ln(7.0)), 0.75)
   assert almostEqual(tanh(0'f32), 0'f32)
   assert almostEqual(tanh(0.5'f32 * ln(3'f32)), 0.5'f32)
-  assert almostEqual(tanh(0.5'f32 * ln(1'f32/3'f32)), -0.5'f32)
+  assert almostEqual(tanh(-0.5'f32 * ln(3'f32)), -0.5'f32)
   assert almostEqual(tanh(0.5'f32 * ln(7'f32)), 0.75'f32)
+
+block: # arcsinh
+  assert almostEqual(arcsinh(-1.0), ln(sqrt(2.0) - 1.0))
+  assert almostEqual(arcsinh(0.0), 0.0)
+  assert almostEqual(arcsinh(0.75), ln(2.0))
+  assert almostEqual(arcsinh(4.0/3.0), ln(3.0))
+  assert almostEqual(arcsinh(-1'f32), ln(sqrt(2'f32) - 1'f32))
+  assert almostEqual(arcsinh(0'f32), 0'f32)
+  assert almostEqual(arcsinh(0.75'f32), ln(2'f32))
+  assert almostEqual(arcsinh(4'f32/3'f32), ln(3'f32))
+
+block: # arccosh
+  assert almostEqual(arccosh(1.0), 0.0)
+  assert almostEqual(arccosh(2.0), ln(2.0 + sqrt(3.0)))
+  assert almostEqual(arccosh(1.25), ln(2.0))
+  assert almostEqual(arccosh(5.0/3.0), ln(3.0))
+  assert almostEqual(arccosh(1'f32), 0'f32)
+  assert almostEqual(arccosh(2'f32), ln(2'f32 + sqrt(3'f32)))
+  assert almostEqual(arccosh(1.25'f32), ln(2'f32))
+  assert almostEqual(arccosh(5'f32/3'f32), ln(3'f32))
+
+block: # arctanh
+  assert almostEqual(arctanh(-0.5), -0.5 * ln(3.0))
+  assert almostEqual(arctanh(0.0), 0.0)
+  assert almostEqual(arctanh(0.5), 0.5 * ln(3.0))
+  assert almostEqual(arctanh(0.75), 0.5 * ln(7.0))
+  assert almostEqual(arctanh(-0.5'f32), -0.5'f32 * ln(3'f32))
+  assert almostEqual(arctanh(0'f32), 0'f32)
+  assert almostEqual(arctanh(0.5'f32), 0.5'f32 * ln(3'f32))
+  assert almostEqual(arctanh(0.75'f32), 0.5'f32 * ln(7'f32))

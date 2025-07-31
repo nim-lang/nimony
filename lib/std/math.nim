@@ -691,4 +691,19 @@ func tanh*[T: SomeFloat](x: T): T {.importc: "tanh".} =
   runnableExamples:
     assert almostEqual(tanh(0.0), 0.0)
     assert almostEqual(tanh(1.0), 0.7615941559557649)
+func arcsinh*[T: SomeFloat](x: T): T {.importc: "asinh".}
+  ## Computes the inverse hyperbolic sine of `x`.
+  ##
+  ## **See also:**
+  ## * `sinh func <#sinh,float64>`_
+func arccosh*[T: SomeFloat](x: T): T {.importc: "acosh".}
+  ## Computes the inverse hyperbolic cosine of `x`.
+  ##
+  ## **See also:**
+  ## * `cosh func <#cosh,float64>`_
+func arctanh*[T: SomeFloat](x: T): T {.importc: "atanh".}
+  ## Computes the inverse hyperbolic tangent of `x`.
+  ##
+  ## **See also:**
+  ## * `tanh func <#tanh,float64>`_
 {.pop.}
