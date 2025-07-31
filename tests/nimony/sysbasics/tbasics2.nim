@@ -172,3 +172,24 @@ block:
 
   assert s.low == 0
   assert s.high == 2
+
+# Test escaping behavior
+block:
+  var s = ""
+  s.addQuoted('\0')
+  s.addQuoted('\31')
+  s.addQuoted('\127')
+  assert s == "'\\x00''\\x1F''\\x7F'"
+block:
+  var s = ""
+  s.addQuoted('\\')
+  s.addQuoted('\'')
+  s.addQuoted('\"')
+  assert s == """'\\''\'''\"'"""
+block:
+  var s = ""
+  s.addQuoted("å")
+  s.addQuoted("ä")
+  s.addQuoted("ö")
+  s.addEscapedChar('\xFF')
+  assert s == """"å""ä""ö"\xFF"""
