@@ -652,4 +652,28 @@ func arctan2*[T: SomeFloat](y, x: T): T {.importc: "atan2".} =
   runnableExamples:
     assert almostEqual(arctan2(1.0, 0.0), PI / 2.0)
     assert almostEqual(radToDeg(arctan2(1.0, 0.0)), 90.0)
+func sinh*[T: SomeFloat](x: T): T {.importc: "sinh".} =
+  ## Computes the [hyperbolic sine](https://en.wikipedia.org/wiki/Hyperbolic_function#Definitions) of `x`.
+  ##
+  ## **See also:**
+  ## * `arcsinh func <#arcsinh,float64>`_
+  runnableExamples:
+    assert almostEqual(sinh(0.0), 0.0)
+    assert almostEqual(sinh(1.0), 1.175201193643801)
+func cosh*[T: SomeFloat](x: T): T {.importc: "cosh".} =
+  ## Computes the [hyperbolic cosine](https://en.wikipedia.org/wiki/Hyperbolic_function#Definitions) of `x`.
+  ##
+  ## **See also:**
+  ## * `arccosh func <#arccosh,float64>`_
+  runnableExamples:
+    assert almostEqual(cosh(0.0), 1.0)
+    assert almostEqual(cosh(1.0), 1.543080634815244)
+func tanh*[T: SomeFloat](x: T): T {.importc: "tanh".} =
+  ## Computes the [hyperbolic tangent](https://en.wikipedia.org/wiki/Hyperbolic_function#Definitions) of `x`.
+  ##
+  ## **See also:**
+  ## * `arctanh func <#arctanh,float64>`_
+  runnableExamples:
+    assert almostEqual(tanh(0.0), 0.0)
+    assert almostEqual(tanh(1.0), 0.7615941559557649)
 {.pop.}

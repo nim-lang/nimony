@@ -473,3 +473,33 @@ block: # arctan2
   assert almostEqual(arctan2(0.0'f32, 1.0'f32), 0.0'f32)
   assert almostEqual(arctan2(1.0'f32, 1.0'f32), float32(PI/4.0))
   assert almostEqual(arctan2(1.0'f32, -1.0'f32), float32(PI*3.0/4.0))
+
+block: # sinh
+  assert almostEqual(sinh(ln(-1.0 + sqrt(2.0))), -1.0)
+  assert almostEqual(sinh(0.0), 0.0)
+  assert almostEqual(sinh(ln(0.5 + sqrt(1.25))), 0.5)
+  assert almostEqual(sinh(ln(1.0 + sqrt(2.0))), 1.0)
+  assert almostEqual(sinh(ln(-1'f32 + sqrt(2'f32))), -1'f32)
+  assert almostEqual(sinh(0'f32), 0'f32)
+  assert almostEqual(sinh(ln(0.5'f32 + sqrt(1.25'f32))), 0.5'f32)
+  assert almostEqual(sinh(ln(1'f32 + sqrt(2'f32))), 1'f32)
+
+block: # cosh
+  assert almostEqual(cosh(0.0), 1.0)
+  assert almostEqual(cosh(ln(sqrt(2.0) + 1.0)), sqrt(2.0))
+  assert almostEqual(cosh(ln(2.0 + sqrt(3.0))), 2.0)
+  assert almostEqual(cosh(ln(2.0 - sqrt(3.0))), 2.0)
+  assert almostEqual(cosh(0'f32), 1'f32)
+  assert almostEqual(cosh(ln(sqrt(2'f32) + 1'f32)), sqrt(2'f32))
+  assert almostEqual(cosh(ln(2'f32 + sqrt(3'f32))), 2'f32)
+  assert almostEqual(cosh(ln(2'f32 - sqrt(3'f32))), 2'f32)
+
+block: # tanh
+  assert almostEqual(tanh(0.0), 0.0)
+  assert almostEqual(tanh(0.5 * ln(3.0)), 0.5)
+  assert almostEqual(tanh(0.5 * ln(1.0/3.0)), -0.5)
+  assert almostEqual(tanh(0.5 * ln(7.0)), 0.75)
+  assert almostEqual(tanh(0'f32), 0'f32)
+  assert almostEqual(tanh(0.5'f32 * ln(3'f32)), 0.5'f32)
+  assert almostEqual(tanh(0.5'f32 * ln(1'f32/3'f32)), -0.5'f32)
+  assert almostEqual(tanh(0.5'f32 * ln(7'f32)), 0.75'f32)
