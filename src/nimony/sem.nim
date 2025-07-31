@@ -1330,7 +1330,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     if hasParRi and n.kind != ParRi:
       semConstStrExpr c, n
     c.dest.addParRi()
-  of ImportcP, ImportcppP, ExportcP, HeaderP, PluginP:
+  of ImportcP, ImportcppP, ExportcP, HeaderP, DynlibP, PluginP:
     crucial.flags.incl pk
     let info = n.info
     c.dest.add parLeToken(pk, info)
@@ -1453,8 +1453,6 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     else:
       buildErr c, n.info, "`semantics` pragma takes a string literal"
     c.dest.addParRi()
-  of DynlibP:
-    bug "todo"
   if hasParRi:
     if n.kind != ParRi:
       if n.exprKind != ErrX:

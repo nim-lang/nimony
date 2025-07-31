@@ -99,6 +99,7 @@ type
     flags: set[PragmaKind]
     align, bits: IntId
     header: StrId
+    dynlib: StrId
     callConv: CallConv
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas
@@ -754,6 +755,12 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           result.header = n.litId
           result.flags.incl NodeclP
           inc n
+        of DynlibP:
+          inc n
+          expectStrLit c, n
+          result.dynlib = n.litId
+          result.flags.incl NodeclP
+          inc n
         of AlignP:
           inc n
           expectIntLit c, n
@@ -771,8 +778,6 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           continue
         of BuildP, EmitP, PushP, PopP, PassLP:
           bug "unreachable"
-        of DynlibP:
-          bug "todo"
         skipParRi c, n
       else:
         error c, "unknown pragma: ", n
@@ -927,6 +932,10 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.dest.add dst
   if prag.header != StrId(0):
     c.headers.incl prag.header
+
+  if prag.dynlib != StrId(0):
+    c.dynlibs.incl prag.dynlib
+
   discard setOwner(c, oldOwner)
   c.closeMangleScope()
   c.resultSym = oldResultSym
