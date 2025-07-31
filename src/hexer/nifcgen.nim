@@ -936,6 +936,11 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   if prag.dynlib != StrId(0):
     c.dynlibs.incl prag.dynlib
 
+    var dynlibName = "Dl" & "." & prag.externName & "." &
+        $c.localDeclCounters & "." & c.main
+    inc c.localDeclCounters
+    c.registerMangleInParent(newSym, dynlibName)
+
   discard setOwner(c, oldOwner)
   c.closeMangleScope()
   c.resultSym = oldResultSym
