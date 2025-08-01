@@ -619,3 +619,45 @@ block: # lgamma
   assert almostEqual(lgamma(0.5'f32), 0.5'f32 * ln(PI.float32))
   assert lgamma(0'f32).classify == fcInf
   assert lgamma(-1'f32).classify == fcInf
+
+block: # splitDecimal
+  assert splitDecimal(54.674).intpart == 54.0
+  assert almostEqual(splitDecimal(54.674).floatpart, 0.674)
+  assert splitDecimal(-693.4375).intpart == -693.0
+  assert almostEqual(splitDecimal(-693.4375).floatpart, -0.4375)
+  assert splitDecimal(0.0) == (0.0, 0.0)
+  assert splitDecimal(1.0) == (1.0, 0.0)
+  assert splitDecimal(0.0625) == (0.0, 0.0625)
+  assert splitDecimal(0.9375) == (0.0, 0.9375)
+  assert splitDecimal(1.0625) == (1.0, 0.0625)
+  assert splitDecimal(1.9375) == (1.0, 0.9375)
+  assert splitDecimal(-1.0) == (-1.0, 0.0)
+  assert splitDecimal(-0.0625) == (0.0, -0.0625)
+  assert splitDecimal(-0.9375) == (0.0, -0.9375)
+  assert splitDecimal(-1.0625) == (-1.0, -0.0625)
+  assert splitDecimal(-1.9375) == (-1.0, -0.9375)
+  assert splitDecimal(65536.0) == (65536.0, 0.0)
+  assert splitDecimal(65536.5) == (65536.0, 0.5)
+  assert splitDecimal(-65536.0) == (-65536.0, 0.0)
+  assert splitDecimal(-65536.5) == (-65536.0, -0.5)
+
+  assert splitDecimal(54.674'f32).intpart == 54'f32
+  assert almostEqual(splitDecimal(54.674'f32).floatpart, 0.674'f32)
+  assert splitDecimal(-693.4375'f32).intpart == -693'f32
+  assert almostEqual(splitDecimal(-693.4375'f32).floatpart, -0.4375'f32)
+  assert splitDecimal(0'f32) == (0'f32, 0'f32)
+  assert splitDecimal(1'f32) == (1'f32, 0'f32)
+  assert splitDecimal(0.1'f32) == (0'f32, 0.1'f32)
+  assert splitDecimal(0.0625'f32) == (0'f32, 0.0625'f32)
+  assert splitDecimal(0.9375'f32) == (0'f32, 0.9375'f32)
+  assert splitDecimal(1.0625'f32) == (1'f32, 0.0625'f32)
+  assert splitDecimal(1.9375'f32) == (1'f32, 0.9375'f32)
+  assert splitDecimal(-1'f32) == (-1'f32, 0'f32)
+  assert splitDecimal(-0.0625'f32) == (0'f32, -0.0625'f32)
+  assert splitDecimal(-0.9375'f32) == (0'f32, -0.9375'f32)
+  assert splitDecimal(-1.0625'f32) == (-1'f32, -0.0625'f32)
+  assert splitDecimal(-1.9375'f32) == (-1'f32, -0.9375'f32)
+  assert splitDecimal(65536'f32) == (65536'f32, 0'f32)
+  assert splitDecimal(65536.5'f32) == (65536'f32, 0.5'f32)
+  assert splitDecimal(-65536'f32) == (-65536'f32, 0'f32)
+  assert splitDecimal(-65536.5'f32) == (-65536'f32, -0.5'f32)

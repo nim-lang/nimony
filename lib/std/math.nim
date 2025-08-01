@@ -2,6 +2,7 @@ import std/[assertions, fenv]
 
 type
   Arithmetic = concept
+    proc `-`(x: Self): Self
     proc `+`(x, y: Self): Self
     proc `-`(x, y: Self): Self
     proc inc(x: var Self, y: Self)
@@ -755,3 +756,22 @@ func lgamma*[T: SomeFloat](x: T): T {.importc: "lgamma".} =
   ## **See also:**
   ## * `gamma func <#gamma,float64>`_ for gamma function
 {.pop.}
+
+func splitDecimal*[T: SomeFloat and Arithmetic and HasDefault](x: T): tuple[intpart: T, floatpart: T] =
+  ## Breaks `x` into an integer and a fractional part.
+  ##
+  ## Returns a tuple containing `intpart` and `floatpart`, representing
+  ## the integer part and the fractional part, respectively.
+  ##
+  ## Both parts have the same sign as `x`.  Analogous to the `modf`
+  ## function in C.
+  runnableExamples:
+    assert splitDecimal(5.25) == (intpart: 5.0, floatpart: 0.25)
+    assert splitDecimal(-2.73) == (intpart: -2.0, floatpart: -0.73)
+  result = default(tuple[intpart: T, floatpart: T])
+  var absolute: T = abs(x)
+  result.intpart = floor(absolute)
+  result.floatpart = absolute - result.intpart
+  if x < T(0):
+    result.intpart = -result.intpart
+    result.floatpart = -result.floatpart
