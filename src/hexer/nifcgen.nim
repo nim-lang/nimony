@@ -934,11 +934,9 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.headers.incl prag.header
 
   if prag.dynlib != StrId(0):
-    c.dynlibs.incl prag.dynlib
+    c.dynlibs.mgetOrPut(prag.dynlib, @[]).add pool.strings.getOrIncl(prag.externName)
 
-    var dynlibName = "Dl" & "." & prag.externName & "." &
-        $c.localDeclCounters & "." & c.main
-    inc c.localDeclCounters
+    var dynlibName = "Dl" & "." & prag.externName & "." & c.main
     c.registerMangleInParent(newSym, dynlibName)
 
   discard setOwner(c, oldOwner)
@@ -1716,15 +1714,26 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
           trStmt c, n, mode
       c.closeMangleScope()
     of VarS, LetS, CursorS:
-      trLocal c, n, VarY, mode
+      if mode == TraverseTopLevel:
+        swap c.toplevels, c.dest
+        trLocal c, n, VarY, mode
+        swap c.toplevels, c.dest
+      else:
+        trLocal c, n, VarY, mode
     of ResultS:
       trLocal c, n, ResultY, mode
     of GvarS, GletS:
+      swap c.toplevels, c.dest
       trLocal c, n, GvarY, mode
+      swap c.toplevels, c.dest
     of TvarS, TletS:
+      swap c.toplevels, c.dest
       trLocal c, n, TvarY, mode
+      swap c.toplevels, c.dest
     of ConstS:
+      swap c.toplevels, c.dest
       trLocal c, n, ConstY, mode
+      swap c.toplevels, c.dest
     of CallKindsS:
       c.dest.add tagToken("call", n.info)
       inc n
@@ -1951,6 +1960,8 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
+    pending: createTokenBuf(),
+    toplevels: createTokenBuf(),
     bits: bits,
     localDeclCounters: 1000,
     activeChecks: flags
@@ -1971,6 +1982,33 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   else:
     error c, "expected (stmts) but got: ", n
 
+  # dynlib init:
+  for key, val in c.dynlibs:
+    var dynlib = pool.strings[key]
+    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c)
+
+    c.dest.add tagToken("gvar", rootInfo)
+
+    c.dest.add symdefToken(tmp, rootInfo)
+    c.offer tmp
+
+    c.dest.addDotToken()
+
+    c.dest.add tagToken("ptr", n.info)
+    c.dest.add tagToken("void", n.info)
+    c.dest.addParRi()
+    c.dest.addParRi()
+
+    c.dest.add tagToken("call", rootInfo)
+    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary")), rootInfo)
+    c.dest.addStrLit dynlib
+    c.dest.addParRi()
+
+    c.dest.addParRi()
+
+
+  c.dest.add c.toplevels
+
   # fix point expansion:
   var i = 0
   while i < c.requires.len:
@@ -1978,6 +2016,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     if not c.declared.contains(imp):
       importSymbol(c, imp)
     inc i
+
   c.dest.add c.pending
   skipParRi c, n
   writeOutput c, rootInfo

@@ -26,12 +26,13 @@ type
     requires*: seq[SymId]
     nestedIn*: seq[(StmtKind, SymId)]
     headers*: HashSet[StrId]
-    dynlibs*: HashSet[StrId]
+    dynlibs*: Table[StrId, seq[StrId]]
     currentOwner*: SymId
     toMangle*: MangleScope
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]
     pending*: TokenBuf
+    toplevels*: TokenBuf
     typeCache*: TypeCache
     bits*: int
 
