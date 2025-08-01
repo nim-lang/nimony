@@ -11,6 +11,7 @@ type
     proc `div`(x, y: Self): Self
     proc `mod`(x, y: Self): Self
     proc `/`(x, y: Self): Self
+    proc `==`(x, y: Self): bool
     proc `<`(x, y: Self): bool
     proc `>`(x, y: Self): bool
 
@@ -804,3 +805,57 @@ func binom*(n, k: Natural): int =
   result = n
   for i in 2 .. k:
     result = (result * (n + 1 - i)) div i
+
+func gcd*[T: Arithmetic](x, y: T): T =
+  ## Computes the greatest common (positive) divisor of `x` and `y`.
+  ##
+  ## Note that for floats, the result cannot always be interpreted as
+  ## "greatest decimal `z` such that `z*N == x and z*M == y`
+  ## where N and M are positive integers".
+  ##
+  ## **See also:**
+  ## * `gcd func <#gcd,SomeInteger,SomeInteger>`_ for an integer version
+  ## * `lcm func <#lcm,T,T>`_
+  runnableExamples:
+    assert gcd(13.5, 9.0) == 4.5
+
+  var (x, y) = (x, y)
+  while y != T(0):
+    x = x mod y
+    swap x, y
+  abs x
+
+func gcd*[T](x: openArray[T]): T =
+  ## Computes the greatest common (positive) divisor of the elements of `x`.
+  ##
+  ## **See also:**
+  ## * `gcd func <#gcd,T,T>`_ for a version with two arguments
+  runnableExamples:
+    assert gcd(@[13.5, 9.0]) == 4.5
+
+  result = x[0]
+  for i in 1 ..< x.len:
+    result = gcd(result, x[i])
+
+func lcm*[T: Arithmetic](x, y: T): T =
+  ## Computes the least common multiple of `x` and `y`.
+  ##
+  ## **See also:**
+  ## * `gcd func <#gcd,T,T>`_
+  runnableExamples:
+    assert lcm(24, 30) == 120
+    assert lcm(13, 39) == 39
+
+  x div gcd(x, y) * y
+
+func lcm*[T](x: openArray[T]): T =
+  ## Computes the least common multiple of the elements of `x`.
+  ##
+  ## **See also:**
+  ## * `lcm func <#lcm,T,T>`_ for a version with two arguments
+  runnableExamples:
+    doAssert lcm(@[24, 30]) == 120
+
+  result = x[0]
+  for i in 1 ..< x.len:
+    result = lcm(result, x[i])

@@ -698,3 +698,59 @@ block: # binom
   assert binom(43, 21) == 1052049481860
   assert binom(101, 100) == 101
   assert binom(9999, 2) == 49985001
+
+block:  # gcd
+  assert gcd(0, 0) == 0
+  assert gcd(0, 1) == 1
+  assert gcd(0, 0) == 0
+  assert gcd(0, 1) == 1
+  assert gcd(1, 0) == 1
+  assert gcd(1, 1) == 1
+  assert gcd(1, -1) == 1
+  assert gcd(-1, 1) == 1
+  assert gcd(-1, -1) == 1
+  assert gcd(1, 2) == 1
+  assert gcd(2, 1) == 1
+  assert gcd(2, 2) == 2
+  assert gcd(2, 3) == 1
+  assert gcd(3, 2) == 1
+  assert gcd(3, 3) == 3
+  assert gcd(4, 2) == 2
+  assert gcd(2, 4) == 2
+  assert gcd(4, 4) == 4
+  assert gcd(-4, 2) == 2
+  assert gcd(-2, 4) == 2
+  assert gcd(-4, 4) == 4
+  assert gcd(-4, -2) == 2
+  assert gcd(-2, -4) == 2
+  assert gcd(-4, -4) == 4
+  assert gcd(2048, 128) == 128
+  assert gcd(12345, 67890) == 15
+  assert gcd(-12345, 67890) == 15
+
+  assert gcd(1.0, 1.0) == 1.0
+  assert gcd(2.0, 1.0) == 1.0
+  assert gcd(1.0, 2.0) == 1.0
+  assert gcd(2.0, 2.0) == 2.0
+  assert gcd(0.1, 0.1) == 0.1
+  assert gcd(1.0, 0.375) == 0.125
+  assert gcd(3.5, 5.5) == 0.5
+
+  assert gcd(@[2, 6, 12]) == 2
+
+block:  # lcm
+  assert lcm(1, 1) == 1
+  assert lcm(1, 2) == 2
+  assert lcm(2, 1) == 2
+  assert lcm(2, 2) == 2
+  assert lcm(2, 3) == 6
+  assert lcm(3, 2) == 6
+  assert lcm(3, 3) == 3
+  assert lcm(4, 2) == 4
+  assert lcm(2, 4) == 4
+  assert lcm(4, 4) == 4
+  assert lcm(2048, 128) == 2048
+  assert lcm(12345, 67890) == 55873470
+
+  assert lcm([3, 5, 7]) == 105
+  assert lcm([4, 6, 9, 12]) == 36
