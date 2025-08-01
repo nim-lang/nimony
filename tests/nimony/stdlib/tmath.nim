@@ -661,3 +661,40 @@ block: # splitDecimal
   assert splitDecimal(65536.5'f32) == (65536'f32, 0.5'f32)
   assert splitDecimal(-65536'f32) == (-65536'f32, 0'f32)
   assert splitDecimal(-65536.5'f32) == (-65536'f32, -0.5'f32)
+
+block: # fac
+  assert fac(0) == 1
+  assert fac(1) == 1
+  assert fac(2) == 2
+  assert fac(3) == 6
+  assert fac(4) == 24
+  assert fac(5) == 120
+
+block: # binom
+  assert binom(0, 0) == 1
+  assert binom(1, 0) == 1
+  assert binom(1, 1) == 1
+  assert binom(2, 1) == 2
+  assert binom(3, 1) == 3
+  assert binom(4, 1) == 4
+  assert binom(5, 1) == 5
+  assert binom(2, 2) == 1
+  assert binom(3, 2) == 3
+  assert binom(4, 2) == 6
+  assert binom(5, 2) == 10
+  assert binom(6, 2) == 15
+  assert binom(3, 3) == 1
+  assert binom(4, 3) == 4
+  assert binom(5, 3) == 10
+  assert binom(6, 3) == 20
+  assert binom(7, 3) == 35
+  assert binom(4, 4) == 1
+  assert binom(5, 4) == 5
+  assert binom(6, 4) == 15
+  assert binom(7, 4) == 35
+  assert binom(5, 5) == 1
+  assert binom(6, 5) == 6
+  assert binom(7, 5) == 21
+  assert binom(43, 21) == 1052049481860
+  assert binom(101, 100) == 101
+  assert binom(9999, 2) == 49985001

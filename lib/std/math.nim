@@ -775,3 +775,32 @@ func splitDecimal*[T: SomeFloat and Arithmetic and HasDefault](x: T): tuple[intp
   if x < T(0):
     result.intpart = -result.intpart
     result.floatpart = -result.floatpart
+
+func fac*(n: int): int =
+  ## Computes the [factorial](https://en.wikipedia.org/wiki/Factorial) of
+  ## a non-negative integer `n`.
+  ##
+  ## **See also:**
+  ## * `prod func <#prod,openArray[T]>`_
+  runnableExamples:
+    assert fac(0) == 1
+    assert fac(4) == 24
+    assert fac(10) == 3628800
+
+  assert n >= 0, "argument of fac must not be negative"
+
+  result = 1
+  for i in 1 .. n:
+    result *= i
+
+func binom*(n, k: Natural): int =
+  ## Computes the [binomial coefficient](https://en.wikipedia.org/wiki/Binomial_coefficient).
+  runnableExamples:
+    assert binom(6, 2) == 15
+    assert binom(6, 0) == 1
+
+  if k <= 0: return 1
+  if 2 * k > n: return binom(n, n - k)
+  result = n
+  for i in 2 .. k:
+    result = (result * (n + 1 - i)) div i
