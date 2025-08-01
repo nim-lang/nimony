@@ -579,3 +579,43 @@ block: # arctanh
   assert almostEqual(arctanh(0'f32), 0'f32)
   assert almostEqual(arctanh(0.5'f32), 0.5'f32 * ln(3'f32))
   assert almostEqual(arctanh(0.75'f32), 0.5'f32 * ln(7'f32))
+
+block: # erf
+  assert almostEqual(erf(0.0), 0.0)
+  assert erf(6.0) > erf(5.0)
+  assert abs(erf(3.0) - 1.0) < 0.01
+  assert almostEqual(erf(1.0), -erf(-1.0))
+  assert almostEqual(erf(0'f32), 0'f32)
+  assert erf(6'f32) >= erf(5'f32)
+  assert abs(erf(3'f32) - 1'f32) < 0.01'f32
+  assert almostEqual(erf(1'f32), -erf(-1'f32))
+
+block: # erfc
+  assert almostEqual(erfc(0.0), 1.0)
+  assert erfc(6.0) < erfc(5.0)
+  assert almostEqual(1.0 - erfc(1.0), erfc(-1.0) - 1.0)
+  assert abs(erfc(3.0)) < 0.01
+  assert almostEqual(erfc(0'f32), 1'f32)
+  assert erfc(6'f32) < erfc(5'f32)
+  assert almostEqual(1'f32 - erfc(1'f32), erfc(-1'f32) - 1'f32)
+  assert abs(erfc(3'f32)) < 0.01'f32
+
+block: # gamma
+  assert gamma(5.0) == 24.0 # 4!
+  assert almostEqual(gamma(0.5), sqrt(PI))
+  assert almostEqual(gamma(-0.5), -2.0 * sqrt(PI))
+  assert almostEqual(gamma(2.0), 1.0)
+  assert gamma(5'f32) == 24'f32 # 4!
+  assert almostEqual(gamma(0.5'f32), sqrt(PI.float32))
+  assert almostEqual(gamma(-0.5'f32), -2'f32 * sqrt(PI.float32))
+  assert almostEqual(gamma(2'f32), 1'f32)
+
+block: # lgamma
+  assert lgamma(1.0) == 0.0 # ln(1.0) == 0.0
+  assert almostEqual(lgamma(0.5), 0.5 * ln(PI))
+  assert lgamma(0.0).classify == fcInf
+  assert lgamma(-1.0).classify == fcInf
+  assert lgamma(1'f32) == 0'f32
+  assert almostEqual(lgamma(0.5'f32), 0.5'f32 * ln(PI.float32))
+  assert lgamma(0'f32).classify == fcInf
+  assert lgamma(-1'f32).classify == fcInf

@@ -735,4 +735,23 @@ func arctanh*[T: SomeFloat](x: T): T {.importc: "atanh".}
   ##
   ## **See also:**
   ## * `tanh func <#tanh,float64>`_
+
+func erf*[T: SomeFloat](x: T): T {.importc: "erf".}
+  ## Computes the [error function](https://en.wikipedia.org/wiki/Error_function) for `x`.
+func erfc*[T: SomeFloat](x: T): T {.importc: "erfc".}
+  ## Computes the [complementary error function](https://en.wikipedia.org/wiki/Error_function#Complementary_error_function) for `x`.
+func gamma*[T: SomeFloat](x: T): T {.importc: "tgamma".} =
+  ## Computes the [gamma function](https://en.wikipedia.org/wiki/Gamma_function) for `x`.
+  ##
+  ## **See also:**
+  ## * `lgamma func <#lgamma,float64>`_ for the natural logarithm of the gamma function
+  runnableExamples:
+    assert almostEqual(gamma(1.0), 1.0)
+    assert almostEqual(gamma(4.0), 6.0)
+    assert almostEqual(gamma(11.0), 3628800.0)
+func lgamma*[T: SomeFloat](x: T): T {.importc: "lgamma".} =
+  ## Computes the natural logarithm of the gamma function for `x`.
+  ##
+  ## **See also:**
+  ## * `gamma func <#gamma,float64>`_ for gamma function
 {.pop.}
