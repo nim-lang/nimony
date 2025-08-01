@@ -837,7 +837,7 @@ func gcd*[T](x: openArray[T]): T =
   for i in 1 ..< x.len:
     result = gcd(result, x[i])
 
-func lcm*[T: Arithmetic](x, y: T): T =
+func lcm*[T: Arithmetic](x, y: T): T {.inline.} =
   ## Computes the least common multiple of `x` and `y`.
   ##
   ## **See also:**
