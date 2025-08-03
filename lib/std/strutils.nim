@@ -72,7 +72,7 @@ func isAlphaNumeric*(c: char): bool {.inline.} =
     assert isAlphaNumeric(' ') == false
   c in Letters+Digits
 
-func isDigit*(c: char): bool =
+func isDigit*(c: char): bool {.inline.} =
   ## Checks whether or not `c` is a number.
   ##
   ## This checks 0-9 ASCII characters only.
@@ -81,7 +81,7 @@ func isDigit*(c: char): bool =
     assert isDigit('8') == true
   c in Digits
 
-func isSpaceAscii*(c: char): bool =
+func isSpaceAscii*(c: char): bool {.inline.} =
   ## Checks whether or not `c` is a whitespace character.
   runnableExamples:
     assert isSpaceAscii('n') == false
@@ -89,7 +89,7 @@ func isSpaceAscii*(c: char): bool =
     assert isSpaceAscii('\t') == true
   c in Whitespace
 
-func isLowerAscii*(c: char): bool =
+func isLowerAscii*(c: char): bool {.inline.} =
   ## Checks whether or not `c` is a lower case character.
   ##
   ## This checks ASCII characters only.
@@ -103,7 +103,7 @@ func isLowerAscii*(c: char): bool =
     assert isLowerAscii('7') == false
   c in LowercaseLetters
 
-func isUpperAscii*(c: char): bool =
+func isUpperAscii*(c: char): bool {.inline.} =
   ## Checks whether or not `c` is an upper case character.
   ##
   ## This checks ASCII characters only.
@@ -127,7 +127,7 @@ func allCharsInSet*(s: string; theSet: set[char]): bool =
     if c notin theSet: return false
   return true
 
-func isEmptyOrWhitespace*(s: string): bool =
+func isEmptyOrWhitespace*(s: string): bool {.inline.} =
   ## Checks if `s` is empty or consists entirely of whitespace characters.
   result = s.allCharsInSet(Whitespace)
 
