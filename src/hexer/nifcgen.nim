@@ -1465,8 +1465,13 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   else:
     trType c, n
 
-  if mode == TraverseSig and localDecl.substructureKind == ParamU:
-    # Parameter decls in NIFC have no dot token for the default value!
+  if mode == TraverseSig:
+    if localDecl.substructureKind == ParamU:
+      # Parameter decls in NIFC have no dot token for the default value!
+      discard
+    else:
+      # Imported variables don't need initial values.
+      c.dest.addDotToken
     skip n
   else:
     trExpr c, n
