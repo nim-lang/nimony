@@ -158,8 +158,83 @@ func startsWith*(s, prefix: string): bool =
   continuesWith s, prefix, 0
 
 proc toLowerAscii*(c: char): char {.inline.} =
+  ## Returns the lower case version of character `c`.
+  ##
+  ## This works only for the letters `A-Z`. See `unicode.toLower
+  ## <unicode.html#toLower,Rune>`_ for a version that works for any Unicode
+  ## character.
+  ##
+  ## See also:
+  ## * `isLowerAscii func<#isLowerAscii,char>`_
+  ## * `toLowerAscii func<#toLowerAscii,string>`_ for converting a string
+  runnableExamples:
+    assert toLowerAscii('A') == 'a'
+    assert toLowerAscii('e') == 'e'
   if c >= 'A' and c <= 'Z': char(int(c) - int('A') + int('a'))
   else: c
+
+func toLowerAscii*(s: string): string =
+  ## Converts string `s` into lower case.
+  ##
+  ## This works only for the letters `A-Z`. See `unicode.toLower
+  ## <unicode.html#toLower,string>`_ for a version that works for any Unicode
+  ## character.
+  ##
+  ## See also:
+  ## * `normalize func<#normalize,string>`_
+  runnableExamples:
+    assert toLowerAscii("FooBar!") == "foobar!"
+  result = newString(s.len)
+  for i in 0 ..< s.len:
+    result[i] = toLowerAscii(s[i])
+
+func toUpperAscii*(c: char): char {.inline.} =
+  ## Converts character `c` into upper case.
+  ##
+  ## This works only for the letters `A-Z`.  See `unicode.toUpper
+  ## <unicode.html#toUpper,Rune>`_ for a version that works for any Unicode
+  ## character.
+  ##
+  ## See also:
+  ## * `isUpperAscii func<#isUpperAscii,char>`_
+  ## * `toUpperAscii func<#toUpperAscii,string>`_ for converting a string
+  ## * `capitalizeAscii func<#capitalizeAscii,string>`_
+  runnableExamples:
+    assert toUpperAscii('a') == 'A'
+    assert toUpperAscii('E') == 'E'
+  if c >= 'a' and c <= 'z': char(int(c) - int('a') + int('A'))
+  else: c
+
+func toUpperAscii*(s: string): string =
+  ## Converts string `s` into upper case.
+  ##
+  ## This works only for the letters `A-Z`.  See `unicode.toUpper
+  ## <unicode.html#toUpper,string>`_ for a version that works for any Unicode
+  ## character.
+  ##
+  ## See also:
+  ## * `capitalizeAscii func<#capitalizeAscii,string>`_
+  runnableExamples:
+    assert toUpperAscii("FooBar!") == "FOOBAR!"
+  result = newString(s.len)
+  for i in 0 ..< s.len:
+    result[i] = toUpperAscii(s[i])
+
+func capitalizeAscii*(s: string): string {.inline.} =
+  ## Converts the first character of string `s` into upper case.
+  ##
+  ## This works only for the letters `A-Z`.
+  ## Use `Unicode module<unicode.html>`_ for UTF-8 support.
+  ##
+  ## See also:
+  ## * `toUpperAscii func<#toUpperAscii,char>`_
+  runnableExamples:
+    assert capitalizeAscii("foo") == "Foo"
+    assert capitalizeAscii("-bar") == "-bar"
+  if s.len == 0: result = ""
+  else:
+    result = s
+    result[0] = toUpperAscii(result[0])
 
 func replace*(s: string; sub, by: char): string =
   result = newString(s.len)

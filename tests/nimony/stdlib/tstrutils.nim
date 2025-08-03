@@ -59,3 +59,32 @@ block: # toLowerAscii
   assert toLowerAscii(' ') == ' '
   assert toLowerAscii('1') == '1'
   assert toLowerAscii('(') == '('
+
+block: # toLowerAscii*(s: string): string
+  assert toLowerAscii("FOO") == "foo"
+  assert toLowerAscii("fOO") == "foo"
+  assert toLowerAscii("foo") == "foo"
+  assert toLowerAscii(" bAr123_") == " bar123_"
+  assert toLowerAscii(" bar123_") == " bar123_"
+
+block: # toUpperAscii
+  assert toUpperAscii('a') == 'A'
+  assert toUpperAscii('b') == 'B'
+  assert toUpperAscii('y') == 'Y'
+  assert toUpperAscii('z') == 'Z'
+  assert toUpperAscii('A') == 'A'
+  assert toUpperAscii('B') == 'B'
+  assert toUpperAscii(' ') == ' '
+  assert toUpperAscii('1') == '1'
+  assert toUpperAscii('(') == '('
+
+block: # toUpperAscii*(s: string): string
+  assert toUpperAscii("foo") == "FOO"
+  assert toUpperAscii("Foo") == "FOO"
+  assert toUpperAscii("FOO") == "FOO"
+  assert toUpperAscii(" BaR123_") == " BAR123_"
+  assert toUpperAscii(" BAR123_") == " BAR123_"
+
+block: # capitalizeAscii
+  assert capitalizeAscii("foo") == "Foo"
+  assert capitalizeAscii("1bar") == "1bar"
