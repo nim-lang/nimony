@@ -210,6 +210,8 @@ proc shrink*(s: var string; newLen: int) =
 # --- string indexing & slicing ---
 
 proc `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
+  if not isAllocated(s):
+    makeAllocated s, s.len
   s.a[i] = c
 
 proc `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.} = s.a[i]
