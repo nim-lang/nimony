@@ -21,6 +21,22 @@ block:
   assert mytext == "ab"
   assert mytext.len == 2
 
+# issue 1356
+block:
+  var s = "foo"
+  if s.len > 0:
+    s[0] = 'F'
+  assert s == "Foo"
+
+  var t = "bar"
+  var u = t
+  if t.len > 0:
+    t[0] = 'c'
+  if u.len > 0:
+    u[0] = 'd'
+  assert t == "car"
+  assert u == "dar"
+
 # --- cstring tests ---
 
 func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
