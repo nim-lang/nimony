@@ -1,3 +1,7 @@
+const
+  Whitespace* = {' ', '\t', '\v', '\r', '\l', '\f'}
+    ## All the characters that count as whitespace (space, tab, vertical tab,
+    ## carriage return, new line, form feed).
 
 proc endsWith*(s: string; c: char): bool {.inline.} =
   if s.len > 0: s[s.len-1] == c else: false
