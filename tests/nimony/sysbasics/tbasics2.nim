@@ -193,3 +193,8 @@ block:
   s.addQuoted("ö")
   s.addEscapedChar('\xFF')
   assert s == """"å""ä""ö"\xFF"""
+
+
+block:
+  var s = "foo"
+  s[0] = 'F'
