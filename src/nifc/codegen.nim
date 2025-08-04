@@ -596,15 +596,16 @@ proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n
   if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
     if headerAsStr[0] == '#':
-      discard "skip the #include keyword"
+      # keeps the #include statements as they are
+      c.includes.add header
     else:
       c.includes.add Token(IncludeKeyword)
-    if headerAsStr[0] == '<':
-      c.includes.add header
-    else:
-      c.includes.add Token(DoubleQuote)
-      c.includes.add header
-      c.includes.add Token(DoubleQuote)
+      if headerAsStr[0] == '<':
+        c.includes.add header
+      else:
+        c.includes.add Token(DoubleQuote)
+        c.includes.add header
+        c.includes.add Token(DoubleQuote)
 
     c.includes.add Token NewLine
   skipParRi n
