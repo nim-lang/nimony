@@ -169,7 +169,11 @@ typedef NU8 NU;
 #  pragma GCC diagnostic ignored "-Wswitch-bool"
 #  pragma GCC diagnostic ignored "-Wformat"
 #  pragma GCC diagnostic ignored "-Wpointer-sign"
-#  pragma GCC diagnostic ignored "-Wdiscarded-qualifiers"
+#  if defined(__clang__)
+#    pragma GCC diagnostic ignored "-Wincompatible-pointer-types-discards-qualifiers"
+#  else
+#    pragma GCC diagnostic ignored "-Wdiscarded-qualifiers"
+#  endif
 #endif
 
 
