@@ -236,6 +236,63 @@ func capitalizeAscii*(s: string): string {.inline.} =
     result = s
     result[0] = toUpperAscii(result[0])
 
+func cmpIgnoreCase*(a, b: string): int =
+  ## Compares two strings in a case insensitive manner. Returns:
+  ##
+  ## | `0` if a == b
+  ## | `< 0` if a < b
+  ## | `> 0` if a > b
+  runnableExamples:
+    assert cmpIgnoreCase("FooBar", "foobar") == 0
+    assert cmpIgnoreCase("bar", "Foo") < 0
+    assert cmpIgnoreCase("Foo5", "foo4") > 0
+
+  let aLen = a.len
+  let bLen = b.len
+  let minLen = min(aLen, bLen)
+  for i in 0 ..< minLen:
+    result = a[i].toLowerAscii.ord - b[i].toLowerAscii.ord
+    if result != 0: return
+  result = aLen - bLen
+
+func cmpIgnoreStyle*(a, b: string): int =
+  ## Semantically the same as `cmp(normalize(a), normalize(b))`. It
+  ## is just optimized to not allocate temporary strings. This should
+  ## NOT be used to compare Nim identifier names.
+  ## Use `macros.eqIdent<macros.html#eqIdent,string,string>`_ for that.
+  ##
+  ## Returns:
+  ##
+  ## | `0` if a == b
+  ## | `< 0` if a < b
+  ## | `> 0` if a > b
+  runnableExamples:
+    assert cmpIgnoreStyle("foo_bar", "FooBar") == 0
+    assert cmpIgnoreStyle("foo_bar_5", "FooBar4") > 0
+  let aLen = a.len
+  let bLen = b.len
+  var i = 0
+  var j = 0
+  while true:
+    while i < aLen and a[i] == '_': inc i
+    while j < bLen and b[j] == '_': inc j
+    if i == aLen:
+      if j == bLen:
+        # both cursors at the end:
+        return 0
+      else:
+        # not yet at the end of 'b':
+        return -1
+    elif j == bLen:
+      return 1
+    let aa = toLowerAscii(a[i])
+    let bb = toLowerAscii(b[j])
+    result = ord(aa) - ord(bb)
+    if result != 0: return result
+    # the characters are identical:
+    inc i
+    inc j
+
 func replace*(s: string; sub, by: char): string =
   result = newString(s.len)
   var i = 0

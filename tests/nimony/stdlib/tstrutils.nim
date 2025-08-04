@@ -88,3 +88,69 @@ block: # toUpperAscii*(s: string): string
 block: # capitalizeAscii
   assert capitalizeAscii("foo") == "Foo"
   assert capitalizeAscii("1bar") == "1bar"
+
+block: # cmpIgnoreCase
+  assert cmpIgnoreCase("", "") == 0
+  assert cmpIgnoreCase("", "a") < 0
+  assert cmpIgnoreCase("a", "") > 0
+  assert cmpIgnoreCase("a", "a") == 0
+  assert cmpIgnoreCase("a", "A") == 0
+  assert cmpIgnoreCase("A", "a") == 0
+  assert cmpIgnoreCase("A", "A") == 0
+  assert cmpIgnoreCase("a", "b") < 0
+  assert cmpIgnoreCase("b", "a") > 0
+  assert cmpIgnoreCase("a", "aa") < 0
+  assert cmpIgnoreCase("aa", "a") > 0
+  assert cmpIgnoreCase("ab", "ac") < 0
+  assert cmpIgnoreCase("ab", "aC") < 0
+  assert cmpIgnoreCase("aB", "ac") < 0
+  assert cmpIgnoreCase("aB", "aC") < 0
+  assert cmpIgnoreCase("aac", "aab") > 0
+  assert cmpIgnoreCase("aaC", "aab") > 0
+  assert cmpIgnoreCase("aac", "aaB") > 0
+  assert cmpIgnoreCase("aaC", "aaB") > 0
+  assert cmpIgnoreCase("foobar", "foobar") == 0
+  assert cmpIgnoreCase("foobar", "Foobar") == 0
+  assert cmpIgnoreCase("fooBar", "foobar") == 0
+  assert cmpIgnoreCase("FOOBAR", "foobar") == 0
+  assert cmpIgnoreCase("FOOBAR", "foobar1") < 0
+  assert cmpIgnoreCase("foobar", "FOOBAR1") < 0
+
+block: # cmpIgnoreStyle
+  assert cmpIgnoreStyle("", "") == 0
+  assert cmpIgnoreStyle("", "_") == 0
+  assert cmpIgnoreStyle("_", "") == 0
+  assert cmpIgnoreStyle("_", "_") == 0
+  assert cmpIgnoreStyle("_", "__") == 0
+  assert cmpIgnoreStyle("__", "_") == 0
+  assert cmpIgnoreStyle("__", "__") == 0
+  assert cmpIgnoreStyle("", "a") < 0
+  assert cmpIgnoreStyle("a", "") > 0
+  assert cmpIgnoreStyle("a", "a") == 0
+  assert cmpIgnoreStyle("", "_a") < 0
+  assert cmpIgnoreStyle("_a", "") > 0
+  assert cmpIgnoreStyle("_", "_a") < 0
+  assert cmpIgnoreStyle("_a", "_") > 0
+  assert cmpIgnoreStyle("a", "b") < 0
+  assert cmpIgnoreStyle("b", "a") > 0
+  assert cmpIgnoreStyle("A", "b") < 0
+  assert cmpIgnoreStyle("B", "a") > 0
+  assert cmpIgnoreStyle("B", "a") > 0
+  assert cmpIgnoreStyle("aa", "aa") == 0
+  assert cmpIgnoreStyle("aa", "aaa") < 0
+  assert cmpIgnoreStyle("aaa", "aa") > 0
+  assert cmpIgnoreStyle("aA", "aaa") < 0
+  assert cmpIgnoreStyle("aAa", "aA") > 0
+  assert cmpIgnoreStyle("a", "_a") == 0
+  assert cmpIgnoreStyle("_a", "a") == 0
+  assert cmpIgnoreStyle("_a", "_a") == 0
+  assert cmpIgnoreStyle("a", "_aa") < 0
+  assert cmpIgnoreStyle("_a", "aa") < 0
+  assert cmpIgnoreStyle("_a", "_aa") < 0
+  assert cmpIgnoreStyle("a", "_a__a__") < 0
+  assert cmpIgnoreStyle("a_b", "_ab_") == 0
+  assert cmpIgnoreStyle("a_b_c", "_ab__c") == 0
+  assert cmpIgnoreStyle("abc", "_a__b__c_") == 0
+  assert cmpIgnoreStyle("a_B", "_ab_") == 0
+  assert cmpIgnoreStyle("a_b_C", "_ab__c") == 0
+  assert cmpIgnoreStyle("ABC", "_a__b__c_") == 0
