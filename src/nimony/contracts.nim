@@ -384,6 +384,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
     if nested == 0: break
 
 proc analyseCallArgs(c: var Context; n: var Cursor) =
+  let callCursor = n
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   analyseExpr c, n # the `fn` itself could be a proc pointer we must ensure was initialized
   assert fnType.isParamsTag
@@ -412,7 +413,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
   let req = extractPragma(fnType, RequiresP)
   if not cursorIsNil(req):
     # ... analyse that the input parameters match the requirements
-    let res = checkReq(c, paramMap, req, n)
+    let res = checkReq(c, paramMap, req, callCursor)
     when isMainModule:
       # XXX Enable when it works
       if res != Proven:
