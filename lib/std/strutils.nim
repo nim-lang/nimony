@@ -142,6 +142,15 @@ proc `$`*(x: char): string =
   result[0] = x
 
 func continuesWith*(s, prefix: string; start: int): bool =
+  ## Returns true if `s` continues with `prefix` at position `start`.
+  ##
+  ## If `prefix == ""` true is returned.
+  ##
+  ## See also:
+  ## * `startsWith func<#startsWith,string,string>`_
+  ## * `endsWith func<#endsWith,string,string>`_
+  if prefix.len == 0:
+    return true
   if prefix.len > s.len-start:
     return false
   for i in 0 ..< prefix.len:
@@ -150,7 +159,36 @@ func continuesWith*(s, prefix: string; start: int): bool =
   return true
 
 func startsWith*(s, prefix: string): bool =
+  ## Returns true if `s` starts with string `prefix`.
+  ##
+  ## If `prefix == ""` true is returned.
+  ##
+  ## See also:
+  ## * `endsWith func<#endsWith,string,string>`_
+  ## * `continuesWith func<#continuesWith,string,string,Natural>`_
+  ## * `removePrefix func<#removePrefix,string,string>`_
+  runnableExamples:
+    let a = "abracadabra"
+    assert a.startsWith("abra") == true
+    assert a.startsWith("bra") == false
   continuesWith s, prefix, 0
+
+func endsWith*(s, suffix: string): bool =
+  ## Returns true if `s` ends with `suffix`.
+  ##
+  ## If `suffix == ""` true is returned.
+  ##
+  ## See also:
+  ## * `startsWith func<#startsWith,string,string>`_
+  ## * `continuesWith func<#continuesWith,string,string,Natural>`_
+  ## * `removeSuffix func<#removeSuffix,string,string>`_
+  runnableExamples:
+    let a = "abracadabra"
+    assert a.endsWith("abra") == true
+    assert a.endsWith("dab") == false
+  if suffix.len > s.len:
+    return false
+  continuesWith s, suffix, s.len - suffix.len
 
 proc toLowerAscii*(c: char): char {.inline.} =
   ## Returns the lower case version of character `c`.
