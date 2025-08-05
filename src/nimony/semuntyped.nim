@@ -318,7 +318,10 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
   of ItertypeT:
     semTemplBodySons c, n
   of NoType:
-    bug("unreachable")
+    if n.kind == Ident:
+      semTemplBody c, n
+    else:
+      bug("unreachable")
 
 proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
   let orig = n
