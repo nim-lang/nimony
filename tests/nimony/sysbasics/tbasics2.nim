@@ -198,3 +198,9 @@ block:
 block:
   var s = "foo"
   s[0] = 'F'
+
+when defined(posix):
+  type
+    SysLockObj {.importc: "pthread_mutex_t", pure, final,
+                header: """#include <sys/types.h>
+                          #include <pthread.h>""", byref.} = object
