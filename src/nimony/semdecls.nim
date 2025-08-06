@@ -659,8 +659,94 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
     producesVoid c, info, it.typ
   publish c, symId, declStart
 
+proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
+  # find all macro/template identifiers in pragmas to invoke them with parent proc definition
+  result = newSeq[Cursor]()
+  if kind in RoutineKinds:
+    var n = asRoutine(n).pragmas
+    if n.substructureKind == PragmasU:
+      inc n
+      while n.kind != ParRi:
+        if n.exprKind == ErrX or n.substructureKind == KvU:
+          skip n
+        elif pragmaKind(n) != NoPragma or callConvKind(n) != NoCallConv:
+          skip n
+        else:
+          let hasParRi = n.kind == ParLe
+          let start = n
+          if n.exprKind == CallX:
+            inc n
+          let name = getIdent(n)
+          if name != StrId(0) and not (name in c.userPragmas and not hasParRi):
+            result.add start
+            n = start
+            skip n
+          else:
+            skip n
+
+proc transformMacroInvoc(c: var SemContext; it: var Item; macroInvocsPos: seq[Cursor]) =
+  # transform `proc foo() {.macrofoo, macrobar.}` to `macrobar: macrofoo: proc foo()`.
+  var inBuf = createTokenBuf()
+
+  # adds last one in macroInvocsPos to buf first as it is invoked last.
+  let info = it.n.info
+  for i in countdown(macroInvocsPos.len - 1, 0):
+    inBuf.addParLe CallX, info
+    var n = macroInvocsPos[i]
+    let isCall = n.exprKind == CallX
+    if isCall:
+      inc n
+    assert n.kind == Ident
+    inBuf.add n
+    if isCall:
+      inc n
+      while n.kind != ParRi:
+        inBuf.takeTree n
+    inBuf.addParLe StmtsS, info
+
+  var n = it.n
+  # copies the proc def to inBuf excepts all macros and templates to avoid
+  # recursive macro invocations and invocations of them at unexpected places.
+  var nested = 0
+  var i = 0
+  while true:
+    if i < macroInvocsPos.len and n == macroInvocsPos[i]:
+      skip n
+      inc i
+    else:
+      if n.kind == ParLe: inc nested
+      inBuf.takeToken n
+    if n.kind == ParRi:
+      dec nested
+      if nested == 0: break
+  inBuf.addParRi
+  for i in 0 ..< macroInvocsPos.len:
+    inBuf.addParRi  # close StmtsS
+    inBuf.addParRi  # close CallX
+  var it2 = Item(n: cursorAt(inBuf, 0), typ: c.types.autoType)
+  #echo "macro invoc in: ", toString it2.n
+  #let lastDestLen = c.dest.len
+  semCall c, it2, {}
+  endRead inBuf
+  #[
+  if c.dest.len > lastDestLen:
+    echo "macro invoc out: ", toString cursorAt(c.dest, lastDestLen)
+    endRead c.dest
+  else:
+    echo "macro invoc out: empty"
+  ]#
+  it.n = n
+  it.typ = it2.typ
+  skipParRi it.n
+
 proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
-  if it.n.firstSon.kind == DotToken:
+  let macroInvocsPos = findMacroInvocs(c, it.n, kind)
+  if macroInvocsPos.len > 0:
+    if pass == checkBody:
+      transformMacroInvoc(c, it, macroInvocsPos)
+    else:
+      c.takeTree it.n
+  elif it.n.firstSon.kind == DotToken:
     # anon routine
     let info = it.n.firstSon.info
     let name = identToSym(c, "`anonproc", ProcY)
