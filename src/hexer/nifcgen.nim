@@ -1963,6 +1963,48 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
   b.endTree()
   b.close()
 
+proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
+  # dynlib init:
+  for key, vals in c.dynlibs:
+    let dynlib = pool.strings[key]
+    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c)
+
+    # nimLoadLibrary
+    c.dest.add tagToken("gvar", rootInfo)
+    c.dest.add symdefToken(tmp, rootInfo)
+    c.offer tmp
+    c.dest.addDotToken()
+    c.dest.add tagToken("ptr", rootInfo)
+    c.dest.add tagToken("void", rootInfo)
+    c.dest.addParRi()
+    c.dest.addParRi()
+    c.dest.add tagToken("call", rootInfo)
+    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary")), rootInfo)
+    c.dest.addStrLit dynlib
+    c.dest.addParRi()
+
+    c.dest.addParRi()
+
+    # nimGetProcAddr
+    for (val, typeSym) in vals:
+      let procName = pool.strings[val]
+      let varName = pool.syms.getOrIncl "Dl." & pool.strings[val] & "." & c.main
+      c.dest.add tagToken("gvar", rootInfo)
+      c.dest.add symdefToken(varName, rootInfo)
+      c.offer varName
+      c.dest.addDotToken()
+      c.dest.add symToken(typeSym, rootInfo)
+
+      c.dest.add tagToken("cast", rootInfo)
+      c.dest.add symToken(typeSym, rootInfo)
+      c.dest.add tagToken("call", rootInfo)
+      c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr")), rootInfo)
+      c.dest.add symToken(tmp, rootInfo) # library
+      c.dest.addStrLit procName # proc name
+      c.dest.addParRi()
+      c.dest.addParRi()
+
+      c.dest.addParRi()
 
 proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   let (dir, file, ext) = splitModulePath(infile)
@@ -1995,48 +2037,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     error c, "expected (stmts) but got: ", n
   swap c.dest, toplevels
 
-  # dynlib init:
-  for key, vals in c.dynlibs:
-    let dynlib = pool.strings[key]
-    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c)
-
-    # nimLoadLibrary
-    c.dest.add tagToken("gvar", rootInfo)
-    c.dest.add symdefToken(tmp, rootInfo)
-    c.offer tmp
-    c.dest.addDotToken()
-    c.dest.add tagToken("ptr", n.info)
-    c.dest.add tagToken("void", n.info)
-    c.dest.addParRi()
-    c.dest.addParRi()
-    c.dest.add tagToken("call", rootInfo)
-    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary")), rootInfo)
-    c.dest.addStrLit dynlib
-    c.dest.addParRi()
-
-    c.dest.addParRi()
-
-    # nimGetProcAddr
-    for (val, typeSym) in vals:
-      let procName = pool.strings[val]
-      let varName = pool.syms.getOrIncl "Dl." & pool.strings[val] & "." & c.main
-      c.dest.add tagToken("gvar", rootInfo)
-      c.dest.add symdefToken(varName, rootInfo)
-      c.offer varName
-      c.dest.addDotToken()
-      c.dest.add symToken(typeSym, rootInfo)
-
-      c.dest.add tagToken("cast", rootInfo)
-      c.dest.add symToken(typeSym, rootInfo)
-      c.dest.add tagToken("call", rootInfo)
-      c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr")), rootInfo)
-      c.dest.add symToken(tmp, rootInfo) # library
-      c.dest.addStrLit procName # proc name
-      c.dest.addParRi()
-      c.dest.addParRi()
-
-      c.dest.addParRi()
-
+  initDynlib(c, rootInfo)
 
   c.dest.add toplevels
 
