@@ -662,7 +662,7 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
 proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
   # find all macro/template identifiers in pragmas to invoke them with parent proc definition
   result = newSeq[Cursor]()
-  if kind in {ProcY, FuncY}:
+  if kind in RoutineKinds:
     var n = asRoutine(n).pragmas
     if n.substructureKind == PragmasU:
       inc n
