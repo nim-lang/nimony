@@ -830,8 +830,29 @@ proc makeLocalSymId(c: var EContext; s: SymId; registerParentScope: bool): SymId
   else:
     registerMangle(c, s, newName)
 
+proc buildProcType(c: var EContext; thisProc: Cursor): SymId =
+  var thisProc = asRoutine(thisProc)
+  var procTypeBuf = createTokenBuf()
+  procTypeBuf.addParLe ProctypeT
+  procTypeBuf.addDotToken() # name
+  procTypeBuf.addDotToken() # export marker
+  procTypeBuf.addDotToken() # pattern
+  procTypeBuf.addDotToken() # type vars
+  procTypeBuf.addSubtree thisProc.params
+  procTypeBuf.addSubtree thisProc.retType
+  procTypeBuf.addSubtree thisProc.pragmas
+  procTypeBuf.addDotToken() # effects
+  procTypeBuf.addDotToken() # body
+  procTypeBuf.addParRi() # end of proctype
+
+  var procTypeCursor = beginRead(procTypeBuf)
+  var beforeProcPos = c.dest.len
+  trAsNamedType c, procTypeCursor
+  result = c.dest[c.dest.len - 1].symId
+  c.dest.shrink beforeProcPos
+
 proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
-  let thisProc = asRoutine(n)
+  let thisProc = n
   c.openMangleScope()
   var dst = createTokenBuf(50)
   swap c.dest, dst
@@ -935,25 +956,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.headers.incl prag.header
 
   if prag.dynlib != StrId(0):
-    var procTypeBuf = createTokenBuf()
-    procTypeBuf.addParLe ProctypeT
-    procTypeBuf.addDotToken() # name
-    procTypeBuf.addDotToken() # export marker
-    procTypeBuf.addDotToken() # pattern
-    procTypeBuf.addDotToken() # type vars
-    procTypeBuf.addSubtree thisProc.params
-    procTypeBuf.addSubtree thisProc.retType
-    procTypeBuf.addSubtree thisProc.pragmas
-    procTypeBuf.addDotToken() # effects
-    procTypeBuf.addDotToken() # body
-    procTypeBuf.addParRi() # end of proctype
-
-    var procTypeCursor = beginRead(procTypeBuf)
-
-    var beforeProcPos = c.dest.len
-    trAsNamedType c, procTypeCursor
-    let typeSym = c.dest[c.dest.len - 1].symId
-    c.dest.shrink beforeProcPos
+    let typeSym = buildProcType(c, thisProc)
 
     c.dynlibs.mgetOrPut(prag.dynlib, @[]).add (pool.strings.getOrIncl(prag.externName), typeSym)
 
