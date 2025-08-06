@@ -690,9 +690,9 @@ proc transformMacroInvoc(c: var SemContext; it: var Item; macroInvocsPos: seq[Cu
 
   # adds last one in macroInvocsPos to buf first as it is invoked last.
   let info = it.n.info
-  for i in 0 ..< macroInvocsPos.len:
+  for i in countdown(macroInvocsPos.len - 1, 0):
     inBuf.addParLe CallX, info
-    var n = macroInvocsPos[^(i + 1)]
+    var n = macroInvocsPos[i]
     let isCall = n.exprKind == CallX
     if isCall:
       inc n
