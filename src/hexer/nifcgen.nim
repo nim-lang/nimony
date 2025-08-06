@@ -831,6 +831,7 @@ proc makeLocalSymId(c: var EContext; s: SymId; registerParentScope: bool): SymId
     registerMangle(c, s, newName)
 
 proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
+  let thisProc = asRoutine(n)
   c.openMangleScope()
   var dst = createTokenBuf(50)
   swap c.dest, dst
@@ -934,11 +935,29 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.headers.incl prag.header
 
   if prag.dynlib != StrId(0):
-    c.dynlibs.incl prag.dynlib
+    var procTypeBuf = createTokenBuf()
+    procTypeBuf.addParLe ProctypeT
+    procTypeBuf.addDotToken() # name
+    procTypeBuf.addDotToken() # export marker
+    procTypeBuf.addDotToken() # pattern
+    procTypeBuf.addDotToken() # type vars
+    procTypeBuf.addSubtree thisProc.params
+    procTypeBuf.addSubtree thisProc.retType
+    procTypeBuf.addSubtree thisProc.pragmas
+    procTypeBuf.addDotToken() # effects
+    procTypeBuf.addDotToken() # body
+    procTypeBuf.addParRi() # end of proctype
 
-    var dynlibName = "Dl" & "." & prag.externName & "." &
-        $c.localDeclCounters & "." & c.main
-    inc c.localDeclCounters
+    var procTypeCursor = beginRead(procTypeBuf)
+
+    var beforeProcPos = c.dest.len
+    trAsNamedType c, procTypeCursor
+    let typeSym = c.dest[c.dest.len - 1].symId
+    c.dest.shrink beforeProcPos
+
+    c.dynlibs.mgetOrPut(prag.dynlib, @[]).add (pool.strings.getOrIncl(prag.externName), typeSym)
+
+    var dynlibName = "Dl." & prag.externName & "." & c.main
     c.registerMangleInParent(newSym, dynlibName)
 
   discard setOwner(c, oldOwner)
@@ -1951,6 +1970,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
+    pending: createTokenBuf(),
     bits: bits,
     localDeclCounters: 1000,
     activeChecks: flags
@@ -1963,6 +1983,9 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   var n = beginRead(dest)
   let rootInfo = n.info
 
+
+  var toplevels = createTokenBuf()
+  swap c.dest, toplevels
   if stmtKind(n) == StmtsS:
     inc n
     #genStringType c, n.info
@@ -1970,6 +1993,52 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
       trStmt c, n, TraverseTopLevel
   else:
     error c, "expected (stmts) but got: ", n
+  swap c.dest, toplevels
+
+  # dynlib init:
+  for key, vals in c.dynlibs:
+    let dynlib = pool.strings[key]
+    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c)
+
+    # nimLoadLibrary
+    c.dest.add tagToken("gvar", rootInfo)
+    c.dest.add symdefToken(tmp, rootInfo)
+    c.offer tmp
+    c.dest.addDotToken()
+    c.dest.add tagToken("ptr", n.info)
+    c.dest.add tagToken("void", n.info)
+    c.dest.addParRi()
+    c.dest.addParRi()
+    c.dest.add tagToken("call", rootInfo)
+    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary")), rootInfo)
+    c.dest.addStrLit dynlib
+    c.dest.addParRi()
+
+    c.dest.addParRi()
+
+    # nimGetProcAddr
+    for (val, typeSym) in vals:
+      let procName = pool.strings[val]
+      let varName = pool.syms.getOrIncl "Dl." & pool.strings[val] & "." & c.main
+      c.dest.add tagToken("gvar", rootInfo)
+      c.dest.add symdefToken(varName, rootInfo)
+      c.offer varName
+      c.dest.addDotToken()
+      c.dest.add symToken(typeSym, rootInfo)
+
+      c.dest.add tagToken("cast", rootInfo)
+      c.dest.add symToken(typeSym, rootInfo)
+      c.dest.add tagToken("call", rootInfo)
+      c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr")), rootInfo)
+      c.dest.add symToken(tmp, rootInfo) # library
+      c.dest.addStrLit procName # proc name
+      c.dest.addParRi()
+      c.dest.addParRi()
+
+      c.dest.addParRi()
+
+
+  c.dest.add toplevels
 
   # fix point expansion:
   var i = 0

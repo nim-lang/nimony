@@ -22,6 +22,11 @@ type
 const
   NilLibHandle: LibHandle = nil
 
+
+# proc nimLoadLibrary(path: cstring): LibHandle {.exportc: "nimLoadLibrary".}
+# proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr {.exportc: "nimGetProcAddr"}, nodecl.}
+
+
 when defined(windows):
   proc GetLastError(): int32 {.importc, header: "<windows.h>", nodecl.}
   const ERROR_BAD_EXE_FORMAT = 193
@@ -106,18 +111,18 @@ when defined(posix):
   proc nimUnloadLibrary(lib: LibHandle) =
     dlclose(lib)
 
-  proc nimLoadLibrary(path: string): LibHandle =
+  proc nimLoadLibrary(path: cstring): LibHandle {.exportc: "nimLoadLibrary".} =
     let flags =
       when defined(globalSymbols): RTLD_NOW or RTLD_GLOBAL
       else: RTLD_NOW
-    result = dlopen(path.cstring, flags)
+    result = dlopen(path, flags)
     when defined(nimDebugDlOpen):
       let error = dlerror()
       if error != nil:
         writeErr(error)
         writeErr("\n")
 
-  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr =
+  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr {.exportc: "nimGetProcAddr"} =
     result = dlsym(lib, name)
     if result == nil: procAddrError(name)
 
@@ -148,10 +153,10 @@ elif defined(windows) or defined(dos):
   proc nimUnloadLibrary(lib: LibHandle) =
     freeLibrary(cast[THINSTANCE](lib))
 
-  proc nimLoadLibrary(path: string): LibHandle =
-    result = cast[LibHandle](winLoadLibrary(path.cstring))
+  proc nimLoadLibrary(path: cstring): LibHandle {.exportc: "nimLoadLibrary".} =
+    result = cast[LibHandle](winLoadLibrary(path))
 
-  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr =
+  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr {.exportc: "nimGetProcAddr"} =
     result = getProcAddress(cast[THINSTANCE](lib), name)
     if result != nil: return
     const decoratedLength = 250
@@ -187,10 +192,10 @@ elif defined(genode):
   proc nimUnloadLibrary(lib: LibHandle) =
     raiseAssert("nimUnloadLibrary not implemented")
 
-  proc nimLoadLibrary(path: string): LibHandle =
+  proc nimLoadLibrary(path: cstring): LibHandle {.exportc: "nimLoadLibrary".} =
     raiseAssert("nimLoadLibrary not implemented")
 
-  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr =
+  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr {.exportc: "nimGetProcAddr"} =
     raiseAssert("nimGetProcAddr not implemented")
 
 elif defined(nintendoswitch) or defined(freertos) or defined(zephyr) or defined(nuttx):
@@ -199,13 +204,13 @@ elif defined(nintendoswitch) or defined(freertos) or defined(zephyr) or defined(
     writeErr("\n")
     die(1)
 
-  proc nimLoadLibrary(path: string): LibHandle =
+  proc nimLoadLibrary(path: cstring): LibHandle {.exportc: "nimLoadLibrary".} =
     writeErr("nimLoadLibrary not implemented")
     writeErr("\n")
     die(1)
 
 
-  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr =
+  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr {.exportc: "nimGetProcAddr"} =
     writeErr("nimGetProAddr not implemented")
     writeErr(name)
     writeErr("\n")
