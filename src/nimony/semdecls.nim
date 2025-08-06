@@ -128,10 +128,10 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
     bug "semLocal"
 
   if beforeType != -1:
-    var valueCursor = cursorAt(c.dest, beforeType)
     let hasError = c.addSymForwardError delayed
 
     if hasError:
+      var valueCursor = cursorAt(c.dest, beforeType)
       skip valueCursor # skips types
       let newValuePos = cursorToPosition(c.dest, valueCursor)
       var valueBuf = createTokenBuf()
@@ -141,8 +141,7 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
 
       let orig = beginRead(valueBuf)
       c.buildErr delayed.info, "attempt to redeclare: " & pool.strings[delayed.lit], orig
-    else:
-      endRead(c.dest)
+
   else:
     c.addSym delayed
 
