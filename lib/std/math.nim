@@ -36,17 +36,16 @@ const
 when defined(posix) and not defined(genode) and not defined(macosx):
   {.passL: "-lm".}
 
-# tgmath.h provides type-generic macros and they reduces a number of C functions to import.
-# But it requires C compiler supports C99.
-const CMathHeader = "<tgmath.h>"
+const CMathHeader = "<math.h>"
 
 {.push header: CMathHeader.}
 # These are C macros and can take both float and double type values.
 proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
-proc c_copysign[T: SomeFloat](x, y: T): T {.importc: "copysign".}
 proc c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify".}
 proc c_isnan[T: SomeFloat](x: T): int {.importc: "isnan".}
-func c_frexp[T: SomeFloat](x: T; exponent: ptr cint): T {.importc: "frexp".}
+
+func c_frexp(x: float32; exponent: ptr cint): float32 {.importc: "frexpf".}
+func c_frexp(x: float64; exponent: ptr cint): float64 {.importc: "frexp".}
 {.pop.}
 
 # use push pragma when it is supported
@@ -79,7 +78,9 @@ func signbit*[T: SomeFloat](x: T): bool {.inline.} =
 
   c_signbit(x) != 0
 
-func copySign*[T: SomeFloat](x, y: T): T {.inline.} =
+{.push header: CMathHeader.}
+func copySign*(x, y: float32): float32 {.importc: "copysignf".}
+func copySign*(x, y: float64): float64 {.importc: "copysign".} =
   ## Returns a value with the magnitude of `x` and the sign of `y`;
   ## this works even if x or y are NaN, infinity or zero, all of which can carry a sign.
   runnableExamples:
@@ -88,7 +89,7 @@ func copySign*[T: SomeFloat](x, y: T): T {.inline.} =
     assert copySign(-Inf, -0.0) == -Inf
     assert copySign(NaN, 1.0).isNaN
     assert copySign(1.0, copySign(NaN, -1.0)) == -1.0
-  c_copysign(x, y)
+{.pop.}
 
 func classify*[T: SomeFloat](x: T): FloatClass {.inline.} =
   ## Classifies a floating point value.
@@ -166,7 +167,7 @@ func sgn*[T: SomeNumber and Comparable](x: T): int {.inline.} =
 
   ord(T(0) < x) - ord(x < T(0))
 
-func frexp*[T: SomeFloat](x: T): tuple[frac: T, exp: int] {.inline.} =
+func frexp*[T: SomeFloat](x: T): tuple[frac: T, exp: int] {.inline, untyped.} =
   ## Splits `x` into a normalized fraction `frac` and an integral power of 2 `exp`,
   ## such that `abs(frac) in 0.5..<1` and `x == frac * 2 ^ exp`, except for special
   ## cases shown below.
@@ -185,7 +186,8 @@ func frexp*[T: SomeFloat](x: T): tuple[frac: T, exp: int] {.inline.} =
   result = (frac: frac, exp: exp.int)
 
 {.push header: CMathHeader.}
-func floor*[T: SomeFloat](x: T): T {.importc: "floor".} =
+func floor*(x: float32): float32 {.importc: "floorf".}
+func floor*(x: float64): float64 {.importc: "floor".} =
   ## Computes the floor function (i.e. the largest integer not greater than `x`).
   ##
   ## **See also:**
@@ -197,7 +199,8 @@ func floor*[T: SomeFloat](x: T): T {.importc: "floor".} =
     assert floor(2.9)  == 2.0
     assert floor(-3.5) == -4.0
 
-func ceil*[T: SomeFloat](x: T): T {.importc: "ceil".} =
+func ceil*(x: float32): float32 {.importc: "ceilf".}
+func ceil*(x: float64): float64 {.importc: "ceil".} =
   ## Computes the ceiling function (i.e. the smallest integer not smaller
   ## than `x`).
   ##
@@ -210,7 +213,8 @@ func ceil*[T: SomeFloat](x: T): T {.importc: "ceil".} =
     assert ceil(2.9)  == 3.0
     assert ceil(-2.1) == -2.0
 
-func round*[T: SomeFloat](x: T): T {.importc: "round".} =
+func round*(x: float32): float32 {.importc: "roundf".}
+func round*(x: float64): float64 {.importc: "round".} =
   ## Returns the nearest integer value to `x`, rounding halfway cases away from zero.
   ##
   ## **See also:**
@@ -222,7 +226,8 @@ func round*[T: SomeFloat](x: T): T {.importc: "round".} =
     assert round(3.5) == 4.0
     assert round(4.5) == 5.0
 
-func trunc*[T: SomeFloat](x: T): T {.importc: "trunc".} =
+func trunc*(x: float32): float32 {.importc: "truncf".}
+func trunc*(x: float64): float64 {.importc: "trunc".} =
   ## Returns the nearest integer not greater in magnitude than `x`.
   ##
   ## **See also:**
@@ -233,7 +238,8 @@ func trunc*[T: SomeFloat](x: T): T {.importc: "trunc".} =
     assert trunc(PI) == 3.0
     assert trunc(-1.85) == -1.0
 
-func `mod`*[T: SomeFloat](x, y: T): T {.importc: "fmod".} =
+func `mod`*(x, y: float32): float32 {.importc: "fmodf".}
+func `mod`*(x, y: float64): float64 {.importc: "fmod".} =
   ## Computes the modulo operation for float values (the remainder of `x` divided by `y`).
   ##
   ## **See also:**
@@ -441,7 +447,8 @@ func cumprod*[T: Arithmetic](x: var openArray[T]) =
   for i in 1 ..< x.len: x[i] = x[i-1] * x[i]
 
 {.push header: CMathHeader.}
-func sqrt*[T: SomeFloat](x: T): T {.importc: "sqrt".} =
+func sqrt*(x: float32): float32 {.importc: "sqrtf".}
+func sqrt*(x: float64): float64 {.importc: "sqrt".} =
   ## Computes the square root of `x`.
   ##
   ## **See also:**
@@ -449,7 +456,8 @@ func sqrt*[T: SomeFloat](x: T): T {.importc: "sqrt".} =
   runnableExamples:
     assert almostEqual(sqrt(4.0), 2.0)
     assert almostEqual(sqrt(1.44), 1.2)
-func cbrt*[T: SomeFloat](x: T): T {.importc: "cbrt".} =
+func cbrt*(x: float32): float32 {.importc: "cbrtf".}
+func cbrt*(x: float64): float64 {.importc: "cbrt".} =
   ## Computes the cube root of `x`.
   ##
   ## **See also:**
@@ -458,7 +466,8 @@ func cbrt*[T: SomeFloat](x: T): T {.importc: "cbrt".} =
     assert almostEqual(cbrt(8.0), 2.0)
     assert almostEqual(cbrt(2.197), 1.3)
     assert almostEqual(cbrt(-27.0), -3.0)
-func pow*[T: SomeFloat](x, y: T): T {.importc: "pow".} =
+func pow*(x, y: float32): float32 {.importc: "powf".}
+func pow*(x, y: float64): float64 {.importc: "pow".} =
   ## Computes `x` raised to the power of `y`.
   ##
   ## You may use the `^ func <#^, T, U>`_ instead.
@@ -469,14 +478,16 @@ func pow*[T: SomeFloat](x, y: T): T {.importc: "pow".} =
   ## * `sqrt func <#sqrt,float64>`_
   ## * `cbrt func <#cbrt,float64>`_
   runnableExamples:
-    assert almostEqual(pow(100, 1.5), 1000.0)
+    assert almostEqual(pow(100.0, 1.5), 1000.0)
     assert almostEqual(pow(16.0, 0.5), 4.0)
-func hypot*[T: SomeFloat](x, y: T): T {.importc: "hypot".} =
+func hypot*(x, y: float32): float32 {.importc: "hypotf".}
+func hypot*(x, y: float64): float64 {.importc: "hypot".} =
   ## Computes the length of the hypotenuse of a right-angle triangle with
   ## `x` as its base and `y` as its height. Equivalent to `sqrt(x*x + y*y)`.
   runnableExamples:
     assert almostEqual(hypot(3.0, 4.0), 5.0)
-func exp*[T: SomeFloat](x: T): T {.importc: "exp".} =
+func exp*(x: float32): float32 {.importc: "expf".}
+func exp*(x: float64): float64 {.importc: "exp".} =
   ## Computes the exponential function of `x` (`e^x`).
   ##
   ## **See also:**
@@ -485,7 +496,8 @@ func exp*[T: SomeFloat](x: T): T {.importc: "exp".} =
     assert almostEqual(exp(1.0), E)
     assert almostEqual(ln(exp(4.0)), 4.0)
     assert almostEqual(exp(0.0), 1.0)
-func ln*[T: SomeFloat](x: T): T {.importc: "log".} =
+func ln*(x: float32): float32 {.importc: "logf".}
+func ln*(x: float64): float64 {.importc: "log".} =
   ## Computes the [natural logarithm](https://en.wikipedia.org/wiki/Natural_logarithm)
   ## of `x`.
   ##
@@ -499,7 +511,8 @@ func ln*[T: SomeFloat](x: T): T {.importc: "log".} =
     assert almostEqual(ln(1.0), 0.0)
     assert almostEqual(ln(0.0), -Inf)
     assert ln(-7.0).isNaN
-func log2*[T: SomeFloat](x: T): T {.importc: "log2".} =
+func log2*(x: float32): float32 {.importc: "log2f".}
+func log2*(x: float64): float64 {.importc: "log2".} =
   ## Computes the binary logarithm (base 2) of `x`.
   ##
   ## **See also:**
@@ -511,7 +524,8 @@ func log2*[T: SomeFloat](x: T): T {.importc: "log2".} =
     assert almostEqual(log2(1.0), 0.0)
     assert almostEqual(log2(0.0), -Inf)
     assert log2(-2.0).isNaN
-func log10*[T: SomeFloat](x: T): T {.importc: "log10".} =
+func log10*(x: float32): float32 {.importc: "log10f".}
+func log10*(x: float64): float64 {.importc: "log10".} =
   ## Computes the common logarithm (base 10) of `x`.
   ##
   ## **See also:**
@@ -638,7 +652,8 @@ func radToDeg*[T: SomeFloat and Arithmetic](r: T): T {.inline.} =
   result = r / T(RadPerDeg)
 
 {.push header: CMathHeader.}
-func sin*[T: SomeFloat](x: T): T {.importc: "sin".} =
+func sin*(x: float32): float32 {.importc: "sinf".}
+func sin*(x: float64): float64 {.importc: "sin".} =
   ## Computes the sine of `x`.
   ##
   ## **See also:**
@@ -646,7 +661,8 @@ func sin*[T: SomeFloat](x: T): T {.importc: "sin".} =
   runnableExamples:
     assert almostEqual(sin(PI / 6), 0.5)
     assert almostEqual(sin(degToRad(90.0)), 1.0)
-func cos*[T: SomeFloat](x: T): T {.importc: "cos".} =
+func cos*(x: float32): float32 {.importc: "cosf".}
+func cos*(x: float64): float64 {.importc: "cos".} =
   ## Computes the cosine of `x`.
   ##
   ## **See also:**
@@ -654,7 +670,8 @@ func cos*[T: SomeFloat](x: T): T {.importc: "cos".} =
   runnableExamples:
     assert almostEqual(cos(2 * PI), 1.0)
     assert almostEqual(cos(degToRad(60.0)), 0.5)
-func tan*[T: SomeFloat](x: T): T {.importc: "tan".} =
+func tan*(x: float32): float32 {.importc: "tanf".}
+func tan*(x: float64): float64 {.importc: "tan".} =
   ## Computes the tangent of `x`.
   ##
   ## **See also:**
@@ -662,7 +679,8 @@ func tan*[T: SomeFloat](x: T): T {.importc: "tan".} =
   runnableExamples:
     assert almostEqual(tan(degToRad(45.0)), 1.0)
     assert almostEqual(tan(PI / 4), 1.0)
-func arcsin*[T: SomeFloat](x: T): T {.importc: "asin".} =
+func arcsin*(x: float32): float32 {.importc: "asinf".}
+func arcsin*(x: float64): float64 {.importc: "asin".} =
   ## Computes the arc sine of `x`.
   ##
   ## **See also:**
@@ -670,7 +688,8 @@ func arcsin*[T: SomeFloat](x: T): T {.importc: "asin".} =
   runnableExamples:
     assert almostEqual(radToDeg(arcsin(0.0)), 0.0)
     assert almostEqual(radToDeg(arcsin(1.0)), 90.0)
-func arccos*[T: SomeFloat](x: T): T {.importc: "acos".} =
+func arccos*(x: float32): float32 {.importc: "acosf".}
+func arccos*(x: float64): float64 {.importc: "acos".} =
   ## Computes the arc cosine of `x`.
   ##
   ## **See also:**
@@ -678,7 +697,8 @@ func arccos*[T: SomeFloat](x: T): T {.importc: "acos".} =
   runnableExamples:
     assert almostEqual(radToDeg(arccos(0.0)), 90.0)
     assert almostEqual(radToDeg(arccos(1.0)), 0.0)
-func arctan*[T: SomeFloat](x: T): T {.importc: "atan".} =
+func arctan*(x: float32): float32 {.importc: "atanf".}
+func arctan*(x: float64): float64 {.importc: "atan".} =
   ## Calculate the arc tangent of `x`.
   ##
   ## **See also:**
@@ -687,7 +707,8 @@ func arctan*[T: SomeFloat](x: T): T {.importc: "atan".} =
   runnableExamples:
     assert almostEqual(arctan(1.0), 0.7853981633974483)
     assert almostEqual(radToDeg(arctan(1.0)), 45.0)
-func arctan2*[T: SomeFloat](y, x: T): T {.importc: "atan2".} =
+func arctan2*(y, x: float32): float32 {.importc: "atan2f".}
+func arctan2*(y, x: float64): float64 {.importc: "atan2".} =
   ## Calculate the arc tangent of `y/x`.
   ##
   ## It produces correct results even when the resulting angle is near
@@ -698,7 +719,8 @@ func arctan2*[T: SomeFloat](y, x: T): T {.importc: "atan2".} =
   runnableExamples:
     assert almostEqual(arctan2(1.0, 0.0), PI / 2.0)
     assert almostEqual(radToDeg(arctan2(1.0, 0.0)), 90.0)
-func sinh*[T: SomeFloat](x: T): T {.importc: "sinh".} =
+func sinh*(x: float32): float32 {.importc: "sinhf".}
+func sinh*(x: float64): float64 {.importc: "sinh".} =
   ## Computes the [hyperbolic sine](https://en.wikipedia.org/wiki/Hyperbolic_function#Definitions) of `x`.
   ##
   ## **See also:**
@@ -706,7 +728,8 @@ func sinh*[T: SomeFloat](x: T): T {.importc: "sinh".} =
   runnableExamples:
     assert almostEqual(sinh(0.0), 0.0)
     assert almostEqual(sinh(1.0), 1.175201193643801)
-func cosh*[T: SomeFloat](x: T): T {.importc: "cosh".} =
+func cosh*(x: float32): float32 {.importc: "coshf".}
+func cosh*(x: float64): float64 {.importc: "cosh".} =
   ## Computes the [hyperbolic cosine](https://en.wikipedia.org/wiki/Hyperbolic_function#Definitions) of `x`.
   ##
   ## **See also:**
@@ -714,7 +737,8 @@ func cosh*[T: SomeFloat](x: T): T {.importc: "cosh".} =
   runnableExamples:
     assert almostEqual(cosh(0.0), 1.0)
     assert almostEqual(cosh(1.0), 1.543080634815244)
-func tanh*[T: SomeFloat](x: T): T {.importc: "tanh".} =
+func tanh*(x: float32): float32 {.importc: "tanhf".}
+func tanh*(x: float64): float64 {.importc: "tanh".} =
   ## Computes the [hyperbolic tangent](https://en.wikipedia.org/wiki/Hyperbolic_function#Definitions) of `x`.
   ##
   ## **See also:**
@@ -722,27 +746,33 @@ func tanh*[T: SomeFloat](x: T): T {.importc: "tanh".} =
   runnableExamples:
     assert almostEqual(tanh(0.0), 0.0)
     assert almostEqual(tanh(1.0), 0.7615941559557649)
-func arcsinh*[T: SomeFloat](x: T): T {.importc: "asinh".}
+func arcsinh*(x: float32): float32 {.importc: "asinhf".}
+func arcsinh*(x: float64): float64 {.importc: "asinh".}
   ## Computes the inverse hyperbolic sine of `x`.
   ##
   ## **See also:**
   ## * `sinh func <#sinh,float64>`_
-func arccosh*[T: SomeFloat](x: T): T {.importc: "acosh".}
+func arccosh*(x: float32): float32 {.importc: "acoshf".}
+func arccosh*(x: float64): float64 {.importc: "acosh".}
   ## Computes the inverse hyperbolic cosine of `x`.
   ##
   ## **See also:**
   ## * `cosh func <#cosh,float64>`_
-func arctanh*[T: SomeFloat](x: T): T {.importc: "atanh".}
+func arctanh*(x: float32): float32 {.importc: "atanhf".}
+func arctanh*(x: float64): float64 {.importc: "atanh".}
   ## Computes the inverse hyperbolic tangent of `x`.
   ##
   ## **See also:**
   ## * `tanh func <#tanh,float64>`_
 
-func erf*[T: SomeFloat](x: T): T {.importc: "erf".}
+func erf*(x: float32): float32 {.importc: "erff".}
+func erf*(x: float64): float64 {.importc: "erf".}
   ## Computes the [error function](https://en.wikipedia.org/wiki/Error_function) for `x`.
-func erfc*[T: SomeFloat](x: T): T {.importc: "erfc".}
+func erfc*(x: float32): float32 {.importc: "erfcf".}
+func erfc*(x: float64): float64 {.importc: "erfc".}
   ## Computes the [complementary error function](https://en.wikipedia.org/wiki/Error_function#Complementary_error_function) for `x`.
-func gamma*[T: SomeFloat](x: T): T {.importc: "tgamma".} =
+func gamma*(x: float32): float32 {.importc: "tgammaf".}
+func gamma*(x: float64): float64 {.importc: "tgamma".} =
   ## Computes the [gamma function](https://en.wikipedia.org/wiki/Gamma_function) for `x`.
   ##
   ## **See also:**
@@ -751,14 +781,15 @@ func gamma*[T: SomeFloat](x: T): T {.importc: "tgamma".} =
     assert almostEqual(gamma(1.0), 1.0)
     assert almostEqual(gamma(4.0), 6.0)
     assert almostEqual(gamma(11.0), 3628800.0)
-func lgamma*[T: SomeFloat](x: T): T {.importc: "lgamma".} =
+func lgamma*(x: float32): float32 {.importc: "lgammaf".}
+func lgamma*(x: float64): float64 {.importc: "lgamma".} =
   ## Computes the natural logarithm of the gamma function for `x`.
   ##
   ## **See also:**
   ## * `gamma func <#gamma,float64>`_ for gamma function
 {.pop.}
 
-func splitDecimal*[T: SomeFloat and Arithmetic and HasDefault](x: T): tuple[intpart: T, floatpart: T] =
+func splitDecimal*[T: SomeFloat and Arithmetic and HasDefault](x: T): tuple[intpart: T, floatpart: T] {.untyped.} =
   ## Breaks `x` into an integer and a fractional part.
   ##
   ## Returns a tuple containing `intpart` and `floatpart`, representing
@@ -770,7 +801,7 @@ func splitDecimal*[T: SomeFloat and Arithmetic and HasDefault](x: T): tuple[intp
     assert splitDecimal(5.25) == (intpart: 5.0, floatpart: 0.25)
     assert splitDecimal(-2.73) == (intpart: -2.0, floatpart: -0.73)
   result = default(tuple[intpart: T, floatpart: T])
-  var absolute: T = abs(x)
+  var absolute = abs(x)
   result.intpart = floor(absolute)
   result.floatpart = absolute - result.intpart
   if x < T(0):
@@ -854,7 +885,7 @@ func lcm*[T](x: openArray[T]): T =
   ## **See also:**
   ## * `lcm func <#lcm,T,T>`_ for a version with two arguments
   runnableExamples:
-    doAssert lcm(@[24, 30]) == 120
+    assert lcm(@[24, 30]) == 120
 
   result = x[0]
   for i in 1 ..< x.len:
