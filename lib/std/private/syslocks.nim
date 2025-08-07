@@ -17,12 +17,12 @@ when defined(windows):
 
     SysLock* {.importc: "CRITICAL_SECTION",
               header: "<windows.h>", final, pure, byref.} = object # CRITICAL_SECTION in WinApi
-      DebugInfo: pointer
-      LockCount: int32
-      RecursionCount: int32
-      OwningThread: int
-      LockSemaphore: int
-      SpinCount: int
+      DebugInfo {.exportc.} : pointer
+      LockCount {.exportc.} : int32
+      RecursionCount {.exportc.} : int32
+      OwningThread {.exportc.} : int
+      LockSemaphore {.exportc.} : int
+      SpinCount {.exportc.} : int
 
     SysCond* {.importc: "RTL_CONDITION_VARIABLE", header: "<windows.h>", byref.} = object
       thePtr {.importc: "Ptr".} : Handle
@@ -51,20 +51,20 @@ when defined(windows):
 
   proc initializeConditionVariable(
     conditionVariable: var SysCond
-  ) {.stdcall, noSideEffect, dynlib: "kernel32", importc: "InitializeConditionVariable".}
+  ) {.stdcall, noSideEffect, header: "<windows.h>", importc: "InitializeConditionVariable".}
 
   proc sleepConditionVariableCS(
     conditionVariable: var SysCond,
     PCRITICAL_SECTION: var SysLock,
     dwMilliseconds: int
-  ): int32 {.stdcall, noSideEffect, dynlib: "kernel32", importc: "SleepConditionVariableCS".}
+  ): int32 {.stdcall, noSideEffect, header: "<windows.h>", importc: "SleepConditionVariableCS".}
 
 
   proc signalSysCond*(hEvent: var SysCond) {.stdcall, noSideEffect,
-    dynlib: "kernel32", importc: "WakeConditionVariable".}
+    header: "<windows.h>", importc: "WakeConditionVariable".}
 
   proc broadcastSysCond*(hEvent: var SysCond) {.stdcall, noSideEffect,
-    dynlib: "kernel32", importc: "WakeAllConditionVariable".}
+    header: "<windows.h>", importc: "WakeAllConditionVariable".}
 
   proc initSysCond*(cond: var SysCond) {.inline.} =
     initializeConditionVariable(cond)
