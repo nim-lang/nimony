@@ -4337,7 +4337,6 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       c.dest.addParLe PragmasS, it.n.info
       c.takeToken it.n
       c.dest.addParRi
-    inc it.n
   of PassLP:
     inc it.n
     let start = c.dest.len
@@ -4347,7 +4346,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       c.passL.add pool.strings[s]
     skipParRi it.n
   else:
-    buildErr c, it.n.info, "unsupported pragma"
+    buildErr c, it.n.info, "unsupported pragma", it.n
     skip it.n
     while it.n.kind != ParRi: skip it.n
 
