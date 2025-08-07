@@ -1460,19 +1460,60 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       while n.kind != ParRi: skip n
     skipParRi n
 
+proc semPushedPragmas(c: var SemContext; n: Cursor; crucial: var CrucialPragma; kind: SymKind): bool =
+  # returns true if any pushed pragmas are applied
+  if c.pragmaStack.len != 0:
+    # don't add pushed pragmas that already exists in the declaration.
+    # In other words, pragmas in the declaration have higher priority than the pushed pragmas.
+    result = false
+    var usedPragmas: set[NimonyPragma] = {}
+    var callconv = NoCallConv
+    var idents = default(HashSet[StrId])  # idents of user pragmas and macro pragmas
+    if n.substructureKind == PragmasU:
+      var n = n
+      inc n
+      while n.kind != ParRi:
+        var n2 = n
+        if n2.substructureKind == KvU or n2.exprKind == CallX:
+          inc n2
+        let pk = pragmaKind(n2)
+        if pk != NoPragma:
+          usedPragmas.incl pk
+        elif kind.isRoutine and (let cc = callConvKind(n2); cc != NoCallConv):
+          callconv = cc
+        elif (let ident = getIdent(n2); ident != StrId(0)):
+          idents.incl ident
+        skip n
+    let info = n.info
+    for ns in c.pragmaStack:
+      var n = ns
+      while n.kind != ParRi:
+        if not kind.isRoutine and callConvKind(n) != NoCallConv:
+          skip n
+        else:
+          var overlapped = false
+          var n2 = n
+          if n2.substructureKind == KvU or n2.exprKind == CallX:
+            inc n2
+          if (let pk = pragmaKind(n2); pk != NoPragma):
+            overlapped = pk in usedPragmas
+          elif kind.isRoutine and (let cc = callConvKind(n2); cc != NoCallConv):
+            overlapped = callconv != NoCallConv
+          elif (let ident = getIdent(n2); ident != StrId(0)):
+            overlapped = ident in idents
+          if overlapped:
+            skip n
+          else:
+            if not result:
+              c.dest.addParLe PragmasU, info
+              result = true
+            semPragma c, n, crucial, kind
+  else:
+    result = false
+
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   if n.kind == DotToken or n.substructureKind == PragmasU:
-    let hasPushedPragma = c.pragmaStack.len != 0
-    if hasPushedPragma:
-      c.dest.addParLe PragmasU, n.info
-      for ns in c.pragmaStack:
-        var n2 = ns
-        while n2.kind != ParRi:
-          if not kind.isRoutine and callConvKind(n2) != NoCallConv:
-            skip n2
-          else:
-            semPragma c, n2, crucial, kind
-
+    let hasPushedPragma = semPushedPragmas(c, n, crucial, kind)
     if n.kind == DotToken:
       if hasPushedPragma:
         inc n
