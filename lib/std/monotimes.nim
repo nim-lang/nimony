@@ -46,7 +46,7 @@ when defined(macosx):
   type
     MachTimebaseInfoData {.pure, final, importc: "mach_timebase_info_data_t",
         header: "<mach/mach_time.h>".} = object
-      numer, denom: int32
+      numer {.exportc.} , denom {.exportc.} : int32
 
   proc mach_absolute_time(): int64 {.importc, header: "<mach/mach.h>".}
   proc mach_timebase_info(info: var MachTimebaseInfoData) {.importc,
