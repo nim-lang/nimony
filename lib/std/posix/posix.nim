@@ -66,3 +66,6 @@ when defined(posix):
   proc mmap*(a1: pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
     importc: "mmap", header: "<sys/mman.h>".}
   proc munmap*(a1: pointer, a2: int): cint {.importc: "munmap", header: "<sys/mman.h>".}
+
+  proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.
+    importc, header: "<time.h>", sideEffect.}
