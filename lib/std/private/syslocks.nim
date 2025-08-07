@@ -17,12 +17,12 @@ when defined(windows):
 
     SysLock* {.importc: "CRITICAL_SECTION",
               header: "<windows.h>", final, pure, byref.} = object # CRITICAL_SECTION in WinApi
-      DebugInfo: pointer
-      LockCount: int32
-      RecursionCount: int32
-      OwningThread: int
-      LockSemaphore: int
-      SpinCount: int
+      DebugInfo {.exportc.} : pointer
+      LockCount {.exportc.} : int32
+      RecursionCount {.exportc.} : int32
+      OwningThread {.exportc.} : int
+      LockSemaphore {.exportc.} : int
+      SpinCount {.exportc.} : int
 
     SysCond* {.importc: "RTL_CONDITION_VARIABLE", header: "<windows.h>", byref.} = object
       thePtr {.importc: "Ptr".} : Handle
