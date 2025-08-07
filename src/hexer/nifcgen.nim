@@ -99,6 +99,7 @@ type
     flags: set[PragmaKind]
     align, bits: IntId
     header: StrId
+    dynlib: StrId
     callConv: CallConv
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas
@@ -754,6 +755,12 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           result.header = n.litId
           result.flags.incl NodeclP
           inc n
+        of DynlibP:
+          inc n
+          expectStrLit c, n
+          result.dynlib = n.litId
+          result.flags.incl NodeclP
+          inc n
         of AlignP:
           inc n
           expectIntLit c, n
@@ -823,7 +830,29 @@ proc makeLocalSymId(c: var EContext; s: SymId; registerParentScope: bool): SymId
   else:
     registerMangle(c, s, newName)
 
+proc buildProcType(c: var EContext; thisProc: Cursor): SymId =
+  var thisProc = asRoutine(thisProc)
+  var procTypeBuf = createTokenBuf()
+  procTypeBuf.addParLe ProctypeT
+  procTypeBuf.addDotToken() # name
+  procTypeBuf.addDotToken() # export marker
+  procTypeBuf.addDotToken() # pattern
+  procTypeBuf.addDotToken() # type vars
+  procTypeBuf.addSubtree thisProc.params
+  procTypeBuf.addSubtree thisProc.retType
+  procTypeBuf.addSubtree thisProc.pragmas
+  procTypeBuf.addDotToken() # effects
+  procTypeBuf.addDotToken() # body
+  procTypeBuf.addParRi() # end of proctype
+
+  var procTypeCursor = beginRead(procTypeBuf)
+  var beforeProcPos = c.dest.len
+  trAsNamedType c, procTypeCursor
+  result = c.dest[c.dest.len - 1].symId
+  c.dest.shrink beforeProcPos
+
 proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
+  let thisProc = n
   c.openMangleScope()
   var dst = createTokenBuf(50)
   swap c.dest, dst
@@ -925,6 +954,15 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.dest.add dst
   if prag.header != StrId(0):
     c.headers.incl prag.header
+
+  if prag.dynlib != StrId(0):
+    let typeSym = buildProcType(c, thisProc)
+
+    c.dynlibs.mgetOrPut(prag.dynlib, @[]).add (pool.strings.getOrIncl(prag.externName), typeSym)
+
+    var dynlibName = "Dl." & prag.externName & "." & c.main
+    c.registerMangleInParent(newSym, dynlibName)
+
   discard setOwner(c, oldOwner)
   c.closeMangleScope()
   c.resultSym = oldResultSym
@@ -1933,6 +1971,48 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
   b.endTree()
   b.close()
 
+proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
+  # dynlib init:
+  for key, vals in c.dynlibs:
+    let dynlib = pool.strings[key]
+    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c)
+
+    # nimLoadLibrary
+    c.dest.add tagToken("gvar", rootInfo)
+    c.dest.add symdefToken(tmp, rootInfo)
+    c.offer tmp
+    c.dest.addDotToken()
+    c.dest.add tagToken("ptr", rootInfo)
+    c.dest.add tagToken("void", rootInfo)
+    c.dest.addParRi()
+    c.dest.addParRi()
+    c.dest.add tagToken("call", rootInfo)
+    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary")), rootInfo)
+    c.dest.addStrLit dynlib
+    c.dest.addParRi()
+
+    c.dest.addParRi()
+
+    # nimGetProcAddr
+    for (val, typeSym) in vals:
+      let procName = pool.strings[val]
+      let varName = pool.syms.getOrIncl "Dl." & pool.strings[val] & "." & c.main
+      c.dest.add tagToken("gvar", rootInfo)
+      c.dest.add symdefToken(varName, rootInfo)
+      c.offer varName
+      c.dest.addDotToken()
+      c.dest.add symToken(typeSym, rootInfo)
+
+      c.dest.add tagToken("cast", rootInfo)
+      c.dest.add symToken(typeSym, rootInfo)
+      c.dest.add tagToken("call", rootInfo)
+      c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr")), rootInfo)
+      c.dest.add symToken(tmp, rootInfo) # library
+      c.dest.addStrLit procName # proc name
+      c.dest.addParRi()
+      c.dest.addParRi()
+
+      c.dest.addParRi()
 
 proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   let (dir, file, ext) = splitModulePath(infile)
@@ -1940,6 +2020,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
+    pending: createTokenBuf(),
     bits: bits,
     localDeclCounters: 1000,
     activeChecks: flags
@@ -1952,6 +2033,9 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   var n = beginRead(dest)
   let rootInfo = n.info
 
+
+  var toplevels = createTokenBuf()
+  swap c.dest, toplevels
   if stmtKind(n) == StmtsS:
     inc n
     #genStringType c, n.info
@@ -1959,6 +2043,11 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
       trStmt c, n, TraverseTopLevel
   else:
     error c, "expected (stmts) but got: ", n
+  swap c.dest, toplevels
+
+  initDynlib(c, rootInfo)
+
+  c.dest.add toplevels
 
   # fix point expansion:
   var i = 0
