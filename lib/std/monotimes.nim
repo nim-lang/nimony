@@ -74,7 +74,7 @@ when defined(js):
   {.pop.}
 
 elif defined(posix) and not defined(osx):
-  import std/posix
+  import posix/posix
 
 when defined(zephyr):
   proc k_uptime_ticks(): int64 {.importc: "k_uptime_ticks", header: "<kernel.h>".}
