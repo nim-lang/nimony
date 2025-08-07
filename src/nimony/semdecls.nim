@@ -78,12 +78,15 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   if delayed.status == OkExistingFresh and InjectP in crucial.flags:
     # symbol is injected, add it to scope
     delayed.status = OkNew
+
+  var beforeType = -1
+
   case kind
   of TypevarY:
     discard semLocalType(c, n, InGenericConstraint)
     wantDot c, n
   of ParamY, LetY, VarY, ConstY, CursorY, ResultY, FldY, GletY, TletY, GvarY, TvarY:
-    let beforeType = c.dest.len
+    beforeType = c.dest.len
     if n.kind == DotToken:
       # no explicit type given:
       inc n # 3
@@ -123,7 +126,25 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         patchType c, it.typ, beforeType
   else:
     bug "semLocal"
-  c.addSym delayed
+
+  if beforeType != -1:
+    let hasError = c.addSymForwardError delayed
+
+    if hasError:
+      var valueCursor = cursorAt(c.dest, beforeType)
+      skip valueCursor # skips types
+      let newValuePos = cursorToPosition(c.dest, valueCursor)
+      var valueBuf = createTokenBuf()
+      valueBuf.addSubtree valueCursor
+      endRead(c.dest)
+      shrink c.dest, newValuePos
+
+      let orig = beginRead(valueBuf)
+      c.buildErr delayed.info, "attempt to redeclare: " & pool.strings[delayed.lit], orig
+
+  else:
+    c.addSym delayed
+
   takeParRi c, n
   if kind == LetY:
     if ThreadvarP in crucial.flags:
