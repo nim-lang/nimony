@@ -333,3 +333,38 @@ func replace*(s: string; sub, by: char): string =
     if s[i] == sub: result[i] = by
     else: result[i] = s[i]
     inc i
+
+const HexChars = "0123456789ABCDEF"
+
+func escape*(s: string, prefix = "\"", suffix = "\""): string =
+  ## Escapes a string `s`.
+  ##
+  ## .. note:: The escaping scheme is different from
+  ##    `system.addEscapedChar`.
+  ##
+  ## * replaces `'\0'..'\31'` and `'\127'..'\255'` by `\xHH` where `HH` is its hexadecimal value
+  ## * replaces ``\`` by `\\`
+  ## * replaces `'` by `\'`
+  ## * replaces `"` by `\"`
+  ##
+  ## The resulting string is prefixed with `prefix` and suffixed with `suffix`.
+  ## Both may be empty strings.
+  ##
+  ## See also:
+  ## * `addEscapedChar proc<system.html#addEscapedChar,string,char>`_
+  ## * `unescape func<#unescape,string,string,string>`_ for the opposite
+  ##   operation
+  result = newStringOfCap(s.len + s.len shr 2)
+  result.add(prefix)
+  for c in items(s):
+    case c
+    of '\0'..'\31', '\127'..'\255':
+      add(result, "\\x")
+      let n = ord(c)
+      add(result, HexChars[int((n and 0xF0) shr 4)])
+      add(result, HexChars[int(n and 0xF)])
+    of '\\': add(result, "\\\\")
+    of '\'': add(result, "\\'")
+    of '\"': add(result, "\\\"")
+    else: add(result, c)
+  add(result, suffix)
