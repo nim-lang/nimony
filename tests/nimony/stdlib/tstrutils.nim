@@ -218,3 +218,30 @@ block: # cmpIgnoreStyle
   assert cmpIgnoreStyle("a_B", "_ab_") == 0
   assert cmpIgnoreStyle("a_b_C", "_ab__c") == 0
   assert cmpIgnoreStyle("ABC", "_a__b__c_") == 0
+
+block: # escape
+  assert escape("") == "\"\""
+  assert escape("a") == "\"a\""
+  assert escape("aA") == "\"aA\""
+  assert escape(" /09:@AZ[`az{~") == "\" /09:@AZ[`az{~\""
+  assert escape("\\") == "\"\\\\\""
+  assert escape("\\\'\"") == "\"\\\\\\\'\\\"\""
+  assert escape("\x00") == "\"\\x00\""
+  assert escape("\x00\x01\x02\x03\x0A\x0B") == "\"\\x00\\x01\\x02\\x03\\x0A\\x0B\""
+  assert escape("\x0E\x0F\x10\x11\x1A\x1B\x1E\x1F") == "\"\\x0E\\x0F\\x10\\x11\\x1A\\x1B\\x1E\\x1F\""
+  assert escape("}~\x7F\x80\x81\xFE\xFF") == "\"}~\\x7F\\x80\\x81\\xFE\\xFF\""
+
+block: # unescape
+  try:
+    assert unescape("\"\"") == ""
+    assert unescape("\"a\"") == "a"
+    assert unescape("\"aA\"") == "aA"
+    assert unescape("\" /09:@AZ[`az{~\"") == " /09:@AZ[`az{~"
+    assert unescape("\"\\\\\"") == "\\"
+    assert unescape("\"\\\\\\\'\\\"\"") == "\\\'\""
+    assert unescape("\"\\x00\\x01\\x02\\x03\\x0A\\x0B\"") == "\x00\x01\x02\x03\x0A\x0B"
+    assert unescape("\"\\x0E\\x0F\\x10\\x11\\x1A\\x1B\\x1E\\x1F\"") == "\x0E\x0F\x10\x11\x1A\x1B\x1E\x1F"
+    assert unescape("\"}~\\x7F\\x80\\x81\\xFE\\xFF\"") == "}~\x7F\x80\x81\xFE\xFF"
+    assert unescape(r"\x013", "", "") == "\x013"
+  except ErrorCode as e:
+    assert false
