@@ -159,7 +159,7 @@ when defined(windows):
       nFileSizeLow*: int32
       dwReserved0: int32
       dwReserved1: int32
-      cFileName*: array[MAX_PATH - 1, WinChar]
+      cFileName*: array[MAX_PATH, WinChar]
       cAlternateFileName*: array[0..13, WinChar]
 
 
