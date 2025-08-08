@@ -521,4 +521,4 @@ proc convert*(s: string, destEncoding = "UTF-8",
   # try:
   result = convert(c, s)
   # finally:
-  #   close(c)
+  close(c)
