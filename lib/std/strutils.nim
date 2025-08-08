@@ -1,3 +1,5 @@
+import std/parseutils
+
 const
   Whitespace* = {' ', '\t', '\v', '\r', '\l', '\f'}
     ## All the characters that count as whitespace (space, tab, vertical tab,
@@ -368,3 +370,44 @@ func escape*(s: string, prefix = "\"", suffix = "\""): string =
     of '\"': add(result, "\\\"")
     else: add(result, c)
   add(result, suffix)
+
+func unescape*(s: string, prefix = "\"", suffix = "\""): string {.raises.} =
+  ## Unescapes a string `s`.
+  ##
+  ## This complements `escape func<#escape,string,string,string>`_
+  ## as it performs the opposite operations.
+  ##
+  ## If `s` does not begin with `prefix` and end with `suffix` a
+  ## ValueError exception will be raised.
+  result = newStringOfCap(s.len)
+  var i = prefix.len
+  if not s.startsWith(prefix):
+    raise ValueError
+  while true:
+    if i >= s.len-suffix.len: break
+    if s[i] == '\\':
+      if i+1 >= s.len:
+        result.add('\\')
+        break
+      case s[i+1]:
+      of 'x':
+        inc i, 2
+        var c = 0
+        i += parseutils.parseHex(s, c, i, maxLen = 2)
+        result.add(chr(c))
+        dec i, 2
+      of '\\':
+        result.add('\\')
+      of '\'':
+        result.add('\'')
+      of '\"':
+        result.add('\"')
+      else:
+        result.add('\\')
+        result.add(s[i+1])
+      inc(i, 2)
+    else:
+      result.add(s[i])
+      inc(i)
+  if not s.endsWith(suffix):
+    raise ValueError
