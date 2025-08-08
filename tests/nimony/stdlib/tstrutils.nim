@@ -245,3 +245,22 @@ block: # unescape
     assert unescape(r"\x013", "", "") == "\x013"
   except ErrorCode as e:
     assert false
+
+block: # formatBiggestFloat
+  assert formatBiggestFloat(0.0, ffDecimal, 0) == "0."
+  assert formatBiggestFloat(0.0, ffDecimal, 1) == "0.0"
+  assert formatBiggestFloat(-1.0, ffDecimal, 1) == "-1.0"
+  assert formatBiggestFloat(1.0, ffDecimal, 1) == "1.0"
+  assert formatBiggestFloat(-0.12, ffDecimal, 1) == "-0.1"
+  assert formatBiggestFloat(0.12, ffDecimal, 1) == "0.1"
+  assert formatBiggestFloat(-0.12, ffDecimal, 2) == "-0.12"
+  assert formatBiggestFloat(0.12, ffDecimal, 2) == "0.12"
+  assert formatBiggestFloat(1234.567, ffDecimal, -1) == "1234.567000"
+  assert formatBiggestFloat(1234.567, ffDecimal, 0) == "1235."
+  assert formatBiggestFloat(1234.567, ffDecimal, 1) == "1234.6"
+  assert formatBiggestFloat(0.00000000001, ffDecimal, 11) == "0.00000000001"
+  assert formatBiggestFloat(0.00000000001, ffScientific, 1, ',') in ["1,0e-11", "1,0e-011"]
+  assert formatBiggestFloat(0.0, ffScientific, 3) == "0.000e+00"
+  assert formatBiggestFloat(0.01, ffScientific, 3) == "1.000e-02"
+  assert formatBiggestFloat(0.0123, ffScientific, 3) == "1.230e-02"
+  assert formatBiggestFloat(123.0, ffScientific, 3) == "1.230e+02"
