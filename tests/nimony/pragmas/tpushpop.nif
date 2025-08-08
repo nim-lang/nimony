@@ -51,4 +51,12 @@
     (i -1) .)
    (asgn result.0 x.2) ~24
    (ret result.0))) 3,19
- (call ~3 foo.0.tpu1210461 1 +1))
+ (call ~3 foo.0.tpu1210461 1 +1) ,24
+ (proc 5 :getchar.0.tpu1210461 . . . 12
+  (params) 37,40,lib/std/system/ctypes.nim
+  (i +32
+   (importc "int")) 21
+  (pragmas 2
+   (importc 9 "putchar") 22
+   (header 8 "<stdio.h>") 43
+   (noconv)) . .))

@@ -18,3 +18,9 @@ proc foo(x: int): int = x
 {.pop.}
 
 foo(1)
+
+{.push header: "<headerfile_doesnt_exists.h>", thiscall.}
+# header pragma and thiscall calling convention in push pragma is ignored if declarations have both of them.
+# This test uses C function without parameters as current implementation applies pushed header pragma to parameters.
+proc getchar(): cint {.importc: "putchar", header: "<stdio.h>", noconv.}
+{.pop.}
