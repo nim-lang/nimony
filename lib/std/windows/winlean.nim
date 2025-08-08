@@ -17,8 +17,10 @@ when defined(windows):
       ## `WINBOOL` uses opposite convention as posix, !=0 meaning success.
     DWORD* = int32
 
-  const
-    INVALID_HANDLE_VALUE* = Handle(-1)
+  let
+    INVALID_HANDLE_VALUE* = cast[Handle](-1)
+  # TODO: error: initialization of 'HANDLE' {aka 'void * const'} from 'long long int' makes pointer from integer without a cast [-Wint-conversion]
+
 
   const
     FILE_ATTRIBUTE_READONLY* = 0x00000001'i32
