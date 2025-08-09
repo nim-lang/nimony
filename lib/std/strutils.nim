@@ -491,4 +491,4 @@ func formatFloat*(f: float, format: FloatFormatMode = ffDefault,
     assert x.formatFloat(ffDecimal, 4) == "123.4560"
     assert x.formatFloat(ffScientific, 2) == "1.23e+02"
 
-  result = formatBiggestFloat(f, format, precision, decimalSep)
+  result = formatBiggestFloat(f, format, precision.int, decimalSep)

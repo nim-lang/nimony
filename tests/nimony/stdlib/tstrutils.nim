@@ -264,3 +264,6 @@ block: # formatBiggestFloat
   assert formatBiggestFloat(0.01, ffScientific, 3) == "1.000e-02"
   assert formatBiggestFloat(0.0123, ffScientific, 3) == "1.230e-02"
   assert formatBiggestFloat(123.0, ffScientific, 3) == "1.230e+02"
+
+block: # formatFloat
+  assert formatFloat(1234.567, ffDecimal, 1) == "1234.6"
