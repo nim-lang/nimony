@@ -870,6 +870,8 @@ proc skipExpr*(n: Cursor): Cursor =
 
 proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   var a = skipModifier(arg.typ)
+  if a.typeKind == RangetypeT:
+    inc a # skip to base type
   let ex = skipExpr(arg.n)
   let isIntLit = f.typeKind != CharT and
     ex.kind == IntLit and sameTrees(a, m.context.types.intType)
