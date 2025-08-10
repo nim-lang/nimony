@@ -219,6 +219,17 @@ block: # cmpIgnoreStyle
   assert cmpIgnoreStyle("a_b_C", "_ab__c") == 0
   assert cmpIgnoreStyle("ABC", "_a__b__c_") == 0
 
+block: # find
+  assert find("", 'A') == -1
+  const haystack: string = "0123456789ABCDEFGH"
+  assert haystack.find('A') == 10
+  assert haystack.find('A', 5) == 10
+  assert haystack.find('A', 5, 10) == 10
+  assert haystack.find('A', 5, 9) == -1
+  assert haystack.find('A', 0, 0) == -1 # search limited to the first char
+  assert haystack.find('A', 5, 0) == -1 # last < start
+  assert haystack.find('A', 5, 4) == -1 # last < start
+
 block: # escape
   assert escape("") == "\"\""
   assert escape("a") == "\"a\""

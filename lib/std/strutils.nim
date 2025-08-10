@@ -328,6 +328,26 @@ func cmpIgnoreStyle*(a, b: string): int =
     inc i
     inc j
 
+type
+  Natural = int
+
+func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` (both ends included).
+  ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  ## Otherwise the index returned is relative to `s[0]`, not `start`.
+  ## Subtract `start` from the result for a `start`-origin index.
+  ##
+  ## See also:
+  ## * `replace func<#replace,string,char,char>`_
+  result = -1
+  let last = if last < 0: s.high else: last
+
+  for i in int(start)..last:
+    if s[i] == sub:
+      return i
+
 func replace*(s: string; sub, by: char): string =
   result = newString(s.len)
   var i = 0
