@@ -219,6 +219,17 @@ block: # cmpIgnoreStyle
   assert cmpIgnoreStyle("a_b_C", "_ab__c") == 0
   assert cmpIgnoreStyle("ABC", "_a__b__c_") == 0
 
+block: # find
+  assert find("", 'A') == -1
+  const haystack: string = "0123456789ABCDEFGH"
+  assert haystack.find('A') == 10
+  assert haystack.find('A', 5) == 10
+  assert haystack.find('A', 5, 10) == 10
+  assert haystack.find('A', 5, 9) == -1
+  assert haystack.find('A', 0, 0) == -1 # search limited to the first char
+  assert haystack.find('A', 5, 0) == -1 # last < start
+  assert haystack.find('A', 5, 4) == -1 # last < start
+
 block: # escape
   assert escape("") == "\"\""
   assert escape("a") == "\"a\""
@@ -245,3 +256,25 @@ block: # unescape
     assert unescape(r"\x013", "", "") == "\x013"
   except ErrorCode as e:
     assert false
+
+block: # formatBiggestFloat
+  assert formatBiggestFloat(0.0, ffDecimal, 0) == "0."
+  assert formatBiggestFloat(0.0, ffDecimal, 1) == "0.0"
+  assert formatBiggestFloat(-1.0, ffDecimal, 1) == "-1.0"
+  assert formatBiggestFloat(1.0, ffDecimal, 1) == "1.0"
+  assert formatBiggestFloat(-0.12, ffDecimal, 1) == "-0.1"
+  assert formatBiggestFloat(0.12, ffDecimal, 1) == "0.1"
+  assert formatBiggestFloat(-0.12, ffDecimal, 2) == "-0.12"
+  assert formatBiggestFloat(0.12, ffDecimal, 2) == "0.12"
+  assert formatBiggestFloat(1234.567, ffDecimal, -1) == "1234.567000"
+  assert formatBiggestFloat(1234.567, ffDecimal, 0) == "1235."
+  assert formatBiggestFloat(1234.567, ffDecimal, 1) == "1234.6"
+  assert formatBiggestFloat(0.00000000001, ffDecimal, 11) == "0.00000000001"
+  assert formatBiggestFloat(0.00000000001, ffScientific, 1, ',') in ["1,0e-11", "1,0e-011"]
+  assert formatBiggestFloat(0.0, ffScientific, 3) == "0.000e+00"
+  assert formatBiggestFloat(0.01, ffScientific, 3) == "1.000e-02"
+  assert formatBiggestFloat(0.0123, ffScientific, 3) == "1.230e-02"
+  assert formatBiggestFloat(123.0, ffScientific, 3) == "1.230e+02"
+
+block: # formatFloat
+  assert formatFloat(1234.567, ffDecimal, 1) == "1234.6"

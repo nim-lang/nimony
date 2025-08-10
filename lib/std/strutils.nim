@@ -328,6 +328,26 @@ func cmpIgnoreStyle*(a, b: string): int =
     inc i
     inc j
 
+type
+  Natural = int
+
+func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` (both ends included).
+  ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  ## Otherwise the index returned is relative to `s[0]`, not `start`.
+  ## Subtract `start` from the result for a `start`-origin index.
+  ##
+  ## See also:
+  ## * `replace func<#replace,string,char,char>`_
+  result = -1
+  let last = if last < 0: s.high else: last
+
+  for i in int(start)..last:
+    if s[i] == sub:
+      return i
+
 func replace*(s: string; sub, by: char): string =
   result = newString(s.len)
   var i = 0
@@ -411,3 +431,75 @@ func unescape*(s: string, prefix = "\"", suffix = "\""): string {.raises.} =
       inc(i)
   if not s.endsWith(suffix):
     raise ValueError
+
+func c_snprintf(buf: cstring, n: csize_t, frmt: cstring): cint {.
+  header: "<stdio.h>", importc: "snprintf", varargs.}
+
+type
+  FloatFormatMode* = enum
+    ## The different modes of floating point formatting.
+    ffDefault,   ## use the shorter floating point notation
+    ffDecimal,   ## use decimal floating point notation
+    ffScientific ## use scientific notation (using `e` character)
+
+func formatBiggestFloat*(f: BiggestFloat, format: FloatFormatMode = ffDefault,
+                         precision: range[-1..32] = 16;
+                         decimalSep = '.'): string =
+  ## Converts a floating point value `f` to a string.
+  ##
+  ## If `format == ffDecimal` then precision is the number of digits to
+  ## be printed after the decimal point.
+  ## If `format == ffScientific` then precision is the maximum number
+  ## of significant digits to be printed.
+  ## `precision`'s default value is the maximum number of meaningful digits
+  ## after the decimal point for Nim's `biggestFloat` type.
+  ##
+  ## If `precision == -1`, it tries to format it nicely.
+  runnableExamples:
+    let x = 123.456
+    assert x.formatBiggestFloat() == "123.4560000000000"
+    assert x.formatBiggestFloat(ffDecimal, 4) == "123.4560"
+    assert x.formatBiggestFloat(ffScientific, 2) == "1.23e+02"
+  const floatFormatToChar: array[FloatFormatMode, char] = ['g', 'f', 'e']
+  var
+    frmtstr {.noinit.}: array[0..5, char]
+    buf {.noinit.}: array[0..2500, char]
+    L: cint
+  frmtstr[0] = '%'
+  if precision.int >= 0:
+    frmtstr[1] = '#'
+    frmtstr[2] = '.'
+    frmtstr[3] = '*'
+    frmtstr[4] = floatFormatToChar[format]
+    frmtstr[5] = '\0'
+    L = c_snprintf(cast[cstring](addr buf), csize_t(2501), cast[cstring](addr frmtstr), precision, f)
+  else:
+    frmtstr[1] = floatFormatToChar[format]
+    frmtstr[2] = '\0'
+    L = c_snprintf(cast[cstring](addr buf), csize_t(2501), cast[cstring](addr frmtstr), f)
+  result = newString(L)
+  for i in 0 ..< L:
+    # Depending on the locale either dot or comma is produced,
+    # but nothing else is possible:
+    if buf[i] in {'.', ','}: result[i] = decimalSep
+    else: result[i] = buf[i]
+
+func formatFloat*(f: float, format: FloatFormatMode = ffDefault,
+                  precision: range[-1..32] = 16; decimalSep = '.'): string =
+  ## Converts a floating point value `f` to a string.
+  ##
+  ## If `format == ffDecimal` then precision is the number of digits to
+  ## be printed after the decimal point.
+  ## If `format == ffScientific` then precision is the maximum number
+  ## of significant digits to be printed.
+  ## `precision`'s default value is the maximum number of meaningful digits
+  ## after the decimal point for Nim's `float` type.
+  ##
+  ## If `precision == -1`, it tries to format it nicely.
+  runnableExamples:
+    let x = 123.456
+    assert x.formatFloat() == "123.4560000000000"
+    assert x.formatFloat(ffDecimal, 4) == "123.4560"
+    assert x.formatFloat(ffScientific, 2) == "1.23e+02"
+
+  result = formatBiggestFloat(f, format, precision.int, decimalSep)
