@@ -22,6 +22,5 @@ src/hastur build nifler
 src/hastur build nimony
 src/hastur build hexer
 src/hastur build nifc
+src/hastur build nifmake
 ```
-
-
