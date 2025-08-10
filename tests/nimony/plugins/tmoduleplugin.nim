@@ -1,8 +1,11 @@
 
 import std / syncio
 
-template generateEcho(s: string) = {.plugin: "deps/mplugin2".}
+template eraseToplevelBlocks() = {.plugin: "deps/mmoduleplugin".}
 
-echo "should be erased"
+echo "this should not be erased"
 
-generateEcho("Hello, world!")
+block:
+  echo "should be erased"
+
+eraseToplevelBlocks()

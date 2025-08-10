@@ -5,16 +5,23 @@ include ".." / ".." / ".." / ".." / src / lib / nifprelude
 import ".." / ".." / ".." / ".." / src / nimony / nimony_model
 
 proc tr(n: Cursor): TokenBuf =
-  echo n
   result = createTokenBuf()
   let info = n.info
   var n = n
   if n.stmtKind == StmtsS: inc n
   result.addParLe StmtsS, info
-  result.addParLe CallS, info
-  result.addIdent "echo"
-  result.takeTree n
-  result.addParRi()
+  
+  while n.kind != ParRi:
+    case n.kind
+    of ParLe:
+      case n.stmtKind
+      of BlockS:
+        skip n
+      else:
+        result.takeTree n
+    else:
+      result.takeTree n
+
   result.addParRi()
 
 let input = os.paramStr(1)
