@@ -1,10 +1,10 @@
-import std/envvars
-import std/[assertions]
-
-import std/syncio
-
-
 when not defined(windows):
+  import std/envvars
+  import std/[assertions]
+  
+  import std/syncio
+
+
   # "LATIN CAPITAL LETTER AE" in UTF-8 (0xc386)
   const unicodeUtf8 = "\xc3\x86"
 
