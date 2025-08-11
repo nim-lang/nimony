@@ -204,3 +204,10 @@ when defined(posix):
     SysLockObj {.importc: "pthread_mutex_t", pure, final,
                 header: """#include <sys/types.h>
                           #include <pthread.h>""", byref.} = object
+
+block:
+  const MAX_PATH: int = 260
+
+  type
+    Foo = object
+      cFileName: array[0..MAX_PATH - 1, int]
