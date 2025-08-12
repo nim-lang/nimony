@@ -743,7 +743,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       semExpr c, magicExpr, cs.flags
       it.typ = magicExpr.typ
     elif finalFn.kind == IteratorY and PreferIterators notin cs.flags:
-      buildErr c, cs.callNode.info, "Iterators can be called only at for statements"
+      buildErr c, cs.callNode.info, "Iterators can be called only in `for` statements"
     elif m[idx].inferred.len > 0:
       var matched = m[idx]
       let returnType: Cursor

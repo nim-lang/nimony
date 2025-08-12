@@ -1,1 +1,1 @@
-tests/nimony/errmsgs/titerator_call_not_in_for.nim(3, 21) Error: Iterators can be called only at for statements
+tests/nimony/errmsgs/titerator_call_not_in_for.nim(3, 21) Error: Iterators can be called only in `for` statements
