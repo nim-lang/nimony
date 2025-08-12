@@ -723,7 +723,8 @@ proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
 
   inc n
 
-  if n.kind != ParRi:
+  while n.kind != ParRi:
+    # skips importc and headers etc.
     skip n
 
   skipParRi(n)
