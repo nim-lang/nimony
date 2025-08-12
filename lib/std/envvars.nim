@@ -22,7 +22,7 @@ type
   # TODO: {.importc: "char**", nodecl.}
   cstringArray = ptr UncheckedArray[cstring]
 
-proc dollarPair*(key, value: string): string =
+proc dollarPair(key, value: string): string =
   ## Returns a string in the form of `(key, value)`
   result = "(" & key & ", " & value & ")"
 #------------------------------------------------------------------
