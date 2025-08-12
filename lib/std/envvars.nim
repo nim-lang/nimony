@@ -9,7 +9,7 @@
 
 
 ## The `std/envvars` module implements environment variable handling.
-import std/[assertions, oserrors, strutils]
+import assertions, oserrors, strutils, syncio
 
 # type
 #   ReadEnvEffect* = object of ReadIOEffect   ## Effect that denotes a read
@@ -69,23 +69,23 @@ when not defined(nimscript):
 
     when defined(windows):
       proc c_putenv(envstring: cstring): cint {.importc: "_putenv", header: "<stdlib.h>".}
-      from std/private/win_setenv import setEnvImpl
-      import std/winlean
-      when defined(nimPreviewSlimSystem):
-        import std/widestrs
+      from private/win_setenv import setEnvImpl
+      import windows/winlean
+      import widestrs
 
       type wchar_t {.importc: "wchar_t", header: "<stdlib.h>".} = int16
       proc c_wgetenv(varname: ptr wchar_t): ptr wchar_t {.importc: "_wgetenv",
           header: "<stdlib.h>".}
       proc getEnvImpl(env: cstring): WideCString =
-        let r: WideCString = env.newWideCString
-        cast[WideCString](c_wgetenv(cast[ptr wchar_t](r)))
+        let r: WideCString = newWideCString(env).toWideCString()
+        result = cast[WideCString](c_wgetenv(cast[ptr wchar_t](r)))
     else:
       proc c_getenv(env: cstring): cstring {.
         importc: "getenv", header: "<stdlib.h>".}
       proc c_setenv(envname: cstring, envval: cstring, overwrite: cint): cint {.importc: "setenv", header: "<stdlib.h>".}
       proc c_unsetenv(env: cstring): cint {.importc: "unsetenv", header: "<stdlib.h>".}
-      proc getEnvImpl(env: cstring): cstring = c_getenv(env)
+      proc getEnvImpl(env: cstring): cstring =
+        result = c_getenv(env)
 
     proc getEnv*(key: string, default = ""): string {.tags: [ReadEnvEffect].} =
       ## Returns the value of the `environment variable`:idx: named `key`.
@@ -136,7 +136,7 @@ when not defined(nimscript):
         if key.len == 0 or '=' in key:
           # raise newException(OSError, "invalid key, got: " & $(key, val))
           quit "invalid key, got: " & dollarPair(key, val)
-        if setEnvImpl(key.cstring, val.cstring, 1'i32) != 0'i32:
+        if setEnvImpl(key, val, 1'i32) != 0'i32:
           raiseOSError(osLastError(), dollarPair(key, val))
       else:
         if c_setenv(key.cstring, val.cstring, 1'i32) != 0'i32:
@@ -199,7 +199,7 @@ when not defined(nimscript):
             let kv = $e
             let p = find(kv, '=')
             yield (substr(kv, 0, p-1), substr(kv, p+1))
-            e = cast[WideCString](cast[ByteAddress](eend)+2)
+            e = cast[WideCString](cast[uint](eend)+2)
             if int(eend[1]) == 0: break
           discard freeEnvironmentStringsW(env)
       else:

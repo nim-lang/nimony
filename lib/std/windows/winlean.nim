@@ -103,3 +103,10 @@ when defined(windows):
       importc: "CreateFileMappingW", stdcall, header: "<Windows.h>".}
   proc unmapViewOfFile*(lpBaseAddress: pointer): WINBOOL {.
       importc: "UnmapViewOfFile", stdcall, header: "<Windows.h>".}
+
+
+  proc getEnvironmentStringsW*(): WideCString {.
+    stdcall, dynlib: "kernel32", importc: "GetEnvironmentStringsW", sideEffect.}
+
+  proc freeEnvironmentStringsW*(para1: WideCString): int32 {.
+    stdcall, dynlib: "kernel32", importc: "FreeEnvironmentStringsW", sideEffect.}

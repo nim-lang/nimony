@@ -1975,7 +1975,7 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
   # dynlib init:
   for key, vals in c.dynlibs:
     let dynlib = pool.strings[key]
-    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c)
+    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & c.main
 
     # nimLoadLibrary
     c.dest.add tagToken("gvar", rootInfo)
