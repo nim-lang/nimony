@@ -478,9 +478,8 @@ else:
     result = newString(s.len)
     var inLen = csize_t len(s)
     var outLen = csize_t len(result)
-    var s = s
-    var src = toCString(s)
-    var dst = toCString(result)
+    var src = cstring(s)
+    var dst = cstring(result)
     var iconvres: csize_t = csize_t(0)
     while inLen > 0:
       iconvres = iconv(c, addr src, addr inLen, addr dst, addr outLen)
