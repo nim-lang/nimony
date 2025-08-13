@@ -38,12 +38,13 @@ elif defined(posix):
 
 
 when defined(windows) and not weirdTarget:
-  template wrapUnary*(varname, winApiProc, arg: untyped) {.untyped.} =
-    var varname = winApiProc(newWideCString(arg).toWideCString)
+  template wrapUnary*(varname, winApiProc, arg: untyped; body: untyped) {.untyped.} =
+    var varname: int32 = winApiProc(newWideCString(arg).toWideCString)
 
   template wrapBinary*(varname, winApiProc, arg, arg2: untyped) {.untyped.} =
     var varname = winApiProc(newWideCString(arg).toWideCString, arg2)
   proc findFirstFile*(a: string, b: var WIN32_FIND_DATA): Handle =
+    var a = a
     result = findFirstFileW(newWideCString(a).toWideCString, b)
   template findNextFile*(a, b: untyped): untyped {.untyped.} = findNextFileW(a, b)
 
@@ -77,6 +78,8 @@ when supportedSystem:
     ## In case of other errors `OSError` is raised.
     ## Returns true in case of success.
     when defined(windows):
+      var source = source
+      var dest = dest
       let s = newWideCString(source)
       let d = newWideCString(dest)
       result = (int32 moveFileExW(s.toWideCString, d.toWideCString, MOVEFILE_COPY_ALLOWED or MOVEFILE_REPLACE_EXISTING)) != 0'i32
@@ -106,9 +109,10 @@ when supportedSystem:
     ## * `dirExists proc`_
     ## * `symlinkExists proc`_
     when defined(windows):
-      wrapUnary(a, getFileAttributesW, filename)
-      if a != -1'i32:
-        result = (a and FILE_ATTRIBUTE_DIRECTORY) == 0'i32
+      var filename = filename
+      wrapUnary(a, getFileAttributesW, filename):
+        if a != -1'i32:
+          result = (a and FILE_ATTRIBUTE_DIRECTORY) == 0'i32
     else:
       var res: Stat
       return stat(filename, res) >= 0'i32 and S_ISREG(res.st_mode)
@@ -123,9 +127,10 @@ when supportedSystem:
     ## * `fileExists proc`_
     ## * `symlinkExists proc`_
     when defined(windows):
-      wrapUnary(a, getFileAttributesW, dir)
-      if a != -1'i32:
-        result = (a and FILE_ATTRIBUTE_DIRECTORY) != 0'i32
+      var dir = dir
+      wrapUnary(a, getFileAttributesW, dir):
+        if a != -1'i32:
+          result = (a and FILE_ATTRIBUTE_DIRECTORY) != 0'i32
     else:
       var res: Stat
       result = stat(dir, res) >= 0'i32 and S_ISDIR(res.st_mode)
@@ -140,11 +145,12 @@ when supportedSystem:
     ## * `fileExists proc`_
     ## * `dirExists proc`_
     when defined(windows):
-      wrapUnary(a, getFileAttributesW, link)
-      if a != -1'i32:
-        # xxx see: bug #16784 (bug9); checking `IO_REPARSE_TAG_SYMLINK`
-        # may also be needed.
-        result = (a and FILE_ATTRIBUTE_REPARSE_POINT) != 0'i32
+      var link = link
+      wrapUnary(a, getFileAttributesW, link):
+        if a != -1'i32:
+          # xxx see: bug #16784 (bug9); checking `IO_REPARSE_TAG_SYMLINK`
+          # may also be needed.
+          result = (a and FILE_ATTRIBUTE_REPARSE_POINT) != 0'i32
     else:
       var res: Stat
       result = lstat(link, res) >= 0'i32 and S_ISLNK(res.st_mode)
@@ -156,8 +162,9 @@ when supportedSystem:
         flags = flags or FILE_FLAG_OPEN_REPARSE_POINT
       let access = if writeAccess: GENERIC_WRITE else: 0'i32
 
+      var path = path
       result = createFileW(
-        newWideCString(path), access,
+        newWideCString(path).toWideCString(), access,
         FILE_SHARE_DELETE or FILE_SHARE_READ or FILE_SHARE_WRITE,
-        nil, OPEN_EXISTING, flags, 0
+        nil, OPEN_EXISTING, flags, cast[Handle](0)
         )

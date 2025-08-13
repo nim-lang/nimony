@@ -11,7 +11,7 @@ when defined(windows):
 
   # See https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
   type
-    Handle* {.importc: "HANDLE", header: "<WinDef.h>".} = distinct int
+    Handle* {.importc: "HANDLE", header: "<WinDef.h>", nodecl.} = distinct int
     LONG* {.importc: "LONG", header: "<WinDef.h>".} = int32
     WINBOOL* = distinct int32
       ## `WINBOOL` uses opposite convention as posix, !=0 meaning success.
@@ -162,7 +162,7 @@ when defined(windows):
       nFileSizeLow*: int32
       dwReserved0: int32
       dwReserved1: int32
-      cFileName*: array[MAX_PATH, WinChar]
+      cFileName*: array[0..(MAX_PATH) - 1, WinChar]
       cAlternateFileName*: array[0..13, WinChar]
 
 
