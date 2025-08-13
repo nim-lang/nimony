@@ -785,6 +785,10 @@ proc addMaybeBaseobjConv(c: var SemContext; m: var Match; beforeExpr: int) =
   else:
     c.dest.add m.args
 
+proc isStringLiteral(n: Cursor): bool =
+  # supposing it's a string type
+  result = n.kind == StringLit or n.exprKind == SufX
+
 proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo; beforeExpr: int) =
   const
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT}
@@ -797,7 +801,13 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
 
-  if (destBase.typeKind in IntegralTypes and srcBase.typeKind in IntegralTypes) or
+  if destBase.typeKind == CstringT and isStringType(srcBase):
+    if isStringLiteral(arg.n):
+      discard "ok"
+      c.dest.addSubtree arg.n
+    else:
+      c.buildErr info, "Only string literals can be converted to cstring. Use `toCString` for safe conversion."
+  elif (destBase.typeKind in IntegralTypes and srcBase.typeKind in IntegralTypes) or
      (destBase.isSomeStringType and srcBase.isSomeStringType) or
      (destBase.containsGenericParams or srcBase.containsGenericParams):
     discard "ok"
