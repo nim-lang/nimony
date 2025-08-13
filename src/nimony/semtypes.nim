@@ -233,9 +233,15 @@ proc semRangeTypeFromExpr(c: var SemContext; n: var Cursor; info: PackedLineInfo
   var it = Item(n: n, typ: c.types.autoType)
   var valuesBuf = createTokenBuf(4)
   swap c.dest, valuesBuf
+
+  # expression needs to be fully evaluated, switch to body phase
+  var phase = SemcheckBodies
+  swap c.phase, phase
   semExpr c, it
   removeModifier(it.typ)
   semExpr c, it
+
+  swap c.phase, phase
   swap c.dest, valuesBuf
   n = it.n
   # insert base type:
