@@ -806,7 +806,7 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
       discard "ok"
       c.dest.addSubtree arg.n
     else:
-      c.buildErr info, "Only string literals can be converted to cstring. Use `cast` for unsafe conversion or `toCString` for safe conversion."
+      c.buildErr info, "Only string literals can be converted to cstring. Use `toCString` for safe conversion."
   elif (destBase.typeKind in IntegralTypes and srcBase.typeKind in IntegralTypes) or
      (destBase.isSomeStringType and srcBase.isSomeStringType) or
      (destBase.containsGenericParams or srcBase.containsGenericParams):

@@ -478,8 +478,8 @@ else:
     result = newString(s.len)
     var inLen = csize_t len(s)
     var outLen = csize_t len(result)
-    var src = cast[cstring](s)
-    var dst = cast[cstring](result)
+    var src = cast[cstring](s.rawData)
+    var dst = cast[cstring](result.rawData)
     var iconvres: csize_t = csize_t(0)
     while inLen > 0:
       iconvres = iconv(c, addr src, addr inLen, addr dst, addr outLen)
@@ -493,10 +493,10 @@ else:
           dec(inLen)
           dec(outLen)
         elif lerr == E2BIG:
-          var offset = cast[int](dst) - cast[int](cast[cstring](result))
+          var offset = cast[int](dst) - cast[int](cast[cstring](result.rawData))
           setLen(result, len(result) + inLen.int * 2 + 5)
           # 5 is minimally one utf-8 char
-          dst = cast[cstring](cast[int](cast[cstring](result)) + offset)
+          dst = cast[cstring](cast[int](cast[cstring](result.rawData)) + offset)
           outLen = csize_t(len(result) - offset)
         else:
           raiseOSError(lerr.OSErrorCode)
@@ -504,10 +504,10 @@ else:
     # not '\0'
     discard iconv(c, nil, nil, addr dst, addr outLen)
     if iconvres == high(csize_t) and errno == E2BIG:
-      var offset = cast[int](dst) - cast[int](cast[cstring](result))
+      var offset = cast[int](dst) - cast[int](cast[cstring](result.rawData))
       setLen(result, len(result) + inLen.int * 2 + 5)
       # 5 is minimally one utf-8 char
-      dst = cast[cstring](cast[int](cast[cstring](result)) + offset)
+      dst = cast[cstring](cast[int](cast[cstring](result.rawData)) + offset)
       outLen = csize_t(len(result) - offset)
       discard iconv(c, nil, nil, addr dst, addr outLen)
     # trim output buffer
