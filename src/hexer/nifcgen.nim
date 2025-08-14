@@ -759,6 +759,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           inc n
           expectStrLit c, n
           result.dynlib = n.litId
+          result.flags.incl DynlibP
           result.flags.incl NodeclP
           inc n
         of AlignP:
@@ -1852,9 +1853,11 @@ proc importSymbol(c: var EContext; s: SymId) =
                       else:
                         asLocal(n).pragmas
         let prag = parsePragmas(c, pragmas)
-        if isR and InlineP in prag.flags:
-          transformInlineRoutines(c, n)
-          return
+        if isR:
+          if {InlineP, DynlibP} * prag.flags != {}:
+            transformInlineRoutines(c, n)
+            return
+
         if NodeclP in prag.flags:
           if prag.externName.len > 0:
             c.registerMangle(s, prag.externName & ".c")
@@ -1975,7 +1978,7 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
   # dynlib init:
   for key, vals in c.dynlibs:
     let dynlib = pool.strings[key]
-    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c)
+    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c) & "." & c.main
 
     # nimLoadLibrary
     c.dest.add tagToken("gvar", rootInfo)
@@ -2045,9 +2048,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     error c, "expected (stmts) but got: ", n
   swap c.dest, toplevels
 
-  initDynlib(c, rootInfo)
 
-  c.dest.add toplevels
 
   # fix point expansion:
   var i = 0
@@ -2056,6 +2057,17 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     if not c.declared.contains(imp):
       importSymbol(c, imp)
     inc i
+
+  initDynlib(c, rootInfo)
+
+  if c.dynlibs.len > 0:
+    let loadLibrary = pool.syms.getOrIncl("nimLoadLibrary.0." & SystemModuleSuffix)
+    let getProcAddr = pool.syms.getOrIncl("nimGetProcAddr.0." & SystemModuleSuffix)
+    if not c.declared.contains(loadLibrary):
+      importSymbol(c, loadLibrary)
+      importSymbol(c, getProcAddr)
+
+  c.dest.add toplevels
   c.dest.add c.pending
   skipParRi c, n
   writeOutput c, rootInfo
