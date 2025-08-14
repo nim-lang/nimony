@@ -9,7 +9,7 @@
 from std / strutils import multiReplace, split, strip
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
-import ".." / lib / [nifchecksums, tooldirs]
+import ".." / lib / [nifchecksums, tooldirs, argsfinder]
 
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -25,16 +25,10 @@ proc stdlibDir*(): string =
   else:
     result = appDir / "lib"
 
-proc setupPaths*(config: var NifConfig; useEnv: bool) =
-  if useEnv:
-    let nimPath = getEnv("NIMPATH")
-    for entry in split(nimPath, PathSep):
-      if entry.strip != "":
-        config.paths.add entry
-    if config.paths.len == 0:
-      config.paths.add stdlibDir()
-  else:
-    config.paths.add stdlibDir()
+proc setupPaths*(config: var NifConfig) =
+  config.paths.add stdlibDir()
+  let pathsFile = findArgs(config.baseDir, ".paths")
+  processPathsFile pathsFile, config.paths
 
 proc stdlibFile*(f: string): string =
   result = stdlibDir() / f
@@ -75,9 +69,10 @@ proc nimexec(cmd: string) =
 
 proc updateCompilerGitSubmodules*(config: NifConfig) =
   # XXX: hack for more convenient development
+  let cwd = getCurrentDir()
   setCurrentDir compilerDir()
   exec "git submodule update --init"
-  setCurrentDir config.currentPath
+  setCurrentDir cwd
 
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)

@@ -10,6 +10,7 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
+import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen
 
 const
@@ -27,8 +28,6 @@ Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
   -p, --path:PATH           add PATH to the search path
   --compat                  turn on compatibility mode
-  --noenv                   do not read configuration from `NIM_*`
-                            environment variables
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
@@ -58,9 +57,8 @@ proc handleCmdLine() =
   var args: seq[string] = @[]
   var cmd = Command.None
   var forceRebuild = false
-  var useEnv = true
   var moduleFlags: set[ModuleFlag] = {}
-  var config = initNifConfig()
+  var config = initNifConfig(determineBaseDir())
   var commandLineArgs = ""
   for kind, key, val in getopt():
     case kind
@@ -85,7 +83,6 @@ proc handleCmdLine() =
       of "compat": config.compat = true
       of "path", "p": config.paths.add val
       of "define", "d": config.defines.incl val
-      of "noenv": useEnv = false
       of "nosystem": moduleFlags.incl SkipSystem
       of "issystem":
         moduleFlags.incl IsSystem
@@ -116,7 +113,7 @@ proc handleCmdLine() =
           commandLineArgs.add ":" & quoteShell(val)
 
     of cmdEnd: assert false, "cannot happen"
-  semos.setupPaths(config, useEnv)
+  semos.setupPaths(config)
   case cmd
   of None:
     quit "command missing"

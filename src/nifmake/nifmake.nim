@@ -9,7 +9,7 @@
 ## by a .nif file or it can translate this file to a Makefile.
 
 import std/[assertions, os, strutils, sequtils, tables, hashes, times, sets, parseopt, syncio, osproc]
-import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader, tooldirs]
+import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader, tooldirs, argsfinder]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[
@@ -55,6 +55,7 @@ type
   Command* = object
     name*: string
     tokens*: TokenBuf
+    ext*: string
 
   Node* = object
     cmdIdx*: int      # index into Dag.commands
@@ -71,6 +72,7 @@ type
     maxDepth*: int    # maximum depth in the DAG
     commands*: seq[Command]  # bidirectional mapping of commands
     timestampCache*: Table[string, Time]  # Cache for file modification times
+    baseDir*: string
 
   CliCommand = enum
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
@@ -98,15 +100,20 @@ proc addFilename(result: var string; filename, prefix, suffix: string) =
     # and so also subject to quoting:
     result.add (suffix & filename).quoteShell
 
-proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]): string =
+proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: string): string =
   result = ""
   if cmd.tokens.len == 0:
     quit "undeclared command: " & cmd.name
 
   var n = readonlyCursorAt(cmd.tokens, 0)
+  var toolArgs: seq[string] = @[]
   if n.kind == StringLit:
-    result.add quoteShell(findTool(pool.strings[n.litId]))
+    let tool = findTool(pool.strings[n.litId])
+    result.add quoteShell(tool)
     inc n
+    if baseDir.len > 0 and cmd.ext.len > 0:
+      let argsFile = findArgs(baseDir, extractArgsKey(tool) & cmd.ext)
+      processArgsFile argsFile, toolArgs
 
   while true:
     case n.kind
@@ -119,9 +126,15 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]): string =
     of ParLe:
       let tag = pool.tags[n.tag]
       if tag == "args":
+        # Add explicit arguments from the .nif file
         for i in 0..<args.len:
           addSpace(result)
           result.add args[i]
+        # Add tool-specific arguments (from .args files)
+        for arg in toolArgs:
+          addSpace(result)
+          result.add arg
+
         inc n
         skipParRi n
       else:
@@ -161,18 +174,18 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]): string =
     else:
       raiseAssert "unsupported token in `cmd` definition: " & $n.kind
 
-proc registerCommand(dag: var Dag; cmdName: string): int =
+proc registerCommand(dag: var Dag; cmdName: string; ext: string): int =
   for i in 0..<dag.commands.len:
     if dag.commands[i].name == cmdName:
       return i
   result = dag.commands.len
-  dag.commands.add Command(name: cmdName)
+  dag.commands.add Command(name: cmdName, ext: ext)
 
 proc addNode(dag: var Dag; cmdName: string;
-             inputs, outputs, args: sink seq[string]): int =
+             inputs, outputs, args: sink seq[string]; ext: string): int =
   ## Add a build node to the DAG and return its ID
   result = dag.nodes.len
-  let cmdIdx = registerCommand(dag, cmdName)
+  let cmdIdx = registerCommand(dag, cmdName, ext)
   let node = Node(
     cmdIdx: cmdIdx,
     inputs: inputs,
@@ -312,7 +325,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
           dag.removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
             echo "Building: ", node.outputs.join(", ")
-          let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args)
+          let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
           if Verbose in opt:
             echo "Command: ", expandedCmd
           commands.add(expandedCmd)
@@ -340,7 +353,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
         dag.removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
-        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args)
+        let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
         if Verbose in opt:
           echo "Command: ", expandedCmd
         if not executeCommand(expandedCmd):
@@ -388,7 +401,7 @@ proc generateMakefile(dag: Dag; filename: string) =
     content.add "\n"
 
     # Command line
-    let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args)
+    let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
     content.add "\t" & mescape(expandedCmd) & "\n\n"
 
   # Add clean target
@@ -407,6 +420,7 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
     inc n
 
     var tokens = createTokenBuf(4)
+    var argsext = ".args"
     while n.kind != ParRi:
       case n.kind
       of StringLit:
@@ -414,23 +428,28 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
         inc n
       of ParLe:
         let tag = pool.tags[n.tag]
-        if tag in ["input", "output", "args"]:
-          discard
+        if tag == "argsext":
+          inc n
+          if n.kind == StringLit:
+            argsext = pool.strings[n.litId]
+            inc n
+          skipParRi n
+        elif tag in ["input", "output", "args"]:
+          var nested = 0
+          while true:
+            if n.kind == ParLe:
+              inc nested
+            elif n.kind == ParRi:
+              dec nested
+            tokens.add n.load()
+            inc n
+            if nested == 0: break
         else:
           quit "unsupported tag in `cmd` definition: " & tag
-        var nested = 0
-        while true:
-          if n.kind == ParLe:
-            inc nested
-          elif n.kind == ParRi:
-            dec nested
-          tokens.add n.load()
-          inc n
-          if nested == 0: break
       else:
         quit "unsupported token in `cmd` definition: " & $n.kind
     tokens.addParRi()
-    let cmdIdx = registerCommand(dag, cmdName)
+    let cmdIdx = registerCommand(dag, cmdName, argsext)
     freeze tokens
     dag.commands[cmdIdx].tokens = tokens
   else:
@@ -477,11 +496,11 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
     else:
       quit "expected `input` or `output` in `do` definition, but found: " & $n.kind
 
-  discard addNode(dag, cmdName, inputs, outputs, args)
+  discard addNode(dag, cmdName, inputs, outputs, args, ".args")
 
-proc parseNifFile(filename: string): Dag =
+proc parseNifFile(filename: string; baseDir: sink string): Dag =
   ## Parse a .nif file and build the DAG
-  result = Dag(timestampCache: initTable[string, Time]())
+  result = Dag(timestampCache: initTable[string, Time](), baseDir: baseDir)
 
   if not fileExists(filename):
     quit "File not found: " & filename
@@ -534,6 +553,8 @@ Options:
   --makefile <name>     Output Makefile name (default: Makefile)
   --force               Force rebuild of all targets
   --verbose             Show verbose output
+  --base:<dir>          Use <dir> as base directory for `.args` files.
+                        If not set, no `.args` files are processed.
 
 Examples:
   nifmake run build.nif
@@ -552,6 +573,7 @@ proc main() =
     inputFile = ""
     outputMakefile = "Makefile"
     opt: set[CliOption] = {}
+    baseDir = ""
 
   for kind, key, val in getopt():
     case kind
@@ -575,6 +597,7 @@ proc main() =
       of "makefile": outputMakefile = val
       of "force": opt.incl Force
       of "verbose": opt.incl Verbose
+      of "base": baseDir = val
       else:
         echo "Unknown option: --", key
         quit(1)
@@ -588,7 +611,7 @@ proc main() =
     if inputFile == "":
       quit "Input file required for 'run' command"
 
-    var dag = parseNifFile(inputFile)
+    var dag = parseNifFile(inputFile, baseDir)
     if not runDag(dag, opt):
       quit 1
 
@@ -596,7 +619,7 @@ proc main() =
     if inputFile == "":
       quit "Input file required for 'makefile' command"
 
-    let dag = parseNifFile(inputFile)
+    let dag = parseNifFile(inputFile, baseDir)
     generateMakefile(dag, outputMakefile)
     echo "Generated: ", outputMakefile
 
