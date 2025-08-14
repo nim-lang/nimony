@@ -29,6 +29,7 @@ proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
   let pathsFile = findArgs(config.baseDir, "nimony.paths")
   processPathsFile pathsFile, config.paths
+  #echo getAppFilename(), "CONFIG.BASEDIR: ", config.baseDir, " CONFIG.PATHS: ", config.paths
 
 proc stdlibFile*(f: string): string =
   result = stdlibDir() / f

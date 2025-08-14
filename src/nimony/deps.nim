@@ -519,6 +519,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
       b.addStrLit c.nimsem
+      if c.config.baseDir.len > 0:
+        b.addStrLit "--base:" & quoteShell(c.config.baseDir)
       if commandLineArgs.len > 0:
         for arg in commandLineArgs.split(' '):
           if arg.len > 0:
