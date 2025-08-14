@@ -42,7 +42,7 @@ There are different files that manage different aspects of the configuration:
 3. `$cc.args` is a text file that contains command line arguments that are passed to the used C compiler. `$cc` here stands for a general C compiler key. This key is extraced from the `--cc` command line option.
 4. `$linker.args` is a text file that contains command line arguments that are passed to the used linker. `$linker` here stands for a general linker key. This key is extraced from the `--linker` command line option. If `--linker` is not used the C compiler command is used for linking.
 
-`.args` files are processed before the real command line arguments are processed so that they can be overridden. An `.args` file can contain newlines as whitespace. Lines starting with `#` are comments.
+`.args` files are processed before the real command line arguments are processed so that they can be overridden. An `.args` file can contain newlines as whitespace. Lines starting with `#` are comments. The POSIX command line parsing rules are used: Whitespace enclosed within single or double quotes is kept as is and the quotes are removed.
 
 These files are searched for in the directory of the `<program>.nim` file and if not found in its parent directories. Only the first file found is used. The idea here is that nobody (neither humans nor tools) needs to perform a "merge" operation of different configuration files.
 

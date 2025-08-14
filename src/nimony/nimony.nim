@@ -102,7 +102,7 @@ type
     passL: string
     executableArgs: string
 
-proc createCmdOptions(baseDir: string): CmdOptions =
+proc createCmdOptions(baseDir: sink string): CmdOptions =
   CmdOptions(
     args: @[],
     cmd: Command.None,
@@ -231,6 +231,8 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
     of cmdEnd: assert false, "cannot happen"
 
 proc compileProgram(c: var CmdOptions) =
+  if c.config.linker.len == 0 and c.config.cc.len > 0:
+    c.config.linker = c.config.cc
   if c.args.len == 0:
     quit "too few command line arguments"
   elif c.args.len > 2 - int(c.cmd == FullProject):
