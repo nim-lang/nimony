@@ -375,6 +375,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         b.withTree "input":
           b.addIntLit 0
           b.addIntLit -1  # all inputs
+        b.withTree "argsext":
+          b.addStrLit ".linker.args"
         if passL.len > 0:
           for arg in passL.split(' '):
             if arg.len > 0:
