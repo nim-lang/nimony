@@ -69,9 +69,10 @@ proc nimexec(cmd: string) =
 
 proc updateCompilerGitSubmodules*(config: NifConfig) =
   # XXX: hack for more convenient development
+  let cwd = getCurrentDir()
   setCurrentDir compilerDir()
   exec "git submodule update --init"
-  setCurrentDir config.baseDir
+  setCurrentDir cwd
 
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)

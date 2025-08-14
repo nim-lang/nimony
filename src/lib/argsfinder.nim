@@ -50,16 +50,16 @@ proc findArgs*(baseDir: string; argsFileName: string): string =
 proc processArgsFile*(argsFile: string; args: var seq[string]) =
   if argsFile.len == 0: return
   for line in lines(argsFile):
-    if line.startsWith("#"):
+    if line.len == 0 or line.startsWith("#"):
       discard "ignore comment"
     else:
-      for arg in line.splitWhitespace():
+      for arg in parseCmdLine(line):
         args.add(arg)
 
 proc processPathsFile*(pathsFile: string; paths: var seq[string]) =
   if pathsFile.len == 0: return
   for line in lines(pathsFile):
-    if line.startsWith("#"):
+    if line.len == 0 or line.startsWith("#"):
       discard "ignore comment"
     else:
       paths.add(line)
