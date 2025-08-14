@@ -6,7 +6,7 @@
 
 ## Provides utility functions for the new "args configuration system".
 
-import std/[os, strutils, syncio]
+import std/[os, strutils, syncio, parseopt]
 
 proc extractArgsKey*(command: string): string =
   ## Extract the key from a command line option.
@@ -63,6 +63,20 @@ proc processPathsFile*(pathsFile: string; paths: var seq[string]) =
       discard "ignore comment"
     else:
       paths.add(line)
+
+proc determineBaseDir*(mainFileAt = 1): string =
+  # `mainFileAt` is the number of command line arguments to skip before
+  # the base directory can be extracted from a file name. It defaults to 1
+  # because the syntax is `nimony c myproject/main.nim`.
+  var cmd = mainFileAt
+  for kind, key, val in getopt():
+    case kind
+    of cmdArgument:
+      if cmd == 0:
+        return val.splitFile.dir
+      dec cmd
+    else: discard
+  return ""
 
 when isMainModule:
   import std/assertions

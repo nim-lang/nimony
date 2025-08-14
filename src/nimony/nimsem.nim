@@ -10,6 +10,7 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
+import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen
 
 const
@@ -57,7 +58,7 @@ proc handleCmdLine() =
   var cmd = Command.None
   var forceRebuild = false
   var moduleFlags: set[ModuleFlag] = {}
-  var config = initNifConfig()
+  var config = initNifConfig(determineBaseDir())
   var commandLineArgs = ""
   for kind, key, val in getopt():
     case kind

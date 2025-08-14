@@ -25,16 +25,17 @@ type
     cc*: string
     linker*: string
 
-proc initNifConfig*(): NifConfig =
-  result = NifConfig()
-  result.baseDir = getCurrentDir()
-  result.nifcachePath = "nimcache"
-  result.defines.incl "nimony"
-  result.bits = sizeof(int)*8
-  result.targetCPU = platform.nameToCPU(system.hostCPU)
-  result.targetOS = platform.nameToOS(system.hostOS)
-  result.cc = "gcc"
-  result.linker = "gcc"
+proc initNifConfig*(baseDir: sink string): NifConfig =
+  result = NifConfig(
+    baseDir: baseDir,
+    nifcachePath: "nimcache",
+    defines: toHashSet(["nimony"]),
+    bits: sizeof(int)*8,
+    targetCPU: platform.nameToCPU(system.hostCPU),
+    targetOS: platform.nameToOS(system.hostOS),
+    cc: "gcc",
+    linker: "gcc"
+  )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
   result = false
