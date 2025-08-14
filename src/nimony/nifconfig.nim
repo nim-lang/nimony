@@ -34,7 +34,7 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     targetCPU: platform.nameToCPU(system.hostCPU),
     targetOS: platform.nameToOS(system.hostOS),
     cc: "gcc",
-    linker: "gcc"
+    linker: ""
   )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =

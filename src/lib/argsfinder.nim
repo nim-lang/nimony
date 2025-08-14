@@ -8,6 +8,34 @@
 
 import std/[os, strutils, syncio, parseopt]
 
+proc parseCmdArg(c: string; i: int; a: var string): int =
+  # eat all delimiting whitespace
+  var i = i
+  while i < c.len and c[i] in {' ', '\t', '\l', '\r'}: inc(i)
+  if i >= c.len: return i
+  case c[i]
+  of '\'', '\"':
+    let delim = c[i]
+    inc(i) # skip ' or "
+    while i < c.len and c[i] != delim:
+      add a, c[i]
+      inc(i)
+    if i < c.len: inc(i)
+  else:
+    while i < c.len and c[i] > ' ':
+      add(a, c[i])
+      inc(i)
+  result = i
+
+proc parseCmdLinePosix(c: string; result: var seq[string]) =
+  ## Components are separated by whitespace unless the whitespace
+  ## occurs within ``"`` or ``'`` quotes.
+  var i = 0
+  var a = ""
+  while i < c.len:
+    i = parseCmdArg(c, i, a)
+    result.add(move a)
+
 proc extractArgsKey*(command: string): string =
   ## Extract the key from a command line option.
   ##
@@ -16,15 +44,17 @@ proc extractArgsKey*(command: string): string =
   ## - `/usr/bin/arm-linux-gnueabihf-gcc` → `arm-linux-gnueabihf-gcc`
   ## - `/usr/bin/x86_64-w64-mingw32-gcc.exe -Wall` → `x86_64-w64-mingw32-gcc`
   ## - `/usr/local/bin/clang` → `clang`
+  result = ""
+  discard parseCmdArg(command, 0, result)
   var i = 0
   var start = 0
-  while i < command.len:
-    case command[i]
+  while i < result.len:
+    case result[i]
     of '/', '\\': start = i + 1
-    of ' ', '.': break
+    of '.': break
     else: discard
     inc i
-  result = command.substr(start, i-1)
+  result = result.substr(start, i-1)
 
 proc findArgs*(baseDir: string; argsFileName: string): string =
   result = (try: expandFilename(baseDir) except: baseDir) / argsFileName
@@ -53,16 +83,19 @@ proc processArgsFile*(argsFile: string; args: var seq[string]) =
     if line.len == 0 or line.startsWith("#"):
       discard "ignore comment"
     else:
-      for arg in parseCmdLine(line):
-        args.add(arg)
+      parseCmdLinePosix(line, args)
 
 proc processPathsFile*(pathsFile: string; paths: var seq[string]) =
   if pathsFile.len == 0: return
+  let dir = pathsFile.splitFile.dir
+  let expanded = try: expandFilename(dir) except: dir
   for line in lines(pathsFile):
     if line.len == 0 or line.startsWith("#"):
       discard "ignore comment"
-    else:
+    elif isAbsolute(line):
       paths.add(line)
+    else:
+      paths.add(expanded / line)
 
 proc determineBaseDir*(mainFileAt = 1): string =
   # `mainFileAt` is the number of command line arguments to skip before
@@ -73,7 +106,7 @@ proc determineBaseDir*(mainFileAt = 1): string =
     case kind
     of cmdArgument:
       if cmd == 0:
-        return val.splitFile.dir
+        return key.splitFile.dir
       dec cmd
     else: discard
   return ""
@@ -87,6 +120,8 @@ when isMainModule:
   assert extractArgsKey("/usr/local/bin/clang") == "clang"
   assert extractArgsKey("/usr/bin/x86_64-w64-mingw32-gcc.exe -Wall") == "x86_64-w64-mingw32-gcc"
   assert extractArgsKey("/usr/local/bin/clang") == "clang"
+
+  assert extractArgsKey("'C:\\Program Files\\gcc\\bin\\gcc.exe' -Wall") == "gcc"
 
   echo findArgs(".", "gcc.args")
 

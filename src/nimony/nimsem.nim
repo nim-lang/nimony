@@ -34,6 +34,7 @@ Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
+  --base:PATH               set the base directory for the configuration system
   --nimcache:PATH           set the path used for generated files
   --flags:FLAGS             undocumented flags
   --version                 show the version
@@ -58,7 +59,7 @@ proc handleCmdLine() =
   var cmd = Command.None
   var forceRebuild = false
   var moduleFlags: set[ModuleFlag] = {}
-  var config = initNifConfig(determineBaseDir())
+  var config = initNifConfig("")
   var commandLineArgs = ""
   for kind, key, val in getopt():
     case kind
@@ -77,6 +78,7 @@ proc handleCmdLine() =
     of cmdLongOption, cmdShortOption:
       var forwardArg = true
       case normalize(key)
+      of "base": config.baseDir = val
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       of "forcebuild", "f", "ff": forceRebuild = true
