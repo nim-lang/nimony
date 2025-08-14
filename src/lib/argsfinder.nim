@@ -87,11 +87,15 @@ proc processArgsFile*(argsFile: string; args: var seq[string]) =
 
 proc processPathsFile*(pathsFile: string; paths: var seq[string]) =
   if pathsFile.len == 0: return
+  let dir = pathsFile.splitFile.dir
+  let expanded = try: expandFilename(dir) except: dir
   for line in lines(pathsFile):
     if line.len == 0 or line.startsWith("#"):
       discard "ignore comment"
-    else:
+    elif isAbsolute(line):
       paths.add(line)
+    else:
+      paths.add(expanded / line)
 
 proc determineBaseDir*(mainFileAt = 1): string =
   # `mainFileAt` is the number of command line arguments to skip before

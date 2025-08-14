@@ -37,7 +37,7 @@ With the `--compat` switch Nimony completely supports Nim's `nim.cfg` and NimScr
 
 There are different files that manage different aspects of the configuration:
 
-1. `nimony.args` is a text file that contains command line arguments that are processed as if they were passed to the command line.
+1. `nimony.args` is a text file that contains command line arguments that are processed as if they were passed on the command line.
 2. `nimony.paths` is a text file where every line is an entry to the search `--path`. This is so important for tooling that it became a separate file.
 3. `$cc.args` is a text file that contains command line arguments that are passed to the used C compiler. `$cc` here stands for a general C compiler key. This key is extraced from the `--cc` command line option.
 4. `$linker.args` is a text file that contains command line arguments that are passed to the used linker. `$linker` here stands for a general linker key. This key is extraced from the `--linker` command line option. If `--linker` is not used the C compiler command is used for linking.
