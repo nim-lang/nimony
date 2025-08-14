@@ -27,7 +27,7 @@ proc stdlibDir*(): string =
 
 proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
-  let pathsFile = findArgs(config.baseDir, ".paths")
+  let pathsFile = findArgs(config.baseDir, "nimony.paths")
   processPathsFile pathsFile, config.paths
 
 proc stdlibFile*(f: string): string =

@@ -106,7 +106,7 @@ proc determineBaseDir*(mainFileAt = 1): string =
     case kind
     of cmdArgument:
       if cmd == 0:
-        return val.splitFile.dir
+        return key.splitFile.dir
       dec cmd
     else: discard
   return ""
