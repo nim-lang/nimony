@@ -55,7 +55,7 @@ NIF supports reusable command definitions that can be used in multiple build rul
 Example command definition:
 
 ```nif
-(cmd :compile "nim" (arg) "c" "--out:" (output) (input))
+(cmd :compile "nim" (args) "c" "--out:" (output) (input))
 ```
 
 This command can be used in build rules:
