@@ -356,7 +356,9 @@ proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter =
   ## Opens a converter that can convert from `srcEncoding` to `destEncoding`.
   ## Raises `EncodingError` if it cannot fulfill the request.
   when not defined(windows):
-    result = iconvOpen(destEncoding.cstring, srcEncoding.cstring)
+    var destEncoding = destEncoding
+    var srcEncoding = srcEncoding
+    result = iconvOpen(destEncoding.toCString, srcEncoding.toCString)
     if result == cast[EncodingConverter](-1):
       raiseEncodingError("cannot create encoding converter from " &
         srcEncoding & " to " & destEncoding)
@@ -379,17 +381,18 @@ when defined(windows):
     var cap = s.len + s.len shr 2
     result = newString(cap*2)
     # convert to utf-16 LE
+    var s = s
     var m = multiByteToWideChar(codePage,
                                 dwFlags = 0'i32,
-                                lpMultiByteStr = cstring(s),
+                                lpMultiByteStr = toCString(s),
                                 cbMultiByte = cint(s.len),
-                                lpWideCharStr = cstring(result),
+                                lpWideCharStr = toCString(result),
                                 cchWideChar = cint(cap))
     if m == 0:
       # try again; ask for capacity:
       cap = multiByteToWideChar(codePage,
                                 dwFlags = 0'i32,
-                                lpMultiByteStr = cstring(s),
+                                lpMultiByteStr = toCString(s),
                                 cbMultiByte = cint(s.len),
                                 lpWideCharStr = nil,
                                 cchWideChar = cint(0))
@@ -397,9 +400,9 @@ when defined(windows):
       result = newString(cap*2)
       m = multiByteToWideChar(codePage,
                               dwFlags = 0'i32,
-                              lpMultiByteStr = cstring(s),
+                              lpMultiByteStr = toCString(s),
                               cbMultiByte = cint(s.len),
-                              lpWideCharStr = cstring(result),
+                              lpWideCharStr = toCString(result),
                               cchWideChar = cint(cap))
       if m == 0: raiseOSError(osLastError())
       setLen(result, m*2)
@@ -412,17 +415,18 @@ when defined(windows):
     let charCount = s.len div 2
     var cap = s.len + s.len shr 2
     result = newString(cap)
+    var s = s
     var m = wideCharToMultiByte(codePage,
                                 dwFlags = 0'i32,
-                                lpWideCharStr = cstring(s),
+                                lpWideCharStr = toCString(s),
                                 cchWideChar = cint(charCount),
-                                lpMultiByteStr = cstring(result),
+                                lpMultiByteStr = toCString(result),
                                 cbMultiByte = cap.cint)
     if m == 0:
       # try again; ask for capacity:
       cap = wideCharToMultiByte(codePage,
                                 dwFlags = 0'i32,
-                                lpWideCharStr = cstring(s),
+                                lpWideCharStr = toCString(s),
                                 cchWideChar = cint(charCount),
                                 lpMultiByteStr = nil,
                                 cbMultiByte = cint(0))
@@ -430,9 +434,9 @@ when defined(windows):
       result = newString(cap)
       m = wideCharToMultiByte(codePage,
                               dwFlags = 0'i32,
-                              lpWideCharStr = cstring(s),
+                              lpWideCharStr = toCString(s),
                               cchWideChar = cint(charCount),
-                              lpMultiByteStr = cstring(result),
+                              lpMultiByteStr = toCString(result),
                               cbMultiByte = cap.cint)
       if m == 0: raiseOSError(osLastError())
       setLen(result, m)
@@ -474,8 +478,8 @@ else:
     result = newString(s.len)
     var inLen = csize_t len(s)
     var outLen = csize_t len(result)
-    var src = cstring(s)
-    var dst = cstring(result)
+    var src = cast[cstring](s.rawData)
+    var dst = cast[cstring](result.rawData)
     var iconvres: csize_t = csize_t(0)
     while inLen > 0:
       iconvres = iconv(c, addr src, addr inLen, addr dst, addr outLen)
@@ -489,10 +493,10 @@ else:
           dec(inLen)
           dec(outLen)
         elif lerr == E2BIG:
-          var offset = cast[int](dst) - cast[int](cstring(result))
+          var offset = cast[int](dst) - cast[int](cast[cstring](result.rawData))
           setLen(result, len(result) + inLen.int * 2 + 5)
           # 5 is minimally one utf-8 char
-          dst = cast[cstring](cast[int](cstring(result)) + offset)
+          dst = cast[cstring](cast[int](cast[cstring](result.rawData)) + offset)
           outLen = csize_t(len(result) - offset)
         else:
           raiseOSError(lerr.OSErrorCode)
@@ -500,10 +504,10 @@ else:
     # not '\0'
     discard iconv(c, nil, nil, addr dst, addr outLen)
     if iconvres == high(csize_t) and errno == E2BIG:
-      var offset = cast[int](dst) - cast[int](cstring(result))
+      var offset = cast[int](dst) - cast[int](cast[cstring](result.rawData))
       setLen(result, len(result) + inLen.int * 2 + 5)
       # 5 is minimally one utf-8 char
-      dst = cast[cstring](cast[int](cstring(result)) + offset)
+      dst = cast[cstring](cast[int](cast[cstring](result.rawData)) + offset)
       outLen = csize_t(len(result) - offset)
       discard iconv(c, nil, nil, addr dst, addr outLen)
     # trim output buffer

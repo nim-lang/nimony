@@ -785,6 +785,10 @@ proc addMaybeBaseobjConv(c: var SemContext; m: var Match; beforeExpr: int) =
   else:
     c.dest.add m.args
 
+proc isStringLiteral(n: Cursor): bool =
+  # supposing it's a string type
+  result = n.kind == StringLit or n.exprKind == SufX
+
 proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLineInfo; beforeExpr: int) =
   const
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT}
@@ -797,7 +801,13 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
 
-  if (destBase.typeKind in IntegralTypes and srcBase.typeKind in IntegralTypes) or
+  if destBase.typeKind == CstringT and isStringType(srcBase):
+    if isStringLiteral(arg.n):
+      discard "ok"
+      c.dest.addSubtree arg.n
+    else:
+      c.buildErr info, "Only string literals can be converted to cstring. Use `toCString` for safe conversion."
+  elif (destBase.typeKind in IntegralTypes and srcBase.typeKind in IntegralTypes) or
      (destBase.isSomeStringType and srcBase.isSomeStringType) or
      (destBase.containsGenericParams or srcBase.containsGenericParams):
     discard "ok"
@@ -4316,13 +4326,27 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       discard "empty push"
     else:
       c.pragmaStack.add n
-    skipUntilEnd it.n
+    # semcheck push/pop pragmas in both SemcheckSignatures and SemcheckBodies phases
+    # so that pushed pragmas works for both procs and variables
+    if c.phase == SemcheckBodies:
+      skipUntilEnd it.n
+    else:
+      c.dest.addParLe PragmasS, it.n.info
+      c.takeToken it.n
+      while it.n.kind != ParRi:
+        c.takeTree it.n
+      c.dest.addParRi
   of PopP:
     if c.pragmaStack.len > 0:
       discard c.pragmaStack.pop
     else:
       buildErr c, it.n.info, "{.pop.} without a corresponding {.push.}"
-    inc it.n
+    if c.phase == SemcheckBodies:
+      inc it.n
+    else:
+      c.dest.addParLe PragmasS, it.n.info
+      c.takeToken it.n
+      c.dest.addParRi
   of PassLP:
     inc it.n
     let start = c.dest.len
@@ -4332,7 +4356,7 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       c.passL.add pool.strings[s]
     skipParRi it.n
   else:
-    buildErr c, it.n.info, "unsupported pragma"
+    buildErr c, it.n.info, "unsupported pragma", it.n
     skip it.n
     while it.n.kind != ParRi: skip it.n
 
@@ -4995,6 +5019,8 @@ proc phaseX(c: var SemContext; n: Cursor; x: SemPhase): TokenBuf =
     semStmt c, n, false
   takeParRi c, n
   result = move c.dest
+  # clear pragmaStack in case {.pop.} was not called
+  c.pragmaStack.setLen(0)
 
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
