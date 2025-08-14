@@ -7,18 +7,12 @@ nim --version
 Nim Compiler Version 2.3.1
 ```
 
-To build it run these commands:
+To build it run this command:
 
 ```
-nim c src/hastur
-src/hastur build nifler
-src/hastur build nimony
-src/hastur build hexer
-src/hastur build nifc
-src/hastur build nifmake
+nim c -r src/hastur build all
 ```
 
-These are also the names of the binaries that should be in `bin/`.
 
 # Usage
 
