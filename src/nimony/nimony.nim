@@ -277,7 +277,8 @@ when isMainModule:
     let argsFile = findArgs(c.config.baseDir, "nimony.args")
     var args: seq[string] = @[]
     processArgsFile argsFile, args
-    handleCmdLine(c, args, FromArgsFile)
+    if args.len > 0:
+      handleCmdLine(c, args, FromArgsFile)
 
   handleCmdLine(c, @[], FromCmdLine)
   compileProgram(c)
