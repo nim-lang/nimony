@@ -56,6 +56,14 @@ proc processArgsFile*(argsFile: string; args: var seq[string]) =
       for arg in line.splitWhitespace():
         args.add(arg)
 
+proc processPathsFile*(pathsFile: string; paths: var seq[string]) =
+  if pathsFile.len == 0: return
+  for line in lines(pathsFile):
+    if line.startsWith("#"):
+      discard "ignore comment"
+    else:
+      paths.add(line)
+
 when isMainModule:
   import std/assertions
   assert extractArgsKey("gcc") == "gcc"

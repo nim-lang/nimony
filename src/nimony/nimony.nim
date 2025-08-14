@@ -14,7 +14,7 @@ when defined(windows):
       {.link: "../../icons/nimony_icon.o".}
 
 import std / [parseopt, sets, strutils, os, assertions, syncio]
-import ".." / lib / tooldirs
+import ".." / lib / [tooldirs, argsfinder]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
@@ -38,8 +38,6 @@ Options:
   --ff                      force a full build
   -r, --run                 also run the compiled program
   --compat                  turn on compatibility mode
-  --noenv                   do not read configuration from `NIM_*`
-                            environment variables
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
@@ -49,6 +47,8 @@ Options:
   --silentMake              suppresses make output
   --nimcache:PATH           set the path used for generated files
   --boundchecks:on|off      turn bound checks on or off
+  --cc:C_COMPILER           set the C compiler
+  --linker:LINKER           set the linker
   --version                 show the version
   --help                    show this help
 """
@@ -71,13 +71,33 @@ type
   Command = enum
     None, SingleModule, FullProject
 
+proc dispatchBasicCommand(key: string): Command =
+  case key.normalize:
+  of "m":
+    SingleModule
+  of "c":
+    FullProject
+  else:
+    quit "command expected"
+
+proc determineBaseDir(): string =
+  # in a prepass determine the base directory for the configuration system:
+  var cmd = Command.None
+  for kind, key, val in getopt():
+    case kind
+    of cmdArgument:
+      if cmd == None: cmd = dispatchBasicCommand(key)
+      else:
+        return val.splitFile.dir
+    else: discard
+  return ""
+
 proc handleCmdLine() =
   var args: seq[string] = @[]
   var cmd = Command.None
   var forceRebuild = false
   var fullRebuild = false
   var silentMake = false
-  var useEnv = true
   var doRun = false
   var moduleFlags: set[ModuleFlag] = {}
   var config = initNifConfig()
@@ -89,17 +109,19 @@ proc handleCmdLine() =
   var checkModes = DefaultSettings
   var forwardArgsToExecutable = false
   var executableArgs = ""
+  config.baseDir = determineBaseDir()
+
+  when false:
+    # XXX To implement
+    if config.baseDir.len > 0:
+      let argsFile = findArgs(config.baseDir, "nimony.args")
+      processArgsFile argsFile, args
+
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
       if cmd == None:
-        case key.normalize:
-        of "m":
-          cmd = SingleModule
-        of "c":
-          cmd = FullProject
-        else:
-          quit "command expected"
+        cmd = dispatchBasicCommand(key)
       else:
         if forwardArgsToExecutable:
           executableArgs.add " " & quoteShell(key)
@@ -131,7 +153,6 @@ proc handleCmdLine() =
         of "compat": config.compat = true
         of "path", "p": config.paths.add val
         of "define", "d": config.defines.incl val
-        of "noenv": useEnv = false
         of "nosystem": moduleFlags.incl SkipSystem
         of "issystem":
           moduleFlags.incl IsSystem
@@ -177,6 +198,10 @@ proc handleCmdLine() =
         of "nimcache":
           config.nifcachePath = val
           forwardArgNifc = true
+        of "cc":
+          config.cc = val
+        of "linker":
+          config.linker = val
         else: writeHelp()
         if forwardArg:
           commandLineArgs.add " --" & key
@@ -196,7 +221,7 @@ proc handleCmdLine() =
   if checkModes != DefaultSettings:
     commandLineArgs.add " --flags:" & genFlags(checkModes)
 
-  semos.setupPaths(config, useEnv)
+  semos.setupPaths(config)
 
   case cmd
   of None:

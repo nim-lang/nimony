@@ -16,21 +16,25 @@ type
   NifConfig* = object
     defines*: HashSet[string]
     paths*, nimblePaths*: seq[string]
-    currentPath*: string
+    baseDir*: string # base directory for the configuration system
     nifcachePath*: string
     bits*: int
     compat*: bool
     targetCPU*: TSystemCPU
     targetOS*: TSystemOS
+    cc*: string
+    linker*: string
 
 proc initNifConfig*(): NifConfig =
   result = NifConfig()
-  result.currentPath = getCurrentDir()
+  result.baseDir = getCurrentDir()
   result.nifcachePath = "nimcache"
   result.defines.incl "nimony"
   result.bits = sizeof(int)*8
   result.targetCPU = platform.nameToCPU(system.hostCPU)
   result.targetOS = platform.nameToOS(system.hostOS)
+  result.cc = "gcc"
+  result.linker = "gcc"
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
   result = false
@@ -103,7 +107,7 @@ proc parseNifConfig*(configFile: string; result: var NifConfig) =
 
 proc getOptionsAsOneString*(config: NifConfig): string =
   ## Returns the concatenation of options that affects generated files.
-  result = "--cwd:" & config.currentPath
+  result = "--base:" & config.baseDir
 
   for i in config.defines:
     result.add(" -d:" & i)

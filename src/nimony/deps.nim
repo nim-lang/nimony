@@ -353,7 +353,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     # Command for C compiler (object files)
     b.withTree "cmd":
       b.addSymbolDef "cc"
-      b.addStrLit "gcc"  # Use gcc directly since environment handling is different
+      b.addStrLit c.config.cc
       b.addStrLit "-c"
       if passC.len > 0:
         for arg in passC.split(' '):
@@ -369,7 +369,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     if c.cmd in {DoCompile, DoRun}:
       b.withTree "cmd":
         b.addSymbolDef "link"
-        b.addStrLit "gcc"
+        b.addStrLit c.config.linker
         b.addStrLit "-o"
         b.addKeyw "output"
         b.withTree "input":
