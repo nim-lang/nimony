@@ -63,6 +63,6 @@ This way there is no hardcoded list of C compilers. In fact, C++ or an LLVM base
 
 ## The `--linker` command line option
 
-If the `--linker` command line option **is not** used, the C compiler's executable will also be used for linking. The used `.args` file is then `.linker.args`
+If the `--linker` command line option **is not** used, the C compiler's executable will also be used for linking. The used `.args` file is then `$cc.linker.args`.
 
 If the `--linker` command line option **is** used, the specified executable will be used for linking. As for the `--cc` option, the used `.args` file will then be `$linkerName.linker.args`. For example `--linker:gold.exe` will look for a configuration file `gold.linker.args`.

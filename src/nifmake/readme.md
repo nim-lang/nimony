@@ -50,7 +50,7 @@ NIF supports reusable command definitions that can be used in multiple build rul
 - A name
 - A sequence of tokens that can be:
   - String literals
-  - Special tags: `(input)`, `(output)`, `(args)`
+  - Special tags: `(input)`, `(output)`, `(args)`, `(argsext)`
 
 Example command definition:
 
@@ -76,6 +76,8 @@ After the indexes a suffix can be written: `(input 0 -1 ".nim")` produces `<inpu
 `(output)`: Refers to the output file(s) from index `N` to index `M`. The indexing and the prefixes and suffixes work just like it does for `(input)`.
 
 `(args)` stands for all arguments that are passed to the command via `(args)`. These are separated by spaces.
+
+`(argsext)` is the file extension that the tool supports so that additional command line arguments can be provided to the tool as long as the `--base` command line option of `nifmake` is used. `(argsext)` defaults to `.args` but for linkers is typically set to `.linker.args`.
 
 
 ## Build File Format
@@ -119,7 +121,7 @@ Each `do` statement defines a build rule:
   (cmd :nimsem "nimsem" (input) (output))
   (cmd :hexer "hexer" (input) (output))
   (cmd :nifc "nifc" (input) (output))
-  (cmd :gcc "-o" (output) (input))
+  (cmd :gcc "-o" (output) (input) (argsext ".linker.args"))
 
   (do nifler
     (input "src/main.nim")
