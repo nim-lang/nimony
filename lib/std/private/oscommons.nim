@@ -62,10 +62,12 @@ when supportedSystem:
     proc getSymlinkFileKind*(path: string):
         tuple[pc: PathComponent, isSpecial: bool] =
       # Helper function.
-      var s: Stat
+      var s: Stat = default(Stat)
       assert(path != "")
       result = (pcLinkToFile, false)
-      if stat(path, s) == 0'i32:
+
+      var path = path
+      if stat(path.toCString, s) == 0'i32:
         if S_ISDIR(s.st_mode):
           result = (pcLinkToDir, false)
         elif not S_ISREG(s.st_mode):
@@ -84,7 +86,9 @@ when supportedSystem:
       let d = newWideCString(dest)
       result = (int32 moveFileExW(s.toWideCString, d.toWideCString, MOVEFILE_COPY_ALLOWED or MOVEFILE_REPLACE_EXISTING)) != 0'i32
     else:
-      result = c_rename(source, dest) == 0'i32
+      var source = source
+      var dest = dest
+      result = c_rename(source.toCString, dest.toCString) == 0'i32
 
     if not result:
       let err = osLastError()
@@ -114,8 +118,9 @@ when supportedSystem:
         if a != -1'i32:
           result = (a and FILE_ATTRIBUTE_DIRECTORY) == 0'i32
     else:
-      var res: Stat
-      return stat(filename, res) >= 0'i32 and S_ISREG(res.st_mode)
+      var res: Stat = default(Stat)
+      var filename = filename
+      return stat(filename.toCString, res) >= 0'i32 and S_ISREG(res.st_mode)
 
 
   proc dirExists*(dir: string): bool {.tags: [ReadDirEffect],
@@ -132,8 +137,9 @@ when supportedSystem:
         if a != -1'i32:
           result = (a and FILE_ATTRIBUTE_DIRECTORY) != 0'i32
     else:
-      var res: Stat
-      result = stat(dir, res) >= 0'i32 and S_ISDIR(res.st_mode)
+      var res: Stat = default(Stat)
+      var dir = dir
+      result = stat(dir.toCString, res) >= 0'i32 and S_ISDIR(res.st_mode)
 
 
   proc symlinkExists*(link: string): bool {.tags: [ReadDirEffect],
@@ -152,8 +158,9 @@ when supportedSystem:
           # may also be needed.
           result = (a and FILE_ATTRIBUTE_REPARSE_POINT) != 0'i32
     else:
-      var res: Stat
-      result = lstat(link, res) >= 0'i32 and S_ISLNK(res.st_mode)
+      var res: Stat = default(Stat)
+      var link = link
+      result = lstat(link.toCString, res) >= 0'i32 and S_ISLNK(res.st_mode)
 
   when defined(windows) and not weirdTarget:
     proc openHandle*(path: string, followSymlink=true, writeAccess=false): Handle =
