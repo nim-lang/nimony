@@ -1817,6 +1817,7 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
     of PragmasS, AssumeS, AssertS:
       skip n
   else:
+    assert n.kind != ParRi
     error c, "statement expected, but got: ", n
 
 proc transformInlineRoutines(c: var EContext; n: var Cursor) =
