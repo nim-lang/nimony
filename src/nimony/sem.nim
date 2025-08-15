@@ -2471,7 +2471,7 @@ proc semFor(c: var SemContext; it: var Item) =
       let argType = iterCall.typ
       iterCall = Item(n: beginRead(callBuf), typ: c.types.autoType)
       shrink c.dest, beforeCall
-      semCall c, iterCall, {}
+      semCall c, iterCall, {PreferIterators}
       if isIteratorCall(c, beforeCall):
         discard "fine"
       elif iterCall.typ.typeKind == UntypedT or
