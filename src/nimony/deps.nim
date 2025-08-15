@@ -41,7 +41,8 @@ proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.m
 
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
-proc exeFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname.addFileExt ExeExt
+proc exeFile(config: NifConfig; f: FilePair): string =
+  config.nifcachePath / f.nimFile.splitFile.name.addFileExt(ExeExt)
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -353,7 +354,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     # Command for C compiler (object files)
     b.withTree "cmd":
       b.addSymbolDef "cc"
-      b.addStrLit "gcc"  # Use gcc directly since environment handling is different
+      b.addStrLit c.config.cc
       b.addStrLit "-c"
       if passC.len > 0:
         for arg in passC.split(' '):
@@ -369,12 +370,14 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     if c.cmd in {DoCompile, DoRun}:
       b.withTree "cmd":
         b.addSymbolDef "link"
-        b.addStrLit "gcc"
+        b.addStrLit c.config.linker
         b.addStrLit "-o"
         b.addKeyw "output"
         b.withTree "input":
           b.addIntLit 0
           b.addIntLit -1  # all inputs
+        b.withTree "argsext":
+          b.addStrLit ".linker.args"
         if passL.len > 0:
           for arg in passL.split(' '):
             if arg.len > 0:
@@ -517,6 +520,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
       b.addStrLit c.nimsem
+      if c.config.baseDir.len > 0:
+        b.addStrLit "--base:" & quoteShell(c.config.baseDir)
       if commandLineArgs.len > 0:
         for arg in commandLineArgs.split(' '):
           if arg.len > 0:
@@ -611,6 +616,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
+    " --base:" & quoteShell(config.baseDir) &
     " -j run "
   exec nifmakeCommand & quoteShell(buildFilename)
 

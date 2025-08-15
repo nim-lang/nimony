@@ -293,6 +293,14 @@ proc pred*(a: xint): xint = a - createXint 1'u64
 
 proc inc*(x: var xint) = x = x + createXint 1'u64
 
+proc toFloat64*(x: xint): float64 =
+  if x.nan:
+    NaN
+  elif x.neg:
+    -float64(x.val)
+  else:
+    float64(x.val)
+
 when isMainModule:
   var a = createXint(10'i64)
   var b = createXint(-5'i64)

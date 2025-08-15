@@ -413,14 +413,14 @@ N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, 
 }
 NIM_THREADVAR NB8 NIFC_ERR_;
 #include <stdio.h>
-typedef struct __attribute__ ((__packed__)) Foo_0_tpakvxko41{
-  NC8 c_0_tpakvxko41;
-  NI x_0_tpakvxko41;}
-Foo_0_tpakvxko41;
 typedef struct string_0_sysvq0asl{
   NC8* a_0_sysvq0asl;
   NI i_0_sysvq0asl;}
 string_0_sysvq0asl;
+typedef struct __attribute__ ((__packed__)) Foo_0_tpakvxko41{
+  NC8 c_0_tpakvxko41;
+  NI x_0_tpakvxko41;}
+Foo_0_tpakvxko41;
 extern void write_0_syn1lfpjv(FILE* f_4, string_0_sysvq0asl s_0);
 extern void write_5_syn1lfpjv(FILE* f_9, NC8 c_1);
 extern void quit_0_syn1lfpjv(NI value_1);
