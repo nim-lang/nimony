@@ -475,8 +475,11 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
       return
     let res = tryLoadSym(s)
     if res.status == LacksNothing:
-      var body = asTypeDecl(res.decl).body
-      if body.typeKind == DistinctT: # skips DistinctT
+      var typeDecl = asTypeDecl(res.decl)
+      let prag = parsePragmas(c, typeDecl.pragmas)
+      var body = typeDecl.body
+      if body.typeKind == DistinctT and
+          prag.flags * {ImportcP, ImportcppP} == {}: # skips DistinctT
         inc body
         trType(c, body, flags)
         inc n
