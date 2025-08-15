@@ -92,7 +92,7 @@ when defined(windows):
 
 
   proc default*(x: typedesc[Handle]): Handle = Handle 0
-  proc `==`(x, y: Handle): bool {.borrow.}
+  proc `==`*(x, y: Handle): bool {.borrow.}
   func isNil*(x: Handle): bool = x == Handle 0
 
   proc `==`(x, y: WINBOOL): bool {.borrow.}
