@@ -41,7 +41,8 @@ proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.m
 
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
-proc exeFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname.addFileExt ExeExt
+proc exeFile(config: NifConfig; f: FilePair): string =
+  config.nifcachePath / f.nimFile.splitFile.name.addFileExt(ExeExt)
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
