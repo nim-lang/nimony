@@ -169,6 +169,9 @@ proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
   result = "nimcache" / name.addFileExt(ext)
 
+proc generatedExeFile(orig: string): string =
+  result = "nimcache" / orig.splitFile.name.addFileExt(ExeExt)
+
 proc removeMakeErrors(output: string): string =
   result = output.strip
   for prefix in ["FAILURE:", "make:"]:
@@ -250,7 +253,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       diffFiles c, file, cfile, nimcacheC, overwrite
 
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       var output = file.changeFileExt(".output")
       if testProgramExitCode != 0:
@@ -417,7 +420,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       let ext = if testProgramExitCode != 0: ".exitcode" else: ".output"
       addTestSpec test.changeFileExt(ext), testProgramOutput
