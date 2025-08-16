@@ -6,6 +6,7 @@ There is a [blog post](https://nim-lang.org/araq/nimony.html) about its design p
 The current focus is on developing a compiler for a Nim dialect that offers:
 
 - Incremental recompilations.
+- Fully parallel builds.
 - No forward declarations for procs and types required.
 - Type-checked generics.
 
