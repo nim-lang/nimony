@@ -10,6 +10,12 @@ import std / [strutils, tables, os]
 import packages / docutils / highlite
 import "$nim" / compiler / [lexer, llstream, parser, ast, renderer, pathutils, options, msgs, syntaxes, idents]
 
+const
+  StrLitBegin = "<em>"
+  StrLitEnd = "</em>"
+  NimCodePrefix = "```nim"
+  NimCodeSuffix = "```"
+
 type
   Declaration = object
     name: string
@@ -19,6 +25,7 @@ type
     decls: seq[Declaration]
   Context = object
     nimCode: Table[string, Declarations]
+    nextTestId: int
 
 proc createConf(): ConfigRef =
   result = newConfigRef()
@@ -79,9 +86,6 @@ proc extractDecls(n: PNode; results: var seq[Declaration]) =
   else:
     for ch in n: extractDecls(ch, results)
 
-const
-  StrLitSpan = "<span style=\"color: #6a737d;\">"
-
 proc nodeToString(n: PNode; hasNewlines: var bool): string =
   result = ""
   var r = initTokRender(n, {renderNoBody, renderNoComments, renderDocComments,
@@ -97,14 +101,14 @@ proc nodeToString(n: PNode; hasNewlines: var bool): string =
       result.add tok
       result.add "</b>"
     elif kind in tkStrLit..tkCharLit:
-      result.add StrLitSpan
+      result.add StrLitBegin
       result.add tok
-      result.add "</span>"
+      result.add StrLitEnd
     else:
       result.add tok
       if kind == tkSpaces and tok.len > 0 and tok[0] == '\n': hasNewlines = true
 
-proc fillinCode(result: var string; c: var Context; ident, currentFile: string) =
+proc fillinCode(result: var string; c: var Context; ident, currentFile: string; headerDepth: int) =
   var d = c.nimCode.getOrDefault(currentFile)
   if d == nil:
     let nodes = parseFile(currentFile)
@@ -118,9 +122,9 @@ proc fillinCode(result: var string; c: var Context; ident, currentFile: string) 
     for decl in mitems(d.decls):
       if decl.name == ident:
         if matches == 0:
-          result.add "<h1>"
+          result.add "<h" & $headerDepth & ">"
           result.add ident
-          result.add "</h1>\n"
+          result.add "</h" & $headerDepth & ">\n"
 
         decl.covered = true
         var hasNewlines = false
@@ -129,10 +133,6 @@ proc fillinCode(result: var string; c: var Context; ident, currentFile: string) 
         result.add s
         result.add "</code></pre>\n"
         inc matches
-
-const
-  NimCodePrefix = "```nim"
-  NimCodeSuffix = "```"
 
 proc nimCodeToHtml(code: string): string =
   var g: GeneralTokenizer
@@ -146,13 +146,13 @@ proc nimCodeToHtml(code: string): string =
     of gtKeyword:
       result.add "<b>"
     of gtStringLit, gtLongStringLit, gtCharLit:
-      result.add StrLitSpan
+      result.add StrLitBegin
     else: discard
 
     add(result, substr(code, g.start, g.length + g.start - 1))
     case g.kind
     of gtKeyword: result.add "</b>"
-    of gtStringLit, gtLongStringLit, gtCharLit: result.add "</span>"
+    of gtStringLit, gtLongStringLit, gtCharLit: result.add StrLitEnd
     else: discard
   deinitGeneralTokenizer(g)
 
@@ -171,17 +171,24 @@ proc processMarkdown(c: var Context; md: string; currentFile: var string): strin
       inc i
     elif md[i] == '#' and md[i+1] notin Whitespace:
       inc i
+      var headerDepth = 1
+      while i < md.len and md[i] == '#':
+        inc headerDepth
+        inc i
       var ident = ""
       while i < md.len and md[i] notin Whitespace:
         ident.add md[i]
         inc i
 
-      result.fillinCode(c, ident, currentFile)
+      result.fillinCode(c, ident, currentFile, headerDepth)
     elif md.continuesWith(NimCodePrefix, i):
       # render the code block ourselves to have a shield against broken highlighting:
       inc i, NimCodePrefix.len
       while i < md.len and md[i] == ' ': inc i
-      if md.continuesWith("test", i): inc i, len("test")
+      var isTest = false
+      if md.continuesWith("test", i):
+        inc i, len("test")
+        isTest = true
       while i < md.len and md[i] == ' ': inc i
 
       var code = ""
@@ -194,6 +201,10 @@ proc processMarkdown(c: var Context; md: string; currentFile: var string): strin
       result.add "</code></pre>"
       # also see if it is followed by ` test`. If so, extract it as a
       # test case. But let hastur run it later.
+      if isTest:
+        inc c.nextTestId
+        createDir("tests/dagon")
+        writeFile("tests/dagon/t" & $c.nextTestId & ".nim", code)
     else:
       result.add md[i]
       inc i
