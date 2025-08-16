@@ -6,9 +6,25 @@
 ## Dagon produces HTML code inside the Markdown file so that we are
 ## independent of Markdown's typically terrible Nim code renderer.
 
-import std / [strutils, tables, os]
+import std / [strutils, tables, os, parseopt]
 import packages / docutils / highlite
 import "$nim" / compiler / [lexer, llstream, parser, ast, renderer, pathutils, options, msgs, syntaxes, idents]
+
+const
+  Usage = """
+Dagon - Nim documentation generator
+
+Usage: dagon [options] <input-file>
+
+Options:
+  -o, --output <file>     Output file (default: input file with `.src.` replaced by `.`)
+  -h, --help             Show this help message
+  --tests <dir>          Directory to store test files (default: tests/dagon)
+
+Examples:
+  dagon docs.nim.src.md
+  dagon -o:output.md docs.nim.src.md
+"""
 
 const
   StrLitBegin = "<em>"
@@ -156,7 +172,7 @@ proc nimCodeToHtml(code: string): string =
     else: discard
   deinitGeneralTokenizer(g)
 
-proc processMarkdown(c: var Context; md: string; currentFile: var string): string =
+proc process(c: var Context; md: string; currentFile: var string; baseDir, testsDir: string): string =
   var i = 0
   result = newStringOfCap(md.len)
   while i < md.len-1:
@@ -168,6 +184,8 @@ proc processMarkdown(c: var Context; md: string; currentFile: var string): strin
       while i < md.len and md[i] != '\n':
         currentFile.add md[i]
         inc i
+      if not isAbsolute(currentFile):
+        currentFile = baseDir / currentFile
       inc i
     elif md[i] == '#' and md[i+1] notin Whitespace:
       inc i
@@ -180,6 +198,8 @@ proc processMarkdown(c: var Context; md: string; currentFile: var string): strin
         ident.add md[i]
         inc i
 
+      if currentFile.len == 0:
+        quit "No file specified, use '@file' to specify the file"
       result.fillinCode(c, ident, currentFile, headerDepth)
     elif md.continuesWith(NimCodePrefix, i):
       # render the code block ourselves to have a shield against broken highlighting:
@@ -203,30 +223,68 @@ proc processMarkdown(c: var Context; md: string; currentFile: var string): strin
       # test case. But let hastur run it later.
       if isTest:
         inc c.nextTestId
-        createDir("tests/dagon")
-        writeFile("tests/dagon/t" & $c.nextTestId & ".nim", code)
+        createDir(testsDir)
+        writeFile(testsDir / "t" & $c.nextTestId & ".nim", code)
     else:
       result.add md[i]
       inc i
 
-proc main(infile, outfile: string) =
-  if outfile == 0 and not infile.contains(".src."):
+proc showHelp() =
+  echo Usage
+
+proc main() =
+  var
+    infile = ""
+    outfile = ""
+    testsDir = "tests/dagon"
+
+  var p = initOptParser()
+  while true:
+    next(p)
+    case p.kind
+    of cmdEnd: break
+    of cmdShortOption, cmdLongOption:
+      case p.key
+      of "o", "output":
+        outfile = p.val
+      of "h", "help":
+        showHelp()
+        quit QuitSuccess
+      of "tests":
+        testsDir = p.val
+      else:
+        echo "Unknown option: ", p.key
+        showHelp()
+        quit QuitFailure
+    of cmdArgument:
+      if infile.len == 0:
+        infile = p.key
+      else:
+        echo "Multiple input files not supported"
+        quit QuitFailure
+
+  if infile.len == 0:
+    echo "No input file specified"
+    showHelp()
+    quit QuitFailure
+
+  if outfile.len == 0 and not infile.contains(".src."):
     echo "Input file must contain `.src.`"
     quit QuitFailure
 
   var c = Context()
   let content = readFile(infile)
-  var currentFile = "lib/std" / infile.splitFile.name & ".nim"
-  let md = processMarkdown(c, content, currentFile)
-  let outf = if outfile == 0: infile.replace(".src.", ".") else: outfile
+  var currentFile = ""
+  let baseDir = infile.splitFile.dir
+  let md = process(c, content, currentFile, baseDir, testsDir)
+  let outf = if outfile.len == 0: infile.replace(".src.", ".") else: outfile
   writeFile(outf, md)
+
   # warn about uncovered declarations:
   for file in c.nimCode.keys:
     for decl in mitems(c.nimCode[file].decls):
       if not decl.covered:
         echo "Warning: `" & decl.name & "` in " & file & " is not documented"
 
-if paramCount() == 0:
-  echo "Usage: dagon <input file>"
-  quit QuitFailure
-main paramStr(1), (if paramCount() > 1: paramStr(2) else: "")
+when isMainModule:
+  main()
