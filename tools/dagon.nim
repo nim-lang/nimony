@@ -209,16 +209,17 @@ proc processMarkdown(c: var Context; md: string; currentFile: var string): strin
       result.add md[i]
       inc i
 
-proc main(infile: string) =
-  if not infile.endsWith(".src.md"):
-    echo "Input file must end with .src.md"
+proc main(infile, outfile: string) =
+  if outfile == 0 and not infile.contains(".src."):
+    echo "Input file must contain `.src.`"
     quit QuitFailure
 
   var c = Context()
   let content = readFile(infile)
   var currentFile = "lib/std" / infile.splitFile.name & ".nim"
   let md = processMarkdown(c, content, currentFile)
-  writeFile(infile.replace(".src.md", ".md"), md)
+  let outf = if outfile == 0: infile.replace(".src.", ".") else: outfile
+  writeFile(outf, md)
   # warn about uncovered declarations:
   for file in c.nimCode.keys:
     for decl in mitems(c.nimCode[file].decls):
@@ -228,4 +229,4 @@ proc main(infile: string) =
 if paramCount() == 0:
   echo "Usage: dagon <input file>"
   quit QuitFailure
-main paramStr(1)
+main paramStr(1), (if paramCount() > 1: paramStr(2) else: "")
