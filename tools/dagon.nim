@@ -7,6 +7,7 @@
 ## independent of Markdown's typically terrible Nim code renderer.
 
 import std / [strutils, tables, os]
+import packages / docutils / highlite
 import "$nim" / compiler / [lexer, llstream, parser, ast, renderer, pathutils, options, msgs, syntaxes, idents]
 
 type
@@ -78,6 +79,9 @@ proc extractDecls(n: PNode; results: var seq[Declaration]) =
   else:
     for ch in n: extractDecls(ch, results)
 
+const
+  StrLitSpan = "<span style=\"color: #6a737d;\">"
+
 proc nodeToString(n: PNode; hasNewlines: var bool): string =
   result = ""
   var r = initTokRender(n, {renderNoBody, renderNoComments, renderDocComments,
@@ -93,7 +97,7 @@ proc nodeToString(n: PNode; hasNewlines: var bool): string =
       result.add tok
       result.add "</b>"
     elif kind in tkStrLit..tkCharLit:
-      result.add "<span style=\"color: #6a737d;\">"
+      result.add StrLitSpan
       result.add tok
       result.add "</span>"
     else:
@@ -121,10 +125,36 @@ proc fillinCode(result: var string; c: var Context; ident, currentFile: string) 
         decl.covered = true
         var hasNewlines = false
         let s = decl.ast.nodeToString(hasNewlines)
-        result.add "<code>"
+        result.add "<pre><code>"
         result.add s
-        result.add "\n</code>\n"
+        result.add "</code></pre>\n"
         inc matches
+
+const
+  NimCodePrefix = "```nim"
+  NimCodeSuffix = "```"
+
+proc nimCodeToHtml(code: string): string =
+  var g: GeneralTokenizer
+  initGeneralTokenizer(g, code)
+  result = newStringOfCap(code.len * 2)
+  while true:
+    getNextToken(g, langNim)
+    case g.kind
+    of gtEof: break
+    of gtNone, gtWhitespace: discard
+    of gtKeyword:
+      result.add "<b>"
+    of gtStringLit, gtLongStringLit, gtCharLit:
+      result.add StrLitSpan
+    else: discard
+
+    add(result, substr(code, g.start, g.length + g.start - 1))
+    case g.kind
+    of gtKeyword: result.add "</b>"
+    of gtStringLit, gtLongStringLit, gtCharLit: result.add "</span>"
+    else: discard
+  deinitGeneralTokenizer(g)
 
 proc processMarkdown(c: var Context; md: string; currentFile: var string): string =
   var i = 0
@@ -147,11 +177,32 @@ proc processMarkdown(c: var Context; md: string; currentFile: var string): strin
         inc i
 
       result.fillinCode(c, ident, currentFile)
+    elif md.continuesWith(NimCodePrefix, i):
+      # render the code block ourselves to have a shield against broken highlighting:
+      inc i, NimCodePrefix.len
+      while i < md.len and md[i] == ' ': inc i
+      if md.continuesWith("test", i): inc i, len("test")
+      while i < md.len and md[i] == ' ': inc i
+
+      var code = ""
+      while i < md.len and not md.continuesWith(NimCodeSuffix, i):
+        code.add md[i]
+        inc i
+      inc i, NimCodeSuffix.len
+      result.add "<pre><code>"
+      result.add nimCodeToHtml(code)
+      result.add "</code></pre>"
+      # also see if it is followed by ` test`. If so, extract it as a
+      # test case. But let hastur run it later.
     else:
       result.add md[i]
       inc i
 
 proc main(infile: string) =
+  if not infile.endsWith(".src.md"):
+    echo "Input file must end with .src.md"
+    quit QuitFailure
+
   var c = Context()
   let content = readFile(infile)
   var currentFile = "lib/std" / infile.splitFile.name & ".nim"
