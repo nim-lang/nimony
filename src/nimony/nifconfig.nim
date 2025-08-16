@@ -24,6 +24,7 @@ type
     targetOS*: TSystemOS
     cc*: string
     linker*: string
+    ccKey*: string
 
 proc initNifConfig*(baseDir: sink string): NifConfig =
   result = NifConfig(
@@ -123,6 +124,8 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
   elif cmpIgnoreStyle(symbol, platform.CPU[config.targetCPU].name) == 0:
     result = true
   elif cmpIgnoreStyle(symbol, platform.OS[config.targetOS].name) == 0:
+    result = true
+  elif cmpIgnoreStyle(symbol, config.ccKey) == 0:
     result = true
   else:
     case symbol.normalize

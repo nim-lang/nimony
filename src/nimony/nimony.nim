@@ -209,13 +209,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           forwardArgNifc = true
         of "cc":
           c.config.cc = val
-          var def = extractArgsKey val
-          var dash = def.len-1
-          while dash >= 0 and def[dash] != '-': dec dash
-          if dash >= 0:
-            def = def.substr(dash+1)
-          if def.len > 0:
-            c.config.defines.incl def
+          c.config.ccKey = extractCCKey(val)
         of "linker":
           c.config.linker = val
         else: writeHelp()

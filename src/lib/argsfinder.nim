@@ -111,6 +111,13 @@ proc determineBaseDir*(mainFileAt = 1): string =
     else: discard
   return ""
 
+proc extractCCKey*(val: string): string =
+  result = extractArgsKey val
+  var dash = result.len-1
+  while dash >= 0 and result[dash] != '-': dec dash
+  if dash >= 0:
+    result = result.substr(dash+1)
+
 when isMainModule:
   import std/assertions
   assert extractArgsKey("gcc") == "gcc"

@@ -106,6 +106,11 @@ proc handleCmdLine() =
           quit "unknown OS: " & val
       of "flags":
         discard "nothing to do here yet, but forward these"
+      of "cc":
+        config.cc = val
+        config.ccKey = extractCCKey(val)
+      of "linker":
+        config.linker = val
       of "nimcache":
         config.nifcachePath = val
       else: writeHelp()
