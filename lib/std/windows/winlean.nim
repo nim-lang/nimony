@@ -11,11 +11,12 @@ when defined(windows):
 
   # See https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
   type
+    # TODO: typedef PVOID HANDLE;
     Handle* {.importc: "HANDLE", header: "<WinDef.h>", nodecl.} = distinct int
     LONG* {.importc: "LONG", header: "<WinDef.h>".} = int32
     WINBOOL* = distinct int32
       ## `WINBOOL` uses opposite convention as posix, !=0 meaning success.
-    DWORD* {.importc: "DWORD", header: "<WinDef.h>", nodecl.} = int32
+    DWORD* {.importc: "DWORD", header: "<WinDef.h>", nodecl.} = uint32
 
   let
     INVALID_HANDLE_VALUE* = cast[Handle](-1)
