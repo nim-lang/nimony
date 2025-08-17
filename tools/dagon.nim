@@ -1,10 +1,7 @@
 ## Dagon is Nimony's new documentation tool.
-## Currently it is very simple: It takes a `.src.md` file and
-## outputs a `.md` file. The `.src.md` file contains references to Nim proc
-## headers etc that Dagon fills in. This way the prototypes cannot
-## get out of sync. References to Nim identifiers are written as `#namehere` (without the backticks).
-## Dagon produces HTML code inside the Markdown file so that we are
-## independent of Markdown's typically terrible Nim code renderer.
+## Currently it is very simple: It takes a `.dgn.md` or `.dgn.html` file and
+## outputs a `.md` or `.html` file. The input file contains references to Nim symbols that Dagon fills in. References to Nim identifiers are written as `#namehere` (without the backticks) in the input file.
+## Dagon produces HTML code that works both within an HTML and a Markdown output file.
 
 import std / [strutils, tables, os, parseopt]
 import packages / docutils / highlite
@@ -12,18 +9,18 @@ import "$nim" / compiler / [lexer, llstream, parser, ast, renderer, pathutils, o
 
 const
   Usage = """
-Dagon - Nim documentation generator
+Dagon - Nim documentation preprocessor
 
 Usage: dagon [options] <input-file>
 
 Options:
-  -o, --output <file>     Output file (default: input file with `.src.` replaced by `.`)
+  -o, --output:<file>     Output file (default: input file with `.dgn.` that is replaced by `.`)
   -h, --help             Show this help message
-  --tests <dir>          Directory to store test files (default: tests/dagon)
+  --tests:<dir>          Directory to store test files (default: tests/dagon)
 
 Examples:
-  dagon docs.nim.src.md
-  dagon -o:output.md docs.nim.src.md
+  dagon docs.dgn.md
+  dagon -o:output.md docs.dgn.md
 """
 
 const
@@ -268,8 +265,8 @@ proc main() =
     showHelp()
     quit QuitFailure
 
-  if outfile.len == 0 and not infile.contains(".src."):
-    echo "Input file must contain `.src.`"
+  if outfile.len == 0 and not infile.contains(".dgn."):
+    echo "Input file must contain `.dgn.`"
     quit QuitFailure
 
   var c = Context()
@@ -277,7 +274,7 @@ proc main() =
   var currentFile = ""
   let baseDir = infile.splitFile.dir
   let md = process(c, content, currentFile, baseDir, testsDir)
-  let outf = if outfile.len == 0: infile.replace(".src.", ".") else: outfile
+  let outf = if outfile.len == 0: infile.replace(".dgn.", ".") else: outfile
   writeFile(outf, md)
 
   # warn about uncovered declarations:
