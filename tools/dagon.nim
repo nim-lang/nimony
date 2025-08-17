@@ -3,7 +3,7 @@
 ## outputs a `.md` or `.html` file. The input file contains references to Nim symbols that Dagon fills in. References to Nim identifiers are written as `#namehere` (without the backticks) in the input file.
 ## Dagon produces HTML code that works both within an HTML and a Markdown output file.
 
-import std / [strutils, tables, os, parseopt]
+import std / [strutils, tables, sets, os, parseopt]
 import packages / docutils / highlite
 import "$nim" / compiler / [lexer, llstream, parser, ast, renderer, pathutils, options, msgs, syntaxes, idents]
 
@@ -39,6 +39,7 @@ type
   Context = object
     nimCode: Table[string, Declarations]
     nextTestId: int
+    included: HashSet[string]
 
 proc createConf(): ConfigRef =
   result = newConfigRef()
@@ -177,14 +178,30 @@ proc process(c: var Context; md: string; currentFile: var string; baseDir, tests
       # file processing instruction:
       if md[i] == '\n': inc i
       inc i
-      currentFile.setLen 0
-      while i < md.len and md[i] != '\n':
-        currentFile.add md[i]
-        inc i
-      if not isAbsolute(currentFile):
-        currentFile = baseDir / currentFile
-      inc i
-    elif md[i] == '#' and md[i+1] notin Whitespace:
+      if md.continuesWith("include ", i):
+        inc i, len("include ")
+        while i < md.len and md[i] == ' ': inc i
+
+        var includeFile = ""
+        while i < md.len and md[i] != '\n':
+          includeFile.add md[i]
+          inc i
+        if not isAbsolute(includeFile):
+          includeFile = baseDir / includeFile
+        if not c.included.containsOrIncl(includeFile):
+          result.add process(c, readFile(includeFile), currentFile, includeFile.splitFile.dir, testsDir)
+          c.included.excl includeFile
+        else:
+          quit "Recursive include of " & includeFile
+      else:
+        currentFile.setLen 0
+        while i < md.len and md[i] != '\n':
+          currentFile.add md[i]
+          inc i
+        if not isAbsolute(currentFile):
+          currentFile = baseDir / currentFile
+      inc i # skip newline
+    elif md[i] == '#' and md[i+1] notin Whitespace and (i == 0 or md[i-1] == '\n'):
       inc i
       var headerDepth = 1
       while i < md.len and md[i] == '#':
@@ -195,9 +212,12 @@ proc process(c: var Context; md: string; currentFile: var string; baseDir, tests
         ident.add md[i]
         inc i
 
-      if currentFile.len == 0:
-        quit "No file specified, use '@file' to specify the file"
-      result.fillinCode(c, ident, currentFile, headerDepth)
+      if ident.len == 0:
+        result.add '#'
+      else:
+        if currentFile.len == 0:
+          quit "No file specified for symbol `" & ident & "`, use '@file' to specify the file"
+        result.fillinCode(c, ident, currentFile, headerDepth)
     elif md.continuesWith(NimCodePrefix, i):
       # render the code block ourselves to have a shield against broken highlighting:
       inc i, NimCodePrefix.len
