@@ -29,6 +29,18 @@ when defined(posix):
                                             ## For a typed memory object, the length in bytes.
                                             ## For other file types, the use of this field is
                                             ## unspecified.
+      st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
+
+
+  const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
+      defined(osx) or defined(openbsd) or defined(dragonfly) or defined(haiku) ## \
+    ## Boolean flag that indicates if the system supports nanosecond time
+    ## resolution in the fields of `Stat`. Note that the nanosecond based fields
+    ## (`Stat.st_atim`, `Stat.st_mtim` and `Stat.st_ctim`) can be accessed
+    ## without checking this flag, because this module defines fallback procs
+    ## when they are not available.
+
+
 
   include posix_other
 
@@ -62,6 +74,24 @@ when defined(posix):
   proc close*(a1: cint): cint {.importc: "close", header: "<unistd.h>".}
 
   proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", header: "<sys/stat.h>", sideEffect.}
+  proc lstat*(a1: cstring, a2: var Stat): cint {.importc, header: "<sys/stat.h>", sideEffect.}
+  proc stat*(a1: cstring, a2: var Stat): cint {.importc, header: "<sys/stat.h>".}
+
+
+  proc S_ISBLK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a block special file.
+  proc S_ISCHR*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a character special file.
+  proc S_ISDIR*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a directory.
+  proc S_ISFIFO*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a pipe or FIFO special file.
+  proc S_ISREG*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a regular file.
+  proc S_ISLNK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a symbolic link.
+  proc S_ISSOCK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a socket.
 
   proc mmap*(a1: pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
     importc: "mmap", header: "<sys/mman.h>".}
