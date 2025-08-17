@@ -162,8 +162,8 @@ proc open*(filename: string, mode: FileMode = fmRead,
     result.mem = mapViewOfFileEx(
       result.mapHandle,
       if readonly: FILE_MAP_READ else: FILE_MAP_READ or FILE_MAP_WRITE,
-      int32(offset shr 32),
-      int32(offset and 0xffffffff),
+      DWORD(offset shr 32),
+      DWORD(offset and 0xffffffff),
       WinSizeT(if mappedSize == -1: 0 else: mappedSize),
       nil)
 
