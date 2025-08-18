@@ -179,7 +179,7 @@ floating-point values during semantic analysis; this means expressions like
 
 ## Boolean type
 
-The boolean type is named `bool`:idx: in Nimony and can be one of the two
+The boolean type is named `bool`:idx: and can be one of the two
 pre-defined values `true` and `false`. Conditions in `while`,
 `if`, `elif`, `when`-statements need to be of type `bool`.
 
@@ -205,7 +205,7 @@ The size of the bool type is one byte.
 
 ## Character type
 
-The character type is named `char` in Nimony. Its size is one byte.
+The character type is named `char`. Its size is one byte.
 Thus, it cannot represent a UTF-8 character, but a part of it.
 
 
@@ -701,7 +701,7 @@ Attempting to declare a set with a larger type will result in an error:
 ```
 
 
-**Note:** Nimony also offers [hash sets](sets.html) (which you need to import
+**Note:** The standard library also offers [hash sets](sets.html) (which you need to import
 with `import std/sets`), which have no such restrictions.
 
 Sets can be constructed via the set constructor: `{}` is the empty set. The
@@ -1173,9 +1173,7 @@ As usual, ambiguous matches produce a compile-time error.
 
 ## Statements and expressions
 
-Nimony uses the common statement/expression paradigm: Statements do not
-produce a value in contrast to expressions. However, some expressions are
-statements.
+Statements do not produce a value in contrast to expressions. However, some expressions are statements.
 
 Statements are separated into `simple statements`:idx: and
 `complex statements`:idx:.
@@ -1289,8 +1287,7 @@ pragma (or any of the other `importX` pragmas) is applied, in this case the
 value is expected to come from native code, typically a C/C++ `const`.
 
 
-Special identifier `_` (underscore)
------------------------------------
+### Special identifier `_` (underscore)
 
 The identifier `_` has a special meaning in declarations.
 Any definition with the name `_` will not be added to scope, meaning the
@@ -1948,28 +1945,6 @@ is rewritten by the parser to `p[T](x)`, `x.p[:T](y)` is rewritten to
 is performed directly in the parsing step.
 
 
-### Properties
-Nimony has no need for *get-properties*: Ordinary get-procedures that are called
-with the *method call syntax* achieve the same:
-
-  ```nim
-  # Module asocket
-  type
-    Socket* = ref object of RootObj
-      host: int # cannot be accessed from the outside of the module
-
-  proc host*(s: Socket): int {.inline.} =
-    ## getter of hostAddr
-    ## This accesses the 'host' field and is not a recursive call to
-    ## `host` because the builtin dot access is preferred if it is
-    ## available:
-    s.host
-  ```
-
-AS the example demonstrates, inside the module `s.host` is interpreted
-as an object field access and outside of the declaring module `s.host`
-is transformed into the getter call `host(s)`.
-
 
 ### Command invocation syntax
 
@@ -2062,7 +2037,7 @@ also used for assignments of the type `seq[T]`.
 Since these operations are bound to a type, they have to be bound to a
 nominal type for reasons of simplicity of implementation.
 
-Type bound operations are the foundation for Nimony's *scope based memory management*.
+Type bound operations are the foundation for Nim's *scope based memory management*.
 
 
 ### Motivating example
@@ -2342,7 +2317,7 @@ as `let tmp = move(b); b = move(a); a = move(tmp)`.
 This has further consequences:
 
 * Objects that contain pointers that point to the same object are not supported
-  by Nimony's model. Otherwise swapped objects would end up in an inconsistent state.
+  by Nim's model. Otherwise swapped objects would end up in an inconsistent state.
 * Seqs can use `realloc` in the implementation.
 
 
@@ -2531,7 +2506,7 @@ As can be manually verified, this transformation is correct for self-assignments
 
 #### The cursor pragma
 
-Nimony's `ref` type is implemented
+The `ref` type is implemented
 via the same runtime "hooks" and thus via reference counting.
 This means that cyclic structures cannot be freed immediately.
 With the `cursor` pragma one can break up cycles declaratively:
@@ -3012,7 +2987,7 @@ or `enums` can only be defined in a `type` section.
 
 ## Generics
 
-Generics are Nimony's means to parametrize procs, iterators or types with
+Generics are a means to parametrize procs, iterators or types with
 `type parameters`:idx:. Depending on the context, the brackets are used either to
 introduce type parameters or to instantiate a generic proc, iterator, or type.
 
