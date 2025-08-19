@@ -3794,4 +3794,96 @@ initialized within the `var` section. (Every thread-local variable needs to
 be replicated at thread creation.)
 
 
+## Plugins
 
+Plugins are a way to extend the language with new functionality. A plugin is a template that lacks a body. Instead it has a `{.plugin.}` pragma listing the Nim program that implements the plugin.
+
+For example, rewriting the following template as a plugin:
+
+```nim
+template generateEcho(s: string) = echo s
+```
+
+Becomes:
+
+```nim
+import std / syncio
+
+template generateEcho(s: string) {.plugin: "deps/mplugin1".}
+
+generateEcho("Hello, world!")
+```
+
+In "deps/mplugin1.nim" there is the implementation:
+
+```nim
+import std / os
+
+import nimonyplugins
+
+proc tr(n: Node): Tree =
+  result = createTree()
+  let info = n.info
+  var n = n
+  if n.stmtKind == StmtsS: inc n
+  result.withTree CallS, info:
+    result.addIdent "echo"
+    result.takeTree n
+
+let input = os.paramStr(1)
+let output = os.paramStr(2)
+var inp = load(input)
+
+let outp = tr(inp)
+
+save output, outp
+```
+
+**Note that plugins are compiled with Nim 2, not Nimony as Nimony is no longer considered stable enough.**
+
+Plugins that are attached to a template receive only the code that is related to the template invocation. But `.plugin` can also be a statement of its own, then it is a so called "module plugin".
+
+
+### Module plugins
+
+A module plugin receives the full code of a module. It needs to output back the complete module with some of its transformations locally applied.
+
+To call a module plugin, use the `.plugin` pragma as a statement on its own:
+
+```nim
+{.plugin: "stdplugins/cps".}
+```
+
+### Type plugins
+
+Module plugins can also be attached to a nominal type (or a generic type that becomes a nominal type after instantiation). These plugins are invoked for every module that uses the type. This mechanism can replace Nim's "term rewriting macros":
+
+```nim
+type
+  Matrix {.plugin: "avoidtemps".} = object
+    a: array[4, array[4, float]]
+
+proc `*=`(x: var Matrix; y: Matrix) = ...
+proc `+=`(x: var Matrix; y: Matrix) = ...
+proc `-=`(x: var Matrix; y: Matrix) = ...
+
+proc `*`(x, y: Matrix): Matrix =
+  result = x; result *= y
+proc `+`(x, y: Matrix): Matrix =
+  result = x; result += y
+proc `-`(x, y: Matrix): Matrix =
+  result = x; result -= y
+```
+
+Code like `let e = a*b + c - d` is then rewritten to:
+
+```nim
+var e = a
+e *= b
+e += c
+e -= d
+```
+
+Avoiding the creation of temporary matrices entirely.
+
+While the code for the avoidtemps plugin is beyond the scope of this document, this is a classical compiler transformation.
