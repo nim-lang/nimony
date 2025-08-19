@@ -252,7 +252,7 @@ An explicit ordered enum can have *holes*:
   ```
 
 However, it is then not ordinal anymore, so it is impossible to use these
-enums as an index type for arrays. The procedures `inc`, `dec`, `succ`
+enums as an index type for arrays. The procs `inc`, `dec`, `succ`
 and `pred` are not available for them either.
 
 
@@ -865,12 +865,12 @@ Nim supports these `calling conventions`:idx:\:
 `inline`:idx:
 :   The inline convention means the caller should not call the proc,
     but inline its code directly. Note that Nim does not inline, but leaves
-    this to the C compiler; it generates `__inline` procedures. This is
+    this to the C compiler; it generates `__inline` procs. This is
     only a hint for the compiler: it may completely ignore it, and
-    it may inline procedures that are not marked as `inline`.
+    it may inline procs that are not marked as `inline`.
 
 `noinline`:idx:
-:   The backend compiler may inline procedures that are not marked as `inline`.
+:   The backend compiler may inline procs that are not marked as `inline`.
     The noinline convention prevents it.
 
 `fastcall`:idx:
@@ -888,7 +888,7 @@ Nim supports these `calling conventions`:idx:\:
 `noconv`:idx:
 :   The generated C code will not have any explicit calling convention and thus
     use the C compiler's default calling convention. This is needed because
-    Nim's default calling convention for procedures is `fastcall` to
+    Nim's default calling convention for procs is `fastcall` to
     improve speed.
 
 Most calling conventions exist only for the Windows 32-bit platform.
@@ -1825,16 +1825,6 @@ every time the function is called.
   proc foo(a: int; b: int = 47): int
   ```
 
-Parameters can be declared mutable and so allow the proc to modify those
-arguments, by using the type modifier `var`.
-
-  ```nim
-  # "returning" a value to the caller through the 2nd argument
-  # Notice that the function uses no actual return value at all (ie void)
-  proc foo(inp: int; outp: var int) =
-    outp = inp + 47
-  ```
-
 If the proc returns a value, the proc body can access an implicitly declared
 variable named `result`:idx: that represents the return value. Procs can be
 overloaded. The overloading resolution algorithm determines which proc is the
@@ -1869,7 +1859,9 @@ Calling a proc can be done in many ways:
 A proc may call itself recursively.
 
 
-`Operators`:idx: are procedures with a special operator symbol as identifier:
+## Operators
+
+Operators are routines with a special operator symbol as identifier:
 
   ```nim
   proc `$`(x: int): string =
@@ -1891,11 +1883,124 @@ notation. (Thus an operator can have more than two parameters):
     # Multiply and add
     result = a * b + c
 
-  assert `*+`(3, 4, 6) == `+`(`*`(a, b), c)
+  assert `*+`(3, 4, 6) == `+`(`*`(3, 4), 6)
   ```
 
 
-### Export marker
+## Strict definitions
+
+Every local variable must be initialized explicitly before it can be used:
+
+  ```nim
+  proc test =
+    var s: seq[string]
+    s.add "abc" # invalid!
+  ```
+
+Needs to be written as:
+
+  ```nim
+  proc test =
+    var s: seq[string] = @[]
+    s.add "abc" # valid!
+  ```
+
+A control flow analysis is performed in order to prove that a variable has been written to
+before it is used. Thus the following is valid:
+
+  ```nim
+  proc test(cond: bool) =
+    var s: seq[string]
+    if cond:
+      s = @["y"]
+    else:
+      s = @[]
+    s.add "abc" # valid!
+  ```
+
+In this example every path does set `s` to a value before it is used.
+
+  ```nim
+  proc test(cond: bool) =
+    let s: seq[string]
+    if cond:
+      s = @["y"]
+    else:
+      s = @[]
+  ```
+
+`let` statements are allowed to not have an initial value, but every path should set `s` to a value before it is used.
+
+
+## `var` parameters
+
+Parameters can be declared mutable and so allow the proc to modify those
+arguments, by using the type modifier `var`.
+
+  ```nim
+  # "returning" a value to the caller through the 2nd argument
+  # Notice that the function uses no actual return value at all (ie void)
+  proc foo(inp: int; outp: var int) =
+    outp = inp + 47
+  ```
+
+
+
+## `out` parameters
+
+An `out` parameter is like a `var` parameter but it must be written to before it can be used:
+
+  ```nim
+  proc myopen(f: out File; name: string): bool =
+    f = default(File)
+    result = open(f, name)
+  ```
+
+While it is usually the better style to use the return type in order to return results API and ABI
+considerations might make this infeasible. Like for `var T` Nim maps `out T` to a hidden pointer.
+For example POSIX's `stat` routine can be wrapped as:
+
+  ```nim
+  proc stat*(a1: cstring, a2: out Stat): cint {.importc, header: "<sys/stat.h>".}
+  ```
+
+When the implementation of a routine with output parameters is analysed, the compiler
+checks that every path before the (implicit or explicit) return does set every output
+parameter:
+
+  ```nim
+  proc p(x: out int; y: out string; cond: bool) =
+    x = 4
+    if cond:
+      y = "abc"
+    # error: not every path initializes 'y'
+  ```
+
+
+### Out parameters and inheritance
+
+It is not valid to pass an lvalue of a supertype to an `out T` parameter:
+
+  ```nim
+  type
+    Superclass = object of RootObj
+      a: int
+    Subclass = object of Superclass
+      s: string
+
+  proc init(x: out Superclass) =
+    x = Superclass(a: 8)
+
+  var v: Subclass
+  init v
+  use v.s # the 's' field was never initialized!
+  ```
+
+However, in the future this could be allowed and provide a better way to write object
+constructors that take inheritance into account.
+
+
+## Export marker
 
 If a declared symbol is marked with an `asterisk`:idx: it is exported from the
 current module:
@@ -1914,14 +2019,14 @@ current module:
   ```
 
 
-### Method call syntax
+## Method call syntax
 
 For object-oriented programming, the syntax `obj.methodName(args)` can be used
 instead of `methodName(obj, args)`. The parentheses can be omitted if
 there are no remaining arguments: `obj.len` (instead of `len(obj)`).
 
 This method call syntax is not restricted to objects, it can be used
-to supply any type of first argument for procedures:
+to supply any type of first argument for procs:
 
   ```nim
   echo "abc".len # is the same as echo len "abc"
@@ -1946,7 +2051,7 @@ is performed directly in the parsing step.
 
 
 
-### Command invocation syntax
+## Command invocation syntax
 
 Routines can be invoked without the `()` if the call is syntactically
 a statement. This command invocation syntax also works for
@@ -1968,7 +2073,7 @@ more argument in this case:
   ```
 
 The command invocation syntax also can't have complex expressions as arguments.
-For example: [anonymous procedures], `if`,
+For example: [anonymous procs], `if`,
 `case` or `try`. Function calls with no arguments still need () to
 distinguish between a call and the function itself as a first-class value:
 
@@ -1986,10 +2091,10 @@ distinguish between a call and the function itself as a first-class value:
 
 
 
-### Anonymous procedures
+## Anonymous procs
 
-Unnamed procedures can be used as lambda expressions to pass into other
-procedures:
+Unnamed procs can be used as lambda expressions to pass into other
+procs:
 
   ```nim
   var cities = @["Frankfurt", "Tokyo", "New York", "Kyiv"]
@@ -2003,19 +2108,10 @@ Procs as expressions can appear both as nested procs and inside top-level
 executable code.
 
 
-### Func
+## Func
 
-The `func` keyword introduces a shortcut for a `noSideEffect`:idx: proc.
+A `func` is currently simply a different spelling for a `proc`. This will be changed in the future. A `func` will be strict about what it can do.
 
-  ```nim
-  func binarySearch[T](a: openArray[T]; elem: T): int
-  ```
-
-Is short for:
-
-  ```nim
-  proc binarySearch[T](a: openArray[T]; elem: T): int {.noSideEffect.}
-  ```
 
 
 ## Lifetime-tracking hooks
@@ -3711,100 +3807,3 @@ be replicated at thread creation.)
 
 
 
-## Strict definitions and `out` parameters
-
-Every local variable must be initialized explicitly before it can be used:
-
-  ```nim
-  proc test =
-    var s: seq[string]
-    s.add "abc" # invalid!
-  ```
-
-Needs to be written as:
-
-  ```nim
-  proc test =
-    var s: seq[string] = @[]
-    s.add "abc" # valid!
-  ```
-
-A control flow analysis is performed in order to prove that a variable has been written to
-before it is used. Thus the following is valid:
-
-  ```nim
-  proc test(cond: bool) =
-    var s: seq[string]
-    if cond:
-      s = @["y"]
-    else:
-      s = @[]
-    s.add "abc" # valid!
-  ```
-
-In this example every path does set `s` to a value before it is used.
-
-  ```nim
-  proc test(cond: bool) =
-    let s: seq[string]
-    if cond:
-      s = @["y"]
-    else:
-      s = @[]
-  ```
-
-`let` statements are allowed to not have an initial value, but every path should set `s` to a value before it is used.
-
-
-### `out` parameters
-
-An `out` parameter is like a `var` parameter but it must be written to before it can be used:
-
-  ```nim
-  proc myopen(f: out File; name: string): bool =
-    f = default(File)
-    result = open(f, name)
-  ```
-
-While it is usually the better style to use the return type in order to return results API and ABI
-considerations might make this infeasible. Like for `var T` Nim maps `out T` to a hidden pointer.
-For example POSIX's `stat` routine can be wrapped as:
-
-  ```nim
-  proc stat*(a1: cstring, a2: out Stat): cint {.importc, header: "<sys/stat.h>".}
-  ```
-
-When the implementation of a routine with output parameters is analysed, the compiler
-checks that every path before the (implicit or explicit) return does set every output
-parameter:
-
-  ```nim
-  proc p(x: out int; y: out string; cond: bool) =
-    x = 4
-    if cond:
-      y = "abc"
-    # error: not every path initializes 'y'
-  ```
-
-
-### Out parameters and inheritance
-
-It is not valid to pass an lvalue of a supertype to an `out T` parameter:
-
-  ```nim
-  type
-    Superclass = object of RootObj
-      a: int
-    Subclass = object of Superclass
-      s: string
-
-  proc init(x: out Superclass) =
-    x = Superclass(a: 8)
-
-  var v: Subclass
-  init v
-  use v.s # the 's' field was never initialized!
-  ```
-
-However, in the future this could be allowed and provide a better way to write object
-constructors that take inheritance into account.
