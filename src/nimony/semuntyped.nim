@@ -402,6 +402,10 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
         # var yz: T
         c.c.dest.shrink start
         c.c.dest.add symToken(firstSym, n.info)
+      elif c.mode == UntypedTemplate:
+        # leave as ident
+        c.c.dest.shrink start
+        c.c.dest.add n
       else:
         semTemplSymbol(c, n, firstSym, count, start)
     inc n

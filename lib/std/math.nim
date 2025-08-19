@@ -334,7 +334,7 @@ template ceilDivUint[T: SomeUnsignedInt and Arithmetic](x, y: T): T =
   # `x + (y - 1)` can overflow.
   (x + (y - T(1))) div y
 
-template ceilDivSigned[T: SomeInteger](x, y: T; U: untyped): T {.untyped.} =
+template ceilDivSigned[T: SomeInteger; U: SomeUnsignedInt and Arithmetic](x, y: T; _: typedesc[U]): T =
   T(ceilDivUint(x.U, y.U))
 
 func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
