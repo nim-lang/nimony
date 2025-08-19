@@ -2120,8 +2120,7 @@ With the language mechanisms described here, a custom seq could be written as:
   ```
 
 
-`=destroy` hook
----------------
+### `=destroy` hook
 
 A `=destroy` hook frees the object's associated memory and releases
 other associated resources. Variables are destroyed via this hook when
@@ -2147,8 +2146,7 @@ The general pattern in `=destroy` looks like:
   ```
 
 
-`=wasMoved` hook
-----------------
+### `=wasMoved` hook
 
 A `=wasMoved` hook sets the object to a state that signifies to the destructor there is nothing to destroy.
 
@@ -2166,8 +2164,7 @@ Usually some pointer field inside the object is set to `nil`:
   ```
 
 
-`=sink` hook
-------------
+### `=sink` hook
 
 A `=sink` hook moves an object around, the resources are stolen from the source
 and passed to the destination. It is ensured that the source's destructor does
@@ -2198,8 +2195,7 @@ The general pattern in `=sink` looks like:
 How self-assignments are handled is explained later in this document.
 
 
-`=copy` hook
-------------
+### `=copy` hook
 
 The ordinary assignment in Nim conceptually copies the values. The `=copy` hook
 is called for assignments that couldn't be transformed into `=sink`
@@ -2233,8 +2229,7 @@ A custom error message (e.g., `{.error: "custom error".}`) will not be emitted
 by the compiler. Notice that there is no `=` before the `{.error.}` pragma.
 
 
-`=dup` hook
------------
+### `=dup` hook
 
 A `=dup` hook duplicates an object. `=dup(x)` can be regarded as an optimization replacing a `wasMoved(dest); =copy(dest, x)` operation.
 
@@ -2260,8 +2255,7 @@ The general pattern in implementing `=dup` looks like:
 
 
 
-`=trace` hook
--------------
+### `=trace` hook
 
 A custom **container** type can support a cycle collector via
 the `=trace` hook. If the container does not implement `=trace`, cyclic data
@@ -2539,29 +2533,6 @@ for the language's evolution: Later on, the compiler can try to prove `cursor` p
 to be safe, but for `ptr` the compiler has to remain silent about possible
 problems.
 
-
-Cursor inference / copy elision
--------------------------------
-
-The current implementation also performs `cursor` inference. Cursor inference is
-a form of copy elision.
-
-To see how and when we can do that, think about this question: In `dest = src` when
-do we really have to *materialize* the full copy? - Only if `dest` or `src` are mutated
-afterward. If `dest` is a local variable that is simple to analyze. And if `src` is a
-location derived from a formal parameter, we also know it is not mutated! In other
-words, we do a compile-time copy-on-write analysis.
-
-This means that "borrowed" views can be written naturally and without explicit pointer
-indirections:
-
-  ```nim
-  proc main(tab: Table[string, string]) =
-    let v = tab["key"] # inferred as cursor because 'tab' is not mutated.
-    # no copy into 'v', no destruction of 'v'.
-    use(v)
-    useItAgain(v)
-  ```
 
 
 #### Hook lifting
