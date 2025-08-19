@@ -370,6 +370,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   var nn = n.firstSon
   if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(nn.symId)):
+    let isResultSym = nn.symId == c.resultSym
     skip nn
     if nn.exprKind in CallKinds and callCanRaise(c.typeCache, nn):
       # nothing to do, both are in compatible tuple form:
@@ -381,7 +382,11 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyInto dest, n:
         dest.add n # result
         inc n
-        let maybeClose = produceSuccessTuple(c, dest, getType(c.typeCache, n), n.info)
+        let maybeClose: bool
+        if isResultSym:
+          maybeClose = produceSuccessTuple(c, dest, c.retType, n.info)
+        else:
+          maybeClose = produceSuccessTuple(c, dest, getType(c.typeCache, n), n.info)
         tr c, dest, n
         if maybeClose:
           dest.addParRi() # tuple constructor
