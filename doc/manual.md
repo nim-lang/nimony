@@ -1932,17 +1932,139 @@ In this example every path does set `s` to a value before it is used.
 `let` statements are allowed to not have an initial value, but every path should set `s` to a value before it is used.
 
 
-## `var` parameters
+## Var parameters
 
-Parameters can be declared mutable and so allow the proc to modify those
-arguments, by using the type modifier `var`.
+The type of a parameter may be prefixed with the `var` keyword:
 
   ```nim
-  # "returning" a value to the caller through the 2nd argument
-  # Notice that the function uses no actual return value at all (ie void)
-  proc foo(inp: int; outp: var int) =
-    outp = inp + 47
+  proc divmod(a, b: int; res, remainder: var int) =
+    res = a div b
+    remainder = a mod b
+
+  var
+    x, y: int
+
+  divmod(8, 5, x, y) # modifies x and y
+  assert x == 1
+  assert y == 3
   ```
+
+In the example, `res` and `remainder` are `var parameters`.
+Var parameters can be modified by the proc and the changes are
+visible to the caller. The argument passed to a var parameter has to be
+an l-value. Var parameters are implemented as hidden pointers. The
+above example is equivalent to:
+
+  ```nim
+  proc divmod(a, b: int; res, remainder: ptr int) =
+    res[] = a div b
+    remainder[] = a mod b
+
+  var
+    x, y: int
+  divmod(8, 5, addr(x), addr(y))
+  assert x == 1
+  assert y == 3
+  ```
+
+In the examples, var parameters or pointers are used to provide two
+return values. This can be done in a cleaner way by returning a tuple:
+
+  ```nim
+  proc divmod(a, b: int): tuple[res, remainder: int] =
+    (a div b, a mod b)
+
+  var t = divmod(8, 5)
+
+  assert t.res == 1
+  assert t.remainder == 3
+  ```
+
+One can use `tuple unpacking`:idx: to access the tuple's fields:
+
+  ```nim
+  var (x, y) = divmod(8, 5) # tuple unpacking
+  assert x == 1
+  assert y == 3
+  ```
+
+
+**Note**: `var` parameters are never necessary for efficient parameter
+passing. Since non-var parameters cannot be modified the compiler is always
+free to pass arguments by reference if it considers it can speed up execution.
+
+
+## Var return type
+
+A proc, converter, or iterator may return a `var` type which means that the
+returned value is an l-value and can be modified by the caller:
+
+  ```nim
+  var g = 0
+
+  proc writeAccessToG(): var int =
+    result = g
+
+  writeAccessToG() = 6
+  assert g == 6
+  ```
+
+It is a static error if the implicitly introduced pointer could be
+used to access a location beyond its lifetime:
+
+  ```nim
+  proc writeAccessToG(): var int =
+    var g = 0
+    result = g # Error!
+  ```
+
+For iterators, a component of a tuple return type can have a `var` type too:
+
+  ```nim
+  iterator mpairs(a: var seq[string]): (int, var string) =
+    for i in 0..a.high:
+      yield (i, a[i])
+  ```
+
+In the standard library every name of a routine that returns a `var` type
+starts with the prefix `m` per convention.
+
+
+Memory safety for returning by `var T` is ensured by a simple borrowing
+rule: If `result` does not refer to a location pointing to the heap
+(that is in `result = X` the `X` involves a `ptr` or `ref` access)
+then it has to be derived from the routine's first parameter:
+
+  ```nim
+  proc forward[T](x: var T): var T =
+    result = x # ok, derived from the first parameter.
+
+  proc p(param: var int): var int =
+    var x: int
+    # we know 'forward' provides a view into the location derived from
+    # its first argument 'x'.
+    result = forward(x) # Error: location is derived from `x`
+                        # which is not p's first parameter and lives
+                        # on the stack.
+  ```
+
+In other words, the lifetime of what `result` points to is attached to the
+lifetime of the first parameter and that is enough knowledge to verify
+memory safety at the call site.
+
+
+### Future directions
+
+Later versions of Nim can be more precise about the borrowing rule with
+a syntax like:
+
+  ```nim
+  proc foo(other: Y; container: var X): var T from container
+  ```
+
+Here `var T from container` explicitly exposes that the
+location is derived from the second parameter (called
+'container' in this case).
 
 
 
@@ -2727,143 +2849,9 @@ to `f`:
     declared, defined, definedInScope, compiles, getAst, astToStr
 
 
-### Var parameters
-
-The type of a parameter may be prefixed with the `var` keyword:
-
-  ```nim
-  proc divmod(a, b: int; res, remainder: var int) =
-    res = a div b
-    remainder = a mod b
-
-  var
-    x, y: int
-
-  divmod(8, 5, x, y) # modifies x and y
-  assert x == 1
-  assert y == 3
-  ```
-
-In the example, `res` and `remainder` are `var parameters`.
-Var parameters can be modified by the proc and the changes are
-visible to the caller. The argument passed to a var parameter has to be
-an l-value. Var parameters are implemented as hidden pointers. The
-above example is equivalent to:
-
-  ```nim
-  proc divmod(a, b: int; res, remainder: ptr int) =
-    res[] = a div b
-    remainder[] = a mod b
-
-  var
-    x, y: int
-  divmod(8, 5, addr(x), addr(y))
-  assert x == 1
-  assert y == 3
-  ```
-
-In the examples, var parameters or pointers are used to provide two
-return values. This can be done in a cleaner way by returning a tuple:
-
-  ```nim
-  proc divmod(a, b: int): tuple[res, remainder: int] =
-    (a div b, a mod b)
-
-  var t = divmod(8, 5)
-
-  assert t.res == 1
-  assert t.remainder == 3
-  ```
-
-One can use `tuple unpacking`:idx: to access the tuple's fields:
-
-  ```nim
-  var (x, y) = divmod(8, 5) # tuple unpacking
-  assert x == 1
-  assert y == 3
-  ```
 
 
-**Note**: `var` parameters are never necessary for efficient parameter
-passing. Since non-var parameters cannot be modified the compiler is always
-free to pass arguments by reference if it considers it can speed up execution.
-
-
-### Var return type
-
-A proc, converter, or iterator may return a `var` type which means that the
-returned value is an l-value and can be modified by the caller:
-
-  ```nim
-  var g = 0
-
-  proc writeAccessToG(): var int =
-    result = g
-
-  writeAccessToG() = 6
-  assert g == 6
-  ```
-
-It is a static error if the implicitly introduced pointer could be
-used to access a location beyond its lifetime:
-
-  ```nim
-  proc writeAccessToG(): var int =
-    var g = 0
-    result = g # Error!
-  ```
-
-For iterators, a component of a tuple return type can have a `var` type too:
-
-  ```nim
-  iterator mpairs(a: var seq[string]): (int, var string) =
-    for i in 0..a.high:
-      yield (i, a[i])
-  ```
-
-In the standard library every name of a routine that returns a `var` type
-starts with the prefix `m` per convention.
-
-
-Memory safety for returning by `var T` is ensured by a simple borrowing
-rule: If `result` does not refer to a location pointing to the heap
-(that is in `result = X` the `X` involves a `ptr` or `ref` access)
-then it has to be derived from the routine's first parameter:
-
-  ```nim
-  proc forward[T](x: var T): var T =
-    result = x # ok, derived from the first parameter.
-
-  proc p(param: var int): var int =
-    var x: int
-    # we know 'forward' provides a view into the location derived from
-    # its first argument 'x'.
-    result = forward(x) # Error: location is derived from `x`
-                        # which is not p's first parameter and lives
-                        # on the stack.
-  ```
-
-In other words, the lifetime of what `result` points to is attached to the
-lifetime of the first parameter and that is enough knowledge to verify
-memory safety at the call site.
-
-
-### Future directions
-
-Later versions of Nim can be more precise about the borrowing rule with
-a syntax like:
-
-  ```nim
-  proc foo(other: Y; container: var X): var T from container
-  ```
-
-Here `var T from container` explicitly exposes that the
-location is derived from the second parameter (called
-'container' in this case).
-
-
-
-### Overloading of the subscript operator
+## Overloading of the subscript operator
 
 The `[]` subscript operator can be overloaded
 for any type by defining a routine with the name `[]`.
