@@ -3817,8 +3817,6 @@ generateEcho("Hello, world!")
 In "deps/mplugin1.nim" there is the implementation:
 
 ```nim
-import std / os
-
 import nimonyplugins
 
 proc tr(n: Node): Tree =
@@ -3830,16 +3828,11 @@ proc tr(n: Node): Tree =
     result.addIdent "echo"
     result.takeTree n
 
-let input = os.paramStr(1)
-let output = os.paramStr(2)
-var inp = load(input)
-
-let outp = tr(inp)
-
-save output, outp
+var inp = loadTree()
+saveTree tr(beginRead inp)
 ```
 
-**Note that plugins are compiled with Nim 2, not Nimony as Nimony is no longer considered stable enough.**
+**Note that plugins are compiled with Nim 2, not Nimony as Nimony is not considered stable enough.**
 
 Plugins that are attached to a template receive only the code that is related to the template invocation. But `.plugin` can also be a statement of its own, then it is a so called "module plugin".
 
