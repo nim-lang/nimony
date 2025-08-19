@@ -127,12 +127,13 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   skip n # skips value
   takeParRi c, n
 
-proc ithTupleField(counter: int): SymId {.inline.} =
-  pool.syms.getOrIncl("fld." & $counter)
+proc ithTupleField(c: var EContext; counter: int, typ: Cursor): SymId {.inline.} =
+  var typ = typ
+  pool.syms.getOrIncl("fld." & $counter & "." & takeMangle(typ, Backend, c.bits))
 
 proc genTupleField(c: var EContext; typ: var Cursor; counter: int) =
   c.dest.add tagToken("fld", typ.info)
-  let name = ithTupleField(counter)
+  let name = ithTupleField(c, counter, typ)
   c.dest.add symdefToken(name, typ.info)
   c.offer name
   c.dest.addDotToken() # pragmas
@@ -1129,11 +1130,22 @@ proc trStmtsExpr(c: var EContext; n: var Cursor) =
 proc trTupleConstr(c: var EContext; n: var Cursor) =
   c.dest.add tagToken("oconstr", n.info)
   inc n
+  var tupleType = n
   c.trType(n, {})
+
+  inc tupleType
   var counter = 0
   while n.kind != ParRi:
     c.dest.add tagToken("kv", n.info)
-    c.dest.add symToken(ithTupleField(counter), n.info)
+    let isKvU = tupleType.substructureKind == KvU
+    if isKvU:
+      inc tupleType # skip "kv"
+      skip tupleType # skip key
+    c.dest.add symToken(ithTupleField(c, counter, tupleType), n.info)
+    skip tupleType
+    if isKvU:
+      skipParRi tupleType
+
     inc counter
     if n.substructureKind == KvU:
       inc n # skip "kv"
@@ -1332,11 +1344,12 @@ proc trExpr(c: var EContext; n: var Cursor) =
     of ArrAtX:
       trArrAt c, n
     of TupatX:
+      let fieldType = getType(c.typeCache, n)
       c.dest.add tagToken("dot", n.info)
       inc n # skip tag
       trExpr c, n # tuple
       expectIntLit c, n
-      c.dest.add symToken(ithTupleField(pool.integers[n.intId]), n.info)
+      c.dest.add symToken(ithTupleField(c, pool.integers[n.intId], fieldType), n.info)
       inc n # skip index
       c.dest.addIntLit(0, n.info) # inheritance
       takeParRi c, n
