@@ -45,8 +45,7 @@ proc beginRead*(tree: var Tree): Node {.inline.} =
   result = beginRead(tree.buf)
 
 proc saveTree*(tree: Tree) =
-  writeFile paramStr(1), toString(tree.buf)
+  writeFile paramStr(2), toString(tree.buf)
 
 proc saveTree*(tree: Tree; filename: string) =
   writeFile filename, toString(tree.buf)
-
