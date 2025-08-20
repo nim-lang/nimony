@@ -17,13 +17,16 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
 
 import ".." / gear2 / modnames
 
-proc stdlibDir*(): string =
+proc nimonyDir(): string =
   let appDir = getAppDir()
   let (head, tail) = splitPath(appDir)
   if tail == "bin":
-    result = head / "lib"
+    result = head
   else:
-    result = appDir / "lib"
+    result = appDir
+
+proc stdlibDir*(): string =
+  result = nimonyDir() / "lib"
 
 proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
@@ -302,7 +305,9 @@ proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
 # ------------------ plugin handling --------------------------
 
 proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
-  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " " & quoteShell(nf)
+  let pluginDir = nimonyDir() / "src/nimony/lib"
+  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
+    " " & quoteShell(nf)
   exec cmd
 
 proc writeFileIfChanged(file, content: string) =
