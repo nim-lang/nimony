@@ -1,6 +1,6 @@
 # Standard library
 
-## Interfacing with the operating system
+## Input / Output
 
 ### syncio
 
@@ -64,6 +64,32 @@ Exits the program with a value or message.
 
 ####tryWriteFile
 Attempts to write content to a file, returns success status.
+
+## memfiles
+
+@../lib/std/memfiles.nim
+
+####MemFile
+
+A type that represents a memory mapped file. Contains:
+- `mem` - A pointer to the memory mapped file contents
+- `size` - The size of the memory mapped file
+- Platform-specific fields for Windows and POSIX systems
+
+####open
+
+Opens a memory mapped file with various options:
+- `filename` - The file to map
+- `mode` - File access mode (read/write)
+- `mappedSize` - Size of the mapped region (-1 for entire file)
+- `offset` - Starting offset (must be multiple of page size)
+- `newFileSize` - Initial file size for new files
+- `allowRemap` - Whether to keep file handles open for remapping
+- `mapFlags` - Platform-specific mapping flags
+
+####close
+
+Closes a memory mapped file and writes any changes back to the filesystem if the file was opened with write access.
 
 
 ## String handling
@@ -392,6 +418,22 @@ Converts an encoding name to a Windows code page number. Windows specific.
 ####codePageToName
 
 Converts a Windows code page number to an encoding name. Windows specific.
+
+
+### wordwrap
+
+@../lib/std/wordwrap.nim
+
+####wrapWords
+
+Word wraps a Unicode string to fit within a specified line width. Parameters:
+- `s` - The string to wrap
+- `maxLineWidth` - Maximum width of each line (default: 80)
+- `splitLongWords` - Whether to split words longer than maxLineWidth (default: true)
+- `seps` - Set of characters considered as separators (default: Whitespace)
+- `newLine` - String to use for line breaks (default: "\n")
+
+The function handles Unicode graphemes correctly and can either split long words or keep them intact depending on the `splitLongWords` parameter.
 
 
 ## Collections
