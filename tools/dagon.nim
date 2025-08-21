@@ -24,8 +24,8 @@ Examples:
 """
 
 const
-  StrLitBegin = "<em>"
-  StrLitEnd = "</em>"
+  StrLitBegin = "<span class=\"StringLit\">"
+  StrLitEnd = "</span>"
   NimCodePrefix = "```nim"
   NimCodeSuffix = "```"
 
@@ -111,9 +111,9 @@ proc nodeToString(n: PNode; hasNewlines: var bool): string =
     if kind == tkEof:
       break
     if kind in tokKeywordLow..tokKeywordHigh:
-      result.add "<b>"
+      result.add "<span class=\"Keyword\">"
       result.add tok
-      result.add "</b>"
+      result.add "</span>"
     elif kind in tkStrLit..tkCharLit:
       result.add StrLitBegin
       result.add tok
@@ -136,17 +136,21 @@ proc fillinCode(result: var string; c: var Context; ident, currentFile: string; 
     for decl in mitems(d.decls):
       if decl.name == ident:
         if matches == 0:
-          result.add "<h" & $headerDepth & ">"
+          result.add "\n.. raw:: html"
+          result.add "\n  <h" & $headerDepth & ">"
           result.add ident
           result.add "</h" & $headerDepth & ">\n"
 
+          result.add "\n.. raw:: html"
+          result.add "\n  <pre><code>"
         decl.covered = true
         var hasNewlines = false
         let s = decl.ast.nodeToString(hasNewlines)
-        result.add "<pre><code>"
-        result.add s
-        result.add "</code></pre>\n"
+        if matches > 0: result.add "\n  "
+        result.add s.replace("\n", "\n  ")
         inc matches
+    if matches > 0:
+      result.add "\n  </code></pre>\n"
 
 proc nimCodeToHtml(code: string): string =
   var g: GeneralTokenizer
@@ -154,20 +158,68 @@ proc nimCodeToHtml(code: string): string =
   result = newStringOfCap(code.len * 2)
   while true:
     getNextToken(g, langNim)
+    var suffix = ""
     case g.kind
     of gtEof: break
     of gtNone, gtWhitespace: discard
     of gtKeyword:
-      result.add "<b>"
+      result.add "<span class=\"Keyword\">"
+      suffix = "</span>"
     of gtStringLit, gtLongStringLit, gtCharLit:
       result.add StrLitBegin
+      suffix = StrLitEnd
+    of gtIdentifier:
+      result.add "<span class=\"Identifier\">"
+      suffix = "</span>"
+    of gtOperator:
+      result.add "<span class=\"Operator\">"
+      suffix = "</span>"
+    of gtPunctuation:
+      result.add "<span class=\"Punctuation\">"
+      suffix = "</span>"
+    of gtComment:
+      result.add "<span class=\"Comment\">"
+      suffix = "</span>"
+    of gtDirective:
+      result.add "<span class=\"Directive\">"
+      suffix = "</span>"
+    of gtPreprocessor:
+      result.add "<span class=\"Preprocessor\">"
+      suffix = "</span>"
+    of gtCommand:
+      result.add "<span class=\"Command\">"
+      suffix = "</span>"
+    of gtRule:
+      result.add "<span class=\"Rule\">"
+      suffix = "</span>"
+    of gtHyperlink:
+      result.add "<span class=\"Hyperlink\">"
+      suffix = "</span>"
+    of gtLabel:
+      result.add "<span class=\"Label\">"
+      suffix = "</span>"
+    of gtReference:
+      result.add "<span class=\"Reference\">"
+      suffix = "</span>"
+    of gtPrompt:
+      result.add "<span class=\"Prompt\">"
+      suffix = "</span>"
+    of gtProgramOutput:
+      result.add "<span class=\"ProgramOutput\">"
+      suffix = "</span>"
+    of gtProgram:
+      result.add "<span class=\"Program\">"
+      suffix = "</span>"
+    of gtOption:
+      result.add "<span class=\"Option\">"
+      suffix = "</span>"
+    of gtOther:
+      result.add "<span class=\"Other\">"
+      suffix = "</span>"
     else: discard
 
     add(result, substr(code, g.start, g.length + g.start - 1))
-    case g.kind
-    of gtKeyword: result.add "</b>"
-    of gtStringLit, gtLongStringLit, gtCharLit: result.add StrLitEnd
-    else: discard
+    result.add suffix
   deinitGeneralTokenizer(g)
 
 proc process(c: var Context; md: string; currentFile: var string; baseDir, testsDir: string): string =
