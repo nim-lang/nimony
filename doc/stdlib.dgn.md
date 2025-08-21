@@ -2,7 +2,10 @@
 
 ## Interfacing with the operating system
 
-To be written.
+@../lib/syncio.nim
+
+
+
 
 ## String handling
 
@@ -417,3 +420,35 @@ Iterates over all key-value pairs in the table, providing mutable access to valu
 
 Creates a new empty table.
 
+
+### Sets
+
+@../lib/std/sets.nim
+
+####HashSet
+
+A generic hash set data structure that stores unique values. Implemented using a hash table where values are mapped to boolean true.
+
+####initHashSet
+
+Creates a new empty hash set.
+
+####incl
+
+Adds an element to the hash set.
+
+####excl
+
+Removes an element from the hash set.
+
+####contains
+
+Checks if an element is present in the hash set.
+
+####containsOrIncl
+
+Checks if an element is present in the hash set, and if not, adds it. Returns true if the element was already present.
+
+####items
+
+An iterator that yields all elements in the hash set.
