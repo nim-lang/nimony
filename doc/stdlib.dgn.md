@@ -122,6 +122,182 @@ Formats floating point numbers as strings.
 
 Formats largest floating point numbers as strings.
 
+### unicode
+
+@../lib/std/unicode.nim
+
+####Rune
+
+A distinct type that can hold a single Unicode code point. A Rune may be composed with other Runes to form a character on the screen.
+
+####runeLen
+
+Returns the number of runes in a string (not bytes).
+
+####runeLenAt
+
+Returns the number of bytes the rune starting at a given position takes.
+
+####fastRuneAt
+
+A template that efficiently extracts a rune from a string at a given byte position.
+
+####runeAt
+
+Returns the rune at a specific byte index in a string.
+
+####validateUtf8
+
+Returns the position of the invalid byte if the string does not hold valid UTF-8 data, otherwise returns -1.
+
+####toUTF8
+
+Converts a rune into its UTF-8 representation.
+
+####add
+
+Adds a rune to a string.
+
+####runeOffset
+
+Returns the byte position of a rune at a given rune position.
+
+####runeReverseOffset
+
+Returns the byte offset of a rune counting from the end of the string.
+
+####runeAtPos
+
+Returns the rune at a given rune position (not byte position).
+
+####runeStrAtPos
+
+Returns the rune at a given position as a UTF-8 string.
+
+####runeSubStr
+
+Returns a UTF-8 substring starting at a code point position with a specified number of code points.
+
+####toLower
+
+Converts a rune to lowercase. Works for any Unicode rune.
+
+####toUpper
+
+Converts a rune to uppercase. Works for any Unicode rune.
+
+####toTitle
+
+Converts a rune to title case.
+
+####isLower
+
+Returns true if a rune is lowercase.
+
+####isUpper
+
+Returns true if a rune is uppercase.
+
+####isAlpha
+
+Returns true if a rune is an alphabetic character (a letter).
+
+####isTitle
+
+Returns true if a rune is a Unicode titlecase code point.
+
+####isWhiteSpace
+
+Returns true if a rune is a Unicode whitespace code point.
+
+####isCombining
+
+Returns true if a rune is a Unicode combining code unit.
+
+####isSpace
+
+Returns true if a string contains only whitespace runes.
+
+####toUpper
+
+Converts a string to uppercase runes.
+
+####toLower
+
+Converts a string to lowercase runes.
+
+####swapCase
+
+Swaps the case of runes in a string.
+
+####capitalize
+
+Converts the first character of a string to uppercase.
+
+####translate
+
+Translates words in a string using a replacement procedure.
+
+####title
+
+Converts a string to a Unicode title (capitalizes first character of each word).
+
+####runes
+
+An iterator that yields runes from a string.
+
+####utf8
+
+An iterator that yields UTF-8 strings from a string.
+
+####toRunes
+
+Converts a string to a sequence of runes.
+
+####cmpRunesIgnoreCase
+
+Compares two UTF-8 strings case-insensitively.
+
+####reversed
+
+Returns the reverse of a string, interpreting it as runes.
+
+####graphemeLen
+
+Returns the number of bytes belonging to a byte index, including following combining code units.
+
+####lastRune
+
+Returns the last rune in a string and its length in bytes.
+
+####size
+
+Returns the number of bytes a rune takes.
+
+####split
+
+Splits a Unicode string into substrings using separators.
+
+####splitWhitespace
+
+Splits a Unicode string at whitespace runes.
+
+####strip
+
+Strips leading or trailing runes from a string.
+
+####repeat
+
+Returns a string of repeated runes.
+
+####align
+
+Right-aligns a Unicode string with padding.
+
+####alignLeft
+
+Left-aligns a Unicode string with padding.
+
 
 ## Collections
 

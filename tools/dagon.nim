@@ -118,6 +118,10 @@ proc nodeToString(n: PNode; hasNewlines: var bool): string =
       result.add StrLitBegin
       result.add tok
       result.add StrLitEnd
+    elif kind == tkComment:
+      result.add "<span class=\"Comment\">"
+      result.add tok
+      result.add "</span>"
     else:
       result.add tok
       if kind == tkSpaces and tok.len > 0 and tok[0] == '\n': hasNewlines = true
@@ -177,7 +181,7 @@ proc nimCodeToHtml(code: string): string =
     of gtPunctuation:
       result.add "<span class=\"Punctuation\">"
       suffix = "</span>"
-    of gtComment:
+    of gtComment, gtLongComment:
       result.add "<span class=\"Comment\">"
       suffix = "</span>"
     of gtDirective:
