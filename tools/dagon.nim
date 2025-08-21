@@ -265,7 +265,8 @@ proc process(c: var Context; md: string; currentFile: var string; baseDir, tests
         inc i
 
       if ident.len == 0:
-        result.add '#'
+        for i in 0..<headerDepth: result.add '#'
+        result.add ' '
       else:
         if currentFile.len == 0:
           quit "No file specified for symbol `" & ident & "`, use '@file' to specify the file"

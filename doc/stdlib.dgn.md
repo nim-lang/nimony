@@ -112,13 +112,7 @@ Unescapes a previously escaped string.
 
 ####FloatFormatMode
 
-An enum that specifies the format of floating point numbers. The possible values are:
-
-| Value | Description |
-|-------|-------------|
-| `ffDefault` | Default format |
-| `ffDecimal` | Decimal format |
-| `ffScientific` | Scientific format |
+An enum that specifies the format of floating point numbers.
 
 ####formatFloat
 
