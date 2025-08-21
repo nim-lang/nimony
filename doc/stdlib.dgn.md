@@ -299,6 +299,39 @@ Right-aligns a Unicode string with padding.
 Left-aligns a Unicode string with padding.
 
 
+### encodings
+
+@../lib/std/encodings.nim
+
+####EncodingConverter
+
+A type that can convert between two character encodings. On Windows, this uses the Windows API; on other platforms, it uses the iconv library.
+
+####getCurrentEncoding
+
+Retrieves the current system encoding. On Unix systems, always returns "UTF-8". On Windows, returns either the UI code page or console code page depending on the parameter.
+
+####open
+
+Opens a converter that can convert from one encoding to another. Raises an error if the requested conversion cannot be fulfilled.
+
+####close
+
+Frees the resources held by an encoding converter.
+
+####convert
+
+Converts a string from one encoding to another.
+
+####nameToCodePage
+
+Converts an encoding name to a Windows code page number. Windows specific.
+
+####codePageToName
+
+Converts a Windows code page number to an encoding name. Windows specific.
+
+
 ## Collections
 
 ### Hashes
