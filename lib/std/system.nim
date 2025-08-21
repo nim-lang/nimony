@@ -370,3 +370,14 @@ proc addQuoted*[T](s: var string, x: T) =
     s.add(x)
   else:
     s.add($x)
+
+type
+  # TODO: change to `range[0..high(int)]` when range type is implemented
+  Natural* = int
+    ## is an `int` type ranging from zero to the maximum value
+    ## of an `int`. This type is often useful for documentation and debugging.
+
+  # TODO: change to `range[1..high(int)]`
+  Positive* = int
+    ## is an `int` type ranging from one to the maximum value
+    ## of an `int`. This type is often useful for documentation and debugging.
