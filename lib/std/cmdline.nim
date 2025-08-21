@@ -241,15 +241,18 @@ elif defined(genode):
 
   proc paramCount*(): int {.raises.}  =
     raise Failure #newException(OSError, "paramCount is not implemented on Genode")
-elif weirdTarget or (defined(posix) and appType == "lib"):
+elif weirdTarget:# or (defined(posix) and appType == "lib"):
   proc paramStr*(i: int): string {.tags: [ReadIOEffect], raises.} =
     raise Failure #newException(OSError, "paramStr is not implemented on current platform")
 
   proc paramCount*(): int {.tags: [ReadIOEffect], raises.} =
     raise Failure #newException(OSError, "paramCount is not implemented on current platform")
-elif not defined(createNimRtl) and
-  not(defined(posix) and appType == "lib"):
+elif not defined(createNimRtl): # and not(defined(posix) and appType == "lib"):
   # On Posix, there is no portable way to get the command line from a DLL.
+  import strutils
+
+  type cstringArray = ptr UncheckedArray[cstring] # {.importc: "char**", nodecl.}
+
   var
     cmdCount {.importc: "cmdCount".}: cint
     cmdLine {.importc: "cmdLine".}: cstringArray
