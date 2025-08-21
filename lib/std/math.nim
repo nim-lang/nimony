@@ -553,10 +553,6 @@ func log*[T: SomeFloat](x, base: T): T {.untyped.} =
 
   ln(x) / ln(base)
 
-# remove this when Natural type is added to system
-type
-  Natural = int
-
 func `^`*[T: SomeNumber and Arithmetic](x: T; y: Natural): T =
   ## Computes `x` to the power of `y`.
   ##

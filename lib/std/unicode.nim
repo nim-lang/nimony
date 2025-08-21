@@ -23,10 +23,6 @@ import syncio, assertions, strutils
 ## * `encodings module <encodings.html>`_
 
 #----------------------------------------------------
-## TODO: move these to system
-type
-  Natural = int
-  Positive = int
 
 template chr(x: int32): char =
   ## TODO: fixes type inference

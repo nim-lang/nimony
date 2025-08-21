@@ -328,9 +328,6 @@ func cmpIgnoreStyle*(a, b: string): int =
     inc i
     inc j
 
-type
-  Natural = int
-
 func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included).
   ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).

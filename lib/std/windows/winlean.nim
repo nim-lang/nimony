@@ -197,3 +197,6 @@ when defined(windows):
   proc moveFileExW*(lpExistingFileName, lpNewFileName: WideCString,
                     flags: DWORD): WINBOOL {.
     importc: "MoveFileExW", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc getCommandLineW*(): WideCString {.importc: "GetCommandLineW",
+    stdcall, dynlib: "kernel32", sideEffect.}
