@@ -2,9 +2,68 @@
 
 ## Interfacing with the operating system
 
-@../lib/syncio.nim
+### syncio
 
+@../lib/std/syncio.nim
 
+####echo
+Prints arguments to stdout followed by a newline.
+
+####File
+
+The type representing a file handle, which is a pointer to a C FILE structure.
+
+####FileMode
+
+An enum that specifies the file mode when opening a file.
+
+####stdin
+
+Standard input file handle.
+
+####stdout
+
+Standard output file handle.
+
+####stderr
+
+Standard error file handle.
+
+####open
+Opens a file with specified mode and buffer size.
+
+####close
+Closes a file handle.
+
+####write
+Writes data to a file (overloaded for different types).
+
+####writeLine
+Writes a string followed by a newline to a file.
+
+####readLine
+Reads a line from a file into a string.
+
+####addReadLine
+Appends a line from a file to a string.
+
+####writeBuffer
+Writes raw bytes to a file.
+
+####readBuffer
+Reads raw bytes from a file.
+
+####flushFile
+Flushes file buffers to disk.
+
+####failed
+Checks if a file operation has failed.
+
+####quit
+Exits the program with a value or message.
+
+####tryWriteFile
+Attempts to write content to a file, returns success status.
 
 
 ## String handling
