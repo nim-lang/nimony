@@ -103,7 +103,8 @@ when not defined(nimscript):
         assert getEnv("unknownEnv") == ""
         assert getEnv("unknownEnv", "doesn't exist") == "doesn't exist"
 
-      let env = getEnvImpl(key.cstring)
+      var key = key
+      let env = getEnvImpl(key.toCString())
       if env == nil:
         result = default
       else:
@@ -121,7 +122,8 @@ when not defined(nimscript):
       runnableExamples:
         assert not existsEnv("unknownEnv")
 
-      result = getEnvImpl(key.cstring) != nil
+      var key = key
+      result = getEnvImpl(key.toCString()) != nil
 
     proc putEnv*(key, val: string) {.tags: [WriteEnvEffect].} =
       ## Sets the value of the `environment variable`:idx: named `key` to `val`.
@@ -139,7 +141,9 @@ when not defined(nimscript):
         if setEnvImpl(key, val, 1'i32) != 0'i32:
           raiseOSError(osLastError(), dollarPair(key, val))
       else:
-        if c_setenv(key.cstring, val.cstring, 1'i32) != 0'i32:
+        var key = key
+        var val = val
+        if c_setenv(key.toCString(), val.toCString(), 1'i32) != 0'i32:
           raiseOSError(osLastError(), dollarPair(key, val))
 
     proc delEnv*(key: string) {.tags: [WriteEnvEffect].} =
