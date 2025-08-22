@@ -196,7 +196,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
           hasError = true
         for pre in mitems(prefix):
           for suf in mitems(suffix):
-            res.add ImportedFilename(path: pre.path & op & suf.path, name: suf.name)
+            res.add ImportedFilename(path: pre.path & op & suf.path, name: suf.name, plugin: suf.plugin)
     of PrefixX:
       var x = n
       skip n # ensure we skipped it completely
@@ -211,7 +211,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       if x.kind != ParRi or suffix.len == 0:
         hasError = true
       for suf in mitems(suffix):
-        res.add ImportedFilename(path: op & suf.path, name: suf.name)
+        res.add ImportedFilename(path: op & suf.path, name: suf.name, plugin: suf.plugin)
     of ParX, TupX, BracketX:
       inc n
       if n.kind == ParRi:

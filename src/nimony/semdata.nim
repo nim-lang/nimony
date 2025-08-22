@@ -113,8 +113,8 @@ type
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
-    pendingTypePlugins*: Table[SymId, StrId]
-    pendingModulePlugins*: seq[StrId]
+    pendingTypePlugins*: Table[SymId, (StrId, PackedLineInfo)]
+    pendingModulePlugins*: seq[(StrId, PackedLineInfo)]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     userPragmas*: Table[StrId, TokenBuf]
