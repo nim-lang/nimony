@@ -1,4 +1,5 @@
 import std/parseutils
+from std/syncio import quit
 
 const
   Whitespace* = {' ', '\t', '\v', '\r', '\l', '\f'}
@@ -500,3 +501,160 @@ func formatFloat*(f: float, format: FloatFormatMode = ffDefault,
     assert x.formatFloat(ffScientific, 2) == "1.23e+02"
 
   result = formatBiggestFloat(f, format, precision.int, decimalSep)
+
+func findNormalized(x: string, inArray: openArray[string]): int =
+  var i = 0
+  while i < inArray.len - 1:
+    if cmpIgnoreStyle(x, inArray[i]) == 0: return i
+    inc(i, 2) # incrementing by 1 would probably lead to a
+              # security hole...
+  return -1
+
+proc invalidFormatString(formatstr: string) {.noinline.} =
+  # TODO: Uncomment when exceptions are implemented.
+  #raise newException(ValueError, "invalid format string: " & formatstr)
+  quit "ValueError: invalid format string: " & formatstr
+
+func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
+  ## Interpolates a format string with the values from `a`.
+  ##
+  ## The `substitution`:idx: operator performs string substitutions in
+  ## `formatstr` and returns a modified `formatstr`. This is often called
+  ## `string interpolation`:idx:.
+  ##
+  ## This is best explained by an example:
+  ##
+  ##   ```nim
+  ##   "$1 eats $2." % ["The cat", "fish"]
+  ##   ```
+  ##
+  ## Results in:
+  ##
+  ##   ```nim
+  ##   "The cat eats fish."
+  ##   ```
+  ##
+  ## The substitution variables (the thing after the `$`) are enumerated
+  ## from 1 to `a.len`.
+  ## To produce a verbatim `$`, use `$$`.
+  ## The notation `$#` can be used to refer to the next substitution
+  ## variable:
+  ##
+  ##   ```nim
+  ##   "$# eats $#." % ["The cat", "fish"]
+  ##   ```
+  ##
+  ## Substitution variables can also be words (that is
+  ## `[A-Za-z_]+[A-Za-z0-9_]*`) in which case the arguments in `a` with even
+  ## indices are keys and with odd indices are the corresponding values.
+  ## An example:
+  ##
+  ##   ```nim
+  ##   "$animal eats $food." % ["animal", "The cat", "food", "fish"]
+  ##   ```
+  ##
+  ## Results in:
+  ##
+  ##   ```nim
+  ##   "The cat eats fish."
+  ##   ```
+  ##
+  ## The variables are compared with `cmpIgnoreStyle`. `ValueError` is
+  ## raised if an ill-formed format string has been passed to the `%` operator.
+  result = newStringOfCap(formatstr.len + a.len shl 4)
+  const PatternChars = {'a'..'z', 'A'..'Z', '0'..'9', '\128'..'\255', '_'}
+  var i = 0
+  var num = 0
+  while i < len(formatstr):
+    if formatstr[i] == '$' and i+1 < len(formatstr):
+      case formatstr[i+1]
+      of '#':
+        if num >= a.len: invalidFormatString(formatstr)
+        add result, a[num]
+        inc i, 2
+        inc num
+      of '$':
+        add result, '$'
+        inc(i, 2)
+      of '1'..'9', '-':
+        var j = 0
+        inc(i) # skip $
+        var negative = formatstr[i] == '-'
+        if negative: inc i
+        while i < formatstr.len and formatstr[i] in Digits:
+          j = j * 10 + ord(formatstr[i]) - ord('0')
+          inc(i)
+        let idx = if not negative: j-1 else: a.len-j
+        if idx < 0 or idx >= a.len: invalidFormatString(formatstr)
+        add result, a[idx]
+      of '{':
+        var j = i+2
+        var k = 0
+        var negative = formatstr[j] == '-'
+        if negative: inc j
+        var isNumber = 0
+        while j < formatstr.len and formatstr[j] notin {'\0', '}'}:
+          if formatstr[j] in Digits:
+            k = k * 10 + ord(formatstr[j]) - ord('0')
+            if isNumber == 0: isNumber = 1
+          else:
+            isNumber = -1
+          inc(j)
+        if isNumber == 1:
+          let idx = if not negative: k-1 else: a.len-k
+          if idx < 0 or idx >= a.len: invalidFormatString(formatstr)
+          add result, a[idx]
+        else:
+          var x = findNormalized(substr(formatstr, i+2, j-1), a)
+          if x >= 0 and x < a.len - 1: add result, a[x+1]
+          else: invalidFormatString(formatstr)
+        i = j+1
+      of 'a'..'z', 'A'..'Z', '\128'..'\255', '_':
+        var j = i+1
+        while j < formatstr.len and formatstr[j] in PatternChars: inc(j)
+        var x = findNormalized(substr(formatstr, i+1, j-1), a)
+        if x >= 0 and x < a.len - 1: add result, a[x+1]
+        else: invalidFormatString(formatstr)
+        i = j
+      else:
+        invalidFormatString(formatstr)
+    else:
+      add result, formatstr[i]
+      inc(i)
+
+func format*(formatstr: string; a: openArray[string]): string {.raises.} =
+  ## This is the same as `formatstr % a` (see
+  ## `% func<#%25,string,openArray[string]>`_)
+  result = formatstr % a
+
+func strip*(s: string; leading = true; trailing = true;
+            chars: set[char] = Whitespace): string =
+  ## Strips leading or trailing `chars` (default: whitespace characters)
+  ## from `s` and returns the resulting string.
+  ##
+  ## If `leading` is true (default), leading `chars` are stripped.
+  ## If `trailing` is true (default), trailing `chars` are stripped.
+  ## If both are false, the string is returned unchanged.
+  runnableExamples:
+    let a = "  vhellov   "
+    let b = strip(a)
+    assert b == "vhellov"
+
+    assert a.strip(leading = false) == "  vhellov"
+    assert a.strip(trailing = false) == "vhellov   "
+
+    assert b.strip(chars = {'v'}) == "hello"
+    assert b.strip(leading = false, chars = {'v'}) == "vhello"
+
+    let c = "blaXbla"
+    assert c.strip(chars = {'b', 'a'}) == "laXbl"
+    assert c.strip(chars = {'b', 'a', 'l'}) == "X"
+
+  var
+    first = 0
+    last = len(s)-1
+  if leading:
+    while first <= last and s[first] in chars: inc(first)
+  if trailing:
+    while last >= first and s[last] in chars: dec(last)
+  result = if first > last: "" else: substr(s, first, last)

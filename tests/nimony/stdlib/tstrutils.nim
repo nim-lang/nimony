@@ -278,3 +278,66 @@ block: # formatBiggestFloat
 
 block: # formatFloat
   assert formatFloat(1234.567, ffDecimal, 1) == "1234.6"
+
+block: # `%`
+  try:
+    assert "" % ["a"] == ""
+    assert "1" % ["a"] == "1"
+    assert "$$" % ["a"] == "$"
+    assert "$1" % ["a"] == "a"
+    assert "$$$1" % ["a"] == "$a"
+    assert "$1$$" % ["a"] == "a$"
+    assert "$2$1" % ["a", "b"] == "ba"
+    assert "$# $3 $# $#" % ["a", "b", "c"] == "a c b c"
+    assert "${1}12 ${-1}$2" % ["a", "b"] == "a12 bb"
+    assert "$animal eats $food." % ["animal", "The cat", "food", "fish"] ==
+             "The cat eats fish."
+    assert "$x $y" % ["x", "a", "y", "b"] == "a b"
+    assert "$x $y" % ["x", "a", "y", "b", "x"] == "a b"
+  except:
+    assert false
+
+block: # strip
+  assert strip("") == ""
+  assert strip("", leading = false) == ""
+  assert strip("", trailing = false) == ""
+  assert strip(" ") == ""
+  assert strip("\t \n") == ""
+  assert strip("a") == "a"
+  assert strip("a", leading = false) == "a"
+  assert strip("a", trailing = false) == "a"
+  assert strip(" a", leading = false) == " a"
+  assert strip(" a", trailing = false) == "a"
+  assert strip("a ", leading = false) == "a"
+  assert strip("a ", trailing = false) == "a "
+  assert strip("ab") == "ab"
+  assert strip(" ab") == "ab"
+  assert strip(" a b") == "a b"
+  assert strip(" a b ") == "a b"
+  assert strip("a  b ") == "a  b"
+  assert strip("  ha  ") == "ha"
+  assert strip("  foofoofoo  ") == "foofoofoo"
+  assert strip("sfoofoofoos", chars = {'s'}) == "foofoofoo"
+  assert strip("sfoosfoos", chars = {'s'}) == "foosfoo"
+  assert strip("barfoofoofoobar", chars = {'b', 'a', 'r'}) == "foofoofoo"
+  assert strip("bar", chars = {'b', 'a', 'r'}) == ""
+  assert strip("rab", chars = {'b', 'a', 'r'}) == ""
+  assert strip("bbbb", chars = {'b', 'a', 'r'}) == ""
+  assert strip("BAR", chars = {'b', 'a', 'r'}) == "BAR"
+  assert strip("bar", chars = {'B', 'A', 'R'}) == "bar"
+  assert strip("bar-bar-bar", chars = {'b', 'a', 'r'}) == "-bar-"
+  assert strip("stripme but don't strip this stripme",
+               chars = {'s', 't', 'r', 'i', 'p', 'm', 'e'}) ==
+               " but don't strip this "
+  assert strip("sfoofoos", leading = false, chars = {'s'}) == "sfoofoo"
+  assert strip("sfoofoos", trailing = false, chars = {'s'}) == "foofoos"
+  assert "xxxxxx".strip(chars={'x'}) == ""
+  assert "".strip(chars={'x'}).len == 0
+  assert "         ".strip(chars={'x'}) == "         "
+  assert "xxx xxx".strip(chars={'x'}) == " "
+  assert "xxx  wind".strip(chars={'x'}) == "  wind"
+  assert "xxx  iii".strip(chars={'i'}) == "xxx  "
+  assert "x".strip(leading = false, chars={'x'}).len == 0
+  assert "x".strip(trailing = false, chars={'x'}).len == 0
+  assert "x".strip(leading = false, trailing = false, chars={'x'}) == "x"
+  assert "xyz".strip(leading = false, trailing = false, chars={'x', 'y', 'z'}) == "xyz"
