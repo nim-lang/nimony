@@ -165,10 +165,11 @@ when not defined(nimscript):
         if key.len == 0 or '=' in key:
           # raise newException(OSError, "invalid key, got: " & key)
           quit "invalid key, got: " & key
-        let envToDel = key & "="
-        if c_putenv(cstring envToDel) != 0'i32: bail()
+        var envToDel = key & "="
+        if c_putenv(toCString envToDel) != 0'i32: bail()
       else:
-        if c_unsetenv(cstring key) != 0'i32: bail()
+        var key = key
+        if c_unsetenv(toCString key) != 0'i32: bail()
 
     when defined(windows):
       when defined(cpp):
