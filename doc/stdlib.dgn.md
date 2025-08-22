@@ -1000,3 +1000,30 @@ Checks if an element is present in the hash set, and if not, adds it. Returns tr
 ####items
 
 An iterator that yields all elements in the hash set.
+
+
+## Generic Operating System Services
+
+### pathnorm
+
+@../lib/std/pathnorm.nim
+
+####PathIter
+
+An object used to iterate over path components.
+
+####hasNext
+
+Checks whether the `PathIter` has another path component in the given input string.
+
+####next
+
+Advances a `PathIter` and returns a `(start, end)` pair representing the bounds of the next path component within the provided string.
+
+####addNormalizePath
+
+Low-level procedure that appends a normalized representation of `x` to the `result` string and updates the `state`.
+
+####normalizePath
+
+Returns a normalized path string. It collapses repeated separators, resolves `.` and `..` where possible, and returns `.` for an empty normalized path. The optional `dirSep` parameter controls the separator used in the result.
