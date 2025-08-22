@@ -581,6 +581,10 @@ Checks if character is alphanumeric (a-z, A-Z, 0-9)
 ####isDigit
 Checks if character is a digit (0-9)
 
+####isSpaceAscii
+
+Checks if character is whitespace
+
 ####isLowerAscii
 
 Checks if character is lowercase
@@ -656,6 +660,18 @@ Formats floating point numbers as strings.
 ####formatBiggestFloat
 
 Formats largest floating point numbers as strings.
+
+####%
+
+Interpolates a format string with values.
+
+####format
+
+Interpolates a format string with values.
+
+####strip
+
+Strips leading or trailing characters.
 
 ### unicode
 
