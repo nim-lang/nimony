@@ -66,9 +66,9 @@ proc addNormalizePath*(x: string; result: var string; state: var int;
       let (drive, file) = splitDrive(x)
       x = file
       result.add drive
-      for c in result.mitems:
-        if c in {DirSep, AltSep}:
-          c = dirSep
+      for i in 0..<result.len:
+        if result[i] in {DirSep, AltSep}:
+          result[i] = dirSep
 
   # state: 0th bit set if isAbsolute path. Other bits count
   # the number of path components.

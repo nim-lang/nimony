@@ -1,8 +1,18 @@
 # This module is inspired by Python's `ntpath.py` module.
 
-import std/[
-  strutils,
-]
+import ../strutils
+
+
+func strip(s: string; leading = true; trailing = true;
+            chars: set[char] = Whitespace): string =
+  var
+    first = 0
+    last = len(s)-1
+  if leading:
+    while first <= last and s[first] in chars: inc(first)
+  if trailing:
+    while last >= first and s[last] in chars: dec(last)
+  result = if first > last: "" else: substr(s, first, last)
 
 # Adapted `splitdrive` function from the following commits in Python source
 # code:
@@ -42,7 +52,7 @@ func splitDrive*(p: string): tuple[drive, path: string] =
     let start = block:
       const unc = "\\\\?\\UNC" # Length is 7
       let idx = min(8, normp.len)
-      if unc == normp[0..<idx].strip(chars = {sep}, leading = false).toUpperAscii:
+      if unc == normp.substr(0, idx-1).strip(chars = {sep}, leading = false).toUpperAscii:
         8
       else:
         2
@@ -56,6 +66,6 @@ func splitDrive*(p: string): tuple[drive, path: string] =
       return
     if index2 == -1:
       index2 = p.len
-    return (p[0..<index2], p[index2..^1])
+    return (p.substr(0, index2-1), p.substr(index2, p.high))
   if p[1] == ':':
-    return (p[0..1], p[2..^1])
+    return (p.substr(0, 1), p.substr(2, p.high))
