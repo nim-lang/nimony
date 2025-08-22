@@ -28,13 +28,9 @@ proc considerImportedSymbols(c: var SemContext; name: StrId; info: PackedLineInf
   for moduleId in c.importTab.getOrDefault(name):
     # prevent copies
     let candidates = addr c.importedModules[moduleId].iface[name]
+    inc result, candidates[].len
     for defId in candidates[]:
-      let res = tryLoadSym(defId)
-      if res.status == LacksNothing and res.decl.symKind == FldY:
-        discard "ignores object fields as they are always used with dot or in an object constructor"
-      else:
-        c.dest.add symToken(defId, info)
-        inc result
+      c.dest.add symToken(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
