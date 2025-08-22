@@ -229,6 +229,16 @@ block: # find
   assert haystack.find('A', 0, 0) == -1 # search limited to the first char
   assert haystack.find('A', 5, 0) == -1 # last < start
   assert haystack.find('A', 5, 4) == -1 # last < start
+  assert "".find({}) == -1
+  assert "".find({'A'..'C'}) == -1
+  assert "1".find({'A'..'C'}) == -1
+  assert "abc".find({'A'..'C'}) == -1
+  assert "A".find({'A'..'C'}) == 0
+  assert "C".find({'A'..'C'}) == 0
+  assert haystack.find({'A'..'C'}) == 10
+  assert haystack.find({'A'..'C'}, 5) == 10
+  assert haystack.find({'A'..'C'}, 5, 10) == 10
+  assert haystack.find({'A'..'C'}, 5, 9) == -1
 
 block: # escape
   assert escape("") == "\"\""

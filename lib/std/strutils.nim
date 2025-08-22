@@ -346,6 +346,22 @@ func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
     if s[i] == sub:
       return i
 
+func find*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
+  ## Searches for `chars` in `s` inside range `start..last` (both ends included).
+  ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
+  ##
+  ## If `s` contains none of the characters in `chars`, -1 is returned.
+  ## Otherwise the index returned is relative to `s[0]`, not `start`.
+  ## Subtract `start` from the result for a `start`-origin index.
+  ##
+  ## See also:
+  ## * `multiReplace func<#multiReplace,string,varargs[]>`_
+  result = -1
+  let last = if last < 0: s.high else: last
+  for i in int(start)..last:
+    if s[i] in chars:
+      return i
+
 func replace*(s: string; sub, by: char): string =
   result = newString(s.len)
   var i = 0
