@@ -190,6 +190,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   var target = -1
   var previousPublicTarget = 0
   var previousPrivateTarget = 0
+  var tagId = TagId(0)
 
   var public = createTokenBuf(30)
   var private = createTokenBuf(30)
@@ -205,6 +206,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     if t.kind == ParLe:
       stack.add t.info
       target = offs
+      tagId = t.tagId
     elif t.kind == ParRi:
       if stack.len > 1:
         discard stack.pop()
@@ -214,7 +216,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
       if pool.syms[sym].isImportant:
         let tb = next(s)
         buf.add tb
-        let isPublic = tb.kind != DotToken
+        # object field symbols are always private so that identifiers outside of dot or
+        # object constructors are not bound to them.
+        let isPublic = tb.kind != DotToken and tagId != TagId(FldTagId)
         var dest =
           if isPublic:
             addr(public)

@@ -1606,7 +1606,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
         let p = extractPragma(typ.pragmas, PluginP)
         if p != default(Cursor) and p.kind == StringLit:
           if p.litId notin c.pluginBlacklist:
-            c.pendingTypePlugins[s.name] = p.litId
+            c.pendingTypePlugins[s.name] = (p.litId, p.info)
       else:
         # remove symbol, inline type:
         c.dest.shrink c.dest.len-1
@@ -4291,12 +4291,13 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
     inc it.n
     if it.n.kind == StringLit:
       if c.routine.inGeneric == 0 and it.n.litId notin c.pluginBlacklist:
-        c.pendingModulePlugins.add it.n.litId
+        c.pendingModulePlugins.add (it.n.litId, it.n.info)
       c.dest.add it.n
       inc it.n
     else:
       buildErr c, it.n.info, "expected `string` but got: " & asNimCode(it.n)
       if it.n.kind != ParRi: skip it.n
+    takeParRi c, it.n
     c.dest.addParRi()
   of PragmaP:
     c.dest.add parLeToken(PragmasS, it.n.info)
@@ -5208,7 +5209,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
 
   while true:
     semcheckCore c, n0
-    if c.pendingTypePlugins.len == 0: break
+    if c.pendingTypePlugins.len == 0 and c.pendingModulePlugins.len == 0: break
     handleTypePlugins c
 
   if reportErrors(c) == 0:

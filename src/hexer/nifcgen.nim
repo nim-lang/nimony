@@ -127,12 +127,13 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   skip n # skips value
   takeParRi c, n
 
-proc ithTupleField(counter: int): SymId {.inline.} =
-  pool.syms.getOrIncl("fld." & $counter)
+proc ithTupleField(c: var EContext; counter: int, typ: Cursor): SymId {.inline.} =
+  var typ = typ
+  pool.syms.getOrIncl("fld." & $counter & "." & takeMangle(typ, Backend, c.bits))
 
 proc genTupleField(c: var EContext; typ: var Cursor; counter: int) =
   c.dest.add tagToken("fld", typ.info)
-  let name = ithTupleField(counter)
+  let name = ithTupleField(c, counter, typ)
   c.dest.add symdefToken(name, typ.info)
   c.offer name
   c.dest.addDotToken() # pragmas
@@ -475,11 +476,19 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
       return
     let res = tryLoadSym(s)
     if res.status == LacksNothing:
-      var body = asTypeDecl(res.decl).body
+      var typeDecl = asTypeDecl(res.decl)
+      var body = typeDecl.body
       if body.typeKind == DistinctT: # skips DistinctT
-        inc body
-        trType(c, body, flags)
-        inc n
+        let prag = parsePragmas(c, typeDecl.pragmas)
+
+        if prag.flags * {ImportcP, ImportcppP} == {}:
+          inc body
+          trType(c, body, flags)
+          inc n
+        else:
+          c.demand s
+          c.dest.add n
+          inc n
       else:
         c.demand s
         c.dest.add n
@@ -734,7 +743,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           result.externName = pool.strings[n.litId]
           result.flags.incl pk
           inc n
-        of ExportcP, PluginP:
+        of ExportcP:
           inc n
           expectStrLit c, n
           result.externName = pool.strings[n.litId]
@@ -774,7 +783,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           inc n
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
-           BaseP, FinalP, PragmaP, CursorP, PassiveP:
+           BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP:
           skip n
           continue
         of BuildP, EmitP, PushP, PopP, PassLP:
@@ -1121,11 +1130,22 @@ proc trStmtsExpr(c: var EContext; n: var Cursor) =
 proc trTupleConstr(c: var EContext; n: var Cursor) =
   c.dest.add tagToken("oconstr", n.info)
   inc n
+  var tupleType = n
   c.trType(n, {})
+
+  inc tupleType
   var counter = 0
   while n.kind != ParRi:
     c.dest.add tagToken("kv", n.info)
-    c.dest.add symToken(ithTupleField(counter), n.info)
+    let isKvU = tupleType.substructureKind == KvU
+    if isKvU:
+      inc tupleType # skip "kv"
+      skip tupleType # skip key
+    c.dest.add symToken(ithTupleField(c, counter, tupleType), n.info)
+    skip tupleType
+    if isKvU:
+      skipParRi tupleType
+
     inc counter
     if n.substructureKind == KvU:
       inc n # skip "kv"
@@ -1324,11 +1344,12 @@ proc trExpr(c: var EContext; n: var Cursor) =
     of ArrAtX:
       trArrAt c, n
     of TupatX:
+      let fieldType = getType(c.typeCache, n)
       c.dest.add tagToken("dot", n.info)
       inc n # skip tag
       trExpr c, n # tuple
       expectIntLit c, n
-      c.dest.add symToken(ithTupleField(pool.integers[n.intId]), n.info)
+      c.dest.add symToken(ithTupleField(c, pool.integers[n.intId], fieldType), n.info)
       inc n # skip index
       c.dest.addIntLit(0, n.info) # inheritance
       takeParRi c, n

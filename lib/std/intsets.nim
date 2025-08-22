@@ -36,7 +36,7 @@ proc contains*(s: IntSet; x: int): bool =
   let (a, b, c) = split cast[uint](x)
   if s.t.hasKey(a):
     #let tr = s.t.getOrDefault(a)
-    let tr = addr s.t[a]
+    let tr = addr getOrQuit(s.t, a)
     result = (tr.a[b] and (1'u shl c)) != 0'u
   else:
     result = false
@@ -49,6 +49,8 @@ proc containsOrIncl*(s: var IntSet; x: int): bool =
     tr.a[b] = tr.a[b] or (1'u shl c)
 
 when isMainModule:
+  import std/assertions
+
   var s = initIntSet()
   for i in 5000..<6000:
     s.incl i
