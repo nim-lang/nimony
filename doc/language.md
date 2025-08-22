@@ -556,10 +556,69 @@ Note that, unlike tuples, objects require the field names along with their value
 For a `ref object` type `system.new` is invoked implicitly.
 
 
+### Case in object
+
+Objects can contain a `case` section to create variant types, where different object variants have different fields:
+
+```nim
+type
+  ShapeKind = enum
+    Circle, Rectangle, Triangle
+
+  Shape = object
+    case kind: ShapeKind
+    of Circle:
+      radius: float
+    of Rectangle:
+      width, height: float
+    of Triangle:
+      a, b, c: float
+
+proc area(s: Shape): float =
+  case s.kind
+  of Circle:
+    PI * s.radius * s.radius
+  of Rectangle:
+    s.width * s.height
+  of Triangle:
+    # Heron's formula
+    let p = (s.a + s.b + s.c) / 2
+    sqrt(p * (p - s.a) * (p - s.b) * (p - s.c))
+
+var circle = Shape(kind: Circle, radius: 5.0)
+var rect = Shape(kind: Rectangle, width: 3.0, height: 4.0)
+echo area(circle)  # 78.54...
+echo area(rect)    # 12.0
+```
+
+The discriminator field (in this case `kind`) must be an ordinal type, typically an enum. The case section must be exhaustive - all possible values of the discriminator must be handled or an `else` has to be used.
+
+When constructing an object with a case section, only the fields for the specified variant need to be provided:
+
+```nim
+var triangle = Shape(kind: Triangle, a: 3.0, b: 4.0, c: 5.0)
+```
+
+The case section can also be nested within other object fields:
+
+```nim
+type
+  NodeType = enum
+    Leaf, Branch
+
+  Node = object
+    id: int
+    case nodeType: NodeType
+    of Leaf:
+      value: string
+    of Branch:
+      children: seq[Node]
+```
+
+
 ### Default values for object fields
 
 Object fields are allowed to have a constant default value.
-Contrary to Nim, the type of a field cannot be omitted if a default value is given.
 
 ```nim test
 type
@@ -747,6 +806,39 @@ like `myRef = nil`.
 
 Dereferencing `nil` is prevented at compile-time.
 
+
+### Not nil tracking
+
+Nimony supports `not nil` tracking, which allows the compiler to track when a reference is guaranteed to be non-nil. This is done by appending `not nil` to a reference type:
+
+```nim
+type
+  Node = ref object
+    data: int
+    next: Node not nil
+
+proc processNode(n: Node not nil) =
+  # n is guaranteed to be non-nil here
+  echo n.data
+  if n.next != nil:
+    processNode(n.next)
+```
+
+When a variable is declared as `not nil`, the compiler ensures it is never assigned `nil` and can be used without nil checks.
+
+The compiler can track when a variable becomes non-nil through control flow:
+
+```nim
+var node: Node = nil
+if someCondition():
+  node = Node(data: 42, next: nil)
+  # node is now tracked as not nil in this branch
+  processNode(node) # OK
+else:
+  # node is still potentially nil here
+  if node != nil:
+    processNode(node) # OK after nil check
+```
 
 
 ### Proc type
@@ -1585,6 +1677,70 @@ Is equivalent to:
   ```
 
 
+### Defer statement
+
+The `defer` statement schedules a block of code to be executed when the current scope exits, regardless of how it exits (normal completion, exception, or early return). This is useful for cleanup operations:
+
+```nim
+proc processFile(filename: string) =
+  var f: File
+  if open(f, filename):
+    defer: close(f)  # Will be called when proc exits
+    # Process the file...
+    if someError():
+      return  # close(f) is still called
+    # More processing...
+  # close(f) is called here if file was opened
+```
+
+The `defer` statement can be used in any block scope (procs, methods, iterators, etc.). Multiple `defer` statements in the same scope are executed in reverse order (last in, first out):
+
+```nim
+proc example() =
+  defer: echo "third"
+  defer: echo "second"
+  defer: echo "first"
+  echo "body"
+  # Output: body, first, second, third
+```
+
+`defer` statements are particularly useful for resource management and ensuring cleanup code is always executed, even in error conditions.
+
+
+### Using statement
+
+The `using` statement provides syntactic convenience in modules where the same parameter names and types are used over and over. Instead of repeating type annotations:
+
+```nim
+proc foo(c: Context; n: Node) = ...
+proc bar(c: Context; n: Node, counter: int) = ...
+proc baz(c: Context; n: Node) = ...
+```
+
+One can tell the compiler about the convention that a parameter of name `c` should default to type `Context`, `n` should default to `Node` etc.:
+
+```nim
+using
+  c: Context
+  n: Node
+  counter: int
+
+proc foo(c, n) = ...
+proc bar(c, n, counter) = ...
+proc baz(c, n) = ...
+
+proc mixedMode(c, n; x, y: int) =
+  # 'c' is inferred to be of the type 'Context'
+  # 'n' is inferred to be of the type 'Node'
+  # But 'x' and 'y' are of type 'int'.
+```
+
+The `using` section uses the same indentation based grouping syntax as a `var` or `let` section.
+
+Note that `using` is not applied for `template` since the untyped template parameters default to the type `system.untyped`.
+
+Mixing parameters that should use the `using` declaration with parameters that are explicitly typed is possible and requires a semicolon between them.
+
 
 ### If expression
 
@@ -2163,6 +2319,97 @@ procs:
 
 Procs as expressions can appear both as nested procs and inside top-level
 executable code.
+
+
+## Do notation
+
+As a special convenience notation that keeps most elements of a
+regular proc expression, the `do` keyword can be used to pass
+anonymous procs to routines:
+
+  ```nim
+  var cities = @["Frankfurt", "Tokyo", "New York", "Kyiv"]
+
+  sort(cities) do (x, y: string) -> int:
+    cmp(x.len, y.len)
+
+  # Less parentheses using the method plus command syntax:
+  cities = cities.map do (x: string) -> string:
+    "City of " & x
+  ```
+
+`do` is written after the parentheses enclosing the regular proc parameters.
+The proc expression represented by the `do` block is appended to the routine
+call as the last argument. In calls using the command syntax, the `do` block
+will bind to the immediately preceding expression rather than the command call.
+
+`do` with a parameter list or pragma list corresponds to an anonymous `proc`,
+however `do` without parameters or pragmas is treated as a normal statement
+list. This allows templates to receive both indented statement lists as an
+argument in inline calls:
+
+```nim
+import std/syncio
+
+template myif(cond: bool; thenPart, elsePart: untyped) =
+  if cond:
+    thenPart
+  else:
+    elsePart
+
+myif true:
+  echo "bar"
+do:
+  echo "baz"
+```
+
+
+## Closures
+
+A closure is a proc that captures variables from its surrounding scope. In Nimony, closures are created by declaring a proc inside another proc or block:
+
+```nim
+proc createCounter(): proc(): int =
+  var count = 0
+  result = proc(): int =
+    inc count
+    return count
+
+let counter = createCounter()
+echo counter() # 1
+echo counter() # 2
+echo counter() # 3
+```
+
+Closures capture variables by reference, so modifications to captured variables are visible to all instances of the closure:
+
+```nim
+proc createAdder(x: int): proc(y: int): int =
+  result = proc(y: int): int =
+    return x + y
+
+let add5 = createAdder(5)
+let add10 = createAdder(10)
+echo add5(3)  # 8
+echo add10(3) # 13
+```
+
+Closures can capture multiple variables and can modify them:
+
+```nim
+proc createAccumulator(): proc(x: int): int =
+  var total = 0
+  result = proc(x: int): int =
+    total += x
+    return total
+
+let acc = createAccumulator()
+echo acc(5)  # 5
+echo acc(3)  # 8
+echo acc(7)  # 15
+```
+
+The lifetime of captured variables extends beyond the scope where they were declared, as long as the closure exists. This is handled automatically by the garbage collector for traced references.
 
 
 ## Func
@@ -3234,36 +3481,23 @@ instantiation. The following is not allowed:
   ```
 
 
+### Untyped generics
 
-### Symbol lookup in generics
+Nimony supports untyped generics through the `{.untyped.}` pragma, which enables Nim 2's behavior for generic procs. By default, new generics in Nimony are type-checked when they are defined and when they are instantiated, but the `untyped` pragma allows them to be type-checked only at instantiation time instead:
 
-#### Open and Closed symbols
+```nim
+proc processUntyped[T](x: T): string {.untyped.} =
+  when T is string:
+    "String: " & x
+  elif T is int:
+    "Integer: " & $x
+  else:
+    "Unknown type: " & $x
 
-The symbol binding rules in generics are slightly subtle: There are "open" and
-"closed" symbols. A "closed" symbol cannot be re-bound in the instantiation
-context, an "open" symbol can. Per default, overloaded symbols are open
-and every other symbol is closed.
+echo process("hello")        # Works with default behavior
+echo processUntyped("hello") # Works with untyped pragma
+```
 
-Open symbols are looked up in two different contexts: Both the context
-at definition and the context at instantiation are considered:
-
-  ```nim  test = "nim c $1"
-  type
-    Index = distinct int
-
-  proc `==` (a, b: Index): bool {.borrow.}
-
-  var a = (0, 0.Index)
-  var b = (0, 0.Index)
-
-  echo a == b # works!
-  ```
-
-In the example, the [generic `==` for tuples](system.html#%3D%3D%2CT%2CT_2) (as defined in the system module)
-uses the `==` operators of the tuple's components. However, the `==` for
-the `Index` type is defined *after* the `==` for tuples; yet the example
-compiles as the instantiation takes the currently defined symbols into account
-too.
 
 
 ## Templates
@@ -3837,3 +4071,16 @@ e -= d
 Avoiding the creation of temporary matrices entirely.
 
 While the code for the avoidtemps plugin is beyond the scope of this document, this is a classical compiler transformation.
+
+
+### Import plugins
+
+The `import` statement can be combined with a plugin pragma to load a module that is the result of a plugin output:
+
+```nim
+import (path/foo) {.plugin: "std/v2".}
+```
+
+This syntax imports the module `path/foo` **from the plugin** `std/v2`. This mechanism can be used to import code from a foreign programming language.
+
+The plugin does not receive Nim code but only the path `path/foo`.
