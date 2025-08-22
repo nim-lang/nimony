@@ -1414,7 +1414,7 @@ won't work:
     Foo = ref object
       x: seq[string]
 
-  proc get_x(x: Foo): var seq[string] =
+  proc getX(x: Foo): var seq[string] =
     # doesn't work
     case true
     of true:
@@ -1423,13 +1423,13 @@ won't work:
       x.x
 
   var foo = Foo(x: @[])
-  foo.get_x().add("asd")
+  foo.getX().add("asd")
   ```
 
 This can be remedied by explicitly using `result` or `return`:
 
   ```nim
-  proc get_x(x: Foo): var seq[string] =
+  proc getX(x: Foo): var seq[string] =
     case true
     of true:
       result = x.x
@@ -3770,6 +3770,28 @@ saveTree tr(beginRead inp)
 **Note that plugins are compiled with Nim 2, not Nimony as Nimony is not considered stable enough.**
 
 Plugins that are attached to a template receive only the code that is related to the template invocation. But `.plugin` can also be a statement of its own, then it is a so called "module plugin".
+
+
+### Plugins search
+
+The filename that is passed to the `.plugin` pragma is relative to the directory the string literal originates from.
+
+For example:
+`/dirA/a.nim`
+
+```nim
+template foo =
+  {.plugin: "myplugin".}
+```
+
+`/dirB/b.nim`
+
+```nim
+import ../dirA/a
+foo()
+```
+
+will search for `myplugin.nim` in `dirA` (and in `std`).
 
 
 ### Module plugins
