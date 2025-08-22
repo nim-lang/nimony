@@ -362,6 +362,79 @@ func find*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
     if s[i] in chars:
       return i
 
+type
+  SkipTable* = array[char, int] ## Character table for efficient substring search.
+
+func initSkipTable*(a: var SkipTable; sub: string) =
+  ## Initializes table `a` for efficient search of substring `sub`.
+  ##
+  ## See also:
+  ## * `initSkipTable func<#initSkipTable,string>`_
+  ## * `find func<#find,SkipTable,string,string,Natural,int>`_
+  # TODO: this should be the `default()` initializer for the type.
+  let m = len(sub)
+  for i in a.low.int .. a.high.int:
+    a[i] = m
+
+  for i in 0 ..< m - 1:
+    a[sub[i]] = m - 1 - i
+
+func initSkipTable*(sub: string): SkipTable {.noinit.} =
+  ## Returns a new table initialized for `sub`.
+  ##
+  ## See also:
+  ## * `initSkipTable func<#initSkipTable,SkipTable,string>`_
+  ## * `find func<#find,SkipTable,string,string,Natural,int>`_
+  initSkipTable(result, sub)
+
+func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` using preprocessed
+  ## table `a`. If `last` is unspecified, it defaults to `s.high` (the last
+  ## element).
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  ##
+  ## See also:
+  ## * `initSkipTable func<#initSkipTable,string>`_
+  ## * `initSkipTable func<#initSkipTable,SkipTable,string>`_
+  let
+    last = if last < 0: s.high else: last
+    subLast = sub.len - 1
+
+  if subLast == -1:
+    # this was an empty needle string,
+    # we count this as match in the first possible position:
+    return start
+
+  # This is an implementation of the Boyer-Moore Horspool algorithms
+  # https://en.wikipedia.org/wiki/Boyer%E2%80%93Moore%E2%80%93Horspool_algorithm
+  result = -1
+  var skip = start
+
+  while last - skip >= subLast:
+    var i = subLast
+    while s[skip + i] == sub[i]:
+      if i == 0:
+        return skip
+      dec i
+    inc skip, a[s[skip + subLast]]
+
+func find*(s, sub: string; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` (both ends included).
+  ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  ## Otherwise the index returned is relative to `s[0]`, not `start`.
+  ## Subtract `start` from the result for a `start`-origin index.
+  ##
+  ## See also:
+  ## * `replace func<#replace,string,string,string>`_
+  if sub.len > s.len - start: return -1
+  if sub.len == 1: return find(s, sub[0], start, last)
+
+  # TODO: use `memmem` C function like Nim 2.
+  result = find(initSkipTable(sub), s, sub, start, last)
+
 func replace*(s: string; sub, by: char): string =
   result = newString(s.len)
   var i = 0

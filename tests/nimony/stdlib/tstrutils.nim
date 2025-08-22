@@ -240,6 +240,88 @@ block: # find
   assert haystack.find({'A'..'C'}, 5, 10) == 10
   assert haystack.find({'A'..'C'}, 5, 9) == -1
 
+  assert "".find("") == 0
+  assert "".find("a") == -1
+  assert "".find("aa") == -1
+  assert "".find("ab") == -1
+  assert "a".find("") == 0
+  assert "a".find("a") == 0
+  assert "a".find("aa") == -1
+  assert "a".find("ab") == -1
+  assert "a".find("aaa") == -1
+  assert "aa".find("") == 0
+  assert "aa".find("a") == 0
+  assert "aa".find("aa") == 0
+  assert "aa".find("ab") == -1
+  assert "aa".find("aaa") == -1
+  assert "ab".find("") == 0
+  assert "ab".find("a") == 0
+  assert "ab".find("aa") == -1
+  assert "ab".find("ab") == 0
+  assert "ab".find("abc") == -1
+  assert "abc".find("") == 0
+  assert "abc".find("a") == 0
+  assert "abc".find("aa") == -1
+  assert "abc".find("ab") == 0
+  assert "abc".find("abc") == 0
+  assert "abc".find("bc") == 1
+  assert "abc".find("c") == 2
+
+  assert "abc".find("", start = 1) == 1
+  assert "abc".find("", start = 2) == 2
+  assert "abc".find("", start = 3) == 3
+  assert "abc".find("", start = 4) == -1
+  assert "abc".find("", start = 400) == -1
+  assert "abc".find("", start = 1, last=3) == 1
+  assert "abc".find("", start = 1, last=2) == 1
+  assert "abc".find("", start = 1, last=1) == 1
+  assert "abc".find("", start = 1, last=0) == 1
+  assert "abc".find("", start = 1, last = -1) == 1
+
+  assert "abc".find("a", start = 1) == -1
+  assert "abc".find("a", start = 2) == -1
+  assert "abc".find("a", start = 3) == -1
+  assert "abc".find("a", start = 4) == -1
+  assert "abc".find("a", start = 400) == -1
+  assert "abc".find("a", start = 1, last=2) == -1
+  assert "abc".find("a", start = 1, last=1) == -1
+  assert "abc".find("a", start = 1, last=0) == -1
+  assert "abc".find("a", start = 1, last = -1) == -1
+
+  assert "abc".find("bc", start = 1) == 1
+  assert "abc".find("bc", start = 2) == -1
+  assert "abc".find("bc", start = 3) == -1
+  assert "abc".find("bc", start = 4) == -1
+  assert "abc".find("bc", start = 400) == -1
+  assert "abc".find("bc", start = 1, last=2) == 1
+  assert "abc".find("bc", start = 1, last=1) == -1
+  assert "abc".find("bc", start = 1, last=0) == -1
+  assert "abc".find("bc", start = 1, last = -1) == 1
+
+  block:
+    const haystack: string = "ABCABABABABCAB"
+    assert haystack.len == 14
+
+    # only last argument
+    assert haystack.find("ABC") == 0
+    assert haystack.find("ABC", last=12) == 0 # after the second ABC
+    assert haystack.find("ABC", last=5) == 0 # before the second ABC
+
+    # only start argument
+    assert haystack.find("ABC", start=0) == 0
+    assert haystack.find("ABC", start=1) == 9
+    assert haystack.find("ABC", start=9) == 9
+    assert haystack.find("ABC", start=10) == -1
+
+    # both start and last arguments
+    assert haystack.find("ABC", start=0, last=14) == 0
+    assert haystack.find("ABC", start=0, last=13) == 0
+    assert haystack.find("ABC", start=0, last=12) == 0
+    assert haystack.find("ABC", start=1, last=13) == 9
+    assert haystack.find("ABC", start=1, last=12) == 9
+    assert haystack.find("ABC", start=1, last=11) == 9
+    assert haystack.find("ABC", start=1, last=10) == -1
+
 block: # escape
   assert escape("") == "\"\""
   assert escape("a") == "\"a\""
