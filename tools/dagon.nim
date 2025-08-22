@@ -47,6 +47,7 @@ proc createConf(): ConfigRef =
   result.errorMax = 1000
 
 proc parseFile(thisfile: string): PNode =
+  let thisfile = thisfile.addFileExt(".nim")
   let stream = llStreamOpen(AbsoluteFile thisfile, fmRead)
   if stream == nil:
     quit "cannot open file: " & thisfile
@@ -75,7 +76,7 @@ proc getName(n: PNode; exported: var bool): string =
   else:
     result = ""
 
-proc extractDecls(n: PNode; results: var seq[Declaration]) =
+proc extractDecls(n: PNode; results: var seq[Declaration]; currentFile: string) =
   case n.kind
   of nkNone..nkNilLit: discard
   of routineDefs:
@@ -90,7 +91,14 @@ proc extractDecls(n: PNode; results: var seq[Declaration]) =
       results.add Declaration(name: name, ast: n)
   of nkWhenStmt:
     # pretend the first branch is what we are interested in:
-    extractDecls(n[0], results)
+    extractDecls(n[0], results, currentFile)
+  of nkIncludeStmt:
+    for s in n:
+      if s.kind in {nkStrLit..nkTripleStrLit}:
+        let includeFile = currentFile.splitFile.dir / s.strVal
+        extractDecls(parseFile(includeFile), results, includeFile)
+      else:
+        echo "Warning: did not follow include statement: ", n.renderTree
   of nkTypeSection:
     for i in 0..<n.len:
       var exported = false
@@ -98,7 +106,7 @@ proc extractDecls(n: PNode; results: var seq[Declaration]) =
       if exported:
         results.add Declaration(name: name, ast: newTree(nkTypeSection, n[i]))
   else:
-    for ch in n: extractDecls(ch, results)
+    for ch in n: extractDecls(ch, results, currentFile)
 
 proc nodeToString(n: PNode; hasNewlines: var bool): string =
   result = ""
@@ -131,7 +139,7 @@ proc fillinCode(result: var string; c: var Context; ident, currentFile: string; 
   if d == nil:
     let nodes = parseFile(currentFile)
     d = Declarations()
-    extractDecls(nodes, d.decls)
+    extractDecls(nodes, d.decls, currentFile)
     c.nimCode[currentFile] = d
   if d == nil or d.decls.len == 0:
     result.add "ERROR: Could not find declaration for " & ident & " in " & currentFile & "\n"

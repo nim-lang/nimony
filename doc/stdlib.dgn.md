@@ -1,5 +1,452 @@
 # Standard library
 
+## system
+
+@../lib/std/system.nim
+
+The system module defines fundamental types and type classes:
+
+### Numbers
+
+####int
+Word-sized signed integer type.
+
+####int8
+8-bit signed integer type.
+
+####int16
+16-bit signed integer type.
+
+####int32
+32-bit signed integer type.
+
+####int64
+64-bit signed integer type.
+
+####Natural
+Natural number type.
+
+####Positive
+Positive number type.
+
+####uint
+Word-sized unsigned integer type.
+
+####uint8
+8-bit unsigned integer type.
+
+####uint16
+16-bit unsigned integer type.
+
+####uint32
+32-bit unsigned integer type.
+
+####uint64
+64-bit unsigned integer type.
+
+####float
+Floating point number type.
+
+####float32
+32-bit floating point number type.
+
+####float64
+64-bit floating point number type.
+
+### Other basic types
+
+####char
+8-bit character type.
+
+####cstring
+C-compatible string type.
+
+####pointer
+Pointer type.
+
+####bool
+Boolean type (false, true).
+
+####string
+Built-in string type.
+
+####seq
+Built-in sequence type.
+
+####array
+Built-in array type.
+
+####tuple
+Built-in tuple type.
+
+
+### Type classes
+
+####SomeSignedInt
+All signed integer types.
+
+####SomeUnsignedInt
+All unsigned integer types.
+
+####SomeInteger
+All integer types.
+
+####SomeFloat
+All floating point types.
+
+####SomeNumber
+All numeric types.
+
+
+### Arithmetic operators
+
+####inc
+In-place increment.
+
+####dec
+In-place decrement.
+
+####succ
+Successor function.
+
+####pred
+Predecessor function.
+
+####+
+Addition.
+
+####-
+Subtraction.
+
+####*
+Multiplication.
+
+####div
+Integer division.
+
+####mod
+Modulus for integers.
+
+####shl
+Bit shift left.
+
+####shr
+Bit shift right.
+
+####ashr
+Arithmetic shift right.
+
+####and
+Logical and bitwise AND.
+
+####or
+Logical or bitwise OR.
+
+####xor
+Logical and bitwise XOR.
+
+####not
+Logical and bitwise NOT.
+
+### Comparison operators
+
+####==
+Equality
+
+####!=
+Inequality. This is a generic template that means you **should not** implement it for your own types. Implement only `==` instead.
+
+####>
+Greater than. This is a generic template that means you **should not** implement it for your own types. Implement only `<` instead.
+
+####=>
+Greater than or equal to. This is a generic template that means you **should not** implement it for your own types. Implement only `>=` instead.
+
+####<
+Less than.
+
+####<=
+Less than or equal to.
+
+####is
+
+Returns true if the object is of the given type. This is a compile-time check.
+
+####isnot
+
+The negation of `is`. This is a compile-time check.
+
+####of
+
+Returns true if the object is of the given subtype. This is a runtime check.
+
+
+####contains
+
+Set membership check.
+
+####in
+
+Set membership check. `a in b` is equivalent to `b contains a`.
+
+####notin
+
+The negation of `in`.
+
+
+### Moves
+
+####move
+Move operation.
+
+####ensureMove
+Ensure move optimization.
+
+### Compile-time utilities
+
+####defined
+Check if symbol is defined.
+
+####declared
+Check if symbol is declared.
+
+####compiles
+Check if code compiles.
+
+####astToStr
+Convert AST to string.
+
+####isMainModule
+True if this is the main module.
+
+### Memory management
+
+####sizeof
+Get size of type.
+
+####addr
+Get address of variable.
+
+####swap
+Swap two values. This does not use and `=sink` or `=copy` or `=dup` hooks! It always swaps the values' bits. This is in line with the design of Nim's move semantics.
+
+####allocFixed
+Allocate fixed size memory.
+
+####deallocFixed
+Deallocate fixed size memory.
+
+####copyMem
+Copy memory.
+
+####cmpMem
+Compare memory.
+
+####zeroMem
+Zero memory.
+
+####continueAfterOutOfMem
+The default implementation of the "out of memory" handler. The standard library tries to handle this case gracefully.
+
+####threadOutOfMem
+Returns if the current thread ran out of memory.
+
+####setOomHandler
+Set out of memory handler. Applications can use this to handle the "out of memory" case differently: For many applications the cheapest solution is to just exit the program.
+
+
+### Miscellaneous operations
+
+####default
+
+Returns the default value for a type.
+
+
+### String and sequence operations
+
+####len
+Length of a string/seq/array/etc.
+
+####high
+
+Highest index of a string/seq/array/etc.
+
+####low
+
+Lowest index of a string/seq/array/etc.
+
+####capacity
+
+Capacity of a string/seq/array/etc.
+
+####add
+
+Adds a value to a string/seq. Often also called an "append" operation.
+
+####$
+String conversion operator.
+
+####toOpenArray
+
+Converts a string/seq/array/etc to an open array.
+
+
+####rawData
+
+Provides an unchecked view into the underlying data of a string/seq. The data is guaranteed to be sequential in memory.
+
+####borrowCStringUnsafe
+
+Borrows a C string from a Nim string. This is unsafe because the Nim string may be moved or deallocated while the C string is still in use.
+
+
+####setLen
+
+Sets the length of a string/seq/array/etc. Prefer to use `grow` or `shrink` instead as they are more efficient and clearer.
+
+####grow
+
+Grows a `seq` by a given number of elements. The elements are default initialized.
+
+####growUnsafe
+
+Grows a `seq` by a given number of elements. The elements are not  initialized. Use with care!
+
+####shrink
+
+Shrinks a string/seq/array/etc.
+
+####toCString
+
+Converts a Nim string to a C string.
+
+####prepareMutation
+
+Prepares a string for mutation. String literals are "copy on write", so you need to call `prepareMutation` before modifying strings via `addr`.
+
+
+####&
+
+Concatenates two strings. Prefer to use `concat` instead as it is much more efficient.
+
+####concat
+
+Concatenates many strings.
+
+
+####substr
+
+Returns a substring of a string.
+
+####addEscapedChar
+Add escaped character to string.
+
+####addQuoted
+Add quoted value to string.
+
+####items
+
+Yields all the elements of a string/seq/array/etc.
+
+####newSeq
+
+Creates a new `seq` with a given length. The elements are default initialized.
+
+####newSeqOf
+
+Creates a new `seq` with a given length. The elements are initialized with a given value.
+
+####newSeqUninit
+
+Creates a new `seq` with a given length. The elements are not initialized. Use with care!
+
+####@
+
+Creates a new `seq` from an `array`. Typically used with an array constructor, for example: `@[1, 2, 3]`.
+
+
+####newString
+
+Creates a new `string` with a given length. The elements are not initialized. Use with care!
+
+####del
+
+Deletes an element from a `seq` by swapping it with its last element and then setting the internal length field. Thus it is O(1) but it does change the order of the elements.
+
+####pop
+
+Pops the last element from a `seq` and returns it.
+
+### Iterators
+
+####..
+Inclusive range iterator.
+
+####..<
+Exclusive range iterator.
+
+####countdown
+Countdown iterator.
+
+####fields
+Iterate over object/tuple fields.
+
+####fieldPairs
+Iterate over field name-value pairs.
+
+####unpack
+
+Used to iterate over varargs parameters.
+
+
+### Coroutines
+
+####Continuation
+Continuation representation.
+
+####ContinuationProc
+Continuation procedure type.
+
+####CoroutineBase
+Base coroutine type.
+
+####Scheduler
+Scheduler function type.
+
+####afterYield
+Get next continuation after yield.
+
+####delay
+Delay execution and return continuation.
+
+####advance
+Single step through continuations.
+
+####Inf
+
+Positive infinity floating point value.
+
+####NaN
+
+Not a Number floating point value.
+
+####ord
+
+Converts a value to its ordinal value.
+
+####abs
+
+Returns the absolute value. That is the value of its number ignoring its sign.
+
+####chr
+
+Converts an integer to a character.
+
+####isNil
+
+Checks if a value is nil.
+
+
 ## Input / Output
 
 ### syncio
