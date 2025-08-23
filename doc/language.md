@@ -3222,73 +3222,101 @@ or `enums` can only be defined in a `type` section.
 
 
 
+## Concepts
+
+A concept is a description of a constraint, it describes what operations a type must provide so that the type fullfills the concept. For example:
+
+```nim
+type
+  Comparable = concept
+    proc `<=`(a, b: Self): bool
+    proc `==`(a, b: Self): bool
+    proc `<`(a, b: Self): bool
+
+`Self` stands for the currently defined concept itself. It is used to avoid a recursion, `proc <=(a, b: Comparable): bool` is invalid.
+
+A concept is a pure compile-time mechanism that is required to type-check generic code, it is not a runtime mechanism! It is **not** comparable to a C#/Java interface.
+
+### Atoms and containers
+
+Concepts come in two forms: Atoms and containers. A container is a generic concept like `Iterable[T]`, an atom always lacks any kind of generic parameter (as in `Comparable`).
+
+Syntactically a concept consists of a list of proc and iterator declarations.
+
+
+### Atomic concepts
+
+More examples for atomic concepts:
+
+```nim
+type
+  Comparable = concept # no T, an atom
+    proc cmp(a, b: Self): int
+
+  ToStringable = concept
+    proc `$`(a: Self): string
+
+  Hashable = concept
+    proc hash(x: Self): int
+    proc `==`(x, y: Self): bool
+
+  Swapable = concept
+    proc swap(x, y: var Self)
+```
+
+### Containers concepts
+
+A container has at least one generic parameter (most often called `T`). The first syntactic usage of the generic parameter specifies how to infer and bind `T`. Other usages of T are then checked to match what it was bound to.
+
+For example:
+
+```nim
+type
+  Indexable[T] = concept # has a T, a collection
+    proc `[]`(a: Self; index: int): var T # we need to describe how to infer 'T'
+    # and then we can use the 'T' and it must match:
+    proc `[]=`(a: var Self; index: int; value: T)
+    proc len(a: Self): int
+```
+
+Nothing interesting happens when we use multiple generic parameters:
+
+```nim
+type
+  Dictionary[K, V] = concept
+    proc `[]`(a: Self; key: K): V
+    proc `[]=`(a: var Self; key: K; value: V)
+```
+
+The usual ": Constraint" syntax can be used to add generic constraints to the involved generic parameters:
+
+```nim
+type
+  Dictionary[K: Hashable; V] = concept
+    proc `[]`(a: Self; key: K): V
+    proc `[]=`(a: var Self; key: K; value: V)
+```
+
+
 ## Generics
 
-Generics are a means to parametrize procs, iterators or types with
-`type parameters`:idx:. Depending on the context, the brackets are used either to
-introduce type parameters or to instantiate a generic proc, iterator, or type.
+Generics are a means to parametrize procs, iterators or types with `type parameters`:idx:. Depending on the context, the brackets are used either to introduce type parameters or to instantiate a generic proc, iterator, or type.
 
+The following example describes a generic proc `find` that can be used to look for an element in any container that fullfills the `Findable` constraints:
 
-The following example shows how a generic binary tree can be modeled:
+```nim
+type
+  Findable[T] = concept
+    iterator items(x: Self): T
+    proc `==`(a, b: T): bool
 
-  ```nim  test = "nim c $1"
-  type
-    BinaryTree*[T] = ref object # BinaryTree is a generic type with
-                                # generic parameter `T`
-      le, ri: BinaryTree[T]     # left and right subtrees; may be nil
-      data: T                   # the data stored in a node
-
-  proc newNode*[T](data: T): BinaryTree[T] =
-    # constructor for a node
-    result = BinaryTree[T](le: nil, ri: nil, data: data)
-
-  proc add*[T](root: var BinaryTree[T], n: BinaryTree[T]) =
-    # insert a node into the tree
-    if root == nil:
-      root = n
-    else:
-      var it = root
-      while it != nil:
-        # compare the data items; uses the generic `cmp` proc
-        # that works for any type that has a `==` and `<` operator
-        var c = cmp(it.data, n.data)
-        if c < 0:
-          if it.le == nil:
-            it.le = n
-            return
-          it = it.le
-        else:
-          if it.ri == nil:
-            it.ri = n
-            return
-          it = it.ri
-
-  proc add*[T](root: var BinaryTree[T], data: T) =
-    # convenience proc:
-    add(root, newNode(data))
-
-  iterator preorder*[T](root: BinaryTree[T]): T =
-    # Preorder traversal of a binary tree.
-    # This uses an explicit stack (which is more efficient than
-    # a recursive iterator factory).
-    var stack: seq[BinaryTree[T]] = @[root]
-    while stack.len > 0:
-      var n = stack.pop()
-      while n != nil:
-        yield n.data
-        add(stack, n.ri)  # push right subtree onto the stack
-        n = n.le          # and follow the left pointer
-
-  var
-    root: BinaryTree[string] # instantiate a BinaryTree with `string`
-  add(root, newNode("hello")) # instantiates `newNode` and `add`
-  add(root, "world")          # instantiates the second `add` proc
-  for str in preorder(root):
-    stdout.writeLine(str)
-  ```
-
-The `T` is called a `generic type parameter`:idx: or
-a `type variable`:idx:.
+proc find(x: Findable[T]; elem: T): int =
+  var i = 0
+  for a in x:
+    if a == elem: return i
+    inc i
+  return -1
+```
 
 
 ### Generic Procs
