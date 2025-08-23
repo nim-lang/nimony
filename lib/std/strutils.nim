@@ -1,5 +1,4 @@
 import std/parseutils
-from std/syncio import quit
 
 const
   Whitespace* = {' ', '\t', '\v', '\r', '\l', '\f'}
@@ -599,10 +598,10 @@ func findNormalized(x: string, inArray: openArray[string]): int =
               # security hole...
   return -1
 
-proc invalidFormatString(formatstr: string) {.noinline.} =
+proc invalidFormatString(formatstr: string) {.noinline, raises.} =
   # TODO: Uncomment when exceptions are implemented.
-  #raise newException(ValueError, "invalid format string: " & formatstr)
-  quit "ValueError: invalid format string: " & formatstr
+  #raise newException(SyntaxError, "invalid format string: " & formatstr)
+  raise SyntaxError
 
 func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
   ## Interpolates a format string with the values from `a`.
