@@ -3224,7 +3224,7 @@ or `enums` can only be defined in a `type` section.
 
 ## Concepts
 
-A concept is a description of a constraint, it describes what operations a type must provide so that the type fullfills the concept. For example:
+A concept is a description of a constraint, it describes what operations a type must provide so that the type fulfills the concept. For example:
 
 ```nim
 type
@@ -3232,6 +3232,7 @@ type
     proc `<=`(a, b: Self): bool
     proc `==`(a, b: Self): bool
     proc `<`(a, b: Self): bool
+```
 
 `Self` stands for the currently defined concept itself. It is used to avoid a recursion, `proc <=(a, b: Comparable): bool` is invalid.
 
@@ -3302,7 +3303,7 @@ type
 
 Generics are a means to parametrize procs, iterators or types with `type parameters`:idx:. Depending on the context, the brackets are used either to introduce type parameters or to instantiate a generic proc, iterator, or type.
 
-The following example describes a generic proc `find` that can be used to look for an element in any container that fullfills the `Findable` constraints:
+The following example describes a generic proc `find` that can be used to look for an element in any container that fulfills the `Findable` constraints:
 
 ```nim
 type
@@ -3310,178 +3311,49 @@ type
     iterator items(x: Self): T
     proc `==`(a, b: T): bool
 
-proc find(x: Findable[T]; elem: T): int =
+proc find[T](x: Findable[T]; elem: T): int =
   var i = 0
-  for a in x:
+  for a in items(x):
     if a == elem: return i
     inc i
   return -1
 ```
 
+Thanks to the `x` being declared as `Findable[T]`, it is known that the element `a` of the collection is of type `T` and that `T` supports equality comparisons via `==`.
 
-### Generic Procs
-
-Let's consider the anatomy of a generic `proc` to agree on defined terminology.
-
-```nim
-p[T: t](arg1: f): y
-```
-
-- `p`: Callee symbol
-- `[...]`: Generic parameters
-- `T: t`: Generic constraint
-- `T`: Type variable
-- `[T: t](arg1: f): y`: Formal signature
-- `arg1: f`: Formal parameter
-- `f`: Formal parameter type
-- `y`: Formal return type
-
-The use of the word "formal" here is to denote the symbols as they are defined by the programmer,
-not as they may be at compile time contextually. Since generics may be instantiated and
-types bound, we have more than one entity to think about when generics are involved.
-
-The usage of a generic will resolve the formally defined expression into an instance of that
-expression bound to only concrete types. This process is called "instantiation".
-
-Brackets at the site of a generic's formal definition specify the "constraints" as in:
+This find function can be used with any collection that fulfills the `Findable` concept, for example:
 
 ```nim
-type Foo[T] = object
-proc p[H;T: Foo[H]](param: T): H
+type
+  MyCollection = object
+    data: seq[int]
+
+proc items(x: MyCollection): int =
+  return x.data
+
+var myCollection = MyCollection(data: @[1, 2, 3, 4, 5])
+echo find(myCollection, 3) # 2
 ```
 
-A constraint definition may have more than one symbol defined by separating each definition by
-a `;`. Notice how `T` is composed of `H` and the return  type of `p` is defined as `H`. When this
-generic proc is instantiated `H` will be bound to a concrete type, thus making `T` concrete and
-the return type of `p` will be bound to the same concrete type used to define `H`.
-
-Brackets at the site of usage can be used to supply concrete types to instantiate the generic in the same
-order that the symbols are defined in the constraint. Alternatively, type bindings may be inferred by the compiler
-in some situations, allowing for cleaner code.
+These form of generics are called "checked generics" because the typing rules are checked at the point of definition and also at the point of instantiation.
 
 
-### Type classes
+### Untyped generics
 
-A type class is a special pseudo-type that can be used to match against
-types in the context of overload resolution.
-The following built-in type classes exist:
+There are also "unchecked generics" which are only checked at the point of instantiation. These can be accessed via the `{.untyped.}` pragma:
 
-==================   ===================================================
-type class           matches
-==================   ===================================================
-`object`             any object type
-`tuple`              any tuple type
-`enum`               any enumeration
-`proc`               any proc type
-`iterator`           any iterator type
-`ref`                any `ref` type
-`ptr`                any `ptr` type
-`var`                any `var` type
-`distinct`           any distinct type
-`array`              any array type
-`set`                any set type
-`seq`                any seq type
-==================   ===================================================
+```nim
+proc processUntyped[T](x: T): string {.untyped.} =
+  when T is string:
+    "String: " & x
+  elif T is int:
+    "Integer: " & $x
+  else:
+    "Unknown type: " & $x
 
-Furthermore, every generic type automatically creates a type class of the same
-name that will match any instantiation of the generic type.
-
-Type classes can be combined using the `|` operator to form
-more complex type classes:
-
-  ```nim
-  # create a type class that will match all tuple and object types
-  type RecordType = (tuple | object)
-
-  proc printFields[T: RecordType](rec: T) =
-    for key, value in fieldPairs(rec):
-      echo key, " = ", value
-  ```
-
-Type constraints on generic parameters can be grouped with `,` and propagation
-stops with `;`, similarly to parameters for macros and templates:
-
-  ```nim
-  proc fn1[T; U, V: SomeFloat]() = discard # T is unconstrained
-  template fn2(t; u, v: SomeFloat) = discard # t is unconstrained
-  ```
-
-Whilst the syntax of type classes appears to resemble that of ADTs/algebraic data
-types in ML-like languages, it should be understood that type classes are static
-constraints to be enforced at type instantiations. Type classes are not really
-types in themselves but are instead a system of providing generic "checks" that
-ultimately *resolve* to some singular type. Type classes do not allow for
-runtime type dynamism, unlike object variants or methods.
-
-As an example, the following would not compile:
-
-  ```nim
-  type TypeClass = int | string
-  var foo: TypeClass = 2 # foo's type is resolved to an int here
-  foo = "this will fail" # error here, because foo is an int
-  ```
-
-Nim allows for type classes and regular types to be specified
-as `type constraints`:idx: of the generic type parameter:
-
-  ```nim
-  proc onlyIntOrString[T: int|string](x, y: T) = discard
-
-  onlyIntOrString(450, 616) # valid
-  onlyIntOrString(5.0, 0.0) # type mismatch
-  onlyIntOrString("xy", 50) # invalid as 'T' cannot be both at the same time
-  ```
-
-`proc` and `iterator` type classes also accept a calling convention pragma
-to restrict the calling convention of the matching `proc` or `iterator` type.
-
-  ```nim
-  proc onlyClosure[T: proc {.closure.}](x: T) = discard
-
-  onlyClosure(proc() = echo "hello") # valid
-  proc foo() {.nimcall.} = discard
-  onlyClosure(foo) # type mismatch
-  ```
-
-
-
-`typedesc` used as a parameter type also introduces an implicit
-generic. `typedesc` has its own set of rules:
-
-  ```nim
-  proc p(a: typedesc)
-
-  # is roughly the same as:
-
-  proc p[T](a: typedesc[T])
-  ```
-
-
-`typedesc` is a "bind many" type class:
-
-  ```nim
-  proc p(a, b: typedesc)
-
-  # is roughly the same as:
-
-  proc p[T, T2](a: typedesc[T], b: typedesc[T2])
-  ```
-
-
-A parameter of type `typedesc` is itself usable as a type. If it is used
-as a type, it's the underlying type. In other words, one level
-of "typedesc"-ness is stripped off:
-
-  ```nim
-  proc p(a: typedesc; b: a) = discard
-
-  # is roughly the same as:
-  proc p[T](a: typedesc[T]; b: T) = discard
-
-  # hence this is a valid call:
-  p(int, 4)
-  # as parameter 'a' requires a type, but 'b' requires a value.
-  ```
+echo process("hello")        # Works with default behavior
+echo processUntyped("hello") # Works with untyped pragma
+```
 
 
 ### Generic inference restrictions
@@ -3507,25 +3379,6 @@ instantiation. The following is not allowed:
   # also not allowed: explicit instantiation via 'var int'
   g[var int](v, i)
   ```
-
-
-### Untyped generics
-
-Nimony supports untyped generics through the `{.untyped.}` pragma, which enables Nim 2's behavior for generic procs. By default, new generics in Nimony are type-checked when they are defined and when they are instantiated, but the `untyped` pragma allows them to be type-checked only at instantiation time instead:
-
-```nim
-proc processUntyped[T](x: T): string {.untyped.} =
-  when T is string:
-    "String: " & x
-  elif T is int:
-    "Integer: " & $x
-  else:
-    "Unknown type: " & $x
-
-echo process("hello")        # Works with default behavior
-echo processUntyped("hello") # Works with untyped pragma
-```
-
 
 
 ## Templates
