@@ -35,10 +35,13 @@ import nifindexes, symparser, treemangler, lifter, mover, hexer_context
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 
 type
+  ContextFlag = enum
+    ReportLastUse, CanRaise
+
   Context = object
     dest: TokenBuf
     lifter: ref LiftingCtx
-    reportLastUse: bool
+    flags: set[ContextFlag]
     typeCache: TypeCache
     tmpCounter: int
     resultSym: SymId
@@ -80,7 +83,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
     if canAnalyse:
       var otherUsage = NoLineInfo
       result = isLastUse(n, c.source[], otherUsage)
-      if c.reportLastUse:
+      if ReportLastUse in c.flags:
         echo infoToStr(n.info), " LastUse: ", result
 
 const
@@ -598,14 +601,18 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
 proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.dest.add n
   let oldResultSym = c.resultSym
+  let oldFlags = c.flags
   c.resultSym = NoSymId
-  let oldReportLastUse = c.reportLastUse
+  c.flags = {}
   let decl = n
   var r = takeRoutine(n, SkipFinalParRi)
   let symId = r.name.symId
   if isLocalDecl(symId):
     c.typeCache.registerLocal(symId, r.kind, decl)
-  c.reportLastUse = hasPragmaOfValue(r.pragmas, ReportP, "lastuse")
+  if hasPragmaOfValue(r.pragmas, ReportP, "lastuse"):
+    c.flags.incl ReportLastUse
+  if hasPragma(r.pragmas, RaisesP):
+    c.flags.incl CanRaise
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pattern
@@ -626,7 +633,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
     copyTree c.dest, r.body
   c.dest.addParRi()
   c.resultSym = oldResultSym
-  c.reportLastUse = oldReportLastUse
+  c.flags = oldFlags
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   not isTrivial(c.lifter[], typ)
@@ -735,6 +742,17 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
       tr(c, n, WantOwner)
   inc n # skip ParRi
 
+proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
+  copyIntoKind c.dest, IfS, info:
+    copyIntoKind c.dest, ElifU, info:
+      copyIntoKind c.dest, EqX, info:
+        copyIntoKind c.dest, PointerT, info: discard
+        c.dest.add symToken(ow.s, info)
+        copyIntoKind c.dest, NilX, info: discard
+      copyIntoKind c.dest, StmtsS, info:
+        copyIntoKind c.dest, RaiseS, info:
+          c.dest.add symToken(pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix), info)
+
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
   let info = n.info
   inc n
@@ -755,6 +773,10 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
       copyIntoKind c.dest, SizeofX, info:
         c.dest.add symToken(typeSym, info)
   c.dest.addParRi() # finish temp declaration
+
+  # map to OOM if the proc can raise an error:
+  if CanRaise in c.flags:
+    genOutOfMemCheck(c, ow, info)
 
   copyIntoKind c.dest, AsgnS, info:
     copyIntoKind c.dest, DerefX, info:
