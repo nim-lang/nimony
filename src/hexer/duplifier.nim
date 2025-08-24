@@ -611,7 +611,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
     c.typeCache.registerLocal(symId, r.kind, decl)
   if hasPragmaOfValue(r.pragmas, ReportP, "lastuse"):
     c.flags.incl ReportLastUse
-  if hasPragma(r.effects, RaisesP):
+  if hasPragma(r.pragmas, RaisesP):
     c.flags.incl CanRaise
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
