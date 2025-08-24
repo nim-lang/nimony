@@ -284,8 +284,7 @@ A `$` proc is defined for cstrings that returns a string. Thus, to get a nim
 string from a cstring:
 
   ```nim
-  var str: string = "Hello!"
-  var cstr: cstring = str
+  var cstr: cstring
   var newstr: string = $cstr
   ```
 
@@ -307,6 +306,7 @@ it can be modified:
   ```
 
 `cstring` values may also be used in case statements like strings.
+
 
 ### Array type
 
