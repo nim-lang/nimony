@@ -1677,36 +1677,6 @@ Is equivalent to:
   ```
 
 
-### Defer statement
-
-The `defer` statement schedules a block of code to be executed when the current scope exits, regardless of how it exits (normal completion, exception, or early return). This is useful for cleanup operations:
-
-```nim
-proc processFile(filename: string) =
-  var f: File
-  if open(f, filename):
-    defer: close(f)  # Will be called when proc exits
-    # Process the file...
-    if someError():
-      return  # close(f) is still called
-    # More processing...
-  # close(f) is called here if file was opened
-```
-
-The `defer` statement can be used in any block scope (procs, methods, iterators, etc.). Multiple `defer` statements in the same scope are executed in reverse order (last in, first out):
-
-```nim
-proc example() =
-  defer: echo "third"
-  defer: echo "second"
-  defer: echo "first"
-  echo "body"
-  # Output: body, first, second, third
-```
-
-`defer` statements are particularly useful for resource management and ensuring cleanup code is always executed, even in error conditions.
-
-
 ### Using statement
 
 The `using` statement provides syntactic convenience in modules where the same parameter names and types are used over and over. Instead of repeating type annotations:
@@ -3197,6 +3167,136 @@ A converter can also be explicitly invoked for improved readability. Note that
 implicit converter chaining is not supported: If there is a converter from
 type A to type B and from type B to type C, the implicit conversion from A to C
 is not provided.
+
+
+## Error handling
+
+The error handling is based on a standardized error enum called `ErrorCode`. It is supposed to cover all possible errors that can occur in a program. Among its possible values are `Success`, `Failure`, `OverflowError`, `IndexError` and `SyntaxError`. As it is a normal enum, it can be used as a return type:
+
+```nim
+proc problem(): ErrorCode = return Failure
+```
+
+But it can also be "raised" which then influences the control flow of the caller:
+
+```nim
+proc problem() {.raises.} = raise Failure
+```
+
+A routine that can raise an error must always be annotated with `{.raises.}`. In order to handle an error use a `try` statement:
+
+```nim
+try:
+  problem()
+except ErrorCode as e:
+  echo "Error: ", e
+```
+
+### Try statement
+
+A try statement has the general form: `try <statements> except <statements> finally <statements>`.
+
+The statements after the `try` are executed in sequential order unless an error is raised. If an error is raised the `except` block is executed. Regardless of whether an error is raised or not, the `finally` block is executed, it runs after the `except` block.
+
+For Example:
+
+```nim
+# read the first two lines of a text file that should contain numbers
+# and tries to add them
+var f: File
+if open(f, "numbers.txt"):
+  try:
+    var a = readLine(f)
+    var b = readLine(f)
+    echo "sum: " & $(parseInt(a) + parseInt(b))
+  except ErrorCode as e:
+    case e
+    of OverflowError:
+      echo "overflow!"
+    of ValueError:
+      echo "value error!"
+    of IOError:
+      echo "io error!"
+    of SyntaxError:
+      echo "syntax error!"
+    of RangeError:
+      echo "range error!"
+    else:
+      echo "unknown error! ", e
+  finally:
+    close(f)
+```
+
+### Try expression
+
+Try can also be used as an expression; the type of the `try` branch then needs to fit the types of `except` branches, but the type of the `finally` branch always has to be `void`:
+
+```nim test
+from std/strutils import parseInt
+
+let x = try: parseInt("133a")
+        except: -1
+        finally: echo "hi"
+```
+
+
+To prevent confusing code there is a parsing limitation; if the `try` follows a `(` it has to be written as a one liner:
+
+```nim test
+from std/strutils import parseInt
+let x = (try: parseInt("133a") except: -1)
+```
+
+
+### Defer statement
+
+The `defer` statement is syntactic sugar for a `finally` section of a `try` statement.
+
+For example:
+
+```nim
+proc p() =
+  setup()
+  try:
+    use()
+  finally:
+    atLast()
+```
+
+Can be written as:
+
+```nim
+proc p() =
+  setup()
+  defer: atLast()
+  use()
+```
+
+The `defer` statement schedules a block of code to be executed when the current scope exits, regardless of how it exits (normal completion, exception, or early return). This is useful for cleanup operations:
+
+```nim
+proc processFile(filename: string) =
+  var f: File
+  if open(f, filename):
+    defer: close(f)  # Will be called when proc exits
+    # Process the file...
+    if someError():
+      return  # close(f) is still called
+    # More processing...
+  # close(f) is called here if file was opened
+```
+
+The `defer` statement can be used in any block scope (procs, methods, iterators, etc.). Multiple `defer` statements in the same scope are executed in reverse order (last in, first out):
+
+```nim
+proc example() =
+  defer: echo "third"
+  defer: echo "second"
+  defer: echo "first"
+  echo "body"
+  # Output: body, first, second, third
+```
+
 
 
 ## Type sections
