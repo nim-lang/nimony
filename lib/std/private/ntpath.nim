@@ -3,17 +3,6 @@
 import ../strutils
 
 
-func strip(s: string; leading = true; trailing = true;
-            chars: set[char] = Whitespace): string =
-  var
-    first = 0
-    last = len(s)-1
-  if leading:
-    while first <= last and s[first] in chars: inc(first)
-  if trailing:
-    while last >= first and s[last] in chars: dec(last)
-  result = if first > last: "" else: substr(s, first, last)
-
 # Adapted `splitdrive` function from the following commits in Python source
 # code:
 # 5a607a3ee5e81bdcef3f886f9d20c1376a533df4 (2009): Initial UNC handling (by Mark Hammond)
