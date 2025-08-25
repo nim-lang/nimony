@@ -149,6 +149,7 @@ when not (defined(cpu16) or defined(cpu8)):
     result = newWideCString(s, s.len)
 
   proc newWideCString*(s: var string): WideCStringObj =
+    # seems to be a bit buggy ...
     result = newWideCString(s.toCString, s.len)
 
   proc `$`*(w: WideCString, estimate: int, replacement: int = 0xFFFD): string =

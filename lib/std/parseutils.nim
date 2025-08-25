@@ -5,6 +5,15 @@
 from std/syncio import quit
 import std/[assertions]
 
+const
+  Whitespace = {' ', '\t', '\v', '\r', '\l', '\f'}
+  IdentChars = {'a'..'z', 'A'..'Z', '0'..'9', '_'}
+  IdentStartChars = {'a'..'z', 'A'..'Z', '_'}
+    ## copied from strutils
+
+proc toLower(c: char): char {.inline.} =
+  result = if c in {'A'..'Z'}: chr(ord(c)-ord('A')+ord('a')) else: c
+
 proc integerOutOfRangeError() {.noinline, noreturn.} =
   # TODO: Uncomment when exception is implemented.
   #raise newException(ValueError, "Parsed integer outside of valid range")
@@ -362,3 +371,13 @@ proc parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
   # array not zeroed out:
   t[ti] = '\0'
   number = c_strtod(cast[cstring](addr t), nil)
+
+proc skipIgnoreCase*(s, token: openArray[char]): int =
+  ## Same as `skip` but case is ignored for token matching.
+  runnableExamples:
+    doAssert skipIgnoreCase("CAPlow", "CAP", 0) == 3
+    doAssert skipIgnoreCase("CAPlow", "cap", 0) == 3
+  result = 0
+  while result < s.len and result < token.len and
+      toLower(s[result]) == toLower(token[result]): inc(result)
+  if result != token.len: result = 0
