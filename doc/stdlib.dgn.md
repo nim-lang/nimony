@@ -261,6 +261,9 @@ Set out of memory handler. Applications can use this to handle the "out of memor
 
 Returns the default value for a type.
 
+###typeof
+
+Returns the type of an expression
 
 ### String and sequence operations
 

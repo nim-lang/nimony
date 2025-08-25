@@ -398,3 +398,6 @@ func `..`*[T, U](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
   ##   echo a[2 .. 3] # @[30, 40]
   ##   ```
   result = HSlice[T, U](a: a, b: b)
+
+proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+  ## Builtin `typeof` operation for accessing the type of an expression.
