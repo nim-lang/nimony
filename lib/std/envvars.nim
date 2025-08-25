@@ -36,9 +36,9 @@ when defined(nodejs):
 
 else:
   when defined(windows):
-    from std/parseutils import skipIgnoreCase
+    from parseutils import skipIgnoreCase
 
-  import std/[strutils, oserrors]
+  import strutils, oserrors
 
 
   type
@@ -55,22 +55,19 @@ else:
     shrink(x, xl-1)
 
   when defined(windows) and not defined(nimscript):
-    when useWinUnicode:
-      type
-        WideCString = ptr UncheckedArray[wchar]
-      proc getEnvironmentStringsW(): WideCString {.
-        importc: "GetEnvironmentStringsW", header: "<windows.h>".}
-      proc freeEnvironmentStringsW(env: WideCString): BOOL {.
-        importc: "FreeEnvironmentStringsW", header: "<windows.h>".}
-      proc setEnvironmentVariableW(name, value: WideCString): BOOL {.
-        importc: "SetEnvironmentVariableW", header: "<windows.h>".}
-    else:
-      proc getEnvironmentStringsA(): cstring {.
-        importc: "GetEnvironmentStringsA", header: "<windows.h>".}
-      proc freeEnvironmentStringsA(env: cstring): BOOL {.
-        importc: "FreeEnvironmentStringsA", header: "<windows.h>".}
-      proc setEnvironmentVariableA(name, value: cstring): BOOL {.
-        importc: "SetEnvironmentVariableA", header: "<windows.h>".}
+    import std/widestrs
+
+
+    type
+      WINBOOL = int32
+      ## `WINBOOL` uses opposite convention as posix, !=0 meaning success.
+      # xxx this should be distinct int32, distinct would make code less error prone
+    proc getEnvironmentStringsW(): WideCString {.
+      importc: "GetEnvironmentStringsW", header: "<windows.h>".}
+    proc freeEnvironmentStringsW(env: WideCString): WINBOOL {.
+      importc: "FreeEnvironmentStringsW", header: "<windows.h>".}
+    proc setEnvironmentVariableW(name, value: WideCString): WINBOOL {.
+      importc: "SetEnvironmentVariableW", header: "<windows.h>".}
 
   proc c_getenv(env: cstring): cstring {.
     importc: "getenv", header: "<stdlib.h>".}
@@ -96,42 +93,27 @@ else:
   when defined(windows) and not defined(nimscript):
     # because we support Windows GUI applications, things get really
     # messy here...
-    when useWinUnicode:
-      when defined(cpp):
-        proc strEnd(cstr: WideCString, c = 0'i32): WideCString {.
-          importcpp: "(NI16*)wcschr((const wchar_t *)#, #)", header: "<string.h>".}
-      else:
-        proc strEnd(cstr: WideCString, c = 0'i32): WideCString {.
-          importc: "wcschr", header: "<string.h>".}
+    when defined(cpp):
+      proc strEnd(cstr: WideCString, c = 0'i32): WideCString {.
+        importcpp: "(NI16*)wcschr((const wchar_t *)#, #)", header: "<string.h>".}
     else:
-      proc strEnd(cstr: cstring, c = 0'i32): cstring {.
-        importc: "strchr", header: "<string.h>".}
+      proc strEnd(cstr: WideCString, c = 0'i32): WideCString {.
+        importc: "wcschr", header: "<string.h>".}
 
     proc getEnvVarsC() =
       if not envComputed:
         environment = @[]
-        when useWinUnicode:
-          var
-            env = getEnvironmentStringsW()
-            e = env
-          if e == nil: return # an error occurred
-          while true:
-            var eend = strEnd(e)
-            add(environment, $e)
-            e = cast[WideCString](cast[ByteAddress](eend)+2)
-            if eend[1].int == 0: break
-          discard freeEnvironmentStringsW(env)
-        else:
-          var
-            env = getEnvironmentStringsA()
-            e = env
-          if e == nil: return # an error occurred
-          while true:
-            var eend = strEnd(e)
-            add(environment, $e)
-            e = cast[cstring](cast[ByteAddress](eend)+1)
-            if eend[1] == '\0': break
-          discard freeEnvironmentStringsA(env)
+        var
+          env = getEnvironmentStringsW()
+          e = env
+        if e == nil: return # an error occurred
+        while true:
+          var eend = strEnd(e)
+          add(environment, $e)
+          e = cast[WideCString](cast[uint](eend)+2)
+          if eend[1].int == 0: break
+        discard freeEnvironmentStringsW(env)
+
         envComputed = true
 
   else:
@@ -239,19 +221,18 @@ else:
     else:
       add environment, (key & '=' & val)
       indx = high(environment)
+
+    var key = key
+    var val = val
     when defined(windows) and not defined(nimscript):
-      when useWinUnicode:
-        var k = newWideCString(key)
-        var v = newWideCString(val)
-        if setEnvironmentVariableW(k, v) == 0'i32: raiseOSError(osLastError())
-      else:
-        if setEnvironmentVariableA(key, val) == 0'i32: raiseOSError(osLastError())
+      var k = newWideCString(key)
+      var v = newWideCString(val)
+      if setEnvironmentVariableW(k.toWideCString(), v.toWideCString()) == 0'i32: raiseOSError(osLastError())
+
     elif defined(vcc):
       if c_putenv_s(key, val) != 0'i32:
         raiseOSError(osLastError())
     else:
-      var key = key
-      var val = val
       if c_setenv(key.toCString(), val.toCString(), 1'i32) != 0'i32:
         raiseOSError(osLastError())
 
@@ -266,12 +247,12 @@ else:
     ## * `envPairs iterator <#envPairs.i>`_
     var indx = findEnvVar(key)
     if indx < 0: return # Do nothing if the env var is not already set
+
     when defined(windows) and not defined(nimscript):
-      when useWinUnicode:
-        var k = newWideCString(key)
-        if setEnvironmentVariableW(k, nil) == 0'i32: raiseOSError(osLastError())
-      else:
-        if setEnvironmentVariableA(key, nil) == 0'i32: raiseOSError(osLastError())
+      var key = key
+      var k = newWideCString(key.toCString(), key.len).toWideCString()
+      if setEnvironmentVariableW(k, nil) == 0'i32:
+        raiseOSError(osLastError())
     else:
       var key = key
       if c_unsetenv(key.toCString()) != 0'i32:
