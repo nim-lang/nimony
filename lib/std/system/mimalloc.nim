@@ -1,4 +1,4 @@
-{.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-I${path}/../../../vendor/mimalloc/include").}
+{.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -I${path}/../../../vendor/mimalloc/include").}
 
 type
   MiStatCount {.importc: "mi_stat_count_t", bycopy.} = object
@@ -11,17 +11,17 @@ type
   # matches the initial layout of mi_stats_t in C.
   MiStatsPrefix {.importc: "mi_stats_t", bycopy.} = object
     version: cint
-    pages: MiStatCount # count of mimalloc pages
-    reserved: MiStatCount # reserved memory bytes
-    committed: MiStatCount # committed bytes
-    reset: MiStatCount # reset bytes
-    purged: MiStatCount # purged bytes
-    page_committed: MiStatCount # committed memory inside pages
-    pages_abandoned: MiStatCount # abandonded pages count
-    threads: MiStatCount # number of threads
-    malloc_normal: MiStatCount # allocated bytes <= MI_LARGE_OBJ_SIZE_MAX
-    malloc_huge: MiStatCount # allocated bytes in huge pages
-    malloc_requested: MiStatCount # malloc requested bytes
+    pages: MiStatCount             # count of mimalloc pages
+    reserved: MiStatCount          # reserved memory bytes
+    committed: MiStatCount         # committed bytes
+    reset: MiStatCount             # reset bytes
+    purged: MiStatCount            # purged bytes
+    page_committed: MiStatCount    # committed memory inside pages
+    pages_abandoned: MiStatCount   # abandonded pages count
+    threads: MiStatCount           # number of threads
+    malloc_normal: MiStatCount     # allocated bytes <= MI_LARGE_OBJ_SIZE_MAX
+    malloc_huge: MiStatCount       # allocated bytes in huge pages
+    malloc_requested: MiStatCount  # malloc requested bytes
     # Note: the real C struct continues with counters and more fields, we falsely declare it as .completeStruct
     # for sizeof(MiStatsPrefix) to work.
 
