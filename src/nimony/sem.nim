@@ -1856,7 +1856,9 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
 
 proc semLocalTypeExpr(c: var SemContext, it: var Item) =
   let info = it.n.info
-  let val = semLocalType(c, it.n)
+  var val = semLocalType(c, it.n)
+  if val.typeKind == TypedescT:
+    inc val
   let start = c.dest.len
   c.dest.buildTree TypedescT, info:
     c.dest.addSubtree val
