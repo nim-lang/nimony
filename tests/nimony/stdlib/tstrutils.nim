@@ -49,6 +49,98 @@ block: # isEmptyOrWhitespace
   assert not isEmptyOrWhitespace("ABc   \td")
   assert not isEmptyOrWhitespace("a")
 
+block: # delete
+  try:
+    block:
+      var s = "a"
+      delete s, 0..0
+      assert s == ""
+    block:
+      var s = "ab"
+      delete s, 0..0
+      assert s == "b"
+      s = "ab"
+      delete s, 1..1
+      assert s == "a"
+      s = "ab"
+      delete s, 0..1
+      assert s == ""
+    block:
+      var s = "abc"
+      delete s, 0..0
+      assert s == "bc"
+      s = "abc"
+      delete s, 1..1
+      assert s == "ac"
+      s = "abc"
+      delete s, 2..2
+      assert s == "ab"
+      s = "abc"
+      delete s, 0..1
+      assert s == "c"
+      s = "abc"
+      delete s, 1..2
+      assert s == "a"
+      s = "abc"
+      delete s, 0..2
+      assert s == ""
+    block:
+      var s = "abcd"
+      delete s, 0..0
+      assert s == "bcd"
+      s = "abcd"
+      delete s, 1..1
+      assert s == "acd"
+      s = "abcd"
+      delete s, 2..2
+      assert s == "abd"
+      s = "abcd"
+      delete s, 3..3
+      assert s == "abc"
+      s = "abcd"
+      delete s, 0..1
+      assert s == "cd"
+      s = "abcd"
+      delete s, 1..2
+      assert s == "ad"
+      s = "abcd"
+      delete s, 2..3
+      assert s == "ab"
+      s = "abcd"
+      delete s, 0..2
+      assert s == "d"
+      s = "abcd"
+      delete s, 1..3
+      assert s == "a"
+      s = "abcd"
+      delete s, 0..3
+      assert s == ""
+    block:
+      let s0 = "0123456789ABCDEFGH"
+      var s = s0
+      delete s, 0..0
+      assert s == "123456789ABCDEFGH"
+      s = s0
+      delete s, 17..17
+      assert s == "0123456789ABCDEFG"
+      s = s0
+      delete s, 0..9
+      assert s == "ABCDEFGH"
+      s = s0
+      delete s, 10..17
+      assert s == "0123456789"
+      s = s0
+      delete s, 1..17
+      assert s == "0"
+      s = s0
+      delete s, 0..16
+      assert s == "H"
+      s = s0
+      delete s, 0..17
+      assert s == ""
+  except ErrorCode as e:
+    assert false
+
 block: # continuesWith
   assert continuesWith("", "", 0)
   assert continuesWith("", "", 1)
