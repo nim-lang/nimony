@@ -345,6 +345,95 @@ func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
     if s[i] == sub:
       return i
 
+func find*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
+  ## Searches for `chars` in `s` inside range `start..last` (both ends included).
+  ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
+  ##
+  ## If `s` contains none of the characters in `chars`, -1 is returned.
+  ## Otherwise the index returned is relative to `s[0]`, not `start`.
+  ## Subtract `start` from the result for a `start`-origin index.
+  ##
+  ## See also:
+  ## * `multiReplace func<#multiReplace,string,varargs[]>`_
+  result = -1
+  let last = if last < 0: s.high else: last
+  for i in int(start)..last:
+    if s[i] in chars:
+      return i
+
+type
+  SkipTable* = array[char, int] ## Character table for efficient substring search.
+
+func initSkipTable*(a: var SkipTable; sub: string) =
+  ## Initializes table `a` for efficient search of substring `sub`.
+  ##
+  ## See also:
+  ## * `initSkipTable func<#initSkipTable,string>`_
+  ## * `find func<#find,SkipTable,string,string,Natural,int>`_
+  # TODO: this should be the `default()` initializer for the type.
+  let m = len(sub)
+  for i in a.low.int .. a.high.int:
+    a[i] = m
+
+  for i in 0 ..< m - 1:
+    a[sub[i]] = m - 1 - i
+
+func initSkipTable*(sub: string): SkipTable {.noinit.} =
+  ## Returns a new table initialized for `sub`.
+  ##
+  ## See also:
+  ## * `initSkipTable func<#initSkipTable,SkipTable,string>`_
+  ## * `find func<#find,SkipTable,string,string,Natural,int>`_
+  initSkipTable(result, sub)
+
+func find*(a: SkipTable; s, sub: string; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` using preprocessed
+  ## table `a`. If `last` is unspecified, it defaults to `s.high` (the last
+  ## element).
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  ##
+  ## See also:
+  ## * `initSkipTable func<#initSkipTable,string>`_
+  ## * `initSkipTable func<#initSkipTable,SkipTable,string>`_
+  let
+    last = if last < 0: s.high else: last
+    subLast = sub.len - 1
+
+  if subLast == -1:
+    # this was an empty needle string,
+    # we count this as match in the first possible position:
+    return start
+
+  # This is an implementation of the Boyer-Moore Horspool algorithms
+  # https://en.wikipedia.org/wiki/Boyer%E2%80%93Moore%E2%80%93Horspool_algorithm
+  result = -1
+  var skip = start
+
+  while last - skip >= subLast:
+    var i = subLast
+    while s[skip + i] == sub[i]:
+      if i == 0:
+        return skip
+      dec i
+    inc skip, a[s[skip + subLast]]
+
+func find*(s, sub: string; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` (both ends included).
+  ## If `last` is unspecified or negative, it defaults to `s.high` (the last element).
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  ## Otherwise the index returned is relative to `s[0]`, not `start`.
+  ## Subtract `start` from the result for a `start`-origin index.
+  ##
+  ## See also:
+  ## * `replace func<#replace,string,string,string>`_
+  if sub.len > s.len - start: return -1
+  if sub.len == 1: return find(s, sub[0], start, last)
+
+  # TODO: use `memmem` C function like Nim 2.
+  result = find(initSkipTable(sub), s, sub, start, last)
+
 func replace*(s: string; sub, by: char): string =
   result = newString(s.len)
   var i = 0
@@ -500,3 +589,160 @@ func formatFloat*(f: float, format: FloatFormatMode = ffDefault,
     assert x.formatFloat(ffScientific, 2) == "1.23e+02"
 
   result = formatBiggestFloat(f, format, precision.int, decimalSep)
+
+func findNormalized(x: string, inArray: openArray[string]): int =
+  var i = 0
+  while i < inArray.len - 1:
+    if cmpIgnoreStyle(x, inArray[i]) == 0: return i
+    inc(i, 2) # incrementing by 1 would probably lead to a
+              # security hole...
+  return -1
+
+proc invalidFormatString(formatstr: string) {.noinline, raises.} =
+  # TODO: Uncomment when exceptions are implemented.
+  #raise newException(SyntaxError, "invalid format string: " & formatstr)
+  raise SyntaxError
+
+func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
+  ## Interpolates a format string with the values from `a`.
+  ##
+  ## The `substitution`:idx: operator performs string substitutions in
+  ## `formatstr` and returns a modified `formatstr`. This is often called
+  ## `string interpolation`:idx:.
+  ##
+  ## This is best explained by an example:
+  ##
+  ##   ```nim
+  ##   "$1 eats $2." % ["The cat", "fish"]
+  ##   ```
+  ##
+  ## Results in:
+  ##
+  ##   ```nim
+  ##   "The cat eats fish."
+  ##   ```
+  ##
+  ## The substitution variables (the thing after the `$`) are enumerated
+  ## from 1 to `a.len`.
+  ## To produce a verbatim `$`, use `$$`.
+  ## The notation `$#` can be used to refer to the next substitution
+  ## variable:
+  ##
+  ##   ```nim
+  ##   "$# eats $#." % ["The cat", "fish"]
+  ##   ```
+  ##
+  ## Substitution variables can also be words (that is
+  ## `[A-Za-z_]+[A-Za-z0-9_]*`) in which case the arguments in `a` with even
+  ## indices are keys and with odd indices are the corresponding values.
+  ## An example:
+  ##
+  ##   ```nim
+  ##   "$animal eats $food." % ["animal", "The cat", "food", "fish"]
+  ##   ```
+  ##
+  ## Results in:
+  ##
+  ##   ```nim
+  ##   "The cat eats fish."
+  ##   ```
+  ##
+  ## The variables are compared with `cmpIgnoreStyle`. `ValueError` is
+  ## raised if an ill-formed format string has been passed to the `%` operator.
+  result = newStringOfCap(formatstr.len + a.len shl 4)
+  const PatternChars = {'a'..'z', 'A'..'Z', '0'..'9', '\128'..'\255', '_'}
+  var i = 0
+  var num = 0
+  while i < len(formatstr):
+    if formatstr[i] == '$' and i+1 < len(formatstr):
+      case formatstr[i+1]
+      of '#':
+        if num >= a.len: invalidFormatString(formatstr)
+        add result, a[num]
+        inc i, 2
+        inc num
+      of '$':
+        add result, '$'
+        inc(i, 2)
+      of '1'..'9', '-':
+        var j = 0
+        inc(i) # skip $
+        var negative = formatstr[i] == '-'
+        if negative: inc i
+        while i < formatstr.len and formatstr[i] in Digits:
+          j = j * 10 + ord(formatstr[i]) - ord('0')
+          inc(i)
+        let idx = if not negative: j-1 else: a.len-j
+        if idx < 0 or idx >= a.len: invalidFormatString(formatstr)
+        add result, a[idx]
+      of '{':
+        var j = i+2
+        var k = 0
+        var negative = formatstr[j] == '-'
+        if negative: inc j
+        var isNumber = 0
+        while j < formatstr.len and formatstr[j] notin {'\0', '}'}:
+          if formatstr[j] in Digits:
+            k = k * 10 + ord(formatstr[j]) - ord('0')
+            if isNumber == 0: isNumber = 1
+          else:
+            isNumber = -1
+          inc(j)
+        if isNumber == 1:
+          let idx = if not negative: k-1 else: a.len-k
+          if idx < 0 or idx >= a.len: invalidFormatString(formatstr)
+          add result, a[idx]
+        else:
+          var x = findNormalized(substr(formatstr, i+2, j-1), a)
+          if x >= 0 and x < a.len - 1: add result, a[x+1]
+          else: invalidFormatString(formatstr)
+        i = j+1
+      of 'a'..'z', 'A'..'Z', '\128'..'\255', '_':
+        var j = i+1
+        while j < formatstr.len and formatstr[j] in PatternChars: inc(j)
+        var x = findNormalized(substr(formatstr, i+1, j-1), a)
+        if x >= 0 and x < a.len - 1: add result, a[x+1]
+        else: invalidFormatString(formatstr)
+        i = j
+      else:
+        invalidFormatString(formatstr)
+    else:
+      add result, formatstr[i]
+      inc(i)
+
+func format*(formatstr: string; a: openArray[string]): string {.raises.} =
+  ## This is the same as `formatstr % a` (see
+  ## `% func<#%25,string,openArray[string]>`_)
+  result = formatstr % a
+
+func strip*(s: string; leading = true; trailing = true;
+            chars: set[char] = Whitespace): string =
+  ## Strips leading or trailing `chars` (default: whitespace characters)
+  ## from `s` and returns the resulting string.
+  ##
+  ## If `leading` is true (default), leading `chars` are stripped.
+  ## If `trailing` is true (default), trailing `chars` are stripped.
+  ## If both are false, the string is returned unchanged.
+  runnableExamples:
+    let a = "  vhellov   "
+    let b = strip(a)
+    assert b == "vhellov"
+
+    assert a.strip(leading = false) == "  vhellov"
+    assert a.strip(trailing = false) == "vhellov   "
+
+    assert b.strip(chars = {'v'}) == "hello"
+    assert b.strip(leading = false, chars = {'v'}) == "vhello"
+
+    let c = "blaXbla"
+    assert c.strip(chars = {'b', 'a'}) == "laXbl"
+    assert c.strip(chars = {'b', 'a', 'l'}) == "X"
+
+  var
+    first = 0
+    last = len(s)-1
+  if leading:
+    while first <= last and s[first] in chars: inc(first)
+  if trailing:
+    while last >= first and s[last] in chars: dec(last)
+  result = if first > last: "" else: substr(s, first, last)

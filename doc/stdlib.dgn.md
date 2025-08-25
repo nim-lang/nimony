@@ -581,6 +581,10 @@ Checks if character is alphanumeric (a-z, A-Z, 0-9)
 ####isDigit
 Checks if character is a digit (0-9)
 
+####isSpaceAscii
+
+Checks if character is whitespace
+
 ####isLowerAscii
 
 Checks if character is lowercase
@@ -656,6 +660,18 @@ Formats floating point numbers as strings.
 ####formatBiggestFloat
 
 Formats largest floating point numbers as strings.
+
+####%
+
+Interpolates a format string with values.
+
+####format
+
+Interpolates a format string with values.
+
+####strip
+
+Strips leading or trailing characters.
 
 ### unicode
 
@@ -1000,3 +1016,30 @@ Checks if an element is present in the hash set, and if not, adds it. Returns tr
 ####items
 
 An iterator that yields all elements in the hash set.
+
+
+## Generic Operating System Services
+
+### pathnorm
+
+@../lib/std/pathnorm.nim
+
+####PathIter
+
+An object used to iterate over path components.
+
+####hasNext
+
+Checks whether the `PathIter` has another path component in the given input string.
+
+####next
+
+Advances a `PathIter` and returns a `(start, end)` pair representing the bounds of the next path component within the provided string.
+
+####addNormalizePath
+
+Low-level procedure that appends a normalized representation of `x` to the `result` string and updates the `state`.
+
+####normalizePath
+
+Returns a normalized path string. It collapses repeated separators, resolves `.` and `..` where possible, and returns `.` for an empty normalized path. The optional `dirSep` parameter controls the separator used in the result.

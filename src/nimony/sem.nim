@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts
+  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -1473,33 +1473,45 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
 proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   if n.kind == DotToken or n.substructureKind == PragmasU:
     let hasPushedPragma = c.pragmaStack.len != 0
-    if hasPushedPragma:
-      c.dest.addParLe PragmasU, n.info
+    let emptyPragma = n.kind == DotToken
+
+    if emptyPragma and not hasPushedPragma:
+      # there is no pragma
+      takeToken c, n
+    else:
+      var pragmaAdded = false
+      var checkedPragmas = default(CheckedPragmas)
+      if n.substructureKind == PragmasU:
+        takeToken c, n
+        pragmaAdded = true
+        while n.kind != ParRi:
+          if n.exprKind == ErrX:
+            takeTree c, n
+          else:
+            if checkedPragmas.isChecked(n, kind):
+              skip n
+            else:
+              semPragma c, n, crucial, kind
+
       for ns in c.pragmaStack:
         var n2 = ns
         while n2.kind != ParRi:
-          if not kind.isRoutine and callConvKind(n2) != NoCallConv:
+          if checkedPragmas.isChecked(n2, kind):
             skip n2
           else:
+            if not pragmaAdded:
+              c.dest.addParLe PragmasU, n.info
+              pragmaAdded = true
             semPragma c, n2, crucial, kind
 
-    if n.kind == DotToken:
-      if hasPushedPragma:
-        inc n
-        c.dest.addParRi
-      else:
-        takeToken c, n
-    elif n.substructureKind == PragmasU:
-      if hasPushedPragma:
-        inc n
-      else:
-        takeToken c, n
-      while n.kind != ParRi:
-        if n.exprKind == ErrX:
-          takeTree c, n
+      if emptyPragma:
+        if pragmaAdded:
+          inc n
+          c.dest.addParRi
         else:
-          semPragma c, n, crucial, kind
-      takeParRi c, n
+          takeToken c, n
+      else:
+        takeParRi c, n
   else:
     buildErr c, n.info, "expected '.' or 'pragmas'"
 

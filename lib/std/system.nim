@@ -381,3 +381,20 @@ type
   Positive* = int
     ## is an `int` type ranging from one to the maximum value
     ## of an `int`. This type is often useful for documentation and debugging.
+
+  HSlice*[T, U] = object   ## "Heterogeneous" slice type.
+    a*: T                  ## The lower bound (inclusive).
+    b*: U                  ## The upper bound (inclusive).
+  Slice*[T] = HSlice[T, T] ## An alias for `HSlice[T, T]`.
+
+func `..`*[T, U](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
+  ## Binary `slice`:idx: operator that constructs an interval `[a, b]`, both `a`
+  ## and `b` are inclusive.
+  ##
+  ## Slices can also be used in the set constructor and in ordinal case
+  ## statements, but then they are special-cased by the compiler.
+  ##   ```nim
+  ##   let a = [10, 20, 30, 40, 50]
+  ##   echo a[2 .. 3] # @[30, 40]
+  ##   ```
+  result = HSlice[T, U](a: a, b: b)

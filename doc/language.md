@@ -284,8 +284,7 @@ A `$` proc is defined for cstrings that returns a string. Thus, to get a nim
 string from a cstring:
 
   ```nim
-  var str: string = "Hello!"
-  var cstr: cstring = str
+  var cstr: cstring
   var newstr: string = $cstr
   ```
 
@@ -307,6 +306,7 @@ it can be modified:
   ```
 
 `cstring` values may also be used in case statements like strings.
+
 
 ### Array type
 
@@ -1675,36 +1675,6 @@ Is equivalent to:
       break myBlockName
       stmt2
   ```
-
-
-### Defer statement
-
-The `defer` statement schedules a block of code to be executed when the current scope exits, regardless of how it exits (normal completion, exception, or early return). This is useful for cleanup operations:
-
-```nim
-proc processFile(filename: string) =
-  var f: File
-  if open(f, filename):
-    defer: close(f)  # Will be called when proc exits
-    # Process the file...
-    if someError():
-      return  # close(f) is still called
-    # More processing...
-  # close(f) is called here if file was opened
-```
-
-The `defer` statement can be used in any block scope (procs, methods, iterators, etc.). Multiple `defer` statements in the same scope are executed in reverse order (last in, first out):
-
-```nim
-proc example() =
-  defer: echo "third"
-  defer: echo "second"
-  defer: echo "first"
-  echo "body"
-  # Output: body, first, second, third
-```
-
-`defer` statements are particularly useful for resource management and ensuring cleanup code is always executed, even in error conditions.
 
 
 ### Using statement
@@ -3199,6 +3169,136 @@ type A to type B and from type B to type C, the implicit conversion from A to C
 is not provided.
 
 
+## Error handling
+
+The error handling is based on a standardized error enum called `ErrorCode`. It is supposed to cover all possible errors that can occur in a program. Among its possible values are `Success`, `Failure`, `OverflowError`, `IndexError` and `SyntaxError`. As it is a normal enum, it can be used as a return type:
+
+```nim
+proc problem(): ErrorCode = return Failure
+```
+
+But it can also be "raised" which then influences the control flow of the caller:
+
+```nim
+proc problem() {.raises.} = raise Failure
+```
+
+A routine that can raise an error must always be annotated with `{.raises.}`. In order to handle an error use a `try` statement:
+
+```nim
+try:
+  problem()
+except ErrorCode as e:
+  echo "Error: ", e
+```
+
+### Try statement
+
+A try statement has the general form: `try <statements> except <statements> finally <statements>`.
+
+The statements after the `try` are executed in sequential order unless an error is raised. If an error is raised the `except` block is executed. Regardless of whether an error is raised or not, the `finally` block is executed, it runs after the `except` block.
+
+For Example:
+
+```nim
+# read the first two lines of a text file that should contain numbers
+# and tries to add them
+var f: File
+if open(f, "numbers.txt"):
+  try:
+    var a = readLine(f)
+    var b = readLine(f)
+    echo "sum: " & $(parseInt(a) + parseInt(b))
+  except ErrorCode as e:
+    case e
+    of OverflowError:
+      echo "overflow!"
+    of ValueError:
+      echo "value error!"
+    of IOError:
+      echo "io error!"
+    of SyntaxError:
+      echo "syntax error!"
+    of RangeError:
+      echo "range error!"
+    else:
+      echo "unknown error! ", e
+  finally:
+    close(f)
+```
+
+### Try expression
+
+Try can also be used as an expression; the type of the `try` branch then needs to fit the types of `except` branches, but the type of the `finally` branch always has to be `void`:
+
+```nim test
+from std/strutils import parseInt
+
+let x = try: parseInt("133a")
+        except: -1
+        finally: echo "hi"
+```
+
+
+To prevent confusing code there is a parsing limitation; if the `try` follows a `(` it has to be written as a one liner:
+
+```nim test
+from std/strutils import parseInt
+let x = (try: parseInt("133a") except: -1)
+```
+
+
+### Defer statement
+
+The `defer` statement is syntactic sugar for a `finally` section of a `try` statement.
+
+For example:
+
+```nim
+proc p() =
+  setup()
+  try:
+    use()
+  finally:
+    atLast()
+```
+
+Can be written as:
+
+```nim
+proc p() =
+  setup()
+  defer: atLast()
+  use()
+```
+
+The `defer` statement schedules a block of code to be executed when the current scope exits, regardless of how it exits (normal completion, exception, or early return). This is useful for cleanup operations:
+
+```nim
+proc processFile(filename: string) =
+  var f: File
+  if open(f, filename):
+    defer: close(f)  # Will be called when proc exits
+    # Process the file...
+    if someError():
+      return  # close(f) is still called
+    # More processing...
+  # close(f) is called here if file was opened
+```
+
+The `defer` statement can be used in any block scope (procs, methods, iterators, etc.). Multiple `defer` statements in the same scope are executed in reverse order (last in, first out):
+
+```nim
+proc example() =
+  defer: echo "third"
+  defer: echo "second"
+  defer: echo "first"
+  echo "body"
+  # Output: body, first, second, third
+```
+
+
+
 ## Type sections
 
 Example:
@@ -3222,238 +3322,138 @@ or `enums` can only be defined in a `type` section.
 
 
 
+## Concepts
+
+A concept is a description of a constraint, it describes what operations a type must provide so that the type fulfills the concept. For example:
+
+```nim
+type
+  Comparable = concept
+    proc `<=`(a, b: Self): bool
+    proc `==`(a, b: Self): bool
+    proc `<`(a, b: Self): bool
+```
+
+`Self` stands for the currently defined concept itself. It is used to avoid a recursion, `proc <=(a, b: Comparable): bool` is invalid.
+
+A concept is a pure compile-time mechanism that is required to type-check generic code, it is not a runtime mechanism! It is **not** comparable to a C#/Java interface.
+
+### Atoms and containers
+
+Concepts come in two forms: Atoms and containers. A container is a generic concept like `Iterable[T]`, an atom always lacks any kind of generic parameter (as in `Comparable`).
+
+Syntactically a concept consists of a list of proc and iterator declarations.
+
+
+### Atomic concepts
+
+More examples for atomic concepts:
+
+```nim
+type
+  Comparable = concept # no T, an atom
+    proc cmp(a, b: Self): int
+
+  ToStringable = concept
+    proc `$`(a: Self): string
+
+  Hashable = concept
+    proc hash(x: Self): int
+    proc `==`(x, y: Self): bool
+
+  Swapable = concept
+    proc swap(x, y: var Self)
+```
+
+### Containers concepts
+
+A container has at least one generic parameter (most often called `T`). The first syntactic usage of the generic parameter specifies how to infer and bind `T`. Other usages of T are then checked to match what it was bound to.
+
+For example:
+
+```nim
+type
+  Indexable[T] = concept # has a T, a collection
+    proc `[]`(a: Self; index: int): var T # we need to describe how to infer 'T'
+    # and then we can use the 'T' and it must match:
+    proc `[]=`(a: var Self; index: int; value: T)
+    proc len(a: Self): int
+```
+
+Nothing interesting happens when we use multiple generic parameters:
+
+```nim
+type
+  Dictionary[K, V] = concept
+    proc `[]`(a: Self; key: K): V
+    proc `[]=`(a: var Self; key: K; value: V)
+```
+
+The usual ": Constraint" syntax can be used to add generic constraints to the involved generic parameters:
+
+```nim
+type
+  Dictionary[K: Hashable; V] = concept
+    proc `[]`(a: Self; key: K): V
+    proc `[]=`(a: var Self; key: K; value: V)
+```
+
+
 ## Generics
 
-Generics are a means to parametrize procs, iterators or types with
-`type parameters`:idx:. Depending on the context, the brackets are used either to
-introduce type parameters or to instantiate a generic proc, iterator, or type.
+Generics are a means to parametrize procs, iterators or types with `type parameters`:idx:. Depending on the context, the brackets are used either to introduce type parameters or to instantiate a generic proc, iterator, or type.
 
-
-The following example shows how a generic binary tree can be modeled:
-
-  ```nim  test = "nim c $1"
-  type
-    BinaryTree*[T] = ref object # BinaryTree is a generic type with
-                                # generic parameter `T`
-      le, ri: BinaryTree[T]     # left and right subtrees; may be nil
-      data: T                   # the data stored in a node
-
-  proc newNode*[T](data: T): BinaryTree[T] =
-    # constructor for a node
-    result = BinaryTree[T](le: nil, ri: nil, data: data)
-
-  proc add*[T](root: var BinaryTree[T], n: BinaryTree[T]) =
-    # insert a node into the tree
-    if root == nil:
-      root = n
-    else:
-      var it = root
-      while it != nil:
-        # compare the data items; uses the generic `cmp` proc
-        # that works for any type that has a `==` and `<` operator
-        var c = cmp(it.data, n.data)
-        if c < 0:
-          if it.le == nil:
-            it.le = n
-            return
-          it = it.le
-        else:
-          if it.ri == nil:
-            it.ri = n
-            return
-          it = it.ri
-
-  proc add*[T](root: var BinaryTree[T], data: T) =
-    # convenience proc:
-    add(root, newNode(data))
-
-  iterator preorder*[T](root: BinaryTree[T]): T =
-    # Preorder traversal of a binary tree.
-    # This uses an explicit stack (which is more efficient than
-    # a recursive iterator factory).
-    var stack: seq[BinaryTree[T]] = @[root]
-    while stack.len > 0:
-      var n = stack.pop()
-      while n != nil:
-        yield n.data
-        add(stack, n.ri)  # push right subtree onto the stack
-        n = n.le          # and follow the left pointer
-
-  var
-    root: BinaryTree[string] # instantiate a BinaryTree with `string`
-  add(root, newNode("hello")) # instantiates `newNode` and `add`
-  add(root, "world")          # instantiates the second `add` proc
-  for str in preorder(root):
-    stdout.writeLine(str)
-  ```
-
-The `T` is called a `generic type parameter`:idx: or
-a `type variable`:idx:.
-
-
-### Generic Procs
-
-Let's consider the anatomy of a generic `proc` to agree on defined terminology.
+The following example describes a generic proc `find` that can be used to look for an element in any container that fulfills the `Findable` constraints:
 
 ```nim
-p[T: t](arg1: f): y
+type
+  Findable[T] = concept
+    iterator items(x: Self): T
+    proc `==`(a, b: T): bool
+
+proc find[T](x: Findable[T]; elem: T): int =
+  var i = 0
+  for a in items(x):
+    if a == elem: return i
+    inc i
+  return -1
 ```
 
-- `p`: Callee symbol
-- `[...]`: Generic parameters
-- `T: t`: Generic constraint
-- `T`: Type variable
-- `[T: t](arg1: f): y`: Formal signature
-- `arg1: f`: Formal parameter
-- `f`: Formal parameter type
-- `y`: Formal return type
+Thanks to the `x` being declared as `Findable[T]`, it is known that the element `a` of the collection is of type `T` and that `T` supports equality comparisons via `==`.
 
-The use of the word "formal" here is to denote the symbols as they are defined by the programmer,
-not as they may be at compile time contextually. Since generics may be instantiated and
-types bound, we have more than one entity to think about when generics are involved.
-
-The usage of a generic will resolve the formally defined expression into an instance of that
-expression bound to only concrete types. This process is called "instantiation".
-
-Brackets at the site of a generic's formal definition specify the "constraints" as in:
+This find function can be used with any collection that fulfills the `Findable` concept, for example:
 
 ```nim
-type Foo[T] = object
-proc p[H;T: Foo[H]](param: T): H
+type
+  MyCollection = object
+    data: seq[int]
+
+proc items(x: MyCollection): int =
+  return x.data
+
+var myCollection = MyCollection(data: @[1, 2, 3, 4, 5])
+echo find(myCollection, 3) # 2
 ```
 
-A constraint definition may have more than one symbol defined by separating each definition by
-a `;`. Notice how `T` is composed of `H` and the return  type of `p` is defined as `H`. When this
-generic proc is instantiated `H` will be bound to a concrete type, thus making `T` concrete and
-the return type of `p` will be bound to the same concrete type used to define `H`.
-
-Brackets at the site of usage can be used to supply concrete types to instantiate the generic in the same
-order that the symbols are defined in the constraint. Alternatively, type bindings may be inferred by the compiler
-in some situations, allowing for cleaner code.
+These form of generics are called "checked generics" because the typing rules are checked at the point of definition and also at the point of instantiation.
 
 
-### Type classes
+### Untyped generics
 
-A type class is a special pseudo-type that can be used to match against
-types in the context of overload resolution.
-The following built-in type classes exist:
+There are also "unchecked generics" which are only checked at the point of instantiation. These can be accessed via the `{.untyped.}` pragma:
 
-==================   ===================================================
-type class           matches
-==================   ===================================================
-`object`             any object type
-`tuple`              any tuple type
-`enum`               any enumeration
-`proc`               any proc type
-`iterator`           any iterator type
-`ref`                any `ref` type
-`ptr`                any `ptr` type
-`var`                any `var` type
-`distinct`           any distinct type
-`array`              any array type
-`set`                any set type
-`seq`                any seq type
-==================   ===================================================
+```nim
+proc processUntyped[T](x: T): string {.untyped.} =
+  when T is string:
+    "String: " & x
+  elif T is int:
+    "Integer: " & $x
+  else:
+    "Unknown type: " & $x
 
-Furthermore, every generic type automatically creates a type class of the same
-name that will match any instantiation of the generic type.
-
-Type classes can be combined using the `|` operator to form
-more complex type classes:
-
-  ```nim
-  # create a type class that will match all tuple and object types
-  type RecordType = (tuple | object)
-
-  proc printFields[T: RecordType](rec: T) =
-    for key, value in fieldPairs(rec):
-      echo key, " = ", value
-  ```
-
-Type constraints on generic parameters can be grouped with `,` and propagation
-stops with `;`, similarly to parameters for macros and templates:
-
-  ```nim
-  proc fn1[T; U, V: SomeFloat]() = discard # T is unconstrained
-  template fn2(t; u, v: SomeFloat) = discard # t is unconstrained
-  ```
-
-Whilst the syntax of type classes appears to resemble that of ADTs/algebraic data
-types in ML-like languages, it should be understood that type classes are static
-constraints to be enforced at type instantiations. Type classes are not really
-types in themselves but are instead a system of providing generic "checks" that
-ultimately *resolve* to some singular type. Type classes do not allow for
-runtime type dynamism, unlike object variants or methods.
-
-As an example, the following would not compile:
-
-  ```nim
-  type TypeClass = int | string
-  var foo: TypeClass = 2 # foo's type is resolved to an int here
-  foo = "this will fail" # error here, because foo is an int
-  ```
-
-Nim allows for type classes and regular types to be specified
-as `type constraints`:idx: of the generic type parameter:
-
-  ```nim
-  proc onlyIntOrString[T: int|string](x, y: T) = discard
-
-  onlyIntOrString(450, 616) # valid
-  onlyIntOrString(5.0, 0.0) # type mismatch
-  onlyIntOrString("xy", 50) # invalid as 'T' cannot be both at the same time
-  ```
-
-`proc` and `iterator` type classes also accept a calling convention pragma
-to restrict the calling convention of the matching `proc` or `iterator` type.
-
-  ```nim
-  proc onlyClosure[T: proc {.closure.}](x: T) = discard
-
-  onlyClosure(proc() = echo "hello") # valid
-  proc foo() {.nimcall.} = discard
-  onlyClosure(foo) # type mismatch
-  ```
-
-
-
-`typedesc` used as a parameter type also introduces an implicit
-generic. `typedesc` has its own set of rules:
-
-  ```nim
-  proc p(a: typedesc)
-
-  # is roughly the same as:
-
-  proc p[T](a: typedesc[T])
-  ```
-
-
-`typedesc` is a "bind many" type class:
-
-  ```nim
-  proc p(a, b: typedesc)
-
-  # is roughly the same as:
-
-  proc p[T, T2](a: typedesc[T], b: typedesc[T2])
-  ```
-
-
-A parameter of type `typedesc` is itself usable as a type. If it is used
-as a type, it's the underlying type. In other words, one level
-of "typedesc"-ness is stripped off:
-
-  ```nim
-  proc p(a: typedesc; b: a) = discard
-
-  # is roughly the same as:
-  proc p[T](a: typedesc[T]; b: T) = discard
-
-  # hence this is a valid call:
-  p(int, 4)
-  # as parameter 'a' requires a type, but 'b' requires a value.
-  ```
+echo process("hello")        # Works with default behavior
+echo processUntyped("hello") # Works with untyped pragma
+```
 
 
 ### Generic inference restrictions
@@ -3479,25 +3479,6 @@ instantiation. The following is not allowed:
   # also not allowed: explicit instantiation via 'var int'
   g[var int](v, i)
   ```
-
-
-### Untyped generics
-
-Nimony supports untyped generics through the `{.untyped.}` pragma, which enables Nim 2's behavior for generic procs. By default, new generics in Nimony are type-checked when they are defined and when they are instantiated, but the `untyped` pragma allows them to be type-checked only at instantiation time instead:
-
-```nim
-proc processUntyped[T](x: T): string {.untyped.} =
-  when T is string:
-    "String: " & x
-  elif T is int:
-    "Integer: " & $x
-  else:
-    "Unknown type: " & $x
-
-echo process("hello")        # Works with default behavior
-echo processUntyped("hello") # Works with untyped pragma
-```
-
 
 
 ## Templates
