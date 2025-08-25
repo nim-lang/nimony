@@ -55,7 +55,7 @@ else:
     shrink(x, xl-1)
 
   when defined(windows) and not defined(nimscript):
-    import std/widestrs
+    import widestrs
 
 
     type
