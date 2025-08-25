@@ -398,7 +398,6 @@ Iterate over field name-value pairs.
 
 Used to iterate over varargs parameters.
 
-
 ### Coroutines
 
 ####Continuation
@@ -1043,3 +1042,32 @@ Low-level procedure that appends a normalized representation of `x` to the `resu
 ####normalizePath
 
 Returns a normalized path string. It collapses repeated separators, resolves `.` and `..` where possible, and returns `.` for an empty normalized path. The optional `dirSep` parameter controls the separator used in the result.
+
+### envvars
+
+@../lib/std/envvars.nim
+
+Provides utilities for reading and modifying process environment variables.
+
+####getEnv
+
+Returns the value of the environment variable named `key`.
+
+If the variable does not exist the `default` argument (empty string by default) is returned. Use `existsEnv` when you need to distinguish between a missing variable and an empty value.
+
+####existsEnv
+
+Returns true if the environment variable named `key` exists, false otherwise.
+
+####putEnv
+
+Sets the environment variable `key` to `val` for the current process.
+On error an `OSError` is raised.
+
+####delEnv
+
+Removes the environment variable named `key` from the current process environment. If the variable is not present the call is a no-op. On error an `OSError` is raised.
+
+####envPairs
+
+Iterator yielding all environment variable pairs as tuples `(key, value)`.
