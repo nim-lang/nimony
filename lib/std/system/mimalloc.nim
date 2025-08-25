@@ -54,11 +54,10 @@ proc allocatedSize*(p: pointer): int =
 
 when defined(debug):
   proc readStats(): MiStatsPrefix =
-    var s: MiStatsPrefix
+    result = default(MiStatsPrefix)
     # Fold thread-local stats into main stats so we get process-wide values.
     mi_stats_merge()
-    mi_stats_get(csize_t(sizeof(s)), addr s)
-    return s
+    mi_stats_get(csize_t(sizeof(result)), addr result)
 
   proc getOccupiedMem*(): int =
     ## Returns the number of bytes that are owned by the process and hold data.
