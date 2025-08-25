@@ -143,6 +143,36 @@ proc `$`*(x: char): string =
   result = newString(1)
   result[0] = x
 
+func delete*(s: var string, slice: Slice[int]) {.raises.} =
+  ## Deletes the items `s[slice]`, raising `IndexDefect` if the slice contains
+  ## elements out of range.
+  ##
+  ## This operation moves all elements after `s[slice]` in linear time, and
+  ## is the string analog to `sequtils.delete`.
+  runnableExamples:
+    var a = "abcde"
+    assert a == "abcde"
+    a.delete(4..4)
+    assert a == "abcd"
+    a.delete(1..2)
+    assert a == "ad"
+    a.delete(1..<1) # empty slice
+    assert a == "ad"
+  #when compileOption("boundChecks"):
+  if not (slice.a < s.len and slice.a >= 0 and slice.b < s.len):
+    #raise newException(IndexDefect, $(slice: slice, len: s.len))
+    raise IndexError
+  if slice.b >= slice.a:
+    var i = slice.a
+    var j = slice.b + 1
+    var newLen = s.len - j + i
+    # if j < s.len: moveMem(addr s[i], addr s[j], s.len - j) # pending benchmark
+    while i < newLen:
+      s[i] = s[j]
+      inc(i)
+      inc(j)
+    shrink(s, newLen)
+
 func continuesWith*(s, prefix: string; start: int): bool =
   ## Returns true if `s` continues with `prefix` at position `start`.
   ##
