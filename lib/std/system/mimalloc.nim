@@ -52,33 +52,29 @@ proc dealloc*(p: pointer) =
 proc allocatedSize*(p: pointer): int =
   result = int mi_usable_size(p)
 
-when defined(debug):
-  proc readStats(): MiStatsPrefix =
-    result = default(MiStatsPrefix)
-    # Fold thread-local stats into main stats so we get process-wide values.
-    mi_stats_merge()
-    mi_stats_get(csize_t(sizeof(result)), addr result)
+proc readStats(): MiStatsPrefix =
+  result = default(MiStatsPrefix)
+  # Fold thread-local stats into main stats so we get process-wide values.
+  mi_stats_merge()
+  mi_stats_get(csize_t(sizeof(result)), addr result)
 
-  proc getOccupiedMem*(): int =
-    ## Returns the number of bytes that are owned by the process and hold data.
-    let st = readStats()
-    let allocated = st.malloc_normal.current + st.malloc_huge.current
-    # Cast to Nim int (pointer-sized); beware of overflow on 32-bit if very large.
-    result = int(allocated)
+proc getOccupiedMem*(): int =
+  ## Returns the number of bytes that are owned by the process and hold data.
+  let st = readStats()
+  let allocated = st.malloc_normal.current + st.malloc_huge.current
+  # Cast to Nim int (pointer-sized); beware of overflow on 32-bit if very large.
+  result = int allocated
 
-  proc getTotalMem*(): int =
-    ## Returns the number of bytes that are owned by the process.
-    let st = readStats()
-    result = int(st.committed.current)
+proc getTotalMem*(): int =
+  ## Returns the number of bytes that are owned by the process.
+  let st = readStats()
+  result = int st.committed.current
 
-  proc getFreeMem*(): int =
-    ## Returns the number of bytes that are owned by the process, but do not hold any meaningful data.
-    let st = readStats()
-    let allocated = st.malloc_normal.current + st.malloc_huge.current
-    var freeBytes = st.committed.current - allocated
-    if freeBytes < 0: freeBytes = 0          # be defensive against underflow if stats lag slightly
-    result = int(freeBytes)
-else:
-  proc getOccupiedMem*(): int = discard
-  proc getFreeMem*(): int = discard
-  proc getTotalMem*(): int = discard
+proc getFreeMem*(): int =
+  ## Returns the number of bytes that are owned by the process, but do not hold any meaningful data.
+  let st = readStats()
+  let allocated = st.malloc_normal.current + st.malloc_huge.current
+  var freeBytes = st.committed.current - allocated
+  if freeBytes < 0: freeBytes = 0          # be defensive against underflow if stats lag slightly
+  result = int freeBytes
+
