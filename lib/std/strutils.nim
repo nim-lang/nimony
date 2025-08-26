@@ -1,4 +1,4 @@
-import std/parseutils
+import std/[assertions, parseutils]
 
 const
   Whitespace* = {' ', '\t', '\v', '\r', '\l', '\f'}
@@ -776,3 +776,26 @@ func strip*(s: string; leading = true; trailing = true;
   if trailing:
     while last >= first and s[last] in chars: dec(last)
   result = if first > last: "" else: substr(s, first, last)
+
+func trimZeros*(x: var string; decimalSep = '.') =
+  ## Trim trailing zeros from a formatted floating point
+  ## value `x` (must be declared as `var`).
+  ##
+  ## This modifies `x` itself, it does not return a copy.
+  runnableExamples:
+    var x = "123.456000000"
+    x.trimZeros()
+    doAssert x == "123.456"
+
+  let sPos = find(x, decimalSep)
+  if sPos >= 0:
+    var last = find(x, 'e', start = sPos)
+    last = if last >= 0: last - 1 else: high(x)
+    var pos = last
+    while pos >= 0 and x[pos] == '0': dec(pos)
+    if pos > sPos: inc(pos)
+    if last >= pos:
+      try:
+        x.delete(pos..last)
+      except:
+        assert false

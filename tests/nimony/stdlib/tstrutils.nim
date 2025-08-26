@@ -525,3 +525,135 @@ block: # strip
   assert "x".strip(trailing = false, chars={'x'}).len == 0
   assert "x".strip(leading = false, trailing = false, chars={'x'}) == "x"
   assert "xyz".strip(leading = false, trailing = false, chars={'x', 'y', 'z'}) == "xyz"
+
+block: # trimZeros
+  var x = ""
+  x.trimZeros
+  assert x == ""
+  x = "0"
+  x.trimZeros
+  assert x == "0"
+  x = "+0"
+  x.trimZeros
+  assert x == "+0"
+  x = "-0"
+  x.trimZeros
+  assert x == "-0"
+  x = "0."
+  x.trimZeros()
+  assert x == "0"
+  x = "0.0"
+  x.trimZeros()
+  assert x == "0"
+  x = "1"
+  x.trimZeros
+  assert x == "1"
+  x = "+1"
+  x.trimZeros
+  assert x == "+1"
+  x = "-1"
+  x.trimZeros
+  assert x == "-1"
+  x = "1200"
+  x.trimZeros()
+  assert x == "1200"
+  x = "120.0"
+  x.trimZeros()
+  assert x == "120"
+  x = "120.00"
+  x.trimZeros()
+  assert x == "120"
+  x = "120.000"
+  x.trimZeros()
+  assert x == "120"
+  x = "0.01"
+  x.trimZeros()
+  assert x == "0.01"
+  x = "0.010"
+  x.trimZeros()
+  assert x == "0.01"
+  x = "0.0100"
+  x.trimZeros()
+  assert x == "0.01"
+  x = "-0.010"
+  x.trimZeros()
+  assert x == "-0.01"
+  x = "1.01"
+  x.trimZeros()
+  assert x == "1.01"
+  x = "1.010"
+  x.trimZeros()
+  assert x == "1.01"
+  x = "1.0100"
+  x.trimZeros()
+  assert x == "1.01"
+  x = "1.001"
+  x.trimZeros()
+  assert x == "1.001"
+  x = "1.0010"
+  x.trimZeros()
+  assert x == "1.001"
+  x = "1.1001"
+  x.trimZeros()
+  assert x == "1.1001"
+  x = "1.10010"
+  x.trimZeros()
+  assert x == "1.1001"
+  x = "1.1001000"
+  x.trimZeros()
+  assert x == "1.1001"
+  x = "1e2"
+  x.trimZeros()
+  assert x == "1e2"
+  x = "1.0e2"
+  x.trimZeros()
+  assert x == "1e2"
+  x = "-1.0e2"
+  x.trimZeros()
+  assert x == "-1e2"
+  x = "1.00e2"
+  x.trimZeros()
+  assert x == "1e2"
+  x = "1.000e2"
+  x.trimZeros()
+  assert x == "1e2"
+  x = "9.9e2"
+  x.trimZeros()
+  assert x == "9.9e2"
+  x = "9.90e2"
+  x.trimZeros()
+  assert x == "9.9e2"
+  x = "9.900e2"
+  x.trimZeros()
+  assert x == "9.9e2"
+  x = "9.09e2"
+  x.trimZeros()
+  assert x == "9.09e2"
+  x = "9.090e2"
+  x.trimZeros()
+  assert x == "9.09e2"
+  x = "1e20"
+  x.trimZeros()
+  assert x == "1e20"
+  x = "1.0e20"
+  x.trimZeros()
+  assert x == "1e20"
+  x = "1.00e200"
+  x.trimZeros()
+  assert x == "1e200"
+  x = "1e-2"
+  x.trimZeros()
+  assert x == "1e-2"
+  x = "1.00e-20"
+  x.trimZeros()
+  assert x == "1e-20"
+  x = "1.01e-20"
+  x.trimZeros()
+  assert x == "1.01e-20"
+  x = "1.010e-20"
+  x.trimZeros()
+  assert x == "1.01e-20"
+
+  x = "1,0"
+  x.trimZeros(',')
+  assert x == "1"
