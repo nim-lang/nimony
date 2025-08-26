@@ -111,7 +111,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
     # TODO: raise exception when it is supported.
     #raise newEIO("The append mode is not supported.")
     # quit "The append mode is not supported."
-    raise Failure
+    raise BadOperation
 
   assert newFileSize == -1 or mode != fmRead
   var readonly = mode == fmRead
