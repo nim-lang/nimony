@@ -1,7 +1,7 @@
 import std/encodings
 import std/assertions
 
-template noRaise(x: untyped): untyped =
+template noRaise(x: untyped): untyped {.untyped.} =
   try:
     x
   except:
