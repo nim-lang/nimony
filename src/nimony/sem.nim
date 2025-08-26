@@ -1721,7 +1721,32 @@ include semtypes
 proc semTypeof(c: var SemContext; it: var Item) =
   let beforeExpr = c.dest.len
   inc it.n # typeof
-  semExpr c, it
+
+  let beforeMode = c.dest.len
+  var modeArg = Item(n: it.n, typ: c.types.autoType)
+  skip modeArg.n # second parameter is TypeOfMode
+  semConstExpr c, modeArg
+  assert c.dest.len > beforeMode
+  let modeTok = c.dest[beforeMode]
+  if modeTok.kind == ParLe and modeTok.tagId == ErrT:
+    c.dest.insert it.n, beforeMode
+    skip it.n
+    skip it.n
+    takeParRi c, it.n
+    return
+  assert modeTok.kind == Symbol
+  var semFlags: set[SemFlag] = {}
+  var modeSym = pool.syms[modeTok.symId]
+  modeSym.extractBasename
+  case modeSym
+  of "typeOfProc":
+    discard
+  of "typeOfIter":
+    semFlags = {PreferIterators}
+  else:
+    assert false
+
+  semExpr c, it, semFlags
   var t = it.typ
   if t.typeKind == TypedescT: inc t
   c.dest.shrink beforeExpr
@@ -1731,6 +1756,7 @@ proc semTypeof(c: var SemContext; it: var Item) =
   it.typ = typeToCursor(c, beforeExpr)
   #echo "CAME HERE! ", typeToString(t), " ", c.phase
   #writeStackTrace()
+  skip it.n # skip mode
   skipParRi it.n
 
 proc addXint(c: var SemContext; x: xint; info: PackedLineInfo) =

@@ -29,3 +29,19 @@ block:
   assert typeof(f) is Foo
   assert typeof(f.x) is int
   assert typeof(f.y) is string
+
+proc foo(): int = discard
+iterator foo(): float = discard
+
+assert typeof(foo(), typeOfProc) is int
+assert typeof(foo(), typeOfIter) is float
+const TypeofModeConst1 = typeOfProc
+assert typeof(foo(), TypeofModeConst1) is int
+const TypeofModeConst2 = typeOfIter
+assert typeof(foo(), TypeofModeConst2) is float
+
+proc foo(x: int): string = discard
+iterator foo(x: int): char = discard
+
+assert typeof(foo(0), typeOfProc) is string
+assert typeof(foo(0), typeOfIter) is char
