@@ -211,6 +211,7 @@
 | `(assume X)` | NimonyPragma, NimonyStmt | `assume` pragma |
 | `(assert X)` | NimonyPragma, NimonyStmt | `assert` pragma |
 | `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma |
+| `(feature STR)` | NimonyPragma | `feature` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |
 | `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
