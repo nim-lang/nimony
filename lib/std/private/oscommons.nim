@@ -73,7 +73,7 @@ when supportedSystem:
         elif not S_ISREG(s.st_mode):
           result = (pcLinkToFile, true)
 
-  proc tryMoveFSObject*(source, dest: string, isDir: bool): bool =
+  proc tryMoveFSObject*(source, dest: string, isDir: bool): bool {.raises.} =
     ## Moves a file (or directory if `isDir` is true) from `source` to `dest`.
     ##
     ## Returns false in case of `EXDEV` error or `AccessDeniedError` on Windows (if `isDir` is true).
