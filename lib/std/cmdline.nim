@@ -237,16 +237,16 @@ elif defined(windows):
 
 elif defined(genode):
   proc paramStr*(i: int): string {.raises.} =
-    raise Failure #newException(OSError, "paramStr is not implemented on Genode")
+    raise BadOperation #newException(OSError, "paramStr is not implemented on Genode")
 
   proc paramCount*(): int {.raises.}  =
-    raise Failure #newException(OSError, "paramCount is not implemented on Genode")
+    raise BadOperation #newException(OSError, "paramCount is not implemented on Genode")
 elif weirdTarget:# or (defined(posix) and appType == "lib"):
   proc paramStr*(i: int): string {.tags: [ReadIOEffect], raises.} =
-    raise Failure #newException(OSError, "paramStr is not implemented on current platform")
+    raise BadOperation #newException(OSError, "paramStr is not implemented on current platform")
 
   proc paramCount*(): int {.tags: [ReadIOEffect], raises.} =
-    raise Failure #newException(OSError, "paramCount is not implemented on current platform")
+    raise BadOperation #newException(OSError, "paramCount is not implemented on current platform")
 elif not defined(createNimRtl): # and not(defined(posix) and appType == "lib"):
   # On Posix, there is no portable way to get the command line from a DLL.
   import strutils
@@ -303,8 +303,8 @@ when declared(paramCount) or defined(nimdoc):
       case e
       of IndexError:
         quit "cannot happen"
-      of Failure:
-        raise Failure
+      of BadOperation:
+        raise BadOperation
       else:
         quit "unexpected error code"
 else:
