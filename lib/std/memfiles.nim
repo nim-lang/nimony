@@ -108,8 +108,6 @@ proc open*(filename: string, mode: FileMode = fmRead,
   result = default(MemFile)
   # The file can be resized only when write mode is used:
   if mode == fmAppend:
-    # TODO: raise exception when it is supported.
-    #raise newEIO("The append mode is not supported.")
     # quit "The append mode is not supported."
     raise BadOperation
 
