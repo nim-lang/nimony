@@ -277,10 +277,14 @@ proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.canRaise:
     copyInto dest, n:
-      let maybeClose = produceSuccessTuple(c, dest, c.retType, n.info)
-      tr c, dest, n
-      if maybeClose:
-        dest.addParRi() # tuple constructor
+      if n.kind == DotToken:
+        dest.addSymUse pool.syms.getOrIncl(SuccessName), n.info
+        inc n
+      else:
+        let maybeClose = produceSuccessTuple(c, dest, c.retType, n.info)
+        tr c, dest, n
+        if maybeClose:
+          dest.addParRi() # tuple constructor
   else:
     copyInto dest, n:
       tr c, dest, n
