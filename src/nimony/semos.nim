@@ -183,7 +183,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         let alias = pool.strings[aliasId]
         var prefix: seq[ImportedFilename] = @[]
         filenameVal(x, prefix, hasError, allowAs = false)
-        if x.kind != ParRi or prefix.len == 0:
+        if rhs.kind != ParRi or prefix.len == 0:
           hasError = true
         for pre in mitems(prefix):
           res.add ImportedFilename(path: pre.path, name: alias)
