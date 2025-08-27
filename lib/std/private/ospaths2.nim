@@ -1,8 +1,18 @@
-import ../[strutils, pathnorm]
+import ../strutils
 import ../oserrors
 
 import oscommons
 import ../[syncio, assertions, widestrs]
+
+import ../pathnorm
+
+
+
+proc `&`(x: string, y: char): string {.inline.} =
+  result = x & $y
+
+proc `&`(x: char, y: string): string {.inline.} =
+  result = $x & y
 
 ## .. importdoc:: osappdirs.nim, osdirs.nim, osseps.nim, os.nim
 
@@ -63,17 +73,19 @@ proc normalizePathEnd*(path: var string, trailingSep = false) =
     # // => / (empty case was already taken care of)
     path = $DirSep
 
-proc normalizePathEnd*(path: string, trailingSep = false): string =
-  ## outplace overload
-  runnableExamples:
-    when defined(posix):
-      assert normalizePathEnd("/lib//.//", trailingSep = true) == "/lib/"
-      assert normalizePathEnd("lib/./.", trailingSep = false) == "lib"
-      assert normalizePathEnd(".//./.", trailingSep = false) == "."
-      assert normalizePathEnd("", trailingSep = true) == "" # not / !
-      assert normalizePathEnd("/", trailingSep = false) == "/" # not "" !
-  result = path
-  result.normalizePathEnd(trailingSep)
+
+# TODO: Overloading with varness doesn't work in Nimony yet
+# proc normalizePathEnd*(path: string, trailingSep = false): string {.inline.} =
+#   ## outplace overload
+#   runnableExamples:
+#     when defined(posix):
+#       assert normalizePathEnd("/lib//.//", trailingSep = true) == "/lib/"
+#       assert normalizePathEnd("lib/./.", trailingSep = false) == "lib"
+#       assert normalizePathEnd(".//./.", trailingSep = false) == "."
+#       assert normalizePathEnd("", trailingSep = true) == "" # not / !
+#       assert normalizePathEnd("/", trailingSep = false) == "/" # not "" !
+#   result = path
+#   result.normalizePathEndImpl(trailingSep)
 
 template endsWith(a: string, b: set[char]): bool =
   a.len > 0 and a[a.high] in b
@@ -211,10 +223,7 @@ proc splitPath*(path: string): tuple[head, tail: string] {.
       break
   if sepPos >= 0:
     result.head = substr(path, 0,
-      when (NimMajor, NimMinor) <= (1, 0):
-        sepPos-1
-      else:
-        if likely(sepPos >= 1): sepPos-1 else: 0
+        if sepPos >= 1: sepPos-1 else: 0
     )
     result.tail = substr(path, sepPos+1)
   else:
@@ -354,7 +363,7 @@ proc relativePath*(path, base: string, sep = DirSep): string =
   # every directory that is in 'base', needs to add '..'
   while true:
     if bb[1] >= bb[0]:
-      if result.len > 0 and result[^1] != sep:
+      if result.len > 0 and result[result.high] != sep:
         result.add sep
       result.add ".."
     if not b.hasNext(base): break
@@ -363,7 +372,7 @@ proc relativePath*(path, base: string, sep = DirSep): string =
   # add the rest of 'path':
   while true:
     if ff[1] >= ff[0]:
-      if result.len > 0 and result[^1] != sep:
+      if result.len > 0 and result[result.high] != sep:
         result.add sep
       for i in 0..ff[1] - ff[0]:
         result.add path[i + ff[0]]
@@ -373,7 +382,7 @@ proc relativePath*(path, base: string, sep = DirSep): string =
   when not defined(nimOldRelativePathBehavior):
     if result.len == 0: result.add "."
 
-proc isRelativeTo*(path: string, base: string): bool {.since: (1, 1).} =
+proc isRelativeTo*(path: string, base: string): bool =
   ## Returns true if `path` is relative to `base`.
   runnableExamples:
     doAssert isRelativeTo("./foo//bar", "foo")
@@ -423,7 +432,7 @@ proc parentDir*(path: string): string {.
   if sepPos >= 0:
     result = substr(result, 0, sepPos)
     normalizePathEnd(result)
-  elif result == ".." or result == "." or result.len == 0 or result[^1] in {DirSep, AltSep}:
+  elif result == ".." or result == "." or result.len == 0 or result[result.high] in {DirSep, AltSep}:
     # `.` => `..` and .. => `../..`(etc) would be a sensible alternative
     # `/` => `/` (as done with splitFile) would be a sensible alternative
     result = ""
@@ -646,7 +655,7 @@ proc splitFile*(path: string): tuple[dir, name, ext: string] {.
   for i in countdown(len(path) - 1, stop):
     if path[i] in {DirSep, AltSep} or i == 0:
       if path[i] in {DirSep, AltSep}:
-        result.dir = substr(path, 0, if likely(i >= 1): i - 1 else: 0)
+        result.dir = substr(path, 0, if i >= 1: i - 1 else: 0)
         namePos = i + 1
       if dotPos > i:
         result.name = substr(path, namePos, dotPos - 1)
@@ -696,7 +705,8 @@ proc lastPathPart*(path: string): string {.
     assert lastPathPart("foo/bar/") == "bar"
     assert lastPathPart("foo/bar") == "bar"
 
-  let path = path.normalizePathEnd(trailingSep = false)
+  var path = path
+  path.normalizePathEnd(trailingSep = false)
   result = extractFilename(path)
 
 proc changeFileExt*(filename, ext: string): string {.
@@ -765,8 +775,11 @@ proc cmpPaths*(pathA, pathB: string): int {.
     elif defined(posix):
       assert cmpPaths("foo", "Foo") > 0
 
-  let a = normalizePath(pathA)
-  let b = normalizePath(pathB)
+  var a: string = ""
+  normalizePath(a)
+  var b: string = ""
+  normalizePath(b)
+
   if FileSystemCaseSensitive:
     result = cmp(a, b)
   else:
@@ -855,13 +868,13 @@ when not defined(nimscript) and supportedSystem:
       raiseAssert "use -d:nodejs to have `getCurrentDir` defined"
     elif defined(windows):
       var bufsize = MAX_PATH.int32
-      var res = newWideCString(bufsize)
+      var res = newWideCString(bufsize).toWideCString()
       while true:
         var L = getCurrentDirectoryW(bufsize, res)
         if L == 0'i32:
           raiseOSError(osLastError())
         elif L > bufsize:
-          res = newWideCString(L)
+          res = newWideCString(L).toWideCString()
           bufsize = L
         else:
           result = res$L
@@ -882,7 +895,7 @@ when not defined(nimscript) and supportedSystem:
           else:
             raiseOSError(osLastError())
 
-proc absolutePath*(path: string, root = when supportedSystem: getCurrentDir() else: ""): string =
+proc absolutePath*(path: string, root = when supportedSystem: getCurrentDir() else: ""): string {.raises.} =
   ## Returns the absolute path of `path`, rooted at `root` (which must be absolute;
   ## default: current directory).
   ## If `path` is absolute, return it, ignoring `root`.
@@ -896,10 +909,11 @@ proc absolutePath*(path: string, root = when supportedSystem: getCurrentDir() el
   if isAbsolute(path): path
   else:
     if not root.isAbsolute:
-      raise newException(ValueError, "The specified root is not absolute: " & root)
+      raise ValueError
+      # raise newException(ValueError, "The specified root is not absolute: " & root)
     joinPath(root, path)
 
-proc absolutePathInternal(path: string): string =
+proc absolutePathInternal(path: string): string {.raises.} =
   absolutePath(path)
 
 
@@ -938,7 +952,7 @@ proc normalizePath*(path: var string) {.tags: [].} =
             discard  # collapse all double dots on absoluta paths
           else:
             stack.add(p)
-        elif stack[^1] == "..":
+        elif stack[stack.high] == "..":
           stack.add(p)
         else:
           discard stack.pop()
@@ -965,7 +979,7 @@ proc normalizedPath*(path: string): string {.tags: [].} =
       assert normalizedPath("a///b//..//c///d") == "a/c/d"
   result = pathnorm.normalizePath(path)
 
-proc normalizeExe*(file: var string) {.since: (1, 3, 5).} =
+proc normalizeExe*(file: var string) =
   ## on posix, prepends `./` if `file` doesn't contain `/` and is not `"", ".", ".."`.
   runnableExamples:
     import std/sugar
@@ -1001,8 +1015,8 @@ when supportedSystem:
       if f1 != INVALID_HANDLE_VALUE and f2 != INVALID_HANDLE_VALUE:
         var fi1, fi2: BY_HANDLE_FILE_INFORMATION
 
-        if getFileInformationByHandle(f1, addr(fi1)) != 0 and
-           getFileInformationByHandle(f2, addr(fi2)) != 0:
+        if getFileInformationByHandle(f1, addr(fi1)).int32 != 0 and
+           getFileInformationByHandle(f2, addr(fi2)).int32 != 0:
           result = fi1.dwVolumeSerialNumber == fi2.dwVolumeSerialNumber and
                    fi1.nFileIndexHigh == fi2.nFileIndexHigh and
                    fi1.nFileIndexLow == fi2.nFileIndexLow

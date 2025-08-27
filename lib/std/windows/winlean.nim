@@ -169,6 +169,19 @@ when defined(windows):
       cAlternateFileName*: array[0..13, WinChar]
 
 
+    BY_HANDLE_FILE_INFORMATION* = object
+      dwFileAttributes*: DWORD
+      ftCreationTime*: FILETIME
+      ftLastAccessTime*: FILETIME
+      ftLastWriteTime*: FILETIME
+      dwVolumeSerialNumber*: DWORD
+      nFileSizeHigh*: DWORD
+      nFileSizeLow*: DWORD
+      nNumberOfLinks*: DWORD
+      nFileIndexHigh*: DWORD
+      nFileIndexLow*: DWORD
+
+
   proc getFullPathNameW*(lpFileName: WideCString, nBufferLength: int32,
                         lpBuffer: WideCString,
                         lpFilePart: var WideCString): int32 {.
@@ -200,3 +213,17 @@ when defined(windows):
 
   proc getCommandLineW*(): WideCString {.importc: "GetCommandLineW",
     stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc getFileInformationByHandle*(hFile: Handle,
+    lpFileInformation: ptr BY_HANDLE_FILE_INFORMATION): WINBOOL{.
+      stdcall, dynlib: "kernel32", importc: "GetFileInformationByHandle", sideEffect.}
+
+  proc getCurrentDirectoryW*(nBufferLength: int32,
+                            lpBuffer: WideCString): int32 {.
+    importc: "GetCurrentDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
+  proc setCurrentDirectoryW*(lpPathName: WideCString): int32 {.
+    importc: "SetCurrentDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
+  proc createDirectoryW*(pathName: WideCString, security: pointer=nil): int32 {.
+    importc: "CreateDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
+  proc removeDirectoryW*(lpPathName: WideCString): int32 {.
+    importc: "RemoveDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
