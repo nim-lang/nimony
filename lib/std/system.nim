@@ -399,5 +399,10 @@ func `..`*[T, U](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
   ##   ```
   result = HSlice[T, U](a: a, b: b)
 
-proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+type
+  TypeOfMode* = enum ## Possible modes of `typeof`.
+    typeOfProc,      ## Prefer the interpretation that means `x` is a proc call.
+    typeOfIter       ## Prefer the interpretation that means `x` is an iterator call.
+
+proc typeof*(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
   ## Builtin `typeof` operation for accessing the type of an expression.

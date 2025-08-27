@@ -81,7 +81,7 @@ type
     ProccallX = (ord(ProccallTagId), "proccall")  ## turns method call into a proc call aka a "static" call
     HighX = (ord(HighTagId), "high")
     LowX = (ord(LowTagId), "low")
-    TypeofX = (ord(TypeofTagId), "typeof")
+    TypeofX = (ord(TypeofTagId), "typeof")  ## `typeof` operation for accessing the type of an expression
     UnpackX = (ord(UnpackTagId), "unpack")
     FieldsX = (ord(FieldsTagId), "fields")  ## fields iterator
     FieldpairsX = (ord(FieldpairsTagId), "fieldpairs")  ## fieldPairs iterator

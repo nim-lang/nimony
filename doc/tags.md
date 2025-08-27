@@ -239,7 +239,7 @@
 | `(proccall X)` | NimonyExpr | turns method call into a proc call aka a "static" call |
 | `(high X)` | NimonyExpr | |
 | `(low X)` | NimonyExpr | |
-| `(typeof X)` | NimonyExpr, NiflerKind | |
+| `(typeof X X)` | NimonyExpr, NiflerKind | `typeof` operation for accessing the type of an expression |
 | `(unpack)` | NimonyExpr | |
 | `(fields T X X?)` | NimonyExpr | fields iterator |
 | `(fieldpairs T X X?)` | NimonyExpr | fieldPairs iterator |
