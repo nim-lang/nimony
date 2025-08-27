@@ -13,7 +13,7 @@ from std/os import changeFileExt, getCurrentDir
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
-  intervals, xints, typeprops,
+  intervals, xints, typeprops, features,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon
 
@@ -1332,6 +1332,21 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       c.dest.addSubtree n
     else:
       buildErr c, n.info, "`magic` pragma takes a string literal"
+    c.dest.addParRi()
+  of FeatureP:
+    c.dest.add parLeToken(FeatureP, n.info)
+    inc n
+    if hasParRi and n.kind in {StringLit, Ident}:
+      let feature = parseFeature(pool.strings[n.litId])
+      if feature == InvalidFeature:
+        buildErr c, n.info, "unknown `feature`"
+      else:
+        c.features.incl feature
+      takeToken c, n
+    elif n.exprKind == ErrX:
+      c.dest.addSubtree n
+    else:
+      buildErr c, n.info, "`feature` pragma takes a string literal"
     c.dest.addParRi()
   of ErrorP, ReportP, DeprecatedP:
     crucial.flags.incl pk
