@@ -2,6 +2,7 @@ import std/[assertions, memfiles]
 
 
 when not defined(windows):
+  # TODO: enable it on windows
   block:
     try:
       var f = memfiles.open("tests/nimony/stdlib/file_for_reading_test.txt")
