@@ -14,6 +14,9 @@ proc `&`(x: string, y: char): string {.inline.} =
 proc `&`(x: char, y: string): string {.inline.} =
   result = $x & y
 
+proc c_strlen(a: cstring): csize_t {.
+  importc: "strlen", header: "<string.h>", noSideEffect.}
+
 ## .. importdoc:: osappdirs.nim, osdirs.nim, osseps.nim, os.nim
 
 const weirdTarget = defined(nimscript) or defined(js)
@@ -378,10 +381,10 @@ proc relativePath*(path, base: string, sep = DirSep): string {.raises.} =
 proc isRelativeTo*(path: string, base: string): bool {.raises.} =
   ## Returns true if `path` is relative to `base`.
   runnableExamples:
-    doAssert isRelativeTo("./foo//bar", "foo")
-    doAssert isRelativeTo("foo/bar", ".")
-    doAssert isRelativeTo("/foo/bar.nim", "/foo/bar.nim")
-    doAssert not isRelativeTo("foo/bar.nims", "foo/bar.nim")
+    assert isRelativeTo("./foo//bar", "foo")
+    assert isRelativeTo("foo/bar", ".")
+    assert isRelativeTo("/foo/bar.nim", "/foo/bar.nim")
+    assert not isRelativeTo("foo/bar.nims", "foo/bar.nim")
   let path = pathnorm.normalizePath(path)
   let base = pathnorm.normalizePath(base)
   let ret = relativePath(path, base)
@@ -874,14 +877,14 @@ when not defined(nimscript) and supportedSystem:
       var bufsize = 1024 # should be enough
       result = newString(bufsize)
       while true:
-        if getcwd(result.cstring, bufsize) != nil:
-          setLen(result, c_strlen(result.cstring))
+        if getcwd(result.toCString(), bufsize) != nil:
+          setLen(result, c_strlen(result.toCString()).int)
           break
         else:
           let err = osLastError()
           if err.int32 == ERANGE:
             bufsize = bufsize shl 1
-            doAssert(bufsize >= 0)
+            assert(bufsize >= 0)
             result = newString(bufsize)
           else:
             raiseOSError(osLastError())
@@ -976,9 +979,9 @@ proc normalizeExe*(file: var string) =
   runnableExamples:
     import std/sugar
     when defined(posix):
-      doAssert "foo".dup(normalizeExe) == "./foo"
-      doAssert "foo/../bar".dup(normalizeExe) == "foo/../bar"
-    doAssert "".dup(normalizeExe) == ""
+      assert "foo".dup(normalizeExe) == "./foo"
+      assert "foo/../bar".dup(normalizeExe) == "foo/../bar"
+    assert "".dup(normalizeExe) == ""
   when defined(posix):
     if file.len > 0 and DirSep notin file and file != "." and file != "..":
       file = "./" & file
@@ -1024,8 +1027,10 @@ when supportedSystem:
 
       if not success: raiseOSError(lastErr, "(" & path1 & ", " & path2 & ")")
     else:
-      var a, b: Stat
-      if stat(path1, a) < 0'i32 or stat(path2, b) < 0'i32:
+      var a, b: Stat = default(Stat)
+      var path1 = path1
+      var path2 = path2
+      if stat(path1.toCString(), a) < 0'i32 or stat(path2.toCString(), b) < 0'i32:
         raiseOSError(osLastError(), "(" & path1 & ", " & path2 & ")")
       else:
         result = a.st_dev == b.st_dev and a.st_ino == b.st_ino

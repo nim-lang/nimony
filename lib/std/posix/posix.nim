@@ -20,9 +20,14 @@ when defined(posix):
 
     Sighandler = proc (a: cint) {.noconv.}
 
+    Dev* {.importc: "dev_t", header: "<sys/types.h>".} = uint
+    Ino* {.importc: "ino_t", header: "<sys/types.h>".} = uint
+
     Stat* {.importc: "struct stat",
              header: "<sys/stat.h>", final, pure.} = object ## struct stat
-      st_size* {.importc: "st_size".}: Off  ## For regular files, the file size in bytes.
+      st_dev* {.importc: "st_dev".} : Dev          ## Device ID of device containing file.
+      st_ino* {.importc: "st_ino".} : Ino          ## File serial number.
+      st_size* {.importc: "st_size".} : Off  ## For regular files, the file size in bytes.
                                             ## For symbolic links, the length in bytes of the
                                             ## pathname contained in the symbolic link.
                                             ## For a shared memory object, the length in bytes.
@@ -99,3 +104,5 @@ when defined(posix):
 
   proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.
     importc, header: "<time.h>", sideEffect.}
+
+  proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
