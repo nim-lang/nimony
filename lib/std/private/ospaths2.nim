@@ -35,6 +35,9 @@ proc normalizePathAux(path: var string){.inline, raises: [], noSideEffect.}
 import osseps
 export osseps
 
+
+{.pragma: gcsafe.} # TODO:
+
 proc absolutePathInternal(path: string): string {.gcsafe.}
 
 proc normalizePathEnd*(path: var string, trailingSep = false) =
@@ -73,7 +76,7 @@ proc normalizePathEnd*(path: string, trailingSep = false): string =
   result.normalizePathEnd(trailingSep)
 
 template endsWith(a: string, b: set[char]): bool =
-  a.len > 0 and a[^1] in b
+  a.len > 0 and a[a.high] in b
 
 proc joinPathImpl(result: var string, state: var int, tail: string) =
   let trailingSep = tail.endsWith({DirSep, AltSep}) or tail.len == 0 and result.endsWith({DirSep, AltSep})
@@ -82,7 +85,7 @@ proc joinPathImpl(result: var string, state: var int, tail: string) =
   normalizePathEnd(result, trailingSep=trailingSep)
 
 proc joinPath*(head, tail: string): string {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Joins two directory names to one.
   ##
   ## returns normalized path concatenation of `head` and `tail`, preserving
@@ -125,31 +128,30 @@ proc joinPath*(head, tail: string): string {.
       else:
         result = head & DirSep & tail
 
-proc joinPath*(parts: varargs[string]): string {.noSideEffect,
-  rtl, extern: "nos$1OpenArray".} =
-  ## The same as `joinPath(head, tail) proc`_,
-  ## but works with any number of directory parts.
-  ##
-  ## You need to pass at least one element or the proc
-  ## will assert in debug builds and crash on release builds.
-  ##
-  ## See also:
-  ## * `joinPath(head, tail) proc`_
-  ## * `/ proc`_
-  ## * `/../ proc`_
-  ## * `splitPath proc`_
-  runnableExamples:
-    when defined(posix):
-      assert joinPath("a") == "a"
-      assert joinPath("a", "b", "c") == "a/b/c"
-      assert joinPath("usr/lib", "../../var", "log") == "var/log"
+# proc joinPath*(parts: varargs[string]): string {.noSideEffect.} =
+#   ## The same as `joinPath(head, tail) proc`_,
+#   ## but works with any number of directory parts.
+#   ##
+#   ## You need to pass at least one element or the proc
+#   ## will assert in debug builds and crash on release builds.
+#   ##
+#   ## See also:
+#   ## * `joinPath(head, tail) proc`_
+#   ## * `/ proc`_
+#   ## * `/../ proc`_
+#   ## * `splitPath proc`_
+#   runnableExamples:
+#     when defined(posix):
+#       assert joinPath("a") == "a"
+#       assert joinPath("a", "b", "c") == "a/b/c"
+#       assert joinPath("usr/lib", "../../var", "log") == "var/log"
 
-  var estimatedLen = 0
-  for p in parts: estimatedLen += p.len
-  result = newStringOfCap(estimatedLen)
-  var state = 0
-  for i in 0..high(parts):
-    joinPathImpl(result, state, parts[i])
+#   var estimatedLen = 0
+#   for p in parts: estimatedLen += p.len
+#   result = newStringOfCap(estimatedLen)
+#   var state = 0
+#   for i in 0..high(parts):
+#     joinPathImpl(result, state, parts[i])
 
 proc `/`*(head, tail: string): string {.noSideEffect, inline.} =
   ## The same as `joinPath(head, tail) proc`_.
@@ -175,7 +177,7 @@ when doslikeFileSystem:
   import ntpath
 
 proc splitPath*(path: string): tuple[head, tail: string] {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Splits a directory into `(head, tail)` tuple, so that
   ## ``head / tail == path`` (except for edge cases like "/usr").
   ##
@@ -223,7 +225,7 @@ proc splitPath*(path: string): tuple[head, tail: string] {.
       result.head = ""
       result.tail = path
 
-proc isAbsolute*(path: string): bool {.rtl, noSideEffect, extern: "nos$1", raises: [].} =
+proc isAbsolute*(path: string): bool {.noSideEffect, raises: [].} =
   ## Checks whether a given `path` is absolute.
   ##
   ## On Windows, network paths are considered absolute too.
@@ -282,8 +284,7 @@ when doslikeFileSystem:
     else:
       result = false
 
-proc relativePath*(path, base: string, sep = DirSep): string {.
-  rtl, extern: "nos$1".} =
+proc relativePath*(path, base: string, sep = DirSep): string =
   ## Converts `path` to a path relative to `base`.
   ##
   ## The `sep` (default: DirSep_) is used for the path normalizations,
@@ -392,7 +393,7 @@ proc parentDirPos(path: string): int =
   result = -1
 
 proc parentDir*(path: string): string {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Returns the parent directory of `path`.
   ##
   ## This is similar to ``splitPath(path).head`` when ``path`` doesn't end
@@ -437,7 +438,7 @@ proc parentDir*(path: string): string {.
       result = drive & result
 
 proc tailDir*(path: string): string {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Returns the tail part of `path`.
   ##
   ## See also:
@@ -466,7 +467,7 @@ proc tailDir*(path: string): string {.
   result = ""
 
 proc isRootDir*(path: string): bool {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Checks whether a given `path` is a root directory.
   runnableExamples:
     assert isRootDir("")
@@ -600,7 +601,7 @@ proc searchExtPos*(path: string): int =
       break
 
 proc splitFile*(path: string): tuple[dir, name, ext: string] {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Splits a filename into `(dir, name, extension)` tuple.
   ##
   ## `dir` does not end in DirSep_ unless it's `/`.
@@ -659,7 +660,7 @@ proc splitFile*(path: string): tuple[dir, name, ext: string] {.
       dotPos = i
 
 proc extractFilename*(path: string): string {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Extracts the filename of a given `path`.
   ##
   ## This is the same as ``name & ext`` from `splitFile(path) proc`_.
@@ -681,7 +682,7 @@ proc extractFilename*(path: string): string {.
     result = splitPath(path).tail
 
 proc lastPathPart*(path: string): string {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Like `extractFilename proc`_, but ignores
   ## trailing dir separator; aka: `baseName`:idx: in some other languages.
   ##
@@ -699,7 +700,7 @@ proc lastPathPart*(path: string): string {.
   result = extractFilename(path)
 
 proc changeFileExt*(filename, ext: string): string {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Changes the file extension to `ext`.
   ##
   ## If the `filename` has no extension, `ext` will be added.
@@ -725,7 +726,7 @@ proc changeFileExt*(filename, ext: string): string {.
   else: result = substr(filename, 0, extPos-1) & normExt(ext)
 
 proc addFileExt*(filename, ext: string): string {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Adds the file extension `ext` to `filename`, unless
   ## `filename` already has an extension.
   ##
@@ -749,7 +750,7 @@ proc addFileExt*(filename, ext: string): string {.
   else: result = filename
 
 proc cmpPaths*(pathA, pathB: string): int {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Compares two paths.
   ##
   ## On a case-sensitive filesystem this is done
@@ -776,7 +777,7 @@ proc cmpPaths*(pathA, pathB: string): int {.
       result = cmpIgnoreCase(a, b)
 
 proc unixToNativePath*(path: string, drive=""): string {.
-  noSideEffect, rtl, extern: "nos$1".} =
+  noSideEffect.} =
   ## Converts an UNIX-like path to a native one.
   ##
   ## On an UNIX system this does nothing. Else it converts
@@ -833,7 +834,7 @@ proc unixToNativePath*(path: string, drive=""): string {.
 
 
 when not defined(nimscript) and supportedSystem:
-  proc getCurrentDir*(): string {.rtl, extern: "nos$1", tags: [].} =
+  proc getCurrentDir*(): string {.tags: [].} =
     ## Returns the `current working directory`:idx: i.e. where the built
     ## binary is run.
     ##
@@ -902,7 +903,7 @@ proc absolutePathInternal(path: string): string =
   absolutePath(path)
 
 
-proc normalizePath*(path: var string) {.rtl, extern: "nos$1", tags: [].} =
+proc normalizePath*(path: var string) {.tags: [].} =
   ## Normalize a path.
   ##
   ## Consecutive directory separators are collapsed, including an initial double slash.
@@ -953,7 +954,7 @@ proc normalizePath*(path: var string) {.rtl, extern: "nos$1", tags: [].} =
 
 proc normalizePathAux(path: var string) = normalizePath(path)
 
-proc normalizedPath*(path: string): string {.rtl, extern: "nos$1", tags: [].} =
+proc normalizedPath*(path: string): string {.tags: [].} =
   ## Returns a normalized path for the current OS.
   ##
   ## See also:
@@ -977,8 +978,8 @@ proc normalizeExe*(file: var string) {.since: (1, 3, 5).} =
       file = "./" & file
 
 when supportedSystem:
-  proc sameFile*(path1, path2: string): bool {.rtl, extern: "nos$1",
-    tags: [ReadDirEffect], noWeirdTarget.} =
+  proc sameFile*(path1, path2: string): bool {.
+    tags: [ReadDirEffect], noWeirdTarget, raises.} =
     ## Returns true if both pathname arguments refer to the same physical
     ## file or directory.
     ##
@@ -1015,10 +1016,10 @@ when supportedSystem:
       discard closeHandle(f1)
       discard closeHandle(f2)
 
-      if not success: raiseOSError(lastErr, $(path1, path2))
+      if not success: raiseOSError(lastErr, "(" & path1 & ", " & path2 & ")")
     else:
       var a, b: Stat
       if stat(path1, a) < 0'i32 or stat(path2, b) < 0'i32:
-        raiseOSError(osLastError(), $(path1, path2))
+        raiseOSError(osLastError(), "(" & path1 & ", " & path2 & ")")
       else:
         result = a.st_dev == b.st_dev and a.st_ino == b.st_ino
