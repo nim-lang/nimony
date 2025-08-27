@@ -39,16 +39,9 @@ else:
   {.pragma: noNimJs.}
 
 
-proc normalizePathAux(path: var string){.inline, raises: [], noSideEffect.}
-
-
 import osseps
 export osseps
 
-
-{.pragma: gcsafe.} # TODO:
-
-proc absolutePathInternal(path: string): string {.gcsafe.}
 
 proc normalizePathEnd*(path: var string, trailingSep = false) =
   ## Ensures ``path`` has exactly 0 or 1 trailing `DirSep`, depending on
@@ -293,7 +286,7 @@ when doslikeFileSystem:
     else:
       result = false
 
-proc relativePath*(path, base: string, sep = DirSep): string =
+proc relativePath*(path, base: string, sep = DirSep): string {.raises.} =
   ## Converts `path` to a path relative to `base`.
   ##
   ## The `sep` (default: DirSep_) is used for the path normalizations,
@@ -382,15 +375,15 @@ proc relativePath*(path, base: string, sep = DirSep): string =
   when not defined(nimOldRelativePathBehavior):
     if result.len == 0: result.add "."
 
-proc isRelativeTo*(path: string, base: string): bool =
+proc isRelativeTo*(path: string, base: string): bool {.raises.} =
   ## Returns true if `path` is relative to `base`.
   runnableExamples:
     doAssert isRelativeTo("./foo//bar", "foo")
     doAssert isRelativeTo("foo/bar", ".")
     doAssert isRelativeTo("/foo/bar.nim", "/foo/bar.nim")
     doAssert not isRelativeTo("foo/bar.nims", "foo/bar.nim")
-  let path = path.normalizePath
-  let base = base.normalizePath
+  let path = pathnorm.normalizePath(path)
+  let base = pathnorm.normalizePath(base)
   let ret = relativePath(path, base)
   result = path.len > 0 and not ret.startsWith ".."
 
@@ -537,7 +530,7 @@ iterator parentDirs*(path: string, fromRoot=false, inclusive=true): string =
       let start = path.splitDrive.drive.len
     else:
       const start = 0
-    for i in countup(start, path.len - 2): # ignore the last /
+    for i in start .. (path.len - 2): # ignore the last /
       # deal with non-normalized paths such as /foo//bar//baz
       if path[i] in {DirSep, AltSep} and
           (i == 0 or path[i-1] notin {DirSep, AltSep}):
@@ -775,10 +768,8 @@ proc cmpPaths*(pathA, pathB: string): int {.
     elif defined(posix):
       assert cmpPaths("foo", "Foo") > 0
 
-  var a: string = ""
-  normalizePath(a)
-  var b: string = ""
-  normalizePath(b)
+  let a: string = pathnorm.normalizePath(pathA)
+  let b: string = pathnorm.normalizePath(pathB)
 
   if FileSystemCaseSensitive:
     result = cmp(a, b)
@@ -847,7 +838,7 @@ proc unixToNativePath*(path: string, drive=""): string {.
 
 
 when not defined(nimscript) and supportedSystem:
-  proc getCurrentDir*(): string {.tags: [].} =
+  proc getCurrentDir*(): string {.tags: [], raises.} =
     ## Returns the `current working directory`:idx: i.e. where the built
     ## binary is run.
     ##
@@ -914,7 +905,7 @@ proc absolutePath*(path: string, root = when supportedSystem: getCurrentDir() el
     joinPath(root, path)
 
 proc absolutePathInternal(path: string): string {.raises.} =
-  absolutePath(path)
+  result = absolutePath(path)
 
 
 proc normalizePath*(path: var string) {.tags: [].} =
@@ -966,7 +957,8 @@ proc normalizePath*(path: var string) {.tags: [].} =
     else:
       path = "."
 
-proc normalizePathAux(path: var string) = normalizePath(path)
+proc normalizePathAux(path: var string) {.inline, raises: [], noSideEffect.} =
+  ospaths2.normalizePath(path)
 
 proc normalizedPath*(path: string): string {.tags: [].} =
   ## Returns a normalized path for the current OS.
@@ -1011,9 +1003,9 @@ when supportedSystem:
       var f1 = openHandle(path1)
       var f2 = openHandle(path2)
 
-      var lastErr: OSErrorCode
+      var lastErr: OSErrorCode = OSErrorCode(0)
       if f1 != INVALID_HANDLE_VALUE and f2 != INVALID_HANDLE_VALUE:
-        var fi1, fi2: BY_HANDLE_FILE_INFORMATION
+        var fi1, fi2: BY_HANDLE_FILE_INFORMATION = default(BY_HANDLE_FILE_INFORMATION)
 
         if getFileInformationByHandle(f1, addr(fi1)).int32 != 0 and
            getFileInformationByHandle(f2, addr(fi2)).int32 != 0:
