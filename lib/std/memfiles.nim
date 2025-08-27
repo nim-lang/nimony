@@ -71,7 +71,7 @@ proc setFileSize(fh: OsFileHandle, newFileSize = -1, oldSize = -1): OSErrorCode 
 
 proc open*(filename: string, mode: FileMode = fmRead,
            mappedSize = -1, offset = 0, newFileSize = -1,
-           allowRemap = false, mapFlags = cint(-1)): MemFile =
+           allowRemap = false, mapFlags = cint(-1)): MemFile {.raises.} =
   ## opens a memory mapped file. If this fails, `OSError` is raised.
   ##
   ## `newFileSize` can only be set if the file does not exist and is opened
@@ -108,9 +108,8 @@ proc open*(filename: string, mode: FileMode = fmRead,
   result = default(MemFile)
   # The file can be resized only when write mode is used:
   if mode == fmAppend:
-    # TODO: raise exception when it is supported.
-    #raise newEIO("The append mode is not supported.")
-    quit "The append mode is not supported."
+    # quit "The append mode is not supported."
+    raise BadOperation
 
   assert newFileSize == -1 or mode != fmRead
   var readonly = mode == fmRead
@@ -230,7 +229,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
       if close(result.handle) == 0:
         result.handle = -1
 
-proc close*(f: var MemFile) =
+proc close*(f: var MemFile) {.raises.} =
   ## closes the memory mapped file `f`. All changes are written back to the
   ## file system, if `f` was opened with write access.
 

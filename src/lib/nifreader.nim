@@ -102,7 +102,11 @@ proc openFromBuffer*(buf: sink string): Reader =
   result.f.size = result.buf.len
 
 proc close*(r: var Reader) =
-  close r.f
+  try:
+    memfiles.close(r.f)
+  except:
+    when defined(debug) and not defined(nimony): writeStackTrace()
+    quit "[Error] cannot close"
 
 when not defined(nimony):
   {.pragma: untyped.}

@@ -53,9 +53,6 @@ else:
     EncodingConverter* = object
       dest {.exportc.}, src {.exportc.}: CodePage
 
-# type
-#   EncodingError* = object of ValueError ## Exception that is raised
-#                                         ## for encoding errors.
 
 proc raiseEncodingError(msg: string) =
   ## Raises an `EncodingError` with the given `msg`.
@@ -376,7 +373,7 @@ proc close*(c: EncodingConverter) =
     iconvClose(c)
 
 when defined(windows):
-  proc convertToWideString(codePage: CodePage, s: string): string =
+  proc convertToWideString(codePage: CodePage, s: string): string {.raises.} =
     # educated guess of capacity:
     var cap = s.len + s.len shr 2
     result = newString(cap*2)
@@ -411,7 +408,7 @@ when defined(windows):
     else:
       assert(false) # cannot happen
 
-  proc convertFromWideString(codePage: CodePage, s: string): string =
+  proc convertFromWideString(codePage: CodePage, s: string): string {.raises.} =
     let charCount = s.len div 2
     var cap = s.len + s.len shr 2
     result = newString(cap)
@@ -446,7 +443,7 @@ when defined(windows):
       assert(false) # cannot happen
 
   proc convertWin(codePageFrom: CodePage, codePageTo: CodePage,
-      s: string): string =
+      s: string): string {.raises.} =
     # special case: empty string: needed because MultiByteToWideChar, WideCharToMultiByte
     # return 0 in case of error
     if s.len == 0: return ""
@@ -467,10 +464,10 @@ when defined(windows):
     return if int(codePageTo) == 1200: wideString
            else: convertFromWideString(codePageTo, wideString)
 
-  proc convert*(c: EncodingConverter, s: string): string =
+  proc convert*(c: EncodingConverter, s: string): string {.raises.} =
     result = convertWin(c.src, c.dest, s)
 else:
-  proc convert*(c: EncodingConverter, s: string): string =
+  proc convert*(c: EncodingConverter, s: string): string {.raises.} =
     ## Converts `s` to `destEncoding` that was given to the converter `c`. It
     ## assumes that `s` is in `srcEncoding`.
     ##
@@ -514,15 +511,14 @@ else:
     setLen(result, len(result) - outLen.int)
 
 proc convert*(s: string, destEncoding = "UTF-8",
-                         srcEncoding = "CP1252"): string =
+                         srcEncoding = "CP1252"): string {.raises.} =
   ## Converts `s` to `destEncoding`. It assumed that `s` is in `srcEncoding`.
   ## This opens a converter, uses it and closes it again and is thus more
   ## convenient but also likely less efficient than re-using a converter.
   ##
   ## .. warning:: UTF-16BE and UTF-32 conversions are not supported on Windows.
   var c = open(destEncoding, srcEncoding)
-  # TODO:
-  # try:
-  result = convert(c, s)
-  # finally:
-  close(c)
+  try:
+    result = convert(c, s)
+  finally:
+    close(c)

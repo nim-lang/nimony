@@ -200,7 +200,7 @@ else:
     if c_getenv(key.toCString()) != nil: return true
     else: return findEnvVar(key) >= 0
 
-  proc putEnv*(key, val: string) {.tags: [WriteEnvEffect].} =
+  proc putEnv*(key, val: string) {.tags: [WriteEnvEffect], raises.} =
     ## Sets the value of the `environment variable`:idx: named `key` to `val`.
     ## If an error occurs, `OSError` is raised.
     ##
@@ -227,7 +227,8 @@ else:
     when defined(windows) and not defined(nimscript):
       var k = newWideCString(key)
       var v = newWideCString(val)
-      if setEnvironmentVariableW(k.toWideCString(), v.toWideCString()) == 0'i32: raiseOSError(osLastError())
+      if setEnvironmentVariableW(k.toWideCString(), v.toWideCString()) == 0'i32:
+        raiseOSError(osLastError())
 
     elif defined(vcc):
       if c_putenv_s(key, val) != 0'i32:
@@ -236,7 +237,7 @@ else:
       if c_setenv(key.toCString(), val.toCString(), 1'i32) != 0'i32:
         raiseOSError(osLastError())
 
-  proc delEnv*(key: string) {.tags: [WriteEnvEffect].} =
+  proc delEnv*(key: string) {.tags: [WriteEnvEffect], raises.} =
     ## Deletes the `environment variable`:idx: named `key`.
     ## If an error occurs, `OSError` is raised.
     ##
@@ -246,18 +247,19 @@ else:
     ## * `putEnv proc <#putEnv,string,string>`_
     ## * `envPairs iterator <#envPairs.i>`_
     var indx = findEnvVar(key)
-    if indx < 0: return # Do nothing if the env var is not already set
-
-    when defined(windows) and not defined(nimscript):
-      var key = key
-      var k = newWideCString(key.toCString(), key.len).toWideCString()
-      if setEnvironmentVariableW(k, nil) == 0'i32:
-        raiseOSError(osLastError())
+    if indx >= 0:
+      when defined(windows) and not defined(nimscript):
+        var key = key
+        var k = newWideCString(key.toCString(), key.len).toWideCString()
+        if setEnvironmentVariableW(k, nil) == 0'i32:
+          raiseOSError(osLastError())
+      else:
+        var key = key
+        if c_unsetenv(key.toCString()) != 0'i32:
+          raiseOSError(osLastError())
+      environment.delete(indx)
     else:
-      var key = key
-      if c_unsetenv(key.toCString()) != 0'i32:
-        raiseOSError(osLastError())
-    environment.delete(indx)
+      discard # Do nothing if the env var is not already set
 
   iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect].} =
     ## Iterate over all `environments variables`:idx:.

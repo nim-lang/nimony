@@ -2,6 +2,12 @@ import std/[envvars, assertions]
 
 import std/syncio
 
+template noRaise(x: untyped): untyped {.untyped.} =
+  try:
+    x
+  except:
+    discard
+
 
 # "LATIN CAPITAL LETTER AE" in UTF-8 (0xc386)
 const unicodeUtf8 = "\xc3\x86"
@@ -19,20 +25,24 @@ block: # delEnv, existsEnv, getEnv, envPairs
   const key = "NIM_TESTS_TOSENV_KEY"
   assert not existsEnv(key)
 
-  putEnv(key, "tempval")
+  noRaise:
+    putEnv(key, "tempval")
   assert existsEnv(key)
   assert getEnv(key) == "tempval"
 
-  putEnv(key, val) # change a key that already exists
+  noRaise:
+    putEnv(key, val) # change a key that already exists
   assert existsEnv(key)
   assert getEnv(key) == val
 
 
   assert findEnvPair(key, val)
-  delEnv(key)
+  noRaise:
+    delEnv(key)
   assert not findEnvPair(key, val)
   assert not existsEnv(key)
-  delEnv(key) # deleting an already deleted env var
+  noRaise:
+    delEnv(key) # deleting an already deleted env var
   assert not existsEnv(key)
 
 
@@ -40,11 +50,14 @@ block osenv:
   block delEnv:
     const dummyEnvVar = "DUMMY_ENV_VAR" # This env var wouldn't be likely to exist to begin with
     assert existsEnv(dummyEnvVar) == false
-    putEnv(dummyEnvVar, "1")
+    noRaise:
+      putEnv(dummyEnvVar, "1")
     assert existsEnv(dummyEnvVar) == true
-    delEnv(dummyEnvVar)
+    noRaise:
+      delEnv(dummyEnvVar)
     assert existsEnv(dummyEnvVar) == false
-    delEnv(dummyEnvVar)         # deleting an already deleted env var
+    noRaise:
+      delEnv(dummyEnvVar)         # deleting an already deleted env var
     assert existsEnv(dummyEnvVar) == false
   # block: # putEnv, bug #18502
   #   doAssertRaises(OSError): putEnv("DUMMY_ENV_VAR_PUT=DUMMY_VALUE", "NEW_DUMMY_VALUE")
