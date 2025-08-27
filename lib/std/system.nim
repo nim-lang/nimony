@@ -1,61 +1,6 @@
 ## System module for Nimony
 
-type
-  int* {.magic: Int.}         ## Default integer type; bitwidth depends on
-                              ## architecture, but is always the same as a pointer.
-  int8* {.magic: Int8.}       ## Signed 8 bit integer type.
-  int16* {.magic: Int16.}     ## Signed 16 bit integer type.
-  int32* {.magic: Int32.}     ## Signed 32 bit integer type.
-  int64* {.magic: Int64.}     ## Signed 64 bit integer type.
-  uint* {.magic: UInt.}       ## Unsigned default integer type.
-  uint8* {.magic: UInt8.}     ## Unsigned 8 bit integer type.
-  uint16* {.magic: UInt16.}   ## Unsigned 16 bit integer type.
-  uint32* {.magic: UInt32.}   ## Unsigned 32 bit integer type.
-  uint64* {.magic: UInt64.}   ## Unsigned 64 bit integer type.
-
-type
-  float* {.magic: Float.}     ## Default floating point type.
-  float32* {.magic: Float32.} ## 32 bit floating point type.
-  float64* {.magic: Float.}   ## 64 bit floating point type.
-
-type
-  char* {.magic: Char.}         ## Built-in 8 bit character type (unsigned).
-  cstring* {.magic: Cstring.}   ## Built-in cstring (*compatible string*) type.
-  pointer* {.magic: Pointer.}   ## Built-in pointer type, use the `addr`
-                                ## operator to get a pointer to a variable.
-
-  typedesc*[T] {.magic: TypeDesc.} ## Meta type to denote a type description.
-  UncheckedArray*[T] {.magic: UncheckedArray.} ## Built-in unchecked array type.
-
-type
-  string* = object ## Built-in string type.
-    a: ptr UncheckedArray[char]
-    i: int
-
-type # we need to start a new type section here, so that ``0`` can have a type
-  bool* {.magic: "Bool".} = enum ## Built-in boolean type.
-    false = 0, true = 1
-
-proc `not`*(x: bool): bool {.magic: "Not", noSideEffect.}
-  ## Boolean not; returns true if `x == false`.
-
-proc `and`*(x, y: bool): bool {.magic: "And", noSideEffect.}
-  ## Boolean `and`; returns true if `x == y == true` (if both arguments
-  ## are true).
-  ##
-  ## Evaluation is lazy: if `x` is false, `y` will not even be evaluated.
-proc `or`*(x, y: bool): bool {.magic: "Or", noSideEffect.}
-  ## Boolean `or`; returns true if `not (not x and not y)` (if any of
-  ## the arguments is true).
-  ##
-  ## Evaluation is lazy: if `x` is true, `y` will not even be evaluated.
-proc `xor`*(x, y: bool): bool {.magic: "Xor", noSideEffect.}
-  ## Boolean `exclusive or`; returns true if `x != y` (if either argument
-  ## is true while the other is false).
-
-type
-  untyped* {.magic: Expr.}
-  typed* {.magic: Stmt.}
+include "system/basic_types"
 
 iterator unpack*(): untyped {.magic: Unpack.}
 
@@ -63,26 +8,14 @@ proc unpackToCall(fn: untyped) {.magic: Unpack.}
 
 const
   isMainModule* {.magic: "IsMainModule".}: bool = false
-
-type
-  Ordinal*[T] {.magic: Ordinal.} ## Generic ordinal type. Includes integer,
-                                  ## bool, character, and enumeration types
-                                  ## as well as their subtypes. See also
-                                  ## `SomeOrdinal`.
-
-type
-  range*[T]{.magic: "Range".}         ## Generic type to construct range types.
-  array*[I, T]{.magic: "Array".}      ## Generic type to construct
-                                      ## fixed-length arrays.
-  set*[T]{.magic: "Set".}             ## Generic type to construct bit sets.
-
-type sink*[T]{.magic: "Sink".}
-type lent*[T]{.magic: "Lent".}
-
-proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect.}
-proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
-proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
-proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
+  Inf* {.magic: "Inf".}: float64 = 0.0
+    ## Contains the IEEE floating point value of positive infinity.
+  NaN* {.magic: "NaN".}: float64 = 0.0
+    ## Contains an IEEE floating point value of *Not A Number*.
+    ##
+    ## Note that you cannot compare a floating point value to this value
+    ## and expect a reasonable result - use the `isNaN` or `classify` procedure
+    ## in the `math module <math.html>`_ for checking for NaN.
 
 proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 proc `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
@@ -104,342 +37,83 @@ template `[]=`*[T](x: ptr T, val: T) =
 template `[]=`*[T](x: ref T, val: T) =
   (x[]) = val
 
-# integer calculations:
-template `+`*(x: int8): int8 = x
-template `+`*(x: int16): int16 = x
-template `+`*(x: int32): int32 = x
-template `+`*(x: int64): int64 = x
-  ## Unary `+` operator for an integer. Has no effect.
+include "system/arithmetics"
 
-proc `-`*(x: int8): int8 {.magic: "UnaryMinusI", noSideEffect.}
-proc `-`*(x: int16): int16 {.magic: "UnaryMinusI", noSideEffect.}
-proc `-`*(x: int32): int32 {.magic: "UnaryMinusI", noSideEffect.}
-proc `-`*(x: int64): int64 {.magic: "UnaryMinusI", noSideEffect.}
-  ## Unary `-` operator for an integer. Negates `x`.
-
-proc `not`*(x: int8): int8 {.magic: "BitnotI", noSideEffect.}
-proc `not`*(x: int16): int16 {.magic: "BitnotI", noSideEffect.}
-proc `not`*(x: int32): int32 {.magic: "BitnotI", noSideEffect.}
-proc `not`*(x: int64): int64 {.magic: "BitnotI", noSideEffect.}
-
-proc `+`*(x, y: int8): int8 {.magic: "AddI", noSideEffect.}
-proc `+`*(x, y: int16): int16 {.magic: "AddI", noSideEffect.}
-proc `+`*(x, y: int32): int32 {.magic: "AddI", noSideEffect.}
-proc `+`*(x, y: int64): int64 {.magic: "AddI", noSideEffect.}
-  ## Binary `+` operator for an integer.
-
-proc `-`*(x, y: int8): int8 {.magic: "SubI", noSideEffect.}
-proc `-`*(x, y: int16): int16 {.magic: "SubI", noSideEffect.}
-proc `-`*(x, y: int32): int32 {.magic: "SubI", noSideEffect.}
-proc `-`*(x, y: int64): int64 {.magic: "SubI", noSideEffect.}
-  ## Binary `-` operator for an integer.
-
-proc `*`*(x, y: int8): int8 {.magic: "MulI", noSideEffect.}
-proc `*`*(x, y: int16): int16 {.magic: "MulI", noSideEffect.}
-proc `*`*(x, y: int32): int32 {.magic: "MulI", noSideEffect.}
-proc `*`*(x, y: int64): int64 {.magic: "MulI", noSideEffect.}
-  ## Binary `*` operator for an integer.
-
-proc `div`*(x, y: int8): int8 {.magic: "DivI", noSideEffect.}
-proc `div`*(x, y: int16): int16 {.magic: "DivI", noSideEffect.}
-proc `div`*(x, y: int32): int32 {.magic: "DivI", noSideEffect.}
-proc `div`*(x, y: int64): int64 {.magic: "DivI", noSideEffect.}
-
-proc `mod`*(x, y: int8): int8 {.magic: "ModI", noSideEffect.}
-proc `mod`*(x, y: int16): int16 {.magic: "ModI", noSideEffect.}
-proc `mod`*(x, y: int32): int32 {.magic: "ModI", noSideEffect.}
-proc `mod`*(x, y: int64): int64 {.magic: "ModI", noSideEffect.}
-
-type
-  SomeInteger = int # for now just an alias
-
-proc `shr`*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
-proc `shr`*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
-
-
-proc `shl`*(x: int8, y: SomeInteger): int8 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int16, y: SomeInteger): int16 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int32, y: SomeInteger): int32 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: int64, y: SomeInteger): int64 {.magic: "ShlI", noSideEffect.}
-
-proc ashr*(x: int8, y: SomeInteger): int8 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int16, y: SomeInteger): int16 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int32, y: SomeInteger): int32 {.magic: "AshrI", noSideEffect.}
-proc ashr*(x: int64, y: SomeInteger): int64 {.magic: "AshrI", noSideEffect.}
-
-proc `and`*(x, y: int8): int8 {.magic: "BitandI", noSideEffect.}
-proc `and`*(x, y: int16): int16 {.magic: "BitandI", noSideEffect.}
-proc `and`*(x, y: int32): int32 {.magic: "BitandI", noSideEffect.}
-proc `and`*(x, y: int64): int64 {.magic: "BitandI", noSideEffect.}
-  ## Computes the `bitwise and` of numbers `x` and `y`.
-
-proc `or`*(x, y: int8): int8 {.magic: "BitorI", noSideEffect.}
-proc `or`*(x, y: int16): int16 {.magic: "BitorI", noSideEffect.}
-proc `or`*(x, y: int32): int32 {.magic: "BitorI", noSideEffect.}
-proc `or`*(x, y: int64): int64 {.magic: "BitorI", noSideEffect.}
-  ## Computes the `bitwise or` of numbers `x` and `y`.
-
-proc `xor`*(x, y: int8): int8 {.magic: "BitxorI", noSideEffect.}
-proc `xor`*(x, y: int16): int16 {.magic: "BitxorI", noSideEffect.}
-proc `xor`*(x, y: int32): int32 {.magic: "BitxorI", noSideEffect.}
-proc `xor`*(x, y: int64): int64 {.magic: "BitxorI", noSideEffect.}
-  ## Computes the `bitwise xor` of numbers `x` and `y`.
-
-# unsigned integer operations:
-
-proc `not`*(x: uint8): uint8 {.magic: "BitnotI", noSideEffect.}
-proc `not`*(x: uint16): uint16 {.magic: "BitnotI", noSideEffect.}
-proc `not`*(x: uint32): uint32 {.magic: "BitnotI", noSideEffect.}
-proc `not`*(x: uint64): uint64 {.magic: "BitnotI", noSideEffect.}
-
-proc `shr`*(x: uint8, y: SomeInteger): uint8 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint16, y: SomeInteger): uint16 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint32, y: SomeInteger): uint32 {.magic: "ShrI", noSideEffect.}
-proc `shr`*(x: uint64, y: SomeInteger): uint64 {.magic: "ShrI", noSideEffect.}
-
-proc `shl`*(x: uint8, y: SomeInteger): uint8 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint16, y: SomeInteger): uint16 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint32, y: SomeInteger): uint32 {.magic: "ShlI", noSideEffect.}
-proc `shl`*(x: uint64, y: SomeInteger): uint64 {.magic: "ShlI", noSideEffect.}
-
-proc `and`*(x, y: uint8): uint8 {.magic: "BitandI", noSideEffect.}
-proc `and`*(x, y: uint16): uint16 {.magic: "BitandI", noSideEffect.}
-proc `and`*(x, y: uint32): uint32 {.magic: "BitandI", noSideEffect.}
-proc `and`*(x, y: uint64): uint64 {.magic: "BitandI", noSideEffect.}
-
-proc `or`*(x, y: uint8): uint8 {.magic: "BitorI", noSideEffect.}
-proc `or`*(x, y: uint16): uint16 {.magic: "BitorI", noSideEffect.}
-proc `or`*(x, y: uint32): uint32 {.magic: "BitorI", noSideEffect.}
-proc `or`*(x, y: uint64): uint64 {.magic: "BitorI", noSideEffect.}
-
-proc `xor`*(x, y: uint8): uint8 {.magic: "BitxorI", noSideEffect.}
-proc `xor`*(x, y: uint16): uint16 {.magic: "BitxorI", noSideEffect.}
-proc `xor`*(x, y: uint32): uint32 {.magic: "BitxorI", noSideEffect.}
-proc `xor`*(x, y: uint64): uint64 {.magic: "BitxorI", noSideEffect.}
-
-proc `+`*(x, y: uint8): uint8 {.magic: "AddU", noSideEffect.}
-proc `+`*(x, y: uint16): uint16 {.magic: "AddU", noSideEffect.}
-proc `+`*(x, y: uint32): uint32 {.magic: "AddU", noSideEffect.}
-proc `+`*(x, y: uint64): uint64 {.magic: "AddU", noSideEffect.}
-
-proc `-`*(x, y: uint8): uint8 {.magic: "SubU", noSideEffect.}
-proc `-`*(x, y: uint16): uint16 {.magic: "SubU", noSideEffect.}
-proc `-`*(x, y: uint32): uint32 {.magic: "SubU", noSideEffect.}
-proc `-`*(x, y: uint64): uint64 {.magic: "SubU", noSideEffect.}
-
-proc `*`*(x, y: uint8): uint8 {.magic: "MulU", noSideEffect.}
-proc `*`*(x, y: uint16): uint16 {.magic: "MulU", noSideEffect.}
-proc `*`*(x, y: uint32): uint32 {.magic: "MulU", noSideEffect.}
-proc `*`*(x, y: uint64): uint64 {.magic: "MulU", noSideEffect.}
-
-proc `div`*(x, y: uint8): uint8 {.magic: "DivU", noSideEffect.}
-proc `div`*(x, y: uint16): uint16 {.magic: "DivU", noSideEffect.}
-proc `div`*(x, y: uint32): uint32 {.magic: "DivU", noSideEffect.}
-proc `div`*(x, y: uint64): uint64 {.magic: "DivU", noSideEffect.}
-
-proc `mod`*(x, y: uint8): uint8 {.magic: "ModU", noSideEffect.}
-proc `mod`*(x, y: uint16): uint16 {.magic: "ModU", noSideEffect.}
-proc `mod`*(x, y: uint32): uint32 {.magic: "ModU", noSideEffect.}
-proc `mod`*(x, y: uint64): uint64 {.magic: "ModU", noSideEffect.}
-
-# floating point operations:
-template `+`*(x: float32): float32 = x
-proc `-`*(x: float32): float32 {.magic: "UnaryMinusF64", noSideEffect.}
-proc `+`*(x, y: float32): float32 {.magic: "AddF64", noSideEffect.}
-proc `-`*(x, y: float32): float32 {.magic: "SubF64", noSideEffect.}
-proc `*`*(x, y: float32): float32 {.magic: "MulF64", noSideEffect.}
-proc `/`*(x, y: float32): float32 {.magic: "DivF64", noSideEffect.}
-
-template `+`*(x: float): float = x
-proc `-`*(x: float): float {.magic: "UnaryMinusF64", noSideEffect.}
-proc `+`*(x, y: float): float {.magic: "AddF64", noSideEffect.}
-proc `-`*(x, y: float): float {.magic: "SubF64", noSideEffect.}
-proc `*`*(x, y: float): float {.magic: "MulF64", noSideEffect.}
-proc `/`*(x, y: float): float {.magic: "DivF64", noSideEffect.}
-
-type
-  Incable = concept
-    proc `+`(x, y: Self): Self
-  Decable = concept
-    proc `-`(x, y: Self): Self
-
-proc inc*[T: Incable, V: Ordinal](x: var T, y: V) {.inline.} =
-  ## Increments the ordinal `x` by `y`.
-  x = x + T(y)
-
-proc dec*[T: Decable, V: Ordinal](x: var T, y: V) {.inline.} =
-  ## Decrements the ordinal `x` by `y`.
-  x = x - T(y)
-
-proc inc*[T: Incable](x: var T) {.inline.} =
-  # workaround for no default params
-  x = x + T(1)
-
-proc dec*[T: Decable](x: var T) {.inline.} =
-  # workaround for no default params
-  x = x - T(1)
-
-# comparison operators:
-proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
-  ## Checks whether values within the *same enum* have the same underlying value.
-
-proc `==`*(x, y: pointer): bool {.magic: "EqRef", noSideEffect.}
-  ## Checks for equality between two `pointer` variables.
-
-proc `==`*(x, y: char): bool {.magic: "EqCh", noSideEffect.}
-  ## Checks for equality between two `char` variables.
-proc `==`*(x, y: bool): bool {.magic: "EqB", noSideEffect.}
-  ## Checks for equality between two `bool` variables.
-proc `==`*[T](x, y: set[T]): bool {.magic: "EqSet", noSideEffect.}
-  ## Checks for equality between two variables of type `set`.
-
-proc `==`*[T](x, y: ref T): bool {.magic: "EqRef", noSideEffect.}
-  ## Checks that two `ref` variables refer to the same item.
-proc `==`*[T](x, y: ptr T): bool {.magic: "EqRef", noSideEffect.}
-  ## Checks that two `ptr` variables refer to the same item.
-
-proc `<=`*[Enum: enum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
-
-proc `<=`*(x, y: char): bool {.magic: "LeCh", noSideEffect.}
-  ## Compares two chars and returns true if `x` is lexicographically
-  ## before `y` (uppercase letters come before lowercase letters).
-
-proc `<=`*[T](x, y: set[T]): bool {.magic: "LeSet", noSideEffect.}
-  ## Returns true if `x` is a subset of `y`.
-  ##
-  ## A subset `x` has all of its members in `y` and `y` doesn't necessarily
-  ## have more members than `x`. That is, `x` can be equal to `y`.
-
-proc `<=`*(x, y: bool): bool {.magic: "LeB", noSideEffect.}
-proc `<=`*[T](x, y: ref T): bool {.magic: "LePtr", noSideEffect.}
-proc `<=`*(x, y: pointer): bool {.magic: "LePtr", noSideEffect.}
-
-proc `<`*[Enum: enum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
-
-proc `<`*(x, y: char): bool {.magic: "LtCh", noSideEffect.}
-  ## Compares two chars and returns true if `x` is lexicographically
-  ## before `y` (uppercase letters come before lowercase letters).
-
-proc `<`*[T](x, y: set[T]): bool {.magic: "LtSet", noSideEffect.}
-  ## Returns true if `x` is a strict or proper subset of `y`.
-  ##
-  ## A strict or proper subset `x` has all of its members in `y` but `y` has
-  ## more elements than `y`.
-
-proc `==`*(x, y: int8): bool {.magic: "EqI", noSideEffect.}
-proc `==`*(x, y: int16): bool {.magic: "EqI", noSideEffect.}
-proc `==`*(x, y: int32): bool {.magic: "EqI", noSideEffect.}
-proc `==`*(x, y: int64): bool {.magic: "EqI", noSideEffect.}
-
-proc `<=`*(x, y: int8): bool {.magic: "LeI", noSideEffect.}
-proc `<=`*(x, y: int16): bool {.magic: "LeI", noSideEffect.}
-proc `<=`*(x, y: int32): bool {.magic: "LeI", noSideEffect.}
-proc `<=`*(x, y: int64): bool {.magic: "LeI", noSideEffect.}
-
-proc `<`*(x, y: int8): bool {.magic: "LtI", noSideEffect.}
-proc `<`*(x, y: int16): bool {.magic: "LtI", noSideEffect.}
-proc `<`*(x, y: int32): bool {.magic: "LtI", noSideEffect.}
-proc `<`*(x, y: int64): bool {.magic: "LtI", noSideEffect.}
-
-proc `<=`*(x, y: uint8): bool {.magic: "LeU", noSideEffect.}
-proc `<=`*(x, y: uint16): bool {.magic: "LeU", noSideEffect.}
-proc `<=`*(x, y: uint32): bool {.magic: "LeU", noSideEffect.}
-proc `<=`*(x, y: uint64): bool {.magic: "LeU", noSideEffect.}
-
-proc `<`*(x, y: uint8): bool {.magic: "LtU", noSideEffect.}
-proc `<`*(x, y: uint16): bool {.magic: "LtU", noSideEffect.}
-proc `<`*(x, y: uint32): bool {.magic: "LtU", noSideEffect.}
-proc `<`*(x, y: uint64): bool {.magic: "LtU", noSideEffect.}
-
-proc `==`*(x, y: uint8): bool {.magic: "EqI", noSideEffect.}
-proc `==`*(x, y: uint16): bool {.magic: "EqI", noSideEffect.}
-proc `==`*(x, y: uint32): bool {.magic: "EqI", noSideEffect.}
-proc `==`*(x, y: uint64): bool {.magic: "EqI", noSideEffect.}
-
-proc `<=`*(x, y: float32): bool {.magic: "LeF64", noSideEffect.}
-proc `<=`*(x, y: float): bool {.magic: "LeF64", noSideEffect.}
-
-proc `<`*(x, y: float32): bool {.magic: "LtF64", noSideEffect.}
-proc `<`*(x, y: float): bool {.magic: "LtF64", noSideEffect.}
-
-proc `==`*(x, y: float32): bool {.magic: "EqF64", noSideEffect.}
-proc `==`*(x, y: float): bool {.magic: "EqF64", noSideEffect.}
-
-proc min*(x, y: int8): int8 {.noSideEffect, inline.} =
-  if x <= y: x else: y
-proc min*(x, y: int16): int16 {.noSideEffect, inline.} =
-  if x <= y: x else: y
-proc min*(x, y: int32): int32 {.noSideEffect, inline.} =
-  if x <= y: x else: y
-proc min*(x, y: int64): int64 {.noSideEffect, inline.} =
-  ## The minimum value of two integers.
-  if x <= y: x else: y
-proc min*(x, y: float32): float32 {.noSideEffect, inline.} =
-  if x <= y or y != y: x else: y
-proc min*(x, y: float): float {.noSideEffect, inline.} =
-  if x <= y or y != y: x else: y
-
-proc max*(x, y: int8): int8 {.noSideEffect, inline.} =
-  if y <= x: x else: y
-proc max*(x, y: int16): int16 {.noSideEffect, inline.} =
-  if y <= x: x else: y
-proc max*(x, y: int32): int32 {.noSideEffect, inline.} =
-  if y <= x: x else: y
-proc max*(x, y: int64): int64 {.noSideEffect, inline.} =
-  ## The maximum value of two integers.
-  if y <= x: x else: y
-proc max*(x, y: float32): float32 {.noSideEffect, inline.} =
-  if y <= x or y != y: x else: y
-proc max*(x, y: float): float {.noSideEffect, inline.} =
-  if y <= x or y != y: x else: y
-
-template `!=`*(x, y: untyped): untyped =
-  ## Unequals operator. This is a shorthand for `not (x == y)`.
-  not (x == y)
-
-template `>=`*(x, y: untyped): untyped =
-  ## "is greater or equals" operator. This is the same as `y <= x`.
-  y <= x
-
-template `>`*(x, y: untyped): untyped =
-  ## "is greater" operator. This is the same as `y < x`.
-  y < x
-
-template default*(x: typedesc[bool]): bool = false
-template default*(x: typedesc[char]): char = '\0'
-template default*(x: typedesc[int]): int = 0
-template default*(x: typedesc[uint]): uint = 0'u
-template default*(x: typedesc[int8]): int8 = 0'i8
-template default*(x: typedesc[uint8]): uint8 = 0'u8
-template default*(x: typedesc[int16]): int16 = 0'i16
-template default*(x: typedesc[uint16]): uint16 = 0'u16
-template default*(x: typedesc[int32]): int32 = 0'i32
-template default*(x: typedesc[uint32]): uint32 = 0'u32
-template default*(x: typedesc[int64]): int64 = 0'i64
-template default*(x: typedesc[uint64]): uint64 = 0'u64
-template default*(x: typedesc[float32]): float32 = 0.0'f32
-template default*(x: typedesc[float64]): float64 = 0.0'f64
-template default*(x: typedesc[string]): string = ""
-template default*[T: enum](x: typedesc[T]): T = low(T)
-
-template default*[T: ptr](x: typedesc[T]): T = T(nil)
-template default*[T: ref](x: typedesc[T]): T = T(nil)
-
-proc default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
-proc default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
+include "system/comparisons"
 
 proc defined*(x: untyped): bool {.magic: Defined.}
 proc declared*(x: untyped): bool {.magic: Declared.}
+
+func astToStr*[T](x: T): string {.magic: AstToStr.}
+  ## Converts the AST of `x` into a string representation. This is very useful
+  ## for debugging.
+
+func compiles*(x: untyped): bool {.magic: Compiles.}
+  ## Special compile-time procedure that checks whether `x` can be compiled
+  ## without any semantic error.
+  ## This can be used to check whether a type supports some operation:
+  ##   ```nim
+  ##   when compiles(3 + 4):
+  ##     echo "'+' for integers is available"
+  ##   ```
+
+
+const
+  # Use string literals for one digit numbers to avoid the allocations as they are so common.
+  NegTen = [
+    "-0", "-1", "-2", "-3", "-4",
+    "-5", "-6", "-7", "-8", "-9"]
+
+proc `$`*(x: uint64): string =
+  result = ""
+  if x < 10:
+    result = NegTen[int x].substr(1, 1)
+  else:
+    var y = x
+    while true:
+      result.add char((y mod 10'u) + uint('0'))
+      y = y div 10'u
+      if y == 0'u: break
+    let last = result.len-1
+    var i = 0
+    let b = result.len div 2
+    while i < b:
+      let ch = result[i]
+      result[i] = result[last-i]
+      result[last-i] = ch
+      inc i
+
+proc `$`*(x: int64): string =
+  if x < 0:
+    if x > -10:
+      result = NegTen[-x]
+    if x == -9223372036854775808:
+      result = "-" & $cast[uint64](x)
+    else:
+      result = "-" & $(0-x)
+  elif x < 10:
+    result.add char(x + int64('0'))
+  else:
+    result = $cast[uint64](x)
+
+proc addInt*(s: var string; x: int64) {.inline.} =
+  s.add $x
+
+proc addInt*(s: var string; x: uint64) {.inline.} =
+  s.add $x
+
+proc `$`*(b: bool): string =
+  if b: "true" else: "false"
 
 proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
 proc addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
-proc sizeof*[T](x: T): int {.magic: "SizeOf", noSideEffect.}
-proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
+proc sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
+
+template sizeof*[T](_: T): int =
+  sizeof(T)
 
 proc `=destroy`*[T](x: T) {.magic: "Destroy", noSideEffect.}
 proc `=dup`*[T](x: T): T {.magic: "Dup", noSideEffect.}
@@ -463,47 +137,272 @@ template len*[I, T](x: array[I, T]): int =
   ## This is roughly the same as `high(T)-low(T)+1`.
   len(array[I, T])
 
-# This must be the first include so that we know string's `==` is the 17th.
-# This is a minor hack, let's see how long it will be able to last. The fact that ==.17
-# is the string equality is used by hexer/stringcases.nim.
-include "system/stringimpl"
-
-include "system/setops"
-
-include "system/openarrays"
-include "system/seqimpl"
-
-include "system/iterators"
-
-include "system/atomics"
-
 proc swap*[T](x, y: var T) {.inline, nodestroy.} =
   let tmp = x
   x = y
   y = tmp
 
-type
-  Comparable* = concept
-    proc `==`(x, y: Self): bool
-    proc `<`(x, y: Self): bool
+template `in`*(x, y: untyped): untyped =
+  contains(y, x)
 
-proc cmp*[T: Comparable](x, y: T): int =
-  ## Generic compare proc.
-  ##
-  ## Returns:
-  ## * a value less than zero, if `x < y`
-  ## * a value greater than zero, if `x > y`
-  ## * zero, if `x == y`
-  ##
-  ## This is useful for writing generic algorithms without performance loss.
-  ## This generic implementation uses the `==` and `<` operators.
-  ##   ```nim
-  ##   import std/algorithm
-  ##   echo sorted(@[4, 2, 6, 5, 8, 7], cmp[int])
-  ##   ```
-  if x == y: return 0
-  if x < y: return -1
-  return 1
+template `notin`*(x, y: untyped): untyped =
+  not contains(y, x)
+
+proc `is`*[T, S](x: T, y: S): bool {.magic: "Is", noSideEffect.}
+template `isnot`*(x, y: untyped): untyped =
+  not (x is y)
+
+include "system/iterators"
+include "system/defaults"
+
+include "system/countbits_impl"
+include "system/setops"
+
+include "system/ctypes"
+
+include "system/memory"
+include "system/seqimpl"
+include "system/stringimpl"
+include "system/openarrays"
+
+include "system/atomics"
 
 proc newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
 proc new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
+
+template runnableExamples*(body: untyped) {.untyped.} =
+  discard "ignore runnable examples"
+
+proc overflowFlag*(): bool {.magic: "OverflowFlag".}
+
+include "system/panics"
+
+include "system/dyncalls"
+
+proc `of`*[T, S](x: T; y: typedesc[S]): bool {.magic: "Of", noSideEffect.}
+proc procCall*[T](x: T): untyped {.magic: "ProcCall".}
+
+type
+  Rtti* = object
+    dl: int
+    dy: ptr UncheckedArray[uint32]
+    mt: UncheckedArray[pointer]
+
+proc getRtti(dummy: pointer): ptr Rtti {.nodecl.} = discard "patched by vtables.nim"
+
+func ord*[T: Ordinal|enum](x: T): int {.inline.} =
+  ## Returns the internal `int` value of `x`, including for enum with holes
+  ## and distinct ordinal types.
+
+  int(x)
+
+type
+  ComparableAndNegatable = concept
+    proc `<`(x, y: Self): bool
+    proc `-`(x: Self): Self
+
+func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
+  ## Returns the absolute value of `x`.
+  if x < 0: -x else: x
+
+func isNil*(s: cstring): bool {.inline.} = s == nil
+
+func chr*(u: range[0..255]): char {.inline.} =
+  ## Converts `u` to a `char`, same as `char(u)`.
+  char(u.int)
+
+include "../../vendor/errorcodes/src" / errorcodes
+
+var localErr* {.threadvar.}: ErrorCode
+
+type
+  ContinuationProc* = proc (coro: ptr CoroutineBase): Continuation {.nimcall.}
+  Continuation* = object
+    fn*: ContinuationProc
+    env*: ptr CoroutineBase
+  CoroutineBase* = object of RootObj
+    caller*: Continuation
+
+method cancel*(coro: ptr CoroutineBase) =
+  discard "to override"
+
+proc afterYield*(): Continuation {.semantics: "afterYield".} =
+  ## Special builtin that returns the next continuation within a `yield` statement.
+  ## Do not use unless you know what you are doing.
+  result = Continuation(fn: nil, env: nil)
+
+proc delay*(x: untyped): Continuation {.magic: "Delay".}
+  ## Delays the execution of a `.passive` proc and returns a continuation representation
+  ## this call. Think of it as a `toTask` builtin.
+
+proc trivialTick(c: Continuation): Continuation =
+  result = c.fn(c.env)
+
+type
+  Scheduler* = proc (c: Continuation): Continuation {.nimcall.}
+    ## A scheduler is a function that takes a continuation and returns a new continuation.
+
+var scheduler: Scheduler = trivialTick
+proc setScheduler*(handler: Scheduler) {.inline.} =
+  # XXX needs atomic store here
+  scheduler = handler
+
+proc advance*(c: Continuation): Continuation =
+  ## Single steps through a list of continuations. Usually this does not need
+  ## to be called directly. Used by the compiler to run a coroutine.
+  result = scheduler(c)
+
+proc complete*(c: Continuation) =
+  ## Used by the compiler to run a coroutine until completion.
+  var c = c
+  while c.fn != nil:
+    c = scheduler(c)
+
+func `==`*[T: tuple|object](x, y: T): bool =
+  ## Return true only if each fields of `x` and `y` are equal.
+  for xf, yf in fields(x, y):
+    if xf != yf: return false
+  return true
+
+func `==`*[T: Equatable](x, y: seq[T]): bool =
+  ## Generic equals operator for sequences: relies on a equals operator for
+  ## the element type `T`.
+  if y.rawData == x.rawData:
+    return true
+
+  if x.len != y.len:
+    return false
+
+  for i in 0..x.len-1:
+    if x[i] != y[i]:
+      return false
+
+  return true
+
+const HexChars = "0123456789ABCDEF"
+
+proc addEscapedChar*(s: var string, c: char) {.noSideEffect, inline.} =
+  ## Adds a char to string `s` and applies the following escaping:
+  ##
+  ## * replaces any ``\`` by `\\`
+  ## * replaces any `'` by `\'`
+  ## * replaces any `"` by `\"`
+  ## * replaces any `\a` by `\\a`
+  ## * replaces any `\b` by `\\b`
+  ## * replaces any `\t` by `\\t`
+  ## * replaces any `\n` by `\\n`
+  ## * replaces any `\v` by `\\v`
+  ## * replaces any `\f` by `\\f`
+  ## * replaces any `\r` by `\\r`
+  ## * replaces any `\e` by `\\e`
+  ## * replaces any other character not in the set `{\21..\126}`
+  ##   by `\xHH` where `HH` is its hexadecimal value
+  ##
+  ## The procedure has been designed so that its output is usable for many
+  ## different common syntaxes.
+  ##
+  ## .. warning:: This is **not correct** for producing ANSI C code!
+  ##
+  case c
+  of '\a': s.add "\\a" # \x07
+  of '\b': s.add "\\b" # \x08
+  of '\t': s.add "\\t" # \x09
+  of '\n': s.add "\\n" # \x0A
+  of '\v': s.add "\\v" # \x0B
+  of '\f': s.add "\\f" # \x0C
+  of '\r': (when defined(nimLegacyAddEscapedCharx0D): s.add "\\c" else: s.add "\\r") # \x0D
+  of '\e': s.add "\\e" # \x1B
+  of '\\': s.add("\\\\")
+  of '\'': s.add("\\'")
+  of '\"': s.add("\\\"")
+  of {'\32'..'\126'} - {'\\', '\'', '\"'}: s.add(c)
+  else:
+    s.add("\\x")
+    let n = ord(c)
+    s.add(HexChars[int((n and 0xF0) shr 4)])
+    s.add(HexChars[int(n and 0xF)])
+
+proc addQuoted*[T](s: var string, x: T) =
+  ## Appends `x` to string `s` in place, applying quoting and escaping
+  ## if `x` is a string or char.
+  ##
+  ## See `addEscapedChar <#addEscapedChar,string,char>`_
+  ## for the escaping scheme. When `x` is a string, characters in the
+  ## range `{\128..\255}` are never escaped so that multibyte UTF-8
+  ## characters are untouched (note that this behavior is different from
+  ## `addEscapedChar`).
+  ##
+  ## The Nim standard library uses this function on the elements of
+  ## collections when producing a string representation of a collection.
+  ## It is recommended to use this function as well for user-side collections.
+  ## Users may overload `addQuoted` for custom (string-like) types if
+  ## they want to implement a customized element representation.
+  ##
+  ##   ```nim
+  ##   var tmp = ""
+  ##   tmp.addQuoted(1)
+  ##   tmp.add(", ")
+  ##   tmp.addQuoted("string")
+  ##   tmp.add(", ")
+  ##   tmp.addQuoted('c')
+  ##   assert(tmp == """1, "string", 'c'""")
+  ##   ```
+  when T is string or T is cstring:
+    s.add("\"")
+    for c in x:
+      # Only ASCII chars are escaped to avoid butchering
+      # multibyte UTF-8 characters.
+      if c <= 127.char:
+        s.addEscapedChar(c)
+      else:
+        s.add c
+    s.add("\"")
+  elif T is char:
+    s.add("'")
+    s.addEscapedChar(x)
+    s.add("'")
+  # prevent temporary string allocation
+  elif T is SomeInteger:
+    s.addInt(x)
+  elif T is SomeFloat:
+    s.addFloat(x)
+  elif compiles(s.add(x)):
+    s.add(x)
+  else:
+    s.add($x)
+
+type
+  # TODO: change to `range[0..high(int)]` when range type is implemented
+  Natural* = int
+    ## is an `int` type ranging from zero to the maximum value
+    ## of an `int`. This type is often useful for documentation and debugging.
+
+  # TODO: change to `range[1..high(int)]`
+  Positive* = int
+    ## is an `int` type ranging from one to the maximum value
+    ## of an `int`. This type is often useful for documentation and debugging.
+
+  HSlice*[T, U] = object   ## "Heterogeneous" slice type.
+    a*: T                  ## The lower bound (inclusive).
+    b*: U                  ## The upper bound (inclusive).
+  Slice*[T] = HSlice[T, T] ## An alias for `HSlice[T, T]`.
+
+func `..`*[T, U](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
+  ## Binary `slice`:idx: operator that constructs an interval `[a, b]`, both `a`
+  ## and `b` are inclusive.
+  ##
+  ## Slices can also be used in the set constructor and in ordinal case
+  ## statements, but then they are special-cased by the compiler.
+  ##   ```nim
+  ##   let a = [10, 20, 30, 40, 50]
+  ##   echo a[2 .. 3] # @[30, 40]
+  ##   ```
+  result = HSlice[T, U](a: a, b: b)
+
+type
+  TypeOfMode* = enum ## Possible modes of `typeof`.
+    typeOfProc,      ## Prefer the interpretation that means `x` is a proc call.
+    typeOfIter       ## Prefer the interpretation that means `x` is an iterator call.
+
+proc typeof*(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
+  ## Builtin `typeof` operation for accessing the type of an expression.

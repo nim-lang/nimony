@@ -49,14 +49,14 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
   of UIntLit:
     result = createIntegralType(m, "(u -1)")
   of FloatLit:
-    result = createIntegralType(m, "(f 64)")
-  of StringLit: result = createIntegralType(m, "(aptr (c 8))")
-  of CharLit: result = createIntegralType(m, "(c 8)")
+    result = createIntegralType(m, "(f +64)")
+  of StringLit: result = createIntegralType(m, "(aptr (c +8))")
+  of CharLit: result = createIntegralType(m, "(c +8)")
   of ParLe:
     case n.exprKind
-    of SizeofC, AlignofC, OffsetofC: result = createIntegralType(m, "(i 8)")
-    of InfC, NegInfC, NanC: result = createIntegralType(m, "(f 64)")
-    of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC:
+    of SizeofC, AlignofC, OffsetofC: result = createIntegralType(m, "(i +8)")
+    of InfC, NegInfC, NanC: result = createIntegralType(m, "(f +64)")
+    of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(m, "(bool)")
     of CallC:
       var procType = getTypeImpl(m, n.firstSon)
@@ -98,7 +98,7 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       buf.addParRi()
       result = cursorAt(buf, 0)
       m.mem.add ensureMove buf
-    of ConvC, CastC, AconstrC, OconstrC:
+    of ConvC, CastC, AconstrC, OconstrC, BaseobjC:
       result = n.firstSon
     of NegC, AddC, SubC, MulC, DivC, ModC, ShrC, ShlC, BitandC, BitorC, BitxorC, BitnotC:
       result = n.firstSon

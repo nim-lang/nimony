@@ -3,19 +3,16 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
 import std / [tables, sets, syncio]
 
 include nifprelude
-import ".." / nimony / [nimony_model, typenav]
+import ".." / nimony / [nimony_model, typenav, langmodes]
 
-const
-  RcField* = "r.0."
-  DataField* = "d.0."
-  GeneratedTypeSuffix* = ".0.t"
+export RcField, DataField, GeneratedTypeSuffix
 
 type
   MangleScope* {.acyclic.} = ref object
@@ -29,6 +26,7 @@ type
     requires*: seq[SymId]
     nestedIn*: seq[(StmtKind, SymId)]
     headers*: HashSet[StrId]
+    dynlibs*: Table[StrId, seq[(StrId, SymId)]]
     currentOwner*: SymId
     toMangle*: MangleScope
     strLits*: Table[string, SymId]
@@ -39,10 +37,14 @@ type
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`
+    exceptLabels*: seq[SymId] # how to translate `except`
     instId*: int # per forStmt
     tmpId*: int # per proc
     inImpSection*: int
     resultSym*: SymId
+
+    localDeclCounters*: int
+    activeChecks*: set[CheckMode]
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId
@@ -81,7 +83,7 @@ proc error*(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
 
 proc error*(e: var EContext; msg: string) {.noreturn.} =
   write stdout, "[Error] "
-  write stdout, msg
+  writeLine stdout, msg
   when defined(debug):
     echo getStackTrace()
   quit 1

@@ -1,0 +1,14 @@
+(stmts
+  (proc :my.proc . . . (params (param :cond.0 . . (bool) .)) . . . (stmts
+    (var :x.0 . . (i +32) .)
+    (if
+      (elif (cond.0) (stmts
+        (asgn x.0 +12)
+      ))
+      (else (stmts
+        (asgn x.0 +14)
+      ))
+    )
+    (assert (report) (le . +0 x.0))
+  ))
+)

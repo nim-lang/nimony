@@ -50,6 +50,8 @@ proc asUnsigned*(x: xint; err: var bool): uint64 =
 proc `-`*(a: xint): xint =
   xint(nan: a.nan, neg: not a.neg, val: a.val)
 
+proc negate*(a: var xint) {.inline.} = a.neg = not a.neg
+
 proc `+`*(a, b: xint): xint =
   if a.nan or b.nan:
     return xint(nan: true)
@@ -290,6 +292,14 @@ proc succ*(a: xint): xint = a + createXint 1'u64
 proc pred*(a: xint): xint = a - createXint 1'u64
 
 proc inc*(x: var xint) = x = x + createXint 1'u64
+
+proc toFloat64*(x: xint): float64 =
+  if x.nan:
+    NaN
+  elif x.neg:
+    -float64(x.val)
+  else:
+    float64(x.val)
 
 when isMainModule:
   var a = createXint(10'i64)

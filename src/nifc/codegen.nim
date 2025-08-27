@@ -3,7 +3,7 @@
 #           NIFC Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -11,6 +11,7 @@
 
 import std / [assertions, syncio, tables, sets, intsets, formatfloat, strutils, packedsets]
 from std / os import changeFileExt, splitFile, extractFilename
+from std / sequtils import insert
 
 include ".." / lib / nifprelude
 import mangler, nifc_model, cprelude, noptions, typenav
@@ -65,7 +66,10 @@ type
     CatchKeyword = "catch ("
     ThrowKeyword = "throw"
     ErrToken = "NIFC_ERR_"
+    OvfToken = "NIFC_OVF_"
     ThreadVarToken = "NIM_THREADVAR "
+    AnonStruct = "struct "
+    AnonUnion = "union "
 
 proc fillTokenTable(tab: var BiTable[Token, string]) =
   for e in EmptyToken..high(PredefinedToken):
@@ -73,12 +77,22 @@ proc fillTokenTable(tab: var BiTable[Token, string]) =
     assert id == Token(e), $(id, " ", ord(e))
 
 type
+  GenFlag* = enum
+    gfMainModule # isMainModule
+    gfHasError   # already generated the error variable
+    gfProducesMainProc # needs main proc
+    gfInCallImportC # in importC call context
+
+  CurrentProc* = object
+    needsOverflowFlag: bool
+    nextTemp: int
+
   GeneratedCode* = object
     m: Module
     includes: seq[Token]
     includedHeaders: IntSet
-    data: seq[Token]
     protos: seq[Token]
+    data: seq[Token]
     code: seq[Token]
     init: seq[Token]
     fileIds: PackedSet[FileId]
@@ -89,11 +103,13 @@ type
     flags: set[GenFlag]
     inToplevel: bool
     objConstrNeedsType: bool
+    bits: int
+    currentProc: CurrentProc
 
-proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]): GeneratedCode =
+proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]; bits: int): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
       fileIds: initPackedSet[FileId](), flags: flags, inToplevel: true,
-      objConstrNeedsType: true)
+      objConstrNeedsType: true, bits: bits)
   fillTokenTable(result.tokens)
 
 proc add*(c: var GeneratedCode; t: PredefinedToken) {.inline.} =
@@ -158,9 +174,9 @@ proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
 
 proc genIntLit(c: var GeneratedCode; litId: IntId) =
   let i = pool.integers[litId]
-  if i > low(int32) and i <= high(int32):
+  if i > low(int32) and i <= high(int32) and c.bits != 64:
     c.add $i
-  elif i == low(int32):
+  elif i == low(int32) and c.bits != 64:
     # Nim has the same bug for the same reasons :-)
     c.add "(-2147483647 -1)"
   elif i > low(int64):
@@ -172,7 +188,7 @@ proc genIntLit(c: var GeneratedCode; litId: IntId) =
 
 proc genUIntLit(c: var GeneratedCode; litId: UIntId) =
   let i = pool.uintegers[litId]
-  if i <= high(uint32):
+  if i <= high(uint32) and c.bits != 64:
     c.add $i
     c.add "u"
   else:
@@ -221,7 +237,7 @@ proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
     inc n
     while n.kind != ParRi:
       case n.pragmaKind
-      of NoPragma, AlignP, BitsP, VectorP, NodeclP, StaticP:
+      of NoPragma, AlignP, BitsP, VectorP, NodeclP, StaticP, PackedP:
         if n.callConvKind != NoCallConv:
           skip n
         else:
@@ -367,8 +383,11 @@ proc isLiteral(n: var Cursor): bool =
       while n.kind != ParRi:
         if n.substructureKind == KvU:
           inc n
-          skip n # key
           if not isLiteral(n): return false
+          skip n # key
+          if n.kind != ParRi:
+            # optional inheritance
+            skip n
           skipParRi n
         else:
           if not isLiteral(n): return false
@@ -405,7 +424,7 @@ proc genVarInitValue(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     c.add Semicolon
 
-proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
+proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   genCLineDir(c, info(n))
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
@@ -417,13 +436,11 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     if toExtern or isImportC(d.name):
       c.add ExternKeyword
 
-    if vk == IsConst:
-      c.add ConstKeyword
     if vk == IsThreadlocal:
       c.add "__thread "
-    genType c, d.typ, name
+    genType c, d.typ, name, isConst = vk == IsConst
     let vis = genVarPragmas(c, d.pragmas)
-    if vis == StaticP:
+    if vis == StaticP or useStatic:
       c.code.insert(Token(StaticKeyword), beforeDecl)
     let beforeInit = c.code.len
 
@@ -452,10 +469,22 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
 
 include genstmts
 
+proc addOverflowDecl(c: var GeneratedCode; code: var seq[Token]; beforeBody: int) =
+  let tokens = @[
+    c.tokens.getOrIncl("NB8"),
+    Token(Space),
+    Token(OvfToken),
+    Token(AsgnOpr),
+    c.tokens.getOrIncl("NIM_FALSE"),
+    Token(Semicolon)
+  ]
+  code.insert(tokens, beforeBody)
 
 proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   c.m.openScope()
   c.inToplevel = false
+  let oldProc = c.currentProc
+  c.currentProc = CurrentProc(needsOverflowFlag: false)
   let signatureBegin = c.code.len
   var prc = takeProcDecl(n)
 
@@ -548,12 +577,16 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     if isSelectAny in flags:
       genRoutineGuardBegin(c, name)
     c.add CurlyLe
+    let beforeBody = c.code.len
     genStmt c, prc.body
+    if c.currentProc.needsOverflowFlag:
+      addOverflowDecl c, c.code, beforeBody
     c.add CurlyRi
     if isSelectAny in flags:
       genRoutineGuardEnd(c)
   c.m.closeScope()
   c.inToplevel = true
+  c.currentProc = oldProc
 
 proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n
@@ -563,15 +596,16 @@ proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n
   if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
     if headerAsStr[0] == '#':
-      discard "skip the #include keyword"
+      # keeps the #include statements as they are
+      c.includes.add header
     else:
       c.includes.add Token(IncludeKeyword)
-    if headerAsStr[0] == '<':
-      c.includes.add header
-    else:
-      c.includes.add Token(DoubleQuote)
-      c.includes.add header
-      c.includes.add Token(DoubleQuote)
+      if headerAsStr[0] == '<':
+        c.includes.add header
+      else:
+        c.includes.add Token(DoubleQuote)
+        c.includes.add header
+        c.includes.add Token(DoubleQuote)
 
     c.includes.add Token NewLine
   skipParRi n
@@ -615,8 +649,8 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   of InclS: genInclude c, n
   of ProcS: genProcDecl c, n, false
   of VarS, GvarS, TvarS: genStmt c, n
-  of ConstS: genStmt c, n
-  of DiscardS, AsgnS, ScopeS, IfS,
+  of ConstS: genVar c, n, IsConst
+  of DiscardS, AsgnS, KeepovfS, ScopeS, IfS,
       WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnErrS:
     moveToInitSection:
       genStmt c, n
@@ -624,6 +658,10 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
     discard "handled in a different pass"
     skip n
   of EmitS: genEmitStmt c, n
+  of StmtsS:
+    inc n
+    while n.kind != ParRi: genToplevel c, n
+    skipParRi n
   else:
     if n.pragmaKind == NodeclP:
       genNodecl c, n
@@ -648,7 +686,7 @@ proc writeLineDir(f: var CppFile, c: var GeneratedCode) =
 proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   var m = load(inp)
   m.config = s.config
-  var c = initGeneratedCode(m, flags)
+  var c = initGeneratedCode(m, flags, s.bits)
   c.m.openScope()
 
   var co = TypeOrder()
@@ -669,8 +707,9 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   if optLineDir in c.m.config.options:
     writeLineDir f, c
   writeTokenSeq f, typeDecls, c
-  writeTokenSeq f, c.data, c
+  # so that v-tables can be generated protos must be written before data:
   writeTokenSeq f, c.protos, c
+  writeTokenSeq f, c.data, c
   writeTokenSeq f, c.code, c
 
   if gfProducesMainProc in c.flags:
@@ -684,6 +723,8 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
     f.write "}\n\n"
   elif c.init.len > 0:
     f.write "static void __attribute__((constructor)) init(void) {"
+    if c.currentProc.needsOverflowFlag:
+      addOverflowDecl c, c.init, 0
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
   f.f.close

@@ -16,7 +16,10 @@ type
 
 template `[]`*(s: StringView; i: int): char = s.p[i]
 
-template eqImpl() {.dirty.} =
+when not defined(nimony):
+  {.pragma: untyped.}
+
+template eqImpl() {.untyped.} =
   if a.len == b.len:
     for i in 0..<a.len:
       if a[i] != b[i]: return false
@@ -43,17 +46,27 @@ proc add*(s: var string; b: StringView) =
   for i in 0..<b.len:
     s[l+i] = b[i]
 
+when not defined(nimony):
+  proc rawData(s: string): ptr UncheckedArray[char] {.inline.} =
+    if s.len == 0:
+      nil
+    else:
+      cast[ptr UncheckedArray[char]](addr(s[0]))
+
 proc `$`*(s: StringView): string =
   result = newString(s.len)
   if s.len > 0:
-    copyMem addr(result[0]), s.p, s.len
+    copyMem result.rawData, s.p, s.len
 
 proc toStringViewUnsafe*(s: string): StringView =
   ## Watch out that the string lives longer than the string view!
   if s.len != 0:
-    result = StringView(p: cast[pchar](addr(s[0])), len: s.len)
+    result = StringView(p: cast[pchar](s.rawData), len: s.len)
   else:
     result = StringView(p: nil, len: 0)
 
 proc hash*(a: StringView): Hash {.inline.} =
-  hash toOpenArray(a.p, 0, a.len-1)
+  when defined(nimony):
+    hash borrowCStringUnsafe(cast[cstring](a.p), a.len)
+  else:
+    hash toOpenArray(a.p, 0, a.len-1)

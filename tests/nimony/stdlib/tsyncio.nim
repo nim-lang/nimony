@@ -1,4 +1,4 @@
-import std/syncio
+import std/[syncio, assertions]
 
 stdout.write "test"
 
@@ -56,4 +56,27 @@ echo 'a'
 echo "xyz", 111'u, true, 'b'
 echo 0.0, " ", 1.0
 
+type
+  DummyObject0 = object
+    o, b, j, n: char
+  DummyObject1 = object
+    a, b, c, n: char
+
+let obj0 = DummyObject0(o: 'o', b: 'b', j: 'j', n: '\n')
+let obj1 = DummyObject1(a: 'a', b: 'b', c: 'c', n: '\n')
+let n0 = stdout.writeBuffer(addr obj0, sizeof DummyObject0)
+let n1 = stdout.writeBuffer(addr obj1, sizeof DummyObject1)
+
+assert n0 == sizeof DummyObject0
+assert n1 == sizeof DummyObject1
 assert true
+
+type MyTuple = tuple[a, b, c: char]
+assert sizeof(MyTuple) == 3 # MyTuple not declared in c generated code
+
+type
+  MyObject = object
+    a, b, c, d: int
+
+let my = default(MyObject)
+assert sizeof(my) == 32

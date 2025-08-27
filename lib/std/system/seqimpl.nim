@@ -20,14 +20,18 @@ proc `=wasMoved`*[T](s: var seq[T]) {.inline.} =
   s.len = 0
   s.data = nil
 
-type HasDefault* = concept
-  proc default(_: typedesc[Self]): Self
+proc memSizeInBytes[T](size: int): int {.inline.} =
+  {.keepOverflowFlag.}:
+    result = size * sizeof(T)
+    if overflowFlag():
+      # When required memory size is overflowed, cause out of memory.
+      result = high(int)
 
 proc newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
   if size == 0:
     result = seq[T](len: size, data: nil)
   else:
-    let memSize = size * sizeof(T)
+    let memSize = memSizeInBytes[T](size)
     result = seq[T](len: size, data: cast[ptr UncheckedArray[T]](alloc(memSize)))
     if result.data != nil:
       var i = 0
@@ -35,13 +39,14 @@ proc newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
         (result.data[i]) = default(T)
         inc i
     else:
+      result.len = 0
       oomHandler memSize
 
 proc newSeqOf*[T](size: int; initValue: T): seq[T] {.nodestroy.} =
   if size == 0:
     result = seq[T](len: size, data: nil)
   else:
-    let memSize = size * sizeof(T)
+    let memSize = memSizeInBytes[T](size)
     result = seq[T](len: size, data: cast[ptr UncheckedArray[T]](alloc(memSize)))
     if result.data != nil:
       var i = 0
@@ -56,7 +61,7 @@ proc newSeqUninit*[T](size: int): seq[T] {.nodestroy, inline.} =
   if size == 0:
     result = seq[T](len: size, data: nil)
   else:
-    let memSize = size * sizeof(T)
+    let memSize = memSizeInBytes[T](size)
     result = seq[T](len: size, data: cast[ptr UncheckedArray[T]](alloc(memSize)))
     if result.data != nil:
       discard "leave uninitialized"
@@ -74,14 +79,21 @@ proc `=dup`*[T](a: seq[T]): seq[T] {.nodestroy.} =
     inc i
 
 proc recalcCap(oldCap, addedElements: int): int {.inline.} =
-  result = oldCap + (oldCap shr 1)
-  if result < oldCap + addedElements:
-    result = oldCap + addedElements
+  {.keepOverflowFlag.}:
+    let requiredLen = oldCap + addedElements
+    if overflowFlag():
+      result = high(int)
+    else:
+      result = oldCap + (oldCap shr 1)
+      if overflowFlag():
+        result = requiredLen
+      else:
+        result = max(result, requiredLen)
 
 proc resize[T](dest: var seq[T]; addedElements: int): bool {.nodestroy.} =
   let oldCap = dest.capInBytes div sizeof(T)
   let newCap = recalcCap(oldCap, addedElements)
-  let memSize = newCap * sizeof(T)
+  let memSize = memSizeInBytes[T](newCap)
   dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
   if dest.data == nil:
     dest.len = 0
@@ -100,7 +112,7 @@ proc `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
   elif dest.capInBytes < src.len * sizeof(T):
     let oldCap = dest.capInBytes div sizeof(T)
     let newCap = recalcCap(oldCap, src.len - oldCap)
-    let memSize = newCap * sizeof(T)
+    let memSize = memSizeInBytes[T](newCap)
     dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
     if dest.data == nil:
       dest.len = 0
@@ -125,6 +137,9 @@ proc add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
 
 proc len*[T](s: seq[T]): int {.inline.} = s.len
 
+proc rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
+  result = s.data
+
 proc `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} = s.data[i]
 
 proc `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline.} =
@@ -146,11 +161,6 @@ proc `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
 # special cased in compiler as "@.1.<system suffix>" for empty seq type inference:
 template `@`*[T](a: array[0, T]): seq[T] = newSeqUninit[T](0)
 
-when false:
-  # XXX needs openArray implementation
-  converter toOpenArray*[T](x: seq[T]): openArray[T] {.inline.} =
-    toOpenArray(x.data, len(x))
-
 proc del*[T](s: var seq[T]; idx: int) {.nodestroy.} =
   let L = s.len
   `=destroy`(s.data[idx])
@@ -166,7 +176,12 @@ proc shrink*[T](s: var seq[T]; newLen: int) =
   s.len = newLen
 
 proc growUnsafe*[T](s: var seq[T]; newLen: int) =
-  if s.capInBytes <= newLen * sizeof(T):
+  {.keepOverflowFlag.}:
+    let newSize = newLen * sizeof(T)
+    if overflowFlag():
+      oomHandler high(int)
+      return
+  if s.capInBytes <= newSize:
     if not resize(s, newLen - s.len): return
   s.len = newLen
 
@@ -179,6 +194,7 @@ proc grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
     inc i
 
 proc high*[T](s: seq[T]): int {.inline.} = s.len - 1
+proc low*[T](s: seq[T]): int {.inline.} = 0
 
 proc pop*[T](s: var seq[T]): T {.requires: (s.len > 0), inline, nodestroy.} =
   let L = s.len-1

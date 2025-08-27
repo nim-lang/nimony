@@ -1,0 +1,27 @@
+(stmts
+ (proc :my.proc . . .
+  (params
+   (param :i.0 . .
+    (i -1) .))
+  (i -1) . .
+  (stmts
+   (result :res.0 . .
+    (i -1) .)
+   (asgn res.0 +1)
+   (goto L37)
+   (lab :L37)
+   (ret res.0)))
+ (let :my.var . .
+  (array
+   (i +8) +6) .)
+ (var :i.0 . .
+  (i -1) +0)
+ (let :`cf.0 . .
+  (ptr
+   (i +8))
+  (addr
+   (arrat my.var i.0)))
+ (asgn
+  (deref `cf.0) +56)
+ (asgn i.0 +1)
+ (ret res.0))

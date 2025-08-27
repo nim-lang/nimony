@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -31,14 +31,17 @@ It follows that we're only interested in Call expressions here, or similar
 
 import std / [assertions]
 include nifprelude
-import nifindexes, symparser, treemangler, lifter, mover, hexer_context, typekeys
-import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes]
+import nifindexes, symparser, treemangler, lifter, mover, hexer_context
+import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 
 type
+  ContextFlag = enum
+    ReportLastUse, CanRaise
+
   Context = object
     dest: TokenBuf
     lifter: ref LiftingCtx
-    reportLastUse: bool
+    flags: set[ContextFlag]
     typeCache: TypeCache
     tmpCounter: int
     resultSym: SymId
@@ -61,6 +64,8 @@ proc isLastRead(c: var Context; n: Cursor): bool =
     inc n
     while n.kind != ParRi and not isLastSon(n): skip n
 
+  if n.exprKind == EmoveX: inc n
+
   let r = rootOf(n)
   result = false
   if r != NoSymId:
@@ -73,31 +78,47 @@ proc isLastRead(c: var Context; n: Cursor): bool =
       # as it doesn't have any.
       canAnalyse = true
     else:
+      assert v.kind != NoSym
       canAnalyse = false
     if canAnalyse:
       var otherUsage = NoLineInfo
       result = isLastUse(n, c.source[], otherUsage)
+      if ReportLastUse in c.flags:
+        echo infoToStr(n.info), " LastUse: ", result
 
 const
   ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX, NewrefX}
 
-proc constructsValue*(n: Cursor): bool =
+proc constructsValue*(n: Cursor; derefConstructs = true): bool =
   var n = n
   while true:
     case n.exprKind
-    of CastX, ConvX, HconvX, DconvX, OconvX:
+    of CastX, ConvX, HconvX, DconvX:
       inc n
       skip n
+    of DerefX, HDerefX:
+      if not derefConstructs:
+        return false
+      inc n
+    of BaseobjX:
+      inc n
+      skip n
+      skip n # skip intlit
     of ExprX:
       inc n
       while not isLastSon(n): skip n
     else: break
   result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
-proc lvalueRoot(n: Cursor): SymId =
+proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
   var n = n
-  while n.exprKind in {DotX, TupatX, AtX, ArrAtX}:
-    n = n.firstSon
+  while true:
+    case n.exprKind
+    of DotX, TupatX, AtX, ArrAtX: inc n
+    of HderefX:
+      hdrefs = true
+      inc n
+    else: break
   if n.kind == Symbol:
     result = n.symId
   else:
@@ -110,19 +131,50 @@ proc potentialSelfAsgn(dest, src: Cursor): bool =
     result = false
   else:
     result = true # true until proven otherwise
-    let d = lvalueRoot(dest)
-    let s = lvalueRoot(src)
+    var destHdrefs = false
+    var srcHdrefs = false
+    let d = lvalueRoot(dest, destHdrefs)
+    let s = lvalueRoot(src, srcHdrefs)
     if d != NoSymId or s != NoSymId:
       # one of the expressions was analysable
-      if d == s:
+      if destHdrefs and srcHdrefs:
+        # two pointer derefs? can alias:
+        result = true
+      elif d == s:
         # see if we can distinguish between `x.fieldA` and `x.fieldB` which
-        # cannot alias. We do know here that both expressions are free of
+        # cannot alias. We do know here that at least one expressions is free of
         # pointer derefs, so we can simply use `sameValues` here.
-        result = sameTrees(dest, src)
+        result = sameTreesIgnoreArrayIndexes(dest, src)
       else:
         # different roots while we know that at least one expression has
         # no harmful pointer deref:
         result = false
+
+proc potentialAliasing(le, ri: Cursor): bool =
+  var destHdrefs = false
+  let d = lvalueRoot(le, destHdrefs)
+  if d == NoSymId:
+    result = true # too bad, cannot analyse
+  else:
+    result = false
+    var nested = 0
+    var n = ri
+    while true:
+      case n.kind
+      of Symbol:
+        if n.symId == d:
+          result = true
+          break
+        inc n
+      of ParLe:
+        inc nested
+        inc n
+      of ParRi:
+        dec nested
+        inc n
+      else:
+        inc n
+      if nested == 0: break
 
 # -----------------------------------------------------------
 
@@ -142,12 +194,62 @@ proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   if n.kind == Symbol:
     result = n.symId == c.resultSym
 
-proc trReturn(c: var Context; n: var Cursor) =
-  copyInto c.dest, n:
-    if isResultUsage(c, n):
-      takeTree c.dest, n
+proc isSimpleExpression(n: var Cursor): bool =
+  ## expressions that can be returned safely
+  case n.kind
+  of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, DotToken, Ident:
+    result = true
+    inc n
+  of ParLe:
+    case n.exprKind
+    of FalseX, TrueX, InfX, NegInfX, NanX, NilX, SufX:
+      result = true
+      skip n
+    of CastX, ConvX, HconvX, DconvX:
+      result = true
+      inc n
+      skip n # type
+      while n.kind != ParRi:
+        if not isSimpleExpression(n): return false
+      skipParRi n
+    of ExprX:
+      inc n
+      var inner = n
+      skip n
+      if n.kind == ParRi:
+        result = isSimpleExpression(inner)
+        skipParRi n
+      else:
+        result = false
     else:
+      result = false
+      skip n
+  of ParRi, SymbolDef, UnknownToken, EofToken:
+    result = false
+    inc n
+
+proc trReturn(c: var Context; n: var Cursor) =
+  let retVal = n.firstSon
+  var exp = retVal
+  if isResultUsage(c, retVal):
+    takeTree c.dest, n
+  elif isSimpleExpression(exp) or c.resultSym == NoSymId:
+    # simple enough:
+    copyInto(c.dest, n):
       tr c, n, WantOwner
+  else:
+    let info = n.info
+    inc n # skip ParLe
+    c.dest.addParLe StmtsS, info
+    c.dest.addParLe AsgnS, info
+    c.dest.add symToken(c.resultSym, info)
+    tr c, n, WantOwner
+    c.dest.addParRi() # end of AsgnS
+    c.dest.addParLe(RetS, info)
+    c.dest.add symToken(c.resultSym, info)
+    c.dest.addParRi() # end of RetS
+    c.dest.addParRi() # end of StmtsS
+    skipParRi(n) # skip ParRi
 
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
@@ -171,16 +273,30 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
       copyIntoSymUse result, tmp, info
     c.typeCache.registerLocalPtrOf(tmp, VarY, typ)
 
-proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf) =
+proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor) =
   let info = arg[0].info
+  let staticCall = typ.typeKind notin {RefT, PtrT}
+  if staticCall:
+    c.dest.addParLe ProcCallX, info
   copyIntoKind c.dest, CallS, info:
     copyIntoSymUse c.dest, destroyProc, info
-    copyTree c.dest, arg
+    if isMutFirstParam(destroyProc):
+      copyIntoKind c.dest, HaddrX, info:
+        copyTree c.dest, arg
+    else:
+      copyTree c.dest, arg
+  if staticCall:
+    c.dest.addParRi()
 
-proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo) =
+proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo; typ: Cursor) =
+  let staticCall = typ.typeKind notin {RefT, PtrT}
+  if staticCall:
+    c.dest.addParLe ProcCallX, info
   copyIntoKind c.dest, CallS, info:
     copyIntoSymUse c.dest, destroyProc, info
     copyIntoSymUse c.dest, arg, info
+  if staticCall:
+    c.dest.addParRi()
 
 proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
   var n = n
@@ -225,7 +341,7 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
       copyIntoKind c.dest, HaddrX, info:
-        copyTree c.dest, n
+        tr c, n, WillBeOwned
 
 proc callWasMoved(c: var Context; sym: SymId; info: PackedLineInfo; typ: Cursor) =
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
@@ -237,7 +353,7 @@ proc callWasMoved(c: var Context; sym: SymId; info: PackedLineInfo; typ: Cursor)
 
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
-  `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
+  `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp` #`f()` can read `x`
   `x = lastUse y` is turned into either
 
     `=destroy(x); x =bitcopy y; =wasMoved(y)` # no self assignments possible
@@ -274,20 +390,31 @@ proc trAsgn(c: var Context; n: var Cursor) =
     const isNotFirstAsgn = true
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
-    if constructsValue(ri):
-      # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
-      if isNotFirstAsgn:
-        callDestroy(c, destructor, lhs)
-      copyInto c.dest, n:
-        copyTree c.dest, lhs
-        n = ri
-        tr c, n, WillBeOwned
+    if constructsValue(ri, derefConstructs = false):
+      if not potentialAliasing(le, ri):
+        # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
+        if isNotFirstAsgn:
+          callDestroy(c, destructor, lhs, leType)
+        copyInto c.dest, n:
+          copyTree c.dest, lhs
+          n = ri
+          tr c, n, WillBeOwned
+      else:
+        # `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp`.
+        let tmp = tempOfTrArg(c, ri, leType)
+        if isNotFirstAsgn:
+          callDestroy(c, destructor, lhs, leType)
+        copyInto c.dest, n:
+          copyTree c.dest, lhs
+          copyIntoSymUse c.dest, tmp, ri.info
+          n = ri
+          skip n
     elif isLastRead(c, ri):
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
         let tmp = tempOfTrArg(c, ri, leType)
         callWasMoved c, ri, leType
-        callDestroy(c, destructor, lhs)
+        callDestroy(c, destructor, lhs, leType)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
@@ -296,7 +423,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           skip n # skip right hand side
       else:
         if isNotFirstAsgn:
-          callDestroy(c, destructor, lhs)
+          callDestroy(c, destructor, lhs, leType)
         copyInto c.dest, n:
           copyTree c.dest, lhs
           n = ri
@@ -306,16 +433,16 @@ proc trAsgn(c: var Context; n: var Cursor) =
       # XXX We should really prefer to simply call `=copy(x, y)` here.
       if isNotFirstAsgn and potentialSelfAsgn(le, ri):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
-        let tmp = tempOfTrArg(c, ri, leType)
+        let tmp = tempOfTrArg(c, le, leType)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
           n = ri
           callDup c, n
-        callDestroy(c, destructor, tmp, le.info)
+        callDestroy(c, destructor, tmp, le.info, leType)
       else:
         if isNotFirstAsgn:
-          callDestroy(c, destructor, lhs)
+          callDestroy(c, destructor, lhs, leType)
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
@@ -323,7 +450,13 @@ proc trAsgn(c: var Context; n: var Cursor) =
           callDup c, n
 
 proc getHookType(c: var Context; n: Cursor): Cursor =
-  result = skipModifier(getType(c.typeCache, n.firstSon))
+  var n = n
+  inc n
+  if n.exprKind == HaddrX:
+    # skips `HaddrX` to get the correct type; otherwise
+    # we get a `ptr` type
+    inc n
+  result = skipModifier(getType(c.typeCache, n))
 
 proc trExplicitDestroy(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
@@ -370,7 +503,12 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
   else:
     c.dest.addParLe AsgnS, info
     inc n
-    tr c, n, DontCare
+    if n.exprKind == HaddrX:
+      inc n
+      tr c, n, DontCare
+      skipParRi(n)
+    else:
+      tr c, n, DontCare
     tr c, n, DontCare
     takeParRi c.dest, n
 
@@ -463,8 +601,18 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
 proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.dest.add n
   let oldResultSym = c.resultSym
+  let oldFlags = c.flags
   c.resultSym = NoSymId
+  c.flags = {}
+  let decl = n
   var r = takeRoutine(n, SkipFinalParRi)
+  let symId = r.name.symId
+  if isLocalDecl(symId):
+    c.typeCache.registerLocal(symId, r.kind, decl)
+  if hasPragmaOfValue(r.pragmas, ReportP, "lastuse"):
+    c.flags.incl ReportLastUse
+  if hasPragma(r.pragmas, RaisesP):
+    c.flags.incl CanRaise
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
   copyTree c.dest, r.pattern
@@ -475,7 +623,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
     c.typeCache.openScope()
-    c.typeCache.registerParams(r.name.symId, r.params)
+    c.typeCache.registerParams(r.name.symId, decl, r.params)
     if parentNodestroy or hasPragma(r.pragmas, NodestroyP):
       trOnlyEssentials c, r.body
     else:
@@ -485,6 +633,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
     copyTree c.dest, r.body
   c.dest.addParRi()
   c.resultSym = oldResultSym
+  c.flags = oldFlags
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   not isTrivial(c.lifter[], typ)
@@ -529,18 +678,21 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   takeTree c.dest, n # skip `fn`
-  assert fnType.typeKind == ParamsT
+  assert fnType.substructureKind == ParamsU
   inc fnType
   while n.kind != ParRi:
     let previousFormalParam = fnType
-    let param = takeLocal(fnType, SkipFinalParRi)
-    let pk = param.typ.typeKind
     var e2 = WantNonOwner
-    if pk == SinkT:
-      e2 = WantOwner
-    elif pk == VarargsT:
-      # do not advance formal parameter:
-      fnType = previousFormalParam
+    if fnType.kind == ParRi:
+      discard "this can happen for closure parameters"
+    else:
+      let param = takeLocal(fnType, SkipFinalParRi)
+      let pk = param.typ.typeKind
+      if pk == SinkT:
+        e2 = WantOwner
+      elif pk == VarargsT:
+        # do not advance formal parameter:
+        fnType = previousFormalParam
     tr c, n, e2
   takeParRi c.dest, n
   finishOwningTemp c.dest, ow
@@ -557,7 +709,8 @@ proc trRawConstructor(c: var Context; n: var Cursor; e: Expects) =
 proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
   copyInto c.dest, n:
     takeTree c.dest, n # type
-    tr c, n, e
+    while n.kind != ParRi:
+      tr c, n, e
 
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
@@ -571,6 +724,9 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
       copyInto c.dest, n:
         takeTree c.dest, n
         tr c, n, WantOwner
+        if n.kind != ParRi:
+          # optional inheritance
+          takeTree c.dest, n
   finishOwningTemp c.dest, ow
 
 proc trNewobjFields(c: var Context; n: var Cursor) =
@@ -579,9 +735,23 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
       copyInto c.dest, n:
         takeTree c.dest, n # keep field name
         tr(c, n, WantOwner)
+        if n.kind != ParRi:
+          # optional inheritance
+          takeTree c.dest, n
     else:
       tr(c, n, WantOwner)
   inc n # skip ParRi
+
+proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
+  copyIntoKind c.dest, IfS, info:
+    copyIntoKind c.dest, ElifU, info:
+      copyIntoKind c.dest, EqX, info:
+        copyIntoKind c.dest, PointerT, info: discard
+        c.dest.add symToken(ow.s, info)
+        copyIntoKind c.dest, NilX, info: discard
+      copyIntoKind c.dest, StmtsS, info:
+        copyIntoKind c.dest, RaiseS, info:
+          c.dest.add symToken(pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix), info)
 
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
   let info = n.info
@@ -593,7 +763,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
 
   let baseType = refType.firstSon
   var refTypeCopy = refType
-  let typeKey = takeMangle refTypeCopy
+  let typeKey = takeMangle(refTypeCopy, Frontend, c.lifter.bits)
   let typeSym = pool.syms.getOrIncl(typeKey & GeneratedTypeSuffix)
 
   copyIntoKind c.dest, CastX, info:
@@ -603,6 +773,10 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
       copyIntoKind c.dest, SizeofX, info:
         c.dest.add symToken(typeSym, info)
   c.dest.addParRi() # finish temp declaration
+
+  # map to OOM if the proc can raise an error:
+  if CanRaise in c.flags:
+    genOutOfMemCheck(c, ow, info)
 
   copyIntoKind c.dest, AsgnS, info:
     copyIntoKind c.dest, DerefX, info:
@@ -649,6 +823,14 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
   c.dest.copyIntoSymUse ow.s, ow.info
   c.dest.addParRi() # finish the StmtListExpr
 
+proc trLocationNonOwner(c: var Context; n: var Cursor) =
+  c.dest.add n
+  inc n
+  tr c, n, WantNonOwner
+  while n.kind != ParRi:
+    tr(c, n, DontCare)
+  takeParRi c.dest, n
+
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # `x` does not own its value as it can be read multiple times.
   let typ = getType(c.typeCache, n)
@@ -665,15 +847,15 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
           if isAtom(n):
             takeTree c.dest, n
           else:
-            trSons c, n, DontCare
+            trLocationNonOwner c, n
       elif isAtom(n):
         takeTree c.dest, n
       else:
-        trSons c, n, DontCare
+        trLocationNonOwner c, n
   elif isAtom(n):
     takeTree c.dest, n
   else:
-    trSons c, n, DontCare
+    trLocationNonOwner c, n
 
 proc trValue(c: var Context; n: Cursor; e: Expects) =
   var n = n
@@ -701,7 +883,7 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
       if k == CursorS:
         trValue c, r.val, DontCare
         c.dest.addParRi()
-      elif constructsValue(r.val):
+      elif constructsValue(r.val, derefConstructs = false):
         trValue c, r.val, WillBeOwned
         c.dest.addParRi()
 
@@ -731,7 +913,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
   let typ = getType(c.typeCache, n)
   let arg = n.firstSon
   let info = n.info
-  if constructsValue(arg):
+  if constructsValue(arg, derefConstructs = true):
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
@@ -748,7 +930,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
       tr c, n, e
       skipParRi n
   else:
-    let m = "not the last usage of: " & asNimCode(n)
+    let m = "not the last usage of: " & asNimCode(arg)
     c.dest.buildTree ErrT, info:
       c.dest.addSubtree n
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
@@ -757,7 +939,9 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
 proc trDeref(c: var Context; n: var Cursor) =
   let info = n.info
   inc n
-  let typ = getType(c.typeCache, n, {SkipAliases})
+  var typ = getType(c.typeCache, n, {SkipAliases})
+  if typ.kind == ParLe and typ.typeKind == SinkT:
+    inc typ
   let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
   if isRef:
     c.dest.addParLe DotX, info
@@ -791,7 +975,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trExplicitCopy c, n, attachedSink
     of TraceX:
       trExplicitTrace c, n
-    of ConvKinds, SufX:
+    of ConvKinds, BaseobjX, SufX:
       trConvExpr c, n, e
     of OconstrX:
       trObjConstr c, n, e
@@ -801,7 +985,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trNewobj c, n, e, NewrefX
     of DotX, AtX, ArrAtX, PatX, TupatX:
       trLocation c, n, e
-    of ParX:
+    of ParX, ProccallX:
       trSons c, n, e
     of ExprX:
       trStmtListExpr c, n, e
@@ -814,16 +998,19 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
        PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX,
        EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, CompilesX, DeclaredX,
-       DefinedX, HighX, LowX, TypeofX, UnpackX, EnumtostrX, IsmainmoduleX, QuotedX,
-       AddrX, HaddrX, AlignofX, OffsetofX, ErrX:
+       DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
+       AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
+       InternalFieldPairsX, IsX, DelayX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
       trDeref c, n
     of DdotX:
-      raiseAssert "nodekind should have been eliminated in desugar.nim"
-    of DefaultobjX, DefaulttupX, BracketX, CurlyX, TupX:
-      raiseAssert "nodekind should have been eliminated in sem.nim"
-    of PragmaxX, CurlyatX, TabconstrX, DoX:
+      bug "nodekind should have been eliminated in desugar.nim"
+    of EnvpX:
+      bug "envp should have been eliminated in lambdalifting.nim"
+    of DefaultobjX, DefaulttupX, DefaultdistinctX, BracketX, CurlyX, TupX:
+      bug "nodekind should have been eliminated in sem.nim"
+    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX:
       trSons c, n, e
     of NoExpr:
       let k = n.stmtKind
@@ -867,7 +1054,7 @@ proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int
         inc arg
         if arg.kind != ParRi:
           let param = asLocal(arg)
-          m.add " for type <" & asNimCode(param.typ) & ">"
+          m.add " for type <" & typeToString(param.typ) & ">"
       r.error infoToStr(info), m
       inc result
 

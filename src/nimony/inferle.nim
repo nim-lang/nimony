@@ -7,19 +7,41 @@
 ## Infer `le` ("less or equal") properties for compile-time array index checking
 ## and also for "not nil" checking.
 
+import std/assertions
 import xints
 
 type
   VarId* = distinct int32  # convention: VarId(0) is always the constant 0!
+
+proc `==`*(a, b: VarId): bool {.borrow.}
+
+type
   LeXplusC* = object    # semantics: a <= b + c
-    a, b: VarId
-    c: xint
+    a*, b*: VarId
+    c*: xint
 
   Facts* = object
     x: seq[LeXplusC]
 
   RestorePoint* = object
     xlen: int
+
+const
+  InvalidVarId* = VarId(-1)
+
+proc isValid*(x: LeXplusC): bool {.inline.} =
+  result = x.a != InvalidVarId and x.b != InvalidVarId and not isNaN(x.c)
+
+proc len*(f: Facts): int {.inline.} = f.x.len
+proc `[]`*(f: Facts; i: int): lent LeXplusC {.inline.} = f.x[i]
+
+proc `$`*(f: LeXplusC): string =
+  let a = if f.a == VarId(0): "0" else: "v" & $f.a.int
+  let b = if f.b == VarId(0): "0" else: "v" & $f.b.int
+  result = a & " <= " & b & " + " & $f.c
+
+proc shrink*(f: var Facts; newLen: int) {.inline.} =
+  f.x.shrink newLen
 
 #[
 
@@ -47,25 +69,35 @@ proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
   f.x.add LeXplusC(a: a, b: b, c: c)
 
+proc query*(a, b: VarId; c: xint = createXint(0'i64)): LeXplusC =
+  result = LeXplusC(a: a, b: b, c: c)
+
 proc createFacts*(): Facts =
   result = Facts()
   # VarId(0) is always mapped to zero so we know that `v0 <= v0 + 0`:
   result.x.add LeXplusC(a: VarId(0), b: VarId(0), c: createXint(0'i64))
 
-proc `==`(a, b: VarId): bool {.borrow.}
+proc geXplusC*(f: LeXplusC): LeXplusC =
+  # a >= b + c  --> b + c <= a  --> b <= a - c
+  result = LeXplusC(a: f.b, b: f.a, c: -f.c)
 
-proc negFact(f: var LeXplusC) =
+proc ltXplusC*(f: LeXplusC): LeXplusC =
+  # a < b + c  --> a <= b + c - 1
+  result = LeXplusC(a: f.a, b: f.b, c: f.c - createXint(1'i64))
+
+proc negateFact*(f: var LeXplusC) =
   # not (a <= b + c)
   # -->
-  # a >= b + c - 1
-  # a - c + 1 >= b
-  # b <= a + (1 - c)
-  f.c = createXint(1'i64) - f.c
+  # a > b + c
+  # a >= b + c + 1
+  # a - c - 1 >= b
+  # b <= a - c - 1
+  f.c = -f.c - createXint(1'i64)
   swap f.a, f.b
 
 proc negateFacts*(f: var Facts; start: int) =
   for i in start ..< f.x.len:
-    negFact(f.x[i])
+    negateFact(f.x[i])
 
 proc variableChangedByDiff*(f: var Facts; x: VarId; diff: xint) =
   # after `inc x` we know that x is now bigger by 1 so all
@@ -92,7 +124,7 @@ proc simpleImplies(facts: Facts; v: LeXplusC): bool =
       if f.c <= v.c: return true
   return false
 
-import intsets
+import std/intsets
 
 type
   Path = object
@@ -148,7 +180,31 @@ proc complexImplies(facts: Facts; v: LeXplusC): bool =
   traverseAllPaths(facts, v.a, v, result)
 
 proc implies*(facts: Facts; v: LeXplusC): bool =
+  assert v.isValid
   result = simpleImplies(facts, v) or complexImplies(facts, v)
+
+proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
+  # computes thing we know on a joint point.
+  # we know that `a <= b + c` or `a <= b + d` then we know
+  # that `a <= b + max(c, d)`
+  result = Facts()
+  for i in 0 ..< xstart:
+    for j in 0..<y.len:
+      let ya = y[j]
+      if x[i].a == ya.a and x[i].b == ya.b:
+        result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
+
+  if negate and x.len - xstart > 1:
+    # negation of (a and b) would be (not a or not b) so we cannot model that:
+    discard "must lose information here"
+  else:
+    for i in xstart ..< x.len:
+      for j in 0..<y.len:
+        var ya = y[j]
+        if negate:
+          ya.negateFact()
+        if x[i].a == ya.a and x[i].b == ya.b:
+          result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
 
 when isMainModule:
   proc main =

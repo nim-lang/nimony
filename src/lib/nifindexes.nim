@@ -11,10 +11,10 @@ import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
 
 #import std / [sha1]
 import "$nim"/dist/checksums/src/checksums/sha1
-import ".." / models / nifindex_tags
+import ".." / models / [tags, nifindex_tags]
 
 proc entryKind(tag: TagId): NifIndexKind =
-  if rawTagIsNifIndexKind(tag.uint32):
+  if rawTagIsNifIndexKind(cast[TagEnum](tag)):
     result = cast[NifIndexKind](tag)
   else:
     result = NoIndexTag
@@ -84,7 +84,8 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
             skip n
         skipToEnd n
       of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, IndexIdx, PublicIdx, PrivateIdx,
-         DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx:
+         DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx,
+         ExportIdx, FromexportIdx, ExportexceptIdx:
         inc n
         inc nested
     of ParRi:
@@ -108,10 +109,19 @@ type
     typ*, hook*: SymId
     isGeneric*: bool
 
+  MethodIndexEntry* = object
+    fn*: SymId
+    signature*: StrId
+
+  ClassIndexEntry* = object
+    cls*: SymId
+    methods*: seq[MethodIndexEntry]
+
   IndexSections* = object
     hooks*: array[AttachedOp, seq[HookIndexEntry]]
-    converters*: seq[(SymId, SymId)]
-    toBuild*: TokenBuf
+    converters*: seq[(SymId, SymId)] # string is for compat with `methods`
+    classes*: seq[ClassIndexEntry]
+    exportBuf*: TokenBuf
 
 proc hookName*(op: AttachedOp): string =
   case op
@@ -158,6 +168,20 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
 
   result.addParRi()
 
+proc getClassesSection(tag: TagId; values: seq[ClassIndexEntry]): TokenBuf =
+  result = createTokenBuf(30)
+  result.addParLe tag
+
+  for value in values:
+    result.buildTree TagId(KvIdx), NoLineInfo:
+      result.add symToken(value.cls, NoLineInfo)
+      result.buildTree TagId(StmtsTagId), NoLineInfo:
+        for m in value.methods:
+          result.buildTree TagId(KvIdx), NoLineInfo:
+            result.add symToken(m.fn, NoLineInfo)
+            result.add strToken(m.signature, NoLineInfo)
+  result.addParRi()
+
 proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
   let indexName = changeFileExt(infile, ".idx.nif")
 
@@ -166,6 +190,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   var target = -1
   var previousPublicTarget = 0
   var previousPrivateTarget = 0
+  var tagId = TagId(0)
 
   var public = createTokenBuf(30)
   var private = createTokenBuf(30)
@@ -181,6 +206,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     if t.kind == ParLe:
       stack.add t.info
       target = offs
+      tagId = t.tagId
     elif t.kind == ParRi:
       if stack.len > 1:
         discard stack.pop()
@@ -190,7 +216,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
       if pool.syms[sym].isImportant:
         let tb = next(s)
         buf.add tb
-        let isPublic = tb.kind != DotToken
+        # object field symbols are always private so that identifiers outside of dot or
+        # object constructors are not bound to them.
+        let isPublic = tb.kind != DotToken and tagId != TagId(FldTagId)
         var dest =
           if isPublic:
             addr(public)
@@ -205,6 +233,8 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
           previousPublicTarget = target
         else:
           previousPrivateTarget = target
+
+        if tb.kind == ParLe: stack.add tb.info
 
   public.addParRi()
   private.addParRi()
@@ -229,12 +259,15 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     content.add toString(converterSectionBuf)
     content.add "\n"
 
-  var buildBuf = createTokenBuf()
-  buildBuf.addParLe TagId(BuildIdx)
-  buildBuf.add sections.toBuild
-  buildBuf.addParRi
-  content.add toString(buildBuf)
-  content.add "\n"
+  if sections.classes.len != 0:
+    let classesSectionBuf = getClassesSection(TagId(MethodIdx), sections.classes)
+
+    content.add toString(classesSectionBuf)
+    content.add "\n"
+
+  if sections.exportBuf.len != 0:
+    content.add toString(sections.exportBuf)
+    content.add "\n"
 
   if buildChecksum:
     var checksum = newSha1State()
@@ -242,10 +275,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     let final = SecureHash checksum.finalize()
     content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
-  if fileExists(indexName) and readFile(indexName) == content:
-    discard "no change"
-  else:
-    writeFile(indexName, content)
+  writeFile(indexName, content)
 
 proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
   createIndex(infile, root, buildChecksum,
@@ -262,7 +292,9 @@ type
     public*, private*: Table[string, NifIndexEntry]
     hooks*: Table[SymId, HooksPerType]
     converters*: seq[(string, string)] # map of dest types to converter symbols
-    toBuild*: seq[(string, string, string)]
+    #methods*: seq[(string, string)] # map of dest types to method symbols
+    classes*: seq[ClassIndexEntry]
+    exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
   var previousOffset = 0
@@ -386,6 +418,52 @@ proc readSymbolSection(s: var Stream; tab: var seq[(string, string)]) =
       assert false, "expected (kv) construct"
       #t = next(s)
 
+proc readClassesSection(s: var Stream; tab: var seq[ClassIndexEntry]) =
+  var t = next(s)
+  while t.kind == ParLe and t.tagId == TagId(KvIdx):
+    t = next(s)
+    var cls = SymId(0)
+    if t.kind == Symbol:
+      cls = t.symId
+    else:
+      raiseAssert "invalid (kv) construct: symbol expected"
+    t = next(s) # skip Symbol
+    var methods: seq[MethodIndexEntry] = @[]
+    if t.kind == ParLe and t.tagId == TagId(StmtsTagId):
+      t = next(s)
+      while t.kind == ParLe and t.tagId == TagId(KvIdx):
+        t = next(s)
+        var fn = SymId(0)
+        if t.kind == Symbol:
+          fn = t.symId
+        else:
+          raiseAssert "invalid (kv) construct: symbol expected"
+        t = next(s) # skip Symbol
+        var signature = StrId(0)
+        if t.kind == StringLit:
+          signature = t.litId
+        else:
+          raiseAssert "invalid (kv) construct: string expected"
+        t = next(s) # skip StringLit
+        methods.add(MethodIndexEntry(fn: fn, signature: signature))
+        if t.kind == ParRi: # KvIdx
+          t = next(s)
+        else:
+          raiseAssert "invalid (kv) construct: ')' expected"
+      if t.kind == ParRi:
+        t = next(s)
+      else:
+        assert false, "invalid (stmts) construct: ')' expected"
+    tab.add ClassIndexEntry(cls: cls, methods: methods)
+    if t.kind == ParRi:
+      t = next(s)
+    else:
+      assert false, "invalid (kv) construct: ')' expected"
+  if t.kind == ParRi: # MethodIdx
+    t = next(s)
+  else:
+    raiseAssert "invalid (method) construct: ')' expected"
+
 proc readIndex*(indexName: string): NifIndex =
   var s = nifstreams.open(indexName)
   let res = processDirectives(s.r)
@@ -412,23 +490,23 @@ proc readIndex*(indexName: string): NifIndex =
     if t.tag == TagId(ConverterIdx):
       readSymbolSection(s, result.converters)
       t = next(s)
-
-    if t.tag == TagId(BuildIdx):
+    if t.tag == TagId(MethodIdx):
+      readClassesSection(s, result.classes)
       t = next(s)
-      while t.kind != EofToken and t.kind != ParRi:
-        # tup
+
+    while t.tag == TagId(ExportIdx) or t.tag == TagId(FromexportIdx) or t.tag == TagId(ExportexceptIdx):
+      let kind = cast[NifIndexKind](t.tag)
+      t = next(s)
+      assert t.kind == StringLit
+      let path = pool.strings[t.litId]
+      t = next(s)
+      var names: seq[StrId] = @[]
+      while t.kind != ParRi:
+        assert t.kind == Ident
+        names.add t.litId
         t = next(s)
-        assert t.kind == StringLit
-        let typ = pool.strings[t.litId]
-        t = next(s)
-        assert t.kind == StringLit
-        let path = pool.strings[t.litId]
-        t = next(s)
-        assert t.kind == StringLit
-        let args = pool.strings[t.litId]
-        result.toBuild.add (typ, path, args)
-        t = next(s)
-        t = next(s)
+      result.exports.add (path, kind, names)
+      t = next(s)
   else:
     assert false, "expected 'index' tag"
 

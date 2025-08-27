@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tlocalvoid.nim(5, 5) Error: expression 'foo()' has no type (or is ambiguous)

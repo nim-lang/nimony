@@ -1,0 +1,5 @@
+tests/nimony/templates/tinvalidrecursion.nim(2, 6) Trace: instantiation from here
+tests/nimony/templates/tinvalidrecursion.nim(2, 6) Error: cannot expand template from prototype; possibly a recursive template call
+tests/nimony/templates/tinvalidrecursion.nim(5, 7) Trace: instantiation from here
+tests/nimony/templates/tinvalidrecursion.nim(8, 7) Trace: instantiation from here
+tests/nimony/templates/tinvalidrecursion.nim(8, 7) Error: cannot expand template from prototype; possibly a recursive template call

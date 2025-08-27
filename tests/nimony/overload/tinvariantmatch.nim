@@ -15,3 +15,6 @@ procType(addr p)
 proc intbit(i: ptr int64) = discard
 var i: int = 123
 intbit(addr i)
+
+# issue #969
+discard default(cint)

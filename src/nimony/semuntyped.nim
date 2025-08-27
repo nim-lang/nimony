@@ -33,7 +33,7 @@ proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var HashSet[SymId]) =
     # the same symbol!
     # This is however not true anymore for hygienic templates as semantic
     # processing for them changes the symbol table...
-    let name = getIdent(n)
+    let name = takeIdent(n)
     if name == StrId(0):
       c.buildErr n.info, "invalid identifier"
     var symsBuf = createTokenBuf(4)
@@ -52,13 +52,13 @@ proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var HashSet[SymId]) =
         while syms.kind != ParRi:
           c.dest.add syms
       else:
-        raiseAssert("unreachable")
+        bug("unreachable")
   takeParRi c, n
 
 proc semMixinStmt(c: var SemContext; n: var Cursor; toMixin: var HashSet[StrId]) =
   takeToken c, n
   while n.kind != ParRi:
-    let name = getIdent(n)
+    let name = takeIdent(n)
     if name == StrId(0):
       c.buildErr n.info, "invalid identifier"
     toMixin.incl(name)
@@ -137,7 +137,7 @@ proc getIdentReplaceParams(c: var UntypedCtx, n: var Cursor): bool =
     result = false
     takeToken c.c[], n
   of ParLe:
-    if n == $QuotedX:
+    if n.exprKind == QuotedX:
       takeToken c.c[], n
       result = false
       while n.kind != ParRi:
@@ -182,7 +182,7 @@ proc addDecl(c: var UntypedCtx; name, pragmas: Cursor; k: SymKind; nameStart, de
       var newName = cursorAt(newNameBuf, 0)
       if not hasParam:
         if k != FldY:
-          let ident = getIdent(newName)
+          let ident = takeIdent(newName)
           c.inject(ident)
       else:
         c.c.dest.replace(newName, nameStart)
@@ -195,7 +195,7 @@ proc addDecl(c: var UntypedCtx; name, pragmas: Cursor; k: SymKind; nameStart, de
       if not hasParam:
         let info = newName.info
         if newName.kind != Symbol and not (newName.kind == Ident and pool.strings[newName.litId] == "_"):
-          var ident = pool.strings[getIdent(newName)]
+          var ident = pool.strings[takeIdent(newName)]
           var symName = ident
           makeLocalSym(c.c[], symName)
           let s = Sym(kind: k, name: pool.syms.getOrIncl(symName),
@@ -226,7 +226,7 @@ proc addBareDecl(c: var UntypedCtx, n: Cursor, k: SymKind, nameStart, declStart:
     if not hasParam:
       let info = newName.info
       if newName.kind != Symbol and not (newName.kind == Ident and pool.strings[newName.litId] == "_"):
-        var ident = pool.strings[getIdent(newName)]
+        var ident = pool.strings[takeIdent(newName)]
         makeLocalSym(c.c[], ident)
         let s = Sym(kind: k, name: pool.syms.getOrIncl(ident),
                     pos: c.c.dest.len)
@@ -240,8 +240,7 @@ proc addBareDecl(c: var UntypedCtx, n: Cursor, k: SymKind, nameStart, declStart:
     else:
       c.c.dest.replace(newName, nameStart)
   else:
-    var name = n
-    let ident = getIdent(name)
+    let ident = getIdent(n)
     c.inject(ident)
 
 proc semTemplSymbol(c: var UntypedCtx; n: var Cursor; firstSym: SymId; count: int; start: int) =
@@ -311,7 +310,7 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
     closeScope(c)
   of DistinctT:
     semTemplBodySons c, n
-  of ProctypeT, IteratorT, ParamsT:
+  of RoutineTypes:
     # open scope for param decls
     openScope(c)
     semTemplBodySons c, n
@@ -319,7 +318,10 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
   of ItertypeT:
     semTemplBodySons c, n
   of NoType:
-    raiseAssert("unreachable")
+    if n.kind == Ident:
+      semTemplBody c, n
+    else:
+      bug("unreachable")
 
 proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
   let orig = n
@@ -480,12 +482,12 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
       of ForS:
         takeToken c.c[], n
         openScope c
+        semTemplBody c, n
         case n.substructureKind
         of UnpackFlatU, UnpackTupU:
           semTemplBodySons c, n
         else:
           error "illformed AST", n
-        semTemplBody c, n
         openScope c
         semTemplBody c, n
         closeScope c
@@ -538,10 +540,12 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
       inc c.noGenSym
       semTemplBody c, n
       dec c.noGenSym
+      if n.kind != ParRi:
+        # annoying inheritance depth:
+        takeTree c.c[], n
       takeParRi c.c[], n
     of QuotedX:
-      var n2 = n
-      let ident = getIdent(n2)
+      let ident = getIdent(n)
       # emulate `qualifiedLookUp(n) != nil`:
       if isDeclared(c.c[], ident):
         # consider identifier

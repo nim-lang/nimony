@@ -3,7 +3,7 @@
 #           NIFC Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -27,6 +27,7 @@ type
     lookedAtBodies: HashSet[SymId]
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor)
+proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor)
 
 proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
                           viaPointer: var bool) =
@@ -63,6 +64,13 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
   of EnumT:
     # enums do not depend on anything so always safe to generate them
     o.ordered.add tracebackTypeC(ch), TypedefKeyword
+  of ProctypeT:
+    if viaPointer:
+      o.forwardedDecls.add parent, TypedefKeyword
+    else:
+      if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
+        traverseProctypeBody(m, o, ch)
+      o.ordered.add tracebackTypeC(ch), TypedefKeyword
   else:
     if ch.kind == Symbol:
       # follow the symbol to its definition:
@@ -77,7 +85,10 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
       else:
         var n = readonlyCursorAt(m.src, def.pos)
         let decl = asTypeDecl(n)
-        if not containsOrIncl(o.lookedAtBodies, decl.name.symId):
+        if not containsOrIncl(o.lookedAtBodies, decl.name.symId) or viaPointer:
+          # For `viaPointer` we must traverse it again, in a shallow manner or
+          # else we might miss crucial forward declarations. This case is triggered
+          # by the `Continuation` type.
           recordDependencyImpl m, o, n, decl.body, viaPointer
     else:
       discard "uninteresting type as we only focus on the required struct declarations"
@@ -87,30 +98,54 @@ proc recordDependency(m: Module; o: var TypeOrder; parent, child: Cursor) =
   recordDependencyImpl m, o, parent, child, viaPointer
 
 proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor) =
+  let kind = t.typeKind
   var n = t
   inc n
-  if n.kind == Symbol:
-    # inheritance
-    recordDependency m, o, t, n
-    inc n
-  elif n.kind == DotToken:
-    inc n
-  else:
-    error m, "expected `Symbol` or `.` for inheritance but got: ", n
-  while n.substructureKind == FldU:
-    let decl = takeFieldDecl(n)
-    recordDependency m, o, t, decl.typ
+  if kind == ObjectT:
+    if n.kind == Symbol:
+      # inheritance
+      recordDependency m, o, t, n
+      inc n
+    elif n.kind == DotToken:
+      inc n
+    else:
+      error m, "expected `Symbol` or `.` for inheritance but got: ", n
+  var nested = 1
+  while true:
+    case n.kind:
+    of ParRi:
+      dec nested
+      inc n
+      if nested == 0: break
+    of ParLe:
+      if n.substructureKind == FldU:
+        let decl = takeFieldDecl(n)
+        recordDependency m, o, t, decl.typ
+      elif n.typeKind in {ObjectT, UnionT}: # anonymous object/union
+        inc nested
+        if n.typeKind == ObjectT:
+          inc n
+          assert n.kind == DotToken, "anonymous objects cannot inherit any types"
+          inc n
+        else:
+          inc n
+      else:
+        error m, "unexpected node inside object: ", n
+    else:
+      error m, "unexpected token inside object: ", n
 
 proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor) =
   var n = t
   let procType = takeProcType(n)
   var param = procType.params
+  # we only have weak deps to the param types:
+  var viaPointer = true
   if param.kind == ParLe:
     param = param.firstSon
     while param.kind != ParRi:
       let paramDecl = takeParamDecl(param)
-      recordDependency m, o, t, paramDecl.typ
-  recordDependency m, o, t, procType.returnType
+      recordDependencyImpl m, o, t, paramDecl.typ, viaPointer
+  recordDependencyImpl m, o, t, procType.returnType, viaPointer
 
 proc traverseTypes(m: Module; o: var TypeOrder) =
   for ch in m.types:
@@ -237,24 +272,27 @@ proc getPtrQualifier(c: var GeneratedCode; n: Cursor; isCppRef: var bool): strin
   of NoQualifier:
     error c.m, "expected pointer qualifier but got: ", n
 
-proc genType(c: var GeneratedCode; n: var Cursor; name = "")
+proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false)
 
-template maybeAddName(c: var GeneratedCode; name: string) =
+template maybeAddName(c: var GeneratedCode; name: string; isConst: bool) =
+  if isConst:
+    c.add Space
+    c.add "const"
   if name != "":
     c.add Space
     c.add name
 
-template atom(c: var GeneratedCode; s, name: string) =
+template atom(c: var GeneratedCode; s, name: string; isConst: bool) =
   c.add s
-  maybeAddName(c, name)
+  maybeAddName(c, name, isConst)
 
-proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isBool = false) =
+proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isConst: bool; isBool = false) =
   if isBool:
     inc n
     while n.kind != ParRi:
       c.add getNumberQualifier(c, n)
       skip n
-    atom(c, typeName, name)
+    atom(c, typeName, name, isConst)
     inc n
   else:
     var s = ""
@@ -266,9 +304,9 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isB
       c.add getNumberQualifier(c, n)
       skip n
     skipParRi n
-    atom(c, s, name)
+    atom(c, s, name, isConst)
 
-proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string) =
+proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string; isConst: bool) =
   inc n
   var elem = n
   skip n # element type
@@ -282,9 +320,9 @@ proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string) =
     c.add "&"
   else:
     c.add Star
-  maybeAddName(c, name)
+  maybeAddName(c, name, isConst)
 
-proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
+proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   let decl = takeProcType(n)
   var lastCallConv = NoCallConv
   if decl.pragmas.kind == ParLe:
@@ -307,7 +345,7 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
     c.add Comma
     var pragmas = decl.pragmas
     genProcTypePragmas c, pragmas, isVarargs
-    maybeAddName(c, name)
+    maybeAddName(c, name, isConst)
     c.add ParRi
   else:
     if decl.returnType.kind == DotToken:
@@ -320,7 +358,7 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
     var pragmas = decl.pragmas
     genProcTypePragmas c, pragmas, isVarargs
     c.add Star # "(*fn)"
-    maybeAddName(c, name)
+    maybeAddName(c, name, isConst)
     c.add ParRi
   c.add ParLe
   var i = 0
@@ -339,38 +377,38 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = "") =
     c.add "void"
   c.add ParRi
 
-proc genType(c: var GeneratedCode; n: var Cursor; name = "") =
+proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   case n.typeKind
   of VoidT:
-    atom(c, "void", name)
+    atom(c, "void", name, isConst)
     skip n
   of IT:
-    atomNumber(c, n, "NI", name)
+    atomNumber(c, n, "NI", name, isConst)
   of UT:
-    atomNumber(c, n, "NU", name)
+    atomNumber(c, n, "NU", name, isConst)
   of FT:
-    atomNumber(c, n, "NF", name)
+    atomNumber(c, n, "NF", name, isConst)
   of BoolT:
-    atomNumber(c, n, "NB8", name, isBool = true)
+    atomNumber(c, n, "NB8", name, isConst, isBool = true)
   of CT:
-    atomNumber(c, n, "NC", name)
+    atomNumber(c, n, "NC", name, isConst)
   of NoType:
     if n.kind == Symbol:
-      atom(c, mangle(pool.syms[n.symId]), name)
+      atom(c, mangle(pool.syms[n.symId]), name, isConst)
       inc n
     else:
       error c.m, "node is not a type: ", n
   of PtrT, APtrT:
-    atomPointer(c, n, name)
+    atomPointer(c, n, name, isConst)
   of FlexarrayT:
     inc n
     genType c, n
-    maybeAddName(c, name)
+    maybeAddName(c, name, isConst)
     c.add BracketLe
     c.add BracketRi
     skipParRi n
   of ProctypeT:
-    genProcType(c, n, name)
+    genProcType(c, n, name, isConst)
   of ParamsT, UnionT, ObjectT, EnumT, ArrayT:
     error c.m, "nominal type not allowed here: ", n
 
@@ -382,29 +420,52 @@ proc mangleField(c: var GeneratedCode; n: Cursor): string =
     error c.m, "field name must be a SymDef, but got: ", n
 
 proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
+  let kind = n.typeKind
   inc n
-  if n.kind == DotToken:
-    inc n
-  elif n.kind == Symbol:
-    genType c, n, "Q"
-    c.add Semicolon
-  else:
-    error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
-
-  while n.kind != ParRi:
-    if n.substructureKind == FldU:
-      var decl = takeFieldDecl(n)
-      let f = mangleField(c, decl.name)
-      var bits = 0'i64
-      genFieldPragmas c, decl.pragmas, bits
-      genType c, decl.typ, f
-      if bits > 0:
-        c.add " : "
-        c.add $bits
+  if kind == ObjectT:
+    if n.kind == DotToken:
+      inc n
+    elif n.kind == Symbol:
+      genType c, n, "Q"
       c.add Semicolon
     else:
+      error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
+
+  var nested = 1
+  while true:
+    case n.kind:
+    of ParRi:
+      dec nested
+      inc n
+      if nested == 0: break
+      c.add CurlyRi   # close anonymous struct/union
+      c.add Semicolon
+    of ParLe:
+      if n.substructureKind == FldU:
+        var decl = takeFieldDecl(n)
+        let f = mangleField(c, decl.name)
+        var bits = 0'i64
+        genFieldPragmas c, decl.pragmas, bits
+        genType c, decl.typ, f
+        if bits > 0:
+          c.add " : "
+          c.add $bits
+        c.add Semicolon
+      elif n.typeKind == ObjectT:
+        inc nested
+        inc n
+        inc n # base
+        c.add AnonStruct
+        c.add CurlyLe
+      elif n.typeKind == UnionT:
+        inc nested
+        inc n
+        c.add AnonUnion
+        c.add CurlyLe
+      else:
+        error c.m, "expected `fld` but got: ", n
+    else:
       error c.m, "expected `fld` but got: ", n
-  inc n # ParRi
 
 proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
   # (efld SymbolDef Expr)
@@ -450,6 +511,21 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
       error c.m, "expected `efld` but got: ", n
   inc n # ParRi
 
+proc parseTypePragmas(c: var GeneratedCode; n: Cursor): set[NifcPragma] =
+  result = {}
+  var n = n
+  if n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind:
+      of PackedP:
+        result.incl PackedP
+        skip n
+      else:
+        error c.m, "got unexpected pragma: ", n
+  elif n.kind != DotToken:
+    error c.m, "expected type pragmas but got: ", n
+
 proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
   for (d, declKeyword) in o.forwardedDecls.s:
     var n = d
@@ -490,7 +566,16 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
         genType c, decl.body, s
         c.add Semicolon
       else:
+        let prag = parseTypePragmas(c, decl.pragmas)
         c.add declKeyword
+        if PackedP in prag:
+          # `alignas` is in C23 standard but `alignas(1)` doesn't reduce minimum alignment and
+          # work like `packed` attribute.
+          # `[[gnu::packed]]` is not supported by MSVC and old GCC/Clang.
+          # `#pragma pack(push, 1)` is supported by GCC, Clang and MSVC, but a not in C standard
+          # and `aligned (x)` attribute in struct fields are ignored.
+          # `__attribute__ ((__packed__))` is not supported by MSVC.
+          c.add "__attribute__ ((__packed__)) "
         c.add s
         c.add CurlyLe
         # XXX generate attributes and pragmas here

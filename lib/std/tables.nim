@@ -1,5 +1,5 @@
 
-import hashes, syncio
+import hashes, assertions
 
 type
   Keyable* = concept
@@ -14,7 +14,7 @@ type
     hashes: seq[HashEntry]
 
 proc mustRehash(length, counter: int): bool {.inline.} =
-  result = (length * 2 < counter * 3) or (length - counter < 4)
+  result = (length < counter div 2 + counter) or (length - counter < 4)
 
 proc isFilled(a: HashEntry): bool {.inline.} = a.position > 0
 
@@ -66,21 +66,30 @@ proc getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
   else:
     default(V)
 
+proc getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
+  ## Quits if the key is not found.
+  let idx = rawGet(t, k, hash(k))
+  assert idx >= 0
+  t.data[idx][1]
+
 when defined(nimony):
-  proc `[]`*[K: Keyable, V](t: var Table[K, V]; k: K): var V =
+  proc `[]`*[K: Keyable, V](t: Table[K, V]; k: K): var V {.raises.} =
     let idx = rawGet(t, k, hash(k))
-    assert idx >= 0
+    if idx < 0:
+      raise KeyError
     t.data[idx][1]
 
 else:
-  proc `[]`*[K, V](t: var Table[K, V]; k: K): var V =
+  proc `[]`*[K, V](t: var Table[K, V]; k: K): var V {.raises.} =
     let idx = rawGet(t, k, hash(k))
-    assert idx >= 0
+    if idx < 0:
+      raise KeyError
     t.data[idx][1]
 
-  proc `[]`*[K, V](t: Table[K, V]; k: K): V =
+  proc `[]`*[K, V](t: Table[K, V]; k: K): V {.raises.} =
     let idx = rawGet(t, k, hash(k))
-    assert idx >= 0
+    if idx < 0:
+      raise KeyError
     t.data[idx][1]
 
 proc rawPut[K, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
@@ -111,10 +120,12 @@ proc mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V 
 
 proc len*[K, V](t: Table[K, V]): int {.inline.} = t.data.len
 
-iterator pairs*[K, V](t: Table[K, V]): (K, V) =
+iterator pairs*[K, V](t: Table[K, V]): (lent K, lent V) =
   for i in 0 ..< t.data.len:
-    # XXX Nim ORC bug:
-    # Does not work: `yield t.data[i]
+    yield (t.data[i][0], t.data[i][1])
+
+iterator mpairs*[K, V](t: Table[K, V]): (lent K, var V) =
+  for i in 0 ..< t.data.len:
     yield (t.data[i][0], t.data[i][1])
 
 proc initTable*[K, V](): Table[K, V] =

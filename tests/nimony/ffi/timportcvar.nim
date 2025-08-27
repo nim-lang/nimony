@@ -1,4 +1,4 @@
-import std/syncio
+import std/assertions
 import deps/mimportcvar
 
 {.emit: "int cvar = 11;"}
@@ -19,3 +19,17 @@ var cvarInDotC {.importc: "cvarInDotC", header: "ctestvars.h".}: int32
 assert cvarInDotC == 55
 
 assert cvarInDotCInModule == 66
+
+{.emit:"""
+const int TEST1 = 123;
+#define TEST2 321
+""".}
+
+let
+  TEST0 = 1
+  TEST1 {.importc, nodecl.}: cint
+  TEST2 {.importc: "TEST2", nodecl.}: cint
+
+assert TEST0 == 1
+assert TEST1 == 123
+assert TEST2 == 321

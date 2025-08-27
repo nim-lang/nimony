@@ -1,0 +1,15 @@
+(stmts
+  (var :x.0 . . (i +32) .)
+  (while (le . x.0 +10) (stmts
+    (assert (report) (le . x.0 +34))
+    (asgn x.0 (add . x.0 +1))
+  ))
+
+  (assert (report) (error) (le . x.0 +12))
+
+  (while (true) (stmts
+    (if (elif (le . +10 x.0) (stmts (break .))))
+    (assert (report) (le . x.0 +39))
+    (asgn x.0 (add . x.0 +1))
+  ))
+)

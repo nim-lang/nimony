@@ -1,0 +1,15 @@
+(stmts
+(if (elif (eq +11 +11) (call echo "true")))
+
+(if
+  (elif (eq +12 +12) (call echo "true"))
+  (elif (and (eq +2 +3) (eq +4 +5)) (call echo "elif"))
+  (else (call echo "false"))
+)
+
+(while (eq +13 +13) (call echo "while"))
+
+(while (or (eq +9 +9) (eq +4 +5)) (call echo "while 2"))
+
+(let :my.var . . (i -1) (call echo.0 "abc" (and (eq +5 -5) (eq +6 -6))))
+)

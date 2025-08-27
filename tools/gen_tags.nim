@@ -52,50 +52,43 @@ type
   EnumImpls = array[EnumList, seq[EnumField]]
 
 proc writeClassifier(f: File; e: EnumList; fields: seq[EnumField]) =
-  var first = -1
-  var last = -1
+  var first = ""
+  var last = ""
   var prev = -1
   var holes: seq[int] = @[]
   for f in fields:
-    if first < 0: first = f.value
-    if last < f.value: last = f.value
+    if first.len == 0: first = f.tag
+    last = f.tag
     if prev >= 0 and f.value != prev + 1:
       for h in prev + 1..f.value - 1:
         holes.add h
     prev = f.value
-  f.write "\n\nproc rawTagIs" & $e & "*(raw: uint32): bool {.inline.} ="
+  f.write "\n\nproc rawTagIs" & $e & "*(raw: TagEnum): bool {.inline.} ="
   if holes.len <= 3:
-    f.write "\n  raw >= " & $first & "'u32 and raw <= " & $last & "'u32"
+    f.write "\n  raw >= " & toNimName(first, "TagId") & " and raw <= " & toNimName(last, "TagId")
     for h in holes:
-      f.write " and raw != " & $h & "'u32"
+      f.write " and raw != TagEnum(" & $h & ")"
     f.write "\n"
   else:
-    assert last - first + 1 < 256, "cannot generate enum " & $e
-    let useOffset = first > 1 or (first != 0 and last >= 256)
-    if useOffset:
-      f.write "\n  let r = raw - " & $first & "'u32"
-    else:
-      f.write "\n  let r = raw"
-    f.write "\n  r <= 255'u32 and r.uint8 in {"
+    f.write "\n  raw in {"
     var i = 0
     for field in fields:
       if i > 0: f.write ", "
-      assert field.value >= first and field.value <= last
-      let v = if useOffset: field.value - first else: field.value
-      f.write $v & "'u8"
+      f.write toNimName(field.tag, "TagId")
       inc i
     f.write "}\n"
 
 proc writeModel(basename: string; data: EnumImpls; first, last: EnumList) =
   let f = open(basename & "_tags.nim", fmWrite)
   f.writeLine Header
+  f.writeLine "import tags"
   for e in first..last:
     f.write "\ntype"
     f.write "\n  " & $e & "* = enum"
     f.write "\n    " & toSuffix(e)[1]
     for field in data[e]:
       f.write "\n    " & field.name
-      f.write " = (" & $field.value & ", " & field.tag & ")"
+      f.write " = (ord(" & toNimName(field.tag, "TagId") & "), " & escape(field.tag) & ")"
       if field.desc.len > 0:
         f.write "  ## " & field.desc
     if e != NiflerKind:
@@ -105,17 +98,17 @@ proc writeModel(basename: string; data: EnumImpls; first, last: EnumList) =
 proc writeTagsFile(output: string; data: seq[(string, int)]) =
   let f = open(output, fmWrite)
   f.writeLine Header
-  f.writeLine "const"
-  f.writeLine "  TagData* = ["
-  var i = 0
+  f.writeLine "type\n  TagEnum* = enum"
+  f.writeLine "    InvalidTagId"
   for d in data:
-    if i > 0: f.write ",\n"
+    f.writeLine "    " & toNimName(d[0], "TagId")
+  f.writeLine "const"
+  f.writeLine "  TagData*: array[TagEnum, (string, int)] = ["
+  f.write "    (" & escape("InvalidTagId") & ", 0)"
+  for d in data:
+    f.write ",\n"
     f.write "    (" & escape(d[0]) & ", " & $d[1] & ")"
-    inc i
   f.writeLine "\n  ]"
-  f.writeLine "const"
-  for d in data:
-    f.writeLine "  " & toNimName(d[0], "TagId") & "* = " & $d[1]
 
 proc extractTagName(s: string): string =
   var i = 0
@@ -154,7 +147,7 @@ proc genTags(inp: File) =
       let e = shortcutToEnumList(a)
       enumDecls[e].add EnumField(
         name: toNimName(tagName, toSuffix(e)[0]),
-        tag: escape(tagName),
+        tag: tagName,
         value: i,
         desc: desc
       )

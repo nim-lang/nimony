@@ -7,7 +7,9 @@
  (stmts
   (discard 8 "good")) 2,20
  (stmts
-  (discard 8 "good")) ,28
+  (discard 8 "good")) 2,25
+ (stmts
+  (discard 8 "good")) ,27
  (proc 5 :not.0.twho7opw81
   (not) . . 11
   (params 1
@@ -15,6 +17,8 @@
     (bool) .)) 11
   (bool) 27
   (pragmas 2
-   (magic 7 Not)) . .) 2,33
+   (magic 7 Not)) . .) 2,32
+ (stmts
+  (discard 8 "good")) 2,35
  (stmts
   (discard 8 "good")))

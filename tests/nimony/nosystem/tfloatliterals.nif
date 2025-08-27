@@ -1,0 +1,22 @@
+(.nif24)
+0,1,tests/nimony/nosystem/tfloatliterals.nim(stmts
+ (discard 8 +0.0) ,1
+ (discard 8 +1.0) ,2
+ (discard 8 +1.0) ,3
+ (discard 8 -1.0) ,4
+ (discard 8 +10.0) ,5
+ (discard 8 -10.0) ,6
+ (discard 8 +100.0) ,7
+ (discard 8 -100.0) ,11
+ (discard 8 +1000000000000000.0) ,12
+ (discard 8 -1000000000000000.0) ,13
+ (discard 8 +10000000000000000.0) ,14
+ (discard 8 -10000000000000000.0) ,15
+ (discard 8 +1E+17) ,16
+ (discard 8 -1E+17) ,17
+ (discard 8 +1E+18) ,18
+ (discard 8 -1E+18) ,20
+ (discard 8 +1.23E+19) ,21
+ (discard 8 -1.23E+19) ,24
+ (discard 8 +0.0) ,25
+ (discard 8 -0.0))

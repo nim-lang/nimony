@@ -1,0 +1,3 @@
+tests/nimony/modules/treexport3.nim(9, 9) Error: undeclared identifier
+tests/nimony/modules/treexport3.nim(10, 9) Error: undeclared identifier
+tests/nimony/modules/treexport3.nim(11, 9) Error: undeclared identifier

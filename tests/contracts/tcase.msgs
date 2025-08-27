@@ -1,0 +1,3 @@
+OK 0 <= v1 + -3
+OK v1 <= 0 + 3
+OK (could indeed not prove) v1 <= 0 + 3

@@ -2,7 +2,8 @@
 
 import std / [assertions]
 include nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
+  builtintypes, langmodes, renderer, reporters]
 import hexer_context
 
 type
@@ -11,6 +12,8 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     tempUseBufStack: seq[TokenBuf]
+    activeChecks: set[CheckMode]
+    pending: TokenBuf
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): SymId =
   let s = "`desugar." & $c.counter & "." & c.thisModuleSuffix
@@ -63,14 +66,14 @@ proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
     inc n
   else:
-    error "expected ')', but got: ", n
+    bug "expected ')', but got: ", n
 
-proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
 
-proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   copyInto dest, n:
     while n.kind != ParRi:
-      tr(c, dest, n)
+      tr(c, dest, n, isTopScope)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -78,12 +81,52 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.typeCache.takeLocalHeader(dest, n, kind)
     tr(c, dest, n)
 
+proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  inc n # (stmts)
+  while n.kind != ParRi:
+    tr(c, dest, n)
+  skipParRi n
+
+proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cursor; pragmas: var Cursor): bool =
+  # returns false if the routine is generic
+  result = true # assume it is concrete
+  let sym = n.symId
+  for i in 0..<BodyPos:
+    if i == ParamsPos:
+      c.typeCache.registerParams(sym, decl, n)
+    elif i == TypevarsPos:
+      result = n.substructureKind != TypevarsU
+    elif i == ProcPragmasPos:
+      pragmas = n
+    takeTree dest, n
+
+proc trRequires(c: var Context; dest: var TokenBuf; pragmas: Cursor) =
+  if not cursorIsNil(pragmas) and BoundCheck in c.activeChecks:
+    let req = extractPragma(pragmas, RequiresP)
+    if not cursorIsNil(req):
+      let info = req.info
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.copyIntoKind NotX, info:
+            var n = req
+            tr(c, dest, n)
+          dest.copyIntoKind StmtsS, info:
+            dest.copyIntoKind CallS, info:
+              dest.addSymUse pool.syms.getOrIncl("panic.0." & SystemModuleSuffix), info
+              let msg = infoToStr(pragmas.info) & ": " & asNimCode(req) & " [AssertionDefect]\n"
+              dest.addStrLit msg, info
+
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
+  let decl = n
   copyInto dest, n:
-    let isConcrete = c.typeCache.takeRoutineHeader(dest, n)
-    if isConcrete:
-      tr(c, dest, n)
+    var pragmas = default(Cursor)
+    let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
+    if isConcrete and n.stmtKind == StmtsS:
+      dest.add n # (stmts)
+      trRequires(c, dest, pragmas)
+      trProcBody(c, dest, n)
+      dest.addParRi()
     else:
       takeTree dest, n
   c.typeCache.closeScope()
@@ -225,9 +268,6 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case size
   of 1, 2, 4, 8:
     case kind
-    of CardX:
-      # XXX needs countBits compilerproc
-      raiseAssert("unimplemented")
     of LtSetX:
       copyIntoKind dest, AndX, info:
         addTypedOp dest, EqX, cType, info:
@@ -280,12 +320,9 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addUIntLit(uint64(mask), info)
         dest.addUIntLit(0, info)
     else:
-      raiseAssert("unreachable")
+      bug("unreachable")
   else:
     case kind
-    of CardX:
-      # XXX originally implemented as cardSet compilerproc
-      raiseAssert("unimplemented")
     of LtSetX, LeSetX:
       dest.add parLeToken(ExprX, info)
       let resValue = [parLeToken(TrueX, info), parRiToken(info)]
@@ -352,7 +389,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
             of PlusSetX: BitorX
             of XorSetX: BitxorX
             of MulSetX, MinusSetX: BitandX
-            else: raiseAssert("unreachable")
+            else: bug("unreachable")
           addUIntTypedOp dest, op, 8, info:
             copyIntoKind dest, ArrAtX, info:
               dest.addSubtree a
@@ -383,10 +420,49 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addUIntLit(7, info)
         dest.addUIntLit(0, info)
     else:
-      raiseAssert("unreachable")
+      bug("unreachable")
   if useTemp:
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
+
+proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n
+  let typ = n
+  if typ.typeKind != SetT:
+    error "expected set type for set op", n
+  var baseType = typ
+  inc baseType
+  var argsBuf = createTokenBuf(16)
+  swap dest, argsBuf
+  skip n # nothing to do with set type
+  let aStart = dest.len
+  tr(c, dest, n)
+  swap dest, argsBuf
+  skipParRi n
+  let a = cursorAt(argsBuf, aStart) # no temp needed
+  var err = false
+  let size = asSigned(bitsetSizeInBytes(baseType), err)
+  assert not err
+  case size
+  of 1, 2:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("countBits32.0." & SystemModuleSuffix), info)
+      addUIntTypedOp dest, CastX, 32, info:
+        dest.addSubtree a
+  of 4:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("countBits32.0." & SystemModuleSuffix), info)
+      dest.addSubtree a
+  of 8:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("countBits64.0." & SystemModuleSuffix), info)
+      dest.addSubtree a
+  else:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(pool.syms.getOrIncl("cardSet.0." & SystemModuleSuffix), info)
+      dest.arrayToPointer(a, info)
+      dest.addIntLit(size, info)
 
 proc genSingleInclSmall(dest: var TokenBuf; s, elem: Cursor; size: int; info: PackedLineInfo) =
   let bits = size * 8
@@ -591,7 +667,6 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSubtree a
         addUIntTypedOp dest, ShrX, -1, info:
           addUIntTypedOp dest, CastX, -1, info:
-            dest.addParRi()
             dest.addSubtree b
           dest.addUIntLit(3)
     copyIntoKind dest, AsgnS, info:
@@ -629,7 +704,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
     dec nestedExpr
 
-proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
     takeTree dest, n
@@ -661,21 +736,30 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trLocal c, dest, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProc c, dest, n
-      of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-        ForS, CmdS, IncludeS, ImportS, FromS, ImportExceptS,
+      of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
+        ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
         ExportS, CommentS,
         PragmasS:
         takeTree dest, n
+      of TypeS:
+        if isTopScope:
+          takeTree dest, n
+        else:
+          takeTree c.pending, n
       of ScopeS:
         c.typeCache.openScope()
         trSons(c, dest, n)
         c.typeCache.closeScope()
+      of StmtsS:
+        trSons(c, dest, n, isTopScope = isTopScope)
       else:
         trSons(c, dest, n)
     of SetConstrX:
       genSetConstr(c, dest, n)
-    of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX:
+    of PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX:
       genSetOp(c, dest, n)
+    of CardX:
+      genCard(c, dest, n)
     of TypeofX:
       takeTree dest, n
     of DdotX:
@@ -692,12 +776,19 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       trSons(c, dest, n)
   of ParRi:
-    raiseAssert "unexpected ')' inside"
+    bug "unexpected ')' inside"
 
-proc desugar*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+proc desugar*(n: Cursor; moduleSuffix: string; activeChecks: set[CheckMode]): TokenBuf =
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
-  tr c, result, n
+  tr c, result, n, isTopScope = true
+
+  assert result[result.len-1].kind == ParRi
+  shrink(result, result.len-1)
+
+  result.add c.pending
+  result.addParRi()
+
   c.typeCache.closeScope()

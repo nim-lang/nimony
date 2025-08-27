@@ -1,5 +1,5 @@
 
-import std / [syncio]
+import std / [syncio, assertions]
 
 proc effect(s: string): string =
   echo s
@@ -155,3 +155,77 @@ assert not isCppKeyword("quux")
 assert not isCppKeyword("corge")
 assert not isCppKeyword("grault")
 assert not isCppKeyword("")
+
+block:
+  type Result = enum none, a, b, c, d, e, f
+
+  block:
+    proc foo1(x: cstring): Result =
+      const y = cstring"hash"
+      result = none
+      case x
+      of "Andreas", "Rumpf": result = a
+      of cstring"aa", "bb": result = b
+      of "cc", y, "when": result = c
+      of "will", "be", "generated": result = d
+      of "": result = f
+
+    var s = "Andreas"
+    assert foo1(s.toCString) == a
+
+  block:
+    proc foo1(): Result =
+      const y = cstring"hash"
+      result = none
+      case "Andreas".cstring
+      of "Andreas", "Rumpf": result = a
+      of cstring"aa", "bb": result = b
+      of "cc", y, "when": result = c
+      of "will", "be", "generated": result = d
+      of "": result = f
+
+    assert foo1() == a
+
+  block:
+    proc foo1(): Result =
+      const y = cstring"hash"
+      var x = "Andreas"
+      result = none
+      case x.toCString
+      of "Andreas", "Rumpf": result = a
+      of cstring"aa", "bb": result = b
+      of "cc", y, "when": result = c
+      of "will", "be", "generated": result = d
+      of "": result = f
+
+    assert foo1() == a
+
+block:
+  proc foo(x: int): string =
+    case x
+    of 1: result = "digit"
+    else: result = "number"
+
+
+  var r = foo(10)
+  assert r == "number"
+
+block:
+  type
+    E = enum A, B, C
+
+  let s = A
+  echo s
+
+block:
+  type
+    E = enum A, B, C
+
+  let s = A
+  echo s
+
+type
+  E = enum A, B, C
+
+let s = A
+echo s

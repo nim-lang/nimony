@@ -41,6 +41,34 @@ proc extractModule*(s: string): string =
     dec i
   return ""
 
+type
+  SplittedSymName* = object
+    name*: string
+    module*: string
+
+proc splitSymName*(s: string): SplittedSymName =
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        return SplittedSymName(name: s, module: "")
+      else:
+        return SplittedSymName(name: substr(s, 0, i-1), module: substr(s, i+1))
+    dec i
+  return SplittedSymName(name: s, module: "")
+
+proc extractVersionedBasename*(s: string): string =
+  # From "abc.12.Mod132a3bc" extract "abc.12".
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        var j = i+1
+        while j < s.len and s[j] in {'0'..'9'}: inc j
+        return substr(s, 0, j-1)
+    dec i
+  return ""
+
 proc isInstantiation*(s: string): bool =
   # abc.12.Iabcdefghi.mod2
   var i = s.len - 2
@@ -67,3 +95,12 @@ proc removeModule*(s: string): string =
         return substr(s, 0, i-1)
     dec i
   return s
+
+when isMainModule:
+  import std/[assertions]
+  assert extractVersionedBasename("abc.12.Mod132a3bc") == "abc.12"
+  assert extractVersionedBasename("abc.Mod132a3bc") == ""
+
+  let sn = splitSymName("abc.12.Mod132a3bc")
+  assert sn.name == "abc.12"
+  assert sn.module == "Mod132a3bc"

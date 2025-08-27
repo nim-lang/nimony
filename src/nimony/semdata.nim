@@ -17,6 +17,7 @@ type
   TypeCursor* = Cursor
   SemRoutine* {.acyclic.} = ref object
     kind*: SymKind
+    hasDefer*: bool
     inGeneric*, inLoop*, inBlock*, inInst*: int
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
@@ -31,7 +32,10 @@ const
 
 type
   ImportedModule* = object
+    path*: string
+    fromPlugin*: string
     iface*: Iface
+    exports*: Table[SymId, ImportFilter]
 
   InstRequest* = object
     origin*: SymId
@@ -78,6 +82,7 @@ type
       ## syms of type instantiations to add their declarations to module
     includeStack*: seq[string]
     importedModules*: Table[SymId, ImportedModule]
+    selfModuleSym*: SymId
     instantiatedFrom*: seq[PackedLineInfo]
     importTab*: OrderedTable[StrId, seq[SymId]] ## mapping of identifiers to modules containing the identifier
     globals*, locals*: Table[string, int]
@@ -87,10 +92,11 @@ type
     instantiatedProcs*: Table[(SymId, string), SymId]
     thisModuleSuffix*: string
     moduleFlags*: set[ModuleFlag]
-    processedModules*: HashSet[string]
+    processedModules*: Table[string, SymId] # suffix to sym
     usedTypevars*: int
     phase*: SemPhase
     canSelfExec*: bool
+    inWhen*: int
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.
@@ -99,10 +105,22 @@ type
     hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
+    methods*: Table[SymId, seq[SymId]]
+    classIndexMap*: seq[ClassIndexEntry]
+    exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
+    pending*: TokenBuf
+    pendingTypePlugins*: Table[SymId, (StrId, PackedLineInfo)]
+    pendingModulePlugins*: seq[(StrId, PackedLineInfo)]
+    pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
+    cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
+    userPragmas*: Table[StrId, TokenBuf]
+    usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
+    pragmaStack*: seq[Cursor] # used to implement {.push.} and {.pop.}
+    passL*: seq[string]
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

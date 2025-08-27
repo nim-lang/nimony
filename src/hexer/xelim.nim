@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -36,6 +36,7 @@ proc isComplex(n: Cursor): bool =
         else:
           # More than one son is always complex:
           return true
+        inc nested
       else:
         inc n
         inc nested
@@ -88,12 +89,16 @@ proc add(dest: var TokenBuf; tar: Target) =
 
 proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
   var tar = Target(m: IsEmpty)
+  let typ = getType(c.typeCache, n)
   trExpr c, dest, n, tar
 
-  let info = n.info
-  copyIntoKind dest, AsgnS, info:
-    dest.addSymUse v, info
+  if typ.typeKind in {VoidT, AutoT}:
     dest.add tar
+  else:
+    let info = n.info
+    copyIntoKind dest, AsgnS, info:
+      dest.addSymUse v, info
+      dest.add tar
 
 proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
@@ -154,6 +159,14 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       trExpr c, dest, n, tar
       trExpr c, dest, n, tar
 
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # IMPORTANT: Stores into `tar` helper!
+  var tar = Target(m: IsAppend)
+  tar.t.copyInto n:
+    while n.kind != ParRi:
+      trExpr c, dest, n, tar
+  dest.add tar
+
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # if cond: a elif condB: b else: c
   # -->
@@ -189,14 +202,16 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         dest.add t0
         #copyIntoKind dest, StmtsS, info:
         if tar.m != IsIgnored:
-          trExprInto c, dest, n, tmp
+          copyIntoKind dest, StmtsS, info:
+            trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
       skipParRi n
     of ElseU:
       inc n
       if tar.m != IsIgnored:
-        trExprInto c, dest, n, tmp
+        copyIntoKind dest, StmtsS, info:
+          trExprInto c, dest, n, tmp
       else:
         trStmt c, dest, n
       skipParRi n
@@ -230,13 +245,15 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       copyInto(dest, n):
         takeTree dest, n # choices
         if tar.m != IsIgnored:
-          trExprInto c, dest, n, tmp
+          copyIntoKind dest, StmtsS, info:
+            trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
     of ElseU:
       copyInto(dest, n):
         if tar.m != IsIgnored:
-          trExprInto c, dest, n, tmp
+          copyIntoKind dest, StmtsS, info:
+            trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
     else:
@@ -255,7 +272,8 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
   copyInto(dest, n):
     if tar.m != IsIgnored:
-      trExprInto c, dest, n, tmp
+      copyIntoKind dest, StmtsS, info:
+        trExprInto c, dest, n, tmp
     else:
       trStmt c, dest, n
 
@@ -265,7 +283,8 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         copyInto(dest, n):
           takeTree dest, n # declarations
           if tar.m != IsIgnored:
-            trExprInto c, dest, n, tmp
+            copyIntoKind dest, StmtsS, info:
+              trExprInto c, dest, n, tmp
           else:
             trStmt c, dest, n
       of FinU:
@@ -317,8 +336,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
+  let decl = n
   copyInto dest, n:
-    let isConcrete = takeRoutineHeader(c.typeCache, dest, n)
+    let isConcrete = takeRoutineHeader(c.typeCache, dest, decl, n)
     if isConcrete:
       trStmt c, dest, n
     else:
@@ -334,12 +354,14 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
   copyInto(dest, n):
     takeTree dest, n # label or DotToken
     if tar.m != IsIgnored:
-      trExprInto c, dest, n, tmp
+      copyIntoKind dest, StmtsS, n.info:
+        trExprInto c, dest, n, tmp
     else:
       trStmt c, dest, n
 
-  #if tar.m != IsIgnored:
-  #  tar.t.addSymUse tmp, info
+
+  if tar.m != IsIgnored:
+    tar.t.addSymUse tmp, n.info
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
@@ -368,7 +390,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   of WhileS:
     trWhile c, dest, n
-  of AsgnS, CallS, CmdS, InclS, ExclS, AsmS, DeferS:
+  of CallKindsS, InclS, ExclS:
+    trCall c, dest, n
+  of AsgnS, AsmS, DeferS:
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
@@ -383,8 +407,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsIgnored)
     trBlock c, dest, n, tar
   of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-     ForS, IncludeS, ImportS, FromS, ImportExceptS,
-     ExportS, CommentS,
+     ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
+     ExportS, CommentS, AssumeS, AssertS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     takeTree dest, n
   of ScopeS, StaticstmtS:
@@ -433,7 +457,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
           while n.kind != ParRi:
             trExpr c, dest, n, tar
   of ParRi:
-    raiseAssert "unexpected ')' inside"
+    bug "unexpected ')' inside"
 
 proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)

@@ -3,7 +3,7 @@
 #           NIFC Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -21,6 +21,8 @@ proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
   c.add NewLine
 
 proc genIf(c: var GeneratedCode; n: var Cursor) =
+  let oldInToplevel = c.inToplevel
+  c.inToplevel = false
   var hasElse = false
   var hasElif = false
   inc n
@@ -57,6 +59,7 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
   skipParRi n
   if not hasElif and not hasElse:
     error c.m, "`if` expects `elif` or `else` but got: ", first
+  c.inToplevel = oldInToplevel
 
 proc genWhile(c: var GeneratedCode; n: var Cursor) =
   let oldInToplevel = c.inToplevel
@@ -71,30 +74,84 @@ proc genWhile(c: var GeneratedCode; n: var Cursor) =
   c.inToplevel = oldInToplevel
 
 proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
+  #[ The generated code is equivalent to:
+    bool needsFinalRethrow = false;
+    try {
+        // original code
+    } catch (...) {
+        needsFinalRethrow = true;
+        // catch block code
+    }
+
+    // finally section
+    if (needsFinalRethrow) { throw; }
+
+    Possible cases:
+    1. No exception in original code:
+       - needsFinalRethrow stays false
+       - finally runs normally
+       - needsFinalRethrow check fails, no rethrow
+
+    2. Exception in original code, no exception in finally:
+       - needsFinalRethrow set to true
+       - finally runs normally
+       - needsFinalRethrow succeeds, original exception rethrown
+
+    3. No exception in original code, exception in finally:
+       - needsFinalRethrow stays false
+       - finally throws directly
+       - never reaches rethrow check
+
+    4. Exception in original code, exception in finally:
+       - needsFinalRethrow set to true
+       - finally throws directly
+       - never reaches rethrow check
+  ]#
   inc n
 
+  # Add needsFinalRethrow flag
+  let varName = "needsFinalRethrow" & $c.currentProc.nextTemp
+  inc c.currentProc.nextTemp
+  c.add "bool " & varName & " = false;"
+  c.add NewLine
+
+  # Try block
   c.add TryKeyword
   c.add CurlyLe
   c.genStmt n
   c.add CurlyRi
 
+  # Catch block for original exception
   c.add CatchKeyword
   c.add "..."
   c.add ParRi
   c.add Space
   c.add CurlyLe
+  let beforeAsgn = c.code.len
+  var sections = 0
+  c.add varName & " = true;"
+  c.add NewLine
   if n.kind != DotToken:
     c.genStmt n
+    inc sections
   else:
     inc n
   c.add CurlyRi
 
+  # Finally section
   if n.kind != DotToken:
-    c.add CurlyLe
     c.genStmt n
-    c.add CurlyRi
+    inc sections
   else:
     inc n
+  if sections == 0:
+    c.code.shrink beforeAsgn
+    c.add CurlyRi
+
+  # Rethrow original exception if needed
+  c.add "if (" & varName & ") { throw; }"
+  c.add NewLine
+
   skipParRi n
 
 proc genScope(c: var GeneratedCode; n: var Cursor) =
@@ -107,8 +164,18 @@ proc genScope(c: var GeneratedCode; n: var Cursor) =
   c.add CurlyRi
   c.m.closeScope()
 
-proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
+proc isBranchValue(n: Cursor): bool =
+  var n = n
   if n.kind in {IntLit, UIntLit, CharLit, Symbol} or n.exprKind in {TrueC, FalseC}:
+    result = true
+  elif n.exprKind == SufC:
+    inc n
+    result = n.kind in {IntLit, UIntLit, CharLit}
+  else:
+    result = false
+
+proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
+  if isBranchValue(n):
     c.genx n
   else:
     error c.m, "expected valid `of` value but got: ", n
@@ -119,8 +186,8 @@ proc genCaseCond(c: var GeneratedCode; n: var Cursor) =
   # BranchRanges ::= (ranges BranchRange+)
   if n.substructureKind == RangesU:
     inc n
-    c.add CaseKeyword
     while n.kind != ParRi:
+      c.add CaseKeyword
       if n.substructureKind == RangeU:
         inc n
         genBranchValue c, n
@@ -161,6 +228,8 @@ proc genGoto(c: var GeneratedCode; n: var Cursor) =
 
 proc genSwitch(c: var GeneratedCode; n: var Cursor) =
   # (case Expr (of BranchRanges StmtList)* (else StmtList)?) |
+  let oldInToplevel = c.inToplevel
+  c.inToplevel = false
   c.add SwitchKeyword
   inc n
   let first = n
@@ -204,8 +273,9 @@ proc genSwitch(c: var GeneratedCode; n: var Cursor) =
     error c.m, "`case` expects `of` or `else` but got: ", first
   c.add CurlyRi
   skipParRi n
+  c.inToplevel = oldInToplevel
 
-proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
+proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   case vk
   of IsLocal:
     genVarDecl c, n, IsLocal, toExtern
@@ -217,7 +287,77 @@ proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) 
       genVarDecl c, n, IsThreadlocal, toExtern
   of IsConst:
     moveToDataSection:
-      genVarDecl c, n, IsConst, toExtern
+      genVarDecl c, n, IsConst, toExtern, useStatic
+
+proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
+  inc n # keepovf
+  let op = n.exprKind
+  var gcc = ""
+  var prefix = "__builtin_"
+  case op
+  of AddC:
+    gcc.add "add"
+  of SubC:
+    gcc.add "sub"
+  of MulC:
+    gcc.add "mul"
+  of DivC:
+    gcc.add "div_"
+    prefix = "_Qnifc_"
+  of ModC:
+    gcc.add "mod_"
+    prefix = "_Qnifc_"
+  else:
+    error c.m, "expected arithmetic operation but got: ", n
+  inc n # operation
+  if n.typeKind == IT:
+    gcc = prefix & "s" & gcc
+  elif n.typeKind == UT:
+    gcc = prefix & "u" & gcc
+  else:
+    error c.m, "expected integer type but got: ", n
+  inc n # type
+  var isLongLong = false
+  if n.kind == IntLit:
+    let bits = pool.integers[n.intId]
+    if bits == 64 or (bits == -1 and c.bits == 64):
+      gcc.add "ll"
+      isLongLong = true
+    else:
+      gcc.add "l"
+    inc n
+  else:
+    error c.m, "expected integer literal but got: ", n
+  c.currentProc.needsOverflowFlag = true
+  skipParRi n # end of type
+  c.add IfKeyword
+  c.add ParLe
+  gcc.add "_overflow"
+  c.add gcc
+  c.add ParLe
+  genx c, n
+  c.add Comma
+  genx c, n
+  skipParRi n
+  c.add Comma
+  if isLongLong:
+    c.add "(long long int*)"
+    c.add ParLe
+  c.add Amp
+  genLvalue c, n
+  if isLongLong:
+    c.add ParRi
+  c.add ParRi
+  c.add ParRi # end of condition
+  c.add CurlyLe
+  c.add OvfToken
+  c.add AsgnOpr
+  c.add OvfToken
+  c.add " || "
+  c.add "NIM_TRUE"
+  c.add Semicolon
+  c.add CurlyRi
+  skipParRi n
 
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
   case n.stmtKind
@@ -246,7 +386,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of TvarS:
     genVar c, n, IsThreadlocal
   of ConstS:
-    genVar c, n, IsConst
+    genVar c, n, IsConst, useStatic = true
   of EmitS:
     genEmitStmt c, n
   of AsgnS:
@@ -304,3 +444,5 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       genOnError(c, onErrAction)
   of ProcS, TypeS, ImpS, InclS:
     error c.m, "expected statement but got: ", n
+  of KeepovfS:
+    genKeepOverflow c, n

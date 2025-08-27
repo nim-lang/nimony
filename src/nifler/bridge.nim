@@ -13,7 +13,7 @@ import std / [assertions, syncio, os]
 
 import compiler / [
   ast, options, pathutils, renderer, lineinfos,
-  parser, llstream, idents, msgs]
+  syntaxes, llstream, idents, msgs]
 
 import ".." / lib / nifbuilder
 import ".." / models / nifler_tags
@@ -81,7 +81,7 @@ proc nodeKindTranslation(k: TNodeKind): NiflerKind =
   of nkIncludeStmt: IncludeL
   of nkExportStmt: ExportL
   of nkExportExceptStmt: ExportexceptL
-  of nkFromStmt: FromL
+  of nkFromStmt: FromimportL
   of nkPragma: PragmasL
   of nkAsmStmt: AsmL
   of nkDefer: DeferL
@@ -116,6 +116,7 @@ type
     b, deps: Builder
     portablePaths: bool
     depsEnabled, lineInfoEnabled: bool
+    inWhen: int
 
 proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
   var fp = toFullPath(c.conf, i.fileIndex)
@@ -174,6 +175,28 @@ proc splitIdentDefName(n: PNode): IdentDefName =
     result.name = n[1]
   else:
     result.name = n
+
+proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false)
+
+proc toVarTuple(v: PNode, n: PNode; c: var TranslationContext) =
+  c.b.addTree(UnpacktupL)
+  for i in 0..<v.len-1: # ignores typedesc
+    c.b.addTree(LetL)
+
+    toNif(v[i], n, c) # name
+
+    c.b.addEmpty 4 # export marker, pragmas, type, value
+    c.b.endTree() # LetDecl
+  c.b.endTree() # UnpackIntoTuple
+
+proc handleCaseIdentDefs(n, parent: PNode; c: var TranslationContext) =
+  if n.kind == nkIdentDefs and n.len > 3:
+    # multiple ident defs, we need to add StmtsL
+    c.b.addTree(StmtsL)
+    toNif(n, parent, c)
+    c.b.endTree()
+  else:
+    toNif(n, parent, c)
 
 proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   case n.kind
@@ -331,6 +354,13 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     toNif(n[paramsPos], n, c, allowEmpty = true)
     toNif(n[bodyPos], n, c)
     c.b.endTree()
+  of nkLambda:
+    relLineInfo(n, parent, c)
+    c.b.addTree(ProcL)
+    c.b.addEmpty # adds name placeholder
+    for i in 0..<n.len:
+      toNif(n[i], n, c, allowEmpty = true)
+    c.b.endTree()
   of nkOfInherit:
     if n.len == 1:
       toNif(n[0], parent, c)
@@ -347,13 +377,17 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
     c.b.endTree()
-    toNif(n[n.len-1], n, c)
+    handleCaseIdentDefs(n[n.len-1], n, c)
+    c.b.endTree()
+  of nkElse:
+    relLineInfo(n, parent, c)
+    c.b.addTree(ElseL)
+    handleCaseIdentDefs(n[n.len-1], n, c)
     c.b.endTree()
 
   of nkStmtListType, nkStmtListExpr:
     relLineInfo(n, parent, c)
     c.b.addTree(ExprL)
-    c.b.addEmpty # type information of StmtListExpr
     c.b.addTree(StmtsL)
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
@@ -398,56 +432,59 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     #   EnumType
     #   (Integer value, "string value")
     relLineInfo(n, parent, c)
-    c.b.addTree(EnumL)
-    if n.len > 0:
+    if n.len == 0:
+      # typeclass, compiles to identifier for nimony
+      c.b.addIdent "enum"
+    else:
+      c.b.addTree(EnumL)
       assert n[0].kind == nkEmpty
       c.b.addEmpty # base type
-    for i in 1..<n.len:
-      let it = n[i]
+      for i in 1..<n.len:
+        let it = n[i]
 
-      var name: PNode
-      var val: PNode
-      var pragma: PNode
+        var name: PNode
+        var val: PNode
+        var pragma: PNode
 
-      if it.kind == nkEnumFieldDef:
-        let first = it[0]
-        if first.kind == nkPragmaExpr:
-          name = first[0]
-          pragma = first[1]
-        else:
+        if it.kind == nkEnumFieldDef:
+          let first = it[0]
+          if first.kind == nkPragmaExpr:
+            name = first[0]
+            pragma = first[1]
+          else:
+            name = it[0]
+            pragma = nil
+          val = it[1]
+        elif it.kind == nkPragmaExpr:
           name = it[0]
+          pragma = it[1]
+          val = nil
+        else:
+          name = it
           pragma = nil
-        val = it[1]
-      elif it.kind == nkPragmaExpr:
-        name = it[0]
-        pragma = it[1]
-        val = nil
-      else:
-        name = it
-        pragma = nil
-        val = nil
+          val = nil
 
-      relLineInfo(it, n, c)
+        relLineInfo(it, n, c)
 
-      c.b.addTree(EfldL)
+        c.b.addTree(EfldL)
 
-      toNif name, it, c
-      c.b.addEmpty # export marker
+        toNif name, it, c
+        c.b.addEmpty # export marker
 
-      if pragma == nil:
-        c.b.addEmpty
-      else:
-        toNif(pragma, it, c)
+        if pragma == nil:
+          c.b.addEmpty
+        else:
+          toNif(pragma, it, c)
 
-      c.b.addEmpty # type (filled by sema)
+        c.b.addEmpty # type (filled by sema)
 
-      if val == nil:
-        c.b.addEmpty
-      else:
-        toNif(val, it, c)
+        if val == nil:
+          c.b.addEmpty
+        else:
+          toNif(val, it, c)
+        c.b.endTree()
+
       c.b.endTree()
-
-    c.b.endTree()
 
   of nkProcDef, nkFuncDef, nkConverterDef, nkMacroDef, nkTemplateDef, nkIteratorDef, nkMethodDef:
     relLineInfo(n, parent, c)
@@ -507,26 +544,20 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
     toNif(n[n.len-2], n, c) # iterator
 
-    if n[0].kind == nkVarTuple:
-      let v = n[0]
-      c.b.addTree(UnpacktupL)
-      for i in 0..<v.len-1: # ignores typedesc
-        c.b.addTree(LetL)
-
-        toNif(v[i], n, c) # name
-
-        c.b.addEmpty 4 # export marker, pragmas, type, value
-        c.b.endTree() # LetDecl
-      c.b.endTree() # UnpackIntoTuple
+    if n.len == 3 and n[0].kind == nkVarTuple:
+      toVarTuple(n[0], n, c)
     else:
       c.b.addTree(UnpackflatL)
       for i in 0..<n.len-2:
-        c.b.addTree(LetL)
+        if n[i].kind == nkVarTuple:
+          toVarTuple(n[i], n, c)
+        else:
+          c.b.addTree(LetL)
 
-        toNif(n[i], n, c) # name
+          toNif(n[i], n, c) # name
 
-        c.b.addEmpty 4 # export marker, pragmas, type, value
-        c.b.endTree() # LetDecl
+          c.b.addEmpty 4 # export marker, pragmas, type, value
+          c.b.endTree() # LetDecl
       c.b.endTree() # UnpackIntoFlat
 
     # for-loop-body:
@@ -560,6 +591,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       let last {.cursor.} = n[n.len-1]
       if last.kind == nkRecList:
         for child in last:
+          c.section = FldL
           toNif(child, n, c)
       elif last.kind != nkEmpty:
         toNif(last, n, c)
@@ -598,7 +630,16 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       let oldDepsEnabled = c.depsEnabled
       swap c.b, c.deps
       c.depsEnabled = false
-      toNif(n, nil, c)
+
+      relLineInfo(n, nil, c)
+      c.b.addTree(nodeKindTranslation(n.kind))
+      if c.inWhen > 0:
+        # mark it as a conditional dependency:
+        c.b.addKeyw "when"
+      for i in 0..<n.len:
+        toNif(n[i], nil, c)
+      c.b.endTree()
+
       c.depsEnabled = oldDepsEnabled
       swap c.b, c.deps
       c.lineInfoEnabled = oldLineInfoEnabled
@@ -619,6 +660,22 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     for i in 0..<n.len:
       toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
+  of nkExceptBranch:
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    if n.len == 1:
+      c.b.addEmpty 1
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+  of nkWhenStmt:
+    inc c.inWhen
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+    dec c.inWhen
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
@@ -664,12 +721,17 @@ proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
     quit "cannot open file: " & thisfile
   else:
     var conf = createConf()
+    let fileIdx = fileInfoIdx(conf, AbsoluteFile thisfile)
     var parser: Parser = default(Parser)
-    openParser(parser, AbsoluteFile(thisfile), stream, newIdentCache(), conf)
-    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled)
-
+    syntaxes.openParser(parser, fileIdx, stream, newIdentCache(), conf)
     bench "parseAll":
       let fullTree = parseAll(parser)
+
+    if conf.errorCounter > 0:
+      closeParser(parser)
+      quit QuitFailure
+
+    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled)
 
     bench "moduleToIr":
       moduleToIr(fullTree, tc)

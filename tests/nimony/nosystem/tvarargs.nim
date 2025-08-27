@@ -4,8 +4,13 @@ type
   bool* {.magic: Bool.}
   char* {.magic: Char.}
   typedesc*[T] {.magic: TypeDesc.}
+  untyped* {.magic: Expr.}
 
-proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+  TypeOfMode* = enum
+    typeOfProc,
+    typeOfIter
+
+proc typeof(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
 
 type
   string* = typeof("")
@@ -24,9 +29,6 @@ proc write(f: var File; c: char) = discard
 proc write(f: var File; s: string) = discard
 
 write stdout, '\n'
-
-type
-  untyped* {.magic: Expr.}
 
 iterator unpack(): untyped {.magic: Unpack.}
 

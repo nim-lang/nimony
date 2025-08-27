@@ -93,6 +93,7 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
   var p = temp.pragmas
   if p.kind != ParLe:
     return false
+  inc p
   while p.kind != ParRi:
     if p.pragmaKind == PluginP:
       inc p
@@ -103,9 +104,8 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
         while a.kind != ParRi:
           b.takeTree a
         b.addParRi()
-        let content = "(.nif24)\n" & b.toString
 
-        runPlugin(c, dest, p.info, pool.strings[p.litId], content)
+        runPlugin(c, dest, p.info, pool.strings[p.litId], b.toString)
         return true
       skipToEnd p
     else:
@@ -114,7 +114,8 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
 
 proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      templateDecl, args, firstVarargMatch: Cursor;
-                     inferred: ptr Table[SymId, Cursor]) =
+                     inferred: ptr Table[SymId, Cursor];
+                     info: PackedLineInfo) =
   var templ = asRoutine(templateDecl, SkipInclBody)
 
   if expandPlugin(c, dest, templ, args):
@@ -129,7 +130,7 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
   var a = args
   var f = templ.params
   if f.kind != DotToken:
-    assert f == "params"
+    assert f.isParamsTag
     inc f
     while f.kind != ParRi and a.kind != ParRi:
       var param = f
@@ -139,7 +140,12 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
       skip a
       skip f
 
-  expandTemplateImpl c, dest, e, templ.body
+  if templ.body.kind == DotToken:
+    swap c.dest, dest
+    c.buildErr info, "cannot expand template from prototype; possibly a recursive template call"
+    swap c.dest, dest
+  else:
+    expandTemplateImpl c, dest, e, templ.body
 
   for _, newVar in e.newVars:
     c.freshSyms.incl newVar

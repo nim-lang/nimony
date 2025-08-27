@@ -80,9 +80,10 @@ proc unpack*(m: LineInfoManager; info: PackedLineInfo): LineInfoUnpacked =
     result = LineInfoUnpacked(file: FileId((i shr 1'u32) and FileMax.uint32),
       line: int32((i shr uint32(AsideBit + FileBits)) and LineMax.uint32),
       col: int32((i shr uint32(AsideBit + FileBits + LineBits)) and ColMax.uint32))
-  else:
-    assert(not isPayload(info))
+  elif not isPayload(info):
     result = m.aside[int(i shr 2'u32)]
+  else:
+    result = LineInfoUnpacked(file: NoFile)
 
 proc getPayload*(i: PackedLineInfo): uint32 {.inline.} =
   assert isPayload(i)

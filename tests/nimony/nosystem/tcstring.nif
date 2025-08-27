@@ -55,10 +55,8 @@
   (nil)) 2,18
  (const :myconst.0.tcsj45p9m . . 10
   (cstring) 17
-  (conv ~7
-   (cstring)
-   (suf "abc" "R"))) 4,20
- (gvar :zz.0.tcsj45p9m . . 4
-  (cstring)
-  (hconv 8,22,tests/nimony/nosystem/tcstring.nim
-   (cstring) 18,22,tests/nimony/nosystem/tcstring.nim "xzy")))
+  (suf "abc" "C")) 4,20
+ (gvar :zz.0.tcsj45p9m . . 8,~2
+  (cstring) 14
+  (hconv ~6,~2
+   (cstring) "xzy")))

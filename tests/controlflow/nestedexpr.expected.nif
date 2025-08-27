@@ -1,0 +1,32 @@
+(stmts
+ (proc :getOrDefault.0.tem6twvye1 . . .
+  (params
+   (param :t.3 . .
+    (i -1) .)
+   (param :k.2 . .
+    (i -1) .))
+  (i -1) . .
+  (stmts
+   (result :result.1 . .
+    (i -1) .)
+   (let :idx.0 . .
+    (i -1) +1212)
+   (var :`cf.0 . .
+    (i -1) .)
+   (ite
+    (le
+     (i -1) +0 idx.0)
+    (goto L70)
+    (goto L75))
+   (lab :L70)
+   (asgn `cf.0 +1)
+   (goto L80)
+   (lab :L75)
+   (asgn `cf.0 +0)
+   (goto L80)
+   (lab :L80)
+   (asgn result.1 `cf.0)
+   (goto L85)
+   (lab :L85)
+   (ret result.1)))
+ (ret result.1))

@@ -7,7 +7,7 @@ type
 
 proc `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} = x.a[idx]
 
-proc `[]=`*[T](x: openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
+proc `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem
 
 converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline.} =
@@ -15,6 +15,9 @@ converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline.} 
     openArray[T](a: nil, len: 0)
   else:
     openArray[T](a: cast[ptr UncheckedArray[T]](addr(x)), len: len(x))
+
+converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline.} =
+  openArray[T](a: rawData(s), len: s.len)
 
 converter toOpenArray*(s: string): openArray[char] {.inline.} =
   openArray[char](a: rawData(s), len: s.len)
@@ -47,3 +50,10 @@ proc `==`*[T: Equatable](a, b: openArray[T]): bool =
       if a[i] != b[i]: return false
     return true
   return false
+
+proc toOpenArray*[T](x: ptr UncheckedArray[T]; first, last: int): openArray[T] =
+  openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x) + uint(first * sizeof(T))), len: last - first + 1)
+
+proc toOpenArray*[T](x: openArray[T]; first, last: int): openArray[T] =
+  openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x.a) + uint(first * sizeof(T))), len: last - first + 1)
+

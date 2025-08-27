@@ -1,0 +1,12 @@
+(stmts
+  (var :x.0 . . (i +32) .)
+  (case x.0
+    (of (ranges +3) (stmts
+        (assert (report) (le . +3 x.0))
+        (assert (report) (le . x.0 +3))
+    ))
+    (else (stmts
+      (assert (report) (error) (le . x.0 +3))
+    ))
+  )
+)

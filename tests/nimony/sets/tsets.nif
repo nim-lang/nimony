@@ -1,0 +1,316 @@
+(.nif24)
+0,1,tests/nimony/sets/tsets.nim(stmts 9,2
+ (type ~4 :Foo.0.tseflljd71 . . . 2
+  (enum
+   (u +8) ~9,1
+   (efld :A.0.tseflljd71 . . Foo.0.tseflljd71
+    (tup +0 "A")) ~6,1
+   (efld :B.0.tseflljd71 . . Foo.0.tseflljd71
+    (tup +1 "B")) ~3,1
+   (efld :C.0.tseflljd71 . . Foo.0.tseflljd71
+    (tup +2 "C")) ,1
+   (efld :D.0.tseflljd71 . . Foo.0.tseflljd71
+    (tup +3 "D")) 3,1
+   (efld :E.0.tseflljd71 . . Foo.0.tseflljd71
+    (tup +4 "E")) 6,1
+   (efld :F.0.tseflljd71 . . Foo.0.tseflljd71
+    (tup +5 "F")))) 4,5
+ (gvar :s.0.tseflljd71 . . 10
+  (set 1 Foo.0.tseflljd71) .) 7,5
+ (gvar :s1.0.tseflljd71 . . 7
+  (set 1 Foo.0.tseflljd71) .) 2,6
+ (asgn ~2 s.0.tseflljd71 2
+  (setconstr 10,~1
+   (set 1 Foo.0.tseflljd71) 1
+   (range A.0.tseflljd71 3 D.0.tseflljd71))) 3,7
+ (asgn ~3 s1.0.tseflljd71 2
+  (setconstr 9,~2
+   (set 1 Foo.0.tseflljd71) 1
+   (range A.0.tseflljd71 3 C.0.tseflljd71))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 10,9,tests/nimony/sets/tsets.nim
+     (ltset
+      (set Foo.0.tseflljd71) ~3 s1.0.tseflljd71 2 s.0.tseflljd71)) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 4,9
+ (glet :y.0.tseflljd71 . . 10,~4
+  (set 1 Foo.0.tseflljd71) 7
+  (mulset
+   (set Foo.0.tseflljd71) ~3 s1.0.tseflljd71 2 s.0.tseflljd71)) 4,10
+ (glet :z.0.tseflljd71 . . 10,~5
+  (set 1 Foo.0.tseflljd71) 14 y.0.tseflljd71) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 9,12,tests/nimony/sets/tsets.nim
+     (eqset
+      (set Foo.0.tseflljd71) ~2 y.0.tseflljd71 3
+      (setconstr 2,~6
+       (set 1 Foo.0.tseflljd71) 1
+       (range A.0.tseflljd71 3 C.0.tseflljd71)))) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 9,13,tests/nimony/sets/tsets.nim
+     (eqset
+      (set Foo.0.tseflljd71) ~2 z.0.tseflljd71 3
+      (setconstr 2,~7
+       (set 1 Foo.0.tseflljd71) 1
+       (range A.0.tseflljd71 3 C.0.tseflljd71)))) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 14,14,tests/nimony/sets/tsets.nim
+     (eqset
+      (set Foo.0.tseflljd71) ~5
+      (minusset
+       (set Foo.0.tseflljd71) ~2 s.0.tseflljd71 2 s1.0.tseflljd71) 3
+      (setconstr ~3,~8
+       (set 1 Foo.0.tseflljd71) 1 D.0.tseflljd71))) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 10,15,tests/nimony/sets/tsets.nim
+     (leset
+      (set Foo.0.tseflljd71) ~3 s1.0.tseflljd71 3 s.0.tseflljd71)) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 15,16,tests/nimony/sets/tsets.nim
+     (eq
+      (i +64) ~4
+      (card
+       (set Foo.0.tseflljd71) 1 s.0.tseflljd71) 3 +4)) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 16,17,tests/nimony/sets/tsets.nim
+     (eq
+      (i +64) ~5
+      (card
+       (set Foo.0.tseflljd71) 1 s1.0.tseflljd71) 3 +3)) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) 4,17
+ (glet :val.0.tseflljd71 . . 7,~14 Foo.0.tseflljd71 6 D.0.tseflljd71) 3,18
+ (asgn ~3 s1.0.tseflljd71 2
+  (setconstr 9,~13
+   (set 1 Foo.0.tseflljd71) 1
+   (range A.0.tseflljd71 3 B.0.tseflljd71) 7 val.0.tseflljd71 12 F.0.tseflljd71)) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 16,20,tests/nimony/sets/tsets.nim
+     (eq
+      (i +64) ~5
+      (card
+       (set Foo.0.tseflljd71) 1 s1.0.tseflljd71) 3 +4)) ~1,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) ,21
+ (template 9 :resem.0.tseflljd71 . . . 14
+  (params) . . . 2,1
+  (stmts 2
+   (asgn ~2 s.0.tseflljd71 2
+    (setconstr 8,~17
+     (set 1 Foo.0.tseflljd71) 1 A.0.tseflljd71 4
+     (range C.0.tseflljd71 3 E.0.tseflljd71) 10 F.0.tseflljd71)) 3,1
+   (asgn ~3 s1.0.tseflljd71 2
+    (setconstr 7,~18
+     (set 1 Foo.0.tseflljd71) 1
+     (range A.0.tseflljd71 3 B.0.tseflljd71) 7 val.0.tseflljd71 12 F.0.tseflljd71)))) 2,22
+ (stmts 2
+  (asgn ~2 s.0.tseflljd71 2
+   (setconstr 8,~17
+    (set 1 Foo.0.tseflljd71) 1 A.0.tseflljd71 4
+    (range C.0.tseflljd71 3 E.0.tseflljd71) 10 F.0.tseflljd71)) 3,1
+  (asgn ~3 s1.0.tseflljd71 2
+   (setconstr 7,~18
+    (set 1 Foo.0.tseflljd71) 1
+    (range A.0.tseflljd71 3 B.0.tseflljd71) 7 val.0.tseflljd71 12 F.0.tseflljd71))) ,26
+ (block . 2,1
+  (stmts 4
+   (var :sss.0 . . 8
+    (set 1
+     (c +8)) .) 4,1
+   (asgn ~4 sss.0 2
+    (setconstr 6,~1
+     (set 1
+      (c +8)))) 2,4,lib/std/assertions.nim
+   (stmts
+    (if 3
+     (elif
+      (not 19,30,tests/nimony/sets/tsets.nim
+       (eq
+        (i +64) ~6
+        (card
+         (set
+          (c +8)) 1 sss.0) 3 +0)) ~1,1
+      (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+       (cmd quit.0.syn1lfpjv 5 +1))))) 4,3
+   (asgn ~4 sss.0 2
+    (setconstr 6,~3
+     (set 1
+      (c +8)) 1
+     (range 'a' 7 'z') 13 '_')) 2,4,lib/std/assertions.nim
+   (stmts
+    (if 3
+     (elif
+      (not 19,32,tests/nimony/sets/tsets.nim
+       (eq
+        (i +64) ~6
+        (card
+         (set
+          (c +8)) 1 sss.0) 3 +27)) ~1,1
+      (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+       (cmd quit.0.syn1lfpjv 5 +1))))) 8,5
+   (excl
+    (set
+     (c +8)) ~8 sss.0 1 'm') 2,4,lib/std/assertions.nim
+   (stmts
+    (if 3
+     (elif
+      (not 19,34,tests/nimony/sets/tsets.nim
+       (eq
+        (i +64) ~6
+        (card
+         (set
+          (c +8)) 1 sss.0) 3 +26)) ~1,1
+      (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+       (cmd quit.0.syn1lfpjv 5 +1))))) 8,7
+   (incl
+    (set
+     (c +8)) ~8 sss.0 1 'u') 2,4,lib/std/assertions.nim
+   (stmts
+    (if 3
+     (elif
+      (not 19,36,tests/nimony/sets/tsets.nim
+       (eq
+        (i +64) ~6
+        (card
+         (set
+          (c +8)) 1 sss.0) 3 +26)) ~1,1
+      (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+       (cmd quit.0.syn1lfpjv 5 +1))))))) ,37
+ (block . 2,1
+  (stmts
+   (proc 5 :test.0 . . . 9
+    (params) . . . 2,1
+    (stmts
+     (discard 8
+      (setconstr 2,~12
+       (set 1
+        (c +8)) 1 'a')))))) 5,2
+ (proc :dollar`.Foo.0.tseflljd71 x . .
+  (params
+   (param :e.0 . . Foo.0.tseflljd71 .)) string.0.sysvq0asl . .
+  (stmts 6
+   (result :result.0 . . string.0.sysvq0asl .) 6
+   (case e.0 ~9,1
+    (of
+     (ranges A.0.tseflljd71)
+     (stmts
+      (ret "A"))) ~6,1
+    (of
+     (ranges B.0.tseflljd71)
+     (stmts
+      (ret "B"))) ~3,1
+    (of
+     (ranges C.0.tseflljd71)
+     (stmts
+      (ret "C"))) ,1
+    (of
+     (ranges D.0.tseflljd71)
+     (stmts
+      (ret "D"))) 3,1
+    (of
+     (ranges E.0.tseflljd71)
+     (stmts
+      (ret "E"))) 6,1
+    (of
+     (ranges F.0.tseflljd71)
+     (stmts
+      (ret "F"))))
+   (ret result.0))))

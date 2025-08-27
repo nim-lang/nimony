@@ -18,6 +18,7 @@ proc magicToTag*(m: string): (string, int) =
   case m
   of "Defined": res DefinedX
   of "Declared": res DeclaredX
+  of "AstToStr": res AstToStrX
   of "IsMainModule": res IsMainModuleX
   of "Compiles": res CompilesX
   of "ArrGet": res AtX
@@ -25,8 +26,8 @@ proc magicToTag*(m: string): (string, int) =
   of "Pat": res PatX
   of "TupAt": res TupatX
   of "Asgn": res AsgnS
-  of "AddI", "AddU", "AddF64": res AddX, TypedMagic
-  of "SubI", "SubU", "SubF64": res SubX, TypedMagic
+  of "AddI", "AddU", "AddF64", "Succ": res AddX, TypedMagic
+  of "SubI", "SubU", "SubF64", "Pred": res SubX, TypedMagic
   of "MulI", "MulU", "MulF64": res MulX, TypedMagic
   of "DivI", "DivU", "DivF64": res DivX, TypedMagic
   of "ModI", "ModU": res ModX, TypedMagic
@@ -38,6 +39,7 @@ proc magicToTag*(m: string): (string, int) =
   of "BitxorI": res BitxorX, TypedMagic
   of "BitnotI": res BitnotX, TypedMagic
   of "UnaryMinusI", "UnaryMinusF64": res NegX, TypedMagic
+  of "Delay": res DelayX, TypedMagic
   of "And": res AndX
   of "Or": res OrX
   of "Not": res NotX
@@ -89,6 +91,7 @@ proc magicToTag*(m: string): (string, int) =
   of "Pointer": res PointerT
   of "DefaultObj": res DefaultObjX
   of "DefaultTup": res DefaultTupX
+  of "DefaultDistinct": res DefaultDistinctX
   of "PlusSet": res PlusSetX, TypedMagic
   of "MinusSet": res MinusSetX, TypedMagic
   of "MulSet": res MulSetX, TypedMagic
@@ -111,4 +114,16 @@ proc magicToTag*(m: string): (string, int) =
   of "WasMoved": res WasMovedX
   of "Trace": res TraceX
   of "NewRef": res NewrefX, TypedMagic
+  of "OverflowFlag": res OvfX
+  of "Fields": res FieldsX, TypedMagic
+  of "FieldPairs": res FieldPairsX, TypedMagic
+  of "Of": res InstanceofX
+  of "ProcCall": res ProccallX
+  of "InternalTypeName": res InternalTypeNameX
+  of "InternalFieldPairs": res InternalFieldPairsX, TypedMagic
+  of "OrdinalEnum": res EnumT
+  of "HoleyEnum": res HoleyEnumT
+  of "NaN": res NanX
+  of "Inf": res InfX
+  of "Is": res IsX
   else: ("", 0)

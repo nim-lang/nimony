@@ -1,0 +1,24 @@
+(.nif24)
+0,2,tests/nimony/overload/tnamedparams.nim(stmts
+ (proc 5 :callme.0.tna1v8dmd . . . 11
+  (params 1
+   (param :x.0 . . 6
+    (i -1) .) 4
+   (param :y.0 . . 3
+    (i -1) .) 12
+   (param :s.0 . . 3 string.0.sysvq0asl 12 "") 28
+   (param :c.0 . . 3
+    (c +8) .) 37
+   (param :b.0 . . 3
+    (bool) 10
+    (false))) . . . 67
+  (stmts
+   (discard .))) 6,2
+ (call ~6 callme.0.tna1v8dmd 1 +0 4 +1 7 "abc" 14 '\09' 20
+  (true)) 6,3
+ (call ~6 callme.0.tna1v8dmd 8 +0 3 +1 11 "abd" 18 '\09' 52,~3
+  (false)) 6,4
+ (call ~6 callme.0.tna1v8dmd 16 +0 11 +1 29,~4 "" 3 '\09' 52,~4
+  (false)) ,5
+ (cmd callme.0.tna1v8dmd 7 +0 10 +1 13 "abc" 20 '\09' 58,~5
+  (false)))

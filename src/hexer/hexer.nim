@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -20,7 +20,7 @@ multiple different steps.
 - Inject dups.
 - Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct).
 - Inject destructors.
-- Map builtins like new and + to "compiler procs".
+- Map builtins like `new` and `+` to "compiler procs".
 - Translate exception handling.
 
 
@@ -43,20 +43,22 @@ Hexer accepts Nimony's grammar.
 ]##
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
+import ".." / nimony / [langmodes]
 import nifcgen, lifter, duplifier, destroyer, inliner, constparams
 
 const
-  Version = "0.2"
+  Version = "0.4"
   Usage = "Hexer Compiler. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
 Usage:
   hexer [options] [command]
 Command:
-  file.nif      expand NIF file to meet NIFC's requirements
+  file.nif      compile semchecked NIF file to NIFC
 
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
+  --flags:FLAGS             undocumented flags
   --version                 show the version
   --help                    show this help
 """
@@ -67,6 +69,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 proc handleCmdLine*() =
   var files: seq[string] = @[]
   var bits = sizeof(int) * 8
+  var flags = DefaultSettings
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -79,6 +82,8 @@ proc handleCmdLine*() =
         of "32": bits = 32
         of "16": bits = 16
         else: quit "invalid value for --bits"
+      of "flags":
+        flags = parseFlags(val)
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
       else: writeHelp()
@@ -88,7 +93,7 @@ proc handleCmdLine*() =
   elif files.len == 0:
     writeHelp()
   else:
-    expand files[0], bits
+    expand files[0], bits, flags
 
 when isMainModule:
   handleCmdLine()

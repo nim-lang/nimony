@@ -1,0 +1,1 @@
+lib/std/system/seqimpl.nim(143, 41): i < s.len and 0 <= i [AssertionDefect]

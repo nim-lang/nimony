@@ -1,0 +1,30 @@
+Foo.0.tni7snh9s
+Bar.0.tni7snh9s
+Foo.0.tni7snh9s
+Bar.0.tni7snh9s
+fooFieldX.0.tni7snh9s = 123
+barFieldX.0.tni7snh9s = bar field
+barFieldY.0.tni7snh9s = 456
+fooFieldX.0.tni7snh9s = 123
+barFieldX.0.tni7snh9s = bar field
+barFieldY.0.tni7snh9s = 456
+"hello"
++123
++123u
++123.456
+(true)
+(false)
+(conv TestEnum.0.tni7snh9s +0u)
+(oconstr Foo.0.tni7snh9s
+ (kv fooFieldX.0.tni7snh9s +123))(oconstr Bar.0.tni7snh9s
+ (kv barFieldX.0.tni7snh9s "bar field X")
+ (kv barFieldY.0.tni7snh9s +321))(oconstr FooBar.0.tni7snh9s
+ (kv foo.0.tni7snh9s
+  (oconstr Foo.0.tni7snh9s
+   (kv fooFieldX.0.tni7snh9s +321)))
+ (kv bar.0.tni7snh9s
+  (oconstr Bar.0.tni7snh9s
+   (kv barFieldX.0.tni7snh9s "bar")
+   (kv barFieldY.0.tni7snh9s +567.5)))
+ (kv en.0.tni7snh9s
+  (conv TestEnum.0.tni7snh9s +1u)))

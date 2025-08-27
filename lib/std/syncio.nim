@@ -25,13 +25,11 @@ var
   stdout* {.importc: "stdout", header: "<stdio.h>".}: File
   stderr* {.importc: "stderr", header: "<stdio.h>".}: File
 
-proc c_fwrite(buf: ptr UncheckedArray[char]; size, n: uint; f: File): uint {.
-  importc: "fwrite", header: "<stdio.h>".}
-proc c_fwrite(buf: ptr UncheckedArray[uint8]; size, n: uint; f: File): uint {.
-  importc: "fwrite", header: "<stdio.h>".}
 proc c_fputc(c: int32; f: File): int32 {.
   importc: "fputc", header: "<stdio.h>".}
-proc c_fread(buf: ptr UncheckedArray[uint8]; size, n: uint; f: File): uint {.
+proc c_fwrite(buf: pointer; size, n: uint; f: File): uint {.
+  importc: "fwrite", header: "<stdio.h>".}
+proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
   importc: "fread", header: "<stdio.h>".}
 
 proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
@@ -64,10 +62,10 @@ proc close*(f: File) = discard fclose(f)
 
 proc fopen(filename, mode: cstring): File {.importc: "fopen", header: "<stdio.h>".}
 
-proc writeBuffer*(f: File; buffer: ptr UncheckedArray[uint8]; size: int): int =
+proc writeBuffer*(f: File; buffer: pointer; size: int): int =
   result = cast[int](c_fwrite(buffer, 1'u, cast[uint](size), f))
 
-proc readBuffer*(f: File; buffer: ptr UncheckedArray[uint8]; size: int): int =
+proc readBuffer*(f: File; buffer: pointer; size: int): int =
   result = cast[int](c_fread(buffer, 1'u, cast[uint](size), f))
 
 proc c_ferror(f: File): int32 {.
@@ -75,7 +73,7 @@ proc c_ferror(f: File): int32 {.
 
 proc failed*(f: File): bool {.inline.} = c_ferror(f) != 0
 
-proc c_setvbuf(f: File; buffer: ptr UncheckedArray[uint8]; mode: int32; size: uint): int32 {.
+proc c_setvbuf(f: File; buffer: pointer; mode: int32; size: uint): int32 {.
   importc: "setvbuf", header: "<stdio.h>".}
 
 var IOFBF {.importc: "_IOFBF", header: "<stdio.h>".}: int32
@@ -91,14 +89,28 @@ proc open*(f: out File; filename: string;
     of fmReadWriteExisting: cstring"r+b"
     of fmAppend: cstring"ab"
 
-  var tmpFilename = filename
-  f = fopen(tmpFilename.toCString, m)
+  # XXX: avoid a possible double copy when the string is allocated
+  var tmpFilename = filename.terminatingZero()
+  let rawFilename = cast[cstring](tmpFilename.rawData)
+  f = fopen(rawFilename, m)
   if f != nil:
     result = true
     if bufSize >= 0:
       discard c_setvbuf(f, nil, IOFBF, cast[uint](bufSize))
   else:
     result = false
+
+proc open*(filename: string,
+            mode: FileMode = fmRead, bufSize: int = -1): File =
+  ## Opens a file named `filename` with given `mode`.
+  ##
+  ## Default mode is readonly. Raises an `IOError` if the file
+  ## could not be opened.
+  result = default(File)
+  if not open(result, filename, mode, bufSize):
+    # TODO: raise exception when it is supported.
+    #raise newException(IOError, "cannot open: " & filename)
+    quit "cannot open: " & filename
 
 template echo*() {.varargs.} =
   for x in unpack():
@@ -132,14 +144,9 @@ proc readLine*(f: File; s: var string): bool =
   addReadLine f, s
 
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
-proc quit*(value: int) = exit(value.int32)
+proc quit*(value: int) {.noreturn.} = exit(value.int32)
 
-template assert*(cond: bool; msg = "") =
-  if not cond:
-    echo "[Assertion Failure] ", msg
-    quit 1
-
-proc quit*(msg: string) =
+proc quit*(msg: string) {.noreturn.} =
   echo msg
   quit 1
 
@@ -152,3 +159,5 @@ proc tryWriteFile*(file, content: string): bool =
       result = false
   else:
     result = false
+
+proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}

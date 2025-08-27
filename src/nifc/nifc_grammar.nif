@@ -8,10 +8,18 @@
              (dot Expr SYMBOL INTLIT)
              (pat Expr Expr)
              (errv)
+             (ovff)
              ))
 
 (RULE :Call (call (ONE_OR_MANY Expr)))
 (RULE :CallCanRaise (onerr Stmt (ONE_OR_MANY Expr)))
+(RULE :ArithExpr (OR
+         (add Type Expr Expr)
+         (sub Type Expr Expr)
+         (mul Type Expr Expr)
+         (div Type Expr Expr)
+         (mod Type Expr Expr)
+))
 (RULE :Expr (OR INTLIT UINTLIT FLOATLIT CHARLITERAL STRINGLITERAL
          Lvalue
          (par Expr)
@@ -27,11 +35,7 @@
          (offsetof Type SYMBOL)
          (oconstr Type (ZERO_OR_MANY (kv SYMBOL Expr)))
          (aconstr Type (ZERO_OR_MANY Expr))
-         (add Type Expr Expr)
-         (sub Type Expr Expr)
-         (mul Type Expr Expr)
-         (div Type Expr Expr)
-         (mod Type Expr Expr)
+         ArithExpr
          (shr Type Expr Expr)
          (shl Type Expr Expr)
          (bitand Type Expr Expr)
@@ -62,6 +66,7 @@
 (RULE :TryStmt (try StmtList StmtList StmtList))
 (RULE :RaiseStmt (raise (OR . Expr)))
 (RULE :AsgnStmt (asgn Lvalue Expr))
+(RULE :KeepOverflowStmt (keepovf ArithExpr Lvalue))
 (RULE :IfStmt (if (ONE_OR_MANY (elif Expr StmtList)) (ZERO_OR_ONE (else StmtList))))
 (RULE :WhileStmt (while Expr StmtList))
 (RULE :CaseStmt (case Expr (ONE_OR_MANY (of BranchRanges StmtList)) (ZERO_OR_ONE (else StmtList))))
@@ -78,6 +83,7 @@
          TryStmt
          RaiseStmt
          AsgnStmt
+         KeepOverflowStmt
          IfStmt
          WhileStmt
          (break)
@@ -153,7 +159,8 @@
 
 (RULE :TopLevelConstruct (OR ExternDecl IgnoreDecl ProcDecl VarDecl ConstDecl
                       TypeDecl Include EmitStmt
-                      Call CallCanRaise TryStmt RaiseStmt AsgnStmt
+                      Call CallCanRaise TryStmt RaiseStmt
+                      AsgnStmt KeepOverflowStmt
                       IfStmt WhileStmt CaseStmt LabelStmt JumpStmt
                       ScopeStmt DiscardStmt))
 (RULE :Module (stmts (ZERO_OR_MANY TopLevelConstruct)))

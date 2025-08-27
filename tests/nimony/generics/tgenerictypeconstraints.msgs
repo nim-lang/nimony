@@ -1,0 +1,2 @@
+tests/nimony/generics/tgenerictypeconstraints.nim(6, 12) Error: type float64 does not match constraint: int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64
+tests/nimony/generics/tgenerictypeconstraints.nim(7, 11) Error: wrong amount of generic parameters for type Foo.0.tge70svym, expected 1 but got 2

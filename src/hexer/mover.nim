@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -12,32 +12,6 @@ import std / [assertions]
 
 include nifprelude
 import ".." / nimony / [nimony_model, decls, controlflow, programs]
-
-const
-  PayloadOffset = 1'u32 # so that we don't use 0 as a payload
-
-proc prepare(buf: var TokenBuf): seq[PackedLineInfo] =
-  result = newSeq[PackedLineInfo](buf.len)
-  for i in 0..<buf.len:
-    result[i] = buf[i].info
-    buf[i].info = toPayload(i.uint32 + PayloadOffset)
-
-proc restore(buf: var TokenBuf; infos: seq[PackedLineInfo]) =
-  for i in 0..<buf.len:
-    buf[i].info = infos[i]
-
-proc isMarked(n: Cursor): bool {.inline.} =
-  result = n.info == toPayload(0'u32)
-
-proc doMark(n: Cursor) {.inline.} =
-  n.setInfo(toPayload(0'u32))
-
-proc testOrSetMark(n: Cursor): bool {.inline.} =
-  if isMarked(n):
-    result = true
-  else:
-    doMark(n)
-    result = false
 
 proc rootOf*(n: Cursor): SymId =
   var n = n
@@ -48,6 +22,10 @@ proc rootOf*(n: Cursor): SymId =
     of ConvKinds:
       inc n
       skip n # type part
+    of BaseobjX:
+      inc n
+      skip n # type part
+      skip n # skip intlit
     else:
       break
   if n.kind == Symbol:
@@ -55,11 +33,54 @@ proc rootOf*(n: Cursor): SymId =
   else:
     result = NoSymId
 
+proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
+  var a = a
+  var b = b
+  var nested = 0
+  let isAtom = a.kind != ParLe
+  while true:
+    if a.kind != b.kind: return false
+    case a.kind
+    of ParLe:
+      if a.tagId != b.tagId: return false
+      if a.exprKind in {PatX, ArrAtX}:
+        inc a
+        inc b
+        if not sameTreesIgnoreArrayIndexes(a, b):
+          return false
+        # do not compare the array indexes:
+        skipToEnd a
+        skipToEnd b
+      else:
+        inc a
+        inc b
+        inc nested
+    of ParRi:
+      dec nested
+      if nested == 0: return true
+    of Symbol, SymbolDef:
+      if a.symId != b.symId: return false
+    of IntLit:
+      if a.intId != b.intId: return false
+    of UIntLit:
+      if a.uintId != b.uintId: return false
+    of FloatLit:
+      if a.floatId != b.floatId: return false
+    of StringLit, Ident:
+      if a.litId != b.litId: return false
+    of CharLit, UnknownToken:
+      if a.uoperand != b.uoperand: return false
+    of DotToken, EofToken: discard "nothing else to compare"
+    if isAtom: return true
+    inc a
+    inc b
+  return false
+
 proc containsUsage(tree: var Cursor; x: Cursor): bool =
   result = false
   var nested = 0
   while true:
-    if sameTrees(tree, x):
+    if sameTreesIgnoreArrayIndexes(tree, x):
       result = true
     case tree.kind
     of ParLe:
@@ -115,6 +136,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
     case pc.kind
     of GotoInstr:
       let diff = pc.getInt28
+      assert diff != 0
       if diff < 0:
         # jump backwards:
         let back = pc +! diff
@@ -128,7 +150,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
         pc = pc +! diff
     of ParRi:
       if nested == 0:
-        raiseAssert "BUG: unpaired ')'"
+        bug "unpaired ')'"
       dec nested
       inc pc
     of Symbol:
@@ -189,16 +211,17 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
           skip pc # type
           inc nested
           # proceed with its value here
-        of NoStmt, CallS, CmdS, DiscardS, EmitS, InclS, ExclS:
+        of NoStmt, CallKindsS, DiscardS, EmitS, InclS, ExclS:
           if containsRoot(pc, x):
             otherUsage = pc
             return false
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
-           IncludeS, ImportS, FromS, ImportExceptS, CommentS, PragmasS,
+           IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackDeclS, StaticstmtS, AsmS, DeferS:
-          raiseAssert "BUG: statement not eliminated: " & $pc.stmtKind
-        of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
+          bug "statement not eliminated: " & $pc.stmtKind
+        of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
+           AssumeS, AssertS:
           # declarative junk we don't care about:
           skip pc
   return true
@@ -227,6 +250,7 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
 
 proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
+  #echo "Input is: ", toString(buf, false)
   let oldInfos = prepare(buf)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
@@ -259,7 +283,7 @@ when isMainModule:
         discard
       if nested == 0: break
       inc result
-    raiseAssert "BUG: no 'ensureMove' found"
+    bug "no 'ensureMove' found"
 
   proc test(s: string; expected: bool) =
     var input = parse(s)

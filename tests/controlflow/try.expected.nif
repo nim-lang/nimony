@@ -1,0 +1,12 @@
+(stmts
+ (call echo "try")
+ (asgn localErr.0.sysvq0asl some.exc)
+ (goto L11)
+ (goto L20)
+ (lab :L11)
+ (as :e.0 Type)
+ (call echo "except")
+ (goto L20)
+ (lab :L20)
+ (call echo "finally")
+ (ret .))

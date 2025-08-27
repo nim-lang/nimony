@@ -1,0 +1,4 @@
+tests/nimony/lookups/tprivatefield.nim(6, 1) Error: undeclared field: 'private=' for type ImportedObject
+tests/nimony/lookups/tprivatefield.nim(8, 38) Error: undeclared field: 'private' for type ImportedObject
+tests/nimony/lookups/tprivatefield.nim(10, 33) Error: undeclared field: 'private' for type GenObj
+tests/nimony/lookups/tprivatefield.nim(11, 10) Error: undeclared field: 'private' for type GenObj

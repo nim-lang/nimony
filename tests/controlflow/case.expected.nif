@@ -1,0 +1,50 @@
+(stmts
+ (let :other.var . .
+  (i -1) +12)
+ (var :`cf.0 . .
+  (i -1) .)
+ (ite
+  (eq
+   (i -1) other.var +0)
+  (goto L85)
+  (goto L30))
+ (lab :L30)
+ (ite
+  (eq
+   (i -1) other.var +1)
+  (goto L85)
+  (goto L41))
+ (lab :L41)
+ (ite
+  (eq
+   (i -1) other.var +2)
+  (goto L85)
+  (goto L52))
+ (lab :L52)
+ (ite
+  (le
+   (i -1) +5 other.var)
+  (goto L63)
+  (goto L74))
+ (lab :L63)
+ (ite
+  (le
+   (i -1) other.var +15)
+  (goto L85)
+  (goto L74))
+ (lab :L74)
+ (ite
+  (eq
+   (i -1) other.var +80)
+  (goto L85)
+  (goto L90))
+ (lab :L85)
+ (asgn `cf.0 +1)
+ (goto L95)
+ (lab :L90)
+ (asgn `cf.0 +0)
+ (goto L95)
+ (lab :L95)
+ (let :my.var . .
+  (i -1) `cf.0)
+ (ret .))

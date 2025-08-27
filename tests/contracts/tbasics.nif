@@ -1,0 +1,29 @@
+(stmts
+  (var :x.0 . . (i +32) .)
+  (if
+    (elif (le . x.0 +4)
+      (stmts
+      (if (elif (true)
+        (stmts
+          (assert (report) (le . x.0 +9))
+        )
+      )
+      )
+    ))
+    (else (stmts (assert (le . +5 x.0)) (assert (le . +1 x.0))))
+  )
+
+  (if
+    (elif (not (le . x.0 +4))
+      (stmts
+      (if (elif (true)
+        (stmts
+          (assert (le . +5 x.0)) (assert (report) (le . +1 x.0))
+        )
+      )
+      )
+    ))
+    (else (stmts (assert (le . x.0 +9))))
+  )
+  (assert (report) (error) (le . x.0 +6))
+)

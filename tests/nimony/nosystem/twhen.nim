@@ -20,11 +20,10 @@ when isImportedMain1:
 else:
   discard "good"
 
-when false: # enable when `isImportedMain2` works
-  when isImportedMain2:
-    discard "bad"
-  else:
-    discard "good"
+when isImportedMain2:
+  discard "bad"
+else:
+  discard "good"
 
 proc `not`*(x: bool): bool {.magic: Not.}
 
@@ -33,8 +32,7 @@ when not true:
 else:
   discard "good"
 
-when false: # enable when `isImportedMain2` works
-  when not isImportedMain2:
-    discard "good"
-  else:
-    discard "bad"
+when not isImportedMain2:
+  discard "good"
+else:
+  discard "bad"

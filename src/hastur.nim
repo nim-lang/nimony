@@ -1,5 +1,12 @@
 ## Hastur - Tester tool for Nimony and its related subsystems (NIFC etc).
-## (c) 2024 Andreas Rumpf
+## (c) 2024-2025 Andreas Rumpf
+
+when defined(windows):
+  when defined(gcc):
+    when defined(x86):
+      {.link: "../icons/hastur.res".}
+    else:
+      {.link: "../icons/hastur_icon.o".}
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
@@ -10,16 +17,16 @@ const
   Version = "0.6"
   Usage = "hastur - tester tool for Nimony Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
-  test <file>          run test <file>.
+  test <file>/<dir>    run test <file> or <dir>.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
@@ -162,14 +169,18 @@ proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
   result = "nimcache" / name.addFileExt(ext)
 
+proc generatedExeFile(orig: string): string =
+  result = "nimcache" / orig.splitFile.name.addFileExt(ExeExt)
+
 proc removeMakeErrors(output: string): string =
   result = output.strip
   for prefix in ["FAILURE:", "make:"]:
     let lastLine = rfind(result, '\n')
-    if lastLine >= 0 and lastLine + prefix.len < result.len and
-        result[lastLine + 1 .. lastLine + prefix.len] == prefix:
-      result = result[0 .. lastLine].strip
-    else: break
+    if lastLine >= 0:
+      if result.continuesWith(prefix, lastLine+1):
+        result.setLen lastLine
+    elif result.startsWith(prefix):
+      result.setLen 0
 
 proc compareValgrindOutput(s1: string, s2: string): bool =
   # ==90429==
@@ -177,7 +188,7 @@ proc compareValgrindOutput(s1: string, s2: string): bool =
   let s2 = s2.splitLines()
   if s1.len != s2.len:
     return false
-  for i in 0 .. s1.len - 1:
+  for i in 3 .. s1.len - 1:
     let n1 = rfind(s1[i], "== ")
     let n2 = rfind(s2[i], "== ")
     if n2 == -1 or s1[i][n1+3..^1] != s2[i][n2+3..^1]:
@@ -242,11 +253,13 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       diffFiles c, file, cfile, nimcacheC, overwrite
 
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
+      var output = file.changeFileExt(".output")
       if testProgramExitCode != 0:
-        failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode
-      let output = file.changeFileExt(".output")
+        output = file.changeFileExt(".exitcode")
+        if not output.fileExists():
+          failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
       if output.fileExists():
         let outputSpec = readFile(output).strip
         let success = outputSpec == testProgramOutput.strip
@@ -269,11 +282,11 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
     if x.kind == pcFile and x.path.endsWith(".nim"):
       files.add x.path
   sort files
-  if cat == Compat:
+  if cat in {Compat, Basics}:
     removeDir "nimcache"
   for f in items files:
     testFile c, f, overwrite, cat
-  if cat == Compat:
+  if cat in {Compat, Basics}:
     removeDir "nimcache"
 
 proc parseCategory(path: string): Category =
@@ -300,7 +313,46 @@ proc nimonytests(overwrite: bool) =
     let cat = parseCategory x.path
     if x.kind == pcDir:
       testDir c, TestDir / x.path, overwrite, cat
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some tests failed."
+  else:
+    echo "SUCCESS."
+
+proc controlflowTests(tool: string; overwrite: bool) =
+  ## Run all the controlflow tests in the test-suite.
+  let testDir = "tests/" & tool
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  for x in walkDir(testDir, relative = true):
+    if x.kind == pcFile and x.path.endsWith(".nif") and not x.path.contains(".expected.nif"):
+      inc c.total
+      let t = testDir / x.path
+      let dest = t.changeFileExt(".out.nif")
+      let (msgs, exitcode) = execLocal(tool, os.quoteShell(t) & " " & os.quoteShell(dest))
+      if exitcode != 0:
+        failure c, t, tool & " exitcode " & $exitcode, msgs
+      let msgsFile = t.changeFileExt(".msgs")
+      if msgsFile.fileExists():
+        if overwrite:
+          writeFile(msgsFile, msgs)
+        else:
+          let expectedOutput = readFile(msgsFile).strip
+          if expectedOutput != msgs.strip:
+            failure c, t, expectedOutput, msgs
+      let expected = t.changeFileExt(".expected.nif")
+      if overwrite:
+        if expected.fileExists():
+          moveFile(dest, expected)
+      elif expected.fileExists():
+        let expectedOutput = readFile(expected).strip
+        let destContent = readFile(dest).strip
+        let success = expectedOutput == destContent
+        if success:
+          os.removeFile(dest)
+        else:
+          failure c, t, expectedOutput, destContent
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
@@ -311,6 +363,16 @@ proc test(t: string; overwrite: bool; cat: Category) =
   testFile c, t, overwrite, cat
   if c.failures > 0:
     quit "FAILURE: Test failed."
+  else:
+    echo "SUCCESS."
+
+proc testDirCmd(dir: string; overwrite: bool) =
+  var c = TestCounters(total: 0, failures: 0)
+  let t0 = epochTime()
+  testDir c, dir, overwrite, findCategory(dir)
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some tests failed."
   else:
     echo "SUCCESS."
 
@@ -358,10 +420,10 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
-      assert testProgramExitCode == 0, "the test program had an invalid exitcode; unsupported"
-      addTestSpec test.changeFileExt(".output"), testProgramOutput
+      let ext = if testProgramExitCode != 0: ".exitcode" else: ".output"
+      addTestSpec test.changeFileExt(ext), testProgramOutput
 
     addTestCode test, file
     if {RecordCodegen, RecordAst} * flags != {}:
@@ -398,6 +460,16 @@ proc buildNimony(showProgress = false) =
   let exe = "nimony".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
+proc buildControlflow(showProgress = false) =
+  exec "nim c src/nimony/controlflow.nim", showProgress
+  let exe = "controlflow".addFileExt(ExeExt)
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
+
+proc buildContracts(showProgress = false) =
+  exec "nim c src/nimony/contracts.nim", showProgress
+  let exe = "contracts".addFileExt(ExeExt)
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
+
 proc buildNifc(showProgress = false) =
   exec "nim c src/nifc/nifc.nim", showProgress
   let exe = "nifc".addFileExt(ExeExt)
@@ -407,6 +479,11 @@ proc buildHexer(showProgress = false) =
   exec "nim c src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
+
+proc buildNifmake(showProgress = false) =
+  exec "nim c src/nifmake/nifmake.nim", showProgress
+  let exe = "nifmake".addFileExt(ExeExt)
+  robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -452,9 +529,17 @@ proc syncCmd(newBranch: string) =
     quit "FAILURE: " & output
   exec "git checkout master"
   exec "git pull origin master"
-  exec "git branch -D " & output.strip()
+  let branch = output.strip()
+  if branch != "master":
+    exec "git branch -D " & branch
   if newBranch.len > 0:
     exec "git checkout -B " & newBranch
+
+proc pullpush(cmd: string) =
+  let (output, status) = execCmdEx("git symbolic-ref --short HEAD")
+  if status != 0:
+    quit "FAILURE: " & output
+  exec "git " & cmd & " origin " & output.strip()
 
 proc handleCmdLine =
   var primaryCmd = ""
@@ -495,9 +580,22 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     buildHexer()
+    buildNifmake()
     nimonytests(overwrite)
     nifctests(overwrite)
     #hexertests(overwrite)
+    buildControlflow()
+    controlflowTests("controlflow", overwrite)
+    buildContracts()
+    controlflowTests("contracts", overwrite)
+
+  of "controlflow", "cf":
+    buildControlflow()
+    controlflowTests("controlflow", overwrite)
+
+  of "contracts":
+    buildContracts()
+    controlflowTests("contracts", overwrite)
 
   of "build":
     const showProgress = true
@@ -508,6 +606,7 @@ proc handleCmdLine =
       buildNimony(showProgress)
       buildNifc(showProgress)
       buildHexer(showProgress)
+      buildNifmake(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -517,6 +616,8 @@ proc handleCmdLine =
       buildNifc(showProgress)
     of "hexer":
       buildHexer(showProgress)
+    of "nifmake":
+      buildNifmake(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
@@ -535,7 +636,10 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     if args.len > 0:
-      test args[0], overwrite, findCategory(args[0])
+      if args[0].dirExists():
+        testDirCmd args[0], overwrite
+      else:
+        test args[0], overwrite, findCategory(args[0])
     else:
       quit "`test` takes an argument"
   of "record":
@@ -555,6 +659,10 @@ proc handleCmdLine =
     removeDir "bin"
   of "sync":
     syncCmd(if args.len > 0: args[0] else: "")
+  of "pull":
+    pullpush("pull")
+  of "push":
+    pullpush("push")
   else:
     quit "invalid command: " & primaryCmd
 

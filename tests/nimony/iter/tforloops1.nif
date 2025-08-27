@@ -1,0 +1,849 @@
+(.nif24)
+0,1,tests/nimony/iter/tforloops1.nim(stmts ,2
+ (iterator 9 :powers.0.tfo161bfb1 . . . 15
+  (params 1
+   (param :n.0 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts 4
+   (var :i.0 . .
+    (i -1) 4 +0) ,1
+   (while 8
+    (le
+     (i +64) ~2 i.0 3 n.0) 2,1
+    (stmts
+     (yld 6 i.0) ,1
+     (yld 7
+      (mul
+       (i +64) ~1 i.0 1 i.0)) ,2
+     (yld 9
+      (mul
+       (i +64) ~2
+       (mul
+        (i +64) ~1 i.0 1 i.0) 1 i.0)) 2,3
+     (asgn ~2 i.0 4
+      (add
+       (i +64) ~2 i.0 2 +1)))))) ,10
+ (proc 5 :printf.0.tfo161bfb1 . . . 11
+  (params 1
+   (param :format.0 . . 8
+    (cstring) .) 39
+   (param :vanon.0 . .
+    (varargs) .)) . 29
+  (pragmas 2
+   (importc 9 "printf") 21
+   (varargs) 30
+   (header 8 "<stdio.h>") 51
+   (nodecl)) . .) 4,13
+ (for 11
+  (call ~6 powers.0.tfo161bfb1 1 +5)
+  (unpackflat
+   (let :i.1 . . 15,~11
+    (i -1) .)) ~2,1
+  (stmts 4
+   (let :m.0 . . 13,~12
+    (i -1) 4 i.1) 6,2
+   (call ~6 printf.0.tfo161bfb1 1
+    (hconv 11,~6
+     (cstring) "Hello, world\3A %ld\0A") 24 m.0))) ,18
+ (iterator 9 :countup.0.tfo161bfb1 . . . 16
+  (params 1
+   (param :a.0 . . 6
+    (i -1) .) 4
+   (param :b.0 . . 3
+    (i -1) .)) 13
+  (i -1) . . 2,1
+  (stmts 4
+   (var :i.2 . . 17,~1
+    (i -1) 4 a.0) ,1
+   (while 8
+    (le
+     (i +64) ~2 i.2 3 b.0) 2,1
+    (stmts
+     (yld 6 i.2) ,1
+     (cmd inc.0.tfo161bfb1 4
+      (haddr i.2)))))) 4,24
+ (for 12
+  (call ~7 countup.0.tfo161bfb1 1 +1 4 +5)
+  (unpackflat
+   (let :x.1 . . 15,~22
+    (i -1) .)) ~2,1
+  (stmts 4
+   (let :m.1 . . 13,~23
+    (i -1) 4 x.1) 6,1
+   (call ~6 printf.0.tfo161bfb1 1
+    (hconv 11,~16
+     (cstring) "countup start\3A %ld\0A") 25 m.1) ,2
+   (if 3
+    (elif 2,114,lib/std/system/comparisons.nim
+     (expr 2,1
+      (lt
+       (i +64) 9,28,tests/nimony/iter/tforloops1.nim +5 5,28,tests/nimony/iter/tforloops1.nim x.1)) ~1,1
+     (stmts
+      (break .))) 5,2
+    (elif 2
+     (lt
+      (i +64) ~2 x.1 2 +3) ~3,1
+     (stmts
+      (continue .)))) 6,6
+   (call ~6 printf.0.tfo161bfb1 1
+    (hconv 11,~21
+     (cstring) "countup end\3A %ld\0A") 23 m.1))) ,33
+ (iterator 9 :countup2.0.tfo161bfb1 . . . 17
+  (params 1
+   (param :n.1 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts 4
+   (var :i.3 . .
+    (i -1) 4 +0) ,1
+   (while 8
+    (le
+     (i +64) ~2 i.3 3 n.1) 2,1
+    (stmts
+     (yld 6 i.3) ,1
+     (cmd inc.0.tfo161bfb1 4
+      (haddr i.3)))))) ,39
+ (iterator 9 :powers2.0.tfo161bfb1 . . . 16
+  (params 1
+   (param :n.2 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts 4
+   (for 13
+    (call ~8 countup2.0.tfo161bfb1 1 n.2)
+    (unpackflat
+     (let :i.4 . . 13,~38
+      (i -1) .)) ~2,1
+    (stmts
+     (yld 6 i.4) ,1
+     (yld 7
+      (mul
+       (i +64) ~1 i.4 1 i.4)) ,2
+     (yld 9
+      (mul
+       (i +64) ~2
+       (mul
+        (i +64) ~1 i.4 1 i.4) 1 i.4)))))) 4,45
+ (for 12
+  (call ~7 powers2.0.tfo161bfb1 1 +6)
+  (unpackflat
+   (let :i.5 . . 15,~43
+    (i -1) .)) ~2,1
+  (stmts 6
+   (call ~6 printf.0.tfo161bfb1 1
+    (hconv 11,~36
+     (cstring) "Hello, world\3A %ld\0A") 24 i.5))) ,48
+ (iterator 9 :countup3.0.tfo161bfb1 . . . 17
+  (params 1
+   (param :a.1 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts
+   (yld 6 +3))) ,51
+ (iterator 9 :powers3.0.tfo161bfb1 . . . 16
+  (params 1
+   (param :b.1 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts 4
+   (for 13
+    (call ~8 countup3.0.tfo161bfb1 1 b.1)
+    (unpackflat
+     (let :j.0 . . 13,~50
+      (i -1) .)) ~2,1
+    (stmts
+     (yld 6 j.0))))) 4,55
+ (for 12
+  (call ~7 powers3.0.tfo161bfb1 1 +5)
+  (unpackflat
+   (let :m.2 . . 15,~53
+    (i -1) .)) ~2,1
+  (stmts 4
+   (for 13
+    (call ~8 countup3.0.tfo161bfb1 1 +4)
+    (unpackflat
+     (let :n.3 . . 13,~54
+      (i -1) .)) ~2,1
+    (stmts 6
+     (call ~6 printf.0.tfo161bfb1 1
+      (hconv 9,~47
+       (cstring) "Hello, world\3A %ld\0A") 25
+      (add
+       (i +64) ~1 m.2 1 n.3)))))) ,59
+ (while 6
+  (true) 2,1
+  (stmts 4
+   (for 7
+    (infix \2E.<.0.tfo161bfb1 ~2 +0 4 +1)
+    (unpackflat
+     (let :i.6 . . 13,~58
+      (i -1) .)) ~2,1
+    (stmts
+     (discard 8 i.6))) ,2
+   (break .))) ,65
+ (iterator 9 :countup4.0.tfo161bfb1 . . . 17
+  (params 1
+   (param :a.2 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts
+   (yld 6 a.2))) ,68
+ (iterator 9 :powers4.0.tfo161bfb1 . . . 16
+  (params 1
+   (param :a.3 . . 3
+    (i -1) .)) 10
+  (i -1) . . 2,1
+  (stmts 4
+   (for 13
+    (call ~8 countup4.0.tfo161bfb1 1 a.3)
+    (unpackflat
+     (let :j.1 . . 13,~67
+      (i -1) .)) ~2,1
+    (stmts
+     (yld 6 j.1))))) 4,72
+ (for 12
+  (call ~7 powers4.0.tfo161bfb1 1 +5)
+  (unpackflat
+   (let :i.7 . . 15,~70
+    (i -1) .)) ~2,1
+  (stmts 4
+   (for 13
+    (call ~8 countup4.0.tfo161bfb1 1 +4)
+    (unpackflat
+     (let :j.2 . . 13,~71
+      (i -1) .)) ~2,1
+    (stmts 6
+     (call ~6 printf.0.tfo161bfb1 1
+      (hconv 9,~64
+       (cstring) "Hello, world\3A %ld\0A") 25
+      (add
+       (i +64) ~1 i.7 1 j.2)))))) 4,77
+ (for 6
+  (infix \2E.<.0.tfo161bfb1 ~1 +0 3 +3)
+  (unpackflat
+   (let :i.8 . . 15,~75
+    (i -1) .)) ~2,1
+  (stmts 4
+   (for 6
+    (infix \2E.<.0.tfo161bfb1 ~1 +0 3 +4)
+    (unpackflat
+     (let :j.3 . . 13,~76
+      (i -1) .)) ~2,1
+    (stmts
+     (if 3
+      (elif 2
+       (eq
+        (i +64) ~2 j.3 3 +2) ~1,1
+       (stmts 2,116,lib/std/syncio.nim
+        (stmts 2,1
+         (stmts
+          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,81,tests/nimony/iter/tforloops1.nim "left the loop!")) ,2
+         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+        (break .)))) 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,83,tests/nimony/iter/tforloops1.nim "A i ")) 2,1
+      (stmts
+       (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 17,83,tests/nimony/iter/tforloops1.nim i.8)) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 20,83,tests/nimony/iter/tforloops1.nim " j ")) 2,1
+      (stmts
+       (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 27,83,tests/nimony/iter/tforloops1.nim j.3)) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,84
+ (block . 2,1
+  (stmts 4
+   (for 7
+    (infix \2E.<.0.tfo161bfb1 ~2 +1 4 +3)
+    (unpackflat
+     (let :i.9 . . 13,~83
+      (i -1) .)) ~2,1
+    (stmts 4
+     (for 7
+      (infix \2E.<.0.tfo161bfb1 ~2 +2 4 +4)
+      (unpackflat
+       (let :j.4 . . 11,~84
+        (i -1) .)) ~2,1
+      (stmts 4
+       (let :a.5 . . 15,56,lib/std/system/arithmetics.nim
+        (i +64) 6
+        (add
+         (i +64) ~2 i.9 2 j.4)) 4,1
+       (var :sum.0 . . 9,~86
+        (i -1) 11 +0) 4,2
+       (for 7
+        (infix \2E.<.0.tfo161bfb1 ~2 +1 4 j.4)
+        (unpackflat
+         (let :k.0 . . 9,~87
+          (i -1) .)) ~2,1
+        (stmts 4
+         (asgn ~4 sum.0 6
+          (add
+           (i +64) ~4 sum.0 2 a.5)))) 2,116,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 11,92,tests/nimony/iter/tforloops1.nim sum.0)) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) ,93
+ (block . 2,1
+  (stmts 4
+   (let :i_arr.0 . . 8
+    (array
+     (i -1)
+     (rangetype
+      (i -1) +0 +5)) 8
+    (aconstr
+     (array
+      (i -1)
+      (rangetype
+       (i -1) +0 +5)) 1 -100 7 -50 12 +0 15 +0 18 +123 23 +1000)) 4,1
+   (for 10
+    (hderef
+     (call ~5 items.0.tfo161bfb1 1
+      (hcall toOpenArray.0.tfo161bfb1 i_arr.0)))
+    (unpackflat
+     (let :i.10 . . 19,41,lib/std/system/openarrays.nim
+      (mut
+       (i -1)) .)) ~2,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 9,97,tests/nimony/iter/tforloops1.nim
+        (hderef i.10))) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,98
+ (block 6 :tbreak.0 2,1
+  (stmts 2,1
+   (var :x.3 . . 12,35,lib/std/system/basic_types.nim
+    (bool) 4
+    (false)) 2,2
+   (var :run.0 . . 22,35,lib/std/system/basic_types.nim
+    (bool) 6
+    (true)) ,4
+   (while 6 run.0 2,1
+    (stmts 4
+     (asgn ~4 run.0 2
+      (false)) ,1
+     (block 6 :myblock.0 2,1
+      (stmts
+       (if 3
+        (elif
+         (true) ~1,1
+         (stmts
+          (break 6 myblock.0)))) 2,116,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,109,tests/nimony/iter/tforloops1.nim "leaving myblock")) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 2,5
+     (asgn ~2 x.3 2
+      (true)))) 2,4,lib/std/assertions.nim
+   (stmts
+    (if 3
+     (elif
+      (not 9,111,tests/nimony/iter/tforloops1.nim x.3) ~1,1
+      (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+       (cmd quit.0.syn1lfpjv 5 +1))))) ,14
+   (iterator 9 :foo.0 . . . 12
+    (params) 2
+    (i -1) . . 2,1
+    (stmts 4
+     (for 7
+      (infix \2E..0.tfo161bfb1 ~2 +0 3 +9)
+      (unpackflat
+       (let :x.4 . . 11,~112
+        (i -1) .)) ~2,1
+      (stmts 4
+       (for 5
+        (hderef
+         (call ~5 items.0.tfo161bfb1
+          (hcall toOpenArray.1.tfo161bfb1
+           (aconstr
+            (array
+             (i -1)
+             (rangetype
+              (i -1) +0 +8)) 1 +10 4 +20 7 +30 10 +40 13 +50 16 +60 19 +70 22 +80 25 +90))))
+        (unpackflat
+         (let :y.0 . . 19,41,lib/std/system/openarrays.nim
+          (mut
+           (i -1)) .)) ~2,1
+        (stmts
+         (yld 8
+          (add
+           (i +64) ~2 x.4 2
+           (hderef y.0))))))))) 4,19
+   (for 8
+    (call ~3 foo.0)
+    (unpackflat
+     (let :p.0 . . 13,~116
+      (i -1) .)) ~2,1
+    (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 9,120,tests/nimony/iter/tforloops1.nim p.0)) ,2
+      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (break .))) ,23
+   (iterator 9 :permutations.0 . . . 21
+    (params) 2
+    (i -1) . . 2,1
+    (stmts
+     (yld 6 +10))) 4,26
+   (for 17
+    (call ~12 permutations.0)
+    (unpackflat
+     (let :p.1 . . 13,~123
+      (i -1) .)) ~2,1
+    (stmts
+     (break .))) ,30
+   (proc 5 :main.0 . . . 10
+    (params) . . . 2,1
+    (stmts 4
+     (for 5
+      (hderef
+       (call ~5 items.1.tfo161bfb1
+        (hcall toOpenArray.2.tfo161bfb1
+         (aconstr
+          (array 22,35,lib/std/system/basic_types.nim
+           (bool)
+           (rangetype
+            (i -1) +0 +1)) 1
+          (true) 7
+          (false)))))
+      (unpackflat
+       (let :x.7 . . 19,41,lib/std/system/openarrays.nim
+        (mut 22,35,lib/std/system/basic_types.nim
+         (bool)) .)) ~2,1
+      (stmts 4
+       (for 5
+        (hderef
+         (call ~5 items.1.tfo161bfb1
+          (hcall toOpenArray.2.tfo161bfb1
+           (aconstr ~2,~1
+            (array 22,35,lib/std/system/basic_types.nim
+             (bool)
+             (rangetype
+              (i -1) +0 +1)) 1
+            (true) 7
+            (false)))))
+        (unpackflat
+         (let :y.1 . . 19,41,lib/std/system/openarrays.nim
+          (mut 22,35,lib/std/system/basic_types.nim
+           (bool)) .)) ~2,1
+        (stmts 2,116,lib/std/syncio.nim
+         (stmts 2,1
+          (stmts
+           (cmd write.1.syn1lfpjv 6 stdout.0.syn1lfpjv 13,133,tests/nimony/iter/tforloops1.nim
+            (hderef x.7))) 2,1
+          (stmts
+           (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 16,133,tests/nimony/iter/tforloops1.nim " ")) 2,1
+          (stmts
+           (cmd write.1.syn1lfpjv 6 stdout.0.syn1lfpjv 21,133,tests/nimony/iter/tforloops1.nim
+            (hderef y.1))) ,2
+          (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) 4,35
+   (call ~4 main.0))) 4,22
+ (proc :inc.0.tfo161bfb1 . 0,12,lib/std/system/arithmetics.nim .
+  (at inc.1.sysvq0asl 19,~4
+   (i -1)) 21,12,lib/std/system/arithmetics.nim
+  (params 1
+   (param :x.8 . . 3
+    (mut 23,19,tests/nimony/iter/tforloops1.nim
+     (i -1)) .)) 0,12,lib/std/system/arithmetics.nim . 32,12,lib/std/system/arithmetics.nim
+  (pragmas 2
+   (inline)) 0,12,lib/std/system/arithmetics.nim . 2,13,lib/std/system/arithmetics.nim
+  (stmts 2,1
+   (asgn ~2
+    (hderef x.8) 6
+    (add 23,19,tests/nimony/iter/tforloops1.nim
+     (i -1) 1
+     (hderef x.8) 30,~13
+     (conv 23,19,tests/nimony/iter/tforloops1.nim
+      (i -1) 1 +1))))) 13,60
+ (iterator :\2E.<.0.tfo161bfb1 . 0,1,lib/std/system/iterators.nim .
+  (at \2E.<.0.sysvq0asl
+   (i -1)) 27,1,lib/std/system/iterators.nim
+  (params 1
+   (param :a.9 . .
+    (i -1) .) 4
+   (param :b.4 . .
+    (i -1) .))
+  (i -1) 40,1,lib/std/system/iterators.nim
+  (pragmas 2
+   (inline)) 0,1,lib/std/system/iterators.nim . 2,2,lib/std/system/iterators.nim
+  (stmts 4
+   (var :i.11 . . 19,3,tests/nimony/iter/tforloops1.nim
+    (i -1) 4 a.9) ,1
+   (while 8
+    (lt
+     (i -1) ~2 i.11 2 b.4) 2,1
+    (stmts
+     (yld 6 i.11) ,1
+     (cmd inc.0.tfo161bfb1 4
+      (haddr i.11)))))) 17,95
+ (converter :toOpenArray.0.tfo161bfb1 . 0,13,lib/std/system/openarrays.nim .
+  (at toOpenArray.0.sysvq0asl ~3,~1
+   (rangetype
+    (i -1) +0 +5)
+   (i -1)) 28,13,lib/std/system/openarrays.nim
+  (params 3
+   (param ~2 :x.9 .
+    (pragmas 2
+     (byref)) 16
+    (array
+     (i -1) 14,95,tests/nimony/iter/tforloops1.nim
+     (rangetype
+      (i -1) +0 +5)) .)) 37,13,lib/std/system/openarrays.nim openArray.0.Inff8aa1.tfo161bfb1 69,13,lib/std/system/openarrays.nim
+  (pragmas 2
+   (inline)) 0,13,lib/std/system/openarrays.nim . 2,14,lib/std/system/openarrays.nim
+  (stmts
+   (result :result.0 . . 35,~1 openArray.0.Inff8aa1.tfo161bfb1 .)
+   (asgn result.0
+    (if 3
+     (elif 7
+      (eq
+       (i +64) 2,136,lib/std/system.nim
+       (expr ,~4
+        (expr 45,2
+         (add
+          (i +64) ~23
+          (sub
+           (i +64) ~5
+           (conv 30,6,lib/std/system/defaults.nim
+            (i -1) ~13
+            (conv
+             (i -1) 14,95,tests/nimony/iter/tforloops1.nim +5)) 18
+           (conv 30,6,lib/std/system/defaults.nim
+            (i -1) ~13
+            (conv
+             (i -1) 14,95,tests/nimony/iter/tforloops1.nim +0))) 2 +1))) 3 +0) ~1,1
+      (expr 12
+       (oconstr 21,~2 openArray.0.Inff8aa1.tfo161bfb1 2
+        (kv ~1 a.1.Inff8aa1.tfo161bfb1 2
+         (nil)) 12
+        (kv ~3 len.7.Inff8aa1.tfo161bfb1 2 +0)))) ,2
+     (else 2,1
+      (expr 12
+       (oconstr 21,~4 openArray.0.Inff8aa1.tfo161bfb1 2
+        (kv ~1 a.1.Inff8aa1.tfo161bfb1 2
+         (cast 5
+          (ptr 18
+           (uarray
+            (i -1))) 32
+          (addr 1 x.9))) 45
+        (kv ~3 len.7.Inff8aa1.tfo161bfb1 2,136,lib/std/system.nim
+         (expr ,~4
+          (expr 45,2
+           (add
+            (i +64) ~23
+            (sub
+             (i +64) ~5
+             (conv 30,6,lib/std/system/defaults.nim
+              (i -1) ~13
+              (conv
+               (i -1) 14,95,tests/nimony/iter/tforloops1.nim +5)) 18
+             (conv 30,6,lib/std/system/defaults.nim
+              (i -1) ~13
+              (conv
+               (i -1) 14,95,tests/nimony/iter/tforloops1.nim +0))) 2 +1))))))))) ~2,~1
+   (ret result.0))) 16,95
+ (iterator :items.0.tfo161bfb1 . 0,41,lib/std/system/openarrays.nim .
+  (at items.1.sysvq0asl
+   (i -1)) 18,41,lib/std/system/openarrays.nim
+  (params 1
+   (param :a.10 . . 12 openArray.0.Inff8aa1.tfo161bfb1 .)) 19,41,lib/std/system/openarrays.nim
+  (mut
+   (i -1)) 0,41,lib/std/system/openarrays.nim . 0,41,lib/std/system/openarrays.nim . 2,42,lib/std/system/openarrays.nim
+  (stmts 4
+   (var :i.12 . . 19,3,tests/nimony/iter/tforloops1.nim
+    (i -1) 4 +0) ,1
+   (while 8
+    (lt
+     (i +64) ~2 i.12 5
+     (call ~3 len.0.tfo161bfb1 1 a.10)) 2,1
+    (stmts
+     (yld 6
+      (call \5B\5D.0.tfo161bfb1 a.10 2 i.12)) ,1
+     (cmd inc.0.tfo161bfb1 4
+      (haddr i.12)))))) 15,114
+ (iterator :\2E..0.tfo161bfb1 . 0,7,lib/std/system/iterators.nim .
+  (at \2E..0.sysvq0asl
+   (i -1)) 26,7,lib/std/system/iterators.nim
+  (params 1
+   (param :a.12 . .
+    (i -1) .) 4
+   (param :b.5 . .
+    (i -1) .))
+  (i -1) 39,7,lib/std/system/iterators.nim
+  (pragmas 2
+   (inline)) 0,7,lib/std/system/iterators.nim . 2,8,lib/std/system/iterators.nim
+  (stmts 4
+   (var :i.13 . . 19,3,tests/nimony/iter/tforloops1.nim
+    (i -1) 4 a.12) ,1
+   (while 8
+    (le
+     (i -1) ~2 i.13 3 b.5) 2,1
+    (stmts
+     (yld 6 i.13) ,1
+     (cmd inc.0.tfo161bfb1 4
+      (haddr i.13)))))) 15,115
+ (converter :toOpenArray.1.tfo161bfb1 . 0,13,lib/std/system/openarrays.nim .
+  (at toOpenArray.0.sysvq0asl
+   (rangetype
+    (i -1) +0 +8)
+   (i -1)) 28,13,lib/std/system/openarrays.nim
+  (params 3
+   (param ~2 :x.11 .
+    (pragmas 2
+     (byref)) 16
+    (array
+     (i -1) 15,116,tests/nimony/iter/tforloops1.nim
+     (rangetype
+      (i -1) +0 +8)) .)) 37,13,lib/std/system/openarrays.nim openArray.0.Inff8aa1.tfo161bfb1 69,13,lib/std/system/openarrays.nim
+  (pragmas 2
+   (inline)) 0,13,lib/std/system/openarrays.nim . 2,14,lib/std/system/openarrays.nim
+  (stmts
+   (result :result.1 . . 35,~1 openArray.0.Inff8aa1.tfo161bfb1 .)
+   (asgn result.1
+    (if 3
+     (elif 7
+      (eq
+       (i +64) 2,136,lib/std/system.nim
+       (expr ,~4
+        (expr 45,2
+         (add
+          (i +64) ~23
+          (sub
+           (i +64) ~5
+           (conv 30,6,lib/std/system/defaults.nim
+            (i -1) ~13
+            (conv
+             (i -1) 15,116,tests/nimony/iter/tforloops1.nim +8)) 18
+           (conv 30,6,lib/std/system/defaults.nim
+            (i -1) ~13
+            (conv
+             (i -1) 15,116,tests/nimony/iter/tforloops1.nim +0))) 2 +1))) 3 +0) ~1,1
+      (expr 12
+       (oconstr 21,~2 openArray.0.Inff8aa1.tfo161bfb1 2
+        (kv ~1 a.1.Inff8aa1.tfo161bfb1 2
+         (nil)) 12
+        (kv ~3 len.7.Inff8aa1.tfo161bfb1 2 +0)))) ,2
+     (else 2,1
+      (expr 12
+       (oconstr 21,~4 openArray.0.Inff8aa1.tfo161bfb1 2
+        (kv ~1 a.1.Inff8aa1.tfo161bfb1 2
+         (cast 5
+          (ptr 18
+           (uarray
+            (i -1))) 32
+          (addr 1 x.11))) 45
+        (kv ~3 len.7.Inff8aa1.tfo161bfb1 2,136,lib/std/system.nim
+         (expr ,~4
+          (expr 45,2
+           (add
+            (i +64) ~23
+            (sub
+             (i +64) ~5
+             (conv 30,6,lib/std/system/defaults.nim
+              (i -1) ~13
+              (conv
+               (i -1) 15,116,tests/nimony/iter/tforloops1.nim +8)) 18
+             (conv 30,6,lib/std/system/defaults.nim
+              (i -1) ~13
+              (conv
+               (i -1) 15,116,tests/nimony/iter/tforloops1.nim +0))) 2 +1))))))))) ~2,~1
+   (ret result.1))) 13,130
+ (converter :toOpenArray.2.tfo161bfb1 . 0,13,lib/std/system/openarrays.nim .
+  (at toOpenArray.0.sysvq0asl
+   (rangetype
+    (i -1) +0 +1) 22,35,lib/std/system/basic_types.nim
+   (bool)) 28,13,lib/std/system/openarrays.nim
+  (params 3
+   (param ~2 :x.12 .
+    (pragmas 2
+     (byref)) 16
+    (array 22,35,lib/std/system/basic_types.nim
+     (bool) 13,131,tests/nimony/iter/tforloops1.nim
+     (rangetype
+      (i -1) +0 +1)) .)) 37,13,lib/std/system/openarrays.nim openArray.0.Ijejnmx1.tfo161bfb1 69,13,lib/std/system/openarrays.nim
+  (pragmas 2
+   (inline)) 0,13,lib/std/system/openarrays.nim . 2,14,lib/std/system/openarrays.nim
+  (stmts
+   (result :result.2 . . 35,~1 openArray.0.Ijejnmx1.tfo161bfb1 .)
+   (asgn result.2
+    (if 3
+     (elif 7
+      (eq
+       (i +64) 2,136,lib/std/system.nim
+       (expr ,~4
+        (expr 45,2
+         (add
+          (i +64) ~23
+          (sub
+           (i +64) ~5
+           (conv 30,6,lib/std/system/defaults.nim
+            (i -1) ~13
+            (conv
+             (i -1) 13,131,tests/nimony/iter/tforloops1.nim +1)) 18
+           (conv 30,6,lib/std/system/defaults.nim
+            (i -1) ~13
+            (conv
+             (i -1) 13,131,tests/nimony/iter/tforloops1.nim +0))) 2 +1))) 3 +0) ~1,1
+      (expr 12
+       (oconstr 21,~2 openArray.0.Ijejnmx1.tfo161bfb1 2
+        (kv ~1 a.1.Ijejnmx1.tfo161bfb1 2
+         (nil)) 12
+        (kv ~3 len.7.Ijejnmx1.tfo161bfb1 2 +0)))) ,2
+     (else 2,1
+      (expr 12
+       (oconstr 21,~4 openArray.0.Ijejnmx1.tfo161bfb1 2
+        (kv ~1 a.1.Ijejnmx1.tfo161bfb1 2
+         (cast 5
+          (ptr 18
+           (uarray 22,35,lib/std/system/basic_types.nim
+            (bool))) 32
+          (addr 1 x.12))) 45
+        (kv ~3 len.7.Ijejnmx1.tfo161bfb1 2,136,lib/std/system.nim
+         (expr ,~4
+          (expr 45,2
+           (add
+            (i +64) ~23
+            (sub
+             (i +64) ~5
+             (conv 30,6,lib/std/system/defaults.nim
+              (i -1) ~13
+              (conv
+               (i -1) 13,131,tests/nimony/iter/tforloops1.nim +1)) 18
+             (conv 30,6,lib/std/system/defaults.nim
+              (i -1) ~13
+              (conv
+               (i -1) 13,131,tests/nimony/iter/tforloops1.nim +0))) 2 +1))))))))) ~2,~1
+   (ret result.2))) 13,130
+ (iterator :items.1.tfo161bfb1 . 0,41,lib/std/system/openarrays.nim .
+  (at items.1.sysvq0asl 22,35,lib/std/system/basic_types.nim
+   (bool)) 18,41,lib/std/system/openarrays.nim
+  (params 1
+   (param :a.13 . . 12 openArray.0.Ijejnmx1.tfo161bfb1 .)) 19,41,lib/std/system/openarrays.nim
+  (mut 22,35,lib/std/system/basic_types.nim
+   (bool)) 0,41,lib/std/system/openarrays.nim . 0,41,lib/std/system/openarrays.nim . 2,42,lib/std/system/openarrays.nim
+  (stmts 4
+   (var :i.14 . . 19,3,tests/nimony/iter/tforloops1.nim
+    (i -1) 4 +0) ,1
+   (while 8
+    (lt
+     (i +64) ~2 i.14 5
+     (call ~3 len.1.tfo161bfb1 1 a.13)) 2,1
+    (stmts
+     (yld 6
+      (call \5B\5D.1.tfo161bfb1 a.13 2 i.14)) ,1
+     (cmd inc.0.tfo161bfb1 4
+      (haddr i.14)))))) 15,43,lib/std/system/openarrays.nim
+ (func :len.0.tfo161bfb1 . ~15,~18 .
+  (at len.8.sysvq0asl
+   (i -1)) ~3,~18
+  (params 1
+   (param :a.15 . . 12 openArray.0.Inff8aa1.tfo161bfb1 .)) 4,~18
+  (i -1) 20,~18
+  (pragmas 2
+   (inline)) ~15,~18 . 33,~18
+  (stmts 1
+   (result :result.3 . . 7,31,lib/std/system/basic_types.nim
+    (i -1) .) 1
+   (asgn result.3
+    (dot ~1 a.15 len.7.Inff8aa1.tfo161bfb1 +0)) ~48
+   (ret result.3))) 10,44,lib/std/system/openarrays.nim
+ (proc :\5B\5D.0.tfo161bfb1 . ~10,~36 .
+  (at \5B\5D.9.sysvq0asl
+   (i -1)) 3,~36
+  (params 1
+   (param :x.14 . . 12 openArray.0.Inff8aa1.tfo161bfb1 .) 18
+   (param :idx.2 . . 5
+    (i -1) .)) 19,~36
+  (mut
+   (i -1)) 38,~36
+  (pragmas 2
+   (inline) 10
+   (requires 19
+    (and 2,110,lib/std/system/comparisons.nim
+     (expr 2,1
+      (le
+       (i +64) 75,8,lib/std/system/openarrays.nim +0 68,8,lib/std/system/openarrays.nim idx.2)) 8
+     (lt
+      (i +64) ~4 idx.2 3
+      (dot ~1 x.14 len.7.Inff8aa1.tfo161bfb1 +0))))) ~10,~36 . 87,~36
+  (stmts 3
+   (result :result.4 . . ~71
+    (mut
+     (i -1)) .) 3
+   (asgn result.4 ~2
+    (haddr
+     (pat
+      (dot ~1 x.14 a.1.Inff8aa1.tfo161bfb1 +0) 3 idx.2))) ~97
+   (ret result.4))) 15,43,lib/std/system/openarrays.nim
+ (func :len.1.tfo161bfb1 . ~15,~18 .
+  (at len.8.sysvq0asl 22,35,lib/std/system/basic_types.nim
+   (bool)) ~3,~18
+  (params 1
+   (param :a.16 . . 12 openArray.0.Ijejnmx1.tfo161bfb1 .)) 4,~18
+  (i -1) 20,~18
+  (pragmas 2
+   (inline)) ~15,~18 . 33,~18
+  (stmts 1
+   (result :result.5 . . 7,31,lib/std/system/basic_types.nim
+    (i -1) .) 1
+   (asgn result.5
+    (dot ~1 a.16 len.7.Ijejnmx1.tfo161bfb1 +0)) ~48
+   (ret result.5))) 10,44,lib/std/system/openarrays.nim
+ (proc :\5B\5D.1.tfo161bfb1 . ~10,~36 .
+  (at \5B\5D.9.sysvq0asl 22,35,lib/std/system/basic_types.nim
+   (bool)) 3,~36
+  (params 1
+   (param :x.15 . . 12 openArray.0.Ijejnmx1.tfo161bfb1 .) 18
+   (param :idx.3 . . 5
+    (i -1) .)) 19,~36
+  (mut 22,35,lib/std/system/basic_types.nim
+   (bool)) 38,~36
+  (pragmas 2
+   (inline) 10
+   (requires 19
+    (and 2,110,lib/std/system/comparisons.nim
+     (expr 2,1
+      (le
+       (i +64) 75,8,lib/std/system/openarrays.nim +0 68,8,lib/std/system/openarrays.nim idx.3)) 8
+     (lt
+      (i +64) ~4 idx.3 3
+      (dot ~1 x.15 len.7.Ijejnmx1.tfo161bfb1 +0))))) ~10,~36 . 87,~36
+  (stmts 3
+   (result :result.6 . . ~71
+    (mut 22,35,lib/std/system/basic_types.nim
+     (bool)) .) 3
+   (asgn result.6 ~2
+    (haddr
+     (pat
+      (dot ~1 x.15 a.1.Ijejnmx1.tfo161bfb1 +0) 3 idx.3))) ~97
+   (ret result.6))) 37,13,lib/std/system/openarrays.nim
+ (type :openArray.0.Inff8aa1.tfo161bfb1 .
+  (at openArray.0.sysvq0asl
+   (i -1)) ~21,~9
+  (pragmas 2
+   (view)) ~10,~9
+  (object . ~23,1
+   (fld :a.1.Inff8aa1.tfo161bfb1 . . 3
+    (ptr 18
+     (uarray
+      (i -1))) .) ~23,2
+   (fld :len.7.Inff8aa1.tfo161bfb1 . . 5
+    (i -1) .))) 37,13,lib/std/system/openarrays.nim
+ (type :openArray.0.Ijejnmx1.tfo161bfb1 .
+  (at openArray.0.sysvq0asl 22,35,lib/std/system/basic_types.nim
+   (bool)) ~21,~9
+  (pragmas 2
+   (view)) ~10,~9
+  (object . ~23,1
+   (fld :a.1.Ijejnmx1.tfo161bfb1 . . 3
+    (ptr 18
+     (uarray 22,35,lib/std/system/basic_types.nim
+      (bool))) .) ~23,2
+   (fld :len.7.Ijejnmx1.tfo161bfb1 . . 5
+    (i -1) .))))

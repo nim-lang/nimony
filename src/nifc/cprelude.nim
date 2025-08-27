@@ -1,4 +1,3 @@
-
 const
   Prelude* = """
 /* GENERATED CODE. DO NOT EDIT. */
@@ -133,6 +132,10 @@ typedef NU8 NU;
 #define NIM_TRUE true
 #define NIM_FALSE false
 
+// Include math.h to use `NAN` that should be defined in C compilers supports C99.
+#include <math.h>
+
+// Define NAN in case math.h doesn't define it.
 // NAN definition copied from math.h included in the Windows SDK version 10.0.14393.0
 #ifndef NAN
 #  ifndef _HUGE_ENUF
@@ -166,6 +169,12 @@ typedef NU8 NU;
 #if defined(__GNUC__) || defined(__clang__)
 #  pragma GCC diagnostic ignored "-Wswitch-bool"
 #  pragma GCC diagnostic ignored "-Wformat"
+#  pragma GCC diagnostic ignored "-Wpointer-sign"
+#  if defined(__clang__)
+#    pragma GCC diagnostic ignored "-Wincompatible-pointer-types-discards-qualifiers"
+#  else
+#    pragma GCC diagnostic ignored "-Wdiscarded-qualifiers"
+#  endif
 #endif
 
 
@@ -316,5 +325,91 @@ typedef NU8 NU;
 #  error "Cannot define NIM_THREADVAR"
 #endif
 
-"""
+N_INLINE(NB8, _Qnifc_div_sll_overflow)(long long int a, long long int b, long long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  if (a == (long long int)(((unsigned long long int)1) << (sizeof(long long int) * 8 - 1)) && b == -1) {
+    *res = a;
+    return NIM_TRUE;
+  }
+  *res = a / b;
+  return NIM_FALSE;
+}
 
+N_INLINE(NB8, _Qnifc_div_sl_overflow)(long int a, long int b, long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  if (a == (long int)(((unsigned long int)1) << (sizeof(long int) * 8 - 1)) && b == -1) {
+    *res = a;
+    return NIM_TRUE;
+  }
+  *res = a / b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_div_ull_overflow)(unsigned long long int a, unsigned long long int b, unsigned long long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE; /* Overflow: division by zero */
+  }
+  *res = a / b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_div_ul_overflow)(unsigned long int a, unsigned long int b, unsigned long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a / b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_mod_sll_overflow)(long long int a, long long int b, long long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  if (a == (long long int)(((unsigned long long int)1) << (sizeof(long long int) * 8 - 1)) && b == -1) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a % b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_mod_sl_overflow)(long int a, long int b, long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  if (a == (long int)(((unsigned long int)1) << (sizeof(long int) * 8 - 1)) && b == -1) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a % b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_mod_ull_overflow)(unsigned long long int a, unsigned long long int b, unsigned long long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a % b;
+  return NIM_FALSE;
+}
+
+N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, unsigned long int *res) {
+  if (b == 0) {
+    *res = 0;
+    return NIM_TRUE;
+  }
+  *res = a % b;
+  return NIM_FALSE;
+}
+"""

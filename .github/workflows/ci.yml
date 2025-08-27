@@ -17,7 +17,7 @@ jobs:
             cpu: amd64
             nim_branch: devel
           - os: macos
-            cpu: amd64
+            cpu: arm64
             nim_branch: devel
           - os: windows
             cpu: amd64
@@ -28,10 +28,10 @@ jobs:
             builder: ubuntu-24.04
           - target:
               os: macos
-            builder: macos-13
+            builder: macos-15
           - target:
               os: windows
-            builder: windows-latest
+            builder: windows-2025
 
     name: '${{ matrix.target.os }}-${{ matrix.target.cpu }}-nim-${{ matrix.target.nim_branch }} (${{ matrix.branch }})'
     runs-on: ${{ matrix.builder }}
@@ -46,7 +46,7 @@ jobs:
           git config --global init.defaultBranch master
 
       - name: Checkout nif
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: nif
           submodules: false
@@ -111,15 +111,21 @@ jobs:
           echo '${{ github.workspace }}'"/external/mingw-${{ matrix.target.cpu }}/bin" >> $GITHUB_PATH
           echo '${{ github.workspace }}'"/external/dlls-${{ matrix.target.cpu }}" >> $GITHUB_PATH
 
-      - name: Install winget
-        if: runner.os == 'Windows'
-        uses: Cyberboss/install-winget@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #- name: Install winget
+      #  if: runner.os == 'Windows'
+      #  continue-on-error: true # for some reason errors if latest version already installed
+      #  # winget included in windows-2025 and above:
+      #  run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
 
-      - name: Install make dependencies (Windows)
+      #- name: Install make dependencies with winget (Windows)
+      #  if: runner.os == 'Windows'
+      #  run: winget install ezwinports.make --disable-interactivity --accept-source-agreements
+
+      - name: Install make dependencies with chocolatey (Windows)
         if: runner.os == 'Windows'
-        run: winget install ezwinports.make --disable-interactivity --accept-source-agreements
+        uses: crazy-max/ghaction-chocolatey@v3
+        with:
+          args: install make
 
       - name: System Info (Windows)
         if: runner.os == 'Windows'
@@ -142,10 +148,11 @@ jobs:
           version: ${{ matrix.target.nim_branch }}
           architecture: ${{ matrix.target.cpu }}
 
-      - name: Test Building nifler
+      - name: Test Building nimony
         run: |
           cd nif
           nim c src/nifler/nifler.nim
+          nim c -r src/nimony/nimony c lib/std/assertions.nim
 
       - name: Run tester
         run: |
