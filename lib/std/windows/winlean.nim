@@ -227,3 +227,11 @@ when defined(windows):
     importc: "CreateDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
   proc removeDirectoryW*(lpPathName: WideCString): int32 {.
     importc: "RemoveDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
+
+
+  proc createSymbolicLinkW*(lpSymlinkFileName, lpTargetFileName: WideCString,
+                        flags: DWORD): int32 {.
+    importc:"CreateSymbolicLinkW", dynlib: "kernel32", stdcall, sideEffect.}
+  proc createHardLinkW*(lpFileName, lpExistingFileName: WideCString,
+                        security: pointer=nil): int32 {.
+    importc:"CreateHardLinkW", dynlib: "kernel32", stdcall, sideEffect.}
