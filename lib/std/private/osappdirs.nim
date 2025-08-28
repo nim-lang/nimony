@@ -158,7 +158,7 @@ proc getTempDir*(): string {.tags: [ReadEnvEffect, ReadIOEffect].} =
       let size = getTempPath(0, nil)
       # If the function fails, the return value is zero.
       if size > 0:
-        let buffer = newWideCString(size.int)
+        let buffer = newWideCString(size.int).toWideCString()
         if getTempPath(size, buffer) > 0:
           result = $buffer
     elif defined(android): result = "/data/local/tmp"
