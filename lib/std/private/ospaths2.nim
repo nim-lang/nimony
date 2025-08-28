@@ -64,7 +64,7 @@ proc normalizePathEnd*(path: var string, trailingSep = false) =
     path = $DirSep
 
 
-# TODO: Overloading with varness doesn't work in Nimony yet
+# Overloading with varness isn't supported
 # proc normalizePathEnd*(path: string, trailingSep = false): string {.inline.} =
 #   ## outplace overload
 #   runnableExamples:
