@@ -106,3 +106,10 @@ when defined(posix):
     importc, header: "<time.h>", sideEffect.}
 
   proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
+
+  when not defined(nintendoswitch):
+    proc readlink*(a1, a2: cstring, a3: int): int {.importc, header: "<unistd.h>".}
+
+    proc symlink*(a1, a2: cstring): cint {.importc, header: "<unistd.h>".}
+  else:
+    proc symlink*(a1, a2: cstring): cint = -1

@@ -42,22 +42,24 @@ proc createSymlink*(src, dest: string) {.noWeirdTarget, raises.} =
   ## * `createHardlink proc`_
   ## * `expandSymlink proc`_
 
+
+  var src = src
+  var dest = dest
+
   when defined(windows):
     const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE = 2'u32
     # allows anyone with developer mode on to create a link
     let flag = dirExists(src).uint32 or SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
-    
-    var src = src
-    var dest = dest
+
     var wSrc = newWideCString(src).toWideCString()
     var wDst = newWideCString(dest).toWideCString()
     if createSymbolicLinkW(wDst, wSrc, flag) == 0 or getLastError() != 0:
       raiseOSError(osLastError(), "(" & src & ", " & dest & ")")
   else:
-    if symlink(src, dest) != 0:
+    if symlink(src.toCString(), dest.toCString()) != 0:
       raiseOSError(osLastError(), "(" & src & ", " & dest & ")")
 
-proc expandSymlink*(symlinkPath: string): string {.noWeirdTarget.} =
+proc expandSymlink*(symlinkPath: string): string {.noWeirdTarget, raises.} =
   ## Returns a string representing the path to which the symbolic link points.
   ##
   ## On Windows this is a noop, `symlinkPath` is simply returned.
@@ -71,7 +73,7 @@ proc expandSymlink*(symlinkPath: string): string {.noWeirdTarget.} =
     while true:
       result = newString(bufLen)
       var symlinkPath = symlinkPath
-      let len = readlink(symlinkPath.toWideCString(), result.toWideCString(), bufLen)
+      let len = readlink(symlinkPath.toCString(), result.toCString(), bufLen)
       if len < 0:
         raiseOSError(osLastError(), symlinkPath)
       if len < bufLen:
