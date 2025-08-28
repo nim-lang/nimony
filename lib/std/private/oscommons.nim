@@ -167,7 +167,7 @@ when supportedSystem:
       var flags = FILE_FLAG_BACKUP_SEMANTICS or FILE_ATTRIBUTE_NORMAL
       if not followSymlink:
         flags = flags or FILE_FLAG_OPEN_REPARSE_POINT
-      let access = if writeAccess: GENERIC_WRITE else: 0'i32
+      let access = if writeAccess: GENERIC_WRITE else: 0'u32
 
       var path = path
       result = createFileW(

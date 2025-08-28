@@ -45,9 +45,6 @@ else:
     # TODO: {.importc: "char**", nodecl.}
     cstringArray = ptr UncheckedArray[cstring]
 
-  proc `&`(x: string, y: char): string {.inline.} =
-    result = x & $y
-
   proc delete[T](x: var seq[T], i: Natural) {.noSideEffect.} =
     let xl = x.len
     for j in i.int..xl-2:
