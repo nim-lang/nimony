@@ -8,12 +8,6 @@ import ../pathnorm
 
 
 
-proc `&`(x: string, y: char): string {.inline.} =
-  result = x & $y
-
-proc `&`(x: char, y: string): string {.inline.} =
-  result = $x & y
-
 proc c_strlen(a: cstring): csize_t {.
   importc: "strlen", header: "<string.h>", noSideEffect.}
 

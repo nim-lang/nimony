@@ -328,6 +328,16 @@ proc `&`*(a, b: string): string {.semantics: "string.&".} =
     result = string(i: EmptyI)
     result.a = cast[StrData](cstring"")
 
+proc charToString(c: char): string =
+  result = newString(1)
+  result[0] = c
+
+proc `&`*(x: string, y: char): string {.inline.} =
+  result = x & charToString(y)
+
+proc `&`*(x: char, y: string): string {.inline.} =
+  result = charToString(x) & y
+
 proc terminatingZero*(s: string): string =
   result = s & "\0"
   result.shrink s.len
