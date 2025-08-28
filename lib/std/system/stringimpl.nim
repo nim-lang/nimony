@@ -218,8 +218,8 @@ proc `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.
 
 proc substr*(s: string; first, last: int): string =
   let len = s.len
-  let f = if first >= 0 and first < len: first else: 0
-  let l = if last >= 0 and last < len: last+1 else: len
+  let f = max(first, 0)
+  let l = min(last, len - 1) + 1
   if l <= f:
     result = string(a: cast[StrData](cstring""), i: EmptyI)
   else:
