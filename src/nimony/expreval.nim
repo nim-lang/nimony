@@ -264,7 +264,9 @@ proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; inf
 
 proc evalBitSet*(n, typ: Cursor): seq[uint8]
 
-proc evalPlusSet(c: var EvalContext; n: var Cursor): Cursor =
+
+
+proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   let info = n.info
   inc n # tag
   assert n.typeKind == SetT
@@ -285,8 +287,21 @@ proc evalPlusSet(c: var EvalContext; n: var Cursor): Cursor =
   let setB = evalBitSet(b, typeB)
   assert setA.len == setB.len
   var setRes = newSeq[uint8](setA.len)
-  for i in 0 ..< setA.len:
-    setRes[i] = setA[i] or setB[i]
+  case op
+  of PlusSetX:
+    for i in 0 ..< setA.len:
+      setRes[i] = setA[i] or setB[i]
+  of MinusSetX:
+    for i in 0 ..< setA.len:
+      setRes[i] = setA[i] and not setB[i]
+  of XorSetX:
+    for i in 0 ..< setA.len:
+      setRes[i] = setA[i] xor setB[i]
+  of MulSetX:
+    for i in 0 ..< setA.len:
+      setRes[i] = setA[i] and setB[i]
+  else:
+    assert false, "unexpected operation: " & $op
 
   let valPos = c.values.len
   c.values.add createTokenBuf()
@@ -325,7 +340,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   of ParLe:
     let exprKind = n.exprKind
     case exprKind
-    of TrueX, FalseX, NanX, InfX, NeginfX:
+    of TrueX, FalseX, NanX, InfX, NeginfX, NilX:
       result = n
       skip n
     of AndX:
@@ -476,8 +491,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of CallKinds:
       result = evalCall(c, n)
       skip n
-    of PlusSetX:
-      result = evalPlusSet(c, n)
+    of PlusSetX, MinusSetX, XorSetX, MulSetX:
+      result = evalSetOp(c, n, n.exprKind)
     else:
       if n.tagId == ErrT:
         result = n
@@ -682,7 +697,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       annotateConstantType(buf, typ, raw)
     of NilX:
       case typ.typeKind
-      of PointerT, PtrT, RefT, CstringT, ProctypeT, ParamsT, NiltT:
+      of PointerT, PtrT, RefT, CstringT, RoutineTypes, NiltT:
         buf.addSubtree n
       else: err = true
     of NanX, InfX, NeginfX:

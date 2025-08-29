@@ -15,17 +15,14 @@ template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
 
 template tagEnum*(c: PackedToken): TagEnum = cast[TagEnum](tag(c))
 
-proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
-  if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
-    result = cast[NimonyStmt](tagEnum(c))
-  else:
-    result = NoStmt
-
 proc stmtKind*(c: PackedToken): NimonyStmt {.inline.} =
   if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
     result = cast[NimonyStmt](tagEnum(c))
   else:
     result = NoStmt
+
+proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
+  result = stmtKind(c.load())
 
 proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   if c.kind == ParLe:
@@ -75,7 +72,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
   else:
     result = NoCallConv
 
-proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
+proc exprKind*(c: PackedToken): NimonyExpr {.inline.} =
   if c.kind == ParLe:
     if rawTagIsNimonyExpr(tagEnum(c)):
       result = cast[NimonyExpr](tagEnum(c))
@@ -83,6 +80,9 @@ proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
       result = NoExpr
   else:
     result = NoExpr
+
+proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
+  result = exprKind(c.load())
 
 proc symKind*(c: Cursor): NimonySym {.inline.} =
   if c.kind == ParLe:
@@ -127,6 +127,7 @@ const
   CallKindsS* = {CallS, CallstrlitS, CmdS, PrefixS, InfixS, HcallS}
   ConvKinds* = {HconvX, ConvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
+  RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv;
                info = NoLineInfo) =
@@ -287,3 +288,26 @@ proc skipModifier*(a: Cursor): Cursor =
 
 const
   LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}
+
+template skipToLocalType*(n) =
+  inc n # skip ParLe
+  inc n # skip name
+  skip n # skip export marker
+  skip n # skip pragmas
+
+template skipToReturnType*(n) =
+  inc n # skip ParLe
+  skip n # skip name
+  skip n # skip export marker
+  skip n # skip pattern
+  skip n # skip generics
+  skip n # skip params
+
+proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
+  var typ = typ
+  if typ.typeKind in RoutineTypes:
+    skipToReturnType typ
+    skip typ # return type
+    result = hasPragma(typ, kind)
+  else:
+    result = false

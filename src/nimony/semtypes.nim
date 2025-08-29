@@ -77,6 +77,7 @@ type
     enumType: SymId
     thisValue: xint
     hasHole: bool
+    declaredNames: HashSet[StrId]
 
 proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState)
 
@@ -232,9 +233,15 @@ proc semRangeTypeFromExpr(c: var SemContext; n: var Cursor; info: PackedLineInfo
   var it = Item(n: n, typ: c.types.autoType)
   var valuesBuf = createTokenBuf(4)
   swap c.dest, valuesBuf
+
+  # expression needs to be fully evaluated, switch to body phase
+  var phase = SemcheckBodies
+  swap c.phase, phase
   semExpr c, it
   removeModifier(it.typ)
   semExpr c, it
+
+  swap c.phase, phase
   swap c.dest, valuesBuf
   n = it.n
   # insert base type:
@@ -766,24 +773,23 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       else:
         semConceptType c, n
     of DistinctT:
-      if context != InTypeSection:
+      if tryTypeClass(c, n):
+        discard
+      elif context != InTypeSection:
         c.buildErr info, "`distinct` type must be defined in a `type` section"
         skip n
       else:
         takeToken c, n
         semLocalTypeImpl c, n, InLocalDecl
         takeParRi c, n
-    of ProctypeT, IteratorT, ParamsT:
+    of RoutineTypes:
       if tryTypeClass(c, n):
         return
-      if typeKind(n) != ParamsT:
-        takeToken c, n
-        wantDot c, n # name
-        wantDot c, n # export marker
-        wantDot c, n # pattern
-        wantDot c, n # generics
-      else:
-        takeToken c, n
+      takeToken c, n
+      wantDot c, n # name
+      wantDot c, n # export marker
+      wantDot c, n # pattern
+      wantDot c, n # generics
       let beforeParams = c.dest.len
       c.openScope()
       semParams c, n
@@ -791,7 +797,11 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       var crucial = default CrucialPragma
       semPragmas c, n, crucial, ProcY
       wantDot c, n # exceptions
-      wantDot c, n # body
+      # make it robust against Nifler's output
+      if n.kind == ParRi:
+        c.dest.addDotToken()
+      else:
+        wantDot c, n # body
       # close it here so that pragmas like `requires` can refer to the params:
       c.closeScope()
       takeParRi c, n

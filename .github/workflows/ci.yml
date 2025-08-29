@@ -46,7 +46,7 @@ jobs:
           git config --global init.defaultBranch master
 
       - name: Checkout nif
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: nif
           submodules: false
@@ -148,10 +148,11 @@ jobs:
           version: ${{ matrix.target.nim_branch }}
           architecture: ${{ matrix.target.cpu }}
 
-      - name: Test Building nifler
+      - name: Test Building nimony
         run: |
           cd nif
           nim c src/nifler/nifler.nim
+          nim c -r src/nimony/nimony c lib/std/assertions.nim
 
       - name: Run tester
         run: |

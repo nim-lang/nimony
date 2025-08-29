@@ -1,0 +1,1 @@
+tests/nimony/enums/tenumnameconflict.nim(6, 5) Error: attempt to redeclare: Value1

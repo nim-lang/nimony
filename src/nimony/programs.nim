@@ -262,6 +262,14 @@ proc publish*(s: SymId; dest: TokenBuf; start: int) =
     buf.add dest[i]
   publish s, buf
 
+proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
+  var buf = createTokenBuf(dest.len - start + 3)
+  for i in start..<dest.len:
+    buf.add dest[i]
+  buf.addDotToken() # body is empty for a signature
+  buf.addParRi()
+  publish s, buf
+
 proc splitModulePath*(s: string): (string, string, string) =
   var (dir, main, ext) = splitFile(s)
   let dotPos = find(main, '.')

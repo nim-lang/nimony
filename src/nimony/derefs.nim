@@ -350,6 +350,7 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
     takeParRi c, n
 
 proc trProcDecl(c: var Context; n: var Cursor) =
+  let decl = n
   c.typeCache.openScope(ProcScope)
   takeToken c, n
   let symId = n.symId
@@ -361,7 +362,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
       isGeneric = n.substructureKind == TypevarsU
       takeTree c.dest, n
     elif i == ParamsPos:
-      c.typeCache.registerParams(symId, n)
+      c.typeCache.registerParams(symId, decl, n)
       var params = n
       inc params
       let firstParam = asLocal(params)
@@ -371,7 +372,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
       takeTree c.dest, n
     elif i == ProcPragmasPos and not isGeneric:
       trProcPragmas(c, n)
-    elif i == ResultPos and n.typeKind in {MutT, OutT, LentT}:
+    elif i == ReturnTypePos and n.typeKind in {MutT, OutT, LentT}:
       c.r.returnExpects = WantVarTResult
       takeTree c.dest, n
     else:
@@ -428,6 +429,8 @@ proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   assert n.exprKind in CallKinds
   var n = n
   inc n
+  assert n.kind != ParRi
+  skip n
   if n.kind != ParRi:
     result = not borrowsFromReadonly(c, n)
   else:
@@ -774,6 +777,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       if e.wantMutable:
         cannotPassToVar c.dest, n.info, n
         skip n
+      else:
+        trSons c, n, WantT
+    of DerefX:
+      if e.wantMutable:
+        # allows ptr indirection: e.g. `inc x.id[]` for `id: ptr int`
+        c.dest.addParLe(HaddrX, n.info)
+        trSons c, n, WantT
+        c.dest.addParRi()
       else:
         trSons c, n, WantT
 

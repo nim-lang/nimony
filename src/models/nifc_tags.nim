@@ -88,10 +88,10 @@ type
   NifcType* = enum
     NoType
     ParamsT = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
-    UnionT = (ord(UnionTagId), "union")  ## union declaration
+    UnionT = (ord(UnionTagId), "union")  ## first one is Nifc union declaration, second one is Nimony union pragma
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration (soon obsolete, use params instead)
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration
     IT = (ord(ITagId), "i")  ## `int` builtin type
     UT = (ord(UTagId), "u")  ## `uint` builtin type
     FT = (ord(FTagId), "f")  ## `float` builtin type
@@ -140,9 +140,10 @@ type
     RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation
     ErrsP = (ord(ErrsTagId), "errs")  ## proc annotation
     StaticP = (ord(StaticTagId), "static")  ## `static` type or annotation
+    PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
 
 proc rawTagIsNifcPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, VarargsTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, VarargsTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, PackedTagId}
 
 type
   NifcTypeQualifier* = enum

@@ -77,7 +77,7 @@ type
     strings*: BiTable[StrId, string]
     integers*: BiTable[IntId, int64]
     uintegers*: BiTable[UIntId, uint64]
-    floats*: BiTable[FloatId, float64]
+    floats*: BiTableFloat[FloatId]
 
 proc `==`*(a, b: SymId): bool {.borrow.}
 proc `==`*(a, b: StrId): bool {.borrow.}

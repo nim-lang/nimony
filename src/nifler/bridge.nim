@@ -354,6 +354,13 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     toNif(n[paramsPos], n, c, allowEmpty = true)
     toNif(n[bodyPos], n, c)
     c.b.endTree()
+  of nkLambda:
+    relLineInfo(n, parent, c)
+    c.b.addTree(ProcL)
+    c.b.addEmpty # adds name placeholder
+    for i in 0..<n.len:
+      toNif(n[i], n, c, allowEmpty = true)
+    c.b.endTree()
   of nkOfInherit:
     if n.len == 1:
       toNif(n[0], parent, c)
@@ -584,6 +591,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       let last {.cursor.} = n[n.len-1]
       if last.kind == nkRecList:
         for child in last:
+          c.section = FldL
           toNif(child, n, c)
       elif last.kind != nkEmpty:
         toNif(last, n, c)

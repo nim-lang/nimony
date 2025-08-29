@@ -74,6 +74,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         b.addTree(tag)
         inc c
         mangleImpl b, c, mm
+        # skip optional not-nil markers:
         if c.kind != ParRi:
           skip c
         assert c.kind == ParRi

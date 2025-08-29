@@ -198,6 +198,7 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Curso
             break
           else:
             inc nested
+  let info = if hasErr: n.info else: info
   c.dest.buildTree ErrT, info:
     if hasErr:
       inc n
@@ -216,6 +217,28 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string) =
   var orig = createTokenBuf(1)
   orig.addDotToken()
   c.buildErr info, msg, cursorAt(orig, 0)
+
+proc combineErr*(c: var SemContext; pos: int; info: PackedLineInfo; msg: string; orig: Cursor) =
+  ## Builds ErrT node and combine it with the node at `pos` so that no nodes are added outside of
+  ## the node at `pos`.
+  ## When there is no node at `pos`, New ErrT node is added to `c.dest`.
+  ## Assumes the node at `pos` is the last node.
+  var needsParRi = false
+  if c.dest.len > pos:
+    needsParRi = true
+    if c.dest[pos].stmtKind == StmtsS:
+      assert c.dest[c.dest.len - 1].kind == ParRi
+      c.dest.shrink(c.dest.len - 1)
+    else:
+      c.dest.insert [parLeToken(StmtsS, c.dest[pos].info)], pos
+  buildErr c, info, msg, orig
+  if needsParRi:
+    c.dest.addParRi
+
+proc combineErr*(c: var SemContext; pos: int; info: PackedLineInfo; msg: string) =
+  var orig = createTokenBuf(1)
+  orig.addDotToken()
+  c.combineErr pos, info, msg, cursorAt(orig, 0)
 
 proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
@@ -402,19 +425,17 @@ proc addSym*(c: var SemContext; s: DelayedSym) =
     if addNonOverloadable(c.currentScope, s.lit, s.s) == Conflict:
       c.buildErr s.info, "attempt to redeclare: " & pool.strings[s.lit]
 
+proc addSymForwardError*(c: var SemContext; s: DelayedSym): bool =
+  if s.status == OkNew:
+    result = addNonOverloadable(c.currentScope, s.lit, s.s) == Conflict
+  else:
+    result = false
+
 proc publish*(c: var SemContext; s: SymId; start: int) =
   assert s != SymId(0)
   var buf = createTokenBuf(c.dest.len - start + 1)
   for i in start..<c.dest.len:
     buf.add c.dest[i]
-  programs.publish s, buf
-
-proc publishSignature*(c: var SemContext; s: SymId; start: int) =
-  var buf = createTokenBuf(c.dest.len - start + 3)
-  for i in start..<c.dest.len:
-    buf.add c.dest[i]
-  buf.addDotToken() # body is empty for a signature
-  buf.addParRi()
   programs.publish s, buf
 
 # -------------------------------------------------------------------------------------------------

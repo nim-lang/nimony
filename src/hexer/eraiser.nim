@@ -48,11 +48,12 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let decl = n
   var r = asRoutine(n)
   var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim)
 
   copyInto(dest, n):
-    let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
+    let isConcrete = c2.typeCache.takeRoutineHeader(dest, decl, n)
     if isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):

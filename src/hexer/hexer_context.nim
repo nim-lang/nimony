@@ -26,6 +26,7 @@ type
     requires*: seq[SymId]
     nestedIn*: seq[(StmtKind, SymId)]
     headers*: HashSet[StrId]
+    dynlibs*: Table[StrId, seq[(StrId, SymId)]]
     currentOwner*: SymId
     toMangle*: MangleScope
     strLits*: Table[string, SymId]

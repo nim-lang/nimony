@@ -78,12 +78,15 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
   if delayed.status == OkExistingFresh and InjectP in crucial.flags:
     # symbol is injected, add it to scope
     delayed.status = OkNew
+
+  var beforeType = -1
+
   case kind
   of TypevarY:
     discard semLocalType(c, n, InGenericConstraint)
     wantDot c, n
   of ParamY, LetY, VarY, ConstY, CursorY, ResultY, FldY, GletY, TletY, GvarY, TvarY:
-    let beforeType = c.dest.len
+    beforeType = c.dest.len
     if n.kind == DotToken:
       # no explicit type given:
       inc n # 3
@@ -92,6 +95,14 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
       if kind == ConstY:
         withNewScope c:
           semConstExpr c, it # 4
+      elif kind == ParamY and it.n.kind == DotToken:
+        if delayed.lit in c.usingStmtMap:
+          it.typ = c.usingStmtMap[delayed.lit]
+        elif c.routine.kind in {TemplateY, MacroY}:
+          it.typ = c.types.untypedType
+        else:
+          buildErr c, it.n.info, "type or init value expected"
+        c.dest.takeToken it.n
       else:
         semLocalValue c, it, crucial # 4
       n = it.n
@@ -115,7 +126,25 @@ proc semLocal(c: var SemContext; n: var Cursor; kind: SymKind) =
         patchType c, it.typ, beforeType
   else:
     bug "semLocal"
-  c.addSym delayed
+
+  if beforeType != -1:
+    let hasError = c.addSymForwardError delayed
+
+    if hasError:
+      var valueCursor = cursorAt(c.dest, beforeType)
+      skip valueCursor # skips types
+      let newValuePos = cursorToPosition(c.dest, valueCursor)
+      var valueBuf = createTokenBuf()
+      valueBuf.addSubtree valueCursor
+      endRead(c.dest)
+      shrink c.dest, newValuePos
+
+      let orig = beginRead(valueBuf)
+      c.buildErr delayed.info, "attempt to redeclare: " & pool.strings[delayed.lit], orig
+
+  else:
+    c.addSym delayed
+
   takeParRi c, n
   if kind == LetY:
     if ThreadvarP in crucial.flags:
@@ -142,6 +171,10 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
     # XXX original nim always injects enum fields regardless of the enum sym itself,
     # this does the same here
     delayed.status = OkNew
+  if state.declaredNames.contains delayed.lit:
+    delayed.status = ErrRedef
+  else:
+    state.declaredNames.incl delayed.lit
   let beforeExportMarker = c.dest.len
   if n.kind == DotToken:
     if state.isExported:
@@ -208,8 +241,11 @@ proc semEnumField(c: var SemContext; n: var Cursor; state: var EnumTypeState) =
           state.thisValue = explicitValue
         c.dest.add strToken(delayed.lit, n.info)
         c.dest.addParRi()
-  c.addSym delayed
   takeParRi c, n
+  if delayed.status == OkNew:
+    addOverloadable(c.currentScope, delayed.lit, delayed.s)
+  elif delayed.status == ErrRedef:
+    c.buildErr delayed.info, "attempt to redeclare: " & pool.strings[delayed.lit]
   publish c, delayed.s.name, declStart
 
 proc semGenericParam(c: var SemContext; n: var Cursor) =
@@ -274,7 +310,7 @@ proc getParamsType(c: var SemContext; paramsAt: int): seq[TypeCursor] =
   result = @[]
   if c.dest[paramsAt].kind != DotToken:
     var n = cursorAt(c.dest, paramsAt)
-    if n.typeKind == ParamsT:
+    if n.substructureKind == ParamsU:
       inc n
       while n.kind != ParRi:
         if n.symKind == ParamY:
@@ -487,12 +523,21 @@ proc hookThatShouldBeMethod(c: var SemContext; hk: HookKind; beforeParams: int):
   else:
     result = false
 
-proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
+proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind; newName = NoSymId) =
   let info = it.n.info
   let declStart = c.dest.len
   takeToken c, it.n
   let beforeName = c.dest.len
-  let (symId, status) = declareOverloadableSym(c, it, kind)
+
+  let symId: SymId
+  let status: SymStatus
+  if it.n.kind == DotToken:
+    symId = newName
+    status = OkNew
+    c.dest.add symdefToken(symId, it.n.info)
+    inc it.n
+  else:
+    (symId, status) = declareOverloadableSym(c, it, kind)
 
   let beforeExportMarker = c.dest.len
   wantExportMarker c, it.n
@@ -535,7 +580,7 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
       buildErr c, it.n.info, "`effects` must be empty"
       skip it.n
 
-    publishSignature c, symId, declStart
+    publishSignature c.dest, symId, declStart
     let hookName = getHookName(symId)
     let hk = hookToKind(hookName)
     if status in {OkNew, OkExistingFresh}:
@@ -631,8 +676,115 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
   finally:
     c.routine = c.routine.parent
   takeParRi c, it.n
-  producesVoid c, info, it.typ
+  if newName == NoSymId:
+    producesVoid c, info, it.typ
   publish c, symId, declStart
+
+proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
+  # find all macro/template identifiers in pragmas to invoke them with parent proc definition
+  result = newSeq[Cursor]()
+  if kind in RoutineKinds:
+    var n = asRoutine(n).pragmas
+    if n.substructureKind == PragmasU:
+      inc n
+      while n.kind != ParRi:
+        if n.exprKind == ErrX or n.substructureKind == KvU:
+          skip n
+        elif pragmaKind(n) != NoPragma or callConvKind(n) != NoCallConv:
+          skip n
+        else:
+          let hasParRi = n.kind == ParLe
+          let start = n
+          if n.exprKind == CallX:
+            inc n
+          let name = getIdent(n)
+          if name != StrId(0) and not (name in c.userPragmas and not hasParRi):
+            result.add start
+            n = start
+            skip n
+          else:
+            skip n
+
+proc transformMacroInvoc(c: var SemContext; it: var Item; macroInvocsPos: seq[Cursor]) =
+  # transform `proc foo() {.macrofoo, macrobar.}` to `macrobar: macrofoo: proc foo()`.
+  var inBuf = createTokenBuf()
+
+  # adds last one in macroInvocsPos to buf first as it is invoked last.
+  let info = it.n.info
+  for i in countdown(macroInvocsPos.len - 1, 0):
+    inBuf.addParLe CallX, info
+    var n = macroInvocsPos[i]
+    let isCall = n.exprKind == CallX
+    if isCall:
+      inc n
+    assert n.kind == Ident
+    inBuf.add n
+    if isCall:
+      inc n
+      while n.kind != ParRi:
+        inBuf.takeTree n
+    inBuf.addParLe StmtsS, info
+
+  var n = it.n
+  # copies the proc def to inBuf excepts all macros and templates to avoid
+  # recursive macro invocations and invocations of them at unexpected places.
+  var nested = 0
+  var i = 0
+  while true:
+    if i < macroInvocsPos.len and n == macroInvocsPos[i]:
+      skip n
+      inc i
+    else:
+      if n.kind == ParLe: inc nested
+      inBuf.takeToken n
+    if n.kind == ParRi:
+      dec nested
+      if nested == 0: break
+  inBuf.addParRi
+  for i in 0 ..< macroInvocsPos.len:
+    inBuf.addParRi  # close StmtsS
+    inBuf.addParRi  # close CallX
+  var it2 = Item(n: cursorAt(inBuf, 0), typ: c.types.autoType)
+  #echo "macro invoc in: ", toString it2.n
+  #let lastDestLen = c.dest.len
+  semCall c, it2, {}
+  endRead inBuf
+  #[
+  if c.dest.len > lastDestLen:
+    echo "macro invoc out: ", toString cursorAt(c.dest, lastDestLen)
+    endRead c.dest
+  else:
+    echo "macro invoc out: empty"
+  ]#
+  it.n = n
+  it.typ = it2.typ
+  skipParRi it.n
+
+proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
+  let macroInvocsPos = findMacroInvocs(c, it.n, kind)
+  if macroInvocsPos.len > 0:
+    if pass == checkBody:
+      transformMacroInvoc(c, it, macroInvocsPos)
+    else:
+      c.takeTree it.n
+  elif it.n.firstSon.kind == DotToken:
+    # anon routine
+    let info = it.n.firstSon.info
+    let name = identToSym(c, "`anonproc", ProcY)
+
+    var anons = createTokenBuf()
+    swap c.dest, anons
+    semProcImpl c, it, kind, pass, name
+    swap c.dest, anons
+    c.dest.add parLeToken(ExprX, info)
+    let anonTypePos = c.dest.len
+    c.dest.add anons
+    c.dest.add symToken(name, info)
+    c.dest.addParRi()
+    it.typ = typeToCursor(c, c.dest, anonTypePos)
+
+  else:
+    semProcImpl c, it, kind, pass
 
 proc semTypePragmas(c: var SemContext; n: var Cursor; sym: SymId; beforeExportMarker: int): CrucialPragma =
   result = CrucialPragma(sym: sym)
@@ -646,7 +798,7 @@ proc fitTypeToPragmas(c: var SemContext; pragmas: CrucialPragma; typeStart: int)
     if isNominal(typ.typeKind):
       # ok
       endRead(c.dest)
-    elif typ.typeKind in {IntT, UintT, FloatT, CharT}:
+    elif typ.typeKind in {IntT, UintT, FloatT, CharT, PointerT}:
       let info = typ.info
       endRead(c.dest)
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
@@ -937,3 +1089,67 @@ proc semUnpackDecl(c: var SemContext; it: var Item) =
   skipParRi it.n # close unpacktup
   skipParRi it.n # close unpackdecl
   producesVoid c, info, it.typ
+
+proc semUsing(c: var SemContext; n: var Cursor) =
+  takeToken c, n
+  while n.kind != ParRi:
+    assert n.substructureKind == FldU
+    takeToken c, n
+    var ident = StrId(0)
+    if n.kind == Ident:
+      ident = n.litId
+      takeToken c, n
+    else:
+      c.buildErr n.info, "identifier is expected", n
+      skip n
+
+    # export marker
+    if n.kind == DotToken:
+      takeToken c, n
+    else:
+      c.buildErr n.info, "identifiers under using statements cannot be exported", n
+      skip n
+
+    # pragma
+    # currently no pragmas can be used in using statements
+    if n.kind == DotToken:
+      takeToken c, n
+    elif n.substructureKind == PragmasU:
+      c.buildErr n.info, "using statements supports no pragmas", n
+      skip n
+    else:
+      c.buildErr n.info, "illformed AST inside using statement", n
+      skip n
+
+    let typ = semLocalType(c, n)
+    if ident != StrId(0):
+      c.usingStmtMap[ident] = typ
+
+    if n.kind == DotToken:
+      takeToken c, n
+    else:
+      c.buildErr n.info, "illformed AST inside using statement", n
+      skip n
+
+    takeParRi c, n
+
+  takeParRi c, n
+
+proc semDo(c: var SemContext; it: var Item; pass: PassKind) =
+  let info = it.n.info
+  inc it.n
+  var anons = createTokenBuf()
+  # transform the do notation to an anon proc
+  anons.addParLe(ProcS, info)
+  anons.addEmpty info # name
+  anons.addEmpty3 info # export, pattern, typevars
+  anons.takeTree it.n  # params
+  anons.takeTree it.n  # return type
+  anons.addEmpty info  # pragma
+  anons.addEmpty info  # effects
+  anons.takeTree it.n  # body
+  anons.takeParRi it.n
+  var anonIt = Item(n: beginRead(anons), typ: it.typ)
+  semProc c, anonIt, ProcY, pass
+  endRead anons
+  it.typ = anonIt.typ

@@ -21,6 +21,7 @@ proc len*(s: string): int {.inline, semantics: "string.len", ensures: (0 <= resu
   result = s.i shr LenShift
 
 proc high*(s: string): int {.inline.} = len(s)-1
+proc low*(s: string): int {.inline.} = 0
 
 proc cap(s: string): int {.inline.} = allocatedSize(s.a)
 
@@ -209,14 +210,16 @@ proc shrink*(s: var string; newLen: int) =
 # --- string indexing & slicing ---
 
 proc `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
+  if not isAllocated(s):
+    makeAllocated s, s.len
   s.a[i] = c
 
 proc `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.} = s.a[i]
 
 proc substr*(s: string; first, last: int): string =
   let len = s.len
-  let f = if first >= 0 and first < len: first else: 0
-  let l = if last >= 0 and last < len: last+1 else: len
+  let f = max(first, 0)
+  let l = min(last, len - 1) + 1
   if l <= f:
     result = string(a: cast[StrData](cstring""), i: EmptyI)
   else:
@@ -324,6 +327,16 @@ proc `&`*(a, b: string): string {.semantics: "string.&".} =
     # ensure an empty string
     result = string(i: EmptyI)
     result.a = cast[StrData](cstring"")
+
+proc charToString(c: char): string =
+  result = newString(1)
+  result[0] = c
+
+proc `&`*(x: string, y: char): string {.inline.} =
+  result = x & charToString(y)
+
+proc `&`*(x: char, y: string): string {.inline.} =
+  result = charToString(x) & y
 
 proc terminatingZero*(s: string): string =
   result = s & "\0"

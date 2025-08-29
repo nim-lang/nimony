@@ -468,15 +468,7 @@ proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false) =
       assert n.substructureKind == RangesU
       inc n
       while n.kind != ParRi:
-        case n.substructureKind
-        of RangeU:
-          inc n
-          gsub(g, n)
-          put(g, tkDotDot, "..")
-          gsub(g, n)
-          skipParRi(n)
-        else:
-          gsub(g, n)
+        gsub(g, n)
 
       skipParRi(n)
 
@@ -607,7 +599,16 @@ proc gcallComma(g: var SrcGen, n: var Cursor) =
       gcomma(g)
     else:
       afterFirst = true
-    gsub(g, n)
+
+    if n.substructureKind == VvU:
+      inc n
+      gsub(g, n)
+      put(g, tkSpaces, Space)
+      put(g, tkEquals, "=")
+      put(g, tkSpaces, Space)
+      gsub(g, n)
+    else:
+      gsub(g, n)
 
 proc gcall(g: var SrcGen, n: var Cursor) =
   inc n
@@ -722,7 +723,8 @@ proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
 
   inc n
 
-  if n.kind != ParRi:
+  while n.kind != ParRi:
+    # skips importc and headers etc.
     skip n
 
   skipParRi(n)
@@ -975,6 +977,69 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       put(g, tkStrLit, toString(n, false))
       skip n
 
+    of RoutineTypes:
+      case n.typeKind
+      of ProcT:
+        putWithSpace(g, tkProc, "proc")
+      of IteratorT:
+        putWithSpace(g, tkIterator, "iterator")
+      of ConverterT:
+        putWithSpace(g, tkConverter, "converter")
+      of MacroT:
+        putWithSpace(g, tkMacro, "macro")
+      of TemplateT:
+        putWithSpace(g, tkTemplate, "template")
+      of MethodT:
+        putWithSpace(g, tkMethod, "method")
+      of FuncT:
+        putWithSpace(g, tkFunc, "func")
+      of ProctypeT:
+        putWithSpace(g, tkProc, "proc")
+      else:
+        raiseAssert "cannot happen"
+      inc n
+
+      for i in 1..4: skip n
+      if n.substructureKind == ParamsU:
+        put(g, tkParLe, "(")
+        inc n
+        while n.kind != ParRi:
+          let decl = takeLocal(n, SkipFinalParRi)
+          var name = decl.name
+          var value = decl.val
+          var typ = decl.typ
+          gsub(g, name, c)
+
+          if typ.kind != DotToken:
+            putWithSpace(g, tkColon, ":")
+            gtype(g, typ, c)
+
+          if value.kind != DotToken:
+            put(g, tkSpaces, Space)
+            putWithSpace(g, tkEquals, "=")
+            gsub(g, value, c)
+
+          if n.kind != ParRi:
+            putWithSpace(g, tkComma, ",")
+        inc n
+        put(g, tkParRi, ")")
+      else:
+        skip n
+
+      # return type
+      if n.kind != DotToken:
+        putWithSpace(g, tkColon, ":")
+        gtype(g, n, c)
+      else:
+        inc n
+      if n.kind != DotToken:
+        # pragmas
+        gsub(g, n, c)
+      else:
+        inc n
+      skip n # effects
+      skip n # body
+      skipParRi(n)
     else:
       case n.exprKind
       of CchoiceX, OchoiceX:
@@ -1320,7 +1385,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         skipParRi(n)
 
       of NoStmt:
-        skip n
+        case n.substructureKind
+        of RangeU:
+          inc n
+          gsub(g, n)
+          put(g, tkDotDot, "..")
+          gsub(g, n)
+          skipParRi(n)
+        else:
+          skip n
         # raiseAssert "unreachable"
 
       of PragmasS:
@@ -1398,6 +1471,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       skipParRi(n)
 
+    of DelayX:
+      inc n
+      skip n # don't render the type `Continuation` here
+      put(g, tkSymbol, "delay")
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
     of EmoveX:
       inc n
       put(g, tkSymbol, "ensureMove")
@@ -1414,7 +1496,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of HighX, LowX, TypeofX,
        SizeofX, AlignofX, OffsetofX,
        CardX, UnpackX, FieldsX, CompilesX,
-       DeclaredX, DefinedX:
+       DeclaredX, DefinedX, AstToStrX:
       gcallsystem(g, n, $n.exprKind)
 
     of ProccallX:
@@ -1454,7 +1536,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of TraceX:
        gcallsystem(g, n, "=sink")
 
-    of DefaultobjX, DefaulttupX:
+    of DefaultobjX, DefaulttupX, DefaultdistinctX:
       gcallsystem(g, n, "default")
 
     of InsetX:
@@ -1562,7 +1644,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of InfixX:
       ginfix(g, n)
 
-    of AndX, OrX, XorX, IsX, InstanceofX:
+    of AndX, OrX, XorX:
       let opr: string
       case n.exprKind
       of AndX:
@@ -1571,6 +1653,19 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         opr = "or"
       of XorX:
         opr = "xor"
+      else:
+        raiseAssert "unreachable"
+      inc n
+      gsub(g, n)
+      put(g, tkSpaces, Space)
+      put(g, tkSymbol, opr)
+      put(g, tkSpaces, Space)
+      gsub(g, n)
+      skipParRi(n)
+
+    of IsX, InstanceofX:
+      let opr: string
+      case n.exprKind
       of IsX:
         opr = "is"
       of InstanceofX:
@@ -1582,7 +1677,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkSpaces, Space)
       put(g, tkSymbol, opr)
       put(g, tkSpaces, Space)
-      gsub(g, n)
+      gtype(g, n, c)
       skipParRi(n)
 
     of EqX, NeqX, LeX, LtX, AddX,

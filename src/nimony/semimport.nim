@@ -166,7 +166,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
     while x.kind != ParRi:
       if x.kind == ParLe and x.exprKind == NilX:
         # from a import nil
-        discard
+        skip x
       else:
         included.incl takeIdent(x)
     doImports c, files, ImportFilter(kind: FromImport, list: included), info

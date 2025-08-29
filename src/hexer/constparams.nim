@@ -55,17 +55,18 @@ proc rememberConstRefParams(c: var Context; params: Cursor) =
       c.constRefParams.incl r.name.symId
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let decl = n
   var r = asRoutine(n)
   var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim,
     resultSym: SymId(0), canRaise: hasPragma(r.pragmas, RaisesP),
     retType: r.retType)
 
   copyInto(dest, n):
-    let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
+    let isConcrete = c2.typeCache.takeRoutineHeader(dest, decl, n)
     if isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):
-        c2.typeCache.registerLocal(symId, r.kind, r.params)
+        c2.typeCache.registerLocal(symId, r.kind, decl)
       c2.typeCache.openScope()
       rememberConstRefParams c2, r.params
       c2.tupleVars = localsThatBecomeTuples(n)
@@ -276,10 +277,14 @@ proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.canRaise:
     copyInto dest, n:
-      let maybeClose = produceSuccessTuple(c, dest, c.retType, n.info)
-      tr c, dest, n
-      if maybeClose:
-        dest.addParRi() # tuple constructor
+      if n.kind == DotToken:
+        dest.addSymUse pool.syms.getOrIncl(SuccessName), n.info
+        inc n
+      else:
+        let maybeClose = produceSuccessTuple(c, dest, c.retType, n.info)
+        tr c, dest, n
+        if maybeClose:
+          dest.addParRi() # tuple constructor
   else:
     copyInto dest, n:
       tr c, dest, n
@@ -349,7 +354,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc nn
 
   dest.add n
-  let info = n.info
   inc n
   tr c, dest, n
   c.exceptVars.shrink oldLen
@@ -370,6 +374,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   var nn = n.firstSon
   if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(nn.symId)):
+    let isResultSym = nn.symId == c.resultSym
     skip nn
     if nn.exprKind in CallKinds and callCanRaise(c.typeCache, nn):
       # nothing to do, both are in compatible tuple form:
@@ -381,7 +386,11 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyInto dest, n:
         dest.add n # result
         inc n
-        let maybeClose = produceSuccessTuple(c, dest, getType(c.typeCache, n), n.info)
+        let maybeClose: bool
+        if isResultSym:
+          maybeClose = produceSuccessTuple(c, dest, c.retType, n.info)
+        else:
+          maybeClose = produceSuccessTuple(c, dest, getType(c.typeCache, n), n.info)
         tr c, dest, n
         if maybeClose:
           dest.addParRi() # tuple constructor

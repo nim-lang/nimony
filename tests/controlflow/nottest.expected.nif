@@ -9,4 +9,4 @@
  (lab :L14)
  (call side.effect)
  (call echo +3)
- (ret))
+ (ret .))

@@ -113,11 +113,14 @@ type
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
-    pendingTypePlugins*: Table[SymId, StrId]
-    pendingModulePlugins*: seq[StrId]
+    pendingTypePlugins*: Table[SymId, (StrId, PackedLineInfo)]
+    pendingModulePlugins*: seq[(StrId, PackedLineInfo)]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     userPragmas*: Table[StrId, TokenBuf]
+    usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
+    pragmaStack*: seq[Cursor] # used to implement {.push.} and {.pop.}
+    passL*: seq[string]
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

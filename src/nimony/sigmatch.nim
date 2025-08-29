@@ -412,7 +412,7 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
     inc f
-    return true
+    return a.typeKind != AutoT
   if a.kind == Symbol:
     let res = tryLoadSym(a.symId)
     assert res.status == LacksNothing
@@ -525,8 +525,8 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
       of ParLe:
         # special cases:
         case f.typeKind
-        of ProctypeT, ParamsT:
-          if a.typeKind notin {ProctypeT, ParamsT}:
+        of RoutineTypes:
+          if a.typeKind notin RoutineTypes:
             m.error(InvalidMatch, fOrig, aOrig)
             break
           var a2 = a # since procTypeMatch does not skip it properly
@@ -603,7 +603,7 @@ type
     usesClosure*: bool
 
 proc extractProcProps*(c: var Cursor): ProcProperties =
-  result = ProcProperties(cc: Fastcall, usesRaises: false, usesClosure: false)
+  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false)
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
@@ -622,17 +622,17 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
     bug "No pragmas found"
 
 proc procTypeMatch(m: var Match; f, a: var Cursor) =
-  if f.typeKind == ProctypeT:
-    inc f
-    for i in 1..4: skip f
-  if a.typeKind == ProctypeT:
-    inc a
-    for i in 1..4: skip a
+  assert f.typeKind in RoutineTypes
+  inc f
+  for i in 1..4: skip f
+  assert a.typeKind in RoutineTypes
+  inc a
+  for i in 1..4: skip a
   var hasParams = 0
-  if f.typeKind == ParamsT:
+  if f.substructureKind == ParamsU:
     inc f
     if f.kind != ParRi: inc hasParams
-  if a.typeKind == ParamsT:
+  if a.substructureKind == ParamsU:
     inc a
     if a.kind != ParRi: inc hasParams, 2
   if hasParams == 3:
@@ -870,6 +870,8 @@ proc skipExpr*(n: Cursor): Cursor =
 
 proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   var a = skipModifier(arg.typ)
+  if a.typeKind == RangetypeT:
+    inc a # skip to base type
   let ex = skipExpr(arg.n)
   let isIntLit = f.typeKind != CharT and
     ex.kind == IntLit and sameTrees(a, m.context.types.intType)
@@ -1037,7 +1039,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         discard "ok"
         inc f
         expectParRi m, f
-      of PtrT, CstringT:
+      of PtrT, CstringT, RoutineTypes:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
@@ -1107,18 +1109,18 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         if a.kind != ParRi:
           # len(a) > len(f)
           m.error InvalidMatch, fOrig, aOrig
-    of ProctypeT, ParamsT:
+    of RoutineTypes:
       var a = skipModifier(arg.typ)
       case a.typeKind
       of NiltT:
         discard "ok"
         skip f
-      of {ProctypeT, ParamsT}:
+      of RoutineTypes:
         procTypeMatch m, f, a
       else:
         m.error InvalidMatch, f, a
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, VoidT, NiltT, OrT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
+        ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
@@ -1361,7 +1363,10 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
   matchTypevars m, fn, explicitTypeVars
 
   var f = fn.typ
-  assert f.isParamsTag
+  if f.typeKind in RoutineTypes:
+    inc f # skip ParLe
+    for i in 1..4: skip f
+  assert f.substructureKind == ParamsU
   inc f # "params"
   sigmatchLoop m, f, args
 
@@ -1401,8 +1406,12 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   let c = a.context
   var aParams = a.fn.typ
   var bParams = b.fn.typ
-  assert aParams.typeKind == ParamsT
-  assert bParams.typeKind == ParamsT
+  inc aParams
+  for i in 1..4: skip aParams
+  assert aParams.substructureKind == ParamsU
+  inc bParams
+  for i in 1..4: skip bParams
+  assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
   while aParams.kind != ParRi and bParams.kind != ParRi:
@@ -1425,10 +1434,20 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
       if result == SecondWins: return NobodyWins
       result = FirstWins
 
-proc cmpMatches*(a, b: Match): DisambiguationResult =
+proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
   assert not a.err
   assert not b.err
-  if a.convCosts < b.convCosts:
+  if a.fn.typ.typeKind == IteratorT and b.fn.typ.typeKind != IteratorT:
+    if preferIterators:
+      result = FirstWins
+    else:
+      result = SecondWins
+  elif b.fn.typ.typeKind == IteratorT and a.fn.typ.typeKind != IteratorT:
+    if preferIterators:
+      result = SecondWins
+    else:
+      result = FirstWins
+  elif a.convCosts < b.convCosts:
     result = FirstWins
   elif a.convCosts > b.convCosts:
     result = SecondWins
@@ -1451,15 +1470,16 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
     elif diff > 0:
       result = SecondWins
     else:
-      if a.fn.typ.typeKind == ParamsT and b.fn.typ.typeKind == ParamsT:
+      if a.fn.typ.typeKind in RoutineTypes and b.fn.typ.typeKind in RoutineTypes:
         result = mutualGenericMatch(a, b)
       else:
         result = NobodyWins
 
-type ParamsInfo = object
-  len: int
-  names: Table[StrId, int]
-  isVarargs: seq[bool] # could also use a set or store the decls and check after
+type
+  ParamsInfo = object
+    len: int
+    names: Table[StrId, int]
+    isVarargs: seq[bool] # could also use a set or store the decls and check after
 
 proc buildParamsInfo(params: Cursor): ParamsInfo =
   result = ParamsInfo(names: initTable[StrId, int](), len: 0)
@@ -1550,6 +1570,11 @@ proc sigmatchNamedArgs*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                         explicitTypeVars: Cursor;
                         hasNamedArgs: bool) =
   if hasNamedArgs:
-    sigmatch m, fn, orderArgs(m, fn.typ, args), explicitTypeVars
+    var params = fn.typ
+    if params.typeKind in RoutineTypes:
+      inc params
+      for i in 1..4: skip params
+    assert params.substructureKind == ParamsU
+    sigmatch m, fn, orderArgs(m, params, args), explicitTypeVars
   else:
     sigmatch m, fn, args, explicitTypeVars

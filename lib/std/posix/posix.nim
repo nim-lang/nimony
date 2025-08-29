@@ -20,15 +20,32 @@ when defined(posix):
 
     Sighandler = proc (a: cint) {.noconv.}
 
+    Dev* {.importc: "dev_t", header: "<sys/types.h>".} = uint
+    Ino* {.importc: "ino_t", header: "<sys/types.h>".} = uint
+
     Stat* {.importc: "struct stat",
              header: "<sys/stat.h>", final, pure.} = object ## struct stat
-      st_size* {.importc: "st_size".}: Off  ## For regular files, the file size in bytes.
+      st_dev* {.importc: "st_dev".} : Dev          ## Device ID of device containing file.
+      st_ino* {.importc: "st_ino".} : Ino          ## File serial number.
+      st_size* {.importc: "st_size".} : Off  ## For regular files, the file size in bytes.
                                             ## For symbolic links, the length in bytes of the
                                             ## pathname contained in the symbolic link.
                                             ## For a shared memory object, the length in bytes.
                                             ## For a typed memory object, the length in bytes.
                                             ## For other file types, the use of this field is
                                             ## unspecified.
+      st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
+
+
+  const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
+      defined(osx) or defined(openbsd) or defined(dragonfly) or defined(haiku) ## \
+    ## Boolean flag that indicates if the system supports nanosecond time
+    ## resolution in the fields of `Stat`. Note that the nanosecond based fields
+    ## (`Stat.st_atim`, `Stat.st_mtim` and `Stat.st_ctim`) can be accessed
+    ## without checking this flag, because this module defines fallback procs
+    ## when they are not available.
+
+
 
   include posix_other
 
@@ -62,7 +79,37 @@ when defined(posix):
   proc close*(a1: cint): cint {.importc: "close", header: "<unistd.h>".}
 
   proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", header: "<sys/stat.h>", sideEffect.}
+  proc lstat*(a1: cstring, a2: var Stat): cint {.importc, header: "<sys/stat.h>", sideEffect.}
+  proc stat*(a1: cstring, a2: var Stat): cint {.importc, header: "<sys/stat.h>".}
+
+
+  proc S_ISBLK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a block special file.
+  proc S_ISCHR*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a character special file.
+  proc S_ISDIR*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a directory.
+  proc S_ISFIFO*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a pipe or FIFO special file.
+  proc S_ISREG*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a regular file.
+  proc S_ISLNK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a symbolic link.
+  proc S_ISSOCK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+    ## Test for a socket.
 
   proc mmap*(a1: pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
     importc: "mmap", header: "<sys/mman.h>".}
   proc munmap*(a1: pointer, a2: int): cint {.importc: "munmap", header: "<sys/mman.h>".}
+
+  proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.
+    importc, header: "<time.h>", sideEffect.}
+
+  proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
+
+  when not defined(nintendoswitch):
+    proc readlink*(a1, a2: cstring, a3: int): int {.importc, header: "<unistd.h>".}
+
+    proc symlink*(a1, a2: cstring): cint {.importc, header: "<unistd.h>".}
+  else:
+    proc symlink*(a1, a2: cstring): cint = -1

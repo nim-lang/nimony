@@ -9,4 +9,4 @@
  (goto L20)
  (lab :L20)
  (call echo "finally")
- (ret))
+ (ret .))

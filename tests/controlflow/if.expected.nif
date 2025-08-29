@@ -2,20 +2,20 @@
  (let :other.var . .
   (i -1) +12)
  (call echo "before")
- (var :`cf0 . .
+ (var :`cf.0 . .
   (auto) .)
  (ite
   (eq other.var +12)
   (goto L30)
   (goto L38))
  (lab :L30)
- (asgn `cf0
+ (asgn `cf.0
   (call echo +1))
  (goto L43)
  (lab :L38)
- (asgn `cf0 +0)
+ (asgn `cf.0 +0)
  (goto L43)
  (lab :L43)
  (let :my.var . .
-  (i -1) `cf0)
- (ret))
+  (i -1) `cf.0)
+ (ret .))

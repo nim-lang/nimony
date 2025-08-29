@@ -6,6 +6,7 @@ There is a [blog post](https://nim-lang.org/araq/nimony.html) about its design p
 The current focus is on developing a compiler for a Nim dialect that offers:
 
 - Incremental recompilations.
+- Fully parallel builds.
 - No forward declarations for procs and types required.
 - Type-checked generics.
 
@@ -17,11 +18,5 @@ AI has created a good overview of our [compiler architecture](https://deepwiki.c
 Nimony uses a tool called `hastur` to build:
 
 ```
-nim c src/hastur
-src/hastur build nifler
-src/hastur build nimony
-src/hastur build hexer
-src/hastur build nifc
+nim c -r src/hastur build all
 ```
-
-

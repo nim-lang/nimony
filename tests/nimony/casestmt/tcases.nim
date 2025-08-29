@@ -34,3 +34,41 @@ block:
       discard
 
   main(10)
+
+block:
+  var x = 'x'
+  var value = 0
+
+  case x
+  of 'a':
+    value = 1
+  of {'c', 'b', 'g'..'z'}:
+    value = 2
+  else:
+    value = 3
+
+  assert value == 2
+
+const toEscapedChars = {'\32'} + {'\\', '\'', '\"'}
+
+block:
+  var x = '\"'
+  var branch = 0
+  case x
+  of toEscapedChars:
+    branch = 1
+  else:
+    branch = 2
+  assert branch == 1
+
+
+proc hoo =
+  var x = 'a'
+  var branch = 0
+  case x
+  of toEscapedChars:
+    branch = 1
+  else:
+    branch = 2
+  assert branch == 2
+hoo()

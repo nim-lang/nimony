@@ -9,7 +9,7 @@
 from std / strutils import multiReplace, split, strip
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include nifprelude
-import ".." / lib / [nifchecksums, tooldirs]
+import ".." / lib / [nifchecksums, tooldirs, argsfinder]
 
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -17,24 +17,22 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
 
 import ".." / gear2 / modnames
 
-proc stdlibDir*(): string =
+proc nimonyDir(): string =
   let appDir = getAppDir()
   let (head, tail) = splitPath(appDir)
   if tail == "bin":
-    result = head / "lib"
+    result = head
   else:
-    result = appDir / "lib"
+    result = appDir
 
-proc setupPaths*(config: var NifConfig; useEnv: bool) =
-  if useEnv:
-    let nimPath = getEnv("NIMPATH")
-    for entry in split(nimPath, PathSep):
-      if entry.strip != "":
-        config.paths.add entry
-    if config.paths.len == 0:
-      config.paths.add stdlibDir()
-  else:
-    config.paths.add stdlibDir()
+proc stdlibDir*(): string =
+  result = nimonyDir() / "lib"
+
+proc setupPaths*(config: var NifConfig) =
+  config.paths.add stdlibDir()
+  let pathsFile = findArgs(config.baseDir, "nimony.paths")
+  processPathsFile pathsFile, config.paths
+  #echo getAppFilename(), "CONFIG.BASEDIR: ", config.baseDir, " CONFIG.PATHS: ", config.paths
 
 proc stdlibFile*(f: string): string =
   result = stdlibDir() / f
@@ -75,9 +73,10 @@ proc nimexec(cmd: string) =
 
 proc updateCompilerGitSubmodules*(config: NifConfig) =
   # XXX: hack for more convenient development
+  let cwd = getCurrentDir()
   setCurrentDir compilerDir()
   exec "git submodule update --init"
-  setCurrentDir config.currentPath
+  setCurrentDir cwd
 
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
@@ -184,7 +183,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         let alias = pool.strings[aliasId]
         var prefix: seq[ImportedFilename] = @[]
         filenameVal(x, prefix, hasError, allowAs = false)
-        if x.kind != ParRi or prefix.len == 0:
+        if rhs.kind != ParRi or prefix.len == 0:
           hasError = true
         for pre in mitems(prefix):
           res.add ImportedFilename(path: pre.path, name: alias)
@@ -197,7 +196,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
           hasError = true
         for pre in mitems(prefix):
           for suf in mitems(suffix):
-            res.add ImportedFilename(path: pre.path & op & suf.path, name: suf.name)
+            res.add ImportedFilename(path: pre.path & op & suf.path, name: suf.name, plugin: suf.plugin)
     of PrefixX:
       var x = n
       skip n # ensure we skipped it completely
@@ -212,7 +211,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       if x.kind != ParRi or suffix.len == 0:
         hasError = true
       for suf in mitems(suffix):
-        res.add ImportedFilename(path: op & suf.path, name: suf.name)
+        res.add ImportedFilename(path: op & suf.path, name: suf.name, plugin: suf.plugin)
     of ParX, TupX, BracketX:
       inc n
       if n.kind == ParRi:
@@ -306,7 +305,9 @@ proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
 # ------------------ plugin handling --------------------------
 
 proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
-  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " " & quoteShell(nf)
+  let pluginDir = nimonyDir() / "src/nimony/lib"
+  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
+    " " & quoteShell(nf)
   exec cmd
 
 proc writeFileIfChanged(file, content: string) =

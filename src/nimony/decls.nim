@@ -22,7 +22,7 @@ proc isNominal*(t: TypeKind): bool {.inline.} =
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   result = t
-  if result.typeKind == ProctypeT:
+  if result.typeKind in RoutineTypes:
     inc result # skip ParLe
     skip result # skip name
     skip result # skip export marker
@@ -126,7 +126,7 @@ proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
 const
   TypevarsPos* = 3
   ParamsPos* = 4
-  ResultPos* = 5
+  ReturnTypePos* = 5
   ProcPragmasPos* = 6
   BodyPos* = 8
 
@@ -283,3 +283,14 @@ proc asForStmt*(c: Cursor): ForStmt =
     result.vars = c
     skip c
     result.body = c
+
+proc isMutFirstParam*(destroyProc: SymId): bool =
+  result = false
+  let res = tryLoadSym(destroyProc)
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    var params = routine.params
+    inc params
+    let firstParam = asLocal(params)
+    if firstParam.typ.typeKind in {MutT, OutT}:
+      result = true

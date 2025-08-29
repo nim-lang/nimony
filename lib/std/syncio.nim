@@ -144,9 +144,9 @@ proc readLine*(f: File; s: var string): bool =
   addReadLine f, s
 
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
-proc quit*(value: int) = exit(value.int32)
+proc quit*(value: int) {.noreturn.} = exit(value.int32)
 
-proc quit*(msg: string) =
+proc quit*(msg: string) {.noreturn.} =
   echo msg
   quit 1
 

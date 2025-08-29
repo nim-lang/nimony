@@ -41,7 +41,8 @@ proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.m
 
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
-proc exeFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname.addFileExt ExeExt
+proc exeFile(config: NifConfig; f: FilePair): string =
+  config.nifcachePath / f.nimFile.splitFile.name.addFileExt(ExeExt)
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -79,6 +80,7 @@ type
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
     toBuild: seq[CFile]
+    passL: seq[string]
 
 proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
@@ -250,6 +252,12 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   of NoStmt:
     if n.tagId == TagId(BuildIdx):
       processBuild c, n
+    elif n.tagId == TagId(PassLP):
+      inc n
+      while n.kind != ParRi:
+        assert n.kind == StringLit
+        c.passL.add pool.strings[n.litId]
+        inc n
     else:
       skip n
   else:
@@ -346,7 +354,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     # Command for C compiler (object files)
     b.withTree "cmd":
       b.addSymbolDef "cc"
-      b.addStrLit "gcc"  # Use gcc directly since environment handling is different
+      b.addStrLit c.config.cc
       b.addStrLit "-c"
       if passC.len > 0:
         for arg in passC.split(' '):
@@ -362,16 +370,20 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     if c.cmd in {DoCompile, DoRun}:
       b.withTree "cmd":
         b.addSymbolDef "link"
-        b.addStrLit "gcc"
+        b.addStrLit c.config.linker
         b.addStrLit "-o"
         b.addKeyw "output"
         b.withTree "input":
           b.addIntLit 0
           b.addIntLit -1  # all inputs
+        b.withTree "argsext":
+          b.addStrLit ".linker.args"
         if passL.len > 0:
           for arg in passL.split(' '):
             if arg.len > 0:
               b.addStrLit arg
+        for i in c.passL:
+          b.addStrLit i
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
@@ -508,6 +520,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
       b.addStrLit c.nimsem
+      if c.config.baseDir.len > 0:
+        b.addStrLit "--base:" & quoteShell(c.config.baseDir)
       if commandLineArgs.len > 0:
         for arg in commandLineArgs.split(' '):
           if arg.len > 0:
@@ -583,7 +597,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
-    passC, passL: string) =
+    passC, passL: string, executableArgs: string) =
   let nifler = findTool("nifler")
   let nifmake = findTool("nifmake")
 
@@ -602,6 +616,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
+    " --base:" & quoteShell(config.baseDir) &
     " -j run "
   exec nifmakeCommand & quoteShell(buildFilename)
 
@@ -612,4 +627,4 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
   exec nifmakeCommand & quoteShell(buildFinalFilename)
   if cmd == DoRun:
-    exec c.config.exeFile(c.rootNode.files[0])
+    exec c.config.exeFile(c.rootNode.files[0]) & executableArgs

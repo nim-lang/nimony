@@ -20,3 +20,7 @@ discard -1e18
 
 discard 123e17
 discard -123e17
+
+# issue #1321
+discard 0.0
+discard -0.0
