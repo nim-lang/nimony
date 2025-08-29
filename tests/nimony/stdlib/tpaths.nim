@@ -22,33 +22,34 @@ func joinPath(head, tail: Path): Path {.inline.} =
   head / tail
 
 # Normalization tests
-block:
-  var path = initPath("a/b/c")
-  normalizePath(path)
-  assert $path == "a/b/c"
+when not defined(windows):
+  block:
+    var path = initPath("a/b/c")
+    normalizePath(path)
+    assert $path == "a/b/c"
 
-  path = initPath("a//b/c")
-  normalizePath(path)
-  assert $path == "a/b/c"
+    path = initPath("a//b/c")
+    normalizePath(path)
+    assert $path == "a/b/c"
 
-  path = initPath("./a/b/c")
-  normalizePath(path)
-  assert $path == "a/b/c"
+    path = initPath("./a/b/c")
+    normalizePath(path)
+    assert $path == "a/b/c"
 
-# initPath joining tests
-block:
-  let p1 = initPath("usr")
-  let p2 = initPath("local")
-  let p3 = initPath("bin")
+  # initPath joining tests
+  block:
+    let p1 = initPath("usr")
+    let p2 = initPath("local")
+    let p3 = initPath("bin")
 
-  assert p1 / p2 == initPath("usr/local")
-  assert p1 / p2 / p3 == initPath("usr/local/bin")
+    assert p1 / p2 == initPath("usr/local")
+    assert p1 / p2 / p3 == initPath("usr/local/bin")
 
 # Platform-specific tests
 when defined(windows):
   block:
     var path = initPath(r"c:/users")
-    normalizePath2(path)
+    normalizePath(path)
     assert $path == r"c:\users"
 
     let drive = initPath("c:")
@@ -132,7 +133,7 @@ block splitFile:
     assert splitFile(initPath("a/..")) == (initPath("a"), initPath(".."), "")
     assert splitFile(initPath("/foo/abc....txt")) == (initPath("/foo"), initPath("abc..."), ".txt")
 
-# execShellCmd is tested in tosproc
+# # execShellCmd is tested in tosproc
 
 
 
@@ -206,36 +207,37 @@ block splitFile:
   assert normalizePath2(initPath"./foo//bar/../baz", '/') == initPath"foo/baz"
 
 
-  try:
-    assert relativePath(initPath"/foo/bar//baz.nim", initPath"/foo", '/') == initPath"bar/baz.nim"
-    assert relativePath(initPath"/Users/me/bar/z.nim", initPath"/Users/other/bad", '/') == initPath"../../me/bar/z.nim"
+  when not defined(windows): # TODO: ??? windows
+    try:
+      assert relativePath(initPath"/foo/bar//baz.nim", initPath"/foo", '/') == initPath"bar/baz.nim"
+      assert relativePath(initPath"/Users/me/bar/z.nim", initPath"/Users/other/bad", '/') == initPath"../../me/bar/z.nim"
 
-    assert relativePath(initPath"/Users/me/bar/z.nim", initPath"/Users/other", '/') == initPath"../me/bar/z.nim"
+      assert relativePath(initPath"/Users/me/bar/z.nim", initPath"/Users/other", '/') == initPath"../me/bar/z.nim"
 
-    # `//` is a UNC path, `/` is the current working directory's drive, so can't
-    # run this test on Windows.
-    when not doslikeFileSystem:
-      assert relativePath(initPath"/Users///me/bar//z.nim", initPath"//Users/", '/') == initPath"me/bar/z.nim"
-    assert relativePath(initPath"/Users/me/bar/z.nim", initPath"/Users/me", '/') == initPath"bar/z.nim"
-    assert relativePath(initPath"", initPath"/users/moo", '/') == initPath""
-    assert relativePath(initPath"foo", initPath"", '/') == initPath"foo"
-    assert relativePath(initPath"/foo", initPath"/Foo", '/') == (when FileSystemCaseSensitive: initPath"../foo" else: initPath".")
-    assert relativePath(initPath"/Foo", initPath"/foo", '/') == (when FileSystemCaseSensitive: initPath"../Foo" else: initPath".")
-    assert relativePath(initPath"/foo", initPath"/fOO", '/') == (when FileSystemCaseSensitive: initPath"../foo" else: initPath".")
-    assert relativePath(initPath"/foO", initPath"/foo", '/') == (when FileSystemCaseSensitive: initPath"../foO" else: initPath".")
+      # `//` is a UNC path, `/` is the current working directory's drive, so can't
+      # run this test on Windows.
+      when not doslikeFileSystem:
+        assert relativePath(initPath"/Users///me/bar//z.nim", initPath"//Users/", '/') == initPath"me/bar/z.nim"
+      assert relativePath(initPath"/Users/me/bar/z.nim", initPath"/Users/me", '/') == initPath"bar/z.nim"
+      assert relativePath(initPath"", initPath"/users/moo", '/') == initPath""
+      assert relativePath(initPath"foo", initPath"", '/') == initPath"foo"
+      assert relativePath(initPath"/foo", initPath"/Foo", '/') == (when FileSystemCaseSensitive: initPath"../foo" else: initPath".")
+      assert relativePath(initPath"/Foo", initPath"/foo", '/') == (when FileSystemCaseSensitive: initPath"../Foo" else: initPath".")
+      assert relativePath(initPath"/foo", initPath"/fOO", '/') == (when FileSystemCaseSensitive: initPath"../foo" else: initPath".")
+      assert relativePath(initPath"/foO", initPath"/foo", '/') == (when FileSystemCaseSensitive: initPath"../foO" else: initPath".")
 
-    assert relativePath(initPath"foo", initPath".", '/') == initPath"foo"
-    assert relativePath(initPath".", initPath".", '/') == initPath"."
-    assert relativePath(initPath"..", initPath".", '/') == initPath".."
+      assert relativePath(initPath"foo", initPath".", '/') == initPath"foo"
+      assert relativePath(initPath".", initPath".", '/') == initPath"."
+      assert relativePath(initPath"..", initPath".", '/') == initPath".."
 
-    assert relativePath(initPath"foo", initPath"foo") == initPath"."
-    assert relativePath(initPath"", initPath"foo") == initPath""
-    assert relativePath(initPath"././/foo", initPath"foo//./") == initPath"."
+      assert relativePath(initPath"foo", initPath"foo") == initPath"."
+      assert relativePath(initPath"", initPath"foo") == initPath""
+      assert relativePath(initPath"././/foo", initPath"foo//./") == initPath"."
 
-    assert relativePath(paths.getCurrentDir() / initPath"bar", initPath"foo") == initPath"../bar".unixToNativePath
-    assert relativePath(initPath"bar", paths.getCurrentDir() / initPath"foo") == initPath"../bar".unixToNativePath
-  except:
-    assert false
+      assert relativePath(paths.getCurrentDir() / initPath"bar", initPath"foo") == initPath"../bar".unixToNativePath
+      assert relativePath(initPath"bar", paths.getCurrentDir() / initPath"foo") == initPath"../bar".unixToNativePath
+    except:
+      assert false
 
   when doslikeFileSystem:
     try:

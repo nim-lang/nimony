@@ -1074,3 +1074,95 @@ Removes the environment variable named `key` from the current process environmen
 ####envPairs
 
 Iterator yielding all environment variable pairs as tuples `(key, value)`.
+
+
+### paths
+
+@../lib/std/paths.nim
+
+This module implements path handling.
+
+####Path
+A path object that holds the path data.
+
+####initPath
+Creates a new path from a string.
+
+####`$`
+String conversion for Path.
+
+####hash
+Computes hash for a Path. On a case-sensitive filesystem this is done case-sensitively otherwise case-insensitively.
+
+####`==`
+Compares two paths. On a case-sensitive filesystem this is done case-sensitively otherwise case-insensitively.
+
+####add
+Adds a path to another path.
+
+####`/`
+Joins two directory names to one. Returns normalized path concatenation of `head` and `tail`, preserving whether or not `tail` has a trailing slash (or, if tail if empty, whether head has one).
+
+####splitPath
+Splits a directory into `(head, tail)` tuple, so that `head / tail == path` (except for edge cases like "/usr").
+
+####splitFile
+Splits a filename into `(dir, name, extension)` tuple. `dir` does not end in DirSep unless it's `/`. `extension` includes the leading dot. If `path` has no extension, `ext` is the empty string. If `path` has no directory component, `dir` is the empty string. If `path` has no filename component, `name` and `ext` are empty strings.
+
+####isAbsolute
+Checks whether a given `path` is absolute. On Windows, network paths are considered absolute too.
+
+####relativePath
+Converts `path` to a path relative to `base`. The `sep` (default: DirSep) is used for the path normalizations, this can be useful to ensure the relative path only contains `'/'` so that it can be used for URL constructions. On Windows, if a root of `path` and a root of `base` are different, returns `path` as is because it is impossible to make a relative path. That means an absolute path can be returned.
+
+####isRelativeTo
+Returns true if `path` is relative to `base`.
+
+####parentDir
+Returns the parent directory of `path`. This is similar to `splitPath(path).head` when `path` doesn't end in a dir separator, but also takes care of path normalizations.
+
+####tailDir
+Returns the tail part of `path`.
+
+####isRootDir
+Checks whether a given `path` is a root directory.
+
+####parentDirs
+Iterator that walks over all parent directories of a given `path`. If `fromRoot` is true (default: false), the traversal will start from the file system root directory. If `inclusive` is true (default), the original argument will be included in the traversal. Relative paths won't be expanded by this iterator. Instead, it will traverse only the directories appearing in the relative path.
+
+####`/../`
+The same as `parentDir(head) / tail`, unless there is no parent directory. Then `head / tail` is performed instead.
+
+####extractFilename
+Extracts the filename of a given `path`. This is the same as `name & ext` from splitFile.
+
+####lastPathPart
+Like extractFilename, but ignores trailing dir separator; aka: baseName in some other languages.
+
+####changeFileExt
+Changes the file extension to `ext`. If the `filename` has no extension, `ext` will be added. If `ext` == "" then any extension is removed. `Ext` should be given without the leading `'.'`, because some filesystems may use a different character.
+
+####addFileExt
+Adds the file extension `ext` to `filename`, unless `filename` already has an extension. `Ext` should be given without the leading `'.'`, because some filesystems may use a different character.
+
+####unixToNativePath
+Converts an UNIX-like path to a native one. On an UNIX system this does nothing. Else it converts `'/'`, `'.'`, `'..'` to the appropriate things. On systems with a concept of "drives", `drive` is used to determine which drive label to use during absolute path conversion. `drive` defaults to the drive of the current working directory, and is ignored on systems that do not have a concept of "drives".
+
+####getCurrentDir
+Returns the current working directory i.e. where the built binary is run. The path returned by this proc is determined at run time.
+
+####normalizeExe
+Normalize executable name. On Windows this proc will check if an `.exe` extension needs to be added. On other platforms it does nothing.
+
+####normalizePath
+Normalize a path. Consecutive directory separators are collapsed, including directory separators at the end of the path.
+
+####normalizePathEnd
+Normalize path so that it maintains a trailing separator or not depending on the value of the `trailingSep` parameter.
+
+####absolutePath
+Returns the absolute path of `path`, rooted at `root` (which must be absolute; default: current directory). If `path` is absolute, return it, ignoring `root`.
+
+####expandTilde
+Expands `~` or a path starting with `~/` to a full path, replacing `~` with getHomeDir() (otherwise returns `path` unmodified). Windows: this is still supported despite the Windows platform not having this convention; also, both `~/` and `~\` are handled.
+
