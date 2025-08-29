@@ -183,8 +183,8 @@ template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   inc n # tag
   let isSigned = n.typeKind == IntT
   skip n # type
-  let a = getConstOrdinalValue eval(c, n)
-  let b = getConstOrdinalValue eval(c, n)
+  let a = getConstOrdinalValue propagateError eval(c, n)
+  let b = getConstOrdinalValue propagateError eval(c, n)
   skipParRi n
   if not isNaN(a) and not isNaN(b):
     let rx = opr(a, b)
@@ -208,8 +208,8 @@ template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty
   let orig = n
   inc n # tag
   skip n # type
-  let a = eval(c, n)
-  let b = eval(c, n)
+  let a = propagateError eval(c, n)
+  let b = propagateError eval(c, n)
   skipParRi n
   if a.kind == FloatLit and b.kind == FloatLit:
     let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
