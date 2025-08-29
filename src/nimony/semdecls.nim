@@ -523,6 +523,135 @@ proc hookThatShouldBeMethod(c: var SemContext; hk: HookKind; beforeParams: int):
   else:
     result = false
 
+proc transformReturnVar(c: var SemContext; procBody: int) =
+  ## Rewrites `return x` into `result = x; return result` if `x` was used
+  ## in `finally` block.
+  ##
+  ## See: https://github.com/nim-lang/nimony/issues/1440
+  type
+    BlockKind = enum
+      DontCare
+      InTry
+      InFinally
+
+    TransformContext = object
+      kind: BlockKind
+      varsUsedInFinBlock: HashSet[SymId]
+
+  template withStatus(ctx: var TransformContext; s: BlockKind; body: untyped): untyped =
+    let oldStatus = ctx.kind
+    ctx.kind = s
+    body
+    ctx.kind = oldStatus
+
+  proc trStmt(c: var SemContext; n: var Cursor; ctx: var TransformContext) =
+    case n.kind
+    of Symbol:
+      if ctx.kind == InFinally:
+        # TODO: check if symbol was mutated
+        #       (i.e. passed to var\out parameter or assigned new value)
+        let sym = c.fetchSym(n.symId)
+        if sym.kind in {GvarY, TvarY, VarY}:
+          ctx.varsUsedInFinBlock.incl(n.symId)
+      inc n # sym
+    of ParLe:
+      case n.stmtKind
+      of DeferS:
+        raiseAssert "`defer` must be eliminated here"
+      of ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS, TypeS:
+        skip n
+      of IfS:
+        inc n # if
+        while true:
+          let k = n.substructureKind
+          if k == ElifU:
+            inc n # elif
+            trStmt(c, n, ctx)
+            skipParRi(n)
+          elif k == ElseU:
+            inc n # else
+            trStmt(c, n, ctx)
+            skipParRi(n)
+          else:
+            break
+        skipParRi(n)
+      of CaseS:
+        inc n # case
+        trStmt(c, n, ctx) # subject
+        while true:
+          let k = n.substructureKind
+          if k == OfU:
+            inc n # elif
+            trStmt(c, n, ctx)
+            trStmt(c, n, ctx)
+            skipParRi(n)
+          elif k == ElifU:
+            inc n # elif
+            trStmt(c, n, ctx)
+            trStmt(c, n, ctx)
+            skipParRi(n)
+          elif k == ElseU:
+            inc n # else
+            trStmt(c, n, ctx)
+            skipParRi(n)
+          else:
+            break
+        skipParRi(n)
+      of TryS:
+        inc n # try
+        # traverse statements after `finally` block so we collect used vars
+        # before traversing `return`
+        var tryStmts = n
+        skip n
+        while n.substructureKind == ExceptU:
+          inc n # except
+          trStmt(c, n, ctx)
+          trStmt(c, n, ctx)
+          skipParRi(n)
+        if n.substructureKind == FinU:
+          inc n # finally
+          ctx.withStatus(InFinally):
+            trStmt(c, n, ctx)
+          skipParRi(n)
+        skipParRi(n)
+        ctx.withStatus(InTry):
+          trStmt c, tryStmts, ctx
+      of RetS:
+        var ret = n
+        inc n # return
+        if ctx.kind == InTry and n.kind == Symbol and n.symId in ctx.varsUsedInFinBlock:
+          c.dest.endRead()
+          var buf = createTokenBuf(7)
+          # result = n
+          buf.buildTree(AsgnS, ret.info):
+            buf.addSymUse(c.routine.resId, NoLineInfo)
+            buf.takeToken(n)
+          # return result
+          buf.buildTree(RetS, ret.info):
+            buf.addSymUse(c.routine.resId, NoLineInfo)
+          c.dest.replace(buf.beginRead(), c.dest.cursorToPosition(ret))
+          discard c.dest.beginRead()
+        trStmt(c, n, ctx)
+        skipParRi(n)
+      else:
+        inc n # ParLe
+        while n.kind != ParRi:
+          trStmt(c, n, ctx)
+        skipParRi(n)
+    of ParRi:
+      raiseAssert "unexpected ParRi"
+    of UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+      inc n
+
+  var ctx = TransformContext(varsUsedInFinBlock: initHashSet[SymId]())
+  var n = c.dest.cursorAt(procBody)
+  assert n.stmtKind == StmtsS
+  inc n # StmtsS
+  while n.kind != ParRi:
+    trStmt c, n, ctx
+  skipParRi(n)
+  c.dest.endRead()
+
 proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind; newName = NoSymId) =
   let info = it.n.info
   let declStart = c.dest.len
@@ -673,6 +802,8 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
       c.closeScope() # close parameter scope
     if c.routine.hasDefer:
       transformDefer c.dest, beforeBody
+    if c.routine.hasDefer or c.routine.hasFinally:
+      transformReturnVar c, beforeBody
   finally:
     c.routine = c.routine.parent
   takeParRi c, it.n

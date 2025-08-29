@@ -18,6 +18,7 @@ type
   SemRoutine* {.acyclic.} = ref object
     kind*: SymKind
     hasDefer*: bool
+    hasFinally*: bool
     inGeneric*, inLoop*, inBlock*, inInst*: int
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]

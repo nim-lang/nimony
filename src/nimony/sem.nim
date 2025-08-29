@@ -2117,6 +2117,8 @@ proc semTry(c: var SemContext; it: var Item) =
     takeParRi c, it.n
     closeScope(c)
   if it.n.substructureKind == FinU:
+    if c.routine.kind in {ProcY, FuncY, MethodY, ConverterY, MacroY, IteratorY}:
+      c.routine.hasFinally = true
     takeToken c, it.n
     withNewScope c:
       semStmt c, it.n, true
@@ -2558,6 +2560,10 @@ proc semFor(c: var SemContext; it: var Item) =
 
 proc semReturn(c: var SemContext; it: var Item) =
   let info = it.n.info
+  # if it.kind.isLocal and it.n.symId in c.usedInFinally:
+  #   echo it.n
+  #   takeToken c, it.n
+  # else:
   takeToken c, it.n
   if c.routine.kind == NoSym:
     buildErr c, info, "`return` only allowed within a routine"
