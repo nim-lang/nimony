@@ -197,7 +197,7 @@ proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
 proc isSimpleExpression(n: var Cursor): bool =
   ## expressions that can be returned safely
   case n.kind
-  of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, DotToken, Ident:
+  of UIntLit, StringLit, IntLit, FloatLit, CharLit, DotToken, Ident:
     result = true
     inc n
   of ParLe:
@@ -224,6 +224,12 @@ proc isSimpleExpression(n: var Cursor): bool =
     else:
       result = false
       skip n
+  of Symbol:
+    # fixes https://github.com/nim-lang/nimony/issues/1440
+    # symbol might be changed in a defer\finally block or indirrectly
+    # during return so a copy the symbol needed (result = sym)
+    result = false
+    inc n
   of ParRi, SymbolDef, UnknownToken, EofToken:
     result = false
     inc n
