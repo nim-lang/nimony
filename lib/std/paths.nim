@@ -3,56 +3,60 @@
 ## **See also:**
 ## * `files module <files.html>`_ for file access
 
-import std/private/osseps
+import private/osseps
 export osseps
 
-import std/envvars
-import std/private/osappdirs
+import envvars
+import private/osappdirs
 
-import std/[pathnorm, hashes, sugar, strutils]
+import pathnorm, hashes, strutils
 
-from std/private/ospaths2 import  joinPath, splitPath,
-                                  ReadDirEffect, WriteDirEffect,
-                                  isAbsolute, relativePath,
-                                  normalizePathEnd, isRelativeTo, parentDir,
-                                  tailDir, isRootDir, parentDirs, `/../`,
-                                  extractFilename, lastPathPart,
-                                  changeFileExt, addFileExt, cmpPaths, splitFile,
-                                  unixToNativePath, absolutePath, normalizeExe,
-                                  normalizePath
-export ReadDirEffect, WriteDirEffect
+from private/ospaths2 import  joinPath, splitPath,
+                              isAbsolute, relativePath,
+                              normalizePathEnd, isRelativeTo, parentDir,
+                              tailDir, isRootDir, parentDirs, `/../`,
+                              extractFilename, lastPathPart,
+                              changeFileExt, addFileExt, cmpPaths, splitFile,
+                              unixToNativePath, absolutePath, normalizeExe,
+                              normalizePath
 
 type
-  Path* = distinct string
+  Path* = object
+    data: string
 
-func hash*(x: Path): Hash =
-  let x = x.string.dup(normalizePath)
+func initPath*(s: string): Path {.inline.} =
+  Path(data: s)
+
+func `$`*(x: Path): string {.inline.} =
+  x.data
+
+func hash*(x: Path): Hash {.noSideEffect.} =
+  var s = x.data
+  ospaths2.normalizePath(s)
   if FileSystemCaseSensitive:
-    result = x.hash
+    result = s.hash
   else:
-    result = x.toLowerAscii.hash
-
-template `$`*(x: Path): string =
-  string(x)
+    result = s.toLowerAscii.hash
 
 func `==`*(x, y: Path): bool {.inline.} =
   ## Compares two paths.
   ##
   ## On a case-sensitive filesystem this is done
   ## case-sensitively otherwise case-insensitively.
-  result = cmpPaths(x.string, y.string) == 0
+  result = cmpPaths(x.data, y.data) == 0
 
 template endsWith(a: string, b: set[char]): bool =
-  a.len > 0 and a[^1] in b
+  a.len > 0 and a[a.high] in b
 
-func add(x: var string, tail: string) =
+func addStr(x: var string, tail: string) =
   var state = 0
   let trailingSep = tail.endsWith({DirSep, AltSep}) or tail.len == 0 and x.endsWith({DirSep, AltSep})
   normalizePathEnd(x, trailingSep=false)
   addNormalizePath(tail, x, state, DirSep)
   normalizePathEnd(x, trailingSep=trailingSep)
 
-func add*(x: var Path, y: Path) {.borrow.}
+func add*(x: var Path, y: Path) =
+  addStr(x.data, y.data)
 
 func `/`*(head, tail: Path): Path {.inline.} =
   ## Joins two directory names to one.
@@ -65,7 +69,8 @@ func `/`*(head, tail: Path): Path {.inline.} =
   ## * `splitPath proc`_
   ## * `uri.combine proc <uri.html#combine,Uri,Uri>`_
   ## * `uri./ proc <uri.html#/,Uri,string>`_
-  Path(joinPath(head.string, tail.string))
+  let joined = joinPath(head.data, tail.data)
+  initPath(joined)
 
 func splitPath*(path: Path): tuple[head, tail: Path] {.inline.} =
   ## Splits a directory into `(head, tail)` tuple, so that
@@ -76,8 +81,8 @@ func splitPath*(path: Path): tuple[head, tail: Path] {.inline.} =
   ## * `/ proc`_
   ## * `/../ proc`_
   ## * `relativePath proc`_
-  let res = splitPath(path.string)
-  result = (Path(res.head), Path(res.tail))
+  let res = splitPath(path.data)
+  result = (initPath(res.head), initPath(res.tail))
 
 func splitFile*(path: Path): tuple[dir, name: Path, ext: string] {.inline.} =
   ## Splits a filename into `(dir, name, extension)` tuple.
@@ -94,16 +99,16 @@ func splitFile*(path: Path): tuple[dir, name: Path, ext: string] {.inline.} =
   ## * `lastPathPart proc`_
   ## * `changeFileExt proc`_
   ## * `addFileExt proc`_
-  let res = splitFile(path.string)
-  result = (Path(res.dir), Path(res.name), res.ext)
+  let res = splitFile(path.data)
+  result = (initPath(res.dir), initPath(res.name), res.ext)
 
 func isAbsolute*(path: Path): bool {.inline, raises: [].} =
   ## Checks whether a given `path` is absolute.
   ##
   ## On Windows, network paths are considered absolute too.
-  result = isAbsolute(path.string)
+  result = isAbsolute(path.data)
 
-proc relativePath*(path, base: Path, sep = DirSep): Path {.inline.} =
+proc relativePath*(path, base: Path, sep = DirSep): Path {.inline, raises.} =
   ## Converts `path` to a path relative to `base`.
   ##
   ## The `sep` (default: DirSep) is used for the path normalizations,
@@ -118,11 +123,11 @@ proc relativePath*(path, base: Path, sep = DirSep): Path {.inline.} =
   ## * `splitPath proc`_
   ## * `parentDir proc`_
   ## * `tailDir proc`_
-  result = Path(relativePath(path.string, base.string, sep))
+  result = initPath(relativePath(path.data, base.data, sep))
 
-proc isRelativeTo*(path: Path, base: Path): bool {.inline.} =
+proc isRelativeTo*(path: Path, base: Path): bool {.inline, raises.} =
   ## Returns true if `path` is relative to `base`.
-  result = isRelativeTo(path.string, base.string)
+  result = isRelativeTo(path.data, base.data)
 
 
 func parentDir*(path: Path): Path {.inline.} =
@@ -137,7 +142,7 @@ func parentDir*(path: Path): Path {.inline.} =
   ## * `splitPath proc`_
   ## * `tailDir proc`_
   ## * `parentDirs iterator`_
-  result = Path(parentDir(path.string))
+  result = initPath(parentDir(path.data))
 
 func tailDir*(path: Path): Path {.inline.} =
   ## Returns the tail part of `path`.
@@ -146,11 +151,11 @@ func tailDir*(path: Path): Path {.inline.} =
   ## * `relativePath proc`_
   ## * `splitPath proc`_
   ## * `parentDir proc`_
-  result = Path(tailDir(path.string))
+  result = initPath(tailDir(path.data))
 
 func isRootDir*(path: Path): bool {.inline.} =
   ## Checks whether a given `path` is a root directory.
-  result = isRootDir(path.string)
+  result = isRootDir(path.data)
 
 iterator parentDirs*(path: Path, fromRoot=false, inclusive=true): Path =
   ## Walks over all parent directories of a given `path`.
@@ -166,8 +171,8 @@ iterator parentDirs*(path: Path, fromRoot=false, inclusive=true): Path =
   ## See also:
   ## * `parentDir proc`_
   ##
-  for p in parentDirs(path.string, fromRoot, inclusive):
-    yield Path(p)
+  for p in parentDirs(path.data, fromRoot, inclusive):
+    yield initPath(p)
 
 func `/../`*(head, tail: Path): Path {.inline.} =
   ## The same as ``parentDir(head) / tail``, unless there is no parent
@@ -176,7 +181,7 @@ func `/../`*(head, tail: Path): Path {.inline.} =
   ## See also:
   ## * `/ proc`_
   ## * `parentDir proc`_
-  Path(`/../`(head.string, tail.string))
+  initPath(`/../`(head.data, tail.data))
 
 func extractFilename*(path: Path): Path {.inline.} =
   ## Extracts the filename of a given `path`.
@@ -188,7 +193,7 @@ func extractFilename*(path: Path): Path {.inline.} =
   ## * `lastPathPart proc`_
   ## * `changeFileExt proc`_
   ## * `addFileExt proc`_
-  result = Path(extractFilename(path.string))
+  result = initPath(extractFilename(path.data))
 
 func lastPathPart*(path: Path): Path {.inline.} =
   ## Like `extractFilename proc`_, but ignores
@@ -199,7 +204,7 @@ func lastPathPart*(path: Path): Path {.inline.} =
   ## * `extractFilename proc`_
   ## * `changeFileExt proc`_
   ## * `addFileExt proc`_
-  result = Path(lastPathPart(path.string))
+  result = initPath(lastPathPart(path.data))
 
 func changeFileExt*(filename: Path, ext: string): Path {.inline.} =
   ## Changes the file extension to `ext`.
@@ -216,7 +221,7 @@ func changeFileExt*(filename: Path, ext: string): Path {.inline.} =
   ## * `extractFilename proc`_
   ## * `lastPathPart proc`_
   ## * `addFileExt proc`_
-  result = Path(changeFileExt(filename.string, ext))
+  result = initPath(changeFileExt(filename.data, ext))
 
 func addFileExt*(filename: Path, ext: string): Path {.inline.} =
   ## Adds the file extension `ext` to `filename`, unless
@@ -231,9 +236,9 @@ func addFileExt*(filename: Path, ext: string): Path {.inline.} =
   ## * `extractFilename proc`_
   ## * `lastPathPart proc`_
   ## * `changeFileExt proc`_
-  result = Path(addFileExt(filename.string, ext))
+  result = initPath(addFileExt(filename.data, ext))
 
-func unixToNativePath*(path: Path, drive=Path("")): Path {.inline.} =
+func unixToNativePath*(path: Path, drive=initPath("")): Path {.inline.} =
   ## Converts an UNIX-like path to a native one.
   ##
   ## On an UNIX system this does nothing. Else it converts
@@ -243,9 +248,9 @@ func unixToNativePath*(path: Path, drive=Path("")): Path {.inline.} =
   ## which drive label to use during absolute path conversion.
   ## `drive` defaults to the drive of the current working directory, and is
   ## ignored on systems that do not have a concept of "drives".
-  result = Path(unixToNativePath(path.string, drive.string))
+  result = initPath(unixToNativePath(path.data, drive.data))
 
-proc getCurrentDir*(): Path {.inline, tags: [].} =
+proc getCurrentDir*(): Path {.inline, tags: [], raises.} =
   ## Returns the `current working directory`:idx: i.e. where the built
   ## binary is run.
   ##
@@ -258,22 +263,35 @@ proc getCurrentDir*(): Path {.inline, tags: [].} =
   ## * `setCurrentDir proc <dirs.html#setCurrentDir>`_
   ## * `currentSourcePath template <system.html#currentSourcePath.t>`_
   ## * `getProjectPath proc <macros.html#getProjectPath>`_
-  result = Path(ospaths2.getCurrentDir())
+  result = initPath(ospaths2.getCurrentDir())
 
-proc normalizeExe*(file: var Path) {.borrow.}
+proc normalizeExe*(file: var Path) =
+  ## Normalize executable name.
+  ##
+  ## On Windows this proc will check if an `.exe` extension needs to be added.
+  ## On other platforms it does nothing.
+  ospaths2.normalizeExe(file.data)
 
-proc normalizePath*(path: var Path) {.borrow.}
+proc normalizePath*(path: var Path) =
+  ## Normalize a path.
+  ##
+  ## Consecutive directory separators are collapsed, including directory separators
+  ## at the end of the path.
+  ospaths2.normalizePath(path.data)
 
-proc normalizePathEnd*(path: var Path, trailingSep = false) {.borrow.}
+proc normalizePathEnd*(path: var Path, trailingSep = false) =
+  ## Normalize path so that it maintains a trailing separator or not depending on
+  ## the value of the `trailingSep` parameter.
+  ospaths2.normalizePathEnd(path.data, trailingSep)
 
-proc absolutePath*(path: Path, root = getCurrentDir()): Path =
+proc absolutePath*(path: Path, root = getCurrentDir()): Path {.raises.} =
   ## Returns the absolute path of `path`, rooted at `root` (which must be absolute;
   ## default: current directory).
   ## If `path` is absolute, return it, ignoring `root`.
   ##
   ## See also:
   ## * `normalizePath proc`_
-  result = Path(absolutePath(path.string, root.string))
+  result = initPath(absolutePath(path.data, root.data))
 
 proc expandTildeImpl(path: string): string {.
   tags: [ReadEnvEffect, ReadIOEffect].} =
@@ -299,4 +317,4 @@ proc expandTilde*(path: Path): Path {.inline,
     assert expandTilde(Path("~") / Path("appname.cfg")) == getHomeDir() / Path("appname.cfg")
     assert expandTilde(Path("~/foo/bar")) == getHomeDir() / Path("foo/bar")
     assert expandTilde(Path("/foo/bar")) == Path("/foo/bar")
-  result = Path(expandTildeImpl(path.string))
+  result = initPath(expandTildeImpl(path.data))
