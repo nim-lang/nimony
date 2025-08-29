@@ -2560,10 +2560,6 @@ proc semFor(c: var SemContext; it: var Item) =
 
 proc semReturn(c: var SemContext; it: var Item) =
   let info = it.n.info
-  # if it.kind.isLocal and it.n.symId in c.usedInFinally:
-  #   echo it.n
-  #   takeToken c, it.n
-  # else:
   takeToken c, it.n
   if c.routine.kind == NoSym:
     buildErr c, info, "`return` only allowed within a routine"
