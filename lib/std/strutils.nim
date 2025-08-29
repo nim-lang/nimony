@@ -799,3 +799,62 @@ func trimZeros*(x: var string; decimalSep = '.') =
         x.delete(pos..last)
       except:
         assert false
+
+type
+  BinaryPrefixMode* = enum ## The different names for binary prefixes.
+    bpIEC,                 # use the IEC/ISO standard prefixes such as kibi
+    bpColloquial           # use the colloquial kilo, mega etc
+
+func formatSize*(bytes: int64; decimalSep = '.'; prefix = bpIEC; includeSpace = false): string =
+  ## Rounds and formats `bytes`.
+  ##
+  ## By default, uses the IEC/ISO standard binary prefixes, so 1024 will be
+  ## formatted as 1KiB.  Set prefix to `bpColloquial` to use the colloquial
+  ## names from the SI standard (e.g. k for 1000 being reused as 1024).
+  ##
+  ## `includeSpace` can be set to true to include the (SI preferred) space
+  ## between the number and the unit (e.g. 1 KiB).
+  ##
+  ## See also:
+  ## * `strformat module<strformat.html>`_ for string interpolation and formatting
+  runnableExamples:
+    assert formatSize((1'i64 shl 31) + (300'i64 shl 20)) == "2.293GiB"
+    assert formatSize((2.234*1024*1024).int) == "2.233MiB"
+    assert formatSize(4096, includeSpace = true) == "4 KiB"
+    assert formatSize(4096, prefix = bpColloquial, includeSpace = true) == "4 kB"
+    assert formatSize(4096) == "4KiB"
+    assert formatSize(5_378_934, prefix = bpColloquial, decimalSep = ',') == "5,129MB"
+
+  assert bytes >= 0
+  # It doesn't needs Zi and larger units until we use int72 or larger ints.
+  const iecPrefixes = ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei"]
+  const collPrefixes = ["", "k", "M", "G", "T", "P", "E"]
+
+  # TODO: use fastLog2 when it is added.
+  #let lg2 = if bytes == 0: 0 else: fastLog2(bytes)
+  let Lg2MaxDiv10 = sizeof(bytes) * 8 div 10
+  var lg2 = Lg2MaxDiv10 * 10
+  var matchedIndex = Lg2MaxDiv10
+  for i in 1 .. Lg2MaxDiv10:
+    if (bytes shr (i * 10)) == 0:
+      lg2 = (i - 1) * 10
+      matchedIndex = i - 1
+      break
+  # Lower bits that are smaller than 0.001 when `bytes` is converted to a real number and added prefix, are discard.
+  # Then it is converted to float with round down.
+  let discardBits = (lg2 div 10 - 1) * 10
+
+  var prefixes: array[7, string]
+  if prefix == bpColloquial:
+    prefixes = collPrefixes
+  else:
+    prefixes = iecPrefixes
+
+  let fbytes = if lg2 < 10: bytes.float elif lg2 < 20: bytes.float / 1024.0 else: (bytes shr discardBits).float / 1024.0
+  result = formatFloat(fbytes, format = ffDecimal, precision = 3,
+      decimalSep = decimalSep)
+  result.trimZeros(decimalSep)
+  if includeSpace:
+    result.add ' '
+  result.add prefixes[matchedIndex]
+  result.add 'B'
