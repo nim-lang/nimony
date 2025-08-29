@@ -643,7 +643,8 @@ proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
   var it = Item(n: n, typ: c.types.autoType)
   let exPos = c.dest.len
   semExpr c, it
-  if classifyType(c, it.typ) in {NoType, VoidT, AutoT, UntypedT}:
+  if it.typ.kind != Symbol and
+      classifyType(c, it.typ) in {NoType, VoidT, AutoT, UntypedT}:
     discard "ok"
   else:
     # analyze the expression that was just produced:
