@@ -567,6 +567,7 @@ proc transformReturnVar(c: var SemContext; procBody: int) =
           if k == ElifU:
             inc n # elif
             trStmt(c, n, ctx)
+            trStmt(c, n, ctx)
             skipParRi(n)
           elif k == ElseU:
             inc n # else
