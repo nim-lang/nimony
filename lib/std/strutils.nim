@@ -513,6 +513,35 @@ func replace*(s, sub: string; by = ""): string =
     # copy the rest:
     add result, substr(s, i)
 
+func replaceWord*(s, sub: string, by = ""): string =
+  ## Replaces every occurrence of the string `sub` in `s` with the string `by`.
+  ##
+  ## Each occurrence of `sub` has to be surrounded by word boundaries
+  ## (comparable to `\b` in regular expressions), otherwise it is not
+  ## replaced.
+  if sub.len == 0: return s
+  const wordChars = {'a'..'z', 'A'..'Z', '0'..'9', '_', '\128'..'\255'}
+  result = ""
+  var a = initSkipTable(sub)
+  var i = 0
+  let last = s.high
+  let sublen = sub.len
+  if sublen > 0:
+    while true:
+      var j = find(a, s, sub, i, last)
+      if j < 0: break
+      # word boundary?
+      if (j == 0 or s[j-1] notin wordChars) and
+          (j+sub.len >= s.len or s[j+sub.len] notin wordChars):
+        add result, substr(s, i, j - 1)
+        add result, by
+        i = j + sublen
+      else:
+        add result, substr(s, i, j)
+        i = j + 1
+    # copy the rest:
+    add result, substr(s, i)
+
 const HexChars = "0123456789ABCDEF"
 
 func escape*(s: string, prefix = "\"", suffix = "\""): string =
