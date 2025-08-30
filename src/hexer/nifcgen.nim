@@ -783,7 +783,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           inc n
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
-           BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP:
+           BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, FeatureP:
           skip n
           continue
         of BuildP, EmitP, PushP, PopP, PassLP:
