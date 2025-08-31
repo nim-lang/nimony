@@ -11,13 +11,13 @@ when defined(windows):
 
   type
     SysThread = Handle
-    WinThreadProc = proc (x: pointer): int32 {.stdcall.}
+    WinThreadProc = proc (x: pointer): uint32 {.stdcall.}
 
   proc createThread(lpThreadAttributes: pointer, dwStackSize: uint,
                      lpStartAddress: WinThreadProc,
                      lpParameter: pointer,
-                     dwCreationFlags: int32,
-                     lpThreadId: var int32): SysThread {.
+                     dwCreationFlags: uint32,
+                     lpThreadId: var uint32): SysThread {.
     stdcall, importc: "CreateThread", header: "<Windows.h>".}
 
   proc winSuspendThread(hThread: SysThread): int32 {.
@@ -150,8 +150,8 @@ template nimThreadProcWrapperBody(closure: pointer) =
   t.dataFn(t.data)
 
 when defined(windows):
-  proc threadProcWrapper(closure: pointer): int32 {.stdcall.} =
-    result = 0'i32
+  proc threadProcWrapper(closure: pointer): uint32 {.stdcall.} =
+    result = 0'u32
     nimThreadProcWrapperBody(closure)
     # implicitly return 0
 elif defined(genode):
@@ -171,8 +171,8 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
   t.dataFn = fn
   t.data = arg
   when defined(windows):
-    var dummyThreadId: int32 = 0'i32
-    t.sys = createThread(nil, uint(stackSize), threadProcWrapper, addr(t), 0'i32, dummyThreadId)
+    var dummyThreadId: uint32 = 0'u32
+    t.sys = createThread(nil, uint(stackSize), threadProcWrapper, addr(t), 0'u32, dummyThreadId)
     if t.sys.int <= 0:
       raiseOSError(osLastError())
     elif pinnedToCpu >= 0:
