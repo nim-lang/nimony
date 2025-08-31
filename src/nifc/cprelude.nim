@@ -132,6 +132,8 @@ typedef NU8 NU;
 #define NIM_TRUE true
 #define NIM_FALSE false
 
+#define _GNU_SOURCE
+
 // Include math.h to use `NAN` that should be defined in C compilers supports C99.
 #include <math.h>
 

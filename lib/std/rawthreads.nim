@@ -3,8 +3,8 @@
 import std/oserrors
 
 const
-  schedh = "#define _GNU_SOURCE\n#include <sched.h>"
-  pthreadh = "#define _GNU_SOURCE\n#include <pthread.h>"
+  schedh = "<sched.h>"
+  pthreadh = "<pthread.h>"
 
 when defined(windows):
   import windows/winlean
