@@ -310,6 +310,7 @@ type
     AssumeP = (ord(AssumeTagId), "assume")  ## `assume` pragma
     AssertP = (ord(AssertTagId), "assert")  ## `assert` pragma
     BuildP = (ord(BuildTagId), "build")  ## `build` pragma
+    FeatureP = (ord(FeatureTagId), "feature")  ## `feature` pragma
     StringP = (ord(StringTagId), "string")  ## `string` pragma
     ViewP = (ord(ViewTagId), "view")  ## `view` pragma
     InjectP = (ord(InjectTagId), "inject")  ## `inject` pragma
@@ -333,7 +334,7 @@ type
     PassLP = (ord(PassLTagId), "passL")  ## `passL` pragma adds options to the backend linker
 
 proc rawTagIsNimonyPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {CursorTagId, EmitTagId, UnionTagId, InlineTagId, NoinlineTagId, ClosureTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId, FinalTagId, PragmaTagId, PackedTagId, PassiveTagId, PushTagId, PopTagId, PassLTagId}
+  raw in {CursorTagId, EmitTagId, UnionTagId, InlineTagId, NoinlineTagId, ClosureTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, FeatureTagId, StringTagId, ViewTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId, FinalTagId, PragmaTagId, PackedTagId, PassiveTagId, PushTagId, PopTagId, PassLTagId}
 
 type
   NimonySym* = enum
