@@ -31,7 +31,7 @@ jobs:
             builder: macos-15
           - target:
               os: windows
-            builder: windows-2022
+            builder: windows-2025
 
     name: '${{ matrix.target.os }}-${{ matrix.target.cpu }}-nim-${{ matrix.target.nim_branch }} (${{ matrix.branch }})'
     runs-on: ${{ matrix.builder }}
