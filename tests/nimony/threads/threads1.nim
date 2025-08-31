@@ -34,4 +34,8 @@ proc main =
       return
   echo "all threads found"
 
-main()
+when not defined(windows):
+  main()
+else:
+  echo "other"
+  echo "all threads found"
