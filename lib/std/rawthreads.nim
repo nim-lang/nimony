@@ -111,6 +111,7 @@ else:
   proc pthread_cancel(a1: SysThread): cint {.
     importc: "pthread_cancel", header: pthreadh.}
 
+when defined(posix) and not defined(macosx):
   type CpuSet {.importc: "cpu_set_t", header: schedh.} = object
 
   proc cpusetZero(s: var CpuSet) {.importc: "CPU_ZERO", header: schedh.}
@@ -190,12 +191,12 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
     if pthread_create(t.sys, a, threadProcWrapper, addr(t)) != 0:
       raiseOSError(osLastError())
     discard pthread_attr_destroy(a)
-
-    if pinnedToCpu >= 0:
-      var s {.noinit.}: CpuSet
-      cpusetZero(s)
-      cpusetIncl(pinnedToCpu.cint, s)
-      setAffinity(t.sys, csize_t(sizeof(s)), s)
+    when not defined(macosx):
+      if pinnedToCpu >= 0:
+        var s {.noinit.}: CpuSet
+        cpusetZero(s)
+        cpusetIncl(pinnedToCpu.cint, s)
+        setAffinity(t.sys, csize_t(sizeof(s)), s)
 
 proc join*(t: var RawThread) =
   ## Waits for the thread `t` to finish.
@@ -285,13 +286,15 @@ elif defined(freebsd):
     result = threadId
 
 elif defined(macosx):
-  proc syscall(arg: cint): cint {.varargs, importc: "syscall", header: "<unistd.h>".}
-  var SYS_thread_selfid {.importc:"SYS_thread_selfid", header:"<sys/syscall.h>".}: cint
+  proc pthread_threadid_np(thread: SysThread, thread_id: ptr uint64): cint {.
+    importc: "pthread_threadid_np", header: "<pthread.h>".}
 
   proc getThreadId*(): int =
     ## Gets the ID of the currently running thread.
     if threadId == 0:
-      threadId = int(syscall(SYS_thread_selfid))
+      var tid = 0'u64
+      discard pthread_threadid_np(0, addr tid)
+      threadId = int(tid)
     result = threadId
 
 elif defined(solaris):
