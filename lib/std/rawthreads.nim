@@ -2,6 +2,10 @@
 
 import std/oserrors
 
+const
+  schedh = "#define _GNU_SOURCE\n#include <sched.h>"
+  pthreadh = "#define _GNU_SOURCE\n#include <pthread.h>"
+
 when defined(windows):
   import windows/winlean
 
@@ -56,14 +60,10 @@ elif defined(genode):
 
 else:
   when not (defined(macosx) or defined(haiku)):
-    {.passl: "-pthread".}
+    {.passL: "-pthread".}
 
   when not defined(haiku):
-    {.passc: "-pthread".}
-
-  const
-    schedh = "#define _GNU_SOURCE\n#include <sched.h>"
-    pthreadh = "#define _GNU_SOURCE\n#include <pthread.h>"
+    {.passC: "-pthread".}
 
   when not declared(Time):
     when defined(linux):
@@ -190,6 +190,12 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
     if pthread_create(t.sys, a, threadProcWrapper, addr(t)) != 0:
       raiseOSError(osLastError())
     discard pthread_attr_destroy(a)
+
+    if pinnedToCpu >= 0:
+      var s {.noinit.}: CpuSet
+      cpusetZero(s)
+      cpusetIncl(pinnedToCpu.cint, s)
+      setAffinity(t.sys, csize_t(sizeof(s)), s)
 
 proc join*(t: var RawThread) =
   ## Waits for the thread `t` to finish.
