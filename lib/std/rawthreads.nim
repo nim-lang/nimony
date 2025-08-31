@@ -173,7 +173,7 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
   when defined(windows):
     var dummyThreadId: int32 = 0'i32
     t.sys = createThread(nil, uint(stackSize), threadProcWrapper, addr(t), 0'i32, dummyThreadId)
-    if t.sys <= 0:
+    if t.sys.int <= 0:
       raiseOSError(osLastError())
     elif pinnedToCpu >= 0:
       # we cannot undo the thread creation so we cannot raise an error if this fails here:
