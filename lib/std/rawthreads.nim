@@ -166,7 +166,7 @@ when defined(genode):
     ## CPU affinity offset for next thread, safe to roll-over.
 
 proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; arg: pointer;
-            stackSize = 0; pinnedToCpu = -1) {.raises.}
+            stackSize = 0; pinnedToCpu = -1) {.raises.} =
   t.dataFn = fn
   t.data = arg
   when defined(windows):
