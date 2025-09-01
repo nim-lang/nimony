@@ -298,6 +298,28 @@ func capitalizeAscii*(s: string): string {.inline.} =
     result = s
     result[0] = toUpperAscii(result[0])
 
+func normalize*(s: string): string =
+  ## Normalizes the string `s`.
+  ##
+  ## That means to convert it to lower case and remove any '_'. This
+  ## should NOT be used to normalize Nim identifier names.
+  ##
+  ## See also:
+  ## * `toLowerAscii func<#toLowerAscii,string>`_
+  runnableExamples:
+    assert normalize("Foo_bar") == "foobar"
+    assert normalize("Foo Bar") == "foo bar"
+  result = newString(s.len)
+  var j = 0
+  for i in 0 ..< len(s):
+    if s[i] in UppercaseLetters:
+      result[j] = chr(ord(s[i]) + (ord('a') - ord('A')))
+      inc j
+    elif s[i] != '_':
+      result[j] = s[i]
+      inc j
+  if j != s.len: shrink(result, j)
+
 func cmpIgnoreCase*(a, b: string): int =
   ## Compares two strings in a case insensitive manner. Returns:
   ##

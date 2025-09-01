@@ -245,6 +245,22 @@ block: # capitalizeAscii
   assert capitalizeAscii("foo") == "Foo"
   assert capitalizeAscii("1bar") == "1bar"
 
+block: # normalize
+  assert normalize("") == ""
+  assert normalize("a") == "a"
+  assert normalize("1") == "1"
+  assert normalize("ab") == "ab"
+  assert normalize("A") == "a"
+  assert normalize("AB") == "ab"
+  assert normalize("a_") == "a"
+  assert normalize("_a") == "a"
+  assert normalize("_a_") == "a"
+  assert normalize("ab_") == "ab"
+  assert normalize("a_b") == "ab"
+  assert normalize("_ab") == "ab"
+  assert normalize("fOO_b_A_R") == "foobar"
+  assert normalize("fOO_b__A___R0123456789") == "foobar0123456789"
+
 block: # cmpIgnoreCase
   assert cmpIgnoreCase("", "") == 0
   assert cmpIgnoreCase("", "a") < 0

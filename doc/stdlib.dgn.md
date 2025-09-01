@@ -631,6 +631,10 @@ Converts character or string to uppercase
 
 Converts first character of string to uppercase
 
+####normalize
+
+Normalizes a string
+
 ####cmpIgnoreCase
 
 Case-insensitive string comparison
