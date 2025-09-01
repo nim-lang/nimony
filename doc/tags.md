@@ -303,3 +303,4 @@
 | `(push P)`   | NimonyPragma | `push` pragma |
 | `(pop)`      | NimonyPragma | `pop` pragma |
 | `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
+| `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |

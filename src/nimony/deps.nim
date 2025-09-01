@@ -81,6 +81,7 @@ type
     foundPlugins: HashSet[string]
     toBuild: seq[CFile]
     passL: seq[string]
+    passC: seq[string]
 
 proc toPair(c: DepContext; f: string): FilePair =
   FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
@@ -258,6 +259,12 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
         assert n.kind == StringLit
         c.passL.add pool.strings[n.litId]
         inc n
+    elif n.tagId == TagId(PassCP):
+      inc n
+      while n.kind != ParRi:
+        assert n.kind == StringLit
+        c.passC.add pool.strings[n.litId]
+        inc n
     else:
       skip n
   else:
@@ -360,6 +367,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         for arg in passC.split(' '):
           if arg.len > 0:
             b.addStrLit arg
+      for i in c.passC:
+        b.addStrLit i
       b.addStrLit "-I" & rootPath(c)
       b.addKeyw "args"
       b.addKeyw "input"

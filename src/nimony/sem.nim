@@ -1363,9 +1363,10 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     if pk == HeaderP:
       let idx = c.dest.len - 1
       let tok = c.dest[idx]
-      var name = replaceSubs(pool.strings[tok.litId], info.getFile(), c.g.config)
-      name = name.toRelativePath(c.g.config.nifcachePath)
-      c.dest[idx] = strToken(pool.strings.getOrIncl(name), tok.info)
+      if tok.kind == StringLit:
+        var name = replaceSubs(pool.strings[tok.litId], info.getFile(), c.g.config)
+        name = name.toRelativePath(c.g.config.nifcachePath)
+        c.dest[idx] = strToken(pool.strings.getOrIncl(name), tok.info)
       crucial.headerFileTok = c.dest[idx]
     # Finalize expression
     c.dest.addParRi()
@@ -1446,7 +1447,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
         c.dest.shrink oldLen
     else:
       c.dest.addParRi()
-  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP:
+  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
     buildErr c, n.info, "pragma not supported"
     inc n
     if hasParRi:
@@ -4397,6 +4398,14 @@ proc semPragmaLine(c: var SemContext; it: var Item; isPragmaBlock: bool) =
       c.dest.shrink start
       c.passL.add pool.strings[s]
     skipParRi it.n
+  of PassCP:
+    inc it.n
+    let start = c.dest.len
+    let s = evalConstStrExpr(c, it.n, c.types.stringType)
+    if s != StrId(0):
+      c.dest.shrink start
+      c.passC.add pool.strings[s]
+    skipParRi it.n
   else:
     buildErr c, it.n.info, "unsupported pragma", it.n
     skip it.n
@@ -5034,6 +5043,10 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
     if c.passL.len != 0:
       deps.buildTree TagId(PassLP), NoLineInfo:
         for i in c.passL:
+          deps.addStrLit i
+    if c.passC.len != 0:
+      deps.buildTree TagId(PassCP), NoLineInfo:
+        for i in c.passC:
           deps.addStrLit i
   let depsFile = changeFileExt(outfile, ".deps.nif")
   writeFile depsFile, "(.nif24)\n" & toString(deps)

@@ -1166,3 +1166,26 @@ Returns the absolute path of `path`, rooted at `root` (which must be absolute; d
 ####expandTilde
 Expands `~` or a path starting with `~/` to a full path, replacing `~` with getHomeDir() (otherwise returns `path` unmodified). Windows: this is still supported despite the Windows platform not having this convention; also, both `~/` and `~\` are handled.
 
+
+### Threads
+
+@../lib/std/rawthreads.nim
+
+####getThreadId
+
+Gets the ID of the currently running thread. This uses a cached value to avoid performing a syscall. Do not assume any value range for thread IDs!
+
+####RawThread
+
+A type that represents a raw thread.
+
+####create
+
+Creates a new thread. Runs `fn(arg)` on the newly created thread. `stackSize` is the size of the stack for the thread, if its default value 0 is used, a system specific stack size is used (typically 2MB).
+
+`pinnedToCpu` is the CPU number to pin the thread to. If it is not -1, it is attempted to run the thread on the given CPU number. If the attempt fails, the thread will run on a different CPU. The standard library offers no way to check if the thread is actually pinned to the given CPU. Also, some platforms like OSX fundamentaly do not support pinning.
+
+
+####join
+
+Joins a thread. Waits for the thread to finish.
