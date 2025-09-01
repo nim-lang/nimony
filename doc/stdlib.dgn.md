@@ -1167,6 +1167,35 @@ Returns the absolute path of `path`, rooted at `root` (which must be absolute; d
 Expands `~` or a path starting with `~/` to a full path, replacing `~` with getHomeDir() (otherwise returns `path` unmodified). Windows: this is still supported despite the Windows platform not having this convention; also, both `~/` and `~\` are handled.
 
 
+### appdirs
+
+@../lib/std/appdirs.nim
+
+This module implements helpers for determining special directories used by apps.
+
+####getHomeDir
+Returns the home directory of the current user as a Path. Used for expanding `~` in user configuration files.
+
+####getDataDir
+Returns the data directory of the current user for applications. On non-Windows OSs, this follows the XDG Base Directory spec and uses the `XDG_DATA_HOME` environment variable if set, otherwise defaults to `~/.local/share` or `~/Library/Application Support` on macOS.
+
+####getConfigDir
+Returns the config directory of the current user for applications. On non-Windows OSs, this follows the XDG Base Directory spec and uses the `XDG_CONFIG_HOME` environment variable if set, otherwise defaults to `~/.config/`. The returned string always ends with an OS-dependent trailing slash.
+
+####getCacheDir
+Returns the cache directory of the current user for applications. Uses platform-specific environment variables:
+- Windows: `LOCALAPPDATA`
+- macOS: `XDG_CACHE_HOME` or `HOME/Library/Caches`
+- Other: `XDG_CACHE_HOME` or `HOME/.cache`
+
+####getCacheDir(app: Path)
+Returns the cache directory for a specific application. On Windows, this is `getCacheDir() / app / "cache"`; on other platforms, `getCacheDir() / app`.
+
+####getTempDir
+Returns the temporary directory for the current user. On Windows, uses `GetTempPath`. On POSIX, checks `TMPDIR`, `TEMP`, `TMP`, and `TEMPDIR` environment variables, defaulting to `/tmp` if none are set. The implementation can be overridden with `-d:tempDir=mytempname` at compile time. Does not check if the returned path exists.
+
+
+
 ### Threads
 
 @../lib/std/rawthreads.nim
