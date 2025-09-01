@@ -144,8 +144,7 @@ proc `$`*(x: char): string =
   result[0] = x
 
 func delete*(s: var string, slice: Slice[int]) =
-  ## Deletes the items `s[slice]`, raising `IndexDefect` if the slice contains
-  ## elements out of range.
+  ## Deletes the items `s[slice]`.
   ##
   ## This operation moves all elements after `s[slice]` in linear time, and
   ## is the string analog to `sequtils.delete`.

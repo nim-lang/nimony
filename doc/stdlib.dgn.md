@@ -603,6 +603,10 @@ Returns true if every character in a string is in a given set
 
 Checks if string is empty or consists entirely of whitespace
 
+####delete
+
+Deletes characters in a string within a range
+
 ####startsWith
 
 Checks if string starts with a prefix
@@ -637,11 +641,15 @@ Style-insensitive string comparison (ignores case and underscores)
 
 ####find
 
-Searches for a character in a string within a range
+Searches for a character, a set of chars or a substring in a string within a range
 
 ####replace
 
-Replaces characters in a string
+Replaces characters or substrings in a string
+
+####replaceWord
+
+Replaces every words in a string
 
 ####escape
 
@@ -674,6 +682,14 @@ Interpolates a format string with values.
 ####strip
 
 Strips leading or trailing characters.
+
+####trimZeros
+
+Trim trailing zeros from a formatted floating point in a string.
+
+####formatSize
+
+Rounds and formats bytes.
 
 ### unicode
 
