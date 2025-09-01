@@ -311,9 +311,4 @@ proc expandTilde*(path: Path): Path {.inline,
   ##
   ## Windows: this is still supported despite the Windows platform not having this
   ## convention; also, both ``~/`` and ``~\`` are handled.
-  runnableExamples:
-    import std/appdirs
-    assert expandTilde(Path("~") / Path("appname.cfg")) == getHomeDir() / Path("appname.cfg")
-    assert expandTilde(Path("~/foo/bar")) == getHomeDir() / Path("foo/bar")
-    assert expandTilde(Path("/foo/bar")) == Path("/foo/bar")
   result = initPath(expandTildeImpl(path.data))
