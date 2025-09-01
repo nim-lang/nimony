@@ -1,4 +1,4 @@
-import std/parseutils
+import std/[assertions, parseutils]
 
 const
   Whitespace* = {' ', '\t', '\v', '\r', '\l', '\f'}
@@ -142,6 +142,33 @@ proc `$`*(x: cstring): string =
 proc `$`*(x: char): string =
   result = newString(1)
   result[0] = x
+
+func delete*(s: var string, slice: Slice[int]) =
+  ## Deletes the items `s[slice]`.
+  ##
+  ## This operation moves all elements after `s[slice]` in linear time, and
+  ## is the string analog to `sequtils.delete`.
+  runnableExamples:
+    var a = "abcde"
+    assert a == "abcde"
+    a.delete(4..4)
+    assert a == "abcd"
+    a.delete(1..2)
+    assert a == "ad"
+    a.delete(1..0) # empty slice
+    assert a == "ad"
+  #when compileOption("boundChecks"):
+  assert slice.a < s.len and slice.a >= 0 and slice.b < s.len
+  if slice.b >= slice.a:
+    var i = slice.a
+    var j = slice.b + 1
+    var newLen = s.len - j + i
+    # if j < s.len: moveMem(addr s[i], addr s[j], s.len - j) # pending benchmark
+    while i < newLen:
+      s[i] = s[j]
+      inc(i)
+      inc(j)
+    shrink(s, newLen)
 
 func continuesWith*(s, prefix: string; start: int): bool =
   ## Returns true if `s` continues with `prefix` at position `start`.
@@ -441,6 +468,76 @@ func replace*(s: string; sub, by: char): string =
     if s[i] == sub: result[i] = by
     else: result[i] = s[i]
     inc i
+
+func replace*(s, sub: string; by = ""): string =
+  ## Replaces every occurrence of the string `sub` in `s` with the string `by`.
+  ##
+  ## See also:
+  ## * `find func<#find,string,string,Natural,int>`_
+  ## * `replace func<#replace,string,char,char>`_ for replacing
+  ##   single characters
+  ## * `replaceWord func<#replaceWord,string,string,string>`_
+  ## * `multiReplace func<#multiReplace,string,varargs[]>`_ for substrings
+  ## * `multiReplace func<#multiReplace,openArray[char],varargs[]>`_ for single characters
+  result = ""
+  let subLen = sub.len
+  if subLen == 0:
+    result = s
+  elif subLen == 1:
+    # when the pattern is a single char, we use a faster
+    # char-based search that doesn't need a skip table:
+    let c = sub[0]
+    let last = s.high
+    var i = 0
+    while true:
+      let j = find(s, c, i, last)
+      if j < 0: break
+      add result, substr(s, i, j - 1)
+      add result, by
+      i = j + subLen
+    # copy the rest:
+    add result, substr(s, i)
+  else:
+    var a = initSkipTable(sub)
+    let last = s.high
+    var i = 0
+    while true:
+      let j = find(a, s, sub, i, last)
+      if j < 0: break
+      add result, substr(s, i, j - 1)
+      add result, by
+      i = j + subLen
+    # copy the rest:
+    add result, substr(s, i)
+
+func replaceWord*(s, sub: string, by = ""): string =
+  ## Replaces every occurrence of the string `sub` in `s` with the string `by`.
+  ##
+  ## Each occurrence of `sub` has to be surrounded by word boundaries
+  ## (comparable to `\b` in regular expressions), otherwise it is not
+  ## replaced.
+  if sub.len == 0: return s
+  const wordChars = {'a'..'z', 'A'..'Z', '0'..'9', '_', '\128'..'\255'}
+  result = ""
+  var a = initSkipTable(sub)
+  var i = 0
+  let last = s.high
+  let sublen = sub.len
+  if sublen > 0:
+    while true:
+      var j = find(a, s, sub, i, last)
+      if j < 0: break
+      # word boundary?
+      if (j == 0 or s[j-1] notin wordChars) and
+          (j+sub.len >= s.len or s[j+sub.len] notin wordChars):
+        add result, substr(s, i, j - 1)
+        add result, by
+        i = j + sublen
+      else:
+        add result, substr(s, i, j)
+        i = j + 1
+    # copy the rest:
+    add result, substr(s, i)
 
 const HexChars = "0123456789ABCDEF"
 
@@ -746,3 +843,85 @@ func strip*(s: string; leading = true; trailing = true;
   if trailing:
     while last >= first and s[last] in chars: dec(last)
   result = if first > last: "" else: substr(s, first, last)
+
+func trimZeros*(x: var string; decimalSep = '.') =
+  ## Trim trailing zeros from a formatted floating point
+  ## value `x` (must be declared as `var`).
+  ##
+  ## This modifies `x` itself, it does not return a copy.
+  runnableExamples:
+    var x = "123.456000000"
+    x.trimZeros()
+    doAssert x == "123.456"
+
+  let sPos = find(x, decimalSep)
+  if sPos >= 0:
+    var last = find(x, 'e', start = sPos)
+    last = if last >= 0: last - 1 else: high(x)
+    var pos = last
+    while pos >= 0 and x[pos] == '0': dec(pos)
+    if pos > sPos: inc(pos)
+    if last >= pos:
+      try:
+        x.delete(pos..last)
+      except:
+        assert false
+
+type
+  BinaryPrefixMode* = enum ## The different names for binary prefixes.
+    bpIEC,                 # use the IEC/ISO standard prefixes such as kibi
+    bpColloquial           # use the colloquial kilo, mega etc
+
+func formatSize*(bytes: int64; decimalSep = '.'; prefix = bpIEC; includeSpace = false): string =
+  ## Rounds and formats `bytes`.
+  ##
+  ## By default, uses the IEC/ISO standard binary prefixes, so 1024 will be
+  ## formatted as 1KiB.  Set prefix to `bpColloquial` to use the colloquial
+  ## names from the SI standard (e.g. k for 1000 being reused as 1024).
+  ##
+  ## `includeSpace` can be set to true to include the (SI preferred) space
+  ## between the number and the unit (e.g. 1 KiB).
+  ##
+  ## See also:
+  ## * `strformat module<strformat.html>`_ for string interpolation and formatting
+  runnableExamples:
+    assert formatSize((1'i64 shl 31) + (300'i64 shl 20)) == "2.293GiB"
+    assert formatSize((2.234*1024*1024).int) == "2.233MiB"
+    assert formatSize(4096, includeSpace = true) == "4 KiB"
+    assert formatSize(4096, prefix = bpColloquial, includeSpace = true) == "4 kB"
+    assert formatSize(4096) == "4KiB"
+    assert formatSize(5_378_934, prefix = bpColloquial, decimalSep = ',') == "5,129MB"
+
+  assert bytes >= 0
+  # It doesn't needs Zi and larger units until we use int72 or larger ints.
+  const iecPrefixes = ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei"]
+  const collPrefixes = ["", "k", "M", "G", "T", "P", "E"]
+
+  # TODO: use fastLog2 when it is added.
+  #let lg2 = if bytes == 0: 0 else: fastLog2(bytes)
+  let Lg2MaxDiv10 = sizeof(bytes) * 8 div 10
+  var lg2 = Lg2MaxDiv10 * 10
+  var matchedIndex = Lg2MaxDiv10
+  for i in 1 .. Lg2MaxDiv10:
+    if (bytes shr (i * 10)) == 0:
+      lg2 = (i - 1) * 10
+      matchedIndex = i - 1
+      break
+  # Lower bits that are smaller than 0.001 when `bytes` is converted to a real number and added prefix, are discard.
+  # Then it is converted to float with round down.
+  let discardBits = (lg2 div 10 - 1) * 10
+
+  var prefixes: array[7, string]
+  if prefix == bpColloquial:
+    prefixes = collPrefixes
+  else:
+    prefixes = iecPrefixes
+
+  let fbytes = if lg2 < 10: bytes.float elif lg2 < 20: bytes.float / 1024.0 else: (bytes shr discardBits).float / 1024.0
+  result = formatFloat(fbytes, format = ffDecimal, precision = 3,
+      decimalSep = decimalSep)
+  result.trimZeros(decimalSep)
+  if includeSpace:
+    result.add ' '
+  result.add prefixes[matchedIndex]
+  result.add 'B'

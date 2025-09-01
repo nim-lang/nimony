@@ -49,6 +49,98 @@ block: # isEmptyOrWhitespace
   assert not isEmptyOrWhitespace("ABc   \td")
   assert not isEmptyOrWhitespace("a")
 
+block: # delete
+  try:
+    block:
+      var s = "a"
+      delete s, 0..0
+      assert s == ""
+    block:
+      var s = "ab"
+      delete s, 0..0
+      assert s == "b"
+      s = "ab"
+      delete s, 1..1
+      assert s == "a"
+      s = "ab"
+      delete s, 0..1
+      assert s == ""
+    block:
+      var s = "abc"
+      delete s, 0..0
+      assert s == "bc"
+      s = "abc"
+      delete s, 1..1
+      assert s == "ac"
+      s = "abc"
+      delete s, 2..2
+      assert s == "ab"
+      s = "abc"
+      delete s, 0..1
+      assert s == "c"
+      s = "abc"
+      delete s, 1..2
+      assert s == "a"
+      s = "abc"
+      delete s, 0..2
+      assert s == ""
+    block:
+      var s = "abcd"
+      delete s, 0..0
+      assert s == "bcd"
+      s = "abcd"
+      delete s, 1..1
+      assert s == "acd"
+      s = "abcd"
+      delete s, 2..2
+      assert s == "abd"
+      s = "abcd"
+      delete s, 3..3
+      assert s == "abc"
+      s = "abcd"
+      delete s, 0..1
+      assert s == "cd"
+      s = "abcd"
+      delete s, 1..2
+      assert s == "ad"
+      s = "abcd"
+      delete s, 2..3
+      assert s == "ab"
+      s = "abcd"
+      delete s, 0..2
+      assert s == "d"
+      s = "abcd"
+      delete s, 1..3
+      assert s == "a"
+      s = "abcd"
+      delete s, 0..3
+      assert s == ""
+    block:
+      let s0 = "0123456789ABCDEFGH"
+      var s = s0
+      delete s, 0..0
+      assert s == "123456789ABCDEFGH"
+      s = s0
+      delete s, 17..17
+      assert s == "0123456789ABCDEFG"
+      s = s0
+      delete s, 0..9
+      assert s == "ABCDEFGH"
+      s = s0
+      delete s, 10..17
+      assert s == "0123456789"
+      s = s0
+      delete s, 1..17
+      assert s == "0"
+      s = s0
+      delete s, 0..16
+      assert s == "H"
+      s = s0
+      delete s, 0..17
+      assert s == ""
+  except ErrorCode as e:
+    assert false
+
 block: # continuesWith
   assert continuesWith("", "", 0)
   assert continuesWith("", "", 1)
@@ -322,6 +414,99 @@ block: # find
     assert haystack.find("ABC", start=1, last=11) == 9
     assert haystack.find("ABC", start=1, last=10) == -1
 
+block: # replace
+  assert replace("", 'a', 'x') == ""
+  assert replace("1", 'a', 'x') == "1"
+  assert replace("a", 'a', 'x') == "x"
+  assert replace("abac", 'a', 'x') == "xbxc"
+
+  assert replace("", "", "") == ""
+  assert replace("", "", "x") == ""
+  assert replace("", "", "xy") == ""
+  assert replace("", "a", "") == ""
+  assert replace("", "a", "x") == ""
+  assert replace("", "a", "xy") == ""
+  assert replace("", "ab", "") == ""
+  assert replace("", "ab", "x") == ""
+  assert replace("", "ab", "xy") == ""
+  assert replace("a", "", "") == "a"
+  assert replace("a", "", "x") == "a"
+  assert replace("a", "", "xy") == "a"
+  assert replace("a", "a", "") == ""
+  assert replace("a", "a", "x") == "x"
+  assert replace("a", "a", "xy") == "xy"
+  assert replace("a", "ab", "") == "a"
+  assert replace("a", "ab", "x") == "a"
+  assert replace("a", "ab", "xy") == "a"
+  assert replace("ab", "", "") == "ab"
+  assert replace("ab", "", "x") == "ab"
+  assert replace("ab", "", "xy") == "ab"
+  assert replace("ab", "a", "") == "b"
+  assert replace("ab", "a", "x") == "xb"
+  assert replace("ab", "a", "xy") == "xyb"
+  assert replace("ab", "ab", "") == ""
+  assert replace("ab", "ab", "x") == "x"
+  assert replace("ab", "ab", "xy") == "xy"
+  assert replace("abab", "", "") == "abab"
+  assert replace("abab", "", "x") == "abab"
+  assert replace("abab", "", "xy") == "abab"
+  assert replace("abab", "a", "") == "bb"
+  assert replace("abab", "a", "x") == "xbxb"
+  assert replace("abab", "a", "xy") == "xybxyb"
+  assert replace("abab", "ab", "") == ""
+  assert replace("abab", "ab", "x") == "xx"
+  assert replace("abab", "ab", "xy") == "xyxy"
+  assert replace("1ab2ab3", "", "") == "1ab2ab3"
+  assert replace("1ab2ab3", "", "x") == "1ab2ab3"
+  assert replace("1ab2ab3", "", "xy") == "1ab2ab3"
+  assert replace("1ab2ab3", "a", "") == "1b2b3"
+  assert replace("1ab2ab3", "a", "x") == "1xb2xb3"
+  assert replace("1ab2ab3", "a", "xy") == "1xyb2xyb3"
+  assert replace("1ab2ab3", "ab", "") == "123"
+  assert replace("1ab2ab3", "ab", "x") == "1x2x3"
+  assert replace("1ab2ab3", "ab", "xy") == "1xy2xy3"
+
+block: # replaceWord
+  assert replaceWord("", "", "") == ""
+  assert replaceWord("", "", "x") == ""
+  assert replaceWord("", "", "xy") == ""
+  assert replaceWord("", "a", "") == ""
+  assert replaceWord("", "a", "x") == ""
+  assert replaceWord("", "a", "xy") == ""
+  assert replaceWord("", "ab", "") == ""
+  assert replaceWord("", "ab", "x") == ""
+  assert replaceWord("", "ab", "xy") == ""
+  assert replaceWord("a", "", "") == "a"
+  assert replaceWord("a", "", "x") == "a"
+  assert replaceWord("a", "", "xy") == "a"
+  assert replaceWord("a", "a", "") == ""
+  assert replaceWord("a", "a", "x") == "x"
+  assert replaceWord("a", "a", "xy") == "xy"
+  assert replaceWord("a", "ab", "") == "a"
+  assert replaceWord("a", "ab", "x") == "a"
+  assert replaceWord("a", "ab", "xy") == "a"
+  assert replaceWord("ab", "", "") == "ab"
+  assert replaceWord("ab", "", "x") == "ab"
+  assert replaceWord("ab", "", "xy") == "ab"
+  assert replaceWord("ab", "a", "") == "ab"
+  assert replaceWord("ab", "a", "x") == "ab"
+  assert replaceWord("ab", "a", "xy") == "ab"
+  assert replaceWord("ab", "ab", "") == ""
+  assert replaceWord("ab", "ab", "x") == "x"
+  assert replaceWord("ab", "ab", "xy") == "xy"
+  assert replaceWord("abab", "", "") == "abab"
+  assert replaceWord("abab", "a", "") == "abab"
+  assert replaceWord("abab", "ab", "") == "abab"
+  assert replaceWord("abab", "ba", "") == "abab"
+  assert replaceWord("abab", "abab", "") == ""
+  assert replaceWord("abab", "abab", "x") == "x"
+  assert replaceWord("ab, ab", "ab", "x") == "x, x"
+  assert replaceWord("ab, ab", "ab", "xyz") == "xyz, xyz"
+  assert replaceWord("ab ab!ab\"ab#ab$ab%ab&ab'(ab)", "ab", "x") == "x x!x\"x#x$x%x&x'(x)"
+  assert "-ld a-ldz -ld".replaceWord("-ld") == " a-ldz "
+  assert "-lda-ldz -ld abc".replaceWord("-ld") == "-lda-ldz  abc"
+  assert "-lda-ldz -ld abc".replaceWord("") == "-lda-ldz -ld abc"
+
 block: # escape
   assert escape("") == "\"\""
   assert escape("a") == "\"a\""
@@ -433,3 +618,202 @@ block: # strip
   assert "x".strip(trailing = false, chars={'x'}).len == 0
   assert "x".strip(leading = false, trailing = false, chars={'x'}) == "x"
   assert "xyz".strip(leading = false, trailing = false, chars={'x', 'y', 'z'}) == "xyz"
+
+block: # trimZeros
+  var x = ""
+  x.trimZeros
+  assert x == ""
+  x = "0"
+  x.trimZeros
+  assert x == "0"
+  x = "+0"
+  x.trimZeros
+  assert x == "+0"
+  x = "-0"
+  x.trimZeros
+  assert x == "-0"
+  x = "0."
+  x.trimZeros()
+  assert x == "0"
+  x = "0.0"
+  x.trimZeros()
+  assert x == "0"
+  x = "1"
+  x.trimZeros
+  assert x == "1"
+  x = "+1"
+  x.trimZeros
+  assert x == "+1"
+  x = "-1"
+  x.trimZeros
+  assert x == "-1"
+  x = "1200"
+  x.trimZeros()
+  assert x == "1200"
+  x = "120.0"
+  x.trimZeros()
+  assert x == "120"
+  x = "120.00"
+  x.trimZeros()
+  assert x == "120"
+  x = "120.000"
+  x.trimZeros()
+  assert x == "120"
+  x = "0.01"
+  x.trimZeros()
+  assert x == "0.01"
+  x = "0.010"
+  x.trimZeros()
+  assert x == "0.01"
+  x = "0.0100"
+  x.trimZeros()
+  assert x == "0.01"
+  x = "-0.010"
+  x.trimZeros()
+  assert x == "-0.01"
+  x = "1.01"
+  x.trimZeros()
+  assert x == "1.01"
+  x = "1.010"
+  x.trimZeros()
+  assert x == "1.01"
+  x = "1.0100"
+  x.trimZeros()
+  assert x == "1.01"
+  x = "1.001"
+  x.trimZeros()
+  assert x == "1.001"
+  x = "1.0010"
+  x.trimZeros()
+  assert x == "1.001"
+  x = "1.1001"
+  x.trimZeros()
+  assert x == "1.1001"
+  x = "1.10010"
+  x.trimZeros()
+  assert x == "1.1001"
+  x = "1.1001000"
+  x.trimZeros()
+  assert x == "1.1001"
+  x = "1e2"
+  x.trimZeros()
+  assert x == "1e2"
+  x = "1.0e2"
+  x.trimZeros()
+  assert x == "1e2"
+  x = "-1.0e2"
+  x.trimZeros()
+  assert x == "-1e2"
+  x = "1.00e2"
+  x.trimZeros()
+  assert x == "1e2"
+  x = "1.000e2"
+  x.trimZeros()
+  assert x == "1e2"
+  x = "9.9e2"
+  x.trimZeros()
+  assert x == "9.9e2"
+  x = "9.90e2"
+  x.trimZeros()
+  assert x == "9.9e2"
+  x = "9.900e2"
+  x.trimZeros()
+  assert x == "9.9e2"
+  x = "9.09e2"
+  x.trimZeros()
+  assert x == "9.09e2"
+  x = "9.090e2"
+  x.trimZeros()
+  assert x == "9.09e2"
+  x = "1e20"
+  x.trimZeros()
+  assert x == "1e20"
+  x = "1.0e20"
+  x.trimZeros()
+  assert x == "1e20"
+  x = "1.00e200"
+  x.trimZeros()
+  assert x == "1e200"
+  x = "1e-2"
+  x.trimZeros()
+  assert x == "1e-2"
+  x = "1.00e-20"
+  x.trimZeros()
+  assert x == "1e-20"
+  x = "1.01e-20"
+  x.trimZeros()
+  assert x == "1.01e-20"
+  x = "1.010e-20"
+  x.trimZeros()
+  assert x == "1.01e-20"
+
+  x = "1,0"
+  x.trimZeros(',')
+  assert x == "1"
+
+block: # formatSize
+  assert formatSize(1024 * 1024 * 1024 * 2 - 1) == "1.999GiB"
+  assert formatSize(1024 * 1024 * 1024 * 2) == "2GiB"
+  assert formatSize((1'i64 shl 31) + (300'i64 shl 20)) == "2.293GiB" # <=== bug #8231
+  assert formatSize(int64.high) == "7.999EiB"
+  assert formatSize(int64.high div 2 + 1) == "4EiB"
+  assert formatSize(int64.high div 2) == "3.999EiB"
+  assert formatSize(int64.high div 4 + 1) == "2EiB"
+  assert formatSize(int64.high div 4) == "1.999EiB"
+  assert formatSize(int64.high div 8 + 1) == "1EiB"
+  assert formatSize(int64.high div 8) == "1023.999PiB"
+  assert formatSize(int64.high div 16 + 1) == "512PiB"
+  assert formatSize(int64.high div 16) == "511.999PiB"
+  assert formatSize(0) == "0B"
+  assert formatSize(0, includeSpace = true) == "0 B"
+  assert formatSize(1) == "1B"
+  assert formatSize(2) == "2B"
+  assert formatSize(1022) == "1022B"
+  assert formatSize(1023) == "1023B"
+  assert formatSize(1024) == "1KiB"
+  assert formatSize(1025) == "1.001KiB"
+  assert formatSize(1026) == "1.002KiB"
+  assert formatSize(1024 * 2 - 2) == "1.998KiB"
+  assert formatSize(1024 * 2 - 1) == "1.999KiB"
+  assert formatSize(1024 * 2) == "2KiB"
+  assert formatSize(1024 * 2 + 1) == "2.001KiB"
+  assert formatSize(1024 * 2 + 2) == "2.002KiB"
+  assert formatSize(4096 - 1) == "3.999KiB"
+  assert formatSize(4096) == "4KiB"
+  assert formatSize(4096 + 1) == "4.001KiB"
+  assert formatSize(1024 * 512 - 1) == "511.999KiB"
+  assert formatSize(1024 * 512) == "512KiB"
+  assert formatSize(1024 * 512 + 1) == "512.001KiB"
+  assert formatSize(1024 * 1024 - 2) == "1023.998KiB"
+  assert formatSize(1024 * 1024 - 1) == "1023.999KiB"
+  assert formatSize(1024 * 1024) == "1MiB"
+  assert formatSize(1024 * 1024 + 1) == "1MiB"
+  assert formatSize(1024 * 1024 + 1023) == "1MiB"
+  assert formatSize(1024 * 1024 + 1024) == "1.001MiB"
+  assert formatSize(1024 * 1024 + 1024 * 2) == "1.002MiB"
+  assert formatSize(1024 * 1024 * 2 - 1) == "1.999MiB"
+  assert formatSize(1024 * 1024 * 2) == "2MiB"
+  assert formatSize(1024 * 1024 * 2 + 1) == "2MiB"
+  assert formatSize(1024 * 1024 * 2 + 1024) == "2.001MiB"
+  assert formatSize(1024 * 1024 * 2 + 1024 * 2) == "2.002MiB"
+  assert formatSize(1024 * 1024 * 4 - 1) == "3.999MiB"
+  assert formatSize(1024 * 1024 * 4) == "4MiB"
+  assert formatSize(1024 * (1024 * 4 + 1)) == "4.001MiB"
+  assert formatSize(1024 * 1024 * 512 - 1025) == "511.998MiB"
+  assert formatSize(1024 * 1024 * 512 - 1) == "511.999MiB"
+  assert formatSize(1024 * 1024 * 512) == "512MiB"
+  assert formatSize(1024 * 1024 * 512 + 1) == "512MiB"
+  assert formatSize(1024 * 1024 * 512 + 1024) == "512.001MiB"
+  assert formatSize(1024 * 1024 * 512 + 1024 * 2) == "512.002MiB"
+  assert formatSize(1024 * 1024 * 1024 - 1) == "1023.999MiB"
+  assert formatSize(1024 * 1024 * 1024) == "1GiB"
+  assert formatSize(1024 * 1024 * 1024 + 1) == "1GiB"
+  assert formatSize(1024 * 1024 * 1025) == "1.001GiB"
+  assert formatSize(1024 * 1024 * 1026) == "1.002GiB"
+  # != 2.234MiB as (2.234 * 1024 * 1024).int.float / (1024 * 1024) = 2.23399...
+  # and formatSize round down the value
+  assert formatSize((2.234*1024*1024).int) == "2.233MiB"
+  assert formatSize(4096, prefix = bpColloquial, includeSpace = true) == "4 kB"
+  assert formatSize(4096, includeSpace = true) == "4 KiB"
+  # (5378934).float / (1024 * 1024) = 5.12975...
+  assert formatSize(5_378_934, prefix = bpColloquial, decimalSep = ',') == "5,129MB"
