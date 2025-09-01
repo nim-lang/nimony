@@ -1,12 +1,12 @@
-## This module implements helpers for determining special directories used by apps.
+# This module implements helpers for determining special directories used by apps.
 
-## .. importdoc:: paths.nim
+# .. importdoc:: paths.nim
 
-from std/private/osappdirs import nil
-import std/paths
-import std/envvars
+import paths
+from private/osappdirs import nil
 
-proc getHomeDir*(): Path {.inline, tags: [ReadEnvEffect, ReadIOEffect].} =
+
+proc getHomeDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## Returns the home directory of the current user.
   ##
   ## This proc is wrapped by the `expandTilde proc`_
@@ -15,9 +15,9 @@ proc getHomeDir*(): Path {.inline, tags: [ReadEnvEffect, ReadIOEffect].} =
   ## See also:
   ## * `getConfigDir proc`_
   ## * `getTempDir proc`_
-  result = Path(osappdirs.getHomeDir())
+  result = initPath(osappdirs.getHomeDir())
 
-proc getDataDir*(): Path {.inline, tags: [ReadEnvEffect, ReadIOEffect].} =
+proc getDataDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## Returns the data directory of the current user for applications.
   ## 
   ## On non-Windows OSs, this proc conforms to the XDG Base Directory
@@ -32,9 +32,9 @@ proc getDataDir*(): Path {.inline, tags: [ReadEnvEffect, ReadIOEffect].} =
   ## * `expandTilde proc`_
   ## * `getCurrentDir proc`_
   ## * `setCurrentDir proc`_
-  result = Path(osappdirs.getDataDir())
+  result = initPath(osappdirs.getDataDir())
 
-proc getConfigDir*(): Path {.inline, tags: [ReadEnvEffect, ReadIOEffect].} =
+proc getConfigDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## Returns the config directory of the current user for applications.
   ##
   ## On non-Windows OSs, this proc conforms to the XDG Base Directory
@@ -48,9 +48,9 @@ proc getConfigDir*(): Path {.inline, tags: [ReadEnvEffect, ReadIOEffect].} =
   ## See also:
   ## * `getHomeDir proc`_
   ## * `getTempDir proc`_
-  result = Path(osappdirs.getConfigDir())
+  result = initPath(osappdirs.getConfigDir())
 
-proc getCacheDir*(): Path {.inline.} =
+proc getCacheDir*(): Path =
   ## Returns the cache directory of the current user for applications.
   ##
   ## This makes use of the following environment variables:
@@ -66,16 +66,16 @@ proc getCacheDir*(): Path {.inline.} =
   ## * `getTempDir proc`_
   ## * `getConfigDir proc`_
   # follows https://crates.io/crates/platform-dirs
-  result = Path(osappdirs.getCacheDir())
+  result = initPath(osappdirs.getCacheDir())
 
-proc getCacheDir*(app: Path): Path {.inline.} =
+proc getCacheDir*(app: Path): Path =
   ## Returns the cache directory for an application `app`.
   ##
   ## * On Windows, this uses: `getCacheDir() / app / "cache"`
   ## * On other platforms, this uses: `getCacheDir() / app`
-  result = Path(osappdirs.getCacheDir(app.string))
+  result = initPath(osappdirs.getCacheDir($app))
 
-proc getTempDir*(): Path {.inline, tags: [ReadEnvEffect, ReadIOEffect].} =
+proc getTempDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## Returns the temporary directory of the current user for applications to
   ## save temporary files in.
   ##
@@ -91,4 +91,4 @@ proc getTempDir*(): Path {.inline, tags: [ReadEnvEffect, ReadIOEffect].} =
   ## See also:
   ## * `getHomeDir proc`_
   ## * `getConfigDir proc`_
-  result = Path(osappdirs.getTempDir())
+  result = initPath(osappdirs.getTempDir())

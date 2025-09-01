@@ -6,7 +6,6 @@
 import private/osseps
 export osseps
 
-import envvars
 import private/osappdirs
 
 import pathnorm, hashes, strutils
