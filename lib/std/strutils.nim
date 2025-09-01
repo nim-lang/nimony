@@ -143,7 +143,7 @@ proc `$`*(x: char): string =
   result = newString(1)
   result[0] = x
 
-func delete*(s: var string, slice: Slice[int]) {.raises.} =
+func delete*(s: var string, slice: Slice[int]) =
   ## Deletes the items `s[slice]`, raising `IndexDefect` if the slice contains
   ## elements out of range.
   ##
@@ -156,12 +156,10 @@ func delete*(s: var string, slice: Slice[int]) {.raises.} =
     assert a == "abcd"
     a.delete(1..2)
     assert a == "ad"
-    a.delete(1..<1) # empty slice
+    a.delete(1..0) # empty slice
     assert a == "ad"
   #when compileOption("boundChecks"):
-  if not (slice.a < s.len and slice.a >= 0 and slice.b < s.len):
-    #raise newException(IndexDefect, $(slice: slice, len: s.len))
-    raise IndexError
+  assert slice.a < s.len and slice.a >= 0 and slice.b < s.len
   if slice.b >= slice.a:
     var i = slice.a
     var j = slice.b + 1
