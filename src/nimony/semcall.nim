@@ -952,6 +952,12 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     semExpr(c, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads})
     cs.fnName = getFnIdent(c)
     it.n = cs.fn.n
+
+    if pool.strings[cs.fnName] == "runnableExamples":
+      skipToEnd it.n
+      swap c.dest, cs.dest
+      return
+
   if c.g.config.compat and cs.fnName in c.unoverloadableMagics:
     # transform call early before semchecking arguments
     let syms = beginRead(c.dest)

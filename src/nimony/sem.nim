@@ -5258,7 +5258,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     canSelfExec: canSelfExec,
     pending: createTokenBuf())
 
-  for magic in ["typeof", "compiles", "defined", "declared"]:
+  for magic in ["typeof", "compiles", "defined", "declared", "runnableExamples"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
 
   while true:
