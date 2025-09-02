@@ -2385,7 +2385,7 @@ proc semCaseImpl(c: var SemContext; it: var Item; mode: CaseMode) =
 proc semCase(c: var SemContext; it: var Item) =
   semCaseImpl(c, it, NormalCase)
 
-proc semForLoopVar(c: var SemContext; it: var Item; loopvarType: TypeCursor) =
+proc semForLoopVar(c: var SemContext; it: var Item; loopvarType: TypeCursor; loopvarTypeMod = NoType) =
   if stmtKind(it.n) == LetS:
     let declStart = c.dest.len
     takeToken c, it.n
@@ -2393,7 +2393,11 @@ proc semForLoopVar(c: var SemContext; it: var Item; loopvarType: TypeCursor) =
     c.addSym delayed
     wantDot c, it.n # export marker must be empty
     wantDot c, it.n # pragmas
-    copyTree c.dest, loopvarType
+    if loopvarTypeMod != NoType and loopvarType.typeKind notin TypeModifiers:
+      c.dest.buildTree loopvarTypeMod, it.n.info:
+        copyTree c.dest, loopvarType
+    else:
+      copyTree c.dest, loopvarType
     skip it.n # skip over the type which might have been set already as we tend to re-sem stuff
     wantDot c, it.n # value
     takeParRi c, it.n
@@ -2407,20 +2411,24 @@ proc isIterator(c: var SemContext; s: SymId): bool =
   let res = declToCursor(c, sym)
   result = res.status == LacksNothing and res.decl.symKind == IteratorY
 
-proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor) =
+proc semForLoopTupleVar(c: var SemContext; it: var Item; tup: TypeCursor; loopvarTypeMod = NoType) =
   var tup = tup
+  var loopvarTypeMod = loopvarTypeMod
+  if tup.typeKind in TypeModifiers:
+    loopvarTypeMod = tup.typeKind
+    inc tup
   inc tup
   while it.n.kind != ParRi and tup.kind != ParRi:
     let field = getTupleFieldType(tup)
     if it.n.substructureKind == UnpacktupU:
       takeToken c, it.n
-      if field.typeKind == TupleT:
-        semForLoopTupleVar c, it, field
+      if field.skipModifier.typeKind == TupleT:
+        semForLoopTupleVar c, it, field, loopvarTypeMod
       else:
         buildErr c, it.n.info, "tuple types expected, but got: " & $field
       takeParRi c, it.n
     else:
-      semForLoopVar c, it, field
+      semForLoopVar c, it, field, loopvarTypeMod
     skip tup
   if it.n.kind == ParRi:
     if tup.kind == ParRi:
@@ -2531,7 +2539,7 @@ proc semFor(c: var SemContext; it: var Item) =
     case substructureKind(it.n)
     of UnpackflatU:
       takeToken c, it.n
-      if iterCall.typ.typeKind == TupleT:
+      if iterCall.typ.skipModifier.typeKind == TupleT:
         semForLoopTupleVar c, it, iterCall.typ
       else:
         semForLoopVar c, it, iterCall.typ
@@ -2539,7 +2547,7 @@ proc semFor(c: var SemContext; it: var Item) =
       takeParRi c, it.n
     of UnpacktupU:
       takeToken c, it.n
-      if iterCall.typ.typeKind == TupleT:
+      if iterCall.typ.skipModifier.typeKind == TupleT:
         semForLoopTupleVar c, it, iterCall.typ
       else:
         buildErr c, it.n.info, "tuple types expected, but got: " & $iterCall.typ
