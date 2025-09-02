@@ -516,6 +516,8 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
           c.headers.incl n.litId
           inc n
           skipParRi c, n
+        while n.kind != ParRi and n.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
+          skip n
         skipParRi c, n
       else:
         takeParRi c, n
