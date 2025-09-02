@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon
+  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -5256,7 +5256,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
-    pending: createTokenBuf())
+    pending: createTokenBuf(),
+    executeCall: exprexec.executeCall)
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))

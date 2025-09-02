@@ -176,7 +176,21 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let val = pool.strings[a.litId].len
     result = intValue(c, val, n.info)
   else:
-    cannotEval(n)
+    var evaluatedArgs = createTokenBuf(16)
+    while args.kind != ParRi:
+      let x = eval(c, args)
+      if x.tag == nifstreams.ErrT:
+        cannotEval(n)
+        return
+      evaluatedArgs.addSubtree x
+
+    let i = c.values.len
+    c.values.add createTokenBuf(12)
+    assert c.c.executeCall != nil
+    if c.c.executeCall(c.c[], routine, c.values[i], cursorAt(evaluatedArgs, 0), n.info):
+      result = cursorAt(c.values[i], 0)
+    else:
+      cannotEval(n)
 
 template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n

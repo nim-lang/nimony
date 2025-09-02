@@ -72,6 +72,8 @@ type
   ModuleFlag* = enum
     IsSystem, IsMain, SkipSystem
 
+  SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; args: Cursor; info: PackedLineInfo): bool {.nimcall.}
+
   SemContext* = object
     dest*: TokenBuf
     routine*: SemRoutine
@@ -120,6 +122,7 @@ type
     userPragmas*: Table[StrId, TokenBuf]
     usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
     pragmaStack*: seq[Cursor] # used to implement {.push.} and {.pop.}
+    executeCall*: SemExecutor
     passL*: seq[string]
     passC*: seq[string]
 
