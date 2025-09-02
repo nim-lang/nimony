@@ -2539,7 +2539,10 @@ proc semFor(c: var SemContext; it: var Item) =
     case substructureKind(it.n)
     of UnpackflatU:
       takeToken c, it.n
-      if iterCall.typ.skipModifier.typeKind == TupleT:
+      var n2 = it.n
+      skip n2
+      let hasMultiVars = n2.kind != ParRi
+      if hasMultiVars and iterCall.typ.skipModifier.typeKind == TupleT:
         semForLoopTupleVar c, it, iterCall.typ
       else:
         semForLoopVar c, it, iterCall.typ
