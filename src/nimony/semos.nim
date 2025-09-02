@@ -346,3 +346,8 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
     parse s, dest, NoLineInfo
   finally:
     close s
+
+proc runEval*(c: var SemContext; dest: var TokenBuf; src: TokenBuf; usedModules: HashSet[string]): bool =
+  let outfile = c.g.config.nifcachePath & "/eval_" & $c.thisModuleSuffix & ".nif"
+  writeFile outfile, "(.nif24)\n" & toString(src)
+  result = false

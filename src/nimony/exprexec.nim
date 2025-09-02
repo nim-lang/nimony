@@ -8,7 +8,7 @@
 
 include nifprelude
 import std / [assertions, sets, tables]
-import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops, typenav, typekeys, expreval
+import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops, typenav, typekeys, expreval, semos
 
 const
   writeNifModuleSuffix = "wriwhv7qv"
@@ -31,7 +31,7 @@ proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
       elif item.kind == Symbol: stack.add item.symId
       inc c
 
-proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; routine: Routine) =
+proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var HashSet[string]; routine: Routine) =
   var stack = newSeq[SymId]()
   var handledSyms = initHashSet[SymId]()
   stack.add routine.name.symId
@@ -44,6 +44,8 @@ proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; routine: Routine) =
         let res = tryLoadSym(sym)
         if res.status != LacksNothing:
           dest.addSubtreeAndSyms res.decl, stack
+      elif owner.len > 0:
+        usedModules.incl(owner)
 
 type
   GenProcRequest = object
@@ -56,9 +58,10 @@ type
     routineKind: SymKind
     hookNames: Table[string, int]
     thisModuleSuffix: string
-    bits: int
+    bits, errorCount: int
     structuralTypeToProc: Table[string, SymId]
     requests: seq[GenProcRequest]
+    usedModules: HashSet[string]
 
 proc generateName(c: var LiftingCtx; key: string): string =
   result = "`toNif" & "_" & key
@@ -81,6 +84,15 @@ proc requestProc(c: var LiftingCtx; t: TypeCursor): SymId =
 when not defined(nimony):
   proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf)
   proc entryPoint(c: var LiftingCtx; orig: TypeCursor; arg: Cursor)
+
+proc genStringCall(c: var LiftingCtx; name, arg: string) =
+  c.dest.copyIntoKind CallS, c.info:
+    c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
+    c.dest.addStrLit arg, c.info
+
+proc genParRiCall(c: var LiftingCtx) =
+  c.dest.copyIntoKind CallS, c.info:
+    c.dest.addSymUse pool.syms.getOrIncl("writeNifParRi.0." & writeNifModuleSuffix), c.info
 
 proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; needsDeref: bool; depth = 0): TokenBuf =
   assert name.kind == SymbolDef
@@ -107,7 +119,12 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDer
   # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
   let fieldType = r.typ
   let a = accessObjField(c, param, r.name, needsDeref, depth = depth)
+
+  genStringCall(c, "writeNifParLe", "kv")
+  genStringCall(c, "writeNifSymbol", pool.syms[r.name.symId])
+
   entryPoint(c, fieldType, readOnlyCursorAt(a, 0))
+  genParRiCall c
 
 proc unravelObjFields(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
   while n.kind != ParRi:
@@ -118,11 +135,11 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDe
       var selector = n
       unravelObjField c, selector, param, needsDeref, depth
 
-      c.dest.addParLe CaseU, info
-
       var selectorField = takeLocal(n, SkipFinalParRi)
-      let dest = accessObjField(c, param, selectorField.name, needsDeref)
-      c.dest.add dest
+      let sel = accessObjField(c, param, selectorField.name, needsDeref)
+
+      c.dest.addParLe CaseU, info
+      c.dest.add sel
 
       while n.kind != ParRi:
         case n.substructureKind
@@ -154,8 +171,12 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDe
       error "illformed AST inside object: ", n
 
 
-proc unravelObj(c: var LiftingCtx; n: Cursor; param: TokenBuf; depth: int) =
-  var n = n
+proc unravelObj(c: var LiftingCtx; orig: Cursor; param: TokenBuf; depth: int) =
+  genStringCall(c, "writeNifParLe", "oconstr")
+  # we simply generate the type as a raw string:
+  genStringCall(c, "writeNifRaw", toString(orig, false))
+
+  var n = orig
   let needsDeref = n.typeKind in {RefT, PtrT}
   if n.typeKind in {RefT, PtrT}:
     inc n
@@ -169,11 +190,16 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; param: TokenBuf; depth: int) =
     unravelObj c, toTypeImpl(parent), param, depth+1
   skip n # inheritance is gone
   unravelObjFields c, n, param, needsDeref, depth
+  genParRiCall c
 
 proc unravelTuple(c: var LiftingCtx;
-                  n: Cursor; param: TokenBuf) =
-  assert n.typeKind == TupleT
-  var n = n
+                  orig: Cursor; param: TokenBuf) =
+  assert orig.typeKind == TupleT
+  genStringCall(c, "writeNifParLe", "tupconstr")
+  # we simply generate the type as a raw string:
+  genStringCall(c, "writeNifRaw", toString(orig, false))
+
+  var n = orig
   inc n
   var idx = 0
   while n.kind != ParRi:
@@ -183,6 +209,8 @@ proc unravelTuple(c: var LiftingCtx;
     let a = accessTupField(c, param, idx)
     unravel c, fieldType, a
     inc idx
+  genParRiCall c
+
 
 proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId): TokenBuf =
   result = createTokenBuf(4)
@@ -225,15 +253,19 @@ proc declareIndexVar(c: var LiftingCtx; indexVar: SymId) =
     c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
 
 proc unravelArray(c: var LiftingCtx;
-                  n: Cursor; param: TokenBuf) =
-  assert n.typeKind == ArrayT
-  let arrayLen = getArrayLen(n)
-  var n = n
+                  orig: Cursor; param: TokenBuf) =
+  assert orig.typeKind == ArrayT
+  let arrayLen = getArrayLen(orig)
+  var n = orig
   inc n
   let baseType = n
 
   let indexVar = pool.syms.getOrIncl("idx.0")
   declareIndexVar c, indexVar
+
+  genStringCall(c, "writeNifParLe", "aconstr")
+  # we simply generate the type as a raw string:
+  genStringCall(c, "writeNifRaw", toString(orig, false))
 
   copyIntoKind c.dest, WhileS, c.info:
     indexVarLowerThanArrayLen c, indexVar, arrayLen
@@ -242,25 +274,72 @@ proc unravelArray(c: var LiftingCtx;
       unravel c, baseType, a
 
       incIndexVar c, indexVar
+  genParRiCall c
+
+proc unravelSet(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
+  assert orig.typeKind == SetT
+  let baseType = orig.firstSon
+  let maxValue = bitsetSizeInBytes(orig) * createXint(8'i64)
+  genStringCall(c, "writeNifParLe", "setconstr")
+  genStringCall(c, "writeNifRaw", toString(orig, false))
+
+  let indexVar = pool.syms.getOrIncl("idx.0")
+  declareIndexVar c, indexVar
+  var indexVarAsBuf = createTokenBuf(1)
+  indexVarAsBuf.addSymUse indexVar, c.info
+
+  copyIntoKind c.dest, WhileS, c.info:
+    indexVarLowerThanArrayLen c, indexVar, maxValue
+    copyIntoKind c.dest, StmtsS, c.info:
+      copyIntoKind c.dest, IfS, c.info:
+        copyIntoKind c.dest, ElifU, c.info:
+          copyIntoKind c.dest, InSetX, c.info:
+            c.dest.addSubtree orig
+            c.dest.add param # param is the set, so it comes first
+            # the element is our indexVar
+            c.dest.addSymUse indexVar, c.info
+          copyIntoKind c.dest, StmtsS, c.info:
+           unravel c, baseType, indexVarAsBuf
+
+      incIndexVar c, indexVar
+  genParRiCall c
+
+proc unravelEnum(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
+  c.dest.addParLe CaseS, c.info
+  c.dest.add param
+  var enumDecl = orig
+  inc enumDecl # skips enum
+  skip enumDecl # skips base type
+  while enumDecl.kind != ParRi:
+    let enumDeclInfo = enumDecl.info
+    c.dest.copyIntoKind OfU, enumDeclInfo:
+      c.dest.copyIntoKind RangesU, enumDeclInfo:
+        let enumField = takeLocal(enumDecl, SkipFinalParRi)
+        let esym = enumField.name.symId
+        c.dest.addSymUse esym, enumDeclInfo
+      c.dest.copyIntoKind StmtsS, enumDeclInfo:
+        genStringCall(c, "writeNifSymbol", pool.syms[esym])
+  c.dest.addParRi() # case
 
 proc primitiveCall(c: var LiftingCtx; name: string; arg: Cursor) =
   c.dest.copyIntoKind CallS, c.info:
     c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addSubtree arg
 
-proc genStringCall(c: var LiftingCtx; name, arg: string) =
-  c.dest.copyIntoKind CallS, c.info:
-    c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
-    c.dest.addStrLit arg, c.info
-
-proc genParRiCall(c: var LiftingCtx) =
-  c.dest.copyIntoKind CallS, c.info:
-    c.dest.addSymUse pool.syms.getOrIncl("writeNifParRi.0." & writeNifModuleSuffix), c.info
-
 proc entryPoint(c: var LiftingCtx; orig: TypeCursor; arg: Cursor) =
+  if isStringType(orig):
+    primitiveCall(c, "writeNifStr", arg)
+    return
+  elif orig.typeKind == CstringT:
+    genStringCall(c, "writeNifParLe", "conv")
+    genStringCall(c, "writeNifRaw", toString(orig, false))
+    primitiveCall(c, "writeNifStr", arg)
+    genParRiCall c
+    return
+
   let typ = toTypeImpl orig
   case typ.typeKind
-  of DistinctT:
+  of DistinctT, RangetypeT:
     # do not lose the type:
     genStringCall(c, "writeNifParLe", "conv")
     # we simply generate the type as a raw string:
@@ -284,25 +363,31 @@ proc entryPoint(c: var LiftingCtx; orig: TypeCursor; arg: Cursor) =
       c.dest.addSubtree arg
 
 proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
+  if isSomeStringType(orig):
+    entryPoint(c, orig, readOnlyCursorAt(param, 0))
+    return
+
   let typ = toTypeImpl orig
   case typ.typeKind
   of ObjectT:
     if orig.kind == Symbol and hasRtti(orig.symId):
       c.routineKind = MethodY
     unravelObj c, typ, param, 0
-  of DistinctT:
-    unravel(c, typ.firstSon, param)
   of TupleT:
     unravelTuple c, typ, param
   of ArrayT:
     unravelArray c, typ, param
-  of IT, UT, FT, CT, BoolT:
+  of IT, UT, FT, CT, BoolT, DistinctT, RangetypeT:
     entryPoint(c, typ, readOnlyCursorAt(param, 0))
+  of EnumT, OnumT:
+    unravelEnum c, typ, param
+  of SetT:
+    unravelSet c, typ, param
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT, TemplateT,
-     EnumT, ProctypeT,  VoidT, PtrT, VarargsT, StaticT, OnumT,
-     RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT,
+     ProctypeT,  VoidT, PtrT, VarargsT, StaticT,
+     RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT, ItertypeT, UarrayT, AutoT,
      SymkindT, TypekindT, TypedescT, UntypedT, TypedT, CstringT, PointerT, OrdinalT:
-    discard "to implement"
+    inc c.errorCount
 
 proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
   var buf = createTokenBuf(100)
@@ -353,12 +438,10 @@ proc genMissingProcs*(c: var LiftingCtx) =
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call: Cursor; info: PackedLineInfo): bool {.nimcall.} =
-  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits, thisModuleSuffix: s.thisModuleSuffix)
+  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits, errorCount: 0, thisModuleSuffix: s.thisModuleSuffix)
 
   c.dest.addParLe StmtsS, info
-  c.dest.copyIntoKind ImportS, info:
-    c.dest.addIdent "writenif"
-  collectUsedSyms s, c.dest, routine
+  collectUsedSyms s, c.dest, c.usedModules, routine
 
   # now that we have all dependencies in the module, we can add the call, but wrap it in a new `toNif` tag:
   if isVoidType(routine.retType):
@@ -371,5 +454,7 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   genMissingProcs c
   c.dest.addParRi() # StmtsS
 
-  result = false
-
+  if c.errorCount > 0:
+    result = false
+  else:
+    result = runEval(s, dest, c.dest, c.usedModules)

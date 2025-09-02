@@ -23,6 +23,7 @@ Usage:
 Command:
   m file.nim [project.nim]    compile a single Nim module to hexer
   x file.nif                  generate the .idx.nif file from a .nif file
+  e file.nif [dep1.nif ...]   execute the given .nif file
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
@@ -46,13 +47,18 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 type
   Command = enum
-    None, SingleModule, GenerateIdx
+    None, SingleModule, GenerateIdx, Execute
 
 proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
   if not semos.fileExists(infile):
     quit "cannot find " & infile
   else:
     semcheck(infile, outfile, ensureMove config, moduleFlags, "", false)
+
+proc executeNif(files: seq[string]; config: sink NifConfig) =
+  # file 0 is special as it is the main file. We need to run injectDerefs on it first.
+  # The other modules are simply dependencies we need to compile&link too.
+  discard "XXX to implement"
 
 proc handleCmdLine() =
   var args: seq[string] = @[]
@@ -70,6 +76,8 @@ proc handleCmdLine() =
           cmd = SingleModule
         of "x":
           cmd = GenerateIdx
+        of "e":
+          cmd = Execute
         else:
           quit "command expected"
       else:
@@ -132,6 +140,10 @@ proc handleCmdLine() =
     if args.len != 1:
       quit "want exactly 1 command line argument"
     indexFromNif(args[0])
+  of Execute:
+    if args.len == 0:
+      quit "want more than 0 command line argument"
+    executeNif args, ensureMove config
 
 when isMainModule:
   handleCmdLine()
