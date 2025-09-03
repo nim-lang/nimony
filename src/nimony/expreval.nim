@@ -145,9 +145,6 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
           op = pool.strings[prag.litId]
           break
       skip pragmas
-  if op == "":
-    cannotEval(n)
-    return
   var args = n
   inc args
   skip args
@@ -180,9 +177,10 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     evaluatedCall.addParLe CallS, n.info
     evaluatedCall.addSymUse routine.name.symId, n.info
     while args.kind != ParRi:
+      let thisArg = args
       let x = eval(c, args)
-      if x.tag == nifstreams.ErrT:
-        cannotEval(n)
+      if x.kind == ParLe and x.tagId == nifstreams.ErrT:
+        cannotEval(thisArg)
         return
       evaluatedCall.addSubtree x
     evaluatedCall.addParRi()
