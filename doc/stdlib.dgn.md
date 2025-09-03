@@ -603,6 +603,10 @@ Returns true if every character in a string is in a given set
 
 Checks if string is empty or consists entirely of whitespace
 
+####split
+
+Splits a string into substring using a group of separators
+
 ####delete
 
 Deletes characters in a string within a range
