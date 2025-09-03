@@ -561,6 +561,55 @@ func replaceWord*(s, sub: string, by = ""): string =
     # copy the rest:
     add result, substr(s, i)
 
+func multiReplace*(s: string; replacements: openArray[(string, string)]): string =
+  ## Same as `replace<#replace,string,string,string>`_, but specialized for
+  ## doing multiple replacements in a single pass through the input string.
+  ##
+  ## `multiReplace` scans the input string from left to right and replaces the
+  ## matching substrings in the same order as passed in the argument list.
+  ##
+  ## The implications of the order of scanning the string and matching the
+  ## replacements:
+  ##   - In case of multiple matches at a given position, the earliest
+  ##     replacement is applied.
+  ##   - Overlaps are not handled. After performing a replacement, the scan
+  ##     continues from the character after the matched substring. If the
+  ##     resulting string then contains a possible match starting in a newly
+  ##     placed substring, the additional replacement is not performed.
+  ##
+  ## If the resulting string is not longer than the original input string,
+  ## only a single memory allocation is required.
+  ##
+  runnableExamples:
+    # Swapping occurrences of 'a' and 'b':
+    assert multireplace("abba", [("a", "b"), ("b", "a")]) == "baab"
+
+    # The second replacement ("ab") is matched and performed first, the scan then
+    # continues from 'c', so the "bc" replacement is never matched and thus skipped.
+    assert multireplace("abc", [("bc", "x"), ("ab", "_b")]) == "_bc"
+  result = newStringOfCap(s.len)
+  var i = 0
+  var fastChk: set[char] = {}
+  # workaround https://github.com/nim-lang/nimony/issues/1461
+  # and https://github.com/nim-lang/nimony/issues/1451
+  for repl in replacements.items:
+    if repl[0].len > 0:
+      # Include first character of all replacements
+      fastChk.incl repl[0][0]
+  while i < s.len:
+    block sIteration:
+      # Assume most chars in s are not candidates for any replacement operation
+      if s[i] in fastChk:
+        for repl in replacements.items:
+          if repl[0].len > 0 and s.continuesWith(repl[0], i):
+            add result, repl[1]
+            inc(i, repl[0].len)
+            break sIteration
+      # No matching replacement found
+      # copy current character from s
+      add result, s[i]
+      inc(i)
+
 const HexChars = "0123456789ABCDEF"
 
 func escape*(s: string, prefix = "\"", suffix = "\""): string =
