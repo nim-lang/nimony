@@ -49,6 +49,68 @@ block: # isEmptyOrWhitespace
   assert not isEmptyOrWhitespace("ABc   \td")
   assert not isEmptyOrWhitespace("a")
 
+block: # split iterator
+  proc testSplit(s: string; seps: set[char] = Whitespace; maxsplit: int = -1): seq[string] =
+    for s in split(s, seps, maxsplit):
+      result.add s
+
+  assert testSplit("") == @[""]
+  assert testSplit("", default(set[char])) == @[""]
+  assert testSplit("", default(set[char]), 0) == @[""]
+  assert testSplit("", {' '}) == @[""]
+  assert testSplit("", {' '}, 0) == @[""]
+  assert testSplit("", {' '}, 1) == @[""]
+  assert testSplit("a") == @["a"]
+  assert testSplit("a", default(set[char])) == @["a"]
+  assert testSplit("a", default(set[char]), 0) == @["a"]
+  assert testSplit("a", {' '}) == @["a"]
+  assert testSplit("a", {' '}, 0) == @["a"]
+  assert testSplit("a", {' '}, 1) == @["a"]
+  assert testSplit("a", {'a'}) == @["", ""]
+  assert testSplit("a", {'a'}, 0) == @["a"]
+  assert testSplit("a", {'a'}, 1) == @["", ""]
+  assert testSplit("aa") == @["aa"]
+  assert testSplit("aa", default(set[char])) == @["aa"]
+  assert testSplit("aa", default(set[char]), 0) == @["aa"]
+  assert testSplit("aa", {' '}) == @["aa"]
+  assert testSplit("aa", {' '}, 0) == @["aa"]
+  assert testSplit("aa", {' '}, 1) == @["aa"]
+  assert testSplit("aa", {'a'}) == @["", "", ""]
+  assert testSplit("aa", {'a'}, 0) == @["aa"]
+  assert testSplit("aa", {'a'}, 1) == @["", "a"]
+  assert testSplit("aa", {'a'}, 2) == @["", "", ""]
+  assert testSplit("ab") == @["ab"]
+  assert testSplit("ab", default(set[char])) == @["ab"]
+  assert testSplit("ab", default(set[char]), 0) == @["ab"]
+  assert testSplit("ab", {' '}) == @["ab"]
+  assert testSplit("ab", {' '}, 0) == @["ab"]
+  assert testSplit("ab", {' '}, 1) == @["ab"]
+  assert testSplit("ab", {'a'}) == @["", "b"]
+  assert testSplit("ab", {'a'}, 0) == @["ab"]
+  assert testSplit("ab", {'a'}, 1) == @["", "b"]
+  assert testSplit("ab", {'a'}, 2) == @["", "b"]
+  assert testSplit("ab", {'a', 'b'}) == @["", "", ""]
+  assert testSplit("ab", {'a', 'b'}, 0) == @["ab"]
+  assert testSplit("ab", {'a', 'b'}, 1) == @["", "b"]
+  assert testSplit("ab", {'a', 'b'}, 2) == @["", "", ""]
+  assert testSplit("a b\tc\vd\re\lf\fg") == @["a", "b", "c", "d", "e", "f", "g"]
+
+  let s = " foo bar  baz  "
+  assert testSplit(s) == @["", "foo", "bar", "", "baz", "", ""]
+  assert testSplit(s, Whitespace, 0) == @[s]
+  assert testSplit(s, Whitespace, 1) == @["", "foo bar  baz  "]
+  assert testSplit(s, Whitespace, 2) == @["", "foo", "bar  baz  "]
+  assert testSplit(s, Whitespace, 3) == @["", "foo", "bar", " baz  "]
+  assert testSplit(s, Whitespace, 4) == @["", "foo", "bar", "", "baz  "]
+
+  let s1 = "foo1bar23baz456"
+  assert testSplit(s1, Digits) == @["foo", "bar", "", "baz", "", "", ""]
+  assert testSplit(s1, Digits, 0) == @[s1]
+  assert testSplit(s1, Digits, 1) == @["foo", "bar23baz456"]
+  assert testSplit(s1, Digits, 2) == @["foo", "bar", "3baz456"]
+  assert testSplit(s1, Digits, 3) == @["foo", "bar", "", "baz456"]
+  assert testSplit(s1, Digits, 4) == @["foo", "bar", "", "baz", "56"]
+
 block: # delete
   try:
     block:

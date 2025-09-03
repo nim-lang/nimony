@@ -143,6 +143,75 @@ proc `$`*(x: char): string =
   result = newString(1)
   result[0] = x
 
+template stringHasSep(s: string, index: int, seps: set[char]): bool =
+  s[index] in seps
+
+template splitCommon(s, sep, maxsplit, sepLen) {.untyped.} =
+  ## Common code for split procs
+  var last = 0
+  var splits = maxsplit
+
+  while last <= len(s):
+    var first = last
+    while last < len(s) and not stringHasSep(s, last, sep):
+      inc(last)
+    if splits == 0: last = len(s)
+    yield substr(s, first, last-1)
+    if splits == 0: break
+    dec(splits)
+    inc(last, sepLen)
+
+iterator split*(s: string; seps: set[char] = Whitespace;
+                maxsplit: int = -1): string =
+  ## Splits the string `s` into substrings using a group of separators.
+  ##
+  ## Substrings are separated by a substring containing only `seps`.
+  ##
+  ##   ```nim
+  ##   for word in split("this\lis an\texample"):
+  ##     writeLine(stdout, word)
+  ##   ```
+  ##
+  ## ...generates this output:
+  ##
+  ##   ```
+  ##   "this"
+  ##   "is"
+  ##   "an"
+  ##   "example"
+  ##   ```
+  ##
+  ## And the following code:
+  ##
+  ##   ```nim
+  ##   for word in split("this:is;an$example", {';', ':', '$'}):
+  ##     writeLine(stdout, word)
+  ##   ```
+  ##
+  ## ...produces the same output as the first example. The code:
+  ##
+  ##   ```nim
+  ##   let date = "2012-11-20T22:08:08.398990"
+  ##   let separators = {' ', '-', ':', 'T'}
+  ##   for number in split(date, separators):
+  ##     writeLine(stdout, number)
+  ##   ```
+  ##
+  ## ...results in:
+  ##
+  ##   ```
+  ##   "2012"
+  ##   "11"
+  ##   "20"
+  ##   "22"
+  ##   "08"
+  ##   "08.398990"
+  ##   ```
+  ##
+  ##  .. note:: Empty separator set results in returning an original string,
+  ##   following the interpretation "split by no element".
+  splitCommon(s, seps, maxsplit, 1)
+
 func delete*(s: var string, slice: Slice[int]) =
   ## Deletes the items `s[slice]`.
   ##
