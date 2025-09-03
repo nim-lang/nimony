@@ -608,9 +608,6 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
     forceRebuild, silentMake: bool; moduleFlags: set[ModuleFlag]) =
   ## Build graph starting from already-processed .nif files instead of .nim files
 
-  let nifc = findTool("nifc")
-  let nifmake = findTool("nifmake")
-
   # Generate a simplified build file that works with .nif files
   let buildFile = config.nifcachePath / "nif_execute.build.nif"
   var b = nifbuilder.open(buildFile)
@@ -621,7 +618,7 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
     # Command definitions (reuse existing logic)
     b.withTree "cmd":
       b.addSymbolDef "nifc"
-      b.addStrLit nifc
+      b.addStrLit findTool("nifc")
       b.addStrLit "c"
       b.addStrLit "--compileOnly"
       b.addKeyw "args"
@@ -659,10 +656,11 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
 
     # Build rules for dependency files
     var objFiles: seq[string] = @[]
-    for depIdx, depNifFile in dependencyNifFiles:
-      let depHexedFile = config.nifcachePath / "dep" & $depIdx & ".hexed.nif"
-      let depCFile = config.nifcachePath / "dep" & $depIdx & ".c"
-      let depObjFile = config.nifcachePath / "dep" & $depIdx & ".o"
+    for depNifFile in dependencyNifFiles:
+      let depName = depNifFile.splitFile.name
+      let depHexedFile = config.nifcachePath / depName & ".2.nif"
+      let depCFile = config.nifcachePath / depName & ".c.nif"
+      let depObjFile = config.nifcachePath / depName & ".o"
       objFiles.add(depObjFile)
 
       # Process dependency .nif file with hexer first
@@ -690,9 +688,10 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
           b.addStrLit depObjFile
 
     # Build rules for main file
-    let mainHexedFile = config.nifcachePath / "main.hexed.nif"
-    let mainCFile = config.nifcachePath / "main.c"
-    let mainObjFile = config.nifcachePath / "main.o"
+    let mainName = mainNifFile.splitFile.name
+    let mainHexedFile = config.nifcachePath / mainName & ".2.nif"
+    let mainCFile = config.nifcachePath / mainName & ".c.nif"
+    let mainObjFile = config.nifcachePath / mainName & ".o"
     objFiles.add(mainObjFile)
 
     # Process main .nif file with hexer first
@@ -730,7 +729,7 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
         b.addStrLit exeFile
 
   # Execute the build using nifmake
-  let nifmakeCmd = quoteShell(nifmake) &
+  let nifmakeCmd = quoteShell(findTool("nifmake")) &
     (if forceRebuild: " --force" else: "") &
     " --base:" & quoteShell(config.baseDir) &
     " -j run " & quoteShell(buildFile)
