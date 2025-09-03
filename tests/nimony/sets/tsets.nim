@@ -38,3 +38,11 @@ block:
 block:
   proc test() =
     discard {'a'}
+
+# issue #1459
+block:
+  proc foo: char = 'a'
+  var x: set[char] = {}
+  x.incl foo()
+
+  assert x == {'a'}

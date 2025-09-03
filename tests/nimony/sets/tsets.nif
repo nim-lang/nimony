@@ -282,12 +282,50 @@
      (discard 8
       (setconstr 2,~12
        (set 1
-        (c +8)) 1 'a')))))) 5,2
+        (c +8)) 1 'a')))))) ,42
+ (block . 2,1
+  (stmts
+   (proc 5 :foo.0 . . . 8
+    (params) 2
+    (c +8) . . 17
+    (stmts
+     (result :result.0 . . ~15
+      (c +8) .)
+     (asgn result.0 'a') ~17
+     (ret result.0))) 4,1
+   (var :x.0 . . 8,~17
+    (set 1
+     (c +8)) 15
+    (setconstr ~7,~17
+     (set 1
+      (c +8)))) 1,2
+   (incl
+    (set
+     (c +8)) ~1 x.0 9
+    (call ~3 foo.0)) 2,4,lib/std/assertions.nim
+   (stmts
+    (if 3
+     (elif
+      (not 11,48,tests/nimony/sets/tsets.nim
+       (eqset
+        (set
+         (c +8)) ~2 x.0 3
+        (setconstr ,~20
+         (set 1
+          (c +8)) 1 'a'))) ~1,1
+      (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+        (stmts
+         (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+       (cmd quit.0.syn1lfpjv 5 +1))))))) 5,2
  (proc :dollar`.Foo.0.tseflljd71 x . .
   (params
    (param :e.0 . . Foo.0.tseflljd71 .)) string.0.sysvq0asl . .
   (stmts 6
-   (result :result.0 . . string.0.sysvq0asl .) 6
+   (result :result.1 . . string.0.sysvq0asl .) 6
    (case e.0 ~9,1
     (of
      (ranges A.0.tseflljd71)
@@ -313,4 +351,4 @@
      (ranges F.0.tseflljd71)
      (stmts
       (ret "F"))))
-   (ret result.0))))
+   (ret result.1))))
