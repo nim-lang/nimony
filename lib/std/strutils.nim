@@ -143,6 +143,75 @@ proc `$`*(x: char): string =
   result = newString(1)
   result[0] = x
 
+template stringHasSep(s: string, index: int, seps: set[char]): bool =
+  s[index] in seps
+
+template splitCommon(s, sep, maxsplit, sepLen) {.untyped.} =
+  ## Common code for split procs
+  var last = 0
+  var splits = maxsplit
+
+  while last <= len(s):
+    var first = last
+    while last < len(s) and not stringHasSep(s, last, sep):
+      inc(last)
+    if splits == 0: last = len(s)
+    yield substr(s, first, last-1)
+    if splits == 0: break
+    dec(splits)
+    inc(last, sepLen)
+
+iterator split*(s: string; seps: set[char] = Whitespace;
+                maxsplit: int = -1): string =
+  ## Splits the string `s` into substrings using a group of separators.
+  ##
+  ## Substrings are separated by a substring containing only `seps`.
+  ##
+  ##   ```nim
+  ##   for word in split("this\lis an\texample"):
+  ##     writeLine(stdout, word)
+  ##   ```
+  ##
+  ## ...generates this output:
+  ##
+  ##   ```
+  ##   "this"
+  ##   "is"
+  ##   "an"
+  ##   "example"
+  ##   ```
+  ##
+  ## And the following code:
+  ##
+  ##   ```nim
+  ##   for word in split("this:is;an$example", {';', ':', '$'}):
+  ##     writeLine(stdout, word)
+  ##   ```
+  ##
+  ## ...produces the same output as the first example. The code:
+  ##
+  ##   ```nim
+  ##   let date = "2012-11-20T22:08:08.398990"
+  ##   let separators = {' ', '-', ':', 'T'}
+  ##   for number in split(date, separators):
+  ##     writeLine(stdout, number)
+  ##   ```
+  ##
+  ## ...results in:
+  ##
+  ##   ```
+  ##   "2012"
+  ##   "11"
+  ##   "20"
+  ##   "22"
+  ##   "08"
+  ##   "08.398990"
+  ##   ```
+  ##
+  ##  .. note:: Empty separator set results in returning an original string,
+  ##   following the interpretation "split by no element".
+  splitCommon(s, seps, maxsplit, 1)
+
 func delete*(s: var string, slice: Slice[int]) =
   ## Deletes the items `s[slice]`.
   ##
@@ -297,6 +366,28 @@ func capitalizeAscii*(s: string): string {.inline.} =
   else:
     result = s
     result[0] = toUpperAscii(result[0])
+
+func normalize*(s: string): string =
+  ## Normalizes the string `s`.
+  ##
+  ## That means to convert it to lower case and remove any '_'. This
+  ## should NOT be used to normalize Nim identifier names.
+  ##
+  ## See also:
+  ## * `toLowerAscii func<#toLowerAscii,string>`_
+  runnableExamples:
+    assert normalize("Foo_bar") == "foobar"
+    assert normalize("Foo Bar") == "foo bar"
+  result = newString(s.len)
+  var j = 0
+  for i in 0 ..< len(s):
+    if s[i] in UppercaseLetters:
+      result[j] = chr(ord(s[i]) + (ord('a') - ord('A')))
+      inc j
+    elif s[i] != '_':
+      result[j] = s[i]
+      inc j
+  if j != s.len: shrink(result, j)
 
 func cmpIgnoreCase*(a, b: string): int =
   ## Compares two strings in a case insensitive manner. Returns:
@@ -538,6 +629,89 @@ func replaceWord*(s, sub: string, by = ""): string =
         i = j + 1
     # copy the rest:
     add result, substr(s, i)
+
+func multiReplace*(s: string; replacements: openArray[(string, string)]): string =
+  ## Same as `replace<#replace,string,string,string>`_, but specialized for
+  ## doing multiple replacements in a single pass through the input string.
+  ##
+  ## `multiReplace` scans the input string from left to right and replaces the
+  ## matching substrings in the same order as passed in the argument list.
+  ##
+  ## The implications of the order of scanning the string and matching the
+  ## replacements:
+  ##   - In case of multiple matches at a given position, the earliest
+  ##     replacement is applied.
+  ##   - Overlaps are not handled. After performing a replacement, the scan
+  ##     continues from the character after the matched substring. If the
+  ##     resulting string then contains a possible match starting in a newly
+  ##     placed substring, the additional replacement is not performed.
+  ##
+  ## If the resulting string is not longer than the original input string,
+  ## only a single memory allocation is required.
+  ##
+  runnableExamples:
+    # Swapping occurrences of 'a' and 'b':
+    assert multireplace("abba", [("a", "b"), ("b", "a")]) == "baab"
+
+    # The second replacement ("ab") is matched and performed first, the scan then
+    # continues from 'c', so the "bc" replacement is never matched and thus skipped.
+    assert multireplace("abc", [("bc", "x"), ("ab", "_b")]) == "_bc"
+  result = newStringOfCap(s.len)
+  var i = 0
+  var fastChk: set[char] = {}
+  # workaround https://github.com/nim-lang/nimony/issues/1461
+  # and https://github.com/nim-lang/nimony/issues/1451
+  for repl in replacements.items:
+    if repl[0].len > 0:
+      # Include first character of all replacements
+      fastChk.incl repl[0][0]
+  while i < s.len:
+    block sIteration:
+      # Assume most chars in s are not candidates for any replacement operation
+      if s[i] in fastChk:
+        for repl in replacements.items:
+          if repl[0].len > 0 and s.continuesWith(repl[0], i):
+            add result, repl[1]
+            inc(i, repl[0].len)
+            break sIteration
+      # No matching replacement found
+      # copy current character from s
+      add result, s[i]
+      inc(i)
+
+func multiReplace*(s: openArray[char]; replacements: openArray[(set[char], char)]): string =
+  ## Performs multiple character replacements in a single pass through the input.
+  ##
+  ## `multiReplace` scans the input `s` from left to right and replaces
+  ## characters based on character sets, applying the first matching replacement
+  ## at each position. Useful for sanitizing or transforming strings with
+  ## predefined character mappings.
+  ##
+  ## The order of the `replacements` matters:
+  ##   - First matching replacement is applied
+  ##   - Subsequent replacements are not considered for the same character
+  ##
+  ## See also:
+  ## - `multiReplace(s: string; replacements: varargs[(string, string)]) <#multiReplace,string,varargs[]>`_,
+  runnableExamples:
+    const WinSanitationRules = [
+      ({'\0'..'\31'}, ' '),
+      ({'"'}, '\''),
+      ({'/', '\\', ':', '|'}, '-'),
+      ({'*', '?', '<', '>'}, '_'),
+    ]
+    # Sanitize a filename with Windows-incompatible characters
+    const file = "a/file:with?invalid*chars.txt"
+    assert file.multiReplace(WinSanitationRules) == "a-file-with_invalid_chars.txt"
+  result = newString(s.len)
+  for i in 0..<s.len:
+    var nextChar = s[i]
+    # Workaround https://github.com/nim-lang/nimony/issues/1451
+    for repl in replacements.items:
+      if nextChar in repl[0]:
+        nextChar = repl[1]
+        break
+    result[i] = nextChar
 
 const HexChars = "0123456789ABCDEF"
 

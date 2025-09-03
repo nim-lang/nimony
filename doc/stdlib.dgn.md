@@ -603,6 +603,10 @@ Returns true if every character in a string is in a given set
 
 Checks if string is empty or consists entirely of whitespace
 
+####split
+
+Splits a string into substring using a group of separators
+
 ####delete
 
 Deletes characters in a string within a range
@@ -631,6 +635,10 @@ Converts character or string to uppercase
 
 Converts first character of string to uppercase
 
+####normalize
+
+Normalizes a string
+
 ####cmpIgnoreCase
 
 Case-insensitive string comparison
@@ -650,6 +658,10 @@ Replaces characters or substrings in a string
 ####replaceWord
 
 Replaces every words in a string
+
+####multiReplace
+
+Replaces multiple substrings or characters in a string
 
 ####escape
 

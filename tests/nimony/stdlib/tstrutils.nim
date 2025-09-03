@@ -49,6 +49,68 @@ block: # isEmptyOrWhitespace
   assert not isEmptyOrWhitespace("ABc   \td")
   assert not isEmptyOrWhitespace("a")
 
+block: # split iterator
+  proc testSplit(s: string; seps: set[char] = Whitespace; maxsplit: int = -1): seq[string] =
+    for s in split(s, seps, maxsplit):
+      result.add s
+
+  assert testSplit("") == @[""]
+  assert testSplit("", default(set[char])) == @[""]
+  assert testSplit("", default(set[char]), 0) == @[""]
+  assert testSplit("", {' '}) == @[""]
+  assert testSplit("", {' '}, 0) == @[""]
+  assert testSplit("", {' '}, 1) == @[""]
+  assert testSplit("a") == @["a"]
+  assert testSplit("a", default(set[char])) == @["a"]
+  assert testSplit("a", default(set[char]), 0) == @["a"]
+  assert testSplit("a", {' '}) == @["a"]
+  assert testSplit("a", {' '}, 0) == @["a"]
+  assert testSplit("a", {' '}, 1) == @["a"]
+  assert testSplit("a", {'a'}) == @["", ""]
+  assert testSplit("a", {'a'}, 0) == @["a"]
+  assert testSplit("a", {'a'}, 1) == @["", ""]
+  assert testSplit("aa") == @["aa"]
+  assert testSplit("aa", default(set[char])) == @["aa"]
+  assert testSplit("aa", default(set[char]), 0) == @["aa"]
+  assert testSplit("aa", {' '}) == @["aa"]
+  assert testSplit("aa", {' '}, 0) == @["aa"]
+  assert testSplit("aa", {' '}, 1) == @["aa"]
+  assert testSplit("aa", {'a'}) == @["", "", ""]
+  assert testSplit("aa", {'a'}, 0) == @["aa"]
+  assert testSplit("aa", {'a'}, 1) == @["", "a"]
+  assert testSplit("aa", {'a'}, 2) == @["", "", ""]
+  assert testSplit("ab") == @["ab"]
+  assert testSplit("ab", default(set[char])) == @["ab"]
+  assert testSplit("ab", default(set[char]), 0) == @["ab"]
+  assert testSplit("ab", {' '}) == @["ab"]
+  assert testSplit("ab", {' '}, 0) == @["ab"]
+  assert testSplit("ab", {' '}, 1) == @["ab"]
+  assert testSplit("ab", {'a'}) == @["", "b"]
+  assert testSplit("ab", {'a'}, 0) == @["ab"]
+  assert testSplit("ab", {'a'}, 1) == @["", "b"]
+  assert testSplit("ab", {'a'}, 2) == @["", "b"]
+  assert testSplit("ab", {'a', 'b'}) == @["", "", ""]
+  assert testSplit("ab", {'a', 'b'}, 0) == @["ab"]
+  assert testSplit("ab", {'a', 'b'}, 1) == @["", "b"]
+  assert testSplit("ab", {'a', 'b'}, 2) == @["", "", ""]
+  assert testSplit("a b\tc\vd\re\lf\fg") == @["a", "b", "c", "d", "e", "f", "g"]
+
+  let s = " foo bar  baz  "
+  assert testSplit(s) == @["", "foo", "bar", "", "baz", "", ""]
+  assert testSplit(s, Whitespace, 0) == @[s]
+  assert testSplit(s, Whitespace, 1) == @["", "foo bar  baz  "]
+  assert testSplit(s, Whitespace, 2) == @["", "foo", "bar  baz  "]
+  assert testSplit(s, Whitespace, 3) == @["", "foo", "bar", " baz  "]
+  assert testSplit(s, Whitespace, 4) == @["", "foo", "bar", "", "baz  "]
+
+  let s1 = "foo1bar23baz456"
+  assert testSplit(s1, Digits) == @["foo", "bar", "", "baz", "", "", ""]
+  assert testSplit(s1, Digits, 0) == @[s1]
+  assert testSplit(s1, Digits, 1) == @["foo", "bar23baz456"]
+  assert testSplit(s1, Digits, 2) == @["foo", "bar", "3baz456"]
+  assert testSplit(s1, Digits, 3) == @["foo", "bar", "", "baz456"]
+  assert testSplit(s1, Digits, 4) == @["foo", "bar", "", "baz", "56"]
+
 block: # delete
   try:
     block:
@@ -244,6 +306,22 @@ block: # toUpperAscii*(s: string): string
 block: # capitalizeAscii
   assert capitalizeAscii("foo") == "Foo"
   assert capitalizeAscii("1bar") == "1bar"
+
+block: # normalize
+  assert normalize("") == ""
+  assert normalize("a") == "a"
+  assert normalize("1") == "1"
+  assert normalize("ab") == "ab"
+  assert normalize("A") == "a"
+  assert normalize("AB") == "ab"
+  assert normalize("a_") == "a"
+  assert normalize("_a") == "a"
+  assert normalize("_a_") == "a"
+  assert normalize("ab_") == "ab"
+  assert normalize("a_b") == "ab"
+  assert normalize("_ab") == "ab"
+  assert normalize("fOO_b_A_R") == "foobar"
+  assert normalize("fOO_b__A___R0123456789") == "foobar0123456789"
 
 block: # cmpIgnoreCase
   assert cmpIgnoreCase("", "") == 0
@@ -506,6 +584,79 @@ block: # replaceWord
   assert "-ld a-ldz -ld".replaceWord("-ld") == " a-ldz "
   assert "-lda-ldz -ld abc".replaceWord("-ld") == "-lda-ldz  abc"
   assert "-lda-ldz -ld abc".replaceWord("") == "-lda-ldz -ld abc"
+
+block: # multiReplace
+  assert multiReplace("", [("", "")]) == ""
+  assert multiReplace("", [("", "x")]) == ""
+  assert multiReplace("", [("", "xy")]) == ""
+  assert multiReplace("", [("a", "")]) == ""
+  assert multiReplace("", [("a", "x")]) == ""
+  assert multiReplace("", [("a", "xy")]) == ""
+  assert multiReplace("", [("ab", "")]) == ""
+  assert multiReplace("", [("ab", "x")]) == ""
+  assert multiReplace("", [("ab", "xy")]) == ""
+  assert multiReplace("a", [("", "")]) == "a"
+  assert multiReplace("a", [("", "x")]) == "a"
+  assert multiReplace("a", [("", "xy")]) == "a"
+  assert multiReplace("a", [("a", "")]) == ""
+  assert multiReplace("a", [("a", "x")]) == "x"
+  assert multiReplace("a", [("a", "xy")]) == "xy"
+  assert multiReplace("a", [("ab", "")]) == "a"
+  assert multiReplace("a", [("ab", "x")]) == "a"
+  assert multiReplace("a", [("ab", "xy")]) == "a"
+  assert multiReplace("ab", [("", "")]) == "ab"
+  assert multiReplace("ab", [("", "x")]) == "ab"
+  assert multiReplace("ab", [("", "xy")]) == "ab"
+  assert multiReplace("ab", [("a", "")]) == "b"
+  assert multiReplace("ab", [("a", "x")]) == "xb"
+  assert multiReplace("ab", [("a", "xy")]) == "xyb"
+  assert multiReplace("ab", [("ab", "")]) == ""
+  assert multiReplace("ab", [("ab", "x")]) == "x"
+  assert multiReplace("ab", [("ab", "xy")]) == "xy"
+  assert multiReplace("abab", [("", "")]) == "abab"
+  assert multiReplace("abab", [("a", "")]) == "bb"
+  assert multiReplace("abab", [("ab", "")]) == ""
+  assert multiReplace("abab", [("ba", "")]) == "ab"
+  assert multiReplace("abab", [("abab", "")]) == ""
+  assert "abba".multiReplace([("a", "b"), ("b", "a")]) == "baab"
+  assert "Hello World.".multiReplace([("ello", "ELLO"), ("World.",
+      "PEOPLE!")]) == "HELLO PEOPLE!"
+  assert "aaaa".multiReplace([("a", "aa"), ("aa", "bb")]) == "aaaaaaaa"
+  assert multiReplace("foobarbaz", [("foo", "bar"), ("bar", "baz"), ("baz", "foo")]) == "barbazfoo"
+
+block: # multiReplace characters
+  assert multiReplace("", [(default(set[char]), 'x')]) == ""
+  assert multiReplace("", [({'a'}, 'x')]) == ""
+  assert multiReplace("", [({'a', 'b'}, 'x')]) == ""
+  assert multiReplace("", [({'a'}, 'x'), ({'b'}, 'y')]) == ""
+  assert multiReplace("1", [(default(set[char]), 'x')]) == "1"
+  assert multiReplace("1", [({'a'}, 'x')]) == "1"
+  assert multiReplace("1", [({'a', 'b'}, 'x')]) == "1"
+  assert multiReplace("1", [({'a'}, 'x'), ({'b'}, 'y')]) == "1"
+  assert multiReplace("a", [(default(set[char]), 'x')]) == "a"
+  assert multiReplace("a", [({'a'}, 'x')]) == "x"
+  assert multiReplace("a", [({'a', 'b'}, 'x')]) == "x"
+  assert multiReplace("a", [({'a'}, 'x'), ({'b'}, 'y')]) == "x"
+  assert multiReplace("1ab", [(default(set[char]), 'x')]) == "1ab"
+  assert multiReplace("1ab", [({'a'}, 'x')]) == "1xb"
+  assert multiReplace("1ab", [({'a', 'b'}, 'x')]) == "1xx"
+  assert multiReplace("1ab", [({'a'}, 'x'), ({'b'}, 'y')]) == "1xy"
+  assert multiReplace("12ab", [({'a', 'b'}, 'x'), ({'1', '2'}, 'y')]) == "yyxx"
+  # https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file#naming-conventions
+  const SanitationRules = [
+      ({'\0'..'\31'}, ' '),
+      ({'"'}, '\''),
+      ({'/', '\\', ':', '|'}, '-'),
+      ({'*', '?', '<', '>'}, '_'),
+    ]
+  # Basic character set replacements
+  assert multiReplace("abba", SanitationRules) == "abba"
+  assert multiReplace("a/b\\c:d", SanitationRules) == "a-b-c-d"
+  assert multiReplace("a*b?c", SanitationRules) == "a_b_c"
+  assert multiReplace("\0\3test", SanitationRules) == "  test"
+  assert multiReplace("testquote\"", SanitationRules) == "testquote'"
+  assert multiReplace("", SanitationRules) == ""
+  assert multiReplace("/\\:*?\"\0<>", [({'\0'..'\255'}, '.')]) == "........."
 
 block: # escape
   assert escape("") == "\"\""
