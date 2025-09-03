@@ -562,6 +562,40 @@ block: # multiReplace
   assert "aaaa".multiReplace([("a", "aa"), ("aa", "bb")]) == "aaaaaaaa"
   assert multiReplace("foobarbaz", [("foo", "bar"), ("bar", "baz"), ("baz", "foo")]) == "barbazfoo"
 
+block: # multiReplace characters
+  assert multiReplace("", [(default(set[char]), 'x')]) == ""
+  assert multiReplace("", [({'a'}, 'x')]) == ""
+  assert multiReplace("", [({'a', 'b'}, 'x')]) == ""
+  assert multiReplace("", [({'a'}, 'x'), ({'b'}, 'y')]) == ""
+  assert multiReplace("1", [(default(set[char]), 'x')]) == "1"
+  assert multiReplace("1", [({'a'}, 'x')]) == "1"
+  assert multiReplace("1", [({'a', 'b'}, 'x')]) == "1"
+  assert multiReplace("1", [({'a'}, 'x'), ({'b'}, 'y')]) == "1"
+  assert multiReplace("a", [(default(set[char]), 'x')]) == "a"
+  assert multiReplace("a", [({'a'}, 'x')]) == "x"
+  assert multiReplace("a", [({'a', 'b'}, 'x')]) == "x"
+  assert multiReplace("a", [({'a'}, 'x'), ({'b'}, 'y')]) == "x"
+  assert multiReplace("1ab", [(default(set[char]), 'x')]) == "1ab"
+  assert multiReplace("1ab", [({'a'}, 'x')]) == "1xb"
+  assert multiReplace("1ab", [({'a', 'b'}, 'x')]) == "1xx"
+  assert multiReplace("1ab", [({'a'}, 'x'), ({'b'}, 'y')]) == "1xy"
+  assert multiReplace("12ab", [({'a', 'b'}, 'x'), ({'1', '2'}, 'y')]) == "yyxx"
+  # https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file#naming-conventions
+  const SanitationRules = [
+      ({'\0'..'\31'}, ' '),
+      ({'"'}, '\''),
+      ({'/', '\\', ':', '|'}, '-'),
+      ({'*', '?', '<', '>'}, '_'),
+    ]
+  # Basic character set replacements
+  assert multiReplace("abba", SanitationRules) == "abba"
+  assert multiReplace("a/b\\c:d", SanitationRules) == "a-b-c-d"
+  assert multiReplace("a*b?c", SanitationRules) == "a_b_c"
+  assert multiReplace("\0\3test", SanitationRules) == "  test"
+  assert multiReplace("testquote\"", SanitationRules) == "testquote'"
+  assert multiReplace("", SanitationRules) == ""
+  assert multiReplace("/\\:*?\"\0<>", [({'\0'..'\255'}, '.')]) == "........."
+
 block: # escape
   assert escape("") == "\"\""
   assert escape("a") == "\"a\""

@@ -655,6 +655,10 @@ Replaces characters or substrings in a string
 
 Replaces every words in a string
 
+####multiReplace
+
+Replaces multiple substrings or characters in a string
+
 ####escape
 
 Escapes a string with control characters and special sequences.

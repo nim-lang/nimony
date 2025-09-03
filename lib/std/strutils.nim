@@ -610,6 +610,40 @@ func multiReplace*(s: string; replacements: openArray[(string, string)]): string
       add result, s[i]
       inc(i)
 
+func multiReplace*(s: openArray[char]; replacements: openArray[(set[char], char)]): string =
+  ## Performs multiple character replacements in a single pass through the input.
+  ##
+  ## `multiReplace` scans the input `s` from left to right and replaces
+  ## characters based on character sets, applying the first matching replacement
+  ## at each position. Useful for sanitizing or transforming strings with
+  ## predefined character mappings.
+  ##
+  ## The order of the `replacements` matters:
+  ##   - First matching replacement is applied
+  ##   - Subsequent replacements are not considered for the same character
+  ##
+  ## See also:
+  ## - `multiReplace(s: string; replacements: varargs[(string, string)]) <#multiReplace,string,varargs[]>`_,
+  runnableExamples:
+    const WinSanitationRules = [
+      ({'\0'..'\31'}, ' '),
+      ({'"'}, '\''),
+      ({'/', '\\', ':', '|'}, '-'),
+      ({'*', '?', '<', '>'}, '_'),
+    ]
+    # Sanitize a filename with Windows-incompatible characters
+    const file = "a/file:with?invalid*chars.txt"
+    assert file.multiReplace(WinSanitationRules) == "a-file-with_invalid_chars.txt"
+  result = newString(s.len)
+  for i in 0..<s.len:
+    var nextChar = s[i]
+    # Workaround https://github.com/nim-lang/nimony/issues/1451
+    for repl in replacements.items:
+      if nextChar in repl[0]:
+        nextChar = repl[1]
+        break
+    result[i] = nextChar
+
 const HexChars = "0123456789ABCDEF"
 
 func escape*(s: string, prefix = "\"", suffix = "\""): string =
