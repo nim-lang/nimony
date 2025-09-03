@@ -604,6 +604,139 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   result.processedModules[p.modname] = 0
   traverseDeps result, p, result.rootNode
 
+proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
+    forceRebuild, silentMake: bool; moduleFlags: set[ModuleFlag]) =
+  ## Build graph starting from already-processed .nif files instead of .nim files
+
+  let nifc = findTool("nifc")
+  let nifmake = findTool("nifmake")
+
+  # Generate a simplified build file that works with .nif files
+  let buildFile = config.nifcachePath / "nif_execute.build.nif"
+  var b = nifbuilder.open(buildFile)
+  defer: b.close()
+
+  b.addHeader()
+  b.withTree "stmts":
+    # Command definitions (reuse existing logic)
+    b.withTree "cmd":
+      b.addSymbolDef "nifc"
+      b.addStrLit nifc
+      b.addStrLit "c"
+      b.addStrLit "--compileOnly"
+      b.addKeyw "args"
+      b.addKeyw "input"
+      b.addKeyw "output"
+
+    b.withTree "cmd":
+      b.addSymbolDef "hexer"
+      b.addStrLit findTool("hexer")
+      b.addStrLit "--bits:" & $config.bits
+      b.addKeyw "args"
+      b.addKeyw "input"
+      b.addKeyw "output"
+
+    b.withTree "cmd":
+      b.addSymbolDef "cc"
+      b.addStrLit config.cc
+      b.addStrLit "-c"
+      b.addStrLit "-I" & config.baseDir
+      b.addKeyw "args"
+      b.addKeyw "input"
+      b.addStrLit "-o"
+      b.addKeyw "output"
+
+    b.withTree "cmd":
+      b.addSymbolDef "link"
+      b.addStrLit config.linker
+      b.addStrLit "-o"
+      b.addKeyw "output"
+      b.withTree "input":
+        b.addIntLit 0
+        b.addIntLit -1  # all inputs
+      b.withTree "argsext":
+        b.addStrLit ".linker.args"
+
+    # Build rules for dependency files
+    var objFiles: seq[string] = @[]
+    for depIdx, depNifFile in dependencyNifFiles:
+      let depHexedFile = config.nifcachePath / "dep" & $depIdx & ".hexed.nif"
+      let depCFile = config.nifcachePath / "dep" & $depIdx & ".c"
+      let depObjFile = config.nifcachePath / "dep" & $depIdx & ".o"
+      objFiles.add(depObjFile)
+
+      # Process dependency .nif file with hexer first
+      b.withTree "do":
+        b.addIdent "hexer"
+        b.withTree "input":
+          b.addStrLit depNifFile
+        b.withTree "output":
+          b.addStrLit depHexedFile
+
+      # Generate C from hexed dependency .nif file
+      b.withTree "do":
+        b.addIdent "nifc"
+        b.withTree "input":
+          b.addStrLit depHexedFile
+        b.withTree "output":
+          b.addStrLit depCFile
+
+      # Compile dependency C file to object file
+      b.withTree "do":
+        b.addIdent "cc"
+        b.withTree "input":
+          b.addStrLit depCFile
+        b.withTree "output":
+          b.addStrLit depObjFile
+
+    # Build rules for main file
+    let mainHexedFile = config.nifcachePath / "main.hexed.nif"
+    let mainCFile = config.nifcachePath / "main.c"
+    let mainObjFile = config.nifcachePath / "main.o"
+    objFiles.add(mainObjFile)
+
+    # Process main .nif file with hexer first
+    b.withTree "do":
+      b.addIdent "hexer"
+      b.withTree "input":
+        b.addStrLit mainNifFile
+      b.withTree "output":
+        b.addStrLit mainHexedFile
+
+    # Generate C from hexed main .nif file
+    b.withTree "do":
+      b.addIdent "nifc"
+      b.withTree "input":
+        b.addStrLit mainHexedFile
+      b.withTree "output":
+        b.addStrLit mainCFile
+
+    # Compile main C file to object file
+    b.withTree "do":
+      b.addIdent "cc"
+      b.withTree "input":
+        b.addStrLit mainCFile
+      b.withTree "output":
+        b.addStrLit mainObjFile
+
+    # Link all object files to create executable
+    let exeFile = config.nifcachePath / "main" & (when defined(windows): ".exe" else: "")
+    b.withTree "do":
+      b.addIdent "link"
+      for objFile in objFiles:
+        b.withTree "input":
+          b.addStrLit objFile
+      b.withTree "output":
+        b.addStrLit exeFile
+
+  # Execute the build using nifmake
+  let nifmakeCmd = quoteShell(nifmake) &
+    (if forceRebuild: " --force" else: "") &
+    " --base:" & quoteShell(config.baseDir) &
+    " -j run " & quoteShell(buildFile)
+  exec(nifmakeCmd)
+  exec(exeFile)
+
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string, executableArgs: string) =

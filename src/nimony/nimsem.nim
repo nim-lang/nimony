@@ -12,6 +12,7 @@ import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen
+import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder
 
 const
   Version = "0.2"
@@ -58,7 +59,36 @@ proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; modu
 proc executeNif(files: seq[string]; config: sink NifConfig) =
   # file 0 is special as it is the main file. We need to run injectDerefs on it first.
   # The other modules are simply dependencies we need to compile&link too.
-  discard "XXX to implement"
+  if files.len == 0:
+    return
+
+  let mainFile = files[0]
+  let dependencyFiles = files[1..^1]
+
+  # Step 1: Run injectDerefs on the main file
+  var stream = nifstreams.open(mainFile)
+  defer: nifstreams.close(stream)
+
+  discard processDirectives(stream.r)
+  var buf = fromStream(stream)
+  let mainCursor = beginRead(buf)
+
+  # Transform the main file with injectDerefs
+  let transformedMain = injectDerefs(mainCursor)
+
+  # Write the transformed main file to a temporary location
+  let transformedMainFile = config.nifcachePath / "transformed_main.nif"
+  writeFile(transformedMainFile, "(.nif24)\n" & toString(transformedMain))
+
+  # Step 2: Use the existing deps.nim infrastructure to build from .nif files
+  buildGraphFromNif(
+    config = config,
+    mainNifFile = transformedMainFile,
+    dependencyNifFiles = dependencyFiles,
+    forceRebuild = false,
+    silentMake = false,
+    moduleFlags = {}
+  )
 
 proc handleCmdLine() =
   var args: seq[string] = @[]
