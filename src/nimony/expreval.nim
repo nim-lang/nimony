@@ -190,10 +190,11 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let i = c.values.len
     c.values.add createTokenBuf(12)
     assert c.c.executeCall != nil
-    if c.c.executeCall(c.c[], routine, c.values[i], cursorAt(evaluatedCall, 0), n.info):
+    let errorMsg = c.c.executeCall(c.c[], routine, c.values[i], cursorAt(evaluatedCall, 0), n.info)
+    if errorMsg.len == 0:
       result = cursorAt(c.values[i], 0)
     else:
-      cannotEval(n)
+      result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
 
 template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n

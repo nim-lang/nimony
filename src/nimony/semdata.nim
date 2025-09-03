@@ -72,7 +72,7 @@ type
   ModuleFlag* = enum
     IsSystem, IsMain, SkipSystem
 
-  SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): bool {.nimcall.}
+  SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
 
   SemContext* = object
     dest*: TokenBuf

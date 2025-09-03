@@ -58,10 +58,11 @@ type
     routineKind: SymKind
     hookNames: Table[string, int]
     thisModuleSuffix: string
-    bits, errorCount: int
+    bits: int
     structuralTypeToProc: Table[string, SymId]
     requests: seq[GenProcRequest]
     usedModules: HashSet[string]
+    errorMsg: string
 
 proc generateName(c: var LiftingCtx; key: string): string =
   result = "`toNif" & "_" & key
@@ -387,7 +388,7 @@ proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
      ProctypeT,  VoidT, PtrT, VarargsT, StaticT,
      RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT, ItertypeT, UarrayT, AutoT,
      SymkindT, TypekindT, TypedescT, UntypedT, TypedT, CstringT, PointerT, OrdinalT:
-    inc c.errorCount
+    c.errorMsg = "unsupported type for compile-time evaluation: " & asNimCode(orig)
 
 proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
   var buf = createTokenBuf(100)
@@ -437,8 +438,8 @@ proc genMissingProcs*(c: var LiftingCtx) =
       c.routineKind = ProcY
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
-proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call: Cursor; info: PackedLineInfo): bool {.nimcall.} =
-  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits, errorCount: 0, thisModuleSuffix: s.thisModuleSuffix)
+proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.} =
+  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits, errorMsg: "", thisModuleSuffix: s.thisModuleSuffix)
 
   c.dest.addParLe StmtsS, info
   collectUsedSyms s, c.dest, c.usedModules, routine
@@ -454,7 +455,7 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   genMissingProcs c
   c.dest.addParRi() # StmtsS
 
-  if c.errorCount > 0:
-    result = false
+  if c.errorMsg.len > 0:
+    result = ensureMove c.errorMsg
   else:
     result = runEval(s, dest, c.dest, c.usedModules)
