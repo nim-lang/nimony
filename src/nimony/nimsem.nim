@@ -62,11 +62,10 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   if files.len == 0:
     return
 
-  let mainFile = files[0]
   let dependencyFiles = files[1..^1]
 
   # Step 1: Run injectDerefs on the main file
-  var stream = nifstreams.open(mainFile)
+  var stream = nifstreams.open(files[0])
   defer: nifstreams.close(stream)
 
   discard processDirectives(stream.r)

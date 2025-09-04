@@ -42,7 +42,7 @@ proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var Has
       if owner == c.thisModuleSuffix:
         # add sym's declaration to `dest`:
         let res = tryLoadSym(sym)
-        if res.status != LacksNothing:
+        if res.status == LacksNothing:
           dest.addSubtreeAndSyms res.decl, stack
       elif owner.len > 0:
         usedModules.incl(owner)
