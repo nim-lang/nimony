@@ -671,11 +671,12 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
 
     # Special case: compile writenif stdlib module since it's used by exprexec
     let writenifNimFile = stdlibFile("std/writenif.nim")
-    let writenifNifFile = config.nifcachePath / "writenif.1.nif"
-    let writenifSemmedFile = config.nifcachePath / "writenif.2.nif"
-    let writenifHexedFile = config.nifcachePath / "writenif.2.nif"
-    let writenifCFile = config.nifcachePath / "writenif.c.nif"
-    let writenifObjFile = config.nifcachePath / "writenif.o"
+    let writenifSuffix = moduleSuffix(writenifNimFile, config.paths)
+    let writenifNifFile = config.nifcachePath / writenifSuffix & ".1.nif"
+    let writenifSemmedFile = config.nifcachePath / writenifSuffix & ".2.nif"
+    let writenifHexedFile = config.nifcachePath / writenifSuffix & ".c.nif"
+    let writenifCFile = config.nifcachePath / writenifSuffix & ".c"
+    let writenifObjFile = config.nifcachePath / writenifSuffix & ".o"
 
     # Process writenif.nim with nifler to generate .nif file
     b.withTree "do":
