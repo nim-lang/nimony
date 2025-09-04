@@ -655,6 +655,12 @@ proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
       buildErr c, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
   n = it.n
 
+proc semStmtCallback(c: var SemContext; dest: var TokenBuf; n: Cursor) =
+  var n = n
+  swap c.dest, dest
+  semStmt c, n, false
+  swap c.dest, dest
+
 proc sameIdent(sym: SymId; str: StrId): bool =
   # XXX speed this up by using the `fieldCache` idea
   var name = pool.syms[sym]
@@ -5257,7 +5263,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
     pending: createTokenBuf(),
-    executeCall: exprexec.executeCall)
+    executeCall: exprexec.executeCall,
+    semStmtCallback: semStmtCallback)
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))

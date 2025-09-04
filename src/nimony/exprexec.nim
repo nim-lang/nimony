@@ -31,6 +31,23 @@ proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
       elif item.kind == Symbol: stack.add item.symId
       inc c
 
+proc collectSyms(c: Cursor; stack: var seq[SymId]) =
+  assert c.kind != ParRi, "cursor at end?"
+  if c.kind != ParLe:
+    # atom:
+    if c.kind == Symbol: stack.add c.symId
+  else:
+    var c = c
+    var nested = 0
+    while true:
+      let item = c.load
+      if item.kind == ParRi:
+        dec nested
+        if nested == 0: break
+      elif item.kind == ParLe: inc nested
+      elif item.kind == Symbol: stack.add item.symId
+      inc c
+
 proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var HashSet[string]; routine: Routine) =
   var stack = newSeq[SymId]()
   var handledSyms = initHashSet[SymId]()
@@ -43,7 +60,11 @@ proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var Has
         # add sym's declaration to `dest`:
         let res = tryLoadSym(sym)
         if res.status == LacksNothing:
-          dest.addSubtreeAndSyms res.decl, stack
+          let before = dest.len
+          c.semStmtCallback(c, dest, res.decl)
+          collectSyms(cursorAt(dest, before), stack)
+          endRead(dest)
+          #dest.addSubtreeAndSyms res.decl, stack
       elif owner.len > 0:
         usedModules.incl(owner)
 
