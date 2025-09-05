@@ -74,7 +74,7 @@ proc rewriteSyms*(c: var LiftingCtx) =
     if c.dest[i].kind in {Symbol, SymbolDef}:
       let m = splitSymName(pool.syms[c.dest[i].symId])
       if m.module == c.thisModuleSuffix:
-        let newSym = pool.syms.getOrIncl(m.name & c.newModuleSuffix)
+        let newSym = pool.syms.getOrIncl(m.name & "." & c.newModuleSuffix)
         c.dest[i].setSymId newSym
 
 proc collectUsedSyms(c: var LiftingCtx; s: var SemContext; routine: Routine) =
@@ -475,7 +475,8 @@ proc genMissingProcs*(c: var LiftingCtx) =
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.} =
-  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits, errorMsg: "", thisModuleSuffix: s.thisModuleSuffix,
+  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits,
+    errorMsg: "", thisModuleSuffix: s.thisModuleSuffix,
     newModuleSuffix: computeChecksum(mangle(call, Frontend, s.g.config.bits)))
 
   c.dest.addParLe StmtsS, info
