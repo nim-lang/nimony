@@ -7,6 +7,7 @@
 ## Can run arbitrary expressions at compile-time by using `selfExec`.
 
 include nifprelude
+from std / os import `/`
 import std / [assertions, sets, tables]
 import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops, typenav, typekeys, expreval, semos
 
@@ -71,7 +72,7 @@ proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var Has
           endRead(dest)
           #dest.addSubtreeAndSyms res.decl, stack
       elif owner.len > 0:
-        usedModules.incl(owner)
+        usedModules.incl(c.g.config.nifcachePath / owner)
 
 type
   GenProcRequest = object

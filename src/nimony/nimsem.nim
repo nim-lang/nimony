@@ -11,7 +11,7 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
-import sem, nifconfig, semos, semdata, indexgen
+import sem, nifconfig, semos, semdata, indexgen, programs
 import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder
 
 const
@@ -22,7 +22,7 @@ const
 Usage:
   nimsem [options] [command]
 Command:
-  m file.nim [project.nim]    compile a single Nim module to hexer
+  m input.nif output.nif index.nif    compile a single Nim module to hexer
   x file.nif                  generate the .idx.nif file from a .nif file
   e file.nif [dep1.nif ...]   execute the given .nif file
 
@@ -65,18 +65,14 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   let dependencyFiles = files[1..^1]
 
   # Step 1: Run injectDerefs on the main file
-  var stream = nifstreams.open(files[0])
-  defer: nifstreams.close(stream)
+  let transformedMainFile = config.nifcachePath / "transformed_main.nif"
 
-  discard processDirectives(stream.r)
-  var buf = fromStream(stream)
-  let mainCursor = beginRead(buf)
+  let mainCursor = setupProgram(files[0], transformedMainFile, false)
 
   # Transform the main file with injectDerefs
   let transformedMain = injectDerefs(mainCursor)
 
   # Write the transformed main file to a temporary location
-  let transformedMainFile = config.nifcachePath / "transformed_main.nif"
   writeFile(transformedMainFile, "(.nif24)\n" & toString(transformedMain))
 
   # Step 2: Use the existing deps.nim infrastructure to build from .nif files
