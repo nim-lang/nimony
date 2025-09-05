@@ -477,7 +477,7 @@ proc genMissingProcs*(c: var LiftingCtx) =
 proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.} =
   var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits,
     errorMsg: "", thisModuleSuffix: s.thisModuleSuffix,
-    newModuleSuffix: computeChecksum(mangle(call, Frontend, s.g.config.bits)))
+    newModuleSuffix: s.thisModuleSuffix.substr(0, 2) & computeChecksum(mangle(call, Frontend, s.g.config.bits)))
 
   c.dest.addParLe StmtsS, info
   var retTypeBuf = createTokenBuf(4) # the aliasing also causes `routine.retType` to alias `prog.mem`!
