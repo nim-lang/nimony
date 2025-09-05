@@ -13,23 +13,24 @@ import nimony_model, decls, programs, xints, semdata, symparser, renderer, built
 const
   writeNifModuleSuffix = "wriwhv7qv"
 
-proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
-  assert c.kind != ParRi, "cursor at end?"
-  if c.kind != ParLe:
-    # atom:
-    result.add c.load
-  else:
-    var c = c
-    var nested = 0
-    while true:
-      let item = c.load
-      result.add item
-      if item.kind == ParRi:
-        dec nested
-        if nested == 0: break
-      elif item.kind == ParLe: inc nested
-      elif item.kind == Symbol: stack.add item.symId
-      inc c
+when false:
+  proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
+    assert c.kind != ParRi, "cursor at end?"
+    if c.kind != ParLe:
+      # atom:
+      result.add c.load
+    else:
+      var c = c
+      var nested = 0
+      while true:
+        let item = c.load
+        result.add item
+        if item.kind == ParRi:
+          dec nested
+          if nested == 0: break
+        elif item.kind == ParLe: inc nested
+        elif item.kind == Symbol: stack.add item.symId
+        inc c
 
 proc collectSyms(c: Cursor; stack: var seq[SymId]) =
   assert c.kind != ParRi, "cursor at end?"
@@ -40,12 +41,13 @@ proc collectSyms(c: Cursor; stack: var seq[SymId]) =
     var c = c
     var nested = 0
     while true:
-      let item = c.load
-      if item.kind == ParRi:
+      case c.kind
+      of ParRi:
         dec nested
         if nested == 0: break
-      elif item.kind == ParLe: inc nested
-      elif item.kind == Symbol: stack.add item.symId
+      of ParLe: inc nested
+      of Symbol: stack.add c.symId
+      else: discard
       inc c
 
 proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var HashSet[string]; routine: Routine) =
@@ -61,7 +63,10 @@ proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var Has
         let res = tryLoadSym(sym)
         if res.status == LacksNothing:
           let before = dest.len
-          c.semStmtCallback(c, dest, res.decl)
+          # we need to copy res.decl here as it aliases prog.mem which the semchecker will overwrite nilly-willy!
+          var newDecl = createTokenBuf(50)
+          newDecl.addSubtree res.decl
+          c.semStmtCallback(c, dest, cursorAt(newDecl, 0))
           collectSyms(cursorAt(dest, before), stack)
           endRead(dest)
           #dest.addSubtreeAndSyms res.decl, stack
@@ -463,15 +468,18 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits, errorMsg: "", thisModuleSuffix: s.thisModuleSuffix)
 
   c.dest.addParLe StmtsS, info
+  var retTypeBuf = createTokenBuf(4) # the aliasing also causes `routine.retType` to alias `prog.mem`!
+  retTypeBuf.addSubtree routine.retType
+  var retType = cursorAt(retTypeBuf, 0)
   collectUsedSyms s, c.dest, c.usedModules, routine
 
   # now that we have all dependencies in the module, we can add the call, but wrap it in a new `toNif` tag:
-  if isVoidType(routine.retType):
+  if isVoidType(retType):
     # if the call is void, we can just emit the code for it directly here:
     c.dest.addSubtree call
   else:
     # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
-    entryPoint(c, routine.retType, call)
+    entryPoint(c, retType, call)
 
   genMissingProcs c
   c.dest.addParRi() # StmtsS
