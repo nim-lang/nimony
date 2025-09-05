@@ -356,10 +356,10 @@ proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: strin
     cmd &= " " & quoteShell(module)
   result = execCmdEx(cmd)
 
-proc runEval*(c: var SemContext; dest: var TokenBuf; src: TokenBuf; usedModules: HashSet[string]): string =
+proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
   #echo "HEREES ", toString(src, false)
-  let outfile = c.g.config.nifcachePath & "/eval_" & $c.thisModuleSuffix & ".nif"
+  let outfile = c.g.config.nifcachePath / srcName.addFileExt(".nif")
   writeFile outfile, "(.nif24)\n" & toString(src)
   let (output, exitCode) = runProgram(outfile, usedModules)
   if exitCode != 0:

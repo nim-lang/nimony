@@ -7,6 +7,7 @@
 ## Can run arbitrary expressions at compile-time by using `selfExec`.
 
 include nifprelude
+import ".." / lib / nifchecksums
 from std / os import `/`
 import std / [assertions, sets, tables]
 import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops, typenav, typekeys, expreval, semos
@@ -33,25 +34,50 @@ when false:
         elif item.kind == Symbol: stack.add item.symId
         inc c
 
-proc collectSyms(c: Cursor; stack: var seq[SymId]) =
-  assert c.kind != ParRi, "cursor at end?"
-  if c.kind != ParLe:
+type
+  GenProcRequest = object
+    sym: SymId
+    typ: TypeCursor
+
+  LiftingCtx = object
+    dest: TokenBuf
+    info: PackedLineInfo
+    routineKind: SymKind
+    hookNames: Table[string, int]
+    thisModuleSuffix, newModuleSuffix: string
+    bits: int
+    structuralTypeToProc: Table[string, SymId]
+    requests: seq[GenProcRequest]
+    usedModules: HashSet[string]
+    errorMsg: string
+
+proc collectSyms(n: Cursor; stack: var seq[SymId]) =
+  assert n.kind != ParRi, "cursor at end?"
+  if n.kind != ParLe:
     # atom:
-    if c.kind == Symbol: stack.add c.symId
+    if n.kind == Symbol: stack.add n.symId
   else:
-    var c = c
+    var n = n
     var nested = 0
     while true:
-      case c.kind
+      case n.kind
       of ParRi:
         dec nested
         if nested == 0: break
       of ParLe: inc nested
-      of Symbol: stack.add c.symId
+      of Symbol: stack.add n.symId
       else: discard
-      inc c
+      inc n
 
-proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var HashSet[string]; routine: Routine) =
+proc rewriteSyms*(c: var LiftingCtx) =
+  for i in 0 ..< c.dest.len:
+    if c.dest[i].kind in {Symbol, SymbolDef}:
+      let m = splitSymName(pool.syms[c.dest[i].symId])
+      if m.module == c.thisModuleSuffix:
+        let newSym = pool.syms.getOrIncl(m.name & c.newModuleSuffix)
+        c.dest[i].setSymId newSym
+
+proc collectUsedSyms(c: var LiftingCtx; s: var SemContext; routine: Routine) =
   var stack = newSeq[SymId]()
   var handledSyms = initHashSet[SymId]()
   stack.add routine.name.symId
@@ -63,33 +89,16 @@ proc collectUsedSyms(c: var SemContext; dest: var TokenBuf; usedModules: var Has
         # add sym's declaration to `dest`:
         let res = tryLoadSym(sym)
         if res.status == LacksNothing:
-          let before = dest.len
+          let before = c.dest.len
           # we need to copy res.decl here as it aliases prog.mem which the semchecker will overwrite nilly-willy!
           var newDecl = createTokenBuf(50)
           newDecl.addSubtree res.decl
-          c.semStmtCallback(c, dest, cursorAt(newDecl, 0))
-          collectSyms(cursorAt(dest, before), stack)
-          endRead(dest)
+          s.semStmtCallback(s, c.dest, cursorAt(newDecl, 0))
+          collectSyms(cursorAt(c.dest, before), stack)
+          endRead(c.dest)
           #dest.addSubtreeAndSyms res.decl, stack
       elif owner.len > 0:
-        usedModules.incl(c.g.config.nifcachePath / owner)
-
-type
-  GenProcRequest = object
-    sym: SymId
-    typ: TypeCursor
-
-  LiftingCtx = object
-    dest: TokenBuf
-    info: PackedLineInfo
-    routineKind: SymKind
-    hookNames: Table[string, int]
-    thisModuleSuffix: string
-    bits: int
-    structuralTypeToProc: Table[string, SymId]
-    requests: seq[GenProcRequest]
-    usedModules: HashSet[string]
-    errorMsg: string
+        c.usedModules.incl(s.g.config.nifcachePath / owner)
 
 proc generateName(c: var LiftingCtx; key: string): string =
   result = "`toNif" & "_" & key
@@ -98,7 +107,7 @@ proc generateName(c: var LiftingCtx; key: string): string =
   result.add '.'
   result.addInt counter[]
   result.add '.'
-  result.add c.thisModuleSuffix
+  result.add c.newModuleSuffix
 
 proc requestProc(c: var LiftingCtx; t: TypeCursor): SymId =
   let key = mangle(t, Frontend, c.bits)
@@ -466,13 +475,14 @@ proc genMissingProcs*(c: var LiftingCtx) =
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.} =
-  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits, errorMsg: "", thisModuleSuffix: s.thisModuleSuffix)
+  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits, errorMsg: "", thisModuleSuffix: s.thisModuleSuffix,
+    newModuleSuffix: computeChecksum(mangle(call, Frontend, s.g.config.bits)))
 
   c.dest.addParLe StmtsS, info
   var retTypeBuf = createTokenBuf(4) # the aliasing also causes `routine.retType` to alias `prog.mem`!
   retTypeBuf.addSubtree routine.retType
   var retType = cursorAt(retTypeBuf, 0)
-  collectUsedSyms s, c.dest, c.usedModules, routine
+  collectUsedSyms c, s, routine
 
   # now that we have all dependencies in the module, we can add the call, but wrap it in a new `toNif` tag:
   if isVoidType(retType):
@@ -482,10 +492,12 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
     # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
     entryPoint(c, retType, call)
 
+  rewriteSyms c
+
   genMissingProcs c
   c.dest.addParRi() # StmtsS
 
   if c.errorMsg.len > 0:
     result = ensureMove c.errorMsg
   else:
-    result = runEval(s, dest, c.dest, c.usedModules)
+    result = runEval(s, dest, c.newModuleSuffix, c.dest, c.usedModules)

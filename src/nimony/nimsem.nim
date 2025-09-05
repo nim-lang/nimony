@@ -65,7 +65,7 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   let dependencyFiles = files[1..^1]
 
   # Step 1: Run injectDerefs on the main file
-  let transformedMainFile = config.nifcachePath / "transformed_main.nif"
+  let transformedMainFile = files[0].changeFileExt(".2.nif")
 
   let mainCursor = setupProgram(files[0], transformedMainFile, false)
 

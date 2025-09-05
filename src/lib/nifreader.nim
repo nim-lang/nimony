@@ -89,6 +89,7 @@ proc open*(filename: string): Reader =
       memfiles.open(filename)
     except:
       when defined(debug) and not defined(nimony): writeStackTrace()
+      writeStackTrace()
       quit "[Error] cannot open: " & filename
   result = Reader(f: f, p: nil)
   result.p = cast[pchar](result.f.mem)
