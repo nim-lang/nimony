@@ -67,7 +67,7 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   # Step 1: Run injectDerefs on the main file
   let transformedMainFile = files[0].changeFileExt(".2.nif")
 
-  let mainCursor = setupProgram(files[0], transformedMainFile, false)
+  let mainCursor = setupProgram(files[0], transformedMainFile, true)
 
   # Transform the main file with injectDerefs
   let transformedMain = injectDerefs(mainCursor)
