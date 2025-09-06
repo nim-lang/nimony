@@ -611,7 +611,6 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
   # Generate a simplified build file that works with .nif files
   let buildFile = config.nifcachePath / "nif_execute.build.nif"
   var b = nifbuilder.open(buildFile)
-  defer: b.close()
 
   b.addHeader()
   b.withTree "stmts":
@@ -793,6 +792,7 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
           b.addStrLit objFile
       b.withTree "output":
         b.addStrLit exeFile
+  b.close()
 
   # Execute the build using nifmake
   let nifmakeCmd = quoteShell(findTool("nifmake")) &
