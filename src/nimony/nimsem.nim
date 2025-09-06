@@ -12,7 +12,7 @@ import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen, programs
-import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder
+import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes
 
 const
   Version = "0.2"
@@ -72,8 +72,7 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   # Transform the main file with injectDerefs
   let transformedMain = injectDerefs(mainCursor)
 
-  # Write the transformed main file to a temporary location
-  writeFile(transformedMainFile, "(.nif24)\n" & toString(transformedMain))
+  writeFileAndIndex(transformedMainFile, transformedMain)
 
   # Step 2: Use the existing deps.nim infrastructure to build from .nif files
   buildGraphForNif(

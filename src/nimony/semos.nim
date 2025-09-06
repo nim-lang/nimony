@@ -360,10 +360,8 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
   ## Returns an error message if the evaluation failed, "" on success.
   #echo "HEREES ", toString(src, false)
   let outfile = c.g.config.nifcachePath / srcName.addFileExt(".nif")
-  writeFile outfile, "(.nif24)\n" & toString(src)
 
-  let root = c.dest[0].info
-  createIndex outfile, root, true, IndexSections()
+  writeFileAndIndex(outfile, src)
 
   let (output, exitCode) = runProgram(outfile, usedModules)
   if exitCode != 0:
