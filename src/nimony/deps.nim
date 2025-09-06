@@ -509,6 +509,14 @@ proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin)
 
+proc defineNiflerCmd(b: var Builder; nifler: string) =
+  b.withTree "cmd":
+    b.addSymbolDef "nifler"
+    b.addStrLit nifler
+    b.addStrLit "--portablePaths"
+    b.addStrLit "--deps"
+    b.addStrLit "parse"
+
 proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".build.nif"
   var b = nifbuilder.open(result)
@@ -517,14 +525,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
   b.addHeader()
   b.withTree "stmts":
     # Command definitions
-    b.withTree "cmd":
-      b.addSymbolDef "nifler"
-      b.addStrLit c.nifler
-      b.addStrLit "--portablePaths"
-      b.addStrLit "--deps"
-      b.addStrLit "parse"
-      b.addKeyw "input"
-      b.addKeyw "output"
+    defineNiflerCmd(b, c.nifler)
 
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
@@ -604,7 +605,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   result.processedModules[p.modname] = 0
   traverseDeps result, p, result.rootNode
 
-proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
+proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     forceRebuild, silentMake: bool; moduleFlags: set[ModuleFlag]) =
   ## Build graph starting from already-processed .nif files instead of .nim files
 
@@ -615,20 +616,21 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
   b.addHeader()
   b.withTree "stmts":
     # Command definitions (reuse existing logic)
-    b.withTree "cmd":
-      b.addSymbolDef "nifler"
-      b.addStrLit findTool("nifler")
-      b.addStrLit "parse"
-      b.addKeyw "args"
-      b.addKeyw "input"
-      b.addKeyw "output"
+    defineNiflerCmd(b, findTool("nifler"))
 
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
       b.addStrLit findTool("nimsem")
+      if config.baseDir.len > 0:
+        b.addStrLit "--base:" & quoteShell(config.baseDir)
+      b.addStrLit "m"
       b.addKeyw "args"
-      b.addKeyw "input"
-      b.addKeyw "output"
+      b.withTree "input":
+        b.addIntLit 0  # main parsed file
+      b.withTree "output":
+        b.addIntLit 0  # semmed file output
+      b.withTree "output":
+        b.addIntLit 1  # index file output
 
     b.withTree "cmd":
       b.addSymbolDef "nifc"
@@ -637,15 +639,14 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
       b.addStrLit "--compileOnly"
       b.addKeyw "args"
       b.addKeyw "input"
-      b.addKeyw "output"
 
     b.withTree "cmd":
       b.addSymbolDef "hexer"
       b.addStrLit findTool("hexer")
       b.addStrLit "--bits:" & $config.bits
       b.addKeyw "args"
-      b.addKeyw "input"
-      b.addKeyw "output"
+      b.withTree "input":
+        b.addIntLit 0
 
     b.withTree "cmd":
       b.addSymbolDef "cc"
@@ -754,8 +755,8 @@ proc buildGraphFromNif*(config: sink NifConfig; mainNifFile: string; dependencyN
 
     # Build rules for main file
     let mainName = mainNifFile.splitFile.name
-    let mainHexedFile = config.nifcachePath / mainName & ".2.nif"
-    let mainCFile = config.nifcachePath / mainName & ".c.nif"
+    let mainHexedFile = config.nifcachePath / mainName & ".c.nif"
+    let mainCFile = config.nifcachePath / mainName & ".c"
     let mainObjFile = config.nifcachePath / mainName & ".o"
     objFiles.add(mainObjFile)
 

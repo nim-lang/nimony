@@ -76,7 +76,7 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   writeFile(transformedMainFile, "(.nif24)\n" & toString(transformedMain))
 
   # Step 2: Use the existing deps.nim infrastructure to build from .nif files
-  buildGraphFromNif(
+  buildGraphForNif(
     config = config,
     mainNifFile = transformedMainFile,
     dependencyNifFiles = dependencyFiles,
