@@ -509,6 +509,14 @@ proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin)
 
+proc defineNiflerCmd(b: var Builder; nifler: string) =
+  b.withTree "cmd":
+    b.addSymbolDef "nifler"
+    b.addStrLit nifler
+    b.addStrLit "--portablePaths"
+    b.addStrLit "--deps"
+    b.addStrLit "parse"
+
 proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".build.nif"
   var b = nifbuilder.open(result)
@@ -517,14 +525,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
   b.addHeader()
   b.withTree "stmts":
     # Command definitions
-    b.withTree "cmd":
-      b.addSymbolDef "nifler"
-      b.addStrLit c.nifler
-      b.addStrLit "--portablePaths"
-      b.addStrLit "--deps"
-      b.addStrLit "parse"
-      b.addKeyw "input"
-      b.addKeyw "output"
+    defineNiflerCmd(b, c.nifler)
 
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
@@ -603,6 +604,204 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   result.nodes.add result.rootNode
   result.processedModules[p.modname] = 0
   traverseDeps result, p, result.rootNode
+
+proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
+    forceRebuild, silentMake: bool; moduleFlags: set[ModuleFlag]) =
+  ## Build graph starting from already-processed .nif files instead of .nim files
+
+  # Generate a simplified build file that works with .nif files
+  let buildFile = config.nifcachePath / "nif_execute.build.nif"
+  var b = nifbuilder.open(buildFile)
+
+  b.addHeader()
+  b.withTree "stmts":
+    # Command definitions (reuse existing logic)
+    defineNiflerCmd(b, findTool("nifler"))
+
+    b.withTree "cmd":
+      b.addSymbolDef "nimsem"
+      b.addStrLit findTool("nimsem")
+      if config.baseDir.len > 0:
+        b.addStrLit "--base:" & quoteShell(config.baseDir)
+      b.addStrLit "m"
+      b.addKeyw "args"
+      b.withTree "input":
+        b.addIntLit 0  # main parsed file
+      b.withTree "output":
+        b.addIntLit 0  # semmed file output
+      b.withTree "output":
+        b.addIntLit 1  # index file output
+
+    b.withTree "cmd":
+      b.addSymbolDef "nifc"
+      b.addStrLit findTool("nifc")
+      b.addStrLit "c"
+      b.addStrLit "--compileOnly"
+      b.addKeyw "args"
+      b.addKeyw "input"
+
+    b.withTree "cmd":
+      b.addSymbolDef "hexer"
+      b.addStrLit findTool("hexer")
+      b.addStrLit "--bits:" & $config.bits
+      b.addKeyw "args"
+      b.withTree "input":
+        b.addIntLit 0
+
+    b.withTree "cmd":
+      b.addSymbolDef "cc"
+      b.addStrLit config.cc
+      b.addStrLit "-c"
+      b.addStrLit "-I" & config.baseDir
+      b.addKeyw "args"
+      b.addKeyw "input"
+      b.addStrLit "-o"
+      b.addKeyw "output"
+
+    b.withTree "cmd":
+      b.addSymbolDef "link"
+      b.addStrLit config.linker
+      b.addStrLit "-o"
+      b.addKeyw "output"
+      b.withTree "input":
+        b.addIntLit 0
+        b.addIntLit -1  # all inputs
+      b.withTree "argsext":
+        b.addStrLit ".linker.args"
+
+    # Special case: compile writenif stdlib module since it's used by exprexec
+    let writenifNimFile = stdlibFile("std/writenif.nim")
+    let writenifSuffix = moduleSuffix(writenifNimFile, config.paths)
+    let writenifNifFile = config.nifcachePath / writenifSuffix & ".1.nif"
+    let writenifSemmedFile = config.nifcachePath / writenifSuffix & ".2.nif"
+    let writenifHexedFile = config.nifcachePath / writenifSuffix & ".c.nif"
+    let writenifCFile = config.nifcachePath / writenifSuffix & ".c"
+    let writenifObjFile = config.nifcachePath / writenifSuffix & ".o"
+
+    # Process writenif.nim with nifler to generate .nif file
+    b.withTree "do":
+      b.addIdent "nifler"
+      b.withTree "input":
+        b.addStrLit writenifNimFile
+      b.withTree "output":
+        b.addStrLit writenifNifFile
+
+    # Process writenif .nif file with nimsem for semantic analysis
+    b.withTree "do":
+      b.addIdent "nimsem"
+      b.withTree "input":
+        b.addStrLit writenifNifFile
+      b.withTree "output":
+        b.addStrLit writenifSemmedFile
+
+    # Process writenif semmed .nif file with hexer
+    b.withTree "do":
+      b.addIdent "hexer"
+      b.withTree "input":
+        b.addStrLit writenifSemmedFile
+      b.withTree "output":
+        b.addStrLit writenifHexedFile
+
+    # Generate C from hexed writenif .nif file
+    b.withTree "do":
+      b.addIdent "nifc"
+      b.withTree "input":
+        b.addStrLit writenifHexedFile
+      b.withTree "output":
+        b.addStrLit writenifCFile
+
+    # Compile writenif C file to object file
+    b.withTree "do":
+      b.addIdent "cc"
+      b.withTree "input":
+        b.addStrLit writenifCFile
+      b.withTree "output":
+        b.addStrLit writenifObjFile
+
+    # Build rules for dependency files
+    var objFiles: seq[string] = @[]
+    objFiles.add(writenifObjFile)  # Include writenif object file
+
+    for depNifFile in dependencyNifFiles:
+      let depName = depNifFile.splitFile.name
+      let depHexedFile = config.nifcachePath / depName & ".2.nif"
+      let depCFile = config.nifcachePath / depName & ".c.nif"
+      let depObjFile = config.nifcachePath / depName & ".o"
+      objFiles.add(depObjFile)
+
+      # Process dependency .nif file with hexer first
+      b.withTree "do":
+        b.addIdent "hexer"
+        b.withTree "input":
+          b.addStrLit depNifFile
+        b.withTree "output":
+          b.addStrLit depHexedFile
+
+      # Generate C from hexed dependency .nif file
+      b.withTree "do":
+        b.addIdent "nifc"
+        b.withTree "input":
+          b.addStrLit depHexedFile
+        b.withTree "output":
+          b.addStrLit depCFile
+
+      # Compile dependency C file to object file
+      b.withTree "do":
+        b.addIdent "cc"
+        b.withTree "input":
+          b.addStrLit depCFile
+        b.withTree "output":
+          b.addStrLit depObjFile
+
+    # Build rules for main file
+    let mainName = mainNifFile.splitFile.name
+    let mainHexedFile = config.nifcachePath / mainName & ".c.nif"
+    let mainCFile = config.nifcachePath / mainName & ".c"
+    let mainObjFile = config.nifcachePath / mainName & ".o"
+    objFiles.add(mainObjFile)
+
+    # Process main .nif file with hexer first
+    b.withTree "do":
+      b.addIdent "hexer"
+      b.withTree "input":
+        b.addStrLit mainNifFile
+      b.withTree "output":
+        b.addStrLit mainHexedFile
+
+    # Generate C from hexed main .nif file
+    b.withTree "do":
+      b.addIdent "nifc"
+      b.withTree "input":
+        b.addStrLit mainHexedFile
+      b.withTree "output":
+        b.addStrLit mainCFile
+
+    # Compile main C file to object file
+    b.withTree "do":
+      b.addIdent "cc"
+      b.withTree "input":
+        b.addStrLit mainCFile
+      b.withTree "output":
+        b.addStrLit mainObjFile
+
+    # Link all object files to create executable
+    let exeFile = config.nifcachePath / "main" & (when defined(windows): ".exe" else: "")
+    b.withTree "do":
+      b.addIdent "link"
+      for objFile in objFiles:
+        b.withTree "input":
+          b.addStrLit objFile
+      b.withTree "output":
+        b.addStrLit exeFile
+  b.close()
+
+  # Execute the build using nifmake
+  let nifmakeCmd = quoteShell(findTool("nifmake")) &
+    (if forceRebuild: " --force" else: "") &
+    " --base:" & quoteShell(config.baseDir) &
+    " -j run " & quoteShell(buildFile)
+  exec(nifmakeCmd)
+  exec(exeFile)
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;

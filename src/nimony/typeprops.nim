@@ -617,6 +617,19 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
     if negative:
       buf.addParRi()
 
+proc toTypeImpl*(n: Cursor): Cursor =
+  result = n
+  var counter = 20
+  while counter > 0 and result.kind == Symbol:
+    dec counter
+    let sym = tryLoadSym(result.symId)
+    if sym.status == LacksNothing:
+      var local = asTypeDecl(sym.decl)
+      if local.kind == TypeY:
+        result = local.body
+    else:
+      bug "could not load: " & pool.syms[result.symId]
+
 when isMainModule:
   when false: # tests sum of products
     proc test(s: string) =

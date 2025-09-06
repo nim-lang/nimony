@@ -145,9 +145,6 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
           op = pool.strings[prag.litId]
           break
       skip pragmas
-  if op == "":
-    cannotEval(n)
-    return
   var args = n
   inc args
   skip args
@@ -176,7 +173,26 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let val = pool.strings[a.litId].len
     result = intValue(c, val, n.info)
   else:
-    cannotEval(n)
+    var evaluatedCall = createTokenBuf(16)
+    evaluatedCall.addParLe CallS, n.info
+    evaluatedCall.addSymUse routine.name.symId, n.info
+    while args.kind != ParRi:
+      let thisArg = args
+      let x = eval(c, args)
+      if x.kind == ParLe and x.tagId == nifstreams.ErrT:
+        cannotEval(thisArg)
+        return
+      evaluatedCall.addSubtree x
+    evaluatedCall.addParRi()
+
+    let i = c.values.len
+    c.values.add createTokenBuf(12)
+    assert c.c.executeCall != nil
+    let errorMsg = c.c.executeCall(c.c[], routine, c.values[i], cursorAt(evaluatedCall, 0), n.info)
+    if errorMsg.len == 0:
+      result = cursorAt(c.values[i], 0)
+    else:
+      result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
 
 template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
@@ -837,34 +853,11 @@ proc enumBounds*(n: Cursor): Bounds =
     if isNaN(result.lo) or x < result.lo: result.lo = x
     if isNaN(result.hi) or x > result.hi: result.hi = x
 
-proc countEnumValues*(n: Cursor): xint =
-  result = createNaN()
-  if n.kind == Symbol:
-    let sym = tryLoadSym(n.symId)
-    if sym.status == LacksNothing:
-      var local = asTypeDecl(sym.decl)
-      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
-        let b = enumBounds(local.body)
-        result = b.hi - b.lo + createXint(1'i64)
-
 proc div8Roundup(a: int64): int64 =
   if (a and 7) == 0:
     result = a shr 3
   else:
     result = (a shr 3) + 1
-
-proc toTypeImpl*(n: Cursor): Cursor =
-  result = n
-  var counter = 20
-  while counter > 0 and result.kind == Symbol:
-    dec counter
-    let sym = tryLoadSym(result.symId)
-    if sym.status == LacksNothing:
-      var local = asTypeDecl(sym.decl)
-      if local.kind == TypeY:
-        result = local.body
-    else:
-      bug "could not load: " & pool.syms[result.symId]
 
 proc bitsetSizeInBytes*(baseType: Cursor): xint =
   var baseType = toTypeImpl baseType
@@ -900,6 +893,16 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     result = bitsetSizeInBytes(baseType.firstSon)
   else:
     result = createNaN()
+
+proc countEnumValues*(n: Cursor): xint =
+  result = createNaN()
+  if n.kind == Symbol:
+    let sym = tryLoadSym(n.symId)
+    if sym.status == LacksNothing:
+      var local = asTypeDecl(sym.decl)
+      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
+        let b = enumBounds(local.body)
+        result = b.hi - b.lo + createXint(1'i64)
 
 proc getArrayIndexLen*(index: Cursor): xint =
   var index = toTypeImpl index

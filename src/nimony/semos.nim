@@ -8,6 +8,8 @@
 
 from std / strutils import multiReplace, split, strip
 import std / [tables, sets, os, syncio, formatfloat, assertions]
+from std / osproc import execCmdEx
+
 include nifprelude
 import ".." / lib / [nifchecksums, tooldirs, argsfinder]
 
@@ -346,3 +348,28 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
     parse s, dest, NoLineInfo
   finally:
     close s
+
+proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
+  let nimonyExe = findTool("nimsem")
+  var cmd = quoteShell(nimonyExe) & " e " & quoteShell(file)
+  for module in usedModules:
+    cmd &= " " & quoteShell(module)
+  result = execCmdEx(cmd)
+
+proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
+  ## Returns an error message if the evaluation failed, "" on success.
+  #echo "HEREES ", toString(src, false)
+  let outfile = c.g.config.nifcachePath / srcName.addFileExt(".nif")
+
+  writeFileAndIndex(outfile, src)
+
+  let (output, exitCode) = runProgram(outfile, usedModules)
+  if exitCode != 0:
+    result = ensureMove(output)
+  else:
+    var s = nifstreams.openFromBuffer(output)
+    try:
+      parse s, dest, NoLineInfo
+    finally:
+      close s
+    result = ""
