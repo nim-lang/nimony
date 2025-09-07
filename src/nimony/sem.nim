@@ -5258,7 +5258,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   var c = SemContext(
     dest: createTokenBuf(),
     types: createBuiltinTypes(),
-    thisModuleSuffix: prog.main,
+    thisModuleSuffix: prog.main.name,
     moduleFlags: moduleFlags,
     g: ProgramContext(config: config),
     phase: SemcheckTopLevelSyms,

@@ -96,6 +96,22 @@ proc removeModule*(s: string): string =
     dec i
   return s
 
+type
+  SplittedModulePath* = object
+    dir*: string
+    name*: string
+    ext*: string
+
+proc splitModulePath*(s: string): SplittedModulePath =
+  # We diverge from `splitFile` here in that we consider the `.2.nif` part the extension, not just the `.nif` part.
+  var i = s.len - 2
+  while i >= 0 and s[i] notin {'/', '\\'}:
+    dec i
+  var d = i + 1 # find first dot (i can be -1 here!)
+  while d < s.len and s[d] != '.':
+    inc d
+  result = SplittedModulePath(dir: substr(s, 0, i-1), name: substr(s, i+1, d-1), ext: substr(s, d))
+
 when isMainModule:
   import std/[assertions]
   assert extractVersionedBasename("abc.12.Mod132a3bc") == "abc.12"
@@ -104,3 +120,18 @@ when isMainModule:
   let sn = splitSymName("abc.12.Mod132a3bc")
   assert sn.name == "abc.12"
   assert sn.module == "Mod132a3bc"
+
+  let mp = splitModulePath("abc/def.2.nif")
+  assert mp.dir == "abc"
+  assert mp.name == "def"
+  assert mp.ext == ".2.nif"
+
+  let mp2 = splitModulePath("def.2.nif")
+  assert mp2.dir == "", mp2.dir
+  assert mp2.name == "def", mp2.name
+  assert mp2.ext == ".2.nif"
+
+  let mp3 = splitModulePath("def")
+  assert mp3.dir == "", mp3.dir
+  assert mp3.name == "def", mp3.name
+  assert mp3.ext == ""
