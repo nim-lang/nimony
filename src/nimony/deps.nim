@@ -610,7 +610,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
   ## Build graph starting from already-processed .nif files instead of .nim files
 
   # Generate a simplified build file that works with .nif files
-  let buildFile = config.nifcachePath / splitModulePath(mainNifFile).name & ".nif_execute.build.nif"
+  let buildFile = config.nifcachePath / splitModulePath(mainNifFile).name & ".exec.build.nif"
   var b = nifbuilder.open(buildFile)
 
   b.addHeader()
@@ -754,7 +754,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
           b.addStrLit depObjFile
 
     # Build rules for main file
-    let mainName = mainNifFile.splitFile.name
+    let mainName = mainNifFile.splitModulePath.name
     let mainHexedFile = config.nifcachePath / mainName & ".c.nif"
     let mainCFile = config.nifcachePath / mainName & ".c"
     let mainObjFile = config.nifcachePath / mainName & ".o"
