@@ -652,7 +652,8 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
       b.addSymbolDef "cc"
       b.addStrLit config.cc
       b.addStrLit "-c"
-      b.addStrLit "-I" & config.baseDir
+      if config.baseDir.len > 0:
+        b.addStrLit "-I" & config.baseDir
       b.addKeyw "args"
       b.addKeyw "input"
       b.addStrLit "-o"

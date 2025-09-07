@@ -156,6 +156,9 @@ proc handleCmdLine() =
 
     of cmdEnd: assert false, "cannot happen"
   semos.setupPaths(config)
+  if config.linker.len == 0 and config.cc.len > 0:
+    config.linker = config.cc
+
   case cmd
   of None:
     quit "command missing"
