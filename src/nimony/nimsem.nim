@@ -12,7 +12,7 @@ import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen, programs
-import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes
+import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs
 
 const
   Version = "0.2"
@@ -61,6 +61,9 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   # The other modules are simply dependencies we need to compile&link too.
   if files.len == 0:
     return
+
+  # litle hack: prepare our writenif dependency
+  exec quoteShell(findTool("nimony")) & " c " & quoteShell(stdlibFile("std/writenif.nim"))
 
   let dependencyFiles = files[1..^1]
 

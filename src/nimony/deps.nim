@@ -15,7 +15,7 @@
 ]#
 
 import std/[os, tables, sets, syncio, assertions, strutils, times]
-import semos, nifconfig, nimony_model, nifindexes
+import semos, nifconfig, nimony_model, nifindexes, symparser
 import ".." / gear2 / modnames, semdata
 import ".." / lib / tooldirs
 import ".." / models / nifindex_tags
@@ -610,7 +610,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
   ## Build graph starting from already-processed .nif files instead of .nim files
 
   # Generate a simplified build file that works with .nif files
-  let buildFile = config.nifcachePath / "nif_execute.build.nif"
+  let buildFile = config.nifcachePath / splitModulePath(mainNifFile).name & ".nif_execute.build.nif"
   var b = nifbuilder.open(buildFile)
 
   b.addHeader()
@@ -723,7 +723,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
     objFiles.add(writenifObjFile)  # Include writenif object file
 
     for depNifFile in dependencyNifFiles:
-      let depName = depNifFile.splitFile.name
+      let depName = depNifFile.splitModulePath.name
       let depHexedFile = config.nifcachePath / depName & ".2.nif"
       let depCFile = config.nifcachePath / depName & ".c.nif"
       let depObjFile = config.nifcachePath / depName & ".o"
