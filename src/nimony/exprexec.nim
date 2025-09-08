@@ -480,6 +480,11 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
     newModuleSuffix: s.thisModuleSuffix.substr(0, 2) & computeChecksum(mangle(call, Frontend, s.g.config.bits)))
 
   c.dest.addParLe StmtsS, info
+
+  c.dest.copyIntoKind CallS, info:
+    c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
+    c.dest.addStrLit s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif", info
+
   var retTypeBuf = createTokenBuf(4) # the aliasing also causes `routine.retType` to alias `prog.mem`!
   retTypeBuf.addSubtree routine.retType
   var retType = cursorAt(retTypeBuf, 0)
@@ -492,6 +497,9 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   else:
     # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
     entryPoint(c, retType, call)
+
+  c.dest.copyIntoKind CallS, info:
+    c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
 
   rewriteSyms c
 

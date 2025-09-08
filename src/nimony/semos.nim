@@ -359,15 +359,16 @@ proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: strin
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
   #echo "HEREES ", toString(src, false)
-  let outfile = c.g.config.nifcachePath / srcName.addFileExt(".nif")
+  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".nif")
 
-  writeFileAndIndex(outfile, src)
+  writeFileAndIndex(progfile, src)
 
-  let (output, exitCode) = runProgram(outfile, usedModules)
+  let (output, exitCode) = runProgram(progfile, usedModules)
   if exitCode != 0:
     result = ensureMove(output)
   else:
-    var s = nifstreams.openFromBuffer(output)
+    let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
+    var s = nifstreams.open(outfile)
     try:
       parse s, dest, NoLineInfo
     finally:
