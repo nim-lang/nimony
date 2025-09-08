@@ -2042,8 +2042,8 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
       c.dest.addParRi()
 
 proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
-  let (dir, file, ext) = splitModulePath(infile)
-  var c = EContext(dir: (if dir.len == 0: getCurrentDir() else: dir), ext: ext, main: file,
+  let mp = splitModulePath(infile)
+  var c = EContext(dir: (if mp.dir.len == 0: getCurrentDir() else: mp.dir), ext: mp.ext, main: mp.name,
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
@@ -2055,11 +2055,10 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   c.openMangleScope()
 
   var c0 = setupProgram(infile, infile.changeFileExt ".c.nif", true)
-  var dest = transform(c, c0, file)
+  var dest = transform(c, c0, mp.name)
 
   var n = beginRead(dest)
   let rootInfo = n.info
-
 
   var toplevels = createTokenBuf()
   swap c.dest, toplevels
@@ -2071,7 +2070,6 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   else:
     error c, "expected (stmts) but got: ", n
   swap c.dest, toplevels
-
 
 
   # fix point expansion:
@@ -2096,6 +2094,3 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   skipParRi c, n
   writeOutput c, rootInfo
   c.closeMangleScope()
-
-when isMainModule:
-  echo splitModulePath("/abc/def/name.4.nif")

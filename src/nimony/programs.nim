@@ -20,7 +20,7 @@ type
 
   Program* = object
     mods: Table[string, NifModule]
-    dir, main*, ext: string
+    main*: SplittedModulePath
     mem: Table[SymId, TokenBuf]
 
   ImportFilterKind* = enum
@@ -40,10 +40,10 @@ proc newNifModule(infile: string): NifModule =
 
 proc suffixToNif*(suffix: string): string {.inline.} =
   # always imported from semchecked files
-  prog.dir / suffix & ".2.nif"
+  prog.main.dir / suffix & ".2.nif"
 
 proc customToNif*(suffix: string): string {.inline.} =
-  prog.dir / suffix & ".nif"
+  prog.main.dir / suffix & ".nif"
 
 proc needsRecompile*(dep, output: string): bool =
   result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)
@@ -270,14 +270,6 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   buf.addParRi()
   publish s, buf
 
-proc splitModulePath*(s: string): (string, string, string) =
-  var (dir, main, ext) = splitFile(s)
-  let dotPos = find(main, '.')
-  if dotPos >= 0:
-    ext = substr(main, dotPos) & ext
-    main.setLen dotPos
-  result = (dir, main, ext)
-
 proc publishStringType() =
   # This logic is not strictly necessary for "system.nim" itself, but
   # for modules that emulate system via --isSystem.
@@ -315,11 +307,11 @@ proc publishStringType() =
   publish symId, str
 
 proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
-  let (dir, file, _) = splitModulePath(infile)
-  let (_, _, ext) = splitModulePath(outfile)
-  prog.dir = (if dir.len == 0: getCurrentDir() else: dir)
-  prog.ext = ext
-  prog.main = file
+  prog.main = splitModulePath(infile)
+  let outp = splitModulePath(outfile)
+  if prog.main.dir.len == 0:
+    prog.main.dir = getCurrentDir()
+  prog.main.ext = outp.ext
 
   var m = newNifModule(infile)
 
@@ -331,13 +323,13 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
 
   #echo "INPUT IS ", toString(m.buf)
   result = beginRead(m.buf)
-  prog.mods[prog.main] = m
+  prog.mods[prog.main.name] = m
   publishStringType()
 
 proc setupProgramForTesting*(dir, file, ext: string) =
-  prog.dir = dir
-  prog.main = file
-  prog.ext = ext
+  prog.main.dir = dir
+  prog.main.name = file
+  prog.main.ext = ext
   publishStringType()
 
 proc takeParRi*(dest: var TokenBuf; n: var Cursor) =

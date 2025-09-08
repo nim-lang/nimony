@@ -388,12 +388,15 @@ template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInf
   dest.add parRiToken(NoLineInfo)
 
 proc parse*(r: var Stream; dest: var TokenBuf;
-            parentInfo: PackedLineInfo) =
+            parentInfo: PackedLineInfo; debug: bool = false) =
   r.parents[0] = parentInfo
   var nested = 0
   while true:
     let tok = r.next()
     dest.add tok
+    if debug:
+      echo "parsing ", toString([tok], false)
+      if tok.kind == UnknownToken: break
     if tok.kind == EofToken:
       break
     elif tok.kind == ParLe:

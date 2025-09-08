@@ -281,6 +281,10 @@ proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
   createIndex(infile, root, buildChecksum,
     IndexSections())
 
+proc writeFileAndIndex*(outfile: string; content: TokenBuf) =
+  writeFile(outfile, "(.nif24)\n" & toString(content))
+  createIndex(outfile, true, content[0].info)
+
 type
   NifIndexEntry* = object
     offset*: int

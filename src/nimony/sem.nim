@@ -15,7 +15,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon
+  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -654,6 +654,15 @@ proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool) =
     if not discardable:
       buildErr c, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
   n = it.n
+
+proc semStmtCallback(c: var SemContext; dest: var TokenBuf; n: Cursor) =
+  var n = n
+  swap c.dest, dest
+  let oldPhase = c.phase
+  c.phase = SemcheckBodies
+  semStmt c, n, false
+  swap c.dest, dest
+  c.phase = oldPhase
 
 proc sameIdent(sym: SymId; str: StrId): bool =
   # XXX speed this up by using the `fieldCache` idea
@@ -4984,7 +4993,7 @@ proc semExpr(c: var SemContext; it: var Item; flags: set[SemFlag] = {}) =
 
   of ParRi, EofToken, SymbolDef, UnknownToken, DotToken:
     buildErr c, it.n.info, "expression expected"
-    if it.n.kind == DotToken:
+    if it.n.kind in {DotToken, UnknownToken}:
       inc it.n
 
 
@@ -5249,14 +5258,16 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
   var c = SemContext(
     dest: createTokenBuf(),
     types: createBuiltinTypes(),
-    thisModuleSuffix: prog.main,
+    thisModuleSuffix: prog.main.name,
     moduleFlags: moduleFlags,
     g: ProgramContext(config: config),
     phase: SemcheckTopLevelSyms,
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
-    pending: createTokenBuf())
+    pending: createTokenBuf(),
+    executeCall: exprexec.executeCall,
+    semStmtCallback: semStmtCallback)
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))

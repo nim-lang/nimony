@@ -11,7 +11,8 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
-import sem, nifconfig, semos, semdata, indexgen
+import sem, nifconfig, semos, semdata, indexgen, programs
+import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs
 
 const
   Version = "0.2"
@@ -21,8 +22,9 @@ const
 Usage:
   nimsem [options] [command]
 Command:
-  m file.nim [project.nim]    compile a single Nim module to hexer
+  m input.nif output.nif index.nif    compile a single Nim module to hexer
   x file.nif                  generate the .idx.nif file from a .nif file
+  e file.nif [dep1.nif ...]   execute the given .nif file
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
@@ -46,13 +48,44 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 type
   Command = enum
-    None, SingleModule, GenerateIdx
+    None, SingleModule, GenerateIdx, Execute
 
 proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
   if not semos.fileExists(infile):
     quit "cannot find " & infile
   else:
     semcheck(infile, outfile, ensureMove config, moduleFlags, "", false)
+
+proc executeNif(files: seq[string]; config: sink NifConfig) =
+  # file 0 is special as it is the main file. We need to run injectDerefs on it first.
+  # The other modules are simply dependencies we need to compile&link too.
+  if files.len == 0:
+    return
+
+  # litle hack: prepare our writenif dependency
+  exec quoteShell(findTool("nimony")) & " c " & quoteShell(stdlibFile("std/writenif.nim"))
+
+  let dependencyFiles = files[1..^1]
+
+  # Step 1: Run injectDerefs on the main file
+  let transformedMainFile = files[0].changeFileExt(".2.nif")
+
+  let mainCursor = setupProgram(files[0], transformedMainFile, true)
+
+  # Transform the main file with injectDerefs
+  let transformedMain = injectDerefs(mainCursor)
+
+  writeFileAndIndex(transformedMainFile, transformedMain)
+
+  # Step 2: Use the existing deps.nim infrastructure to build from .nif files
+  buildGraphForNif(
+    config = config,
+    mainNifFile = transformedMainFile,
+    dependencyNifFiles = dependencyFiles,
+    forceRebuild = false,
+    silentMake = false,
+    moduleFlags = {}
+  )
 
 proc handleCmdLine() =
   var args: seq[string] = @[]
@@ -70,6 +103,8 @@ proc handleCmdLine() =
           cmd = SingleModule
         of "x":
           cmd = GenerateIdx
+        of "e":
+          cmd = Execute
         else:
           quit "command expected"
       else:
@@ -121,6 +156,9 @@ proc handleCmdLine() =
 
     of cmdEnd: assert false, "cannot happen"
   semos.setupPaths(config)
+  if config.linker.len == 0 and config.cc.len > 0:
+    config.linker = config.cc
+
   case cmd
   of None:
     quit "command missing"
@@ -132,6 +170,10 @@ proc handleCmdLine() =
     if args.len != 1:
       quit "want exactly 1 command line argument"
     indexFromNif(args[0])
+  of Execute:
+    if args.len == 0:
+      quit "want more than 0 command line argument"
+    executeNif args, ensureMove config
 
 when isMainModule:
   handleCmdLine()

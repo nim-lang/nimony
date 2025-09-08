@@ -53,12 +53,12 @@ proc indexMethod(classIndexMap: var seq[ClassIndexEntry]; symId: SymId; routine:
 
 proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): TokenBuf =
   result = default(TokenBuf)
-  let (dir, _, ext) = splitModulePath infile
+  let mp = splitModulePath infile
   if exports.len != 0:
     result = createTokenBuf(32)
     for suffix, syms in exports:
       # open NIF file to get the path of source file of the module from the line info.
-      let modPath = dir / (suffix & ext)
+      let modPath = mp.dir / (suffix & mp.ext)
       var stream = nifstreams.open(modPath)
       discard processDirectives(stream.r)
       discard stream.next   # first stmts node doesn't have line info.
