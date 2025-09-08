@@ -608,6 +608,10 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
 proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     forceRebuild, silentMake: bool; moduleFlags: set[ModuleFlag]) =
   ## Build graph starting from already-processed .nif files instead of .nim files
+  const requiredStdlibModules = [
+    "std/writenif.nim", "std/syncio.nim", "std/math.nim", "std/formatfloat.nim"
+  ]
+  const requiredObjFiles = ["static.o"]
 
   # Generate a simplified build file that works with .nif files
   let buildFile = config.nifcachePath / splitModulePath(mainNifFile).name & ".exec.build.nif"
@@ -670,58 +674,58 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
       b.withTree "argsext":
         b.addStrLit ".linker.args"
 
-    # Special case: compile writenif stdlib module since it's used by exprexec
-    let writenifNimFile = stdlibFile("std/writenif.nim")
-    let writenifSuffix = moduleSuffix(writenifNimFile, config.paths)
-    let writenifNifFile = config.nifcachePath / writenifSuffix & ".1.nif"
-    let writenifSemmedFile = config.nifcachePath / writenifSuffix & ".2.nif"
-    let writenifHexedFile = config.nifcachePath / writenifSuffix & ".c.nif"
-    let writenifCFile = config.nifcachePath / writenifSuffix & ".c"
-    let writenifObjFile = config.nifcachePath / writenifSuffix & ".o"
-
-    # Process writenif.nim with nifler to generate .nif file
-    b.withTree "do":
-      b.addIdent "nifler"
-      b.withTree "input":
-        b.addStrLit writenifNimFile
-      b.withTree "output":
-        b.addStrLit writenifNifFile
-
-    # Process writenif .nif file with nimsem for semantic analysis
-    b.withTree "do":
-      b.addIdent "nimsem"
-      b.withTree "input":
-        b.addStrLit writenifNifFile
-      b.withTree "output":
-        b.addStrLit writenifSemmedFile
-
-    # Process writenif semmed .nif file with hexer
-    b.withTree "do":
-      b.addIdent "hexer"
-      b.withTree "input":
-        b.addStrLit writenifSemmedFile
-      b.withTree "output":
-        b.addStrLit writenifHexedFile
-
-    # Generate C from hexed writenif .nif file
-    b.withTree "do":
-      b.addIdent "nifc"
-      b.withTree "input":
-        b.addStrLit writenifHexedFile
-      b.withTree "output":
-        b.addStrLit writenifCFile
-
-    # Compile writenif C file to object file
-    b.withTree "do":
-      b.addIdent "cc"
-      b.withTree "input":
-        b.addStrLit writenifCFile
-      b.withTree "output":
-        b.addStrLit writenifObjFile
-
-    # Build rules for dependency files
     var objFiles: seq[string] = @[]
-    objFiles.add(writenifObjFile)  # Include writenif object file
+    for objFile in requiredObjFiles: objFiles.add(config.nifcachePath / objFile)
+
+    for module in requiredStdlibModules:
+      let writenifNimFile = stdlibFile(module)
+      let writenifSuffix = moduleSuffix(writenifNimFile, config.paths)
+      let writenifNifFile = config.nifcachePath / writenifSuffix & ".1.nif"
+      let writenifSemmedFile = config.nifcachePath / writenifSuffix & ".2.nif"
+      let writenifHexedFile = config.nifcachePath / writenifSuffix & ".c.nif"
+      let writenifCFile = config.nifcachePath / writenifSuffix & ".c"
+      let writenifObjFile = config.nifcachePath / writenifSuffix & ".o"
+
+      # Process writenif.nim with nifler to generate .nif file
+      b.withTree "do":
+        b.addIdent "nifler"
+        b.withTree "input":
+          b.addStrLit writenifNimFile
+        b.withTree "output":
+          b.addStrLit writenifNifFile
+
+      # Process writenif .nif file with nimsem for semantic analysis
+      b.withTree "do":
+        b.addIdent "nimsem"
+        b.withTree "input":
+          b.addStrLit writenifNifFile
+        b.withTree "output":
+          b.addStrLit writenifSemmedFile
+
+      # Process writenif semmed .nif file with hexer
+      b.withTree "do":
+        b.addIdent "hexer"
+        b.withTree "input":
+          b.addStrLit writenifSemmedFile
+        b.withTree "output":
+          b.addStrLit writenifHexedFile
+
+      # Generate C from hexed writenif .nif file
+      b.withTree "do":
+        b.addIdent "nifc"
+        b.withTree "input":
+          b.addStrLit writenifHexedFile
+        b.withTree "output":
+          b.addStrLit writenifCFile
+
+      # Compile writenif C file to object file
+      b.withTree "do":
+        b.addIdent "cc"
+        b.withTree "input":
+          b.addStrLit writenifCFile
+        b.withTree "output":
+          b.addStrLit writenifObjFile
+      objFiles.add(writenifObjFile)
 
     for depNifFile in dependencyNifFiles:
       let depName = depNifFile.splitModulePath.name
