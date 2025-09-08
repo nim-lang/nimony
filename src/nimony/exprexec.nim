@@ -143,12 +143,14 @@ proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; needsDeref: 
       result.addParRi()
     copyIntoSymUse result, nameSym, c.info
     result.addIntLit(depth, c.info)
+  freeze result
 
 proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int): TokenBuf =
   result = createTokenBuf(4)
   copyIntoKind(result, TupatX, c.info):
     copyTree result, tup
     result.add intToken(pool.integers.getOrIncl(idx), c.info)
+  freeze result
 
 proc unravelObjField(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
@@ -254,6 +256,7 @@ proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId): TokenBuf 
   copyIntoKind result, ArrAtX, c.info:
     copyTree result, arr
     copyIntoSymUse result, indexVar, c.info
+  freeze result
 
 proc indexVarLowerThanArrayLen(c: var LiftingCtx; indexVar: SymId; arrayLen: xint) =
   copyIntoKind c.dest, LtX, c.info:
@@ -324,6 +327,7 @@ proc unravelSet(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
   declareIndexVar c, indexVar
   var indexVarAsBuf = createTokenBuf(1)
   indexVarAsBuf.addSymUse indexVar, c.info
+  freeze indexVarAsBuf
 
   copyIntoKind c.dest, WhileS, c.info:
     indexVarLowerThanArrayLen c, indexVar, maxValue
@@ -435,6 +439,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   let paramA = pool.syms.getOrIncl("dest.0")
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
+  freeze paramTreeA
 
   let procStart = c.dest.len
   copyIntoKind(c.dest, ProcS, c.info):
