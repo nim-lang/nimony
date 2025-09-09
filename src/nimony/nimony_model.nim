@@ -276,7 +276,7 @@ proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   dest.add symToken(s, info)
 
 const
-  TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
+  TypeModifiers* = {MutT, OutT, LentT, SinkT, StaticT}
 
 proc removeModifier*(a: var Cursor) =
   if a.kind == ParLe and a.typeKind in TypeModifiers:
