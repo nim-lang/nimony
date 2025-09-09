@@ -521,12 +521,12 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
 
-  rewriteSyms c
-
   # we know that the generated code doesn't require any deref
   # insertions so we do it after `injectDerefs`:
   genMissingProcs c
   c.dest.addParRi() # StmtsS
+
+  rewriteSyms c
 
   if c.errorMsg.len > 0:
     result = ensureMove c.errorMsg
