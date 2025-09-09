@@ -10,10 +10,12 @@ include nifprelude
 import ".." / lib / nifchecksums
 from std / os import `/`
 import std / [assertions, sets, tables]
-import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops, typenav, typekeys, expreval, semos
+import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops,
+  typenav, typekeys, expreval, semos, derefs
 
 const
   writeNifModuleSuffix = "wriwhv7qv"
+  ParamSymName = "dest.0"
 
 when false:
   proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
@@ -107,7 +109,22 @@ proc generateName(c: var LiftingCtx; key: string): string =
   result.add '.'
   result.addInt counter[]
   result.add '.'
-  result.add c.newModuleSuffix
+  result.add c.thisModuleSuffix # will later be rewired to use `c.newModuleSuffix`
+
+proc genProcHeader(c: var LiftingCtx; dest: var TokenBuf; sym: SymId; typ: TypeCursor) =
+  # Leaves the declaration open at the position of the body.
+  dest.addParLe ProcS, c.info
+  addSymDef dest, sym, c.info
+  dest.addEmpty3 c.info # export marker, pattern, generics
+  copyIntoKind dest, ParamsU, c.info:
+    copyIntoKind dest, ParamY, c.info:
+      addSymDef dest, pool.syms.getOrIncl(ParamSymName), c.info
+      dest.addEmpty2 c.info # export marker, pragmas
+      copyTree dest, typ
+      dest.addEmpty c.info # value
+  dest.addEmpty() # void return type
+  dest.addEmpty() # pragmas
+  dest.addEmpty c.info # exc
 
 proc requestProc(c: var LiftingCtx; t: TypeCursor): SymId =
   let key = mangle(t, Frontend, c.bits)
@@ -117,6 +134,12 @@ proc requestProc(c: var LiftingCtx; t: TypeCursor): SymId =
     result = pool.syms.getOrIncl(name)
     c.requests.add GenProcRequest(sym: result, typ: t)
     c.structuralTypeToProc[key] = result
+
+    var header = createTokenBuf(30)
+    genProcHeader(c, header, result, t)
+    header.addEmpty() # body is empty
+    header.addParRi() # close ProcS declaration
+    programs.publish(result, header)
 
 when not defined(nimony):
   proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf)
@@ -430,46 +453,24 @@ proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
      SymkindT, TypekindT, TypedescT, UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     c.errorMsg = "unsupported type for compile-time evaluation: " & asNimCode(orig)
 
-proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
-  var buf = createTokenBuf(100)
-  for i in procStart ..< dest.len: buf.add dest[i]
-  programs.publish(sym, buf)
-
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
-  let paramA = pool.syms.getOrIncl("dest.0")
+  let paramA = pool.syms.getOrIncl(ParamSymName)
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
   freeze paramTreeA
 
   let procStart = c.dest.len
-  copyIntoKind(c.dest, ProcS, c.info):
-    addSymDef c.dest, sym, c.info
-    c.dest.addEmpty3 c.info # export marker, pattern, generics
+  genProcHeader(c, c.dest, sym, typ)
 
-    c.dest.addParLe ParamsU, c.info
-
-    copyIntoKind(c.dest, ParamY, c.info):
-      addSymDef c.dest, paramA, c.info
-      c.dest.addEmpty2 c.info # export marker, pragmas
-      copyTree c.dest, typ
-      c.dest.addEmpty c.info # value
-
-    c.dest.addParRi()
-    c.dest.addEmpty() # void return type
-
-    c.dest.addEmpty() # pragmas
-    c.dest.addEmpty c.info # exc
-
-    copyIntoKind(c.dest, StmtsS, c.info):
-      let beforeUnravel = c.dest.len
-      unravel(c, typ, paramTreeA)
-      if c.dest.len == beforeUnravel:
-        assert false, "empty hook created"
+  copyIntoKind(c.dest, StmtsS, c.info):
+    let beforeUnravel = c.dest.len
+    unravel(c, typ, paramTreeA)
+    if c.dest.len == beforeUnravel:
+      assert false, "empty hook created"
+  c.dest.addParRi() # close ProcS declaration
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
     c.dest[procStart] = parLeToken(MethodS, c.info)
-
-  publishProc(sym, c.dest, procStart)
 
 proc genMissingProcs*(c: var LiftingCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
@@ -493,21 +494,37 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   var retTypeBuf = createTokenBuf(4) # the aliasing also causes `routine.retType` to alias `prog.mem`!
   retTypeBuf.addSubtree routine.retType
   var retType = cursorAt(retTypeBuf, 0)
-  collectUsedSyms c, s, routine
 
-  # now that we have all dependencies in the module, we can add the call, but wrap it in a new `toNif` tag:
-  if isVoidType(retType):
-    # if the call is void, we can just emit the code for it directly here:
-    c.dest.addSubtree call
-  else:
-    # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
-    entryPoint(c, retType, call)
+  let beforeUsercode = c.dest.len
+
+  c.dest.copyIntoKind StmtsS, info:
+    collectUsedSyms c, s, routine
+
+    # now that we have all dependencies in the module, we can add the call, but wrap it in a new `toNif` tag:
+    if isVoidType(retType):
+      # if the call is void, we can just emit the code for it directly here:
+      c.dest.addSubtree call
+    else:
+      # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
+      entryPoint(c, retType, call)
+
+  let withDerefs = injectDerefs(cursorAt(c.dest, beforeUsercode))
+  endRead(c.dest)
+  c.dest.shrink beforeUsercode
+  # do not copy the `(stmts)` here:
+  assert withDerefs.len >= 2
+  assert withDerefs[0].kind == ParLe
+  assert withDerefs[withDerefs.len-1].kind == ParRi
+  for i in 1..<withDerefs.len-1:
+    c.dest.add withDerefs[i]
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
 
   rewriteSyms c
 
+  # we know that the generated code doesn't require any deref
+  # insertions so we do it after `injectDerefs`:
   genMissingProcs c
   c.dest.addParRi() # StmtsS
 

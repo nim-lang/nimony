@@ -67,20 +67,9 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
 
   let dependencyFiles = files[1..^1]
 
-  # Step 1: Run injectDerefs on the main file
-  let transformedMainFile = files[0].changeFileExt(".2.nif")
-
-  let mainCursor = setupProgram(files[0], transformedMainFile, true)
-
-  # Transform the main file with injectDerefs
-  let transformedMain = injectDerefs(mainCursor)
-
-  writeFileAndIndex(transformedMainFile, transformedMain)
-
-  # Step 2: Use the existing deps.nim infrastructure to build from .nif files
   buildGraphForNif(
     config = config,
-    mainNifFile = transformedMainFile,
+    mainNifFile = files[0],
     dependencyNifFiles = dependencyFiles,
     forceRebuild = false,
     silentMake = false,

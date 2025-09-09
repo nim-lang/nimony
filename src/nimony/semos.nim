@@ -359,8 +359,7 @@ proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: strin
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
   #echo "HEREES ", toString(src, false)
-  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".nif")
-
+  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".2.nif")
   writeFileAndIndex(progfile, src)
 
   let (output, exitCode) = runProgram(progfile, usedModules)
