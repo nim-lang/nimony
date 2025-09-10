@@ -1,0 +1,1 @@
+tests/nimony/sysbasics/tdiscardvoidcalls.nim(4, 12) Error: expression of type `void` must not be discarded

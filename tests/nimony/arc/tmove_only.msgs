@@ -1,1 +1,1 @@
-tests/nimony/arc/tmove_only.nim(18, 15) Error: '=dup' is not available for type <MyObj.0.tmoloqt6c1>
+tests/nimony/arc/tmove_only.nim(18, 15) Error: '=dup' is not available for type <MyObj>

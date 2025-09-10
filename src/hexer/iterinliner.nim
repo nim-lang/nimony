@@ -51,26 +51,26 @@ when false:
     takeTree(e, value)
     e.dest.addParRi()
 
-proc createTupleAccess(lvalue: SymId; i: int; info: PackedLineInfo): TokenBuf =
+proc createTupleAccess(left: TokenBuf; i: int; info: PackedLineInfo): TokenBuf =
   result = createTokenBuf()
   result.add parLeToken(TupatX, info)
-  result.add symToken(lvalue, info)
+  result.add left
   result.addIntLit(i, info)
   result.addParRi()
 
-proc getForVars(e: var EContext, forVars: Cursor): seq[Local] =
+proc getForVars(e: var EContext, forVars: Cursor): seq[Cursor] =
   result = @[]
   var forVars = forVars
   if forVars.substructureKind notin {UnpackflatU, UnpacktupU}:
     error e, "`unpackflat` or `unpacktup` expected, but got: ", forVars
-  inc forVars # unpackflat
+  inc forVars # unpackflat/unpacktup
   while forVars.kind != ParRi:
-    let local = asLocal(forVars)
-    result.add local
+    result.add forVars
     skip forVars
 
 proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
-          local: Local; res: var Table[SymId, SymId]) =
+          forVar: Cursor; res: var Table[SymId, SymId]) =
+  let local = asLocal(forVar)
   let destSym = local.name.symId
   let info = local.name.info
   case c.kind
@@ -81,6 +81,14 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
   else:
     var typ = local.typ
     createDecl(e, destSym, typ, c, info, "var")
+
+proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor) =
+  let local = asLocal(forVar)
+  let symId = local.name.symId
+  var tupBuf = createTupleAccess(left, i, info)
+  var tup = beginRead(tupBuf)
+  var fieldTyp = getTupleFieldType(typ)
+  createDecl(e, symId, fieldTyp, tup, info, "let")
 
 proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
@@ -113,12 +121,26 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
 
       inc typ # skips tuple
       for i in 0..<forVars.len:
-        let symId = forvars[i].name.symId
-        var tupBuf = createTupleAccess(tmpId, i, info)
-        var tup = beginRead(tupBuf)
-        var fieldTyp = getTupleFieldType(typ)
-        skip typ
-        createDecl(e, symId, fieldTyp, tup, info, "let")
+        if forVars[i].substructureKind == UnpacktupU:
+          var counter = 0
+          var unpackCursor = forVars[i]
+          inc unpackCursor
+          var left = createTokenBuf()
+          left.add symToken(tmpId, info)
+          let leftTupleAccess = createTupleAccess(left, i, info)
+          assert typ.typeKind == TupleT
+          inc typ
+          while unpackCursor.kind != ParRi:
+            unpackTupleAccess(e, unpackCursor, leftTupleAccess, counter, info, typ)
+            inc counter
+            skip unpackCursor
+            skip typ
+          skipParRi(typ)
+        else:
+          var left = createTokenBuf()
+          left.add symToken(tmpId, info)
+          unpackTupleAccess(e, forVars[i], left, i, info, typ)
+          skip typ
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
   e.dest.add c
@@ -186,11 +208,12 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       discard e.breaks.pop()
       discard e.continues.pop()
     of BlockS:
-      e.dest.add c
-      inc c
-      e.breaks.add SymId(0)
-      e.dest.add c
-      inc c
+      e.dest.takeToken(c)
+      if c.kind == SymbolDef:
+        e.breaks.add c.symId
+      else:
+        e.breaks.add SymId(0)
+      e.dest.takeToken(c)
       inlineLoopBody(e, c, mapping)
       discard e.breaks.pop
       takeParRi(e, c)
@@ -483,7 +506,14 @@ proc transformStmt(e: var EContext; c: var Cursor) =
     of ForS:
       transformForStmt(e, c)
     of IteratorS:
-      skip(c)
+      var iter = c
+      inc iter
+      if isLocalDecl(iter.symId):
+        var buf = createTokenBuf()
+        takeTree(buf, c)
+        publish iter.symId, buf
+      else:
+        skip(c)
     of TemplateS:
       e.dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:
@@ -504,12 +534,21 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       e.tmpId = oldTmpId
       takeParRi(e, c)
     of VarS, LetS, CursorS, ResultS:
+      # We transform `var x {.cursor.} = y` into `cursor x = y` here because
+      # this is the first step of the backend pipeline.
+      let before = e.dest.len
       e.dest.add c
       inc c
+      var hasCursorPragma = false
       for i in 0..<LocalValuePos:
+        if i == LocalPragmasPos:
+          if hasPragma(c, CursorP):
+            hasCursorPragma = true
         takeTree(e, c)
       transformStmt(e, c)
       takeParRi(e, c)
+      if hasCursorPragma:
+        e.dest[before] = parLeToken(CursorS, e.dest[before].info)
     of WhileS:
       transformWhileStmt(e, c)
     of BreakS:
@@ -517,11 +556,12 @@ proc transformStmt(e: var EContext; c: var Cursor) =
     of ContinueS:
       transformContinueStmt(e, c)
     of BlockS:
-      e.dest.add c
-      inc c
-      e.breaks.add SymId(0)
-      e.dest.add c
-      inc c
+      e.dest.takeToken(c)
+      if c.kind == SymbolDef:
+        e.breaks.add c.symId
+      else:
+        e.breaks.add SymId(0)
+      e.dest.takeToken(c)
       transformStmt(e, c)
       discard e.breaks.pop
       takeParRi(e, c)

@@ -7,7 +7,8 @@
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
 import std / assertions
-import nifstreams, nifcursors, nimony_model
+import ".." / lib / [nifstreams, nifcursors]
+import ".." / nimony / [nimony_model, programs]
 
 proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
@@ -21,7 +22,7 @@ proc isNominal*(t: TypeKind): bool {.inline.} =
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   result = t
-  if result.typeKind == ProctypeT:
+  if result.typeKind in RoutineTypes:
     inc result # skip ParLe
     skip result # skip name
     skip result # skip export marker
@@ -29,6 +30,7 @@ proc skipProcTypeToParams*(t: Cursor): Cursor =
     skip result # skip generics
 
 const
+  LocalPragmasPos* = 2
   LocalTypePos* = 3
   LocalValuePos* = 4
 
@@ -66,7 +68,7 @@ proc takeLocal*(c: var Cursor; mode: SkipMode): Local =
         if c.kind == ParRi:
           inc c
         else:
-          raiseAssert "expected ')' inside (" & $result.kind
+          bug "expected ')' inside (" & $result.kind
 
 proc asLocal*(c: Cursor; mode = SkipInclBody): Local =
   var c = c
@@ -119,12 +121,12 @@ proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
         if c.kind == ParRi:
           inc c
         else:
-          raiseAssert "expected ')' inside (" & $result.kind
+          bug "expected ')' inside (" & $result.kind
 
 const
   TypevarsPos* = 3
   ParamsPos* = 4
-  ResultPos* = 5
+  ReturnTypePos* = 5
   ProcPragmasPos* = 6
   BodyPos* = 8
 
@@ -144,8 +146,7 @@ type
 proc isGeneric*(r: TypeDecl): bool {.inline.} =
   r.typevars.substructureKind == TypevarsU
 
-proc asTypeDecl*(c: Cursor): TypeDecl =
-  var c = c
+proc takeTypeDecl*(c: var Cursor; mode: SkipMode): TypeDecl =
   let kind = symKind c
   result = TypeDecl(kind: kind)
   if kind == TypeY:
@@ -157,8 +158,19 @@ proc asTypeDecl*(c: Cursor): TypeDecl =
     result.typevars = c
     skip c
     result.pragmas = c
-    skip c
-    result.body = c
+    if mode >= SkipInclBody:
+      skip c
+      result.body = c
+      if mode == SkipFinalParRi:
+        skip c
+        if c.kind == ParRi:
+          inc c
+        else:
+          bug "expected ')' inside (" & $result.kind
+
+proc asTypeDecl*(c: Cursor): TypeDecl =
+  var c = c
+  result = takeTypeDecl(c, SkipInclBody)
 
 type
   ObjectDecl* = object
@@ -175,6 +187,40 @@ proc asObjectDecl*(c: Cursor): ObjectDecl =
     result.parentType = c
     skip c
     result.firstField = c
+
+type ObjFieldIter* = object
+  nested: int
+
+proc initObjFieldIter*(): ObjFieldIter =
+  result = ObjFieldIter(nested: 1)
+
+proc nextField*(iter: var ObjFieldIter, n: var Cursor, keepCase = false): bool =
+  result = false
+  while iter.nested != 0:
+    if n.kind == ParRi:
+      dec iter.nested
+      if iter.nested != 0: inc n
+    else:
+      case n.substructureKind
+      of CaseU:
+        if keepCase:
+          result = true
+          break
+        else:
+          inc iter.nested
+          inc n
+      of WhenU, StmtsU, NilU, ElseU:
+        inc iter.nested
+        inc n
+      of ElifU, OfU:
+        inc iter.nested
+        inc n
+        skip n
+      of FldU:
+        result = true
+        break
+      else:
+        error "illformed AST inside object: ", n
 
 type
   EnumDecl* = object
@@ -237,3 +283,14 @@ proc asForStmt*(c: Cursor): ForStmt =
     result.vars = c
     skip c
     result.body = c
+
+proc isMutFirstParam*(destroyProc: SymId): bool =
+  result = false
+  let res = tryLoadSym(destroyProc)
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    var params = routine.params
+    inc params
+    let firstParam = asLocal(params)
+    if firstParam.typ.typeKind in {MutT, OutT}:
+      result = true

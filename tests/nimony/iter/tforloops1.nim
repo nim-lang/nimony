@@ -1,4 +1,4 @@
-import std / [syncio]
+import std / [syncio, assertions]
 
 iterator powers(n: int): int =
   var i = 0
@@ -95,3 +95,41 @@ block:
   let i_arr = [-100, -50, 0, 0, 123, 1000]
   for i in items(i_arr):
     echo i
+
+block tbreak:
+  var
+    x = false
+    run = true
+
+  while run:
+    run = false
+    block myblock:
+      if true:
+        break myblock
+      echo "leaving myblock"
+    x = true
+  assert(x)
+
+  # bug #1418
+  iterator foo: int =
+    for x in 0 .. 9:
+      for y in [10,20,30,40,50,60,70,80,90]:
+        yield x + y
+
+  for p in foo():
+    echo p
+    break
+
+  iterator permutations: int =
+    yield 10
+
+  for p in permutations():
+    break
+
+  # regression:
+  proc main =
+    for x in [true, false]:
+      for y in [true, false]:
+        echo x, " ", y
+
+  main()

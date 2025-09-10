@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model
 
 type
@@ -27,6 +27,8 @@ const
   StringName* = "string.0." & SystemModuleSuffix
   StringAField* = "a.0." & SystemModuleSuffix
   StringIField* = "i.0." & SystemModuleSuffix
+  ErrorCodeName* = "ErrorCode.0." & SystemModuleSuffix
+  SuccessName* = "Success.0." & SystemModuleSuffix
 
 proc createBuiltinTypes*(): BuiltinTypes =
   result = BuiltinTypes(mem: createTokenBuf(30))

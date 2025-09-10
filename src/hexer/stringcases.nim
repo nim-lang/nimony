@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -42,6 +42,33 @@ proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
             c.dest.copyIntoUnchecked "jmp", info:
               c.dest.add symToken(pool.syms.getOrIncl(x[1]), info)
 
+proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
+  if n.kind == StringLit:
+    result = n.litId
+    inc n
+  elif n.kind == Symbol:
+    var inlineValue = getInitValue(c.typeCache, n.symId)
+    if not cursorIsNil(inlineValue):
+      result = getSimpleStringLit(c, inlineValue)
+      inc n
+    else:
+      bug "not a string literal"
+  else:
+    case n.exprKind:
+    of SufX:
+      inc n
+      assert n.kind == StringLit
+      result = n.litId
+      skipToEnd n
+    of HconvX, ConvX:
+      inc n
+      assert n.typeKind == CstringT
+      skip n
+      result = getSimpleStringLit(c, n)
+      skipParRi n
+    else:
+      bug "not a string literal"
+
 proc transformStringCase*(c: var EContext; n: var Cursor) =
   c.demand pool.syms.getOrIncl("equalStrings.0." & SystemModuleSuffix)
   c.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
@@ -53,7 +80,20 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
   var selectorNode = nb
   let sinfo = selectorNode.info
   let selector: SymId
-  if selectorNode.kind == Symbol:
+
+  let selectorType = getType(c.typeCache, selectorNode)
+  if selectorType.typeKind == CstringT:
+    # the other overload of `borrowCStringUnsafe`
+    c.demand pool.syms.getOrIncl("borrowCStringUnsafe.1." & SystemModuleSuffix)
+    selector = pool.syms.getOrIncl(":tmp.c." & $c.getTmpId)
+    c.dest.copyIntoUnchecked "var", sinfo:
+      c.dest.add symdefToken(selector, sinfo)
+      c.dest.addDotToken() # pragmas
+      c.dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
+      c.dest.copyIntoUnchecked "call", sinfo:
+        c.dest.add symToken(pool.syms.getOrIncl("nimBorrowCStringUnsafe.c"), sinfo)
+        trExpr(c, selectorNode)
+  elif selectorNode.kind == Symbol:
     selector = selectorNode.symId
   else:
     selector = pool.syms.getOrIncl(":tmp.c." & $c.getTmpId)
@@ -61,7 +101,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       c.dest.add symdefToken(selector, sinfo)
       c.dest.addDotToken() # pragmas
       c.dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
-      traverseExpr(c, selectorNode)
+      trExpr(c, selectorNode)
   skip nb # selector
 
   while nb.kind != ParRi:
@@ -71,9 +111,8 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       assert nb.substructureKind == RangesU
       inc nb
       while nb.kind != ParRi:
-        assert nb.kind == StringLit
-        pairs.add (pool.strings[nb.litId], labl)
-        inc nb
+        let litId = getSimpleStringLit(c, nb)
+        pairs.add (pool.strings[litId], labl)
       inc nb # skip ParRi
       skip nb # skip action for now
       skipParRi nb
@@ -101,10 +140,10 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       inc nb
       inc nb
       while nb.kind != ParRi:
-        inc nb
+        skip nb
         inc i
       inc nb # skip ParRi
-      traverseStmt c, nb
+      trStmt c, nb
       c.dest.copyIntoUnchecked "jmp", info:
         c.dest.add symToken(afterwards, info)
       skipParRi nb
@@ -112,7 +151,7 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
       c.dest.copyIntoUnchecked "lab", info:
         c.dest.add symdefToken(elseLabel, info)
       inc nb
-      traverseStmt c, nb
+      trStmt c, nb
       skipParRi nb
       hasElse = true
     else:

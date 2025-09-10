@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/ttupleviews.nim(3, 13) Error: cannot borrow from a
+tests/nimony/errmsgs/ttupleviews.nim(4, 16) Error: cannot borrow from a

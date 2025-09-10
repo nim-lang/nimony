@@ -18,10 +18,10 @@
   (ref 4 NodeObj.0.tbimvo1d9) 8
   (newobj ~3,~2
    (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~5 data.0.tbimvo1d9 2 +123) 16
-   (kv ~16 left.0.tbimvo1d9 2
+   (kv ~4 data.0.tbimvo1d9 2 +123) 16
+   (kv ~4 left.0.tbimvo1d9 2
     (nil)) 28
-   (kv ~28 right.0.tbimvo1d9 2
+   (kv ~5 right.0.tbimvo1d9 2
     (nil)))) 7,9
  (asgn ~6
   (ddot ~1 x.0.tbimvo1d9 data.0.tbimvo1d9 +0) 2 +456) 7,10
@@ -29,10 +29,10 @@
   (ddot ~1 x.0.tbimvo1d9 left.0.tbimvo1d9 +0) 6
   (newobj ~4,~4
    (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~5 data.0.tbimvo1d9 2 +123) 16
-   (kv ~16 left.0.tbimvo1d9 2
+   (kv ~4 data.0.tbimvo1d9 2 +123) 16
+   (kv ~4 left.0.tbimvo1d9 2
     (nil)) 28
-   (kv ~28 right.0.tbimvo1d9 2
+   (kv ~5 right.0.tbimvo1d9 2
     (nil)))) 8,11
  (asgn ~7
   (ddot ~1 x.0.tbimvo1d9 right.0.tbimvo1d9 +0) 2
@@ -45,16 +45,16 @@
   (ref 4 NodeObj.0.tbimvo1d9) 8
   (newobj ~3,~7
    (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~5 data.0.tbimvo1d9 2 +987) 16
-   (kv ~16 left.0.tbimvo1d9 2
+   (kv ~4 data.0.tbimvo1d9 2 +987) 16
+   (kv ~4 left.0.tbimvo1d9 2
     (nil)) 28
-   (kv ~28 right.0.tbimvo1d9 2
+   (kv ~5 right.0.tbimvo1d9 2
     (nil)))) 12,14
  (asgn ~6
   (ddot ~5
    (ddot ~1 x.0.tbimvo1d9 left.0.tbimvo1d9 +0) left.0.tbimvo1d9 +0) 15
   (newobj ~18,~8
    (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~5 data.0.tbimvo1d9 2 -123) 17
-   (kv ~17 left.0.tbimvo1d9 2 y.0.tbimvo1d9) 27
-   (kv ~27 right.0.tbimvo1d9 2 y.0.tbimvo1d9))))
+   (kv ~4 data.0.tbimvo1d9 2 -123) 17
+   (kv ~4 left.0.tbimvo1d9 2 y.0.tbimvo1d9) 27
+   (kv ~5 right.0.tbimvo1d9 2 y.0.tbimvo1d9))))

@@ -11,7 +11,7 @@ import std / [assertions, hashes]
 
 import bitabs, stringviews, lineinfos, nifreader, nifbuilder
 
-export TokenKind
+export NifKind
 
 const
   InlineInt* = UnknownToken
@@ -26,11 +26,11 @@ const
   TokenKindMask = (1'u32 shl TokenKindBits) - 1'u32
   ExcessK = 1'i32 shl (32 - TokenKindBits - 1)
 
-template kind*(n: PackedToken): TokenKind = cast[TokenKind](n.x and TokenKindMask)
+template kind*(n: PackedToken): NifKind = cast[NifKind](n.x and TokenKindMask)
 template uoperand*(n: PackedToken): uint32 = (n.x shr TokenKindBits)
 template soperand*(n: PackedToken): int32 = cast[int32](uoperand(n))
 
-template toX(k: TokenKind; operand: uint32): uint32 =
+template toX(k: NifKind; operand: uint32): uint32 =
   uint32(k) or (operand shl TokenKindBits)
 
 proc int28Token*(operand: int32; info: PackedLineInfo): PackedToken =
@@ -46,13 +46,13 @@ proc getInt28*(n: PackedToken): int32 =
   let arg = n.soperand
   result = arg - ExcessK
 
-proc toToken[L](kind: TokenKind; id: L; info: PackedLineInfo): PackedToken {.inline.} =
+proc toToken[L](kind: NifKind; id: L; info: PackedLineInfo): PackedToken {.inline.} =
   PackedToken(x: toX(kind, uint32(id)), info: info)
 
 proc parRiToken*(info: PackedLineInfo): PackedToken {.inline.} =
   PackedToken(x: toX(ParRi, 0'u32), info: info)
 
-proc addToken[L](tree: var seq[PackedToken]; kind: TokenKind; id: L; info: PackedLineInfo) =
+proc addToken[L](tree: var seq[PackedToken]; kind: NifKind; id: L; info: PackedLineInfo) =
   tree.add PackedToken(x: toX(kind, uint32(id)), info: info)
 
 proc copyKeepLineInfo*(dest: var PackedToken; src: PackedToken) {.inline.} =
@@ -77,7 +77,7 @@ type
     strings*: BiTable[StrId, string]
     integers*: BiTable[IntId, int64]
     uintegers*: BiTable[UIntId, uint64]
-    floats*: BiTable[FloatId, float64]
+    floats*: BiTableFloat[FloatId]
 
 proc `==`*(a, b: SymId): bool {.borrow.}
 proc `==`*(a, b: StrId): bool {.borrow.}

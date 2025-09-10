@@ -42,47 +42,52 @@ proc semInclude(c: var SemContext; it: var Item) =
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       mode: ImportFilter; exports: var seq[(string, ImportFilter)];
-                      info: PackedLineInfo) =
+                      info: PackedLineInfo): SymId =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
     c.buildErr info, "file not found: " & f2
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
-  var moduleSym = SymId(0)
+  result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
-    if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
-      selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
+    if f1.plugin.len == 0:
+      if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
+        selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
-    moduleSym = identToSym(c, moduleName, ModuleY)
-    c.processedModules[suffix] = moduleSym
-    let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
+    result = identToSym(c, moduleName, ModuleY)
+    c.processedModules[suffix] = result
+    let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
     if f1.name != "":
       c.currentScope.addOverloadable(moduleName, s)
     var moduleDecl = createTokenBuf(2)
     moduleDecl.addParLe(ModuleY, info)
     moduleDecl.addParRi()
-    publish moduleSym, moduleDecl
+    publish result, moduleDecl
   else:
-    moduleSym = c.processedModules[suffix]
-  let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
-  loadInterface suffix, module.iface, moduleSym, c.importTab, c.converters, exports, mode
+    result = c.processedModules[suffix]
+  let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
+  loadInterface suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, mode
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
                       info: PackedLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[] # ignored
-  importSingleFile(c, f1, origin, filter, exports, info)
+  discard importSingleFile(c, f1, origin, filter, exports, info)
 
 proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[]
-  importSingleFile(c, f1, origin, filter, exports, info)
+  let source = importSingleFile(c, f1, origin, filter, exports, info)
   while exports.len != 0:
     var newExports: seq[(string, ImportFilter)] = @[]
     for ex in exports:
       let file = ImportedFilename(path: ex[0], name: "")
-      importSingleFile(c, file, origin, ex[1], newExports, info)
+      let forward = importSingleFile(c, file, origin, ex[1], newExports, info)
+      if forward in c.importedModules[source].exports:
+        mergeFilter(c.importedModules[source].exports[forward], ex[1])
+      else:
+        c.importedModules[source].exports[forward] = ex[1]
     exports = newExports
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
@@ -93,21 +98,23 @@ proc doImports(c: var SemContext; files: seq[ImportedFilename]; mode: ImportFilt
   for f in files:
     importSingleFileConsiderExports c, f, origin, mode, info
 
-proc semImport(c: var SemContext; it: var Item) =
-  let info = it.n.info
-  var x = it.n
-  skip it.n
-  inc x # skip the `import`
-
+template maybeCyclic(c: var SemContext; x: var Cursor) =
   if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
     var y = x
+    inc y
     skip y
     if y.substructureKind == PragmasU:
       inc y
       if y.kind == Ident and pool.strings[y.litId] == "cyclic":
         cyclicImport(c, x)
         return
+
+proc semImport(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  var x = it.n
+  skip it.n
+  inc x # skip the `import`
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
@@ -126,15 +133,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `importexcept`
 
-  if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
@@ -155,15 +154,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `from`
 
-  if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
@@ -175,7 +166,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
     while x.kind != ParRi:
       if x.kind == ParLe and x.exprKind == NilX:
         # from a import nil
-        discard
+        skip x
       else:
         included.incl takeIdent(x)
     doImports c, files, ImportFilter(kind: FromImport, list: included), info
@@ -308,7 +299,7 @@ proc semExportExcept(c: var SemContext; it: var Item) =
 
   let moduleSymStart = c.dest.len
   var m = Item(n: x, typ: c.types.autoType)
-  semExpr c, m # get module sym
+  semExpr c, m, {AllowModuleSym} # get module sym
   x = m.n
   let moduleSym = findModuleSymbol(cursorAt(c.dest, moduleSymStart))
   endRead(c.dest)

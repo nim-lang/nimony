@@ -1,0 +1,17 @@
+at base method: 1
+base check: true
+inherited 1 check: false
+inherited 2 check: false
+at inherited 1 method: 2, 3
+base check: true
+inherited 1 check: true
+at base method: 4.56
+base check: true
+inherited 1 check: false
+inherited 2 check: false
+at inherited 1 method: 7.89, 10.11
+base check: true
+inherited 1 check: true
+at inherited 2 method: 12, abc
+base check: true
+inherited 2 check: true

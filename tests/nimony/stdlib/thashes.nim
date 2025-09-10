@@ -7,6 +7,7 @@ assert compare(123, 123)
 assert compare('a', 'a')
 assert compare(true, true)
 assert compare(false, false)
+assert compare("test", "test")
 
 type
   FooEnum = enum

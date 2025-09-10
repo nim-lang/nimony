@@ -13,6 +13,7 @@ type
     thisModuleSuffix: string
     tempUseBufStack: seq[TokenBuf]
     activeChecks: set[CheckMode]
+    pending: TokenBuf
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): SymId =
   let s = "`desugar." & $c.counter & "." & c.thisModuleSuffix
@@ -65,14 +66,14 @@ proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
     inc n
   else:
-    error "expected ')', but got: ", n
+    bug "expected ')', but got: ", n
 
-proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
 
-proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   copyInto dest, n:
     while n.kind != ParRi:
-      tr(c, dest, n)
+      tr(c, dest, n, isTopScope)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -86,14 +87,14 @@ proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
   skipParRi n
 
-proc trRoutineHeader(c: var Context; dest: var TokenBuf; n: var Cursor; pragmas: var Cursor): bool =
+proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cursor; pragmas: var Cursor): bool =
   # returns false if the routine is generic
   result = true # assume it is concrete
   let sym = n.symId
   for i in 0..<BodyPos:
     if i == ParamsPos:
-      c.typeCache.registerParams(sym, n)
-    elif i == TypeVarsPos:
+      c.typeCache.registerParams(sym, decl, n)
+    elif i == TypevarsPos:
       result = n.substructureKind != TypevarsU
     elif i == ProcPragmasPos:
       pragmas = n
@@ -117,9 +118,10 @@ proc trRequires(c: var Context; dest: var TokenBuf; pragmas: Cursor) =
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
+  let decl = n
   copyInto dest, n:
     var pragmas = default(Cursor)
-    let isConcrete = c.trRoutineHeader(dest, n, pragmas)
+    let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
     if isConcrete and n.stmtKind == StmtsS:
       dest.add n # (stmts)
       trRequires(c, dest, pragmas)
@@ -318,7 +320,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addUIntLit(uint64(mask), info)
         dest.addUIntLit(0, info)
     else:
-      raiseAssert("unreachable")
+      bug("unreachable")
   else:
     case kind
     of LtSetX, LeSetX:
@@ -387,7 +389,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
             of PlusSetX: BitorX
             of XorSetX: BitxorX
             of MulSetX, MinusSetX: BitandX
-            else: raiseAssert("unreachable")
+            else: bug("unreachable")
           addUIntTypedOp dest, op, 8, info:
             copyIntoKind dest, ArrAtX, info:
               dest.addSubtree a
@@ -418,7 +420,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addUIntLit(7, info)
         dest.addUIntLit(0, info)
     else:
-      raiseAssert("unreachable")
+      bug("unreachable")
   if useTemp:
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
@@ -626,7 +628,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.add parLeToken(StmtsS, info)
     # lift both so (n, (n = 123; n)) works
     a = liftTempAddr(c, dest, aOrig, typ, info)
-    b = liftTemp(c, dest, bOrig, typ, info)
+    b = liftTemp(c, dest, bOrig, typ.firstSon, info)
   else:
     a = aOrig
     b = bOrig
@@ -702,7 +704,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
     dec nestedExpr
 
-proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
     takeTree dest, n
@@ -734,15 +736,22 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trLocal c, dest, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS:
         trProc c, dest, n
-      of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-        ForS, CmdS, IncludeS, ImportS, FromimportS, ImportExceptS,
+      of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
+        ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
         ExportS, CommentS,
         PragmasS:
         takeTree dest, n
+      of TypeS:
+        if isTopScope:
+          takeTree dest, n
+        else:
+          takeTree c.pending, n
       of ScopeS:
         c.typeCache.openScope()
         trSons(c, dest, n)
         c.typeCache.closeScope()
+      of StmtsS:
+        trSons(c, dest, n, isTopScope = isTopScope)
       else:
         trSons(c, dest, n)
     of SetConstrX:
@@ -767,12 +776,19 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       trSons(c, dest, n)
   of ParRi:
-    raiseAssert "unexpected ')' inside"
+    bug "unexpected ')' inside"
 
 proc desugar*(n: Cursor; moduleSuffix: string; activeChecks: set[CheckMode]): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks)
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n
-  tr c, result, n
+  tr c, result, n, isTopScope = true
+
+  assert result[result.len-1].kind == ParRi
+  shrink(result, result.len-1)
+
+  result.add c.pending
+  result.addParRi()
+
   c.typeCache.closeScope()

@@ -1,8 +1,5 @@
 include mimalloc
 
-type
-  cint {.importc: "int", nodecl.} = int32
-
 proc allocFixed*(size: int): pointer =
   result = mi_malloc(size.csize_t)
 

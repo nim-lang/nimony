@@ -15,6 +15,7 @@ proc fprintf(f: ptr RawCFile; fmt: cstring) {.varargs, importc: "fprintf", heade
 proc writeErr(x: int64) = fprintf(cstderr, cstring"%lld", x)
 proc writeErr(x: uint64) = fprintf(cstderr, cstring"%llu", x)
 proc writeErr(s: string) = discard c_fwrite(rawData(s), 1'u, s.len.uint, cstderr)
+proc writeErr(s: cstring) = discard c_fwrite(s, 1'u, s.len.uint, cstderr)
 
 proc panic*(s: string) {.noinline.} =
   writeErr s
@@ -57,3 +58,14 @@ proc nimUcheckB(i, b: uint): uint {.inline, exportc: "nimUcheckB".} =
   result = i
   if result > b:
     raiseIndexError3(i, 0, b)
+
+proc nimInvalidObjConv(name: string) {.inline, exportc: "nimInvalidObjConv".} =
+  writeErr "invalid object conversion: "
+  writeErr name
+  writeErr "\n"
+  die 1'i32
+
+proc nimChckNilDisp(p: pointer) {.inline, exportc: "nimChckNilDisp".} =
+  if p == nil:
+    writeErr "cannot dispatch; dispatcher is nil\n"
+    die 1'i32

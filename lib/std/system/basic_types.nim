@@ -34,6 +34,32 @@ type # we need to start a new type section here, so that ``0`` can have a type
   bool* {.magic: "Bool".} = enum ## Built-in boolean type.
     false = 0, true = 1
 
+# nimony only:
+type
+  OrdinalEnum* {.magic: "OrdinalEnum".}
+  HoleyEnum* {.magic: "HoleyEnum".}
+  `enum`* = OrdinalEnum | HoleyEnum
+
+type
+  SomeSignedInt* = int|int8|int16|int32|int64
+    ## Type class matching all signed integer types.
+
+  SomeUnsignedInt* = uint|uint8|uint16|uint32|uint64
+    ## Type class matching all unsigned integer types.
+
+  SomeInteger* = SomeSignedInt|SomeUnsignedInt
+    ## Type class matching all integer types.
+
+  SomeFloat* = float|float32|float64
+    ## Type class matching all floating point number types.
+
+  SomeNumber* = SomeInteger|SomeFloat
+    ## Type class matching all number types.
+
+  SomeOrdinal* = int|int8|int16|int32|int64|bool|enum|uint|uint8|uint16|uint32|uint64
+    ## Type class matching all ordinal types; however this includes enums with
+    ## holes. See also `Ordinal`
+
 proc `not`*(x: bool): bool {.magic: "Not", noSideEffect.}
   ## Boolean not; returns true if `x == false`.
 
@@ -55,6 +81,8 @@ type
   untyped* {.magic: Expr.}
   typed* {.magic: Stmt.}
 
+  void* {.magic: "VoidType".} ## Meta type to denote the absence of any type.
+
 type
   Ordinal*[T] {.magic: Ordinal.} ## Generic ordinal type. Includes integer,
                                   ## bool, character, and enumeration types
@@ -75,3 +103,16 @@ proc low*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "Low", noSideEffect
 proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
 proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
 proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
+
+template low*[I, T](x: array[I, T]): I =
+  low(array[I, T])
+template high*[I, T](x: array[I, T]): I =
+  high(array[I, T])
+
+type
+  RootObj* {.inheritable.} =
+    object ## The root of Nim's object hierarchy.
+           ##
+           ## Objects should inherit from `RootObj` or one of its descendants.
+           ## However, objects that have no ancestor are also allowed.
+  RootRef* = ref RootObj ## Reference to `RootObj`.

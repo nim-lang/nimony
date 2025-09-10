@@ -1,7 +1,7 @@
 (stmts
  (let :other.var . .
   (i -1) +12)
- (var :`cf0 . .
+ (var :`cf.0 . .
   (i -1) .)
  (ite
   (eq
@@ -39,12 +39,12 @@
   (goto L85)
   (goto L90))
  (lab :L85)
- (asgn `cf0 +1)
+ (asgn `cf.0 +1)
  (goto L95)
  (lab :L90)
- (asgn `cf0 +0)
+ (asgn `cf.0 +0)
  (goto L95)
  (lab :L95)
  (let :my.var . .
-  (i -1) `cf0)
- (ret))
+  (i -1) `cf.0)
+ (ret .))

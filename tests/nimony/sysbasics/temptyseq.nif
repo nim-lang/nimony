@@ -41,8 +41,8 @@
      (stmts 7
       (asgn ~7 result.0 8
        (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Ipe57hg.temd2l7vy 4
-        (kv ~4 len.3.Ipe57hg.temd2l7vy 2 size.3) 16
-        (kv ~16 data.0.Ipe57hg.temd2l7vy 2
+        (kv ~3 len.3.Ipe57hg.temd2l7vy 2 size.3) 16
+        (kv ~4 data.0.Ipe57hg.temd2l7vy 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
@@ -51,15 +51,15 @@
        (call ~17 memSizeInBytes.0.temd2l7vy 1 size.3)) 7,1
       (asgn ~7 result.0 8
        (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Ipe57hg.temd2l7vy 4
-        (kv ~4 len.3.Ipe57hg.temd2l7vy 2 size.3) 16
-        (kv ~16 data.0.Ipe57hg.temd2l7vy 2
+        (kv ~3 len.3.Ipe57hg.temd2l7vy 2 size.3) 16
+        (kv ~4 data.0.Ipe57hg.temd2l7vy 2
          (cast 5
           (ptr 18
            (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
             (i -1))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.0))))) ,2
       (if 3
-       (elif 2,98,lib/std/system/comparisons.nim
+       (elif 2,106,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
           (eq
@@ -94,8 +94,8 @@
      (stmts 7
       (asgn ~7 result.1 8
        (oconstr ~3,~2 seq.0.Iw9f2pq.temd2l7vy 4
-        (kv ~4 len.3.Iw9f2pq.temd2l7vy 2 size.5) 16
-        (kv ~16 data.0.Iw9f2pq.temd2l7vy 2
+        (kv ~3 len.3.Iw9f2pq.temd2l7vy 2 size.5) 16
+        (kv ~4 data.0.Iw9f2pq.temd2l7vy 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
@@ -104,15 +104,15 @@
        (call ~17 memSizeInBytes.1.temd2l7vy 1 size.5)) 7,1
       (asgn ~7 result.1 8
        (oconstr ~3,~5 seq.0.Iw9f2pq.temd2l7vy 4
-        (kv ~4 len.3.Iw9f2pq.temd2l7vy 2 size.5) 16
-        (kv ~16 data.0.Iw9f2pq.temd2l7vy 2
+        (kv ~3 len.3.Iw9f2pq.temd2l7vy 2 size.5) 16
+        (kv ~4 data.0.Iw9f2pq.temd2l7vy 2
          (cast 5
           (ptr 18
            (uarray
             (f +64))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.1))))) ,2
       (if 3
-       (elif 2,98,lib/std/system/comparisons.nim
+       (elif 2,106,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
           (eq
@@ -156,8 +156,8 @@
      (stmts 7
       (asgn ~7 result.2 8
        (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.0.Iq4ofkp1.temd2l7vy 4
-        (kv ~4 len.3.Iq4ofkp1.temd2l7vy 2 size.7) 16
-        (kv ~16 data.0.Iq4ofkp1.temd2l7vy 2
+        (kv ~3 len.3.Iq4ofkp1.temd2l7vy 2 size.7) 16
+        (kv ~4 data.0.Iq4ofkp1.temd2l7vy 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
@@ -166,15 +166,15 @@
        (call ~17 memSizeInBytes.2.temd2l7vy 1 size.7)) 7,1
       (asgn ~7 result.2 8
        (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.0.Iq4ofkp1.temd2l7vy 4
-        (kv ~4 len.3.Iq4ofkp1.temd2l7vy 2 size.7) 16
-        (kv ~16 data.0.Iq4ofkp1.temd2l7vy 2
+        (kv ~3 len.3.Iq4ofkp1.temd2l7vy 2 size.7) 16
+        (kv ~4 data.0.Iq4ofkp1.temd2l7vy 2
          (cast 5
           (ptr 18
            (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
             (u +8))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.2))))) ,2
       (if 3
-       (elif 2,98,lib/std/system/comparisons.nim
+       (elif 2,106,lib/std/system/comparisons.nim
         (expr ,1
          (not 7
           (eq
@@ -321,7 +321,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.0)))) ,4
    (if 3
-    (elif 2,98,lib/std/system/comparisons.nim
+    (elif 2,106,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
        (eq
@@ -332,9 +332,9 @@
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,19,lib/std/system/mimalloc.nim
+       (hconv 17,49,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 17,19,lib/std/system/mimalloc.nim
+        (hconv 13,43,lib/std/system/mimalloc.nim
          (pointer)
          (dot ~1 s.6 data.0.Ipe57hg.temd2l7vy +0))))))))) 0,19,lib/std/system/seqimpl.nim
  (proc :=wasMoved.0.temd2l7vy . .
@@ -461,9 +461,9 @@
          (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
           (i -1))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,16,lib/std/system/mimalloc.nim
+         (hconv 17,46,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 17,19,lib/std/system/mimalloc.nim
+          (hconv 13,43,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
             (hderef dest.3) data.0.Ipe57hg.temd2l7vy +0))) 12 memSize.3))) ,4
@@ -493,7 +493,7 @@
      (i +64) ~2 i.3 6
      (dot ~4
       (hderef dest.3) len.3.Ipe57hg.temd2l7vy +0)) 2,1
-    (stmts 2,23,lib/std/system.nim
+    (stmts 2,31,lib/std/system.nim
      (stmts 7
       (asgn ~6
        (pat 8,124,lib/std/system/seqimpl.nim
@@ -523,7 +523,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.4)))) ,4
    (if 3
-    (elif 2,98,lib/std/system/comparisons.nim
+    (elif 2,106,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
        (eq
@@ -534,9 +534,9 @@
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,19,lib/std/system/mimalloc.nim
+       (hconv 17,49,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 17,19,lib/std/system/mimalloc.nim
+        (hconv 13,43,lib/std/system/mimalloc.nim
          (pointer)
          (dot ~1 s.9 data.0.Iw9f2pq.temd2l7vy +0))))))))) 0,19,lib/std/system/seqimpl.nim
  (proc :=wasMoved.1.temd2l7vy . .
@@ -663,9 +663,9 @@
          (uarray
           (f +64))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,16,lib/std/system/mimalloc.nim
+         (hconv 17,46,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 17,19,lib/std/system/mimalloc.nim
+          (hconv 13,43,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
             (hderef dest.4) data.0.Iw9f2pq.temd2l7vy +0))) 12 memSize.4))) ,4
@@ -695,7 +695,7 @@
      (i +64) ~2 i.7 6
      (dot ~4
       (hderef dest.4) len.3.Iw9f2pq.temd2l7vy +0)) 2,1
-    (stmts 2,23,lib/std/system.nim
+    (stmts 2,31,lib/std/system.nim
      (stmts 7
       (asgn ~6
        (pat 8,124,lib/std/system/seqimpl.nim
@@ -725,7 +725,7 @@
      (cmd inc.0.temd2l7vy 4
       (haddr i.8)))) ,4
    (if 3
-    (elif 2,98,lib/std/system/comparisons.nim
+    (elif 2,106,lib/std/system/comparisons.nim
      (expr ,1
       (not 7
        (eq
@@ -736,9 +736,9 @@
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,19,lib/std/system/mimalloc.nim
+       (hconv 17,49,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 17,19,lib/std/system/mimalloc.nim
+        (hconv 13,43,lib/std/system/mimalloc.nim
          (pointer)
          (dot ~1 s.12 data.0.Iq4ofkp1.temd2l7vy +0))))))))) 0,19,lib/std/system/seqimpl.nim
  (proc :=wasMoved.2.temd2l7vy . .
@@ -865,9 +865,9 @@
          (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
           (u +8))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,16,lib/std/system/mimalloc.nim
+         (hconv 17,46,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 17,19,lib/std/system/mimalloc.nim
+          (hconv 13,43,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
             (hderef dest.5) data.0.Iq4ofkp1.temd2l7vy +0))) 12 memSize.5))) ,4
@@ -897,7 +897,7 @@
      (i +64) ~2 i.11 6
      (dot ~4
       (hderef dest.5) len.3.Iq4ofkp1.temd2l7vy +0)) 2,1
-    (stmts 2,23,lib/std/system.nim
+    (stmts 2,31,lib/std/system.nim
      (stmts 7
       (asgn ~6
        (pat 8,124,lib/std/system/seqimpl.nim
@@ -908,15 +908,15 @@
          (dot ~3 src.5 data.0.Iq4ofkp1.temd2l7vy +0) 6 i.11)))) ,1
      (cmd inc.0.temd2l7vy 4
       (haddr i.11)))))) 4,15,lib/std/system/seqimpl.nim
- (proc :inc.0.temd2l7vy . 0,12,lib/std/system.nim .
+ (proc :inc.0.temd2l7vy . 0,12,lib/std/system/arithmetics.nim .
   (at inc.1.sysvq0asl 5,~10
-   (i -1)) 21,12,lib/std/system.nim
+   (i -1)) 21,12,lib/std/system/arithmetics.nim
   (params 1
    (param :x.5 . . 3
     (mut 9,5,lib/std/system/seqimpl.nim
-     (i -1)) .)) 0,12,lib/std/system.nim . 32,12,lib/std/system.nim
+     (i -1)) .)) 0,12,lib/std/system/arithmetics.nim . 32,12,lib/std/system/arithmetics.nim
   (pragmas 2
-   (inline)) 0,12,lib/std/system.nim . 2,13,lib/std/system.nim
+   (inline)) 0,12,lib/std/system/arithmetics.nim . 2,13,lib/std/system/arithmetics.nim
   (stmts 2,1
    (asgn ~2
     (hderef x.5) 6
@@ -938,7 +938,7 @@
     (i -1) .) 7
    (asgn ~7 result.9 2
     (if 3
-     (elif 2,98,lib/std/system/comparisons.nim
+     (elif 2,106,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
         (eq
@@ -949,9 +949,9 @@
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,22,lib/std/system/mimalloc.nim
+        (hconv 23,52,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 17,19,lib/std/system/mimalloc.nim
+         (hconv 13,43,lib/std/system/mimalloc.nim
           (pointer)
           (dot ~1 s.15 data.0.Ipe57hg.temd2l7vy +0)))))) 40
      (else 6
@@ -970,7 +970,7 @@
     (i -1) .) 7
    (asgn ~7 result.10 2
     (if 3
-     (elif 2,98,lib/std/system/comparisons.nim
+     (elif 2,106,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
         (eq
@@ -981,9 +981,9 @@
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,22,lib/std/system/mimalloc.nim
+        (hconv 23,52,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 17,19,lib/std/system/mimalloc.nim
+         (hconv 13,43,lib/std/system/mimalloc.nim
           (pointer)
           (dot ~1 s.16 data.0.Iw9f2pq.temd2l7vy +0)))))) 40
      (else 6
@@ -1002,7 +1002,7 @@
     (i -1) .) 7
    (asgn ~7 result.11 2
     (if 3
-     (elif 2,98,lib/std/system/comparisons.nim
+     (elif 2,106,lib/std/system/comparisons.nim
       (expr ,1
        (not 7
         (eq
@@ -1013,9 +1013,9 @@
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,22,lib/std/system/mimalloc.nim
+        (hconv 23,52,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 17,19,lib/std/system/mimalloc.nim
+         (hconv 13,43,lib/std/system/mimalloc.nim
           (pointer)
           (dot ~1 s.17 data.0.Iq4ofkp1.temd2l7vy +0)))))) 40
      (else 6

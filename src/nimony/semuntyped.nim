@@ -52,7 +52,7 @@ proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var HashSet[SymId]) =
         while syms.kind != ParRi:
           c.dest.add syms
       else:
-        raiseAssert("unreachable")
+        bug("unreachable")
   takeParRi c, n
 
 proc semMixinStmt(c: var SemContext; n: var Cursor; toMixin: var HashSet[StrId]) =
@@ -310,7 +310,7 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
     closeScope(c)
   of DistinctT:
     semTemplBodySons c, n
-  of ProctypeT, IteratorT, ParamsT:
+  of RoutineTypes:
     # open scope for param decls
     openScope(c)
     semTemplBodySons c, n
@@ -318,7 +318,10 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
   of ItertypeT:
     semTemplBodySons c, n
   of NoType:
-    raiseAssert("unreachable")
+    if n.kind == Ident:
+      semTemplBody c, n
+    else:
+      bug("unreachable")
 
 proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
   let orig = n
@@ -537,6 +540,9 @@ proc semTemplBody*(c: var UntypedCtx; n: var Cursor) =
       inc c.noGenSym
       semTemplBody c, n
       dec c.noGenSym
+      if n.kind != ParRi:
+        # annoying inheritance depth:
+        takeTree c.c[], n
       takeParRi c.c[], n
     of QuotedX:
       let ident = getIdent(n)

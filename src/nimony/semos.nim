@@ -8,8 +8,10 @@
 
 from std / strutils import multiReplace, split, strip
 import std / [tables, sets, os, syncio, formatfloat, assertions]
+from std / osproc import execCmdEx
+
 include nifprelude
-import ".." / lib / nifchecksums
+import ".." / lib / [nifchecksums, tooldirs, argsfinder]
 
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -17,24 +19,22 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
 
 import ".." / gear2 / modnames
 
-proc stdlibDir*(): string =
+proc nimonyDir(): string =
   let appDir = getAppDir()
   let (head, tail) = splitPath(appDir)
   if tail == "bin":
-    result = head / "lib"
+    result = head
   else:
-    result = appDir / "lib"
+    result = appDir
 
-proc setupPaths*(config: var NifConfig; useEnv: bool) =
-  if useEnv:
-    let nimPath = getEnv("NIMPATH")
-    for entry in split(nimPath, PathSep):
-      if entry.strip != "":
-        config.paths.add entry
-    if config.paths.len == 0:
-      config.paths.add stdlibDir()
-  else:
-    config.paths.add stdlibDir()
+proc stdlibDir*(): string =
+  result = nimonyDir() / "lib"
+
+proc setupPaths*(config: var NifConfig) =
+  config.paths.add stdlibDir()
+  let pathsFile = findArgs(config.baseDir, "nimony.paths")
+  processPathsFile pathsFile, config.paths
+  #echo getAppFilename(), "CONFIG.BASEDIR: ", config.baseDir, " CONFIG.PATHS: ", config.paths
 
 proc stdlibFile*(f: string): string =
   result = stdlibDir() / f
@@ -45,17 +45,6 @@ proc compilerDir*(): string =
   if tail == "bin":
     return head
   else: return tail
-
-proc binDir*(): string =
-  let appDir = getAppDir()
-  let (_, tail) = splitPath(appDir)
-  if tail == "bin":
-    result = appDir
-  else:
-    result = appDir / "bin"
-
-proc toolDir*(f: string): string =
-  result = binDir() / f
 
 proc absoluteParentDir*(f: string): string =
   result = f.absolutePath().parentDir()
@@ -75,11 +64,6 @@ proc toRelativePath*(f: string, dir: string): string =
   if not f.isAbsolute: return f
   result = f.relativePath(dir)
 
-proc findTool*(name: string): string =
-  assert not name.isAbsolute
-  let exe = name.addFileExt(ExeExt)
-  result = toolDir(exe)
-
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
 
@@ -91,9 +75,10 @@ proc nimexec(cmd: string) =
 
 proc updateCompilerGitSubmodules*(config: NifConfig) =
   # XXX: hack for more convenient development
+  let cwd = getCurrentDir()
   setCurrentDir compilerDir()
   exec "git submodule update --init"
-  setCurrentDir config.currentPath
+  setCurrentDir cwd
 
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
@@ -113,6 +98,19 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
   #  result = stdFile nimFile
   if toResolve.isAbsolute:
     result = nimFile
+  elif toResolve.len > 0 and toResolve[0] == '$':
+    var key = ""
+    var i = 1
+    while i < toResolve.len:
+      if toResolve[i] in {'/', '\\'}:
+        break
+      key.add toResolve[i]
+      inc i
+    let val = getEnv(key)
+    if val.len == 0:
+      result = nimFile
+    else:
+      result = val / nimFile.substr(i)
   else:
     result = splitFile(origin).dir / nimFile
     var i = 0
@@ -120,10 +118,12 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
       result = paths[i] / nimFile
       inc i
 
-type ImportedFilename* = object
-  path*: string ## stringified path from AST that has to be resolved
-  name*: string ## extracted module name to define a sym for in `import`
-  isSystem*: bool
+type
+  ImportedFilename* = object
+    path*: string ## stringified path from AST that has to be resolved
+    name*: string ## extracted module name to define a sym for in `import`
+    plugin*: string ## plugin name if any (usually empty)
+    isSystem*: bool
 
 proc moduleNameFromPath*(path: string): string =
   result = splitFile(path).name
@@ -185,7 +185,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         let alias = pool.strings[aliasId]
         var prefix: seq[ImportedFilename] = @[]
         filenameVal(x, prefix, hasError, allowAs = false)
-        if x.kind != ParRi or prefix.len == 0:
+        if rhs.kind != ParRi or prefix.len == 0:
           hasError = true
         for pre in mitems(prefix):
           res.add ImportedFilename(path: pre.path, name: alias)
@@ -198,7 +198,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
           hasError = true
         for pre in mitems(prefix):
           for suf in mitems(suffix):
-            res.add ImportedFilename(path: pre.path & op & suf.path, name: suf.name)
+            res.add ImportedFilename(path: pre.path & op & suf.path, name: suf.name, plugin: suf.plugin)
     of PrefixX:
       var x = n
       skip n # ensure we skipped it completely
@@ -213,7 +213,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       if x.kind != ParRi or suffix.len == 0:
         hasError = true
       for suf in mitems(suffix):
-        res.add ImportedFilename(path: op & suf.path, name: suf.name)
+        res.add ImportedFilename(path: op & suf.path, name: suf.name, plugin: suf.plugin)
     of ParX, TupX, BracketX:
       inc n
       if n.kind == ParRi:
@@ -231,6 +231,32 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         while n.kind != ParRi:
           filenameVal(n, res, hasError, allowAs)
       inc n
+    of PragmaxX:
+      let orig = n
+      inc n
+      let start = res.len
+      if n.kind == ParRi:
+        hasError = true
+      else:
+        filenameVal(n, res, hasError, allowAs)
+        var success = false
+        if n.substructureKind == PragmasU:
+          inc n
+          if n.substructureKind == KvU:
+            inc n
+            if n.kind == Ident and pool.strings[n.litId] == "plugin":
+              inc n
+              if n.kind == StringLit:
+                for i in start ..< res.len:
+                  res[i].plugin = pool.strings[n.litId]
+                  success = true
+                inc n
+                if n.kind == ParRi: inc n
+                else: hasError = true
+        if not success:
+          n = orig
+          skip n
+          hasError = true
     else:
       hasError = true
       skip n
@@ -274,34 +300,76 @@ proc getFile*(info: PackedLineInfo): string =
     result = ""
 
 proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
-  exec os.getAppFilename() & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
+  let nimonyExe = findTool("nimony")
+  exec quoteShell(nimonyExe) & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
+  #exec os.getAppFilename() & c.commandLineArgs & moreArgs & " --ischild m " & quoteShell(file)
 
 # ------------------ plugin handling --------------------------
 
-proc compilePlugin(c: var SemContext; info: PackedLineInfo; nimfile, exefile: string) =
-  let nf = resolveFile(c.g.config.paths, getFile(info), nimfile)
-  let cmd = "nim c -o " & quoteShell(exefile) & " " & quoteShell(nf)
+proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
+  let pluginDir = nimonyDir() / "src/nimony/lib"
+  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
+    " " & quoteShell(nf)
   exec cmd
 
-proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string) =
-  let p = splitFile(pluginName)
-  let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input)
-  let inputFile = basename & ".in.nif"
-  let outputFile = basename & ".out.nif"
-  let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
-  if not fileExists(pluginExe):
-    compilePlugin(c, info, pluginName, pluginExe)
-  if fileExists(inputFile) and readFile(inputFile) == input:
+proc writeFileIfChanged(file, content: string) =
+  if fileExists(file) and readFile(file) == content:
     # do not touch the timestamp
     discard "nothing to do here"
   else:
-    writeFile inputFile, input
+    writeFile file, content
+
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string;
+                additionalInput = "") =
+  let p = splitFile(pluginName)
+  let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
+  let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input) & checksumA
+  let inputFile = basename & ".in.nif"
+  let outputFile = basename & ".out.nif"
+  let inputFileB = basename & ".types.nif"
+  let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
+
+  let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
+  if needsRecompile(nf, pluginExe):
+    compilePlugin(c, info, nf, pluginExe)
+
+  writeFileIfChanged(inputFile, input)
+  if additionalInput.len > 0:
+    writeFileIfChanged(inputFileB, additionalInput)
 
   if needsRecompile(pluginExe, outputFile):
-    let cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
+    var cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
+    if additionalInput.len > 0:
+      cmd &= " "
+      cmd &= quoteShell(inputFileB)
     exec cmd
   var s = nifstreams.open(outputFile)
   try:
     parse s, dest, NoLineInfo
   finally:
     close s
+
+proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
+  let nimonyExe = findTool("nimsem")
+  var cmd = quoteShell(nimonyExe) & " e " & quoteShell(file)
+  for module in usedModules:
+    cmd &= " " & quoteShell(module)
+  result = execCmdEx(cmd)
+
+proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
+  ## Returns an error message if the evaluation failed, "" on success.
+  #echo "HEREES ", toString(src, false)
+  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".2.nif")
+  writeFileAndIndex(progfile, src)
+
+  let (output, exitCode) = runProgram(progfile, usedModules)
+  if exitCode != 0:
+    result = ensureMove(output)
+  else:
+    let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
+    var s = nifstreams.open(outfile)
+    try:
+      parse s, dest, NoLineInfo
+    finally:
+      close s
+    result = ""

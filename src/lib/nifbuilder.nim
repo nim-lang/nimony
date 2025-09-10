@@ -150,7 +150,7 @@ proc addSymbolDef*(b: var Builder; s: string) =
 proc addStrLit*(b: var Builder; s: string) =
   addSep b
   b.put '"'
-  for c in s:
+  for c in s.items:
     if needsEscape c:
       b.escape c
     else:
@@ -171,27 +171,28 @@ proc addCharLit*(b: var Builder; c: char) =
     b.put c
   b.put '\''
 
-proc addIntLit*(b: var Builder; i: BiggestInt) =
+proc addIntLit*(b: var Builder; i: int64) =
   addSep b
   if i >= 0:
     b.buf.add '+'
   b.put $i
 
-proc addUIntLit*(b: var Builder; u: BiggestUInt) =
+proc addUIntLit*(b: var Builder; u: uint64) =
   addSep b
   b.buf.add '+'
   b.put $u
   b.buf.add 'u'
 
-proc addFloatLit*(b: var Builder; f: BiggestFloat) =
+proc addFloatLit*(b: var Builder; f: float) =
   addSep b
-  let myLen = b.buf.len
   drainPending b
+  let myLen = b.buf.len
   case classify(f)
   of fcInf: b.buf.add "(inf)"
   of fcNan: b.buf.add "(nan)"
   of fcNegInf: b.buf.add "(neginf)"
-  of fcNormal, fcSubnormal, fcZero, fcNegZero:
+  of fcNegZero: b.buf.add "-0.0"
+  of fcNormal, fcSubnormal, fcZero:
     if f >= 0.0:
       b.buf.add '+'
     b.buf.addFloat f
@@ -237,7 +238,7 @@ proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
     b.buf.add ','
     b.buf.addLine line
     b.buf.add ','
-    for c in file:
+    for c in file.items:
       if c.needsEscape:
         b.escape c
       else:
@@ -282,7 +283,7 @@ template withTree*(b: var Builder; kind: string; body: untyped) =
   body
   endTree b
 
-proc addUIntLit*(b: var Builder; u: BiggestUInt; suffix: string) =
+proc addUIntLit*(b: var Builder; u: uint64; suffix: string) =
   withTree(b, "suf"):
     addUIntLit(b, u)
     addStrLit(b, suffix)
@@ -323,6 +324,8 @@ when isMainModule:
         b.addSymbol "foo.3.mymod"
         b.addIntLit 3423
         b.addFloatLit 50.4
+        # issue #1313
+        b.addFloatLit -0.0
 
     if b.attachedToFile:
       b.close

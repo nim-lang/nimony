@@ -66,3 +66,8 @@ left the loop!
 0
 123
 1000
+10
+true true
+true false
+false true
+false false

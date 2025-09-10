@@ -75,3 +75,27 @@ block:
   assert objs[0].y == 0
   assert objs[1].x == 0
   assert objs[1].y == 0
+
+block:
+  var p = default(pointer)
+  assert p == nil
+
+  type
+    Foo = object
+      p: pointer
+
+  var foo = default(Foo)
+  assert foo.p == nil
+
+block:
+  type
+    Rune = distinct int
+
+  proc foo() =
+    var res = newSeq[Rune](1)
+    assert res[0].int == 0
+
+    var des = default(Rune)
+    assert des.int == 0
+
+  foo()

@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/templ_lineinfo.nim(5, 4) Trace: instantiation from here
+tests/nimony/errmsgs/deps/myynclude.nim(8, 51) Error: undeclared identifier: 'undeclaredProc'
+tests/nimony/errmsgs/templ_lineinfo.nim(7, 4) Trace: instantiation from here
+tests/nimony/errmsgs/deps/myimp.nim(4, 58) Error: undeclared identifier: 'anotherUndeclaredProc'

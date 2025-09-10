@@ -6,5 +6,5 @@ type
     kind: FooEnum
 
 iterator testIter*(): int =
-  var f: BarObj
+  var f = BarObj(kind: abc)
   f.kind = abc

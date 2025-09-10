@@ -1,5 +1,12 @@
 ## Hastur - Tester tool for Nimony and its related subsystems (NIFC etc).
-## (c) 2024 Andreas Rumpf
+## (c) 2024-2025 Andreas Rumpf
+
+when defined(windows):
+  when defined(gcc):
+    when defined(x86):
+      {.link: "../icons/hastur.res".}
+    else:
+      {.link: "../icons/hastur_icon.o".}
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
@@ -10,16 +17,16 @@ const
   Version = "0.6"
   Usage = "hastur - tester tool for Nimony Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
-  test <file>          run test <file>.
+  test <file>/<dir>    run test <file> or <dir>.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
@@ -162,14 +169,18 @@ proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
   result = "nimcache" / name.addFileExt(ext)
 
+proc generatedExeFile(orig: string): string =
+  result = "nimcache" / orig.splitFile.name.addFileExt(ExeExt)
+
 proc removeMakeErrors(output: string): string =
   result = output.strip
   for prefix in ["FAILURE:", "make:"]:
     let lastLine = rfind(result, '\n')
-    if lastLine >= 0 and lastLine + prefix.len < result.len and
-        result[lastLine + 1 .. lastLine + prefix.len] == prefix:
-      result = result[0 .. lastLine].strip
-    else: break
+    if lastLine >= 0:
+      if result.continuesWith(prefix, lastLine+1):
+        result.setLen lastLine
+    elif result.startsWith(prefix):
+      result.setLen 0
 
 proc compareValgrindOutput(s1: string, s2: string): bool =
   # ==90429==
@@ -242,13 +253,13 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       diffFiles c, file, cfile, nimcacheC, overwrite
 
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       var output = file.changeFileExt(".output")
       if testProgramExitCode != 0:
         output = file.changeFileExt(".exitcode")
         if not output.fileExists():
-          failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode
+          failure c, file, "test program exitcode 0", "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
       if output.fileExists():
         let outputSpec = readFile(output).strip
         let success = outputSpec == testProgramOutput.strip
@@ -271,11 +282,11 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
     if x.kind == pcFile and x.path.endsWith(".nim"):
       files.add x.path
   sort files
-  if cat == Compat:
+  if cat in {Compat, Basics}:
     removeDir "nimcache"
   for f in items files:
     testFile c, f, overwrite, cat
-  if cat == Compat:
+  if cat in {Compat, Basics}:
     removeDir "nimcache"
 
 proc parseCategory(path: string): Category =
@@ -302,7 +313,7 @@ proc nimonytests(overwrite: bool) =
     let cat = parseCategory x.path
     if x.kind == pcDir:
       testDir c, TestDir / x.path, overwrite, cat
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
@@ -341,7 +352,7 @@ proc controlflowTests(tool: string; overwrite: bool) =
           os.removeFile(dest)
         else:
           failure c, t, expectedOutput, destContent
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, precision=2), "s."
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
@@ -352,6 +363,16 @@ proc test(t: string; overwrite: bool; cat: Category) =
   testFile c, t, overwrite, cat
   if c.failures > 0:
     quit "FAILURE: Test failed."
+  else:
+    echo "SUCCESS."
+
+proc testDirCmd(dir: string; overwrite: bool) =
+  var c = TestCounters(total: 0, failures: 0)
+  let t0 = epochTime()
+  testDir c, dir, overwrite, findCategory(dir)
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some tests failed."
   else:
     echo "SUCCESS."
 
@@ -399,7 +420,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       let ext = if testProgramExitCode != 0: ".exitcode" else: ".output"
       addTestSpec test.changeFileExt(ext), testProgramOutput
@@ -458,6 +479,11 @@ proc buildHexer(showProgress = false) =
   exec "nim c src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
+
+proc buildNifmake(showProgress = false) =
+  exec "nim c src/nifmake/nifmake.nim", showProgress
+  let exe = "nifmake".addFileExt(ExeExt)
+  robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -554,6 +580,7 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     buildHexer()
+    buildNifmake()
     nimonytests(overwrite)
     nifctests(overwrite)
     #hexertests(overwrite)
@@ -579,6 +606,7 @@ proc handleCmdLine =
       buildNimony(showProgress)
       buildNifc(showProgress)
       buildHexer(showProgress)
+      buildNifmake(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -588,6 +616,8 @@ proc handleCmdLine =
       buildNifc(showProgress)
     of "hexer":
       buildHexer(showProgress)
+    of "nifmake":
+      buildNifmake(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
@@ -606,7 +636,10 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     if args.len > 0:
-      test args[0], overwrite, findCategory(args[0])
+      if args[0].dirExists():
+        testDirCmd args[0], overwrite
+      else:
+        test args[0], overwrite, findCategory(args[0])
     else:
       quit "`test` takes an argument"
   of "record":

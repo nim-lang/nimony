@@ -1,0 +1,116 @@
+(.nif24)
+0,1,tests/nimony/sysbasics/ttabconstr.nim(stmts
+ (proc 5 :emptyArray.0.ttaqkm614 . . . 15
+  (params 1
+   (param :arr.0 . . 10
+    (array 4
+     (i -1)
+     (rangetype
+      (i -1) +0 -1)) .)) . . . 38
+  (stmts
+   (discard .))) ,1
+ (proc 5 :tableIntInt.0.ttaqkm614 . . . 16
+  (params 1
+   (param :arr.1 . . 10
+    (array 4
+     (tuple 1
+      (i -1) 6
+      (i -1))
+     (rangetype
+      (i -1) +0 +0)) .)) . . . 46
+  (stmts
+   (discard .))) ,2
+ (proc 5 :tableStrInt.0.ttaqkm614 . . . 16
+  (params 1
+   (param :arr.2 . . 10
+    (array 4
+     (tuple 1 string.0.sysvq0asl 9
+      (i -1))
+     (rangetype
+      (i -1) +0 +1)) .)) . . . 49
+  (stmts
+   (discard .))) ,3
+ (proc 5 :tableIntTup.0.ttaqkm614 . . . 16
+  (params 1
+   (param :arr.3 . . 10
+    (array 4
+     (tuple 1
+      (i -1) 6
+      (tuple 1
+       (i -1) 6
+       (i -1)))
+     (rangetype
+      (i -1) +0 +2)) .)) . . . 53
+  (stmts
+   (discard .))) ,5
+ (cmd emptyArray.0.ttaqkm614 11
+  (aconstr 15,~5
+   (array 4
+    (i -1)
+    (rangetype
+     (i -1) +0 -1)))) ,6
+ (cmd tableIntInt.0.ttaqkm614 12
+  (aconstr 15,~5
+   (array 4
+    (tuple 1
+     (i -1) 6
+     (i -1))
+    (rangetype
+     (i -1) +0 +0)) 2
+   (tupconstr ~1
+    (tuple
+     (i -1)
+     (i -1)) ~1 +1 2 +2))) ,7
+ (cmd tableStrInt.0.ttaqkm614 12
+  (aconstr 15,~5
+   (array 4
+    (tuple 1 string.0.sysvq0asl 9
+     (i -1))
+    (rangetype
+     (i -1) +0 +1)) 4
+   (tupconstr ~3
+    (tuple string.0.sysvq0asl
+     (i -1)) ~3 "a" 2 +1) 12
+   (tupconstr ~11
+    (tuple string.0.sysvq0asl
+     (i -1)) ~3 "b" 2 +2))) ,8
+ (cmd tableIntTup.0.ttaqkm614 12
+  (aconstr 15,~5
+   (array 4
+    (tuple 1
+     (i -1) 6
+     (tuple 1
+      (i -1) 6
+      (i -1)))
+    (rangetype
+     (i -1) +0 +2)) 2
+   (tupconstr ~1
+    (tuple
+     (i -1) ,~2
+     (tuple
+      (i -1)
+      (i -1))) ~1 +1 2
+    (tupconstr ~3,~2
+     (tuple
+      (i -1)
+      (i -1)) 1 +2 4 +3)) 13
+   (tupconstr ~12
+    (tuple
+     (i -1) ,~2
+     (tuple
+      (i -1)
+      (i -1))) ~1 +2 2
+    (tupconstr ~14,~2
+     (tuple
+      (i -1)
+      (i -1)) 1 +4 4 +5)) 24
+   (tupconstr ~23
+    (tuple
+     (i -1) ,~2
+     (tuple
+      (i -1)
+      (i -1))) ~1 +3 2
+    (tupconstr ~25,~2
+     (tuple
+      (i -1)
+      (i -1)) 1 +6 4 +7)))))

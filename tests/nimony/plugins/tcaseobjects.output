@@ -1,0 +1,15 @@
+
+type
+  Foo = object
+    case x: bool
+    of true:
+      a: int
+      b: int
+      case y: bool
+      of false:
+        m: int
+      else:
+        s: float64
+        g: int
+    of false:
+      c: float64

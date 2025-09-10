@@ -3,7 +3,7 @@ type FieldsIter = object
     # can be SymId if loopvars/body are processed before substituting
   obj1, obj2: Cursor
 
-proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; body: Cursor) =
+proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym: SymId; body: Cursor) =
   # use `if true` to open a new scope without interfering with `break`:
   buf.addParLe(IfS, body.info)
   buf.addParLe(ElifU, body.info)
@@ -20,7 +20,10 @@ proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; 
       # substitute direct idents for now, symbols would work the same way 
       let s = n.litId
       if s == iter.nameVar:
-        buf.add strToken(fieldName, n.info)
+        if fieldSym == SymId(0):
+          buf.add strToken(fieldName, n.info)
+        else:
+          buf.addStrLit pool.syms[fieldSym]
       elif s == iter.fieldVar1:
         buf.addParLe(DotX, n.info)
         buf.addSubtree iter.obj1
@@ -89,7 +92,8 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
   buf.addParRi() # (if)
 
 proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
-  let fieldPairs = call.exprKind == FieldPairsX
+  let fieldPairs = call.exprKind in {FieldPairsX, InternalFieldPairsX}
+  let isInternalSym = call.exprKind == InternalFieldPairsX
   var iter = FieldsIter()
   let unpackInfo = it.n.info
   case it.n.substructureKind
@@ -203,8 +207,9 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
       if currentField.kind != DotToken:
         while currentField.kind != ParRi:
           let field = takeLocal(currentField, SkipfinalParRi)
+          let fieldSym = if isInternalSym: field.name.symId else: SymId(0)
           # field name is enough:
-          buildNamedFieldIter(iterBuf, iter, getIdent(field.name), body)
+          buildNamedFieldIter(iterBuf, iter, getIdent(field.name), fieldSym, body)
       objType = obj.parentType
       if objType.kind == DotToken:
         break

@@ -49,3 +49,33 @@ for k, v in t.lpairs:
 echo "---- test 4 ----"
 for k, v in t.mixedPairs:
   echo k, v
+
+block:
+  iterator iter(s: seq[int]): int =
+    for i in 0 ..< s.len:
+      yield s[i]
+
+  var s = newSeq[int](1)
+
+  for i in iter(s):
+    echo i
+
+block:
+  iterator iter(s: seq[int]): lent int =
+    for i in 0 ..< s.len:
+      yield s[i]
+
+  var s = newSeq[int](1)
+
+  for i in iter(s):
+    echo i
+
+block:
+  iterator iter(s: var seq[int]): var int =
+    for i in 0 ..< s.len:
+      yield s[i]
+
+  var s = newSeq[int](1)
+
+  for i in iter(s):
+    echo i

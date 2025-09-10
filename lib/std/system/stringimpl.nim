@@ -8,10 +8,20 @@ const
   LenShift = 1
   IsAllocatedBit = 1
 
+proc sumLen(a, b: int): int =
+  {.keepOverflowFlag.}:
+    result = a + b
+    if overflowFlag():
+      # When required length is overflowed, cause out of memory.
+      result = high(int)
+
+# --- string attributes ---
+
 proc len*(s: string): int {.inline, semantics: "string.len", ensures: (0 <= result).} =
   result = s.i shr LenShift
 
 proc high*(s: string): int {.inline.} = len(s)-1
+proc low*(s: string): int {.inline.} = 0
 
 proc cap(s: string): int {.inline.} = allocatedSize(s.a)
 
@@ -19,6 +29,11 @@ template isAllocated(s: string): bool = (s.i and IsAllocatedBit) != 0
 
 proc capacity*(s: string): int =
   result = if isAllocated(s): s.cap else: 0
+
+proc rawData*(s: string): ptr UncheckedArray[char] {.inline.} =
+  result = s.a
+
+# --- string destructor hooks ---
 
 proc `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
   s.i = EmptyI
@@ -68,6 +83,15 @@ proc `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
   else:
     result = s
 
+# --- string/cstring conversions ---
+
+func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
+
+func len*(a: cstring): int {.inline.} =
+  ## Assume `a` is a zero terminated string and
+  ## return the lenth of `a` excluding terminating zero
+  a.strlen.int
+
 proc borrowCStringUnsafe*(s: cstring; len: int): string =
   ## Creates a Nim string from a `cstring` by borrowing the
   ## underlying storage. You have to ensure the `cstring` lives
@@ -75,9 +99,7 @@ proc borrowCStringUnsafe*(s: cstring; len: int): string =
   ## use `fromCString` instead.
   string(a: cast[StrData](s), i: (len shl LenShift))
 
-func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
-
-proc borrowCStringUnsafe*(s: cstring): string =
+proc borrowCStringUnsafe*(s: cstring): string {.exportc: "nimBorrowCStringUnsafe".} =
   ## Creates a Nim string from a `cstring` by borrowing the
   ## underlying storage. You have to ensure the `cstring` lives
   ## long enough for this to be safe! If in doubt,
@@ -91,7 +113,7 @@ proc ensureTerminatingZero*(s: var string) =
     if cap > len:
       s.a[len] = '\0'
     else:
-      let newCap = len+1
+      let newCap = sumLen(len, 1)
       let a = cast[StrData](realloc(s.a, newCap))
       if a != nil:
         a[len] = '\0'
@@ -102,7 +124,7 @@ proc ensureTerminatingZero*(s: var string) =
         s.a = cast[StrData](cstring"")
         s.i = EmptyI
   else:
-    let newCap = len+1
+    let newCap = sumLen(len, 1)
     let a = cast[StrData](alloc(newCap))
     if a != nil:
       copyMem a, s.a, len
@@ -116,11 +138,13 @@ proc ensureTerminatingZero*(s: var string) =
       s.i = EmptyI
 
 proc toCString*(s: var string): cstring =
+  ## Creates a `cstring` from a Nim string.
+  ## You have to ensure the string lives long enough
+  ## than the returned `cstring` for this to be safe!
   ensureTerminatingZero(s)
   result = cast[cstring](s.a)
 
-proc rawData*(s: string): ptr UncheckedArray[char] {.inline.} =
-  result = s.a
+# --- string allocation & append ---
 
 proc growImpl(s: var string; newLen: int) =
   let cap = s.cap
@@ -147,13 +171,6 @@ proc makeAllocated(s: var string; newLen: int) =
   else:
     oomHandler newCap
     s.i = EmptyI
-
-proc sumLen(a, b: int): int =
-  {.keepOverflowFlag.}:
-    result = a + b
-    if overflowFlag():
-      # When required length is overflowed, cause out of memory.
-      result = high(int)
 
 proc add*(s: var string; part: string) =
   let len = s.len
@@ -190,15 +207,19 @@ proc shrink*(s: var string; newLen: int) =
   elif newLen < s.len:
     s.i = newLen shl LenShift or (s.i and IsAllocatedBit)
 
+# --- string indexing & slicing ---
+
 proc `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
+  if not isAllocated(s):
+    makeAllocated s, s.len
   s.a[i] = c
 
 proc `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.} = s.a[i]
 
 proc substr*(s: string; first, last: int): string =
   let len = s.len
-  let f = if first >= 0 and first < len: first else: 0
-  let l = if last >= 0 and last < len: last+1 else: len
+  let f = max(first, 0)
+  let l = min(last, len - 1) + 1
   if l <= f:
     result = string(a: cast[StrData](cstring""), i: EmptyI)
   else:
@@ -216,6 +237,8 @@ proc substr*(s: string; first, last: int): string =
 
 proc substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
+
+# --- string compare ---
 
 # used by string case:
 proc equalStrings(a, b: string): bool {.exportc: "nimStrEq", inline.} =
@@ -250,6 +273,8 @@ proc `<=`*(a, b: string): bool {.inline.} =
 proc `<`*(a, b: string): bool {.inline.} =
   cmpStrings(a, b) < 0
 
+# --- string creation & concat ---
+
 proc prepareMutation*(s: var string) =
   if not isAllocated(s):
     let len = s.len
@@ -266,6 +291,18 @@ proc newString*(len: int): string =
   let a = cast[StrData](alloc(len))
   if a != nil:
     result = string(a: a, i: (len shl LenShift) or IsAllocatedBit)
+  else:
+    oomHandler len
+    result = string(a: nil, i: EmptyI)
+
+proc newStringOfCap*(len: int): string =
+  ## Returns a new string of length `0` but with capacity `cap`.
+  ##
+  ## This procedure exists only for optimization purposes; the same effect can
+  ## be achieved with the `&` operator or with `add`.
+  let a = cast[StrData](alloc(len))
+  if a != nil:
+    result = string(a: a, i: IsAllocatedBit)
   else:
     oomHandler len
     result = string(a: nil, i: EmptyI)
@@ -287,4 +324,28 @@ proc `&`*(a, b: string): string {.semantics: "string.&".} =
       copyMem addr r[a.len], b.a, b.len
   else:
     oomHandler rlen
-    result = string(a: nil, i: EmptyI)
+    # ensure an empty string
+    result = string(i: EmptyI)
+    result.a = cast[StrData](cstring"")
+
+proc charToString(c: char): string =
+  result = newString(1)
+  result[0] = c
+
+proc `&`*(x: string, y: char): string {.inline.} =
+  result = x & charToString(y)
+
+proc `&`*(x: char, y: string): string {.inline.} =
+  result = charToString(x) & y
+
+proc terminatingZero*(s: string): string =
+  result = s & "\0"
+  result.shrink s.len
+
+proc fromCString*(s: cstring): string =
+  ## Creates a Nim string from a `cstring`
+  ## by copying the underlying storage.
+  let aux = borrowCStringUnsafe(s)
+  result = aux.terminatingZero()
+
+template `$`*(x: string): string = x

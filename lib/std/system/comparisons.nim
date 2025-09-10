@@ -3,8 +3,10 @@
 # not in original nim, so that it works for generic `Ordinal` types:
 proc `==`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
 
-proc `==`*[Enum: enum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
+# `enum` typeclass split here to prevent ambiguity with `Ordinal`:
+proc `==`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
   ## Checks whether values within the *same enum* have the same underlying value.
+proc `==`*[Enum: HoleyEnum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
 
 proc `==`*(x, y: pointer): bool {.magic: "EqRef", noSideEffect.}
   ## Checks for equality between two `pointer` variables.
@@ -24,7 +26,9 @@ proc `==`*[T](x, y: ptr T): bool {.magic: "EqRef", noSideEffect.}
 # not in original nim, so that it works for generic `Ordinal` types:
 proc `<=`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
 
-proc `<=`*[Enum: enum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
+# `enum` typeclass split here to prevent ambiguity with `Ordinal`:
+proc `<=`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
+proc `<=`*[Enum: HoleyEnum](x, y: Enum): bool {.magic: "LeEnum", noSideEffect.}
 
 proc `<=`*(x, y: char): bool {.magic: "LeCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
@@ -43,7 +47,9 @@ proc `<=`*(x, y: pointer): bool {.magic: "LePtr", noSideEffect.}
 # not in original nim, so that it works for generic `Ordinal` types:
 proc `<`*[T: Ordinal](x, y: T): bool {.magic: "LtI", noSideEffect.}
 
-proc `<`*[Enum: enum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
+# `enum` typeclass split here to prevent ambiguity with `Ordinal`:
+proc `<`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
+proc `<`*[Enum: HoleyEnum](x, y: Enum): bool {.magic: "LtEnum", noSideEffect.}
 
 proc `<`*(x, y: char): bool {.magic: "LtCh", noSideEffect.}
   ## Compares two chars and returns true if `x` is lexicographically
@@ -54,6 +60,8 @@ proc `<`*[T](x, y: set[T]): bool {.magic: "LtSet", noSideEffect.}
   ##
   ## A strict or proper subset `x` has all of its members in `y` but `y` has
   ## more elements than `y`.
+
+proc `<`*(x, y: pointer): bool {.magic: "LtPtr", noSideEffect.}
 
 proc `==`*(x, y: int8): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int16): bool {.magic: "EqI", noSideEffect.}

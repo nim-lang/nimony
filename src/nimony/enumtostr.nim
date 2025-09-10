@@ -34,18 +34,26 @@ proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId, enumSy
 
     inc enumDecl # skips tupleConstr
     inc enumDecl # skips counter field
-    let fieldValue = enumDecl.litId
+    var fieldValue = enumDecl
     inc enumDecl # skips fieldValue
     inc enumDecl # Skips ParRi
 
     inc enumDecl # Skips ParRi
+
+    while enumDecl.kind == ParLe and enumDecl.tagId == ErrT:
+      skip enumDecl
 
     c.dest.add symToken(symId, symInfo)
     c.dest.addParRi() # set
 
     c.dest.add tagToken("stmts", enumDeclInfo)
     c.dest.add tagToken("ret", enumDeclInfo)
-    c.dest.add strToken(fieldValue, enumDeclInfo)
+    if fieldValue.kind == StringLit:
+      c.dest.add strToken(fieldValue.litId, enumDeclInfo)
+    else:
+      # handle errors
+      c.dest.addSubtree fieldValue
+
     c.dest.addParRi() # ret
     c.dest.addParRi() # stmts
 
@@ -63,7 +71,8 @@ proc genEnumToStrProc*(c: var SemContext; typeDecl: var Cursor) =
   c.dest.add tagToken("proc", enumSymInfo)
   c.dest.add symdefToken(dollorSymId, enumSymInfo)
 
-  # Todo: defaults to (nodecl)
+  # TODO: defaults to (nodecl)
+  # TODO: static for local functions
   let exportIdent = pool.strings.getOrIncl("x")
   c.dest.add identToken(exportIdent, enumSymInfo)
   c.dest.addDotToken()

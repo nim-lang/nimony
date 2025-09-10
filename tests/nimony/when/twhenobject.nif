@@ -1,0 +1,9 @@
+(.nif24)
+0,1,tests/nimony/when/twhenobject.nim(stmts 6,1
+ (type ~4 :Foo.0.twh699we9 . . . 2
+  (object . ~2,4
+   (fld :y.0.twh699we9 . . 3
+    (i -1) .) ~4,5
+   (fld :z.0.twh699we9 . . 3
+    (i -1) .) ~2,7
+   (fld :a.0.twh699we9 . . 3 string.0.sysvq0asl .))))

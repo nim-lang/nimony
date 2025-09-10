@@ -57,7 +57,7 @@ type
     ParamsL = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
     ObjectL = (ord(ObjectTagId), "object")  ## object type declaration
     EnumL = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeL = (ord(ProctypeTagId), "proctype")  ## proc type declaration (soon obsolete, use params instead)
+    ProctypeL = (ord(ProctypeTagId), "proctype")  ## proc type declaration
     PtrL = (ord(PtrTagId), "ptr")  ## `ptr` type contructor
     PragmasL = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
     PragmaxL = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
@@ -91,7 +91,7 @@ type
     CallstrlitL = (ord(CallstrlitTagId), "callstrlit")
     InfixL = (ord(InfixTagId), "infix")
     PrefixL = (ord(PrefixTagId), "prefix")
-    TypeofL = (ord(TypeofTagId), "typeof")
+    TypeofL = (ord(TypeofTagId), "typeof")  ## `typeof` operation for accessing the type of an expression
     ExprL = (ord(ExprTagId), "expr")
     DoL = (ord(DoTagId), "do")  ## `do` expression
     StaticstmtL = (ord(StaticstmtTagId), "staticstmt")  ## `static` statement

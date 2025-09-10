@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/temptycurly.nim(1, 19) Error: invalid expected type for set constructor: int

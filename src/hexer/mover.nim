@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -22,6 +22,10 @@ proc rootOf*(n: Cursor): SymId =
     of ConvKinds:
       inc n
       skip n # type part
+    of BaseobjX:
+      inc n
+      skip n # type part
+      skip n # skip intlit
     else:
       break
   if n.kind == Symbol:
@@ -146,7 +150,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
         pc = pc +! diff
     of ParRi:
       if nested == 0:
-        raiseAssert "BUG: unpaired ')'"
+        bug "unpaired ')'"
       dec nested
       inc pc
     of Symbol:
@@ -207,7 +211,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
           skip pc # type
           inc nested
           # proceed with its value here
-        of NoStmt, CallS, CmdS, DiscardS, EmitS, InclS, ExclS:
+        of NoStmt, CallKindsS, DiscardS, EmitS, InclS, ExclS:
           if containsRoot(pc, x):
             otherUsage = pc
             return false
@@ -215,7 +219,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
            IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackDeclS, StaticstmtS, AsmS, DeferS:
-          raiseAssert "BUG: statement not eliminated: " & $pc.stmtKind
+          bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
            AssumeS, AssertS:
           # declarative junk we don't care about:
@@ -279,7 +283,7 @@ when isMainModule:
         discard
       if nested == 0: break
       inc result
-    raiseAssert "BUG: no 'ensureMove' found"
+    bug "no 'ensureMove' found"
 
   proc test(s: string; expected: bool) =
     var input = parse(s)

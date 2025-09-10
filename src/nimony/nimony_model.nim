@@ -5,19 +5,24 @@
 # distribution, for details about the copyright.
 
 import std / assertions
-include nifprelude
-import stringviews
+include ".." / lib / nifprelude
+import ".." / lib / stringviews
 
 import ".." / models / [tags, nimony_tags, callconv_tags]
 export nimony_tags, callconv_tags
 
 template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
 
-proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
+template tagEnum*(c: PackedToken): TagEnum = cast[TagEnum](tag(c))
+
+proc stmtKind*(c: PackedToken): NimonyStmt {.inline.} =
   if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
     result = cast[NimonyStmt](tagEnum(c))
   else:
     result = NoStmt
+
+proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
+  result = stmtKind(c.load())
 
 proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   if c.kind == ParLe:
@@ -67,7 +72,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
   else:
     result = NoCallConv
 
-proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
+proc exprKind*(c: PackedToken): NimonyExpr {.inline.} =
   if c.kind == ParLe:
     if rawTagIsNimonyExpr(tagEnum(c)):
       result = cast[NimonyExpr](tagEnum(c))
@@ -75,6 +80,9 @@ proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
       result = NoExpr
   else:
     result = NoExpr
+
+proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
+  result = exprKind(c.load())
 
 proc symKind*(c: Cursor): NimonySym {.inline.} =
   if c.kind == ParLe:
@@ -116,14 +124,16 @@ const
 const
   RoutineKinds* = {ProcY, FuncY, IteratorY, TemplateY, MacroY, ConverterY, MethodY}
   CallKinds* = {CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX}
-  ConvKinds* = {HconvX, ConvX, OconvX, DconvX, CastX}
+  CallKindsS* = {CallS, CallstrlitS, CmdS, PrefixS, InfixS, HcallS}
+  ConvKinds* = {HconvX, ConvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
+  RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv;
                info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
 
-proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind; info = NoLineInfo) =
+proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind|SubstructureKind|CallConv; info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
   dest.addParRi()
 
@@ -176,26 +186,6 @@ proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
   dest.add dotToken(info)
   dest.add dotToken(info)
   dest.add dotToken(info)
-
-proc takeTree*(dest: var TokenBuf; n: var Cursor) =
-  if n.kind != ParLe:
-    dest.add n
-    inc n
-  else:
-    var nested = 0
-    while true:
-      dest.add n
-      case n.kind
-      of ParLe: inc nested
-      of ParRi:
-        dec nested
-        if nested == 0:
-          inc n
-          break
-      of EofToken:
-        raiseAssert "expected ')', but EOF reached"
-      else: discard
-      inc n
 
 proc sameTrees*(a, b: Cursor): bool =
   var a = a
@@ -298,3 +288,26 @@ proc skipModifier*(a: Cursor): Cursor =
 
 const
   LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}
+
+template skipToLocalType*(n) =
+  inc n # skip ParLe
+  inc n # skip name
+  skip n # skip export marker
+  skip n # skip pragmas
+
+template skipToReturnType*(n) =
+  inc n # skip ParLe
+  skip n # skip name
+  skip n # skip export marker
+  skip n # skip pattern
+  skip n # skip generics
+  skip n # skip params
+
+proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
+  var typ = typ
+  if typ.typeKind in RoutineTypes:
+    skipToReturnType typ
+    skip typ # return type
+    result = hasPragma(typ, kind)
+  else:
+    result = false

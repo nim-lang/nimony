@@ -3,7 +3,7 @@
 #           Hexer Compiler
 #        (c) Copyright 2025 Andreas Rumpf
 #
-#    See the file "copying.txt", included in this
+#    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
@@ -43,7 +43,7 @@ interprets this `=` as `=bitcopy`.
 
 ]##
 
-import std / assertions
+import std / [assertions, tables]
 include nifprelude
 import nifindexes, symparser, treemangler
 import ".." / nimony / [nimony_model, programs, typenav, decls]
@@ -55,6 +55,7 @@ const
 type
   ScopeKind = enum
     Other
+    OtherPreventFinally
     WhileOrBlock
   DestructorOp = object
     destroyProc: SymId
@@ -66,6 +67,7 @@ type
     isTopLevel: bool
     destroyOps: seq[DestructorOp]
     info: PackedLineInfo
+    finallySection: Cursor
     parent: ptr Scope
 
   Context = object
@@ -75,10 +77,11 @@ type
     dest: TokenBuf
     lifter: ref LiftingCtx
 
-proc createNestedScope(kind: ScopeKind; parent: var Scope; info: PackedLineInfo; label = NoLabel): Scope =
+proc createNestedScope(kind: ScopeKind; parent: var Scope; info: PackedLineInfo;
+                       label = NoLabel; fin = default(Cursor)): Scope =
   Scope(label: label,
     kind: kind, destroyOps: @[], info: info, parent: addr(parent),
-    isTopLevel: false)
+    isTopLevel: false, finallySection: fin)
 
 proc createEntryScope(info: PackedLineInfo): Scope =
   Scope(label: NoLabel,
@@ -89,9 +92,53 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId) =
   let info = c.currentScope.info
   copyIntoKind c.dest, CallS, info:
     copyIntoSymUse c.dest, destroyProc, info
-    copyIntoSymUse c.dest, arg, info
+    if isMutFirstParam(destroyProc):
+      copyIntoKind c.dest, HaddrX, info:
+        copyIntoSymUse c.dest, arg, info
+    else:
+      copyIntoSymUse c.dest, arg, info
+
+when not defined(nimony):
+  proc tr(c: var Context; n: var Cursor)
+
+proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
+  var n = n
+  var nested = 0
+  var newVars = initTable[SymId, SymId]()
+  var idgen = 0
+  result = createTokenBuf(30)
+  while true:
+    case n.kind
+    of Symbol:
+      let repl = newVars.getOrDefault(n.symId, n.symId)
+      result.add symToken(repl, n.info)
+      inc n
+    of ParRi:
+      result.add n
+      dec nested
+      if nested == 0: break
+      inc n
+    of ParLe:
+      result.add n
+      let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS}
+      inc n
+      inc nested
+      if isLocalDecl:
+        if n.kind == SymbolDef:
+          let repl = pool.syms.getOrIncl("`ffv." & $idgen)
+          newVars[n.symId] = repl
+          result.add symdefToken(repl, n.info)
+          inc idgen
+          inc n
+    of UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
+      result.add n
+      inc n
 
 proc leaveScope(c: var Context; s: var Scope) =
+  if s.finallySection != default(Cursor):
+    var freshVars = createFreshVars(c, s.finallySection)
+    var n = beginRead(freshVars)
+    tr c, n
   for i in countdown(s.destroyOps.high, 0):
     callDestroy c, s.destroyOps[i].destroyProc, s.destroyOps[i].arg
 
@@ -110,7 +157,7 @@ proc leaveNamedBlock(c: var Context; label: SymId) =
   if it != nil and it.label == label:
     leaveScope(c, it[])
   else:
-    raiseAssert "do not know which block to leave"
+    bug "do not know which block to leave"
 
 proc leaveAnonBlock(c: var Context) =
   var it = addr(c.currentScope)
@@ -120,7 +167,7 @@ proc leaveAnonBlock(c: var Context) =
   if it != nil and it.kind == WhileOrBlock:
     leaveScope(c, it[])
   else:
-    raiseAssert "do not know which block to leave"
+    bug "do not know which block to leave"
 
 proc trBreak(c: var Context; n: var Cursor) =
   let lab = n.firstSon
@@ -137,8 +184,27 @@ proc trReturn(c: var Context; n: var Cursor) =
     it = it.parent
   takeTree c.dest, n
 
-when not defined(nimony):
-  proc tr(c: var Context; n: var Cursor)
+proc trRaise(c: var Context; n: var Cursor) =
+  #[
+  Consider:
+
+    try:
+      s1
+      raise
+    except:
+      echo "e"
+    finally:
+      echo "fin"
+
+    We do not want to duplicate the finally here since
+    it will run after the `except` block no matter what.
+  ]#
+  var it = addr(c.currentScope)
+  while it != nil:
+    if it.kind != OtherPreventFinally:
+      leaveScope(c, it[])
+    it = it.parent
+  takeTree c.dest, n
 
 proc trLocal(c: var Context; n: var Cursor) =
   let info = n.info
@@ -156,7 +222,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   if destructor != NoSymId and r.kind notin {CursorY, ResultY, GvarY, TvarY, GletY, TletY, ConstY}:
     c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
-proc trScope(c: var Context; body: var Cursor) =
+proc trScope(c: var Context; body: var Cursor; kind = Other) =
   copyIntoKind c.dest, StmtsS, body.info:
     if body.stmtKind == StmtsS:
       inc body
@@ -165,7 +231,8 @@ proc trScope(c: var Context; body: var Cursor) =
       inc body
     else:
       tr c, body
-    leaveScope(c, c.currentScope)
+    if kind != OtherPreventFinally:
+      leaveScope(c, c.currentScope)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
@@ -202,10 +269,10 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     copyTree c.dest, r.body
   c.dest.addParRi()
 
-proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
+proc trNestedScope(c: var Context; body: var Cursor; kind = Other; fin = default(Cursor)) =
   var oldScope = move c.currentScope
-  c.currentScope = createNestedScope(kind, oldScope, body.info)
-  trScope c, body
+  c.currentScope = createNestedScope(kind, oldScope, body.info, NoLabel, fin)
+  trScope c, body, kind
   swap c.currentScope, oldScope
 
 proc trWhile(c: var Context; n: var Cursor) =
@@ -263,6 +330,28 @@ proc trCase(c: var Context; n: var Cursor) =
       else:
         takeTree c.dest, n
 
+proc trTry(c: var Context; n: var Cursor) =
+  var nn = n
+  inc nn
+  skip nn # try statements
+  var hasExcept = false
+  while nn.substructureKind == ExceptU:
+    hasExcept = true
+    skip nn
+  copyInto(c.dest, n):
+    let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
+    trNestedScope c, n, (if hasExcept: OtherPreventFinally else: Other), fin
+    while n.substructureKind == ExceptU:
+      copyInto(c.dest, n):
+        takeTree c.dest, n # `E as e`
+        trNestedScope c, n, Other, fin
+    if n.substructureKind == FinU:
+      if hasExcept:
+        copyInto(c.dest, n):
+          trNestedScope c, n
+      else:
+        skip n
+
 proc tr(c: var Context; n: var Cursor) =
   if isAtom(n) or isDeclarative(n):
     takeTree c.dest, n
@@ -270,6 +359,8 @@ proc tr(c: var Context; n: var Cursor) =
     case n.stmtKind
     of RetS:
       trReturn(c, n)
+    of RaiseS:
+      trRaise(c, n)
     of BreakS:
       trBreak(c, n)
     of IfS:
@@ -282,6 +373,8 @@ proc tr(c: var Context; n: var Cursor) =
       trLocal c, n
     of WhileS:
       trWhile c, n
+    of TryS:
+      trTry c, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       trProcDecl c, n
     else:

@@ -57,21 +57,16 @@
  (ite
   (eq +5 -5)
   (goto L103)
-  (goto L117))
+  (goto L111))
  (lab :L103)
- (ite
-  (eq +6 -6)
-  (goto L111)
-  (goto L117))
+ (asgn `cf.0
+  (eq +6 -6))
+ (goto L116)
  (lab :L111)
  (asgn `cf.0
-  (true))
- (goto L122)
- (lab :L117)
- (asgn `cf.0
   (false))
- (lab :L122)
+ (lab :L116)
  (let :my.var . .
   (i -1)
   (call echo.0 "abc" `cf.0))
- (ret))
+ (ret .))

@@ -8,7 +8,8 @@ type
 let x = $Value1
 echo x
 
-proc generic[T: enum](a: T): string =
+# can be changed back into `T: enum` when `or` types can match themselves:
+proc generic[T: OrdinalEnum](a: T): string =
   result = $a
 
 echo generic(Value2)
