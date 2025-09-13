@@ -519,8 +519,8 @@ proc hexertests(overwrite: bool) =
   let helloworld = "tests/hexer/hexer_helloworld"
   createIndex helloworld & ".nif", false, NoLineInfo
   createIndex mod1 & ".nif", false, NoLineInfo
-  execHexer mod1 & ".nif"
-  execHexer helloworld & ".nif"
+  execHexer "c " & mod1 & ".nif"
+  execHexer "c " & helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
 proc syncCmd(newBranch: string) =

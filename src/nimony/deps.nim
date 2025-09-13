@@ -354,6 +354,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     b.withTree "cmd":
       b.addSymbolDef "hexer"
       b.addStrLit hexer
+      b.addStrLit "c"
       b.addStrLit "--bits:" & $c.config.bits
       b.withTree "input":
         b.addIntLit 0
@@ -647,6 +648,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
     b.withTree "cmd":
       b.addSymbolDef "hexer"
       b.addStrLit findTool("hexer")
+      b.addStrLit "c"
       b.addStrLit "--bits:" & $config.bits
       b.addKeyw "args"
       b.withTree "input":

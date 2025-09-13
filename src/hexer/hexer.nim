@@ -50,11 +50,12 @@ const
   Version = "0.4"
   Usage = "Hexer Compiler. Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   hexer [options] [command]
 Command:
-  file.nif      compile semchecked NIF file to NIFC
+  c file.nif                compile semchecked NIF file to NIFC
+  d file1.nif file2.nif ... perform dead code elimination for the given NIF files
 
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
@@ -66,14 +67,21 @@ Options:
 proc writeHelp() = quit(Usage, QuitSuccess)
 proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
+proc deadCodeElimination(files: seq[string]) =
+  discard "to implement"
+
 proc handleCmdLine*() =
   var files: seq[string] = @[]
   var bits = sizeof(int) * 8
   var flags = DefaultSettings
+  var action = ""
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
-      files.add key
+      if action.len == 0:
+        action = key.normalize
+      else:
+        files.add key
     of cmdLongOption, cmdShortOption:
       case normalize(key)
       of "bits":
@@ -90,10 +98,16 @@ proc handleCmdLine*() =
     of cmdEnd: assert false, "cannot happen"
   if files.len > 1:
     quit "too many arguments given, seek --help"
-  elif files.len == 0:
+  elif action.len == 0 or files.len == 0:
     writeHelp()
   else:
-    expand files[0], bits, flags
+    case action
+    of "c":
+      expand files[0], bits, flags
+    of "d":
+      deadCodeElimination files
+    else:
+      writeHelp()
 
 when isMainModule:
   handleCmdLine()
