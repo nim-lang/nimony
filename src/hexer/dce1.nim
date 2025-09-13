@@ -49,11 +49,12 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
 const
   depName = "dep"
   offerName = "offer"
+  RootSym* = "`root.0"
 
 proc prepDce(outputFilename: string; n: Cursor) =
   var n = n
   var a = ModuleAnalysis()
-  tr n, a, pool.syms.getOrIncl("root.0")
+  tr n, a, pool.syms.getOrIncl(RootSym)
 
   var b = nifbuilder.open(outputFilename)
   b.withTree "stmts":
