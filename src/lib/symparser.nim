@@ -83,6 +83,12 @@ proc isInstantiation*(s: string): bool =
     dec i
   result = false
 
+proc isLocalName*(s: string): bool =
+  var dots = 0
+  for c in s:
+    if c == '.': inc dots
+  result = dots <= 1
+
 proc removeModule*(s: string): string =
   # From "abc.12.Mod132a3bc" extract "abc.12".
   # From "abc.12" extract "abc.12".

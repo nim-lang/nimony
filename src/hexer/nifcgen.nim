@@ -14,7 +14,7 @@ import symparser
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
   typeprops, langmodes, typekeys, sigmatch]
-import hexer_context, pipeline
+import hexer_context, pipeline, dce1
 import  ".." / lib / [stringtrees, treemangler]
 
 
@@ -1898,8 +1898,8 @@ proc importSymbol(c: var EContext; s: SymId) =
   else:
     error c, "could not find symbol: " & pool.syms[s]
 
-proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
-  var b = nifbuilder.open(c.dir / c.main & ".c.nif")
+proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string) =
+  var b = nifbuilder.open(destfileName)
   b.addHeader "hexer", "nifc"
   var stack: seq[PackedLineInfo] = @[]
   if rootInfo.isValid:
@@ -2092,5 +2092,9 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   c.dest.add toplevels
   c.dest.add c.pending
   skipParRi c, n
-  writeOutput c, rootInfo
+  let destfileName = c.dir / c.main & ".c.nif"
+
+  writeOutput c, rootInfo, destfileName
   c.closeMangleScope()
+
+  writeDceOutput destfileName, c.dir / c.main & ".dce.nif"
