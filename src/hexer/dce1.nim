@@ -11,7 +11,7 @@
 
 import std / [assertions, tables, sets]
 include nifprelude
-import ".." / nimony / [nimony_model, decls]
+import ".." / nifc / [nifc_model]
 
 import symparser
 
@@ -24,8 +24,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
   case n.kind
   of ParLe:
     case n.stmtKind
-    of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
-      VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, ResultS, CursorS:
+    of ProcS, TypeS, VarS, ConstS, GvarS, TvarS:
       inc n
       let newOwner = if n.kind == SymbolDef: n.symId else: owner
       if n.kind == SymbolDef and isInstantiation(pool.syms[n.symId]):
@@ -47,20 +46,24 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
   of SymbolDef, UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit: inc n
   of ParRi: raiseAssert "ParRi should not be encountered here"
 
+const
+  depName = "dep"
+  offerName = "offer"
+
 proc prepDce(outputFilename: string; n: Cursor) =
   var n = n
   var a = ModuleAnalysis()
-  tr n, a, NoSymId
+  tr n, a, pool.syms.getOrIncl("root.0")
 
   var b = nifbuilder.open(outputFilename)
   b.withTree "stmts":
     for owner, deps in mpairs(a.deps):
-      b.withTree "dep":
+      b.withTree depName:
         b.addSymbol pool.syms[owner]
         for dep in deps:
           b.addSymbol pool.syms[dep]
-    for offer in a.offers:
-      b.withTree "offer":
+    b.withTree offerName:
+      for offer in a.offers:
         b.addSymbol pool.syms[offer]
   b.close()
 
@@ -68,7 +71,33 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
   var buf = parseFromFile(infile)
   var n = beginRead(buf)
   result = ModuleAnalysis()
-
+  if n.stmtKind == StmtsS:
+    inc n
+    let depTag = pool.tags.getOrIncl(depName)
+    let offerTag = pool.tags.getOrIncl(offerName)
+    while n.kind != ParRi:
+      if n.kind == ParLe:
+        if n.tag == depTag:
+          inc n
+          let key = n.symId
+          result.deps[key] = initHashSet[SymId]()
+          inc n
+          while n.kind != ParRi:
+            if n.kind == Symbol:
+              result.deps[key].incl(n.symId)
+              inc n
+            else:
+              raiseAssert infile & ": expected Symbol"
+        elif n.tag == offerTag:
+          inc n
+          while n.kind != ParRi:
+            if n.kind == Symbol:
+              result.offers.incl(n.symId)
+              inc n
+            else:
+              raiseAssert infile & ": expected Symbol"
+      else:
+        raiseAssert infile & ": expected ParLe"
 
 proc writeDceOutput*(infile, outfile: string) =
   var buf = parseFromFile(infile)
