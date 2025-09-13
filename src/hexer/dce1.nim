@@ -16,11 +16,9 @@ import ".." / nimony / [nimony_model, decls]
 import symparser
 
 type
-  DependencyGraph = Table[SymId, HashSet[SymId]]
-
-  ModuleAnalysis = object
-    deps: DependencyGraph
-    offers: HashSet[SymId] # generic instances that are offered by this module
+  ModuleAnalysis* = object
+    deps*: Table[SymId, HashSet[SymId]]
+    offers*: HashSet[SymId] # generic instances that are offered by this module
 
 proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
   case n.kind
@@ -66,7 +64,13 @@ proc prepDce(outputFilename: string; n: Cursor) =
         b.addSymbol pool.syms[offer]
   b.close()
 
+proc readModuleAnalysis*(infile: string): ModuleAnalysis =
+  var buf = parseFromFile(infile)
+  var n = beginRead(buf)
+  result = ModuleAnalysis()
+
+
 proc writeDceOutput*(infile, outfile: string) =
-  var buf = parse(infile)
+  var buf = parseFromFile(infile)
   let n = beginRead(buf)
   prepDce(outfile, n)

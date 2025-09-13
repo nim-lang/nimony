@@ -405,8 +405,13 @@ proc parse*(r: var Stream; dest: var TokenBuf;
       dec nested
       if nested == 0: break
 
-proc parse*(input: string; sizeHint = 100): TokenBuf =
+proc parseFromBuffer*(input: string; sizeHint = 100): TokenBuf =
   var r = nifstreams.openFromBuffer(input)
+  result = createTokenBuf(sizeHint)
+  parse(r, result, NoLineInfo)
+
+proc parseFromFile*(filename: string; sizeHint = 100): TokenBuf =
+  var r = nifstreams.open(filename)
   result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 
