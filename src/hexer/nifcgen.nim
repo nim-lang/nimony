@@ -2054,7 +2054,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     )
   c.openMangleScope()
 
-  var c0 = setupProgram(infile, infile.changeFileExt ".c.nif", true)
+  var c0 = setupProgram(infile, infile.changeFileExt ".x.nif", true)
   var dest = transform(c, c0, mp.name)
 
   var n = beginRead(dest)
@@ -2092,7 +2092,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   c.dest.add toplevels
   c.dest.add c.pending
   skipParRi c, n
-  let destfileName = c.dir / c.main & ".c.nif"
+  let destfileName = c.dir / c.main & ".x.nif"
 
   writeOutput c, rootInfo, destfileName
   c.closeMangleScope()

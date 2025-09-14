@@ -5058,14 +5058,14 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
         for i in c.passC:
           deps.addStrLit i
   let depsFile = changeFileExt(outfile, ".deps.nif")
-  writeFile depsFile, "(.nif24)\n" & toString(deps)
+  writeFile deps, depsFile
 
 proc writeOutput(c: var SemContext; outfile: string) =
   #var b = nifbuilder.open(outfile)
   #b.addHeader "nimony", "nim-sem"
   #b.addRaw toString(c.dest)
   #b.close()
-  writeFile outfile, "(.nif24)\n" & toString(c.dest)
+  writeFile c.dest, outfile
   let root = c.dest[0].info
   createIndex outfile, root, true,
     IndexSections(hooks: move c.hookIndexLog,

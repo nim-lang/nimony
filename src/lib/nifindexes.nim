@@ -282,7 +282,7 @@ proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
     IndexSections())
 
 proc writeFileAndIndex*(outfile: string; content: TokenBuf) =
-  writeFile(outfile, "(.nif24)\n" & toString(content))
+  writeFile(content, outfile)
   createIndex(outfile, true, content[0].info)
 
 type

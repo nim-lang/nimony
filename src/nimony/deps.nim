@@ -35,7 +35,7 @@ proc depsFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.
 proc deps2File(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".2.deps.nif"
 proc semmedFile(config: NifConfig; f: FilePair; bundle: string): string =
   config.nifcachePath / bundle / f.modname & ".2.nif"
-proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c.nif"
+proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
 proc cFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c"
 proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".o"
 
@@ -684,7 +684,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
       let writenifSuffix = moduleSuffix(writenifNimFile, config.paths)
       let writenifNifFile = config.nifcachePath / writenifSuffix & ".1.nif"
       let writenifSemmedFile = config.nifcachePath / writenifSuffix & ".2.nif"
-      let writenifHexedFile = config.nifcachePath / writenifSuffix & ".c.nif"
+      let writenifHexedFile = config.nifcachePath / writenifSuffix & ".x.nif"
       let writenifCFile = config.nifcachePath / writenifSuffix & ".c"
       let writenifObjFile = config.nifcachePath / writenifSuffix & ".o"
 
@@ -732,7 +732,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
     for depNifFile in dependencyNifFiles:
       let depName = depNifFile.splitModulePath.name
       let depHexedFile = config.nifcachePath / depName & ".2.nif"
-      let depCFile = config.nifcachePath / depName & ".c.nif"
+      let depCFile = config.nifcachePath / depName & ".x.nif"
       let depObjFile = config.nifcachePath / depName & ".o"
       objFiles.add(depObjFile)
 
@@ -762,7 +762,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
 
     # Build rules for main file
     let mainName = mainNifFile.splitModulePath.name
-    let mainHexedFile = config.nifcachePath / mainName & ".c.nif"
+    let mainHexedFile = config.nifcachePath / mainName & ".x.nif"
     let mainCFile = config.nifcachePath / mainName & ".c"
     let mainObjFile = config.nifcachePath / mainName & ".o"
     objFiles.add(mainObjFile)

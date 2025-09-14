@@ -67,8 +67,107 @@ proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTab
             if s notin result[sowner]:
               worklist.add(s)
 
-proc rewriteModule*(file: string; live: HashSet[SymId]; resolved: ResolveTable) =
-  discard "to implement"
+proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: ResolveTable) =
+  case n.kind
+  of ParLe:
+    let stmtKind = n.stmtKind
+    case stmtKind
+    of TypeS:
+      # types are fundamentally different from procs when it comes to generic instantiations:
+      # We need to ensure **consistency** for types, but for procs we need to ensure **uniqueness**.
+      let head = n.load()
+      inc n
+      if n.kind == SymbolDef:
+        if alive.contains(n.symId):
+          let t = translate(resolved, n.symId)
+          dest.add head
+          dest.addSymDef t, n.info
+          inc n # skip symbol def
+          while n.kind != ParRi:
+            tr dest, n, alive, resolved
+          dest.takeToken n
+        else:
+          # skip it, it's dead
+          inc n # skip symbol def
+          while n.kind != ParRi: skip n
+          inc n
+      else:
+        # let errors propagate:
+        dest.add head
+        while n.kind != ParRi:
+          tr dest, n, alive, resolved
+        dest.takeToken n
+
+    of ProcS, VarS, ConstS, GvarS, TvarS:
+      let head = n.load()
+      inc n
+      if n.kind == SymbolDef:
+        if alive.contains(n.symId):
+          let t = translate(resolved, n.symId)
+          if t != n.symId:
+            # we are a loser and need to add an `extern` declaration:
+            dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
+
+            dest.add head
+            dest.addSymDef t, n.info
+            inc n # skip symbol def
+            var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
+            while n.kind != ParRi and untilBody > 0:
+              dec untilBody
+              tr dest, n, alive, resolved
+            skip n # skip the body
+            # replace it with an empty body:
+            dest.addDotToken()
+            dest.takeToken n
+            dest.addParRi() # also close the "imp" declaration
+          else:
+            dest.add head
+            dest.addSymDef t, n.info
+            inc n # skip symbol def
+            while n.kind != ParRi:
+              tr dest, n, alive, resolved
+            dest.takeToken n
+        else:
+          # skip it, it's dead
+          inc n # skip symbol def
+          while n.kind != ParRi: skip n
+          inc n
+      else:
+        # let errors propagate:
+        dest.add head
+        while n.kind != ParRi:
+          tr dest, n, alive, resolved
+        dest.takeToken n
+    else:
+      dest.takeToken n
+      while n.kind != ParRi:
+        tr dest, n, alive, resolved
+      dest.takeToken n
+  of Symbol:
+    if isLocalName(pool.syms[n.symId]):
+      dest.add n
+    else:
+      let t = translate(resolved, n.symId)
+      dest.addSymUse t, n.info
+    inc n
+  of SymbolDef:
+    if isLocalName(pool.syms[n.symId]):
+      dest.add n
+    else:
+      let t = translate(resolved, n.symId)
+      dest.addSymDef t, n.info
+    inc n
+  of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    dest.takeToken n
+  of ParRi: raiseAssert "ParRi should not be encountered here"
+
+proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable) =
+  var buf = parseFromFile(file)
+  var n = beginRead(buf)
+  var dest = createTokenBuf(buf.len)
+  tr dest, n, live, resolved
+  endRead(buf)
+  writeFile(dest, file.changeModuleExt ".c.nif")
 
 proc deadCodeElimination*(files: openArray[string]) =
   var graphs = initTable[string, ModuleAnalysis]()

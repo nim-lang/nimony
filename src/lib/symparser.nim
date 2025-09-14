@@ -118,6 +118,13 @@ proc splitModulePath*(s: string): SplittedModulePath =
     inc d
   result = SplittedModulePath(dir: substr(s, 0, i-1), name: substr(s, i+1, d-1), ext: substr(s, d))
 
+proc changeModuleExt*(s, ext: string): string =
+  let mp = splitModulePath(s)
+  if ext.len > 0 and ext[0] != '.':
+    result = mp.dir & "/" & mp.name & "." & ext
+  else:
+    result = mp.dir & "/" & mp.name & ext
+
 when isMainModule:
   import std/[assertions]
   assert extractVersionedBasename("abc.12.Mod132a3bc") == "abc.12"
