@@ -682,11 +682,8 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
   var idx = pickBestMatch(c, m, cs.flags)
 
   if idx < 0 and (cs.fn.n.kind == Symbol or cs.fn.n.exprKind == OchoiceX):
-    let idxOffset = m.len
     considerInScopeOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
-    idx = pickBestMatch(c, m.toOpenArray(idxOffset, m.high), cs.flags)
-    if idx >= 0:
-      idx += idxOffset
+    idx = pickBestMatch(c, m, cs.flags)
 
   if idx < 0:
     # try converters
