@@ -383,6 +383,40 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; a
       m.add createMatch(addr c)
       sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
+proc considerInScopeOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[CallArg], genericArgs: Cursor, hasNamedArgs: bool) =
+  var syms = newSeq[Sym]()
+  var marker = initHashSet[SymId]()
+  # mark already matched symbols so that they don't get added:
+  for i in 0 ..< m.len:
+    if m[i].fn.sym != SymId(0):
+      marker.incl m[i].fn.sym
+  
+  var it = c.currentScope
+  while it != nil:
+    for s in it.tab.getOrDefault(fnName):
+      if not containsOrIncl(marker, s.name):
+        syms.add s
+    it = it.up
+  
+  for moduleId in c.importTab.getOrDefault(fnName):
+    let candidates = addr c.importedModules[moduleId].iface[fnName]
+    for sym in candidates[]:
+      if not containsOrIncl(marker, sym):
+        let s = fetchSym(c, sym)
+        if s.kind != NoSym:
+          syms.add s
+  
+  for s in syms:
+    let res = declToCursor(c, s)
+    if res.status == LacksNothing:
+      var typ = res.decl
+      if s.kind.isLocal:
+        skipToLocalType typ
+      if typ.typeKind in RoutineTypes:
+        let candidate = FnCandidate(kind: s.kind, sym: s.name, typ: typ)
+        m.add createMatch(addr c)
+        sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
+
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[CallArg]) =
   if not (m.genericConverter or m.checkEmptyArg or m.insertedParam):
     c.dest.add m.args
@@ -646,6 +680,13 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     else:
       buildErr c, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
   var idx = pickBestMatch(c, m, cs.flags)
+
+  if idx < 0 and (cs.fn.n.kind == Symbol or cs.fn.n.exprKind == OchoiceX):
+    let idxOffset = m.len
+    considerInScopeOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
+    idx = pickBestMatch(c, m.toOpenArray(idxOffset, m.high), cs.flags)
+    if idx >= 0:
+      idx += idxOffset
 
   if idx < 0:
     # try converters
