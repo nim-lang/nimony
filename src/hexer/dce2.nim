@@ -13,8 +13,12 @@ import std / [tables, sets, assertions]
 include nifprelude
 
 import symparser, dce1
+import ".." / nifc / [nifc_model]
 
-proc resolveSymbolConflicts(modules: Table[string, ModuleAnalysis]): Table[string, SymId] =
+type
+  ResolveTable = Table[string, SymId]
+
+proc resolveSymbolConflicts(modules: Table[string, ModuleAnalysis]): ResolveTable =
   # Resolve conflicts between duplicate symbols (e.g., generic instantiations)
   # Returns: symbol mapping from key to canonical
   result = initTable[string, SymId]()
@@ -26,7 +30,7 @@ proc resolveSymbolConflicts(modules: Table[string, ModuleAnalysis]): Table[strin
       if existing == SymId(0) or offerName < pool.syms[existing]:
         result[key] = offer
 
-proc translate(resolved: Table[string, SymId]; sym: SymId): SymId =
+proc translate(resolved: ResolveTable; sym: SymId): SymId =
   let symName = pool.syms[sym]
   if isInstantiation(symName):
     let key = removeModule(symName)
@@ -34,9 +38,7 @@ proc translate(resolved: Table[string, SymId]; sym: SymId): SymId =
   else:
     result = sym
 
-proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]): Table[string, HashSet[SymId]] =
-  let resolved = resolveSymbolConflicts(moduleGraphs)
-
+proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTable): Table[string, HashSet[SymId]] =
   var worklist = newSeq[SymId](1)
   worklist[0] = pool.syms.getOrIncl(RootSym)
 
@@ -60,7 +62,22 @@ proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]): Table[string, HashS
         if sym in graph.deps:
           for dep in graph.deps[sym]:
             let s = translate(resolved, dep)
-            let sModuleName = extractModule(pool.syms[s])
+            let sowner = extractModule(pool.syms[s])
             # Check if dependency is already live in its owning module
-            if s notin result[sModuleName]:
+            if s notin result[sowner]:
               worklist.add(s)
+
+proc rewriteModule*(file: string; live: HashSet[SymId]; resolved: ResolveTable) =
+  discard "to implement"
+
+proc deadCodeElimination*(files: openArray[string]) =
+  var graphs = initTable[string, ModuleAnalysis]()
+  for file in files:
+    graphs[file] = readModuleAnalysis(file)
+
+  let resolved = resolveSymbolConflicts(graphs)
+
+  let live = markLive(graphs, resolved)
+  # TODO: we could do this step in parallel:
+  for file in files:
+    rewriteModule(file, live[file], resolved)

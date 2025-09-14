@@ -44,7 +44,7 @@ Hexer accepts Nimony's grammar.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import ".." / nimony / [langmodes]
-import nifcgen, lifter, duplifier, destroyer, inliner, constparams
+import nifcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
 
 const
   Version = "0.4"
@@ -66,9 +66,6 @@ Options:
 
 proc writeHelp() = quit(Usage, QuitSuccess)
 proc writeVersion() = quit(Version & "\n", QuitSuccess)
-
-proc deadCodeElimination(files: seq[string]) =
-  discard "to implement"
 
 proc handleCmdLine*() =
   var files: seq[string] = @[]
