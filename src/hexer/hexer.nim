@@ -93,7 +93,7 @@ proc handleCmdLine*() =
       of "version", "v": writeVersion()
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
-  if files.len > 1:
+  if action == "c" and files.len > 1:
     quit "too many arguments given, seek --help"
   elif action.len == 0 or files.len == 0:
     writeHelp()
