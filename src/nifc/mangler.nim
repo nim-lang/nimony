@@ -99,13 +99,6 @@ proc makeCString*(s: string): string =
   for c in s: toCChar(c, result)
   result.add('"')
 
-template mangleFileName*(s: string): string =
-  # strip '.c' from filenames
-  if s.endsWith(".c"):
-    s[0..<s.len-2]
-  else:
-    s
-
 when isMainModule:
   import std/assertions
 

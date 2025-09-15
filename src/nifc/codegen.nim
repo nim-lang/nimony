@@ -14,7 +14,7 @@ from std / os import changeFileExt, splitFile, extractFilename
 from std / sequtils import insert
 
 include ".." / lib / nifprelude
-import mangler, nifc_model, cprelude, noptions, typenav
+import mangler, nifc_model, cprelude, noptions, typenav, symparser
 
 type
   Token = distinct uint32

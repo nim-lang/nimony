@@ -120,10 +120,13 @@ proc splitModulePath*(s: string): SplittedModulePath =
 
 proc changeModuleExt*(s, ext: string): string =
   let mp = splitModulePath(s)
+  result = mp.dir
+  if result.len > 0: result.add "/"
+  result.add mp.name
   if ext.len > 0 and ext[0] != '.':
-    result = mp.dir & "/" & mp.name & "." & ext
+    result.add "." & ext
   else:
-    result = mp.dir & "/" & mp.name & ext
+    result.add ext
 
 when isMainModule:
   import std/[assertions]

@@ -5057,7 +5057,7 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       deps.buildTree TagId(PassCP), NoLineInfo:
         for i in c.passC:
           deps.addStrLit i
-  let depsFile = changeFileExt(outfile, ".deps.nif")
+  let depsFile = changeModuleExt(outfile, ".2.deps.nif")
   writeFile deps, depsFile
 
 proc writeOutput(c: var SemContext; outfile: string) =

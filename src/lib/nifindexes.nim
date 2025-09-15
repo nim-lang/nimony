@@ -7,7 +7,7 @@
 ## Create an index file for a NIF file.
 
 import std / [os, tables, assertions, syncio]
-import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
+import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser
 
 #import std / [sha1]
 import "$nim"/dist/checksums/src/checksums/sha1
@@ -183,7 +183,7 @@ proc getClassesSection(tag: TagId; values: seq[ClassIndexEntry]): TokenBuf =
   result.addParRi()
 
 proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
-  let indexName = changeFileExt(infile, ".idx.nif")
+  let indexName = changeModuleExt(infile, ".idx.nif")
 
   var s = nifstreams.open(infile)
   discard processDirectives(s.r)
