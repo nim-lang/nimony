@@ -39,7 +39,7 @@ Example for a .nif file:
   (cmd :nifler "nifler" (input) (output))
   (do nifler
     (input "a.nim")
-    (output "a.1.nif")
+    (output "a.p.nif")
   )
 )
 ```

@@ -5024,7 +5024,7 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
       result.addParRi()
 
 proc writeNewDepsFile(c: var SemContext; outfile: string) =
-  # Update .2.deps.nif file that doesn't contain modules imported under `when false:`
+  # Update .s.deps.nif file that doesn't contain modules imported under `when false:`
   # so that Hexer and following phases doesn't read such modules.
   var deps = createTokenBuf(16)
   deps.buildTree StmtsS, NoLineInfo:
@@ -5057,7 +5057,7 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       deps.buildTree TagId(PassCP), NoLineInfo:
         for i in c.passC:
           deps.addStrLit i
-  let depsFile = changeModuleExt(outfile, ".2.deps.nif")
+  let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   writeFile deps, depsFile
 
 proc writeOutput(c: var SemContext; outfile: string) =

@@ -183,7 +183,7 @@ proc getClassesSection(tag: TagId; values: seq[ClassIndexEntry]): TokenBuf =
   result.addParRi()
 
 proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
-  let indexName = changeModuleExt(infile, ".idx.nif")
+  let indexName = changeModuleExt(infile, ".s.idx.nif")
 
   var s = nifstreams.open(infile)
   discard processDirectives(s.r)

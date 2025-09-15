@@ -273,7 +273,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
 
     let ast = file.changeFileExt(".nif")
     if ast.fileExists():
-      let nif = generatedFile(file, ".2.nif")
+      let nif = generatedFile(file, ".s.nif")
       diffFiles c, file, ast, nif, overwrite
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
@@ -435,7 +435,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
       addTestCode test.changeFileExt(".nim.c"), nimcacheC
 
     if RecordAst in flags:
-      let nif = generatedFile(test, ".2.nif")
+      let nif = generatedFile(test, ".s.nif")
       addTestCode test.changeFileExt(".nif"), nif
 
 proc binDir*(): string =

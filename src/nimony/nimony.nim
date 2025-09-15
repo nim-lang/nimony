@@ -61,8 +61,8 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
                          commandLineArgs: string; forceRebuild: bool) =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, config.paths)
-  let src = config.nifcachePath / name & ".1.nif"
-  let dest = config.nifcachePath / name & ".2.nif"
+  let src = config.nifcachePath / name & ".p.nif"
+  let dest = config.nifcachePath / name & ".s.nif"
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
