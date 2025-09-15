@@ -1946,22 +1946,14 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string
         b.addSymbol(val)
       else:
         let s = pool.syms[n.symId]
-        if isInstantiation(s):
-          # ensure instantiations have the same name across modules:
-          b.addSymbol(removeModule(s))
-        else:
-          b.addSymbol(s)
+        b.addSymbol(s)
     of SymbolDef:
       let val = c.maybeMangle(n.symId)
       if val.len > 0:
         b.addSymbolDef(val)
       else:
         let s = pool.syms[n.symId]
-        if isInstantiation(s):
-          # ensure instantiations have the same name across modules:
-          b.addSymbolDef(removeModule(s))
-        else:
-          b.addSymbolDef(s)
+        b.addSymbolDef(s)
       if nextIsOwner >= 0:
         ownerStack.add (n.symId, nextIsOwner)
         nextIsOwner = -1

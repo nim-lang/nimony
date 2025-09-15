@@ -167,7 +167,7 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable) =
   var dest = createTokenBuf(buf.len)
   tr dest, n, live, resolved
   endRead(buf)
-  writeFile(dest, file.changeModuleExt ".c.nif")
+  writeFile(dest, file.changeModuleExt ".c.nif", OnlyIfChanged)
 
 proc deadCodeElimination*(files: openArray[string]) =
   var graphs = initTable[string, ModuleAnalysis]()

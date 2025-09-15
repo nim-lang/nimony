@@ -35,7 +35,9 @@ proc depsFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.
 proc deps2File(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".s.deps.nif"
 proc semmedFile(config: NifConfig; f: FilePair; bundle: string): string =
   config.nifcachePath / bundle / f.modname & ".s.nif"
-proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
+proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
+proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c.nif"
+
 proc cFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c"
 proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".o"
 
@@ -359,6 +361,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.withTree "input":
         b.addIntLit 0
 
+    b.withTree "cmd":
+      b.addSymbolDef "dce"
+      b.addStrLit hexer
+      b.addStrLit "d"
+      b.addStrLit "--bits:" & $c.config.bits
+      b.withTree "input":
+        b.addIntLit 0
+        b.addIntLit -1  # all inputs
+
     # Command for C compiler (object files)
     b.withTree "cmd":
       b.addSymbolDef "cc"
@@ -397,6 +408,14 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
+      b.withTree "do":
+        b.addIdent "dce"
+        for n in c.nodes:
+          b.withTree "input":
+            b.addStrLit c.config.hexedFile(n.files[0])
+          b.withTree "output":
+            b.addStrLit c.config.nifcFile(n.files[0])
+
       # Link executable
       b.withTree "do":
         b.addIdent "link"
@@ -458,7 +477,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.withTree "input":
             b.addStrLit c.config.indexFile(v.files[0], v.plugin)
           b.withTree "output":
-            b.addStrLit c.config.nifcFile(v.files[0])
+            b.addStrLit c.config.hexedFile(v.files[0])
 
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
