@@ -39,13 +39,15 @@ proc translate(resolved: ResolveTable; sym: SymId): SymId =
     result = sym
 
 proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTable): Table[string, HashSet[SymId]] =
-  var worklist = newSeq[SymId](1)
-  worklist[0] = pool.syms.getOrIncl(RootSym)
+  var worklist = newSeq[SymId](0)
 
   result = initTable[string, HashSet[SymId]]()
 
-  for m in moduleGraphs.keys:
-    result[m] = initHashSet[SymId]()
+  for k, m in moduleGraphs:
+    let n = splitModulePath(k).name
+    result[n] = initHashSet[SymId]()
+    for root in m.roots:
+      worklist.add(root)
 
   while worklist.len > 0:
     let sym = translate(resolved, worklist.pop())
@@ -59,8 +61,8 @@ proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTab
       # Process dependencies from the symbol's own module
       if moduleName in moduleGraphs:
         let graph = moduleGraphs[moduleName]
-        if sym in graph.deps:
-          for dep in graph.deps[sym]:
+        if sym in graph.uses:
+          for dep in graph.uses[sym]:
             let s = translate(resolved, dep)
             let sowner = extractModule(pool.syms[s])
             # Check if dependency is already live in its owning module
