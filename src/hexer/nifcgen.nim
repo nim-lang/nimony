@@ -1879,6 +1879,9 @@ proc importSymbol(c: var EContext; s: SymId) =
         let prag = parsePragmas(c, pragmas)
         if isR:
           if {InlineP, DynlibP} * prag.flags != {}:
+            # rewrite the inline routine, it belongs to the current module now that
+            # we duplicated it!
+            c.registerMangle(s, removeModule(pool.syms[s]) & "." & c.main)
             transformInlineRoutines(c, n)
             return
 
