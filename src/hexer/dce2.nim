@@ -181,4 +181,5 @@ proc deadCodeElimination*(files: openArray[string]) =
   let live = markLive(graphs, resolved)
   # TODO: we could do this step in parallel:
   for file in files:
-    rewriteModule(file, live[file], resolved)
+    let modName = splitModulePath(file).name
+    rewriteModule(file, live[modName], resolved)
