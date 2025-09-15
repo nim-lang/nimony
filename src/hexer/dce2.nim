@@ -38,7 +38,7 @@ proc translate(resolved: ResolveTable; sym: SymId): SymId =
   else:
     result = sym
 
-proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTable): Table[string, HashSet[SymId]] =
+proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTable): Table[string, HashSet[SymId]] =
   var worklist = newSeq[SymId](0)
 
   result = initTable[string, HashSet[SymId]]()
