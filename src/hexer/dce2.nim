@@ -44,8 +44,7 @@ proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTab
   result = initTable[string, HashSet[SymId]]()
 
   for k, m in moduleGraphs:
-    let n = splitModulePath(k).name
-    result[n] = initHashSet[SymId]()
+    result[k] = initHashSet[SymId]()
     for root in m.roots:
       worklist.add(root)
 
@@ -55,9 +54,6 @@ proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTab
 
     # Check if symbol is already live in its owning module
     if not result[moduleName].containsOrIncl(sym):
-      # Add symbol to its module's live set
-      result[moduleName].incl(sym)
-
       # Process dependencies from the symbol's own module
       if moduleName in moduleGraphs:
         let graph = moduleGraphs[moduleName]
@@ -102,7 +98,14 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       inc n
       if n.kind == SymbolDef:
         let def = n.symId
-        if alive.contains(def):
+        if isLocalName(pool.syms[def]):
+          dest.add head
+          dest.addSymDef def, n.info
+          inc n # skip symbol def
+          while n.kind != ParRi:
+            tr dest, n, alive, resolved
+          dest.takeToken n
+        elif alive.contains(def):
           let t = translate(resolved, def)
           if t != def:
             # we are a loser and need to add an `extern` declaration:
@@ -123,7 +126,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.addParRi() # also close the "imp" declaration
           else:
             dest.add head
-            dest.addSymDef t, n.info
+            dest.addSymDef def, n.info
             inc n # skip symbol def
             while n.kind != ParRi:
               tr dest, n, alive, resolved
@@ -173,7 +176,8 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable) =
 proc deadCodeElimination*(files: openArray[string]) =
   var graphs = initTable[string, ModuleAnalysis]()
   for file in files:
-    graphs[file] = readModuleAnalysis(file.changeModuleExt ".dce.nif")
+    let modName = splitModulePath(file).name
+    graphs[modName] = readModuleAnalysis(file.changeModuleExt ".dce.nif")
 
   let resolved = resolveSymbolConflicts(graphs)
 
