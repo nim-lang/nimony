@@ -113,6 +113,9 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
               inc n
             else:
               raiseAssert infile & ": expected Symbol"
+        else:
+          raiseAssert infile & ": expected (roots|uses|offers)"
+        inc n
       else:
         raiseAssert infile & ": expected ParLe"
 

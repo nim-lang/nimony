@@ -174,7 +174,7 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable) =
 proc deadCodeElimination*(files: openArray[string]) =
   var graphs = initTable[string, ModuleAnalysis]()
   for file in files:
-    graphs[file] = readModuleAnalysis(file)
+    graphs[file] = readModuleAnalysis(file.changeModuleExt ".dce.nif")
 
   let resolved = resolveSymbolConflicts(graphs)
 
