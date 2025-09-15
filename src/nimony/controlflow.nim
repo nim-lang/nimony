@@ -1059,7 +1059,7 @@ proc testOrSetMark*(n: Cursor): bool {.inline.} =
 when isMainModule:
   import std / [syncio, os]
   proc main(infile, outputfile: string; keepReturns: bool) =
-    var input = parse(readFile(infile))
+    var input = parseFromFile(infile)
     var cf = toControlflow(beginRead(input), keepReturns=keepReturns)
     writeFile(outputfile, codeListing(cf))
 

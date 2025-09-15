@@ -935,7 +935,7 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
 when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
-    var input = parse(readFile(infile))
+    var input = parseFromFile(infile)
     discard analyzeContracts(input)
     #echo toString(outp, false)
 

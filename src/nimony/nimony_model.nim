@@ -172,9 +172,6 @@ proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline.} =
 proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline.} =
   dest.addSubtree src
 
-proc addSymDef*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
-  dest.add symdefToken(s, info)
-
 proc addEmpty*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
   dest.add dotToken(info)
 
@@ -271,9 +268,6 @@ proc hasPragma*(n: Cursor; kind: PragmaKind): bool =
 proc hasPragmaOfValue*(n: Cursor; kind: PragmaKind; val: string): bool =
   let p = extractPragma(n, kind)
   result = not cursorIsNil(p) and p.kind == StringLit and pool.strings[p.litId] == val
-
-proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
-  dest.add symToken(s, info)
 
 const
   TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}

@@ -83,6 +83,12 @@ proc isInstantiation*(s: string): bool =
     dec i
   result = false
 
+proc isLocalName*(s: string): bool =
+  var dots = 0
+  for c in s:
+    if c == '.': inc dots
+  result = dots <= 1
+
 proc removeModule*(s: string): string =
   # From "abc.12.Mod132a3bc" extract "abc.12".
   # From "abc.12" extract "abc.12".
@@ -111,6 +117,16 @@ proc splitModulePath*(s: string): SplittedModulePath =
   while d < s.len and s[d] != '.':
     inc d
   result = SplittedModulePath(dir: substr(s, 0, i-1), name: substr(s, i+1, d-1), ext: substr(s, d))
+
+proc changeModuleExt*(s, ext: string): string =
+  let mp = splitModulePath(s)
+  result = mp.dir
+  if result.len > 0: result.add "/"
+  result.add mp.name
+  if ext.len > 0 and ext[0] != '.':
+    result.add "." & ext
+  else:
+    result.add ext
 
 when isMainModule:
   import std/[assertions]

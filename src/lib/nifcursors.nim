@@ -6,7 +6,7 @@
 
 ## Cursors into token streams. Suprisingly effective even for more complex algorithms.
 
-import std / assertions
+import std / [assertions, syncio]
 import nifreader, nifstreams, bitabs, lineinfos
 
 type
@@ -195,6 +195,12 @@ proc toUniqueId*(c: Cursor): int {.inline.} =
 proc add*(result: var TokenBuf; c: Cursor) =
   result.add c.load
 
+proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
+  dest.add symToken(s, info)
+
+proc addSymDef*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
+  dest.add symdefToken(s, info)
+
 proc addSubtree*(result: var TokenBuf; c: Cursor) =
   assert c.kind != ParRi, "cursor at end?"
   if c.kind != ParLe:
@@ -372,6 +378,9 @@ proc toStringDebug*(b: Cursor; produceLineInfo = true): string =
   let L = if b.kind == ParLe: 1 else: 0
   result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, L), produceLineInfo)
 
+proc writeFile*(b: TokenBuf; filename: string) =
+  writeFile(filename, "(.nif24)\n" & toString(b))
+
 proc `$`*(c: Cursor): string = toString(c, false)
 
 template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
@@ -405,8 +414,13 @@ proc parse*(r: var Stream; dest: var TokenBuf;
       dec nested
       if nested == 0: break
 
-proc parse*(input: string; sizeHint = 100): TokenBuf =
+proc parseFromBuffer*(input: string; sizeHint = 100): TokenBuf =
   var r = nifstreams.openFromBuffer(input)
+  result = createTokenBuf(sizeHint)
+  parse(r, result, NoLineInfo)
+
+proc parseFromFile*(filename: string; sizeHint = 100): TokenBuf =
+  var r = nifstreams.open(filename)
   result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 
