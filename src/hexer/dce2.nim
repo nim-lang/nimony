@@ -80,19 +80,14 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       let head = n.load()
       inc n
       if n.kind == SymbolDef:
-        if alive.contains(n.symId):
-          let t = translate(resolved, n.symId)
-          dest.add head
-          dest.addSymDef t, n.info
-          inc n # skip symbol def
-          while n.kind != ParRi:
-            tr dest, n, alive, resolved
-          dest.takeToken n
-        else:
-          # skip it, it's dead
-          inc n # skip symbol def
-          while n.kind != ParRi: skip n
-          inc n
+        let def = n.symId
+        let t = translate(resolved, def)
+        dest.add head
+        dest.addSymDef t, n.info
+        inc n # skip symbol def
+        while n.kind != ParRi:
+          tr dest, n, alive, resolved
+        dest.takeToken n
       else:
         # let errors propagate:
         dest.add head
@@ -100,13 +95,16 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
           tr dest, n, alive, resolved
         dest.takeToken n
 
+    of ImpS:
+      dest.takeTree n
     of ProcS, VarS, ConstS, GvarS, TvarS:
       let head = n.load()
       inc n
       if n.kind == SymbolDef:
-        if alive.contains(n.symId):
-          let t = translate(resolved, n.symId)
-          if t != n.symId:
+        let def = n.symId
+        if alive.contains(def):
+          let t = translate(resolved, def)
+          if t != def:
             # we are a loser and need to add an `extern` declaration:
             dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
 
@@ -120,6 +118,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             skip n # skip the body
             # replace it with an empty body:
             dest.addDotToken()
+            assert n.kind == ParRi
             dest.takeToken n
             dest.addParRi() # also close the "imp" declaration
           else:
