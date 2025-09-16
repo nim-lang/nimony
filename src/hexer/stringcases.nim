@@ -11,6 +11,10 @@
 
 ## Transforms string `case` statements to decision trees.
 
+const
+  EqStringsOp* = "equalStrings.0." & SystemModuleSuffix
+  StrAtLeOp* = "nimStrAtLe.0." & SystemModuleSuffix
+
 proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
                     selector: SymId; info: PackedLineInfo) =
   case s[i].kind
@@ -20,7 +24,7 @@ proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
     c.dest.copyIntoUnchecked "if", info:
       c.dest.copyIntoUnchecked "elif", info:
         c.dest.copyIntoUnchecked "call", info:
-          c.dest.add symToken(pool.syms.getOrIncl(toExtern("nimStrAtLe", SystemModuleSuffix)), info)
+          c.dest.add symToken(pool.syms.getOrIncl(StrAtLeOp), info)
           c.dest.add symToken(selector, info)
           c.dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
           c.dest.add charToken(f.best[0], info)
@@ -35,7 +39,7 @@ proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
       for x in s[i].choices:
         c.dest.copyIntoUnchecked "elif", info:
           c.dest.copyIntoUnchecked "call", info:
-            c.dest.add symToken(pool.syms.getOrIncl(toExtern("equalStrings", SystemModuleSuffix)), info)
+            c.dest.add symToken(pool.syms.getOrIncl(EqStringsOp), info)
             c.dest.add symToken(selector, info)
             c.genStringLit(x[0], info)
           c.dest.copyIntoUnchecked "stmts", info:
@@ -70,8 +74,8 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
       bug "not a string literal"
 
 proc transformStringCase*(c: var EContext; n: var Cursor) =
-  c.demand pool.syms.getOrIncl("equalStrings.0." & SystemModuleSuffix)
-  c.demand pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix)
+  c.demand pool.syms.getOrIncl(EqStringsOp)
+  c.demand pool.syms.getOrIncl(StrAtLeOp)
 
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
