@@ -65,6 +65,14 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
             if s notin result[sowner]:
               worklist.add(s)
 
+proc toNifcName(sym: SymId): SymId =
+  var symName = pool.syms[sym]
+  if symName[symName.high] == ExternMarker:
+    translateExtern symName
+    result = pool.syms.getOrIncl(symName)
+  else:
+    result = sym
+
 proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: ResolveTable) =
   case n.kind
   of ParLe:
@@ -79,7 +87,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
         let def = n.symId
         let t = translate(resolved, def)
         dest.add head
-        dest.addSymDef t, n.info
+        dest.addSymDef t.toNifcName, n.info
         inc n # skip symbol def
         while n.kind != ParRi:
           tr dest, n, alive, resolved
@@ -92,7 +100,18 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
         dest.takeToken n
 
     of ImpS:
-      dest.takeTree n
+      dest.takeToken n # Imp
+      if n.stmtKind in {ProcS, VarS, ConstS, GvarS, TvarS, TypeS}:
+        dest.takeToken n
+        while n.kind != ParRi:
+          tr dest, n, alive, resolved
+        dest.takeToken n
+      else:
+        while n.kind != ParRi:
+          tr dest, n, alive, resolved
+        dest.takeToken n
+      assert n.kind == ParRi
+      dest.takeToken n
     of ProcS, VarS, ConstS, GvarS, TvarS:
       let head = n.load()
       inc n
@@ -100,7 +119,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
         let def = n.symId
         if isLocalName(pool.syms[def]):
           dest.add head
-          dest.addSymDef def, n.info
+          dest.addSymDef def.toNifcName, n.info
           inc n # skip symbol def
           while n.kind != ParRi:
             tr dest, n, alive, resolved
@@ -112,7 +131,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
 
             dest.add head
-            dest.addSymDef t, n.info
+            dest.addSymDef t.toNifcName, n.info
             inc n # skip symbol def
             var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
             while n.kind != ParRi and untilBody > 0:
@@ -126,7 +145,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.addParRi() # also close the "imp" declaration
           else:
             dest.add head
-            dest.addSymDef def, n.info
+            dest.addSymDef def.toNifcName, n.info
             inc n # skip symbol def
             while n.kind != ParRi:
               tr dest, n, alive, resolved
@@ -148,18 +167,12 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
         tr dest, n, alive, resolved
       dest.takeToken n
   of Symbol:
-    if isLocalName(pool.syms[n.symId]):
-      dest.add n
-    else:
-      let t = translate(resolved, n.symId)
-      dest.addSymUse t, n.info
+    let t = translate(resolved, n.symId)
+    dest.addSymUse t.toNifcName, n.info
     inc n
   of SymbolDef:
-    if isLocalName(pool.syms[n.symId]):
-      dest.add n
-    else:
-      let t = translate(resolved, n.symId)
-      dest.addSymDef t, n.info
+    let t = translate(resolved, n.symId)
+    dest.addSymDef t.toNifcName, n.info
     inc n
   of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n

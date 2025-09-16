@@ -20,7 +20,7 @@ proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
     c.dest.copyIntoUnchecked "if", info:
       c.dest.copyIntoUnchecked "elif", info:
         c.dest.copyIntoUnchecked "call", info:
-          c.dest.add symToken(pool.syms.getOrIncl("nimStrAtLe.0." & SystemModuleSuffix), info)
+          c.dest.add symToken(pool.syms.getOrIncl(toExtern("nimStrAtLe", SystemModuleSuffix)), info)
           c.dest.add symToken(selector, info)
           c.dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
           c.dest.add charToken(f.best[0], info)
@@ -35,7 +35,7 @@ proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
       for x in s[i].choices:
         c.dest.copyIntoUnchecked "elif", info:
           c.dest.copyIntoUnchecked "call", info:
-            c.dest.add symToken(pool.syms.getOrIncl("equalStrings.0." & SystemModuleSuffix), info)
+            c.dest.add symToken(pool.syms.getOrIncl(toExtern("equalStrings", SystemModuleSuffix)), info)
             c.dest.add symToken(selector, info)
             c.genStringLit(x[0], info)
           c.dest.copyIntoUnchecked "stmts", info:

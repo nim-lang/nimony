@@ -104,6 +104,9 @@ type
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas
 
+proc toExtern(c: var EContext; externName: string): string {.inline.} =
+  result = toExtern(externName, c.main)
+
 proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.add n # fld
   inc n
@@ -120,7 +123,7 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.addDotToken() # adds pragmas
 
   if prag.externName.len > 0:
-    c.registerMangle(s, prag.externName & ".c")
+    c.registerMangle(s, c.toExtern prag.externName)
 
   trType c, n, flags
 
@@ -508,7 +511,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
       if n.kind != ParRi and n.pragmaKind in {ImportcP, ImportcppP}:
         c.dest.shrink start
         inc n
-        c.dest.addSymUse pool.syms.getOrIncl(pool.strings[n.litId] & ".c"), n.info
+        c.dest.addSymUse pool.syms.getOrIncl(c.toExtern pool.strings[n.litId]), n.info
         inc n
         skipParRi c, n
         if n.kind != ParRi and n.pragmaKind == HeaderP:
@@ -937,7 +940,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.addKey genPragmas, "inline", pinfo
 
   if prag.externName.len > 0:
-    c.registerMangleInParent(newSym, prag.externName & ".c")
+    c.registerMangleInParent(newSym, c.toExtern prag.externName)
     c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
   if SelectanyP in prag.flags:
     c.addKey genPragmas, "selectany", pinfo
@@ -1026,7 +1029,7 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.dest.addDotToken() # pragmas
 
   if prag.externName.len > 0:
-    c.registerMangle(newSym, prag.externName & ".c")
+    c.registerMangle(newSym, c.toExtern prag.externName)
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
@@ -1220,7 +1223,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
 
 proc getCompilerProc(c: var EContext; name: string): string =
   c.demand pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
-  result = name & ".c"
+  result = c.toExtern name
 
 proc trArrAt(c: var EContext; n: var Cursor) =
   c.dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
@@ -1503,7 +1506,7 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   var genPragmas = openGenPragmas()
 
   if prag.externName.len > 0:
-    c.registerMangle(s, prag.externName & ".c")
+    c.registerMangle(s, c.toExtern prag.externName)
     c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
 
   if ThreadvarP in prag.flags:
@@ -1887,7 +1890,7 @@ proc importSymbol(c: var EContext; s: SymId) =
 
         if NodeclP in prag.flags:
           if prag.externName.len > 0:
-            c.registerMangle(s, prag.externName & ".c")
+            c.registerMangle(s, c.toExtern prag.externName)
           if prag.header != StrId(0):
             c.headers.incl prag.header
           return

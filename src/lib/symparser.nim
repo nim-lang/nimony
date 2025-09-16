@@ -28,6 +28,14 @@ proc extractBasename*(s: var string) =
         return
     dec i
 
+const
+  ExternMarker* = '\t'
+
+proc toExtern*(externName, modname: string): string {.inline.} =
+  # This minor hack allows us to keep the module origin while also encoding
+  # we need to map it to the `name.c` form that NIFC expects:
+  result = externName & ".00." & modname & ExternMarker
+
 proc extractModule*(s: string): string =
   # From "abc.12.Mod132a3bc" extract "Mod132a3bc".
   # From "abc.12" extract "".
@@ -37,9 +45,19 @@ proc extractModule*(s: string): string =
       if s[i+1] in {'0'..'9'}:
         return ""
       else:
-        return substr(s, i+1)
+        let mend = if s[s.high] == ExternMarker: s.high-1 else: s.high
+        return substr(s, i+1, mend)
     dec i
   return ""
+
+proc translateExtern*(s: var string) =
+  if s[s.high] == ExternMarker:
+    var i = 1
+    while i < s.len:
+      if s[i] == '.': break
+      inc i
+    s.setLen i
+    s.add ".c"
 
 type
   SplittedSymName* = object
@@ -53,7 +71,8 @@ proc splitSymName*(s: string): SplittedSymName =
       if s[i+1] in {'0'..'9'}:
         return SplittedSymName(name: s, module: "")
       else:
-        return SplittedSymName(name: substr(s, 0, i-1), module: substr(s, i+1))
+        let mend = if s[s.high] == ExternMarker: s.high-1 else: s.high
+        return SplittedSymName(name: substr(s, 0, i-1), module: substr(s, i+1, mend))
     dec i
   return SplittedSymName(name: s, module: "")
 
