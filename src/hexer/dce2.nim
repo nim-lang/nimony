@@ -62,7 +62,7 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
             let s = translate(resolved, dep)
             let sowner = extractModule(pool.syms[s])
             # Check if dependency is already live in its owning module
-            if s notin result[sowner]:
+            if sowner.len > 0 and s notin result[sowner]:
               worklist.add(s)
 
 proc toNifcName(sym: SymId): SymId =

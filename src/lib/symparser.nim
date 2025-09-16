@@ -28,6 +28,9 @@ proc extractBasename*(s: var string) =
         return
     dec i
 
+proc genericTypeName*(key, modname: string): string =
+  result = "`t.0.I" & key & "." & modname
+
 const
   ExternMarker* = '\t'
 

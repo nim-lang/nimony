@@ -23,10 +23,6 @@ const
   DisplayLenField* = "dl.0."
   DisplayField* = "dy.0."
   MethodsField* = "mt.0."
-  GeneratedTypeSuffix* = ".0.t"
-
-proc isGeneratedType*(s: string): bool =
-  result = endsWith(s, GeneratedTypeSuffix)
 
 type
   LocalInfo* = object

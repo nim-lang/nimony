@@ -305,8 +305,6 @@ proc trRefBody(c: var EContext; n: var Cursor; key: string) =
   # `cast` must also be adjusted by the offset of `d` within `OuterT` but this seems
   # to be optional.
 
-  #let dataStructName = pool.syms.getOrIncl(key & ".1.t")
-
   let info = n.info
   inc n
   c.dest.add tagToken("object", info)
@@ -370,7 +368,7 @@ proc trAsNamedType(c: var EContext; n: var Cursor) =
 
   var val = c.newTypes.getOrDefault(key)
   if val == SymId(0):
-    val = pool.syms.getOrIncl(key & GeneratedTypeSuffix)
+    val = pool.syms.getOrIncl(genericTypeName(key, c.main))
     c.newTypes[key] = val
 
     var buf = createTokenBuf(30)
