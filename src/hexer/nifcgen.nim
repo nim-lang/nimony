@@ -104,9 +104,9 @@ type
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas
 
-proc toExtern(c: var EContext; s: SymId; externName: string): string {.inline.} =
+proc toExtern(c: var EContext; s: SymId; externName: string; isInline=false): string {.inline.} =
   let m = extractModule(pool.syms[s])
-  result = toExtern(externName, if m.len == 0: c.main else: m)
+  result = toExtern(externName, if m.len == 0 or isInline: c.main else: m)
 
 proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.add n # fld
@@ -940,7 +940,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.addKey genPragmas, "inline", pinfo
 
   if prag.externName.len > 0:
-    c.registerMangleInParent(newSym, c.toExtern(s, prag.externName))
+    c.registerMangleInParent(newSym, c.toExtern(s, prag.externName, InlineP in prag.flags))
     c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
   if SelectanyP in prag.flags:
     c.addKey genPragmas, "selectany", pinfo
@@ -1221,9 +1221,9 @@ proc isSimpleLiteral(nb: var Cursor): bool =
     else:
       result = false
 
-proc getCompilerProc(c: var EContext; name: string): string =
+proc getCompilerProc(c: var EContext; name: string; isInline=false): string =
   c.demand pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
-  result = toExtern(name, SystemModuleSuffix)
+  result = toExtern(name, if isInline: c.main else: SystemModuleSuffix)
 
 proc trArrAt(c: var EContext; n: var Cursor) =
   c.dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
@@ -1245,7 +1245,7 @@ proc trArrAt(c: var EContext; n: var Cursor) =
       let indexA = n
       skip n
       if BoundCheck in c.activeChecks:
-        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckAB" else: "nimIcheckAB")
+        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckAB" else: "nimIcheckAB", true)
         c.dest.copyIntoUnchecked "call", info:
           c.dest.add symToken(pool.syms.getOrIncl(abProcName), info)
           c.dest.add indexDest
@@ -1262,7 +1262,7 @@ proc trArrAt(c: var EContext; n: var Cursor) =
     else:
       # we only have to care about the upper bound:
       if BoundCheck in c.activeChecks:
-        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckB" else: "nimIcheckB")
+        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckB" else: "nimIcheckB", true)
         c.dest.copyIntoUnchecked "call", info:
           c.dest.add symToken(pool.syms.getOrIncl(abProcName), info)
           c.dest.add indexDest
@@ -2016,7 +2016,7 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
     c.dest.addParRi()
     c.dest.addParRi()
     c.dest.add tagToken("call", rootInfo)
-    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary")), rootInfo)
+    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary", false)), rootInfo)
     c.dest.addStrLit dynlib
     c.dest.addParRi()
 
@@ -2035,7 +2035,7 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
       c.dest.add tagToken("cast", rootInfo)
       c.dest.add symToken(typeSym, rootInfo)
       c.dest.add tagToken("call", rootInfo)
-      c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr")), rootInfo)
+      c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr", false)), rootInfo)
       c.dest.add symToken(tmp, rootInfo) # library
       c.dest.addStrLit procName # proc name
       c.dest.addParRi()
