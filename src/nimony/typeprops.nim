@@ -391,7 +391,7 @@ proc isFinal*(n: Cursor): bool =
   result = typeHasPragma(n, FinalP, ObjectT)
 
 proc hasRtti*(s: SymId): bool =
-  if pool.syms[s].startsWith("`t.0.IArefS"):
+  if pool.syms[s].startsWith("`t.0.IAref"):
     # This `startsWith` is a minor hack but we know that types of this
     # internal name only have a refcount and a payload, hence no RTTI
     return false
