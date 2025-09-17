@@ -1886,7 +1886,8 @@ proc importSymbol(c: var EContext; s: SymId) =
             if prag.externName.len > 0:
               c.registerMangle(s, c.toExtern prag.externName)
             else:
-              c.registerMangle(s, removeModule(pool.syms[s]) & "." & c.main)
+              let newName = makeLocalDeclName(c, s)
+              c.registerMangle(s, newName)
             transformInlineRoutines(c, n)
             return
 
