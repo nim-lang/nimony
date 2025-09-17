@@ -27,9 +27,13 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
     case n.stmtKind
     of ProcS, TypeS, VarS, ConstS, GvarS, TvarS:
       inc n
-      let newOwner = if n.kind == SymbolDef: n.symId else: owner
-      if n.kind == SymbolDef and isInstantiation(pool.syms[n.symId]):
-        a.offers.incl(n.symId)
+      var newOwner = owner
+      let symName = pool.syms[n.symId]
+      if n.kind == SymbolDef:
+        if isInstantiation(symName):
+          a.offers.incl(n.symId)
+        if not isLocalName(symName):
+          newOwner = n.symId
 
       while n.kind != ParRi:
         tr n, a, newOwner
