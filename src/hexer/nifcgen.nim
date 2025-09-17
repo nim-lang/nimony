@@ -104,8 +104,9 @@ type
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas
 
-proc toExtern(c: var EContext; externName: string): string {.inline.} =
-  result = toExtern(externName, c.main)
+proc toExtern(c: var EContext; s: SymId; externName: string): string {.inline.} =
+  let m = extractModule(pool.syms[s])
+  result = toExtern(externName, if m.len == 0: c.main else: m)
 
 proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.add n # fld
@@ -123,7 +124,7 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.addDotToken() # adds pragmas
 
   if prag.externName.len > 0:
-    c.registerMangle(s, c.toExtern prag.externName)
+    c.registerMangle(s, c.toExtern(s, prag.externName))
 
   trType c, n, flags
 
@@ -510,7 +511,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
       if n.kind != ParRi and n.pragmaKind in {ImportcP, ImportcppP}:
         c.dest.shrink start
         inc n
-        c.dest.addSymUse pool.syms.getOrIncl(c.toExtern pool.strings[n.litId]), n.info
+        c.dest.addSymUse pool.syms.getOrIncl(toExtern(pool.strings[n.litId], c.main)), n.info
         inc n
         skipParRi c, n
         if n.kind != ParRi and n.pragmaKind == HeaderP:
@@ -939,7 +940,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.addKey genPragmas, "inline", pinfo
 
   if prag.externName.len > 0:
-    c.registerMangleInParent(newSym, c.toExtern prag.externName)
+    c.registerMangleInParent(newSym, c.toExtern(s, prag.externName))
     c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
   if SelectanyP in prag.flags:
     c.addKey genPragmas, "selectany", pinfo
@@ -1028,7 +1029,7 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.dest.addDotToken() # pragmas
 
   if prag.externName.len > 0:
-    c.registerMangle(newSym, c.toExtern prag.externName)
+    c.registerMangle(newSym, c.toExtern(s, prag.externName))
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
@@ -1222,7 +1223,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
 
 proc getCompilerProc(c: var EContext; name: string): string =
   c.demand pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
-  result = c.toExtern name
+  result = toExtern(name, SystemModuleSuffix)
 
 proc trArrAt(c: var EContext; n: var Cursor) =
   c.dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
@@ -1505,7 +1506,7 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   var genPragmas = openGenPragmas()
 
   if prag.externName.len > 0:
-    c.registerMangle(s, c.toExtern prag.externName)
+    c.registerMangle(s, c.toExtern(s, prag.externName))
     c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
 
   if ThreadvarP in prag.flags:
@@ -1884,7 +1885,7 @@ proc importSymbol(c: var EContext; s: SymId) =
             # rewrite the inline routine, it belongs to the current module now that
             # we duplicated it!
             if prag.externName.len > 0:
-              c.registerMangle(s, c.toExtern prag.externName)
+              c.registerMangle(s, toExtern(prag.externName, c.main))
             else:
               let newName = makeLocalDeclName(c, s)
               c.registerMangle(s, newName)
@@ -1893,7 +1894,7 @@ proc importSymbol(c: var EContext; s: SymId) =
 
         if NodeclP in prag.flags:
           if prag.externName.len > 0:
-            c.registerMangle(s, c.toExtern prag.externName)
+            c.registerMangle(s, c.toExtern(s, prag.externName))
           if prag.header != StrId(0):
             c.headers.incl prag.header
           return
