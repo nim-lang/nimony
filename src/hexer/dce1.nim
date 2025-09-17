@@ -39,7 +39,14 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         tr n, a, newOwner
       inc n
     else:
-      inc n
+      if n.substructureKind == FldU:
+        inc n
+        let symName = pool.syms[n.symId]
+        if n.kind == SymbolDef:
+          if isInstantiation(symName):
+            a.offers.incl(n.symId)
+      else:
+        inc n
       while n.kind != ParRi:
         tr n, a, owner
       inc n
