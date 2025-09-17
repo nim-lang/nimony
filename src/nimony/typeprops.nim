@@ -1,4 +1,5 @@
 import std/assertions
+from std/strutils import startsWith
 include nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
 import ".." / models / tags
@@ -390,6 +391,10 @@ proc isFinal*(n: Cursor): bool =
   result = typeHasPragma(n, FinalP, ObjectT)
 
 proc hasRtti*(s: SymId): bool =
+  if pool.syms[s].startsWith("`t.0.IArefS"):
+    # This `startsWith` is a minor hack but we know that types of this
+    # internal name only have a refcount and a payload, hence no RTTI
+    return false
   var root = s
   for r in inheritanceChain(s):
     root = r
