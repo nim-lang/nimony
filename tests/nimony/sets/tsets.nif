@@ -276,7 +276,7 @@
        (cmd quit.0.syn1lfpjv 5 +1))))))) ,37
  (block . 2,1
   (stmts
-   (proc 5 :test.0 . . . 9
+   (proc 5 :test.0.tseflljd71 . . . 9
     (params) . . . 2,1
     (stmts
      (discard 8
@@ -285,7 +285,7 @@
         (c +8)) 1 'a')))))) ,42
  (block . 2,1
   (stmts
-   (proc 5 :foo.0 . . . 8
+   (proc 5 :foo.0.tseflljd71 . . . 8
     (params) 2
     (c +8) . . 17
     (stmts
@@ -302,7 +302,7 @@
    (incl
     (set
      (c +8)) ~1 x.0 9
-    (call ~3 foo.0)) 2,4,lib/std/assertions.nim
+    (call ~3 foo.0.tseflljd71)) 2,4,lib/std/assertions.nim
    (stmts
     (if 3
      (elif
