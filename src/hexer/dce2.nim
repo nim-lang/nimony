@@ -51,6 +51,7 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
   while worklist.len > 0:
     let sym = translate(resolved, worklist.pop())
     let moduleName = extractModule(pool.syms[sym])
+    assert moduleName.len > 0, "moduleName is empty for " & pool.syms[sym]
 
     # Check if symbol is already live in its owning module
     if not result[moduleName].containsOrIncl(sym):

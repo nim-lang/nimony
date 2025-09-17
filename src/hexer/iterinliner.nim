@@ -311,7 +311,8 @@ proc replaceSymbol(e: var EContext; c: var Cursor; relations: var Table[SymId, S
       e.dest.add c
       inc c
       let oldName = c.symId
-      let newName = pool.syms.getOrIncl(pool.syms[oldName] & ".lf." & $e.instId)
+      let newName = pool.syms.getOrIncl("`lf." & $e.instId)
+      inc e.instId
       relations[oldName] = newName
       e.dest.add symdefToken(newName, c.info)
       inc c
@@ -353,7 +354,8 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
       let name = param.name
       let symId = name.symId
 
-      let newName = pool.syms.getOrIncl(pool.syms[symId] & ".lf." & $e.instId)
+      let newName = pool.syms.getOrIncl("`lf." & $e.instId)
+      inc e.instId
       createDecl(e, newName, typ, iter, name.info, if constructsValue(iter): "var" else: "cursor")
       relationsMap[symId] = newName
 
@@ -445,7 +447,6 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
 
   e.breaks.add lab
 
-  inc e.instId
   inlineIterator(e, forStmt)
 
   discard e.breaks.pop()
