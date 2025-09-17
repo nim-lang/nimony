@@ -14,6 +14,7 @@
 const
   EqStringsOp* = "equalStrings.0." & SystemModuleSuffix
   StrAtLeOp* = "nimStrAtLe.0." & SystemModuleSuffix
+  BorrowCStringUnsafeOp* = "borrowCStringUnsafe.1." & SystemModuleSuffix
 
 proc decodeSolution(c: var EContext; s: seq[SearchNode]; i: int;
                     selector: SymId; info: PackedLineInfo) =
@@ -88,19 +89,19 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
   let selectorType = getType(c.typeCache, selectorNode)
   if selectorType.typeKind == CstringT:
     # the other overload of `borrowCStringUnsafe`
-    c.demand pool.syms.getOrIncl("borrowCStringUnsafe.1." & SystemModuleSuffix)
-    selector = pool.syms.getOrIncl(":tmp.c." & $c.getTmpId)
+    c.demand pool.syms.getOrIncl(BorrowCStringUnsafeOp)
+    selector = pool.syms.getOrIncl("`tc." & $c.getTmpId)
     c.dest.copyIntoUnchecked "var", sinfo:
       c.dest.add symdefToken(selector, sinfo)
       c.dest.addDotToken() # pragmas
       c.dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
       c.dest.copyIntoUnchecked "call", sinfo:
-        c.dest.add symToken(pool.syms.getOrIncl("nimBorrowCStringUnsafe.c"), sinfo)
+        c.dest.add symToken(pool.syms.getOrIncl(BorrowCStringUnsafeOp), sinfo)
         trExpr(c, selectorNode)
   elif selectorNode.kind == Symbol:
     selector = selectorNode.symId
   else:
-    selector = pool.syms.getOrIncl(":tmp.c." & $c.getTmpId)
+    selector = pool.syms.getOrIncl("`tc." & $c.getTmpId)
     c.dest.copyIntoUnchecked "var", sinfo:
       c.dest.add symdefToken(selector, sinfo)
       c.dest.addDotToken() # pragmas
