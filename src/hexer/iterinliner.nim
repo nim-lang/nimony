@@ -114,7 +114,7 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
         info = c.info
         inc c
       else:
-        tmpId = pool.syms.getOrIncl(":tmp.l." & $e.getTmpId)
+        tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
         var typ = yieldType
         createDecl(e, tmpId, typ, c, info, "let")
@@ -233,7 +233,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       e.dest.add c
       inc c
       let oldName = c.symId
-      let freshLocal = pool.syms.getOrIncl(":tmp.v." & $e.getTmpId)
+      let freshLocal = pool.syms.getOrIncl("`ii." & $e.getTmpId)
       mapping[oldName] = freshLocal
       e.dest.add symdefToken(freshLocal, c.info) # name
 

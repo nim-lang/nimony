@@ -131,8 +131,9 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   takeParRi c, n
 
 proc ithTupleField(c: var EContext; counter: int, typ: Cursor): SymId {.inline.} =
-  var typ = typ
-  pool.syms.getOrIncl("fld." & $counter & "." & takeMangle(typ, Backend, c.bits))
+  #var typ = typ
+  pool.syms.getOrIncl("fld." & $counter)
+  # & "." & takeMangle(typ, Backend, c.bits))
 
 proc genTupleField(c: var EContext; typ: var Cursor; counter: int) =
   c.dest.add tagToken("fld", typ.info)
