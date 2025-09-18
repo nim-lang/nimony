@@ -599,6 +599,7 @@ proc handleCmdLine =
 
   of "build":
     const showProgress = true
+    exec "git submodule update --init"
     case (if args.len > 0: args[0] else: "")
     of "", "all":
       buildNifler(showProgress)

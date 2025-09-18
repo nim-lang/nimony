@@ -243,22 +243,10 @@ proc compileProgram(c: var CmdOptions) =
   of SingleModule:
     if not c.isChild:
       createDir(c.config.nifcachePath)
-      createDir(binDir())
-      # configure required tools
-      requiresTool "nifler", "src/nifler/nifler.nim", c.fullRebuild
-      requiresTool "nifc", "src/nifc/nifc.nim", c.fullRebuild
     processSingleModule(c.args[0].addFileExt(".nim"), c.config, c.moduleFlags,
                         c.commandLineArgs, c.forceRebuild)
   of FullProject:
     createDir(c.config.nifcachePath)
-    createDir(binDir())
-    # configure required tools
-    updateCompilerGitSubmodules(c.config)
-    requiresTool "nifler", "src/nifler/nifler.nim", c.fullRebuild
-    requiresTool "nimsem", "src/nimony/nimsem.nim", c.fullRebuild
-    requiresTool "hexer", "src/hexer/hexer.nim", c.fullRebuild
-    requiresTool "nifc", "src/nifc/nifc.nim", c.fullRebuild
-    requiresTool "nifmake", "src/nifmake/nifmake.nim", c.fullRebuild
     # compile full project modules
     buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
