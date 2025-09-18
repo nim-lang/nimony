@@ -73,13 +73,6 @@ proc nimexec(cmd: string) =
     quit("FAILURE: cannot find nim.exe / nim binary")
   exec quoteShell(t) & " " & cmd
 
-proc updateCompilerGitSubmodules*(config: NifConfig) =
-  # XXX: hack for more convenient development
-  let cwd = getCurrentDir()
-  setCurrentDir compilerDir()
-  exec "git submodule update --init"
-  setCurrentDir cwd
-
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
   # XXX: hack for more convenient development

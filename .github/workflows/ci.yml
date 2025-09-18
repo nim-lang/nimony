@@ -151,8 +151,7 @@ jobs:
       - name: Test Building nimony
         run: |
           cd nif
-          nim c src/nifler/nifler.nim
-          nim c -r src/nimony/nimony c lib/std/assertions.nim
+          nim c -r src/hastur build all
 
       - name: Run tester
         run: |
