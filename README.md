@@ -1,6 +1,6 @@
 # nimony
 
-Nimony is a new Nim implementation that is in heavy development. See [design.md](https://github.com/nim-lang/nimony/blob/master/doc/design.md) for the big picture.
+Nimony is a new Nim implementation that is in heavy development. See the [manual](https://nim-lang.github.io/nimony-website/) for up to date documentation. See [design.md](https://github.com/nim-lang/nimony/blob/master/doc/design.md) for lots of implementation details.
 There is a [blog post](https://nim-lang.org/araq/nimony.html) about its design principles.
 
 The current focus is on developing a compiler for a Nim dialect that offers:
