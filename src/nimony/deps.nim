@@ -353,22 +353,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addKeyw "input"
 
     # Command for hexer
-    b.withTree "cmd":
-      b.addSymbolDef "hexer"
-      b.addStrLit hexer
-      b.addStrLit "c"
-      b.addStrLit "--bits:" & $c.config.bits
-      b.withTree "input":
-        b.addIntLit 0
-
-    b.withTree "cmd":
-      b.addSymbolDef "dce"
-      b.addStrLit hexer
-      b.addStrLit "d"
-      b.addStrLit "--bits:" & $c.config.bits
-      b.withTree "input":
-        b.addIntLit 0
-        b.addIntLit -1  # all inputs
+    defineHexerCmds(b, hexer, c.config.bits)
 
     # Command for C compiler (object files)
     b.withTree "cmd":
@@ -537,6 +522,24 @@ proc defineNiflerCmd(b: var Builder; nifler: string) =
     b.addStrLit "--deps"
     b.addStrLit "parse"
 
+proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
+  b.withTree "cmd":
+    b.addSymbolDef "hexer"
+    b.addStrLit hexer
+    b.addStrLit "c"
+    b.addStrLit "--bits:" & $bits
+    b.withTree "input":
+      b.addIntLit 0
+
+  b.withTree "cmd":
+    b.addSymbolDef "dce"
+    b.addStrLit hexer
+    b.addStrLit "d"
+    b.addStrLit "--bits:" & $bits
+    b.withTree "input":
+      b.addIntLit 0
+      b.addIntLit -1  # all inputs
+
 proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".build.nif"
   var b = nifbuilder.open(result)
@@ -664,14 +667,7 @@ proc buildGraphForNif*(config: NifConfig; mainNifFile: string; dependencyNifFile
       b.addKeyw "args"
       b.addKeyw "input"
 
-    b.withTree "cmd":
-      b.addSymbolDef "hexer"
-      b.addStrLit findTool("hexer")
-      b.addStrLit "c"
-      b.addStrLit "--bits:" & $config.bits
-      b.addKeyw "args"
-      b.withTree "input":
-        b.addIntLit 0
+    defineHexerCmds(b, findTool("hexer"), config.bits)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"
