@@ -233,7 +233,7 @@
  (call ~9 classify1.0.tbawx6nu81 1 "9123345") ,81
  (block . 2,1
   (stmts
-   (proc 5 :classify.0 . . . 13
+   (proc 5 :classify.0.tbawx6nu81 . . . 13
     (params 1
      (param :s.4 . . 3 string.0.sysvq0asl .)) . . . 2,1
     (stmts 2,116,lib/std/syncio.nim
@@ -241,10 +241,10 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,84,tests/nimony/sysbasics/tbasics.nim s.4)) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
-   (call ~8 classify.0 1 "9123345") ,4
+   (call ~8 classify.0.tbawx6nu81 1 "9123345") ,4
    (block . 2,1
     (stmts
-     (proc 5 :classify2.0 . . . 14
+     (proc 5 :classify2.0.tbawx6nu81 . . . 14
       (params 1
        (param :s.5 . . 3 string.0.sysvq0asl .)) . . . 2,1
       (stmts 2,116,lib/std/syncio.nim
@@ -252,10 +252,10 @@
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,89,tests/nimony/sysbasics/tbasics.nim s.5)) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 9,3
-     (call ~9 classify2.0 1 "9123345"))))) ,92
+     (call ~9 classify2.0.tbawx6nu81 1 "9123345"))))) ,92
  (block . 2,1
   (stmts
-   (proc 5 :classify2.1 . . . 14
+   (proc 5 :classify2.1.tbawx6nu81 . . . 14
     (params 1
      (param :s.6 . . 3 string.0.sysvq0asl .)) . . . 2,1
     (stmts 2,116,lib/std/syncio.nim
@@ -263,10 +263,10 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,95,tests/nimony/sysbasics/tbasics.nim s.6)) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 9,3
-   (call ~9 classify2.1 1 "9123345"))) ,98
+   (call ~9 classify2.1.tbawx6nu81 1 "9123345"))) ,98
  (block . 2,1
   (stmts
-   (proc 5 :classify.1 . . . 13
+   (proc 5 :classify.1.tbawx6nu81 . . . 13
     (params 1
      (param :s.7 . . 3 string.0.sysvq0asl .)) . . . 2,1
     (stmts 2,116,lib/std/syncio.nim
@@ -274,12 +274,12 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,101,tests/nimony/sysbasics/tbasics.nim s.7)) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
-   (call ~8 classify.1 1 "9123345"))) ,104
+   (call ~8 classify.1.tbawx6nu81 1 "9123345"))) ,104
  (block . 2,1
   (stmts
    (block . 2,1
     (stmts
-     (proc 5 :classify.2 . . . 13
+     (proc 5 :classify.2.tbawx6nu81 . . . 13
       (params 1
        (param :s.8 . . 3 string.0.sysvq0asl .)) . . . 2,1
       (stmts 2,116,lib/std/syncio.nim
@@ -287,11 +287,11 @@
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,108,tests/nimony/sysbasics/tbasics.nim s.8)) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
-     (call ~8 classify.2 1 "9123345"))))) ,111
+     (call ~8 classify.2.tbawx6nu81 1 "9123345"))))) ,111
  (proc 5 :foo2.1.tbawx6nu81 . . . 9
   (params) . . . 2,1
   (stmts
-   (proc 5 :classify.3 . . . 13
+   (proc 5 :classify.3.tbawx6nu81 . . . 13
     (params 1
      (param :s.9 . . 3 string.0.sysvq0asl .)) . . . 2,1
     (stmts 2,116,lib/std/syncio.nim
@@ -299,7 +299,7 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,114,tests/nimony/sysbasics/tbasics.nim s.9)) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
-   (call ~8 classify.3 1 "9123345"))) 4,117
+   (call ~8 classify.3.tbawx6nu81 1 "9123345"))) 4,117
  (call ~4 foo2.1.tbawx6nu81) ,119
  (proc 5 :bar.0.tbawx6nu81 . . . 8
   (params) 4 string.0.sysvq0asl . . 2,1

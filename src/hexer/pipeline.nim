@@ -60,7 +60,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
 
   var duplicationReader = beginRead(nx)
   let ctx = createLiftingCtx(moduleSuffix, c.bits)
-  var duplicatedBuf = injectDups(duplicationReader, nx, ctx)
+  var duplicatedBuf = injectDups(duplicationReader, moduleSuffix, nx, ctx)
   endRead(nx)
 
   var raisesReader = beginRead(duplicatedBuf)

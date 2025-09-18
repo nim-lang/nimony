@@ -378,8 +378,17 @@ proc toStringDebug*(b: Cursor; produceLineInfo = true): string =
   let L = if b.kind == ParLe: 1 else: 0
   result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, L), produceLineInfo)
 
-proc writeFile*(b: TokenBuf; filename: string) =
-  writeFile(filename, "(.nif24)\n" & toString(b))
+type
+  FileWriteMode* = enum
+    AlwaysWrite,
+    OnlyIfChanged
+
+proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) =
+  let content = "(.nif24)\n" & toString(b)
+  if mode == OnlyIfChanged:
+    let existingContent = try: readFile(filename) except: ""
+    if existingContent == content: return
+  writeFile(filename, content)
 
 proc `$`*(c: Cursor): string = toString(c, false)
 
@@ -421,6 +430,7 @@ proc parseFromBuffer*(input: string; sizeHint = 100): TokenBuf =
 
 proc parseFromFile*(filename: string; sizeHint = 100): TokenBuf =
   var r = nifstreams.open(filename)
+  discard processDirectives(r.r)
   result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 

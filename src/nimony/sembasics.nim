@@ -315,10 +315,13 @@ type
 
 proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
   var name = str
+  # Replace dots with spaces to avoid conflicts with NIF symbol format
+  when false:
+    # XXX activate this later!
+    for i in 0..<name.len:
+      if name[i] == '.': name[i] = ' '
   if c.currentScope.kind == ToplevelScope or
-      kind in {FldY, EfldY, TypevarY,
-        # required for local enum type dollars to work at least, probably more cases:
-        TypeY}:
+      kind in {FldY, EfldY, TypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY}:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
@@ -330,6 +333,10 @@ proc identToSym*(c: var SemContext; lit: StrId; kind: SymKind): SymId =
 proc symToIdent*(s: SymId): StrId =
   var name = pool.syms[s]
   extractBasename name
+  when false:
+    # XXX activate this later!
+    for i in 0..<name.len:
+      if name[i] == ' ': name[i] = '.'
   result = pool.strings.getOrIncl name
 
 proc declareSym*(c: var SemContext; it: var Item; kind: SymKind): SymStatus =

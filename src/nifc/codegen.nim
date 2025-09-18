@@ -624,7 +624,8 @@ proc genImp(c: var GeneratedCode; n: var Cursor) =
   of ConstS:
     genVar c, n, IsConst, true
   else:
-    error c.m, "expected declaration for `imp` but got: ", n
+    if n.kind != ParRi:
+      error c.m, "expected declaration for `imp` but got: ", n
   skipParRi n
 
 proc genNodecl(c: var GeneratedCode; n: var Cursor) =

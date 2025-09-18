@@ -38,34 +38,43 @@ proc translate(resolved: ResolveTable; sym: SymId): SymId =
   else:
     result = sym
 
-proc markLive*(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTable): Table[string, HashSet[SymId]] =
-  var worklist = newSeq[SymId](1)
-  worklist[0] = pool.syms.getOrIncl(RootSym)
+proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTable): Table[string, HashSet[SymId]] =
+  var worklist = newSeq[SymId](0)
 
   result = initTable[string, HashSet[SymId]]()
 
-  for m in moduleGraphs.keys:
-    result[m] = initHashSet[SymId]()
+  for k, m in moduleGraphs:
+    result[k] = initHashSet[SymId]()
+    for root in m.roots:
+      worklist.add(root)
 
   while worklist.len > 0:
     let sym = translate(resolved, worklist.pop())
     let moduleName = extractModule(pool.syms[sym])
+    assert moduleName.len > 0, "moduleName is empty for " & pool.syms[sym]
 
     # Check if symbol is already live in its owning module
     if not result[moduleName].containsOrIncl(sym):
-      # Add symbol to its module's live set
-      result[moduleName].incl(sym)
-
       # Process dependencies from the symbol's own module
       if moduleName in moduleGraphs:
         let graph = moduleGraphs[moduleName]
-        if sym in graph.deps:
-          for dep in graph.deps[sym]:
+        if sym in graph.uses:
+          for dep in graph.uses[sym]:
             let s = translate(resolved, dep)
             let sowner = extractModule(pool.syms[s])
             # Check if dependency is already live in its owning module
-            if s notin result[sowner]:
+            if sowner.len > 0:
+              assert sowner in result, "sowner is not in result for " & pool.syms[s]
+            if sowner.len > 0 and s notin result[sowner]:
               worklist.add(s)
+
+proc toNifcName(sym: SymId): SymId =
+  var symName = pool.syms[sym]
+  if symName[symName.high] == ExternMarker:
+    translateExtern symName
+    result = pool.syms.getOrIncl(symName)
+  else:
+    result = sym
 
 proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: ResolveTable) =
   case n.kind
@@ -78,19 +87,14 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       let head = n.load()
       inc n
       if n.kind == SymbolDef:
-        if alive.contains(n.symId):
-          let t = translate(resolved, n.symId)
-          dest.add head
-          dest.addSymDef t, n.info
-          inc n # skip symbol def
-          while n.kind != ParRi:
-            tr dest, n, alive, resolved
-          dest.takeToken n
-        else:
-          # skip it, it's dead
-          inc n # skip symbol def
-          while n.kind != ParRi: skip n
-          inc n
+        let def = n.symId
+        let t = translate(resolved, def)
+        dest.add head
+        dest.addSymDef t.toNifcName, n.info
+        inc n # skip symbol def
+        while n.kind != ParRi:
+          tr dest, n, alive, resolved
+        dest.takeToken n
       else:
         # let errors propagate:
         dest.add head
@@ -98,18 +102,39 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
           tr dest, n, alive, resolved
         dest.takeToken n
 
+    of ImpS:
+      dest.takeToken n # Imp
+      if n.stmtKind in {ProcS, VarS, ConstS, GvarS, TvarS, TypeS}:
+        dest.takeToken n
+        while n.kind != ParRi:
+          tr dest, n, alive, resolved
+        dest.takeToken n
+      else:
+        while n.kind != ParRi:
+          tr dest, n, alive, resolved
+        dest.takeToken n
+      assert n.kind == ParRi
+      dest.takeToken n
     of ProcS, VarS, ConstS, GvarS, TvarS:
       let head = n.load()
       inc n
       if n.kind == SymbolDef:
-        if alive.contains(n.symId):
-          let t = translate(resolved, n.symId)
-          if t != n.symId:
+        let def = n.symId
+        if isLocalName(pool.syms[def]):
+          dest.add head
+          dest.addSymDef def.toNifcName, n.info
+          inc n # skip symbol def
+          while n.kind != ParRi:
+            tr dest, n, alive, resolved
+          dest.takeToken n
+        elif alive.contains(def):
+          let t = translate(resolved, def)
+          if t != def:
             # we are a loser and need to add an `extern` declaration:
             dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
 
             dest.add head
-            dest.addSymDef t, n.info
+            dest.addSymDef t.toNifcName, n.info
             inc n # skip symbol def
             var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
             while n.kind != ParRi and untilBody > 0:
@@ -118,11 +143,12 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             skip n # skip the body
             # replace it with an empty body:
             dest.addDotToken()
+            assert n.kind == ParRi
             dest.takeToken n
             dest.addParRi() # also close the "imp" declaration
           else:
             dest.add head
-            dest.addSymDef t, n.info
+            dest.addSymDef def.toNifcName, n.info
             inc n # skip symbol def
             while n.kind != ParRi:
               tr dest, n, alive, resolved
@@ -144,18 +170,12 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
         tr dest, n, alive, resolved
       dest.takeToken n
   of Symbol:
-    if isLocalName(pool.syms[n.symId]):
-      dest.add n
-    else:
-      let t = translate(resolved, n.symId)
-      dest.addSymUse t, n.info
+    let t = translate(resolved, n.symId)
+    dest.addSymUse t.toNifcName, n.info
     inc n
   of SymbolDef:
-    if isLocalName(pool.syms[n.symId]):
-      dest.add n
-    else:
-      let t = translate(resolved, n.symId)
-      dest.addSymDef t, n.info
+    let t = translate(resolved, n.symId)
+    dest.addSymDef t.toNifcName, n.info
     inc n
   of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
@@ -167,16 +187,18 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable) =
   var dest = createTokenBuf(buf.len)
   tr dest, n, live, resolved
   endRead(buf)
-  writeFile(dest, file.changeModuleExt ".c.nif")
+  writeFile(dest, file.changeModuleExt ".c.nif", OnlyIfChanged)
 
 proc deadCodeElimination*(files: openArray[string]) =
   var graphs = initTable[string, ModuleAnalysis]()
   for file in files:
-    graphs[file] = readModuleAnalysis(file)
+    let modName = splitModulePath(file).name
+    graphs[modName] = readModuleAnalysis(file.changeModuleExt ".dce.nif")
 
   let resolved = resolveSymbolConflicts(graphs)
 
   let live = markLive(graphs, resolved)
   # TODO: we could do this step in parallel:
   for file in files:
-    rewriteModule(file, live[file], resolved)
+    let modName = splitModulePath(file).name
+    rewriteModule(file, live[modName], resolved)

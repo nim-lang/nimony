@@ -347,7 +347,7 @@
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))) ,14
-   (iterator 9 :foo.0 . . . 12
+   (iterator 9 :foo.0.tfo161bfb1 . . . 12
     (params) 2
     (i -1) . . 2,1
     (stmts 4
@@ -376,7 +376,7 @@
            (i +64) ~2 x.4 2
            (hderef y.0))))))))) 4,19
    (for 8
-    (call ~3 foo.0)
+    (call ~3 foo.0.tfo161bfb1)
     (unpackflat
      (let :p.0 . . 13,~116
       (i -1) .)) ~2,1
@@ -386,19 +386,19 @@
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 9,120,tests/nimony/iter/tforloops1.nim p.0)) ,2
       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (break .))) ,23
-   (iterator 9 :permutations.0 . . . 21
+   (iterator 9 :permutations.0.tfo161bfb1 . . . 21
     (params) 2
     (i -1) . . 2,1
     (stmts
      (yld 6 +10))) 4,26
    (for 17
-    (call ~12 permutations.0)
+    (call ~12 permutations.0.tfo161bfb1)
     (unpackflat
      (let :p.1 . . 13,~123
       (i -1) .)) ~2,1
     (stmts
      (break .))) ,30
-   (proc 5 :main.0 . . . 10
+   (proc 5 :main.0.tfo161bfb1 . . . 10
     (params) . . . 2,1
     (stmts 4
      (for 5
@@ -443,7 +443,7 @@
            (cmd write.1.syn1lfpjv 6 stdout.0.syn1lfpjv 21,133,tests/nimony/iter/tforloops1.nim
             (hderef y.1))) ,2
           (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) 4,35
-   (call ~4 main.0))) 4,22
+   (call ~4 main.0.tfo161bfb1))) 4,22
  (proc :inc.0.tfo161bfb1 . 0,12,lib/std/system/arithmetics.nim .
   (at inc.1.sysvq0asl 19,~4
    (i -1)) 21,12,lib/std/system/arithmetics.nim
