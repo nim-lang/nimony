@@ -87,6 +87,4 @@ proc hasturTests(overwrite: bool) =
   else:
     exec "nim c -r src/hastur"
 
-exec "nim c -r src/hastur build all"
-
 hasturTests(overwrite)
