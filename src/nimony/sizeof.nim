@@ -273,7 +273,7 @@ when isMainModule:
 
   proc testSizeof(srcNif: string; expectedSize: int) =
     let symId = block:
-      var srcBuf = parse srcNif
+      var srcBuf = parseFromBuffer srcNif
       var n = beginRead srcBuf
       assert n.stmtKind == TypeS
       inc n

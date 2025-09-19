@@ -40,7 +40,7 @@ proc newNifModule(infile: string): NifModule =
 
 proc suffixToNif*(suffix: string): string {.inline.} =
   # always imported from semchecked files
-  prog.main.dir / suffix & ".2.nif"
+  prog.main.dir / suffix & ".s.nif"
 
 proc customToNif*(suffix: string): string {.inline.} =
   prog.main.dir / suffix & ".nif"
@@ -52,7 +52,7 @@ proc load(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
     let infile = suffixToNif suffix
     result = newNifModule(infile)
-    let indexName = infile.changeFileExt".idx.nif"
+    let indexName = infile.changeModuleExt".s.idx.nif"
     #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
     #  createIndex infile
     result.index = readIndex(indexName)
@@ -316,7 +316,7 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   var m = newNifModule(infile)
 
   if hasIndex:
-    let indexName = infile.changeFileExt".idx.nif"
+    let indexName = infile.changeModuleExt".s.idx.nif"
     #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
     #  createIndex infile
     m.index = readIndex(indexName)

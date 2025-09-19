@@ -67,7 +67,7 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
 
   let dependencyFiles = files[1..^1]
 
-  buildGraphForNif(
+  buildGraphForEval(
     config = config,
     mainNifFile = files[0],
     dependencyNifFiles = dependencyFiles,

@@ -14,7 +14,7 @@ from std / os import changeFileExt, splitFile, extractFilename
 from std / sequtils import insert
 
 include ".." / lib / nifprelude
-import mangler, nifc_model, cprelude, noptions, typenav
+import mangler, nifc_model, cprelude, noptions, typenav, symparser
 
 type
   Token = distinct uint32
@@ -624,7 +624,8 @@ proc genImp(c: var GeneratedCode; n: var Cursor) =
   of ConstS:
     genVar c, n, IsConst, true
   else:
-    error c.m, "expected declaration for `imp` but got: ", n
+    if n.kind != ParRi:
+      error c.m, "expected declaration for `imp` but got: ", n
   skipParRi n
 
 proc genNodecl(c: var GeneratedCode; n: var Cursor) =

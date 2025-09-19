@@ -46,6 +46,7 @@ type
     tmpCounter: int
     resultSym: SymId
     source: ptr TokenBuf
+    moduleSuffix: string
 
   Expects = enum
     DontCare,
@@ -764,7 +765,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
   let baseType = refType.firstSon
   var refTypeCopy = refType
   let typeKey = takeMangle(refTypeCopy, Frontend, c.lifter.bits)
-  let typeSym = pool.syms.getOrIncl(typeKey & GeneratedTypeSuffix)
+  let typeSym = pool.syms.getOrIncl(genericTypeName(typeKey, c.moduleSuffix))
 
   copyIntoKind c.dest, CastX, info:
     c.dest.addSubtree refType
@@ -1087,9 +1088,9 @@ proc checkForMoveTypes(c: var Context; n: Cursor): int =
     if nested == 0: break
     inc n
 
-proc injectDups*(n: Cursor; source: var TokenBuf; lifter: ref LiftingCtx): TokenBuf =
+proc injectDups*(n: Cursor; moduleSuffix: string; source: var TokenBuf; lifter: ref LiftingCtx): TokenBuf =
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
-    dest: createTokenBuf(400), source: addr source)
+    dest: createTokenBuf(400), source: addr source, moduleSuffix: moduleSuffix)
   c.typeCache.openScope()
   var n = n
   tr(c, n, WantNonOwner)

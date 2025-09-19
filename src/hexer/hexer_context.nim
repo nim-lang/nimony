@@ -12,7 +12,7 @@ import std / [tables, sets, syncio]
 include nifprelude
 import ".." / nimony / [nimony_model, typenav, langmodes]
 
-export RcField, DataField, GeneratedTypeSuffix
+export RcField, DataField
 
 type
   MangleScope* {.acyclic.} = ref object

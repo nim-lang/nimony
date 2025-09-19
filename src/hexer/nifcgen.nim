@@ -14,7 +14,7 @@ import symparser
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
   typeprops, langmodes, typekeys, sigmatch]
-import hexer_context, pipeline
+import hexer_context, pipeline, dce1
 import  ".." / lib / [stringtrees, treemangler]
 
 
@@ -104,6 +104,10 @@ type
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas
 
+proc toExtern(c: var EContext; s: SymId; externName: string; isInline=false): string {.inline.} =
+  let m = extractModule(pool.syms[s])
+  result = toExtern(externName, if m.len == 0 or isInline: c.main else: m)
+
 proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.add n # fld
   inc n
@@ -120,7 +124,7 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.addDotToken() # adds pragmas
 
   if prag.externName.len > 0:
-    c.registerMangle(s, prag.externName & ".c")
+    c.registerMangle(s, c.toExtern(s, prag.externName))
 
   trType c, n, flags
 
@@ -128,8 +132,9 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   takeParRi c, n
 
 proc ithTupleField(c: var EContext; counter: int, typ: Cursor): SymId {.inline.} =
-  var typ = typ
-  pool.syms.getOrIncl("fld." & $counter & "." & takeMangle(typ, Backend, c.bits))
+  #var typ = typ
+  pool.syms.getOrIncl("fld." & $counter)
+  # & "." & takeMangle(typ, Backend, c.bits))
 
 proc genTupleField(c: var EContext; typ: var Cursor; counter: int) =
   c.dest.add tagToken("fld", typ.info)
@@ -302,8 +307,6 @@ proc trRefBody(c: var EContext; n: var Cursor; key: string) =
   # `cast` must also be adjusted by the offset of `d` within `OuterT` but this seems
   # to be optional.
 
-  #let dataStructName = pool.syms.getOrIncl(key & ".1.t")
-
   let info = n.info
   inc n
   c.dest.add tagToken("object", info)
@@ -367,7 +370,7 @@ proc trAsNamedType(c: var EContext; n: var Cursor) =
 
   var val = c.newTypes.getOrDefault(key)
   if val == SymId(0):
-    val = pool.syms.getOrIncl(key & GeneratedTypeSuffix)
+    val = pool.syms.getOrIncl(genericTypeName(key, c.main))
     c.newTypes[key] = val
 
     var buf = createTokenBuf(30)
@@ -508,7 +511,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
       if n.kind != ParRi and n.pragmaKind in {ImportcP, ImportcppP}:
         c.dest.shrink start
         inc n
-        c.dest.addSymUse pool.syms.getOrIncl(pool.strings[n.litId] & ".c"), n.info
+        c.dest.addSymUse pool.syms.getOrIncl(toExtern(pool.strings[n.litId], c.main)), n.info
         inc n
         skipParRi c, n
         if n.kind != ParRi and n.pragmaKind == HeaderP:
@@ -937,7 +940,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.addKey genPragmas, "inline", pinfo
 
   if prag.externName.len > 0:
-    c.registerMangleInParent(newSym, prag.externName & ".c")
+    c.registerMangleInParent(newSym, c.toExtern(s, prag.externName, InlineP in prag.flags))
     c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
   if SelectanyP in prag.flags:
     c.addKey genPragmas, "selectany", pinfo
@@ -1026,7 +1029,7 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.dest.addDotToken() # pragmas
 
   if prag.externName.len > 0:
-    c.registerMangle(newSym, prag.externName & ".c")
+    c.registerMangle(newSym, c.toExtern(s, prag.externName))
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
@@ -1218,9 +1221,9 @@ proc isSimpleLiteral(nb: var Cursor): bool =
     else:
       result = false
 
-proc getCompilerProc(c: var EContext; name: string): string =
+proc getCompilerProc(c: var EContext; name: string; isInline=false): string =
   c.demand pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
-  result = name & ".c"
+  result = toExtern(name, if isInline: c.main else: SystemModuleSuffix)
 
 proc trArrAt(c: var EContext; n: var Cursor) =
   c.dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
@@ -1242,7 +1245,7 @@ proc trArrAt(c: var EContext; n: var Cursor) =
       let indexA = n
       skip n
       if BoundCheck in c.activeChecks:
-        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckAB" else: "nimIcheckAB")
+        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckAB" else: "nimIcheckAB", true)
         c.dest.copyIntoUnchecked "call", info:
           c.dest.add symToken(pool.syms.getOrIncl(abProcName), info)
           c.dest.add indexDest
@@ -1259,7 +1262,7 @@ proc trArrAt(c: var EContext; n: var Cursor) =
     else:
       # we only have to care about the upper bound:
       if BoundCheck in c.activeChecks:
-        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckB" else: "nimIcheckB")
+        let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckB" else: "nimIcheckB", true)
         c.dest.copyIntoUnchecked "call", info:
           c.dest.add symToken(pool.syms.getOrIncl(abProcName), info)
           c.dest.add indexDest
@@ -1503,7 +1506,7 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   var genPragmas = openGenPragmas()
 
   if prag.externName.len > 0:
-    c.registerMangle(s, prag.externName & ".c")
+    c.registerMangle(s, c.toExtern(s, prag.externName))
     c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
 
   if ThreadvarP in prag.flags:
@@ -1879,12 +1882,19 @@ proc importSymbol(c: var EContext; s: SymId) =
         let prag = parsePragmas(c, pragmas)
         if isR:
           if {InlineP, DynlibP} * prag.flags != {}:
+            # rewrite the inline routine, it belongs to the current module now that
+            # we duplicated it!
+            if prag.externName.len > 0:
+              c.registerMangle(s, toExtern(prag.externName, c.main))
+            else:
+              let newName = makeLocalDeclName(c, s)
+              c.registerMangle(s, newName)
             transformInlineRoutines(c, n)
             return
 
         if NodeclP in prag.flags:
           if prag.externName.len > 0:
-            c.registerMangle(s, prag.externName & ".c")
+            c.registerMangle(s, c.toExtern(s, prag.externName))
           if prag.header != StrId(0):
             c.headers.incl prag.header
           return
@@ -1898,8 +1908,8 @@ proc importSymbol(c: var EContext; s: SymId) =
   else:
     error c, "could not find symbol: " & pool.syms[s]
 
-proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
-  var b = nifbuilder.open(c.dir / c.main & ".c.nif")
+proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string) =
+  var b = nifbuilder.open(destfileName)
   b.addHeader "hexer", "nifc"
   var stack: seq[PackedLineInfo] = @[]
   if rootInfo.isValid:
@@ -1946,22 +1956,14 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo) =
         b.addSymbol(val)
       else:
         let s = pool.syms[n.symId]
-        if isInstantiation(s):
-          # ensure instantiations have the same name across modules:
-          b.addSymbol(removeModule(s))
-        else:
-          b.addSymbol(s)
+        b.addSymbol(s)
     of SymbolDef:
       let val = c.maybeMangle(n.symId)
       if val.len > 0:
         b.addSymbolDef(val)
       else:
         let s = pool.syms[n.symId]
-        if isInstantiation(s):
-          # ensure instantiations have the same name across modules:
-          b.addSymbolDef(removeModule(s))
-        else:
-          b.addSymbolDef(s)
+        b.addSymbolDef(s)
       if nextIsOwner >= 0:
         ownerStack.add (n.symId, nextIsOwner)
         nextIsOwner = -1
@@ -2014,7 +2016,7 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
     c.dest.addParRi()
     c.dest.addParRi()
     c.dest.add tagToken("call", rootInfo)
-    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary")), rootInfo)
+    c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary", false)), rootInfo)
     c.dest.addStrLit dynlib
     c.dest.addParRi()
 
@@ -2033,7 +2035,7 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
       c.dest.add tagToken("cast", rootInfo)
       c.dest.add symToken(typeSym, rootInfo)
       c.dest.add tagToken("call", rootInfo)
-      c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr")), rootInfo)
+      c.dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr", false)), rootInfo)
       c.dest.add symToken(tmp, rootInfo) # library
       c.dest.addStrLit procName # proc name
       c.dest.addParRi()
@@ -2054,7 +2056,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     )
   c.openMangleScope()
 
-  var c0 = setupProgram(infile, infile.changeFileExt ".c.nif", true)
+  var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", true)
   var dest = transform(c, c0, mp.name)
 
   var n = beginRead(dest)
@@ -2092,5 +2094,9 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   c.dest.add toplevels
   c.dest.add c.pending
   skipParRi c, n
-  writeOutput c, rootInfo
+  let destfileName = c.dir / c.main & ".x.nif"
+
+  writeOutput c, rootInfo, destfileName
   c.closeMangleScope()
+
+  writeDceOutput destfileName, c.dir / c.main & ".dce.nif"

@@ -273,7 +273,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
 
     let ast = file.changeFileExt(".nif")
     if ast.fileExists():
-      let nif = generatedFile(file, ".2.nif")
+      let nif = generatedFile(file, ".s.nif")
       diffFiles c, file, ast, nif, overwrite
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
@@ -435,7 +435,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
       addTestCode test.changeFileExt(".nim.c"), nimcacheC
 
     if RecordAst in flags:
-      let nif = generatedFile(test, ".2.nif")
+      let nif = generatedFile(test, ".s.nif")
       addTestCode test.changeFileExt(".nif"), nif
 
 proc binDir*(): string =
@@ -519,8 +519,8 @@ proc hexertests(overwrite: bool) =
   let helloworld = "tests/hexer/hexer_helloworld"
   createIndex helloworld & ".nif", false, NoLineInfo
   createIndex mod1 & ".nif", false, NoLineInfo
-  execHexer mod1 & ".nif"
-  execHexer helloworld & ".nif"
+  execHexer "c " & mod1 & ".nif"
+  execHexer "c " & helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
 proc syncCmd(newBranch: string) =
@@ -599,6 +599,7 @@ proc handleCmdLine =
 
   of "build":
     const showProgress = true
+    exec "git submodule update --init"
     case (if args.len > 0: args[0] else: "")
     of "", "all":
       buildNifler(showProgress)

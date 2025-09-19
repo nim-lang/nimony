@@ -73,13 +73,6 @@ proc nimexec(cmd: string) =
     quit("FAILURE: cannot find nim.exe / nim binary")
   exec quoteShell(t) & " " & cmd
 
-proc updateCompilerGitSubmodules*(config: NifConfig) =
-  # XXX: hack for more convenient development
-  let cwd = getCurrentDir()
-  setCurrentDir compilerDir()
-  exec "git submodule update --init"
-  setCurrentDir cwd
-
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
   # XXX: hack for more convenient development
@@ -281,7 +274,7 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
 proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, paths)
-  let src = nifcachePath / name & ".1.nif"
+  let src = nifcachePath / name & ".p.nif"
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 
