@@ -13,7 +13,10 @@ import platform
 include nifprelude
 
 type
+  TrackMode* = enum
+    TrackNone, TrackUsages, TrackDef
   TrackPosition* = object
+    mode*: TrackMode
     line*, col*: int
     filename*: string
 
@@ -26,7 +29,7 @@ type
     compat*: bool
     targetCPU*: TSystemCPU
     targetOS*: TSystemOS
-    toTrack*: seq[TrackPosition]
+    toTrack*: TrackPosition
     cc*: string
     linker*: string
     ccKey*: string

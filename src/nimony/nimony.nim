@@ -29,7 +29,10 @@ Usage:
   nimony [options] [command]
 Command:
   c project.nim               compile the full project
-  m file.nim [project.nim]    compile a single Nim module to hexer
+  check project.nim           check the full project for errors; can be
+                              combined with `--usages`, `--def` for
+                              editor integration
+  m file.nim [project.nim]    compile a single Nim module to Hexer
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
@@ -47,7 +50,8 @@ Options:
   --silentMake              suppresses make output
   --nimcache:PATH           set the path used for generated files
   --boundchecks:on|off      turn bound checks on or off
-  --track:file,line,col     track the given position for editor integration
+  --usages:file,line,col    list usages of the symbol at the given position
+  --def:file,line,col       list definition of the symbol at the given position
   --cc:C_COMPILER           set the C compiler; can be a path to the compiler's
                             executable or a name
   --linker:LINKER           set the linker
@@ -69,30 +73,9 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
     quoteShell(src)
   semcheck(src, dest, ensureMove config, moduleFlags, commandLineArgs, true)
 
-proc parseTrack(s: string): TrackPosition =
-  # --------------------------------------------------------------------------
-  # Format:  file,line,col
-  # --------------------------------------------------------------------------
-  var i = 0
-  var line = 0
-  var col = 0
-  while i < s.len and s[i] != ',':
-    inc i
-  let filenameEnd = i
-  if i < s.len and s[i] == ',': inc i
-
-  while i < s.len and s[i] in {'0'..'9'}:
-    line = line * 10 + (ord(s[i]) - ord('0'))
-    inc i
-  if i < s.len and s[i] == ',': inc i
-  while i < s.len and s[i] in {'0'..'9'}:
-    col = col * 10 + (ord(s[i]) - ord('0'))
-    inc i
-  result = TrackPosition(line: line, col: col, filename: s.substr(0, filenameEnd-1))
-
 type
   Command = enum
-    None, SingleModule, FullProject
+    None, SingleModule, FullProject, CheckProject
 
 proc dispatchBasicCommand(key: string): Command =
   case key.normalize:
@@ -100,6 +83,8 @@ proc dispatchBasicCommand(key: string): Command =
     SingleModule
   of "c":
     FullProject
+  of "check":
+    CheckProject
   else:
     quit "command expected"
 
@@ -234,9 +219,8 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           c.config.ccKey = extractCCKey(val)
         of "linker":
           c.config.linker = val
-        of "track":
-          c.config.toTrack.add parseTrack(val)
-          forwardArg = false
+        of "usages", "def":
+          forwardArg = true
         else: writeHelp()
         if forwardArg:
           c.commandLineArgs.add " --" & key
@@ -276,6 +260,11 @@ proc compileProgram(c: var CmdOptions) =
     buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
+  of CheckProject:
+    createDir(c.config.nifcachePath)
+    # check full project modules
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
+      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
 
 when isMainModule:
   var c = createCmdOptions(determineBaseDir())
