@@ -235,7 +235,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
         of "linker":
           c.config.linker = val
         of "track":
-          config.toTrack.add parseTrack(val)
+          c.config.toTrack.add parseTrack(val)
           forwardArg = false
         else: writeHelp()
         if forwardArg:
