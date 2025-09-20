@@ -13,6 +13,13 @@ import platform
 include nifprelude
 
 type
+  TrackMode* = enum
+    TrackNone, TrackUsages, TrackDef
+  TrackPosition* = object
+    mode*: TrackMode
+    line*, col*: int32
+    filename*: string
+
   NifConfig* = object
     defines*: HashSet[string]
     paths*, nimblePaths*: seq[string]
@@ -22,6 +29,7 @@ type
     compat*: bool
     targetCPU*: TSystemCPU
     targetOS*: TSystemOS
+    toTrack*: TrackPosition
     cc*: string
     linker*: string
     ccKey*: string
