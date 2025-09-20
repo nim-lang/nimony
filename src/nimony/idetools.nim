@@ -92,32 +92,12 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo) =
 proc usages*(files: openArray[string]; config: NifConfig) =
   # This is comparable to a linking step: We iterate over all `.idetools.nif` files to see
   # what symbol is meant by the `file,line,col` tracking information.
-  var syms = initHashSet[SymId]()
-  var foundLocals = 0
-  for file in files:
-    let x = changeModuleExt(file, ".idetools.nif")
-    if semos.fileExists(x):
-      var s = nifstreams.open(x)
-      try:
-        var tok = next(s)
-        if tok.kind == ParLe: tok = next(s)
-        if tok.kind == Symbol:
-          let sym = tok.symId
-          if isLocalName(pool.syms[sym]):
-            # for a local symbol we know we are in the correct file and need to find the outermost scope
-            # where the symbol is declared. That is the parent node that is a `scope` or routine node.
-            let requestedInfo = lineinfos.pack(pool.man, pool.files.getOrIncl(config.toTrack.filename), config.toTrack.line, config.toTrack.col)
-            findLocal(file, sym, requestedInfo)
-            inc foundLocals
-          else:
-            syms.incl sym
-      finally:
-        close(s)
-  if syms.len == 0:
-    if foundLocals == 0:
-      quit "no symbols found"
-    else:
-      return
+  let requestedInfo = lineinfos.pack(pool.man, pool.files.getOrIncl(config.toTrack.filename),
+                                     config.toTrack.line, config.toTrack.col)
+  # first pass: search for the symbol at `file,line,col`:
+  var isLocalSym = false
+  var symId = SymId 0
+  var symFile = ""
   for file in files:
     var s = nifstreams.open(file)
     try:
@@ -125,10 +105,39 @@ proc usages*(files: openArray[string]; config: NifConfig) =
       while true:
         let tok = next(s)
         case tok.kind
-        of Symbol:
-          if tok.symId in syms: foundUsage(tok)
+        of Symbol, SymbolDef:
+          var name = pool.syms[tok.symId]
+          let isLocal = isLocalName(name)
+          extractBasename name
+
+          let tokenLen = name.len
+          if lineInfoMatch(tok.info, requestedInfo, tokenLen):
+            isLocalSym = isLocal
+            symId = tok.symId
+            symFile = file
+            break
         of EofToken: break
-        of UnknownToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit, ParLe, ParRi:
+        of UnknownToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, ParLe, ParRi:
           discard "proceed"
     finally:
       close(s)
+
+  if symId == SymId 0:
+    quit "symbol not found"
+  elif isLocalSym:
+    findLocal(symFile, symId, requestedInfo)
+  else:
+    for file in files:
+      var s = nifstreams.open(file)
+      try:
+        discard processDirectives(s.r)
+        while true:
+          let tok = next(s)
+          case tok.kind
+          of Symbol:
+            if tok.symId == symId: foundUsage(tok)
+          of EofToken: break
+          of UnknownToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit, ParLe, ParRi:
+            discard "proceed"
+      finally:
+        close(s)

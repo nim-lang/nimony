@@ -41,9 +41,6 @@ proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.
 proc cFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c"
 proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".o"
 
-proc idetoolsFile(config: NifConfig; f: FilePair; bundle: string): string =
-  config.nifcachePath / bundle / f.modname & ".idetools.nif"
-
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
 proc exeFile(config: NifConfig; f: FilePair): string =
@@ -525,9 +522,6 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin)
-    if c.cmd == DoCheck:
-      b.withTree "output":
-        b.addStrLit c.config.idetoolsFile(v.files[0], v.plugin)
 
 proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
   #[ An import plugin fills `nimcache/<plugin>` for us. It is our job to
