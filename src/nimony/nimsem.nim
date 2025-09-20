@@ -12,7 +12,7 @@ import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen, programs
-import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs
+import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs, idetools
 
 const
   Version = "0.2"
@@ -82,19 +82,19 @@ proc parseTrack(s: string; mode: TrackMode): TrackPosition =
   # Format:  file,line,col
   # --------------------------------------------------------------------------
   var i = 0
-  var line = 0
-  var col = 0
+  var line = 0'i32
+  var col = 0'i32
   while i < s.len and s[i] != ',':
     inc i
   let filenameEnd = i
   if i < s.len and s[i] == ',': inc i
 
   while i < s.len and s[i] in {'0'..'9'}:
-    line = line * 10 + (ord(s[i]) - ord('0'))
+    line = line * 10'i32 + (ord(s[i]) - ord('0')).int32
     inc i
   if i < s.len and s[i] == ',': inc i
   while i < s.len and s[i] in {'0'..'9'}:
-    col = col * 10 + (ord(s[i]) - ord('0'))
+    col = col * 10'i32 + (ord(s[i]) - ord('0')).int32
     inc i
   result = TrackPosition(mode: mode, line: line, col: col, filename: s.substr(0, filenameEnd-1))
 
@@ -200,7 +200,13 @@ proc handleCmdLine() =
   of Idetools:
     if args.len == 0:
       quit "want more than 0 command line argument"
-    quit "not implemented!"
+    case config.toTrack.mode
+    of TrackUsages:
+      usages(args, config)
+    of TrackDef:
+      quit "definitions not implemented yet"
+    of TrackNone:
+      quit "no --track information provided"
 
 when isMainModule:
   handleCmdLine()

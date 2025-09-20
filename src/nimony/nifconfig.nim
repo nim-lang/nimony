@@ -17,7 +17,7 @@ type
     TrackNone, TrackUsages, TrackDef
   TrackPosition* = object
     mode*: TrackMode
-    line*, col*: int
+    line*, col*: int32
     filename*: string
 
   NifConfig* = object
