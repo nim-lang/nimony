@@ -335,6 +335,8 @@ proc defineNiflerCmd(b: var Builder; nifler: string) =
     b.addStrLit "--portablePaths"
     b.addStrLit "--deps"
     b.addStrLit "parse"
+    b.addKeyw "input"
+    b.addKeyw "output"
 
 proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
   b.withTree "cmd":
@@ -622,7 +624,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
             b.withTree "output":
               b.addStrLit f
 
-    if cmd == DoCheck:
+    if cmd == DoCheck and c.config.toTrack.mode != TrackNone:
       b.withTree "do":
         b.addIdent "idetools"
         for v in c.nodes:
