@@ -238,7 +238,7 @@ proc compileProgram(c: var CmdOptions) =
     c.config.linker = c.config.cc
   if c.args.len == 0:
     quit "too few command line arguments"
-  elif c.args.len > 2 - int(c.cmd == FullProject):
+  elif c.args.len > 2 - int(c.cmd in {FullProject, CheckProject}):
     quit "too many command line arguments"
 
   if c.checkModes != DefaultSettings:
