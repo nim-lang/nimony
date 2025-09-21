@@ -201,10 +201,8 @@ proc handleCmdLine() =
     if args.len == 0:
       quit "want more than 0 command line argument"
     case config.toTrack.mode
-    of TrackUsages:
+    of TrackUsages, TrackDef:
       usages(args, config)
-    of TrackDef:
-      quit "definitions not implemented yet"
     of TrackNone:
       quit "no --track information provided"
 

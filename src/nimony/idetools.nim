@@ -18,26 +18,27 @@ proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
     if i.col + tokenLen > t.col: return false
   return true
 
-proc foundUsage(tok: PackedToken) =
+proc foundSymbol(tok: PackedToken; mode: TrackMode) =
   # format that is compatible with nimsuggest's in the hope it helps:
   let info = unpack(pool.man, tok.info)
   if info.file.isValid:
-    var r = "use\t"
-    r.add "\t" # unknown symbol kind
-    r.add pool.syms[tok.symId]
-    r.add "\t"
-    # unknown signature:
-    r.add "\t"
-    # filename:
-    r.add "\t"
-    r.add pool.files[info.file]
-    r.add "\t"
-    r.addInt info.line
-    r.add "\t"
-    r.addInt info.col
-    stdout.writeLine(r)
+    if (tok.kind == Symbol and mode == TrackUsages) or (tok.kind == SymbolDef and mode == TrackDef):
+      var r = (if tok.kind == Symbol: "use\t" else: "def\t")
+      r.add "\t" # unknown symbol kind
+      r.add pool.syms[tok.symId]
+      r.add "\t"
+      # unknown signature:
+      r.add "\t"
+      # filename:
+      r.add "\t"
+      r.add pool.files[info.file]
+      r.add "\t"
+      r.addInt info.line
+      r.add "\t"
+      r.addInt info.col
+      stdout.writeLine(r)
 
-proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo) =
+proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMode) =
   var buf = parseFromFile(file)
   var n = beginRead(buf)
   var scopes: seq[(Cursor, int)] = @[(n, 0)]
@@ -58,7 +59,7 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo) =
       scopes.add (n, nested)
     else:
       case n.kind
-      of Symbol:
+      of Symbol, SymbolDef:
         if n.symId == sym and lineInfoMatch(n.info, toTrack, tokenLen):
           foundScope = true
           break
@@ -82,9 +83,9 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo) =
     of ParRi:
       dec nested
       if nested == 0: break
-    of Symbol:
+    of Symbol, SymbolDef:
       if n.symId == sym:
-        foundUsage(n.load)
+        foundSymbol(n.load, mode)
     else:
       discard
     inc n
@@ -106,13 +107,16 @@ proc usages*(files: openArray[string]; config: NifConfig) =
         let tok = next(s)
         case tok.kind
         of Symbol, SymbolDef:
-          var name = pool.syms[tok.symId]
-          let isLocal = isLocalName(name)
-          extractBasename name
-
-          let tokenLen = name.len
+          # performance critical! May run over every symbol in the project!
+          var name = addr pool.syms[tok.symId]
+          var tokenLen = 0
+          var dots = 0
+          for i in 0 ..< name[].len:
+            if name[][i] == '.':
+              inc dots
+            if dots == 0: inc tokenLen
           if lineInfoMatch(tok.info, requestedInfo, tokenLen):
-            isLocalSym = isLocal
+            isLocalSym = dots < 2
             symId = tok.symId
             symFile = file
             break
@@ -125,7 +129,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   if symId == SymId 0:
     quit "symbol not found"
   elif isLocalSym:
-    findLocal(symFile, symId, requestedInfo)
+    findLocal(symFile, symId, requestedInfo, config.toTrack.mode)
   else:
     for file in files:
       var s = nifstreams.open(file)
@@ -135,9 +139,11 @@ proc usages*(files: openArray[string]; config: NifConfig) =
           let tok = next(s)
           case tok.kind
           of Symbol:
-            if tok.symId == symId: foundUsage(tok)
+            if tok.symId == symId: foundSymbol(tok, config.toTrack.mode)
+          of SymbolDef:
+            if tok.symId == symId: foundSymbol(tok, config.toTrack.mode)
           of EofToken: break
-          of UnknownToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit, ParLe, ParRi:
+          of UnknownToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, ParLe, ParRi:
             discard "proceed"
       finally:
         close(s)

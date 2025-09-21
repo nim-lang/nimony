@@ -753,7 +753,6 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       let depName = depNifFile.splitModulePath.name
       allNifFiles.add(depName)
       let depHexedFile = config.nifcachePath / depName & ".s.nif"
-      let depCFile = config.nifcachePath / depName & ".x.nif"
 
       # Process dependency .nif file with hexer first
       b.withTree "do":
@@ -767,8 +766,6 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
     let mainName = mainNifFile.splitModulePath.name
     allNifFiles.add(mainName)
     let mainHexedFile = config.nifcachePath / mainName & ".x.nif"
-    let mainCFile = config.nifcachePath / mainName & ".c"
-    let mainObjFile = config.nifcachePath / mainName & ".o"
 
     # Process main .nif file with hexer first
     b.withTree "do":
