@@ -1609,6 +1609,7 @@ proc semTypeSym(c: var SemContext; s: Sym; info: PackedLineInfo; start: int; con
       # maybe substitution performed here?
       inc c.usedTypevars
     elif beforeMagic != afterMagic:
+      c.expanded.addSymUse s.name, info
       # was magic symbol, may be typeclass, otherwise nothing to do
       if context != InInvokeHead:
         let magic = cursorAt(c.dest, start).typeKind
@@ -1872,7 +1873,11 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
   else:
     let res = declToCursor(c, s)
     if KeepMagics notin flags:
+      let beforeMagic = c.dest.len
+      let info = it.n.info
       maybeInlineMagic c, res
+      if beforeMagic != c.dest.len:
+        c.expanded.addSymUse s.name, info
     if res.status == LacksNothing:
       var n = res.decl
       if s.kind.isLocal or s.kind == EfldY:
@@ -3617,6 +3622,7 @@ proc semCompiles(c: var SemContext; it: var Item) =
   let oldInWhen = c.inWhen
   let oldTemplateInstCounter = c.templateInstCounter
   let oldPending = c.pending.len
+  let oldExpanded = c.expanded.len
   let oldIncludeStackLen = c.includeStack.len
   let oldDebugAllowErrors = c.debugAllowErrors
   c.debugAllowErrors = true
@@ -3638,6 +3644,7 @@ proc semCompiles(c: var SemContext; it: var Item) =
   c.inWhen = oldInWhen
   c.templateInstCounter = oldTemplateInstCounter
   c.pending.shrink(oldPending)
+  c.expanded.shrink(oldExpanded)
   c.debugAllowErrors = oldDebugAllowErrors
 
 
@@ -5229,6 +5236,11 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
     semStmt c, cur, false
   skipParRi(cur)
   endRead(c.pending)
+
+  if c.expanded.len > 0:
+    c.dest.addParLe CommentS, NoLineInfo
+    c.dest.add c.expanded
+    c.dest.addParRi()
 
   instantiateGenerics c
   for val in c.typeInstDecls:
