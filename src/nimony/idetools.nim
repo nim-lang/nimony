@@ -14,8 +14,9 @@ proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
   if i.file.isValid and t.file.isValid:
     if i.file != t.file: return false
     if i.line != t.line: return false
-    if i.col < t.col: return false
-    if i.col + tokenLen > t.col: return false
+    # Check if target column falls within the token's range
+    if t.col < i.col: return false
+    if t.col >= i.col + tokenLen: return false
   return true
 
 proc foundSymbol(tok: PackedToken; mode: TrackMode) =
