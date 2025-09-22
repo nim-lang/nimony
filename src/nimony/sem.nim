@@ -1874,7 +1874,7 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
     let res = declToCursor(c, s)
     if KeepMagics notin flags:
       let beforeMagic = c.dest.len
-      let info = it.n.info
+      let info = c.dest[beforeMagic-1].info
       maybeInlineMagic c, res
       if beforeMagic != c.dest.len:
         c.expanded.addSymUse s.name, info
@@ -5238,7 +5238,7 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
   endRead(c.pending)
 
   if c.expanded.len > 0:
-    c.dest.addParLe CommentS, NoLineInfo
+    c.dest.addParLe CommentS, c.expanded[0].info
     c.dest.add c.expanded
     c.dest.addParRi()
 
