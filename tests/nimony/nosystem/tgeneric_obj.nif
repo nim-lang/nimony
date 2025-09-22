@@ -227,7 +227,8 @@
      (ranges typeOfIter.0.tge7jvqqk1)
      (stmts
       (ret "typeOfIter"))))
-   (ret result.3))) 3,69
+   (ret result.3))) 15,16
+ (comment untyped.0.tge7jvqqk1 18 typedesc.0.tge7jvqqk1 1,22 int.0.tge7jvqqk1 1,22 int.0.tge7jvqqk1 ~2,22 int.0.tge7jvqqk1 ~3,27 int.0.tge7jvqqk1 6,27 int.0.tge7jvqqk1 3,52 array.0.tge7jvqqk1 8,55 array.0.tge7jvqqk1 3,55 array.0.tge7jvqqk1 ~4,5 set.0.tge7jvqqk1 ,5 uint8.0.tge7jvqqk1 ~4,6 array.0.tge7jvqqk1 5,6 int.0.tge7jvqqk1 5,16 int.0.tge7jvqqk1 4,17 float.0.tge7jvqqk1 ~3,45 array.0.tge7jvqqk1 9,45 int.0.tge7jvqqk1 ~7,48 array.0.tge7jvqqk1 2,48 int.0.tge7jvqqk1 ~7,49 array.0.tge7jvqqk1 5,49 int.0.tge7jvqqk1) 3,69
  (proc :foo.2.tge7jvqqk1 . ~3,~1 .
   (at foo.1.tge7jvqqk1 13,~47
    (rangetype

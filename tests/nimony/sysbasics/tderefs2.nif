@@ -132,7 +132,8 @@
     (hderef
      (call ~3 g41.1.tdexr7cz81 1
       (haddr s2.0)))))) 5,41
- (call ~5 foo11.0.tdexr7cz81 1 +12) 14,38
+ (call ~5 foo11.0.tdexr7cz81 1 +12) 14
+ (comment int.0.sysvq0asl 4 int.0.sysvq0asl 1,10 int.0.sysvq0asl 4,10 int.0.sysvq0asl 1,13 int.0.sysvq0asl 4,13 int.0.sysvq0asl ~1,16 int.0.sysvq0asl 2,24 int.0.sysvq0asl ,24 int.0.sysvq0asl ,35 int.0.sysvq0asl) 14,38
  (proc :g31.1.tdexr7cz81 . ~14,~9 .
   (at g31.0.tdexr7cz81 ,~3
    (i -1)) ~3,~9

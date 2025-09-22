@@ -136,7 +136,8 @@
   (stmts
    (discard .))) 4,52
  (gvar :obj.0.tho8gh7q4 . . 13 MyObject.0.I76zger.tho8gh7q4 .) 12,53
- (call 1 =checkHook.1.tho8gh7q4 1 obj.0.tho8gh7q4) 12,53
+ (call 1 =checkHook.1.tho8gh7q4 1 obj.0.tho8gh7q4) 10,2
+ (comment int.0.sysvq0asl int.0.sysvq0asl ,3 int.0.sysvq0asl ,3 int.0.sysvq0asl 28,5 pointer.0.sysvq0asl 19,34 int.0.sysvq0asl 24,34 float.0.sysvq0asl 10,34 default.3.sysvq0asl 10,34 default.3.sysvq0asl 20,36 float.0.sysvq0asl 27,36 int.0.sysvq0asl 11,36 default.3.sysvq0asl 11,36 default.3.sysvq0asl 14,40 default.3.sysvq0asl 14,40 default.3.sysvq0asl 15,41 default.3.sysvq0asl 15,41 default.3.sysvq0asl 8,50 int.0.sysvq0asl 13,50 float.0.sysvq0asl) 12,53
  (proc :=checkHook.1.tho8gh7q4 . ~12,~4 .
   (at =checkHook.0.tho8gh7q4 17,~17
    (i -1) 22,~17

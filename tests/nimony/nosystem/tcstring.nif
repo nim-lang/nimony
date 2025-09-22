@@ -59,4 +59,5 @@
  (gvar :zz.0.tcsj45p9m . . 8,~2
   (cstring) 14
   (hconv ~6,~2
-   (cstring) "xzy")))
+   (cstring) "xzy")) 16,8
+ (comment int.0.tcsj45p9m int.0.tcsj45p9m ~3 int.0.tcsj45p9m ,1 int.0.tcsj45p9m ,1 int.0.tcsj45p9m ~3,1 int.0.tcsj45p9m 1,3 int.0.tcsj45p9m 1,3 int.0.tcsj45p9m ~3,3 bool.0.tcsj45p9m ~4,10 cstring.0.tcsj45p9m ~3,5 int.0.tcsj45p9m ~9,7 pointer.0.tcsj45p9m ~8,12 cstring.0.tcsj45p9m))

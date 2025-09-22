@@ -113,7 +113,8 @@
  (discard 11
   (call ~3 fib.1.tfitjdpcx 1 +8)) ,29
  (discard 16
-  (call ~8 fib.1.tfitjdpcx 1 +8)) 11,28
+  (call ~8 fib.1.tfitjdpcx 1 +8)) 16,5
+ (comment int.0.tfitjdpcx int.0.tfitjdpcx ~3 int.0.tfitjdpcx ,1 int.0.tfitjdpcx ,1 int.0.tfitjdpcx ~3,1 int.0.tfitjdpcx 1,3 int.0.tfitjdpcx 1,3 int.0.tfitjdpcx ~3,3 bool.0.tfitjdpcx ,5 float.0.tfitjdpcx ,5 float.0.tfitjdpcx ~1,5 float.0.tfitjdpcx ,6 float.0.tfitjdpcx ,6 float.0.tfitjdpcx ~1,6 float.0.tfitjdpcx 1,8 float.0.tfitjdpcx 1,8 float.0.tfitjdpcx ~1,8 bool.0.tfitjdpcx 2,13 bool.0.tfitjdpcx ~4,24 int.0.tfitjdpcx) 11,28
  (proc :fib.1.tfitjdpcx . ~11,~6 .
   (at fib.0.tfitjdpcx
    (i -1)) 9,~6

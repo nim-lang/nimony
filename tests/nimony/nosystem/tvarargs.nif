@@ -157,4 +157,5 @@
      (ranges typeOfIter.0.tvah6culb)
      (stmts
       (ret "typeOfIter"))))
-   (ret result.0))))
+   (ret result.0))) 15,11
+ (comment untyped.0.tvah6culb 18 typedesc.0.tvah6culb 1,5 int.0.tvah6culb 1,5 int.0.tvah6culb ~2,5 int.0.tvah6culb 1,6 int.0.tvah6culb 1,6 int.0.tvah6culb ~2,6 int.0.tvah6culb 2,8 int.0.tvah6culb 2,8 int.0.tvah6culb ~2,8 bool.0.tvah6culb 12,15 char.0.tvah6culb ~11,20 untyped.0.tvah6culb ~15,29 echo.0.tvah6culb ~15,31 echo.0.tvah6culb ~11,33 echo.0.tvah6culb ~15,35 echo.0.tvah6culb))

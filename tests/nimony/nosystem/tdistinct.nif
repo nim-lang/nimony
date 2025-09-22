@@ -115,4 +115,5 @@
      (ranges typeOfIter.0.tdiuhv8dm)
      (stmts
       (ret "typeOfIter"))))
-   (ret result.1))))
+   (ret result.1))) 15,13
+ (comment untyped.0.tdiuhv8dm 18 typedesc.0.tdiuhv8dm 1,6 int.0.tdiuhv8dm 1,6 int.0.tdiuhv8dm ~2,6 int.0.tdiuhv8dm 1,7 int.0.tdiuhv8dm 1,7 int.0.tdiuhv8dm ~2,7 int.0.tdiuhv8dm 2,9 int.0.tdiuhv8dm 2,9 int.0.tdiuhv8dm ~2,9 bool.0.tdiuhv8dm 5,13 int.0.tdiuhv8dm ~7,26 int8.0.tdiuhv8dm))

@@ -443,7 +443,8 @@
            (cmd write.1.syn1lfpjv 6 stdout.0.syn1lfpjv 21,133,tests/nimony/iter/tforloops1.nim
             (hderef y.1))) ,2
           (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) 4,35
-   (call ~4 main.0.tfo161bfb1))) 4,22
+   (call ~4 main.0.tfo161bfb1))) 19,2
+ (comment int.0.sysvq0asl ~9 int.0.sysvq0asl 1,8 cstring.0.sysvq0asl 4,16 int.0.sysvq0asl 4,16 int.0.sysvq0asl ~6,16 int.0.sysvq0asl 2,31 int.0.sysvq0asl ~9,31 int.0.sysvq0asl 1,37 int.0.sysvq0asl ~9,37 int.0.sysvq0asl 2,46 int.0.sysvq0asl ~9,46 int.0.sysvq0asl 1,49 int.0.sysvq0asl ~9,49 int.0.sysvq0asl 2,63 int.0.sysvq0asl ~9,63 int.0.sysvq0asl 1,66 int.0.sysvq0asl ~9,66 int.0.sysvq0asl ~12,25 >.0.sysvq0asl ~13,57 true.0.sysvq0asl ~13,78 echo.0.syn1lfpjv ~15,80 echo.0.syn1lfpjv ~4,86 int.0.sysvq0asl ~13,89 echo.0.syn1lfpjv ~15,94 echo.0.syn1lfpjv ~11,98 false.0.sysvq0asl ~9,99 true.0.sysvq0asl ~9,102 false.0.sysvq0asl ~10,104 true.0.sysvq0asl ~13,106 echo.0.syn1lfpjv ~11,107 true.0.sysvq0asl ~11,108 assert.0.assy765wm ~15,111 int.0.sysvq0asl ~15,117 echo.0.syn1lfpjv ~15,120 int.0.sysvq0asl ~5,128 true.0.sysvq0asl 1,128 false.0.sysvq0asl ~3,129 true.0.sysvq0asl 3,129 false.0.sysvq0asl ~11,130 echo.0.syn1lfpjv) 4,22
  (proc :inc.0.tfo161bfb1 . 0,12,lib/std/system/arithmetics.nim .
   (at inc.1.sysvq0asl 19,~4
    (i -1)) 21,12,lib/std/system/arithmetics.nim
