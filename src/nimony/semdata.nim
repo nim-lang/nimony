@@ -127,6 +127,7 @@ type
     semStmtCallback*: SemStmtCallback
     passL*: seq[string]
     passC*: seq[string]
+    expanded*: TokenBuf
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

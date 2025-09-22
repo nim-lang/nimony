@@ -22,7 +22,8 @@
    (call ~15 newSeqUninit.1.temd2l7vy 1 +0))) 4,8
  (gvar :s.0.temd2l7vy . . 6 seq.0.Iq4ofkp1.temd2l7vy 43,162,lib/std/system/seqimpl.nim
   (expr 15
-   (call ~15 newSeqUninit.2.temd2l7vy 1 +0))) 58,162,lib/std/system/seqimpl.nim
+   (call ~15 newSeqUninit.2.temd2l7vy 1 +0))) 16
+ (comment int.0.sysvq0asl ~12,2 @.1.sysvq0asl ~6,6 @.1.sysvq0asl ~5,8 uint8.0.sysvq0asl 4,8 @.1.sysvq0asl) 58,162,lib/std/system/seqimpl.nim
  (proc :newSeqUninit.0.temd2l7vy . ~58,~102 .
   (at newSeqUninit.0.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
    (i -1)) ~37,~102

@@ -19,4 +19,5 @@
     (i -1) .)
    (discard .) ~35
    (ret result.0))) 3,4
- (call ~3 foo.0.tcui0hn981))
+ (call ~3 foo.0.tcui0hn981) 4,2
+ (comment int.0.sysvq0asl))

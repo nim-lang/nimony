@@ -90,7 +90,8 @@
  (glet :a.0.tge70unlm . . 8,~16
   (ref 11 NodeObj.0.Itet59r.tge70unlm) 7
   (call ~3 foo.1.tge70unlm 1 +123)) 2,20
- (asgn ~2 x.0.tge70unlm 2 a.0.tge70unlm) 11,19
+ (asgn ~2 x.0.tge70unlm 2 a.0.tge70unlm) 13,8
+ (comment int.0.tge70unlm 1,2 int.0.tge70unlm ,5 int.0.tge70unlm 6,6 int.0.tge70unlm) 11,19
  (proc :foo.1.tge70unlm . ~11,~3 .
   (at foo.0.tge70unlm
    (i -1)) ,~3

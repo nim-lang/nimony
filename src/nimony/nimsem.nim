@@ -12,7 +12,7 @@ import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen, programs
-import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs
+import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs, idetools
 
 const
   Version = "0.2"
@@ -25,6 +25,7 @@ Command:
   m input.nif output.nif index.nif    compile a single Nim module to hexer
   x file.nif                  generate the .idx.nif file from a .nif file
   e file.nif [dep1.nif ...]   execute the given .nif file
+  idetools file1.nif [file2.nif ...]  list usages and definitions
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
@@ -48,7 +49,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 type
   Command = enum
-    None, SingleModule, GenerateIdx, Execute
+    None, SingleModule, GenerateIdx, Execute, Idetools
 
 proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
   if not semos.fileExists(infile):
@@ -76,6 +77,27 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
     moduleFlags = {}
   )
 
+proc parseTrack(s: string; mode: TrackMode): TrackPosition =
+  # --------------------------------------------------------------------------
+  # Format:  file,line,col
+  # --------------------------------------------------------------------------
+  var i = 0
+  var line = 0'i32
+  var col = 0'i32
+  while i < s.len and s[i] != ',':
+    inc i
+  let filenameEnd = i
+  if i < s.len and s[i] == ',': inc i
+
+  while i < s.len and s[i] in {'0'..'9'}:
+    line = line * 10'i32 + (ord(s[i]) - ord('0')).int32
+    inc i
+  if i < s.len and s[i] == ',': inc i
+  while i < s.len and s[i] in {'0'..'9'}:
+    col = col * 10'i32 + (ord(s[i]) - ord('0')).int32
+    inc i
+  result = TrackPosition(mode: mode, line: line, col: col, filename: s.substr(0, filenameEnd-1))
+
 proc handleCmdLine() =
   var args: seq[string] = @[]
   var cmd = Command.None
@@ -94,6 +116,8 @@ proc handleCmdLine() =
           cmd = GenerateIdx
         of "e":
           cmd = Execute
+        of "idetools":
+          cmd = Idetools
         else:
           quit "command expected"
       else:
@@ -137,6 +161,16 @@ proc handleCmdLine() =
         config.linker = val
       of "nimcache":
         config.nifcachePath = val
+      of "usages":
+        if config.toTrack.mode == TrackNone:
+          config.toTrack = parseTrack(val, TrackUsages)
+        else:
+          quit "only one --usages or --def can be used"
+      of "def":
+        if config.toTrack.mode == TrackNone:
+          config.toTrack = parseTrack(val, TrackDef)
+        else:
+          quit "only one --usages or --def can be used"
       else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
@@ -163,6 +197,14 @@ proc handleCmdLine() =
     if args.len == 0:
       quit "want more than 0 command line argument"
     executeNif args, ensureMove config
+  of Idetools:
+    if args.len == 0:
+      quit "want more than 0 command line argument"
+    case config.toTrack.mode
+    of TrackUsages, TrackDef:
+      usages(args, config)
+    of TrackNone:
+      quit "no --track information provided"
 
 when isMainModule:
   handleCmdLine()

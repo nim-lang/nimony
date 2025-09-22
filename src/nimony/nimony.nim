@@ -29,7 +29,10 @@ Usage:
   nimony [options] [command]
 Command:
   c project.nim               compile the full project
-  m file.nim [project.nim]    compile a single Nim module to hexer
+  check project.nim           check the full project for errors; can be
+                              combined with `--usages`, `--def` for
+                              editor integration
+  m file.nim [project.nim]    compile a single Nim module to Hexer
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
@@ -47,6 +50,8 @@ Options:
   --silentMake              suppresses make output
   --nimcache:PATH           set the path used for generated files
   --boundchecks:on|off      turn bound checks on or off
+  --usages:file,line,col    list usages of the symbol at the given position
+  --def:file,line,col       list definition of the symbol at the given position
   --cc:C_COMPILER           set the C compiler; can be a path to the compiler's
                             executable or a name
   --linker:LINKER           set the linker
@@ -70,7 +75,7 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
 
 type
   Command = enum
-    None, SingleModule, FullProject
+    None, SingleModule, FullProject, CheckProject
 
 proc dispatchBasicCommand(key: string): Command =
   case key.normalize:
@@ -78,6 +83,8 @@ proc dispatchBasicCommand(key: string): Command =
     SingleModule
   of "c":
     FullProject
+  of "check":
+    CheckProject
   else:
     quit "command expected"
 
@@ -212,6 +219,14 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           c.config.ccKey = extractCCKey(val)
         of "linker":
           c.config.linker = val
+        of "usages":
+          # set for deps.nim:
+          c.config.toTrack.mode = TrackUsages
+          forwardArg = true
+        of "def":
+          # set for deps.nim:
+          c.config.toTrack.mode = TrackDef
+          forwardArg = true
         else: writeHelp()
         if forwardArg:
           c.commandLineArgs.add " --" & key
@@ -229,7 +244,7 @@ proc compileProgram(c: var CmdOptions) =
     c.config.linker = c.config.cc
   if c.args.len == 0:
     quit "too few command line arguments"
-  elif c.args.len > 2 - int(c.cmd == FullProject):
+  elif c.args.len > 2 - int(c.cmd in {FullProject, CheckProject}):
     quit "too many command line arguments"
 
   if c.checkModes != DefaultSettings:
@@ -251,6 +266,11 @@ proc compileProgram(c: var CmdOptions) =
     buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
+  of CheckProject:
+    createDir(c.config.nifcachePath)
+    # check full project modules
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
+      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
 
 when isMainModule:
   var c = createCmdOptions(determineBaseDir())

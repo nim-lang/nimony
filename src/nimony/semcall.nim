@@ -727,6 +727,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         buildErr c, cs.callNode.info, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
       if c.templateInstCounter <= MaxNestedTemplates:
+        c.expanded.addSymUse finalFn.sym, cs.callNode.info
         inc c.templateInstCounter
         withErrorContext c, cs.callNode.info:
           semTemplateCall c, it, finalFn.sym, cs.beforeCall, m[idx]
@@ -778,7 +779,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       swap c.dest, returnTypeBuf
       returnType = semReturnType(c, returnType)
       swap c.dest, returnTypeBuf
-    
+
       typeofCallIs c, it, cs.beforeCall, returnType
 
   else:
