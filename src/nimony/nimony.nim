@@ -219,7 +219,13 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           c.config.ccKey = extractCCKey(val)
         of "linker":
           c.config.linker = val
-        of "usages", "def":
+        of "usages":
+          # set for deps.nim:
+          c.config.toTrack.mode = TrackUsages
+          forwardArg = true
+        of "def":
+          # set for deps.nim:
+          c.config.toTrack.mode = TrackDef
           forwardArg = true
         else: writeHelp()
         if forwardArg:
