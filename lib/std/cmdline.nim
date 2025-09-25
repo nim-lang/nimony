@@ -162,8 +162,8 @@ when defined(nimdoc):
   proc paramStr*(i: int): string {.tags: [ReadIOEffect].} =
     ## Returns the `i`-th `command line argument`:idx: given to the application.
     ##
-    ## `i` should be in the range `1..paramCount()`, the `IndexDefect`
-    ## exception will be raised for invalid values. Instead of iterating
+    ## `i` should be in the range `1..paramCount()`, otherwise "" is returned.
+    ## Instead of iterating
     ## over `paramCount()`_ with this proc you can
     ## call the convenience `commandLineParams()`_.
     ##
@@ -173,8 +173,7 @@ when defined(nimdoc):
     ## this and call `getAppFilename() <os.html#getAppFilename>`_ instead.
     ##
     ## **Availability**: When generating a dynamic library (see `--app:lib`) on
-    ## Posix this proc is not defined.
-    ## Test for availability using `declared() <system.html#declared,untyped>`_.
+    ## Posix this proc always returns "".
     ##
     ## See also:
     ## * `parseopt module <parseopt.html>`_
@@ -182,15 +181,6 @@ when defined(nimdoc):
     ## * `paramCount proc`_
     ## * `commandLineParams proc`_
     ## * `getAppFilename proc <os.html#getAppFilename>`_
-    ##
-    ## **Examples:**
-    ##
-    ##   ```nim
-    ##   when declared(paramStr):
-    ##     # Use paramStr() here
-    ##   else:
-    ##     # Do something else!
-    ##   ```
 
 elif defined(nimscript): discard
 elif defined(nodejs):
@@ -202,12 +192,12 @@ elif defined(nodejs):
   proc paramCount*(): int {.tags: [ReadDirEffect].} =
     result = argv.len - 2
 
-  proc paramStr*(i: int): string {.tags: [ReadIOEffect], raises.} =
+  proc paramStr*(i: int): string {.tags: [ReadIOEffect].} =
     let i = i + 1
     if i < argv.len and i >= 0:
       result = $argv[i]
     else:
-      raise IndexError #newException(IndexDefect, formatErrorIndexBound(i - 1, argv.len - 2))
+      result = ""
 elif defined(windows):
   # Since we support GUI applications with Nim, we sometimes generate
   # a WinMain entry proc. But a WinMain proc has no access to the parsed
@@ -225,7 +215,7 @@ elif defined(windows):
       ownParsedArgv = true
     result = ownArgv.len-1
 
-  proc paramStr*(i: int): string {.tags: [ReadIOEffect], raises.} =
+  proc paramStr*(i: int): string {.tags: [ReadIOEffect].} =
     # Docstring in nimdoc block.
     if not ownParsedArgv:
       ownArgv = parseCmdLine($getCommandLine())
@@ -233,20 +223,20 @@ elif defined(windows):
     if i < ownArgv.len and i >= 0:
       result = ownArgv[i]
     else:
-      raise IndexError
+      result = ""
 
 elif defined(genode):
-  proc paramStr*(i: int): string {.raises.} =
-    raise BadOperation #newException(OSError, "paramStr is not implemented on Genode")
+  proc paramStr*(i: int): string {.tags: [ReadIOEffect].} =
+    result = "" #newException(OSError, "paramStr is not implemented on Genode")
 
-  proc paramCount*(): int {.raises.}  =
-    raise BadOperation #newException(OSError, "paramCount is not implemented on Genode")
+  proc paramCount*(): int {.tags: [ReadIOEffect].}  =
+    result = 0 #newException(OSError, "paramCount is not implemented on Genode")
 elif weirdTarget:# or (defined(posix) and appType == "lib"):
-  proc paramStr*(i: int): string {.tags: [ReadIOEffect], raises.} =
-    raise BadOperation #newException(OSError, "paramStr is not implemented on current platform")
+  proc paramStr*(i: int): string {.tags: [ReadIOEffect].} =
+    result = "" #newException(OSError, "paramStr is not implemented on current platform")
 
-  proc paramCount*(): int {.tags: [ReadIOEffect], raises.} =
-    raise BadOperation #newException(OSError, "paramCount is not implemented on current platform")
+  proc paramCount*(): int {.tags: [ReadIOEffect].} =
+    result = 0 #newException(OSError, "paramCount is not implemented on current platform")
 elif not defined(createNimRtl): # and not(defined(posix) and appType == "lib"):
   # On Posix, there is no portable way to get the command line from a DLL.
   import strutils
@@ -257,56 +247,43 @@ elif not defined(createNimRtl): # and not(defined(posix) and appType == "lib"):
     cmdCount {.importc: "cmdCount".}: cint
     cmdLine {.importc: "cmdLine".}: cstringArray
 
-  proc paramStr*(i: int): string {.tags: [ReadIOEffect], raises.} =
+  proc paramStr*(i: int): string {.tags: [ReadIOEffect].} =
     # Docstring in nimdoc block.
     if i < cmdCount and i >= 0:
       result = $cmdLine[i]
     else:
-      raise IndexError # newException(IndexDefect, formatErrorIndexBound(i, cmdCount-1))
+      result = ""
 
   proc paramCount*(): int {.tags: [ReadIOEffect].} =
     # Docstring in nimdoc block.
     result = cmdCount-1
 
-when declared(paramCount) or defined(nimdoc):
-  proc commandLineParams*(): seq[string] {.raises.} =
-    ## Convenience proc which returns the command line parameters.
-    ##
-    ## This returns **only** the parameters. If you want to get the application
-    ## executable filename, call `getAppFilename() <os.html#getAppFilename>`_.
-    ##
-    ## **Availability**: On Posix there is no portable way to get the command
-    ## line from a DLL and thus the proc isn't defined in this environment. You
-    ## can test for its availability with `declared()
-    ## <system.html#declared,untyped>`_.
-    ##
-    ## See also:
-    ## * `parseopt module <parseopt.html>`_
-    ## * `parseCmdLine proc`_
-    ## * `paramCount proc`_
-    ## * `paramStr proc`_
-    ## * `getAppFilename proc <os.html#getAppFilename>`_
-    ##
-    ## **Examples:**
-    ##
-    ##   ```nim
-    ##   when declared(commandLineParams):
-    ##     # Use commandLineParams() here
-    ##   else:
-    ##     # Do something else!
-    ##   ```
-    result = @[]
-    try:
-      for i in 1..paramCount():
-        result.add(paramStr(i))
-    except ErrorCode as e:
-      case e
-      of IndexError:
-        quit "cannot happen"
-      of BadOperation:
-        raise BadOperation
-      else:
-        quit "unexpected error code"
-else:
-  proc commandLineParams*(): seq[string] =
-    assert false
+proc commandLineParams*(): seq[string] {.tags: [ReadIOEffect].} =
+  ## Convenience proc which returns the command line parameters.
+  ##
+  ## This returns **only** the parameters. If you want to get the application
+  ## executable filename, call `getAppFilename() <os.html#getAppFilename>`_.
+  ##
+  ## **Availability**: On Posix there is no portable way to get the command
+  ## line from a DLL and thus the proc isn't defined in this environment. You
+  ## can test for its availability with `declared()
+  ## <system.html#declared,untyped>`_.
+  ##
+  ## See also:
+  ## * `parseopt module <parseopt.html>`_
+  ## * `parseCmdLine proc`_
+  ## * `paramCount proc`_
+  ## * `paramStr proc`_
+  ## * `getAppFilename proc <os.html#getAppFilename>`_
+  ##
+  ## **Examples:**
+  ##
+  ##   ```nim
+  ##   when declared(commandLineParams):
+  ##     # Use commandLineParams() here
+  ##   else:
+  ##     # Do something else!
+  ##   ```
+  result = @[]
+  for i in 1..paramCount():
+    result.add(paramStr(i))
