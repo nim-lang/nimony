@@ -1192,7 +1192,7 @@ Normalize path so that it maintains a trailing separator or not depending on the
 Returns the absolute path of `path`, rooted at `root` (which must be absolute; default: current directory). If `path` is absolute, return it, ignoring `root`.
 
 ####expandTilde
-Expands `~` or a path starting with `~/` to a full path, replacing `~` with getHomeDir() (otherwise returns `path` unmodified). Windows: this is still supported despite the Windows platform not having this convention; also, both `~/` and `~\\ ` are handled.
+Expands `~` or a path starting with `~/` to a full path, replacing `~` with getHomeDir() (otherwise returns `path` unmodified). Windows: this is still supported despite the Windows platform not having this convention.
 
 
 ### appdirs
