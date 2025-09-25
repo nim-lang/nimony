@@ -28,8 +28,9 @@ A constant is a symbol that is bound to the value of a constant expression. Cons
 * literals
 * built-in operators
 * previously declared constants
+* the call of a routine as long as the passed arguments could be evaluated at compile-time.
 
-Nimony offers no complex evalution engine for arbitrary compile-time computations. Instead the `.plugin` mechanism can be used.
+Nimony offers a complex evalution engine for arbitrary compile-time computations. The restrictions for this mechanism are currently undocumented.
 
 
 

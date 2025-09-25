@@ -7,6 +7,14 @@ nim --version
 Nim Compiler Version 2.3.1
 ```
 
+Clone Nimony from github:
+
+```
+git clone https://github.com/nim-lang/nimony.git
+cd nimony
+```
+
+
 To build it run this command:
 
 ```
@@ -19,6 +27,15 @@ nim c -r src/hastur build all
 ```
 nimony c <program.nim>
 ```
+
+For example:
+
+```nim
+import std / stdio
+
+echo "Hello from Nimony!"
+```
+
 
 # Configuration
 
