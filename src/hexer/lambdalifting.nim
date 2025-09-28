@@ -228,11 +228,11 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
-    if env.needsHeap:
-      dest.copyIntoKind CastX, info:
+    dest.copyIntoKind CastX, info:
+      if env.needsHeap:
         dest.addRootRef info
-        dest.addSymUse env.s, info
-    else:
+      else:
+        dest.copyIntoKind PointerT, info: discard
       dest.addSymUse env.s, info
   of EnvIsParam:
     # the parameter already has the erased type:
@@ -245,13 +245,10 @@ proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
     # the local already has the full type:
     dest.addSymUse env.s, info
   of EnvIsParam:
-    if env.needsHeap:
-      # the parameter has the erased type:
-      dest.copyIntoKind CastX, info:
-        dest.copyIntoKind RefT, info:
-          dest.addSymUse env.typ, info
-        dest.addSymUse env.s, info
-    else:
+    # the parameter has the erased type:
+    dest.copyIntoKind CastX, info:
+      dest.copyIntoKind (if env.needsHeap: RefT else: PtrT), info:
+        dest.addSymUse env.typ, info
       dest.addSymUse env.s, info
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -305,8 +302,9 @@ proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
       dest.copyIntoKind RefT, info:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
     else:
-      dest.copyIntoKind PtrT, info:
-        dest.addSymUse envTyp, info
+      # to keep NIFC's type system happy we need a ptr type here
+      # and then a cast in the body!
+      dest.copyIntoKind PointerT, info: discard
     dest.addDotToken() # no default value
 
 proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId) =
@@ -569,13 +567,9 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
         dest.copyIntoKind DotX, info:
           dest.copyIntoKind DerefX, info:
-            if c.env.needsHeap:
-              dest.copyIntoKind CastX, info:
-                dest.copyIntoKind RefT, info:
-                  dest.takeTree n # type
-                dest.addSymUse c.env.s, info
-            else:
-              skip n # type
+            dest.copyIntoKind CastX, info:
+              dest.copyIntoKind (if c.env.needsHeap: RefT else: PtrT), info:
+                dest.takeTree n # type
               dest.addSymUse c.env.s, info
           assert n.kind == Symbol
           dest.takeTree n # the symbol
