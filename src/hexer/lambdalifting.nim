@@ -522,12 +522,13 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of Symbol:
     # is this the usage of a proc symbol that is a closure? If so,
     # turn it into a `(fn, env)` tuple and generate the environment.
-    var typ = c.typeCache.getType(n, {SkipAliases})
+    let origTyp = c.typeCache.getType(n, {SkipAliases})
+    var typ = origTyp
     if typ.typeKind in RoutineTypes:
       inc typ
       for i in 1..4: skip typ
     let info = n.info
-    if isClosure(typ):
+    if origTyp.typeKind in RoutineTypes and isClosure(origTyp):
       dest.copyIntoKind TupconstrX, info:
         dest.copyIntoKind TupleT, info:
           dest.copyTree typ
