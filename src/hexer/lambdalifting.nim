@@ -506,6 +506,11 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # pragmas:
         tre c, dest, n
         if usesWrapper:
+          # effects and body, deliberately made flexible here for future changes
+          # as it's messy to work with.
+          if n.kind != ParRi:
+            skip n
+            if n.kind != ParRi: skip n
           skipParRi n
       copyIntoKind dest, RefT, info:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
