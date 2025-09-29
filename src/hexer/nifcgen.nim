@@ -293,8 +293,10 @@ proc trProcTypeBody(c: var EContext; n: var Cursor) =
   closeGenPragmas c, genPragmas
 
   # ignore, effects and body:
-  skip n
-  skip n
+  if n.kind != ParRi:
+    skip n
+    if n.kind != ParRi:
+      skip n
   takeParRi c, n
 
 proc trRefBody(c: var EContext; n: var Cursor; key: string) =
@@ -354,8 +356,10 @@ proc takeMangleProctype(c: var EContext; n: var Cursor): string =
   b.addKeyw $props.usesRaises
   b.addKeyw $props.usesClosure
   result = b.extract()
-  skip n # effects
-  skip n # body
+  if n.kind != ParRi:
+    skip n # effects
+    if n.kind != ParRi:
+      skip n # body
   skipParRi c, n
 
 proc trAsNamedType(c: var EContext; n: var Cursor) =

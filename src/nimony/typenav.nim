@@ -141,6 +141,16 @@ proc lookupSymbol*(c: var TypeCache; s: SymId): Cursor =
   else:
     result = default(Cursor)
 
+proc fetchSymKind*(c: var TypeCache; s: SymId): SymKind =
+  var it {.cursor.} = c.current
+  while it != nil:
+    let res = it.locals.getOrDefault(s)
+    if res.kind != NoSym:
+      return res.kind
+    it = it.parent
+  let res = tryLoadSym(s)
+  result = if res.status == LacksNothing: res.decl.symKind else: NoSym
+
 proc registerLocals(c: var TypeCache; n: var Cursor) =
   if n.kind == ParLe:
     let k = n.stmtKind

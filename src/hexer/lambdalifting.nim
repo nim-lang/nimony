@@ -228,11 +228,11 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
-    if env.needsHeap:
-      dest.copyIntoKind CastX, info:
+    dest.copyIntoKind CastX, info:
+      if env.needsHeap:
         dest.addRootRef info
-        dest.addSymUse env.s, info
-    else:
+      else:
+        dest.copyIntoKind PointerT, info: discard
       dest.addSymUse env.s, info
   of EnvIsParam:
     # the parameter already has the erased type:
@@ -245,13 +245,10 @@ proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
     # the local already has the full type:
     dest.addSymUse env.s, info
   of EnvIsParam:
-    if env.needsHeap:
-      # the parameter has the erased type:
-      dest.copyIntoKind CastX, info:
-        dest.copyIntoKind RefT, info:
-          dest.addSymUse env.typ, info
-        dest.addSymUse env.s, info
-    else:
+    # the parameter has the erased type:
+    dest.copyIntoKind CastX, info:
+      dest.copyIntoKind (if env.needsHeap: RefT else: PtrT), info:
+        dest.addSymUse env.typ, info
       dest.addSymUse env.s, info
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -305,8 +302,9 @@ proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
       dest.copyIntoKind RefT, info:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
     else:
-      dest.copyIntoKind PtrT, info:
-        dest.addSymUse envTyp, info
+      # to keep NIFC's type system happy we need a ptr type here
+      # and then a cast in the body!
+      dest.copyIntoKind PointerT, info: discard
     dest.addDotToken() # no default value
 
 proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId) =
@@ -403,7 +401,10 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         if i == TypevarsPos:
           isConcrete = n.substructureKind != TypevarsU
-        takeTree dest, n
+        if i == ReturnTypePos and isConcrete:
+          tre c, dest, n
+        else:
+          takeTree dest, n
 
     if isConcrete:
       treProcBody(c, dest, init, n, sym, needsHeap)
@@ -445,8 +446,10 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     elif n.kind == Symbol:
       tmp = n.symId
       copyIntoKind dest, TupatX, info:
-        tre c, dest, n
+        #tre c, dest, n
+        dest.add n
         dest.addIntLit 0, info
+      inc n
     else:
       dest.addParLe(ExprX, info)
       copyIntoKind dest, StmtsS, info:
@@ -490,8 +493,8 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # type is really a tuple:
     let info = n.info
     copyIntoKind dest, TupleT, info:
-      copyIntoKind dest, ProcT, info:
-        for i in 1..4: dest.addDotToken()
+      copyIntoKind dest, ProctypeT, info:
+        for i in 1..ParamsPos: dest.addDotToken()
         let usesWrapper = n.typeKind in RoutineTypes
         if usesWrapper:
           inc n
@@ -504,30 +507,46 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addParLe ParamsU, info
           addEnvParam dest, info, SymId(0)
           dest.addParRi()
-        dest.takeTree n # return type
+        tre c, dest, n # return type
         # pragmas:
         tre c, dest, n
         if usesWrapper:
+          # effects and body, deliberately made flexible here for future changes
+          # as it's messy to work with.
+          if n.kind != ParRi:
+            skip n
+            if n.kind != ParRi: skip n
           skipParRi n
       copyIntoKind dest, RefT, info:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
   else:
     treSons(c, dest, n)
 
+proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
+  var n = n
+  copyIntoKind dest, ProctypeT, n.info:
+    inc n
+    for i in 1..ParamsPos:
+      dest.addDotToken()
+      skip n
+    tre c, dest, n # params
+    tre c, dest, n # return type
+    # pragmas:
+    tre c, dest, n
+    while n.kind != ParRi: skip n
+    skipParRi n
+
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
     # is this the usage of a proc symbol that is a closure? If so,
     # turn it into a `(fn, env)` tuple and generate the environment.
-    var typ = c.typeCache.getType(n, {SkipAliases})
-    if typ.typeKind in RoutineTypes:
-      inc typ
-      for i in 1..4: skip typ
+    let origTyp = c.typeCache.getType(n, {SkipAliases})
     let info = n.info
-    if isClosure(typ):
+    if origTyp.typeKind in RoutineTypes and isClosure(origTyp) and c.typeCache.fetchSymKind(n.symId) in RoutineKinds:
       dest.copyIntoKind TupconstrX, info:
         dest.copyIntoKind TupleT, info:
-          dest.copyTree typ
+          c.toProcType(dest, origTyp)
           dest.addRootRef info
         dest.addSymUse n.symId, info
         dest.untypedEnv info, c.env
@@ -569,13 +588,9 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
         dest.copyIntoKind DotX, info:
           dest.copyIntoKind DerefX, info:
-            if c.env.needsHeap:
-              dest.copyIntoKind CastX, info:
-                dest.copyIntoKind RefT, info:
-                  dest.takeTree n # type
-                dest.addSymUse c.env.s, info
-            else:
-              skip n # type
+            dest.copyIntoKind CastX, info:
+              dest.copyIntoKind (if c.env.needsHeap: RefT else: PtrT), info:
+                dest.takeTree n # type
               dest.addSymUse c.env.s, info
           assert n.kind == Symbol
           dest.takeTree n # the symbol
