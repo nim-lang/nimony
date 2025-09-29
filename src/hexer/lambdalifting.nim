@@ -443,8 +443,10 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     elif n.kind == Symbol:
       tmp = n.symId
       copyIntoKind dest, TupatX, info:
-        tre c, dest, n
+        #tre c, dest, n
+        dest.add n
         dest.addIntLit 0, info
+      inc n
     else:
       dest.addParLe(ExprX, info)
       copyIntoKind dest, StmtsS, info:
@@ -523,15 +525,11 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # is this the usage of a proc symbol that is a closure? If so,
     # turn it into a `(fn, env)` tuple and generate the environment.
     let origTyp = c.typeCache.getType(n, {SkipAliases})
-    var typ = origTyp
-    if typ.typeKind in RoutineTypes:
-      inc typ
-      for i in 1..4: skip typ
     let info = n.info
     if origTyp.typeKind in RoutineTypes and isClosure(origTyp):
       dest.copyIntoKind TupconstrX, info:
         dest.copyIntoKind TupleT, info:
-          dest.copyTree typ
+          dest.copyTree origTyp
           dest.addRootRef info
         dest.addSymUse n.symId, info
         dest.untypedEnv info, c.env
