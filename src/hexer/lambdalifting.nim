@@ -543,7 +543,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # turn it into a `(fn, env)` tuple and generate the environment.
     let origTyp = c.typeCache.getType(n, {SkipAliases})
     let info = n.info
-    if origTyp.typeKind in RoutineTypes and isClosure(origTyp):
+    if origTyp.typeKind in RoutineTypes and isClosure(origTyp) and c.typeCache.fetchSymKind(n.symId) in RoutineKinds:
       dest.copyIntoKind TupconstrX, info:
         dest.copyIntoKind TupleT, info:
           c.toProcType(dest, origTyp)
