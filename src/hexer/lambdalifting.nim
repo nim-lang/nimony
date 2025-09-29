@@ -401,7 +401,10 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         if i == TypevarsPos:
           isConcrete = n.substructureKind != TypevarsU
-        takeTree dest, n
+        if i == ReturnTypePos and isConcrete:
+          tre c, dest, n
+        else:
+          takeTree dest, n
 
     if isConcrete:
       treProcBody(c, dest, init, n, sym, needsHeap)
@@ -490,7 +493,7 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # type is really a tuple:
     let info = n.info
     copyIntoKind dest, TupleT, info:
-      copyIntoKind dest, ProcT, info:
+      copyIntoKind dest, ProctypeT, info:
         for i in 1..4: dest.addDotToken()
         let usesWrapper = n.typeKind in RoutineTypes
         if usesWrapper:
