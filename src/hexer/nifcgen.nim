@@ -356,8 +356,10 @@ proc takeMangleProctype(c: var EContext; n: var Cursor): string =
   b.addKeyw $props.usesRaises
   b.addKeyw $props.usesClosure
   result = b.extract()
-  skip n # effects
-  skip n # body
+  if n.kind != ParRi:
+    skip n # effects
+    if n.kind != ParRi:
+      skip n # body
   skipParRi c, n
 
 proc trAsNamedType(c: var EContext; n: var Cursor) =
@@ -395,7 +397,6 @@ proc trAsNamedType(c: var EContext; n: var Cursor) =
     else:
       error c, "expected tuple or array, but got: ", body
     c.dest.addParRi() # "type"
-    n = body
 
     swap c.dest, buf
     c.pending.add buf
