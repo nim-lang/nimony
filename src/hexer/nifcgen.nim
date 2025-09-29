@@ -293,8 +293,10 @@ proc trProcTypeBody(c: var EContext; n: var Cursor) =
   closeGenPragmas c, genPragmas
 
   # ignore, effects and body:
-  skip n
-  skip n
+  if n.kind != ParRi:
+    skip n
+    if n.kind != ParRi:
+      skip n
   takeParRi c, n
 
 proc trRefBody(c: var EContext; n: var Cursor; key: string) =
@@ -393,6 +395,7 @@ proc trAsNamedType(c: var EContext; n: var Cursor) =
     else:
       error c, "expected tuple or array, but got: ", body
     c.dest.addParRi() # "type"
+    n = body
 
     swap c.dest, buf
     c.pending.add buf

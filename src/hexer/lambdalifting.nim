@@ -494,7 +494,7 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let info = n.info
     copyIntoKind dest, TupleT, info:
       copyIntoKind dest, ProctypeT, info:
-        for i in 1..4: dest.addDotToken()
+        for i in 1..ParamsPos: dest.addDotToken()
         let usesWrapper = n.typeKind in RoutineTypes
         if usesWrapper:
           inc n
@@ -526,7 +526,7 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
   copyIntoKind dest, ProctypeT, n.info:
     inc n
-    for i in 1..4:
+    for i in 1..ParamsPos:
       dest.addDotToken()
       skip n
     tre c, dest, n # params
