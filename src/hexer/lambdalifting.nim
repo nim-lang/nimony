@@ -504,7 +504,7 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addParLe ParamsU, info
           addEnvParam dest, info, SymId(0)
           dest.addParRi()
-        dest.takeTree n # return type
+        tre c, dest, n # return type
         # pragmas:
         tre c, dest, n
         if usesWrapper:
@@ -519,6 +519,20 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     treSons(c, dest, n)
 
+proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
+  var n = n
+  copyIntoKind dest, ProctypeT, n.info:
+    inc n
+    for i in 1..4:
+      dest.addDotToken()
+      skip n
+    tre c, dest, n # params
+    tre c, dest, n # return type
+    # pragmas:
+    tre c, dest, n
+    while n.kind != ParRi: skip n
+    skipParRi n
+
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
@@ -529,7 +543,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if origTyp.typeKind in RoutineTypes and isClosure(origTyp):
       dest.copyIntoKind TupconstrX, info:
         dest.copyIntoKind TupleT, info:
-          dest.copyTree origTyp
+          c.toProcType(dest, origTyp)
           dest.addRootRef info
         dest.addSymUse n.symId, info
         dest.untypedEnv info, c.env
