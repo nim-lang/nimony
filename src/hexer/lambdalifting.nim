@@ -176,7 +176,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     elif loc.kind in {ProcY, FuncY, IteratorY, ConverterY, MethodY}:
       # usage of a closure proc not within a call? --> The closure does escape:
       if c.procStack.len > 0:
-        c.escapes.incl n.symId
+        #c.escapes.incl n.symId
+        c.escapes.incl c.procStack[0]
       takeTree dest, n
     else:
       takeTree dest, n
@@ -343,7 +344,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
       let oldEnv = c.env
       if c.createsEnv.contains(sym):
         let envTyp = c.envTypeForProc(sym)
-        c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvLocalName), mode: EnvIsLocal, typ: envTyp)
+        c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvLocalName), mode: EnvIsLocal, typ: envTyp, needsHeap: needsHeap)
         dest.copyIntoKind VarS, NoLineInfo:
           dest.addSymDef c.env.s, NoLineInfo
           dest.addDotToken() # no export marker
@@ -380,7 +381,9 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
       dest.add init
       while n.kind != ParRi:
         tre(c, dest, n)
+      var needsHeapB = c.env.needsHeap
       c.env = oldEnv
+      c.env.needsHeap = c.env.needsHeap or needsHeapB
   else:
     tre(c, dest, n)
 
@@ -524,12 +527,21 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
-  copyIntoKind dest, ProctypeT, n.info:
+  let info = n.info
+  copyIntoKind dest, ProctypeT, info:
     inc n
     for i in 1..ParamsPos:
       dest.addDotToken()
       skip n
-    tre c, dest, n # params
+    copyIntoKind dest, ParamsU, n.info:
+      if n.kind == DotToken:
+        inc n
+      else:
+        inc n
+        while n.kind != ParRi:
+          tre c, dest, n # params
+        skipParRi n
+      addEnvParam dest, info, SymId(0)
     tre c, dest, n # return type
     # pragmas:
     tre c, dest, n
