@@ -5211,25 +5211,25 @@ proc addSelfModuleSym(c: var SemContext; path: string) =
   moduleDecl.addParRi()
   publish c.selfModuleSym, moduleDecl
 
-proc fromGeneric(c: var SemContext; i: int): SymId =
-  var n = cursorAt(c.dest, i) # at name
+proc fromGeneric(dest: var TokenBuf; i: int): SymId =
+  var n = cursorAt(dest, i) # at name
   skip n # skip name
   skip n # skip exported
   if n.typeKind == InvokeT:
     result = n.firstSon.symId
   else:
     result = NoSymId
-  endRead(c.dest)
+  endRead(dest)
 
-proc findOrigin(c: SemContext; origin: SymId): int =
+proc findOrigin(dest: var TokenBuf; origin: SymId): int =
   var i = 0
-  while i < c.dest.len:
-    if c.dest[i].kind == SymbolDef and c.dest[i].symId == origin:
+  while i < dest.len:
+    if dest[i].kind == SymbolDef and dest[i].symId == origin:
       return i-2 # before name and `(proc` token
     inc i
   return -1
 
-proc reorderInnerGenericInstances(c: var SemContext; n: Cursor) =
+proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
   #[ Consider:
 
   proc outer =
@@ -5241,29 +5241,29 @@ proc reorderInnerGenericInstances(c: var SemContext; n: Cursor) =
   This ensures proper scoping for lambdalifting to pick up later.
   ]#
   var i = 0
-  while i < c.dest.len:
-    if c.dest[i].stmtKind in {ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS}:
+  while i < dest.len:
+    if dest[i].stmtKind in {ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS}:
       inc i
-      if c.dest[i].kind == SymbolDef:
-        let origin = fromGeneric(c, i)
+      if dest[i].kind == SymbolDef:
+        let origin = fromGeneric(dest, i)
         if origin != NoSymId and origin in c.genericInnerProcs:
           # move to right below the position of the origin
-          let originPos = findOrigin(c, origin)
+          let originPos = findOrigin(dest, origin)
           assert originPos > 0
           assert c.dest[originPos].stmtKind == StmtsS
 
-          let procDecl = cursorAt(c.dest, i-1)
+          let procDecl = cursorAt(dest, i-1)
           var n = procDecl
           skip n
-          let procLen = cursorToPosition(c.dest,n) - (i-1)
+          let procLen = cursorToPosition(dest,n) - (i-1)
 
           # Extract the procedure declaration
           var procBuf = createTokenBuf(procLen)
           for j in (i-1)..<(i-1+procLen):
-            procBuf.add c.dest[j]
-            c.dest[j] = dotToken(NoLineInfo) # invalidate
+            procBuf.add dest[j]
+            dest[j] = dotToken(NoLineInfo) # invalidate
 
-          c.dest.insert procBuf, originPos
+          dest.insert procBuf, originPos
     else:
       inc i
 
@@ -5323,10 +5323,9 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
       var moreErrors = analyzeContracts(afterSem)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
-    var finalBuf = beginRead afterSem
     if c.genericInnerProcs.len > 0:
-      reorderInnerGenericInstances(c, finalBuf)
-      finalBuf = beginRead c.dest
+      reorderInnerGenericInstances(c, afterSem)
+    var finalBuf = beginRead afterSem
     c.dest = injectDerefs(finalBuf)
   else:
     quit 1
