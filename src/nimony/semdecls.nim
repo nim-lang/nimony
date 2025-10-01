@@ -557,6 +557,8 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
     c.openScope() # open parameter scope
     let beforeGenericParams = c.dest.len
     semGenericParams c, it.n
+    if c.routine.inGeneric > 0 and c.routine.parent.kind != NoSym and c.routine.parent.inGeneric == 0:
+      c.genericInnerProcs.incl(symId)
     let beforeParams = c.dest.len
     semParams c, it.n
     c.routine.returnType = semReturnType(c, it.n)
@@ -777,8 +779,10 @@ proc semProc(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind) =
     semProcImpl c, it, kind, pass, name
     swap c.dest, anons
     c.dest.add parLeToken(ExprX, info)
+    c.dest.add parLeToken(StmtsS, info)
     let anonTypePos = c.dest.len
     c.dest.add anons
+    c.dest.addParRi()
     c.dest.add symToken(name, info)
     c.dest.addParRi()
     it.typ = typeToCursor(c, c.dest, anonTypePos)
