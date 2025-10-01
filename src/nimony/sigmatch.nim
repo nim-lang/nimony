@@ -1113,7 +1113,10 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       var a = skipModifier(arg.typ)
       case a.typeKind
       of NiltT:
-        discard "ok"
+        if procHasPragma(f, ClosureP):
+          m.args.addParLe NilX, m.argInfo
+          m.args.addSubtree f
+          inc m.opened
         skip f
       of RoutineTypes:
         procTypeMatch m, f, a

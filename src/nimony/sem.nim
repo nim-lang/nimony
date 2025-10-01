@@ -2681,6 +2681,13 @@ proc literal(c: var SemContext; it: var Item; literalType: TypeCursor) =
 proc literalB(c: var SemContext; it: var Item; literalType: TypeCursor) =
   let beforeExpr = c.dest.len
   takeToken c, it.n
+  var literalType = literalType
+  if it.n.kind != ParRi:
+    let typeStart = c.dest.len
+    semLocalTypeImpl c, it.n, InLocalDecl
+    literalType = typeToCursor(c, typeStart)
+    if it.n.kind != ParRi and it.n.exprKind == NilX:
+      skip it.n
   takeParRi c, it.n
   let expected = it.typ
   it.typ = literalType
