@@ -134,6 +134,22 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
   dest.takeParRi(n)
 
+proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n
+  if n.kind != ParRi and procHasPragma(n, ClosureP):
+    # nil closure must be a tuple:
+    dest.copyIntoKind TupconstrX, info:
+      dest.takeTree n # type
+      if n.kind != ParRi: skip n # might have another nil value
+      dest.addParPair NilX, info
+      dest.addParPair NilX, info
+    skipParRi n
+  else:
+    dest.addParLe NilX, n.info
+    while n.kind != ParRi: takeTree dest, n
+    dest.takeParRi n
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, SymbolDef,
@@ -202,6 +218,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trCall c, dest, n
       of TypeofX:
         takeTree dest, n
+      of NilX:
+        trNil c, dest, n
       else:
         trSons(c, dest, n)
   of ParRi:
@@ -670,5 +688,3 @@ proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
     c.typeCache.closeScope()
 
   #echo "PRODUCED ", toString(result, false)
-
-# TODO: `nil` must be patched to be `(nil, nil)`.
