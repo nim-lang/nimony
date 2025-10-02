@@ -127,6 +127,7 @@ type
     semStmtCallback*: SemStmtCallback
     passL*: seq[string]
     passC*: seq[string]
+    genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =

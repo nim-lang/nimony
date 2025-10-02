@@ -243,7 +243,11 @@ proc addRootRef(dest: var TokenBuf; info: PackedLineInfo) =
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.syms.getOrIncl(RootObjName), info
 
-proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
+type
+  UntypedEnvMode = enum
+    WantValue, WantAddr
+
+proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue) =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
@@ -252,10 +256,18 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
         dest.addRootRef info
       else:
         dest.copyIntoKind PointerT, info: discard
-      dest.addSymUse env.s, info
+      if mode == WantAddr:
+        dest.copyIntoKind AddrX, info:
+          dest.addSymUse env.s, info
+      else:
+        dest.addSymUse env.s, info
   of EnvIsParam:
     # the parameter already has the erased type:
-    dest.addSymUse env.s, info
+    if mode == WantAddr:
+      dest.copyIntoKind AddrX, info:
+        dest.addSymUse env.s, info
+    else:
+      dest.addSymUse env.s, info
 
 proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
   assert env.s != SymId(0)
@@ -490,12 +502,9 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if wantsEnv:
     if isStatic:
       if c.env.s != SymId(0):
-        if c.env.needsHeap:
-          # use the current environment as the last parameter:
-          untypedEnv dest, info, c.env
-        else:
-          dest.copyIntoKind AddrX, info:
-            untypedEnv dest, info, c.env
+        let mode = if c.env.needsHeap: WantValue else: WantAddr
+        # use the current environment as the last parameter:
+        untypedEnv dest, info, c.env, mode
       else:
         # can happen for toplevel closures that have been declared .closure for interop
         # We have no environment here, so pass `nil` instead:

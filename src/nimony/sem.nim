@@ -5211,6 +5211,63 @@ proc addSelfModuleSym(c: var SemContext; path: string) =
   moduleDecl.addParRi()
   publish c.selfModuleSym, moduleDecl
 
+proc fromGeneric(dest: var TokenBuf; i: int): SymId =
+  var n = cursorAt(dest, i) # at name
+  skip n # skip name
+  skip n # skip exported
+  skip n # pattern
+  if n.typeKind == InvokeT:
+    result = n.firstSon.symId
+  else:
+    result = NoSymId
+  endRead(dest)
+
+proc findOrigin(dest: var TokenBuf; origin: SymId): int =
+  var i = 0
+  while i < dest.len:
+    if dest[i].kind == SymbolDef and dest[i].symId == origin:
+      return i-1 # before name
+    inc i
+  return -1
+
+proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
+  #[ Consider:
+
+  proc outer =
+    var x = 0
+    proc inner[T] = echo x
+    inner[int]()
+
+  We instantiate `inner` like any other generic but move it below its generic declaration.
+  This ensures proper scoping for lambdalifting to pick up later.
+  ]#
+  var i = 0
+  while i < dest.len:
+    if dest[i].stmtKind in {ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS}:
+      inc i
+      if dest[i].kind == SymbolDef:
+        let origin = fromGeneric(dest, i)
+        if origin != NoSymId and origin in c.genericInnerProcs:
+          # move to right below the position of the origin
+          let originPos = findOrigin(dest, origin)
+          assert originPos > 0
+
+          let procDecl = cursorAt(dest, i-1)
+          var n = procDecl
+          skip n
+          let procLen = cursorToPosition(dest,n) - (i-1)
+          endRead(dest)
+
+          # Extract the procedure declaration
+          var procBuf = createTokenBuf(procLen)
+          for j in (i-1)..<(i-1+procLen):
+            procBuf.add dest[j]
+            dest[j] = dotToken(NoLineInfo) # invalidate
+
+          dest.insert procBuf, originPos
+    else:
+      inc i
+
 proc semcheckCore(c: var SemContext; n0: Cursor) =
   c.pending.add parLeToken(StmtsS, NoLineInfo)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
@@ -5266,6 +5323,8 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
       var moreErrors = analyzeContracts(afterSem)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
+    if c.genericInnerProcs.len > 0:
+      reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
     c.dest = injectDerefs(finalBuf)
   else:
