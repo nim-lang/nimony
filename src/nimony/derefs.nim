@@ -822,7 +822,9 @@ proc injectDerefs*(n: Cursor): TokenBuf =
   var n3 = n
   c.takeToken n2
   while n2.kind != ParRi:
-    tr(c, n2, WantT)
+    # clean up dots that sem might have introduced for moving inner generic instances:
+    if n2.kind == DotToken: inc n2
+    else: tr(c, n2, WantT)
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
   # Must close the `(stmts)` here **after** `checkForDangerousLocations`

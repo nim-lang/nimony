@@ -5215,6 +5215,7 @@ proc fromGeneric(dest: var TokenBuf; i: int): SymId =
   var n = cursorAt(dest, i) # at name
   skip n # skip name
   skip n # skip exported
+  skip n # pattern
   if n.typeKind == InvokeT:
     result = n.firstSon.symId
   else:
@@ -5225,7 +5226,7 @@ proc findOrigin(dest: var TokenBuf; origin: SymId): int =
   var i = 0
   while i < dest.len:
     if dest[i].kind == SymbolDef and dest[i].symId == origin:
-      return i-2 # before name and `(proc` token
+      return i-1 # before name
     inc i
   return -1
 
@@ -5250,12 +5251,12 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
           # move to right below the position of the origin
           let originPos = findOrigin(dest, origin)
           assert originPos > 0
-          assert c.dest[originPos].stmtKind == StmtsS
 
           let procDecl = cursorAt(dest, i-1)
           var n = procDecl
           skip n
           let procLen = cursorToPosition(dest,n) - (i-1)
+          endRead(dest)
 
           # Extract the procedure declaration
           var procBuf = createTokenBuf(procLen)
@@ -5266,7 +5267,6 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
           dest.insert procBuf, originPos
     else:
       inc i
-
 
 proc semcheckCore(c: var SemContext; n0: Cursor) =
   c.pending.add parLeToken(StmtsS, NoLineInfo)
