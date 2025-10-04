@@ -270,7 +270,7 @@ proc hasPragmaOfValue*(n: Cursor; kind: PragmaKind; val: string): bool =
   result = not cursorIsNil(p) and p.kind == StringLit and pool.strings[p.litId] == val
 
 const
-  TypeModifiers = {MutT, OutT, LentT, SinkT, StaticT}
+  TypeModifiers* = {MutT, OutT, LentT, SinkT, StaticT}
 
 proc removeModifier*(a: var Cursor) =
   if a.kind == ParLe and a.typeKind in TypeModifiers:
