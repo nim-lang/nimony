@@ -13,11 +13,15 @@ import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, controlflow, programs]
 
-proc rootOf*(n: Cursor): SymId =
+proc rootOf*(n: Cursor; beStrict = false): SymId =
   var n = n
   while true:
     case n.exprKind
-    of DotX, TupatX, AtX, ArrAtX, DerefX, AddrX, HderefX, HaddrX, PatX:
+    of DerefX, HderefX, PatX:
+      if beStrict:
+        break
+      inc n
+    of DotX, TupatX, AtX, ArrAtX, AddrX, HaddrX:
       inc n
     of ConvKinds:
       inc n
