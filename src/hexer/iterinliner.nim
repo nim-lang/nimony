@@ -40,6 +40,23 @@ proc createDecl(e: var EContext; destSym: SymId;
   e.dest.add symdefToken(destSym, info)
   e.dest.addDotToken()
   e.dest.addDotToken()
+  let needsAddr = typ.typeKind in {LentT, MutT}
+  takeTree(e, typ)
+  if needsAddr:
+    e.dest.copyIntoKind HaddrX, info:
+      takeTree(e, value)
+  else:
+    takeTree(e, value)
+  e.dest.addParRi()
+
+proc createInitialBinding(e: var EContext; destSym: SymId;
+        typ: var Cursor; value: var Cursor;
+        info: PackedLineInfo; kind: StmtKind) =
+  assert typ.kind != ParRi
+  e.dest.addParLe kind, info
+  e.dest.add symdefToken(destSym, info)
+  e.dest.addDotToken()
+  e.dest.addDotToken()
   takeTree(e, typ)
   takeTree(e, value)
   e.dest.addParRi()
@@ -89,9 +106,16 @@ proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; 
   let symId = local.name.symId
   var tupBuf = createTupleAccess(left, i, info)
   var tup = beginRead(tupBuf)
-  var fieldTyp = getTupleFieldType(typ)
-  assert fieldTyp.kind != ParRi
-  createDecl(e, symId, fieldTyp, tup, info, LetS)
+  var localTyp = local.typ
+  createDecl(e, symId, localTyp, tup, info, LetS)
+
+proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBuf =
+  result = createTokenBuf()
+  if needsDeref:
+    result.copyIntoKind HderefX, info:
+      result.add symToken(s, info)
+  else:
+    result.add symToken(s, info)
 
 proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
@@ -112,6 +136,7 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
       let tmpId: SymId
       let info: PackedLineInfo
       var typ = yieldType.skipModifier()
+      let needsDeref = yieldType.typeKind in {LentT, MutT}
       assert typ.typeKind == TupleT
       if c.kind == Symbol:
         tmpId = c.symId
@@ -121,7 +146,7 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
         tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
         var typ = yieldType
-        createDecl(e, tmpId, typ, c, info, LetS)
+        createInitialBinding(e, tmpId, typ, c, info, LetS)
 
       inc typ # skips tuple
       for i in 0..<forVars.len:
@@ -129,8 +154,7 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
           var counter = 0
           var unpackCursor = forVars[i]
           inc unpackCursor
-          var left = createTokenBuf()
-          left.add symToken(tmpId, info)
+          var left = startTupleAccess(tmpId, info, needsDeref)
           let leftTupleAccess = createTupleAccess(left, i, info)
           assert typ.typeKind == TupleT
           inc typ
@@ -141,8 +165,7 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
             skip typ
           skipParRi(typ)
         else:
-          var left = createTokenBuf()
-          left.add symToken(tmpId, info)
+          var left = startTupleAccess(tmpId, info, needsDeref)
           unpackTupleAccess(e, forVars[i], left, i, info, typ)
           skip typ
 
