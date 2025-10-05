@@ -34,31 +34,18 @@ proc hasContinueStmt(c: Cursor): bool =
 
 proc createDecl(e: var EContext; destSym: SymId;
         typ: var Cursor; value: var Cursor;
-        info: PackedLineInfo; kind: StmtKind) =
+        info: PackedLineInfo; kind: StmtKind; needsAddr: bool) =
   assert typ.kind != ParRi
   e.dest.addParLe kind, info
   e.dest.add symdefToken(destSym, info)
   e.dest.addDotToken()
   e.dest.addDotToken()
-  let needsAddr = typ.typeKind in {LentT, MutT}
   takeTree(e, typ)
   if needsAddr:
     e.dest.copyIntoKind HaddrX, info:
       takeTree(e, value)
   else:
     takeTree(e, value)
-  e.dest.addParRi()
-
-proc createInitialBinding(e: var EContext; destSym: SymId;
-        typ: var Cursor; value: var Cursor;
-        info: PackedLineInfo; kind: StmtKind) =
-  assert typ.kind != ParRi
-  e.dest.addParLe kind, info
-  e.dest.add symdefToken(destSym, info)
-  e.dest.addDotToken()
-  e.dest.addDotToken()
-  takeTree(e, typ)
-  takeTree(e, value)
   e.dest.addParRi()
 
 when false:
@@ -98,16 +85,16 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
     inc c
   else:
     var typ = local.typ
-    createDecl(e, destSym, typ, c, info, VarS)
+    createDecl(e, destSym, typ, c, info, VarS, needsAddr=false)
 
-proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor) =
+proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor; needsAddr: bool) =
   assert typ.kind != ParRi
   let local = asLocal(forVar)
   let symId = local.name.symId
   var tupBuf = createTupleAccess(left, i, info)
   var tup = beginRead(tupBuf)
   var localTyp = local.typ
-  createDecl(e, symId, localTyp, tup, info, LetS)
+  createDecl(e, symId, localTyp, tup, info, LetS, needsAddr)
 
 proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBuf =
   result = createTokenBuf()
@@ -146,7 +133,7 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
         tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
         var typ = yieldType
-        createInitialBinding(e, tmpId, typ, c, info, LetS)
+        createDecl(e, tmpId, typ, c, info, LetS, needsAddr=false)
 
       inc typ # skips tuple
       for i in 0..<forVars.len:
@@ -159,14 +146,14 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
           assert typ.typeKind == TupleT
           inc typ
           while unpackCursor.kind != ParRi:
-            unpackTupleAccess(e, unpackCursor, leftTupleAccess, counter, info, typ)
+            unpackTupleAccess(e, unpackCursor, leftTupleAccess, counter, info, typ, needsDeref)
             inc counter
             skip unpackCursor
             skip typ
           skipParRi(typ)
         else:
           var left = startTupleAccess(tmpId, info, needsDeref)
-          unpackTupleAccess(e, forVars[i], left, i, info, typ)
+          unpackTupleAccess(e, forVars[i], left, i, info, typ, needsDeref)
           skip typ
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
@@ -383,7 +370,7 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
 
       let newName = pool.syms.getOrIncl("`lf." & $e.instId)
       inc e.instId
-      createDecl(e, newName, typ, iter, name.info, if constructsValue(iter): VarS else: CursorS)
+      createDecl(e, newName, typ, iter, name.info, if constructsValue(iter): VarS else: CursorS, needsAddr=false)
       relationsMap[symId] = newName
 
       skip params
