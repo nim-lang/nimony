@@ -34,8 +34,9 @@ proc hasContinueStmt(c: Cursor): bool =
 
 proc createDecl(e: var EContext; destSym: SymId;
         typ: var Cursor; value: var Cursor;
-        info: PackedLineInfo; kind: string) =
-  e.dest.add tagToken(kind, info)
+        info: PackedLineInfo; kind: StmtKind) =
+  assert typ.kind != ParRi
+  e.dest.addParLe kind, info
   e.dest.add symdefToken(destSym, info)
   e.dest.addDotToken()
   e.dest.addDotToken()
@@ -80,15 +81,17 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
     inc c
   else:
     var typ = local.typ
-    createDecl(e, destSym, typ, c, info, "var")
+    createDecl(e, destSym, typ, c, info, VarS)
 
 proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor) =
+  assert typ.kind != ParRi
   let local = asLocal(forVar)
   let symId = local.name.symId
   var tupBuf = createTupleAccess(left, i, info)
   var tup = beginRead(tupBuf)
   var fieldTyp = getTupleFieldType(typ)
-  createDecl(e, symId, fieldTyp, tup, info, "let")
+  assert fieldTyp.kind != ParRi
+  createDecl(e, symId, fieldTyp, tup, info, LetS)
 
 proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
@@ -108,7 +111,8 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
     else:
       let tmpId: SymId
       let info: PackedLineInfo
-      var typ = yieldType
+      var typ = yieldType.skipModifier()
+      assert typ.typeKind == TupleT
       if c.kind == Symbol:
         tmpId = c.symId
         info = c.info
@@ -117,11 +121,11 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
         tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
         var typ = yieldType
-        createDecl(e, tmpId, typ, c, info, "let")
+        createDecl(e, tmpId, typ, c, info, LetS)
 
       inc typ # skips tuple
       for i in 0..<forVars.len:
-        if forVars[i].substructureKind == UnpacktupU:
+        if forVars[i].substructureKind in {UnpacktupU, UnpackflatU}:
           var counter = 0
           var unpackCursor = forVars[i]
           inc unpackCursor
@@ -356,7 +360,7 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
 
       let newName = pool.syms.getOrIncl("`lf." & $e.instId)
       inc e.instId
-      createDecl(e, newName, typ, iter, name.info, if constructsValue(iter): "var" else: "cursor")
+      createDecl(e, newName, typ, iter, name.info, if constructsValue(iter): VarS else: CursorS)
       relationsMap[symId] = newName
 
       skip params
