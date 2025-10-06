@@ -1912,96 +1912,36 @@ proc importSymbol(c: var EContext; s: SymId) =
   else:
     error c, "could not find symbol: " & pool.syms[s]
 
-proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string) =
+proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string): TokenBuf =
+  # Prepass: patch symbols that need mangling in c.dest
+  for i in 0 ..< c.dest.len:
+    let tok = c.dest[i]
+    if tok.kind in {Symbol, SymbolDef}:
+      let mangledName = c.maybeMangle(tok.symId)
+      if mangledName.len > 0:
+        let mangledSym = pool.syms.getOrIncl(mangledName)
+        c.dest[i].setSymId(mangledSym)
+
+  # Build the final output with stmts wrapper and includes
+  result = createTokenBuf()
+  result.add tagToken("stmts", rootInfo)
+
+  # Add include statements for headers
+  for h in c.headers:
+    result.add tagToken("incl", rootInfo)
+    result.add strToken(h, rootInfo)
+    result.addParRi()
+
+  # Add all the generated content
+  result.add c.dest
+
+  # Close the stmts wrapper
+  result.addParRi()
+
+  # Write with vendor/dialect metadata
   var b = nifbuilder.open(destfileName)
   b.addHeader "hexer", "nifc"
-  var stack: seq[PackedLineInfo] = @[]
-  if rootInfo.isValid:
-    stack.add rootInfo
-    let rawInfo = unpack(pool.man, rootInfo)
-    b.addLineInfo(rawInfo.col, rawInfo.line, pool.files[rawInfo.file])
-  b.addTree "stmts"
-  for h in c.headers:
-    b.withTree "incl":
-      b.addStrLit pool.strings[h]
-
-  var n = beginRead(c.dest)
-  var ownerStack = @[(SymId(0), -1)]
-
-  var nested = 0
-  var nextIsOwner = -1
-  for nb in 0 ..< c.dest.len:
-    let info = n.info
-    if info.isValid:
-      let rawInfo = unpack(pool.man, info)
-      let file = rawInfo.file
-      var line = rawInfo.line
-      var col = rawInfo.col
-      if file.isValid:
-        var fileAsStr = ""
-        if stack.len > 0:
-          let pRawInfo = unpack(pool.man, stack[^1])
-          if file != pRawInfo.file: fileAsStr = pool.files[file]
-          if fileAsStr.len == 0:
-            line = line - pRawInfo.line
-            col = col - pRawInfo.col
-        else:
-          fileAsStr = pool.files[file]
-        b.addLineInfo(col, line, fileAsStr)
-
-    case n.kind
-    of DotToken:
-      b.addEmpty()
-    of Ident:
-      b.addIdent(pool.strings[n.litId])
-    of Symbol:
-      let val = c.maybeMangle(n.symId)
-      if val.len > 0:
-        b.addSymbol(val)
-      else:
-        let s = pool.syms[n.symId]
-        b.addSymbol(s)
-    of SymbolDef:
-      let val = c.maybeMangle(n.symId)
-      if val.len > 0:
-        b.addSymbolDef(val)
-      else:
-        let s = pool.syms[n.symId]
-        b.addSymbolDef(s)
-      if nextIsOwner >= 0:
-        ownerStack.add (n.symId, nextIsOwner)
-        nextIsOwner = -1
-    of IntLit:
-      b.addIntLit(pool.integers[n.intId])
-    of UIntLit:
-      b.addUIntLit(pool.uintegers[n.uintId])
-    of FloatLit:
-      b.addFloatLit(pool.floats[n.floatId])
-    of CharLit:
-      b.addCharLit char(n.uoperand)
-    of StringLit:
-      b.addStrLit(pool.strings[n.litId])
-    of UnknownToken:
-      b.addIdent "<unknown token>"
-    of EofToken:
-      b.addIntLit n.soperand
-    of ParRi:
-      if stack.len > 0:
-        discard stack.pop()
-      b.endTree()
-      if nested > 0: dec nested
-      if ownerStack[^1][1] == nested:
-        discard ownerStack.pop()
-    of ParLe:
-      let tag = pool.tags[n.tagId]
-      if tag == "proc" or tag == "type":
-        nextIsOwner = nested
-      b.addTree(tag)
-      stack.add info
-      inc nested
-    inc n
-
-  b.endTree()
+  b.addRaw toString(result)
   b.close()
 
 proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
@@ -2100,7 +2040,8 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   skipParRi c, n
   let destfileName = c.dir / c.main & ".x.nif"
 
-  writeOutput c, rootInfo, destfileName
+  var outputBuf = writeOutput(c, rootInfo, destfileName)
   c.closeMangleScope()
 
-  writeDceOutput destfileName, c.dir / c.main & ".dce.nif"
+  # Use the in-memory buffer to avoid re-reading the file we just wrote
+  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif"
