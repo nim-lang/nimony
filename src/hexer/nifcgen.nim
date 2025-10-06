@@ -1926,10 +1926,8 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string
       b.addStrLit pool.strings[h]
 
   var n = beginRead(c.dest)
-  var ownerStack = @[(SymId(0), -1)]
 
   var nested = 0
-  var nextIsOwner = -1
   for nb in 0 ..< c.dest.len:
     let info = n.info
     if info.isValid:
@@ -1968,9 +1966,6 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string
       else:
         let s = pool.syms[n.symId]
         b.addSymbolDef(s)
-      if nextIsOwner >= 0:
-        ownerStack.add (n.symId, nextIsOwner)
-        nextIsOwner = -1
     of IntLit:
       b.addIntLit(pool.integers[n.intId])
     of UIntLit:
@@ -1990,12 +1985,8 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string
         discard stack.pop()
       b.endTree()
       if nested > 0: dec nested
-      if ownerStack[^1][1] == nested:
-        discard ownerStack.pop()
     of ParLe:
       let tag = pool.tags[n.tagId]
-      if tag == "proc" or tag == "type":
-        nextIsOwner = nested
       b.addTree(tag)
       stack.add info
       inc nested
