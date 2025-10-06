@@ -130,7 +130,9 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
       else:
         raiseAssert infile & ": expected ParLe"
 
-proc writeDceOutput*(infile, outfile: string) =
-  var buf = parseFromFile(infile)
+proc writeDceOutput*(buf: var TokenBuf; outfile: string) =
+  ## Direct overload that works on an already-parsed token buffer,
+  ## avoiding the file read + parse step.
   let n = beginRead(buf)
   prepDce(outfile, n)
+  endRead(buf)
