@@ -222,6 +222,7 @@ proc tryLinearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] 
   m.err = false
   linearMatch m, f, a, flags
   m.err = result
+  result = not result
 
 proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool
 
