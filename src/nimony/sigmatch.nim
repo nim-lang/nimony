@@ -1498,7 +1498,7 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
     result.names[name] = result.len
     inc result.len
 
-proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[CallArg]): seq[CallArg] =
+proc orderArgs*(m: var Match; paramsCursor: Cursor; args: openArray[CallArg]): seq[CallArg] =
   let params = buildParamsInfo(paramsCursor)
   var positions = newSeq[int](params.len)
   for i in 0 ..< positions.len: positions[i] = -1

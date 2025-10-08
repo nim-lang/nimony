@@ -651,12 +651,17 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     # try converters
     var matchAdded = false
     let L = m.len
+    var csArgsOrig: seq[CallArg] = @[]
+    if cs.hasNamedArgs:
+      csArgsOrig = move cs.args
     for mi in 0 ..< L:
       if not m[mi].err: continue
       var newMatch = createMatch(addr c)
       var newArgs: seq[CallArg] = @[]
       var newArgBufs: seq[TokenBuf] = @[] # to keep alive
       var param = skipProcTypeToParams(m[mi].fn.typ)
+      if cs.hasNamedArgs:
+        cs.args = orderArgs(newMatch, param, csArgsOrig)
       assert param.isParamsTag
       inc param
       var ai = 0
