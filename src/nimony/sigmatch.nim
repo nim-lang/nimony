@@ -220,9 +220,12 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
 proc tryLinearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}): bool {.inline.} =
   result = m.err
   m.err = false
+  let oldHasError = m.hasError
+  m.hasError = false
   linearMatch m, f, a, flags
   m.err = result
   result = not result
+  m.hasError = oldHasError
 
 proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool
 
