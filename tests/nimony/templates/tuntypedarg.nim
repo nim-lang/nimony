@@ -18,3 +18,15 @@ proc doReader(r: var Reader) =
 
 var r = Reader(p: 0, eof: 5)
 doReader(r)
+
+# bug #1305
+
+proc bar(x: int) = echo 1234
+
+template foo(rune: untyped): untyped {.untyped.} =
+  rune(12)
+
+proc bar(x: string) =
+  foo(bar)
+
+bar("123")
