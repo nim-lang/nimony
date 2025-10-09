@@ -11,7 +11,7 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
-import sem, nifconfig, semos, semdata, indexgen, programs
+import sem, nifconfig, semos, semdata, indexgen, programs, symparser
 import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs, idetools
 
 const
@@ -22,7 +22,7 @@ const
 Usage:
   nimsem [options] [command]
 Command:
-  m input.nif output.nif index.nif    compile a single Nim module to hexer
+  m input.nif                 compile a single Nim module to hexer (output and index files derived from input name)
   x file.nif                  generate the .idx.nif file from a .nif file
   e file.nif [dep1.nif ...]   execute the given .nif file
   idetools file1.nif [file2.nif ...]  list usages and definitions
@@ -51,10 +51,11 @@ type
   Command = enum
     None, SingleModule, GenerateIdx, Execute, Idetools
 
-proc singleModule(infile, outfile, idxfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
+proc singleModule(infile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
   if not semos.fileExists(infile):
     quit "cannot find " & infile
   else:
+    let outfile = infile.changeModuleExt(".s.nif")
     semcheck(infile, outfile, ensureMove config, moduleFlags, "", false)
 
 proc executeNif(files: seq[string]; config: sink NifConfig) =
@@ -186,9 +187,9 @@ proc handleCmdLine() =
   of None:
     quit "command missing"
   of SingleModule:
-    if args.len != 3:
-      quit "want exactly 3 command line arguments"
-    singleModule(args[0], args[1], args[2], ensureMove config, moduleFlags)
+    if args.len != 1:
+      quit "want exactly 1 command line argument"
+    singleModule(args[0], ensureMove config, moduleFlags)
   of GenerateIdx:
     if args.len != 1:
       quit "want exactly 1 command line argument"
