@@ -88,7 +88,7 @@ proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   m.error = MatchError(info: m.argInfo, kind: k,
                        expected: expected, got: got, pos: m.pos+1)
   #writeStackTrace()
-  #echo "ERROR: ", msg
+  #echo "ERROR: ", typeToString(m.error.expected)
 
 proc error0(m: var Match; k: MatchErrorKind) =
   m.err = true
@@ -217,6 +217,16 @@ type LinearMatchFlag = enum
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
 
+proc tryLinearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}): bool {.inline.} =
+  let oldErr = m.err
+  let oldHasError = m.hasError
+  m.err = false
+  m.hasError = false
+  linearMatch m, f, a, flags
+  result = not m.err
+  m.err = oldErr
+  m.hasError = oldHasError
+
 proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool
 
 proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
@@ -252,11 +262,8 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # XXX typevars inferred to have typevar values will try to match individual constraints here
   f = fOrig
   var a = a
-  var err = false
-  swap m.err, err
-  linearMatch m, f, a # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-  swap m.err, err
-  result = not err
+  # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
+  result = tryLinearMatch(m, f, a)
 
 proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
@@ -297,11 +304,8 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   else:
     # match as a regular type:
     var a = a
-    var err = false
-    swap m.err, err
-    linearMatch m, f, a # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-    swap m.err, err
-    result = not err
+    # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
+    result = tryLinearMatch(m, f, a)
 
 proc matchSingleConstraint(m: var Match; f: var Cursor; a: Cursor): bool {.inline.} =
   if f.kind == Symbol:
