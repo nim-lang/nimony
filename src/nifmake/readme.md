@@ -3,6 +3,18 @@
 Nifmake is a make-like tool used by Nimony to implement parallel and incremental compilation. It can either run a dependency graph directly or translate it to a Makefile.
 
 
+## Concepts
+
+There are **two distinct roles of Inputs and Outputs**:
+
+1. Inputs/Outputs for DAG Construction (Dependency Knowledge). These are derived from the `(do ...)` statements.
+2. Inputs/Outputs as Command String Substitutions. These are specified in the `(cmd ...)` template using special tags: `(input)` and `( output)` with optional indexing.
+
+**DON'T CONFUSE:**
+`(input "file.nim")` in a `(do ...)` block → Adds "file.nim" to the node's dependency list
+`(input)` in a `(cmd ...)` template → Placeholder that will be replaced with actual filenames during execution
+
+
 ## Usage
 
 ### Basic Usage
