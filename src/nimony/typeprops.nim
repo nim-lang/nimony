@@ -336,6 +336,9 @@ proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoTyp
 proc isViewType*(n: Cursor): bool =
   typeHasPragma(n, ViewP)
 
+proc isVoidType*(t: Cursor): bool {.inline.} =
+  t.kind == DotToken or t.typeKind == VoidT
+
 proc typeImpl*(s: SymId): Cursor =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing

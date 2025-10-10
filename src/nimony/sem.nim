@@ -29,6 +29,8 @@ proc typeMismatch(c: var SemContext; info: PackedLineInfo; got, expected: TypeCu
 proc typecheck(c: var SemContext; info: PackedLineInfo; got, expected: TypeCursor) =
   if sameTrees(expected, got):
     discard "fine"
+  elif isVoidType(expected) and isVoidType(got):
+    discard "fine"
   else:
     c.typeMismatch info, got, expected
 
