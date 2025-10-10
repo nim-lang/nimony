@@ -17,6 +17,7 @@ type
   Context = object
     scopeStack: seq[int]
     actionStack: seq[ActionItem]
+    retSym: SymId
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
 
@@ -49,6 +50,23 @@ proc trDefer(c: var Context; dest: var TokenBuf; n: var Cursor) =
   fin.takeParRi n
   fin.addParRi() # close try statement
   c.actionStack.add ActionItem(id: mine, action: ensureMove fin)
+
+proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if c.retSym != NoSymId and not (n.firstSon.kind == Symbol and n.firstSon.symId == c.retSym):
+    # transform to `result = <expr>; return result`, see bug #1440
+    let info = n.info
+    dest.copyIntoKind AsgnS, info:
+      dest.addSymUse c.retSym, info
+      inc n # skip `ret`
+      trStmt c, dest, n
+    dest.copyIntoKind RetS, info:
+      dest.addSymUse c.retSym, info
+  else:
+    # ordinary recursion:
+    dest.takeToken n
+    while n.kind != ParRi:
+      trStmt c, dest, n
+    dest.takeParRi n
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -122,6 +140,16 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeParRi n
     of DeferS:
       trDefer c, dest, n
+    of RetS:
+      trReturn c, dest, n
+    of ResultS:
+      dest.takeToken n
+      assert n.kind == SymbolDef
+      c.retSym = n.symId
+      dest.takeToken n
+      while n.kind != ParRi:
+        trStmt c, dest, n
+      dest.takeParRi n
     else:
       dest.takeToken n
       while n.kind != ParRi:
