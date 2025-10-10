@@ -117,8 +117,8 @@ when defined(posix):
 
   # Directory operations
   type
-    DIR* {.importc: "DIR", header: "<dirent.h>", incompletestruct.} = object
-    Dirent* {.importc: "struct dirent", header: "<dirent.h>", final, pure.} = object
+    DIR* {.importc: "DIR", header: "<dirent.h>".} = object
+    Dirent* {.importc: "struct dirent", header: "<dirent.h>".} = object
       d_name* {.importc: "d_name".}: array[256, char]
 
   proc opendir*(name: cstring): ptr DIR {.importc, header: "<dirent.h>", sideEffect.}
