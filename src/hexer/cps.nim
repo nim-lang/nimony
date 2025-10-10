@@ -67,7 +67,7 @@ import std / [assertions, sets, tables]
 include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
-  builtintypes, langmodes, renderer, reporters, controlflow]
+  builtintypes, langmodes, renderer, reporters, controlflow, typeprops]
 import hexer_context
 
 # TODO:

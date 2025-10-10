@@ -1088,6 +1088,12 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       # `typed` and `untyped` simply match everything:
       inc f
       expectParRi m, f
+    of VoidT:
+      inc f
+      expectPtrParRi m, f
+      var a = arg.typ
+      if not isVoidType(a):
+        m.error InvalidMatch, f, a
     of TupleT:
       let fOrig = f
       let aOrig = skipModifier(arg.typ)
@@ -1126,7 +1132,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         procTypeMatch m, f, a
       else:
         m.error InvalidMatch, f, a
-    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, VoidT, NiltT, OrT, AndT, NotT,
+    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, NiltT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
