@@ -29,3 +29,14 @@ proc testB(a: string) =
     echo "b"
 
 testB("ac")
+
+# bug #1440
+
+proc f(n: int): int =
+  var n = n
+  defer:
+    inc n
+    echo n
+  return n
+
+echo f(5)
