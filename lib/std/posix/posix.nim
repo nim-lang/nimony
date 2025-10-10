@@ -106,6 +106,7 @@ when defined(posix):
     importc, header: "<time.h>", sideEffect.}
 
   proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
+  proc chdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
 
   when not defined(nintendoswitch):
     proc readlink*(a1, a2: cstring, a3: int): int {.importc, header: "<unistd.h>".}
@@ -113,3 +114,17 @@ when defined(posix):
     proc symlink*(a1, a2: cstring): cint {.importc, header: "<unistd.h>".}
   else:
     proc symlink*(a1, a2: cstring): cint = -1
+
+  # Directory operations
+  type
+    DIR* {.importc: "DIR", header: "<dirent.h>", incompletestruct.} = object
+    Dirent* {.importc: "struct dirent", header: "<dirent.h>", final, pure.} = object
+      d_name* {.importc: "d_name".}: array[256, char]
+
+  proc opendir*(name: cstring): ptr DIR {.importc, header: "<dirent.h>", sideEffect.}
+  proc closedir*(dirp: ptr DIR): cint {.importc, header: "<dirent.h>", sideEffect.}
+  proc readdir*(dirp: ptr DIR): ptr Dirent {.importc, header: "<dirent.h>", sideEffect.}
+
+  proc mkdir*(path: cstring, mode: Mode): cint {.importc, header: "<sys/stat.h>", sideEffect.}
+  proc rmdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
+  proc unlink*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}

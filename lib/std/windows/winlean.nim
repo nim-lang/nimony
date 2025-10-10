@@ -200,6 +200,8 @@ when defined(windows):
   proc findNextFileW*(hFindFile: Handle,
                     lpFindFileData: var WIN32_FIND_DATA): int32 {.
       stdcall, dynlib: "kernel32", importc: "FindNextFileW", sideEffect.}
+  proc findClose*(hFindFile: Handle): WINBOOL {.
+      stdcall, dynlib: "kernel32", importc: "FindClose", sideEffect.}
 
   proc copyFileW*(lpExistingFileName, lpNewFileName: WideCString,
                 bFailIfExists: WINBOOL): WINBOOL {.
@@ -227,7 +229,8 @@ when defined(windows):
     importc: "CreateDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
   proc removeDirectoryW*(lpPathName: WideCString): int32 {.
     importc: "RemoveDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
-
+  proc deleteFileW*(lpFileName: WideCString): WINBOOL {.
+    importc: "DeleteFileW", dynlib: "kernel32", stdcall, sideEffect.}
 
   proc createSymbolicLinkW*(lpSymlinkFileName, lpTargetFileName: WideCString,
                         flags: DWORD): int32 {.

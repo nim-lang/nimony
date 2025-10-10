@@ -193,7 +193,11 @@ proc semExportSymbol(c: var SemContext; n: var Cursor) =
   let info = n.info
   if n.exprKind == DotX:
     var it = Item(n: n, typ: c.types.autoType)
+    let oldPhase = c.phase
+    c.phase = SemcheckBodies
     semExpr c, it
+    c.phase = oldPhase
+    n = it.n
   else:
     let ident = takeIdent(n)
     if ident == StrId(0):
