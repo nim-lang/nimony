@@ -1,7 +1,7 @@
 # comparison operators:
 
 # not in original nim, so that it works for generic `Ordinal` types:
-proc `==`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
+proc `==`*[T: Ordinal](x, y: T): bool {.magic: "EqI", noSideEffect.}
 
 # `enum` typeclass split here to prevent ambiguity with `Ordinal`:
 proc `==`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
