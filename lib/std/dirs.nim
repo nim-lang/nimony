@@ -150,18 +150,38 @@ iterator walkDir*(dir: Path,
           # Unknown type, treat as file
           yield (pcFile, fullPath)
 
+proc getCurrentDir*(): Path {.raises.} =
+  ## Returns the current working directory as a `Path`.
+  ##
+  ## Raises an error if unable to retrieve the current directory.
+  ##
+  ## See also:
+  ## * `setCurrentDir proc`_
+  when defined(windows):
+    const bufSize = 1024'i32
+    var buffer = newWideCString("", bufSize)
+    let res = getCurrentDirectoryW(bufSize, addr buffer[0])
+    if res == 0'i32:
+      raiseOSError(osLastError())
+    result = paths.initPath($buffer)
+  else:
+    const bufSize = 1024
+    var buffer = newString(bufSize)
+    if getcwd(addr buffer[0], bufSize) == nil:
+      raiseOSError(osLastError())
+    result = paths.initPath($cast[cstring](addr buffer[0]))
+
 proc setCurrentDir*(dir: Path) {.raises.} =
   ## Sets the current working directory to `dir`.
   ##
   ## Raises errors if the directory doesn't exist or lacks permissions.
   ##
   ## See also:
-  ## * `getCurrentDir proc <paths.html#getCurrentDir>`_
+  ## * `getCurrentDir proc`_
+  var dirStr = $dir
   when defined(windows):
-    var dirStr = $dir
-    if setCurrentDirectoryW(toWide(dirStr)) == 0'i32:
+    if setCurrentDirectoryW(newWideCString(dirStr)) == 0'i32:
       raiseOSError(osLastError())
   else:
-    var dirStr = $dir
     if chdir(dirStr.toCString) != 0'i32:
       raiseOSError(osLastError())
