@@ -19,26 +19,46 @@ when defined(windows):
 else:
   import posix/posix
 
-proc createDir*(dir: Path) {.raises.} =
-  ## Creates a new directory `dir`. If the directory already exists, no error is raised.
+when defined(windows):
+  import "../../vendor/errorcodes/src" / errorcodes_windows
+else:
+  import "../../vendor/errorcodes/src" / errorcodes_posix
+
+  var errno {.importc: "errno", header: "<errno.h>".}: cint
+
+proc tryCreateFinalDir*(dir: Path): ErrorCode =
+  ## Tries to create the final directory in a path.
+  ## In other words, it tries to create a single new directory, not a nested one.
+  ## It returns the OS's error code making it easy to distinguish between
+  ## "could not create" and "already exists".
   var dirStr = $dir
   when defined(windows):
-    let res = createDirectoryW(newWideCString(dirStr))
-    if res != 0'i32:
-      result = true
-    elif getLastError() == 183'i32:
-      result = false
+    if createDirectoryW(newWideCString(dirStr).rawData) == 0'i32:
+      result = Success
     else:
-      raiseOSError(osLastError(), dir)
+      result = windowsToErrorCode getLastError()
   else:
-    if mkdir(dirStr.toCString, 0o777) != 0'i32:
-      raiseOSError(osLastError())
+    if mkdir(dirStr.toCString, 0o777) == 0'i32:
+      result = Success
+    else:
+      result = posixToErrorCode(errno)
 
+proc createDir*(dir: Path) {.raises.} =
+  ## Creates a new directory `dir`. If the directory already exists, no error is raised.
+  ## This can be used to create a nested directory structure directly.
+  for d in parentDirs(dir, fromRoot=false, inclusive=true):
+    let res = tryCreateFinalDir(d)
+    if res == Success or res == NameExists:
+      discard "fine"
+    else:
+      raise res
+
+#[
 proc removeDir*(dir: Path) {.raises.} =
   ## Removes the directory `dir`.
   var dirStr = $dir
   when defined(windows):
-    if removeDirectoryW(newWideCString(dirStr)) == 0'i32:
+    if removeDirectoryW(newWideCString(dirStr).rawData) == 0'i32:
       raiseOSError(osLastError())
   else:
     if rmdir(dirStr.toCString) != 0'i32:
@@ -160,7 +180,7 @@ proc getCurrentDir*(): Path {.raises.} =
   when defined(windows):
     const bufSize = 1024'i32
     var buffer = newWideCString("", bufSize)
-    let res = getCurrentDirectoryW(bufSize, addr buffer[0])
+    let res = getCurrentDirectoryW(bufSize, buffer.rawData)
     if res == 0'i32:
       raiseOSError(osLastError())
     result = paths.initPath($buffer)
@@ -180,8 +200,10 @@ proc setCurrentDir*(dir: Path) {.raises.} =
   ## * `getCurrentDir proc`_
   var dirStr = $dir
   when defined(windows):
-    if setCurrentDirectoryW(newWideCString(dirStr)) == 0'i32:
+    if setCurrentDirectoryW(newWideCString(dirStr).rawData) == 0'i32:
       raiseOSError(osLastError())
   else:
     if chdir(dirStr.toCString) != 0'i32:
       raiseOSError(osLastError())
+
+]#
