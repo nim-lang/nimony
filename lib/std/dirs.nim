@@ -216,9 +216,12 @@ proc getCurrentDir*(): Path {.raises.} =
   else:
     const bufSize = 1024
     var buffer = newString(bufSize)
-    if getcwd(addr buffer[0], bufSize) == nil:
+    if getcwd(buffer.toCString(), bufSize) == nil:
       raiseOSError(osLastError())
-    result = paths.initPath($cast[cstring](addr buffer[0]))
+    var i = 0
+    while i < buffer.len and buffer[i] != '\0': inc i
+    shrink(buffer, i)
+    result = paths.initPath(buffer)
 
 proc setCurrentDir*(dir: Path) {.raises.} =
   ## Sets the current working directory to `dir`.
