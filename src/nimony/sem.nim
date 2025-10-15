@@ -2558,8 +2558,13 @@ proc semFor(c: var SemContext; it: var Item) =
       var n2 = it.n
       skip n2
       let hasMultiVars = n2.kind != ParRi
-      if hasMultiVars and iterCall.typ.skipModifier.typeKind == TupleT:
-        semForLoopTupleVar c, it, iterCall.typ
+      if hasMultiVars:
+        if iterCall.typ.skipModifier.typeKind == TupleT:
+          semForLoopTupleVar c, it, iterCall.typ
+        else:
+          # error handling
+          while it.n.kind != ParRi:
+            semForLoopVar c, it, c.types.autoType
       else:
         semForLoopVar c, it, iterCall.typ
 
