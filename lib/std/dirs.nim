@@ -33,7 +33,7 @@ proc tryCreateFinalDir*(dir: Path): ErrorCode =
   ## "could not create" and "already exists".
   var dirStr = $dir
   when defined(windows):
-    if createDirectoryW(newWideCString(dirStr).rawData) == 0'i32:
+    if createDirectoryW(newWideCString(dirStr).rawData) != 0'i32:
       result = Success
     else:
       result = windowsToErrorCode getLastError()
