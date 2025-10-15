@@ -110,7 +110,7 @@ type
       wimpl: WIN32_FIND_DATA
       handle: Handle
     else:
-      pimpl: DIR
+      pimpl: ptr DIR
     dir: Path
     status: ErrorCode
 
@@ -146,6 +146,28 @@ proc fillDirEntry(w: var DirWalker; e: var DirEntry) =
     let f = cast[ptr UncheckedArray[WinChar]](addr w.wimpl.cFileName)
     e.path = paths.initPath($f)
 
+when defined(posix):
+  proc pathComponentFromEntry(w: var DirWalker; name: string; dType: uint8): PathComponent =
+    if dType == DT_UNKNOWN or dType == DT_LNK:
+      var fullPath = concat($w.dir, "/", name)
+      var s = default Stat
+      if lstat(fullPath.toCString, s) == 0:
+        if S_ISLNK(s.st_mode):
+          # For symlinks, we need to check if they point to a directory
+          var targetStat = default Stat
+          if stat(fullPath.toCString, targetStat) == 0 and S_ISDIR(targetStat.st_mode):
+            result = pcLinkToDir
+          else:
+            result = pcLinkToFile
+        elif S_ISDIR(s.st_mode):
+          result = pcDir
+        else:
+          result = pcFile
+    elif dType == DT_DIR:
+      result = pcDir
+    else:
+      result = pcFile
+
 proc tryNextDir*(w: var DirWalker; e: var DirEntry): bool =
   when defined(windows):
     while w.status == Success:
@@ -163,12 +185,24 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry): bool =
     if result:
       fillDirEntry(w, e)
   else:
-    if readdir(w.pimpl) == nil:
-      if w.status == Success:
-        w.status = posixToErrorCode(errno)
-      result = false
-    else:
-      result = true
+    while w.status == Success:
+      let entry = readdir(w.pimpl)
+      if entry == nil:
+        if w.status == Success:
+          w.status = posixToErrorCode(errno)
+        result = false
+        break
+      else:
+        result = true
+        let cstr = cast[cstring](addr entry.d_name[0])
+        let name = fromCString cstr
+        # Skip "." and ".."
+        if name == "." or name == "..":
+          discard "skip"
+        else:
+          e.kind = pathComponentFromEntry(w, name, entry.d_type)
+          e.path = initPath(name)
+          break
 
 proc tryCloseDir*(w: var DirWalker): ErrorCode =
   when defined(windows):

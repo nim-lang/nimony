@@ -119,6 +119,7 @@ when defined(posix):
   type
     DIR* {.importc: "DIR", header: "<dirent.h>".} = object
     Dirent* {.importc: "struct dirent", header: "<dirent.h>".} = object
+      d_type* {.importc: "d_type".}: uint8
       d_name* {.importc: "d_name".}: array[256, char]
 
   proc opendir*(name: cstring): ptr DIR {.importc, header: "<dirent.h>", sideEffect.}
@@ -128,3 +129,15 @@ when defined(posix):
   proc mkdir*(path: cstring, mode: Mode): cint {.importc, header: "<sys/stat.h>", sideEffect.}
   proc rmdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
   proc unlink*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
+
+  # POSIX d_type constants
+  const
+    DT_UNKNOWN* = 0'u8 ## Unknown file type.
+    DT_FIFO* = 1'u8    ## Named pipe, or FIFO.
+    DT_CHR* = 2'u8     ## Character device.
+    DT_DIR* = 4'u8     ## Directory.
+    DT_BLK* = 6'u8     ## Block device.
+    DT_REG* = 8'u8     ## Regular file.
+    DT_LNK* = 10'u8    ## Symbolic link.
+    DT_SOCK* = 12'u8   ## UNIX domain socket.
+    DT_WHT* = 14'u8
