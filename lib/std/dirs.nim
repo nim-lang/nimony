@@ -117,21 +117,22 @@ type
 proc tryOpenDir*(dir: sink Path): DirWalker =
   ## Tries to open the directory `dir` for iteration over its entries.
   result = DirWalker(dir: dir, status: EmptyError)
-  var dirStr = $result.dir
   when defined(windows):
+    var dirStr = $result.dir & "\\*"
     result.handle = findFirstFileW(newWideCString(dirStr).rawData, result.wimpl)
     if result.handle == INVALID_HANDLE_VALUE:
       result.status = windowsToErrorCode getLastError()
     else:
       result.status = Success
   else:
+    var dirStr = $result.dir
     result.pimpl = opendir(dirStr.toCString)
     if result.pimpl == nil:
       result.status = posixToErrorCode(errno)
     else:
       result.status = Success
 
-proc fillDirEntry*(e: var DirEntry; w: var DirWalker) =
+proc fillDirEntry(w: var DirWalker; e: var DirEntry) =
   when defined(windows):
     let isDir = (w.wimpl.dwFileAttributes.uint32 and FILE_ATTRIBUTE_DIRECTORY) != 0'u32
     let isLink = (w.wimpl.dwFileAttributes.uint32 and FILE_ATTRIBUTE_REPARSE_POINT) != 0'u32
@@ -145,7 +146,7 @@ proc fillDirEntry*(e: var DirEntry; w: var DirWalker) =
     let f = cast[ptr UncheckedArray[WinChar]](addr w.wimpl.cFileName)
     e.path = paths.initPath($f)
 
-proc tryNextDir*(w: var DirWalker): bool =
+proc tryNextDir*(w: var DirWalker; e: var DirEntry): bool =
   when defined(windows):
     while w.status == Success:
       if findNextFileW(w.handle, w.wimpl) != 0'i32:
@@ -159,6 +160,8 @@ proc tryNextDir*(w: var DirWalker): bool =
           w.status = windowsToErrorCode getLastError()
         break
     result = w.status == Success
+    if result:
+      fillDirEntry(w, e)
   else:
     if readdir(w.pimpl) == nil:
       if w.status == Success:
