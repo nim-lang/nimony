@@ -14,7 +14,7 @@ import symparser
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
   typeprops, langmodes, typekeys, sigmatch]
-import hexer_context, pipeline, dce1
+import hexer_context, pipeline, dce1, lifter
 import  ".." / lib / [stringtrees, treemangler]
 
 
@@ -24,8 +24,9 @@ proc setOwner(c: var EContext; newOwner: SymId): SymId =
 
 proc demand(c: var EContext; s: SymId) =
   if not c.declared.contains(s):
-    #if pool.syms[s] == "vt.0":
+    #if pool.syms[s] == "=wasmoved_SX50ath0pat4k2dls.0.tem6twvye1":
     #  writeStackTrace()
+    #  echo "YES, DEMANDED! ", int(s), " ", c.declared.len
     #  quit "wtf"
     c.requires.add s
 
@@ -77,10 +78,10 @@ proc add(c: var EContext; tag: string; info: PackedLineInfo) =
 
 type
   TraverseMode = enum
-    TraverseAll, TraverseSig, TraverseTopLevel
+    TraverseAll, TraverseInner, TraverseSig, TraverseTopLevel
 
 proc trExpr(c: var EContext; n: var Cursor)
-proc trStmt(c: var EContext; n: var Cursor; mode = TraverseAll)
+proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner)
 proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode)
 
 type
@@ -810,7 +811,7 @@ proc trProcBody(c: var EContext; n: var Cursor) =
     var prevStmt = NoStmt
     while n.kind != ParRi:
       prevStmt = n.stmtKind
-      trStmt c, n, TraverseAll
+      trStmt c, n, TraverseInner
     if prevStmt == RetS or c.resultSym == SymId(0):
       discard "ok, do not add another return"
     else:
@@ -819,10 +820,10 @@ proc trProcBody(c: var EContext; n: var Cursor) =
       c.dest.addParRi()
     takeParRi c, n
   else:
-    trStmt c, n, TraverseAll
+    trStmt c, n, TraverseInner
 
 template moveToTopLevel(c: var EContext; mode: TraverseMode; body: typed) =
-  if mode == TraverseAll:
+  if mode in {TraverseAll, TraverseInner}:
     var temp = createTokenBuf()
     swap c.dest, temp
     body
@@ -886,7 +887,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
 
   let newSym: SymId
 
-  if mode == TraverseAll:
+  if mode == TraverseInner:
     # namePos
     newSym = makeLocalSymId(c, s, true)
     c.dest.add symdefToken(newSym, sinfo)
@@ -1000,7 +1001,7 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
 
   let newSym: SymId
 
-  if mode == TraverseAll and not isDistinct:
+  if mode == TraverseInner and not isDistinct:
     newSym = makeLocalSymId(c, s, false)
     c.dest.add symdefToken(newSym, sinfo)
   else:
@@ -1737,7 +1738,7 @@ proc trTry(c: var EContext; n: var Cursor) =
   if hasExcept:
     c.dest.addParRi()
 
-proc trStmt(c: var EContext; n: var Cursor; mode = TraverseAll) =
+proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
   case n.kind
   of DotToken:
     c.dest.add n
@@ -1854,14 +1855,20 @@ proc transformInlineRoutines(c: var EContext; n: var Cursor) =
   var toTransform = createTokenBuf()
   toTransform.copyIntoKind StmtsS, n.info:
     takeTree(toTransform, n)
-  var c0 = beginRead(toTransform)
-  var dest = transform(c, c0, c.main)
-  var c1 = beginRead(dest)
-  inc c1 # skips (stmts
+  var t = beginRead(toTransform)
+  var dest = transform(c, t, c.main)
+  var d = beginRead(dest)
+
+  inc d # skips (stmts
 
   swap c.dest, swapped
 
-  trStmt c, c1, TraverseSig
+  trStmt c, d, TraverseSig
+  let oldInImpSection = c.inImpSection
+  c.inImpSection = 0
+  while d.kind != ParRi:
+    trStmt c, d, TraverseAll
+  c.inImpSection = oldInImpSection
 
 proc importSymbol(c: var EContext; s: SymId) =
   let res = tryLoadSym(s)
@@ -1906,6 +1913,9 @@ proc importSymbol(c: var EContext; s: SymId) =
       # XXX This is a stupid hack to avoid producing (imp (imp ...))
       inc c.inImpSection
       c.dest.add tagToken("imp", n.info)
+      if pool.syms[s] == "=wasmoved_SX50ath0pat4k2dls.0.tem6twvye1":
+        writeStackTrace()
+        echo "IMPORTING ", pool.syms[s]
       trStmt c, n, TraverseSig
       c.dest.addParRi()
       dec c.inImpSection
@@ -1996,7 +2006,8 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     pending: createTokenBuf(),
     bits: bits,
     localDeclCounters: 1000,
-    activeChecks: flags
+    activeChecks: flags,
+    liftingCtx: createLiftingCtx(mp.name, bits)
     )
   c.openMangleScope()
 
@@ -2019,12 +2030,12 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
 
 
   # fix point expansion:
-  var i = 0
-  while i < c.requires.len:
-    let imp = c.requires[i]
-    if not c.declared.contains(imp):
-      importSymbol(c, imp)
-    inc i
+  while true:
+    let batch = c.requires.move
+    if batch.len == 0: break
+    for imp in batch:
+      if not c.declared.contains(imp):
+        importSymbol(c, imp)
 
   initDynlib(c, rootInfo)
 

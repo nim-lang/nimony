@@ -40,6 +40,9 @@ when not (defined(cpu16) or defined(cpu8)):
   proc toWideCString*(x: WideCStringObj): WideCString {.inline.} =
     result = x.data
 
+  proc rawData*(x: WideCStringObj): WideCString {.inline.} =
+    result = x.data
+
   proc ord(arg: Utf16Char): int = int(cast[uint16](arg))
 
   proc len*(w: WideCString): int =

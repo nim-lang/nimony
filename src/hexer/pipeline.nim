@@ -59,8 +59,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   endRead(lambdaLiftedBuf)
 
   var duplicationReader = beginRead(nx)
-  let ctx = createLiftingCtx(moduleSuffix, c.bits)
-  var duplicatedBuf = injectDups(duplicationReader, moduleSuffix, nx, ctx)
+  var duplicatedBuf = injectDups(duplicationReader, moduleSuffix, nx, c.liftingCtx)
   endRead(nx)
 
   var raisesReader = beginRead(duplicatedBuf)
@@ -73,19 +72,19 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   endRead(withRaises)
 
   var destructorReader = beginRead(loweredBuf)
-  var destructorBuf = injectDestructors(destructorReader, ctx)
+  var destructorBuf = injectDestructors(destructorReader, c.liftingCtx)
   endRead(loweredBuf)
 
   assert destructorBuf[destructorBuf.len-1].kind == ParRi
   shrink(destructorBuf, destructorBuf.len-1)
 
-  if ctx[].dest.len > 0:
-    var hookReader = beginRead(ctx[].dest)
+  if c.liftingCtx[].dest.len > 0:
+    var hookReader = beginRead(c.liftingCtx[].dest)
     #echo "HOOKS: ", toString(hookReader)
     publishHooks hookReader
-    endRead(ctx[].dest)
+    endRead(c.liftingCtx[].dest)
 
-  destructorBuf.add move(ctx[].dest)
+  destructorBuf.add move(c.liftingCtx[].dest)
   destructorBuf.addParRi()
 
   var needsXelimAgain = false

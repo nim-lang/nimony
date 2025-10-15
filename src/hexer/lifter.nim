@@ -17,7 +17,7 @@ to type `(T, T)`, etc.
 import std/[assertions, tables]
 
 include nifprelude
-import nifindexes, symparser, treemangler, hexer_context
+import nifindexes, symparser, treemangler
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
 
 type
@@ -710,7 +710,7 @@ proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): S
 when isMainModule:
   import std/os
   setupProgramForTesting getCurrentDir() / "nimcache", "test.nim", ".nif"
-  let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
+  let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName), false)
   if res != SymId(0):
     echo pool.syms[res]
   else:
