@@ -14,7 +14,7 @@ export paths.Path, paths.initPath, paths.`/`, paths.`$`
 
 when defined(windows):
   import windows/winlean
-  from widestrs import newWideCString, toWideCString
+  from widestrs import newWideCString, toWideCString, `$`
 
 else:
   import posix/posix
@@ -99,6 +99,85 @@ proc removeFile*(file: Path) {.raises.} =
     discard "fine"
   else:
     raise res
+
+type
+  DirEntry* = object
+    kind*: PathComponent
+    path*: Path
+
+  DirWalker* = object
+    when defined(windows):
+      wimpl: WIN32_FIND_DATA
+      handle: Handle
+    else:
+      pimpl: DIR
+    dir: Path
+    status: ErrorCode
+
+proc tryOpenDir*(dir: sink Path): DirWalker =
+  ## Tries to open the directory `dir` for iteration over its entries.
+  result = DirWalker(dir: dir, status: EmptyError)
+  var dirStr = $result.dir
+  when defined(windows):
+    result.handle = findFirstFileW(newWideCString(dirStr).rawData, result.wimpl)
+    if result.handle == INVALID_HANDLE_VALUE:
+      result.status = windowsToErrorCode getLastError()
+    else:
+      result.status = Success
+  else:
+    result.pimpl = opendir(dirStr.toCString)
+    if result.pimpl == nil:
+      result.status = posixToErrorCode(errno)
+    else:
+      result.status = Success
+
+proc fillDirEntry*(e: var DirEntry; w: var DirWalker) =
+  when defined(windows):
+    let isDir = (w.wimpl.dwFileAttributes.uint32 and FILE_ATTRIBUTE_DIRECTORY) != 0'u32
+    let isLink = (w.wimpl.dwFileAttributes.uint32 and FILE_ATTRIBUTE_REPARSE_POINT) != 0'u32
+
+    var kind: PathComponent
+    if isLink:
+      kind = if isDir: pcLinkToDir else: pcLinkToFile
+    else:
+      kind = if isDir: pcDir else: pcFile
+    e.kind = kind
+    let f = cast[ptr UncheckedArray[WinChar]](addr w.wimpl.cFileName)
+    e.path = paths.initPath($f)
+
+proc tryNextDir*(w: var DirWalker): bool =
+  when defined(windows):
+    while w.status == Success:
+      if findNextFileW(w.handle, w.wimpl) != 0'i32:
+        if skipFindData(w.wimpl):
+          discard "skip entry"
+        else:
+          break
+      else:
+        # do not overwrite first error
+        if w.status == Success:
+          w.status = windowsToErrorCode getLastError()
+        break
+    result = w.status == Success
+  else:
+    if readdir(w.pimpl) == nil:
+      if w.status == Success:
+        w.status = posixToErrorCode(errno)
+      result = false
+    else:
+      result = true
+
+proc tryCloseDir*(w: var DirWalker): ErrorCode =
+  when defined(windows):
+    if findClose(w.handle).isSuccess:
+      result = Success
+    else:
+      result = windowsToErrorCode getLastError()
+  else:
+    if closedir(w.pimpl) == 0'i32:
+      result = Success
+    else:
+      result = posixToErrorCode(errno)
 
 #[
 iterator walkDir*(dir: Path,
