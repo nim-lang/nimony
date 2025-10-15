@@ -10,6 +10,7 @@
 import std / [tables, sets, syncio]
 
 include nifprelude
+import lifter
 import ".." / nimony / [nimony_model, typenav, langmodes]
 
 export RcField, DataField
@@ -45,6 +46,7 @@ type
 
     localDeclCounters*: int
     activeChecks*: set[CheckMode]
+    liftingCtx*: ref LiftingCtx
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId
