@@ -53,27 +53,54 @@ proc createDir*(dir: Path) {.raises.} =
     else:
       raise res
 
-#[
-proc removeDir*(dir: Path) {.raises.} =
-  ## Removes the directory `dir`.
+proc tryRemoveFinalDir*(dir: Path): ErrorCode =
+  ## Tries to remove the final directory in a path.
+  ## In other words, it tries to remove a single directory, not a nested one.
+  ## It returns the OS's error code making it easy to distinguish between
+  ## "could not remove" and "does not exist".
   var dirStr = $dir
   when defined(windows):
-    if removeDirectoryW(newWideCString(dirStr).rawData) == 0'i32:
-      raiseOSError(osLastError())
+    if removeDirectoryW(newWideCString(dirStr).rawData) != 0'i32:
+      result = Success
+    else:
+      result = windowsToErrorCode getLastError()
   else:
-    if rmdir(dirStr.toCString) != 0'i32:
-      raiseOSError(osLastError())
+    if rmdir(dirStr.toCString) == 0'i32:
+      result = Success
+    else:
+      result = posixToErrorCode(errno)
+
+proc removeDir*(dir: Path) {.raises.} =
+  ## Removes the directory `dir`. If the directory does not exist, no error is raised.
+  let res = tryRemoveFinalDir(dir)
+  if res == Success or res == NameNotFound:
+    discard "fine"
+  else:
+    raise res
+
+proc tryRemoveFile*(file: Path): ErrorCode =
+  var fileStr = $file
+  when defined(windows):
+    if deleteFileW(newWideCString(fileStr).rawData).isSuccess:
+      result = Success
+    else:
+      result = windowsToErrorCode getLastError()
+  else:
+    if unlink(fileStr.toCString) == 0'i32:
+      result = Success
+    else:
+      result = posixToErrorCode(errno)
 
 proc removeFile*(file: Path) {.raises.} =
   ## Removes the file `file`.
-  var fileStr = $file
-  when defined(windows):
-    if deleteFileW(newWideCString(fileStr)).isFail:
-      raiseOSError(osLastError())
+  ## If the file does not exist, no error is raised.
+  let res = tryRemoveFile(file)
+  if res == Success or res == NameNotFound:
+    discard "fine"
   else:
-    if unlink(fileStr.toCString) != 0'i32:
-      raiseOSError(osLastError())
+    raise res
 
+#[
 iterator walkDir*(dir: Path,
                   relative = false,
                   checkDir = false): tuple[kind: PathComponent, path: Path] =
@@ -170,6 +197,8 @@ iterator walkDir*(dir: Path,
           # Unknown type, treat as file
           yield (pcFile, fullPath)
 
+]#
+
 proc getCurrentDir*(): Path {.raises.} =
   ## Returns the current working directory as a `Path`.
   ##
@@ -205,5 +234,3 @@ proc setCurrentDir*(dir: Path) {.raises.} =
   else:
     if chdir(dirStr.toCString) != 0'i32:
       raiseOSError(osLastError())
-
-]#
