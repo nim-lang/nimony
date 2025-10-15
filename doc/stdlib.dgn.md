@@ -1195,6 +1195,47 @@ Returns the absolute path of `path`, rooted at `root` (which must be absolute; d
 Expands `~` or a path starting with `~/` to a full path, replacing `~` with getHomeDir() (otherwise returns `path` unmodified). Windows: this is still supported despite the Windows platform not having this convention.
 
 
+### dirs
+
+@../lib/std/dirs.nim
+
+This module implements operations for creating, removing, and iterating over directories.
+
+
+####tryCreateFinalDir
+
+Tries to create the final directory in a path. In other words, it tries to create a single new directory, not a nested one. It returns the OS's error code making it easy to distinguish between "could not create" and "already exists".
+
+####createDir
+
+Creates a new directory `dir`. If the directory already exists, no error is raised. This can be used to create a nested directory structure directly.
+
+####tryRemoveFinalDir
+
+Tries to remove the final directory in a path. In other words, it tries to remove a single directory, not a nested one. It returns the OS's error code making it easy to distinguish between "could not remove" and "does not exist".
+
+####removeDir
+
+Removes the directory `dir`. If the directory does not exist, no error is raised.
+
+
+####tryRemoveFile
+
+Tries to remove the file. It returns the OS's error code making it easy to distinguish between "could not remove" and "does not exist".
+
+####removeFile
+
+Removes the file `file`. If the file did not exist, no error is raised.
+
+
+####getCurrentDir
+Returns the current working directory as a `Path`. Raises an error if unable to retrieve the current directory.
+
+####setCurrentDir
+Sets the current working directory to `dir`. Raises an error if the directory does not exist or lacks permissions.
+
+
+
 ### appdirs
 
 @../lib/std/appdirs.nim

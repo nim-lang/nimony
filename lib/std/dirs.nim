@@ -1,4 +1,4 @@
-## This module implements directory operations for creating, removing,
+## This module implements operations for creating, removing,
 ## and iterating over directories.
 ##
 ## **See also:**
