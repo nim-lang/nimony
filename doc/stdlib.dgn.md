@@ -1228,6 +1228,23 @@ Tries to remove the file. It returns the OS's error code making it easy to disti
 Removes the file `file`. If the file did not exist, no error is raised.
 
 
+####walkDir
+
+Walks over all entries in the directory `dir`.
+
+Yields tuples of `(kind, path)` where `kind` is one of:
+- `pcFile` - regular file
+- `pcDir` - directory
+- `pcLinkToFile` - symbolic link to a file
+- `pcLinkToDir` - symbolic link to a directory
+
+If `relative` is true, yields relative paths (just the filename/dirname), otherwise yields full paths.
+
+If `checkDir` is true, raises an error if `dir` doesn't exist or isn't a directory.
+
+Special directories "." and ".." are skipped.
+
+
 ####getCurrentDir
 Returns the current working directory as a `Path`. Raises an error if unable to retrieve the current directory.
 
