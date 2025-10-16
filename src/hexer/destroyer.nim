@@ -231,7 +231,8 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
       inc body
     else:
       tr c, body
-    leaveScope(c, c.currentScope)
+    if kind != OtherPreventFinally:
+      leaveScope(c, c.currentScope)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
@@ -345,11 +346,8 @@ proc trTry(c: var Context; n: var Cursor) =
         takeTree c.dest, n # `E as e`
         trNestedScope c, n, Other, fin
     if n.substructureKind == FinU:
-      if hasExcept:
-        copyInto(c.dest, n):
-          trNestedScope c, n
-      else:
-        skip n
+      copyInto(c.dest, n):
+        trNestedScope c, n
 
 proc tr(c: var Context; n: var Cursor) =
   if isAtom(n) or isDeclarative(n):
