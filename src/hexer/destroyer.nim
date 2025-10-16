@@ -231,8 +231,7 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
       inc body
     else:
       tr c, body
-    if kind != OtherPreventFinally:
-      leaveScope(c, c.currentScope)
+    leaveScope(c, c.currentScope)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
