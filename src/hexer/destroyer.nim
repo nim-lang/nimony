@@ -340,17 +340,14 @@ proc trTry(c: var Context; n: var Cursor) =
     skip nn
   copyInto(c.dest, n):
     let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
-    trNestedScope c, n, (if hasExcept: OtherPreventFinally else: Other), fin
+    trNestedScope c, n, OtherPreventFinally, fin
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
         trNestedScope c, n, Other, fin
     if n.substructureKind == FinU:
-      if hasExcept:
-        copyInto(c.dest, n):
-          trNestedScope c, n
-      else:
-        skip n
+      copyInto(c.dest, n):
+        trNestedScope c, n
 
 proc tr(c: var Context; n: var Cursor) =
   if isAtom(n) or isDeclarative(n):

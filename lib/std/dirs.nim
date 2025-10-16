@@ -1,4 +1,4 @@
-## This module implements directory operations for creating, removing,
+## This module implements operations for creating, removing,
 ## and iterating over directories.
 ##
 ## **See also:**
@@ -14,7 +14,7 @@ export paths.Path, paths.initPath, paths.`/`, paths.`$`
 
 when defined(windows):
   import windows/winlean
-  from widestrs import newWideCString, toWideCString
+  from widestrs import newWideCString, toWideCString, `$`
 
 else:
   import posix/posix
@@ -100,10 +100,125 @@ proc removeFile*(file: Path) {.raises.} =
   else:
     raise res
 
-#[
+type
+  DirEntry* = object
+    kind*: PathComponent
+    path*: Path
+
+  DirWalker* = object
+    when defined(windows):
+      wimpl: WIN32_FIND_DATA
+      handle: Handle
+    else:
+      pimpl: ptr DIR
+    dir: Path
+    status: ErrorCode
+
+proc tryOpenDir*(dir: sink Path): DirWalker =
+  ## Tries to open the directory `dir` for iteration over its entries.
+  result = DirWalker(dir: dir, status: EmptyError)
+  when defined(windows):
+    var dirStr = $result.dir & "\\*"
+    result.handle = findFirstFileW(newWideCString(dirStr).rawData, result.wimpl)
+    if result.handle == INVALID_HANDLE_VALUE:
+      result.status = windowsToErrorCode getLastError()
+    else:
+      result.status = Success
+  else:
+    var dirStr = $result.dir
+    result.pimpl = opendir(dirStr.toCString)
+    if result.pimpl == nil:
+      result.status = posixToErrorCode(errno)
+    else:
+      result.status = Success
+
+proc fillDirEntry(w: var DirWalker; e: var DirEntry) =
+  when defined(windows):
+    let isDir = (w.wimpl.dwFileAttributes.uint32 and FILE_ATTRIBUTE_DIRECTORY) != 0'u32
+    let isLink = (w.wimpl.dwFileAttributes.uint32 and FILE_ATTRIBUTE_REPARSE_POINT) != 0'u32
+
+    var kind: PathComponent
+    if isLink:
+      kind = if isDir: pcLinkToDir else: pcLinkToFile
+    else:
+      kind = if isDir: pcDir else: pcFile
+    e.kind = kind
+    let f = cast[ptr UncheckedArray[WinChar]](addr w.wimpl.cFileName)
+    e.path = paths.initPath($f)
+
+when defined(posix):
+  proc pathComponentFromEntry(w: var DirWalker; name: string; dType: uint8): PathComponent =
+    if dType == DT_UNKNOWN or dType == DT_LNK:
+      var fullPath = concat($w.dir, "/", name)
+      var s = default Stat
+      if lstat(fullPath.toCString, s) == 0:
+        if S_ISLNK(s.st_mode):
+          # For symlinks, we need to check if they point to a directory
+          var targetStat = default Stat
+          if stat(fullPath.toCString, targetStat) == 0 and S_ISDIR(targetStat.st_mode):
+            result = pcLinkToDir
+          else:
+            result = pcLinkToFile
+        elif S_ISDIR(s.st_mode):
+          result = pcDir
+        else:
+          result = pcFile
+    elif dType == DT_DIR:
+      result = pcDir
+    else:
+      result = pcFile
+
+proc tryNextDir*(w: var DirWalker; e: var DirEntry): bool =
+  when defined(windows):
+    while w.status == Success:
+      if findNextFileW(w.handle, w.wimpl) != 0'i32:
+        if skipFindData(w.wimpl):
+          discard "skip entry"
+        else:
+          break
+      else:
+        # do not overwrite first error
+        if w.status == Success:
+          w.status = windowsToErrorCode getLastError()
+        break
+    result = w.status == Success
+    if result:
+      fillDirEntry(w, e)
+  else:
+    while w.status == Success:
+      let entry = readdir(w.pimpl)
+      if entry == nil:
+        if w.status == Success:
+          w.status = posixToErrorCode(errno)
+        result = false
+        break
+      else:
+        result = true
+        let cstr = cast[cstring](addr entry.d_name[0])
+        let name = fromCString cstr
+        # Skip "." and ".."
+        if name == "." or name == "..":
+          discard "skip"
+        else:
+          e.kind = pathComponentFromEntry(w, name, entry.d_type)
+          e.path = initPath(name)
+          break
+
+proc tryCloseDir*(w: var DirWalker): ErrorCode =
+  when defined(windows):
+    if findClose(w.handle).isSuccess:
+      result = Success
+    else:
+      result = windowsToErrorCode getLastError()
+  else:
+    if closedir(w.pimpl) == 0'i32:
+      result = Success
+    else:
+      result = posixToErrorCode(errno)
+
 iterator walkDir*(dir: Path,
                   relative = false,
-                  checkDir = false): tuple[kind: PathComponent, path: Path] =
+                  checkDir = false): tuple[kind: PathComponent, path: Path] {.raises.} =
   ## Walks over all entries in the directory `dir`.
   ##
   ## Yields tuples of `(kind, path)` where `kind` is one of:
@@ -118,86 +233,20 @@ iterator walkDir*(dir: Path,
   ## If `checkDir` is true, raises an error if `dir` doesn't exist or isn't a directory.
   ##
   ## Special directories "." and ".." are skipped.
-  ##
-  ## See also:
-  ## * `walkDirRec iterator`_
-  ## * `dirExists proc <oscommons.html#dirExists,string>`_
-  when defined(windows):
-    var findData: WIN32_FIND_DATA
-    var dirStr = $dir
-    let searchPath = dirStr & (when defined(windows): '\\' else: '/') & "*"
-    let handle = findFirstFile(searchPath, findData)
-    if handle == INVALID_HANDLE_VALUE:
-      if checkDir:
-        raiseOSError(osLastError())
-    else:
-      defer:
-        discard findClose(handle)
-
-      while true:
-        if not skipFindData(findData):
-          # Use same pattern as oscommons for getting filename
-          var filename = ""
-          var i = 0
-          while findData.cFileName[i].int16 != 0'i16:
-            filename.add char(findData.cFileName[i].int and 0xFF)
-            inc i
-
-          let fullPath = if relative: initPath(filename) else: dir / initPath(filename)
-
-          let isDir = (findData.dwFileAttributes.uint32 and FILE_ATTRIBUTE_DIRECTORY) != 0'u32
-          let isLink = (findData.dwFileAttributes.uint32 and FILE_ATTRIBUTE_REPARSE_POINT) != 0'u32
-
-          var kind: PathComponent
-          if isLink:
-            kind = if isDir: pcLinkToDir else: pcLinkToFile
-          else:
-            kind = if isDir: pcDir else: pcFile
-
-          yield (kind, fullPath)
-
-        if findNextFileW(handle, findData) == 0'i32:
-          break
-
-  else: # POSIX
-    var dirStr = $dir
-    let d = opendir(dirStr.toCString)
-    if d == nil:
-      if checkDir:
-        raiseOSError(osLastError())
-    else:
-      defer:
-        discard closedir(d)
-
-      while true:
-        let entry = readdir(d)
-        if entry == nil:
-          break
-
-        let name = $cast[cstring](addr entry.d_name[0])
-        # Skip "." and ".."
-        if name == "." or name == "..":
-          continue
-
-        let fullPath = if relative:
-          initPath(name)
-        else:
-          dir / initPath(name)
-
-        let fullPathStr = $fullPath
-        # Determine the kind
-        if symlinkExists(fullPathStr):
-          let (pc, _) = getSymlinkFileKind(fullPathStr)
-          yield (pc, fullPath)
-        elif dirExists(fullPathStr):
-          yield (pcDir, fullPath)
-        elif fileExists(fullPathStr):
-          yield (pcFile, fullPath)
-        else:
-          # Unknown type, treat as file
-          yield (pcFile, fullPath)
-
-]#
+  var w = tryOpenDir(dir)
+  if checkDir and w.status != Success:
+    raise w.status
+  try:
+    var e = default DirEntry
+    while w.status == Success:
+      if tryNextDir(w, e):
+        let rel = if relative: e.path else: dir / e.path
+        yield (e.kind, rel)
+      else:
+        break
+  finally:
+    let res = tryCloseDir(w)
+    if checkDir and res != Success: raise res
 
 proc getCurrentDir*(): Path {.raises.} =
   ## Returns the current working directory as a `Path`.
