@@ -1,2 +1,2 @@
-tests/nimony/errmsgs/tbadconverter.nim(1, 1) Error: cannot attach converter to type (err Foo "undeclared identifier")
-tests/nimony/errmsgs/tbadconverter.nim(1, 11) Error: undeclared identifier
+tests/nimony/errmsgs/tbadconverter.nim(1, 1) Error: cannot attach converter to type (err Foo "undeclared identifier\3A Foo")
+tests/nimony/errmsgs/tbadconverter.nim(1, 11) Error: undeclared identifier: Foo

@@ -43,7 +43,7 @@ proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var HashSet[SymId]) =
     var syms = cursorAt(symsBuf, 0)
     case syms.kind
     of Ident:
-      c.buildErr n.info, "undeclared identifier"
+      c.buildErr n.info, "undeclared identifier: " & pool.strings[syms.litId]
     of Symbol:
       c.dest.add syms
     else:

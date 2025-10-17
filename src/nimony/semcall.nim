@@ -2,7 +2,11 @@
 
 proc fetchCallableType(c: var SemContext; n: Cursor; s: Sym): TypeCursor =
   if s.kind == NoSym:
-    c.buildErr n.info, "undeclared identifier"
+    let s = getIdent(n)
+    if s != StrId(0):
+      c.buildErr n.info, "undeclared identifier: " & pool.strings[s]
+    else:
+      c.buildErr n.info, "undeclared identifier"
     result = c.types.autoType
   else:
     let res = declToCursor(c, s)
