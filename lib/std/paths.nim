@@ -23,7 +23,7 @@ type
   Path* = object
     data: string
 
-func initPath*(s: string): Path {.inline.} =
+func path*(s: string): Path {.inline.} =
   Path(data: s)
 
 func `$`*(x: Path): string {.inline.} =
@@ -69,7 +69,7 @@ func `/`*(head, tail: Path): Path {.inline.} =
   ## * `uri.combine proc <uri.html#combine,Uri,Uri>`_
   ## * `uri./ proc <uri.html#/,Uri,string>`_
   let joined = joinPath(head.data, tail.data)
-  initPath(joined)
+  path(joined)
 
 func splitPath*(path: Path): tuple[head, tail: Path] {.inline.} =
   ## Splits a directory into `(head, tail)` tuple, so that
@@ -81,7 +81,7 @@ func splitPath*(path: Path): tuple[head, tail: Path] {.inline.} =
   ## * `/../ proc`_
   ## * `relativePath proc`_
   let res = splitPath(path.data)
-  result = (initPath(res.head), initPath(res.tail))
+  result = (path(res.head), path(res.tail))
 
 func splitFile*(path: Path): tuple[dir, name: Path, ext: string] {.inline.} =
   ## Splits a filename into `(dir, name, extension)` tuple.
@@ -99,7 +99,7 @@ func splitFile*(path: Path): tuple[dir, name: Path, ext: string] {.inline.} =
   ## * `changeFileExt proc`_
   ## * `addFileExt proc`_
   let res = splitFile(path.data)
-  result = (initPath(res.dir), initPath(res.name), res.ext)
+  result = (path(res.dir), path(res.name), res.ext)
 
 func isAbsolute*(path: Path): bool {.inline, raises: [].} =
   ## Checks whether a given `path` is absolute.
@@ -122,7 +122,7 @@ proc relativePath*(path, base: Path, sep = DirSep): Path {.inline, raises.} =
   ## * `splitPath proc`_
   ## * `parentDir proc`_
   ## * `tailDir proc`_
-  result = initPath(relativePath(path.data, base.data, sep))
+  result = path(relativePath(path.data, base.data, sep))
 
 proc isRelativeTo*(path: Path, base: Path): bool {.inline, raises.} =
   ## Returns true if `path` is relative to `base`.
@@ -141,7 +141,7 @@ func parentDir*(path: Path): Path {.inline.} =
   ## * `splitPath proc`_
   ## * `tailDir proc`_
   ## * `parentDirs iterator`_
-  result = initPath(parentDir(path.data))
+  result = path(parentDir(path.data))
 
 func tailDir*(path: Path): Path {.inline.} =
   ## Returns the tail part of `path`.
@@ -150,7 +150,7 @@ func tailDir*(path: Path): Path {.inline.} =
   ## * `relativePath proc`_
   ## * `splitPath proc`_
   ## * `parentDir proc`_
-  result = initPath(tailDir(path.data))
+  result = path(tailDir(path.data))
 
 func isRootDir*(path: Path): bool {.inline.} =
   ## Checks whether a given `path` is a root directory.
@@ -171,7 +171,7 @@ iterator parentDirs*(path: Path, fromRoot=false, inclusive=true): Path =
   ## * `parentDir proc`_
   ##
   for p in parentDirs(path.data, fromRoot, inclusive):
-    yield initPath(p)
+    yield path(p)
 
 func `/../`*(head, tail: Path): Path {.inline.} =
   ## The same as ``parentDir(head) / tail``, unless there is no parent
@@ -180,7 +180,7 @@ func `/../`*(head, tail: Path): Path {.inline.} =
   ## See also:
   ## * `/ proc`_
   ## * `parentDir proc`_
-  initPath(`/../`(head.data, tail.data))
+  path(`/../`(head.data, tail.data))
 
 func extractFilename*(path: Path): Path {.inline.} =
   ## Extracts the filename of a given `path`.
@@ -192,7 +192,7 @@ func extractFilename*(path: Path): Path {.inline.} =
   ## * `lastPathPart proc`_
   ## * `changeFileExt proc`_
   ## * `addFileExt proc`_
-  result = initPath(extractFilename(path.data))
+  result = path(extractFilename(path.data))
 
 func lastPathPart*(path: Path): Path {.inline.} =
   ## Like `extractFilename proc`_, but ignores
@@ -203,7 +203,7 @@ func lastPathPart*(path: Path): Path {.inline.} =
   ## * `extractFilename proc`_
   ## * `changeFileExt proc`_
   ## * `addFileExt proc`_
-  result = initPath(lastPathPart(path.data))
+  result = path(lastPathPart(path.data))
 
 func changeFileExt*(filename: Path, ext: string): Path {.inline.} =
   ## Changes the file extension to `ext`.
@@ -220,7 +220,7 @@ func changeFileExt*(filename: Path, ext: string): Path {.inline.} =
   ## * `extractFilename proc`_
   ## * `lastPathPart proc`_
   ## * `addFileExt proc`_
-  result = initPath(changeFileExt(filename.data, ext))
+  result = path(changeFileExt(filename.data, ext))
 
 func addFileExt*(filename: Path, ext: string): Path {.inline.} =
   ## Adds the file extension `ext` to `filename`, unless
@@ -235,9 +235,9 @@ func addFileExt*(filename: Path, ext: string): Path {.inline.} =
   ## * `extractFilename proc`_
   ## * `lastPathPart proc`_
   ## * `changeFileExt proc`_
-  result = initPath(addFileExt(filename.data, ext))
+  result = path(addFileExt(filename.data, ext))
 
-func unixToNativePath*(path: Path, drive=initPath("")): Path {.inline.} =
+func unixToNativePath*(path: Path, drive=path("")): Path {.inline.} =
   ## Converts an UNIX-like path to a native one.
   ##
   ## On an UNIX system this does nothing. Else it converts
@@ -247,7 +247,7 @@ func unixToNativePath*(path: Path, drive=initPath("")): Path {.inline.} =
   ## which drive label to use during absolute path conversion.
   ## `drive` defaults to the drive of the current working directory, and is
   ## ignored on systems that do not have a concept of "drives".
-  result = initPath(unixToNativePath(path.data, drive.data))
+  result = path(unixToNativePath(path.data, drive.data))
 
 proc getCurrentDir*(): Path {.inline, tags: [], raises.} =
   ## Returns the `current working directory`:idx: i.e. where the built
@@ -262,7 +262,7 @@ proc getCurrentDir*(): Path {.inline, tags: [], raises.} =
   ## * `setCurrentDir proc <dirs.html#setCurrentDir>`_
   ## * `currentSourcePath template <system.html#currentSourcePath.t>`_
   ## * `getProjectPath proc <macros.html#getProjectPath>`_
-  result = initPath(ospaths2.getCurrentDir())
+  result = path(ospaths2.getCurrentDir())
 
 proc normalizeExe*(file: var Path) =
   ## Normalize executable name.
@@ -290,7 +290,7 @@ proc absolutePath*(path: Path, root = getCurrentDir()): Path {.raises.} =
   ##
   ## See also:
   ## * `normalizePath proc`_
-  result = initPath(absolutePath(path.data, root.data))
+  result = path(absolutePath(path.data, root.data))
 
 proc expandTildeImpl(path: string): string {.
   tags: [ReadEnvEffect, ReadIOEffect].} =
@@ -311,4 +311,4 @@ proc expandTilde*(path: Path): Path {.inline,
   ##
   ## Windows: this is still supported despite the Windows platform not having this
   ## convention; also, both ``~/`` and ``~\`` are handled.
-  result = initPath(expandTildeImpl(path.data))
+  result = path(expandTildeImpl(path.data))

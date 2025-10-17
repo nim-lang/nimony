@@ -15,16 +15,16 @@ proc getHomeDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## See also:
   ## * `getConfigDir proc`_
   ## * `getTempDir proc`_
-  result = initPath(osappdirs.getHomeDir())
+  result = path(osappdirs.getHomeDir())
 
 proc getDataDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## Returns the data directory of the current user for applications.
-  ## 
+  ##
   ## On non-Windows OSs, this proc conforms to the XDG Base Directory
   ## spec. Thus, this proc returns the value of the `XDG_DATA_HOME` environment
   ## variable if it is set, otherwise it returns the default configuration
   ## directory ("~/.local/share" or "~/Library/Application Support" on macOS).
-  ## 
+  ##
   ## See also:
   ## * `getHomeDir proc`_
   ## * `getConfigDir proc`_
@@ -32,7 +32,7 @@ proc getDataDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## * `expandTilde proc`_
   ## * `getCurrentDir proc`_
   ## * `setCurrentDir proc`_
-  result = initPath(osappdirs.getDataDir())
+  result = path(osappdirs.getDataDir())
 
 proc getConfigDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## Returns the config directory of the current user for applications.
@@ -48,7 +48,7 @@ proc getConfigDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## See also:
   ## * `getHomeDir proc`_
   ## * `getTempDir proc`_
-  result = initPath(osappdirs.getConfigDir())
+  result = path(osappdirs.getConfigDir())
 
 proc getCacheDir*(): Path =
   ## Returns the cache directory of the current user for applications.
@@ -66,14 +66,14 @@ proc getCacheDir*(): Path =
   ## * `getTempDir proc`_
   ## * `getConfigDir proc`_
   # follows https://crates.io/crates/platform-dirs
-  result = initPath(osappdirs.getCacheDir())
+  result = path(osappdirs.getCacheDir())
 
 proc getCacheDir*(app: Path): Path =
   ## Returns the cache directory for an application `app`.
   ##
   ## * On Windows, this uses: `getCacheDir() / app / "cache"`
   ## * On other platforms, this uses: `getCacheDir() / app`
-  result = initPath(osappdirs.getCacheDir($app))
+  result = path(osappdirs.getCacheDir($app))
 
 proc getTempDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## Returns the temporary directory of the current user for applications to
@@ -91,4 +91,4 @@ proc getTempDir*(): Path {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## See also:
   ## * `getHomeDir proc`_
   ## * `getConfigDir proc`_
-  result = initPath(osappdirs.getTempDir())
+  result = path(osappdirs.getTempDir())
