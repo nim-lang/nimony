@@ -1113,7 +1113,7 @@ This module implements path handling.
 ####Path
 A path object that holds the path data.
 
-####initPath
+####path
 Creates a new path from a string.
 
 ####`$`

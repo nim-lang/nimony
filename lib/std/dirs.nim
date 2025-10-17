@@ -10,7 +10,7 @@ import std/paths  # separate import for better symbol resolution
 import private/oscommons
 
 export PathComponent
-export paths.Path, paths.initPath, paths.`/`, paths.`$`
+export paths.Path, paths.path, paths.`/`, paths.`$`
 
 when defined(windows):
   import windows/winlean
@@ -144,7 +144,7 @@ proc fillDirEntry(w: var DirWalker; e: var DirEntry) =
       kind = if isDir: pcDir else: pcFile
     e.kind = kind
     let f = cast[ptr UncheckedArray[WinChar]](addr w.wimpl.cFileName)
-    e.path = paths.initPath($f)
+    e.path = paths.path($f)
 
 when defined(posix):
   proc pathComponentFromEntry(w: var DirWalker; name: string; dType: uint8): PathComponent =
@@ -201,7 +201,7 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry): bool =
           discard "skip"
         else:
           e.kind = pathComponentFromEntry(w, name, entry.d_type)
-          e.path = initPath(name)
+          e.path = path(name)
           break
 
 proc tryCloseDir*(w: var DirWalker): ErrorCode =
@@ -261,7 +261,7 @@ proc getCurrentDir*(): Path {.raises.} =
     let res = getCurrentDirectoryW(bufSize, buffer.rawData)
     if res == 0'i32:
       raiseOSError(osLastError())
-    result = paths.initPath($buffer)
+    result = paths.path($buffer)
   else:
     const bufSize = 1024
     var buffer = newString(bufSize)
@@ -270,7 +270,7 @@ proc getCurrentDir*(): Path {.raises.} =
     var i = 0
     while i < buffer.len and buffer[i] != '\0': inc i
     shrink(buffer, i)
-    result = paths.initPath(buffer)
+    result = paths.path(buffer)
 
 proc setCurrentDir*(dir: Path) {.raises.} =
   ## Sets the current working directory to `dir`.
