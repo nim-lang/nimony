@@ -17,6 +17,8 @@ import ".." / nifc / [nifc_model]
 
 type
   ResolveTable = Table[string, SymId]
+    # `foo.1.I<type hash>` -> `foo.1.I<type hash>.module`
+    # that is selected for the generic instance
 
 proc resolveSymbolConflicts(modules: Table[string, ModuleAnalysis]): ResolveTable =
   # Resolve conflicts between duplicate symbols (e.g., generic instantiations)
@@ -105,6 +107,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
     of ImpS:
       dest.takeToken n # Imp
       if n.stmtKind in {ProcS, VarS, ConstS, GvarS, TvarS, TypeS}:
+        # prevent the logic for ProcS, etc from being applied to `imp` declarations:
         dest.takeToken n
         while n.kind != ParRi:
           tr dest, n, alive, resolved
