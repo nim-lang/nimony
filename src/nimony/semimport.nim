@@ -253,7 +253,7 @@ proc semExport(c: var SemContext; it: var Item) =
     var syms = beginRead(symBuf)
     case syms.kind
     of Ident:
-      c.buildErr info, "undeclared identifier"
+      c.buildErr info, "undeclared identifier: " & pool.strings[syms.litId]
     of Symbol:
       doExport(c, syms.symId, info)
     of ParLe:
@@ -321,7 +321,7 @@ proc semExportExcept(c: var SemContext; it: var Item) =
     var syms = beginRead(symBuf)
     case syms.kind
     of Ident:
-      c.buildErr info, "undeclared identifier"
+      c.buildErr info, "undeclared identifier: " & pool.strings[syms.litId]
     of Symbol:
       doExportExcept(c, moduleSym, syms.symId, info)
     of ParLe:
