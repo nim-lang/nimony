@@ -82,6 +82,8 @@ proc collectUsedSyms(c: var LiftingCtx; s: var SemContext; routine: Routine) =
   var stack = newSeq[SymId]()
   var handledSyms = initHashSet[SymId]()
   stack.add routine.name.symId
+  # Always add `system.nim` as a dependency:
+  c.usedModules.incl(s.g.config.nifcachePath / SystemModuleSuffix)
   while stack.len > 0:
     let sym = stack.pop()
     if not handledSyms.containsOrIncl(sym):
@@ -511,7 +513,7 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
       entryPoint(c, retType, call)
 
   let toDeref = cursorAt(c.dest, beforeUsercode)
-  echo "synthesized ", toString(toDeref)
+  #echo "synthesized ", toString(toDeref)
   let withDerefs = injectDerefs(toDeref)
   endRead(c.dest)
   c.dest.shrink beforeUsercode
