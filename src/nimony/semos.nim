@@ -349,6 +349,21 @@ proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: strin
     cmd &= " " & quoteShell(module)
   result = execCmdEx(cmd)
 
+const
+  writeNifModuleSuffix* = "wriwhv7qv"
+
+proc prepareEval*(c: var SemContext): string =
+  if not c.checkedForWriteNifModule:
+    c.checkedForWriteNifModule = true
+    if not fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
+      # precompile the module
+      let nimonyExe = findTool("nimony")
+      var cmd = quoteShell(nimonyExe) & " c " & quoteShell(stdlibFile("std/writenif.nim"))
+      let (output, exitCode) = execCmdEx(cmd)
+      if exitCode != 0:
+        return ensureMove(output)
+  return ""
+
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
   #echo "HEREES ", toString(src, false)

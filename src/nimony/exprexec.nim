@@ -14,7 +14,6 @@ import nimony_model, decls, programs, xints, semdata, symparser, renderer, built
   typenav, typekeys, expreval, semos, derefs
 
 const
-  writeNifModuleSuffix = "wriwhv7qv"
   ParamSymName = "dest.0"
 
 when false:
@@ -83,6 +82,8 @@ proc collectUsedSyms(c: var LiftingCtx; s: var SemContext; routine: Routine) =
   var stack = newSeq[SymId]()
   var handledSyms = initHashSet[SymId]()
   stack.add routine.name.symId
+  # Always add `system.nim` as a dependency:
+  c.usedModules.incl(s.g.config.nifcachePath / SystemModuleSuffix)
   while stack.len > 0:
     let sym = stack.pop()
     if not handledSyms.containsOrIncl(sym):
@@ -481,6 +482,9 @@ proc genMissingProcs*(c: var LiftingCtx) =
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.} =
+  let prepResult = semos.prepareEval(s)
+  if prepResult.len > 0: return prepResult
+
   var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits,
     errorMsg: "", thisModuleSuffix: s.thisModuleSuffix,
     newModuleSuffix: s.thisModuleSuffix.substr(0, 2) & computeChecksum(mangle(call, Frontend, s.g.config.bits)))
@@ -508,7 +512,9 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
       # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
       entryPoint(c, retType, call)
 
-  let withDerefs = injectDerefs(cursorAt(c.dest, beforeUsercode))
+  let toDeref = cursorAt(c.dest, beforeUsercode)
+  #echo "synthesized ", toString(toDeref)
+  let withDerefs = injectDerefs(toDeref)
   endRead(c.dest)
   c.dest.shrink beforeUsercode
   # do not copy the `(stmts)` here:

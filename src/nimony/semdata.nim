@@ -99,6 +99,7 @@ type
     usedTypevars*: int
     phase*: SemPhase
     canSelfExec*: bool
+    checkedForWriteNifModule*: bool
     inWhen*: int
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
