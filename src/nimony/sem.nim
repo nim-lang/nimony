@@ -1851,10 +1851,14 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
       orig.add c.dest[c.dest.len-1]
       c.dest.shrink c.dest.len-1
       let ident = cursorAt(orig, 0)
-      if pool.syms.hasId(s.name):
+      if s.name != SymId(0):
         c.buildErr ident.info, "undeclared identifier: " & pool.syms[s.name], ident
       else:
-        c.buildErr ident.info, "undeclared identifier", ident
+        let s = getIdent(ident)
+        if s != StrId(0):
+          c.buildErr ident.info, "undeclared identifier: " & pool.strings[s], ident
+        else:
+          c.buildErr ident.info, "undeclared identifier", ident
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
     if KeepMagics notin flags and c.routine.kind != TemplateY:
