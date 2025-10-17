@@ -347,6 +347,19 @@ else:
 Now each cfvar is tested exactly once. The backend can efficiently translate this: assignments to `v2` and `v3` become `goto body_label`, and the `if (or v2 v3)` becomes `body_label:`.
 
 
+Cfvars are restricted and must adhere these rules:
+
+1. Only declarations can be initialized with an arbitrary expression of type `bool`: `(cfvar :x (call f.1))`
+2. Reassignments must use literal booleans `(true)` or `(false)`.
+3. The condition for `if` and `loop` constructs must a "cf-expression".
+
+Definition of "cf-expression":
+- A control flow variable cfvar is a cf-expression.
+- `(not X)` is a cf-expression iff `X` is a cf-expression.
+- `(and X Y)` is a cf-expression iff `X` and `Y` are cf-expressions.
+- `(or X Y)` is a cf-expression iff `X` and `Y` are cf-expressions.
+
+
 ### Return elimination
 
 ```nim
