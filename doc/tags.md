@@ -87,7 +87,7 @@
 | `(else X)` | NifcOther, NimonyOther, NiflerKind | `else` action |
 | `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters |
 | `(break .Y)`; `(break)` | NifcStmt, NimonyStmt, NiflerKind | `break` statement |
-| `(continue)` | NimonyStmt, NiflerKind | `continue` statement |
+| `(continue)` | NimonyStmt, NiflerKind, NjvlKind | `continue` statement |
 | `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
 | `(while X S)` | NifcStmt, NimonyStmt, NiflerKind| `while` statement |
 | `(case X (of (ranges...))+ (else X)?)` | NifcStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
@@ -157,10 +157,16 @@
 | `(raises)` | NifcPragma, NimonyPragma | proc annotation |
 | `(errs)` | NifcPragma | proc annotation |
 | `(static T)`; `(static)` | NifcPragma, NimonyType, NiflerKind | `static` type or annotation |
-| `(ite X S S)` | ControlFlowKind | if-then-else |
+| `(ite X S S)` | ControlFlowKind, NjvlKind | if-then-else |
+| `(itec X S S)` | NjvlKind | if-then-else (that was a `case`) |
+| `(loop S X S S)` | NjvlKind | `loop` components are (before-cond, cond, loop-body, after) |
+| `(v X INT_LIT)` | NjvlKind | `versioned` locations |
+| `(unknown X)` | NjvlKind | location's contents it unknown at this point |
+| `(cfvar D (false)/(true))` | NjvlKind | introduce a monotonic controlflow variable |
+| `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |
 | `(forbind ...)` | ControlFlowKind | bindings for a `for` loop but the loop itself is mapped to gotos |
-| `(kill Y)` | ControlFlowKind | some.var is about to disappear (scope exit) |
+| `(kill Y)` | ControlFlowKind, NjvlKind | some.var is about to disappear (scope exit) |
 | `(unpackflat ...)` | NimonyOther, NiflerKind | unpack into flat variable list |
 | `(unpacktup ...)` | NimonyOther, NiflerKind | unpack tuple |
 | `(unpackdecl S+)` | NimonyStmt, NiflerKind | unpack var/let/const declaration |
@@ -208,8 +214,8 @@
 | `(noinit)` | NimonyPragma | `noinit` pragma |
 | `(requires X)` | NimonyPragma | `requires` pragma |
 | `(ensures X)` | NimonyPragma | `ensures` pragma |
-| `(assume X)` | NimonyPragma, NimonyStmt | `assume` pragma |
-| `(assert X)` | NimonyPragma, NimonyStmt | `assert` pragma |
+| `(assume X)` | NimonyPragma, NimonyStmt, NjvlKind | `assume` pragma/annotation |
+| `(assert X)` | NimonyPragma, NimonyStmt, NjvlKind | `assert` pragma/annotation |
 | `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |
