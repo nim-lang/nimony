@@ -46,13 +46,9 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var desugaredBuf = desugar(desugarReader, moduleSuffix, c.activeChecks)
   endRead(initialBuf)
 
-  var cpsReader = beginRead(desugaredBuf)
-  var cpsBuf = transformToCps(cpsReader, moduleSuffix)
-  endRead(desugaredBuf)
-
-  var lambdaLiftingReader = beginRead(cpsBuf)
+  var lambdaLiftingReader = beginRead(desugaredBuf)
   var lambdaLiftedBuf = elimLambdas(lambdaLiftingReader, moduleSuffix)
-  endRead(cpsBuf)
+  endRead(desugaredBuf)
 
   var lowerExprsReader1 = beginRead(lambdaLiftedBuf)
   var nx = lowerExprs(lowerExprsReader1, moduleSuffix)
@@ -66,10 +62,14 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var needsXelimIgnored = false
   var withRaises = injectRaisingCalls(raisesReader, c.bits div 8, needsXelimIgnored)
   endRead(duplicatedBuf)
-  var withRaisesReader = beginRead(withRaises)
 
-  var loweredBuf = lowerExprs(withRaisesReader, moduleSuffix)
+  var cpsReader = beginRead(withRaises)
+  var cpsBuf = transformToCps(cpsReader, moduleSuffix)
   endRead(withRaises)
+
+  var loweredReader = beginRead(cpsBuf)
+  var loweredBuf = lowerExprs(loweredReader, moduleSuffix)
+  endRead(cpsBuf)
 
   var destructorReader = beginRead(loweredBuf)
   var destructorBuf = injectDestructors(destructorReader, c.liftingCtx)
