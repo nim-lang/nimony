@@ -458,6 +458,12 @@ loop_end:
 
 The structured form exists purely to enable optimization. Code generation recovers the original unstructured form with no runtime overhead.
 
+#### Problem: Interim Statements Break Jump Conversion
+
+**Converting `cfvar=true` to a jump is only valid if no interim statements occur.**
+
+To avoid this problem "path specialization" can be used: `(if a b d)(d)` can always be converted to `(if a (stmts b d) (stmts c d))` and then in the duplicated `d` we know whether `a` is true or not and can specialize the code.
+
 
 ## Move analysis
 
