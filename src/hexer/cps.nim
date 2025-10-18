@@ -841,7 +841,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     of YldS:
       trYield c, dest, n
-    of RetS:
+    of RetS, RaiseS:
       trReturn c, dest, n
     of AsgnS:
       trAsgn c, dest, n
