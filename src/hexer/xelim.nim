@@ -15,7 +15,12 @@ import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
 
-proc isComplex(n: Cursor): bool =
+type
+  Goal* = enum
+    ElimExprs   # normal mode: eliminate expressions
+    TowardsNjvl # goal mode: prepare for transformation into njvl
+
+proc isComplex(n: Cursor; goal: Goal): bool =
   var nested = 0
   var n = n
   while true:
@@ -31,12 +36,14 @@ proc isComplex(n: Cursor): bool =
         skip n
         if n.kind == ParRi:
           # ExprX with exactly one son might be harmless:
-          if isComplex(inner):
+          if isComplex(inner, goal):
             return true
         else:
           # More than one son is always complex:
           return true
         inc nested
+      elif goal == TowardsNjvl and n.exprKind in CallKinds:
+        return true
       else:
         inc n
         inc nested
@@ -48,7 +55,7 @@ proc isComplex(n: Cursor): bool =
 
 type
   Mode = enum
-    IsEmpty, IsAppend, IsIgnored
+    IsEmpty, IsAppend, IsIgnored, IsLabel
   Target = object
     m: Mode
     t: TokenBuf
@@ -56,6 +63,7 @@ type
     counter: int
     typeCache: TypeCache
     thisModuleSuffix: string
+    goal: Goal
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -107,7 +115,7 @@ proc skipParRi(n: var Cursor) =
     error "expected ')', but got: ", n
 
 proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if isComplex(n):
+  if isComplex(n, c.goal):
     # `x or y`  <=> `if x: true else: y` <=> `if x: tmp = true else: tmp = y`
     let info = n.info
     var tmp = declareTempBool(c, dest, info)
@@ -133,7 +141,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       trExpr c, dest, n, tar
 
 proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if isComplex(n):
+  if isComplex(n, c.goal):
     # `x and y` <=> `if x: y else: false` <=> `if x: tmp = y else: tmp = false`
     let info = n.info
     var tmp = declareTempBool(c, dest, info)
@@ -167,6 +175,16 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n, tar
   dest.add tar
 
+proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  assert tar.m == IsEmpty
+  case n.exprKind
+  of AndX:
+    trAnd c, dest, n, tar
+  of OrX:
+    trOr c, dest, n, tar
+  else:
+    trExpr c, dest, n, tar
+
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # if cond: a elif condB: b else: c
   # -->
@@ -192,7 +210,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     of ElifU:
       var t0 = Target(m: IsEmpty)
       inc n
-      trExpr c, dest, n, t0
+      trCond c, dest, n, t0
 
       dest.add head
       inc toClose
@@ -300,11 +318,11 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.copyInto n:
-    if isComplex(n):
+    if isComplex(n, c.goal):
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
         var tar = Target(m: IsEmpty)
-        trExpr c, dest, n, tar
+        trCond c, dest, n, tar
         dest.copyIntoKind IfS, info:
           dest.copyIntoKind ElifU, info:
             dest.add tar
@@ -459,8 +477,8 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   of ParRi:
     bug "unexpected ')' inside"
 
-proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+proc lowerExprs*(n: Cursor; moduleSuffix: string; goal = ElimExprs): TokenBuf =
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, goal: goal)
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n

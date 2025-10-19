@@ -161,7 +161,7 @@
 | `(itec X S S)` | NjvlKind | if-then-else (that was a `case`) |
 | `(loop S X S S)` | NjvlKind | `loop` components are (before-cond, cond, loop-body, after) |
 | `(v X INT_LIT)` | NjvlKind | `versioned` locations |
-| `(unknown X)` | NjvlKind | location's contents it unknown at this point |
+| `(unknown X)` | NjvlKind | location's contents is unknown at this point |
 | `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(join Y INT_LIT INT_LIT INT_LIT)` | NimonyOther | `join` construct inside `ite` |
 | `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |
