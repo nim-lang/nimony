@@ -3,7 +3,7 @@
 NJVL is an intermediate representation for Nimony.
 
 It is a structured IR, there is no unstructured control flow like `return` or `break` ("no jumps").
-Instead control flow variables (tag `cfvar`) are used to represent the control flow. Control flow variables are not versioned but other variables are! This gives us a variant of SSA that is easy to get rid of later on -- just ignore the variables' versions.
+Instead control flow variables of type `bool` are used to represent the control flow. All variables, including control flow variables, are versioned! This gives us a variant of SSA that is easy to get rid of later on -- a code generator can just ignore the variables' versions and map every variable to a register or memory slot.
 
 NJVL is good for:
 
@@ -21,9 +21,96 @@ NJVL is bad for:
 
 ## Tags
 
+### `v` (version)
+
+The `v` tag is used to represent the version of a variable. For example:
+
+```
+(stmts
+  (var :x.0 . . . +4)
+  (call use.0 x.0)
+  (asgn x.0 +9)
+  (call use.0 x.0)
+)
+```
+
+is translated into:
+
+```
+(stmts
+  (var (v :x.0 +0) . . . +4)
+  (call use.0 (v x.0 +0))
+  (asgn (v x.0 +1) +9)
+  (call use.0 (vx.0 +1))
+)
+```
+
+In fact, the `v` modifier applies to **locations**, not just variables. The system can reason about independent object field accesses as well: `(v (dot obj field) +0)` is a valid construction. Likewise array indexing: `(v (at arr (v index +0)) +0)` is valid. As you can see the array index is also versioned!
+
+Locations that cannot be reasoned about (due to their address being taken) stay without version information. An algorithm like CSE can only simplify expressions that are versioned.
+
+
+### `unknown`
+
+The `unknown` tag is used to represent an unknown value. It is crucial to mark mutated variables as `unknown` so that these get a new version number. This happens after it is passed as a parameter to a function by `var`:
+
+```nim
+
+proc maybeMutate(x: var int) = discard
+
+var x = 0
+maybeMutate x
+```
+
+is translated into:
+
+```
+(stmts
+  (var (v :x.0 +0) . . . +4)
+  (call maybeMutate.0 (haddr (v x.0 +0)))
+  (unknown (v x.0 +1))
+)
+```
+
 ### `ite`
 
-`ite` is the `if-then-else` control flow. A `case` statement is also translated into a series of `ite`, however the tag `itec` is used so that eventually a `case` statement can be reconstructed. Every `ite` has exactly 3 children.
+`ite` is the `if-then-else` control flow. A `case` statement is also translated into a series of `ite`, however the tag `itec` is used so that eventually a `case` statement can be reconstructed. Every `ite` has exactly 4 children: the condition, the then branch, the else branch, and the join point.
+
+#### `join`
+
+The `join` instruction is used to represent a join point for variable versions:
+
+```nim
+var x = 0
+if cond:
+  x = 1
+else:
+  x = 2
+use x
+```
+
+is translated into:
+
+```
+(stmts
+  (var (v :x.0 +0) . . . +0)
+  (ite
+    cond
+    (stmts
+      (asgn (v x.0 +1) 1)
+    )
+    (stmts
+      (asgn (v x.0 +2) 2)
+    )
+    (stmts
+      (join (v x.0 +3) (v x.0 +1) (v x.0 +2))
+    )
+  )
+  (call use.0 (v x.0 +3))
+)
+```
+
+A `join`'ed variable can be turned into an `(or ...)` construct inside conditions. This will be important later for converting control flow variables back into jumps.
 
 
 ### `loop`
@@ -96,9 +183,8 @@ is translated into:
 
 The `either` construct appears only in `(continue)` statements at loop back-edges. It does not appear anywhere else in NJVL.
 
-**Difference from `unknown`:**
-- `unknown` is used at arbitrary control flow joins (if/else) where we've abstracted away the exact provenance
-- `either` is used at loop back-edges to specify which versions merge at the loop header: the initial value and the back-edge value
+**NOTE**: `join` introduces a new variable version, `either` merely documents where a new variable came from.
+
 
 **Execution semantics:**
 For execution purposes, `either` can be ignored or treated as equivalent to `unknown` - the runtime value is simply whatever flows through control flow. The `either` construct is primarily for optimization analyses.
@@ -129,86 +215,6 @@ This enables loop optimizations like:
 - Bounds check elimination (proving array indices are in range)
 
 
-### `v` (version)
-
-The `v` tag is used to represent the version of a variable. For example:
-
-```
-(stmts
-  (var :x.0 . . . +4)
-  (call use.0 x.0)
-  (asgn x.0 +9)
-  (call use.0 x.0)
-)
-```
-
-is translated into:
-
-```
-(stmts
-  (var (v :x.0 +0) . . . +4)
-  (call use.0 (v x.0 +0))
-  (asgn (v x.0 +1) +9)
-  (call use.0 (vx.0 +1))
-)
-```
-
-In fact, the `v` modifier applies to **locations**, not just variables. The system can reason about independent object field accesses as well: `(v (dot obj field) +0)` is a valid construction. Likewise array indexing: `(v (at arr (v index +0)) +0)` is valid. As you can see the array index is also versioned!
-
-Locations that cannot be reasoned about (due to their address being taken) stay without version information. An algorithm like CSE can only simplify expressions that are versioned.
-
-
-### `unknown`
-
-The `unknown` tag is used to represent an unknown value. It is crucial to mark mutated variables as `unknown` so that these get a new version number. This happens after it is passed as a parameter to a function by `var`:
-
-```nim
-
-proc maybeMutate(x: var int) = discard
-
-var x = 0
-maybeMutate x
-```
-
-is translated into:
-
-```
-(stmts
-  (var (v :x.0 +0) . . . +4)
-  (call maybeMutate.0 (haddr (v x.0 +0)))
-  (unknown (v x.0 +1))
-)
-```
-
-This typically also happens after join points:
-
-```nim
-var x = 0
-if cond:
-  x = 1
-else:
-  x = 2
-use x
-```
-
-is translated into:
-
-```
-(stmts
-  (var (v :x.0 +0) . . . +0)
-  (ite
-    cond
-    (stmts
-      (asgn (v x.0 +1) 1)
-    )
-    (stmts
-      (asgn (v x.0 +2) 2)
-    )
-  )
-  (unknown (v x.0 +3))
-  (call use.0 (v x.0 +3))
-)
-```
 
 ### `assume`
 
@@ -219,7 +225,7 @@ is translated into:
 The `kill` instruction marks the end of a variable's lifetime:
 
 ```
-(kill location)
+(kill <variable>)
 ```
 
 **Semantics:**
@@ -298,7 +304,7 @@ In general `raise`, `return` and `break` are turned into a mixture of data flow 
 
 Function calls cannot be used in conditions either, because they are not side-effect free.
 
-For readability reason we use Nim syntax here throughout, but the actual IR uses NIF, of course.
+For readability reason we use Nim syntax here where `x@v` stands for `(v x +v)`, but the actual IR uses NIF, of course.
 
 For example:
 
@@ -310,54 +316,22 @@ else:
   otherwise
 ```
 
-A simple but suboptimal translation:
+Becomes:
 
 ```nim
-cfvar v = cond1
-if v:
-  v = cond2
-  if not v:
-    v = fn(cond3)
-if v:
+var t@0 = cond1
+if t@0:
+  t@1 = cond2
+  if not t@1:
+    t@2 = fn(cond3)
+  t@3 = (join t@1 t@2)
+t@4 = (join t@0 t@3)
+
+if t@4:
   body
 else:
   otherwise
 ```
-
-This is valid NJVL, but `v` is tested three times, violating the single-use constraint. This means the backend cannot efficiently translate it back to gotos.
-
-The optimal translation uses multiple cfvars and an `(or ...)` construct:
-
-```nim
-cfvar v1 = cond1
-cfvar v2 = false
-cfvar v3 = false
-
-if v1:
-  v2 = cond2
-  if not v2:
-    v3 = fn(cond3)
-
-if (or v2 v3):
-  body
-else:
-  otherwise
-```
-
-Now each cfvar is tested exactly once. The backend can efficiently translate this: assignments to `v2` and `v3` become `goto body_label`, and the `if (or v2 v3)` becomes `body_label:`.
-
-
-Cfvars are restricted and must adhere these rules:
-
-1. Only declarations can be initialized with an arbitrary expression of type `bool`: `(cfvar :x (call f.1))`
-2. Reassignments must use literal booleans `(true)` or `(false)`.
-3. The condition for `if` and `loop` constructs must a "cf-expression".
-
-Definition of "cf-expression":
-- A control flow variable cfvar is a cf-expression.
-- `(not X)` is a cf-expression iff `X` is a cf-expression.
-- `(and X Y)` is a cf-expression iff `X` and `Y` are cf-expressions.
-- `(or X Y)` is a cf-expression iff `X` and `Y` are cf-expressions.
 
 
 ### Return elimination
@@ -561,50 +535,6 @@ Forward scan sees `(destroy (v x.0 +N))` before `(continue)` → **safe to move*
 
 Forward scan: No `(destroy x)` before `(continue)` → **cannot move**. The location is live across the back-edge.
 
-### Algorithm
-
-```
-proc canMove(src: VersionedLocation, from: Cursor): bool =
-  if not src.isVersioned:
-    return false  # Address-taken, can't move
-
-  var cursor = from
-  var foundDestroy = false
-
-  while true:
-    case cursor.kind:
-    of Destroy:
-      if cursor.location == src.location:
-        foundDestroy = true
-
-    of Continue:
-      # Reached back-edge marker
-      if not foundDestroy:
-        # Location still live across back-edge
-        return false
-      # else: destroyed before continue, safe!
-
-    of Use:
-      if sameVersion(cursor, src):
-        return false  # Found another use!
-
-    of Assignment:
-      if cursor.target.location == src.location:
-        # New version created, old one is dead
-        break
-
-    of Unknown:
-      if cursor.location == src.location:
-        # Join creates new version, old is dead
-        break
-
-    of EndOfScope:
-      break
-
-    inc cursor
-
-  return true
-```
 
 ### Benefits Over CFG-Based Analysis
 
@@ -816,7 +746,7 @@ No need to track all possible exit paths. The structure ensures there's only one
 
 # NJVL vs LLVM
 
-| Feature |	NJVL	| LLVM IR |
+| Feature |	NJVL	| LLVM IR |
 |---------|---------|---------|
 | Structured CF | ✅ Yes | ❌ No (has goto) |
 | SSA | ✅ Easy variant | ✅ Full SSA |
