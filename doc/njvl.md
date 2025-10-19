@@ -412,6 +412,194 @@ proc p() =
 
 `raise` is translated like a `return`, function calls that can raise are transformed into `let tmp = call(); if failed(tmp): raise tmp`. This can produce tedious long-winded code but the benefit is that all the anticipated optimizations run in one or two passes over the resulting trees, no fixpoint computations are required.
 
+## Peephole optimizations
+
+The structured nature of NJVL makes peephole optimizations significantly easier than in traditional unstructured control flow. Two key properties enable this:
+
+### No Labels Between Instructions
+
+In traditional assembly or unstructured IR, labels can appear anywhere, making it difficult to identify instruction sequences that can be optimized together. NJVL's structured control flow ensures that:
+
+- Instructions are grouped into logical blocks (`stmts`, `if`, `loop`, etc.)
+- Labels only appear at block boundaries, not between individual instructions
+- This creates clear "peephole windows" where consecutive instructions can be analyzed together
+
+Example:
+```nim
+# Traditional unstructured (hard to optimize):
+label1:
+  mov eax, 0
+  add eax, 5
+  cmp eax, 5
+  je label2
+  mov ebx, eax
+label2:
+  ret
+
+# NJVL structured (easy to optimize):
+stmts:
+  (asgn (v eax.0 +1) 0)
+  (asgn (v eax.0 +2) (+ (v eax.0 +1) 5))
+  (asgn (v tmp.0 +1) (= (v eax.0 +2) 5))
+  (ite (v tmp.0 +1)
+    (stmts: (asgn (v ebx.0 +1) (v eax.0 +2)))
+    (stmts:))
+```
+
+### Kill Instructions Enable Precise Dead Code Detection
+
+NJVL's versioning system with explicit `kill` instructions makes it trivial to determine when a variable becomes dead:
+
+```nim
+# Clear peephole optimization opportunity:
+(asgn (v x.0 +1) (call expensive_function))
+(kill (v x.0 +1))  # Explicit kill - x.0 +1 is now dead!
+# Can eliminate the expensive_function call
+```
+
+The explicit `kill` instruction immediately marks the variable version as dead, enabling aggressive dead code elimination. This is much more precise than traditional approaches that need to analyze liveness across complex control flow graphs.
+
+### Combined Benefits
+
+Together, these properties enable powerful peephole optimizations:
+
+1. **Instruction fusion**: Consecutive operations can be combined
+2. **Dead code elimination**: Kill instructions provide immediate feedback
+3. **Constant folding**: Structured blocks make it easy to track constant propagation
+4. **Register allocation hints**: Clear variable lifetimes enable better register reuse
+5. **Arbitrary pattern detection**: All effects are localized in the representation, enabling detection and simplification of complex patterns
+
+The structured form essentially provides a more "peephole-friendly" representation that traditional unstructured control flow cannot offer. Since all effects are localized and explicit, arbitrary patterns can be detected and simplified without the complexity of analyzing cross-cutting concerns in traditional unstructured representations.
+
+## Separation Logic and Memory Aliasing
+
+NJVL's treatment of memory aliasing through `(unknown)` and the lack of versioning for address-taken locations creates a natural separation logic framework:
+
+### The `(unknown)` Construct as Separation
+
+The `(unknown)` construct represents the "unknown heap" - memory locations that may be aliased and cannot be precisely tracked. This creates a natural separation between:
+
+- **Known heap**: Variables with precise versioning that can be optimized aggressively
+- **Unknown heap**: Address-taken locations that must be treated conservatively
+
+### Address-Taken Locations Lack Versioning
+
+When a variable's address is taken, it loses versioning because it may be modified through aliases:
+
+```nim
+var x = 42
+let p = addr x  # x loses versioning
+# x can now be modified through *p, so we can't track versions
+```
+
+This is exactly the separation logic principle: **if you can't prove separation, you must assume interference**.
+
+### Separation Logic Properties
+
+1. **Disjointness**: Versioned variables are disjoint from the unknown heap
+2. **Frame Property**: Optimizations on versioned variables don't affect unknown locations
+3. **Isolation Property**: Versioned variables are not aliased and cannot be affected by unknown locations
+
+### Practical Benefits
+
+This separation enables:
+- **Aggressive optimization** of versioned variables (they're "separate" from aliasing concerns)
+- **Conservative treatment** of address-taken locations (they're in the "unknown" heap)
+- **Clear reasoning** about when optimizations are safe vs. when they must be conservative
+
+The versioning system essentially implements a form of **memory separation** where tracked variables are "owned" by the optimizer and untracked variables are in the "shared unknown heap".
+
+## Path Duplication and Instruction Scheduling
+
+While NJVL's structured control flow enables powerful optimizations, it can initially seem to limit instruction scheduling flexibility compared to CFG-based IRs. However, **path duplication** restores this flexibility while maintaining structured benefits.
+
+### The Path Duplication Transformation
+
+The key insight is that `(if a b c)(d)` can always be transformed into `(if a (b d) (c d))`:
+
+```nim
+# Original structured form:
+(if condition
+  (stmts:
+    then_branch)
+  (stmts:
+    else_branch))
+(stmts:
+  common_code)
+
+# After path duplication:
+(if condition
+  (stmts:
+    then_branch
+    common_code)  # Duplicated
+  (stmts:
+    else_branch
+    common_code)) # Duplicated
+```
+
+### Specialization Opportunities
+
+Once paths are duplicated, each copy of `common_code` can be **specialized** based on the path context:
+
+```nim
+# In the then branch, we know condition is true
+(if condition
+  (stmts:
+    then_branch
+    # common_code specialized knowing condition=true
+    specialized_common_code)
+  (stmts:
+    else_branch
+    # common_code specialized knowing condition=false
+    specialized_common_code))
+```
+
+### Restored Scheduling Flexibility
+
+Path duplication restores CFG-like scheduling capabilities:
+
+1. **Instruction reordering**: Within each path, instructions can be reordered freely
+2. **Cross-path optimization**: Common subexpressions can be hoisted to the condition
+3. **Path-specific optimizations**: Each path can be optimized based on its specific context
+4. **Register allocation**: Each path can have different register allocation strategies
+
+### Example: Loop Unrolling with Path Duplication
+
+```nim
+# Original loop:
+loop:
+  if i < 10:
+    body
+  i += 1
+
+# After path duplication and specialization:
+loop:
+  if i < 10:
+    # Specialized for i < 10
+    body_specialized
+    i += 1
+  else:
+    # Specialized for i >= 10
+    # Can eliminate the increment
+    pass
+```
+
+### Benefits Over Traditional CFG
+
+Unlike traditional CFG-based IRs, path duplication in NJVL:
+
+- **Maintains structure**: The duplication is explicit and controlled
+- **Enables specialization**: Each path can be optimized independently
+- **Preserves versioning**: Variable versions remain precise within each path
+- **Supports undo**: The transformation can be reversed if needed
+
+This gives NJVL the **best of both worlds**: the optimization benefits of structured control flow combined with the scheduling flexibility of unstructured control flow.
+
+## Simplified Inlining
+
+NJVL's elimination of `return` and `break` statements makes inlining simpler than traditional approaches.
+
+This makes inlining a **simple substitution operation** rather than a complex control flow transformation, enabling more aggressive inlining decisions and better optimization opportunities.
 
 
 ## Move analysis
