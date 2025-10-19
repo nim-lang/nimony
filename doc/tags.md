@@ -162,7 +162,6 @@
 | `(loop S X S S)` | NjvlKind | `loop` components are (before-cond, cond, loop-body, after) |
 | `(v X INT_LIT)` | NjvlKind | `versioned` locations |
 | `(unknown X)` | NjvlKind | location's contents it unknown at this point |
-| `(cfvar D (false)/(true))` | NjvlKind | introduce a monotonic controlflow variable |
 | `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |
 | `(forbind ...)` | ControlFlowKind | bindings for a `for` loop but the loop itself is mapped to gotos |
