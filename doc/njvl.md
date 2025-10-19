@@ -74,7 +74,8 @@ is translated into:
 
 ### `ite`
 
-`ite` is the `if-then-else` control flow. A `case` statement is also translated into a series of `ite`, however the tag `itec` is used so that eventually a `case` statement can be reconstructed. Every `ite` has exactly 4 children: the condition, the then branch, the else branch, and the join point.
+`ite` is the `if-then-else` control flow. A `case` statement is also translated into a series of `ite`, however the tag `itec` is used so that eventually a `case` statement can be reconstructed. Every `ite` consists of: the condition, the then branch, the else branch, and the join point. Optionally an `ite` statement can have a label. The label can be referred to by a control flow variable via an assignment, `(asgn cfvar <label>)` where for analysis purposes the `<label>` stands for the value `(true)` but the code generator can exploit it and turn the assignment into a `goto` statement. This mechanism ensures that the overhead can of control flow variables can be eliminated cheaply and reliably.
+
 
 #### `join`
 
@@ -333,6 +334,29 @@ else:
   otherwise
 ```
 
+While the above transformation is correct, in practice code like the following will be produced:
+
+```nim
+var t@0 = false
+if cond1:
+  if cond2:
+    t@1 = "label"
+  else:
+    let tmp = fn(cond3)
+    if tmp: t@2 = "label"
+  t@3 = (join t@1 t@2)
+t@4 = (join t@0 t@3)
+
+if enter "label":
+  body
+else:
+  otherwise
+```
+
+This ensures that during code generation the control flow variables collapse into control flow and cause no overhead!
+
+We have to watch out though: **Converting `cfvar="label"` to a jump is only valid if no interim statements occur.**
+
 
 ### Return elimination
 
@@ -388,55 +412,6 @@ proc p() =
 
 `raise` is translated like a `return`, function calls that can raise are transformed into `let tmp = call(); if failed(tmp): raise tmp`. This can produce tedious long-winded code but the benefit is that all the anticipated optimizations run in one or two passes over the resulting trees, no fixpoint computations are required.
 
-
-### Translating cfvar back to unstructured control flow
-
-While cfvars appear to introduce data flow overhead, proper construction and code generation can eliminate this entirely.
-
-**Single-use invariant:** Each cfvar should be tested exactly once. This enables direct translation back to unstructured control flow:
-- `(asgn cfvar true)` → `goto label`
-- `(ite cfvar ...)` → `label:`
-
-**Condition forms:** Loop and if conditions must be:
-- `cfvar` (single variable), or
-- `(or cfvar1 cfvar2 ...)` (disjunction of cfvars)
-
-This restriction ensures that multiple early-exit conditions can be merged efficiently while preserving the single-use property.
-
-**Example round-trip:**
-
-Input:
-```nim
-while cond:
-  if earlyExit: break
-  work()
-```
-
-NJVL (optimization passes work here):
-```nim
-loop:
-  stmts:
-    cfvar exitLoop = earlyExit
-  exitif exitLoop
-  work()
-```
-
-Output (code generation):
-```nim
-loop_start:
-  if earlyExit: goto loop_end
-  work()
-  goto loop_start
-loop_end:
-```
-
-The structured form exists purely to enable optimization. Code generation recovers the original unstructured form with no runtime overhead.
-
-#### Problem: Interim Statements Break Jump Conversion
-
-**Converting `cfvar=true` to a jump is only valid if no interim statements occur.**
-
-To avoid this problem "path specialization" can be used: `(if a b d)(d)` can always be converted to `(if a (stmts b d) (stmts c d))` and then in the duplicated `d` we know whether `a` is true or not and can specialize the code.
 
 
 ## Move analysis
