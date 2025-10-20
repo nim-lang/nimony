@@ -132,7 +132,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
     c.needsXelim = true
     let isVoid = retType.kind == DotToken or retType.typeKind == VoidT
     if not isVoid:
-       dest.addParLe(ExprX, info)
+      dest.addParLe(ExprX, info)
     copyIntoKind dest, StmtsS, info:
       let symId = pool.syms.getOrIncl("`canRaise." & $c.tmpCounter)
       inc c.tmpCounter

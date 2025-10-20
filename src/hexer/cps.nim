@@ -462,7 +462,8 @@ proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packed
   inc n # yield/return
   if n.kind == DotToken or (n.kind == Symbol and n.symId == c.currentProc.resultSym):
     inc n
-  elif isVoidType(getType(c.typeCache, n)):
+  elif isVoidType(getType(c.typeCache, n)) and n.kind != Symbol:
+    # void type for Symbol can happen for `raise` statements:
     tr c, dest, n
   else:
     dest.copyIntoKind AsgnS, info:
@@ -491,17 +492,19 @@ proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.currentProc.upcomingState = oldState
 
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # return x -->
+  # return/raise x -->
   # this.res[] = x
-  # return this.caller
-  let info = n.info
+  # return/raise this.caller
+  let head = n.load()
+  let info = head.info
   returnValue(c, dest, n, info)
-  dest.copyIntoKind RetS, info:
-    dest.copyIntoKind DotX, info:
-      dest.copyIntoKind DerefX, info:
-        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
-      dest.addIntLit 1, info # field is in superclass
+  dest.add head
+  dest.copyIntoKind DotX, info:
+    dest.copyIntoKind DerefX, info:
+      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+    dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+    dest.addIntLit 1, info # field is in superclass
+  dest.addParRi()
 
 proc escapingLocals(c: var Context; n: Cursor) =
   if n.kind == DotToken: return
@@ -842,7 +845,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of YldS:
       trYield c, dest, n
     of RetS, RaiseS:
-      trReturn c, dest, n
+      if c.currentProc.kind == IsNormal:
+        trSons(c, dest, n)
+      else:
+        trReturn c, dest, n
     of AsgnS:
       trAsgn c, dest, n
     of ScopeS:
