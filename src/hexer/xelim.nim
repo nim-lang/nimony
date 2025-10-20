@@ -276,17 +276,20 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
-  case n.exprKind
-  of AndX:
-    if isComplex(n, c.goal) or mustUseLabel:
-      trCondAnd c, dest, n, tar
+  if c.goal == TowardsNjvl:
+    case n.exprKind
+    of AndX:
+      if isComplex(n, c.goal) or mustUseLabel:
+        trCondAnd c, dest, n, tar
+      else:
+        trAnd c, dest, n, tar
+    of OrX:
+      if isComplex(n, c.goal) or mustUseLabel:
+        trCondOr c, dest, n, tar
+      else:
+        trOr c, dest, n, tar
     else:
-      trAnd c, dest, n, tar
-  of OrX:
-    if isComplex(n, c.goal) or mustUseLabel:
-      trCondOr c, dest, n, tar
-    else:
-      trOr c, dest, n, tar
+      trExpr c, dest, n, tar
   else:
     trExpr c, dest, n, tar
 
