@@ -171,8 +171,8 @@ type
     TryS = (ord(TryTagId), "try")  ## `try` statement
     RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
     UnpackdeclS = (ord(UnpackdeclTagId), "unpackdecl")  ## unpack var/let/const declaration
-    AssumeS = (ord(AssumeTagId), "assume")  ## `assume` pragma
-    AssertS = (ord(AssertTagId), "assert")  ## `assert` pragma
+    AssumeS = (ord(AssumeTagId), "assume")  ## `assume` pragma/annotation
+    AssertS = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
     CallstrlitS = (ord(CallstrlitTagId), "callstrlit")
     InfixS = (ord(InfixTagId), "infix")
     PrefixS = (ord(PrefixTagId), "prefix")
@@ -264,13 +264,15 @@ type
     StmtsU = (ord(StmtsTagId), "stmts")  ## list of statements
     ParamsU = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
+    EitherU = (ord(EitherTagId), "either")  ## `either` construct to combine location versions
+    JoinU = (ord(JoinTagId), "join")  ## `join` construct inside `ite`
     UnpackflatU = (ord(UnpackflatTagId), "unpackflat")  ## unpack into flat variable list
     UnpacktupU = (ord(UnpacktupTagId), "unpacktup")  ## unpack tuple
     ExceptU = (ord(ExceptTagId), "except")  ## except subsection
     FinU = (ord(FinTagId), "fin")  ## finally subsection
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {NilTagId, NotnilTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
+  raw in {NilTagId, NotnilTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
 
 type
   NimonyPragma* = enum
@@ -307,8 +309,8 @@ type
     NoinitP = (ord(NoinitTagId), "noinit")  ## `noinit` pragma
     RequiresP = (ord(RequiresTagId), "requires")  ## `requires` pragma
     EnsuresP = (ord(EnsuresTagId), "ensures")  ## `ensures` pragma
-    AssumeP = (ord(AssumeTagId), "assume")  ## `assume` pragma
-    AssertP = (ord(AssertTagId), "assert")  ## `assert` pragma
+    AssumeP = (ord(AssumeTagId), "assume")  ## `assume` pragma/annotation
+    AssertP = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
     BuildP = (ord(BuildTagId), "build")  ## `build` pragma
     StringP = (ord(StringTagId), "string")  ## `string` pragma
     ViewP = (ord(ViewTagId), "view")  ## `view` pragma
@@ -383,11 +385,11 @@ proc rawTagIsHookKind*(raw: TagEnum): bool {.inline.} =
 type
   ControlFlowKind* = enum
     NoControlFlow
-    IteF = (ord(IteTagId), "ite")  ## if-then-else
+    IteF = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
     GraphF = (ord(GraphTagId), "graph")  ## disjoint subgraph annotation
     ForbindF = (ord(ForbindTagId), "forbind")  ## bindings for a `for` loop but the loop itself is mapped to gotos
     KillF = (ord(KillTagId), "kill")  ## some.var is about to disappear (scope exit)
 
 proc rawTagIsControlFlowKind*(raw: TagEnum): bool {.inline.} =
-  raw >= IteTagId and raw <= KillTagId
+  raw in {IteTagId, GraphTagId, ForbindTagId, KillTagId}
 
