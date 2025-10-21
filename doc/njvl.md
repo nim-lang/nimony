@@ -251,8 +251,8 @@ Becomes:
 (var (v x.0 +0) (call allocate.0))
 (var (v y.0 +0) (v x.0 +0))
 (call use.0 (v y.0 +0))
-(kill (v x.0 +0))  # x dies here
-(kill (v y.0 +0))  # y dies here
+(kill x.0)  # x (all versions of x) dies here
+(kill y.0)  # y (all versions of y) dies here
 ```
 
 **Move optimization:**
@@ -262,7 +262,7 @@ The `kill` instruction enables precise move analysis:
 (var (v x.0 +0) (call allocate.0))
 (var (v y.0 +0) (v x.0 +0))  # Copy - can we move?
 (call use.0 (v y.0 +0))
-(kill (v x.0 +0))            # x dies - can move!
+(kill x.0)            # x dies - can move!
 ```
 
 **Borrow checking:**
@@ -287,6 +287,9 @@ The `kill` instruction enables precise lifetime tracking for register allocation
 ```
 
 This is more precise than lexical scoping and enables earlier register deallocation, improving register pressure in tight loops.
+
+Moving these `kill` instructions imply that they are not used anymore to denote a scope exit. As such they should then refer to versioned variables only.
+
 
 **Destructor transformation:**
 `kill` instructions are later transformed to destructor calls:
@@ -340,14 +343,14 @@ While the above transformation is correct, in practice code like the following w
 var t@0 = false
 if cond1:
   if cond2:
-    t@1 = "label"
+    jtrue t@1 "label"
   else:
     let tmp = fn(cond3)
-    if tmp: t@2 = "label"
+    if tmp: jtrue t@2 "label"
   t@3 = (join t@1 t@2)
 t@4 = (join t@0 t@3)
 
-if enter "label":
+if t@4 "label":
   body
 else:
   otherwise
@@ -355,7 +358,17 @@ else:
 
 This ensures that during code generation the control flow variables collapse into control flow and cause no overhead!
 
-We have to watch out though: **Converting `cfvar="label"` to a jump is only valid if no interim statements occur.**
+We have to watch out though: **Converting `jtrue x "label"` or `jfalse x "label"` to a jump is only valid if no interim statements occur.**
+
+
+### `jtrue` and `jfalse` instructions
+
+```nim
+jtrue x "label"
+jfalse x "label"
+```
+
+The semantics of `jtrue x "label"` is that `x` is set to `true` and the control flow is allowed to jump to `"label"` directly but this property can safely be ignored as the following code is properly guarded by a condition like `if not x: ...`.
 
 
 ### Return elimination
@@ -372,41 +385,18 @@ Is translated into:
 ```nim
 proc p(cond: bool) =
   before
-  cfvar v = cond
-  if v:
+  var ret = false
+  if not cond:
+    jtrue ret <label A>
+  if not ret:
     after
+  else <label A>:
+    discard
 ```
 
 ### Break elimination
 
-```nim
-proc p() =
-  while true:
-    before
-    if condA:
-      more
-      if condB: break
-    after
-  eventually
-```
-
-Is translated into:
-
-```nim
-proc p() =
-  loop:
-    stmts:
-      before
-      cfvar loopExit = false
-
-      if condA:
-        more
-        if condB: loopExit = true
-    exitif loopExit
-    if not loopExit: # redundant but usually the result of the transformation
-      after
-    eventually
-```
+`break` is handled similarly to `return`.
 
 ### Exception handling
 
@@ -473,14 +463,8 @@ The structured form essentially provides a more "peephole-friendly" representati
 
 ## Separation Logic and Memory Aliasing
 
-NJVL's treatment of memory aliasing through `(unknown)` and the lack of versioning for address-taken locations creates a natural separation logic framework:
+NJVL's treatment of memory aliasing through `(unknown)` and the lack of versioning for address-taken locations creates a natural separation logic framework.
 
-### The `(unknown)` Construct as Separation
-
-The `(unknown)` construct represents the "unknown heap" - memory locations that may be aliased and cannot be precisely tracked. This creates a natural separation between:
-
-- **Known heap**: Variables with precise versioning that can be optimized aggressively
-- **Unknown heap**: Address-taken locations that must be treated conservatively
 
 ### Address-Taken Locations Lack Versioning
 
@@ -584,22 +568,14 @@ loop:
     pass
 ```
 
-### Benefits Over Traditional CFG
-
-Unlike traditional CFG-based IRs, path duplication in NJVL:
-
-- **Maintains structure**: The duplication is explicit and controlled
-- **Enables specialization**: Each path can be optimized independently
-- **Preserves versioning**: Variable versions remain precise within each path
-- **Supports undo**: The transformation can be reversed if needed
-
-This gives NJVL the **best of both worlds**: the optimization benefits of structured control flow combined with the scheduling flexibility of unstructured control flow.
 
 ## Simplified Inlining
 
 NJVL's elimination of `return` and `break` statements makes inlining simpler than traditional approaches.
 
-This makes inlining a **simple substitution operation** rather than a complex control flow transformation, enabling more aggressive inlining decisions and better optimization opportunities.
+Since function calls can only be statements or of the form `let/var dest = call()` or `dest = call()` we can replace the entire assignment with an inlined body where the parameters have been replaced by their arguments and `result` by `dest`.
+
+This makes inlining a **simple substitution operation** rather than a complex control flow transformation.
 
 
 ## Move analysis
@@ -610,20 +586,6 @@ Move analysis optimizes `copy dest, src` into `move dest, src` when `src` is not
 
 In NJVL, the question "is this the last use of x?" becomes "is this the last use of version `(v x.0 +N)`?" This is much more precise because each version has a single definition point (SSA-like).
 
-Example:
-
-```
-(var (v dest.0 +0) ...)
-(asgn (v dest.0 +1) (v src.0 +2))  # Copy from src version +2
-(call foo (v src.0 +2))            # Another use! Can't move
-```
-
-vs.
-
-```
-(asgn (v dest.0 +1) (v src.0 +2))  # Copy from src version +2
-(asgn (v src.0 +3) ...)            # New version! +2 is dead → CAN MOVE
-```
 
 ### Forward-Only Scanning
 
@@ -633,17 +595,6 @@ Because NJVL is structured, move analysis can use simple forward traversal witho
 2. Scan forward through the structured control flow
 3. Stop when finding: another use, a new version, or scope exit
 
-For branches, both paths must be checked:
-
-```
-(var (v x.0 +0) +42)
-(ite cond
-  (call foo (v x.0 +0))  # Use in then-branch
-  (call bar (v x.0 +0))  # Use in else-branch
-)
-(unknown (v x.0 +1))  # Join creates new version
-# Version +0 is dead here - both branches used it, join created new version
-```
 
 ### Loop Back-Edges: The `(continue)` Marker
 
@@ -703,7 +654,7 @@ Forward scan: No `(destroy x)` before `(continue)` → **cannot move**. The loca
 
 1. **No CFG Construction**: Just tree traversal. NJVL's structure IS the control flow.
 2. **Version Numbers Guide Search**: Not "is x used again?" but "is x.0 version +3 used again?" - much more precise.
-3. **Join Points Are Explicit**: `(unknown)` nodes mark where versions die and new ones are born. CFG-based analysis must infer this from merge points.
+3. **Join Points Are Explicit**: `(join)` nodes mark where versions die and new ones are born. CFG-based analysis must infer this from merge points.
 4. **Works for Complex Locations**: The same algorithm handles fields and array elements: `(v (dot obj.0 field) +2)` or `(v (at arr.0 (v i.0 +3)) +5)`.
 
 
@@ -861,7 +812,7 @@ loop:
   stmts:
     var temp = allocate()
 
-    cfvar exitLoop = false
+    var exitLoop = false
     if earlyExit: exitLoop = true
 
     if not exitLoop:
@@ -869,11 +820,12 @@ loop:
 
     temp.free()  # Always runs at scope exit
     (continue)
-  exitif exitLoop
+  not exitLoop
   after
 ```
 
-Single cleanup point runs on every iteration regardless of how the iteration ends.
+Single cleanup point runs on every iteration regardless of how the iteration ends. Note how we avoided the `jtrue` instruction here as the destruction would prevent us from performing a jump anyway.
+
 
 ### Exception Handling
 
@@ -881,7 +833,7 @@ NJVL's structured nature mirrors try/finally blocks naturally:
 
 ```nim
 var x = acquire()
-cfvar raised = false
+var raised = false
 # ... code that might set raised = true ...
 if not raised:
   # normal path
@@ -891,20 +843,6 @@ if raised: reraise
 
 The cleanup appears once and always executes, just like a finally block.
 
-
-### Implementation Simplicity
-
-The destructor injection pass becomes trivial:
-
-```
-proc injectDestructors(scope: Cursor):
-  for each variable `v` in scope:
-    insert `(destroy v)` at scope exit
-
-  recursively process nested scopes
-```
-
-No need to track all possible exit paths. The structure ensures there's only one exit per scope.
 
 
 # NJVL vs LLVM
@@ -976,269 +914,3 @@ Cfvars are not "modeling a program counter" - they're **naming boolean values** 
 3. Track assumptions about them in control flow branches
 
 The pc model looked appealing but solves the wrong problem. Control flow requires testing boolean conditions, and cfvars are the minimal abstraction for that.
-
-
-## Example: Complete Translation
-
-To illustrate NJVL in practice, here's a realistic function with exception handling, loops, and early returns:
-
-**Source code:**
-
-```nim
-proc processItems(items: seq[string]): int =
-  var count = 0
-  for item in items:
-    if item.len == 0:
-      raise newException(ValueError, "Empty item")
-    let processed = transform(item)
-    if processed.isNil:
-      return -1
-    count += 1
-  return count
-```
-
-**Translated to NJVL:**
-
-```
-(proc processItems.0
-  (params
-    (param items.0 seq[string]))
-  (result (v result.0 +0) int)
-
-  (stmts
-    # Initialize variables
-    (var (v count.0 +0) +0)
-    (var (v i.0 +0) +0)
-    (var (v len.0 +0) (call len.0 (v items.0 +0)))
-
-    # Exception flag (raised becomes cfvar retflag for return)
-    (var (v :raisedEx.0 +0) nil)
-    (var (v cfvar.retflag +0) false)
-
-    # Loop over items
-    (loop
-      (stmts)
-
-      # Condition: i < len
-      (lt (v i.0 +1) (v len.0 +0))
-
-      # Loop body
-      (stmts
-        # Get current item
-        (var (v item.0 +0) (at (v items.0 +0) (v i.0 +1)))
-
-        # Check if item is empty
-        (var (v itemLen.0 +0) (call len.0 (v item.0 +0)))
-        (asgn cfvar.0 (eq (v itemLen.0 +0) +0))
-
-        (ite cfvar.0
-          # Then: raise exception
-          (stmts
-            (asgn (v :raisedEx.0 +1)
-              (call newException.0 ValueError.0 "Empty item"))
-            (asgn cfvar.retflag +1) true)
-          # Else: continue
-          (stmts))
-
-        # Guard: if not returning/raising, continue processing
-        (ite cfvar.retflag
-          (stmts)  # Early exit path, do nothing
-          (stmts
-            # Transform the item
-            (var (v processed.0 +0) (call transform.0 (v item.0 +0)))
-
-            # Check if processed is nil
-            (asgn cfvar.1 (call isNil.0 (v processed.0 +0)))
-
-            (ite cfvar.1
-              # Then: early return with -1
-              (stmts
-                (asgn (v result.0 +1) -1)
-                (asgn cfvar.retflag +2) true)
-              # Else: increment count
-              (stmts
-                (asgn (v count.0 +2) (add (v count.0 +1) +1))))
-
-            (unknown (v count.0 +3))  # Join point from if-else
-          ))
-
-        # Increment loop counter
-        (asgn (v i.0 +2) (add (v i.0 +1) +1))
-
-        # Continue or exit loop
-        (ite cfvar.retflag
-          (stmts)  # Will break out of loop
-          (stmts
-            (continue
-              (either i.0 +1 +0 +2)
-              (either count.0 +1 +0 +3))))
-      )
-
-      # After loop
-      (stmts
-        # Set result to count if we didn't return early
-        (ite cfvar.retflag
-          (stmts)  # Result already set
-          (stmts
-            (asgn (v result.0 +2) (v count.0 +1))))
-
-        (unknown (v result.0 +3))
-
-        # Re-raise if exception occurred
-        (ite (call isNotNil.0 (v :raisedEx.0 +1))
-          (stmts (raise (v :raisedEx.0 +1)))
-          (stmts))
-
-        # Return result
-        (ret (v result.0 +3))
-      )
-    )
-  )
-)
-```
-
-**Comparison: Traditional SSA IR with Labels and Jumps:**
-
-For comparison, here's the same function in a traditional unstructured SSA IR with `lab`, `jmp`, and `phi` nodes:
-
-```
-(proc processItems.0
-  (params
-    (param items.0 seq[string]))
-  (result result.0 int)
-
-  (stmts
-    # Initialize variables
-    (var count.0 +0)
-    (var i.0 +0)
-    (var len.0 (call len.0 items.0))
-    (var raisedEx.0 nil)
-
-    (lab loop_start)
-    # Phi nodes for loop header
-    (phi count.1 count.0 count.2)  # count.1 = phi(count.0 from entry, count.2 from backedge)
-    (phi i.1 i.0 i.2)              # i.1 = phi(i.0 from entry, i.2 from backedge)
-
-    # Loop condition
-    (jmpif (ge i.1 len.0) loop_end)
-
-    # Get current item
-    (var item.0 (at items.0 i.1))
-
-    # Check if empty
-    (var itemLen.0 (call len.0 item.0))
-    (jmpif (neq itemLen.0 +0) not_empty)
-    (asgn raisedEx.1 (call newException.0 ValueError.0 "Empty item"))
-    (jmp exception_exit)
-
-    (lab not_empty)
-    # Transform item
-    (var processed.0 (call transform.0 item.0))
-    (jmpif (call isNotNil.0 processed.0) not_nil)
-    (var result.1 -1)
-    (ret result.1)
-
-    (lab not_nil)
-    # Increment count
-    (var count.2 (add count.1 +1))
-
-    # Increment loop counter
-    (var i.2 (add i.1 +1))
-    (jmp loop_start)
-
-    (lab loop_end)
-    # Return count
-    (var result.2 count.1)
-    (ret result.2)
-
-    (lab exception_exit)
-    (phi raisedEx.2 raisedEx.1)
-    (raise raisedEx.2)
-  )
-)
-```
-
-**Code size comparison:**
-- **Source**: 10 lines
-- **Traditional SSA IR with goto**: 150 tokens
-- **NJVL**: 293 tokens
-
-**Observations:**
-
-1. **Code size**: NJVL is **2x larger** than traditional SSA IR (293 vs 150 tokens). Both have versioning overhead, so the difference is purely from structured control flow.
-
-2. **Both use versioning**: Both IRs version variables (`count.0`, `count.1`, `count.2`). The versioning cost is similar.
-
-3. **Different merge mechanisms**:
-   - **Traditional SSA**: Uses `phi` nodes at labels to merge versions from different predecessors
-   - **NJVL**: Uses `either` at `continue` (explicit merge) or `unknown` at joins (abstract merge)
-
-   Both are explicit about where versions merge, but phi nodes require knowing predecessor labels while NJVL merges are self-contained
-
-4. **Control flow representation**:
-   - **Traditional SSA**: Direct jumps (`jmp`, `jmpif`) to labeled blocks - explicit CFG
-   - **NJVL**: Control flow variables + structured nesting - implicit CFG from structure
-
-5. **Early exits**:
-   - **Traditional SSA**: Direct `ret` or `jmp exception_exit` - requires duplicate cleanup at each exit
-   - **NJVL**: Set `cfvar.retflag`, guard subsequent code, single cleanup point - verbose but reduces duplication
-
-6. **Loop back-edges**:
-   - **Traditional SSA**: `(jmp loop_start)` + `(phi ...)` at label - CFG edges + merge
-   - **NJVL**: `(continue (either ...))` - merge encoded in back-edge
-
-**What does NJVL buy us for 1.6x code size?**
-
-Both IRs have SSA, so they're similar in optimization power. The key differences:
-
-- **Move analysis**:
-  - **NJVL**: Forward tree scan, structure guides traversal
-  - **Traditional SSA**: Must build CFG first, then scan
-
-- **CSE**: Both can deduplicate based on versions. Roughly equal.
-
-- **Contract verification**:
-  - **NJVL**: `(assume cfvar)` nodes automatically injected in branches
-  - **Traditional SSA**: Must analyze CFG dominance to infer which conditions hold
-
-- **Destructor injection**:
-  - **NJVL**: One destructor per scope at structured exit point
-  - **Traditional SSA**: Must insert destructors before every `ret`/`raise`/`jmp` that exits scope
-
-- **Induction variables**:
-  - **NJVL**: `(either i.0 +1 +0 +2)` explicitly shows loop-carried deps
-  - **Traditional SSA**: `(phi i.1 i.0 i.2)` also explicit, equivalent information
-
-**The trade-off:**
-
-NJVL is **2x larger** than traditional SSA IR (measured in tokens). The expansion buys:
-
-**The key benefit: No fixpoint computations needed.**
-
-Traditional SSA with CFG requires iterative dataflow analysis for many optimizations:
-- Dataflow facts propagate along CFG edges
-- Must iterate until reaching fixpoint (no more changes)
-- Each iteration re-analyzes the entire function
-- Convergence speed depends on CFG structure
-
-NJVL enables **single-pass or two-pass algorithms**:
-- Structured tree traversal sees all paths in order
-- Versioning makes dependencies explicit (no need to discover them)
-- Forward scan collects all needed information
-- No iteration needed - one traversal is sufficient
-
-Example: **Redundant condition elimination**
-- **Traditional SSA**: Iterate dataflow until all redundancies discovered
-- **NJVL**: Single CSE pass - versions immediately show when expressions are equivalent
-
-Example: **Move analysis**
-- **Traditional SSA**: Build CFG, compute live ranges, iterate until stable
-- **NJVL**: Forward scan from copy until version dies - done
-
-Other benefits:
-- **No CFG construction needed**: The tree structure IS the control flow
-- **Simpler destructor placement**: One exit point per scope
-- **Built-in assumptions**: Control flow automatically injects knowledge about conditions
-
-The 2x code size buys **algorithmic simplicity** - optimization passes are straightforward tree walks instead of complex fixpoint computations over CFGs.
-
