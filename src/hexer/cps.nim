@@ -560,14 +560,16 @@ proc isPassiveCall(c: var Context; n: PackedToken): bool =
       return true
   return false
 
-proc containsDelayX(c: var Context; n: Cursor): bool =
+proc findDelayX(c: var Context; n: Cursor): Cursor =
   var nested = 0
   var n = n
   while true:
     case n.kind
     of ParLe:
       if n.exprKind == DelayX:
-        return true
+        inc n
+        skip n # type
+        return n
       inc nested
     of ParRi:
       dec nested
@@ -576,7 +578,27 @@ proc containsDelayX(c: var Context; n: Cursor): bool =
     if nested == 0:
       break
     inc n
-  return false
+  return default(Cursor)
+
+proc skipButHandleGoto(c: var Context; n: var Cursor; nextLabel: var int) =
+  if n.kind == ParLe:
+    var nested = 0
+    while true:
+      inc n
+      case n.kind
+      of ParRi:
+        if nested == 0: break
+        dec nested
+      of ParLe: inc nested
+      of GotoInstr:
+        let diff = n.getInt28
+        let i = cursorToPosition(c.currentProc.cf, n)
+        if i+diff > 0 and i+diff < c.currentProc.cf.len and c.currentProc.reachable[i+diff]:
+          c.currentProc.labels[i+diff] = nextLabel
+          inc nextLabel
+      else:
+        discard
+  inc n
 
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
   c.currentProc.cf = toControlflow(iter, keepReturns = true)
@@ -608,15 +630,23 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           c.currentProc.labels[i+diff] = nextLabel
           inc nextLabel
     elif n.stmtKind == YldS or
-        (n.exprKind in CallKinds and isPassiveCall(c, n.firstSon.load)) or
-        containsDelayX(c, n):
+        (n.exprKind in CallKinds and isPassiveCall(c, n.firstSon.load)):
       let i = cursorToPosition(c.currentProc.cf, n)
       if c.currentProc.reachable[i]:
         # after a yield we also have a suspension point (a label):
-        var nested = 1
         c.currentProc.yieldConts[i] = nextLabel
         nextStmtIsLabel = true
-    skip n
+    else:
+      let d = findDelayX(c, n)
+      if not cursorIsNil(d):
+        let i = cursorToPosition(c.currentProc.cf, n)
+        if c.currentProc.reachable[i]:
+          # after a yield we also have a suspension point (a label):
+          c.currentProc.yieldConts[i] = nextLabel
+          let j = cursorToPosition(c.currentProc.cf, d)
+          c.currentProc.yieldConts[j] = nextLabel
+          nextStmtIsLabel = true
+    skipButHandleGoto(c, n, nextLabel)
 
   endRead c.currentProc.cf
 
