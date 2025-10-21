@@ -15,7 +15,12 @@ import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
 
-proc isComplex(n: Cursor): bool =
+type
+  Goal* = enum
+    ElimExprs   # normal mode: eliminate expressions
+    TowardsNjvl # goal mode: prepare for transformation into njvl
+
+proc isComplex(n: Cursor; goal: Goal): bool =
   var nested = 0
   var n = n
   while true:
@@ -31,12 +36,14 @@ proc isComplex(n: Cursor): bool =
         skip n
         if n.kind == ParRi:
           # ExprX with exactly one son might be harmless:
-          if isComplex(inner):
+          if isComplex(inner, goal):
             return true
         else:
           # More than one son is always complex:
           return true
         inc nested
+      elif goal == TowardsNjvl and n.exprKind in CallKinds:
+        return true
       else:
         inc n
         inc nested
@@ -48,7 +55,7 @@ proc isComplex(n: Cursor): bool =
 
 type
   Mode = enum
-    IsEmpty, IsAppend, IsIgnored
+    IsEmpty, IsAppend, IsIgnored, IsLabel
   Target = object
     m: Mode
     t: TokenBuf
@@ -56,6 +63,7 @@ type
     counter: int
     typeCache: TypeCache
     thisModuleSuffix: string
+    goal: Goal
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -73,7 +81,11 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
     copyTree dest, typ # type
     dest.addDotToken() # value
 
-proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo): SymId =
+type
+  BoolInitialValue = enum
+    IsFalse, IsTrue, IsUninitialized
+
+proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo; initialValue =IsUninitialized): SymId =
   let s = "`x." & $c.counter & "." & c.thisModuleSuffix
   inc c.counter
   result = pool.syms.getOrIncl(s)
@@ -82,7 +94,13 @@ proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo): 
     dest.addDotToken() # export, pragmas
     dest.addDotToken()
     copyTree dest, c.typeCache.builtins.boolType # type
-    dest.addDotToken() # value
+    case initialValue
+    of IsFalse:
+      copyIntoKind dest, FalseX, info: discard
+    of IsTrue:
+      copyIntoKind dest, TrueX, info: discard
+    of IsUninitialized:
+      dest.addDotToken() # value
 
 proc add(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
@@ -107,7 +125,7 @@ proc skipParRi(n: var Cursor) =
     error "expected ')', but got: ", n
 
 proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if isComplex(n):
+  if isComplex(n, c.goal):
     # `x or y`  <=> `if x: true else: y` <=> `if x: tmp = true else: tmp = y`
     let info = n.info
     var tmp = declareTempBool(c, dest, info)
@@ -133,7 +151,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       trExpr c, dest, n, tar
 
 proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if isComplex(n):
+  if isComplex(n, c.goal):
     # `x and y` <=> `if x: y else: false` <=> `if x: tmp = y else: tmp = false`
     let info = n.info
     var tmp = declareTempBool(c, dest, info)
@@ -167,6 +185,114 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n, tar
   dest.add tar
 
+proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool)
+
+type
+  CfVar = object
+    v: SymId # as variable
+    l: SymId # as label
+
+proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: PackedLineInfo): CfVar =
+  if tar.m == IsEmpty:
+    tar.m = IsLabel
+    let s = "`j." & $c.counter & "." & c.thisModuleSuffix
+    inc c.counter
+    result = CfVar(v: declareTempBool(c, dest, info, IsFalse), l: pool.syms.getOrIncl(s))
+    tar.t.add tagToken("jlab", info)
+    tar.t.addSymUse result.v, info
+    tar.t.addSymUse result.l, info
+    tar.t.addParRi()
+  else:
+    assert tar.m == IsLabel
+    result = CfVar(v: tar.t[1].symId, l: tar.t[2].symId)
+
+proc useCfVar(dest: var TokenBuf; cf: CfVar; info: PackedLineInfo) =
+  dest.add tagToken("jtrue", info)
+  dest.addSymUse cf.v, info
+  dest.addSymUse cf.l, info
+  dest.addParRi()
+
+proc trCondAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  # `x and y` <=>
+  # var tmp = false
+  # if x:
+  #   if y: tmp = true | goto label
+  let info = n.info
+  let cf = makeCfVar(c, dest, tar, info)
+
+  inc n
+
+  var aa = Target(m: IsEmpty)
+  trCond c, dest, n, aa, true
+
+  copyIntoKind dest, IfS, info:
+    copyIntoKind dest, ElifU, info:
+      dest.add aa                # if x
+      copyIntoKind dest, StmtsS, info:
+        var bb = Target(m: IsEmpty)
+        trCond c, dest, n, bb, true
+        copyIntoKind dest, IfS, info:
+          copyIntoKind dest, ElifU, info:
+            dest.add bb                # if y
+            copyIntoKind dest, StmtsS, info:
+              useCfVar dest, cf, info
+
+  skipParRi n
+
+proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  # `x or y` <=>
+  # var tmp = false
+  # if x:
+  #   tmp = true / goto label
+  # else:
+  #   if y:
+  #     tmp = true / goto label
+  let info = n.info
+  let cf = makeCfVar(c, dest, tar, info)
+
+  inc n
+
+  var aa = Target(m: IsEmpty)
+  trCond c, dest, n, aa, true
+
+  copyIntoKind dest, IfS, info:
+    copyIntoKind dest, ElifU, info:
+      dest.add aa                # if x
+      copyIntoKind dest, StmtsS, info:
+        useCfVar dest, cf, info
+    # Watch out, we cannot use an ELifU here directly because `bb` can
+    # have side effects!
+    copyIntoKind dest, ElseU, info:
+      copyIntoKind dest, StmtsS, info:
+        var bb = Target(m: IsEmpty)
+        trCond c, dest, n, bb, true
+        copyIntoKind dest, IfS, info:
+          copyIntoKind dest, ElifU, info:
+            dest.add bb                # if y
+            copyIntoKind dest, StmtsS, info:
+              useCfVar dest, cf, info
+
+  skipParRi n
+
+proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
+  assert tar.m == IsEmpty
+  if c.goal == TowardsNjvl:
+    case n.exprKind
+    of AndX:
+      if isComplex(n, c.goal) or mustUseLabel:
+        trCondAnd c, dest, n, tar
+      else:
+        trAnd c, dest, n, tar
+    of OrX:
+      if isComplex(n, c.goal) or mustUseLabel:
+        trCondOr c, dest, n, tar
+      else:
+        trOr c, dest, n, tar
+    else:
+      trExpr c, dest, n, tar
+  else:
+    trExpr c, dest, n, tar
+
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # if cond: a elif condB: b else: c
   # -->
@@ -192,7 +318,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     of ElifU:
       var t0 = Target(m: IsEmpty)
       inc n
-      trExpr c, dest, n, t0
+      trCond c, dest, n, t0, false
 
       dest.add head
       inc toClose
@@ -300,11 +426,11 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.copyInto n:
-    if isComplex(n):
+    if isComplex(n, c.goal):
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
         var tar = Target(m: IsEmpty)
-        trExpr c, dest, n, tar
+        trCond c, dest, n, tar, false
         dest.copyIntoKind IfS, info:
           dest.copyIntoKind ElifU, info:
             dest.add tar
@@ -459,8 +585,8 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   of ParRi:
     bug "unexpected ')' inside"
 
-proc lowerExprs*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+proc lowerExprs*(n: Cursor; moduleSuffix: string; goal = ElimExprs): TokenBuf =
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, goal: goal)
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var n = n

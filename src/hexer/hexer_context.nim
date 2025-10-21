@@ -91,9 +91,6 @@ proc error*(e: var EContext; msg: string) {.noreturn.} =
   quit 1
 
 
-proc tagToken*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
-  parLeToken(pool.tags.getOrIncl(tag), info)
-
 proc takeParRi*(e: var EContext; c: var Cursor) =
   if c.kind == ParRi:
     e.dest.add c

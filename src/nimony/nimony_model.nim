@@ -140,6 +140,9 @@ proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind
 proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind; info = NoLineInfo): PackedToken =
   parLeToken(cast[TagId](kind), info)
 
+proc tagToken*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
+  parLeToken(pool.tags.getOrIncl(tag), info)
+
 template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
                        info: PackedLineInfo; body: untyped) =
   dest.add parLeToken(kind, info)
