@@ -22,12 +22,10 @@ type
     version: int # version of the guard that is active or -1 if inactive
     negate: bool
 
-  CurrentBlock* {.acyclic.} = ref object
-    parent: CurrentBlock
-
   CurrentProc = object
     addrTaken: HashSet[SymId]
     retFlag: SymId
+    resultSym: SymId
     guards: seq[Guard]
     tmpCounter: int
 
@@ -110,6 +108,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       trParams c, r.params
       let info = n.info
+      setupProc c, n
       copyIntoKind dest, StmtsS, info:
         openScope c
         declareCfVar dest, c.current.retFlag
@@ -247,6 +246,8 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
     let symId = n.symId
+    if kind == ResultY:
+      c.current.resultSym = symId
     c.typeCache.takeLocalHeader(dest, n, kind)
     trExpr c, dest, n
     if not c.current.addrTaken.contains(symId):
@@ -256,15 +257,18 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert c.current.guards.len > 0
 
-  var entries = 1 # only care about the inner most
+  var entries = 0 # only care about the inner most
   inc n
   if n.kind != ParRi:
     if n.kind == DotToken:
       inc n
+      inc entries
     elif n.kind == Symbol:
       for i in countdown(c.current.guards.len - 1, 0):
         if c.current.guards[i].blockName == n.symId: break
         inc entries
+    else:
+      bug "invalid `break` structure"
 
   for i in 1..entries:
     let g = addr c.current.guards[c.current.guards.len - i]
@@ -393,7 +397,20 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n
       skipParRi n
     else:
-      bug "return should not have a value"
+      assert c.current.resultSym != NoSymId, "could not find `result` symbol"
+      dest.add tagToken("asgn", info)
+      dest.add tagToken("v", info)
+      dest.addSymUse c.current.resultSym, info
+      let vAt = dest.len
+      dest.addIntLit 1, info
+      trExpr c, dest, n
+      newValueFor c.vt, c.current.resultSym
+      let v = c.vt.getVersion(c.current.resultSym)
+      # patch the version after we handled the expression, see also the remark for trAsgn.
+      # The new version is active after the assignment, not during it.
+      if v != 1:
+        dest[vAt] = intToken(pool.integers.getOrIncl(v), info)
+      dest.addParRi()
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
   case n.stmtKind
@@ -415,7 +432,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=
     trIf c, dest, n
   of WhileS:
     trWhile c, dest, n
-  of LocalDecls - {ResultS}:
+  of LocalDecls:
     trLocal c, dest, n
   of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
     trProcDecl c, dest, n
