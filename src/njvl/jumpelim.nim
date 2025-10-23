@@ -18,6 +18,7 @@ import versiontabs
 type
   Guard = object
     cond: SymId
+    blockName: SymId # used for named `block` statements
     version: int # version of the guard that is active or -1 if inactive
     negate: bool
 
@@ -60,6 +61,15 @@ proc addKill(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   dest.addSymUse s, info
   dest.addParRi()
 
+proc openScope(c: var Context) =
+  c.typeCache.openScope()
+
+proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  # insert kill instructions:
+  for s in c.typeCache.currentScopeLocals:
+    dest.addKill(s, info)
+  c.typeCache.closeScope()
+
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false)
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
@@ -101,8 +111,11 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trParams c, r.params
       let info = n.info
       copyIntoKind dest, StmtsS, info:
+        openScope c
         declareCfVar dest, c.current.retFlag
         trStmt c, dest, n, true
+        # XXX Declare return label here
+        closeScope c, dest, info
       c.typeCache.closeScope()
     else:
       takeTree dest, n
@@ -201,14 +214,18 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   trExpr c, dest, n
   openSection c.vt
+  openScope c
   trStmt c, dest, n
+  closeScope c, dest, info
   closeSection c.vt
   skipParRi n
   openSection c.vt
   if n.kind != ParRi:
     assert n.substructureKind == ElseU
     inc n
+    openScope c
     trStmt c, dest, n
+    closeScope c, dest, info
     skipParRi n
   closeSection c.vt
   skipParRi n
@@ -238,12 +255,58 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert c.current.guards.len > 0
-  var g = addr c.current.guards[c.current.guards.len - 1]
 
-  dest.add tagToken("jtrue", n.info)
-  dest.addSymUse g.cond, n.info
-  dest.addParRi()
-  g.version = c.vt.getVersion(g.cond)
+  var entries = 1 # only care about the inner most
+  inc n
+  if n.kind != ParRi:
+    if n.kind == DotToken:
+      inc n
+    elif n.kind == Symbol:
+      for i in countdown(c.current.guards.len - 1, 0):
+        if c.current.guards[i].blockName == n.symId: break
+        inc entries
+
+  for i in 1..entries:
+    let g = addr c.current.guards[c.current.guards.len - i]
+    dest.add tagToken("jtrue", n.info)
+    dest.addSymUse g.cond, n.info
+    dest.addParRi()
+    g.version = c.vt.getVersion(g.cond)
+
+  skipParRi n
+
+proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
+  inc c.current.tmpCounter
+
+  declareCfVar dest, guard
+  inc n # "block"
+  let blockName = if n.kind == SymbolDef: n.symId else: NoSymId
+  inc n # name or empty
+  openScope c
+  c.current.guards.add Guard(cond: guard, version: -1, negate: false, blockName: blockName)
+  let myGuardAt = c.current.guards.len - 1
+
+  assert n.stmtKind == StmtsS
+  var usedGuard = false
+  while n.kind != ParRi:
+    let v = c.current.guards[myGuardAt].version
+    if v >= 0:
+      # the rest of the block body must be protected by the guard:
+      dest.add tagToken("ite", n.info)
+      dest.addSymUse guard, n.info
+      c.current.guards[myGuardAt].version = -1 # but only once
+      dest.addParLe StmtsS, n.info # then section
+      usedGuard = true
+    trStmt c, dest, n
+
+  if usedGuard:
+    dest.addParRi() # then section of ite
+    dest.addDotToken() # no else section
+    dest.addParRi() # "ite"
+  c.current.guards.shrink(myGuardAt)
+  closeScope c, dest, n.info
+
 
 proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openSection c.vt
@@ -262,6 +325,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addSymUse guard, n.info # condition is always our artifical guard
 
   dest.addParLe StmtsS, n.info # loop body
+  openScope c
   var usedGuard = false
   while n.kind != ParRi:
     let v = c.current.guards[myGuardAt].version
@@ -279,6 +343,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addDotToken() # no else section
     dest.addParRi() # "ite"
 
+  closeScope c, dest, n.info
   c.current.guards.shrink(myGuardAt)
 
   # last statement of our loop body is the `continue`:
@@ -332,7 +397,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
   case n.stmtKind
-  of StmtsS:
+  of StmtsS, ScopeS:
     # flat nested statements list:
     if not parentIsStmtList:
       dest.takeToken n
@@ -344,22 +409,6 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=
       dest.takeToken n # ParRi
     else:
       inc n
-  of ScopeS:
-    let info = n.info
-    c.typeCache.openScope()
-    if not parentIsStmtList:
-      dest.addParLe StmtsS, info
-    inc n
-    while n.kind != ParRi:
-      trStmt(c, dest, n, true)
-    inc n # ParRi
-    # insert kill instructions:
-    for s in c.typeCache.currentScopeLocals:
-      dest.addKill(s, info)
-    c.typeCache.closeScope()
-    if not parentIsStmtList:
-      dest.addParRi()
-
   of AsgnS:
     trAsgn c, dest, n
   of IfS:
@@ -372,6 +421,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=
     trProcDecl c, dest, n
   of RetS:
     trRet c, dest, n
+  of BreakS:
+    trBreak c, dest, n
+  of BlockS:
+    trBlock c, dest, n
   of TemplateS, TypeS:
     takeTree dest, n
   else:
