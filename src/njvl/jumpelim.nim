@@ -10,20 +10,32 @@
 ## Compiles Nimony IR to a simpler IR called [NJVL](doc/njvl.md) that does not contain jumps.
 
 import std / [assertions]
-include nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
+include ".." / lib / nifprelude
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typenav]
 import ".." / hexer / [xelim]
+import versiontabs
 
 type
   Guard = object
     cond: SymId
     negate: bool
 
+  CurrentBlock* {.acyclic.} = ref object
+    parent: CurrentBlock
+
+  Context* = object
+    typeCache: TypeCache
+    counter: int
+    thisModuleSuffix: string
+    current: CurrentBlock
+    vt: VersionTab
+
 proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, vt: createVersionTab())
   c.typeCache.openScope()
   result = createTokenBuf(300)
-  var n = n
+  var elimExprs = lowerExprs(n, moduleSuffix, TowardsNjvl)
+  var n = beginRead(elimExprs)
   assert n.stmtKind == StmtsS, $n.kind
   result.add n
   inc n
@@ -31,6 +43,7 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
     trStmt c, result, n
   result.addParRi()
   c.typeCache.closeScope()
+  endRead elimExprs
   #echo "PRODUCED: ", result.toString(false)
 
 when isMainModule:
