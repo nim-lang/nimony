@@ -12,7 +12,7 @@
 ## `let tmp; if cond: tmp = 3 else: temp = 4; let x = tmp`
 
 import std / [assertions]
-include nifprelude
+include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
 
 type

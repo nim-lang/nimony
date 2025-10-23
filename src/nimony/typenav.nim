@@ -10,7 +10,7 @@
 ## A type navigator can recompute the type of an expression.
 
 import std/assertions
-include nifprelude
+include ".." / lib / nifprelude
 
 import std/tables
 from std/strutils import endsWith
@@ -52,6 +52,9 @@ proc openScope*(c: var TypeCache; kind = OtherScope) =
 
 proc closeScope*(c: var TypeCache) =
   c.current = c.current.parent
+
+iterator currentScopeLocals*(c: var TypeCache): SymId =
+  for s in c.current.locals.keys: yield s
 
 proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   if params.kind == ParLe:

@@ -10,15 +10,19 @@
 ## Move analyser.
 import std / [assertions]
 
-include nifprelude
+include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, controlflow, programs]
 
-proc rootOf*(n: Cursor; beStrict = false): SymId =
+type
+  RootOfMode* = enum
+    CanFollowDerefs, CannotFollowDerefs, CanFollowCalls
+
+proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
   var n = n
   while true:
     case n.exprKind
     of DerefX, HderefX, PatX:
-      if beStrict:
+      if mode == CannotFollowDerefs:
         break
       inc n
     of DotX, TupatX, AtX, ArrAtX, AddrX, HaddrX:
@@ -30,6 +34,14 @@ proc rootOf*(n: Cursor; beStrict = false): SymId =
       inc n
       skip n # type part
       skip n # skip intlit
+    of CallKinds:
+      if mode == CanFollowCalls:
+        inc n
+        skip n # skip fn and continue with the first argument.
+        # This is exactly what we want for `addr mgetorPut(table, key)` so
+        # that we can mark `table` as aliased.
+      else:
+        break
     else:
       break
   if n.kind == Symbol:
