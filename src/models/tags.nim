@@ -166,7 +166,7 @@ type
     VTagId
     UnknownTagId
     JtrueTagId
-    JlabTagId
+    CfvarTagId
     EitherTagId
     JoinTagId
     GraphTagId
@@ -481,7 +481,7 @@ const
     ("v", 161),
     ("unknown", 162),
     ("jtrue", 163),
-    ("jlab", 164),
+    ("cfvar", 164),
     ("either", 165),
     ("join", 166),
     ("graph", 167),

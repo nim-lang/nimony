@@ -107,7 +107,7 @@ is translated into:
       (asgn (v x.0 +2) 2)
     )
     (stmts
-      (join (v x.0 +3) (v x.0 +1) (v x.0 +2))
+      (join x.0 +3 +1 +2)
     )
   )
   (call use.0 (v x.0 +3))
@@ -312,6 +312,8 @@ Function calls cannot be used in conditions either, because they are not side-ef
 
 The NIF tag `cfvar` is used to declare a new control flow variable. It is always of type `bool` and initialized to `false`.
 A `cfvar` can only be set to `true` by a `jtrue` instruction and tested inside a condition of an `ite` or `loop` statement!
+
+**A cfvar has a monotonic behavior - once set to true, cfvars stay true!**
 
 Right before code generation the `cfvar`s can be replaced by jumps without much analysis effort. For example we know that they do not have to be materialized as they cannot be passed to functions etc.
 
