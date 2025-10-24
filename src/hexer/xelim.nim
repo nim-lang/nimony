@@ -81,11 +81,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
     copyTree dest, typ # type
     dest.addDotToken() # value
 
-type
-  BoolInitialValue = enum
-    IsFalse, IsTrue, IsUninitialized
-
-proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo; initialValue =IsUninitialized): SymId =
+proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo): SymId =
   let s = "`x." & $c.counter & "." & c.thisModuleSuffix
   inc c.counter
   result = pool.syms.getOrIncl(s)
@@ -94,13 +90,7 @@ proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo; i
     dest.addDotToken() # export, pragmas
     dest.addDotToken()
     copyTree dest, c.typeCache.builtins.boolType # type
-    case initialValue
-    of IsFalse:
-      copyIntoKind dest, FalseX, info: discard
-    of IsTrue:
-      copyIntoKind dest, TrueX, info: discard
-    of IsUninitialized:
-      dest.addDotToken() # value
+    dest.addDotToken() # value
 
 proc add(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
@@ -190,33 +180,33 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
 type
   CfVar = object
     v: SymId # as variable
-    l: SymId # as label
 
 proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: PackedLineInfo): CfVar =
   if tar.m == IsEmpty:
     tar.m = IsLabel
     let s = "`j." & $c.counter & "." & c.thisModuleSuffix
     inc c.counter
-    result = CfVar(v: declareTempBool(c, dest, info, IsFalse), l: pool.syms.getOrIncl(s))
-    tar.t.add tagToken("jlab", info)
+
+    result = CfVar(v: pool.syms.getOrIncl(s))
+    dest.add tagToken("cfvar", info)
+    dest.addSymUse result.v, info
+    dest.addParRi()
+
     tar.t.addSymUse result.v, info
-    tar.t.addSymUse result.l, info
-    tar.t.addParRi()
   else:
     assert tar.m == IsLabel
-    result = CfVar(v: tar.t[1].symId, l: tar.t[2].symId)
+    result = CfVar(v: tar.t[0].symId)
 
 proc useCfVar(dest: var TokenBuf; cf: CfVar; info: PackedLineInfo) =
   dest.add tagToken("jtrue", info)
   dest.addSymUse cf.v, info
-  dest.addSymUse cf.l, info
   dest.addParRi()
 
 proc trCondAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # `x and y` <=>
   # var tmp = false
   # if x:
-  #   if y: tmp = true | goto label
+  #   if y: jtrue
   let info = n.info
   let cf = makeCfVar(c, dest, tar, info)
 
@@ -243,10 +233,10 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
   # `x or y` <=>
   # var tmp = false
   # if x:
-  #   tmp = true / goto label
+  #   jtrue tmp
   # else:
   #   if y:
-  #     tmp = true / goto label
+  #     jtrue tmp
   let info = n.info
   let cf = makeCfVar(c, dest, tar, info)
 

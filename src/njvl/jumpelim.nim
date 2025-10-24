@@ -82,8 +82,7 @@ type
   Guard = object
     cond: SymId
     blockName: SymId # used for named `block` statements
-    version: int # version of the guard that is active or -1 if inactive
-    negate: bool
+    active: bool
 
   CurrentProc = object
     addrTaken: HashSet[SymId]
@@ -142,33 +141,26 @@ proc trParams(c: var Context; params: Cursor) =
       c.vt.newValueFor r.name.symId # register parameter as known location
 
 proc declareCfVar(dest: var TokenBuf; s: SymId) =
-  dest.addParLe VarS, NoLineInfo
-  dest.add tagToken("v", NoLineInfo)
+  dest.add tagToken("cfvar", NoLineInfo)
   dest.addSymDef s, NoLineInfo
-  dest.addIntLit 0, NoLineInfo
-  dest.addParRi() # "v"
-  dest.addDotToken() # export marker
-  dest.addDotToken() # pragmas
-  dest.addParPair BoolT, NoLineInfo
-  dest.addParPair FalseX, NoLineInfo
   dest.addParRi()
 
 proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
-  var usedGuard = (-1, -1)
+  var usedGuard = -1
   for i in countdown(c.current.guards.len - 1, 0):
     let g = addr c.current.guards[i]
-    if g.version >= 0:
+    if g.active:
       dest.add tagToken("ite", n.info)
       dest.copyIntoKind NotX, n.info:
         dest.addSymUse g.cond, n.info
-      usedGuard = (i, g.version)
-      g.version = -1 # disable
+      usedGuard = i
+      g.active = false # disable
       dest.addParLe StmtsS, n.info # then section
       break
-  trStmt c, dest, n, parentIsStmtList or (usedGuard[0] >= 0)
-  if usedGuard[0] >= 0:
+  trStmt c, dest, n, parentIsStmtList or (usedGuard >= 0)
+  if usedGuard >= 0:
     # enable again as we are not under the guard anymore:
-    c.current.guards[usedGuard[0]].version = usedGuard[1]
+    c.current.guards[usedGuard].active = true
     dest.addParRi() # then section of ite
     dest.addDotToken() # no else section
     dest.addParRi() # "ite"
@@ -179,8 +171,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let oldProc = move c.current
   c.current = CurrentProc(tmpCounter: 1)
   let retFlag = pool.syms.getOrIncl("´r.0")
-  c.vt.newValueFor retFlag
-  c.current.guards.add Guard(cond: retFlag, version: -1, negate: false)
+  c.current.guards.add Guard(cond: retFlag, active: false)
 
   copyInto(dest, n):
     let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
@@ -356,7 +347,7 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   for i in 1..entries:
     let g = addr c.current.guards[c.current.guards.len - i]
     dest.addSymUse g.cond, n.info
-    g.version = c.vt.getVersion(g.cond)
+    g.active = true
   dest.addParRi()
   skipParRi n
 
@@ -369,7 +360,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let blockName = if n.kind == SymbolDef: n.symId else: NoSymId
   inc n # name or empty
   openScope c
-  c.current.guards.add Guard(cond: guard, version: -1, negate: false, blockName: blockName)
+  c.current.guards.add Guard(cond: guard, active: false, blockName: blockName)
   let myGuardAt = c.current.guards.len - 1
 
   trGuardedStmts c, dest, n, false
@@ -387,7 +378,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc c.current.tmpCounter
 
   declareCfVar dest, guard
-  c.current.guards.add Guard(cond: guard, version: -1, negate: false)
+  c.current.guards.add Guard(cond: guard, active: false)
   let myGuardAt = c.current.guards.len - 1
 
   dest.addParRi() # "stmts" that is the pre-condition body
@@ -453,7 +444,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   for i in countdown(c.current.guards.len - 1, 0):
     let cond = c.current.guards[i].cond
     assert cond != NoSymId
-    c.current.guards[i].version = c.vt.getVersion(cond)
+    c.current.guards[i].active = true
     dest.addSymUse cond, info
 
   dest.addParRi()

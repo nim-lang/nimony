@@ -20,7 +20,7 @@ NJVL is good for:
 
 NJVL is subtle, but works for:
 
-- Continuation passing style ("CPS"). The required labels only implied but remain recoverable.
+- Continuation passing style ("CPS"). The required labels are implied only but remain recoverable.
 
 ## Tags
 
