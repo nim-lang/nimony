@@ -162,8 +162,7 @@
 | `(loop S X S S)` | NjvlKind | `loop` components are (before-cond, cond, loop-body, after) |
 | `(v X INT_LIT)` | NjvlKind | `versioned` locations |
 | `(unknown X)` | NjvlKind | location's contents is unknown at this point |
-| `(jtrue X Y)` | NjvlKind | set `X` to `(true)`; hint this should become a jump |
-| `(jfalse X Y)` | NjvlKind | set `X` to `(true)`; hint this should become a jump |
+| `(jtrue Y+)` | NjvlKind | set variables v1, v2, ... to `(true)`; hint this should become a jump |
 | `(jlab X Y)` | NjvlKind | labelled condition |
 | `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(join Y INT_LIT INT_LIT INT_LIT)` | NimonyOther | `join` construct inside `ite` |

@@ -15,6 +15,69 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typenav]
 import ".." / hexer / [xelim, mover]
 import versiontabs
 
+#[
+Introducing cfvars is more complex than it looks.
+
+Consider:
+
+while true:
+  if cond:
+    if condB:
+      break
+    more()
+  code()
+
+# --> not only does `while` have to understand `break`, also the outer `if` is affected!
+
+while true:
+  if cond:
+    if condB:
+      jtrue loopGuard
+    if not loopGuard:
+      more()
+  if not loopGuard:
+    code()
+
+It gets slightly worse:
+
+while true:
+  if cond:
+    if condB:
+      break
+    else:
+      return
+    more()
+  code()
+
+# --->
+
+while true:
+  if cond:
+    if condB:
+      jtrue loopGuard
+    else:
+      jtrue loopGuard, retFlag
+    if not loopGuard:
+      more()
+  if not loopGuard:
+    code()
+
+We solve this problem in the `trGuardedStmts` proc. The `jtrue` instruction
+can now set multiple guards at once and we ensure that leaving an outer block
+also always implies leaving all inner blocks! This way we can always use a single guard
+condition and do not have to synthesize one with `or`!
+
+# Example Analysis
+
+while true:           # loopGuard
+  if cond:            # ifGuard
+    if condB:         # innerGuard
+      break           # Sets: loopGuard=true, ifGuard=true, innerGuard=true
+    more()            # This should be guarded by ifGuard (not innerGuard)
+  code()              # This should be guarded by loopGuard (not ifGuard)
+
+]#
+
 type
   Guard = object
     cond: SymId
@@ -24,7 +87,6 @@ type
 
   CurrentProc = object
     addrTaken: HashSet[SymId]
-    retFlag: SymId
     resultSym: SymId
     guards: seq[Guard]
     tmpCounter: int
@@ -91,13 +153,34 @@ proc declareCfVar(dest: var TokenBuf; s: SymId) =
   dest.addParPair FalseX, NoLineInfo
   dest.addParRi()
 
+proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
+  var usedGuard = (-1, -1)
+  for i in countdown(c.current.guards.len - 1, 0):
+    let g = addr c.current.guards[i]
+    if g.version >= 0:
+      dest.add tagToken("ite", n.info)
+      dest.copyIntoKind NotX, n.info:
+        dest.addSymUse g.cond, n.info
+      usedGuard = (i, g.version)
+      g.version = -1 # disable
+      dest.addParLe StmtsS, n.info # then section
+      break
+  trStmt c, dest, n, parentIsStmtList or (usedGuard[0] >= 0)
+  if usedGuard[0] >= 0:
+    # enable again as we are not under the guard anymore:
+    c.current.guards[usedGuard[0]].version = usedGuard[1]
+    dest.addParRi() # then section of ite
+    dest.addDotToken() # no else section
+    dest.addParRi() # "ite"
+
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
   let oldProc = move c.current
   c.current = CurrentProc(tmpCounter: 1)
-  c.current.retFlag = pool.syms.getOrIncl("´r.0")
-  c.vt.newValueFor c.current.retFlag
+  let retFlag = pool.syms.getOrIncl("´r.0")
+  c.vt.newValueFor retFlag
+  c.current.guards.add Guard(cond: retFlag, version: -1, negate: false)
 
   copyInto(dest, n):
     let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
@@ -111,9 +194,8 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       setupProc c, n
       copyIntoKind dest, StmtsS, info:
         openScope c
-        declareCfVar dest, c.current.retFlag
-        trStmt c, dest, n, true
-        # XXX Declare return label here
+        declareCfVar dest, retFlag
+        trGuardedStmts c, dest, n, true
         closeScope c, dest, info
       c.typeCache.closeScope()
     else:
@@ -179,7 +261,6 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi:
         trExpr c, dest, n
       dest.takeToken n
-
   of ParRi: bug "Unmatched ParRi"
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -214,7 +295,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trExpr c, dest, n
   openSection c.vt
   openScope c
-  trStmt c, dest, n
+  trGuardedStmts c, dest, n
   closeScope c, dest, info
   closeSection c.vt
   skipParRi n
@@ -223,7 +304,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
     assert n.substructureKind == ElseU
     inc n
     openScope c
-    trStmt c, dest, n
+    trGuardedStmts c, dest, n
     closeScope c, dest, info
     skipParRi n
   closeSection c.vt
@@ -270,13 +351,12 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       bug "invalid `break` structure"
 
+  dest.add tagToken("jtrue", n.info)
   for i in 1..entries:
     let g = addr c.current.guards[c.current.guards.len - i]
-    dest.add tagToken("jtrue", n.info)
     dest.addSymUse g.cond, n.info
-    dest.addParRi()
     g.version = c.vt.getVersion(g.cond)
-
+  dest.addParRi()
   skipParRi n
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -291,23 +371,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.current.guards.add Guard(cond: guard, version: -1, negate: false, blockName: blockName)
   let myGuardAt = c.current.guards.len - 1
 
-  assert n.stmtKind == StmtsS
-  var usedGuard = false
-  while n.kind != ParRi:
-    let v = c.current.guards[myGuardAt].version
-    if v >= 0:
-      # the rest of the block body must be protected by the guard:
-      dest.add tagToken("ite", n.info)
-      dest.addSymUse guard, n.info
-      c.current.guards[myGuardAt].version = -1 # but only once
-      dest.addParLe StmtsS, n.info # then section
-      usedGuard = true
-    trStmt c, dest, n
-
-  if usedGuard:
-    dest.addParRi() # then section of ite
-    dest.addDotToken() # no else section
-    dest.addParRi() # "ite"
+  trGuardedStmts c, dest, n, false
   c.current.guards.shrink(myGuardAt)
   closeScope c, dest, n.info
 
@@ -330,22 +394,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   dest.addParLe StmtsS, n.info # loop body
   openScope c
-  var usedGuard = false
-  while n.kind != ParRi:
-    let v = c.current.guards[myGuardAt].version
-    if v >= 0:
-      # the rest of the loop body must be protected by the guard:
-      dest.add tagToken("ite", n.info)
-      dest.addSymUse guard, n.info
-      c.current.guards[myGuardAt].version = -1 # but only once
-      dest.addParLe StmtsS, n.info # then section
-      usedGuard = true
-    trStmt c, dest, n
-
-  if usedGuard:
-    dest.addParRi() # then section of ite
-    dest.addDotToken() # no else section
-    dest.addParRi() # "ite"
+  trGuardedStmts c, dest, n, false
 
   closeScope c, dest, n.info
   c.current.guards.shrink(myGuardAt)
@@ -383,12 +432,15 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add tagToken("jtrue", info)
-  dest.addSymUse c.current.retFlag, info
+  # we also need to break out of everything:
+  for i in countdown(c.current.guards.len - 1, 0):
+    let cond = c.current.guards[i].cond
+    assert cond != NoSymId
+    c.current.guards[i].version = c.vt.getVersion(cond)
+    dest.addSymUse cond, info
+
   dest.addParRi()
   inc n
-  # we also need to break out of all loops currently active:
-  for i in countdown(c.current.guards.len - 1, 0):
-    c.current.guards[i].version = c.vt.getVersion(c.current.guards[i].cond)
 
   if n.kind == ParRi:
     inc n
