@@ -313,12 +313,13 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe StmtsS, info
   let joinData = combineJoin(c.vt, IfJoin)
   for s, j in joinData:
-    dest.add tagToken("join", info)
-    dest.addSymUse s, info
-    dest.addIntLit j.newv, info
-    dest.addIntLit j.old1, info
-    dest.addIntLit j.old2, info
-    dest.addParRi()
+    if isValid(j):
+      dest.add tagToken("join", info)
+      dest.addSymUse s, info
+      dest.addIntLit j.newv, info
+      dest.addIntLit j.old1, info
+      dest.addIntLit j.old2, info
+      dest.addParRi()
 
   dest.addParRi() # join information
   dest.addParRi() # "ite"
@@ -406,12 +407,13 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `either` seems to be flawed as we need a new version after the loop
   # as we don't know if the loop ran a single time or not!
   for s, j in joinData:
-    dest.add tagToken("join", n.info)
-    dest.addSymUse s, n.info
-    dest.addIntLit j.newv, n.info
-    dest.addIntLit j.old1, n.info
-    dest.addIntLit j.old2, n.info
-    dest.addParRi()
+    if isValid(j):
+      dest.add tagToken("join", n.info)
+      dest.addSymUse s, n.info
+      dest.addIntLit j.newv, n.info
+      dest.addIntLit j.old1, n.info
+      dest.addIntLit j.old2, n.info
+      dest.addParRi()
   dest.addParRi() # Continue statement
 
   dest.addParRi() # close loop body
