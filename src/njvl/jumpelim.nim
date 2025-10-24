@@ -427,7 +427,22 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhileTrue c, dest, n
     dest.addParRi() # close "loop"
   else:
-    bug "unimplemented `while` loop structure"
+    # translate `while cond: body` to `while true: if cond: body else: break`
+    # as it's too complex to handle otherwise.
+    let info = n.info
+    var w = createTokenBuf(10)
+    w.copyIntoKind StmtsS, info:
+      w.copyIntoKind IfS, info:
+        w.copyIntoKind ElifU, info:
+          w.takeTree n # condition
+          w.takeTree n # body
+          skipParRi n
+        w.copyIntoKind ElseU, info:
+          w.copyIntoKind StmtsS, info:
+            w.addParPair BreakS, info
+    var ww = beginRead(w)
+    trWhileTrue c, dest, ww
+    endRead w
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
