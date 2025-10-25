@@ -278,33 +278,74 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeScope c, dest, n.info
 
 
-proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc findBreakSplitPoint(n: Cursor): int =
+  # search for pattern `if cond: break` as all statements before that
+  # can be considered to be part of the pre-condition of the loop.
+  var n = n
   assert n.stmtKind == StmtsS
-  dest.takeToken n
+  inc n # stmtList
+  result = 0
+  while n.kind != ParRi:
+    if n.stmtKind == IfS:
+      inc n
+      assert n.substructureKind == ElifU
+      inc n
+      skip n
+      if n.stmtKind == StmtsS:
+        inc n
+        if n.stmtKind == BreakS:
+          skip n
+          if n.kind == ParRi:
+            return result
 
+    inc result
+    # skip the statement but if we find any break at this point, we don't understand the structure
+    # well enough and bail out:
+    if n.kind == ParLe:
+      var nested = 0
+      while true:
+        inc n
+        if n.kind == ParRi:
+          if nested == 0: break
+          dec nested
+        elif n.kind == ParLe:
+          inc nested
+          if n.stmtKind == BreakS: return -1
+    inc n
+  result = -1
+
+proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
   let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
   inc c.current.tmpCounter
-
-  declareCfVar dest, guard
-  c.current.guards.add Guard(cond: guard, active: false)
-  let myGuardAt = c.current.guards.len - 1
-
-  dest.addParRi() # "stmts" that is the pre-condition body
-  dest.addSymUse guard, n.info # condition is always our artifical guard
-
-  dest.addParLe StmtsS, n.info # loop body
   openScope c
-  trGuardedStmts c, dest, n, true
 
-  closeScope c, dest, n.info
+  dest.copyIntoKind StmtsS, info:
+    declareCfVar dest, guard
+    c.current.guards.add Guard(cond: guard, active: false)
+    let myGuardAt = c.current.guards.len - 1
+
+    var breakSplitPoint = findBreakSplitPoint(n)
+    inc n # into the loop body statement list
+    while n.kind != ParRi and breakSplitPoint >= 1:
+      trGuardedStmts c, dest, n, true
+      dec breakSplitPoint
+
+  dest.copyIntoKind NotX, info:
+    dest.addSymUse guard, info # condition is always our artifical guard
+
+  # post loop condition body:
+  dest.copyIntoKind StmtsS, info:
+    while n.kind != ParRi:
+      trGuardedStmts c, dest, n, true
+    skipParRi n # end of body statement list
+
+    closeScope c, dest, info
+    # last statement of our loop body is the `continue`:
+    dest.copyIntoKind ContinueS, info:
+      dest.addDotToken() # no `join` information yet
+
   c.current.guards.shrink(myGuardAt)
-
-  # last statement of our loop body is the `continue`:
-  dest.addParLe ContinueS, n.info
-  dest.addDotToken() # no `join` information yet
-  dest.addParRi() # Continue statement
-
-  dest.addParRi() # close loop body
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add tagToken("loop", n.info)
