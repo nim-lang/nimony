@@ -8,7 +8,7 @@
 ## which can be easier to analyze, depending on the used algorithm.
 
 import std/[assertions, intsets]
-include nifprelude
+include ".." / lib / nifprelude
 
 import ".." / models / tags
 import nimony_model, programs, builtintypes, typenav

@@ -67,7 +67,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
 
   if n.exprKind == EmoveX: inc n
 
-  let r = rootOf(n, beStrict = true)
+  let r = rootOf(n, CannotFollowDerefs)
   result = false
   if r != NoSymId:
     var canAnalyse = false

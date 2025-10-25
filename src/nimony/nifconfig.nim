@@ -8,9 +8,9 @@
 
 import std / [os, sets, strutils]
 
-import platform
+import ".." / lib / platform
 
-include nifprelude
+include ".." / lib / nifprelude
 
 type
   TrackMode* = enum

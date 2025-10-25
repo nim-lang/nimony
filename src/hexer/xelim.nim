@@ -12,7 +12,7 @@
 ## `let tmp; if cond: tmp = 3 else: temp = 4; let x = tmp`
 
 import std / [assertions]
-include nifprelude
+include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
 
 type
@@ -55,7 +55,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
 
 type
   Mode = enum
-    IsEmpty, IsAppend, IsIgnored, IsLabel
+    IsEmpty, IsAppend, IsIgnored, IsCfvar
   Target = object
     m: Mode
     t: TokenBuf
@@ -81,11 +81,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
     copyTree dest, typ # type
     dest.addDotToken() # value
 
-type
-  BoolInitialValue = enum
-    IsFalse, IsTrue, IsUninitialized
-
-proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo; initialValue =IsUninitialized): SymId =
+proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo): SymId =
   let s = "`x." & $c.counter & "." & c.thisModuleSuffix
   inc c.counter
   result = pool.syms.getOrIncl(s)
@@ -94,13 +90,7 @@ proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo; i
     dest.addDotToken() # export, pragmas
     dest.addDotToken()
     copyTree dest, c.typeCache.builtins.boolType # type
-    case initialValue
-    of IsFalse:
-      copyIntoKind dest, FalseX, info: discard
-    of IsTrue:
-      copyIntoKind dest, TrueX, info: discard
-    of IsUninitialized:
-      dest.addDotToken() # value
+    dest.addDotToken() # value
 
 proc add(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
@@ -177,7 +167,48 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       trExpr c, dest, n, tar
       trExpr c, dest, n, tar
 
-proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  if tar.m == IsEmpty:
+    tar.m = IsAppend
+  else:
+    assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
+  tar.t.add n
+  inc n
+  while n.kind != ParRi:
+    trExpr c, dest, n, tar
+  tar.t.addParRi()
+  inc n
+
+proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  if tar.m == IsAppend and c.goal == TowardsNjvl:
+    # bind to a temporary variable:
+    let tmp = pool.syms.getOrIncl("`x." & $c.counter)
+    inc c.counter
+    let info = n.info
+    dest.addParLe LetS, info
+    dest.addSymDef tmp, info
+    dest.addEmpty2 info # no export marker, no pragmas
+    let typ = c.typeCache.getType(n)
+    dest.copyTree typ
+
+    var callTarget = Target(m: IsAppend)
+    trExprLoop c, dest, n, callTarget
+    dest.add callTarget
+    dest.addParRi()
+
+    tar.t.addSymUse tmp, info
+  else:
+    trExprLoop c, dest, n, tar
+
+proc trExprToTarget(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  if c.goal == TowardsNjvl and n.exprKind in CallKinds:
+    # we know here that the function call will be bound to a location, so do not bind it
+    # to a temporary variable!
+    trExprLoop c, dest, n, tar
+  else:
+    trExpr c, dest, n, tar
+
+proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # IMPORTANT: Stores into `tar` helper!
   var tar = Target(m: IsAppend)
   tar.t.copyInto n:
@@ -190,33 +221,33 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
 type
   CfVar = object
     v: SymId # as variable
-    l: SymId # as label
 
 proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: PackedLineInfo): CfVar =
   if tar.m == IsEmpty:
-    tar.m = IsLabel
+    tar.m = IsCfvar
     let s = "`j." & $c.counter & "." & c.thisModuleSuffix
     inc c.counter
-    result = CfVar(v: declareTempBool(c, dest, info, IsFalse), l: pool.syms.getOrIncl(s))
-    tar.t.add tagToken("jlab", info)
+
+    result = CfVar(v: pool.syms.getOrIncl(s))
+    dest.add tagToken("cfvar", info)
+    dest.addSymUse result.v, info
+    dest.addParRi()
+
     tar.t.addSymUse result.v, info
-    tar.t.addSymUse result.l, info
-    tar.t.addParRi()
   else:
-    assert tar.m == IsLabel
-    result = CfVar(v: tar.t[1].symId, l: tar.t[2].symId)
+    assert tar.m == IsCfvar
+    result = CfVar(v: tar.t[0].symId)
 
 proc useCfVar(dest: var TokenBuf; cf: CfVar; info: PackedLineInfo) =
   dest.add tagToken("jtrue", info)
   dest.addSymUse cf.v, info
-  dest.addSymUse cf.l, info
   dest.addParRi()
 
 proc trCondAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # `x and y` <=>
   # var tmp = false
   # if x:
-  #   if y: tmp = true | goto label
+  #   if y: jtrue
   let info = n.info
   let cf = makeCfVar(c, dest, tar, info)
 
@@ -243,10 +274,10 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
   # `x or y` <=>
   # var tmp = false
   # if x:
-  #   tmp = true / goto label
+  #   jtrue tmp
   # else:
   #   if y:
-  #     tmp = true / goto label
+  #     jtrue tmp
   let info = n.info
   let cf = makeCfVar(c, dest, tar, info)
 
@@ -318,7 +349,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     of ElifU:
       var t0 = Target(m: IsEmpty)
       inc n
-      trCond c, dest, n, t0, false
+      trCond c, dest, n, t0, c.goal == TowardsNjvl
 
       dest.add head
       inc toClose
@@ -430,7 +461,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
         var tar = Target(m: IsEmpty)
-        trCond c, dest, n, tar, false
+        trCond c, dest, n, tar, c.goal == TowardsNjvl
         dest.copyIntoKind IfS, info:
           dest.copyIntoKind ElifU, info:
             dest.add tar
@@ -456,20 +487,24 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.typeCache.registerLocal(name, kind, n)
     takeTree tmp, n # type
     var v = Target(m: IsEmpty)
-    trExpr c, dest, n, v
+    trExprToTarget c, dest, n, v
     tmp.add v
   dest.add tmp
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  c.typeCache.openScope()
   let decl = n
+  let kind = n.symKind
   copyInto dest, n:
+    let symId = n.symId
     let isConcrete = takeRoutineHeader(c.typeCache, dest, decl, n)
     if isConcrete:
+      if isLocalDecl(symId):
+        c.typeCache.registerLocal(symId, kind, decl)
+      c.typeCache.openScope()
       trStmt c, dest, n
+      c.typeCache.closeScope()
     else:
       takeTree dest, n
-  c.typeCache.closeScope()
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   var tmp = SymId(0)
@@ -517,8 +552,16 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of WhileS:
     trWhile c, dest, n
   of CallKindsS, InclS, ExclS:
-    trCall c, dest, n
-  of AsgnS, AsmS, DeferS:
+    trStmtCall c, dest, n
+  of AsgnS:
+    # IMPORTANT: Stores into `tar` helper!
+    var tar = Target(m: IsAppend)
+    tar.t.copyInto n:
+      trExpr c, dest, n, tar
+      trExprToTarget c, dest, n, tar
+    dest.add tar
+
+  of AsmS, DeferS:
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
@@ -568,6 +611,8 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trAnd c, dest, n, tar
     of OrX:
       trOr c, dest, n, tar
+    of CallKinds:
+      trExprCall c, dest, n, tar
     else:
       case n.stmtKind
       of IfS:

@@ -6,7 +6,7 @@
 
 import std / [assertions, tables]
 
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model, decls, programs, xints, semdata, expreval
 
 proc align(address, alignment: int): int {.inline.} =

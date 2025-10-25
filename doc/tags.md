@@ -79,6 +79,7 @@
 | `(ochoice X X*)`| NimonyExpr | open choice |
 | `(emit X*)` | NifcStmt, NimonyStmt, NimonyPragma | emit statement |
 | `(asgn X X)` | NifcStmt, NimonyStmt, NiflerKind | assignment statement |
+| `(store X X)` | NjvlKind | `asgn` with reversed operands that reflects evaluation order |
 | `(keepovf X X)` | NifcStmt | keep overflow flag statement |
 | `(scope S*)` | NifcStmt, NimonyStmt | explicit scope annotation, like `stmts` |
 | `(if (elif X X)+ (else X)?)` | NifcStmt, NimonyStmt, NiflerKind | if statement header |
@@ -162,9 +163,8 @@
 | `(loop S X S S)` | NjvlKind | `loop` components are (before-cond, cond, loop-body, after) |
 | `(v X INT_LIT)` | NjvlKind | `versioned` locations |
 | `(unknown X)` | NjvlKind | location's contents is unknown at this point |
-| `(jtrue X Y)` | NjvlKind | set `X` to `(true)`; hint this should become a jump |
-| `(jfalse X Y)` | NjvlKind | set `X` to `(true)`; hint this should become a jump |
-| `(jlab X Y)` | NjvlKind | labelled condition |
+| `(jtrue Y+)` | NjvlKind | set variables v1, v2, ... to `(true)`; hint this should become a jump |
+| `(cfvar D)` | NjvlKind | declare a new control flow variable `D` of type `bool` initialized to `false` |
 | `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(join Y INT_LIT INT_LIT INT_LIT)` | NimonyOther | `join` construct inside `ite` |
 | `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |

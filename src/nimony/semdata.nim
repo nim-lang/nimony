@@ -7,9 +7,9 @@
 ## Types required by semantic checking.
 
 import std / [tables, sets, os, syncio, formatfloat, assertions]
-include nifprelude
-import nimony_model, symtabs, builtintypes, decls, symparser,
-  programs, magics, reporters, nifconfig, nifindexes
+include ".." / lib / nifprelude
+import ".." / lib / [symparser, nifindexes]
+import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig
 
 import ".." / gear2 / modnames
 

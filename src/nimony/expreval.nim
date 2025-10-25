@@ -8,7 +8,7 @@
 
 import std / assertions
 
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops
 
 type
