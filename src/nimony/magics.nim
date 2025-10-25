@@ -7,7 +7,8 @@
 ## Magics, somewhat compatible with Nim 2.0, but it's neither required nor desirable.
 
 import ".." / models / tags
-import nimony_model, nifstreams
+import ".." / lib / nifstreams
+import nimony_model
 
 template res(t: ExprKind | StmtKind | TypeKind; bits = 0): (string, int) = ($t, bits)
 

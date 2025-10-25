@@ -1,6 +1,6 @@
 import std/assertions
 from std/strutils import startsWith
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
 import ".." / models / tags
 
