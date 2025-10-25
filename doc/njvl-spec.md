@@ -2,7 +2,9 @@
 
 NJVL is an intermediate representation for Nimony.
 
-It is a structured IR, there is no unstructured control flow like `return` or `break` ("no jumps").
+**Note**: This document covers the new constructs and concepts NJVL introduces. For more examples how these can be put into use see the [njvl-details.md](njvl-details.md) file.
+
+NJVL is a structured IR, there is no unstructured control flow like `return` or `break` ("no jumps").
 Instead control flow variables (`cfvar`) of type `bool` are used to represent the control flow. Except cfvars all variables are versioned! This gives us a variant of SSA that is easy to get rid of later on -- a code generator can just ignore the variables' versions and map every variable to a register or memory slot.
 
 NJVL is good for:
@@ -22,7 +24,101 @@ NJVL is subtle, but works for:
 
 - Continuation passing style ("CPS"). The required labels are implied only but remain recoverable.
 
-## Tags
+
+**NJVL is a two-phase transformation, it does not work well as a single pass.**
+
+The first phase is the `nj` pass. It translates the `return` and `break` statements into control flow variables and guards. This restores the inherent tree-like structure of the control flow and means we always have clean `join` points for the second phase which is the `vl` pass.
+
+The `vl` pass adds version information to all locations. A location is a generalization of a variable. It can be a variable, a field access, an array index, etc.
+
+## NJ - "No jumps"
+
+NJ simplifies control flow, VL simplifies data flow.
+
+### Control Flow Variables
+
+In general `raise`, `return` and `break` are turned into a mixture of data flow plus guards (`if cfVar: ...`). In fact even `and` and `or` with their short-circuiting semantics tend to cause trouble and so get the same treatment!
+
+Function calls cannot be used in conditions either, because they are not side-effect free.
+
+The NIF tag `cfvar` is used to declare a new control flow variable. It is always of type `bool` and initialized to `false`.
+A `cfvar` can only be set to `true` by a `jtrue` instruction and tested inside a condition of an `ite` or `loop` statement!
+
+**A cfvar has a monotonic behavior - once set to true, cfvars stay true!**
+
+Right before code generation the `cfvar`s can be replaced by jumps without much analysis effort. For example we know that they do not have to be materialized as they cannot be passed to functions etc.
+
+For readability reason we use Nim syntax here, but the actual IR uses NIF, of course.
+
+For example:
+
+```nim
+if cond2 or fn(cond3):
+  body
+else:
+  otherwise
+```
+
+Becomes:
+
+```nim
+cfvar tmp = false
+if cond2:
+  jtrue tmp
+else:
+  if fn(cond3):
+    jtrue tmp
+if tmp:
+  body
+else:
+  otherwise
+```
+
+This ensures that during code generation the control flow variables collapse into control flow and cause no overhead!
+
+We have to watch out though: **Converting `jtrue x` to a jump is only valid if no interim statements occur.**
+
+
+### `jtrue` instruction
+
+```nim
+jtrue x (y, z, ...)
+```
+
+The semantics of `jtrue x, y, z` is that `x`, `y`, `z` are set to `true`. It is a multi assignment instruction making it easier to analyze and convert to jumps.
+
+
+### Return elimination
+
+```nim
+proc p(cond: bool) =
+  before
+  if not cond: return
+  after
+```
+
+Is translated into:
+
+```nim
+proc p(cond: bool) =
+  before
+  cfvar ret = false
+  if not cond:
+    jtrue ret
+  if not ret:
+    after
+```
+
+### Break elimination
+
+`break` is handled similarly to `return`.
+
+### Exception handling
+
+`raise` is translated like a `return`, function calls that can raise are transformed into `let tmp = call(); if failed(tmp): raise tmp`. This can produce tedious long-winded code but the benefit is that all the anticipated optimizations run in one or two passes over the resulting trees, no fixpoint computations are required.
+
+
+## VL - "Versioned Locations"
 
 ### `v` (version)
 
@@ -188,35 +284,7 @@ The `either` construct appears only in `(continue)` statements at loop back-edge
 
 **NOTE**: `join` introduces a new variable version, `either` merely documents where a new variable came from.
 
-
-**Execution semantics:**
-For execution purposes, `either` can be ignored or treated as equivalent to `unknown` - the runtime value is simply whatever flows through control flow. The `either` construct is primarily for optimization analyses.
-
-**Induction variable analysis:**
-The `either` construct makes induction variable detection straightforward. An induction variable has the pattern:
-
-```
-(loop
-  ...
-  (stmts
-    (asgn (v i.0 recurrent-version) (add (v i.0 +N) constant))
-    (continue
-      (either i.0 +N initial-version recurrent-version))
-  )
-  (after)
-)
-```
-
-The analysis can detect:
-- Initial value: look at `initial-version` in the `either`
-- Step: the constant added to produce `recurrent-version`
-- The variable is an induction variable if `recurrent-version` is defined as `version +N ± constant`
-
-This enables loop optimizations like:
-- Strength reduction (replace multiplication by induction variable with addition)
-- Loop unrolling (knowing the iteration count)
-- Bounds check elimination (proving array indices are in range)
-
+**NOTE**: The current implementation generates `join` instead of `either` for loop back-edges. It is still unclear what is better.
 
 
 ### `assume`
@@ -302,86 +370,3 @@ Moving these `kill` instructions imply that they are not used anymore to denote 
 ```
 
 The `kill` instruction serves as the proper abstraction for lifetime management, separate from the implementation details of destructors.
-
-
-## Control Flow Variables
-
-In general `raise`, `return` and `break` are turned into a mixture of data flow plus guards (`if cfVar: ...`). In fact even `and` and `or` with their short-circuiting semantics tend to cause trouble and so get the same treatment!
-
-Function calls cannot be used in conditions either, because they are not side-effect free.
-
-The NIF tag `cfvar` is used to declare a new control flow variable. It is always of type `bool` and initialized to `false`.
-A `cfvar` can only be set to `true` by a `jtrue` instruction and tested inside a condition of an `ite` or `loop` statement!
-
-**A cfvar has a monotonic behavior - once set to true, cfvars stay true!**
-
-Right before code generation the `cfvar`s can be replaced by jumps without much analysis effort. For example we know that they do not have to be materialized as they cannot be passed to functions etc.
-
-For readability reason we use Nim syntax here, but the actual IR uses NIF, of course.
-
-For example:
-
-```nim
-if cond2 or fn(cond3):
-  body
-else:
-  otherwise
-```
-
-Becomes:
-
-```nim
-cfvar tmp = false
-if cond2:
-  jtrue tmp
-else:
-  if fn(cond3):
-    jtrue tmp
-if tmp:
-  body
-else:
-  otherwise
-```
-
-This ensures that during code generation the control flow variables collapse into control flow and cause no overhead!
-
-We have to watch out though: **Converting `jtrue x` to a jump is only valid if no interim statements occur.**
-
-
-### `jtrue` instruction
-
-```nim
-jtrue x (y, z, ...)
-```
-
-The semantics of `jtrue x, y, z` is that `x`, `y`, `z` are set to `true`. It is a multi assignment instruction making it easier to analyze and convert to jumps.
-
-
-### Return elimination
-
-```nim
-proc p(cond: bool) =
-  before
-  if not cond: return
-  after
-```
-
-Is translated into:
-
-```nim
-proc p(cond: bool) =
-  before
-  cfvar ret = false
-  if not cond:
-    jtrue ret
-  if not ret:
-    after
-```
-
-### Break elimination
-
-`break` is handled similarly to `return`.
-
-### Exception handling
-
-`raise` is translated like a `return`, function calls that can raise are transformed into `let tmp = call(); if failed(tmp): raise tmp`. This can produce tedious long-winded code but the benefit is that all the anticipated optimizations run in one or two passes over the resulting trees, no fixpoint computations are required.

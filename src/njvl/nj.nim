@@ -11,7 +11,7 @@
 
 import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typenav]
+import ".." / nimony / [nimony_model, decls, programs, typenav]
 import ".." / hexer / [xelim, mover]
 import versiontabs
 
@@ -85,7 +85,6 @@ type
     active: bool
 
   CurrentProc = object
-    addrTaken: HashSet[SymId]
     resultSym: SymId
     guards: seq[Guard]
     tmpCounter: int
@@ -95,25 +94,6 @@ type
     counter: int
     thisModuleSuffix: string
     current: CurrentProc
-    vt: VersionTab
-
-proc setupProc(c: var Context; procBody: Cursor) =
-  # detect `addr x` and mark `x` as addrTaken:
-  var n = procBody
-  var nested = 0
-  while true:
-    case n.kind
-    of ParLe:
-      if n.exprKind == AddrX:
-        let r = rootOf(n, CanFollowCalls)
-        if r != NoSymId:
-          c.current.addrTaken.incl r
-      inc nested
-    of ParRi:
-      dec nested
-    else:
-      discard
-    if nested == 0: break
 
 proc addKill(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   dest.add tagToken("kill", info)
@@ -131,14 +111,6 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false)
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
-
-proc trParams(c: var Context; params: Cursor) =
-  var n = params
-  inc n # skips (params
-  while n.kind != ParRi:
-    let r = takeLocal(n, SkipFinalParRi)
-    if r.name.kind == SymbolDef:
-      c.vt.newValueFor r.name.symId # register parameter as known location
 
 proc declareCfVar(dest: var TokenBuf; s: SymId) =
   dest.add tagToken("cfvar", NoLineInfo)
@@ -180,9 +152,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isLocalDecl(symId):
         c.typeCache.registerLocal(symId, r.kind, decl)
       c.typeCache.openScope()
-      trParams c, r.params
       let info = n.info
-      setupProc c, n
       copyIntoKind dest, StmtsS, info:
         openScope c
         declareCfVar dest, retFlag
@@ -214,34 +184,20 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if n.exprKind == HaddrX:
       let r = rootOf(n, CanFollowCalls)
       if r != NoSymId:
-        if not c.current.addrTaken.contains(r):
-          mutates.add r
+        mutates.add r
     trExpr c, dest, n
-  dest.takeParRi n
+  # we make `unknown` part of the `call` for now. This will be cleaned up
+  # in the `versionizer` pass!
   for s in mutates:
     dest.add tagToken("unknown", info)
-    newValueFor c.vt, s
-    let v = c.vt.getVersion(s)
-    dest.add tagToken("v", info)
     dest.addSymUse s, info
-    dest.addIntLit v, info
-    dest.addParRi()
     dest.addParRi() # unknown
+  dest.takeParRi n
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   case n.kind
-  of Symbol:
-    let s = n.symId
-    let v = c.vt.getVersion(s)
-    if v < 0:
-      dest.addSymUse s, info
-    else:
-      dest.add tagToken("v", info)
-      dest.addSymUse s, info
-      dest.addIntLit v, info
-      dest.addParRi()
-  of UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+  of Symbol, UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
   of ParLe:
     case n.exprKind
@@ -255,25 +211,17 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ParRi: bug "Unmatched ParRi"
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # we translate `(asgn X Y)` to `(store Y X)` as it's easier to analyze,
+  # it reflects the actual evaluation order.
   let info = n.info
-  dest.add tagToken("asgn", info)
+  dest.add tagToken("store", info)
   inc n
-  let r = rootOf(n, CanFollowCalls)
-  # we have to watch out: For the lhs the new version is
-  # active immediately, for the rhs it is not: Thus we process the rhs first.
   var rhs = n
   skip rhs
-  var rhsDest = createTokenBuf(10)
-  trExpr c, rhsDest, rhs
-
-  if r != NoSymId:
-    if not c.current.addrTaken.contains(r):
-      newValueFor c.vt, r
-
+  trExpr c, dest, rhs
   trExpr c, dest, n # lhs
   n = rhs
   skipParRi n
-  dest.add rhsDest
   dest.addParRi()
 
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -284,13 +232,10 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert n.substructureKind == ElifU
   inc n
   trExpr c, dest, n
-  openSection c.vt
   openScope c
   trGuardedStmts c, dest, n
   closeScope c, dest, info
-  closeSection c.vt
   skipParRi n
-  openSection c.vt
   if n.kind != ParRi:
     assert n.substructureKind == ElseU
     inc n
@@ -298,21 +243,9 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trGuardedStmts c, dest, n
     closeScope c, dest, info
     skipParRi n
-  closeSection c.vt
   skipParRi n
-  # join information:
-  dest.addParLe StmtsS, info
-  let joinData = combineJoin(c.vt, IfJoin)
-  for s, j in joinData:
-    if isValid(j):
-      dest.add tagToken("join", info)
-      dest.addSymUse s, info
-      dest.addIntLit j.newv, info
-      dest.addIntLit j.old1, info
-      dest.addIntLit j.old2, info
-      dest.addParRi()
-
-  dest.addParRi() # join information
+  # join information: not yet available
+  dest.addDotToken()
   dest.addParRi() # "ite"
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -323,9 +256,6 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.current.resultSym = symId
     c.typeCache.takeLocalHeader(dest, n, kind)
     trExpr c, dest, n
-    if not c.current.addrTaken.contains(symId):
-      # initial version for variable!
-      newValueFor c.vt, symId
 
 proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert c.current.guards.len > 0
@@ -369,8 +299,6 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 
 proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  openSection c.vt
-
   assert n.stmtKind == StmtsS
   dest.takeToken n
 
@@ -392,19 +320,8 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.current.guards.shrink(myGuardAt)
 
   # last statement of our loop body is the `continue`:
-  closeSection c.vt
   dest.addParLe ContinueS, n.info
-  let joinData = combineJoin(c.vt, LoopEither)
-  # `either` seems to be flawed as we need a new version after the loop
-  # as we don't know if the loop ran a single time or not!
-  for s, j in joinData:
-    if isValid(j):
-      dest.add tagToken("join", n.info)
-      dest.addSymUse s, n.info
-      dest.addIntLit j.newv, n.info
-      dest.addIntLit j.old1, n.info
-      dest.addIntLit j.old2, n.info
-      dest.addParRi()
+  dest.addDotToken() # no `join` information yet
   dest.addParRi() # Continue statement
 
   dest.addParRi() # close loop body
@@ -458,19 +375,10 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
       skipParRi n
     else:
       assert c.current.resultSym != NoSymId, "could not find `result` symbol"
-      dest.add tagToken("asgn", info)
-      dest.add tagToken("v", info)
-      dest.addSymUse c.current.resultSym, info
-      let vAt = dest.len
-      dest.addIntLit 1, info
+      dest.add tagToken("store", info)
       trExpr c, dest, n
-      newValueFor c.vt, c.current.resultSym
-      let v = c.vt.getVersion(c.current.resultSym)
-      # patch the version after we handled the expression, see also the remark for trAsgn.
-      # The new version is active after the assignment, not during it.
-      if v != 1:
-        dest[vAt] = intToken(pool.integers.getOrIncl(v), info)
-      dest.addParRi()
+      dest.addSymUse c.current.resultSym, info
+      dest.takeParRi n
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
   case n.stmtKind
@@ -507,9 +415,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=
   else:
     bug "Unhandled stmt kind: " & $n.stmtKind
 
-
-proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, vt: createVersionTab())
+proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var elimExprs = lowerExprs(n, moduleSuffix, TowardsNjvl)
