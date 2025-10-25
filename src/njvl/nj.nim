@@ -13,7 +13,6 @@ import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav]
 import ".." / hexer / [xelim, mover]
-import versiontabs
 
 #[
 Introducing cfvars is more complex than it looks.
@@ -195,7 +194,6 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeParRi n
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
   case n.kind
   of Symbol, UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
@@ -203,6 +201,8 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     case n.exprKind
     of CallKinds:
       trCall c, dest, n
+    of AndX, OrX:
+      bug "and/or should have been handled by the expression elimination pass xelim.nim"
     else:
       dest.takeToken n
       while n.kind != ParRi:
@@ -413,7 +413,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=
   of TemplateS, TypeS:
     takeTree dest, n
   else:
-    bug "Unhandled stmt kind: " & $n.stmtKind
+    trExpr c, dest, n
 
 proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
@@ -432,6 +432,9 @@ proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   #echo "PRODUCED: ", result.toString(false)
 
 when isMainModule:
-  let n = setupProgram("debug.txt", "debug.out")
-  let r = toNjvl(n, "main")
+  import std/os
+  import ".." / lib / symparser
+  let infile = os.paramStr(1)
+  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif")
+  let r = eliminateJumps(n, "main")
   echo r.toString(false)

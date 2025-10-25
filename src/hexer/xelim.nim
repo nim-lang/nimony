@@ -349,7 +349,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     of ElifU:
       var t0 = Target(m: IsEmpty)
       inc n
-      trCond c, dest, n, t0, false
+      trCond c, dest, n, t0, c.goal == TowardsNjvl
 
       dest.add head
       inc toClose
@@ -461,7 +461,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
         var tar = Target(m: IsEmpty)
-        trCond c, dest, n, tar, false
+        trCond c, dest, n, tar, c.goal == TowardsNjvl
         dest.copyIntoKind IfS, info:
           dest.copyIntoKind ElifU, info:
             dest.add tar
