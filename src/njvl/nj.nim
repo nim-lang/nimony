@@ -356,7 +356,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc n
     skipParRi n
     trWhileTrue c, dest, n
-    dest.addParRi() # close "loop"
+    dest.takeParRi n # close "loop"
   else:
     # translate `while cond: body` to `while true: if cond: body else: break`
     # as it's too complex to handle otherwise.
