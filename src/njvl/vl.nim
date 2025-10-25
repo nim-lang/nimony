@@ -151,8 +151,7 @@ proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add tagToken("ite", n.info)
-  inc n
+  dest.takeToken n # "ite" or "itec"
   trExpr c, dest, n
   openSection c.vt
   openScope c.typeCache
@@ -223,7 +222,7 @@ proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.njvlKind
-  of IteV:
+  of IteV, ItecV:
     trIte c, dest, n
   of LoopV:
     trLoop c, dest, n
@@ -243,8 +242,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trProcDecl c, dest, n
     of LocalDecls:
       trLocal c, dest, n
-    of AsgnS:
-      bug "(asgn) should have been translated to store"
+    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, ContinueS, RaiseS, RetS:
+      bug "construct should have been eliminated: " & $n.stmtKind
     else:
       dest.takeToken n
       while n.kind != ParRi:
