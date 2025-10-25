@@ -108,33 +108,13 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
     dest.addKill(s, info)
   c.typeCache.closeScope()
 
-proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false)
+proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false)
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc declareCfVar(dest: var TokenBuf; s: SymId) =
   dest.add tagToken("cfvar", NoLineInfo)
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
-
-proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
-  var usedGuard = -1
-  for i in countdown(c.current.guards.len - 1, 0):
-    let g = addr c.current.guards[i]
-    if g.active:
-      dest.add tagToken("ite", n.info)
-      dest.copyIntoKind NotX, n.info:
-        dest.addSymUse g.cond, n.info
-      usedGuard = i
-      g.active = false # disable
-      dest.addParLe StmtsS, n.info # then section
-      break
-  trStmt c, dest, n, parentIsStmtList or (usedGuard >= 0)
-  if usedGuard >= 0:
-    # enable again as we are not under the guard anymore:
-    c.current.guards[usedGuard].active = true
-    dest.addParRi() # then section of ite
-    dest.addDotToken() # no else section
-    dest.addParRi() # "ite"
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
@@ -314,7 +294,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   dest.addParLe StmtsS, n.info # loop body
   openScope c
-  trGuardedStmts c, dest, n, false
+  trGuardedStmts c, dest, n, true
 
   closeScope c, dest, n.info
   c.current.guards.shrink(myGuardAt)
@@ -380,17 +360,29 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse c.current.resultSym, info
       dest.takeParRi n
 
-proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
+proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
+  var usedGuard = -1
+  for i in countdown(c.current.guards.len - 1, 0):
+    let g = addr c.current.guards[i]
+    if g.active:
+      dest.add tagToken("ite", n.info)
+      dest.copyIntoKind NotX, n.info:
+        dest.addSymUse g.cond, n.info
+      usedGuard = i
+      g.active = false # disable
+      dest.addParLe StmtsS, n.info # then section
+      break
+
   case n.stmtKind
   of StmtsS, ScopeS:
     # flat nested statements list:
-    if not parentIsStmtList:
+    if not parentIsStmtList and usedGuard < 0:
       dest.takeToken n
     else:
       inc n
     while n.kind != ParRi:
-      trStmt(c, dest, n, true)
-    if not parentIsStmtList:
+      trGuardedStmts(c, dest, n, true)
+    if not parentIsStmtList and usedGuard < 0:
       dest.takeToken n # ParRi
     else:
       inc n
@@ -415,6 +407,14 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=
   else:
     trExpr c, dest, n
 
+  if usedGuard >= 0:
+    # enable again as we are not under the guard anymore:
+    c.current.guards[usedGuard].active = true
+    dest.addParRi() # then section of ite
+    dest.addDotToken() # no else section
+    dest.addParRi() # "ite"
+
+
 proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
   c.typeCache.openScope()
@@ -425,7 +425,7 @@ proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   result.add n
   inc n
   while n.kind != ParRi:
-    trStmt c, result, n
+    trGuardedStmts c, result, n, true
   result.addParRi()
   c.typeCache.closeScope()
   endRead elimExprs
