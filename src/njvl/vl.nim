@@ -24,13 +24,9 @@ import versiontabs, nj, njvl_model
 type
   CurrentProc = object
     addrTaken: HashSet[SymId]
-    resultSym: SymId
-    tmpCounter: int
 
   Context* = object
     typeCache: TypeCache
-    counter: int
-    thisModuleSuffix: string
     current: CurrentProc
     vt: VersionTab
 
@@ -75,7 +71,6 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
   let oldProc = move c.current
-  c.current = CurrentProc(tmpCounter: 1)
 
   copyInto(dest, n):
     let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
@@ -189,8 +184,6 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
     let symId = n.symId
-    if kind == ResultY:
-      c.current.resultSym = symId
     c.typeCache.takeLocalHeader(dest, n, kind)
     trExpr c, dest, n
     if not c.current.addrTaken.contains(symId):
@@ -259,7 +252,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeToken n
 
 proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, vt: createVersionTab())
+  var c = Context(typeCache: createTypeCache(), vt: createVersionTab())
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var elimJumps = eliminateJumps(n, moduleSuffix)
