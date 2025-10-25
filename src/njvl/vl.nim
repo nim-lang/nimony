@@ -234,7 +234,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trCfvar c, dest, n
   of UnknownV:
     trUnknown c, dest, n
-  else:
+  of JtrueV, AssumeV, AssertV, ContinueV, VV:
+    takeTree dest, n
+  of NoVTag:
     case n.stmtKind
     of NoStmt:
       trExpr c, dest, n
