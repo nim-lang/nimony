@@ -492,15 +492,19 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add tmp
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  c.typeCache.openScope()
   let decl = n
+  let kind = n.symKind
   copyInto dest, n:
+    let symId = n.symId
     let isConcrete = takeRoutineHeader(c.typeCache, dest, decl, n)
     if isConcrete:
+      if isLocalDecl(symId):
+        c.typeCache.registerLocal(symId, kind, decl)
+      c.typeCache.openScope()
       trStmt c, dest, n
+      c.typeCache.closeScope()
     else:
       takeTree dest, n
-  c.typeCache.closeScope()
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   var tmp = SymId(0)
