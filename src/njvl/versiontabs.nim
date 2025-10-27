@@ -71,7 +71,8 @@ proc combineJoin*(v: var VersionTab; mode: JoinMode): Table[SymId, JoinVar] =
     else:
       bug "cannot happen"
     dec i
-  v.history.shrink(i)
+  if i >= 0:
+    v.history.shrink(i)
   # now add the `join` information to the history:
   for s, counters in result.mpairs:
     let baseVersion = v.currentVersion.getOrDefault(s, 0)

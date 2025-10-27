@@ -50,6 +50,7 @@ proc setupProc(c: var Context; procBody: Cursor) =
     else:
       discard
     if nested == 0: break
+    inc n
 
 proc trParams(c: var Context; params: Cursor) =
   var n = params
@@ -63,6 +64,7 @@ proc trCfvar(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeToken n
   assert n.kind == SymbolDef
   let s = n.symId
+  inc n
   # do not versionize cfvars!
   c.current.addrTaken.incl s
   dest.takeParRi n
@@ -122,6 +124,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse s, info
       dest.addIntLit v, info
       dest.addParRi()
+    inc n
   of UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
   of ParLe:
@@ -164,6 +167,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeScope c.typeCache
   closeSection c.vt
   # join information:
+  assert n.kind != ParRi, "join information should exist"
   skip n # ignore the currently empty join information
   dest.addParLe StmtsS, info
   let joinData = combineJoin(c.vt, IfJoin)
@@ -197,10 +201,12 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openScope c.typeCache
   trStmt c, dest, n # pre condition
   trExpr c, dest, n # condition
-  trStmt c, dest, n # body
+  assert n.stmtKind == StmtsS
+  dest.takeToken n
+  while n.kind != ParRi:
+    trStmt c, dest, n # body
   # last statement of our loop body is the `continue`:
   closeSection c.vt
-  skip n # ignore the currently empty join information
   dest.addParLe ContinueS, n.info
   let joinData = combineJoin(c.vt, LoopEither)
   # `either` seems to be flawed as we need a new version after the loop
@@ -215,6 +221,7 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
   dest.addParRi() # Continue statement
   dest.takeParRi n # close loop body
+  dest.takeParRi n # close loop
 
 proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
@@ -234,7 +241,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trCfvar c, dest, n
   of UnknownV:
     trUnknown c, dest, n
-  else:
+  of JtrueV, AssumeV, AssertV, ContinueV, VV:
+    takeTree dest, n
+  of NoVTag:
     case n.stmtKind
     of NoStmt:
       trExpr c, dest, n
@@ -264,3 +273,11 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   result.addParRi()
   c.typeCache.closeScope()
   endRead elimJumps
+
+when isMainModule:
+  import std/os
+  import ".." / lib / symparser
+  let infile = os.paramStr(1)
+  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif")
+  let r = toNjvl(n, "main")
+  echo r.toString(false)

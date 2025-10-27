@@ -230,7 +230,7 @@ proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: Packed
 
     result = CfVar(v: pool.syms.getOrIncl(s))
     dest.add tagToken("cfvar", info)
-    dest.addSymUse result.v, info
+    dest.addSymDef result.v, info
     dest.addParRi()
 
     tar.t.addSymUse result.v, info

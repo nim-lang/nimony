@@ -223,6 +223,8 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trGuardedStmts c, dest, n
     closeScope c, dest, info
     skipParRi n
+  else:
+    dest.addDotToken() # no else section
   skipParRi n
   # join information: not yet available
   dest.addDotToken()
@@ -453,12 +455,13 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
     c.current.guards[usedGuard].active = true
     dest.addParRi() # then section of ite
     dest.addDotToken() # no else section
+    dest.addDotToken() # no join information
     dest.addParRi() # "ite"
 
 
 proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
-  c.typeCache.openScope()
+  c.openScope()
   result = createTokenBuf(300)
   var elimExprs = lowerExprs(n, moduleSuffix, TowardsNjvl)
   var n = beginRead(elimExprs)
@@ -467,8 +470,8 @@ proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   inc n
   while n.kind != ParRi:
     trGuardedStmts c, result, n, true
+  closeScope c, result, n.info
   result.addParRi()
-  c.typeCache.closeScope()
   endRead elimExprs
   #echo "PRODUCED: ", result.toString(false)
 
