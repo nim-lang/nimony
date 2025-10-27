@@ -54,7 +54,9 @@ proc closeScope*(c: var TypeCache) =
   c.current = c.current.parent
 
 iterator currentScopeLocals*(c: var TypeCache): SymId =
-  for s in c.current.locals.keys: yield s
+  for s, k in c.current.locals:
+    if k.kind in {ParamY, VarY, TvarY, GvarY, LetY, TletY, GletY, ResultY}:
+      yield s
 
 proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   if params.kind == ParLe:

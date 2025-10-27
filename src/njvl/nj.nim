@@ -461,7 +461,7 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
 
 proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
-  c.typeCache.openScope()
+  c.openScope()
   result = createTokenBuf(300)
   var elimExprs = lowerExprs(n, moduleSuffix, TowardsNjvl)
   var n = beginRead(elimExprs)
@@ -470,8 +470,8 @@ proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   inc n
   while n.kind != ParRi:
     trGuardedStmts c, result, n, true
+  closeScope c, result, n.info
   result.addParRi()
-  c.typeCache.closeScope()
   endRead elimExprs
   #echo "PRODUCED: ", result.toString(false)
 
