@@ -201,10 +201,12 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openScope c.typeCache
   trStmt c, dest, n # pre condition
   trExpr c, dest, n # condition
-  trStmt c, dest, n # body
+  assert n.stmtKind == StmtsS
+  dest.takeToken n
+  while n.kind != ParRi:
+    trStmt c, dest, n # body
   # last statement of our loop body is the `continue`:
   closeSection c.vt
-  skip n # ignore the currently empty join information
   dest.addParLe ContinueS, n.info
   let joinData = combineJoin(c.vt, LoopEither)
   # `either` seems to be flawed as we need a new version after the loop
@@ -219,6 +221,7 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
   dest.addParRi() # Continue statement
   dest.takeParRi n # close loop body
+  dest.takeParRi n # close loop
 
 proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
