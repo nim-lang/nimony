@@ -50,6 +50,7 @@ proc setupProc(c: var Context; procBody: Cursor) =
     else:
       discard
     if nested == 0: break
+    inc n
 
 proc trParams(c: var Context; params: Cursor) =
   var n = params
@@ -63,6 +64,7 @@ proc trCfvar(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeToken n
   assert n.kind == SymbolDef
   let s = n.symId
+  inc n
   # do not versionize cfvars!
   c.current.addrTaken.incl s
   dest.takeParRi n
@@ -122,6 +124,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse s, info
       dest.addIntLit v, info
       dest.addParRi()
+    inc n
   of UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
   of ParLe:
@@ -266,3 +269,11 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   result.addParRi()
   c.typeCache.closeScope()
   endRead elimJumps
+
+when isMainModule:
+  import std/os
+  import ".." / lib / symparser
+  let infile = os.paramStr(1)
+  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif")
+  let r = toNjvl(n, "main")
+  echo r.toString(false)
