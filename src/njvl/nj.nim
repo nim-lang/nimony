@@ -223,6 +223,8 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trGuardedStmts c, dest, n
     closeScope c, dest, info
     skipParRi n
+  else:
+    dest.addDotToken() # no else section
   skipParRi n
   # join information: not yet available
   dest.addDotToken()
@@ -453,6 +455,7 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
     c.current.guards[usedGuard].active = true
     dest.addParRi() # then section of ite
     dest.addDotToken() # no else section
+    dest.addDotToken() # no join information
     dest.addParRi() # "ite"
 
 

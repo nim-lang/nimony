@@ -167,6 +167,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeScope c.typeCache
   closeSection c.vt
   # join information:
+  assert n.kind != ParRi, "join information should exist"
   skip n # ignore the currently empty join information
   dest.addParLe StmtsS, info
   let joinData = combineJoin(c.vt, IfJoin)
