@@ -31,6 +31,15 @@ template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOth
 proc takeTree*(t: var Tree; n: var Node) =
   t.buf.takeTree(n)
 
+proc addStrLit*(t: var Tree; s: string; info = NoLineInfo) =
+  t.buf.addStrLit(s, info)
+
+proc addIntLit*(t: var Tree; i: BiggestInt; info = NoLineInfo) =
+  t.buf.addIntLit(i, info)
+
+proc addUIntLit*(t: var Tree; i: BiggestUInt; info = NoLineInfo) =
+  t.buf.addUIntLit(i, info)
+
 proc addIdent*(t: var Tree; ident: string) =
   t.buf.addIdent(ident)
 
