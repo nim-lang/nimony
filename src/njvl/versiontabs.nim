@@ -79,7 +79,7 @@ proc combineJoin*(v: var VersionTab; mode: JoinMode): Table[SymId, JoinVar] =
     # the old counters now are precise as we base them on the current version
     counters.old1 = baseVersion + counters.old1
     counters.old2 = baseVersion + counters.old2
-    counters.newv = counters.old1 + counters.old2 + 1
+    counters.newv = max(counters.old1, counters.old2) + 1
     v.currentVersion.mgetOrPut(s, 0) = counters.newv
     v.history.addSymUse s, NoLineInfo
 
@@ -145,14 +145,14 @@ when isMainModule:
   let xJoin = joinVars[x]
   assert xJoin.old1 == 1  # x was used twice in then branch
   assert xJoin.old2 == 2  # x was used multiple times in else branch
-  assert xJoin.newv == 4  # new version should be old1 + old2 + 1
+  assert xJoin.newv == 3  # new version should be max(old1, old2) + 1
 
   let uJoin = joinVars[u]
   assert not isValid(uJoin) # u is not declared afterwards so there should be no join generated!
 
   # Verify final versions after combination
   # Note: The algorithm works correctly, but the exact version numbers depend on implementation details
-  assert vt.getVersion(x) == 4  # Should be higher than the initial versions
+  assert vt.getVersion(x) == 3  # Should be higher than the initial versions
   assert vt.getVersion(y) == 0  # Unchanged
   assert vt.getVersion(z) == 0  # Unchanged
   assert vt.getVersion(w) == 0  # Unchanged (not detected as join variable)
@@ -161,24 +161,24 @@ when isMainModule:
   vt.openSection()  # Outer if
 
   vt.newValueFor(x)
-  assert vt.getVersion(x) == 5  # Should be higher than initial versions
+  assert vt.getVersion(x) == 4  # Should be higher than initial versions
 
   vt.openSection()  # Inner if
   vt.newValueFor(x)
   vt.newValueFor(y)
-  assert vt.getVersion(x) == 6  # Should be higher than previous
+  assert vt.getVersion(x) == 5  # Should be higher than previous
   assert vt.getVersion(y) == 1  # Should be higher than initial
 
   vt.newValueFor(x)
   vt.newValueFor(z)
-  assert vt.getVersion(x) == 7  # Should be higher than previous
+  assert vt.getVersion(x) == 6  # Should be higher than previous
   assert vt.getVersion(z) == 1  # Should be higher than initial
 
   vt.closeSection()  # Close inner if
   let innerJoins = vt.combineJoin(IfJoin)
   assert innerJoins.len >= 2  # Should have some join variables
 
-  assert vt.getVersion(x) > 8  # Should be higher due to joins
+  assert vt.getVersion(x) >= 7  # Should be higher due to joins (max(5,6)+1)
   let xVersion = vt.getVersion(x)
   vt.newValueFor(x)
   assert vt.getVersion(x) == xVersion + 1
@@ -188,7 +188,7 @@ when isMainModule:
   assert outerJoins.len >= 2  # Should have some join variables
 
   # Verify final versions after nested combination
-  assert vt.getVersion(x) > 10  # Should be much higher due to nested joins
+  assert vt.getVersion(x) >= 9  # Should be higher due to nested joins
   assert vt.getVersion(y) > 0   # Should be higher than initial
   assert vt.getVersion(z) > 0   # Should be higher than initial
 
