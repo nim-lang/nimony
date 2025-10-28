@@ -31,13 +31,16 @@ template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOth
 proc takeTree*(t: var Tree; n: var Node) =
   t.buf.takeTree(n)
 
-proc addStrLit*(t: var Tree; s: string; info = NoLineInfo) =
+proc addDotToken*(t: var Tree) =
+  t.buf.addDotToken()
+
+proc addStrLit*(t: var Tree; s: string) =
   t.buf.addStrLit(s, info)
 
-proc addIntLit*(t: var Tree; i: BiggestInt; info = NoLineInfo) =
+proc addIntLit*(t: var Tree; i: BiggestInt) =
   t.buf.addIntLit(i, info)
 
-proc addUIntLit*(t: var Tree; i: BiggestUInt; info = NoLineInfo) =
+proc addUIntLit*(t: var Tree; i: BiggestUInt) =
   t.buf.addUIntLit(i, info)
 
 proc addIdent*(t: var Tree; ident: string) =
