@@ -23,7 +23,8 @@
      (ite a.0
       (stmts
        (jtrue ´g.1))
-      (call echo.0 "after if without else") .)
+      (stmts
+       (call echo.0 "after if without else")) .)
      (continue .)))
    (kill a.0)))
  (proc :test2.0 . . .
@@ -73,7 +74,8 @@
        (ite b.0
         (stmts
          (jtrue ´g.1))
-        (call echo.0 "after inner if") .)) . .)
+        (stmts
+         (call echo.0 "after inner if")) .)) . .)
      (ite
       (not ´g.1)
       (stmts
@@ -107,7 +109,8 @@
          (ite c.0
           (stmts
            (jtrue ´g.1))
-          (call echo.0 "level 2 after") .)) . .)
+          (stmts
+           (call echo.0 "level 2 after")) .)) . .)
        (ite
         (not ´g.1)
         (stmts
@@ -131,7 +134,8 @@
    (ite a.0
     (stmts
      (jtrue ´r.0))
-    (call echo.0 "after return if") .)
+    (stmts
+     (call echo.0 "after return if")) .)
    (kill a.0)))
  (proc :test6.0 . . .
   (params) . . .
@@ -149,9 +153,10 @@
      (ite a.0
       (stmts
        (jtrue ´g.1))
-      (call echo.0 "stmt1")
-      (call echo.0 "stmt2")
-      (call echo.0 "stmt3") .)
+      (stmts
+       (call echo.0 "stmt1")
+       (call echo.0 "stmt2")
+       (call echo.0 "stmt3")) .)
      (continue .)))
    (kill a.0)))
  (proc :test7.0 . . .
@@ -183,7 +188,8 @@
         (not ´g.1)
         (stmts
          (call echo.0 "after inner if-else")) . .))
-      (call echo.0 "after outer if") .)
+      (stmts
+       (call echo.0 "after outer if")) .)
      (continue .)))
    (kill a.0)
    (kill b.0)))
@@ -200,6 +206,7 @@
     (ite a.0
      (stmts
       (jtrue ´g.1))
-     (call echo.0 "after block break") .))
+     (stmts
+      (call echo.0 "after block break")) .))
    (kill a.0)))
  (kill msg.0))

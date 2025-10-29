@@ -22,11 +22,12 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|nifmake|nj]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
   nj                   run NJ (Nimony Jump Elimination) tests.
+  vl                   run VL (Versioned Locations) tests.
   test <file>/<dir>    run test <file> or <dir>.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
@@ -320,12 +321,19 @@ proc nimonytests(overwrite: bool) =
   else:
     echo "SUCCESS."
 
-proc runNifToolTests(tool, testDir, expectedExt: string; overwrite: bool) =
+proc runNifToolTests(tool, testDir, inputExt, expectedExt: string; overwrite: bool) =
+  ## Run tests for a NIF tool.
+  ## - inputExt: extension that input files must have (e.g., ".nif" or ".nj.nif")
+  ## - expectedExt: extension for expected output files (e.g., ".nj.nif" or ".vl.nif")
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   for x in walkDir(testDir, relative = true):
-    let shouldTest = x.kind == pcFile and x.path.endsWith(".nif") and
-                     not x.path.contains(expectedExt)
+    # To match input, file must end with inputExt but not with any longer output extension.
+    # This prevents .nj.nif and .vl.nif from matching when inputExt is .nif
+    let shouldTest = x.kind == pcFile and x.path.endsWith(inputExt) and
+                     not x.path.contains(expectedExt) and
+                     not x.path.contains(".out.nif") and
+                     not (inputExt == ".nif" and (x.path.endsWith(".nj.nif") or x.path.endsWith(".vl.nif")))
     if shouldTest:
       inc c.total
       let t = testDir / x.path
@@ -361,12 +369,17 @@ proc runNifToolTests(tool, testDir, expectedExt: string; overwrite: bool) =
 
 proc controlflowTests(tool: string; overwrite: bool) =
   ## Run all the controlflow tests in the test-suite.
-  runNifToolTests(tool, "tests/" & tool, ".expected.nif", overwrite)
+  runNifToolTests(tool, "tests/" & tool, ".nif", ".expected.nif", overwrite)
 
 proc njTests(overwrite: bool) =
   ## Run all the NJ (Nimony Jump Elimination) tests.
   ## Tests are .nif files in src/njvl/tests/ with expected output in .nj.nif files.
-  runNifToolTests("nj", "src/njvl/tests", ".nj.nif", overwrite)
+  runNifToolTests("nj", "src/njvl/tests", ".nif", ".nj.nif", overwrite)
+
+proc vlTests(overwrite: bool) =
+  ## Run all the VL (Versioned Locations) tests.
+  ## Tests are .nj.nif files in src/njvl/tests/ with expected output in .vl.nif files.
+  runNifToolTests("vl", "src/njvl/tests", ".nj.nif", ".vl.nif", overwrite)
 
 proc test(t: string; overwrite: bool; cat: Category) =
   var c = TestCounters(total: 0, failures: 0)
@@ -483,6 +496,11 @@ proc buildContracts(showProgress = false) =
 proc buildNj(showProgress = false) =
   exec "nim c src/njvl/nj.nim", showProgress
   let exe = "nj".addFileExt(ExeExt)
+  robustMoveFile "src/njvl/" & exe, binDir() / exe
+
+proc buildVl(showProgress = false) =
+  exec "nim c src/njvl/vl.nim", showProgress
+  let exe = "vl".addFileExt(ExeExt)
   robustMoveFile "src/njvl/" & exe, binDir() / exe
 
 proc buildNifc(showProgress = false) =
@@ -605,6 +623,8 @@ proc handleCmdLine =
     controlflowTests("contracts", overwrite)
     buildNj()
     njTests(overwrite)
+    buildVl()
+    vlTests(overwrite)
 
   of "controlflow", "cf":
     buildControlflow()
@@ -618,6 +638,10 @@ proc handleCmdLine =
     buildNj()
     njTests(overwrite)
 
+  of "vl":
+    buildVl()
+    vlTests(overwrite)
+
   of "build":
     const showProgress = true
     exec "git submodule update --init"
@@ -630,6 +654,7 @@ proc handleCmdLine =
       buildHexer(showProgress)
       buildNifmake(showProgress)
       buildNj(showProgress)
+      buildVl(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -643,6 +668,8 @@ proc handleCmdLine =
       buildNifmake(showProgress)
     of "nj":
       buildNj(showProgress)
+    of "vl":
+      buildVl(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"

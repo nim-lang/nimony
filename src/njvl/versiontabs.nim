@@ -60,6 +60,9 @@ proc combineJoin*(v: var VersionTab; mode: JoinMode): Table[SymId, JoinVar] =
       dec i
       dec nested
       if nested == 0: break
+    of ParRi:
+      # When traversing backwards, ParRi means entering a nested section
+      inc nested
     of Symbol:
       let s = v.history[i].symId
       var entry = addr result.mgetOrPut(s, JoinVar(newv: 0, old1: 0, old2: 0))

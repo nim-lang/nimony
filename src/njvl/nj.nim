@@ -553,8 +553,11 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
 
       if parentIsStmtList:
         # Process all remaining statements in the list as the else branch
+        # Wrap multiple statements in a stmts block for proper ite structure
+        dest.addParLe StmtsS, n.info
         while n.kind != ParRi:
           trGuardedStmts(c, dest, n, true)
+        dest.addParRi() # close stmts
       else:
         # Process this single statement as the else branch
         trGuardedStmts(c, dest, n, false)

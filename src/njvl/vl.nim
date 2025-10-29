@@ -275,9 +275,21 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   endRead elimJumps
 
 when isMainModule:
-  import std/os
+  from std/os import paramStr, paramCount
+  import std/syncio
   import ".." / lib / symparser
-  let infile = os.paramStr(1)
+  let infile = paramStr(1)
   let n = setupProgram(infile, infile.changeModuleExt".njvl.nif")
   let r = toNjvl(n, "main")
-  echo r.toString(false)
+  let output = r.toString(false)
+  if paramCount() >= 2:
+    # Write to specified output file
+    let outfile = paramStr(2)
+    var f = syncio.open(outfile, fmWrite)
+    try:
+      syncio.write(f, output)
+    finally:
+      syncio.close(f)
+  else:
+    # Write to stdout
+    echo output
