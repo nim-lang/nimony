@@ -11,8 +11,9 @@
 
 import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav]
+import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import ".." / hexer / [xelim, mover]
+import njvl_model
 
 #[
 Introducing cfvars is more complex than it looks.
@@ -129,7 +130,13 @@ type
     lastActivated: GuardIndex  # Guard that was activated
     pendingIte: GuardIndex     # Guard for unclosed ite waiting for else-branch
 
+  ExceptionMode* = enum
+    NoRaise     # proc/call cannot raise
+    VoidRaise   # proc/call can raise, but is void
+    TupleRaise  # proc/call can raise, and has a return value so it becomes a tuple
+
   CurrentProc = object
+    mode: ExceptionMode
     resultSym: SymId
     guards: seq[Guard]
     tmpCounter: int
@@ -202,11 +209,55 @@ proc declareCfVar(dest: var TokenBuf; s: SymId) =
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
 
+proc declareResultVar(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
+  copyIntoKind dest, ResultS, info:
+    dest.addSymDef s, info
+    dest.addDotToken() # export marker
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info # type
+    dest.addDotToken() # no value
+  # start with: `result -> success` assignment/store instruction
+  copyIntoKind dest, StoreV, info:
+    dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+    dest.addSymUse s, info
+
+proc trResultExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # we know it will be bound to `result` here:
+  let info = n.info
+  case c.current.mode
+  of VoidRaise:
+    assert n.kind == DotToken
+    inc n
+    copyIntoKind dest, StoreV, info:
+      dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+      dest.addSymUse c.current.resultSym, info
+  of TupleRaise:
+    # wrap it a tuple constructor:
+    copyIntoKind dest, TupconstrX, info:
+      copyIntoKind dest, TupleT, info:
+        dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+        dest.addSymUse c.current.resultSym, info
+      dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+      trExpr c, dest, n
+  of NoRaise:
+    if n.kind == DotToken:
+      inc n
+    else:
+      trExpr c, dest, n
+
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
   let oldProc = move c.current
   c.current = CurrentProc(tmpCounter: 1, iteOpt: initIteOpt())
+  if hasPragma(r.pragmas, RaisesP):
+    if isVoidType(r.retType):
+      c.current.mode = VoidRaise
+    else:
+      c.current.mode = TupleRaise
+  else:
+    c.current.mode = NoRaise
+
   let retFlag = pool.syms.getOrIncl("´r.0")
   c.current.guards.add Guard(cond: retFlag, active: false)
 
@@ -220,6 +271,12 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let info = n.info
       copyIntoKind dest, StmtsS, info:
         openScope c
+        # if this is a void proc that `.raises` we add a `result` variable as we actually need to return something
+        if c.current.mode == VoidRaise:
+          c.current.resultSym = pool.syms.getOrIncl("`result." & $c.current.tmpCounter)
+          inc c.current.tmpCounter
+          declareResultVar dest, c.current.resultSym, info
+
         declareCfVar dest, retFlag
         trGuardedStmts c, dest, n, true
         closeScope c, dest, info
@@ -233,12 +290,14 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert isParamsTag(fnType)
   var pragmas = fnType
   skip pragmas
-  #let retType = pragmas
+  let retType = pragmas
   skip pragmas
   let canRaise = hasPragma(pragmas, RaisesP)
 
-  if canRaise:
-    discard "XXX produce failed flag"
+  let exceptionMode =
+    if canRaise:
+      (if isVoidType(retType): VoidRaise else: TupleRaise)
+    else: NoRaise
 
   let info = n.info
   dest.add n
@@ -282,11 +341,16 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add tagToken("store", info)
   inc n
-  var rhs = n
-  skip rhs
-  trExpr c, dest, rhs
-  trExpr c, dest, n # lhs
-  n = rhs
+  if n.kind == Symbol and n.symId == c.current.resultSym:
+    inc n # skip `result`:
+    trResultExpr c, dest, n
+    dest.addSymUse c.current.resultSym, info
+  else:
+    var rhs = n
+    skip rhs
+    trExpr c, dest, rhs
+    trExpr c, dest, n # lhs
+    n = rhs
   skipParRi n
   dest.addParRi()
 
@@ -528,13 +592,12 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     if n.kind == DotToken:
       inc n
-      skipParRi n
     else:
       assert c.current.resultSym != NoSymId, "could not find `result` symbol"
-      dest.add tagToken("store", info)
-      trExpr c, dest, n
-      dest.addSymUse c.current.resultSym, info
-      dest.takeParRi n
+      dest.copyIntoKind StoreV, info:
+        trResultExpr c, dest, n
+        dest.addSymUse c.current.resultSym, info
+    skipParRi n
 
 proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
   # Check if we have a pending ite from a previous if statement
