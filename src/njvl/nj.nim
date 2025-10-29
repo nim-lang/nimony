@@ -116,6 +116,7 @@ type
     cond: SymId
     blockName: SymId # used for named `block` statements
     active: bool
+    isTryGuard: bool
 
   GuardIndex = object
     idx: int      # index in guards array, or -1 if invalid
@@ -141,6 +142,8 @@ type
     guards: seq[Guard]
     tmpCounter: int
     iteOpt: IteOptState # if-then-else optimization state
+    returnType: Cursor
+    exceptVars: seq[SymId]
 
   Context* = object
     typeCache: TypeCache
@@ -236,7 +239,7 @@ proc trResultExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, TupconstrX, info:
       copyIntoKind dest, TupleT, info:
         dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
-        dest.addSymUse c.current.resultSym, info
+        dest.copyTree c.current.returnType
       dest.addSymUse pool.syms.getOrIncl(SuccessName), info
       trExpr c, dest, n
   of NoRaise:
@@ -249,7 +252,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
   let oldProc = move c.current
-  c.current = CurrentProc(tmpCounter: 1, iteOpt: initIteOpt())
+  c.current = CurrentProc(tmpCounter: 1, iteOpt: initIteOpt(), returnType: r.retType)
   if hasPragma(r.pragmas, RaisesP):
     if isVoidType(r.retType):
       c.current.mode = VoidRaise
@@ -438,6 +441,24 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParRi()
   skipParRi n
 
+type
+  GuardUndoState = object
+    at: int
+    iteOpt: IteOptState
+
+proc addGuard(c: var Context; g: Guard): GuardUndoState =
+  result = GuardUndoState(at: c.current.guards.len, iteOpt: c.current.iteOpt)
+  c.current.iteOpt.clear()
+  c.current.guards.add g
+
+proc removeGuard(c: var Context; s: GuardUndoState) =
+  c.current.guards.shrink(s.at)
+  # Restore optimization state only if it refers to guards still in scope
+  if s.iteOpt.lastActivated.idx >= 0 and s.iteOpt.lastActivated.idx < s.at:
+    c.current.iteOpt.lastActivated = s.iteOpt.lastActivated
+  if s.iteOpt.pendingIte.idx >= 0 and s.iteOpt.pendingIte.idx < s.at:
+    c.current.iteOpt.pendingIte = s.iteOpt.pendingIte
+
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
   inc c.current.tmpCounter
@@ -447,21 +468,10 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let blockName = if n.kind == SymbolDef: n.symId else: NoSymId
   inc n # name or empty
   openScope c
-  c.current.guards.add Guard(cond: guard, active: false, blockName: blockName)
-  let myGuardAt = c.current.guards.len - 1
-
-  # Save optimization state before entering nested scope
-  let oldIteOpt = c.current.iteOpt
-  c.current.iteOpt.clear()
+  let s = addGuard(c, Guard(cond: guard, active: false, blockName: blockName))
 
   trGuardedStmts c, dest, n, false
-
-  # Restore optimization state only if it refers to guards still in scope
-  if oldIteOpt.lastActivated.idx >= 0 and oldIteOpt.lastActivated.idx < myGuardAt:
-    c.current.iteOpt.lastActivated = oldIteOpt.lastActivated
-  if oldIteOpt.pendingIte.idx >= 0 and oldIteOpt.pendingIte.idx < myGuardAt:
-    c.current.iteOpt.pendingIte = oldIteOpt.pendingIte
-  c.current.guards.shrink(myGuardAt)
+  removeGuard c, s
   closeScope c, dest, n.info
 
 
@@ -507,14 +517,9 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc c.current.tmpCounter
   openScope c
 
-  # Save optimization state before entering loop scope
-  let oldIteOpt = c.current.iteOpt
-  let myGuardAt = c.current.guards.len  # Remember where guards start
-  c.current.iteOpt.clear()
-
   dest.copyIntoKind StmtsS, info:
     declareCfVar dest, guard
-    c.current.guards.add Guard(cond: guard, active: false)
+    let s = addGuard(c, Guard(cond: guard, active: false))
 
     var breakSplitPoint = findBreakSplitPoint(n)
     inc n # into the loop body statement list
@@ -536,12 +541,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind ContinueS, info:
       dest.addDotToken() # no `join` information yet
 
-  # Restore optimization state only if it refers to guards still in scope
-  if oldIteOpt.lastActivated.idx >= 0 and oldIteOpt.lastActivated.idx < myGuardAt:
-    c.current.iteOpt.lastActivated = oldIteOpt.lastActivated
-  if oldIteOpt.pendingIte.idx >= 0 and oldIteOpt.pendingIte.idx < myGuardAt:
-    c.current.iteOpt.pendingIte = oldIteOpt.pendingIte
-  c.current.guards.shrink(myGuardAt)
+  removeGuard c, s
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add tagToken("loop", n.info)
@@ -571,6 +571,66 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhileTrue c, dest, ww
     endRead w
 
+proc declareExceptVars(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  var nn = n.firstSon
+  skip nn # stmts
+  if nn.substructureKind == ExceptU:
+    inc nn
+    if nn.stmtKind == LetS:
+      copyInto dest, nn:
+        let exc = nn.symId
+        c.current.exceptVars.add exc
+        c.typeCache.takeLocalHeader(dest, nn, LetY)
+        assert nn.kind == DotToken
+        dest.add nn
+        inc nn
+
+proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: bool) =
+  let info = n.info
+  openScope c
+
+  let oldLen = c.current.exceptVars.len
+  declareExceptVars c, dest, n
+
+  let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
+  inc c.current.tmpCounter
+
+  declareCfVar dest, guard
+  let s = addGuard(c, Guard(cond: guard, active: false, isTryGuard: true))
+
+  inc n # into the loop body statement list
+  trGuardedStmts c, dest, n, parentIsStmtList
+  c.current.exceptVars.shrink oldLen
+
+  closeScope c, dest, info
+
+  while n.substructureKind == ExceptU:
+    inc n # into ExceptU
+    dest.copyIntoKind IteV, info:
+      dest.addSymUse guard, info
+      dest.copyIntoKind StmtsS, info:
+        if n.stmtKind == LetS:
+          dest.addDotToken() # we moved the declaration before the try statement
+          skip n
+        else:
+          dest.takeTree n
+        openScope c
+        trGuardedStmts c, dest, n, true
+        closeScope c, dest, info
+        skipParRi n
+      dest.addDotToken() # no else
+      dest.addDotToken() # no join
+  if n.substructureKind == FinU:
+    inc n # into FinU
+    openScope c
+    trGuardedStmts c, dest, n, true
+    closeScope c, dest, info
+    skipParRi n
+    # we need to generate `if (hadError) reraise` here. Somehow.
+
+  removeGuard c, s
+
+
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add tagToken("jtrue", info)
@@ -598,6 +658,67 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trResultExpr c, dest, n
         dest.addSymUse c.current.resultSym, info
     skipParRi n
+
+proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  dest.add tagToken("jtrue", info)
+  # we also need to break out of everything, until a `try` guard is found
+  for i in countdown(c.current.guards.len - 1, 0):
+    if c.current.guards[i].isTryGuard:
+      break
+    let cond = c.current.guards[i].cond
+    assert cond != NoSymId
+    c.current.guards[i].active = true
+    # Track the innermost guard (first in countdown)
+    if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
+      c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
+    dest.addSymUse cond, info
+
+  dest.addParRi()
+  inc n
+
+  if n.kind == ParRi:
+    inc n
+  else:
+    if n.kind == DotToken:
+      inc n
+      bug "reraise not implemented"
+    else:
+      assert c.current.resultSym != NoSymId, "could not find `result` symbol"
+      dest.copyIntoKind StoreV, info:
+        let info = n.info
+        case c.current.mode
+        of VoidRaise:
+          assert n.kind == DotToken
+          inc n
+          copyIntoKind dest, StoreV, info:
+            trExpr c, dest, n
+            dest.addSymUse c.current.resultSym, info
+        of TupleRaise:
+          # wrap it a tuple constructor:
+          copyIntoKind dest, TupconstrX, info:
+            copyIntoKind dest, TupleT, info:
+              dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+              dest.copyTree c.current.returnType
+            trExpr c, dest, n
+            dest.addSymUse c.current.resultSym, info
+        of NoRaise:
+          bug "`raise` in a proc that does not support it"
+        dest.addSymUse c.current.resultSym, info
+    skipParRi n
+
+  if c.current.exceptVars.len > 0:
+    # also bind the value to a potential `T as e` variable:
+    copyIntoKind dest, StoreV, info:
+      case c.current.mode
+      of VoidRaise:
+        dest.addSymUse c.current.resultSym, info
+      of TupleRaise:
+        copyIntoKind dest, TupatX, info:
+          dest.addSymUse c.current.resultSym, info
+          dest.addIntLit 0, info
+      of NoRaise: discard "already produced a bug earlier"
+      dest.addSymUse c.current.exceptVars[^1], info
 
 proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
   # Check if we have a pending ite from a previous if statement
@@ -681,6 +802,10 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
     trBlock c, dest, n
   of TemplateS, TypeS:
     takeTree dest, n
+  of RaiseS:
+    trRaise c, dest, n
+  of TryS:
+    trTry c, dest, n, parentIsStmtList
   else:
     trExpr c, dest, n
 
