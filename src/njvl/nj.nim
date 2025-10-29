@@ -372,35 +372,6 @@ proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
     dest.addSymUse cond, info
   dest.addParRi()
 
-proc raiseAfterCall(c: var Context; dest: var TokenBuf; target: Cursor; m: ExceptionMode) =
-  if m == NoRaise: return
-  let info = target.info
-
-  var lhs = createTokenBuf(10)
-  case m
-  of VoidRaise:
-    lhs.copyTree target
-  of TupleRaise:
-    lhs.copyIntoKind TupatX, info:
-      lhs.copyTree target
-      lhs.addIntLit 0, info
-  of NoRaise:
-    discard "nothing to do"
-
-  dest.copyIntoKind IteV, info:
-    dest.copyTree lhs # XXX write that later as `e != Success`
-    copyIntoKind dest, StmtsS, info:
-
-      if c.current.exceptVars.len > 0:
-        # also bind the value to a potential `T as e` variable:
-        copyIntoKind dest, StoreV, info:
-          dest.copyTree lhs
-          dest.addSymUse c.current.exceptVars[^1], info
-
-      raiseGuards(c, dest, info)
-    dest.addDotToken() # no else section
-    dest.addDotToken() # no join information
-
 proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let before = dest.len
   let info = n.info
@@ -440,23 +411,68 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of TupleRaise:
     bug "value should have been discarded"
 
+proc replayLocalHeader(c: var Context; dest: var TokenBuf; n: Cursor) =
+  var n = n
+  takeTree dest, n # name
+  takeTree dest, n # export marker
+  takeTree dest, n # pragmas
+  dest.copyIntoKind TupleT, n.info:
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
+    takeTree dest, n # type
+  takeTree dest, n # value
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
-  copyInto dest, n:
-    let symId = n.symId
-    if kind == ResultY:
-      c.current.resultSym = symId
-    c.typeCache.takeLocalHeader(dest, n, kind)
-    let m = trBoundExpr(c, dest, n)
+  dest.takeToken n
+  let afterHead = dest.len
+
+  let symId = n.symId
+  if kind == ResultY:
+    c.current.resultSym = symId
+
+  takeTree dest, n # name
+  takeTree dest, n # export marker
+  takeTree dest, n # pragmas
+  c.typeCache.registerLocal(symId, kind, n)
+  takeTree dest, n # type
+
+  let info = n.info
+  let m = trBoundExpr(c, dest, n)
   # the `raise` statement must follow the var declaration!
   case m
   of NoRaise:
-    discard "nothing to do"
+    dest.addParRi()
   of VoidRaise:
+    dest.addParRi()
     bug "value should have been discarded"
   of TupleRaise:
-    discard "XXX to implement"
+    # we also need to patch the type!
+    var decl = createTokenBuf(10)
+    decl.copyTree cursorAt(dest, afterHead)
+    endRead dest
+    dest.shrink afterHead
+    replayLocalHeader(c, dest, beginRead(decl))
 
+    dest.addParRi()
+
+    c.current.tupleVars.incl(symId)
+    dest.copyIntoKind IteV, info:
+      dest.copyIntoKind TupatX, info:
+        dest.addSymUse symId, info # XXX write that later as `e != Success`
+        dest.addIntLit 0, info
+      copyIntoKind dest, StmtsS, info:
+
+        if c.current.exceptVars.len > 0:
+          # also bind the value to a potential `T as e` variable:
+          copyIntoKind dest, StoreV, info:
+            dest.copyIntoKind TupatX, info:
+              dest.addSymUse symId, info
+              dest.addIntLit 0, info
+            dest.addSymUse c.current.exceptVars[^1], info
+
+        raiseGuards(c, dest, info)
+      dest.addDotToken() # no else section
+      dest.addDotToken() # no join information
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # we translate `(asgn X Y)` to `(store Y X)` as it's easier to analyze,
