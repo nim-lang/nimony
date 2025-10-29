@@ -144,6 +144,7 @@ type
     iteOpt: IteOptState # if-then-else optimization state
     returnType: Cursor
     exceptVars: seq[SymId]
+    tupleVars: HashSet[SymId] # variables that have been expanded to a tuple due to exception handling
 
   Context* = object
     typeCache: TypeCache
@@ -288,7 +289,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
   c.current = ensureMove oldProc
 
-proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): ExceptionMode =
   var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
   assert isParamsTag(fnType)
   var pragmas = fnType
@@ -297,7 +298,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skip pragmas
   let canRaise = hasPragma(pragmas, RaisesP)
 
-  let exceptionMode =
+  result =
     if canRaise:
       (if isVoidType(retType): VoidRaise else: TupleRaise)
     else: NoRaise
@@ -323,12 +324,21 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of Symbol, UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+  of Symbol:
+    if c.current.tupleVars.contains(n.symId):
+      let info = n.info
+      copyIntoKind dest, TupatX, info:
+        dest.addSymUse n.symId, info
+        dest.addIntLit 1, info
+      inc n
+    else:
+      dest.takeToken n
+  of UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
   of ParLe:
     case n.exprKind
     of CallKinds:
-      trCall c, dest, n
+      bug "call must have been bound to a location"
     of AndX, OrX:
       bug "and/or should have been handled by the expression elimination pass xelim.nim"
     else:
@@ -337,6 +347,116 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trExpr c, dest, n
       dest.takeToken n
   of ParRi: bug "Unmatched ParRi"
+
+proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): ExceptionMode =
+  # Indicates that the expression is about to be bound to a location.
+  # Hence a `call` expression is valid here.
+  if n.exprKind in CallKinds:
+    result = trCall(c, dest, n)
+  else:
+    trExpr c, dest, n
+    result = NoRaise
+
+proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  dest.add tagToken("jtrue", info)
+  # we also need to break out of everything, until a `try` guard is found
+  for i in countdown(c.current.guards.len - 1, 0):
+    if c.current.guards[i].isTryGuard:
+      break
+    let cond = c.current.guards[i].cond
+    assert cond != NoSymId
+    c.current.guards[i].active = true
+    # Track the innermost guard (first in countdown)
+    if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
+      c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
+    dest.addSymUse cond, info
+  dest.addParRi()
+
+proc raiseAfterCall(c: var Context; dest: var TokenBuf; target: Cursor; m: ExceptionMode) =
+  if m == NoRaise: return
+  let info = target.info
+
+  var lhs = createTokenBuf(10)
+  case m
+  of VoidRaise:
+    lhs.copyTree target
+  of TupleRaise:
+    lhs.copyIntoKind TupatX, info:
+      lhs.copyTree target
+      lhs.addIntLit 0, info
+  of NoRaise:
+    discard "nothing to do"
+
+  dest.copyIntoKind IteV, info:
+    dest.copyTree lhs # XXX write that later as `e != Success`
+    copyIntoKind dest, StmtsS, info:
+
+      if c.current.exceptVars.len > 0:
+        # also bind the value to a potential `T as e` variable:
+        copyIntoKind dest, StoreV, info:
+          dest.copyTree lhs
+          dest.addSymUse c.current.exceptVars[^1], info
+
+      raiseGuards(c, dest, info)
+    dest.addDotToken() # no else section
+    dest.addDotToken() # no join information
+
+proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let before = dest.len
+  let info = n.info
+  let m = trCall(c, dest, n)
+  case m
+  of NoRaise:
+    discard "nothing to do"
+  of VoidRaise:
+    # we need to bind the call to a temporary!
+    var target = createTokenBuf(10)
+    target.copyTree cursorAt(dest, before)
+    endRead dest
+    dest.shrink before
+
+    let s = pool.syms.getOrIncl("`g." & $c.current.tmpCounter)
+    inc c.current.tmpCounter
+    copyIntoKind dest, LetS, info:
+      dest.addSymDef s, info
+      dest.addDotToken() # export marker
+      dest.addDotToken() # pragmas
+      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info # type
+      dest.add target
+
+    dest.copyIntoKind IteV, info:
+      dest.addSymUse s, info # XXX write that later as `e != Success`
+      copyIntoKind dest, StmtsS, info:
+
+        if c.current.exceptVars.len > 0:
+          # also bind the value to a potential `T as e` variable:
+          copyIntoKind dest, StoreV, info:
+            dest.addSymUse s, info
+            dest.addSymUse c.current.exceptVars[^1], info
+
+        raiseGuards(c, dest, info)
+      dest.addDotToken() # no else section
+      dest.addDotToken() # no join information
+  of TupleRaise:
+    bug "value should have been discarded"
+
+proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let kind = n.symKind
+  copyInto dest, n:
+    let symId = n.symId
+    if kind == ResultY:
+      c.current.resultSym = symId
+    c.typeCache.takeLocalHeader(dest, n, kind)
+    let m = trBoundExpr(c, dest, n)
+  # the `raise` statement must follow the var declaration!
+  case m
+  of NoRaise:
+    discard "nothing to do"
+  of VoidRaise:
+    bug "value should have been discarded"
+  of TupleRaise:
+    discard "XXX to implement"
+
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # we translate `(asgn X Y)` to `(store Y X)` as it's easier to analyze,
@@ -347,6 +467,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.kind == Symbol and n.symId == c.current.resultSym:
     inc n # skip `result`:
     trResultExpr c, dest, n
+    # add `result` later due to the changed order for `(store X result)`
     dest.addSymUse c.current.resultSym, info
   else:
     var rhs = n
@@ -403,15 +524,6 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # join information: not yet available
     dest.addDotToken()
     dest.addParRi() # "ite"
-
-proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let kind = n.symKind
-  copyInto dest, n:
-    let symId = n.symId
-    if kind == ResultY:
-      c.current.resultSym = symId
-    c.typeCache.takeLocalHeader(dest, n, kind)
-    trExpr c, dest, n
 
 proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert c.current.guards.len > 0
@@ -661,20 +773,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add tagToken("jtrue", info)
-  # we also need to break out of everything, until a `try` guard is found
-  for i in countdown(c.current.guards.len - 1, 0):
-    if c.current.guards[i].isTryGuard:
-      break
-    let cond = c.current.guards[i].cond
-    assert cond != NoSymId
-    c.current.guards[i].active = true
-    # Track the innermost guard (first in countdown)
-    if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
-      c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
-    dest.addSymUse cond, info
-
-  dest.addParRi()
+  raiseGuards(c, dest, info)
   inc n
 
   if n.kind == ParRi:
@@ -806,6 +905,8 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
     trRaise c, dest, n
   of TryS:
     trTry c, dest, n, parentIsStmtList
+  of CallKindsS:
+    trStmtCall c, dest, n
   else:
     trExpr c, dest, n
 

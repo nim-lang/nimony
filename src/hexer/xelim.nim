@@ -558,7 +558,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      trExprToTarget c, dest, n, tar
+      # we cannot use `trExprToTarget` here because it is not correct
+      # for procs that can raise.
+      trExpr c, dest, n, tar
     dest.add tar
 
   of AsmS, DeferS:
