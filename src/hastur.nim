@@ -22,10 +22,11 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|nifmake]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake|nj]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
+  nj                   run NJ (Nimony Jump Elimination) tests.
   test <file>/<dir>    run test <file> or <dir>.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
@@ -358,6 +359,46 @@ proc controlflowTests(tool: string; overwrite: bool) =
   else:
     echo "SUCCESS."
 
+proc njTests(overwrite: bool) =
+  ## Run all the NJ (Nimony Jump Elimination) tests.
+  ## Tests are .nif files in src/njvl/tests/ with expected output in .nj.nif files.
+  let testDir = "src/njvl/tests"
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  for x in walkDir(testDir, relative = true):
+    if x.kind == pcFile and x.path.endsWith(".nif") and not x.path.endsWith(".nj.nif"):
+      inc c.total
+      let t = testDir / x.path
+      let dest = t.changeFileExt(".out.nif")
+      let (msgs, exitcode) = execLocal("nj", os.quoteShell(t) & " " & os.quoteShell(dest))
+      if exitcode != 0:
+        failure c, t, "nj exitcode 0", "exitcode " & $exitcode & "\n" & msgs
+      let msgsFile = t.changeFileExt(".msgs")
+      if msgsFile.fileExists():
+        if overwrite:
+          writeFile(msgsFile, msgs)
+        else:
+          let expectedOutput = readFile(msgsFile).strip
+          if expectedOutput != msgs.strip:
+            failure c, t, expectedOutput, msgs
+      let expected = t.changeFileExt(".nj.nif")
+      if overwrite:
+        if expected.fileExists():
+          moveFile(dest, expected)
+      elif expected.fileExists():
+        let expectedOutput = readFile(expected).strip
+        let destContent = readFile(dest).strip
+        let success = expectedOutput == destContent
+        if success:
+          os.removeFile(dest)
+        else:
+          failure c, t, expectedOutput, destContent
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some tests failed."
+  else:
+    echo "SUCCESS."
+
 proc test(t: string; overwrite: bool; cat: Category) =
   var c = TestCounters(total: 0, failures: 0)
   testFile c, t, overwrite, cat
@@ -469,6 +510,11 @@ proc buildContracts(showProgress = false) =
   exec "nim c src/nimony/contracts.nim", showProgress
   let exe = "contracts".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
+
+proc buildNj(showProgress = false) =
+  exec "nim c src/njvl/nj.nim", showProgress
+  let exe = "nj".addFileExt(ExeExt)
+  robustMoveFile "src/njvl/" & exe, binDir() / exe
 
 proc buildNifc(showProgress = false) =
   exec "nim c src/nifc/nifc.nim", showProgress
@@ -588,6 +634,8 @@ proc handleCmdLine =
     controlflowTests("controlflow", overwrite)
     buildContracts()
     controlflowTests("contracts", overwrite)
+    buildNj()
+    njTests(overwrite)
 
   of "controlflow", "cf":
     buildControlflow()
@@ -596,6 +644,10 @@ proc handleCmdLine =
   of "contracts":
     buildContracts()
     controlflowTests("contracts", overwrite)
+
+  of "nj":
+    buildNj()
+    njTests(overwrite)
 
   of "build":
     const showProgress = true
@@ -608,6 +660,7 @@ proc handleCmdLine =
       buildNifc(showProgress)
       buildHexer(showProgress)
       buildNifmake(showProgress)
+      buildNj(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -619,6 +672,8 @@ proc handleCmdLine =
       buildHexer(showProgress)
     of "nifmake":
       buildNifmake(showProgress)
+    of "nj":
+      buildNj(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"

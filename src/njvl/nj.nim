@@ -75,6 +75,39 @@ while true:           # loopGuard
     more()            # This should be guarded by ifGuard (not innerGuard)
   code()              # This should be guarded by loopGuard (not ifGuard)
 
+# If-Then-Else Optimization
+
+When `optimizeIte` is enabled, we perform an optimization to avoid redundant guard checks.
+Instead of generating:
+
+  if cond: break
+  if not guard: stmt1
+  if not guard: stmt2
+  if not guard: stmt3
+
+We generate:
+
+  if cond: break
+  else:
+    stmt1
+    stmt2
+    stmt3
+
+This works by:
+1. `trIf` detects when a guard was activated in the then-branch (by comparing
+   `lastActivatedGuard` before and after).
+2. If activated and no explicit else exists, `trIf` sets `pendingIte` to the
+   activated guard index and leaves the `ite` instruction open.
+3. The next call to `trGuardedStmts` detects `pendingIte >= 0` and processes
+   the remaining statement(s) as the else-branch with the guard disabled.
+4. After processing, it closes the `ite` instruction.
+
+Fields involved:
+- `lastActivatedGuard`: Tracks the most recently activated guard index (set by
+  `trBreak`, `trRet`; reset when guards are popped in `trBlock`, `trWhileTrue`).
+- `pendingIte`: Index of guard for an open `ite` waiting for its else-branch,
+  or -1 if none.
+
 ]#
 
 type
@@ -83,16 +116,69 @@ type
     blockName: SymId # used for named `block` statements
     active: bool
 
+  GuardIndex = object
+    idx: int      # index in guards array, or -1 if invalid
+    sym: SymId    # the guard's SymId, for validation
+
+  IteOptState = object
+    ## State machine for the if-then-else optimization.
+    ## States:
+    ##   1. Empty: no guard activation
+    ##   2. GuardActivated: a guard was activated, available for optimization
+    ##   3. PendingIte: an ite is open, waiting for its else-branch
+    lastActivated: GuardIndex  # Guard that was activated
+    pendingIte: GuardIndex     # Guard for unclosed ite waiting for else-branch
+
   CurrentProc = object
     resultSym: SymId
     guards: seq[Guard]
     tmpCounter: int
+    iteOpt: IteOptState # if-then-else optimization state
 
   Context* = object
     typeCache: TypeCache
     counter: int
     thisModuleSuffix: string
     current: CurrentProc
+    optimizeIte: bool # Enable if-then-else optimization
+
+const InvalidGuardRef = GuardIndex(idx: -1, sym: NoSymId)
+
+proc isValid(g: GuardIndex; guards: seq[Guard]): bool =
+  ## Check if a guard reference is still valid
+  g.idx >= 0 and g.idx < guards.len and guards[g.idx].cond == g.sym
+
+# IteOptState operations - state machine for if-then-else optimization
+proc initIteOpt(): IteOptState =
+  ## Create empty optimization state
+  IteOptState(lastActivated: InvalidGuardRef, pendingIte: InvalidGuardRef)
+
+proc recordActivation(s: var IteOptState; g: GuardIndex) =
+  ## Record that a guard was activated
+  s.lastActivated = g
+
+proc getLastActivated(s: IteOptState): GuardIndex =
+  ## Get the last activated guard
+  s.lastActivated
+
+proc transferToPending(s: var IteOptState) =
+  ## Transfer lastActivated to pendingIte (opening an unclosed ite)
+  s.pendingIte = s.lastActivated
+  s.lastActivated = InvalidGuardRef
+
+proc hasPending(s: IteOptState): bool =
+  ## Check if there's a pending ite
+  s.pendingIte.idx >= 0
+
+proc takePending(s: var IteOptState): GuardIndex =
+  ## Consume and return the pending ite's guard
+  result = s.pendingIte
+  s.pendingIte = InvalidGuardRef
+
+proc clear(s: var IteOptState) =
+  ## Clear all optimization state
+  s.lastActivated = InvalidGuardRef
+  s.pendingIte = InvalidGuardRef
 
 proc addKill(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   dest.add tagToken("kill", info)
@@ -120,7 +206,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
   let oldProc = move c.current
-  c.current = CurrentProc(tmpCounter: 1)
+  c.current = CurrentProc(tmpCounter: 1, iteOpt: initIteOpt())
   let retFlag = pool.syms.getOrIncl("´r.0")
   c.current.guards.add Guard(cond: retFlag, active: false)
 
@@ -212,23 +298,44 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert n.substructureKind == ElifU
   inc n
   trExpr c, dest, n
+
+  # Track which guard was activated before then-branch
+  let guardBefore = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
+
   openScope c
   trGuardedStmts c, dest, n
   closeScope c, dest, info
   skipParRi n
+
+  # Check if a guard was activated during then-branch
+  let activatedGuard = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
+
   if n.kind != ParRi:
+    # Has explicit else branch
     assert n.substructureKind == ElseU
     inc n
     openScope c
     trGuardedStmts c, dest, n
     closeScope c, dest, info
     skipParRi n
+    skipParRi n
+    # join information: not yet available
+    dest.addDotToken()
+    dest.addParRi() # "ite"
+    # Note: keep lastActivated set so statements after this entire if-else
+    # remain guarded (the explicit else doesn't consume the guard like our optimization does)
+  elif c.optimizeIte and activatedGuard.idx >= 0 and activatedGuard.idx != guardBefore.idx:
+    # Guard was activated in then-branch, don't close ite yet
+    # Let next statement become the else branch. Transfer the activation to pending state.
+    c.current.iteOpt.transferToPending()
+    skipParRi n
   else:
+    # Normal completion, no new guard activated
+    skipParRi n
     dest.addDotToken() # no else section
-  skipParRi n
-  # join information: not yet available
-  dest.addDotToken()
-  dest.addParRi() # "ite"
+    # join information: not yet available
+    dest.addDotToken()
+    dest.addParRi() # "ite"
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -257,9 +364,13 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   dest.add tagToken("jtrue", n.info)
   for i in 1..entries:
-    let g = addr c.current.guards[c.current.guards.len - i]
+    let guardIdx = c.current.guards.len - i
+    let g = addr c.current.guards[guardIdx]
     dest.addSymUse g.cond, n.info
     g.active = true
+    # Track the innermost (last in loop) guard that was activated
+    if c.optimizeIte:
+      c.current.iteOpt.recordActivation(GuardIndex(idx: guardIdx, sym: g.cond))
   dest.addParRi()
   skipParRi n
 
@@ -275,7 +386,17 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.current.guards.add Guard(cond: guard, active: false, blockName: blockName)
   let myGuardAt = c.current.guards.len - 1
 
+  # Save optimization state before entering nested scope
+  let oldIteOpt = c.current.iteOpt
+  c.current.iteOpt.clear()
+
   trGuardedStmts c, dest, n, false
+
+  # Restore optimization state only if it refers to guards still in scope
+  if oldIteOpt.lastActivated.idx >= 0 and oldIteOpt.lastActivated.idx < myGuardAt:
+    c.current.iteOpt.lastActivated = oldIteOpt.lastActivated
+  if oldIteOpt.pendingIte.idx >= 0 and oldIteOpt.pendingIte.idx < myGuardAt:
+    c.current.iteOpt.pendingIte = oldIteOpt.pendingIte
   c.current.guards.shrink(myGuardAt)
   closeScope c, dest, n.info
 
@@ -322,10 +443,14 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc c.current.tmpCounter
   openScope c
 
+  # Save optimization state before entering loop scope
+  let oldIteOpt = c.current.iteOpt
+  let myGuardAt = c.current.guards.len  # Remember where guards start
+  c.current.iteOpt.clear()
+
   dest.copyIntoKind StmtsS, info:
     declareCfVar dest, guard
     c.current.guards.add Guard(cond: guard, active: false)
-    let myGuardAt = c.current.guards.len - 1
 
     var breakSplitPoint = findBreakSplitPoint(n)
     inc n # into the loop body statement list
@@ -347,6 +472,11 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind ContinueS, info:
       dest.addDotToken() # no `join` information yet
 
+  # Restore optimization state only if it refers to guards still in scope
+  if oldIteOpt.lastActivated.idx >= 0 and oldIteOpt.lastActivated.idx < myGuardAt:
+    c.current.iteOpt.lastActivated = oldIteOpt.lastActivated
+  if oldIteOpt.pendingIte.idx >= 0 and oldIteOpt.pendingIte.idx < myGuardAt:
+    c.current.iteOpt.pendingIte = oldIteOpt.pendingIte
   c.current.guards.shrink(myGuardAt)
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -385,6 +515,9 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let cond = c.current.guards[i].cond
     assert cond != NoSymId
     c.current.guards[i].active = true
+    # Track the innermost guard (first in countdown)
+    if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
+      c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
     dest.addSymUse cond, info
 
   dest.addParRi()
@@ -404,6 +537,41 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeParRi n
 
 proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
+  # Check if we have a pending ite from a previous if statement
+  if c.current.iteOpt.hasPending():
+    let guardRef = c.current.iteOpt.takePending()
+
+    # Validate that the guard is still in scope and is the same guard (not an ABA problem)
+    if guardRef.isValid(c.current.guards):
+      let guardIdx = guardRef.idx
+
+      # Save state before processing else-branch (stack discipline)
+      let oldIteOpt = c.current.iteOpt
+
+      # Disable the guard for the else branch
+      c.current.guards[guardIdx].active = false
+
+      if parentIsStmtList:
+        # Process all remaining statements in the list as the else branch
+        while n.kind != ParRi:
+          trGuardedStmts(c, dest, n, true)
+      else:
+        # Process this single statement as the else branch
+        trGuardedStmts(c, dest, n, false)
+
+      # Re-enable the guard
+      c.current.guards[guardIdx].active = true
+
+      # Now close the ite
+      dest.addDotToken() # no join information
+      dest.addParRi() # "ite"
+
+      # Restore state (stack discipline). Since trIf called transferToPending (which cleared
+      # lastActivated), oldIteOpt.lastActivated will be InvalidGuardRef, which prevents the
+      # optimization from incorrectly triggering at outer if levels.
+      c.current.iteOpt = oldIteOpt
+      return
+
   var usedGuard = -1
   for i in countdown(c.current.guards.len - 1, 0):
     let g = addr c.current.guards[i]
@@ -459,8 +627,9 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
     dest.addParRi() # "ite"
 
 
-proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+proc eliminateJumps*(n: Cursor; moduleSuffix: string; optimizeIte = true): TokenBuf =
+  var c = Context(counter: 0, typeCache: createTypeCache(),
+                  thisModuleSuffix: moduleSuffix, optimizeIte: optimizeIte)
   c.openScope()
   result = createTokenBuf(300)
   var elimExprs = lowerExprs(n, moduleSuffix, TowardsNjvl)
@@ -476,9 +645,21 @@ proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   #echo "PRODUCED: ", result.toString(false)
 
 when isMainModule:
-  import std/os
+  from std/os import paramStr, paramCount
+  import std/syncio
   import ".." / lib / symparser
-  let infile = os.paramStr(1)
+  let infile = paramStr(1)
   let n = setupProgram(infile, infile.changeModuleExt".njvl.nif")
   let r = eliminateJumps(n, "main")
-  echo r.toString(false)
+  let output = r.toString(false)
+  if paramCount() >= 2:
+    # Write to specified output file
+    let outfile = paramStr(2)
+    var f = syncio.open(outfile, fmWrite)
+    try:
+      syncio.write(f, output)
+    finally:
+      syncio.close(f)
+  else:
+    # Write to stdout
+    echo output
