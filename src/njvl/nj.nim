@@ -139,6 +139,7 @@ type
   CurrentProc = object
     mode: ExceptionMode
     resultSym: SymId
+    errorTracker: SymId # tracks error codes in try blocks (can differ from resultSym)
     guards: seq[Guard]
     tmpCounter: int
     iteOpt: IteOptState # if-then-else optimization state
@@ -213,6 +214,44 @@ proc declareCfVar(dest: var TokenBuf; s: SymId) =
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
 
+proc useErrorTracker(c: Context; dest: var TokenBuf; info: PackedLineInfo) =
+  ## Emit the correct expression to read the error code from errorTracker.
+  ## In TupleRaise mode, errorTracker is a tuple and we need (tupat errorTracker +0).
+  ## In VoidRaise/NoRaise mode, errorTracker is a plain ErrorCode variable.
+  if c.current.mode == TupleRaise:
+    dest.addParLe TupatX, info
+    dest.addSymUse c.current.errorTracker, info
+    dest.addIntLit 0, info
+    dest.addParRi()
+  else:
+    dest.addSymUse c.current.errorTracker, info
+
+proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; info: PackedLineInfo) =
+  ## Emit the correct store to set the error code in errorTracker from a source expression.
+  ## In TupleRaise mode, store to (tupat errorTracker +0).
+  ## In VoidRaise/NoRaise mode, store directly to errorTracker.
+  dest.copyIntoKind StoreV, info:
+    trExpr c, dest, value
+    if c.current.mode == TupleRaise:
+      dest.addParLe TupatX, info
+      dest.addSymUse c.current.errorTracker, info
+      dest.addIntLit 0, info
+      dest.addParRi()
+    else:
+      dest.addSymUse c.current.errorTracker, info
+
+proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; constSym: SymId; info: PackedLineInfo) =
+  ## Store a constant (like Success) to errorTracker.
+  dest.copyIntoKind StoreV, info:
+    dest.addSymUse constSym, info
+    if c.current.mode == TupleRaise:
+      dest.addParLe TupatX, info
+      dest.addSymUse c.current.errorTracker, info
+      dest.addIntLit 0, info
+      dest.addParRi()
+    else:
+      dest.addSymUse c.current.errorTracker, info
+
 proc declareResultVar(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   copyIntoKind dest, ResultS, info:
     dest.addSymDef s, info
@@ -280,6 +319,8 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           c.current.resultSym = pool.syms.getOrIncl("`result." & $c.current.tmpCounter)
           inc c.current.tmpCounter
           declareResultVar dest, c.current.resultSym, info
+          # By default, errorTracker is the same as resultSym
+          c.current.errorTracker = c.current.resultSym
 
         declareCfVar dest, retFlag
         trGuardedStmts c, dest, n, true
@@ -444,6 +485,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let symId = n.symId
   if kind == ResultY:
     c.current.resultSym = symId
+    # For TupleRaise mode, errorTracker should also point to result
+    if c.current.mode == TupleRaise:
+      c.current.errorTracker = symId
 
   takeTree dest, n # name
   takeTree dest, n # export marker
@@ -754,12 +798,40 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: 
   let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
   inc c.current.tmpCounter
 
+  # Determine the error tracker variable
+  # If the proc can raise, use resultSym; otherwise create a local tracker
+  let oldErrorTracker = c.current.errorTracker
+  if c.current.mode != NoRaise:
+    c.current.errorTracker = c.current.resultSym
+  else:
+    # Need a local variable to track errors within this try block
+    let tracker = pool.syms.getOrIncl("´err." & $c.current.tmpCounter)
+    inc c.current.tmpCounter
+    # Declare and initialize to Success
+    dest.copyIntoKind LetS, info:
+      dest.addSymDef tracker, info
+      dest.addDotToken() # export marker
+      dest.addDotToken() # pragmas
+      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info # type
+      dest.addSymUse pool.syms.getOrIncl(SuccessName), info # initial value
+    c.current.errorTracker = tracker
+
   declareCfVar dest, guard
   let s = addGuard(c, Guard(cond: guard, active: false, isTryGuard: true))
+
+  # Temporarily override mode so error handling inside try block works
+  let oldMode = c.current.mode
+  if c.current.mode == NoRaise:
+    # Make the try block think we're in a VoidRaise context
+    c.current.mode = VoidRaise
 
   inc n # into the loop body statement list
   trGuardedStmts c, dest, n, parentIsStmtList
   c.current.exceptVars.shrink oldLen
+
+  # Restore original mode and errorTracker
+  c.current.mode = oldMode
+  c.current.errorTracker = oldErrorTracker
 
   closeScope c, dest, info
 
@@ -775,6 +847,10 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: 
           dest.takeTree n
         openScope c
         trGuardedStmts c, dest, n, true
+
+        # Mark exception as handled by resetting error tracker to Success
+        storeConstToErrorTracker(c, dest, pool.syms.getOrIncl(SuccessName), info)
+
         closeScope c, dest, info
         skipParRi n
       dest.addDotToken() # no else
@@ -785,7 +861,17 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: 
     trGuardedStmts c, dest, n, true
     closeScope c, dest, info
     skipParRi n
-    # we need to generate `if (hadError) reraise` here. Somehow.
+
+    # Re-raise any unhandled error after finally block executes
+    # Check the error tracker, not the guard (guards are monotonic and can't be reset)
+    dest.copyIntoKind IteV, info:
+      dest.copyIntoKind NeqX, info:
+        useErrorTracker(c, dest, info)
+        dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+      dest.copyIntoKind StmtsS, info:
+        raiseGuards(c, dest, info)
+      dest.addDotToken() # no else
+      dest.addDotToken() # no join
 
   removeGuard c, s
 
@@ -830,40 +916,14 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n
       bug "reraise not implemented"
     else:
-      assert c.current.resultSym != NoSymId, "could not find `result` symbol"
-      dest.copyIntoKind StoreV, info:
-        let info = n.info
-        case c.current.mode
-        of VoidRaise:
-          assert n.kind == DotToken
-          inc n
-          copyIntoKind dest, StoreV, info:
-            trExpr c, dest, n
-            dest.addSymUse c.current.resultSym, info
-        of TupleRaise:
-          # wrap it a tuple constructor:
-          copyIntoKind dest, TupconstrX, info:
-            copyIntoKind dest, TupleT, info:
-              dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
-              dest.copyTree c.current.returnType
-            trExpr c, dest, n
-            dest.addSymUse c.current.resultSym, info
-        of NoRaise:
-          bug "`raise` in a proc that does not support it"
-        dest.addSymUse c.current.resultSym, info
+      assert c.current.errorTracker != NoSymId, "could not find error tracker"
+      storeToErrorTracker(c, dest, n, info)
     skipParRi n
 
   if c.current.exceptVars.len > 0:
-    # also bind the value to a potential `T as e` variable:
+    # also bind the error code to a potential exception variable:
     copyIntoKind dest, StoreV, info:
-      case c.current.mode
-      of VoidRaise:
-        dest.addSymUse c.current.resultSym, info
-      of TupleRaise:
-        copyIntoKind dest, TupatX, info:
-          dest.addSymUse c.current.resultSym, info
-          dest.addIntLit 0, info
-      of NoRaise: discard "already produced a bug earlier"
+      useErrorTracker(c, dest, info)
       dest.addSymUse c.current.exceptVars[^1], info
 
 proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
