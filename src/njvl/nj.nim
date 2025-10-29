@@ -757,6 +757,137 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhileTrue c, dest, ww
     endRead w
 
+proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
+                        selector: SymId; selectorType: Cursor; info: PackedLineInfo) =
+  ## Build condition for one of-branch using OrX for multiple ranges/values
+  assert n.substructureKind == RangesU
+  inc n  # into RangesU
+  # Collect all conditions
+  var conditions: seq[TokenBuf] = @[]
+
+  while n.kind != ParRi:
+    var cond = createTokenBuf(10)
+    if n.substructureKind == RangeU:
+      # Range: low..high => (low <= selector) and (selector <= high)
+      inc n
+      cond.copyIntoKind AndX, info:
+        cond.copyIntoKind LeX, info:
+          cond.copyTree selectorType
+          trExpr c, cond, n
+          cond.addSymUse selector, info
+        cond.copyIntoKind LeX, info:
+          cond.copyTree selectorType
+          cond.addSymUse selector, info
+          trExpr c, cond, n
+      skipParRi n
+    else:
+      # Single value: selector == value
+      cond.copyIntoKind EqX, info:
+        cond.copyTree selectorType
+        cond.addSymUse selector, info
+        trExpr c, cond, n
+
+    conditions.add cond
+
+  inc n  # skip closing ParRi of RangesU
+
+  # Combine conditions with OrX
+  if conditions.len == 1:
+    dest.add conditions[0]
+  else:
+    dest.addParLe OrX, info
+    for cond in conditions:
+      dest.add cond
+    dest.addParRi()
+
+proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  inc n  # skip 'case'
+
+  # Evaluate selector
+  let selectorType = c.typeCache.getType(n)
+  let isExhaustive = isOrdinalType(selectorType, allowEnumWithHoles=true)
+
+  var selector: SymId
+  if n.kind == Symbol:
+    selector = n.symId
+    inc n
+  else:
+    # Complex selector - bind to temporary
+    selector = pool.syms.getOrIncl("`cs." & $c.current.tmpCounter)
+    inc c.current.tmpCounter
+    dest.copyIntoKind LetS, info:
+      dest.addSymDef selector, info
+      dest.addDotToken() # export marker
+      dest.addDotToken() # pragmas
+      dest.copyTree selectorType
+      trExpr c, dest, n
+
+  # Find final branch if exhaustive
+  var finalBranch = default(Cursor)
+  if isExhaustive:
+    var nn = n
+    while nn.substructureKind == OfU:
+      finalBranch = nn
+      skip nn
+    if nn.substructureKind == ElseU:
+      finalBranch = default(Cursor)
+
+  # Generate nested ite for each of-branch
+  var iteCount = 0
+
+  while n.substructureKind == OfU:
+    inc n  # into OfU
+
+    if n == finalBranch:
+      # Final exhaustive branch - no condition needed, just emit body
+      skip n  # skip ranges
+      openScope c
+      trGuardedStmts c, dest, n, false
+      closeScope c, dest, info
+      skipParRi n
+      break
+
+    # Emit ite (or itec for first branch to mark case origin)
+    if iteCount == 0:
+      dest.add tagToken("itec", info)
+    else:
+      dest.add tagToken("ite", info)
+    inc iteCount
+
+    # Emit condition
+    buildCaseCondition c, dest, n, selector, selectorType, info
+
+    # Emit then-branch
+    dest.addParLe StmtsS, info
+    openScope c
+    trGuardedStmts c, dest, n, false
+    closeScope c, dest, info
+    dest.addParRi()
+    skipParRi n  # close OfU
+
+    # Start else-branch (will contain next ite or final else)
+    dest.addParLe StmtsS, info
+
+  # Handle explicit else branch
+  if n.substructureKind == ElseU:
+    inc n
+    openScope c
+    trGuardedStmts c, dest, n, false
+    closeScope c, dest, info
+    skipParRi n
+  else:
+    # No explicit else
+    dest.addDotToken()
+
+  skipParRi n  # close case
+
+  # Close all the nested ite structures
+  for i in 0..<iteCount:
+    dest.addParRi()  # close else stmts
+    dest.addDotToken()  # join placeholder
+    dest.addParRi()  # close ite/itec
+
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: bool) =
   let info = n.info
   openScope c
@@ -964,6 +1095,8 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
     trAsgn c, dest, n
   of IfS:
     trIf c, dest, n
+  of CaseS:
+    trCase c, dest, n
   of WhileS:
     trWhile c, dest, n
   of LocalDecls:
