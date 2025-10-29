@@ -320,19 +320,19 @@ proc nimonytests(overwrite: bool) =
   else:
     echo "SUCCESS."
 
-proc controlflowTests(tool: string; overwrite: bool) =
-  ## Run all the controlflow tests in the test-suite.
-  let testDir = "tests/" & tool
+proc runNifToolTests(tool, testDir, expectedExt: string; overwrite: bool) =
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   for x in walkDir(testDir, relative = true):
-    if x.kind == pcFile and x.path.endsWith(".nif") and not x.path.contains(".expected.nif"):
+    let shouldTest = x.kind == pcFile and x.path.endsWith(".nif") and
+                     not x.path.contains(expectedExt)
+    if shouldTest:
       inc c.total
       let t = testDir / x.path
       let dest = t.changeFileExt(".out.nif")
       let (msgs, exitcode) = execLocal(tool, os.quoteShell(t) & " " & os.quoteShell(dest))
       if exitcode != 0:
-        failure c, t, tool & " exitcode " & $exitcode, msgs
+        failure c, t, tool & " exitcode 0", "exitcode " & $exitcode & "\n" & msgs
       let msgsFile = t.changeFileExt(".msgs")
       if msgsFile.fileExists():
         if overwrite:
@@ -341,7 +341,7 @@ proc controlflowTests(tool: string; overwrite: bool) =
           let expectedOutput = readFile(msgsFile).strip
           if expectedOutput != msgs.strip:
             failure c, t, expectedOutput, msgs
-      let expected = t.changeFileExt(".expected.nif")
+      let expected = t.changeFileExt(expectedExt)
       if overwrite:
         if expected.fileExists():
           moveFile(dest, expected)
@@ -359,45 +359,14 @@ proc controlflowTests(tool: string; overwrite: bool) =
   else:
     echo "SUCCESS."
 
+proc controlflowTests(tool: string; overwrite: bool) =
+  ## Run all the controlflow tests in the test-suite.
+  runNifToolTests(tool, "tests/" & tool, ".expected.nif", overwrite)
+
 proc njTests(overwrite: bool) =
   ## Run all the NJ (Nimony Jump Elimination) tests.
   ## Tests are .nif files in src/njvl/tests/ with expected output in .nj.nif files.
-  let testDir = "src/njvl/tests"
-  let t0 = epochTime()
-  var c = TestCounters(total: 0, failures: 0)
-  for x in walkDir(testDir, relative = true):
-    if x.kind == pcFile and x.path.endsWith(".nif") and not x.path.endsWith(".nj.nif"):
-      inc c.total
-      let t = testDir / x.path
-      let dest = t.changeFileExt(".out.nif")
-      let (msgs, exitcode) = execLocal("nj", os.quoteShell(t) & " " & os.quoteShell(dest))
-      if exitcode != 0:
-        failure c, t, "nj exitcode 0", "exitcode " & $exitcode & "\n" & msgs
-      let msgsFile = t.changeFileExt(".msgs")
-      if msgsFile.fileExists():
-        if overwrite:
-          writeFile(msgsFile, msgs)
-        else:
-          let expectedOutput = readFile(msgsFile).strip
-          if expectedOutput != msgs.strip:
-            failure c, t, expectedOutput, msgs
-      let expected = t.changeFileExt(".nj.nif")
-      if overwrite:
-        if expected.fileExists():
-          moveFile(dest, expected)
-      elif expected.fileExists():
-        let expectedOutput = readFile(expected).strip
-        let destContent = readFile(dest).strip
-        let success = expectedOutput == destContent
-        if success:
-          os.removeFile(dest)
-        else:
-          failure c, t, expectedOutput, destContent
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
-  if c.failures > 0:
-    quit "FAILURE: Some tests failed."
-  else:
-    echo "SUCCESS."
+  runNifToolTests("nj", "src/njvl/tests", ".nj.nif", overwrite)
 
 proc test(t: string; overwrite: bool; cat: Category) =
   var c = TestCounters(total: 0, failures: 0)
