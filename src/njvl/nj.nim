@@ -144,7 +144,6 @@ type
     tmpCounter: int
     iteOpt: IteOptState # if-then-else optimization state
     returnType: Cursor
-    exceptVars: seq[SymId]
     tupleVars: HashSet[SymId] # variables that have been expanded to a tuple due to exception handling
 
   Context* = object
@@ -443,13 +442,6 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.add tagToken("ite", info)
     dest.addSymUse s, info # XXX write that later as `e != Success`
     dest.addParLe StmtsS, info # then-branch
-
-    if c.current.exceptVars.len > 0:
-      # also bind the value to a potential `T as e` variable:
-      copyIntoKind dest, StoreV, info:
-        dest.addSymUse s, info
-        dest.addSymUse c.current.exceptVars[^1], info
-
     raiseGuards(c, dest, info)
     dest.addParRi() # close then-branch stmts
 
@@ -526,15 +518,6 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addIntLit 0, info
     dest.addParRi() # close tupat
     dest.addParLe StmtsS, info # then-branch
-
-    if c.current.exceptVars.len > 0:
-      # also bind the value to a potential `T as e` variable:
-      copyIntoKind dest, StoreV, info:
-        dest.copyIntoKind TupatX, info:
-          dest.addSymUse symId, info
-          dest.addIntLit 0, info
-        dest.addSymUse c.current.exceptVars[^1], info
-
     raiseGuards(c, dest, info)
     dest.addParRi() # close then-branch stmts
 
@@ -774,26 +757,9 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhileTrue c, dest, ww
     endRead w
 
-proc declareExceptVars(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var nn = n.firstSon
-  skip nn # stmts
-  if nn.substructureKind == ExceptU:
-    inc nn
-    if nn.stmtKind == LetS:
-      copyInto dest, nn:
-        let exc = nn.symId
-        c.current.exceptVars.add exc
-        c.typeCache.takeLocalHeader(dest, nn, LetY)
-        assert nn.kind == DotToken
-        dest.add nn
-        inc nn
-
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: bool) =
   let info = n.info
   openScope c
-
-  let oldLen = c.current.exceptVars.len
-  declareExceptVars c, dest, n
 
   let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
   inc c.current.tmpCounter
@@ -827,7 +793,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: 
 
   inc n # into the loop body statement list
   trGuardedStmts c, dest, n, parentIsStmtList
-  c.current.exceptVars.shrink oldLen
 
   # Restore original mode and errorTracker
   c.current.mode = oldMode
@@ -840,12 +805,23 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: 
     dest.copyIntoKind IteV, info:
       dest.addSymUse guard, info
       dest.copyIntoKind StmtsS, info:
-        if n.stmtKind == LetS:
-          dest.addDotToken() # we moved the declaration before the try statement
-          skip n
-        else:
+        # Handle exception type pattern (if present)
+        if n.stmtKind != LetS:
           dest.takeTree n
         openScope c
+
+        # If there's an exception variable (let e: ErrorCode), declare and initialize it
+        if n.stmtKind == LetS:
+          let excVar = n.symId
+          c.typeCache.takeLocalHeader(dest, n, LetY)
+          # Initialize: e = errorTracker
+          copyIntoKind dest, StoreV, info:
+            useErrorTracker(c, dest, info)
+            dest.addSymUse excVar, info
+          assert n.kind == DotToken
+          inc n # skip value (should be dot)
+          skipParRi n # close let
+
         trGuardedStmts c, dest, n, true
 
         # Mark exception as handled by resetting error tracker to Success
@@ -919,12 +895,6 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
       assert c.current.errorTracker != NoSymId, "could not find error tracker"
       storeToErrorTracker(c, dest, n, info)
     skipParRi n
-
-  if c.current.exceptVars.len > 0:
-    # also bind the error code to a potential exception variable:
-    copyIntoKind dest, StoreV, info:
-      useErrorTracker(c, dest, info)
-      dest.addSymUse c.current.exceptVars[^1], info
 
 proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
   # Check if we have a pending ite from a previous if statement
