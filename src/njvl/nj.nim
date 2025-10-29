@@ -395,19 +395,34 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info # type
       dest.add target
 
-    dest.copyIntoKind IteV, info:
-      dest.addSymUse s, info # XXX write that later as `e != Success`
-      copyIntoKind dest, StmtsS, info:
+    # Track guard state before emitting the error-check ite
+    let guardBefore = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
 
-        if c.current.exceptVars.len > 0:
-          # also bind the value to a potential `T as e` variable:
-          copyIntoKind dest, StoreV, info:
-            dest.addSymUse s, info
-            dest.addSymUse c.current.exceptVars[^1], info
+    # Manually emit ite to control whether we close it (for optimization)
+    dest.add tagToken("ite", info)
+    dest.addSymUse s, info # XXX write that later as `e != Success`
+    dest.addParLe StmtsS, info # then-branch
 
-        raiseGuards(c, dest, info)
+    if c.current.exceptVars.len > 0:
+      # also bind the value to a potential `T as e` variable:
+      copyIntoKind dest, StoreV, info:
+        dest.addSymUse s, info
+        dest.addSymUse c.current.exceptVars[^1], info
+
+    raiseGuards(c, dest, info)
+    dest.addParRi() # close then-branch stmts
+
+    # Check if raiseGuards activated a guard, and if so, set up pending ite for optimization
+    let activatedGuard = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
+    if c.optimizeIte and activatedGuard.idx >= 0 and activatedGuard.idx != guardBefore.idx:
+      # Don't close the ite - let next statement become the else-branch
+      c.current.iteOpt.transferToPending()
+    else:
+      # Close the ite normally
       dest.addDotToken() # no else section
       dest.addDotToken() # no join information
+      dest.addParRi() # close ite
+
   of TupleRaise:
     bug "value should have been discarded"
 
@@ -455,24 +470,40 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
     dest.addParRi()
 
+    # Track guard state before emitting the error-check ite
+    let guardBefore = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
+
     c.current.tupleVars.incl(symId)
-    dest.copyIntoKind IteV, info:
-      dest.copyIntoKind TupatX, info:
-        dest.addSymUse symId, info # XXX write that later as `e != Success`
-        dest.addIntLit 0, info
-      copyIntoKind dest, StmtsS, info:
 
-        if c.current.exceptVars.len > 0:
-          # also bind the value to a potential `T as e` variable:
-          copyIntoKind dest, StoreV, info:
-            dest.copyIntoKind TupatX, info:
-              dest.addSymUse symId, info
-              dest.addIntLit 0, info
-            dest.addSymUse c.current.exceptVars[^1], info
+    # Manually emit ite to control whether we close it (for optimization)
+    dest.add tagToken("ite", info)
+    dest.addParLe TupatX, info # condition
+    dest.addSymUse symId, info # XXX write that later as `e != Success`
+    dest.addIntLit 0, info
+    dest.addParRi() # close tupat
+    dest.addParLe StmtsS, info # then-branch
 
-        raiseGuards(c, dest, info)
+    if c.current.exceptVars.len > 0:
+      # also bind the value to a potential `T as e` variable:
+      copyIntoKind dest, StoreV, info:
+        dest.copyIntoKind TupatX, info:
+          dest.addSymUse symId, info
+          dest.addIntLit 0, info
+        dest.addSymUse c.current.exceptVars[^1], info
+
+    raiseGuards(c, dest, info)
+    dest.addParRi() # close then-branch stmts
+
+    # Check if raiseGuards activated a guard, and if so, set up pending ite for optimization
+    let activatedGuard = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
+    if c.optimizeIte and activatedGuard.idx >= 0 and activatedGuard.idx != guardBefore.idx:
+      # Don't close the ite - let next statement become the else-branch
+      c.current.iteOpt.transferToPending()
+    else:
+      # Close the ite normally
       dest.addDotToken() # no else section
       dest.addDotToken() # no join information
+      dest.addParRi() # close ite
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # we translate `(asgn X Y)` to `(store Y X)` as it's easier to analyze,
