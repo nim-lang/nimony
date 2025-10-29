@@ -70,7 +70,7 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
     inc n
     while n.kind != ParRi:
       case n.pragmaKind:
-      of {PackedP, UnionP}:
+      of {PackedP, UnionP, InheritableP}:
         result.pragmas.incl n.pragmaKind
         skip n
       else:
@@ -188,6 +188,9 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     var c2 = createSizeofValue(c.strict, PackedP in pragmas.pragmas)
     if n.kind != DotToken:  # base type
       getSize(c2, cache, n, ptrSize)
+    elif InheritableP in pragmas.pragmas:
+      update c, ptrSize, ptrSize
+
     skip n
     var iter = initObjFieldIter()
     while getSizeObject(c2, cache, iter, n, ptrSize, pragmas):
