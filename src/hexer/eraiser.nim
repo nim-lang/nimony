@@ -170,18 +170,8 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trAssign(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
-    var cr = n.kind == Symbol
-    var target = SymId(0)
-    if cr:
-      target = n.symId
-    tr c, dest, n
-    cr = cr and n.exprKind in CallKinds and callCanRaise(c.typeCache, n)
-    if cr:
-      trCall c, dest, n, true
-    else:
-      tr c, dest, n
-  if cr:
-    addRaiseStmt(dest, target, n.info)
+    tr c, dest, n # left hand side
+    tr c, dest, n # right hand side
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
