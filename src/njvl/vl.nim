@@ -64,7 +64,7 @@ proc trCfvar(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeToken n
   assert n.kind == SymbolDef
   let s = n.symId
-  inc n
+  dest.takeToken n
   # do not versionize cfvars!
   c.current.addrTaken.incl s
   dest.takeParRi n

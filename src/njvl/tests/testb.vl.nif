@@ -7,21 +7,19 @@
       (i +8))) .)) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar))))
+    (cfvar :´r.0))))
  (proc :test1.0 . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar)
-    (cfvar)
+    (cfvar :´r.0)
+    (cfvar :´r.0)
     (var :a.0 . .
      (bool)
      (false))
     (loop
      (stmts
-      (cfvar))
+      (cfvar :´g.1))
      (not ´g.1)
      (stmts
       (ite
@@ -33,21 +31,19 @@
        (stmts))
       (continue .)
       (continue)))
-    (kill a.0)
     (kill a.0))))
  (proc :test2.0 . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar)
-    (cfvar)
+    (cfvar :´r.0)
+    (cfvar :´r.0)
     (var :a.0 . .
      (bool)
      (false))
     (loop
      (stmts
-      (cfvar))
+      (cfvar :´g.1))
      (not ´g.1)
      (stmts
       (ite
@@ -67,15 +63,13 @@
        (stmts))
       (continue .)
       (continue)))
-    (kill a.0)
     (kill a.0))))
  (proc :test3.0 . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar)
-    (cfvar)
+    (cfvar :´r.0)
+    (cfvar :´r.0)
     (var :a.0 . .
      (bool)
      (false))
@@ -84,7 +78,7 @@
      (true))
     (loop
      (stmts
-      (cfvar))
+      (cfvar :´g.1))
      (not ´g.1)
      (stmts
       (ite
@@ -106,16 +100,13 @@
       (continue .)
       (continue)))
     (kill a.0)
-    (kill b.0)
-    (kill b.0)
-    (kill a.0))))
+    (kill b.0))))
  (proc :test4.0 . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar)
-    (cfvar)
+    (cfvar :´r.0)
+    (cfvar :´r.0)
     (var :a.0 . .
      (bool)
      (false))
@@ -127,7 +118,7 @@
      (false))
     (loop
      (stmts
-      (cfvar))
+      (cfvar :´g.1))
      (not ´g.1)
      (stmts
       (ite
@@ -159,17 +150,13 @@
       (continue)))
     (kill a.0)
     (kill c.0)
-    (kill b.0)
-    (kill b.0)
-    (kill a.0)
-    (kill c.0))))
+    (kill b.0))))
  (proc :test5.0 . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar)
-    (cfvar)
+    (cfvar :´r.0)
+    (cfvar :´r.0)
     (var :a.0 . .
      (bool)
      (false))
@@ -180,21 +167,19 @@
      (stmts
       (call echo.0 "after return if"))
      (stmts))
-    (kill a.0)
     (kill a.0))))
  (proc :test6.0 . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar)
-    (cfvar)
+    (cfvar :´r.0)
+    (cfvar :´r.0)
     (var :a.0 . .
      (bool)
      (false))
     (loop
      (stmts
-      (cfvar))
+      (cfvar :´g.1))
      (not ´g.1)
      (stmts
       (ite
@@ -209,15 +194,13 @@
       (continue .)
       (continue
        (join a.0 +10 +9 +0))))
-    (kill a.0)
     (kill a.0))))
  (proc :test7.0 . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar)
-    (cfvar)
+    (cfvar :´r.0)
+    (cfvar :´r.0)
     (var :a.0 . .
      (bool)
      (false))
@@ -226,7 +209,7 @@
      (true))
     (loop
      (stmts
-      (cfvar))
+      (cfvar :´g.1))
      (not ´g.1)
      (stmts
       (ite
@@ -252,31 +235,27 @@
        (stmts))
       (continue .)
       (continue
-       (join b.0 +6 +5 +0)
-       (join a.0 +12 +11 +0))))
+       (join a.0 +12 +11 +0)
+       (join b.0 +6 +5 +0))))
     (kill a.0)
-    (kill b.0)
-    (kill b.0)
-    (kill a.0))))
+    (kill b.0))))
  (proc :test8.0 . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar)
-    (cfvar)
+    (cfvar :´r.0)
+    (cfvar :´r.0)
     (var :a.0 . .
      (bool)
      (false))
-    (cfvar)
-    (ite
-     (v a.0 +13)
-     (stmts
-      (jtrue ´g.1))
-     (stmts
-      (call echo.0 "after block break"))
-     (stmts))
-    (kill a.0)
+    (cfvar :´g.1)
+    (stmts
+     (ite
+      (v a.0 +13)
+      (stmts
+       (jtrue ´g.1))
+      (stmts
+       (call echo.0 "after block break"))
+      (stmts)))
     (kill a.0))))
- (kill msg.0)
  (kill msg.0))

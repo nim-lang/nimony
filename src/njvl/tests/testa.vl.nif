@@ -5,8 +5,7 @@
     (bool) .)) . . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar))))
+    (cfvar :´r.0))))
  (proc :echo.1 . . .
   (params
    (param :cond.0 . .
@@ -14,15 +13,14 @@
   (i +32) . .
   (stmts
    (stmts
-    (cfvar)
-    (cfvar))))
+    (cfvar :´r.0))))
  (let :a.0 . .
   (bool)
   (false))
  (var :b.0 . .
   (bool)
   (true))
- (cfvar)
+ (cfvar :`j.0.main)
  (ite
   (v a.0 +0)
   (stmts
@@ -43,7 +41,7 @@
   (v b.0 +1))
  (loop
   (stmts
-   (cfvar))
+   (cfvar :´g.0))
   (not ´g.0)
   (stmts
    (call echo.0 "pre-condition")
@@ -75,8 +73,4 @@
  (kill a.0)
  (kill b.0)
  (kill cond.0)
- (kill `x.1)
- (kill `x.1)
- (kill a.0)
- (kill cond.0)
- (kill b.0))
+ (kill `x.1))
