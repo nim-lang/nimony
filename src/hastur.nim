@@ -378,8 +378,8 @@ proc njTests(overwrite: bool) =
 
 proc vlTests(overwrite: bool) =
   ## Run all the VL (Versioned Locations) tests.
-  ## Tests are .nj.nif files in src/njvl/tests/ with expected output in .vl.nif files.
-  runNifToolTests("vl", "src/njvl/tests", ".nj.nif", ".vl.nif", overwrite)
+  ## Tests are .nif files in src/njvl/tests/ with expected output in .vl.nif files.
+  runNifToolTests("vl", "src/njvl/tests", ".nif", ".vl.nif", overwrite)
 
 proc test(t: string; overwrite: bool; cat: Category) =
   var c = TestCounters(total: 0, failures: 0)
