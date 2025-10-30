@@ -11,6 +11,103 @@
 
 ## **THIS IS CURRENTLY UNUSED AND UNTESTED AND UNFINISHED!**
 
+## Overview
+##
+## This pass tries to “collapse” NJVL control-flow variables (cfvars) back into
+## explicit jumps. In NJVL, structured control flow is expressed by:
+## - Declaring a `cfvar` (starts as `false`, can only become `true`).
+## - Setting it via `(jtrue cf)` inside conditions/branches.
+## - Guarding execution with `if cf: ...` (or, more generally, `ite`/`loop`).
+##
+## The guiding rule (from the spec) is: converting `jtrue x` into a jump is only
+## valid if no interim statements occur between the place that sets the cfvar and
+## the point where control must transfer. Otherwise the cfvar must be
+## materialized as data (`store true into cf`) and the control remains
+## structured.
+##
+## What this prototype does
+## ------------------------
+## - It traces `jtrue` sites and records whether they can be turned into `jmp`.
+## - It tracks a simple per-symbol state `state[sym] = (value, activeCount)`:
+##   - `value` reflects our current knowledge about the cfvar (starts `false`,
+##     becomes `true` after a seen `jtrue`).
+##   - `activeCount` is incremented/decremented while traversing `ite`
+##     conditions to model “this branch is protected by cfvar X == true”. While
+##     protection is active, side effects within the protected region do not
+##     invalidate the potential jump for that cfvar.
+## - If a side effect is encountered at a time when a cfvar is not “actively
+##   guarding” the current code (`activeCount == 0`), we conservatively mark the
+##   cfvar as `mustMaterialize` (cannot be rewritten to a jump).
+## - In the emission phase, `(jtrue x, y, ...)` becomes either materialized
+##   stores (keep cfvars as data) or a single `jmp <label>` if the last listed
+##   cfvar can be a jump target (mirrors return/break lowering patterns).
+##
+## Why this does not work yet (without cfvar versioning and kill)
+## --------------------------------------------------------------
+## The above model ignores versioning for cfvars and does not end their
+## lifetimes explicitly. NJVL’s data side (VL) relies on versioned locations and
+## `kill` to capture precise lifetimes and joins. Cfvars are also subject to the
+## same scoping/merging issues:
+##
+## 1) Missing cfvar versioning at joins
+##    - At `ite` joins (and loop headers), values come from multiple control
+##      predecessors. For ordinary variables, NJVL uses `join`/`either` and
+##      versions `(v x +k)`. This prototype keeps a single global `state` entry
+##      per cfvar symbol, so truth assignments leak across branches or get
+##      observed in regions where they no longer dominate.
+##    - Consequence: we may incorrectly decide a `jtrue` can jump (or must
+##      materialize) because we do not know which version of the cfvar guards the
+##      current region.
+##
+## 2) Missing cfvar `kill` (end-of-lifetime) markers
+##    - The `activeCount` heuristic approximates guard scopes, but there is no
+##      explicit lifetime end for a cfvar version. After leaving a guarded
+##      region, the “true” fact for a cfvar version should die; otherwise later
+##      effects may be treated as if still guarded or, conversely, earlier facts
+##      may prevent turning later `jtrue` occurrences into jumps.
+##    - With explicit `kill` (on versioned cfvars), we could end the guarding
+##      version precisely at scope exit, after last use, or at joins. This also
+##      enables earlier freeing of the logical guard, mirroring how `kill` helps
+##      register-pressure on data values.
+##
+## 3) Loops and back-edges
+##    - Loop headers require `either` or at least explicit `join` semantics for
+##      cfvars: a cfvar visible at the header is either the initial version or a
+##      back-edge version. Without versioning, the prototype cannot distinguish
+##      these, so guardedness can bleed from a previous iteration into the next
+##      or into the `after` section.
+##
+## 4) Monotonic truth without scoping
+##    - Cfvars are monotonic (`false` -> `true`), which is sound only when
+##      combined with versioning and scoped lifetimes: each region/branch works
+##      with its own version; once that version is `true` and used, it should be
+##      killed when leaving the region. Without that, a single mutable truth flag
+##      misrepresents dominance and makes the jump-conversion predicate unstable.
+##
+## 5) Effects and dominance
+##    - The spec’s caveat “no interim statements” is about dominance: the jump
+##      introduced for `(jtrue cf)` must be immediately applicable. Without
+##      cfvar versions and `kill`, we cannot robustly answer “is this `jtrue`
+##      still the controlling event for the current point?” across nested `ite`s
+##      and loops.
+##
+## Path to correctness
+## -------------------
+## - Treat cfvars like versioned locations in VL: create `(v cf +k)` at each
+##   assignment (`jtrue`) or merge (`join`/`either`).
+## - Insert `kill (v cf +k)` when the guard’s lifetime ends (end of the guarded
+##   region, join point, or loop exit). The `activeCount` can then be derived
+##   from structured traversal of these versioned lifetimes instead of being a
+##   global counter.
+## - Decide jump vs materialization per cfvar version, not per symbol. A version
+##   can be turned into a jump only if there are no intervening statements
+##   between its creation point and the target transfer, within that version’s
+##   lifetime.
+##
+## Until versioning and `kill` for cfvars are implemented, this pass remains a
+## prototype that can illustrate the idea but cannot be sound across joins,
+## loops, or complex nesting.
+
 import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav]
