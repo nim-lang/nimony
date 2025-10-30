@@ -489,6 +489,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   let info = n.info
   let m = trBoundExpr(c, dest, n)
+  skipParRi n
   # the `raise` statement must follow the var declaration!
   case m
   of NoRaise:
