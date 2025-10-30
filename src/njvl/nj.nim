@@ -994,18 +994,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: 
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add tagToken("jtrue", info)
-  # we also need to break out of everything:
-  for i in countdown(c.current.guards.len - 1, 0):
-    let cond = c.current.guards[i].cond
-    assert cond != NoSymId
-    c.current.guards[i].active = true
-    # Track the innermost guard (first in countdown)
-    if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
-      c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
-    dest.addSymUse cond, info
-
-  dest.addParRi()
   inc n
 
   if n.kind == ParRi:
@@ -1020,9 +1008,21 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSymUse c.current.resultSym, info
     skipParRi n
 
+  dest.add tagToken("jtrue", info)
+  # we also need to break out of everything:
+  for i in countdown(c.current.guards.len - 1, 0):
+    let cond = c.current.guards[i].cond
+    assert cond != NoSymId
+    c.current.guards[i].active = true
+    # Track the innermost guard (first in countdown)
+    if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
+      c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
+    dest.addSymUse cond, info
+
+  dest.addParRi()
+
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  raiseGuards(c, dest, info)
   inc n
 
   if n.kind == ParRi:
@@ -1035,6 +1035,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
       assert c.current.errorTracker != NoSymId, "could not find error tracker"
       storeToErrorTracker(c, dest, n, info)
     skipParRi n
+  raiseGuards(c, dest, info)
 
 proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
   # Check if we have a pending ite from a previous if statement
