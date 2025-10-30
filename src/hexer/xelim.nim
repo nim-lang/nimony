@@ -539,13 +539,38 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsIgnored)
     trTry c, dest, n, tar
 
-  of RetS, DiscardS, RaiseS, YldS:
+  of RetS, RaiseS, YldS:
     var tar = Target(m: IsEmpty)
     let head = n
     inc n
     trExpr c, dest, n, tar
     dest.add head
     dest.add tar
+    dest.addParRi()
+    skipParRi n
+
+  of DiscardS:
+    if c.goal == TowardsNjvl:
+      inc n
+      var tar = Target(m: IsAppend)
+      trExpr c, dest, n, tar
+      # we must bind the result to a temporary variable!
+      let tmp = pool.syms.getOrIncl("`x." & $c.counter)
+      inc c.counter
+      let info = n.info
+      dest.addParLe LetS, info
+      dest.addSymDef tmp, info
+      dest.addEmpty2 info # no export marker, no pragmas
+      let typ = c.typeCache.getType(n)
+      dest.copyTree typ
+      dest.add tar
+    else:
+      var tar = Target(m: IsEmpty)
+      let head = n
+      inc n
+      trExpr c, dest, n, tar
+      dest.add head
+      dest.add tar
     dest.addParRi()
     skipParRi n
 

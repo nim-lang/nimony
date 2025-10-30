@@ -217,6 +217,7 @@ proc useErrorTracker(c: Context; dest: var TokenBuf; info: PackedLineInfo) =
   ## Emit the correct expression to read the error code from errorTracker.
   ## In TupleRaise mode, errorTracker is a tuple and we need (tupat errorTracker +0).
   ## In VoidRaise/NoRaise mode, errorTracker is a plain ErrorCode variable.
+  assert c.current.errorTracker != NoSymId
   if c.current.mode == TupleRaise:
     dest.addParLe TupatX, info
     dest.addSymUse c.current.errorTracker, info
@@ -229,6 +230,7 @@ proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; 
   ## Emit the correct store to set the error code in errorTracker from a source expression.
   ## In TupleRaise mode, store to (tupat errorTracker +0).
   ## In VoidRaise/NoRaise mode, store directly to errorTracker.
+  assert c.current.errorTracker != NoSymId
   dest.copyIntoKind StoreV, info:
     trExpr c, dest, value
     if c.current.mode == TupleRaise:
@@ -241,6 +243,8 @@ proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; 
 
 proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; constSym: SymId; info: PackedLineInfo) =
   ## Store a constant (like Success) to errorTracker.
+  assert constSym != NoSymId
+  assert c.current.errorTracker != NoSymId
   dest.copyIntoKind StoreV, info:
     dest.addSymUse constSym, info
     if c.current.mode == TupleRaise:
@@ -398,7 +402,9 @@ proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): ExceptionMo
     result = NoRaise
 
 proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  let before = dest.len
   dest.add tagToken("jtrue", info)
+  var produced = 0
   # we also need to break out of everything, until a `try` guard is found
   for i in countdown(c.current.guards.len - 1, 0):
     if c.current.guards[i].isTryGuard:
@@ -410,7 +416,9 @@ proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
     if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
       c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
     dest.addSymUse cond, info
+    inc produced
   dest.addParRi()
+  if produced == 0: dest.shrink before
 
 proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let before = dest.len
@@ -986,18 +994,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList: 
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add tagToken("jtrue", info)
-  # we also need to break out of everything:
-  for i in countdown(c.current.guards.len - 1, 0):
-    let cond = c.current.guards[i].cond
-    assert cond != NoSymId
-    c.current.guards[i].active = true
-    # Track the innermost guard (first in countdown)
-    if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
-      c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
-    dest.addSymUse cond, info
-
-  dest.addParRi()
   inc n
 
   if n.kind == ParRi:
@@ -1012,9 +1008,21 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSymUse c.current.resultSym, info
     skipParRi n
 
+  dest.add tagToken("jtrue", info)
+  # we also need to break out of everything:
+  for i in countdown(c.current.guards.len - 1, 0):
+    let cond = c.current.guards[i].cond
+    assert cond != NoSymId
+    c.current.guards[i].active = true
+    # Track the innermost guard (first in countdown)
+    if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
+      c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
+    dest.addSymUse cond, info
+
+  dest.addParRi()
+
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  raiseGuards(c, dest, info)
   inc n
 
   if n.kind == ParRi:
@@ -1027,6 +1035,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
       assert c.current.errorTracker != NoSymId, "could not find error tracker"
       storeToErrorTracker(c, dest, n, info)
     skipParRi n
+  raiseGuards(c, dest, info)
 
 proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsStmtList=false) =
   # Check if we have a pending ite from a previous if statement
