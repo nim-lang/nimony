@@ -402,7 +402,9 @@ proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): ExceptionMo
     result = NoRaise
 
 proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  let before = dest.len
   dest.add tagToken("jtrue", info)
+  var produced = 0
   # we also need to break out of everything, until a `try` guard is found
   for i in countdown(c.current.guards.len - 1, 0):
     if c.current.guards[i].isTryGuard:
@@ -414,7 +416,9 @@ proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
     if c.optimizeIte and c.current.iteOpt.getLastActivated().idx < 0:
       c.current.iteOpt.recordActivation(GuardIndex(idx: i, sym: cond))
     dest.addSymUse cond, info
+    inc produced
   dest.addParRi()
+  if produced == 0: dest.shrink before
 
 proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let before = dest.len
