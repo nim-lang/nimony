@@ -217,6 +217,7 @@ proc useErrorTracker(c: Context; dest: var TokenBuf; info: PackedLineInfo) =
   ## Emit the correct expression to read the error code from errorTracker.
   ## In TupleRaise mode, errorTracker is a tuple and we need (tupat errorTracker +0).
   ## In VoidRaise/NoRaise mode, errorTracker is a plain ErrorCode variable.
+  assert c.current.errorTracker != NoSymId
   if c.current.mode == TupleRaise:
     dest.addParLe TupatX, info
     dest.addSymUse c.current.errorTracker, info
@@ -229,6 +230,7 @@ proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; 
   ## Emit the correct store to set the error code in errorTracker from a source expression.
   ## In TupleRaise mode, store to (tupat errorTracker +0).
   ## In VoidRaise/NoRaise mode, store directly to errorTracker.
+  assert c.current.errorTracker != NoSymId
   dest.copyIntoKind StoreV, info:
     trExpr c, dest, value
     if c.current.mode == TupleRaise:
@@ -241,6 +243,8 @@ proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; 
 
 proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; constSym: SymId; info: PackedLineInfo) =
   ## Store a constant (like Success) to errorTracker.
+  assert constSym != NoSymId
+  assert c.current.errorTracker != NoSymId
   dest.copyIntoKind StoreV, info:
     dest.addSymUse constSym, info
     if c.current.mode == TupleRaise:
