@@ -444,18 +444,17 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.add target
 
     # Track guard state before emitting the error-check ite
-    let guardBefore = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
+    #let guardBefore = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
 
     # Manually emit ite to control whether we close it (for optimization)
     dest.add tagToken("ite", info)
     dest.addSymUse s, info # XXX write that later as `e != Success`
-    dest.addParLe StmtsS, info # then-branch
-    raiseGuards(c, dest, info)
-    dest.addParRi() # close then-branch stmts
+    dest.copyIntoKind StmtsS, info: # then-branch
+      raiseGuards(c, dest, info)
 
     # Check if raiseGuards activated a guard, and if so, set up pending ite for optimization
     let activatedGuard = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
-    if c.optimizeIte and activatedGuard.idx >= 0 and activatedGuard.idx != guardBefore.idx:
+    if c.optimizeIte and activatedGuard.idx >= 0:
       # Don't close the ite - let next statement become the else-branch
       c.current.iteOpt.transferToPending()
     else:
@@ -517,7 +516,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     replayLocalHeader(c, dest, beginRead(decl))
 
     # Track guard state before emitting the error-check ite
-    let guardBefore = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
+    #let guardBefore = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
 
     c.current.tupleVars.incl(symId)
 
@@ -527,13 +526,13 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse symId, info # XXX write that later as `e != Success`
     dest.addIntLit 0, info
     dest.addParRi() # close tupat
-    dest.addParLe StmtsS, info # then-branch
-    raiseGuards(c, dest, info)
-    dest.addParRi() # close then-branch stmts
+    dest.copyIntoKind StmtsS, info:
+      # then-branch
+      raiseGuards(c, dest, info)
 
     # Check if raiseGuards activated a guard, and if so, set up pending ite for optimization
     let activatedGuard = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
-    if c.optimizeIte and activatedGuard.idx >= 0 and activatedGuard.idx != guardBefore.idx:
+    if c.optimizeIte and activatedGuard.idx >= 0:
       # Don't close the ite - let next statement become the else-branch
       c.current.iteOpt.transferToPending()
     else:
@@ -1091,6 +1090,18 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
 
   case n.stmtKind
   of StmtsS, ScopeS:
+    # Statement lists should introduce a guard scope like block statements
+    # This ensures guards activated by statements are checked for subsequent statements
+    var s = default GuardUndoState
+    let needsGuard = not parentIsStmtList or
+      (c.current.guards.len == 0 or c.current.guards[c.current.guards.len - 1].isTryGuard)
+    if needsGuard:
+      let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
+      inc c.current.tmpCounter
+
+      declareCfVar dest, guard
+      s = addGuard(c, Guard(cond: guard, active: false))
+
     # flat nested statements list:
     if not parentIsStmtList and usedGuard < 0:
       dest.takeToken n
@@ -1102,6 +1113,9 @@ proc trGuardedStmts(c: var Context; dest: var TokenBuf; n: var Cursor; parentIsS
       dest.takeToken n # ParRi
     else:
       inc n
+
+    if needsGuard:
+      removeGuard c, s
   of AsgnS:
     trAsgn c, dest, n
   of IfS:
