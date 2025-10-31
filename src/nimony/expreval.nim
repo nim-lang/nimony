@@ -515,7 +515,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         var err = false
         let value = asSigned(s, err)
         if err:
-          error "expression overflow at compile time: " & asNimCode(orig), orig.info
+          cannotEval n
         else:
           result = intValue(c, value, orig.info)
       else:

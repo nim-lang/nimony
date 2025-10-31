@@ -15,7 +15,7 @@ proc align(address, alignment: int): int {.inline.} =
 type
   SizeofValue* = object
     size, maxAlign: int   # when maxAlign == 0, it is packed and fields of the object are placed without paddings.
-    overflow, strict: bool
+    overflow, strict, isEval: bool
 
 proc update(c: var SizeofValue; size, align: int) =
   if c.maxAlign == 0:
@@ -35,8 +35,8 @@ proc combineCaseObject(c: var SizeofValue; inner: SizeofValue) =
   c.size = max(c.size, inner.size)
   c.overflow = c.overflow or inner.overflow
 
-proc createSizeofValue(strict: bool, packed = false): SizeofValue =
-  SizeofValue(size: 0, maxAlign: if packed: 0 else: 1, overflow: false, strict: strict)
+proc createSizeofValue(strict: bool, isEval: bool, packed = false): SizeofValue =
+  SizeofValue(size: 0, maxAlign: if packed: 0 else: 1, overflow: false, strict: strict, isEval: isEval)
 
 proc finish(c: var SizeofValue) =
   if c.maxAlign != 0:
@@ -80,9 +80,9 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
 
 proc `<`(x: xint; b: int): bool = x < createXint(b)
 
-proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int; isEval: bool)
+proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int)
 
-proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; iter: var ObjFieldIter; n: var Cursor; ptrSize: int; pragmas: TypePragmas; isEval: bool): bool =
+proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; iter: var ObjFieldIter; n: var Cursor; ptrSize: int; pragmas: TypePragmas): bool =
   result = nextField(iter, n, keepCase = true)
   if result:
     if n.substructureKind == CaseU:
@@ -90,19 +90,19 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
       inc n
       # selector
       let field = takeLocal(n, SkipFinalParRi)
-      getSize c, cache, field.typ, ptrSize, isEval
+      getSize c, cache, field.typ, ptrSize
 
-      var cCase = createSizeofValue(c.strict)
+      var cCase = createSizeofValue(c.strict, c.isEval)
       while n.kind != ParRi:
         case n.substructureKind
         of OfU:
           inc n
           # field
           skip n
-          var cOf = createSizeofValue(c.strict)
+          var cOf = createSizeofValue(c.strict, c.isEval)
           inc n # stmt
           while n.kind != ParRi:
-            discard getSizeObject(cOf, cache, iter, n, ptrSize, pragmas, isEval)
+            discard getSizeObject(cOf, cache, iter, n, ptrSize, pragmas)
           skipParRi n # stmt
           skipParRi n
 
@@ -111,10 +111,10 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
         of ElseU:
           inc n
           # else
-          var cElse = createSizeofValue(c.strict)
+          var cElse = createSizeofValue(c.strict, c.isEval)
           inc n # stmt
           while n.kind != ParRi:
-            discard getSizeObject(cElse, cache, iter, n, ptrSize, pragmas, isEval)
+            discard getSizeObject(cElse, cache, iter, n, ptrSize, pragmas)
           skipParRi n # stmt
           skipParRi n
           finish cElse
@@ -125,13 +125,13 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
     else:
       let field = takeLocal(n, SkipFinalParRi)
       if UnionP in pragmas.pragmas:
-        var c2 = createSizeofValue(c.strict)
-        getSize c2, cache, field.typ, ptrSize, isEval
+        var c2 = createSizeofValue(c.strict, c.isEval)
+        getSize c2, cache, field.typ, ptrSize
         combineCaseObject(c, c2)
       else:
-        getSize c, cache, field.typ, ptrSize, isEval
+        getSize c, cache, field.typ, ptrSize
 
-proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int; isEval: bool) =
+proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int) =
   var counter = 20
   var n = n
   let cacheKey = if n.kind == Symbol: n.symId else: NoSymId
@@ -165,7 +165,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of RefT, PtrT, MutT, OutT, RoutineTypes, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
-    getSize c, cache, n.firstSon, ptrSize, isEval
+    getSize c, cache, n.firstSon, ptrSize
   of EnumT, HoleyEnumT:
     let b = enumBounds(n)
     if b.lo < 0:
@@ -180,28 +180,28 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       else:
         update c, 8, 8
   of ObjectT:
-    if c.strict:
+    if c.strict or (c.isEval and IncompleteStructP in pragmas.pragmas):
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true
     var n = n
     inc n
     var c2 = createSizeofValue(c.strict, PackedP in pragmas.pragmas)
     if n.kind != DotToken:  # base type
-      getSize(c2, cache, n, ptrSize, isEval)
+      getSize(c2, cache, n, ptrSize)
     elif InheritableP in pragmas.pragmas:
       update c, ptrSize, ptrSize
 
     skip n
     var iter = initObjFieldIter()
-    while getSizeObject(c2, cache, iter, n, ptrSize, pragmas, isEval):
+    while getSizeObject(c2, cache, iter, n, ptrSize, pragmas):
       discard
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
 
   of ArrayT:
-    var c2 = createSizeofValue(c.strict)
-    getSize(c2, cache, n.firstSon, ptrSize, isEval)
+    var c2 = createSizeofValue(c.strict, c.isEval)
+    getSize(c2, cache, n.firstSon, ptrSize)
     let al1 = asSigned(getArrayLen(n), c.overflow)
     if al1 >= high(int) div c2.size:
       c.overflow = true
@@ -220,24 +220,24 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       c.overflow = true
     var n = n
     inc n
-    var c2 = createSizeofValue(c.strict)
+    var c2 = createSizeofValue(c.strict, c.isEval)
     while n.kind != ParRi:
-      getSize c2, cache, getTupleFieldType(n), ptrSize, isEval
+      getSize c2, cache, getTupleFieldType(n), ptrSize
       skip n
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
   of RangetypeT:
-    getSize c, cache, n.firstSon, ptrSize, isEval
+    getSize c, cache, n.firstSon, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, InvokeT, UarrayT, ItertypeT,
      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
     bug "valid type kind for sizeof computation: " & $n.typeKind
 
 proc getSize*(n: Cursor; ptrSize: int; strict=false; isEval=false): xint =
-  var c = createSizeofValue(strict)
+  var c = createSizeofValue(strict, isEval)
   var cache = initTable[SymId, SizeofValue]()
-  getSize(c, cache, n, ptrSize, isEval)
+  getSize(c, cache, n, ptrSize)
   if not c.overflow:
     result = createXint(c.size)
   else:
