@@ -117,7 +117,7 @@ when defined(posix):
 
   # Directory operations
   type
-    DIR* {.importc: "DIR", header: "<dirent.h>".} = object
+    DIR* {.importc: "DIR", header: "<dirent.h>", incompleteStruct.} = object
     Dirent* {.importc: "struct dirent", header: "<dirent.h>".} = object
       d_type* {.importc: "d_type".}: uint8
       d_name* {.importc: "d_name".}: array[256, char]

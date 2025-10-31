@@ -70,7 +70,7 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
     inc n
     while n.kind != ParRi:
       case n.pragmaKind:
-      of {PackedP, UnionP, InheritableP}:
+      of {PackedP, UnionP, InheritableP, IncompleteStructP}:
         result.pragmas.incl n.pragmaKind
         skip n
       else:
@@ -91,7 +91,6 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
       # selector
       let field = takeLocal(n, SkipFinalParRi)
       getSize c, cache, field.typ, ptrSize
-
       var cCase = createSizeofValue(c.strict)
       while n.kind != ParRi:
         case n.substructureKind
@@ -180,7 +179,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       else:
         update c, 8, 8
   of ObjectT:
-    if c.strict:
+    if c.strict or (IncompleteStructP in pragmas.pragmas):
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true
     var n = n
