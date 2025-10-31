@@ -469,6 +469,7 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc replayLocalHeader(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
+  dest.takeToken n
   takeTree dest, n # name
   takeTree dest, n # export marker
   takeTree dest, n # pragmas
@@ -476,11 +477,12 @@ proc replayLocalHeader(c: var Context; dest: var TokenBuf; n: Cursor) =
     dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
     takeTree dest, n # type
   takeTree dest, n # value
+  dest.takeParRi n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
+  let beforeHead = dest.len
   dest.takeToken n
-  let afterHead = dest.len
 
   let symId = n.symId
   if kind == ResultY:
@@ -507,13 +509,12 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     bug "value should have been discarded"
   of TupleRaise:
     # we also need to patch the type!
-    var decl = createTokenBuf(10)
-    decl.copyTree cursorAt(dest, afterHead)
-    endRead dest
-    dest.shrink afterHead
-    replayLocalHeader(c, dest, beginRead(decl))
-
     dest.addParRi()
+    var decl = createTokenBuf(10)
+    decl.copyTree cursorAt(dest, beforeHead)
+    endRead dest
+    dest.shrink beforeHead
+    replayLocalHeader(c, dest, beginRead(decl))
 
     # Track guard state before emitting the error-check ite
     let guardBefore = if c.optimizeIte: c.current.iteOpt.getLastActivated() else: InvalidGuardRef
