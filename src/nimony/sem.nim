@@ -666,6 +666,10 @@ proc semStmtCallback(c: var SemContext; dest: var TokenBuf; n: Cursor) =
   swap c.dest, dest
   c.phase = oldPhase
 
+
+proc semGetSize(c: var SemContext; n: Cursor; strict=false): xint =
+  getSize(n, c.g.config.bits div 8, strict)
+
 proc sameIdent(sym: SymId; str: StrId): bool =
   # XXX speed this up by using the `fieldCache` idea
   var name = pool.syms[sym]
@@ -1391,7 +1395,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP:
+     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP, IncompleteStructP:
     crucial.flags.incl pk
     c.dest.add parLeToken(pk, n.info)
     c.dest.addParRi()
@@ -5367,7 +5371,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     canSelfExec: canSelfExec,
     pending: createTokenBuf(),
     executeCall: exprexec.executeCall,
-    semStmtCallback: semStmtCallback)
+    semStmtCallback: semStmtCallback,
+    semGetSize: semGetSize)
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))

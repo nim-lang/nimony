@@ -9,7 +9,7 @@
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
 import ".." / lib / [symparser, nifindexes]
-import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig
+import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints
 
 import ".." / gear2 / modnames
 
@@ -74,6 +74,8 @@ type
 
   SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
+  SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
+
 
   SemContext* = object
     dest*: TokenBuf
@@ -126,6 +128,7 @@ type
     pragmaStack*: seq[Cursor] # used to implement {.push.} and {.pop.}
     executeCall*: SemExecutor
     semStmtCallback*: SemStmtCallback
+    semGetSize*: SemGetSize
     passL*: seq[string]
     passC*: seq[string]
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
