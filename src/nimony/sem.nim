@@ -666,6 +666,10 @@ proc semStmtCallback(c: var SemContext; dest: var TokenBuf; n: Cursor) =
   swap c.dest, dest
   c.phase = oldPhase
 
+
+proc semGetSize(c: var SemContext; n: Cursor; strict=false): xint =
+  getSize(n, c.g.config.bits div 8, strict, isEval = true)
+
 proc sameIdent(sym: SymId; str: StrId): bool =
   # XXX speed this up by using the `fieldCache` idea
   var name = pool.syms[sym]
@@ -5367,7 +5371,8 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     canSelfExec: canSelfExec,
     pending: createTokenBuf(),
     executeCall: exprexec.executeCall,
-    semStmtCallback: semStmtCallback)
+    semStmtCallback: semStmtCallback,
+    semGetSize: semGetSize)
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
     c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
