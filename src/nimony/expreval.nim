@@ -515,7 +515,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         var err = false
         let value = asSigned(s, err)
         if err:
-          cannotEval n
+          cannotEval orig
         else:
           result = intValue(c, value, orig.info)
       else:

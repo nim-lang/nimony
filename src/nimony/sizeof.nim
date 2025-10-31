@@ -70,7 +70,7 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
     inc n
     while n.kind != ParRi:
       case n.pragmaKind:
-      of {PackedP, UnionP, InheritableP}:
+      of {PackedP, UnionP, InheritableP, IncompleteStructP}:
         result.pragmas.incl n.pragmaKind
         skip n
       else:
