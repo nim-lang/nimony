@@ -668,7 +668,7 @@ proc semStmtCallback(c: var SemContext; dest: var TokenBuf; n: Cursor) =
 
 
 proc semGetSize(c: var SemContext; n: Cursor; strict=false): xint =
-  getSize(n, c.g.config.bits div 8, strict, isEval = true)
+  getSize(n, c.g.config.bits div 8, strict)
 
 proc sameIdent(sym: SymId; str: StrId): bool =
   # XXX speed this up by using the `fieldCache` idea
