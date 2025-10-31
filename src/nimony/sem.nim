@@ -588,6 +588,14 @@ proc semConstStrExpr(c: var SemContext; n: var Cursor) =
     c.dest.shrink start
     c.dest.add valueBuf
 
+proc semConstStrExprIgnoreTopLevel(c: var SemContext; n: var Cursor) =
+  case c.phase
+  of SemcheckTopLevelSyms:
+    # XXX `const`s etc are not evaluated yet
+    c.takeTree n
+  of SemcheckSignatures, SemcheckBodies:
+    semConstStrExpr(c, n)
+
 proc semConstIntExpr(c: var SemContext; n: var Cursor) =
   let start = c.dest.len
   var it = Item(n: n, typ: c.types.autoType)
@@ -1354,7 +1362,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     c.dest.add parLeToken(pk, n.info)
     inc n
     if hasParRi and n.kind != ParRi:
-      semConstStrExpr c, n
+      semConstStrExprIgnoreTopLevel c, n
     c.dest.addParRi()
   of ImportcP, ImportcppP, ExportcP, HeaderP, DynlibP, PluginP:
     crucial.flags.incl pk
@@ -1363,7 +1371,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
     inc n
     let strPos = c.dest.len
     if hasParRi and n.kind != ParRi:
-      semConstStrExpr c, n
+      semConstStrExprIgnoreTopLevel c, n
     elif crucial.sym != SymId(0):
       var name = pool.syms[crucial.sym]
       extractBasename name
