@@ -43,10 +43,7 @@
       (stmts
        (jtrue ´g.0))
       (stmts
-       (ite
-        (not ´g.0)
-        (stmts
-         (call echo.0 "more")) .)))) .)
+       (call echo.0 "more")))) .)
    (ite
     (not ´g.0)
     (stmts

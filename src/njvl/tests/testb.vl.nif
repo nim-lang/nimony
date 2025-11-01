@@ -27,11 +27,7 @@
        (stmts
         (jtrue ´g.1))
        (stmts
-        (ite
-         (not ´g.1)
-         (stmts
-          (call echo.0 "after if without else")) .
-         (stmts)))
+        (call echo.0 "after if without else"))
        (stmts))
       (continue .)
       (continue)))
@@ -51,7 +47,7 @@
      (not ´g.1)
      (stmts
       (ite
-       (v a.0 +1)
+       (v a.0 +2)
        (stmts
         (jtrue ´g.1))
        (stmts
@@ -64,7 +60,7 @@
        (stmts))
       (continue .)
       (continue
-       (join a.0 +2 +1 +0))))
+       (join a.0 +3 +2 +0))))
     (kill a.0))))
  (proc :test3.0 . . .
   (params) . . .
@@ -84,18 +80,14 @@
      (not ´g.1)
      (stmts
       (ite
-       (v a.0 +3)
+       (v a.0 +4)
        (stmts
         (ite
          (v b.0 +0)
          (stmts
           (jtrue ´g.1))
          (stmts
-          (ite
-           (not ´g.1)
-           (stmts
-            (call echo.0 "after inner if")) .
-           (stmts)))
+          (call echo.0 "after inner if"))
          (stmts))) .
        (stmts))
       (ite
@@ -105,7 +97,7 @@
        (stmts))
       (continue .)
       (continue
-       (join a.0 +4 +3 +0))))
+       (join a.0 +5 +4 +0))))
     (kill a.0 b.0))))
  (proc :test4.0 . . .
   (params) . . .
@@ -128,21 +120,17 @@
      (not ´g.1)
      (stmts
       (ite
-       (v a.0 +5)
+       (v a.0 +6)
        (stmts
         (ite
-         (v b.0 +1)
+         (v b.0 +2)
          (stmts
           (ite
            (v c.0 +0)
            (stmts
             (jtrue ´g.1))
            (stmts
-            (ite
-             (not ´g.1)
-             (stmts
-              (call echo.0 "level 2 after")) .
-             (stmts)))
+            (call echo.0 "level 2 after"))
            (stmts))) .
          (stmts))
         (ite
@@ -158,8 +146,7 @@
        (stmts))
       (continue .)
       (continue
-       (join a.0 +6 +5 +0)
-       (join b.0 +2 +1 +0))))
+       (join a.0 +7 +6 +0))))
     (kill a.0 c.0 b.0))))
  (proc :test5.0 . . .
   (params) . . .
@@ -171,15 +158,11 @@
      (bool)
      (false))
     (ite
-     (v a.0 +7)
+     (v a.0 +8)
      (stmts
       (jtrue ´r.0))
      (stmts
-      (ite
-       (not ´r.0)
-       (stmts
-        (call echo.0 "after return if")) .
-       (stmts)))
+      (call echo.0 "after return if"))
      (stmts))
     (kill a.0))))
  (proc :test6.0 . . .
@@ -197,30 +180,17 @@
      (not ´g.1)
      (stmts
       (ite
-       (v a.0 +8)
+       (v a.0 +9)
        (stmts
         (jtrue ´g.1))
        (stmts
-        (ite
-         (not ´g.1)
-         (stmts
-          (call echo.0 "stmt1")) .
-         (stmts))
-        (ite
-         (not ´g.1)
-         (stmts
-          (call echo.0 "stmt2")) .
-         (stmts))
-        (ite
-         (not ´g.1)
-         (stmts
-          (call echo.0 "stmt3")) .
-         (stmts)))
+        (call echo.0 "stmt1")
+        (call echo.0 "stmt2")
+        (call echo.0 "stmt3"))
        (stmts))
       (continue .)
       (continue
-       (join a.0 +9 +8 +1)
-       (join b.0 +3 +2 +0))))
+       (join a.0 +10 +9 +1))))
     (kill a.0))))
  (proc :test7.0 . . .
   (params) . . .
@@ -240,10 +210,10 @@
      (not ´g.1)
      (stmts
       (ite
-       (v a.0 +10)
+       (v a.0 +11)
        (stmts
         (ite
-         (v b.0 +4)
+         (v b.0 +5)
          (stmts
           (jtrue ´g.1))
          (stmts
@@ -262,8 +232,8 @@
        (stmts))
       (continue .)
       (continue
-       (join a.0 +11 +10 +1)
-       (join b.0 +5 +4 +1))))
+       (join a.0 +12 +11 +1)
+       (join b.0 +6 +5 +0))))
     (kill a.0 b.0))))
  (proc :test8.0 . . .
   (params) . . .
@@ -276,14 +246,10 @@
      (false))
     (cfvar :´g.1)
     (ite
-     (v a.0 +12)
+     (v a.0 +13)
      (stmts
       (jtrue ´g.1))
      (stmts
-      (ite
-       (not ´g.1)
-       (stmts
-        (call echo.0 "after block break")) .
-       (stmts)))
+      (call echo.0 "after block break"))
      (stmts))
     (kill a.0)))))

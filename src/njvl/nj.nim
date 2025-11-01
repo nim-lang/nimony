@@ -128,6 +128,7 @@ type
     openElseBranches: int
     leavesWith: int # index to the innermost guard that we activated or -1
     hasParLe: bool
+    reenableOnLeave: seq[(int, SymId)]
 
   CurrentProc = object
     mode: ExceptionMode
@@ -159,15 +160,44 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
     dest.addParRi()
   c.typeCache.closeScope()
 
-proc closeBasicBlock(b: var BasicBlock; dest: var TokenBuf) =
+proc closeBasicBlock(c: var Context; b: var BasicBlock; dest: var TokenBuf) =
   while b.openElseBranches > 0:
     dest.addParRi() # close `else` branch
     dest.addParRi() # close ite
     dec b.openElseBranches
+  for (idx, cond) in b.reenableOnLeave:
+    if idx < c.current.guards.len and
+        cond == c.current.guards[idx].cond:
+      # enable again as we are not under the guard anymore:
+      c.current.guards[idx].active = true
 
 proc openElseBranch(b: var BasicBlock; dest: var TokenBuf; info: PackedLineInfo) =
   dest.addParLe StmtsS, info # begin of else branch
   inc b.openElseBranches
+
+proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: PackedLineInfo): (int, SymId) =
+  result = (-1, NoSymId)
+  for i in countdown(c.current.guards.len - 1, 0):
+    let g = addr c.current.guards[i]
+    if g.active:
+      dest.add tagToken("ite", info)
+      dest.copyIntoKind NotX, info:
+        dest.addSymUse g.cond, info
+      result = (i, g.cond)
+      g.active = false # disable
+      dest.addParLe StmtsS, info # then section
+      break
+
+proc maybeCloseGuard(c: var Context; dest: var TokenBuf; g: (int, SymId)) =
+  let idx = g[0]
+  if idx >= 0:
+    dest.addParRi() # then section of ite
+    dest.addDotToken() # no else section
+    dest.addParRi() # "ite"
+    if idx < c.current.guards.len and
+        g[1] == c.current.guards[idx].cond:
+      # enable again as we are not under the guard anymore:
+      c.current.guards[idx].active = true
 
 proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -292,7 +322,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
         declareCfVar dest, retFlag
         trGuardedStmts c, b, dest, n
-        closeBasicBlock b, dest
+        closeBasicBlock c, b, dest
         closeScope c, dest, info
       c.typeCache.closeScope()
     else:
@@ -514,7 +544,7 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
   openScope c
   var b = BasicBlock(openElseBranches: 0, hasParLe: false, leavesWith: -1)
   trGuardedStmts c, b, dest, n
-  closeBasicBlock b, dest
+  closeBasicBlock c, b, dest
   closeScope c, dest, info
   skipParRi n # end of `elif`
 
@@ -531,7 +561,7 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
 
     var thenB = BasicBlock(openElseBranches: 0, hasParLe: false, leavesWith: -1)
     trGuardedStmts c, thenB, dest, n
-    closeBasicBlock thenB, dest
+    closeBasicBlock c, thenB, dest
     closeScope c, dest, info
     skipParRi n
     dest.takeParRi n # "ite"
@@ -540,6 +570,8 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
       c.current.guards[b.leavesWith].active = oldActive
   elif b.leavesWith >= 0:
     skipParRi n
+    c.current.guards[b.leavesWith].active = false
+    outerB.reenableOnLeave.add ((b.leavesWith, c.current.guards[b.leavesWith].cond))
     # exploit the fact that we had no `else` and ended with a `break`-like statement:
     openElseBranch outerB, dest, info
   else:
@@ -596,7 +628,7 @@ proc trBlock(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Curs
 
   var b = BasicBlock(openElseBranches: 0, hasParLe: outerB.hasParLe, leavesWith: -1)
   trGuardedStmts c, b, dest, n
-  closeBasicBlock b, dest
+  closeBasicBlock c, b, dest
   removeGuard c, s
   closeScope c, dest, n.info
 
@@ -654,7 +686,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trGuardedStmts c, b, dest, n
       dec breakSplitPoint
 
-    closeBasicBlock b, dest
+    closeBasicBlock c, b, dest
 
   dest.copyIntoKind NotX, info:
     dest.addSymUse guard, info # condition is always our artifical guard
@@ -662,9 +694,12 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # post loop condition body:
   dest.copyIntoKind StmtsS, info:
     var b2 = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
+    var g = (-1, NoSymId)
     while n.kind != ParRi:
+      if g[0] < 0: g = maybeEmitGuard(c, dest, n.info)
       trGuardedStmts c, b2, dest, n
-    closeBasicBlock b2, dest
+    maybeCloseGuard(c, dest, g)
+    closeBasicBlock c, b2, dest
     skipParRi n # end of body statement list
 
     closeScope c, dest, info
@@ -748,7 +783,7 @@ proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
 proc trGuardedStmtsBlock(c: var Context; dest: var TokenBuf; n: var Cursor; hasParLe = false) =
   var b = BasicBlock(openElseBranches: 0, hasParLe: hasParLe, leavesWith: -1)
   trGuardedStmts c, b, dest, n
-  closeBasicBlock b, dest
+  closeBasicBlock c, b, dest
 
 proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -975,17 +1010,7 @@ proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   b.leavesWith = c.current.guards.len-1
 
 proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
-  var usedGuard = (-1, NoSymId)
-  for i in countdown(c.current.guards.len - 1, 0):
-    let g = addr c.current.guards[i]
-    if g.active:
-      dest.add tagToken("ite", n.info)
-      dest.copyIntoKind NotX, n.info:
-        dest.addSymUse g.cond, n.info
-      usedGuard = (i, g.cond)
-      g.active = false # disable
-      dest.addParLe StmtsS, n.info # then section
-      break
+  let g = maybeEmitGuard(c, dest, n.info)
 
   case n.stmtKind
   of StmtsS, ScopeS:
@@ -993,14 +1018,19 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     # This ensures guards activated by statements are checked for subsequent statements
     # flat nested statements list:
     var takeThisParRi = false
-    if not b.hasParLe and usedGuard[0] < 0:
+    if not b.hasParLe and g[0] < 0:
       dest.takeToken n
       b.hasParLe = true
       takeThisParRi = true
     else:
       inc n
+    var g2 = (-1, NoSymId)
     while n.kind != ParRi:
+      # we need to figure out guards as long as we are still in the basic block
+      # so that we can merge `guard a; guard b;` into `guard (a; b)`
+      if g2[0] < 0: g2 = maybeEmitGuard(c, dest, n.info)
       trGuardedStmts(c, b, dest, n)
+    maybeCloseGuard(c, dest, g2)
     if takeThisParRi:
       dest.takeToken n # ParRi
     else:
@@ -1035,16 +1065,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   else:
     trExpr c, dest, n
 
-  let idx = usedGuard[0]
-  if idx >= 0:
-    dest.addParRi() # then section of ite
-    dest.addDotToken() # no else section
-    dest.addParRi() # "ite"
-    if idx < c.current.guards.len and
-        usedGuard[1] == c.current.guards[idx].cond:
-      # enable again as we are not under the guard anymore:
-      c.current.guards[idx].active = true
-
+  maybeCloseGuard(c, dest, g)
 
 proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(),
@@ -1059,7 +1080,7 @@ proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
   while n.kind != ParRi:
     trGuardedStmts c, b, result, n
-  closeBasicBlock b, result
+  closeBasicBlock c, b, result
   closeScope c, result, n.info
   result.addParRi()
   endRead elimExprs
