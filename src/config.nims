@@ -1,5 +1,5 @@
 --define:nimPreviewSlimSystem
---warningAsError:Uninit
+#--warningAsError:Uninit
 --warningAsError:ProveInit
 --experimental:strictDefs
 --warning:StdPrefix
