@@ -46,11 +46,8 @@
      (ite a.0
       (stmts
        (jtrue ´g.1))
-      (ite
-       (not ´g.1)
-       (stmts
-        (stmts
-         (call echo.0 "explicit else"))) .))
+      (stmts
+       (call echo.0 "explicit else")))
      (ite
       (not ´g.1)
       (stmts
@@ -199,11 +196,8 @@
        (ite b.0
         (stmts
          (jtrue ´g.1))
-        (ite
-         (not ´g.1)
-         (stmts
-          (stmts
-           (call echo.0 "inner else"))) .))
+        (stmts
+         (call echo.0 "inner else")))
        (ite
         (not ´g.1)
         (stmts

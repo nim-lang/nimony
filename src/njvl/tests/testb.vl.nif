@@ -54,12 +54,8 @@
        (v a.0 +1)
        (stmts
         (jtrue ´g.1))
-       (ite
-        (not ´g.1)
-        (stmts
-         (stmts
-          (call echo.0 "explicit else"))) .
-        (stmts))
+       (stmts
+        (call echo.0 "explicit else"))
        (stmts))
       (ite
        (not ´g.1)
@@ -67,7 +63,8 @@
         (call echo.0 "after if with else")) .
        (stmts))
       (continue .)
-      (continue)))
+      (continue
+       (join a.0 +2 +1 +0))))
     (kill a.0))))
  (proc :test3.0 . . .
   (params) . . .
@@ -107,7 +104,8 @@
         (call echo.0 "after outer if")) .
        (stmts))
       (continue .)
-      (continue)))
+      (continue
+       (join a.0 +4 +3 +0))))
     (kill a.0 b.0))))
  (proc :test4.0 . . .
   (params) . . .
@@ -160,6 +158,7 @@
        (stmts))
       (continue .)
       (continue
+       (join a.0 +6 +5 +0)
        (join b.0 +2 +1 +0))))
     (kill a.0 c.0 b.0))))
  (proc :test5.0 . . .
@@ -220,7 +219,7 @@
        (stmts))
       (continue .)
       (continue
-       (join a.0 +9 +8 +0)
+       (join a.0 +9 +8 +1)
        (join b.0 +3 +2 +0))))
     (kill a.0))))
  (proc :test7.0 . . .
@@ -247,12 +246,8 @@
          (v b.0 +4)
          (stmts
           (jtrue ´g.1))
-         (ite
-          (not ´g.1)
-          (stmts
-           (stmts
-            (call echo.0 "inner else"))) .
-          (stmts))
+         (stmts
+          (call echo.0 "inner else"))
          (stmts))
         (ite
          (not ´g.1)
@@ -267,7 +262,7 @@
        (stmts))
       (continue .)
       (continue
-       (join a.0 +11 +10 +0)
+       (join a.0 +11 +10 +1)
        (join b.0 +5 +4 +1))))
     (kill a.0 b.0))))
  (proc :test8.0 . . .
