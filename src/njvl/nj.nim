@@ -161,7 +161,6 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
 proc closeBasicBlock(b: var BasicBlock; dest: var TokenBuf) =
   while b.openElseBranches > 0:
     dest.addParRi() # close `else` branch
-    dest.addDotToken() # no join information
     dest.addParRi() # close ite
     dec b.openElseBranches
 
@@ -528,8 +527,6 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
     closeBasicBlock thenB, dest
     closeScope c, dest, info
     skipParRi n
-    # join information: not yet available
-    dest.addDotToken()
     dest.takeParRi n # "ite"
   elif b.endsWithBreak:
     skipParRi n
@@ -538,8 +535,6 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
   else:
     # Normal completion:
     dest.addDotToken() # no else section
-    # join information: not yet available
-    dest.addDotToken()
     dest.takeParRi n # "ite"
 
 proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
@@ -830,7 +825,6 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Close all the nested ite structures
   for i in 0..<iteCount:
     dest.addParRi()  # close else stmts
-    dest.addDotToken()  # join placeholder
     dest.addParRi()  # close ite/itec
 
 proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor) =
@@ -906,7 +900,6 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
         closeScope c, dest, info
         skipParRi n
       dest.addDotToken() # no else
-      dest.addDotToken() # no join
   if n.substructureKind == FinU:
     inc n # into FinU
     openScope c
@@ -923,7 +916,6 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
       dest.copyIntoKind StmtsS, info:
         raiseGuards(c, dest, info)
       dest.addDotToken() # no else
-      dest.addDotToken() # no join
 
   removeGuard c, s
 
@@ -1037,7 +1029,6 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   if idx >= 0:
     dest.addParRi() # then section of ite
     dest.addDotToken() # no else section
-    dest.addDotToken() # no join information
     dest.addParRi() # "ite"
     if idx < c.current.guards.len and
         usedGuard[1] == c.current.guards[idx].cond:
