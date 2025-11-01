@@ -144,18 +144,19 @@ type
     thisModuleSuffix: string
     current: CurrentProc
 
-proc addKill(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
-  dest.add tagToken("kill", info)
-  dest.addSymUse s, info
-  dest.addParRi()
-
 proc openScope(c: var Context) =
   c.typeCache.openScope()
 
 proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   # insert kill instructions:
+  var i = 0
   for s in c.typeCache.currentScopeLocals:
-    dest.addKill(s, info)
+    if i == 0:
+      dest.add tagToken("kill", info)
+    dest.addSymUse s, info
+    inc i
+  if i > 0:
+    dest.addParRi()
   c.typeCache.closeScope()
 
 proc closeBasicBlock(b: var BasicBlock; dest: var TokenBuf) =
