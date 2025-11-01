@@ -505,25 +505,25 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # we assume here that xelim already produced a single elif-else construct here
   let info = n.info
-  dest.add tagToken("ite", n.info)
+  dest.add tagToken("ite", info)
   inc n
   assert n.substructureKind == ElifU
   inc n
   trExpr c, dest, n
 
   openScope c
-  var b = BasicBlock(openElseBranches: 0, hasParLe: true, endsWithBreak: false)
+  var b = BasicBlock(openElseBranches: 0, hasParLe: false, endsWithBreak: false)
   trGuardedStmts c, b, dest, n
   closeBasicBlock b, dest
   closeScope c, dest, info
-  skipParRi n
+  skipParRi n # end of `elif`
 
   if n.kind != ParRi:
     # Has explicit else branch
     assert n.substructureKind == ElseU
     inc n
     openScope c
-    var thenB = BasicBlock(openElseBranches: 0, hasParLe: true, endsWithBreak: false)
+    var thenB = BasicBlock(openElseBranches: 0, hasParLe: false, endsWithBreak: false)
     trGuardedStmts c, thenB, dest, n
     closeBasicBlock thenB, dest
     closeScope c, dest, info
@@ -532,9 +532,8 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # join information: not yet available
     dest.addDotToken()
     dest.addParRi() # "ite"
-    # Note: keep lastActivated set so statements after this entire if-else
-    # remain guarded (the explicit else doesn't consume the guard like our optimization does)
   elif b.endsWithBreak:
+    skipParRi n
     # exploit the fact that we had no `else` and ended with a `break`-like statement:
     openElseBranch b, dest, info
   else:
@@ -977,14 +976,14 @@ proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   b.endsWithBreak = true
 
 proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
-  var usedGuard = -1
+  var usedGuard = (-1, NoSymId)
   for i in countdown(c.current.guards.len - 1, 0):
     let g = addr c.current.guards[i]
     if g.active:
       dest.add tagToken("ite", n.info)
       dest.copyIntoKind NotX, n.info:
         dest.addSymUse g.cond, n.info
-      usedGuard = i
+      usedGuard = (i, g.cond)
       g.active = false # disable
       dest.addParLe StmtsS, n.info # then section
       break
@@ -995,7 +994,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     # This ensures guards activated by statements are checked for subsequent statements
     # flat nested statements list:
     var takeThisParRi = false
-    if not b.hasParLe and usedGuard < 0:
+    if not b.hasParLe and usedGuard[0] < 0:
       dest.takeToken n
       b.hasParLe = true
       takeThisParRi = true
@@ -1037,13 +1036,16 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   else:
     trExpr c, dest, n
 
-  if usedGuard >= 0:
-    # enable again as we are not under the guard anymore:
-    c.current.guards[usedGuard].active = true
+  let idx = usedGuard[0]
+  if idx >= 0:
     dest.addParRi() # then section of ite
     dest.addDotToken() # no else section
     dest.addDotToken() # no join information
     dest.addParRi() # "ite"
+    if idx < c.current.guards.len and
+        usedGuard[1] == c.current.guards[idx].cond:
+      # enable again as we are not under the guard anymore:
+      c.current.guards[idx].active = true
 
 
 proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
