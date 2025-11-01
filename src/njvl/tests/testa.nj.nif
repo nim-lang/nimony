@@ -25,10 +25,10 @@
   (stmts
    (ite b.0
     (stmts
-     (jtrue `j.0.main)) . .)) .)
+     (jtrue `j.0.main)) .)))
  (ite `j.0.main
   (stmts
-   (call echo.0 "abc")) . .)
+   (call echo.0 "abc")) .)
  (store
   (false) b.0)
  (loop
@@ -43,18 +43,18 @@
       (stmts
        (jtrue ´g.0))
       (stmts
-       (call echo.0 "more")) .)) . .)
+       (ite
+        (not ´g.0)
+        (stmts
+         (call echo.0 "more")) .)))) .)
    (ite
     (not ´g.0)
     (stmts
-     (call echo.0 "code here")) . .)
+     (call echo.0 "code here")) .)
    (continue .)))
  (call echo.0 "after loop")
  (let :`x.1 . .
   (i +32)
   (call echo.1 "abc"))
  (call echo.0 `x.1)
- (kill a.0)
- (kill b.0)
- (kill cond.0)
- (kill `x.1))
+ (kill a.0 b.0 `x.1))
