@@ -502,7 +502,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skipParRi n
   dest.addParRi()
 
-proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   # we assume here that xelim already produced a single elif-else construct here
   let info = n.info
   dest.add tagToken("ite", info)
@@ -528,21 +528,19 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
     closeBasicBlock thenB, dest
     closeScope c, dest, info
     skipParRi n
-    skipParRi n
     # join information: not yet available
     dest.addDotToken()
-    dest.addParRi() # "ite"
+    dest.takeParRi n # "ite"
   elif b.endsWithBreak:
     skipParRi n
     # exploit the fact that we had no `else` and ended with a `break`-like statement:
-    openElseBranch b, dest, info
+    openElseBranch outerB, dest, info
   else:
     # Normal completion:
-    skipParRi n
     dest.addDotToken() # no else section
     # join information: not yet available
     dest.addDotToken()
-    dest.addParRi() # "ite"
+    dest.takeParRi n # "ite"
 
 proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   assert c.current.guards.len > 0
@@ -567,8 +565,7 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
     let g = addr c.current.guards[guardIdx]
     dest.addSymUse g.cond, n.info
     g.active = true
-  dest.addParRi()
-  skipParRi n
+  dest.takeParRi n
 
 type
   GuardUndoState = object
@@ -1010,7 +1007,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   of AsgnS:
     trAsgn c, dest, n
   of IfS:
-    trIf c, dest, n
+    trIf c, b, dest, n
   of CaseS:
     trCase c, dest, n
   of WhileS:
