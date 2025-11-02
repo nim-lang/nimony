@@ -65,8 +65,8 @@ proc trCfvar(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert n.kind == SymbolDef
   let s = n.symId
   dest.takeToken n
-  # do not versionize cfvars!
-  c.current.addrTaken.incl s
+  # Do versioning for cfvars!
+  newValueFor c.vt, s
   dest.takeParRi n
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -227,6 +227,16 @@ proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
   dest.takeTree n
 
+proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  dest.takeToken n
+  while n.kind != ParRi:
+    assert n.kind == Symbol
+    let s = n.symId
+    dest.takeToken n
+    # Do versioning for cfvars!
+    newValueFor c.vt, s
+  dest.takeParRi n
+
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.njvlKind
   of IteV, ItecV:
@@ -241,7 +251,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trCfvar c, dest, n
   of UnknownV:
     trUnknown c, dest, n
-  of JtrueV, AssumeV, AssertV, ContinueV, VV:
+  of JtrueV:
+    trJtrue c, dest, n
+  of AssumeV, AssertV, ContinueV, VV:
     takeTree dest, n
   of NoVTag:
     case n.stmtKind
@@ -251,8 +263,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trProcDecl c, dest, n
     of LocalDecls:
       trLocal c, dest, n
-    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, ContinueS, RaiseS, RetS:
+    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS, RetS:
       bug "construct should have been eliminated: " & $n.stmtKind
+    of ContinueS:
+      skip n
     else:
       dest.takeToken n
       while n.kind != ParRi:
