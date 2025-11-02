@@ -32,8 +32,8 @@ stmts:
   (asgn (v eax.0 +2) (+ (v eax.0 +1) 5))
   (asgn (v tmp.0 +1) (= (v eax.0 +2) 5))
   (ite (v tmp.0 +1)
-    (stmts: (asgn (v ebx.0 +1) (v eax.0 +2)))
-    (stmts:))
+    (stmts (asgn (v ebx.0 +1) (v eax.0 +2)))
+    (stmts))
 ```
 
 ### Kill Instructions Enable Precise Dead Code Detection

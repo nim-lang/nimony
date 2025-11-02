@@ -70,7 +70,4 @@
   (call echo.1 "abc"))
  (call echo.0
   (v `x.1 +0))
- (kill a.0)
- (kill b.0)
- (kill cond.0)
- (kill `x.1))
+ (kill a.0 b.0 `x.1))

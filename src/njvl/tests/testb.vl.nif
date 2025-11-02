@@ -50,11 +50,8 @@
        (v a.0 +2)
        (stmts
         (jtrue ´g.1))
-       (ite
-        (not ´g.1)
-        (stmts
-         (call echo.0 "explicit else")) .
-        (stmts))
+       (stmts
+        (call echo.0 "explicit else"))
        (stmts))
       (ite
        (not ´g.1)
@@ -62,7 +59,8 @@
         (call echo.0 "after if with else")) .
        (stmts))
       (continue .)
-      (continue)))
+      (continue
+       (join a.0 +3 +2 +0))))
     (kill a.0))))
  (proc :test3.0 . . .
   (params) . . .
@@ -98,9 +96,9 @@
         (call echo.0 "after outer if")) .
        (stmts))
       (continue .)
-      (continue)))
-    (kill a.0)
-    (kill b.0))))
+      (continue
+       (join a.0 +5 +4 +0))))
+    (kill a.0 b.0))))
  (proc :test4.0 . . .
   (params) . . .
   (stmts
@@ -147,10 +145,9 @@
         (call echo.0 "level 0 after")) .
        (stmts))
       (continue .)
-      (continue)))
-    (kill a.0)
-    (kill c.0)
-    (kill b.0))))
+      (continue
+       (join a.0 +7 +6 +0))))
+    (kill a.0 c.0 b.0))))
  (proc :test5.0 . . .
   (params) . . .
   (stmts
@@ -193,7 +190,7 @@
        (stmts))
       (continue .)
       (continue
-       (join a.0 +10 +9 +0))))
+       (join a.0 +10 +9 +1))))
     (kill a.0))))
  (proc :test7.0 . . .
   (params) . . .
@@ -219,26 +216,25 @@
          (v b.0 +5)
          (stmts
           (jtrue ´g.1))
-         (ite
-          (not ´g.1)
-          (stmts
-           (call echo.0 "inner else")) .
-          (stmts))
+         (stmts
+          (call echo.0 "inner else"))
          (stmts))
         (ite
          (not ´g.1)
          (stmts
           (call echo.0 "after inner if-else")) .
-         (stmts)))
+         (stmts))) .
+       (stmts))
+      (ite
+       (not ´g.1)
        (stmts
-        (call echo.0 "after outer if"))
+        (call echo.0 "after outer if")) .
        (stmts))
       (continue .)
       (continue
-       (join a.0 +12 +11 +0)
+       (join a.0 +12 +11 +1)
        (join b.0 +6 +5 +0))))
-    (kill a.0)
-    (kill b.0))))
+    (kill a.0 b.0))))
  (proc :test8.0 . . .
   (params) . . .
   (stmts
@@ -249,13 +245,11 @@
      (bool)
      (false))
     (cfvar :´g.1)
-    (stmts
-     (ite
-      (v a.0 +13)
-      (stmts
-       (jtrue ´g.1))
-      (stmts
-       (call echo.0 "after block break"))
-      (stmts)))
-    (kill a.0))))
- (kill msg.0))
+    (ite
+     (v a.0 +13)
+     (stmts
+      (jtrue ´g.1))
+     (stmts
+      (call echo.0 "after block break"))
+     (stmts))
+    (kill a.0)))))
