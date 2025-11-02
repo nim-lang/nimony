@@ -263,8 +263,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trProcDecl c, dest, n
     of LocalDecls:
       trLocal c, dest, n
-    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, ContinueS, RaiseS, RetS:
+    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS, RetS:
       bug "construct should have been eliminated: " & $n.stmtKind
+    of ContinueS:
+      skip n
     else:
       dest.takeToken n
       while n.kind != ParRi:
