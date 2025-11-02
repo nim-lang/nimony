@@ -202,10 +202,11 @@ proc maybeCloseGuard(c: var Context; dest: var TokenBuf; g: (int, SymId)) =
 proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
-proc declareCfVar(dest: var TokenBuf; s: SymId) =
+proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
   dest.add tagToken("cfvar", NoLineInfo)
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
+  c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
 
 proc useErrorTracker(c: Context; dest: var TokenBuf; info: PackedLineInfo) =
   ## Emit the correct expression to read the error code from errorTracker.
@@ -320,7 +321,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # By default, errorTracker is the same as resultSym
           c.current.errorTracker = c.current.resultSym
 
-        declareCfVar dest, retFlag
+        declareCfVar c, dest, retFlag
         trGuardedStmts c, b, dest, n
         closeBasicBlock c, b, dest
         closeScope c, dest, info
@@ -619,7 +620,7 @@ proc trBlock(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Curs
   let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
   inc c.current.tmpCounter
 
-  declareCfVar dest, guard
+  declareCfVar c, dest, guard
   inc n # "block"
   let blockName = if n.kind == SymbolDef: n.symId else: NoSymId
   inc n # name or empty
@@ -676,7 +677,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openScope c
 
   dest.copyIntoKind StmtsS, info:
-    declareCfVar dest, guard
+    declareCfVar c, dest, guard
     let s = addGuard(c, Guard(cond: guard, active: false))
     var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
 
@@ -897,7 +898,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
       dest.addSymUse pool.syms.getOrIncl(SuccessName), info # initial value
     c.current.errorTracker = tracker
 
-  declareCfVar dest, guard
+  declareCfVar c, dest, guard
   let s = addGuard(c, Guard(cond: guard, active: false, isTryGuard: true))
 
   # Temporarily override mode so error handling inside try block works
@@ -1009,6 +1010,14 @@ proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   raiseGuards(c, dest, info)
   b.leavesWith = c.current.guards.len-1
 
+proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # xelim can produce cfvars that we didn't generate so handle them here
+  dest.takeToken n # CfVarV
+  let s = n.symId
+  dest.takeToken n # SymDef
+  dest.takeParRi n # ParRi
+  c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
+
 proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   let g = maybeEmitGuard(c, dest, n.info)
 
@@ -1063,7 +1072,10 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   of CallKindsS:
     trStmtCall c, b, dest, n
   else:
-    trExpr c, dest, n
+    if n.njvlKind == CfVarV:
+      trCfVarDecl c, dest, n
+    else:
+      trExpr c, dest, n
 
   maybeCloseGuard(c, dest, g)
 
