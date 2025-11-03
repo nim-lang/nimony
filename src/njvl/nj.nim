@@ -883,11 +883,12 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
   # Determine the error tracker variable
   # If the proc can raise, use resultSym; otherwise create a local tracker
   let oldErrorTracker = c.current.errorTracker
+  var tracker: SymId
   if c.current.mode != NoRaise:
-    c.current.errorTracker = c.current.resultSym
+    tracker = c.current.resultSym
   else:
     # Need a local variable to track errors within this try block
-    let tracker = pool.syms.getOrIncl("´err." & $c.current.tmpCounter)
+    tracker = pool.syms.getOrIncl("´err." & $c.current.tmpCounter)
     inc c.current.tmpCounter
     # Declare and initialize to Success
     dest.copyIntoKind LetS, info:
@@ -896,7 +897,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
       dest.addDotToken() # pragmas
       dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info # type
       dest.addSymUse pool.syms.getOrIncl(SuccessName), info # initial value
-    c.current.errorTracker = tracker
+  c.current.errorTracker = tracker
 
   declareCfVar c, dest, guard
   let s = addGuard(c, Guard(cond: guard, active: false, isTryGuard: true))
@@ -947,6 +948,10 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
         skipParRi n
       dest.addDotToken() # no else
   if n.substructureKind == FinU:
+    c.current.errorTracker = tracker
+    if c.current.mode == NoRaise:
+      c.current.mode = VoidRaise
+
     inc n # into FinU
     openScope c
     trGuardedStmtsBlock c, dest, n, true
@@ -963,6 +968,8 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
         raiseGuards(c, dest, info)
       dest.addDotToken() # no else
 
+    c.current.mode = oldMode
+    c.current.errorTracker = oldErrorTracker
   removeGuard c, s
 
 
