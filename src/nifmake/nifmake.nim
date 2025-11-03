@@ -564,7 +564,7 @@ Examples:
   quit(0)
 
 proc writeVersion() =
-  echo "nifmake 0.1.0"
+  echo "nifmake 0.2.0"
   quit(0)
 
 proc main() =
