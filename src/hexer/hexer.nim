@@ -47,7 +47,7 @@ import ".." / nimony / [langmodes]
 import nifcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
 
 const
-  Version = "0.4"
+  Version = "0.2.0"
   Usage = "Hexer Compiler. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

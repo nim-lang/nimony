@@ -21,7 +21,7 @@ import ".." / gear2 / modnames
 import sem, nifconfig, semos, semdata, deps, langmodes
 
 const
-  Version = "0.2"
+  Version = "0.2.0"
   Usage = "Nimony Compiler. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

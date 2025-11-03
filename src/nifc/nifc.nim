@@ -21,7 +21,7 @@ when defined(enableAsm):
   import amd64 / genasm
 
 const
-  Version = "0.2"
+  Version = "0.2.0"
   Usage = "NIFC Compiler. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
