@@ -293,38 +293,263 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 ### 1. Move Analysis
 
-SSU enables precise move analysis by tracking uses:
+SSU enables precise move analysis by tracking uses. However, `dup` complicates "last use" detection because it creates copies without consuming the source.
+
+**The Core Question:**
+With `dup`, what is the "last use" of a variable? Since `dup` doesn't increment use-version, the last use-version might not correspond to the actual last use needed for move analysis.
+
+**Key Insight:**
+SSU tracks **consuming uses** (operations that need the value), while move analysis needs to know the **last place the variable is needed**. These are different concepts:
+
+1. **Consuming use**: An operation that uses the value (like a function call). This increments use-version.
+2. **Last use for move**: The last place where the variable is needed before it can be moved. This depends on:
+   - The last consuming use of the variable itself
+   - Whether copies (`dup`) have been made and are still needed
+
+**Example 1: Simple case without `dup`**
 
 ```nim
 var x = allocate()
-var y = x        # Copy
-use(y)           # Use y (use-version +1)
-# Can we move x? Check if x has been used
-use2(x)          # Use x (use-version +1)
-# x has been used once, move is safe if x is dead after this
+use(x)           # Use x
+# x is dead here, can move
 ```
 
 IR:
 ```
 (stmts
   (var (v :x.0 +0) (call allocate.0))
-  (var (v :y.0 +0) (v (u x.0 +0) +0))  # Copy: x use-version stays +0
-  (call use.0 (v (u y.0 +1) +0))
-  (call use2.0 (v (u x.0 +1) +0))      # x used here
+  (call use.0 (v (u x.0 +1) +0))  # x use-version +1 - this is the last use
+  (kill x.0)                       # x dead, move is safe
+)
+```
+
+Here, use-version +1 directly corresponds to the last use. Move is safe after the use.
+
+**Example 2: With `dup` - the complication**
+
+```nim
+var x = allocate()
+var y = dup(x)   # Copy x to y (x use-version stays +0)
+use(x)           # Use x (use-version +1)
+use2(y)          # Use y (y use-version +1)
+# Question: When is x "last used"?
+```
+
+IR:
+```
+(stmts
+  (var (v :x.0 +0) (call allocate.0))
+  (var (v :y.0 +0) (dup (v (u x.0 +0) +0)))  # x use-version stays +0
+  (call use.0 (v (u x.0 +1) +0))             # x use-version +1
+  (call use2.0 (v (u y.0 +1) +0))            # y use-version +1 (independent)
   (kill x.0)
 )
 ```
 
-### 2. Linear Types
+**Analysis:**
+- `use(x)` is the last **consuming use** of x (use-version +1)
+- But `dup(x)` created a **copy** of x's value into y
+- Since `dup` is a copy (not a move), x and y are independent after the copy
+- Therefore, x's last use is indeed `use(x)`, not `use2(y)`
+- Move is safe after `use(x)` because y has its own copy
 
-For linear types, we can check that each variable is used exactly once:
+**The Answer:**
+SSU use-versions correctly identify the last consuming use **of the variable itself**, not of its copies. For move analysis:
 
+1. **Find the last use-version** of the variable (e.g., x use-version +1)
+2. **Find the last `dup`** of the variable before that use
+3. **After the last use-version**, the variable can be moved (if dead)
+4. **Copies created by `dup`** are tracked independently - they don't affect when the original can be moved
+
+**Why `dup` is needed:**
+Without `dup`, we couldn't express "copy x to y" without consuming x. With `dup`, we can:
+- Create the copy without consuming x
+- Track x and y's uses independently
+- Identify that x's last use is separate from y's uses
+
+**Move analysis algorithm:**
 ```
-- Variable declaration: use-version +0
-- After single use: use-version +1
-- Error if used again: use-version would become +2
-- Error if unused: use-version still +0 at scope exit
+For variable x:
+1. Find all uses of x (use-versions +1, +2, ..., +N)
+2. Find the last use-version (e.g., +N at position P)
+3. Check: is x dead after position P? (check for kill)
+4. If yes, can move x after position P
+5. Copies created by dup(x) don't affect this - they're independent
 ```
+
+**Example 3: Move after copy**
+
+```nim
+var x = allocate()
+var y = dup(x)   # Copy x
+use(x)           # Last use of x
+# x can be moved here (y is independent)
+use2(y)          # Uses y (x already moved)
+```
+
+IR:
+```
+(stmts
+  (var (v :x.0 +0) (call allocate.0))
+  (var (v :y.0 +0) (dup (v (u x.0 +0) +0)))  # Copy
+  (call use.0 (v (u x.0 +1) +0))             # Last use of x
+  # x can be moved here - y is independent
+  (call use2.0 (v (u y.0 +1) +0))            # Uses y
+  (kill x.0)
+)
+```
+
+The use-version +1 correctly identifies the last use of x, even though y is used later.
+
+### Simplifying the Duplifier Pass
+
+With SSU, the `duplifier.nim` pass can be significantly simplified. Currently, it performs complex `isLastRead` analysis to determine when to use moves vs `=dup` calls.
+
+**Current approach (without SSU):**
+The duplifier uses `isLastUse` (line 59, 413, 839, etc.) which performs control flow analysis to determine if a variable is used again after the current point. This is expensive and complex.
+
+**With SSU:**
+The use-version information already tells us:
+- If use-version is at the maximum for a variable → this is the last use
+- If use-version is not at maximum → variable is used again later
+
+**Simplified algorithm:**
+```nim
+# Instead of:
+if isLastRead(c, arg):
+  # Use move
+  tr c, arg, WillBeOwned
+  callWasMoved c, arg, typ
+else:
+  # Use dup
+  callDup c, arg
+
+# With SSU, we can do:
+let useV = getUseVersion(arg)  # Get current use-version
+let maxUseV = getMaxUseVersion(arg)  # Get maximum use-version for this variable
+if useV == maxUseV:
+  # This is the last use - can move!
+  tr c, arg, WillBeOwned
+  callWasMoved c, arg, typ
+else:
+  # Variable is used again - must dup
+  callDup c, arg
+```
+
+**Key benefits:**
+1. **No control flow analysis needed**: SSU already computed use-versions
+2. **Direct lookup**: Just check if current use-version == max use-version
+3. **Simpler code**: No need for complex `isLastUse` traversal
+4. **More efficient**: O(1) lookup vs O(n) control flow traversal
+
+**The mapping:**
+- `dup` instruction in IR → call `=dup` hook (if needed)
+- Last use (use-version == max) → use move semantics
+- Not last use → use `=dup` to create copy
+
+**Example transformation:**
+
+Current IR (with SSU annotations):
+```
+(var (v :x.0 +0) (call allocate.0))
+(var (v :y.0 +0) (dup (v (u x.0 +0) +0)))  # dup instruction - map to =dup
+(call use.0 (v (u x.0 +1) +0))             # Last use of x (use-version +1 is max)
+```
+
+After duplifier:
+```
+(var (v :x.0 +0) (call allocate.0))
+(var (v :y.0 +0) (call =dup.0 (v (u x.0 +0) +0)))  # dup → =dup call
+(call use.0 (v (u x.0 +1) +0))                      # Last use - can move
+(call =wasMoved.0 (haddr (v x.0 +1)))               # Mark as moved
+```
+
+**Important note:**
+The duplifier doesn't need to analyze anything - SSU already did the analysis! It just needs to:
+1. Check use-versions to determine last use
+2. Map `dup` instructions to `=dup` calls
+3. Insert `=wasMoved` calls for last uses
+
+This makes the duplifier much simpler and more efficient.
+
+### The `dup` Placement Problem
+
+There's a subtle but important issue with `dup` instructions: **they are abstract and don't increment use-version, but when mapped to `=dup` hooks, they become real operations that do read the variable.**
+
+**The Problem:**
+- `dup` in IR: Abstract instruction, doesn't increment use-version, appears "non-consuming"
+- `=dup` hook: Real function call that reads/copies the variable, IS consuming
+- Danger: If optimizations move `dup` around (thinking it's non-consuming), we might get invalid code after mapping to `=dup`
+
+**Example of the danger:**
+
+```nim
+var x = allocate()
+use(x)           # Use x
+var y = dup(x)   # dup inserted here (use-version stays +0)
+```
+
+If an optimizer moves `dup` after `use(x)`:
+```
+(var (v :x.0 +0) (call allocate.0))
+(var (v :y.0 +0) (dup (v (u x.0 +0) +0)))  # dup can be moved?
+(call use.0 (v (u x.0 +1) +0))             # use x
+```
+
+After moving `dup` after `use`:
+```
+(var (v :x.0 +0) (call allocate.0))
+(call use.0 (v (u x.0 +1) +0))             # use x
+(var (v :y.0 +0) (dup (v (u x.0 +0) +0)))  # dup moved here - but x was already used!
+```
+
+When mapped to `=dup`:
+```
+(call use.0 (v (u x.0 +1) +0))             # use x (might invalidate it)
+(call =dup.0 (v (u x.0 +0) +0))            # try to dup x - but x may be invalid!
+```
+
+**The Solution:**
+
+`dup` instructions must be **semantically constrained** to only appear where copies are actually needed. They cannot be moved freely by optimizations.
+
+**Constraints on `dup` placement:**
+1. **`dup` must appear before any uses of the source variable** in the same scope
+2. **`dup` cannot be moved across uses** - it's tied to the copy operation location
+3. **`dup` appears at the point of copy initialization** (e.g., `var y = dup(x)`)
+
+**Why this works:**
+- `dup` is inserted by the SSU pass at the point where a copy is semantically needed
+- The SSU construction algorithm should insert `dup` at the correct location (before uses)
+- Optimizations should respect that `dup` is tied to variable initialization/assignment
+
+**The SSU construction algorithm must:**
+1. Insert `dup` at the point where the copy is needed (e.g., `var y = x`)
+2. Ensure `dup` appears before any uses of the source variable
+3. Not allow `dup` to be moved across uses by treating it specially in optimization passes
+
+**Example of correct insertion:**
+
+```nim
+var x = allocate()
+var y = x        # Copy needed here
+use(x)           # Use x
+use2(y)          # Use y
+```
+
+SSU construction inserts `dup` at the copy point:
+```
+(var (v :x.0 +0) (call allocate.0))
+(var (v :y.0 +0) (dup (v (u x.0 +0) +0)))  # dup inserted at copy point
+(call use.0 (v (u x.0 +1) +0))             # use x
+(call use2.0 (v (u y.0 +1) +0))            # use y
+```
+
+This is correct - `dup` appears before `use(x)`, so when mapped to `=dup`, it's safe.
+
+**Verification:**
+The duplifier can verify this by checking that `dup` appears before any uses of the source variable (by checking use-versions). If a `dup` appears after a use, that's an error in the SSU construction.
+
 
 
 ## Comparison: SSA vs SSU
