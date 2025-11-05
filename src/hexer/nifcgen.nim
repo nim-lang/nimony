@@ -91,6 +91,7 @@ type
     IsNodecl
     IsInheritable
     IsUnion
+    IsImportExternal
 
 proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {})
 
@@ -123,6 +124,11 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   let prag = parsePragmas(c, n)
 
   c.dest.addDotToken() # adds pragmas
+
+  if IsImportExternal in flags and prag.externName.len == 0:
+    var baseName = pool.syms[s]
+    extractBasename baseName
+    prag.externName = baseName
 
   if prag.externName.len > 0:
     c.registerMangle(s, c.toExtern(s, prag.externName))
@@ -1046,6 +1052,8 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
       flags.incl IsInheritable
     if UnionP in prag.flags:
       flags.incl IsUnion
+    if {ImportcP, ImportcppP} * prag.flags != {}:
+      flags.incl IsImportExternal
     trType c, n, flags
   takeParRi c, n
   swap dst, c.dest
