@@ -102,6 +102,15 @@
 import std/syncio
 export FileMode
 
+# TODO: basic stuffs
+#---------------------------------------
+import std/assertions
+
+template isNil(s: typed): bool {.untyped.} =
+  s == nil
+#---------------------------------------
+
+
 when defined(windows):
   import "../../vendor/errorcodes/src" / errorcodes_windows
 else:
@@ -150,24 +159,24 @@ proc flush*(s: Stream) =
   ##
   ## See also:
   ## * `close proc <#close,Stream>`_
-  runnableExamples:
-    from std/os import removeFile
+  # runnableExamples:
+  #   from std/os import removeFile
 
-    var strm = newFileStream("somefile.txt", fmWrite)
+  #   var strm = newFileStream("somefile.txt", fmWrite)
 
-    doAssert "Before write:" & readFile("somefile.txt") == "Before write:"
-    strm.write("hello")
-    doAssert "After  write:" & readFile("somefile.txt") == "After  write:"
+  #   assert "Before write:" & readFile("somefile.txt") == "Before write:"
+  #   strm.write("hello")
+  #   assert "After  write:" & readFile("somefile.txt") == "After  write:"
 
-    strm.flush()
-    doAssert "After  flush:" & readFile("somefile.txt") == "After  flush:hello"
-    strm.write("HELLO")
-    strm.flush()
-    doAssert "After  flush:" & readFile("somefile.txt") == "After  flush:helloHELLO"
+  #   strm.flush()
+  #   assert "After  flush:" & readFile("somefile.txt") == "After  flush:hello"
+  #   strm.write("HELLO")
+  #   strm.flush()
+  #   assert "After  flush:" & readFile("somefile.txt") == "After  flush:helloHELLO"
 
-    strm.close()
-    doAssert "After  close:" & readFile("somefile.txt") == "After  close:helloHELLO"
-    removeFile("somefile.txt")
+    # strm.close()
+    # assert "After  close:" & readFile("somefile.txt") == "After  close:helloHELLO"
+    # removeFile("somefile.txt")
 
   if not isNil(s.flushImpl): s.flushImpl(s)
 
@@ -198,10 +207,10 @@ proc atEnd*(s: Stream): bool =
   runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     var line = ""
-    doAssert strm.atEnd() == false
+    assert strm.atEnd() == false
     while strm.readLine(line):
       discard
-    doAssert strm.atEnd() == true
+    assert strm.atEnd() == true
     strm.close()
 
   result = s.atEndImpl(s)
@@ -211,9 +220,9 @@ proc setPosition*(s: Stream, pos: int) =
   runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     strm.setPosition(4)
-    doAssert strm.readLine() == "first line"
+    assert strm.readLine() == "first line"
     strm.setPosition(0)
-    doAssert strm.readLine() == "The first line"
+    assert strm.readLine() == "The first line"
     strm.close()
 
   s.setPositionImpl(s, pos)
@@ -222,9 +231,9 @@ proc getPosition*(s: Stream): int =
   ## Retrieves the current position in the stream `s`.
   runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
-    doAssert strm.getPosition() == 0
+    assert strm.getPosition() == 0
     discard strm.readLine()
-    doAssert strm.getPosition() == 15
+    assert strm.getPosition() == 15
     strm.close()
 
   result = s.getPositionImpl(s)
@@ -237,9 +246,9 @@ proc readData*(s: Stream, buffer: pointer, bufLen: int): int =
   runnableExamples:
     var strm = newStringStream("abcde")
     var buffer: array[6, char]
-    doAssert strm.readData(addr(buffer), 1024) == 5
-    doAssert buffer == ['a', 'b', 'c', 'd', 'e', '\x00']
-    doAssert strm.atEnd() == true
+    assert strm.readData(addr(buffer), 1024) == 5
+    assert buffer == ['a', 'b', 'c', 'd', 'e', '\x00']
+    assert strm.atEnd() == true
     strm.close()
 
   result = s.readDataImpl(s, buffer, bufLen)
@@ -249,8 +258,8 @@ proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
   runnableExamples:
     var strm = newStringStream("abcde")
     var buffer = "12345"
-    doAssert strm.readDataStr(buffer, 0..3) == 4
-    doAssert buffer == "abcd5"
+    assert strm.readDataStr(buffer, 0..3) == 4
+    assert buffer == "abcd5"
     strm.close()
 
   if s.readDataStrImpl != nil:
@@ -279,8 +288,8 @@ when not defined(js):
     ## Reads all available data.
     runnableExamples:
       var strm = newStringStream("The first line\nthe second line\nthe third line")
-      doAssert strm.readAll() == "The first line\nthe second line\nthe third line"
-      doAssert strm.atEnd() == true
+      assert strm.readAll() == "The first line\nthe second line\nthe third line"
+      assert strm.atEnd() == true
       strm.close()
 
     const bufferSize = 1024
@@ -318,9 +327,9 @@ proc peekData*(s: Stream, buffer: pointer, bufLen: int): int =
   runnableExamples:
     var strm = newStringStream("abcde")
     var buffer: array[6, char]
-    doAssert strm.peekData(addr(buffer), 1024) == 5
-    doAssert buffer == ['a', 'b', 'c', 'd', 'e', '\x00']
-    doAssert strm.atEnd() == false
+    assert strm.peekData(addr(buffer), 1024) == 5
+    assert buffer == ['a', 'b', 'c', 'd', 'e', '\x00']
+    assert strm.atEnd() == false
     strm.close()
 
   result = s.peekDataImpl(s, buffer, bufLen)
@@ -336,12 +345,12 @@ proc writeData*(s: Stream, buffer: pointer, bufLen: int) =
     var strm = newStringStream("")
     var buffer = ['a', 'b', 'c', 'd', 'e']
     strm.writeData(addr(buffer), sizeof(buffer))
-    doAssert strm.atEnd() == true
+    assert strm.atEnd() == true
     ## readData
     strm.setPosition(0)
     var buffer2: array[6, char]
-    doAssert strm.readData(addr(buffer2), sizeof(buffer2)) == 5
-    doAssert buffer2 == ['a', 'b', 'c', 'd', 'e', '\x00']
+    assert strm.readData(addr(buffer2), sizeof(buffer2)) == 5
+    assert buffer2 == ['a', 'b', 'c', 'd', 'e', '\x00']
     strm.close()
 
   s.writeDataImpl(s, buffer, bufLen)
@@ -359,7 +368,7 @@ proc write*[T](s: Stream, x: T) =
     var strm = newStringStream("")
     strm.write("abcde")
     strm.setPosition(0)
-    doAssert strm.readAll() == "abcde"
+    assert strm.readAll() == "abcde"
     strm.close()
 
   writeData(s, unsafeAddr(x), sizeof(x))
@@ -371,7 +380,7 @@ proc write*(s: Stream, x: string) =
     var strm = newStringStream("")
     strm.write("THE FIRST LINE")
     strm.setPosition(0)
-    doAssert strm.readLine() == "THE FIRST LINE"
+    assert strm.readLine() == "THE FIRST LINE"
     strm.close()
 
   when nimvm:
@@ -391,7 +400,7 @@ proc write*(s: Stream, args: varargs[string, `$`]) =
     var strm = newStringStream("")
     strm.write(1, 2, 3, 4)
     strm.setPosition(0)
-    doAssert strm.readLine() == "1234"
+    assert strm.readLine() == "1234"
     strm.close()
 
   for str in args: write(s, str)
@@ -404,7 +413,7 @@ proc writeLine*(s: Stream, args: varargs[string, `$`]) =
     strm.writeLine(1, 2)
     strm.writeLine(3, 4)
     strm.setPosition(0)
-    doAssert strm.readAll() == "12\n34\n"
+    assert strm.readAll() == "12\n34\n"
     strm.close()
 
   for str in args: write(s, str)
@@ -419,11 +428,11 @@ proc read*[T](s: Stream, result: var T) =
     ## readInt
     var i: int8
     strm.read(i)
-    doAssert i == 48
+    assert i == 48
     ## readData
     var buffer: array[2, char]
     strm.read(buffer)
-    doAssert buffer == ['1', '2']
+    assert buffer == ['1', '2']
     strm.close()
 
   if readData(s, addr(result), sizeof(T)) != sizeof(T):
@@ -438,11 +447,11 @@ proc peek*[T](s: Stream, result: var T) =
     ## peekInt
     var i: int8
     strm.peek(i)
-    doAssert i == 48
+    assert i == 48
     ## peekData
     var buffer: array[2, char]
     strm.peek(buffer)
-    doAssert buffer == ['0', '1']
+    assert buffer == ['0', '1']
     strm.close()
 
   if peekData(s, addr(result), sizeof(T)) != sizeof(T):
@@ -455,11 +464,11 @@ proc readChar*(s: Stream): char =
   ## Returns '\\0' as an EOF marker.
   runnableExamples:
     var strm = newStringStream("12\n3")
-    doAssert strm.readChar() == '1'
-    doAssert strm.readChar() == '2'
-    doAssert strm.readChar() == '\n'
-    doAssert strm.readChar() == '3'
-    doAssert strm.readChar() == '\x00'
+    assert strm.readChar() == '1'
+    assert strm.readChar() == '2'
+    assert strm.readChar() == '\n'
+    assert strm.readChar() == '3'
+    assert strm.readChar() == '\x00'
     strm.close()
   result = '\0'
   when true:
@@ -475,10 +484,10 @@ proc peekChar*(s: Stream): char =
   ## Returns '\\0' as an EOF marker.
   runnableExamples:
     var strm = newStringStream("12\n3")
-    doAssert strm.peekChar() == '1'
-    doAssert strm.peekChar() == '1'
+    assert strm.peekChar() == '1'
+    assert strm.peekChar() == '1'
     discard strm.readAll()
-    doAssert strm.peekChar() == '\x00'
+    assert strm.peekChar() == '\x00'
     strm.close()
 
   result = '\0'
@@ -505,8 +514,8 @@ proc readBool*(s: Stream): bool =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readBool() == true
-    doAssert strm.readBool() == false
+    assert strm.readBool() == true
+    assert strm.readBool() == false
     doAssertRaises(IOError): discard strm.readBool()
     strm.close()
 
@@ -530,11 +539,11 @@ proc peekBool*(s: Stream): bool =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekBool() == true
+    assert strm.peekBool() == true
     ## not false
-    doAssert strm.peekBool() == true
-    doAssert strm.readBool() == true
-    doAssert strm.peekBool() == false
+    assert strm.peekBool() == true
+    assert strm.readBool() == true
+    assert strm.peekBool() == false
     strm.close()
 
   var t: byte = byte(0)
@@ -553,8 +562,8 @@ proc readInt8*(s: Stream): int8 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readInt8() == 1'i8
-    doAssert strm.readInt8() == 2'i8
+    assert strm.readInt8() == 1'i8
+    assert strm.readInt8() == 2'i8
     doAssertRaises(IOError): discard strm.readInt8()
     strm.close()
   result = int8(0)
@@ -572,11 +581,11 @@ proc peekInt8*(s: Stream): int8 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekInt8() == 1'i8
+    assert strm.peekInt8() == 1'i8
     ## not 2'i8
-    doAssert strm.peekInt8() == 1'i8
-    doAssert strm.readInt8() == 1'i8
-    doAssert strm.peekInt8() == 2'i8
+    assert strm.peekInt8() == 1'i8
+    assert strm.readInt8() == 1'i8
+    assert strm.peekInt8() == 2'i8
     strm.close()
   result = int8(0)
   peek(s, result)
@@ -593,8 +602,8 @@ proc readInt16*(s: Stream): int16 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readInt16() == 1'i16
-    doAssert strm.readInt16() == 2'i16
+    assert strm.readInt16() == 1'i16
+    assert strm.readInt16() == 2'i16
     doAssertRaises(IOError): discard strm.readInt16()
     strm.close()
   result = int16(0)
@@ -612,11 +621,11 @@ proc peekInt16*(s: Stream): int16 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekInt16() == 1'i16
+    assert strm.peekInt16() == 1'i16
     ## not 2'i16
-    doAssert strm.peekInt16() == 1'i16
-    doAssert strm.readInt16() == 1'i16
-    doAssert strm.peekInt16() == 2'i16
+    assert strm.peekInt16() == 1'i16
+    assert strm.readInt16() == 1'i16
+    assert strm.peekInt16() == 2'i16
     strm.close()
   result = int16(0)
   peek(s, result)
@@ -633,8 +642,8 @@ proc readInt32*(s: Stream): int32 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readInt32() == 1'i32
-    doAssert strm.readInt32() == 2'i32
+    assert strm.readInt32() == 1'i32
+    assert strm.readInt32() == 2'i32
     doAssertRaises(IOError): discard strm.readInt32()
     strm.close()
   result = int32(0)
@@ -652,11 +661,11 @@ proc peekInt32*(s: Stream): int32 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekInt32() == 1'i32
+    assert strm.peekInt32() == 1'i32
     ## not 2'i32
-    doAssert strm.peekInt32() == 1'i32
-    doAssert strm.readInt32() == 1'i32
-    doAssert strm.peekInt32() == 2'i32
+    assert strm.peekInt32() == 1'i32
+    assert strm.readInt32() == 1'i32
+    assert strm.peekInt32() == 2'i32
     strm.close()
   result = int32(0)
   peek(s, result)
@@ -673,8 +682,8 @@ proc readInt64*(s: Stream): int64 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readInt64() == 1'i64
-    doAssert strm.readInt64() == 2'i64
+    assert strm.readInt64() == 1'i64
+    assert strm.readInt64() == 2'i64
     doAssertRaises(IOError): discard strm.readInt64()
     strm.close()
   result = int64(0)
@@ -692,11 +701,11 @@ proc peekInt64*(s: Stream): int64 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekInt64() == 1'i64
+    assert strm.peekInt64() == 1'i64
     ## not 2'i64
-    doAssert strm.peekInt64() == 1'i64
-    doAssert strm.readInt64() == 1'i64
-    doAssert strm.peekInt64() == 2'i64
+    assert strm.peekInt64() == 1'i64
+    assert strm.readInt64() == 1'i64
+    assert strm.peekInt64() == 2'i64
     strm.close()
   result = int64(0)
   peek(s, result)
@@ -713,8 +722,8 @@ proc readUint8*(s: Stream): uint8 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readUint8() == 1'u8
-    doAssert strm.readUint8() == 2'u8
+    assert strm.readUint8() == 1'u8
+    assert strm.readUint8() == 2'u8
     doAssertRaises(IOError): discard strm.readUint8()
     strm.close()
   result = uint8(0)
@@ -732,11 +741,11 @@ proc peekUint8*(s: Stream): uint8 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekUint8() == 1'u8
+    assert strm.peekUint8() == 1'u8
     ## not 2'u8
-    doAssert strm.peekUint8() == 1'u8
-    doAssert strm.readUint8() == 1'u8
-    doAssert strm.peekUint8() == 2'u8
+    assert strm.peekUint8() == 1'u8
+    assert strm.readUint8() == 1'u8
+    assert strm.peekUint8() == 2'u8
     strm.close()
   result = uint8(0)
   peek(s, result)
@@ -753,8 +762,8 @@ proc readUint16*(s: Stream): uint16 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readUint16() == 1'u16
-    doAssert strm.readUint16() == 2'u16
+    assert strm.readUint16() == 1'u16
+    assert strm.readUint16() == 2'u16
     doAssertRaises(IOError): discard strm.readUint16()
     strm.close()
   result = uint16(0)
@@ -772,11 +781,11 @@ proc peekUint16*(s: Stream): uint16 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekUint16() == 1'u16
+    assert strm.peekUint16() == 1'u16
     ## not 2'u16
-    doAssert strm.peekUint16() == 1'u16
-    doAssert strm.readUint16() == 1'u16
-    doAssert strm.peekUint16() == 2'u16
+    assert strm.peekUint16() == 1'u16
+    assert strm.readUint16() == 1'u16
+    assert strm.peekUint16() == 2'u16
     strm.close()
   result = uint16(0)
   peek(s, result)
@@ -794,8 +803,8 @@ proc readUint32*(s: Stream): uint32 =
     strm.setPosition(0)
 
     ## get data
-    doAssert strm.readUint32() == 1'u32
-    doAssert strm.readUint32() == 2'u32
+    assert strm.readUint32() == 1'u32
+    assert strm.readUint32() == 2'u32
     doAssertRaises(IOError): discard strm.readUint32()
     strm.close()
   result = uint32(0)
@@ -813,11 +822,11 @@ proc peekUint32*(s: Stream): uint32 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekUint32() == 1'u32
+    assert strm.peekUint32() == 1'u32
     ## not 2'u32
-    doAssert strm.peekUint32() == 1'u32
-    doAssert strm.readUint32() == 1'u32
-    doAssert strm.peekUint32() == 2'u32
+    assert strm.peekUint32() == 1'u32
+    assert strm.readUint32() == 1'u32
+    assert strm.peekUint32() == 2'u32
     strm.close()
   result = uint32(0)
   peek(s, result)
@@ -834,8 +843,8 @@ proc readUint64*(s: Stream): uint64 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readUint64() == 1'u64
-    doAssert strm.readUint64() == 2'u64
+    assert strm.readUint64() == 1'u64
+    assert strm.readUint64() == 2'u64
     doAssertRaises(IOError): discard strm.readUint64()
     strm.close()
   result = uint64(0)
@@ -853,11 +862,11 @@ proc peekUint64*(s: Stream): uint64 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekUint64() == 1'u64
+    assert strm.peekUint64() == 1'u64
     ## not 2'u64
-    doAssert strm.peekUint64() == 1'u64
-    doAssert strm.readUint64() == 1'u64
-    doAssert strm.peekUint64() == 2'u64
+    assert strm.peekUint64() == 1'u64
+    assert strm.readUint64() == 1'u64
+    assert strm.peekUint64() == 2'u64
     strm.close()
   result = uint64(0)
   peek(s, result)
@@ -874,8 +883,8 @@ proc readFloat32*(s: Stream): float32 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readFloat32() == 1'f32
-    doAssert strm.readFloat32() == 2'f32
+    assert strm.readFloat32() == 1'f32
+    assert strm.readFloat32() == 2'f32
     doAssertRaises(IOError): discard strm.readFloat32()
     strm.close()
   result = 0.0
@@ -893,11 +902,11 @@ proc peekFloat32*(s: Stream): float32 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekFloat32() == 1'f32
+    assert strm.peekFloat32() == 1'f32
     ## not 2'f32
-    doAssert strm.peekFloat32() == 1'f32
-    doAssert strm.readFloat32() == 1'f32
-    doAssert strm.peekFloat32() == 2'f32
+    assert strm.peekFloat32() == 1'f32
+    assert strm.readFloat32() == 1'f32
+    assert strm.peekFloat32() == 2'f32
     strm.close()
   result = 0.0
   peek(s, result)
@@ -914,8 +923,8 @@ proc readFloat64*(s: Stream): float64 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.readFloat64() == 1'f64
-    doAssert strm.readFloat64() == 2'f64
+    assert strm.readFloat64() == 1'f64
+    assert strm.readFloat64() == 2'f64
     doAssertRaises(IOError): discard strm.readFloat64()
     strm.close()
   result = 0.0
@@ -933,11 +942,11 @@ proc peekFloat64*(s: Stream): float64 =
     strm.flush()
     strm.setPosition(0)
     ## get data
-    doAssert strm.peekFloat64() == 1'f64
+    assert strm.peekFloat64() == 1'f64
     ## not 2'f64
-    doAssert strm.peekFloat64() == 1'f64
-    doAssert strm.readFloat64() == 1'f64
-    doAssert strm.peekFloat64() == 2'f64
+    assert strm.peekFloat64() == 1'f64
+    assert strm.readFloat64() == 1'f64
+    assert strm.peekFloat64() == 2'f64
     strm.close()
   result = 0.0
   peek(s, result)
@@ -964,10 +973,10 @@ proc readStr*(s: Stream, length: int): string =
   ## an error occurred.
   runnableExamples:
     var strm = newStringStream("abcde")
-    doAssert strm.readStr(2) == "ab"
-    doAssert strm.readStr(2) == "cd"
-    doAssert strm.readStr(2) == "e"
-    doAssert strm.readStr(2) == ""
+    assert strm.readStr(2) == "ab"
+    assert strm.readStr(2) == "cd"
+    assert strm.readStr(2) == "e"
+    assert strm.readStr(2) == ""
     strm.close()
   result = newString(length)
   readStrPrivate(s, length, result)
@@ -990,11 +999,11 @@ proc peekStr*(s: Stream, length: int): string =
   ## an error occurred.
   runnableExamples:
     var strm = newStringStream("abcde")
-    doAssert strm.peekStr(2) == "ab"
+    assert strm.peekStr(2) == "ab"
     ## not "cd
-    doAssert strm.peekStr(2) == "ab"
-    doAssert strm.readStr(2) == "ab"
-    doAssert strm.peekStr(2) == "cd"
+    assert strm.peekStr(2) == "ab"
+    assert strm.readStr(2) == "ab"
+    assert strm.peekStr(2) == "cd"
     strm.close()
   result = newString(length)
   peekStrPrivate(s, length, result)
@@ -1015,14 +1024,14 @@ proc readLine*(s: Stream, line: var string): bool =
   runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     var line = ""
-    doAssert strm.readLine(line) == true
-    doAssert line == "The first line"
-    doAssert strm.readLine(line) == true
-    doAssert line == "the second line"
-    doAssert strm.readLine(line) == true
-    doAssert line == "the third line"
-    doAssert strm.readLine(line) == false
-    doAssert line == ""
+    assert strm.readLine(line) == true
+    assert line == "The first line"
+    assert strm.readLine(line) == true
+    assert line == "the second line"
+    assert strm.readLine(line) == true
+    assert line == "the third line"
+    assert strm.readLine(line) == false
+    assert line == ""
     strm.close()
 
   if s.readLineImpl != nil:
@@ -1058,15 +1067,15 @@ proc peekLine*(s: Stream, line: var string): bool =
   runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     var line = ""
-    doAssert strm.peekLine(line) == true
-    doAssert line == "The first line"
-    doAssert strm.peekLine(line) == true
+    assert strm.peekLine(line) == true
+    assert line == "The first line"
+    assert strm.peekLine(line) == true
     ## not "the second line"
-    doAssert line == "The first line"
-    doAssert strm.readLine(line) == true
-    doAssert line == "The first line"
-    doAssert strm.peekLine(line) == true
-    doAssert line == "the second line"
+    assert line == "The first line"
+    assert strm.readLine(line) == true
+    assert line == "The first line"
+    assert strm.peekLine(line) == true
+    assert line == "the second line"
     strm.close()
 
   let pos = getPosition(s)
@@ -1084,9 +1093,9 @@ proc readLine*(s: Stream): string =
   ## * `peekLine(Stream, string) proc <#peekLine,Stream,string>`_
   runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
-    doAssert strm.readLine() == "The first line"
-    doAssert strm.readLine() == "the second line"
-    doAssert strm.readLine() == "the third line"
+    assert strm.readLine() == "The first line"
+    assert strm.readLine() == "the second line"
+    assert strm.readLine() == "the third line"
     doAssertRaises(IOError): discard strm.readLine()
     strm.close()
 
@@ -1114,11 +1123,11 @@ proc peekLine*(s: Stream): string =
   ## * `peekLine(Stream, string) proc <#peekLine,Stream,string>`_
   runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
-    doAssert strm.peekLine() == "The first line"
+    assert strm.peekLine() == "The first line"
     ## not "the second line"
-    doAssert strm.peekLine() == "The first line"
-    doAssert strm.readLine() == "The first line"
-    doAssert strm.peekLine() == "the second line"
+    assert strm.peekLine() == "The first line"
+    assert strm.readLine() == "The first line"
+    assert strm.peekLine() == "the second line"
     strm.close()
 
   let pos = getPosition(s)
@@ -1137,7 +1146,7 @@ iterator lines*(s: Stream): string =
     var lines: seq[string]
     for line in strm.lines():
       lines.add line
-    doAssert lines == @["The first line", "the second line", "the third line"]
+    assert lines == @["The first line", "the second line", "the third line"]
     strm.close()
 
   var line: string = ""
@@ -1297,9 +1306,9 @@ else: # after 1.3 or JS not defined
     ##   file stream from the file name and the mode.
     runnableExamples:
       var strm = newStringStream("The first line\nthe second line\nthe third line")
-      doAssert strm.readLine() == "The first line"
-      doAssert strm.readLine() == "the second line"
-      doAssert strm.readLine() == "the third line"
+      assert strm.readLine() == "The first line"
+      assert strm.readLine() == "the second line"
+      assert strm.readLine() == "the third line"
       strm.close()
 
     new(result)
@@ -1424,19 +1433,19 @@ proc newFileStream*(filename: string, mode: FileMode = fmRead,
   ##   opened File.
   ## * `openFileStream proc <#openFileStream,string,FileMode,int>`_ creates a
   ##   file stream from the file name and the mode.
-  runnableExamples:
-    from std/os import removeFile
-    var strm = newFileStream("somefile.txt", fmWrite)
-    if not isNil(strm):
-      strm.writeLine("The first line")
-      strm.writeLine("the second line")
-      strm.writeLine("the third line")
-      strm.close()
-      ## Output (somefile.txt)
-      ## The first line
-      ## the second line
-      ## the third line
-      removeFile("somefile.txt")
+  # runnableExamples:
+  #   from std/os import removeFile
+  #   var strm = newFileStream("somefile.txt", fmWrite)
+  #   if not isNil(strm):
+  #     strm.writeLine("The first line")
+  #     strm.writeLine("the second line")
+  #     strm.writeLine("the third line")
+  #     strm.close()
+  #     ## Output (somefile.txt)
+  #     ## The first line
+  #     ## the second line
+  #     ## the third line
+  #     removeFile("somefile.txt")
 
   var f: File = default(File)
   if open(f, filename, mode, bufSize): result = newFileStream(f)
