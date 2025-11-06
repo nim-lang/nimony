@@ -21,7 +21,7 @@
 #   std/[strutils, os, strtabs, streams, cpuinfo, streamwrapper,
 #   private/since]
 
-import strutils, cpuinfo
+import strutils, cpuinfo, oserrors
 
 # export quoteShell, quoteShellWindows, quoteShellPosix
 
@@ -33,7 +33,7 @@ else:
 # when defined(linux) and defined(useClone):
 #   import std/linux
 
-import std/[syncio, assertions]
+import syncio, assertions
 when defined(windows):
   import widestrs
 
