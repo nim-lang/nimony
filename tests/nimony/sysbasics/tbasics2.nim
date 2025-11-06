@@ -211,3 +211,12 @@ block:
   type
     Foo = object
       cFileName: array[0..MAX_PATH - 1, int]
+
+block:
+  proc foo(x: var string) =
+    var m = 2
+    var s = addr x[1]
+
+
+  var ss = "dsjfhg"
+  foo(ss)

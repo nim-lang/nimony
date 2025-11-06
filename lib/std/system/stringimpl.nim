@@ -214,7 +214,7 @@ proc `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0),
     makeAllocated s, s.len
   s.a[i] = c
 
-proc `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.} = s.a[i]
+proc `[]`*(s: string; i: int): var char {.requires: (i < len(s) and i >= 0), inline.} = s.a[i]
 
 proc substr*(s: string; first, last: int): string =
   let len = s.len
