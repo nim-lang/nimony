@@ -102,9 +102,10 @@
 import std/syncio
 export FileMode
 
-proc newEIO(msg: string): ref IOError =
-  new(result)
-  result.msg = msg
+when defined(windows):
+  import "../../vendor/errorcodes/src" / errorcodes_windows
+else:
+  import "../../vendor/errorcodes/src" / errorcodes_posix
 
 type
   Stream* = ref StreamObj
@@ -261,19 +262,19 @@ proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
       prepareMutation(buffer)
     result = s.readData(addr buffer[slice.a], slice.b + 1 - slice.a)
 
-template jsOrVmBlock(caseJsOrVm, caseElse: untyped): untyped =
-  when nimvm:
-    block:
-      caseJsOrVm
-  else:
-    block:
-      when defined(js) or defined(nimscript):
-        # nimscript has to be here to avoid semantic checking of caseElse
-        caseJsOrVm
-      else:
-        caseElse
+# template jsOrVmBlock(caseJsOrVm: untyped, caseElse: untyped): untyped {.untyped.} =
+#   when nimvm:
+#     block:
+#       caseJsOrVm
+#   else:
+#     block:
+#       when defined(js) or defined(nimscript):
+#         # nimscript has to be here to avoid semantic checking of caseElse
+#         caseJsOrVm
+#       else:
+#         caseElse
 
-when (NimMajor, NimMinor) >= (1, 3) or not defined(js):
+when not defined(js):
   proc readAll*(s: Stream): string =
     ## Reads all available data.
     runnableExamples:
@@ -284,18 +285,19 @@ when (NimMajor, NimMinor) >= (1, 3) or not defined(js):
 
     const bufferSize = 1024
     result = ""
-    jsOrVmBlock:
-      var buffer2 = newString(bufferSize)
-      while true:
-        let readBytes = readDataStr(s, buffer2, 0..<bufferSize)
-        if readBytes == 0:
-          break
-        let prevLen = result.len
-        result.setLen(prevLen + readBytes)
-        result[prevLen..<prevLen+readBytes] = buffer2[0..<readBytes]
-        if readBytes < bufferSize:
-          break
-    do: # not JS or VM
+    when true:
+    # jsOrVmBlock:
+    #   var buffer2 = newString(bufferSize)
+    #   while true:
+    #     let readBytes = readDataStr(s, buffer2, 0..<bufferSize)
+    #     if readBytes == 0:
+    #       break
+    #     let prevLen = result.len
+    #     result.setLen(prevLen + readBytes)
+    #     result[prevLen..<prevLen+readBytes] = buffer2[0..<readBytes]
+    #     if readBytes < bufferSize:
+    #       break
+    # do: # not JS or VM
       var buffer {.noinit.}: array[bufferSize, char]
       while true:
         let readBytes = readData(s, addr(buffer[0]), bufferSize)
@@ -425,7 +427,7 @@ proc read*[T](s: Stream, result: var T) =
     strm.close()
 
   if readData(s, addr(result), sizeof(T)) != sizeof(T):
-    raise newEIO("cannot read from stream")
+    raise IOError #newEIO("cannot read from stream")
 
 proc peek*[T](s: Stream, result: var T) =
   ## Generic peek procedure. Peeks `result` from the stream `s`.
@@ -444,7 +446,7 @@ proc peek*[T](s: Stream, result: var T) =
     strm.close()
 
   if peekData(s, addr(result), sizeof(T)) != sizeof(T):
-    raise newEIO("cannot read from stream")
+    raise IOError#newEIO("cannot read from stream")
 
 proc readChar*(s: Stream): char =
   ## Reads a char from the stream `s`.
@@ -460,11 +462,12 @@ proc readChar*(s: Stream): char =
     doAssert strm.readChar() == '\x00'
     strm.close()
   result = '\0'
-  jsOrVmBlock:
-    var str = " "
-    if readDataStr(s, str, 0..0) != 1: result = '\0'
-    else: result = str[0]
-  do:
+  when true:
+  # jsOrVmBlock:
+  #   var str = " "
+  #   if readDataStr(s, str, 0..0) != 1: result = '\0'
+  #   else: result = str[0]
+  # do:
     if readData(s, addr(result), sizeof(result)) != 1: result = '\0'
 
 proc peekChar*(s: Stream): char =
@@ -1089,7 +1092,7 @@ proc readLine*(s: Stream): string =
 
   result = ""
   if s.atEnd:
-    raise newEIO("cannot read from stream")
+    raise EndOfStreamError#newEIO("cannot read from stream")
   while true:
     var c = readChar(s)
     if c == '\c':
@@ -1222,9 +1225,10 @@ else: # after 1.3 or JS not defined
         prepareMutation(buffer) # buffer might potentially be a CoW literal with ARC
     result = min(slice.b + 1 - slice.a, s.data.len - s.pos)
     if result > 0:
-      jsOrVmBlock:
-        buffer[slice.a..<slice.a+result] = s.data[s.pos..<s.pos+result]
-      do:
+      when true:
+      # jsOrVmBlock:
+      #   buffer[slice.a..<slice.a+result] = s.data[s.pos..<s.pos+result]
+      # do:
         copyMem(unsafeAddr buffer[slice.a], addr s.data[s.pos], result)
       inc(s.pos, result)
     else:
@@ -1470,75 +1474,4 @@ proc openFileStream*(filename: string, mode: FileMode = fmRead,
   if open(f, filename, mode, bufSize):
     return newFileStream(f)
   else:
-    raise newEIO("cannot open file stream: " & filename)
-
-when false:
-  type
-    FileHandleStream* = ref FileHandleStreamObj
-    FileHandleStreamObj* = object of Stream
-      handle*: FileHandle
-      pos: int
-
-  proc newEOS(msg: string): ref OSError =
-    new(result)
-    result.msg = msg
-
-  proc hsGetPosition(s: FileHandleStream): int =
-    return s.pos
-
-  when defined(windows):
-    # do not import windows as this increases compile times:
-    discard
-  else:
-    import std/posix
-
-    proc hsSetPosition(s: FileHandleStream, pos: int) =
-      discard lseek(s.handle, pos, SEEK_SET)
-
-    proc hsClose(s: FileHandleStream) = discard close(s.handle)
-    proc hsAtEnd(s: FileHandleStream): bool =
-      var pos = hsGetPosition(s)
-      var theEnd = lseek(s.handle, 0, SEEK_END)
-      result = pos >= theEnd
-      hsSetPosition(s, pos) # set position back
-
-    proc hsReadData(s: FileHandleStream, buffer: pointer, bufLen: int): int =
-      result = posix.read(s.handle, buffer, bufLen)
-      inc(s.pos, result)
-
-    proc hsPeekData(s: FileHandleStream, buffer: pointer, bufLen: int): int =
-      result = posix.read(s.handle, buffer, bufLen)
-
-    proc hsWriteData(s: FileHandleStream, buffer: pointer, bufLen: int) =
-      if posix.write(s.handle, buffer, bufLen) != bufLen:
-        raise newEIO("cannot write to stream")
-      inc(s.pos, bufLen)
-
-  proc newFileHandleStream*(handle: FileHandle): FileHandleStream =
-    new(result)
-    result.handle = handle
-    result.pos = 0
-    result.close = hsClose
-    result.atEnd = hsAtEnd
-    result.setPosition = hsSetPosition
-    result.getPosition = hsGetPosition
-    result.readData = hsReadData
-    result.peekData = hsPeekData
-    result.writeData = hsWriteData
-
-  proc newFileHandleStream*(filename: string,
-                            mode: FileMode): FileHandleStream =
-    when defined(windows):
-      discard
-    else:
-      var flags: cint
-      case mode
-      of fmRead: flags = posix.O_RDONLY
-      of fmWrite: flags = O_WRONLY or int(O_CREAT)
-      of fmReadWrite: flags = O_RDWR or int(O_CREAT)
-      of fmReadWriteExisting: flags = O_RDWR
-      of fmAppend: flags = O_WRONLY or int(O_CREAT) or O_APPEND
-      static: raiseAssert "unreachable" # handle bug #17888
-      var handle = open(filename, flags)
-      if handle < 0: raise newEOS("posix.open() call failed")
-    result = newFileHandleStream(handle)
+    raise IOError#newEIO("cannot open file stream: " & filename)
