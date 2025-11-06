@@ -118,29 +118,29 @@ type
     ## * That these fields here shouldn't be used directly.
     ##   They are accessible so that a stream implementation can override them.
     closeImpl*: proc (s: Stream)
-      {.nimcall, raises: [IOError, OSError], tags: [WriteIOEffect], gcsafe.}
+      {.nimcall, raises: [IOError, OSError], tags: [WriteIOEffect].}
     atEndImpl*: proc (s: Stream): bool
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [].}
     setPositionImpl*: proc (s: Stream, pos: int)
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [].}
     getPositionImpl*: proc (s: Stream): int
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [].}
 
     readDataStrImpl*: proc (s: Stream, buffer: var string, slice: Slice[int]): int
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].}
 
     readLineImpl*: proc(s: Stream, line: var string): bool
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].}
 
     readDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int): int
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].}
     peekDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int): int
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].}
     writeDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int)
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].}
 
     flushImpl*: proc (s: Stream)
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect], gcsafe.}
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].}
 
 proc flush*(s: Stream) =
   ## Flushes the buffers that the stream `s` might use.
