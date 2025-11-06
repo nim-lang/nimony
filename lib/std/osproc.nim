@@ -21,19 +21,21 @@
 #   std/[strutils, os, strtabs, streams, cpuinfo, streamwrapper,
 #   private/since]
 
+import strutils, cpuinfo
+
 # export quoteShell, quoteShellWindows, quoteShellPosix
 
 when defined(windows):
-  import std/winlean
+  import windows/winlean
 else:
-  import std/posix
+  import posix/posix
 
-when defined(linux) and defined(useClone):
-  import std/linux
+# when defined(linux) and defined(useClone):
+#   import std/linux
 
 import std/[syncio, assertions]
 when defined(windows):
-  import std/widestrs
+  import widestrs
 
 
 type
@@ -75,7 +77,7 @@ type
 proc execProcess*(command: string, workingDir: string = "",
     args: openArray[string] = [], env: StringTableRef = nil,
     options: set[ProcessOption] = {poStdErrToStdOut, poUsePath, poEvalCommand}):
-  string {.extern: "nosp$1", raises: [OSError, IOError],
+  string {.raises: [OSError, IOError],
                   tags: [ExecIOEffect, ReadIOEffect, RootEffect].}
   ## A convenience procedure that executes ``command`` with ``startProcess``
   ## and returns its output as a string.
@@ -97,8 +99,7 @@ proc execProcess*(command: string, workingDir: string = "",
   ##   # and any output from mytestfile when it runs
   ##   ```
 
-proc execCmd*(command: string): int {.extern: "nosp$1",
-    tags: [ExecIOEffect, ReadIOEffect, RootEffect].}
+proc execCmd*(command: string): int {.tags: [ExecIOEffect, ReadIOEffect, RootEffect].}
   ## Executes ``command`` and returns its error code.
   ##
   ## Standard input, output, error streams are inherited from the calling process.
@@ -119,7 +120,7 @@ proc execCmd*(command: string): int {.extern: "nosp$1",
 proc startProcess*(command: string, workingDir: string = "",
     args: openArray[string] = [], env: StringTableRef = nil,
     options: set[ProcessOption] = {poStdErrToStdOut}):
-  owned(Process) {.extern: "nosp$1", raises: [OSError, IOError],
+  owned(Process) {.raises: [OSError, IOError],
                    tags: [ExecIOEffect, ReadEnvEffect, RootEffect].}
   ## Starts a process. `Command` is the executable file, `workingDir` is the
   ## process's working directory. If ``workingDir == ""`` the current directory
@@ -151,14 +152,14 @@ proc startProcess*(command: string, workingDir: string = "",
   ##   <#execProcess,string,string,openArray[string],StringTableRef,set[ProcessOption]>`_
   ## * `execCmd proc <#execCmd,string>`_
 
-proc close*(p: Process) {.extern: "nosp$1", raises: [IOError, OSError], tags: [WriteIOEffect].}
+proc close*(p: Process) {.raises: [IOError, OSError], tags: [WriteIOEffect].}
   ## When the process has finished executing, cleanup related handles.
   ##
   ## .. warning:: If the process has not finished executing, this will forcibly
   ##   terminate the process. Doing so may result in zombie processes and
   ##   `pty leaks <https://stackoverflow.com/questions/27021641/how-to-fix-request-failed-on-channel-0>`_.
 
-proc suspend*(p: Process) {.extern: "nosp$1", tags: [].}
+proc suspend*(p: Process) {.tags: [].}
   ## Suspends the process `p`.
   ##
   ## See also:
@@ -167,7 +168,7 @@ proc suspend*(p: Process) {.extern: "nosp$1", tags: [].}
   ## * `kill proc <#kill,Process>`_
 
 
-proc resume*(p: Process) {.extern: "nosp$1", tags: [].}
+proc resume*(p: Process) {.tags: [].}
   ## Resumes the process `p`.
   ##
   ## See also:
@@ -175,7 +176,7 @@ proc resume*(p: Process) {.extern: "nosp$1", tags: [].}
   ## * `terminate proc <#terminate,Process>`_
   ## * `kill proc <#kill,Process>`_
 
-proc terminate*(p: Process) {.extern: "nosp$1", tags: [].}
+proc terminate*(p: Process) {.tags: [].}
   ## Stop the process `p`.
   ##
   ## On Posix OSes the procedure sends ``SIGTERM`` to the process.
@@ -330,8 +331,6 @@ proc countProcessors*(): int {.raises: [].} =
   ## It is implemented just calling `cpuinfo.countProcessors`.
   result = cpuinfo.countProcessors()
 
-when not defined(nimHasEffectsOf):
-  {.pragma: effectsOf.}
 
 proc execProcesses*(cmds: openArray[string],
     options = {poStdErrToStdOut, poParentStreams}, n = countProcessors(),
