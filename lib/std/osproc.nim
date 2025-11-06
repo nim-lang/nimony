@@ -66,7 +66,7 @@ type
     else:
       inHandle, outHandle, errHandle: FileHandle
       id: Pid
-    # inStream, outStream, errStream: owned(Stream)
+    inStream, outStream, errStream: Stream
     exitStatus: cint
     exitFlag: bool
     options: set[ProcessOption]
@@ -120,7 +120,7 @@ proc execCmd*(command: string): int {.tags: [ExecIOEffect, ReadIOEffect, RootEff
 proc startProcess*(command: string, workingDir: string = "",
     args: openArray[string] = [], env: StringTableRef = nil,
     options: set[ProcessOption] = {poStdErrToStdOut}):
-  owned(Process) {.raises: [OSError, IOError],
+      Process {.raises: [OSError, IOError],
                    tags: [ExecIOEffect, ReadEnvEffect, RootEffect].}
   ## Starts a process. `Command` is the executable file, `workingDir` is the
   ## process's working directory. If ``workingDir == ""`` the current directory
@@ -567,7 +567,7 @@ when defined(windows) and not defined(useNimRtl):
                               addr bytesWritten, nil)
     if a == 0: raiseOSError(osLastError())
 
-  proc newFileHandleStream(handle: FileHandle): owned FileHandleStream =
+  proc newFileHandleStream(handle: FileHandle): FileHandleStream =
     result = FileHandleStream(handle: Handle handle, closeImpl: hsClose, atEndImpl: hsAtEnd,
       readDataImpl: hsReadData, writeDataImpl: hsWriteData)
 
@@ -660,7 +660,7 @@ when defined(windows) and not defined(useNimRtl):
   proc startProcess(command: string, workingDir: string = "",
       args: openArray[string] = [], env: StringTableRef = nil,
       options: set[ProcessOption] = {poStdErrToStdOut}):
-    owned Process =
+       Process =
     var
       si: STARTUPINFO
       procInfo: PROCESS_INFORMATION
@@ -953,7 +953,7 @@ elif not defined(useNimRtl):
   proc startProcess(command: string, workingDir: string = "",
       args: openArray[string] = [], env: StringTableRef = nil,
       options: set[ProcessOption] = {poStdErrToStdOut}):
-    owned Process =
+       Process =
     var
       pStdin, pStdout, pStderr: array[0..1, cint] = default(array[0..1, cint])
     new(result)
@@ -1426,7 +1426,7 @@ elif not defined(useNimRtl):
         result = exitStatusLikeShell(status)
 
   proc createStream(handle: var FileHandle,
-                    fileMode: FileMode): owned FileStream =
+                    fileMode: FileMode): FileStream =
     var f: File = default(File)
     if not open(f, handle, fileMode): raiseOSError(osLastError())
     return newFileStream(f)
@@ -1543,11 +1543,6 @@ proc execCmdEx*(command: string, options: set[ProcessOption] = {
   ##     assert execCmdEx("echo $FO", env = newStringTable({"FO": "B"})) == ("B\n", 0)
   ##     assert execCmdEx("echo $PWD", workingDir = "/") == ("/\n", 0)
   ##   ```
-
-  when (NimMajor, NimMinor, NimPatch) < (1, 3, 5):
-    doAssert input.len == 0
-    doAssert workingDir.len == 0
-    doAssert env == nil
 
   var p = startProcess(command, options = options + {poEvalCommand},
     workingDir = workingDir, env = env)
