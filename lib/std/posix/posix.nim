@@ -141,3 +141,6 @@ when defined(posix):
     DT_LNK* = 10'u8    ## Symbolic link.
     DT_SOCK* = 12'u8   ## UNIX domain socket.
     DT_WHT* = 14'u8
+
+
+  proc sysconf*(a1: cint): int {.importc, header: "<unistd.h>".}
