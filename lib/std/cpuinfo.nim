@@ -28,7 +28,7 @@ when defined(js):
     result = jsObj.to int
 else:
   when defined(posix) and not (defined(macosx) or defined(bsd)):
-    import std/posix
+    import posix/posix
 
   when defined(windows):
     type
