@@ -104,10 +104,30 @@ export FileMode
 
 # TODO: basic stuffs
 #---------------------------------------
-import std/assertions
+# import std/assertions
 
 template isNil(s: typed): bool {.untyped.} =
   s == nil
+
+type
+  byte = uint8
+
+proc clamp(x, a, b: int): int =
+  ## Limits the value `x` within the interval \[a, b].
+  ## This proc is equivalent to but faster than `max(a, min(b, x))`.
+  ## 
+  ## .. warning:: `a <= b` is assumed and will not be checked (currently).
+  ##
+  ## **See also:**
+  ## `math.clamp` for a version that takes a `Slice[T]` instead.
+  # runnableExamples:
+  #   assert (1.4).clamp(0.0, 1.0) == 1.0
+  #   assert (0.5).clamp(0.0, 1.0) == 0.5
+  #   assert 4.clamp(1, 3) == max(1, min(3, 4))
+  if x < a: return a
+  if x > b: return b
+  return x
+
 #---------------------------------------
 
 
@@ -391,35 +411,37 @@ proc write*(s: Stream, x: string) =
         var x = x
         writeData(s, addr(x), x.len)
       else:
-        writeData(s, cstring(x), x.len)
+        var x = x
+        writeData(s, toCString(x), x.len)
 
-proc write*(s: Stream, args: varargs[string, `$`]) =
-  ## Writes one or more strings to the the stream. No length fields or
-  ## terminating zeros are written.
-  when false: # runnableExamples:
-    var strm = newStringStream("")
-    strm.write(1, 2, 3, 4)
-    strm.setPosition(0)
-    assert strm.readLine() == "1234"
-    strm.close()
+when false: # TODO:
+  proc write*(s: Stream, args: varargs[string, `$`]) =
+    ## Writes one or more strings to the the stream. No length fields or
+    ## terminating zeros are written.
+    when false: # runnableExamples:
+      var strm = newStringStream("")
+      strm.write(1, 2, 3, 4)
+      strm.setPosition(0)
+      assert strm.readLine() == "1234"
+      strm.close()
 
-  for str in args: write(s, str)
+    for str in args: write(s, str)
 
-proc writeLine*(s: Stream, args: varargs[string, `$`]) =
-  ## Writes one or more strings to the the stream `s` followed
-  ## by a new line. No length field or terminating zero is written.
-  when false: # runnableExamples:
-    var strm = newStringStream("")
-    strm.writeLine(1, 2)
-    strm.writeLine(3, 4)
-    strm.setPosition(0)
-    assert strm.readAll() == "12\n34\n"
-    strm.close()
+  proc writeLine*(s: Stream, args: varargs[string, `$`]) =
+    ## Writes one or more strings to the the stream `s` followed
+    ## by a new line. No length field or terminating zero is written.
+    when false: # runnableExamples:
+      var strm = newStringStream("")
+      strm.writeLine(1, 2)
+      strm.writeLine(3, 4)
+      strm.setPosition(0)
+      assert strm.readAll() == "12\n34\n"
+      strm.close()
 
-  for str in args: write(s, str)
-  write(s, "\n")
+    for str in args: write(s, str)
+    write(s, "\n")
 
-proc read*[T](s: Stream, result: var T) =
+proc read*[T](s: Stream, result: var T) {.raises.} =
   ## Generic read procedure. Reads `result` from the stream `s`.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -438,7 +460,7 @@ proc read*[T](s: Stream, result: var T) =
   if readData(s, addr(result), sizeof(T)) != sizeof(T):
     raise IOError #newEIO("cannot read from stream")
 
-proc peek*[T](s: Stream, result: var T) =
+proc peek*[T](s: Stream, result: var T) {.raises.} =
   ## Generic peek procedure. Peeks `result` from the stream `s`.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -887,7 +909,7 @@ proc readFloat32*(s: Stream): float32 =
     assert strm.readFloat32() == 2'f32
     doAssertRaises(IOError): discard strm.readFloat32()
     strm.close()
-  result = 0.0
+  result = 0.0'f32
   read(s, result)
 
 proc peekFloat32*(s: Stream): float32 =
@@ -908,7 +930,7 @@ proc peekFloat32*(s: Stream): float32 =
     assert strm.readFloat32() == 1'f32
     assert strm.peekFloat32() == 2'f32
     strm.close()
-  result = 0.0
+  result = 0.0'f32
   peek(s, result)
 
 proc readFloat64*(s: Stream): float64 =
@@ -960,7 +982,7 @@ proc readStrPrivate(s: Stream, length: int, str: var string) =
     when defined(js):
       L = readData(s, addr(str), length)
     else:
-      L = readData(s, cstring(str), length)
+      L = readData(s, toCString(str), length)
   if L != len(str): setLen(str, L)
 
 proc readStr*(s: Stream, length: int, str: var string) =
@@ -986,7 +1008,7 @@ proc peekStrPrivate(s: Stream, length: int, str: var string) =
   when defined(js):
     let L = peekData(s, addr(str), length)
   else:
-    let L = peekData(s, cstring(str), length)
+    let L = peekData(s, toCString(str), length)
   if L != len(str): setLen(str, L)
 
 proc peekStr*(s: Stream, length: int, str: var string) =
@@ -1082,7 +1104,7 @@ proc peekLine*(s: Stream, line: var string): bool =
   defer: setPosition(s, pos)
   result = readLine(s, line)
 
-proc readLine*(s: Stream): string =
+proc readLine*(s: Stream): string {.raises.} =
   ## Reads a line from a stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** This is not very efficient.
@@ -1452,7 +1474,7 @@ proc newFileStream*(filename: string, mode: FileMode = fmRead,
   else: result = nil
 
 proc openFileStream*(filename: string, mode: FileMode = fmRead,
-    bufSize: int = -1): FileStream =
+    bufSize: int = -1): FileStream {.raises.} =
   ## Creates a new stream from the file named `filename` with the mode `mode`.
   ## If the file cannot be opened, an IO exception is raised.
   ##
