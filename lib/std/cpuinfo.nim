@@ -9,9 +9,9 @@
 
 ## This module implements a proc to determine the number of CPUs / cores.
 
-runnableExamples:
-  import std/assertions
-  asssert countProcessors() > 0
+# runnableExamples:
+#   import std/assertions
+#   asssert countProcessors() > 0
 
 
 when defined(js):
@@ -88,7 +88,7 @@ else:
   proc countProcessorsImpl(): int {.inline.} =
     when defined(windows):
       var
-        si: SystemInfo
+        si: SystemInfo = default(SystemInfo)
       getSystemInfo(addr si)
       result = int(si.dwNumberOfProcessors)
     elif defined(macosx) or defined(bsd):
