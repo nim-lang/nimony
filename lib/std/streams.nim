@@ -159,7 +159,7 @@ proc flush*(s: Stream) =
   ##
   ## See also:
   ## * `close proc <#close,Stream>`_
-  # runnableExamples:
+  # when false: # runnableExamples:
   #   from std/os import removeFile
 
   #   var strm = newFileStream("somefile.txt", fmWrite)
@@ -185,7 +185,7 @@ proc close*(s: Stream) =
   ##
   ## See also:
   ## * `flush proc <#flush,Stream>`_
-  runnableExamples:
+  when false: # runnableExamples:
     block:
       let strm = newStringStream("The first line\nthe second line\nthe third line")
       ## do something...
@@ -204,7 +204,7 @@ proc close*(s: Stream) =
 proc atEnd*(s: Stream): bool =
   ## Checks if more data can be read from `s`. Returns ``true`` if all data has
   ## been read.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     var line = ""
     assert strm.atEnd() == false
@@ -217,7 +217,7 @@ proc atEnd*(s: Stream): bool =
 
 proc setPosition*(s: Stream, pos: int) =
   ## Sets the position `pos` of the stream `s`.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     strm.setPosition(4)
     assert strm.readLine() == "first line"
@@ -229,7 +229,7 @@ proc setPosition*(s: Stream, pos: int) =
 
 proc getPosition*(s: Stream): int =
   ## Retrieves the current position in the stream `s`.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     assert strm.getPosition() == 0
     discard strm.readLine()
@@ -243,7 +243,7 @@ proc readData*(s: Stream, buffer: pointer, bufLen: int): int =
   ##
   ## **JS note:** `buffer` is treated as a ``ptr string`` and written to between
   ## ``0..<bufLen``.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("abcde")
     var buffer: array[6, char]
     assert strm.readData(addr(buffer), 1024) == 5
@@ -255,7 +255,7 @@ proc readData*(s: Stream, buffer: pointer, bufLen: int): int =
 
 proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
   ## Low level proc that reads data into a string ``buffer`` at ``slice``.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("abcde")
     var buffer = "12345"
     assert strm.readDataStr(buffer, 0..3) == 4
@@ -272,7 +272,7 @@ proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
     result = s.readData(addr buffer[slice.a], slice.b + 1 - slice.a)
 
 # template jsOrVmBlock(caseJsOrVm: untyped, caseElse: untyped): untyped {.untyped.} =
-#   when nimvm:
+#   when false: # nimvm
 #     block:
 #       caseJsOrVm
 #   else:
@@ -286,7 +286,7 @@ proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
 when not defined(js):
   proc readAll*(s: Stream): string =
     ## Reads all available data.
-    runnableExamples:
+    when false: # runnableExamples:
       var strm = newStringStream("The first line\nthe second line\nthe third line")
       assert strm.readAll() == "The first line\nthe second line\nthe third line"
       assert strm.atEnd() == true
@@ -324,7 +324,7 @@ proc peekData*(s: Stream, buffer: pointer, bufLen: int): int =
   ##
   ## **JS note:** `buffer` is treated as a ``ptr string`` and written to between
   ## ``0..<bufLen``.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("abcde")
     var buffer: array[6, char]
     assert strm.peekData(addr(buffer), 1024) == 5
@@ -340,7 +340,7 @@ proc writeData*(s: Stream, buffer: pointer, bufLen: int) =
   ##
   ## **JS note:** `buffer` is treated as a ``ptr string`` and read between
   ## ``0..<bufLen``.
-  runnableExamples:
+  when false: # runnableExamples:
     ## writeData
     var strm = newStringStream("")
     var buffer = ['a', 'b', 'c', 'd', 'e']
@@ -362,28 +362,28 @@ proc write*[T](s: Stream, x: T) =
   ## <#write,Stream,string>`_ for now.
   ##
   ##   ```Nim
-  ##   s.writeData(s, unsafeAddr(x), sizeof(x))
+  ##   s.writeData(s, addr(x), sizeof(x))
   ##   ```
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("")
     strm.write("abcde")
     strm.setPosition(0)
     assert strm.readAll() == "abcde"
     strm.close()
 
-  writeData(s, unsafeAddr(x), sizeof(x))
+  writeData(s, addr(x), sizeof(x))
 
 proc write*(s: Stream, x: string) =
   ## Writes the string `x` to the stream `s`. No length field or
   ## terminating zero is written.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("")
     strm.write("THE FIRST LINE")
     strm.setPosition(0)
     assert strm.readLine() == "THE FIRST LINE"
     strm.close()
 
-  when nimvm:
+  when false: # nimvm
     writeData(s, cstring(x), x.len)
   else:
     if x.len > 0:
@@ -396,7 +396,7 @@ proc write*(s: Stream, x: string) =
 proc write*(s: Stream, args: varargs[string, `$`]) =
   ## Writes one or more strings to the the stream. No length fields or
   ## terminating zeros are written.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("")
     strm.write(1, 2, 3, 4)
     strm.setPosition(0)
@@ -408,7 +408,7 @@ proc write*(s: Stream, args: varargs[string, `$`]) =
 proc writeLine*(s: Stream, args: varargs[string, `$`]) =
   ## Writes one or more strings to the the stream `s` followed
   ## by a new line. No length field or terminating zero is written.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("")
     strm.writeLine(1, 2)
     strm.writeLine(3, 4)
@@ -423,7 +423,7 @@ proc read*[T](s: Stream, result: var T) =
   ## Generic read procedure. Reads `result` from the stream `s`.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("012")
     ## readInt
     var i: int8
@@ -442,7 +442,7 @@ proc peek*[T](s: Stream, result: var T) =
   ## Generic peek procedure. Peeks `result` from the stream `s`.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("012")
     ## peekInt
     var i: int8
@@ -462,7 +462,7 @@ proc readChar*(s: Stream): char =
   ##
   ## Raises `IOError` if an error occurred.
   ## Returns '\\0' as an EOF marker.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("12\n3")
     assert strm.readChar() == '1'
     assert strm.readChar() == '2'
@@ -482,7 +482,7 @@ proc readChar*(s: Stream): char =
 proc peekChar*(s: Stream): char =
   ## Peeks a char from the stream `s`. Raises `IOError` if an error occurred.
   ## Returns '\\0' as an EOF marker.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("12\n3")
     assert strm.peekChar() == '1'
     assert strm.peekChar() == '1'
@@ -506,7 +506,7 @@ proc readBool*(s: Stream): bool =
   ## Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(true)
@@ -531,7 +531,7 @@ proc peekBool*(s: Stream): bool =
   ## Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(true)
@@ -554,7 +554,7 @@ proc readInt8*(s: Stream): int8 =
   ## Reads an int8 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'i8)
@@ -573,7 +573,7 @@ proc peekInt8*(s: Stream): int8 =
   ## Peeks an int8 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'i8)
@@ -594,7 +594,7 @@ proc readInt16*(s: Stream): int16 =
   ## Reads an int16 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'i16)
@@ -613,7 +613,7 @@ proc peekInt16*(s: Stream): int16 =
   ## Peeks an int16 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'i16)
@@ -634,7 +634,7 @@ proc readInt32*(s: Stream): int32 =
   ## Reads an int32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'i32)
@@ -653,7 +653,7 @@ proc peekInt32*(s: Stream): int32 =
   ## Peeks an int32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'i32)
@@ -674,7 +674,7 @@ proc readInt64*(s: Stream): int64 =
   ## Reads an int64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'i64)
@@ -693,7 +693,7 @@ proc peekInt64*(s: Stream): int64 =
   ## Peeks an int64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'i64)
@@ -714,7 +714,7 @@ proc readUint8*(s: Stream): uint8 =
   ## Reads an uint8 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'u8)
@@ -733,7 +733,7 @@ proc peekUint8*(s: Stream): uint8 =
   ## Peeks an uint8 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'u8)
@@ -754,7 +754,7 @@ proc readUint16*(s: Stream): uint16 =
   ## Reads an uint16 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'u16)
@@ -773,7 +773,7 @@ proc peekUint16*(s: Stream): uint16 =
   ## Peeks an uint16 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'u16)
@@ -794,7 +794,7 @@ proc readUint32*(s: Stream): uint32 =
   ## Reads an uint32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'u32)
@@ -814,7 +814,7 @@ proc peekUint32*(s: Stream): uint32 =
   ## Peeks an uint32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'u32)
@@ -835,7 +835,7 @@ proc readUint64*(s: Stream): uint64 =
   ## Reads an uint64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'u64)
@@ -854,7 +854,7 @@ proc peekUint64*(s: Stream): uint64 =
   ## Peeks an uint64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'u64)
@@ -875,7 +875,7 @@ proc readFloat32*(s: Stream): float32 =
   ## Reads a float32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'f32)
@@ -894,7 +894,7 @@ proc peekFloat32*(s: Stream): float32 =
   ## Peeks a float32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'f32)
@@ -915,7 +915,7 @@ proc readFloat64*(s: Stream): float64 =
   ## Reads a float64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'f64)
@@ -934,7 +934,7 @@ proc peekFloat64*(s: Stream): float64 =
   ## Peeks a float64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream()
     ## setup for reading data
     strm.write(1'f64)
@@ -954,7 +954,7 @@ proc peekFloat64*(s: Stream): float64 =
 proc readStrPrivate(s: Stream, length: int, str: var string) =
   if length > len(str): setLen(str, length)
   var L: int
-  when nimvm:
+  when false: # nimvm
     L = readDataStr(s, str, 0..length-1)
   else:
     when defined(js):
@@ -971,7 +971,7 @@ proc readStr*(s: Stream, length: int, str: var string) =
 proc readStr*(s: Stream, length: int): string =
   ## Reads a string of length `length` from the stream `s`. Raises `IOError` if
   ## an error occurred.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("abcde")
     assert strm.readStr(2) == "ab"
     assert strm.readStr(2) == "cd"
@@ -997,7 +997,7 @@ proc peekStr*(s: Stream, length: int, str: var string) =
 proc peekStr*(s: Stream, length: int): string =
   ## Peeks a string of length `length` from the stream `s`. Raises `IOError` if
   ## an error occurred.
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("abcde")
     assert strm.peekStr(2) == "ab"
     ## not "cd
@@ -1021,7 +1021,7 @@ proc readLine*(s: Stream, line: var string): bool =
   ## * `readLine(Stream) proc <#readLine,Stream>`_
   ## * `peekLine(Stream) proc <#peekLine,Stream>`_
   ## * `peekLine(Stream, string) proc <#peekLine,Stream,string>`_
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     var line = ""
     assert strm.readLine(line) == true
@@ -1064,7 +1064,7 @@ proc peekLine*(s: Stream, line: var string): bool =
   ## * `readLine(Stream) proc <#readLine,Stream>`_
   ## * `readLine(Stream, string) proc <#readLine,Stream,string>`_
   ## * `peekLine(Stream) proc <#peekLine,Stream>`_
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     var line = ""
     assert strm.peekLine(line) == true
@@ -1091,7 +1091,7 @@ proc readLine*(s: Stream): string =
   ## * `readLine(Stream, string) proc <#readLine,Stream,string>`_
   ## * `peekLine(Stream) proc <#peekLine,Stream>`_
   ## * `peekLine(Stream, string) proc <#peekLine,Stream,string>`_
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     assert strm.readLine() == "The first line"
     assert strm.readLine() == "the second line"
@@ -1121,7 +1121,7 @@ proc peekLine*(s: Stream): string =
   ## * `readLine(Stream) proc <#readLine,Stream>`_
   ## * `readLine(Stream, string) proc <#readLine,Stream,string>`_
   ## * `peekLine(Stream, string) proc <#peekLine,Stream,string>`_
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     assert strm.peekLine() == "The first line"
     ## not "the second line"
@@ -1141,7 +1141,7 @@ iterator lines*(s: Stream): string =
   ## See also:
   ## * `readLine(Stream) proc <#readLine,Stream>`_
   ## * `readLine(Stream, string) proc <#readLine,Stream,string>`_
-  runnableExamples:
+  when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
     var lines: seq[string]
     for line in strm.lines():
@@ -1227,7 +1227,7 @@ else: # after 1.3 or JS not defined
 
   proc ssReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int =
     var s = StringStream(s)
-    when nimvm:
+    when false: # nimvm
       discard
     else:
       when declared(prepareMutation):
@@ -1238,7 +1238,7 @@ else: # after 1.3 or JS not defined
       # jsOrVmBlock:
       #   buffer[slice.a..<slice.a+result] = s.data[s.pos..<s.pos+result]
       # do:
-        copyMem(unsafeAddr buffer[slice.a], addr s.data[s.pos], result)
+        copyMem(addr buffer[slice.a], addr s.data[s.pos], result)
       inc(s.pos, result)
     else:
       result = 0
@@ -1304,7 +1304,7 @@ else: # after 1.3 or JS not defined
     ##   file stream from the file name and the mode.
     ## * `openFileStream proc <#openFileStream,string,FileMode,int>`_ creates a
     ##   file stream from the file name and the mode.
-    runnableExamples:
+    when false: # runnableExamples:
       var strm = newStringStream("The first line\nthe second line\nthe third line")
       assert strm.readLine() == "The first line"
       assert strm.readLine() == "the second line"
@@ -1313,7 +1313,7 @@ else: # after 1.3 or JS not defined
 
     new(result)
     result.data = s
-    when nimvm:
+    when false: # nimvm
       discard
     else:
       when declared(prepareMutation):
@@ -1324,7 +1324,7 @@ else: # after 1.3 or JS not defined
     result.setPositionImpl = ssSetPosition
     result.getPositionImpl = ssGetPosition
     result.readDataStrImpl = ssReadDataStr
-    when nimvm:
+    when false: # nimvm
       discard
     else:
       result.readDataImpl = ssReadData
@@ -1382,7 +1382,7 @@ proc newFileStream*(f: File): FileStream =
   ##   on Examples.
   ## * `openFileStream proc <#openFileStream,string,FileMode,int>`_ creates a
   ##   file stream from the file name and the mode.
-  runnableExamples:
+  when false: # runnableExamples:
     ## Input (somefile.txt):
     ## The first line
     ## the second line
@@ -1433,7 +1433,7 @@ proc newFileStream*(filename: string, mode: FileMode = fmRead,
   ##   opened File.
   ## * `openFileStream proc <#openFileStream,string,FileMode,int>`_ creates a
   ##   file stream from the file name and the mode.
-  # runnableExamples:
+  # when false: # runnableExamples:
   #   from std/os import removeFile
   #   var strm = newFileStream("somefile.txt", fmWrite)
   #   if not isNil(strm):
@@ -1465,7 +1465,7 @@ proc openFileStream*(filename: string, mode: FileMode = fmRead,
   ##   opened File.
   ## * `newFileStream proc <#newFileStream,string,FileMode,int>`_  creates a
   ##   file stream from the file name and the mode.
-  runnableExamples:
+  when false: # runnableExamples:
     try:
       ## Input (somefile.txt):
       ## The first line
