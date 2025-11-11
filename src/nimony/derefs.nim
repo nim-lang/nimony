@@ -383,7 +383,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     takeParRi c, n
   else:
     var body = n
-    trSons c, n, c.r.returnExpects
+    tr c, n, c.r.returnExpects
     if c.r.dangerousLocations.len > 0:
       checkForDangerousLocations c, body
     takeParRi c, n
