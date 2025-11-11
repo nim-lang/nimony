@@ -14,7 +14,7 @@ import lib / [nifindexes, lineinfos]
 import gear2 / modnames
 
 const
-  Version = "0.6"
+  Version = "0.6.0"
   Usage = "hastur - tester tool for Nimony Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

@@ -5,7 +5,7 @@ NJVL is an intermediate representation for Nimony.
 **Note**: This document covers the new constructs and concepts NJVL introduces. For more examples how these can be put into use see the [njvl-details.md](njvl-details.md) file.
 
 NJVL is a structured IR, there is no unstructured control flow like `return` or `break` ("no jumps").
-Instead control flow variables (`cfvar`) of type `bool` are used to represent the control flow. Except cfvars all variables are versioned! This gives us a variant of SSA that is easy to get rid of later on -- a code generator can just ignore the variables' versions and map every variable to a register or memory slot.
+Instead control flow variables (`cfvar`) of type `bool` are used to represent the control flow. All variables including cfvars are versioned! This gives us a variant of SSA that is easy to get rid of later on -- a code generator can just ignore the variables' versions and map every variable to a register or memory slot.
 
 NJVL is good for:
 
@@ -119,6 +119,8 @@ proc p(cond: bool) =
 
 
 ## VL - "Versioned Locations"
+
+The VL pass adds version information to all locations. The current implementation uses **SSA (Static Single Assignment)** where versions track writes. Since versioning is separate from control flow analysis, we can also attach an **SSU (Static Single Use)** mechanism instead or alongside SSA. See [njvl-ssu-ideas.md](njvl-ssu-ideas.md) for details on how SSU could be implemented.
 
 ### `v` (version)
 

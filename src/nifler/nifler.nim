@@ -11,7 +11,7 @@ import std / [parseopt, strutils, os, assertions, times]
 import bridge, configcmd
 
 const
-  Version = "0.2"
+  Version = "0.2.0"
   Usage = "Nifler - Tools related to NIF. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
