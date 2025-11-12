@@ -143,3 +143,8 @@ block: # issue #1444
   assert substr("abc", 3, 1) == ""
   assert substr("abc", 3, 2) == ""
   assert substr("abc", 3, 3) == ""
+
+block:
+  var s = "12234"
+  var m = prepareMutationAt(s, 1)
+  assert m == '2'

@@ -287,6 +287,10 @@ proc prepareMutation*(s: var string) =
       s.i = EmptyI
     s.a = a # also do this for `a == nil`
 
+proc prepareMutationAt*(s: var string; i: int): var char {.requires: (i < len(s) and i >= 0), inline.} =
+  prepareMutation(s)
+  result = s.a[i]
+
 proc newString*(len: int): string =
   let a = cast[StrData](alloc(len))
   if a != nil:
