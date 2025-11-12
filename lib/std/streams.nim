@@ -1330,8 +1330,7 @@ else: # after 1.3 or JS not defined
       assert strm.readLine() == "the third line"
       strm.close()
 
-    new(result)
-    result.data = s
+    result = StringStream(data: s)
     when false: # nimvm
       discard
     else:
@@ -1374,7 +1373,7 @@ proc fsReadData(s: Stream, buffer: pointer, bufLen: int): int =
   result = readBuffer(FileStream(s).f, buffer, bufLen)
 
 proc fsReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int =
-  result = readBuffer(FileStream(s).f, addr buffer[slice.a], slice.b + 1 - slice.a)
+  result = readBuffer(FileStream(s).f, addr(prepareMutationAt(buffer, slice.a)), slice.b + 1 - slice.a)
 
 proc fsPeekData(s: Stream, buffer: pointer, bufLen: int): int =
   let pos = fsGetPosition(s)
@@ -1418,18 +1417,19 @@ proc newFileStream*(f: File): FileStream =
       ## the third line
       strm.close()
 
-  new(result)
-  result.f = f
-  result.closeImpl = fsClose
-  result.atEndImpl = fsAtEnd
-  result.setPositionImpl = fsSetPosition
-  result.getPositionImpl = fsGetPosition
-  result.readDataStrImpl = fsReadDataStr
-  result.readDataImpl = fsReadData
-  result.readLineImpl = fsReadLine
-  result.peekDataImpl = fsPeekData
-  result.writeDataImpl = fsWriteData
-  result.flushImpl = fsFlush
+  result = FileStream(
+    f: f,
+    closeImpl: fsClose,
+    atEndImpl: fsAtEnd,
+    setPositionImpl: fsSetPosition,
+    getPositionImpl: fsGetPosition,
+    readDataStrImpl: fsReadDataStr,
+    readDataImpl: fsReadData,
+    readLineImpl: fsReadLine,
+    peekDataImpl: fsPeekData,
+    writeDataImpl: fsWriteData,
+    flushImpl: fsFlush
+  )
 
 proc newFileStream*(filename: string, mode: FileMode = fmRead,
     bufSize: int = -1): FileStream =
