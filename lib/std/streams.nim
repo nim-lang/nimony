@@ -286,10 +286,7 @@ proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
     result = s.readDataStrImpl(s, buffer, slice)
   else:
     # fallback
-    when declared(prepareMutation):
-      # buffer might potentially be a CoW literal with ARC
-      prepareMutation(buffer)
-    result = s.readData(addr buffer[slice.a], slice.b + 1 - slice.a)
+    result = s.readData(addr prepareMutationAt(buffer, slice.a), slice.b + 1 - slice.a)
 
 # template jsOrVmBlock(caseJsOrVm: untyped, caseElse: untyped): untyped {.untyped.} =
 #   when false: # nimvm
@@ -334,7 +331,7 @@ when not defined(js):
           break
         let prevLen = result.len
         result.setLen(prevLen + readBytes)
-        copyMem(addr(result[prevLen]), addr(buffer[0]), readBytes)
+        copyMem(addr(prepareMutationAt(result, prevLen)), addr(buffer[0]), readBytes)
         if readBytes < bufferSize:
           break
 
@@ -1260,7 +1257,7 @@ else: # after 1.3 or JS not defined
       # jsOrVmBlock:
       #   buffer[slice.a..<slice.a+result] = s.data[s.pos..<s.pos+result]
       # do:
-        copyMem(addr buffer[slice.a], addr s.data[s.pos], result)
+        copyMem(addr prepareMutationAt(buffer, slice.a), addr prepareMutationAt(s.data, s.pos), result)
       inc(s.pos, result)
     else:
       result = 0
@@ -1276,7 +1273,7 @@ else: # after 1.3 or JS not defined
           raise newException(Defect, "could not read string stream, " &
             "did you use a non-string buffer pointer?", getCurrentException())
       elif not defined(nimscript):
-        copyMem(buffer, addr(s.data[s.pos]), result)
+        copyMem(buffer, addr(prepareMutationAt(s.data, s.pos)), result)
       inc(s.pos, result)
     else:
       result = 0
@@ -1292,7 +1289,7 @@ else: # after 1.3 or JS not defined
           raise newException(Defect, "could not peek string stream, " &
             "did you use a non-string buffer pointer?", getCurrentException())
       elif not defined(nimscript):
-        copyMem(buffer, addr(s.data[s.pos]), result)
+        copyMem(buffer, addr(prepareMutationAt(s.data, s.pos)), result)
     else:
       result = 0
 
@@ -1309,7 +1306,7 @@ else: # after 1.3 or JS not defined
         raise newException(Defect, "could not write to string stream, " &
           "did you use a non-string buffer pointer?", getCurrentException())
     elif not defined(nimscript):
-      copyMem(addr(s.data[s.pos]), buffer, bufLen)
+      copyMem(addr(prepareMutationAt(s.data, s.pos)), buffer, bufLen)
     inc(s.pos, bufLen)
 
   proc ssClose(s: Stream) =
@@ -1384,9 +1381,9 @@ proc fsPeekData(s: Stream, buffer: pointer, bufLen: int): int =
   defer: fsSetPosition(s, pos)
   result = readBuffer(FileStream(s).f, buffer, bufLen)
 
-proc fsWriteData(s: Stream, buffer: pointer, bufLen: int) =
+proc fsWriteData(s: Stream, buffer: pointer, bufLen: int) {.raises.} =
   if writeBuffer(FileStream(s).f, buffer, bufLen) != bufLen:
-    raise newEIO("cannot write to stream")
+    raise IOError #newEIO("cannot write to stream")
 
 proc fsReadLine(s: Stream, line: var string): bool =
   result = readLine(FileStream(s).f, line)
