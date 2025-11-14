@@ -496,25 +496,6 @@ proc tryTypeClass(c: var SemContext; n: var Cursor): bool =
   else:
     result = false
 
-proc tryRoutineTypeClass(c: var SemContext; n: var Cursor): bool =
-  # if the routine type tree has no non-empty children, interpret it as a type kind typeclass
-  var op = n
-  inc op
-  while op.kind == DotToken:
-    inc op
-
-  if op.kind == ParRi:
-    c.dest.addParLe(TypeKindT, n.info)
-
-    c.dest.add n
-    c.dest.addParRi()
-    skip n
-
-    c.dest.addParRi()
-    result = true
-  else:
-    result = false
-
 proc isOrExpr(n: Cursor): bool =
   # old nim special cases `|` infixes in type contexts
   result = n.exprKind == InfixX
@@ -802,7 +783,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
         semLocalTypeImpl c, n, InLocalDecl
         takeParRi c, n
     of RoutineTypes:
-      if tryRoutineTypeClass(c, n):
+      if tryTypeClass(c, n):
         return
       takeToken c, n
       wantDot c, n # name
