@@ -211,3 +211,10 @@ block:
   type
     Foo = object
       cFileName: array[0..MAX_PATH - 1, int]
+
+type
+  ProcType = proc (x: int) {.nimcall.}
+
+var call: ProcType = ProcType(nil)
+call = proc (x: int) = discard x
+call(1)

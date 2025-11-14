@@ -378,6 +378,11 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         analyseArrayConstr c, pc
       of TupconstrX:
         analyseTupConstr c, pc
+      of CastX, ConvX, HconvX:
+        inc pc
+        skip pc # skips type
+        analyseExpr c, pc
+        skipParRi pc
       else:
         inc nested
         inc pc
