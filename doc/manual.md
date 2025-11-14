@@ -31,7 +31,7 @@ nimony c <program.nim>
 For example:
 
 ```nim
-import std / stdio
+import std / syncio
 
 echo "Hello from Nimony!"
 ```
