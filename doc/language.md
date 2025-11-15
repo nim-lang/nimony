@@ -30,7 +30,7 @@ A constant is a symbol that is bound to the value of a constant expression. Cons
 * previously declared constants
 * the call of a routine as long as the passed arguments could be evaluated at compile-time.
 
-Nimony offers a complex evalution engine for arbitrary compile-time computations. The restrictions for this mechanism are currently undocumented.
+Nimony offers a complex evaluation engine for arbitrary compile-time computations. The restrictions for this mechanism are currently undocumented.
 
 
 
@@ -431,7 +431,7 @@ template concat(): string {.varargs.} =
   res
 ```
 
-Nimony's `echo` is also uses `varargs`:
+Nimony's `echo` also uses `varargs`:
 
 ```nim
 template echo*() {.varargs} =
