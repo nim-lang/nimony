@@ -32,6 +32,11 @@ proc c_fwrite(buf: pointer; size, n: uint; f: File): uint {.
 proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
   importc: "fread", header: "<stdio.h>".}
 
+proc c_fgetc(stream: File): cint {.
+  importc: "fgetc", header: "<stdio.h>", tags: [].}
+proc c_ungetc(c: cint, f: File): cint {.
+  importc: "ungetc", header: "<stdio.h>", tags: [].}
+
 proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
 
 proc write*(f: File; s: string) =
@@ -161,3 +166,9 @@ proc tryWriteFile*(file, content: string): bool =
     result = false
 
 proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}
+
+proc endOfFile*(f: File): bool {.tags: [].} =
+  ## Returns true if `f` is at the end.
+  var c = c_fgetc(f)
+  discard c_ungetc(c, f)
+  return c < 0'i32
