@@ -16,6 +16,9 @@ jobs:
           - os: linux
             cpu: amd64
             nim_branch: devel
+          - os: linux
+            cpu: i386
+            nim_branch: devel
           - os: macos
             cpu: arm64
             nim_branch: devel
@@ -52,12 +55,40 @@ jobs:
           submodules: false
 
       - name: Install Linux dependency (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y valgrind gcc-14 g++-14
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 60 --slave /usr/bin/g++ g++ /usr/bin/g++-14
+
+      - name: Install dependencies (Linux i386)
+        if: runner.os == 'Linux' && matrix.target.cpu == 'i386'
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND='noninteractive' apt-get install \
+            --no-install-recommends -yq gcc-multilib g++-multilib \
+            libssl-dev:i386
+
+          mkdir -p external/bin
+          cat << EOF > external/bin/gcc
+          #!/bin/bash
+
+          exec $(which gcc) -m32 "\$@"
+          EOF
+
+          cat << EOF > external/bin/g++
+          #!/bin/bash
+
+          exec $(which g++) -m32 "\$@"
+          EOF
+
+          chmod 755 external/bin/gcc external/bin/g++
+
+          echo "$PWD/external/bin" >> "${GITHUB_PATH}"
+
 
       - name: Restore MinGW-W64 (Windows) from cache
         if: runner.os == 'Windows'
