@@ -78,7 +78,7 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
   elif n.kind != DotToken:
     error "illformed AST inside type section: ", n
 
-proc `<`(x: xint; b: int): bool = x < createXint(b)
+proc `<`(x: xint; b: int64): bool = x < createXint(b)
 
 proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int)
 
@@ -154,10 +154,10 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of IntT, UIntT, FloatT:
     let n = n.firstSon
     assert n.kind == IntLit
-    let s = if pool.integers[n.intId] != -1:
+    let s = int(if pool.integers[n.intId] != -1:
         pool.integers[n.intId] div 8
       else:
-        ptrSize
+        ptrSize)
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
@@ -211,7 +211,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
 
   of SetT:
     let size0 = bitsetSizeInBytes(n.firstSon)
-    let size1 = asSigned(size0, c.overflow)
+    let size1 = int asSigned(size0, c.overflow)
     update c, size1, 1
   of TupleT:
     if c.strict:

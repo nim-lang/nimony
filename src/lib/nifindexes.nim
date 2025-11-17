@@ -319,7 +319,7 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
           raiseAssert "invalid (kv) construct: symbol expected"
         t = next(s) # skip Symbol
         if t.kind == IntLit:
-          let offset = pool.integers[t.intId] + previousOffset
+          let offset = int pool.integers[t.intId] + previousOffset
           tab[key] = NifIndexEntry(offset: offset, info: info)
           previousOffset = offset
         else:
