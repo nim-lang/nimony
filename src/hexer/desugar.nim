@@ -160,7 +160,7 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if err:
     error "invalid set element type: ", n
   else:
-    addSetType dest, size, info
+    addSetType dest, int size, info
   skip n
   skipParRi n
 
@@ -263,7 +263,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     a = aOrig
     b = bOrig
   var err = false
-  let size = asSigned(bitsetSizeInBytes(baseType), err)
+  let size = int asSigned(bitsetSizeInBytes(baseType), err)
   assert not err
   case size
   of 1, 2, 4, 8:
@@ -505,7 +505,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var elemTyp = typ
   inc elemTyp
   var err = false
-  let size = asSigned(bitsetSizeInBytes(elemTyp), err)
+  let size = int asSigned(bitsetSizeInBytes(elemTyp), err)
   assert not err
   var typBuf = createTokenBuf(16)
   addSetType typBuf, size, info

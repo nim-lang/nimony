@@ -89,7 +89,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       of "intbits":
         inc c
         if c.kind == IntLit:
-          result.bits = pool.integers[c.intId]
+          result.bits = int pool.integers[c.intId]
           inc c
       of "compat":
         inc c
