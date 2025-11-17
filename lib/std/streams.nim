@@ -171,7 +171,7 @@ type
     flushImpl*: proc (s: Stream)
       {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].}
 
-proc flush*(s: Stream) =
+proc flush*(s: Stream) {.raises: [Defect, IOError, OSError].} =
   ## Flushes the buffers that the stream `s` might use.
   ##
   ## This procedure causes any unwritten data for that stream to be delivered
@@ -200,7 +200,7 @@ proc flush*(s: Stream) =
 
   if not isNil(s.flushImpl): s.flushImpl(s)
 
-proc close*(s: Stream) =
+proc close*(s: Stream) {.raises: [IOError, OSError].} =
   ## Closes the stream `s`.
   ##
   ## See also:
@@ -221,7 +221,7 @@ proc close*(s: Stream) =
   if not isNil(s) and not isNil(s.closeImpl):
     s.closeImpl(s)
 
-proc atEnd*(s: Stream): bool =
+proc atEnd*(s: Stream): bool {.raises: [Defect, IOError, OSError].} =
   ## Checks if more data can be read from `s`. Returns ``true`` if all data has
   ## been read.
   when false: # runnableExamples:
@@ -235,7 +235,7 @@ proc atEnd*(s: Stream): bool =
 
   result = s.atEndImpl(s)
 
-proc setPosition*(s: Stream, pos: int) =
+proc setPosition*(s: Stream, pos: int) {.raises: [Defect, IOError, OSError].} =
   ## Sets the position `pos` of the stream `s`.
   when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
@@ -247,7 +247,7 @@ proc setPosition*(s: Stream, pos: int) =
 
   s.setPositionImpl(s, pos)
 
-proc getPosition*(s: Stream): int =
+proc getPosition*(s: Stream): int {.raises: [Defect, IOError, OSError].} =
   ## Retrieves the current position in the stream `s`.
   when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
@@ -258,7 +258,7 @@ proc getPosition*(s: Stream): int =
 
   result = s.getPositionImpl(s)
 
-proc readData*(s: Stream, buffer: pointer, bufLen: int): int =
+proc readData*(s: Stream, buffer: pointer, bufLen: int): int {.raises: [Defect, IOError, OSError].} =
   ## Low level proc that reads data into an untyped `buffer` of `bufLen` size.
   ##
   ## **JS note:** `buffer` is treated as a ``ptr string`` and written to between
@@ -273,7 +273,7 @@ proc readData*(s: Stream, buffer: pointer, bufLen: int): int =
 
   result = s.readDataImpl(s, buffer, bufLen)
 
-proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
+proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int {.raises: [Defect, IOError, OSError].} =
   ## Low level proc that reads data into a string ``buffer`` at ``slice``.
   when false: # runnableExamples:
     var strm = newStringStream("abcde")
@@ -301,7 +301,7 @@ proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
 #         caseElse
 
 when not defined(js):
-  proc readAll*(s: Stream): string =
+  proc readAll*(s: Stream): string {.raises.} =
     ## Reads all available data.
     when false: # runnableExamples:
       var strm = newStringStream("The first line\nthe second line\nthe third line")
@@ -335,7 +335,7 @@ when not defined(js):
         if readBytes < bufferSize:
           break
 
-proc peekData*(s: Stream, buffer: pointer, bufLen: int): int =
+proc peekData*(s: Stream, buffer: pointer, bufLen: int): int {.raises: [Defect, IOError, OSError].} =
   ## Low level proc that reads data into an untyped `buffer` of `bufLen` size
   ## without moving stream position.
   ##
@@ -351,7 +351,7 @@ proc peekData*(s: Stream, buffer: pointer, bufLen: int): int =
 
   result = s.peekDataImpl(s, buffer, bufLen)
 
-proc writeData*(s: Stream, buffer: pointer, bufLen: int) =
+proc writeData*(s: Stream, buffer: pointer, bufLen: int) {.raises.} =
   ## Low level proc that writes an untyped `buffer` of `bufLen` size
   ## to the stream `s`.
   ##
@@ -372,7 +372,7 @@ proc writeData*(s: Stream, buffer: pointer, bufLen: int) =
 
   s.writeDataImpl(s, buffer, bufLen)
 
-proc write*[T](s: Stream, x: T) =
+proc write*[T](s: Stream, x: T) {.raises.} =
   ## Generic write procedure. Writes `x` to the stream `s`. Implementation:
   ##
   ## **Note:** Not available for JS backend. Use `write(Stream, string)
@@ -390,7 +390,7 @@ proc write*[T](s: Stream, x: T) =
 
   writeData(s, addr(x), sizeof(x))
 
-proc write*(s: Stream, x: string) =
+proc write*(s: Stream, x: string) {.raises.} =
   ## Writes the string `x` to the stream `s`. No length field or
   ## terminating zero is written.
   when false: # runnableExamples:
@@ -476,7 +476,7 @@ proc peek*[T](s: Stream, result: var T) {.raises.} =
   if peekData(s, addr(result), sizeof(T)) != sizeof(T):
     raise IOError#newEIO("cannot read from stream")
 
-proc readChar*(s: Stream): char =
+proc readChar*(s: Stream): char {.raises.} =
   ## Reads a char from the stream `s`.
   ##
   ## Raises `IOError` if an error occurred.
@@ -498,7 +498,7 @@ proc readChar*(s: Stream): char =
   # do:
     if readData(s, addr(result), sizeof(result)) != 1: result = '\0'
 
-proc peekChar*(s: Stream): char =
+proc peekChar*(s: Stream): char {.raises.} =
   ## Peeks a char from the stream `s`. Raises `IOError` if an error occurred.
   ## Returns '\\0' as an EOF marker.
   when false: # runnableExamples:
@@ -517,7 +517,7 @@ proc peekChar*(s: Stream): char =
   else:
     if peekData(s, addr(result), sizeof(result)) != 1: result = '\0'
 
-proc readBool*(s: Stream): bool =
+proc readBool*(s: Stream): bool {.raises.} =
   ## Reads a bool from the stream `s`.
   ##
   ## A bool is one byte long and it is `true` for every non-zero
@@ -542,7 +542,7 @@ proc readBool*(s: Stream): bool =
   read(s, t)
   result = t != 0.byte
 
-proc peekBool*(s: Stream): bool =
+proc peekBool*(s: Stream): bool {.raises.} =
   ## Peeks a bool from the stream `s`.
   ##
   ## A bool is one byte long and it is `true` for every non-zero
@@ -569,7 +569,7 @@ proc peekBool*(s: Stream): bool =
   peek(s, t)
   result = t != 0.byte
 
-proc readInt8*(s: Stream): int8 =
+proc readInt8*(s: Stream): int8 {.raises.} =
   ## Reads an int8 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -588,7 +588,7 @@ proc readInt8*(s: Stream): int8 =
   result = int8(0)
   read(s, result)
 
-proc peekInt8*(s: Stream): int8 =
+proc peekInt8*(s: Stream): int8 {.raises.} =
   ## Peeks an int8 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -609,7 +609,7 @@ proc peekInt8*(s: Stream): int8 =
   result = int8(0)
   peek(s, result)
 
-proc readInt16*(s: Stream): int16 =
+proc readInt16*(s: Stream): int16 {.raises.} =
   ## Reads an int16 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -628,7 +628,7 @@ proc readInt16*(s: Stream): int16 =
   result = int16(0)
   read(s, result)
 
-proc peekInt16*(s: Stream): int16 =
+proc peekInt16*(s: Stream): int16 {.raises.} =
   ## Peeks an int16 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -649,7 +649,7 @@ proc peekInt16*(s: Stream): int16 =
   result = int16(0)
   peek(s, result)
 
-proc readInt32*(s: Stream): int32 =
+proc readInt32*(s: Stream): int32 {.raises.} =
   ## Reads an int32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -668,7 +668,7 @@ proc readInt32*(s: Stream): int32 =
   result = int32(0)
   read(s, result)
 
-proc peekInt32*(s: Stream): int32 =
+proc peekInt32*(s: Stream): int32 {.raises.} =
   ## Peeks an int32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -689,7 +689,7 @@ proc peekInt32*(s: Stream): int32 =
   result = int32(0)
   peek(s, result)
 
-proc readInt64*(s: Stream): int64 =
+proc readInt64*(s: Stream): int64 {.raises.} =
   ## Reads an int64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -708,7 +708,7 @@ proc readInt64*(s: Stream): int64 =
   result = int64(0)
   read(s, result)
 
-proc peekInt64*(s: Stream): int64 =
+proc peekInt64*(s: Stream): int64 {.raises.} =
   ## Peeks an int64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -729,7 +729,7 @@ proc peekInt64*(s: Stream): int64 =
   result = int64(0)
   peek(s, result)
 
-proc readUint8*(s: Stream): uint8 =
+proc readUint8*(s: Stream): uint8 {.raises.} =
   ## Reads an uint8 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -748,7 +748,7 @@ proc readUint8*(s: Stream): uint8 =
   result = uint8(0)
   read(s, result)
 
-proc peekUint8*(s: Stream): uint8 =
+proc peekUint8*(s: Stream): uint8 {.raises.} =
   ## Peeks an uint8 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -769,7 +769,7 @@ proc peekUint8*(s: Stream): uint8 =
   result = uint8(0)
   peek(s, result)
 
-proc readUint16*(s: Stream): uint16 =
+proc readUint16*(s: Stream): uint16 {.raises.} =
   ## Reads an uint16 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -788,7 +788,7 @@ proc readUint16*(s: Stream): uint16 =
   result = uint16(0)
   read(s, result)
 
-proc peekUint16*(s: Stream): uint16 =
+proc peekUint16*(s: Stream): uint16 {.raises.} =
   ## Peeks an uint16 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -809,7 +809,7 @@ proc peekUint16*(s: Stream): uint16 =
   result = uint16(0)
   peek(s, result)
 
-proc readUint32*(s: Stream): uint32 =
+proc readUint32*(s: Stream): uint32 {.raises.} =
   ## Reads an uint32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -829,7 +829,7 @@ proc readUint32*(s: Stream): uint32 =
   result = uint32(0)
   read(s, result)
 
-proc peekUint32*(s: Stream): uint32 =
+proc peekUint32*(s: Stream): uint32 {.raises.} =
   ## Peeks an uint32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -850,7 +850,7 @@ proc peekUint32*(s: Stream): uint32 =
   result = uint32(0)
   peek(s, result)
 
-proc readUint64*(s: Stream): uint64 =
+proc readUint64*(s: Stream): uint64 {.raises.} =
   ## Reads an uint64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -869,7 +869,7 @@ proc readUint64*(s: Stream): uint64 =
   result = uint64(0)
   read(s, result)
 
-proc peekUint64*(s: Stream): uint64 =
+proc peekUint64*(s: Stream): uint64 {.raises.} =
   ## Peeks an uint64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -890,7 +890,7 @@ proc peekUint64*(s: Stream): uint64 =
   result = uint64(0)
   peek(s, result)
 
-proc readFloat32*(s: Stream): float32 =
+proc readFloat32*(s: Stream): float32 {.raises.} =
   ## Reads a float32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -909,7 +909,7 @@ proc readFloat32*(s: Stream): float32 =
   result = 0.0'f32
   read(s, result)
 
-proc peekFloat32*(s: Stream): float32 =
+proc peekFloat32*(s: Stream): float32 {.raises.} =
   ## Peeks a float32 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -930,7 +930,7 @@ proc peekFloat32*(s: Stream): float32 =
   result = 0.0'f32
   peek(s, result)
 
-proc readFloat64*(s: Stream): float64 =
+proc readFloat64*(s: Stream): float64 {.raises.} =
   ## Reads a float64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `readStr <#readStr,Stream,int>`_ for now.
@@ -949,7 +949,7 @@ proc readFloat64*(s: Stream): float64 =
   result = 0.0
   read(s, result)
 
-proc peekFloat64*(s: Stream): float64 =
+proc peekFloat64*(s: Stream): float64 {.raises.} =
   ## Peeks a float64 from the stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** Not available for JS backend. Use `peekStr <#peekStr,Stream,int>`_ for now.
@@ -970,7 +970,7 @@ proc peekFloat64*(s: Stream): float64 =
   result = 0.0
   peek(s, result)
 
-proc readStrPrivate(s: Stream, length: int, str: var string) =
+proc readStrPrivate(s: Stream, length: int, str: var string) {.raises.} =
   if length > len(str): setLen(str, length)
   var L: int
   when false: # nimvm
@@ -982,12 +982,12 @@ proc readStrPrivate(s: Stream, length: int, str: var string) =
       L = readData(s, toCString(str), length)
   if L != len(str): setLen(str, L)
 
-proc readStr*(s: Stream, length: int, str: var string) =
+proc readStr*(s: Stream, length: int, str: var string) {.raises.} =
   ## Reads a string of length `length` from the stream `s`. Raises `IOError` if
   ## an error occurred.
   readStrPrivate(s, length, str)
 
-proc readStr*(s: Stream, length: int): string =
+proc readStr*(s: Stream, length: int): string {.raises.} =
   ## Reads a string of length `length` from the stream `s`. Raises `IOError` if
   ## an error occurred.
   when false: # runnableExamples:
@@ -1000,7 +1000,7 @@ proc readStr*(s: Stream, length: int): string =
   result = newString(length)
   readStrPrivate(s, length, result)
 
-proc peekStrPrivate(s: Stream, length: int, str: var string) =
+proc peekStrPrivate(s: Stream, length: int, str: var string) {.raises.} =
   if length > len(str): setLen(str, length)
   when defined(js):
     let L = peekData(s, addr(str), length)
@@ -1008,12 +1008,12 @@ proc peekStrPrivate(s: Stream, length: int, str: var string) =
     let L = peekData(s, toCString(str), length)
   if L != len(str): setLen(str, L)
 
-proc peekStr*(s: Stream, length: int, str: var string) =
+proc peekStr*(s: Stream, length: int, str: var string) {.raises.} =
   ## Peeks a string of length `length` from the stream `s`. Raises `IOError` if
   ## an error occurred.
   peekStrPrivate(s, length, str)
 
-proc peekStr*(s: Stream, length: int): string =
+proc peekStr*(s: Stream, length: int): string {.raises.} =
   ## Peeks a string of length `length` from the stream `s`. Raises `IOError` if
   ## an error occurred.
   when false: # runnableExamples:
@@ -1027,7 +1027,7 @@ proc peekStr*(s: Stream, length: int): string =
   result = newString(length)
   peekStrPrivate(s, length, result)
 
-proc readLine*(s: Stream, line: var string): bool =
+proc readLine*(s: Stream, line: var string): bool {.raises.} =
   ## Reads a line of text from the stream `s` into `line`. `line` must not be
   ## ``nil``! May throw an IO exception.
   ##
@@ -1070,7 +1070,7 @@ proc readLine*(s: Stream, line: var string): bool =
       line.add(c)
     result = true
 
-proc peekLine*(s: Stream, line: var string): bool =
+proc peekLine*(s: Stream, line: var string): bool {.raises.} =
   ## Peeks a line of text from the stream `s` into `line`. `line` must not be
   ## ``nil``! May throw an IO exception.
   ##
@@ -1131,7 +1131,7 @@ proc readLine*(s: Stream): string {.raises.} =
     else:
       result.add(c)
 
-proc peekLine*(s: Stream): string =
+proc peekLine*(s: Stream): string {.raises.} =
   ## Peeks a line from a stream `s`. Raises `IOError` if an error occurred.
   ##
   ## **Note:** This is not very efficient.
@@ -1153,7 +1153,7 @@ proc peekLine*(s: Stream): string =
   defer: setPosition(s, pos)
   result = readLine(s)
 
-iterator lines*(s: Stream): string =
+iterator lines*(s: Stream): string {.raises.} =
   ## Iterates over every line in the stream.
   ## The iteration is based on ``readLine``.
   ##
@@ -1232,19 +1232,19 @@ when false: # (NimMajor, NimMinor) < (1, 3) and defined(js):
         break
 
 else: # after 1.3 or JS not defined
-  proc ssAtEnd(s: Stream): bool =
+  proc ssAtEnd(s: Stream): bool {.nimcall, raises: [Defect, IOError, OSError], tags: [].} =
     var s = StringStream(s)
     return s.pos >= s.data.len
 
-  proc ssSetPosition(s: Stream, pos: int) =
+  proc ssSetPosition(s: Stream, pos: int) {.nimcall, raises: [Defect, IOError, OSError], tags: [].} =
     var s = StringStream(s)
     s.pos = clamp(pos, 0, s.data.len)
 
-  proc ssGetPosition(s: Stream): int =
+  proc ssGetPosition(s: Stream): int {.nimcall, raises: [Defect, IOError, OSError], tags: [].} =
     var s = StringStream(s)
     return s.pos
 
-  proc ssReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int =
+  proc ssReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
     var s = StringStream(s)
     when false: # nimvm
       discard
@@ -1262,7 +1262,7 @@ else: # after 1.3 or JS not defined
     else:
       result = 0
 
-  proc ssReadData(s: Stream, buffer: pointer, bufLen: int): int =
+  proc ssReadData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
     var s = StringStream(s)
     result = min(bufLen, s.data.len - s.pos)
     if result > 0:
@@ -1278,7 +1278,7 @@ else: # after 1.3 or JS not defined
     else:
       result = 0
 
-  proc ssPeekData(s: Stream, buffer: pointer, bufLen: int): int =
+  proc ssPeekData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
     var s = StringStream(s)
     result = min(bufLen, s.data.len - s.pos)
     if result > 0:
@@ -1293,7 +1293,7 @@ else: # after 1.3 or JS not defined
     else:
       result = 0
 
-  proc ssWriteData(s: Stream, buffer: pointer, bufLen: int) =
+  proc ssWriteData(s: Stream, buffer: pointer, bufLen: int) {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].} =
     var s = StringStream(s)
     if bufLen <= 0:
       return
@@ -1309,7 +1309,7 @@ else: # after 1.3 or JS not defined
       copyMem(addr(prepareMutationAt(s.data, s.pos)), buffer, bufLen)
     inc(s.pos, bufLen)
 
-  proc ssClose(s: Stream) =
+  proc ssClose(s: Stream) {.nimcall, raises: [IOError, OSError], tags: [WriteIOEffect].} =
     var s = StringStream(s)
     s.data = ""
 
@@ -1360,31 +1360,31 @@ type
     ## **Note:** Not available for JS backend.
     f: File
 
-proc fsClose(s: Stream) =
+proc fsClose(s: Stream) {.nimcall, raises: [IOError, OSError], tags: [WriteIOEffect].} =
   if FileStream(s).f != nil:
     close(FileStream(s).f)
     FileStream(s).f = nil
-proc fsFlush(s: Stream) = flushFile(FileStream(s).f)
-proc fsAtEnd(s: Stream): bool = return endOfFile(FileStream(s).f)
-proc fsSetPosition(s: Stream, pos: int) = setFilePos(FileStream(s).f, pos)
-proc fsGetPosition(s: Stream): int = return int(getFilePos(FileStream(s).f))
+proc fsFlush(s: Stream) {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].} = flushFile(FileStream(s).f)
+proc fsAtEnd(s: Stream): bool {.nimcall, raises: [Defect, IOError, OSError], tags: [].} = return endOfFile(FileStream(s).f)
+proc fsSetPosition(s: Stream, pos: int) {.nimcall, raises: [Defect, IOError, OSError], tags: [].} = setFilePos(FileStream(s).f, pos)
+proc fsGetPosition(s: Stream): int {.nimcall, raises: [Defect, IOError, OSError], tags: [].} = return int(getFilePos(FileStream(s).f))
 
-proc fsReadData(s: Stream, buffer: pointer, bufLen: int): int =
+proc fsReadData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
   result = readBuffer(FileStream(s).f, buffer, bufLen)
 
-proc fsReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int =
+proc fsReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
   result = readBuffer(FileStream(s).f, addr(prepareMutationAt(buffer, slice.a)), slice.b + 1 - slice.a)
 
-proc fsPeekData(s: Stream, buffer: pointer, bufLen: int): int =
+proc fsPeekData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
   let pos = fsGetPosition(s)
   defer: fsSetPosition(s, pos)
   result = readBuffer(FileStream(s).f, buffer, bufLen)
 
-proc fsWriteData(s: Stream, buffer: pointer, bufLen: int) {.raises.} =
+proc fsWriteData(s: Stream, buffer: pointer, bufLen: int) {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].} =
   if writeBuffer(FileStream(s).f, buffer, bufLen) != bufLen:
     raise IOError #newEIO("cannot write to stream")
 
-proc fsReadLine(s: Stream, line: var string): bool =
+proc fsReadLine(s: Stream, line: var string): bool {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
   result = readLine(FileStream(s).f, line)
 
 proc newFileStream*(f: File): FileStream =
