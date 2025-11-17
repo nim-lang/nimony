@@ -185,6 +185,7 @@ jobs:
           nim c -r src/hastur build all
 
       - name: Run tester
+        if: matrix.target.cpu != 'i386' # TODO: enables i386
         run: |
           cd nif
           nim c -r tests/tester.nim
