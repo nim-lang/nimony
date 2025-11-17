@@ -147,12 +147,12 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
           prefix = pool.strings[n.litId]
           inc n
         if n.kind == IntLit:
-          a = pool.integers[n.intId]
+          a = int pool.integers[n.intId]
           if a < 0: a = L + a
           b = a
           inc n
         if n.kind == IntLit:
-          b = pool.integers[n.intId]
+          b = int pool.integers[n.intId]
           if b < 0: b = L + b
           inc n
         var suffix = ""
