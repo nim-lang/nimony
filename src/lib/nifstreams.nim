@@ -260,7 +260,7 @@ proc tag*(n: PackedToken): TagId {.inline.} =
 
 proc typebits*(n: PackedToken): int =
   if n.kind == IntLit:
-    result = pool.integers[n.intId]
+    result = int pool.integers[n.intId]
   elif n.kind == InlineInt:
     result = n.soperand
   else:

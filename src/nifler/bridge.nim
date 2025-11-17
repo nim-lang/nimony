@@ -405,6 +405,11 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     else:
       c.b.addTree(ItertypeL)
 
+    if n.len == 0:
+      # it's a type class
+      c.b.endTree()
+      return
+
     c.b.addEmpty 4 # 0: name
     # 1: export marker
     # 2: pattern
