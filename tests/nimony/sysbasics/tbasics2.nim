@@ -218,3 +218,22 @@ type
 var call: ProcType = ProcType(nil)
 call = proc (x: int) = discard x
 call(1)
+
+block:
+  type
+    Obj = object of RootObj
+      id: proc (x: int)
+      name: int
+
+    ObjRef = ref Obj
+
+  proc foo(fuck: ObjRef)  =
+    fuck.id(21)
+
+  proc fooCallback(x: int) =
+    discard x
+
+  var obj = ObjRef(id: fooCallback)
+
+  foo(obj)
+
