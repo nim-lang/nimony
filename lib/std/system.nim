@@ -87,7 +87,7 @@ proc `$`*(x: int64): string =
   if x < 0:
     if x > -10:
       result = NegTen[-x]
-    if x == -9223372036854775808:
+    elif x == -9223372036854775808:
       result = "-" & $cast[uint64](x)
     else:
       result = "-" & $(0-x)
