@@ -233,6 +233,30 @@ template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty
   else:
     cannotEval orig
 
+template evalCmpOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  let orig = n
+  inc n # tag
+  let t = n
+  skip n # type
+  if t.typeKind == FloatT:
+    let a = propagateError eval(c, n)
+    let b = propagateError eval(c, n)
+    skipParRi n
+    if a.kind == FloatLit and b.kind == FloatLit:
+      let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
+      result = boolValue(c, rf)
+    else:
+      cannotEval orig
+  else:
+    let a = getConstOrdinalValue propagateError eval(c, n)
+    let b = getConstOrdinalValue propagateError eval(c, n)
+    skipParRi n
+    if not isNaN(a) and not isNaN(b):
+      let rx = opr(a, b)
+      result = boolValue(c, rx)
+    else:
+      cannotEval orig
+
 template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   var t = n
   inc t
@@ -474,6 +498,12 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         evalOrdBinOp(c, n, `div`)
     of ModX:
       evalOrdBinOp(c, n, `mod`)
+    of EqX:
+      evalCmpOp(c, n, `==`)
+    of LeX:
+      evalCmpOp(c, n, `<=`)
+    of LtX:
+      evalCmpOp(c, n, `<`)
     of IsMainModuleX:
       inc n
       skipParRi n
