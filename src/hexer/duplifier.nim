@@ -678,7 +678,8 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   c.dest.add n
   inc n # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  takeTree c.dest, n # skip `fn`
+
+  tr c, n, DontCare # transforms `fn` because it may be an expression that requires further handling
   assert fnType.substructureKind == ParamsU
   inc fnType
   while n.kind != ParRi:

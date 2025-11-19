@@ -1367,7 +1367,7 @@ proc trExpr(c: var EContext; n: var Cursor) =
       inc n # skip tag
       trExpr c, n # tuple
       expectIntLit c, n
-      c.dest.add symToken(ithTupleField(c, pool.integers[n.intId], fieldType), n.info)
+      c.dest.add symToken(ithTupleField(c, int pool.integers[n.intId], fieldType), n.info)
       inc n # skip index
       c.dest.addIntLit(0, n.info) # inheritance
       takeParRi c, n

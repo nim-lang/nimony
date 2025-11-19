@@ -876,7 +876,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
   var baseType = toTypeImpl baseType
   case baseType.typeKind
   of IntT, UIntT:
-    let bits = pool.integers[baseType.firstSon.intId]
+    let bits = int pool.integers[baseType.firstSon.intId]
     # - 3 because we do `div 8` as a byte has 8 bits:
     result = createXint(1'i64) shl (bits - 3)
   of CharT:
@@ -923,7 +923,7 @@ proc getArrayIndexLen*(index: Cursor): xint =
   of EnumT:
     result = countEnumValues(index)
   of IntT, UIntT:
-    let bits = pool.integers[index.firstSon.intId]
+    let bits = int pool.integers[index.firstSon.intId]
     result = createXint(1'i64) shl bits
   of CharT:
     result = createXint 256'i64
