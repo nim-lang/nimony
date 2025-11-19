@@ -503,7 +503,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of LeX:
       evalCmpOp(c, n, `<=`)
     of LtX:
-      evalCmpOp(c, n, `<=`)
+      evalCmpOp(c, n, `<`)
     of IsMainModuleX:
       inc n
       skipParRi n
