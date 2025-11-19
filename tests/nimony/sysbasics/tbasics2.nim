@@ -237,3 +237,17 @@ block:
 
   foo(obj)
 
+const fooxx = 5
+when fooxx != 5:
+  echo "hi"
+
+
+block:
+  const x = 1 == 2
+  assert not x
+
+  const y = 8 == 8
+  assert y
+
+  const z = 6.7 == 6.7
+  assert z
