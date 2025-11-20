@@ -42,6 +42,7 @@ Options:
   --codegen             track the contents of the code generator too
   --version             show the version
   --help                show this help
+  --passnimony:OPTION   pass an option to the Nimony compiler
 """
 
 proc quitWithText*(s: string) =
