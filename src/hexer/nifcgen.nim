@@ -424,7 +424,9 @@ proc addRttiField(c: var EContext; info: PackedLineInfo) =
   c.dest.add symdefToken(pool.syms.getOrIncl(VTableField), info)
   c.dest.addEmpty() # pragmas
   c.dest.addParLe PtrT, info
-  c.dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
+  let rttiSym = pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix)
+  c.dest.addSymUse rttiSym, info
+  c.demand rttiSym
   c.dest.addParRi() # "ptr"
   c.dest.addParRi() # "fld"
 
