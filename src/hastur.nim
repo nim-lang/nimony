@@ -215,7 +215,7 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
 
         failure c, file, valgrindSpec, testProgramOutput
 
-proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
+proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category; passNimony: string) =
   #echo "TESTING ", file
   inc c.total
   var nimonycmd = "--isMain"
@@ -227,6 +227,9 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   of Compat:
     nimonycmd.add " --compat"
+  if passNimony.len != 0:
+    nimonycmd.add ' '
+    nimonycmd.add passNimony
   when defined(linux):
     nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
   else:
@@ -278,7 +281,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       let nif = generatedFile(file, ".s.nif")
       diffFiles c, file, ast, nif, overwrite
 
-proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
+proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; passNimony: string) =
   var files: seq[string] = @[]
   for x in walkDir(dir):
     if x.kind == pcFile and x.path.endsWith(".nim"):
@@ -287,7 +290,7 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
   if cat in {Compat, Basics}:
     removeDir "nimcache"
   for f in items files:
-    testFile c, f, overwrite, cat
+    testFile c, f, overwrite, cat, passNimony
   if cat in {Compat, Basics}:
     removeDir "nimcache"
 
@@ -306,7 +309,7 @@ proc findCategory(path: string): Category =
       return cat
   return Normal
 
-proc nimonytests(overwrite: bool) =
+proc nimonytests(overwrite: bool; passNimony: string) =
   ## Run all the nimonytests in the test-suite.
   const TestDir = "tests/nimony"
   let t0 = epochTime()
@@ -314,7 +317,7 @@ proc nimonytests(overwrite: bool) =
   for x in walkDir(TestDir, relative = true):
     let cat = parseCategory x.path
     if x.kind == pcDir:
-      testDir c, TestDir / x.path, overwrite, cat
+      testDir c, TestDir / x.path, overwrite, cat, passNimony
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
@@ -381,18 +384,18 @@ proc vlTests(overwrite: bool) =
   ## Tests are .nif files in src/njvl/tests/ with expected output in .vl.nif files.
   runNifToolTests("vl", "src/njvl/tests", ".nif", ".vl.nif", overwrite)
 
-proc test(t: string; overwrite: bool; cat: Category) =
+proc test(t: string; overwrite: bool; cat: Category; passNimony: string) =
   var c = TestCounters(total: 0, failures: 0)
-  testFile c, t, overwrite, cat
+  testFile c, t, overwrite, cat, passNimony
   if c.failures > 0:
     quit "FAILURE: Test failed."
   else:
     echo "SUCCESS."
 
-proc testDirCmd(dir: string; overwrite: bool) =
+proc testDirCmd(dir: string; overwrite: bool; passNimony: string) =
   var c = TestCounters(total: 0, failures: 0)
   let t0 = epochTime()
-  testDir c, dir, overwrite, findCategory(dir)
+  testDir c, dir, overwrite, findCategory(dir), passNimony
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
@@ -580,6 +583,7 @@ proc handleCmdLine =
 
   var flags: set[RecordFlag] = {}
   var overwrite = false
+  var passNimony = ""
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -595,6 +599,7 @@ proc handleCmdLine =
         of "codegen": flags.incl RecordCodegen
         of "ast": flags.incl RecordAst
         of "overwrite": overwrite = true
+        of "passnimony": passNimony = val
         else: writeHelp()
       else:
         args.add key
@@ -614,7 +619,7 @@ proc handleCmdLine =
     buildNifc()
     buildHexer()
     buildNifmake()
-    nimonytests(overwrite)
+    nimonytests(overwrite, passNimony)
     nifctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
@@ -676,7 +681,7 @@ proc handleCmdLine =
 
   of "nimony":
     buildNimony()
-    nimonytests(overwrite)
+    nimonytests(overwrite, passNimony)
   of "nifc":
     buildNifc()
     nifctests(overwrite)
@@ -689,9 +694,9 @@ proc handleCmdLine =
     buildNifc()
     if args.len > 0:
       if args[0].dirExists():
-        testDirCmd args[0], overwrite
+        testDirCmd args[0], overwrite, passNimony
       else:
-        test args[0], overwrite, findCategory(args[0])
+        test args[0], overwrite, findCategory(args[0]), passNimony
     else:
       quit "`test` takes an argument"
   of "record":
