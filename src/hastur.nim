@@ -42,7 +42,7 @@ Options:
   --codegen             track the contents of the code generator too
   --version             show the version
   --help                show this help
-  --passnimony:OPTION   pass an option to the Nimony compiler
+  --forward:OPTION      pass an option to the Nimony compiler
 """
 
 proc quitWithText*(s: string) =
@@ -216,7 +216,7 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
 
         failure c, file, valgrindSpec, testProgramOutput
 
-proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category; passNimony: string) =
+proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category; forward: string) =
   #echo "TESTING ", file
   inc c.total
   var nimonycmd = "--isMain"
@@ -228,9 +228,9 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   of Compat:
     nimonycmd.add " --compat"
-  if passNimony.len != 0:
+  if forward.len != 0:
     nimonycmd.add ' '
-    nimonycmd.add passNimony
+    nimonycmd.add forward
   when defined(linux):
     nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
   else:
@@ -282,7 +282,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
       let nif = generatedFile(file, ".s.nif")
       diffFiles c, file, ast, nif, overwrite
 
-proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; passNimony: string) =
+proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; forward: string) =
   var files: seq[string] = @[]
   for x in walkDir(dir):
     if x.kind == pcFile and x.path.endsWith(".nim"):
@@ -291,7 +291,7 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; p
   if cat in {Compat, Basics}:
     removeDir "nimcache"
   for f in items files:
-    testFile c, f, overwrite, cat, passNimony
+    testFile c, f, overwrite, cat, forward
   if cat in {Compat, Basics}:
     removeDir "nimcache"
 
@@ -310,7 +310,7 @@ proc findCategory(path: string): Category =
       return cat
   return Normal
 
-proc nimonytests(overwrite: bool; passNimony: string) =
+proc nimonytests(overwrite: bool; forward: string) =
   ## Run all the nimonytests in the test-suite.
   const TestDir = "tests/nimony"
   let t0 = epochTime()
@@ -318,7 +318,7 @@ proc nimonytests(overwrite: bool; passNimony: string) =
   for x in walkDir(TestDir, relative = true):
     let cat = parseCategory x.path
     if x.kind == pcDir:
-      testDir c, TestDir / x.path, overwrite, cat, passNimony
+      testDir c, TestDir / x.path, overwrite, cat, forward
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
@@ -385,18 +385,18 @@ proc vlTests(overwrite: bool) =
   ## Tests are .nif files in src/njvl/tests/ with expected output in .vl.nif files.
   runNifToolTests("vl", "src/njvl/tests", ".nif", ".vl.nif", overwrite)
 
-proc test(t: string; overwrite: bool; cat: Category; passNimony: string) =
+proc test(t: string; overwrite: bool; cat: Category; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
-  testFile c, t, overwrite, cat, passNimony
+  testFile c, t, overwrite, cat, forward
   if c.failures > 0:
     quit "FAILURE: Test failed."
   else:
     echo "SUCCESS."
 
-proc testDirCmd(dir: string; overwrite: bool; passNimony: string) =
+proc testDirCmd(dir: string; overwrite: bool; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
   let t0 = epochTime()
-  testDir c, dir, overwrite, findCategory(dir), passNimony
+  testDir c, dir, overwrite, findCategory(dir), forward
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
@@ -584,7 +584,7 @@ proc handleCmdLine =
 
   var flags: set[RecordFlag] = {}
   var overwrite = false
-  var passNimony = ""
+  var forward = ""
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -600,7 +600,7 @@ proc handleCmdLine =
         of "codegen": flags.incl RecordCodegen
         of "ast": flags.incl RecordAst
         of "overwrite": overwrite = true
-        of "passnimony": passNimony = val
+        of "forward": forward = val
         else: writeHelp()
       else:
         args.add key
@@ -620,7 +620,7 @@ proc handleCmdLine =
     buildNifc()
     buildHexer()
     buildNifmake()
-    nimonytests(overwrite, passNimony)
+    nimonytests(overwrite, forward)
     nifctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
@@ -682,7 +682,7 @@ proc handleCmdLine =
 
   of "nimony":
     buildNimony()
-    nimonytests(overwrite, passNimony)
+    nimonytests(overwrite, forward)
   of "nifc":
     buildNifc()
     nifctests(overwrite)
@@ -695,9 +695,9 @@ proc handleCmdLine =
     buildNifc()
     if args.len > 0:
       if args[0].dirExists():
-        testDirCmd args[0], overwrite, passNimony
+        testDirCmd args[0], overwrite, forward
       else:
-        test args[0], overwrite, findCategory(args[0]), passNimony
+        test args[0], overwrite, findCategory(args[0]), forward
     else:
       quit "`test` takes an argument"
   of "record":
