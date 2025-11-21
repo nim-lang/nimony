@@ -85,19 +85,19 @@ proc exitStatusLikeShell*(status: cint): cint =
     status
 
 proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
-    ## Executes a `shell command`:idx:.
-    ##
-    ## Command has the form 'program args' where args are the command
-    ## line arguments given to program. The proc returns the error code
-    ## of the shell when it has finished (zero if there is no error).
-    ## The proc does not return until the process has finished.
-    ##
-    ## To execute a program without having a shell involved, use `osproc.execProcess proc
-    ## <osproc.html#execProcess,string,string,openArray[string],StringTableRef,set[ProcessOption]>`_.
-    ##
-    ## **Examples:**
-    ##   ```Nim
-    ##   discard execShellCmd("ls -la")
-    ##   ```
-    var command = command
-    result = exitStatusLikeShell(c_system(command.toCString))
+  ## Executes a `shell command`:idx:.
+  ##
+  ## Command has the form 'program args' where args are the command
+  ## line arguments given to program. The proc returns the error code
+  ## of the shell when it has finished (zero if there is no error).
+  ## The proc does not return until the process has finished.
+  ##
+  ## To execute a program without having a shell involved, use `osproc.execProcess proc
+  ## <osproc.html#execProcess,string,string,openArray[string],StringTableRef,set[ProcessOption]>`_.
+  ##
+  ## **Examples:**
+  ##   ```Nim
+  ##   discard execShellCmd("ls -la")
+  ##   ```
+  var command = command
+  result = exitStatusLikeShell(c_system(command.toCString))
