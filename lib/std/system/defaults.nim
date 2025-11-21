@@ -20,6 +20,7 @@ template default*[T: enum](x: typedesc[T]): T = low(T)
 
 template default*[T: ptr](x: typedesc[T]): T = T(nil)
 template default*[T: ref](x: typedesc[T]): T = T(nil)
+template default*[T: proc](x: typedesc[T]): T = T(nil)
 template default*(x: typedesc[pointer]): pointer = nil
 
 proc default*[T: distinct](x: typedesc[T]): T {.magic: DefaultDistinct.}
