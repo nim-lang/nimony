@@ -46,10 +46,6 @@ proc `<%`(x, y: int16): bool {.inline.} = cast[uint16](x) < cast[uint16](y)
 proc `<%`(x, y: int32): bool {.inline.} = cast[uint32](x) < cast[uint32](y)
 proc `<%`(x, y: int64): bool {.inline.} = cast[uint64](x) < cast[uint64](y)
 
-
-template high[T](s: openArray[T]): int =
-  len(s)-1
-
 proc add(x: var string, y: openArray[char]) =
   ## Concatenates `x` and `y` in place. `y` must not overlap with `x` to
   ## allow future `memcpy` optimizations.

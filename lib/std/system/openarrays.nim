@@ -22,6 +22,8 @@ converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline.} =
 converter toOpenArray*(s: string): openArray[char] {.inline.} =
   openArray[char](a: rawData(s), len: s.len)
 
+func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
+func low*[T](a: openArray[T]): int {.inline.} = 0
 func len*[T](a: openArray[T]): int {.inline.} = a.len
 
 type
