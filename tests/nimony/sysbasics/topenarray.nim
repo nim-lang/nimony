@@ -1,4 +1,4 @@
-import std / syncio
+import std / [syncio, assertions]
 
 proc sort(a: var openArray[int]) =
   var n = a.len
@@ -32,3 +32,9 @@ block:
   fill(x, 4)
   for i in x:
     echo i
+
+proc foo(x: openArray[int]) =
+  assert x.low == 0
+  assert x.high == 2
+
+foo([1, 2, 3])
