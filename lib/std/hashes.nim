@@ -42,3 +42,92 @@ proc hash*[T: object](x: T): Hash {.inline.} =
 
 proc nextTry*(h: Hash; maxHash: int): Hash {.inline.} =
   result = (h + 1'u) and maxHash.uint
+
+proc hashIgnoreStyle*(x: string): Hash =
+  ## Efficient hashing of strings; style is ignored.
+  ##
+  ## **Note:** This uses a different hashing algorithm than `hash(string)`.
+  ##
+  ## **See also:**
+  ## * `hashIgnoreCase <#hashIgnoreCase,string>`_
+  # runnableExamples:
+  #   doAssert hashIgnoreStyle("aBr_aCa_dAB_ra") == hashIgnoreStyle("abracadabra")
+  #   doAssert hashIgnoreStyle("abcdefghi") != hash("abcdefghi")
+
+  var h: Hash = 0
+  var i = 0
+  let xLen = x.len
+  while i < xLen:
+    var c = x[i]
+    if c == '_':
+      inc(i)
+    else:
+      if c in {'A'..'Z'}:
+        c = chr(ord(c) + (ord('a') - ord('A'))) # toLower()
+      h = h !& uint(ord(c))
+      inc(i)
+  result = !$h
+
+proc hashIgnoreStyle*(sBuf: string, sPos, ePos: int): Hash =
+  ## Efficient hashing of a string buffer, from starting
+  ## position `sPos` to ending position `ePos` (included); style is ignored.
+  ##
+  ## **Note:** This uses a different hashing algorithm than `hash(string)`.
+  ##
+  ## `hashIgnoreStyle(myBuf, 0, myBuf.high)` is equivalent
+  ## to `hashIgnoreStyle(myBuf)`.
+  # runnableExamples:
+  #   var a = "ABracada_b_r_a"
+  #   doAssert hashIgnoreStyle(a, 0, 3) == hashIgnoreStyle(a, 7, a.high)
+
+  var h: Hash = 0
+  var i = sPos
+  while i <= ePos:
+    var c = sBuf[i]
+    if c == '_':
+      inc(i)
+    else:
+      if c in {'A'..'Z'}:
+        c = chr(ord(c) + (ord('a') - ord('A'))) # toLower()
+      h = h !& uint(ord(c))
+      inc(i)
+  result = !$h
+
+proc hashIgnoreCase*(x: string): Hash =
+  ## Efficient hashing of strings; case is ignored.
+  ##
+  ## **Note:** This uses a different hashing algorithm than `hash(string)`.
+  ##
+  ## **See also:**
+  ## * `hashIgnoreStyle <#hashIgnoreStyle,string>`_
+  # runnableExamples:
+  #   doAssert hashIgnoreCase("ABRAcaDABRA") == hashIgnoreCase("abRACAdabra")
+  #   doAssert hashIgnoreCase("abcdefghi") != hash("abcdefghi")
+
+  var h: Hash = 0
+  for i in 0..x.len-1:
+    var c = x[i]
+    if c in {'A'..'Z'}:
+      c = chr(ord(c) + (ord('a') - ord('A'))) # toLower()
+    h = h !& uint(ord(c))
+  result = !$h
+
+proc hashIgnoreCase*(sBuf: string, sPos, ePos: int): Hash =
+  ## Efficient hashing of a string buffer, from starting
+  ## position `sPos` to ending position `ePos` (included); case is ignored.
+  ##
+  ## **Note:** This uses a different hashing algorithm than `hash(string)`.
+  ##
+  ## `hashIgnoreCase(myBuf, 0, myBuf.high)` is equivalent
+  ## to `hashIgnoreCase(myBuf)`.
+  # runnableExamples:
+  #   var a = "ABracadabRA"
+  #   doAssert hashIgnoreCase(a, 0, 3) == hashIgnoreCase(a, 7, 10)
+
+  var h: Hash = 0
+  for i in sPos..ePos:
+    var c = sBuf[i]
+    if c in {'A'..'Z'}:
+      c = chr(ord(c) + (ord('a') - ord('A'))) # toLower()
+    h = h !& uint(ord(c))
+  result = !$h
