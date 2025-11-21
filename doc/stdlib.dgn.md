@@ -954,6 +954,14 @@ A concept that describes what a type must fullfill in order to be considered has
 
 The overloaded `hash` operation returns the hash of a value.
 
+####hashIgnoreStyle
+
+Efficient hashing of strings; style is ignored.
+
+####hashIgnoreCase
+
+Efficient hashing of strings; case is ignored.
+
 ####nextTry
 
 To iterate over a search space of possible hash values, `nextTry` can be used.

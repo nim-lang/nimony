@@ -14,3 +14,7 @@ type
     foo
 
 assert compare(foo, foo)
+
+block sameButDifferent:
+  assert hashIgnoreCase("aA bb aAAa1234") == hashIgnoreCase("aa bb aaaa1234")
+  assert hashIgnoreStyle("aa_bb_AAaa1234") == hashIgnoreCase("aaBBAAAa1234")
