@@ -1099,3 +1099,17 @@ func formatSize*(bytes: int64; decimalSep = '.'; prefix = bpIEC; includeSpace = 
     result.add ' '
   result.add prefixes[matchedIndex]
   result.add 'B'
+
+func contains*(s, sub: string): bool =
+  ## Same as `find(s, sub) >= 0`.
+  ##
+  ## See also:
+  ## * `find func<#find,string,string,Natural,int>`_
+  return find(s, sub) >= 0
+
+func contains*(s: string, chars: set[char]): bool =
+  ## Same as `find(s, chars) >= 0`.
+  ##
+  ## See also:
+  ## * `find func<#find,string,set[char],Natural,int>`_
+  return find(s, chars) >= 0

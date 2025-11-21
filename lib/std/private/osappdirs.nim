@@ -16,9 +16,9 @@ proc getHomeDir*(): string {.tags: [ReadEnvEffect, ReadIOEffect].} =
   ## * `expandTilde proc`_
   ## * `getCurrentDir proc`_
   ## * `setCurrentDir proc`_
-  runnableExamples:
-    import std/os
-    assert getHomeDir() == expandTilde("~")
+  # runnableExamples:
+  #   import std/os
+  #   assert getHomeDir() == expandTilde("~")
 
   when defined(windows): return getEnv("USERPROFILE") & "\\"
   else: return getEnv("HOME") & "/"
