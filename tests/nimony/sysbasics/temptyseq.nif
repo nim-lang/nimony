@@ -333,9 +333,9 @@
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,49,lib/std/system/mimalloc.nim
+       (hconv 17,51,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 13,43,lib/std/system/mimalloc.nim
+        (hconv 13,45,lib/std/system/mimalloc.nim
          (pointer)
          (dot ~1 s.6 data.0.Ipe57hg.temd2l7vy +0))))))))) 0,19,lib/std/system/seqimpl.nim
  (proc :=wasMoved.0.temd2l7vy . .
@@ -462,9 +462,9 @@
          (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
           (i -1))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,46,lib/std/system/mimalloc.nim
+         (hconv 17,48,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 13,43,lib/std/system/mimalloc.nim
+          (hconv 13,45,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
             (hderef dest.3) data.0.Ipe57hg.temd2l7vy +0))) 12 memSize.3))) ,4
@@ -535,9 +535,9 @@
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,49,lib/std/system/mimalloc.nim
+       (hconv 17,51,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 13,43,lib/std/system/mimalloc.nim
+        (hconv 13,45,lib/std/system/mimalloc.nim
          (pointer)
          (dot ~1 s.9 data.0.Iw9f2pq.temd2l7vy +0))))))))) 0,19,lib/std/system/seqimpl.nim
  (proc :=wasMoved.1.temd2l7vy . .
@@ -664,9 +664,9 @@
          (uarray
           (f +64))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,46,lib/std/system/mimalloc.nim
+         (hconv 17,48,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 13,43,lib/std/system/mimalloc.nim
+          (hconv 13,45,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
             (hderef dest.4) data.0.Iw9f2pq.temd2l7vy +0))) 12 memSize.4))) ,4
@@ -737,9 +737,9 @@
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,49,lib/std/system/mimalloc.nim
+       (hconv 17,51,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 13,43,lib/std/system/mimalloc.nim
+        (hconv 13,45,lib/std/system/mimalloc.nim
          (pointer)
          (dot ~1 s.12 data.0.Iq4ofkp1.temd2l7vy +0))))))))) 0,19,lib/std/system/seqimpl.nim
  (proc :=wasMoved.2.temd2l7vy . .
@@ -866,9 +866,9 @@
          (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
           (u +8))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,46,lib/std/system/mimalloc.nim
+         (hconv 17,48,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 13,43,lib/std/system/mimalloc.nim
+          (hconv 13,45,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
             (hderef dest.5) data.0.Iq4ofkp1.temd2l7vy +0))) 12 memSize.5))) ,4
@@ -950,9 +950,9 @@
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,52,lib/std/system/mimalloc.nim
+        (hconv 23,54,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 13,43,lib/std/system/mimalloc.nim
+         (hconv 13,45,lib/std/system/mimalloc.nim
           (pointer)
           (dot ~1 s.15 data.0.Ipe57hg.temd2l7vy +0)))))) 40
      (else 6
@@ -982,9 +982,9 @@
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,52,lib/std/system/mimalloc.nim
+        (hconv 23,54,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 13,43,lib/std/system/mimalloc.nim
+         (hconv 13,45,lib/std/system/mimalloc.nim
           (pointer)
           (dot ~1 s.16 data.0.Iw9f2pq.temd2l7vy +0)))))) 40
      (else 6
@@ -1014,9 +1014,9 @@
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,52,lib/std/system/mimalloc.nim
+        (hconv 23,54,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 13,43,lib/std/system/mimalloc.nim
+         (hconv 13,45,lib/std/system/mimalloc.nim
           (pointer)
           (dot ~1 s.17 data.0.Iq4ofkp1.temd2l7vy +0)))))) 40
      (else 6
