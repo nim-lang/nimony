@@ -235,12 +235,12 @@
       (elif 2
        (eq
         (i +64) ~2 j.3 3 +2) ~1,1
-       (stmts 2,116,lib/std/syncio.nim
+       (stmts 2,122,lib/std/syncio.nim
         (stmts 2,1
          (stmts
           (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,81,tests/nimony/iter/tforloops1.nim "left the loop!")) ,2
-         (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
-        (break .)))) 2,116,lib/std/syncio.nim
+         (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+        (break .)))) 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,83,tests/nimony/iter/tforloops1.nim "A i ")) 2,1
@@ -250,7 +250,7 @@
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 20,83,tests/nimony/iter/tforloops1.nim " j ")) 2,1
       (stmts
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 27,83,tests/nimony/iter/tforloops1.nim j.3)) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,84
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,84
  (block . 2,1
   (stmts 4
    (for 7
@@ -279,11 +279,11 @@
         (stmts 4
          (asgn ~4 sum.0 6
           (add
-           (i +64) ~4 sum.0 2 a.5)))) 2,116,lib/std/syncio.nim
+           (i +64) ~4 sum.0 2 a.5)))) 2,122,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 11,92,tests/nimony/iter/tforloops1.nim sum.0)) ,2
-        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) ,93
+        (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) ,93
  (block . 2,1
   (stmts 4
    (let :i_arr.0 . . 8
@@ -304,12 +304,12 @@
      (let :i.10 . . 19,43,lib/std/system/openarrays.nim
       (mut
        (i -1)) .)) ~2,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 9,97,tests/nimony/iter/tforloops1.nim
         (hderef i.10))) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,98
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,98
  (block 6 :tbreak.0 2,1
   (stmts 2,1
    (var :x.3 . . 12,35,lib/std/system/basic_types.nim
@@ -328,24 +328,24 @@
         (elif
          (true) ~1,1
          (stmts
-          (break 6 myblock.0)))) 2,116,lib/std/syncio.nim
+          (break 6 myblock.0)))) 2,122,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,109,tests/nimony/iter/tforloops1.nim "leaving myblock")) ,2
-        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 2,5
+        (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 2,5
      (asgn ~2 x.3 2
       (true)))) 2,4,lib/std/assertions.nim
    (stmts
     (if 3
      (elif
       (not 9,111,tests/nimony/iter/tforloops1.nim x.3) ~1,1
-      (stmts 2,116,lib/std/syncio.nim
+      (stmts 2,122,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-        (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+        (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))) ,14
    (iterator 9 :foo.0.tfo161bfb1 . . . 12
     (params) 2
@@ -380,11 +380,11 @@
     (unpackflat
      (let :p.0 . . 13,~116
       (i -1) .)) ~2,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 9,120,tests/nimony/iter/tforloops1.nim p.0)) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (break .))) ,23
    (iterator 9 :permutations.0.tfo161bfb1 . . . 21
     (params) 2
@@ -432,7 +432,7 @@
          (let :y.1 . . 19,43,lib/std/system/openarrays.nim
           (mut 22,35,lib/std/system/basic_types.nim
            (bool)) .)) ~2,1
-        (stmts 2,116,lib/std/syncio.nim
+        (stmts 2,122,lib/std/syncio.nim
          (stmts 2,1
           (stmts
            (cmd write.1.syn1lfpjv 6 stdout.0.syn1lfpjv 13,133,tests/nimony/iter/tforloops1.nim
@@ -442,7 +442,7 @@
           (stmts
            (cmd write.1.syn1lfpjv 6 stdout.0.syn1lfpjv 21,133,tests/nimony/iter/tforloops1.nim
             (hderef y.1))) ,2
-          (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) 4,35
+          (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))))) 4,35
    (call ~4 main.0.tfo161bfb1))) 19,2
  (comment int.0.sysvq0asl ~9 int.0.sysvq0asl 1,8 cstring.0.sysvq0asl 4,16 int.0.sysvq0asl 4,16 int.0.sysvq0asl ~6,16 int.0.sysvq0asl 2,31 int.0.sysvq0asl ~9,31 int.0.sysvq0asl 1,37 int.0.sysvq0asl ~9,37 int.0.sysvq0asl 2,46 int.0.sysvq0asl ~9,46 int.0.sysvq0asl 1,49 int.0.sysvq0asl ~9,49 int.0.sysvq0asl 2,63 int.0.sysvq0asl ~9,63 int.0.sysvq0asl 1,66 int.0.sysvq0asl ~9,66 int.0.sysvq0asl ~12,25 >.0.sysvq0asl ~13,57 true.0.sysvq0asl ~13,78 echo.0.syn1lfpjv ~15,80 echo.0.syn1lfpjv ~4,86 int.0.sysvq0asl ~13,89 echo.0.syn1lfpjv ~15,94 echo.0.syn1lfpjv ~11,98 false.0.sysvq0asl ~9,99 true.0.sysvq0asl ~9,102 false.0.sysvq0asl ~10,104 true.0.sysvq0asl ~13,106 echo.0.syn1lfpjv ~11,107 true.0.sysvq0asl ~11,108 assert.0.assy765wm ~15,111 int.0.sysvq0asl ~15,117 echo.0.syn1lfpjv ~15,120 int.0.sysvq0asl ~5,128 true.0.sysvq0asl 1,128 false.0.sysvq0asl ~3,129 true.0.sysvq0asl 3,129 false.0.sysvq0asl ~11,130 echo.0.syn1lfpjv) 4,22
  (proc :inc.0.tfo161bfb1 . 0,12,lib/std/system/arithmetics.nim .
@@ -504,7 +504,7 @@
     (if 3
      (elif 7
       (eq
-       (i +64) 2,136,lib/std/system.nim
+       (i +64) 2,139,lib/std/system.nim
        (expr ,~4
         (expr 45,2
          (add
@@ -533,7 +533,7 @@
            (uarray
             (i -1))) 32
           (addr 1 x.9))) 45
-        (kv ~3 len.7.Inff8aa1.tfo161bfb1 2,136,lib/std/system.nim
+        (kv ~3 len.7.Inff8aa1.tfo161bfb1 2,139,lib/std/system.nim
          (expr ,~4
           (expr 45,2
            (add
@@ -610,7 +610,7 @@
     (if 3
      (elif 7
       (eq
-       (i +64) 2,136,lib/std/system.nim
+       (i +64) 2,139,lib/std/system.nim
        (expr ,~4
         (expr 45,2
          (add
@@ -639,7 +639,7 @@
            (uarray
             (i -1))) 32
           (addr 1 x.11))) 45
-        (kv ~3 len.7.Inff8aa1.tfo161bfb1 2,136,lib/std/system.nim
+        (kv ~3 len.7.Inff8aa1.tfo161bfb1 2,139,lib/std/system.nim
          (expr ,~4
           (expr 45,2
            (add
@@ -676,7 +676,7 @@
     (if 3
      (elif 7
       (eq
-       (i +64) 2,136,lib/std/system.nim
+       (i +64) 2,139,lib/std/system.nim
        (expr ,~4
         (expr 45,2
          (add
@@ -705,7 +705,7 @@
            (uarray 22,35,lib/std/system/basic_types.nim
             (bool))) 32
           (addr 1 x.12))) 45
-        (kv ~3 len.7.Ijejnmx1.tfo161bfb1 2,136,lib/std/system.nim
+        (kv ~3 len.7.Ijejnmx1.tfo161bfb1 2,139,lib/std/system.nim
          (expr ,~4
           (expr 45,2
            (add

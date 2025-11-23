@@ -25,12 +25,6 @@ var
   stdout* {.importc: "stdout", header: "<stdio.h>".}: File
   stderr* {.importc: "stderr", header: "<stdio.h>".}: File
 
-let
-  PRId32 {.importc: "\"%\" PRId32", header: "inttypes.h".}: cstring
-  PRId64 {.importc: "\"%\" PRId64", header: "inttypes.h".}: cstring
-  PRIu32 {.importc: "\"%\" PRIu32", header: "inttypes.h".}: cstring
-  PRIu64 {.importc: "\"%\" PRIu64", header: "inttypes.h".}: cstring
-
 proc c_fputc(c: int32; f: File): int32 {.
   importc: "fputc", header: "<stdio.h>".}
 proc c_fwrite(buf: pointer; size, n: uint; f: File): uint {.
@@ -47,17 +41,17 @@ proc write*(f: File; b: bool) =
   if b: write f, "true"
   else: write f, "false"
 
-proc write*(f: File; x: int32) =
-  fprintf(f, PRId32, x)
-
 proc write*(f: File; x: int64) =
-  fprintf(f, PRId64, x)
+  fprintf(f, cstring"%lld", x)
 
-proc write*(f: File; x: uint32) =
-  fprintf(f, PRIu32, x)
+proc write*(f: File; x: int32) =
+  write f, int64 x
 
 proc write*(f: File; x: uint64) =
-  fprintf(f, PRIu64, x)
+  fprintf(f, cstring"%llu", x)
+
+proc write*(f: File; x: uint32) =
+  write f, uint64 x
 
 proc write*[T: enum](f: File; x: T) =
   write f, $x
