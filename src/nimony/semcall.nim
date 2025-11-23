@@ -414,7 +414,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         if m.err and not prevErr:
           c.typeMismatch arg.info, defaultValue.typ, param.typ
         inc arg
-      elif m.checkEmptyArg and isEmptyContainer(arg):
+      elif m.checkEmptyArg and (isEmptyContainer(arg) or isEmptyOpenArrayCall(arg)):
         let isCall = arg.exprKind in CallKinds
         let start = c.dest.len
         if isCall:
@@ -728,7 +728,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       if finalFn.sym != SymId(0) and
           # overload of `@` with empty array param:
           pool.syms[finalFn.sym] == "@.1." & SystemModuleSuffix and
-          (AllowEmpty in cs.flags or isSomeSeqType(it.typ)):
+          (AllowEmpty in cs.flags or isSomeSeqType(it.typ) or isSomeOpenArrayType(it.typ)):
         # empty seq will be handled, either by `commonType` now or
         # the call this is an argument of in the case of AllowEmpty
         typeofCallIs c, it, cs.beforeCall, c.types.autoType

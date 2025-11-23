@@ -936,10 +936,9 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   else:
     m.error InvalidMatch, f, a
 
-proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
-  # check that `a` is either an instantiation of seq or an invocation to it
+proc tryTypeSymbolBase(a: var Cursor): bool =
+  # returns false if non-type symbol declaration was found
   result = false
-  var a = a
   var i = 0
   while a.kind == Symbol:
     let decl = getTypeSection(a.symId)
@@ -952,6 +951,14 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
       return false
     inc i
     if i == 20: break
+  result = true
+
+proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
+  # check that `a` is either an instantiation of seq or an invocation to it
+  result = false
+  var a = a
+  if not tryTypeSymbolBase(a):
+    return false
   if a.typeKind == InvokeT:
     inc a # tag
     result = a.kind == Symbol and pool.syms[a.symId] == "seq.0." & SystemModuleSuffix
@@ -962,6 +969,23 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
 proc isSomeSeqType*(a: Cursor): bool {.inline.} =
   var dummy = default(Cursor)
   result = isSomeSeqType(a, dummy)
+
+proc isSomeOpenArrayType*(a: Cursor, elemType: var Cursor): bool =
+  # check that `a` is either an instantiation of openArray or an invocation to it
+  result = false
+  var a = a
+  if not tryTypeSymbolBase(a):
+    return false
+  if a.typeKind == InvokeT:
+    inc a # tag
+    result = a.kind == Symbol and pool.syms[a.symId] == "openArray.0." & SystemModuleSuffix
+    if result:
+      inc a
+      elemType = a
+
+proc isSomeOpenArrayType*(a: Cursor): bool {.inline.} =
+  var dummy = default(Cursor)
+  result = isSomeOpenArrayType(a, dummy)
 
 proc getTupleFieldTypeSkipTypedesc(c: Cursor): Cursor =
   result = getTupleFieldType(c)
@@ -1164,6 +1188,23 @@ proc isEmptyCall*(n: Cursor): bool =
 proc isEmptyContainer*(n: Cursor): bool =
   result = isEmptyLiteral(n) or isEmptyCall(n)
 
+proc isEmptyOpenArrayCall*(n: Cursor): bool =
+  if n.exprKind notin CallKinds:
+    return false
+  var n = n
+  inc n
+  result = n.kind == Symbol and
+    # normal overload of `toOpenArray` for arrays:
+    (pool.syms[n.symId] == "toOpenArray.0." & SystemModuleSuffix or
+      # normal overload of `toOpenArray` for seqs:
+      pool.syms[n.symId] == "toOpenArray.1." & SystemModuleSuffix)
+  inc n
+  if not isEmptyContainer(n):
+    return false
+  skip n
+  if n.kind != ParRi:
+    return false
+
 proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInfo) =
   buf.addParLe(RangetypeT, info)
   buf.addSubtree c.types.intType
@@ -1225,6 +1266,24 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
         skip call
         takeParRi m.args, call # array constructor
         takeParRi m.args, call # call
+    elif ((arg.n.exprKind == AconstrX or arg.n.exprKind in CallKinds) and isSomeOpenArrayType(f, elemType)):
+      inc m.inheritanceCosts
+      if not m.err:
+        # call to `toOpenArray` needs to be instantiated,
+        # also the element type needs to be instantiated if generic:
+        m.checkEmptyArg = true
+        # generate a call to `toOpenArray` with an empty array constructor,
+        # even if the argument is an empty seq for simplicity
+        m.args.addParLe(HcallX, arg.n.info)
+        m.args.add symToken(pool.syms.getOrIncl("toOpenArray.0." & SystemModuleSuffix), arg.n.info)
+        m.args.addParLe(AconstrX, arg.n.info)
+        # build our own array type:
+        m.args.addParLe(ArrayT, arg.n.info)
+        m.args.addSubtree elemType
+        addEmptyRangeType(m.args, m.context, arg.n.info)
+        m.args.addParRi() # array type
+        m.args.addParRi() # array constructor
+        m.args.addParRi() # call
     else:
       # match against `auto`, untyped/varargs should still match
       singleArgImpl(m, f, arg)
