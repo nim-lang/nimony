@@ -17,6 +17,7 @@ converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline.} 
   else:
     openArray[T](a: cast[ptr UncheckedArray[T]](addr(x)), len: len(x))
 
+# special cased in compiler as "toOpenArray.1.<system suffix>" for empty seq type inference:
 converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline.} =
   openArray[T](a: rawData(s), len: s.len)
 
