@@ -24,9 +24,10 @@ import syncio, assertions, strutils
 
 #----------------------------------------------------
 
-template chr(x: int32): char =
-  ## TODO: fixes type inference
-  chr(int(x))
+when not defined(cpu32):
+  template chr(x: int32): char =
+    ## TODO: fixes type inference
+    chr(int(x))
 
 # proc `<=%`(x, y: int): bool {.inline.} =
 #   ## Treats `x` and `y` as unsigned and compares them.

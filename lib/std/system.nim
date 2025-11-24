@@ -96,6 +96,9 @@ proc `$`*(x: int64): string =
   else:
     result = $cast[uint64](x)
 
+proc `$`*(x: int32): string =
+  $(int64(x))
+
 proc addInt*(s: var string; x: int64) {.inline.} =
   s.add $x
 
