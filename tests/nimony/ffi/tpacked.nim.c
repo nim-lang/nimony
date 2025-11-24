@@ -434,7 +434,7 @@ typedef struct __attribute__ ((__packed__)) Foo_0_tpakvxko41{
   NI x_0_tpakvxko41;}
 Foo_0_tpakvxko41;
 extern void write_0_syn1lfpjv(FILE* f_7, string_0_sysvq0asl s_0);
-extern void write_5_syn1lfpjv(FILE* f_12, NC8 c_2);
+extern void write_7_syn1lfpjv(FILE* f_14, NC8 c_2);
 extern void quit_0_syn1lfpjv(NI value_1);
 Foo_0_tpakvxko41 x_1_tpakvxko41;
 int cmdCount;
