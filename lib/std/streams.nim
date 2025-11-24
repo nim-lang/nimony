@@ -411,8 +411,8 @@ proc write*(s: Stream, x: string) {.raises.} =
         var x = x
         writeData(s, toCString(x), x.len)
 
-when false: # TODO:
-  proc write*(s: Stream, args: varargs[string, `$`]) =
+when false: # TODO: ambiguous call: 'write' ?
+  template write*(s: Stream, args: varargs[string, `$`]) =
     ## Writes one or more strings to the the stream. No length fields or
     ## terminating zeros are written.
     when false: # runnableExamples:
@@ -422,21 +422,21 @@ when false: # TODO:
       assert strm.readLine() == "1234"
       strm.close()
 
-    for str in args: write(s, str)
+    for str in unpack(): write(s, str)
 
-  proc writeLine*(s: Stream, args: varargs[string, `$`]) =
-    ## Writes one or more strings to the the stream `s` followed
-    ## by a new line. No length field or terminating zero is written.
-    when false: # runnableExamples:
-      var strm = newStringStream("")
-      strm.writeLine(1, 2)
-      strm.writeLine(3, 4)
-      strm.setPosition(0)
-      assert strm.readAll() == "12\n34\n"
-      strm.close()
+template writeLine*(s: Stream, args: varargs[string, `$`]) =
+  ## Writes one or more strings to the the stream `s` followed
+  ## by a new line. No length field or terminating zero is written.
+  when false: # runnableExamples:
+    var strm = newStringStream("")
+    strm.writeLine(1, 2)
+    strm.writeLine(3, 4)
+    strm.setPosition(0)
+    assert strm.readAll() == "12\n34\n"
+    strm.close()
 
-    for str in args: write(s, str)
-    write(s, "\n")
+  for str in unpack(): write(s, str)
+  write(s, "\n")
 
 proc read*[T](s: Stream, result: var T) {.raises.} =
   ## Generic read procedure. Reads `result` from the stream `s`.

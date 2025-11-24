@@ -5,6 +5,7 @@ block tstreams:
   var outp = newFileStream(stdout)
   try:
     write(outp, "Hello! What is your name?\n")
+    writeLine(outp, "Panne")
   except:
     discard
 
