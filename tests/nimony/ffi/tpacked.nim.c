@@ -326,6 +326,16 @@ typedef NU8 NU;
 #  error "Cannot define NIM_THREADVAR"
 #endif
 
+/* define NIM_STATIC_ASSERT */
+#if defined(__cplusplus)
+#define NIM_STATIC_ASSERT(x, msg) static_assert((x), msg)
+#else
+#define NIM_STATIC_ASSERT(x, msg) _Static_assert((x), msg)
+#endif
+
+// Test to see if Nim and the C compiler agree on the size of a pointer.
+NIM_STATIC_ASSERT(sizeof(NI) == sizeof(void*) && NIM_INTBITS == sizeof(NI)*8, "Pointer size mismatch between Nim and C/C++ backend. You probably need to setup the backend compiler for target CPU.");
+
 N_INLINE(NB8, _Qnifc_div_sll_overflow)(long long int a, long long int b, long long int *res) {
   if (b == 0) {
     *res = 0;
@@ -442,7 +452,7 @@ if ((!((x_1_tpakvxko41.c_0_tpakvxko41 == (NC8)'a') && (x_1_tpakvxko41.x_0_tpakvx
   write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
     .a_0_sysvq0asl = (NC8*)"", .i_0_sysvq0asl = IL64(0)}
   );
-  write_5_syn1lfpjv(stdout, (NC8)'\012');
+  write_7_syn1lfpjv(stdout, (NC8)'\012');
   quit_0_syn1lfpjv(IL64(1));}
 }
 

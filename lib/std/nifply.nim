@@ -77,11 +77,11 @@ proc fromNif*(r: var NifReader; t: typedesc[string]): string =
 
 proc fromNif*(r: var NifReader; t: typedesc[int]): int =
   let t = r.next
-  result = decodeInt t
+  result = int decodeInt t
 
 proc fromNif*(r: var NifReader; t: typedesc[uint]): uint =
   let t = r.next
-  result = decodeUInt t
+  result = uint decodeUInt t
 
 proc fromNif*(r: var NifReader; t: typedesc[float]): float =
   let t = r.next

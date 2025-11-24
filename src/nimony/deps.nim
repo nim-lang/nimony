@@ -373,6 +373,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addStrLit nifc
       b.addStrLit "c"
       b.addStrLit "--compileOnly"
+      b.addStrLit "--bits:" & $c.config.bits
       b.addKeyw "args"
       if commandLineArgsNifc.len > 0:
         for arg in commandLineArgsNifc.split(' '):

@@ -1,4 +1,6 @@
 {.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -I${path}/../../../vendor/mimalloc/include").}
+when defined(arm):
+  {.passL:"-latomic".}
 
 type
   MiStatCount {.importc: "mi_stat_count_t", bycopy.} = object
