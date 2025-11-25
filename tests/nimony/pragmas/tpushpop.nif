@@ -66,13 +66,13 @@
      (eq
       (i +64) ~6
       (call ~12 c_fpclassify.1.tpu1210461 1 +1.0) 3 c_fpNormal.0.tpu1210461)) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) ,22
  (proc 5 :foo.0.tpu1210461 . . . 8
   (params 1

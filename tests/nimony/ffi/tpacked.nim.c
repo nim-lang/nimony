@@ -434,7 +434,7 @@ typedef struct __attribute__ ((__packed__)) Foo_0_tpakvxko41{
   NI x_0_tpakvxko41;}
 Foo_0_tpakvxko41;
 extern void write_0_syn1lfpjv(FILE* f_4, string_0_sysvq0asl s_0);
-extern void write_5_syn1lfpjv(FILE* f_9, NC8 c_1);
+extern void write_7_syn1lfpjv(FILE* f_11, NC8 c_1);
 extern void quit_0_syn1lfpjv(NI value_1);
 Foo_0_tpakvxko41 x_1_tpakvxko41;
 int cmdCount;
@@ -452,7 +452,7 @@ if ((!((x_1_tpakvxko41.c_0_tpakvxko41 == (NC8)'a') && (x_1_tpakvxko41.x_0_tpakvx
   write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
     .a_0_sysvq0asl = (NC8*)"", .i_0_sysvq0asl = IL64(0)}
   );
-  write_5_syn1lfpjv(stdout, (NC8)'\012');
+  write_7_syn1lfpjv(stdout, (NC8)'\012');
   quit_0_syn1lfpjv(IL64(1));}
 }
 

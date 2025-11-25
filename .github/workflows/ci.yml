@@ -49,7 +49,7 @@ jobs:
           git config --global init.defaultBranch master
 
       - name: Checkout nif
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           path: nif
           submodules: false

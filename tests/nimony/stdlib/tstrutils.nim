@@ -903,8 +903,8 @@ block: # trimZeros
   assert x == "1"
 
 block: # formatSize
-  assert formatSize(1024 * 1024 * 1024 * 2 - 1) == "1.999GiB"
-  assert formatSize(1024 * 1024 * 1024 * 2) == "2GiB"
+  assert formatSize(1024'i64 * 1024 * 1024 * 2 - 1) == "1.999GiB"
+  assert formatSize(1024'i64 * 1024 * 1024 * 2) == "2GiB"
   assert formatSize((1'i64 shl 31) + (300'i64 shl 20)) == "2.293GiB" # <=== bug #8231
   assert formatSize(int64.high) == "7.999EiB"
   assert formatSize(int64.high div 2 + 1) == "4EiB"
