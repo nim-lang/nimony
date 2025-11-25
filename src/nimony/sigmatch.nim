@@ -1266,28 +1266,6 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
         skip call
         takeParRi m.args, call # array constructor
         takeParRi m.args, call # call
-    elif ((arg.n.exprKind == AconstrX or arg.n.exprKind in CallKinds) and isSomeOpenArrayType(f, elemType)):
-      # original nim does this for some reason:
-      if arg.n.exprKind == AconstrX:
-        inc m.inheritanceCosts
-      else:
-        inc m.convCosts
-      if not m.err:
-        # call to `toOpenArray` needs to be instantiated,
-        # also the element type needs to be instantiated if generic:
-        m.checkEmptyArg = true
-        # generate a call to `toOpenArray` with an empty array constructor,
-        # even if the argument is an empty seq for simplicity
-        m.args.addParLe(HcallX, arg.n.info)
-        m.args.add symToken(pool.syms.getOrIncl("toOpenArray.0." & SystemModuleSuffix), arg.n.info)
-        m.args.addParLe(AconstrX, arg.n.info)
-        # build our own array type:
-        m.args.addParLe(ArrayT, arg.n.info)
-        m.args.addSubtree elemType
-        addEmptyRangeType(m.args, m.context, arg.n.info)
-        m.args.addParRi() # array type
-        m.args.addParRi() # array constructor
-        m.args.addParRi() # call
     else:
       # match against `auto`, untyped/varargs should still match
       singleArgImpl(m, f, arg)
