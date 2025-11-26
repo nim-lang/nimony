@@ -2766,11 +2766,17 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
         c.dest.addSubtree it.typ
       else:
         buildErr c, info, "empty array needs a specified type"
+      takeParRi c, it.n
     of ArrayT:
       c.dest.addSubtree it.typ
+      takeParRi c, it.n
     else:
-       buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
-    takeParRi c, it.n
+      # unknown expected type, give empty literal auto type, then match it
+      c.dest.addSubtree c.types.autoType
+      takeParRi c, it.n
+      let expected = it.typ
+      it.typ = c.types.autoType
+      commonType c, it, exprStart, expected
     return
 
   let typeInsertPos = c.dest.len
@@ -2838,11 +2844,17 @@ proc semCurly(c: var SemContext, it: var Item; flags: set[SemFlag]) =
         c.dest.addSubtree it.typ
       else:
         buildErr c, info, "empty set needs a specified type"
+      takeParRi c, it.n
     of SetT:
       c.dest.addSubtree it.typ
+      takeParRi c, it.n
     else:
-      buildErr c, info, "invalid expected type for set constructor: " & typeToString(it.typ)
-    takeParRi c, it.n
+      # unknown expected type, give empty literal auto type, then match it
+      c.dest.addSubtree c.types.autoType
+      takeParRi c, it.n
+      let expected = it.typ
+      it.typ = c.types.autoType
+      commonType c, it, exprStart, expected
     return
 
   let typeInsertPos = c.dest.len
