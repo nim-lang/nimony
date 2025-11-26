@@ -979,7 +979,7 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
     var dollorProcDecl = beginRead(pending)
     var it = Item(n: dollorProcDecl, typ: c.types.autoType)
     # semchecking is needed for publishing signature
-    # and transforms `ret ...` into `ret result` for `controlflow.nim`
+    # and transforming `ret ...` into `ret result` for `controlflow.nim`
     semExpr(c, it)
 
   if isRefPtrObj:
