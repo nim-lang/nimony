@@ -1,2 +1,3 @@
 tests/nimony/generics/twronginference.nim(7, 6) Error: Type mismatch at [position]
-[2] expected: (i -1) but got: Foo.0.Iy40vk81.twrt5xaak
+foo(x, x)
+[2] expected: int but got: Foo (declared in tests/nimony/generics/twronginference.nim(3, 1))

@@ -1,2 +1,2 @@
-tests/nimony/errmsgs/tobjconstr.nim(4, 13) Error: undeclared field: 'undeclaredField' for type Foo.0.tobfnj5681
+tests/nimony/errmsgs/tobjconstr.nim(4, 13) Error: undeclared field: 'undeclaredField' for type Foo
 tests/nimony/errmsgs/tobjconstr.nim(4, 33) Error: expected key/value pair in object constructor

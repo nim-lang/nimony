@@ -25,3 +25,11 @@ of false:
   let y = x[]
 else:
   let y = x
+
+var weg: ptr int
+
+if weg == nil:
+  discard "X is nil!"
+
+if nil == weg: # Crashes the compiler
+  discard "X is nil!"

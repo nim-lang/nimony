@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tbadparamcalls.nim(5, 5) Error: undeclared identifier: undefined
+tests/nimony/errmsgs/tbadparamcalls.nim(6, 16) Error: undeclared identifier: undefinedType

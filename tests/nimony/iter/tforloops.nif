@@ -53,10 +53,10 @@
  (for 9
   (call ~4 foo1.0.tfocaa3fp1 1 +2)
   (unpackflat
-   (let :m.0 . . 6,~4
+   (let :m.0 . . 12,~12
     (i -1) .)) ~2,1
   (stmts 4
-   (let :n.0 . . 4,~5
+   (let :n.0 . . 10,~13
     (i -1) 4 m.0))) 4,18
  (for 11
   (call ~3 foo.0.tfocaa3fp1 1 +2)
@@ -111,4 +111,5 @@
       (i -1) 4 i.3) 4,1
      (let :m.4 . . 8,~32
       (i -1) 4 j.3))))) 3,36
- (call ~3 bar.0.tfocaa3fp1))
+ (call ~3 bar.0.tfocaa3fp1) 16,2
+ (comment int.0.sysvq0asl ~5 int.0.sysvq0asl int.0.sysvq0asl 1,8 int.0.sysvq0asl ~6,8 int.0.sysvq0asl))

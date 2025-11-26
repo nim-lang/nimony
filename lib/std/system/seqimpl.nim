@@ -194,6 +194,7 @@ proc grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
     inc i
 
 proc high*[T](s: seq[T]): int {.inline.} = s.len - 1
+proc low*[T](s: seq[T]): int {.inline.} = 0
 
 proc pop*[T](s: var seq[T]): T {.requires: (s.len > 0), inline, nodestroy.} =
   let L = s.len-1

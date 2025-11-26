@@ -44,8 +44,14 @@ proc write*(f: File; b: bool) =
 proc write*(f: File; x: int64) =
   fprintf(f, cstring"%lld", x)
 
+proc write*(f: File; x: int32) =
+  write f, int64 x
+
 proc write*(f: File; x: uint64) =
   fprintf(f, cstring"%llu", x)
+
+proc write*(f: File; x: uint32) =
+  write f, uint64 x
 
 proc write*[T: enum](f: File; x: T) =
   write f, $x
@@ -144,9 +150,9 @@ proc readLine*(f: File; s: var string): bool =
   addReadLine f, s
 
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
-proc quit*(value: int) = exit(value.int32)
+proc quit*(value: int) {.noreturn.} = exit(value.int32)
 
-proc quit*(msg: string) =
+proc quit*(msg: string) {.noreturn.} =
   echo msg
   quit 1
 

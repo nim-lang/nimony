@@ -44,17 +44,18 @@ Hexer accepts Nimony's grammar.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import ".." / nimony / [langmodes]
-import nifcgen, lifter, duplifier, destroyer, inliner, constparams
+import nifcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
 
 const
-  Version = "0.4"
+  Version = "0.2.0"
   Usage = "Hexer Compiler. Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   hexer [options] [command]
 Command:
-  file.nif      compiler semchecked NIF file to NIFC
+  c file.nif                compile semchecked NIF file to NIFC
+  d file1.nif file2.nif ... perform dead code elimination for the given NIF files
 
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
@@ -70,10 +71,14 @@ proc handleCmdLine*() =
   var files: seq[string] = @[]
   var bits = sizeof(int) * 8
   var flags = DefaultSettings
+  var action = ""
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
-      files.add key
+      if action.len == 0:
+        action = key.normalize
+      else:
+        files.add key
     of cmdLongOption, cmdShortOption:
       case normalize(key)
       of "bits":
@@ -88,12 +93,18 @@ proc handleCmdLine*() =
       of "version", "v": writeVersion()
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
-  if files.len > 1:
+  if action == "c" and files.len > 1:
     quit "too many arguments given, seek --help"
-  elif files.len == 0:
+  elif action.len == 0 or files.len == 0:
     writeHelp()
   else:
-    expand files[0], bits, flags
+    case action
+    of "c":
+      expand files[0], bits, flags
+    of "d":
+      deadCodeElimination files
+    else:
+      writeHelp()
 
 when isMainModule:
   handleCmdLine()

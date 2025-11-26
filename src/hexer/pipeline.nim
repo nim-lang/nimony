@@ -12,7 +12,7 @@ include nifprelude
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
-  constparams, vtables_backend, eraiser
+  constparams, vtables_backend, eraiser, lambdalifting, cps
 
 proc publishHooks*(n: var Cursor) =
   var nested = 0
@@ -40,60 +40,67 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string): TokenBuf =
   var n = n
   elimForLoops(c, n)
 
-  var n0 = move c.dest
-  var c0 = beginRead(n0)
+  var initialBuf = move c.dest
+  var desugarReader = beginRead(initialBuf)
 
-  var n1 = desugar(c0, moduleSuffix, c.activeChecks)
-  endRead(n0)
+  var desugaredBuf = desugar(desugarReader, moduleSuffix, c.activeChecks)
+  endRead(initialBuf)
 
-  var c1 = beginRead(n1)
-  var nx = lowerExprs(c1, moduleSuffix)
-  endRead(n1)
+  var cpsReader = beginRead(desugaredBuf)
+  var cpsBuf = transformToCps(cpsReader, moduleSuffix)
+  endRead(desugaredBuf)
 
-  var c2 = beginRead(nx)
-  let ctx = createLiftingCtx(moduleSuffix, c.bits)
-  var n2 = injectDups(c2, nx, ctx)
+  var lambdaLiftingReader = beginRead(cpsBuf)
+  var lambdaLiftedBuf = elimLambdas(lambdaLiftingReader, moduleSuffix)
+  endRead(cpsBuf)
+
+  var lowerExprsReader1 = beginRead(lambdaLiftedBuf)
+  var nx = lowerExprs(lowerExprsReader1, moduleSuffix)
+  endRead(lambdaLiftedBuf)
+
+  var duplicationReader = beginRead(nx)
+  var duplicatedBuf = injectDups(duplicationReader, moduleSuffix, nx, c.liftingCtx)
   endRead(nx)
 
-  var c3 = beginRead(n2)
+  var raisesReader = beginRead(duplicatedBuf)
   var needsXelimIgnored = false
-  var withRaises = injectRaisingCalls(c3, c.bits div 8, needsXelimIgnored)
-  endRead(n2)
-  var withRaisesCursor = beginRead(withRaises)
+  var withRaises = injectRaisingCalls(raisesReader, c.bits div 8, needsXelimIgnored)
+  endRead(duplicatedBuf)
+  var withRaisesReader = beginRead(withRaises)
 
-  var n3 = lowerExprs(withRaisesCursor, moduleSuffix)
+  var loweredBuf = lowerExprs(withRaisesReader, moduleSuffix)
   endRead(withRaises)
 
-  var c4 = beginRead(n3)
-  var n4 = injectDestructors(c4, ctx)
-  endRead(n3)
+  var destructorReader = beginRead(loweredBuf)
+  var destructorBuf = injectDestructors(destructorReader, c.liftingCtx)
+  endRead(loweredBuf)
 
-  assert n4[n4.len-1].kind == ParRi
-  shrink(n4, n4.len-1)
+  assert destructorBuf[destructorBuf.len-1].kind == ParRi
+  shrink(destructorBuf, destructorBuf.len-1)
 
-  if ctx[].dest.len > 0:
-    var hookCursor = beginRead(ctx[].dest)
-    #echo "HOOKS: ", toString(hookCursor)
-    publishHooks hookCursor
-    endRead(ctx[].dest)
+  if c.liftingCtx[].dest.len > 0:
+    var hookReader = beginRead(c.liftingCtx[].dest)
+    #echo "HOOKS: ", toString(hookReader)
+    publishHooks hookReader
+    endRead(c.liftingCtx[].dest)
 
-  n4.add move(ctx[].dest)
-  n4.addParRi()
+  destructorBuf.add move(c.liftingCtx[].dest)
+  destructorBuf.addParRi()
 
   var needsXelimAgain = false
 
-  var c5 = beginRead(n4)
-  var nwithvtables = transformVTables(c5, moduleSuffix, needsXelimAgain)
-  endRead(n4)
+  var vtableReader = beginRead(destructorBuf)
+  var nwithvtables = transformVTables(vtableReader, moduleSuffix, needsXelimAgain)
+  endRead(destructorBuf)
 
-  var c6 = beginRead(nwithvtables)
-  var n5 = injectConstParamDerefs(c6, c.bits div 8, needsXelimAgain)
+  var constParamReader = beginRead(nwithvtables)
+  var constParamBuf = injectConstParamDerefs(constParamReader, c.bits div 8, needsXelimAgain)
   endRead(nwithvtables)
 
   if needsXelimAgain:
-    var c7 = beginRead(n5)
-    var n6 = lowerExprs(c7, moduleSuffix)
-    endRead(n5)
-    result = move n6
+    var finalLowerExprsReader = beginRead(constParamBuf)
+    var finalBuf = lowerExprs(finalLowerExprsReader, moduleSuffix)
+    endRead(constParamBuf)
+    result = move finalBuf
   else:
-    result = move n5
+    result = move constParamBuf

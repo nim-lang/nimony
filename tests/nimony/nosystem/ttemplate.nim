@@ -7,8 +7,13 @@ type
 
   array* [Index, T] {.magic: Array.}
   typedesc*[T] {.magic: TypeDesc.}
+  untyped* {.magic: Expr.}
 
-proc typeof*[T](x: T): typedesc[T] {.magic: TypeOf.}
+  TypeOfMode* = enum
+    typeOfProc,
+    typeOfIter
+
+proc typeof(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
 
 type
   string* = typeof("")

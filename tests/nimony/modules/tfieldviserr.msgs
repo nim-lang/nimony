@@ -1,4 +1,4 @@
-tests/nimony/modules/tfieldviserr.nim(3, 15) Error: undeclared field: 'private' for type Foo.0.mfil3x52c
-tests/nimony/modules/tfieldviserr.nim(4, 12) Error: undeclared field: 'private' for type Foo.0.mfil3x52c
-tests/nimony/modules/tfieldviserr.nim(6, 28) Error: undeclared field: 'private' for type Generic.0.Iect8g8.tfis16ujj
-tests/nimony/modules/tfieldviserr.nim(7, 16) Error: undeclared field: 'private' for type Generic.0.Iect8g8.tfis16ujj
+tests/nimony/modules/tfieldviserr.nim(3, 15) Error: undeclared field: 'private' for type Foo
+tests/nimony/modules/tfieldviserr.nim(4, 12) Error: undeclared field: 'private' for type Foo
+tests/nimony/modules/tfieldviserr.nim(6, 28) Error: undeclared field: 'private' for type Generic
+tests/nimony/modules/tfieldviserr.nim(7, 16) Error: undeclared field: 'private' for type Generic

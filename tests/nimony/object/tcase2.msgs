@@ -1,0 +1,1 @@
+tests/nimony/object/tcase2.nim(13, 17) Error: cannot prove that it's safe to initialize 'value' with the runtime value for the discriminator 'kind'.

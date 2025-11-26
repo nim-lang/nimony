@@ -174,3 +174,12 @@ proc `+`*(x, y: float): float {.magic: "AddF64", noSideEffect.}
 proc `-`*(x, y: float): float {.magic: "SubF64", noSideEffect.}
 proc `*`*(x, y: float): float {.magic: "MulF64", noSideEffect.}
 proc `/`*(x, y: float): float {.magic: "DivF64", noSideEffect.}
+
+proc `+=`*[T: SomeNumber](x: var T; y: T) {.untyped, inline.} =
+  x = x + y
+
+proc `-=`*[T: SomeNumber](x: var T; y: T) {.untyped, inline.} =
+  x = x - y
+
+proc `*=`*[T: SomeNumber](x: var T; y: T) {.untyped, inline.} =
+  x = x * y

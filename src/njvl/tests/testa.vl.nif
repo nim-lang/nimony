@@ -1,0 +1,82 @@
+(stmts
+ (proc :echo.0 . . .
+  (params
+   (param :cond.0 . .
+    (bool) .)) . . .
+  (stmts
+   (stmts
+    (cfvar :´r.0)
+    (kill ´r.0))))
+ (proc :echo.1 . . .
+  (params
+   (param :cond.0 . .
+    (bool) .))
+  (i +32) . .
+  (stmts
+   (stmts
+    (cfvar :´r.0)
+    (kill ´r.0))))
+ (let :a.0 . .
+  (bool)
+  (false))
+ (var :b.0 . .
+  (bool)
+  (true))
+ (cfvar :`j.0.main)
+ (ite
+  (v a.0 +0)
+  (stmts
+   (jtrue `j.0.main))
+  (stmts
+   (ite
+    (v b.0 +0)
+    (stmts
+     (jtrue `j.0.main)) .
+    (stmts)))
+  (stmts
+   (join `j.0.main +3 +1 +2)))
+ (ite
+  (v `j.0.main +3)
+  (stmts
+   (call echo.0 "abc")) .
+  (stmts))
+ (store
+  (false)
+  (v b.0 +1))
+ (loop
+  (stmts
+   (cfvar :´g.0))
+  (not
+   (v ´g.0 +0))
+  (stmts
+   (call echo.0 "pre-condition")
+   (ite
+    (v a.0 +0)
+    (stmts
+     (ite
+      (v b.0 +1)
+      (stmts
+       (jtrue ´g.0))
+      (stmts
+       (call echo.0 "more"))
+      (stmts))) .
+    (stmts))
+   (ite
+    (not
+     (v ´g.0 +1))
+    (stmts
+     (call echo.0 "code here")) .
+    (stmts))
+   (kill ´g.0)
+   (continue .)
+   (continue
+    (join `j.0.main +4 +3 +2)
+    (join b.0 +2 +1 +0)
+    (join ´g.0 +2 +1 +0))))
+ (call echo.0 "after loop")
+ (let :`x.1 . .
+  (i +32)
+  (call echo.1 "abc"))
+ (call echo.0
+  (v `x.1 +0))
+ (kill a.0 `j.0.main b.0 `x.1))

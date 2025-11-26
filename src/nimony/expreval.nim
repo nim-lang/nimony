@@ -8,7 +8,7 @@
 
 import std / assertions
 
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops
 
 type
@@ -145,9 +145,6 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
           op = pool.strings[prag.litId]
           break
       skip pragmas
-  if op == "":
-    cannotEval(n)
-    return
   var args = n
   inc args
   skip args
@@ -176,15 +173,34 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let val = pool.strings[a.litId].len
     result = intValue(c, val, n.info)
   else:
-    cannotEval(n)
+    var evaluatedCall = createTokenBuf(16)
+    evaluatedCall.addParLe CallS, n.info
+    evaluatedCall.addSymUse routine.name.symId, n.info
+    while args.kind != ParRi:
+      let thisArg = args
+      let x = eval(c, args)
+      if x.kind == ParLe and x.tagId == nifstreams.ErrT:
+        cannotEval(thisArg)
+        return
+      evaluatedCall.addSubtree x
+    evaluatedCall.addParRi()
+
+    let i = c.values.len
+    c.values.add createTokenBuf(12)
+    assert c.c.executeCall != nil
+    let errorMsg = c.c.executeCall(c.c[], routine, c.values[i], cursorAt(evaluatedCall, 0), n.info)
+    if errorMsg.len == 0:
+      result = cursorAt(c.values[i], 0)
+    else:
+      result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
 
 template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
   inc n # tag
   let isSigned = n.typeKind == IntT
   skip n # type
-  let a = getConstOrdinalValue eval(c, n)
-  let b = getConstOrdinalValue eval(c, n)
+  let a = getConstOrdinalValue propagateError eval(c, n)
+  let b = getConstOrdinalValue propagateError eval(c, n)
   skipParRi n
   if not isNaN(a) and not isNaN(b):
     let rx = opr(a, b)
@@ -208,14 +224,38 @@ template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty
   let orig = n
   inc n # tag
   skip n # type
-  let a = eval(c, n)
-  let b = eval(c, n)
+  let a = propagateError eval(c, n)
+  let b = propagateError eval(c, n)
   skipParRi n
   if a.kind == FloatLit and b.kind == FloatLit:
     let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
     result = floatValue(c, rf, orig.info)
   else:
     cannotEval orig
+
+template evalCmpOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  let orig = n
+  inc n # tag
+  let t = n
+  skip n # type
+  if t.typeKind == FloatT:
+    let a = propagateError eval(c, n)
+    let b = propagateError eval(c, n)
+    skipParRi n
+    if a.kind == FloatLit and b.kind == FloatLit:
+      let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
+      result = boolValue(c, rf)
+    else:
+      cannotEval orig
+  else:
+    let a = getConstOrdinalValue propagateError eval(c, n)
+    let b = getConstOrdinalValue propagateError eval(c, n)
+    skipParRi n
+    if not isNaN(a) and not isNaN(b):
+      let rx = opr(a, b)
+      result = boolValue(c, rx)
+    else:
+      cannotEval orig
 
 template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   var t = n
@@ -224,6 +264,89 @@ template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
     evalFloatBinOp(c, n, opr)
   else:
     evalOrdBinOp(c, n, opr)
+
+proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
+  case typ.typeKind
+  of IT:
+    result.addIntLit x
+  of UT:
+    result.addUIntLit uint x
+  of CT:
+    result.add charToken(char x, NoLineInfo)
+  else:
+    assert false, "Got unexpected type: " & toString(typ)
+
+proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: PackedLineInfo) =
+  result.addParLe SetConstrX, info
+  result.buildTree TagId(SetT), NoLineInfo:
+    result.addSubtree elementTyp
+
+  var start = -1
+  for i in 0 ..< x.len:
+    for j in 0..7:
+      let val = i * 8 + j
+      if (x[i] and (1'u8 shl j)) == 0:
+        if start != -1:
+          if val - start < 5:
+            for k in start ..< val:
+              result.intToToken k, elementTyp
+          else:
+            result.addParLe RangeU
+            result.intToToken start, elementTyp
+            result.intToToken (val - 1), elementTyp
+            result.addParRi
+          start = -1
+      else:
+        if start == -1:
+          start = val
+
+  result.addParRi
+
+proc evalBitSet*(n, typ: Cursor): seq[uint8]
+
+
+
+proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
+  let info = n.info
+  inc n # tag
+  assert n.typeKind == SetT
+  var elementTyp = n
+  inc elementTyp
+  skip n # skip type
+  var a = eval(c, n)
+  var b = eval(c, n)
+  skipParRi n # skip last parRi
+  assert a.exprKind == SetConstrX, "got " & toString(a)
+  assert b.exprKind == SetConstrX, "got " & toString(b)
+  var typeA = a
+  inc typeA
+  var typeB = b
+  inc typeB
+  assert sameTrees(typeA, typeB)  # must be the same type
+  let setA = evalBitSet(a, typeA)
+  let setB = evalBitSet(b, typeB)
+  assert setA.len == setB.len
+  var setRes = newSeq[uint8](setA.len)
+  case op
+  of PlusSetX:
+    for i in 0 ..< setA.len:
+      setRes[i] = setA[i] or setB[i]
+  of MinusSetX:
+    for i in 0 ..< setA.len:
+      setRes[i] = setA[i] and not setB[i]
+  of XorSetX:
+    for i in 0 ..< setA.len:
+      setRes[i] = setA[i] xor setB[i]
+  of MulSetX:
+    for i in 0 ..< setA.len:
+      setRes[i] = setA[i] and setB[i]
+  else:
+    assert false, "unexpected operation: " & $op
+
+  let valPos = c.values.len
+  c.values.add createTokenBuf()
+  c.values[valPos].bitSetToTokens(setRes, elementTyp, info)
+  result = cursorAt(c.values[valPos], 0)
 
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   template propagateError(r: Cursor): Cursor =
@@ -257,7 +380,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   of ParLe:
     let exprKind = n.exprKind
     case exprKind
-    of TrueX, FalseX, NanX, InfX, NeginfX:
+    of TrueX, FalseX, NanX, InfX, NeginfX, NilX:
       result = n
       skip n
     of AndX:
@@ -375,6 +498,12 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         evalOrdBinOp(c, n, `div`)
     of ModX:
       evalOrdBinOp(c, n, `mod`)
+    of EqX:
+      evalCmpOp(c, n, `==`)
+    of LeX:
+      evalCmpOp(c, n, `<=`)
+    of LtX:
+      evalCmpOp(c, n, `<`)
     of IsMainModuleX:
       inc n
       skipParRi n
@@ -393,13 +522,36 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         # add type
         takeTree c.values[valPos], n
       while n.kind != ParRi:
-        let elem = propagateError eval(c, n)
-        c.values[valPos].addSubtree elem
+        if exprKind == SetConstrX and n.substructureKind == RangeU:
+          c.values[valPos].takeToken n
+          var a = propagateError eval(c, n)
+          c.values[valPos].addSubtree a
+          var b = propagateError eval(c, n)
+          c.values[valPos].addSubtree b
+          c.values[valPos].takeToken n
+        else:
+          let elem = propagateError eval(c, n)
+          c.values[valPos].addSubtree elem
       takeParRi c.values[valPos], n
       result = cursorAt(c.values[valPos], 0)
     of CallKinds:
       result = evalCall(c, n)
       skip n
+    of SizeofX:
+      if c.c.g.config.compat:
+        var orig = n
+        inc n
+        let s = c.c.semGetSize(c.c[], n)
+        var err = false
+        let value = asSigned(s, err)
+        if err:
+          cannotEval orig
+        else:
+          result = intValue(c, value, orig.info)
+      else:
+        cannotEval n
+    of PlusSetX, MinusSetX, XorSetX, MulSetX:
+      result = evalSetOp(c, n, n.exprKind)
     else:
       if n.tagId == ErrT:
         result = n
@@ -604,7 +756,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       annotateConstantType(buf, typ, raw)
     of NilX:
       case typ.typeKind
-      of PointerT, PtrT, RefT, CstringT, ProctypeT, ParamsT, NiltT:
+      of PointerT, PtrT, RefT, CstringT, RoutineTypes, NiltT:
         buf.addSubtree n
       else: err = true
     of NanX, InfX, NeginfX:
@@ -744,40 +896,17 @@ proc enumBounds*(n: Cursor): Bounds =
     if isNaN(result.lo) or x < result.lo: result.lo = x
     if isNaN(result.hi) or x > result.hi: result.hi = x
 
-proc countEnumValues*(n: Cursor): xint =
-  result = createNaN()
-  if n.kind == Symbol:
-    let sym = tryLoadSym(n.symId)
-    if sym.status == LacksNothing:
-      var local = asTypeDecl(sym.decl)
-      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
-        let b = enumBounds(local.body)
-        result = b.hi - b.lo + createXint(1'i64)
-
 proc div8Roundup(a: int64): int64 =
   if (a and 7) == 0:
     result = a shr 3
   else:
     result = (a shr 3) + 1
 
-proc toTypeImpl*(n: Cursor): Cursor =
-  result = n
-  var counter = 20
-  while counter > 0 and result.kind == Symbol:
-    dec counter
-    let sym = tryLoadSym(result.symId)
-    if sym.status == LacksNothing:
-      var local = asTypeDecl(sym.decl)
-      if local.kind == TypeY:
-        result = local.body
-    else:
-      bug "could not load: " & pool.syms[result.symId]
-
 proc bitsetSizeInBytes*(baseType: Cursor): xint =
   var baseType = toTypeImpl baseType
   case baseType.typeKind
   of IntT, UIntT:
-    let bits = pool.integers[baseType.firstSon.intId]
+    let bits = int pool.integers[baseType.firstSon.intId]
     # - 3 because we do `div 8` as a byte has 8 bits:
     result = createXint(1'i64) shl (bits - 3)
   of CharT:
@@ -808,13 +937,23 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
   else:
     result = createNaN()
 
+proc countEnumValues*(n: Cursor): xint =
+  result = createNaN()
+  if n.kind == Symbol:
+    let sym = tryLoadSym(n.symId)
+    if sym.status == LacksNothing:
+      var local = asTypeDecl(sym.decl)
+      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
+        let b = enumBounds(local.body)
+        result = b.hi - b.lo + createXint(1'i64)
+
 proc getArrayIndexLen*(index: Cursor): xint =
   var index = toTypeImpl index
   case index.typeKind
   of EnumT:
     result = countEnumValues(index)
   of IntT, UIntT:
-    let bits = pool.integers[index.firstSon.intId]
+    let bits = int pool.integers[index.firstSon.intId]
     result = createXint(1'i64) shl bits
   of CharT:
     result = createXint 256'i64

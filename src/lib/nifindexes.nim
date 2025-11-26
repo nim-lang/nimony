@@ -7,7 +7,7 @@
 ## Create an index file for a NIF file.
 
 import std / [os, tables, assertions, syncio]
-import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums
+import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser
 
 #import std / [sha1]
 import "$nim"/dist/checksums/src/checksums/sha1
@@ -121,7 +121,6 @@ type
     hooks*: array[AttachedOp, seq[HookIndexEntry]]
     converters*: seq[(SymId, SymId)] # string is for compat with `methods`
     classes*: seq[ClassIndexEntry]
-    toBuild*: TokenBuf
     exportBuf*: TokenBuf
 
 proc hookName*(op: AttachedOp): string =
@@ -184,13 +183,14 @@ proc getClassesSection(tag: TagId; values: seq[ClassIndexEntry]): TokenBuf =
   result.addParRi()
 
 proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
-  let indexName = changeFileExt(infile, ".idx.nif")
+  let indexName = changeModuleExt(infile, ".s.idx.nif")
 
   var s = nifstreams.open(infile)
   discard processDirectives(s.r)
   var target = -1
   var previousPublicTarget = 0
   var previousPrivateTarget = 0
+  var tagId = TagId(0)
 
   var public = createTokenBuf(30)
   var private = createTokenBuf(30)
@@ -206,6 +206,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     if t.kind == ParLe:
       stack.add t.info
       target = offs
+      tagId = t.tagId
     elif t.kind == ParRi:
       if stack.len > 1:
         discard stack.pop()
@@ -215,7 +216,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
       if pool.syms[sym].isImportant:
         let tb = next(s)
         buf.add tb
-        let isPublic = tb.kind != DotToken
+        # object field symbols are always private so that identifiers outside of dot or
+        # object constructors are not bound to them.
+        let isPublic = tb.kind != DotToken and tagId != TagId(FldTagId)
         var dest =
           if isPublic:
             addr(public)
@@ -262,13 +265,6 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     content.add toString(classesSectionBuf)
     content.add "\n"
 
-  var buildBuf = createTokenBuf()
-  buildBuf.addParLe TagId(BuildIdx)
-  buildBuf.add sections.toBuild
-  buildBuf.addParRi()
-  content.add toString(buildBuf)
-  content.add "\n"
-
   if sections.exportBuf.len != 0:
     content.add toString(sections.exportBuf)
     content.add "\n"
@@ -285,6 +281,10 @@ proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
   createIndex(infile, root, buildChecksum,
     IndexSections())
 
+proc writeFileAndIndex*(outfile: string; content: TokenBuf) =
+  writeFile(content, outfile)
+  createIndex(outfile, true, content[0].info)
+
 type
   NifIndexEntry* = object
     offset*: int
@@ -298,7 +298,6 @@ type
     converters*: seq[(string, string)] # map of dest types to converter symbols
     #methods*: seq[(string, string)] # map of dest types to method symbols
     classes*: seq[ClassIndexEntry]
-    toBuild*: seq[(string, string, string)]
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
 proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
@@ -320,7 +319,7 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
           raiseAssert "invalid (kv) construct: symbol expected"
         t = next(s) # skip Symbol
         if t.kind == IntLit:
-          let offset = pool.integers[t.intId] + previousOffset
+          let offset = int pool.integers[t.intId] + previousOffset
           tab[key] = NifIndexEntry(offset: offset, info: info)
           previousOffset = offset
         else:
@@ -497,24 +496,6 @@ proc readIndex*(indexName: string): NifIndex =
       t = next(s)
     if t.tag == TagId(MethodIdx):
       readClassesSection(s, result.classes)
-      t = next(s)
-
-    if t.tag == TagId(BuildIdx):
-      t = next(s)
-      while t.kind != EofToken and t.kind != ParRi:
-        # tup
-        t = next(s)
-        assert t.kind == StringLit
-        let typ = pool.strings[t.litId]
-        t = next(s)
-        assert t.kind == StringLit
-        let path = pool.strings[t.litId]
-        t = next(s)
-        assert t.kind == StringLit
-        let args = pool.strings[t.litId]
-        result.toBuild.add (typ, path, args)
-        t = next(s)
-        t = next(s)
       t = next(s)
 
     while t.tag == TagId(ExportIdx) or t.tag == TagId(FromexportIdx) or t.tag == TagId(ExportexceptIdx):

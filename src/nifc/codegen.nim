@@ -14,7 +14,7 @@ from std / os import changeFileExt, splitFile, extractFilename
 from std / sequtils import insert
 
 include ".." / lib / nifprelude
-import mangler, nifc_model, cprelude, noptions, typenav
+import mangler, nifc_model, cprelude, noptions, typenav, symparser
 
 type
   Token = distinct uint32
@@ -68,6 +68,8 @@ type
     ErrToken = "NIFC_ERR_"
     OvfToken = "NIFC_OVF_"
     ThreadVarToken = "NIM_THREADVAR "
+    AnonStruct = "struct "
+    AnonUnion = "union "
 
 proc fillTokenTable(tab: var BiTable[Token, string]) =
   for e in EmptyToken..high(PredefinedToken):
@@ -235,7 +237,7 @@ proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
     inc n
     while n.kind != ParRi:
       case n.pragmaKind
-      of NoPragma, AlignP, BitsP, VectorP, NodeclP, StaticP:
+      of NoPragma, AlignP, BitsP, VectorP, NodeclP, StaticP, PackedP:
         if n.callConvKind != NoCallConv:
           skip n
         else:
@@ -422,7 +424,7 @@ proc genVarInitValue(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     c.add Semicolon
 
-proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
+proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   genCLineDir(c, info(n))
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
@@ -438,7 +440,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       c.add "__thread "
     genType c, d.typ, name, isConst = vk == IsConst
     let vis = genVarPragmas(c, d.pragmas)
-    if vis == StaticP:
+    if vis == StaticP or useStatic:
       c.code.insert(Token(StaticKeyword), beforeDecl)
     let beforeInit = c.code.len
 
@@ -594,15 +596,16 @@ proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n
   if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
     if headerAsStr[0] == '#':
-      discard "skip the #include keyword"
+      # keeps the #include statements as they are
+      c.includes.add header
     else:
       c.includes.add Token(IncludeKeyword)
-    if headerAsStr[0] == '<':
-      c.includes.add header
-    else:
-      c.includes.add Token(DoubleQuote)
-      c.includes.add header
-      c.includes.add Token(DoubleQuote)
+      if headerAsStr[0] == '<':
+        c.includes.add header
+      else:
+        c.includes.add Token(DoubleQuote)
+        c.includes.add header
+        c.includes.add Token(DoubleQuote)
 
     c.includes.add Token NewLine
   skipParRi n
@@ -621,7 +624,8 @@ proc genImp(c: var GeneratedCode; n: var Cursor) =
   of ConstS:
     genVar c, n, IsConst, true
   else:
-    error c.m, "expected declaration for `imp` but got: ", n
+    if n.kind != ParRi:
+      error c.m, "expected declaration for `imp` but got: ", n
   skipParRi n
 
 proc genNodecl(c: var GeneratedCode; n: var Cursor) =
@@ -646,7 +650,7 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   of InclS: genInclude c, n
   of ProcS: genProcDecl c, n, false
   of VarS, GvarS, TvarS: genStmt c, n
-  of ConstS: genStmt c, n
+  of ConstS: genVar c, n, IsConst
   of DiscardS, AsgnS, KeepovfS, ScopeS, IfS,
       WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnErrS:
     moveToInitSection:

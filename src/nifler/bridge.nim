@@ -116,6 +116,7 @@ type
     b, deps: Builder
     portablePaths: bool
     depsEnabled, lineInfoEnabled: bool
+    inWhen: int
 
 proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
   var fp = toFullPath(c.conf, i.fileIndex)
@@ -175,7 +176,7 @@ proc splitIdentDefName(n: PNode): IdentDefName =
   else:
     result.name = n
 
-proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) 
+proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false)
 
 proc toVarTuple(v: PNode, n: PNode; c: var TranslationContext) =
   c.b.addTree(UnpacktupL)
@@ -353,6 +354,13 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     toNif(n[paramsPos], n, c, allowEmpty = true)
     toNif(n[bodyPos], n, c)
     c.b.endTree()
+  of nkLambda:
+    relLineInfo(n, parent, c)
+    c.b.addTree(ProcL)
+    c.b.addEmpty # adds name placeholder
+    for i in 0..<n.len:
+      toNif(n[i], n, c, allowEmpty = true)
+    c.b.endTree()
   of nkOfInherit:
     if n.len == 1:
       toNif(n[0], parent, c)
@@ -396,6 +404,11 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.addTree(ProctypeL)
     else:
       c.b.addTree(ItertypeL)
+
+    if n.len == 0:
+      # it's a type class
+      c.b.endTree()
+      return
 
     c.b.addEmpty 4 # 0: name
     # 1: export marker
@@ -583,6 +596,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       let last {.cursor.} = n[n.len-1]
       if last.kind == nkRecList:
         for child in last:
+          c.section = FldL
           toNif(child, n, c)
       elif last.kind != nkEmpty:
         toNif(last, n, c)
@@ -621,7 +635,16 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       let oldDepsEnabled = c.depsEnabled
       swap c.b, c.deps
       c.depsEnabled = false
-      toNif(n, nil, c)
+
+      relLineInfo(n, nil, c)
+      c.b.addTree(nodeKindTranslation(n.kind))
+      if c.inWhen > 0:
+        # mark it as a conditional dependency:
+        c.b.addKeyw "when"
+      for i in 0..<n.len:
+        toNif(n[i], nil, c)
+      c.b.endTree()
+
       c.depsEnabled = oldDepsEnabled
       swap c.b, c.deps
       c.lineInfoEnabled = oldLineInfoEnabled
@@ -650,6 +673,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
+  of nkWhenStmt:
+    inc c.inWhen
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
+    dec c.inWhen
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))

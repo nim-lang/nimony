@@ -104,6 +104,11 @@ proc low*[I, T](x: typedesc[array[I, T]]): I {.magic: "Low", noSideEffect.}
 proc high*[T: Ordinal|enum|range](x: typedesc[T]): T {.magic: "High", noSideEffect.}
 proc high*[I, T](x: typedesc[array[I, T]]): I {.magic: "High", noSideEffect.}
 
+template low*[I, T](x: array[I, T]): I =
+  low(array[I, T])
+template high*[I, T](x: array[I, T]): I =
+  high(array[I, T])
+
 type
   RootObj* {.inheritable.} =
     object ## The root of Nim's object hierarchy.

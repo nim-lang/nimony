@@ -6,8 +6,10 @@
 
 ## High performance ("zero copies") NIF file reader.
 
-import std / [memfiles, tables, parseutils, assertions]
+import std / [memfiles, tables, parseutils, assertions, hashes]
 import stringviews
+when defined(nimony):
+  import std/syncio
 
 const
   ControlChars = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', ':'}
@@ -77,11 +79,16 @@ template `-!`(a, b: pchar): int = cast[int](a) - cast[int](b)
 
 template `^`(p: pchar): char = p[0]
 
+when not defined(nimony):
+  proc rawData*(s: var string): ptr UncheckedArray[char] {.inline.} =
+    assert s.len > 0
+    cast[ptr UncheckedArray[char]](addr s[0])
+
 proc open*(filename: string): Reader =
   let f = try:
       memfiles.open(filename)
     except:
-      when defined(debug): writeStackTrace()
+      when defined(debug) and not defined(nimony): writeStackTrace()
       quit "[Error] cannot open: " & filename
   result = Reader(f: f, p: nil)
   result.p = cast[pchar](result.f.mem)
@@ -89,17 +96,24 @@ proc open*(filename: string): Reader =
 
 proc openFromBuffer*(buf: sink string): Reader =
   result = Reader(f: default(MemFile), buf: ensureMove buf)
-  result.p = cast[pchar](addr result.buf[0])
+  result.p = rawData result.buf
   result.eof = result.p +! result.buf.len
   result.f.mem = result.p
   result.f.size = result.buf.len
 
 proc close*(r: var Reader) =
-  close r.f
+  try:
+    memfiles.close(r.f)
+  except:
+    when defined(debug) and not defined(nimony): writeStackTrace()
+    quit "[Error] cannot close"
 
-template useCpuRegisters(body) {.dirty.} =
-  var p = r.p # encourage the code generator to use a register for this.
-  let eof = r.eof
+when not defined(nimony):
+  {.pragma: untyped.}
+
+template useCpuRegisters(body: untyped) {.untyped.} =
+  var p {.inject.} = r.p # encourage the code generator to use a register for this.
+  let eof {.inject.} = r.eof
   body
   r.p = p # store back
 
@@ -167,7 +181,7 @@ proc decodeStr*(t: Token): string =
   else:
     result = newString(t.s.len)
     if t.s.len > 0:
-      copyMem(addr result[0], t.s.p, t.s.len)
+      copyMem(rawData result, t.s.p, t.s.len)
 
 proc decodeFilename*(t: Token): string =
   if FilenameHasEscapes in t.flags:
@@ -184,7 +198,7 @@ proc decodeFilename*(t: Token): string =
         inc p
   else:
     result = newString(t.filename.len)
-    copyMem(addr result[0], t.filename.p, t.filename.len)
+    copyMem(rawData result, t.filename.p, t.filename.len)
 
 proc decodeFloat*(t: Token): BiggestFloat =
   result = 0.0
@@ -495,7 +509,7 @@ proc startsWith*(r: Reader; prefix: string): bool =
   return false
 
 proc processDirectives*(r: var Reader): DirectivesResult =
-  template handleSubstitutionPair(r: var Reader; valid: set[NifKind]; subs: typed) =
+  template handleSubstitutionPair(r: var Reader; valid: set[NifKind]; subs: Table[StringView, (NifKind, StringView)]) =
     if r.p < r.eof and ^r.p in ControlCharsOrWhite:
       let key = next(r)
       if key.tk == Ident:

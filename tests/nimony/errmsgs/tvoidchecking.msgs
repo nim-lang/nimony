@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tvoidchecking.nim(2, 7) Error: expression of type `string` must be discarded

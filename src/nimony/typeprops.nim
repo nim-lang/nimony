@@ -1,5 +1,6 @@
 import std/assertions
-include nifprelude
+from std/strutils import startsWith
+include ".." / lib / nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
 import ".." / models / tags
 
@@ -9,7 +10,7 @@ const
 
 proc typebits*(config: NifConfig; n: PackedToken): int =
   if n.kind == IntLit:
-    result = pool.integers[n.intId]
+    result = int pool.integers[n.intId]
   elif n.kind == InlineInt:
     result = n.soperand
   else:
@@ -136,7 +137,8 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       var field = asEnumDecl(decl.body).firstField
       var last = field
       while field.kind != ParRi:
-        last = field
+        if field.substructureKind == EfldU:
+          last = field
         skip field
       var lastVal = asLocal(last).val
       inc lastVal # skip tuple tag
@@ -334,6 +336,9 @@ proc typeHasPragma*(n: Cursor; pragma: NimonyPragma; bodyKindRestriction = NoTyp
 proc isViewType*(n: Cursor): bool =
   typeHasPragma(n, ViewP)
 
+proc isVoidType*(t: Cursor): bool {.inline.} =
+  t.kind == DotToken or t.typeKind == VoidT
+
 proc typeImpl*(s: SymId): Cursor =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
@@ -389,6 +394,10 @@ proc isFinal*(n: Cursor): bool =
   result = typeHasPragma(n, FinalP, ObjectT)
 
 proc hasRtti*(s: SymId): bool =
+  if pool.syms[s].startsWith("`t.0.IAref"):
+    # This `startsWith` is a minor hack but we know that types of this
+    # internal name only have a refcount and a payload, hence no RTTI
+    return false
   var root = s
   for r in inheritanceChain(s):
     root = r
@@ -616,10 +625,23 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
     if negative:
       buf.addParRi()
 
+proc toTypeImpl*(n: Cursor): Cursor =
+  result = n
+  var counter = 20
+  while counter > 0 and result.kind == Symbol:
+    dec counter
+    let sym = tryLoadSym(result.symId)
+    if sym.status == LacksNothing:
+      var local = asTypeDecl(sym.decl)
+      if local.kind == TypeY:
+        result = local.body
+    else:
+      bug "could not load: " & pool.syms[result.symId]
+
 when isMainModule:
   when false: # tests sum of products
     proc test(s: string) =
-      var typBuf = parse(s)
+      var typBuf = parseFromBuffer(s)
       var buf = createTokenBuf(64)
       var typ = beginRead(typBuf)
       echo "input: ", typ

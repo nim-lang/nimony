@@ -1,0 +1,1 @@
+tests/nimony/misc/tattempt_to_call_a_non1.nim(7, 30) Error: undeclared identifier: '//'

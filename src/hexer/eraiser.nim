@@ -48,11 +48,12 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let decl = n
   var r = asRoutine(n)
   var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim)
 
   copyInto(dest, n):
-    let isConcrete = c2.typeCache.takeRoutineHeader(dest, n)
+    let isConcrete = c2.typeCache.takeRoutineHeader(dest, decl, n)
     if isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):
@@ -169,18 +170,8 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trAssign(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
-    var cr = n.kind == Symbol
-    var target = SymId(0)
-    if cr:
-      target = n.symId
-    tr c, dest, n
-    cr = cr and n.exprKind in CallKinds and callCanRaise(c.typeCache, n)
-    if cr:
-      trCall c, dest, n, true
-    else:
-      tr c, dest, n
-  if cr:
-    addRaiseStmt(dest, target, n.info)
+    tr c, dest, n # left hand side
+    tr c, dest, n # right hand side
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()

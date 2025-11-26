@@ -175,7 +175,6 @@ proc isBranchValue(n: Cursor): bool =
     result = false
 
 proc genBranchValue(c: var GeneratedCode; n: var Cursor) =
-  let branch = n
   if isBranchValue(n):
     c.genx n
   else:
@@ -276,7 +275,7 @@ proc genSwitch(c: var GeneratedCode; n: var Cursor) =
   skipParRi n
   c.inToplevel = oldInToplevel
 
-proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) =
+proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   case vk
   of IsLocal:
     genVarDecl c, n, IsLocal, toExtern
@@ -288,7 +287,7 @@ proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false) 
       genVarDecl c, n, IsThreadlocal, toExtern
   of IsConst:
     moveToDataSection:
-      genVarDecl c, n, IsConst, toExtern
+      genVarDecl c, n, IsConst, toExtern, useStatic
 
 proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
   inc n # keepovf
@@ -324,8 +323,6 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
     if bits == 64 or (bits == -1 and c.bits == 64):
       gcc.add "ll"
       isLongLong = true
-    else:
-      gcc.add "l"
     inc n
   else:
     error c.m, "expected integer literal but got: ", n
@@ -387,7 +384,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of TvarS:
     genVar c, n, IsThreadlocal
   of ConstS:
-    genVar c, n, IsConst
+    genVar c, n, IsConst, useStatic = true
   of EmitS:
     genEmitStmt c, n
   of AsgnS:

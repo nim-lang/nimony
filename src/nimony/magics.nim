@@ -7,7 +7,8 @@
 ## Magics, somewhat compatible with Nim 2.0, but it's neither required nor desirable.
 
 import ".." / models / tags
-import nimony_model, nifstreams
+import ".." / lib / nifstreams
+import nimony_model
 
 template res(t: ExprKind | StmtKind | TypeKind; bits = 0): (string, int) = ($t, bits)
 
@@ -18,6 +19,7 @@ proc magicToTag*(m: string): (string, int) =
   case m
   of "Defined": res DefinedX
   of "Declared": res DeclaredX
+  of "AstToStr": res AstToStrX
   of "IsMainModule": res IsMainModuleX
   of "Compiles": res CompilesX
   of "ArrGet": res AtX
@@ -38,6 +40,7 @@ proc magicToTag*(m: string): (string, int) =
   of "BitxorI": res BitxorX, TypedMagic
   of "BitnotI": res BitnotX, TypedMagic
   of "UnaryMinusI", "UnaryMinusF64": res NegX, TypedMagic
+  of "Delay": res DelayX, TypedMagic
   of "And": res AndX
   of "Or": res OrX
   of "Not": res NotX
@@ -89,6 +92,7 @@ proc magicToTag*(m: string): (string, int) =
   of "Pointer": res PointerT
   of "DefaultObj": res DefaultObjX
   of "DefaultTup": res DefaultTupX
+  of "DefaultDistinct": res DefaultDistinctX
   of "PlusSet": res PlusSetX, TypedMagic
   of "MinusSet": res MinusSetX, TypedMagic
   of "MulSet": res MulSetX, TypedMagic
@@ -122,4 +126,5 @@ proc magicToTag*(m: string): (string, int) =
   of "HoleyEnum": res HoleyEnumT
   of "NaN": res NanX
   of "Inf": res InfX
+  of "Is": res IsX
   else: ("", 0)

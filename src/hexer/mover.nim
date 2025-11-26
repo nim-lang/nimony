@@ -10,14 +10,22 @@
 ## Move analyser.
 import std / [assertions]
 
-include nifprelude
+include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, controlflow, programs]
 
-proc rootOf*(n: Cursor): SymId =
+type
+  RootOfMode* = enum
+    CanFollowDerefs, CannotFollowDerefs, CanFollowCalls
+
+proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
   var n = n
   while true:
     case n.exprKind
-    of DotX, TupatX, AtX, ArrAtX, DerefX, AddrX, HderefX, HaddrX, PatX:
+    of DerefX, HderefX, PatX:
+      if mode == CannotFollowDerefs:
+        break
+      inc n
+    of DotX, TupatX, AtX, ArrAtX, AddrX, HaddrX:
       inc n
     of ConvKinds:
       inc n
@@ -26,6 +34,14 @@ proc rootOf*(n: Cursor): SymId =
       inc n
       skip n # type part
       skip n # skip intlit
+    of CallKinds:
+      if mode == CanFollowCalls:
+        inc n
+        skip n # skip fn and continue with the first argument.
+        # This is exactly what we want for `addr mgetorPut(table, key)` so
+        # that we can mark `table` as aliased.
+      else:
+        break
     else:
       break
   if n.kind == Symbol:
@@ -211,7 +227,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
           skip pc # type
           inc nested
           # proceed with its value here
-        of NoStmt, CallS, CmdS, DiscardS, EmitS, InclS, ExclS:
+        of NoStmt, CallKindsS, DiscardS, EmitS, InclS, ExclS:
           if containsRoot(pc, x):
             otherUsage = pc
             return false

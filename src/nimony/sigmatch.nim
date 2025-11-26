@@ -16,6 +16,10 @@ type
     n*, typ*: Cursor
     kind*: SymKind
 
+  CallArg* = object
+    n*, typ*: Cursor
+    orig*: Cursor ## original tree before semchecking, used for untyped args
+
   FnCandidate* = object
     kind*: SymKind
     sym*: SymId
@@ -30,6 +34,7 @@ type
     FormalParamsMismatch
     CallConvMismatch
     RaisesMismatch
+    ClosureMismatch
     UnavailableSubtypeRelation
     NotImplementedConcept
     ImplicitConversionNotMutable
@@ -83,7 +88,7 @@ proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   m.error = MatchError(info: m.argInfo, kind: k,
                        expected: expected, got: got, pos: m.pos+1)
   #writeStackTrace()
-  #echo "ERROR: ", msg
+  #echo "ERROR: ", typeToString(m.error.expected)
 
 proc error0(m: var Match; k: MatchErrorKind) =
   m.err = true
@@ -124,6 +129,8 @@ proc getErrorMsg*(m: Match): string =
     "calling conventions do not match"
   of RaisesMismatch:
     "`.raises` mismatch"
+  of ClosureMismatch:
+    "`.closure` mismatch"
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
   of NotImplementedConcept:
@@ -169,7 +176,7 @@ proc getProcDecl*(s: SymId): Routine =
   assert res.status == LacksNothing
   result = asRoutine(res.decl, SkipInclBody)
 
-proc isObjectType(s: SymId): bool =
+proc isObjectType*(s: SymId): bool =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
   var n = res.decl
@@ -210,6 +217,16 @@ type LinearMatchFlag = enum
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
 
+proc tryLinearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}): bool {.inline.} =
+  let oldErr = m.err
+  let oldHasError = m.hasError
+  m.err = false
+  m.hasError = false
+  linearMatch m, f, a, flags
+  result = not m.err
+  m.err = oldErr
+  m.hasError = oldHasError
+
 proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool
 
 proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
@@ -245,11 +262,8 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # XXX typevars inferred to have typevar values will try to match individual constraints here
   f = fOrig
   var a = a
-  var err = false
-  swap m.err, err
-  linearMatch m, f, a # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-  swap m.err, err
-  result = not err
+  # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
+  result = tryLinearMatch(m, f, a)
 
 proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
@@ -290,11 +304,8 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   else:
     # match as a regular type:
     var a = a
-    var err = false
-    swap m.err, err
-    linearMatch m, f, a # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-    swap m.err, err
-    result = not err
+    # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
+    result = tryLinearMatch(m, f, a)
 
 proc matchSingleConstraint(m: var Match; f: var Cursor; a: Cursor): bool {.inline.} =
   if f.kind == Symbol:
@@ -405,7 +416,7 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   if f.kind == DotToken:
     inc f
-    return true
+    return a.typeKind != AutoT
   if a.kind == Symbol:
     let res = tryLoadSym(a.symId)
     assert res.status == LacksNothing
@@ -518,8 +529,8 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
       of ParLe:
         # special cases:
         case f.typeKind
-        of ProctypeT, ParamsT:
-          if a.typeKind notin {ProctypeT, ParamsT}:
+        of RoutineTypes:
+          if a.typeKind notin RoutineTypes:
             m.error(InvalidMatch, fOrig, aOrig)
             break
           var a2 = a # since procTypeMatch does not skip it properly
@@ -589,16 +600,24 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
   skip f
   skip a
 
-proc extractCallConv(c: var Cursor): (CallConv, bool) =
-  result = (Fastcall, false)
+type
+  ProcProperties* = object
+    cc*: CallConv
+    usesRaises*: bool
+    usesClosure*: bool
+
+proc extractProcProps*(c: var Cursor): ProcProperties =
+  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false)
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
       let res = callConvKind(c)
       if res != NoCallConv:
-        result[0] = res
+        result.cc = res
       elif c.pragmaKind == RaisesP:
-        result[1] = true
+        result.usesRaises = true
+      elif c.pragmaKind == ClosureP:
+        result.usesClosure = true
       skip c
     inc c
   elif c.kind == DotToken:
@@ -607,17 +626,17 @@ proc extractCallConv(c: var Cursor): (CallConv, bool) =
     bug "No pragmas found"
 
 proc procTypeMatch(m: var Match; f, a: var Cursor) =
-  if f.typeKind == ProctypeT:
-    inc f
-    for i in 1..4: skip f
-  if a.typeKind == ProctypeT:
-    inc a
-    for i in 1..4: skip a
+  assert f.typeKind in RoutineTypes
+  inc f
+  for i in 1..4: skip f
+  assert a.typeKind in RoutineTypes
+  inc a
+  for i in 1..4: skip a
   var hasParams = 0
-  if f.typeKind == ParamsT:
+  if f.substructureKind == ParamsU:
     inc f
     if f.kind != ParRi: inc hasParams
-  if a.typeKind == ParamsT:
+  if a.substructureKind == ParamsU:
     inc a
     if a.kind != ParRi: inc hasParams, 2
   if hasParams == 3:
@@ -657,12 +676,14 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   else:
     linearMatch m, f, a
   # match calling conventions:
-  let fcc = extractCallConv(f)
-  let acc = extractCallConv(a)
-  if fcc[0] != acc[0]:
+  let fcc = extractProcProps(f)
+  let acc = extractProcProps(a)
+  if fcc.cc != acc.cc:
     m.error CallConvMismatch, f, a
-  elif fcc[1] != acc[1]:
+  elif fcc.usesRaises != acc.usesRaises:
     m.error RaisesMismatch, f, a
+  elif fcc.usesClosure != acc.usesClosure:
+    m.error ClosureMismatch, f, a
   # XXX consider when f or a is (params):
   skip f # effects
   #skip a # effects
@@ -685,10 +706,14 @@ proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) {.used.} =
   else:
     m.error ConstraintMismatch, typeImpl(typeVar), a
 
-proc useArg(m: var Match; arg: Item) =
-  m.args.addSubtree arg.n
+proc useArg(m: var Match; arg: CallArg; f: Cursor) =
+  if f.typeKind == UntypedT and not cursorIsNil(arg.orig):
+    # pass arg tree before semchecking to untyped args:
+    m.args.addSubtree arg.orig
+  else:
+    m.args.addSubtree arg.n
 
-proc singleArgImpl(m: var Match; f: var Cursor; arg: Item)
+proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
 
 proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
   let fbase = skipTypeInstSym(fsym)
@@ -791,7 +816,7 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       matchObjectInheritance m, f, a, fsym, asym, ptrKind
       skip f
 
-proc matchSymbol(m: var Match; f: Cursor; arg: Item) =
+proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
   if isTypevar(fs):
@@ -847,8 +872,10 @@ proc skipExpr*(n: Cursor): Cursor =
       result = next
       skip next
 
-proc matchIntegralType(m: var Match; f: var Cursor; arg: Item) =
+proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   var a = skipModifier(arg.typ)
+  if a.typeKind == RangetypeT:
+    inc a # skip to base type
   let ex = skipExpr(arg.n)
   let isIntLit = f.typeKind != CharT and
     ex.kind == IntLit and sameTrees(a, m.context.types.intType)
@@ -936,7 +963,12 @@ proc isSomeSeqType*(a: Cursor): bool {.inline.} =
   var dummy = default(Cursor)
   result = isSomeSeqType(a, dummy)
 
-proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
+proc getTupleFieldTypeSkipTypedesc(c: Cursor): Cursor =
+  result = getTupleFieldType(c)
+  if result.typeKind == TypedescT:
+    inc result
+
+proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
   case f.kind
   of Symbol:
     matchSymbol m, f, arg
@@ -951,7 +983,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       else:
         m.skippedMod = f.typeKind
       inc f
-      singleArgImpl m, f, Item(n: arg.n, typ: a)
+      singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig)
       expectParRi m, f
     of IntT, UIntT, FloatT, CharT:
       matchIntegralType m, f, arg
@@ -1011,7 +1043,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         discard "ok"
         inc f
         expectParRi m, f
-      of PtrT, CstringT:
+      of PtrT, CstringT, RoutineTypes:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
@@ -1056,6 +1088,12 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
       # `typed` and `untyped` simply match everything:
       inc f
       expectParRi m, f
+    of VoidT:
+      inc f
+      expectPtrParRi m, f
+      var a = arg.typ
+      if not isVoidType(a):
+        m.error InvalidMatch, f, a
     of TupleT:
       let fOrig = f
       let aOrig = skipModifier(arg.typ)
@@ -1072,8 +1110,8 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
             # len(f) > len(a)
             m.error InvalidMatch, fOrig, aOrig
           # only the type of the field is important:
-          var ffld = getTupleFieldType(f)
-          var afld = getTupleFieldType(a)
+          var ffld = getTupleFieldTypeSkipTypedesc(f)
+          var afld = getTupleFieldTypeSkipTypedesc(a)
           linearMatch m, ffld, afld
           # skip fields:
           skip f
@@ -1081,16 +1119,21 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: Item) =
         if a.kind != ParRi:
           # len(a) > len(f)
           m.error InvalidMatch, fOrig, aOrig
-    of ProctypeT, ParamsT:
+    of RoutineTypes:
       var a = skipModifier(arg.typ)
       case a.typeKind
       of NiltT:
-        discard "ok"
+        if procHasPragma(f, ClosureP):
+          m.args.addParLe NilX, m.argInfo
+          m.args.addSubtree f
+          inc m.opened
         skip f
-      else:
+      of RoutineTypes:
         procTypeMatch m, f, a
-    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, VoidT, NiltT, OrT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, IteratorT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
+      else:
+        m.error InvalidMatch, f, a
+    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, NiltT, OrT, AndT, NotT,
+        ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
@@ -1128,7 +1171,7 @@ proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInf
   buf.addIntLit(-1, info)
   buf.addParRi()
 
-proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
+proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
   # XXX handle empty containers nested inside (expr)
   if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
       (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
@@ -1186,13 +1229,14 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: Item) =
       # match against `auto`, untyped/varargs should still match
       singleArgImpl(m, f, arg)
 
-proc singleArg(m: var Match; f: var Cursor; arg: Item) =
+proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
   if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
     matchEmptyContainer(m, f, arg)
     return
+  let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:
-    m.useArg arg # since it was a match, copy it
+    m.useArg arg, fOrig # since it was a match, copy it
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
@@ -1200,7 +1244,7 @@ proc singleArg(m: var Match; f: var Cursor; arg: Item) =
 proc typematch*(m: var Match; formal: Cursor; arg: Item) =
   m.argInfo = arg.n.info
   var f = formal
-  singleArg m, f, arg
+  singleArg m, f, CallArg(n: arg.n, typ: arg.typ)
 
 type
   TypeRelation* = enum
@@ -1231,7 +1275,7 @@ proc classifyMatch*(m: Match): TypeRelation {.inline.} =
     return GenericMatch
   result = EqualMatch
 
-proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[Item]) =
+proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   var i = 0
   var isVarargs = false
   while f.kind != ParRi:
@@ -1286,7 +1330,7 @@ iterator typeVars(fn: SymId): SymId =
           yield tv.symId
         skip c
 
-proc collectDefaultValues(m: var Match; f: Cursor): seq[Item] =
+proc collectDefaultValues(m: var Match; f: Cursor): seq[CallArg] =
   var f = f
   result = @[]
   while f.symKind == ParamY:
@@ -1294,7 +1338,7 @@ proc collectDefaultValues(m: var Match; f: Cursor): seq[Item] =
     if param.val.kind == DotToken: break
     m.insertedParam = true
     # add dot token
-    result.add Item(n: emptyNode(m.context[]), typ: m.context.types.autoType)
+    result.add CallArg(n: emptyNode(m.context[]), typ: m.context.types.autoType)
     skip f
 
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
@@ -1325,14 +1369,17 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.error0 RoutineIsNotGeneric
       return
 
-proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[Item];
+proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
   m.fn = fn
   matchTypevars m, fn, explicitTypeVars
 
   var f = fn.typ
-  assert f.isParamsTag
+  if f.typeKind in RoutineTypes:
+    inc f # skip ParLe
+    for i in 1..4: skip f
+  assert f.substructureKind == ParamsU
   inc f # "params"
   sigmatchLoop m, f, args
 
@@ -1372,8 +1419,12 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   let c = a.context
   var aParams = a.fn.typ
   var bParams = b.fn.typ
-  assert aParams.typeKind == ParamsT
-  assert bParams.typeKind == ParamsT
+  inc aParams
+  for i in 1..4: skip aParams
+  assert aParams.substructureKind == ParamsU
+  inc bParams
+  for i in 1..4: skip bParams
+  assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
   while aParams.kind != ParRi and bParams.kind != ParRi:
@@ -1382,9 +1433,9 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
     var aFormal = aParam.typ
     var bFormal = bParam.typ
     var ma = createMatch(c)
-    singleArg ma, aFormal, Item(n: emptyNode(c[]), typ: bParam.typ)
+    singleArg ma, aFormal, CallArg(n: emptyNode(c[]), typ: bParam.typ)
     var mb = createMatch(c)
-    singleArg mb, bFormal, Item(n: emptyNode(c[]), typ: aParam.typ)
+    singleArg mb, bFormal, CallArg(n: emptyNode(c[]), typ: aParam.typ)
     let aMatch = classifyMatch(ma)
     let bMatch = classifyMatch(mb)
     if aMatch == GenericMatch and bMatch == NoMatch:
@@ -1396,10 +1447,20 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
       if result == SecondWins: return NobodyWins
       result = FirstWins
 
-proc cmpMatches*(a, b: Match): DisambiguationResult =
+proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
   assert not a.err
   assert not b.err
-  if a.convCosts < b.convCosts:
+  if a.fn.typ.typeKind == IteratorT and b.fn.typ.typeKind != IteratorT:
+    if preferIterators:
+      result = FirstWins
+    else:
+      result = SecondWins
+  elif b.fn.typ.typeKind == IteratorT and a.fn.typ.typeKind != IteratorT:
+    if preferIterators:
+      result = SecondWins
+    else:
+      result = FirstWins
+  elif a.convCosts < b.convCosts:
     result = FirstWins
   elif a.convCosts > b.convCosts:
     result = SecondWins
@@ -1422,15 +1483,16 @@ proc cmpMatches*(a, b: Match): DisambiguationResult =
     elif diff > 0:
       result = SecondWins
     else:
-      if a.fn.typ.typeKind == ParamsT and b.fn.typ.typeKind == ParamsT:
+      if a.fn.typ.typeKind in RoutineTypes and b.fn.typ.typeKind in RoutineTypes:
         result = mutualGenericMatch(a, b)
       else:
         result = NobodyWins
 
-type ParamsInfo = object
-  len: int
-  names: Table[StrId, int]
-  isVarargs: seq[bool] # could also use a set or store the decls and check after
+type
+  ParamsInfo = object
+    len: int
+    names: Table[StrId, int]
+    isVarargs: seq[bool] # could also use a set or store the decls and check after
 
 proc buildParamsInfo(params: Cursor): ParamsInfo =
   result = ParamsInfo(names: initTable[StrId, int](), len: 0)
@@ -1446,7 +1508,7 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
     result.names[name] = result.len
     inc result.len
 
-proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[Item] =
+proc orderArgs*(m: var Match; paramsCursor: Cursor; args: openArray[CallArg]): seq[CallArg] =
   let params = buildParamsInfo(paramsCursor)
   var positions = newSeq[int](params.len)
   for i in 0 ..< positions.len: positions[i] = -1
@@ -1494,14 +1556,14 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
       inVarargs = true
     inc ai
 
-  result = newSeqOfCap[Item](args.len)
+  result = newSeqOfCap[CallArg](args.len)
   fi = 0
   while fi < params.len:
     ai = positions[fi]
     if ai < 0:
       # does not fail early here for missing default value
       m.insertedParam = true
-      result.add Item(n: emptyNode(m.context[]), typ: m.context.types.autoType)
+      result.add CallArg(n: emptyNode(m.context[]), typ: m.context.types.autoType)
     else:
       while true:
         var arg = args[ai]
@@ -1517,10 +1579,15 @@ proc orderArgs(m: var Match; paramsCursor: Cursor; args: openArray[Item]): seq[I
           break
     inc fi
 
-proc sigmatchNamedArgs*(m: var Match; fn: FnCandidate; args: openArray[Item];
+proc sigmatchNamedArgs*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                         explicitTypeVars: Cursor;
                         hasNamedArgs: bool) =
   if hasNamedArgs:
-    sigmatch m, fn, orderArgs(m, fn.typ, args), explicitTypeVars
+    var params = fn.typ
+    if params.typeKind in RoutineTypes:
+      inc params
+      for i in 1..4: skip params
+    assert params.substructureKind == ParamsU
+    sigmatch m, fn, orderArgs(m, params, args), explicitTypeVars
   else:
     sigmatch m, fn, args, explicitTypeVars

@@ -1,0 +1,112 @@
+(.nif24)
+0,1,tests/nimony/pragmas/tpushpop.nim(stmts 41,4
+ (type ~39 :TestStruct1.0.tpu1210461 . . ~27
+  (pragmas 2
+   (importc 9 "TestStruct1") ~7,~2
+   (header 8 "pushpop.h")) 2
+  (object . ~39,1
+   (fld :x.0.tpu1210461 .
+    (pragmas 3,~3
+     (header 8 "pushpop.h")) 37,40,lib/std/system/ctypes.nim
+    (i +32
+     (importc "int")) .))) 4,8
+ (gvar :tests1.0.tpu1210461 . . 8 TestStruct1.0.tpu1210461 .) ,11
+ (proc 5 :cos.0.tpu1210461 . . . 8
+  (params 1
+   (param :x.0 .
+    (pragmas ~2,~1
+     (header 8 "<math.h>")) 43,48,lib/std/system/ctypes.nim
+    (f +64
+     (importc "double")) .)) 43,48,lib/std/system/ctypes.nim
+  (f +64
+   (importc "double")) 30
+  (pragmas 2
+   (importc 9 "cos") 18
+   (cdecl) ~23,~1
+   (header 8 "<math.h>")) . .) ,13
+ (proc 5 :sin.0.tpu1210461 . . . 8
+  (params 1
+   (param :x.1 .
+    (pragmas ~2,~3
+     (header 8 "<math.h>")) 43,48,lib/std/system/ctypes.nim
+    (f +64
+     (importc "double")) .)) 43,48,lib/std/system/ctypes.nim
+  (f +64
+   (importc "double")) 30
+  (pragmas 2
+   (importc 9 "sin") ~23,~3
+   (header 8 "<math.h>") ~23,~1
+   (cdecl)) . .) ,15
+ (proc 5 :c_fpclassify.0.tpu1210461 . . 17
+  (typevars 1
+   (typevar :T.0.tpu1210461 .
+    (pragmas ~11,~5
+     (header 8 "<math.h>")) 28,53,lib/std/system/basic_types.nim
+    (or ~13
+     (f +64) ~7
+     (f +32) 1
+     (f +64)) .)) 31
+  (params 1
+   (param :x.2 .
+    (pragmas ~25,~5
+     (header 8 "<math.h>")) 3 T.0.tpu1210461 .)) 8
+  (i -1) 43
+  (pragmas 2
+   (importc 9 "fpclassify") ~36,~5
+   (header 8 "<math.h>")) . .) 18,16
+ (glet ~14 :c_fpNormal.0.tpu1210461 .
+  (pragmas 2
+   (importc 9 "FP_NORMAL") ~11,~6
+   (header 8 "<math.h>")) 26
+  (i -1) .) 2,4,lib/std/assertions.nim
+ (stmts
+  (if 3
+   (elif
+    (not 25,20,tests/nimony/pragmas/tpushpop.nim
+     (eq
+      (i +64) ~6
+      (call ~12 c_fpclassify.1.tpu1210461 1 +1.0) 3 c_fpNormal.0.tpu1210461)) ~1,1
+    (stmts 2,122,lib/std/syncio.nim
+     (stmts 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
+      (stmts
+       (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+     (cmd quit.0.syn1lfpjv 5 +1))))) ,22
+ (proc 5 :foo.0.tpu1210461 . . . 8
+  (params 1
+   (param :x.3 .
+    (pragmas ~2,~1
+     (discardable)) 3
+    (i -1) .)) 10
+  (i -1)
+  (pragmas 7,~1
+   (discardable)) . 24
+  (stmts
+   (result :result.0 . . ~16,~7
+    (i -1) .)
+   (asgn result.0 x.3) ~24
+   (ret result.0))) 3,25
+ (call ~3 foo.0.tpu1210461 1 +1) ,30
+ (proc 5 :getchar.0.tpu1210461 . . . 12
+  (params) 37,40,lib/std/system/ctypes.nim
+  (i +32
+   (importc "int")) 21
+  (pragmas 2
+   (importc 9 "putchar") 22
+   (header 8 "<stdio.h>") 43
+   (noconv)) . .) 8,15
+ (comment int.0.sysvq0asl 4,7 int.0.sysvq0asl 2,7 int.0.sysvq0asl 36,1 int.0.sysvq0asl ~8,4 assert.0.assy765wm) 19,19
+ (proc :c_fpclassify.1.tpu1210461 . ~19,~4 .
+  (at c_fpclassify.0.tpu1210461
+   (f +64)) 12,~4
+  (params 1
+   (param :x.5 .
+    (pragmas ~25,~5
+     (header 8 "<math.h>"))
+    (f +64) .)) ~11,~4
+  (i -1) 24,~4
+  (pragmas 2
+   (importc 9 "fpclassify") ~36,~5
+   (header 8 "<math.h>")) ~19,~4 . ~19,~4 .))

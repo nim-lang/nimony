@@ -11,7 +11,7 @@
     (i -1) .)
    (let :idx.0 . .
     (i -1) +1212)
-   (var :`cf0 . .
+   (var :`cf.0 . .
     (i -1) .)
    (ite
     (le
@@ -19,14 +19,14 @@
     (goto L70)
     (goto L75))
    (lab :L70)
-   (asgn `cf0 +1)
+   (asgn `cf.0 +1)
    (goto L80)
    (lab :L75)
-   (asgn `cf0 +0)
+   (asgn `cf.0 +0)
    (goto L80)
    (lab :L80)
-   (asgn result.1 `cf0)
+   (asgn result.1 `cf.0)
    (goto L85)
    (lab :L85)
-   (ret)))
- (ret))
+   (ret result.1)))
+ (ret result.1))

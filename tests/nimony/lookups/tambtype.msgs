@@ -1,2 +1,2 @@
 tests/nimony/lookups/tambtype.nim(3, 8) Error: ambiguous identifier
-tests/nimony/lookups/tambtype.nim(3, 14) Error: type mismatch: got: (i -1) but wanted: (ochoice Foo.0.mamdoporf Foo.0.mamiajb2h)
+tests/nimony/lookups/tambtype.nim(3, 14) Error: type mismatch: got: int but wanted: Foo

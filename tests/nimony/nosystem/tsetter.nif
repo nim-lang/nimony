@@ -24,4 +24,5 @@
    (discard .))) 4,7
  (gvar :foo.0.tseyic8ua1 . . 5 Foo.0.tseyic8ua1 .) ,8
  (call bar=.0.tseyic8ua1 foo.0.tseyic8ua1 10 +123) ,9
- (call \5B\5D=.0.tseyic8ua1 foo.0.tseyic8ua1 4 +123 11 +456))
+ (call \5B\5D=.0.tseyic8ua1 foo.0.tseyic8ua1 4 +123 11 +456) 23,4
+ (comment int.0.tseyic8ua1 ~1,1 int.0.tseyic8ua1 7,1 int.0.tseyic8ua1))

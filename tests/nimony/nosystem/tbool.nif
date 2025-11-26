@@ -34,4 +34,5 @@
       (true))
      (stmts
       (ret "true"))))
-   (ret result.0))))
+   (ret result.0))) 7,3
+ (comment bool.0.tbokvwxm9 7 true.0.tbokvwxm9 ~2,~3 bool.0.tbokvwxm9 ~5,~2 false.0.tbokvwxm9 ~5,~2 false.0.tbokvwxm9 6,~2 true.0.tbokvwxm9 6,~2 true.0.tbokvwxm9))

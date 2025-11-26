@@ -10,14 +10,21 @@ when defined(windows):
 else:
   var errno {.importc: "errno", header: "<errno.h>".}: cint
 
-proc raiseOSError*(errorCode: OSErrorCode, additionalInfo = "") {.noinline.} =
+
+when defined(windows):
+  import "../../vendor/errorcodes/src" / errorcodes_windows
+else:
+  import "../../vendor/errorcodes/src" / errorcodes_posix
+
+proc raiseOSError*(errorCode: OSErrorCode, additionalInfo = "") {.noinline, raises.} =
   ## Raises an `OSError exception <system.html#OSError>`_.
   ##
   ## Read the description of the `newOSError proc`_ to learn
   ## how the exception object is created.
-  # TODO: Uncomment when exceptions are implemented.
-  #raise newOSError(errorCode, additionalInfo)
-  quit "raiseOSError"
+  when defined(windows):
+    raise windowsToErrorCode(errorCode.int32)
+  else:
+    raise posixToErrorCode(errorCode.int32)
 
 #{.push stackTrace:off.}
 proc osLastError*(): OSErrorCode {.sideEffect.} =

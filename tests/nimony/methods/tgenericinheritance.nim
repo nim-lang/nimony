@@ -10,7 +10,7 @@ type
     z: string
 
 type Writeable = concept
-  proc write(f: File; x: Self): string
+  proc write(f: File; x: Self)
 
 method foo[T: Writeable](x: GenericObj[T]) =
   echo "at base method: ", x.x

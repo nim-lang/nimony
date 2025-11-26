@@ -30,3 +30,10 @@ block:
     discard
 
   check(m)
+
+
+proc test(): int {.discardable.} =
+  discard
+
+block:
+  test()

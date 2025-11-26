@@ -17,4 +17,6 @@
  (discard 8 +1E+18) ,18
  (discard 8 -1E+18) ,20
  (discard 8 +1.23E+19) ,21
- (discard 8 -1.23E+19))
+ (discard 8 -1.23E+19) ,24
+ (discard 8 +0.0) ,25
+ (discard 8 -0.0))

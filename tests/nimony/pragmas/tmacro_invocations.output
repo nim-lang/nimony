@@ -1,0 +1,74 @@
+`
+proc foo1() {..} =
+  discard
+`
+`
+proc foo2() {..} =
+  discard
+
+proc foo2() {..} =
+  discard
+`
+`
+proc foo3() {..} =
+  discard
+
+proc foo3() {..} =
+  discard
+`
+`
+proc foo3() {..} =
+  discard
+
+proc foo3() {..} =
+  discard
+`
+<
+proc foo4() {..} =
+  discard 1 + 1
+>
+{
+let s: string = "\0Aproc foo5\28\29 \7B..\7D =\0A  discard 2 + 2\0A"
+write stdout, "\27" & s & "\27"
+write stdout, '\n'}
+(_
+proc foo6() {..} =
+  discard
+_)
+(_
+proc foo6() {..} =
+  discard
+_)
+(_
+proc foo6() {..} =
+  discard
+_)
+(_
+proc foo6() {..} =
+  discard
+_)
+#[
+proc foo7() {..} =
+  discard
+
+proc foo7() {..} =
+  discard
+
+proc foo7() {..} =
+  discard
+
+proc foo7() {..} =
+  discard
+
+proc foo7() {..} =
+  discard
+
+proc foo7() {..} =
+  discard
+
+proc foo7() {..} =
+  discard
+
+proc foo7() {..} =
+  discard
+]#

@@ -132,6 +132,12 @@ typedef NU8 NU;
 #define NIM_TRUE true
 #define NIM_FALSE false
 
+#define _GNU_SOURCE
+
+// Include math.h to use `NAN` that should be defined in C compilers supports C99.
+#include <math.h>
+
+// Define NAN in case math.h doesn't define it.
 // NAN definition copied from math.h included in the Windows SDK version 10.0.14393.0
 #ifndef NAN
 #  ifndef _HUGE_ENUF
@@ -166,6 +172,11 @@ typedef NU8 NU;
 #  pragma GCC diagnostic ignored "-Wswitch-bool"
 #  pragma GCC diagnostic ignored "-Wformat"
 #  pragma GCC diagnostic ignored "-Wpointer-sign"
+#  if defined(__clang__)
+#    pragma GCC diagnostic ignored "-Wincompatible-pointer-types-discards-qualifiers"
+#  else
+#    pragma GCC diagnostic ignored "-Wdiscarded-qualifiers"
+#  endif
 #endif
 
 
@@ -315,6 +326,16 @@ typedef NU8 NU;
 #else
 #  error "Cannot define NIM_THREADVAR"
 #endif
+
+/* define NIM_STATIC_ASSERT */
+#if defined(__cplusplus)
+#define NIM_STATIC_ASSERT(x, msg) static_assert((x), msg)
+#else
+#define NIM_STATIC_ASSERT(x, msg) _Static_assert((x), msg)
+#endif
+
+// Test to see if Nim and the C compiler agree on the size of a pointer.
+NIM_STATIC_ASSERT(sizeof(NI) == sizeof(void*) && NIM_INTBITS == sizeof(NI)*8, "Pointer size mismatch between Nim and C/C++ backend. You probably need to setup the backend compiler for target CPU.");
 
 N_INLINE(NB8, _Qnifc_div_sll_overflow)(long long int a, long long int b, long long int *res) {
   if (b == 0) {

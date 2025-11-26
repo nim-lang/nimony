@@ -21,4 +21,5 @@
  (call ~6 callme.0.tna1v8dmd 16 +0 11 +1 29,~4 "" 3 '\09' 52,~4
   (false)) ,5
  (cmd callme.0.tna1v8dmd 7 +0 10 +1 13 "abc" 20 '\09' 58,~5
-  (false)))
+  (false)) 18
+ (comment int.0.sysvq0asl int.0.sysvq0asl 24 char.0.sysvq0asl 33 bool.0.sysvq0asl 40 false.0.sysvq0asl 8,2 true.0.sysvq0asl))

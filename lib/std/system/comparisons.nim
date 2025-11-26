@@ -1,7 +1,7 @@
 # comparison operators:
 
 # not in original nim, so that it works for generic `Ordinal` types:
-proc `==`*[T: Ordinal](x, y: T): bool {.magic: "LeI", noSideEffect.}
+proc `==`*[T: Ordinal](x, y: T): bool {.magic: "EqI", noSideEffect.}
 
 # `enum` typeclass split here to prevent ambiguity with `Ordinal`:
 proc `==`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
@@ -60,6 +60,8 @@ proc `<`*[T](x, y: set[T]): bool {.magic: "LtSet", noSideEffect.}
   ##
   ## A strict or proper subset `x` has all of its members in `y` but `y` has
   ## more elements than `y`.
+
+proc `<`*(x, y: pointer): bool {.magic: "LtPtr", noSideEffect.}
 
 proc `==`*(x, y: int8): bool {.magic: "EqI", noSideEffect.}
 proc `==`*(x, y: int16): bool {.magic: "EqI", noSideEffect.}

@@ -38,19 +38,19 @@
  (discard 10
   (eq
    (i +64) ~2
-   (hconv 17,67,lib/std/system/comparisons.nim
+   (hconv 17,69,lib/std/system/comparisons.nim
     (i +64) x.0.tin4pj0od1) 3 y.0.tin4pj0od1)) ,14
  (discard 10
   (eq
    (i +64) ~2 y.0.tin4pj0od1 6
-   (hconv 17,67,lib/std/system/comparisons.nim
+   (hconv 17,69,lib/std/system/comparisons.nim
     (i +64)
     (conv 1
      (i +32) ~3 +123)))) ,15
  (discard 18
   (eq
    (i +64) ~7
-   (hconv 17,67,lib/std/system/comparisons.nim
+   (hconv 17,69,lib/std/system/comparisons.nim
     (i +64)
     (conv 6,~1
      (i +32) ~3 +123)) 3 y.0.tin4pj0od1)) ,16
@@ -73,17 +73,18 @@
    (i +32) ~7
    (conv 6,~6
     (i +32) ~3 +123) 3
-   (hconv 17,66,lib/std/system/comparisons.nim
+   (hconv 17,68,lib/std/system/comparisons.nim
     (i +32) +123))) ,21
  (discard 12
   (eq
    (i +32) ~4
-   (hconv 17,66,lib/std/system/comparisons.nim
+   (hconv 17,68,lib/std/system/comparisons.nim
     (i +32) +123) 6
    (conv ~1,~7
     (i +32) ~3 +123))) ,22
  (discard 10
   (eq
    (i +32) ~2 x.0.tin4pj0od1 3
-   (hconv 17,66,lib/std/system/comparisons.nim
-    (i +32) +123))))
+   (hconv 17,68,lib/std/system/comparisons.nim
+    (i +32) +123))) 12
+ (comment int16.0.sysvq0asl ,1 float.0.sysvq0asl ,4 int16.0.sysvq0asl ,5 int.0.sysvq0asl ~5,9 int32.0.sysvq0asl ~5,10 int.0.sysvq0asl 5,14 int32.0.sysvq0asl ,15 int32.0.sysvq0asl ,16 int.0.sysvq0asl 11,16 int.0.sysvq0asl ,17 int32.0.sysvq0asl 13,17 int32.0.sysvq0asl ,20 int32.0.sysvq0asl 7,21 int32.0.sysvq0asl))

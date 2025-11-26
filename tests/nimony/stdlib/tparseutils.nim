@@ -1,5 +1,36 @@
 import std/[assertions, math, parseutils]
 
+block: # parseHex
+  var num: int = 0
+  assert parseHex("", num) == 0
+  assert num == 0
+  assert parseHex("4E_69_ED", num) == 8
+  assert num == 0x4E69ED
+  assert parseHex("X", num) == 0
+  assert num == 0x4E69ED
+  assert parseHex("#ABC", num) == 4
+  assert num == 0xABC
+  assert parseHex("ABC", num, maxLen = 1) == 1
+  assert num == 0xA
+  assert parseHex("ABX", num, maxLen = 2) == 2
+  assert num == 0xAB
+  var num8: int8 = 0
+  assert parseHex("0x_4E_69_ED", num8) == 11
+  assert num8 == 0xED'i8
+  assert parseHex("0x_4E_69_ED", num8, 3, 2) == 2
+  assert num8 == 0x4E'i8
+  var num8u: uint8 = 0
+  assert parseHex("0x_4E_69_ED", num8u) == 11
+  assert num8u == 237
+  var num64: int64 = 0
+  assert parseHex("4E69ED4E69ED", num64) == 12
+  assert num64 == 86216859871725
+
+  assert parseHex("x2x", num, start = 1) == 1
+  assert num == 2
+  assert parseHex("123def", num, start = 2, maxLen = 2) == 2
+  assert num == 0x3d
+
 block:
   var ret: int64 = 3'i64
   assert parseBiggestInt("0", ret) == 1

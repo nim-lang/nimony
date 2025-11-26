@@ -1,0 +1,1 @@
+tests/nimony/methods/tlocalmethods.nim(7, 3) Error: 'method' is only allowed at top level

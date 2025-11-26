@@ -967,7 +967,7 @@ proc main(inp, outp: string;
   result = ensureMove(c.foundTags)
 
 const
-  Version = "0.6"
+  Version = "0.6.0"
   Usage = "NifGram. Version " & Version & """
 
   (c) 2024 Andreas Rumpf

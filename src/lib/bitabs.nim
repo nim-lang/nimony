@@ -129,6 +129,17 @@ proc memSize*[Id, T](t: BiTable[Id, T]): int =
   else:
     t.vals.len * sizeof(T) + t.keys.len * sizeof(Id)
 
+type
+  # we need to distinguish `0.0` and `-0.0` even if `0.0 == -0.0`
+  # as signbit and copySign procs returns the different value.
+  BiTableFloat*[Id] = distinct BiTable[Id, uint64]
+
+proc getOrIncl*[Id](t: var BiTableFloat[Id]; v: float64): Id {.inline .} =
+  BiTable[Id, uint64](t).getOrIncl(cast[uint64](v))
+
+proc `[]`*[Id](t: BiTableFloat[Id]; litId: Id): float64 {.inline.} =
+  cast[float64](BiTable[Id, uint64](t)[litId])
+
 when isMainModule:
 
   var t: BiTable[uint32, string]

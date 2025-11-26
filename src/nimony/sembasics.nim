@@ -73,6 +73,12 @@ proc buildSymChoiceForSelfModule*(c: var SemContext;
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 
+iterator topLevelSyms*(c: var SemContext; identifier: StrId): SymId =
+  var it = c.currentScope
+  while it.up != nil: it = it.up
+  for sym in it.tab.getOrDefault(identifier):
+    yield sym.name
+
 proc rawBuildSymChoiceForForeignModule(c: var SemContext; module: SymId;
                                        identifier: StrId; info: PackedLineInfo;
                                        marker: var HashSet[SymId]): int =
@@ -183,20 +189,72 @@ proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string; orig: Curso
   when defined(debug):
     if not c.debugAllowErrors:
       writeStackTrace()
+      for instFrom in items(c.instantiatedFrom):
+        echo "instantiated from: ", infoToStr(instFrom)
+
       echo infoToStr(info) & " Error: " & msg
       if orig.kind != DotToken:
         echo "Source: ", toString(orig, false)
       quit 1
+  var n = orig
+  var hasErr = false
+  if n.kind == ParLe:
+    if n.tagId == ErrT:
+      hasErr = true
+    else:
+      var nested = 0
+      while true:
+        inc n
+        if n.kind == ParRi:
+          if nested == 0: break
+          dec nested
+        elif n.kind == ParLe:
+          if n.tagId == ErrT:
+            hasErr = true
+            break
+          else:
+            inc nested
+  let info = if hasErr: n.info else: info
   c.dest.buildTree ErrT, info:
-    c.dest.addSubtree orig
+    if hasErr:
+      inc n
+      c.dest.takeTree n
+    else:
+      c.dest.addSubtree orig
     for instFrom in items(c.instantiatedFrom):
       c.dest.add dotToken(instFrom)
-    c.dest.add strToken(pool.strings.getOrIncl(msg), info)
+    if hasErr:
+      while n.kind == DotToken: inc n
+      c.dest.takeTree n
+    else:
+      c.dest.add strToken(pool.strings.getOrIncl(msg), info)
 
 proc buildErr*(c: var SemContext; info: PackedLineInfo; msg: string) =
   var orig = createTokenBuf(1)
   orig.addDotToken()
   c.buildErr info, msg, cursorAt(orig, 0)
+
+proc combineErr*(c: var SemContext; pos: int; info: PackedLineInfo; msg: string; orig: Cursor) =
+  ## Builds ErrT node and combine it with the node at `pos` so that no nodes are added outside of
+  ## the node at `pos`.
+  ## When there is no node at `pos`, New ErrT node is added to `c.dest`.
+  ## Assumes the node at `pos` is the last node.
+  var needsParRi = false
+  if c.dest.len > pos:
+    needsParRi = true
+    if c.dest[pos].stmtKind == StmtsS:
+      assert c.dest[c.dest.len - 1].kind == ParRi
+      c.dest.shrink(c.dest.len - 1)
+    else:
+      c.dest.insert [parLeToken(StmtsS, c.dest[pos].info)], pos
+  buildErr c, info, msg, orig
+  if needsParRi:
+    c.dest.addParRi
+
+proc combineErr*(c: var SemContext; pos: int; info: PackedLineInfo; msg: string) =
+  var orig = createTokenBuf(1)
+  orig.addDotToken()
+  c.combineErr pos, info, msg, cursorAt(orig, 0)
 
 proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
@@ -273,10 +331,13 @@ type
 
 proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
   var name = str
+  # Replace dots with spaces to avoid conflicts with NIF symbol format
+  when false:
+    # XXX activate this later!
+    for i in 0..<name.len:
+      if name[i] == '.': name[i] = ' '
   if c.currentScope.kind == ToplevelScope or
-      kind in {FldY, EfldY, TypevarY,
-        # required for local enum type dollars to work at least, probably more cases:
-        TypeY}:
+      kind in {FldY, EfldY, TypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY}:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
@@ -288,6 +349,10 @@ proc identToSym*(c: var SemContext; lit: StrId; kind: SymKind): SymId =
 proc symToIdent*(s: SymId): StrId =
   var name = pool.syms[s]
   extractBasename name
+  when false:
+    # XXX activate this later!
+    for i in 0..<name.len:
+      if name[i] == ' ': name[i] = '.'
   result = pool.strings.getOrIncl name
 
 proc declareSym*(c: var SemContext; it: var Item; kind: SymKind): SymStatus =
@@ -383,19 +448,17 @@ proc addSym*(c: var SemContext; s: DelayedSym) =
     if addNonOverloadable(c.currentScope, s.lit, s.s) == Conflict:
       c.buildErr s.info, "attempt to redeclare: " & pool.strings[s.lit]
 
+proc addSymForwardError*(c: var SemContext; s: DelayedSym): bool =
+  if s.status == OkNew:
+    result = addNonOverloadable(c.currentScope, s.lit, s.s) == Conflict
+  else:
+    result = false
+
 proc publish*(c: var SemContext; s: SymId; start: int) =
   assert s != SymId(0)
   var buf = createTokenBuf(c.dest.len - start + 1)
   for i in start..<c.dest.len:
     buf.add c.dest[i]
-  programs.publish s, buf
-
-proc publishSignature*(c: var SemContext; s: SymId; start: int) =
-  var buf = createTokenBuf(c.dest.len - start + 3)
-  for i in start..<c.dest.len:
-    buf.add c.dest[i]
-  buf.addDotToken() # body is empty for a signature
-  buf.addParRi()
   programs.publish s, buf
 
 # -------------------------------------------------------------------------------------------------

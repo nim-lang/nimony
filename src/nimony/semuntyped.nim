@@ -43,7 +43,7 @@ proc semBindStmt(c: var SemContext; n: var Cursor; toBind: var HashSet[SymId]) =
     var syms = cursorAt(symsBuf, 0)
     case syms.kind
     of Ident:
-      c.buildErr n.info, "undeclared identifier"
+      c.buildErr n.info, "undeclared identifier: " & pool.strings[syms.litId]
     of Symbol:
       c.dest.add syms
     else:
@@ -310,7 +310,7 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
     closeScope(c)
   of DistinctT:
     semTemplBodySons c, n
-  of ProctypeT, IteratorT, ParamsT:
+  of RoutineTypes:
     # open scope for param decls
     openScope(c)
     semTemplBodySons c, n
@@ -318,7 +318,10 @@ proc semTemplType(c: var UntypedCtx; n: var Cursor) =
   of ItertypeT:
     semTemplBodySons c, n
   of NoType:
-    bug("unreachable")
+    if n.kind == Ident:
+      semTemplBody c, n
+    else:
+      bug("unreachable")
 
 proc semTemplTypeDecl(c: var UntypedCtx; n: var Cursor) =
   let orig = n

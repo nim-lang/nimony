@@ -178,8 +178,9 @@ ProcDecl ::= (proc SymbolDef Params Type ProcPragmas [Empty | StmtList])
 
 FieldDecl ::= (fld SymbolDef FieldPragmas Type)
 
-UnionDecl ::= (union Empty FieldDecl*)
-ObjDecl ::= (object [Empty | Type] FieldDecl*)
+UnionDecl ::= (union [FieldDecl | AnonObjDecl | UnionDecl]*)
+AnonObjDecl ::= (object Empty [FieldDecl | AnonObjDecl | UnionDecl]*)
+ObjDecl ::= (object [Empty | Type] [FieldDecl | AnonObjDecl | UnionDecl]*)
 EnumFieldDecl ::= (efld SymbolDef Number)
 EnumDecl ::= (enum Type EnumFieldDecl+)
 

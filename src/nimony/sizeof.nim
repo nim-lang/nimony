@@ -6,7 +6,7 @@
 
 import std / [assertions, tables]
 
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model, decls, programs, xints, semdata, expreval
 
 proc align(address, alignment: int): int {.inline.} =
@@ -14,15 +14,19 @@ proc align(address, alignment: int): int {.inline.} =
 
 type
   SizeofValue* = object
-    size, maxAlign: int
+    size, maxAlign: int   # when maxAlign == 0, it is packed and fields of the object are placed without paddings.
     overflow, strict: bool
 
 proc update(c: var SizeofValue; size, align: int) =
-  c.maxAlign = max(c.maxAlign, align)
-  c.size = align(c.size, align) + size
+  if c.maxAlign == 0:
+    c.size += size
+  else:
+    c.maxAlign = max(c.maxAlign, align)
+    c.size = align(c.size, align) + size
 
 proc combine(c: var SizeofValue; inner: SizeofValue) =
-  c.maxAlign = max(c.maxAlign, inner.maxAlign)
+  if c.maxAlign != 0:
+    c.maxAlign = max(c.maxAlign, inner.maxAlign)
   c.size = c.size + inner.size
   c.overflow = c.overflow or inner.overflow
 
@@ -31,11 +35,12 @@ proc combineCaseObject(c: var SizeofValue; inner: SizeofValue) =
   c.size = max(c.size, inner.size)
   c.overflow = c.overflow or inner.overflow
 
-proc createSizeofValue(strict: bool): SizeofValue =
-  SizeofValue(size: 0, maxAlign: 1, overflow: false, strict: strict)
+proc createSizeofValue(strict: bool, packed = false): SizeofValue =
+  SizeofValue(size: 0, maxAlign: if packed: 0 else: 1, overflow: false, strict: strict)
 
 proc finish(c: var SizeofValue) =
-  c.size = align(c.size, c.maxAlign)
+  if c.maxAlign != 0:
+    c.size = align(c.size, c.maxAlign)
 
 #[
 Structs and tuples currently share the same layout algorithm,
@@ -54,19 +59,38 @@ The final size and alignment are the size and alignment of the aggregate.
 The stride of the type is the final size rounded up to alignment.
 ]#
 
-proc `<`(x: xint; b: int): bool = x < createXint(b)
+type
+  TypePragmas = object
+    pragmas: set[NimonyPragma]
+
+proc parseTypePragmas(n: Cursor): TypePragmas =
+  result = default TypePragmas
+  var n = n
+  if n.substructureKind == PragmasU:
+    inc n
+    while n.kind != ParRi:
+      case n.pragmaKind:
+      of {PackedP, UnionP, InheritableP, IncompleteStructP}:
+        result.pragmas.incl n.pragmaKind
+        skip n
+      else:
+        skip n
+  elif n.kind != DotToken:
+    error "illformed AST inside type section: ", n
+
+proc `<`(x: xint; b: int64): bool = x < createXint(b)
 
 proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int)
 
-proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; iter: var ObjFieldIter; n: var Cursor; ptrSize: int): bool =
+proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; iter: var ObjFieldIter; n: var Cursor; ptrSize: int; pragmas: TypePragmas): bool =
   result = nextField(iter, n, keepCase = true)
   if result:
     if n.substructureKind == CaseU:
+      assert UnionP notin pragmas.pragmas, "Case objects cannot work with union pragma."
       inc n
       # selector
       let field = takeLocal(n, SkipFinalParRi)
       getSize c, cache, field.typ, ptrSize
-
       var cCase = createSizeofValue(c.strict)
       while n.kind != ParRi:
         case n.substructureKind
@@ -77,7 +101,7 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
           var cOf = createSizeofValue(c.strict)
           inc n # stmt
           while n.kind != ParRi:
-            discard getSizeObject(cOf, cache, iter, n, ptrSize)
+            discard getSizeObject(cOf, cache, iter, n, ptrSize, pragmas)
           skipParRi n # stmt
           skipParRi n
 
@@ -89,7 +113,7 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
           var cElse = createSizeofValue(c.strict)
           inc n # stmt
           while n.kind != ParRi:
-            discard getSizeObject(cElse, cache, iter, n, ptrSize)
+            discard getSizeObject(cElse, cache, iter, n, ptrSize, pragmas)
           skipParRi n # stmt
           skipParRi n
           finish cElse
@@ -99,12 +123,18 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
       combine(c, cCase)
     else:
       let field = takeLocal(n, SkipFinalParRi)
-      getSize c, cache, field.typ, ptrSize
+      if UnionP in pragmas.pragmas:
+        var c2 = createSizeofValue(c.strict)
+        getSize c2, cache, field.typ, ptrSize
+        combineCaseObject(c, c2)
+      else:
+        getSize c, cache, field.typ, ptrSize
 
 proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int) =
   var counter = 20
   var n = n
   let cacheKey = if n.kind == Symbol: n.symId else: NoSymId
+  var pragmas = default(TypePragmas)
   while counter > 0 and n.kind == Symbol:
     if cache.hasKey(n.symId):
       let c2 = cache[n.symId]
@@ -115,6 +145,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       var local = asTypeDecl(sym.decl)
       if local.kind == TypeY:
         n = local.body
+        if n.kind != Symbol:
+          pragmas = parseTypePragmas local.pragmas
     else:
       bug "could not load: " & pool.syms[n.symId]
 
@@ -122,14 +154,14 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of IntT, UIntT, FloatT:
     let n = n.firstSon
     assert n.kind == IntLit
-    let s = if pool.integers[n.intId] != -1:
+    let s = int(if pool.integers[n.intId] != -1:
         pool.integers[n.intId] div 8
       else:
-        ptrSize
+        ptrSize)
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
-  of RefT, PtrT, MutT, OutT, ProctypeT, NiltT, CstringT, PointerT, LentT, ParamsT:
+  of RefT, PtrT, MutT, OutT, RoutineTypes, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.firstSon, ptrSize
@@ -147,17 +179,20 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       else:
         update c, 8, 8
   of ObjectT:
-    if c.strict:
+    if c.strict or (IncompleteStructP in pragmas.pragmas):
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true
     var n = n
     inc n
-    var c2 = createSizeofValue(c.strict)
-    if n.kind != DotToken:
+    var c2 = createSizeofValue(c.strict, PackedP in pragmas.pragmas)
+    if n.kind != DotToken:  # base type
       getSize(c2, cache, n, ptrSize)
+    elif InheritableP in pragmas.pragmas:
+      update c, ptrSize, ptrSize
+
     skip n
     var iter = initObjFieldIter()
-    while getSizeObject(c2, cache, iter, n, ptrSize):
+    while getSizeObject(c2, cache, iter, n, ptrSize, pragmas):
       discard
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2
@@ -176,7 +211,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
 
   of SetT:
     let size0 = bitsetSizeInBytes(n.firstSon)
-    let size1 = asSigned(size0, c.overflow)
+    let size1 = int asSigned(size0, c.overflow)
     update c, size1, 1
   of TupleT:
     if c.strict:
@@ -194,7 +229,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of RangetypeT:
     getSize c, cache, n.firstSon, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
-     ConceptT, StaticT, IteratorT, InvokeT, UarrayT, ItertypeT,
+     ConceptT, StaticT, InvokeT, UarrayT, ItertypeT,
      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
     bug "valid type kind for sizeof computation: " & $n.typeKind
 
@@ -234,3 +269,190 @@ proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
     result = not hasPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
   else:
     result = hasPragma(pragmas, ByrefP) or typeSectionMode(typ) == ByrefP
+
+when isMainModule:
+  setupProgramForTesting("", "", "")
+
+  proc testSizeof(srcNif: string; expectedSize: int) =
+    let symId = block:
+      var srcBuf = parseFromBuffer srcNif
+      var n = beginRead srcBuf
+      assert n.stmtKind == TypeS
+      inc n
+      assert n.kind == SymbolDef
+      let result = n.symId
+      endRead srcBuf
+      publish result, srcBuf
+      result
+    var symBuf = createTokenBuf(1)
+    symBuf.add symToken(symId, NoLineInfo)
+    let n = beginRead symBuf
+    var sz = getSize(n, 8)
+    endRead symBuf
+    var err = false
+    let size = sz.asSigned(err)
+    assert size == expectedSize, "expected " & $expectedSize & " but got " & $size
+
+  # type names in the following test Nif must be unique
+  testSizeof("""
+   (type :IntObj.0.mod123abc . . .
+    (object .
+     (fld :x.0.mod123abc . .
+      (i +64) .)))""", 8)
+
+  testSizeof("""
+   (type :IntIntObj.0.mod123abc . . .
+    (object .
+     (fld :x.0.mod123abc . .
+      (i +64) .)
+     (fld :y.0.mod123abc . .
+      (i +64) .)))""", 16)
+
+  testSizeof("""
+   (type :CharObj.0.mod123abc . . .
+    (object .
+     (fld :x.0.mod123abc . .
+      (c +8) .)))""", 1)
+
+  testSizeof("""
+   (type :CharIntObj.0.mod123abc . . .
+    (object .
+     (fld :x.0.mod123abc . .
+      (c +8) .)
+     (fld :y.0.mod123abc . .
+      (i +64) .)))""", 16)
+
+  testSizeof("""
+   (type :IntCharObj.0.mod123abc . . .
+    (object .
+     (fld :x.0.mod123abc . .
+      (i +64) .)
+     (fld :y.0.mod123abc . .
+      (c +8) .)))""", 16)
+
+  testSizeof("""
+   (type ~24 :IntIntObjPacked.0.mod123abc . .
+    (pragmas
+     (packed))
+    (object .
+     (fld :x.1.mod123abc . .
+      (i +64) .)
+     (fld :y.1.mod123abc . .
+      (i +64) .)))""", 16)
+
+  testSizeof("""
+   (type ~24 :IntCharObjPacked.0.mod123abc . .
+    (pragmas
+     (packed))
+    (object .
+     (fld :x.1.mod123abc . .
+      (i +64) .)
+     (fld :y.1.mod123abc . .
+      (c +8) .)))""", 9)
+
+  testSizeof("""
+   (type ~24 :CharIntObjPacked.0.mod123abc . .
+    (pragmas
+     (packed))
+    (object .
+     (fld :x.1.mod123abc . .
+      (c +8) .)
+     (fld :y.1.mod123abc . .
+      (i +64) .)))""", 9)
+
+  testSizeof("""
+   (type ~24 :CharPackedFieldObj.0.mod123abc . . .
+    (object .
+     (fld :x.1.mod123abc . .
+      (c +8) .)
+     (fld :y.1.mod123abc . .
+      IntIntObjPacked.0.mod123abc .)))""", 17)
+
+  testSizeof("""
+   (type ~24 :PackedFieldCharObj.0.mod123abc . . .
+    (object .
+     (fld :x.1.mod123abc . .
+      IntIntObjPacked.0.mod123abc .)
+     (fld :y.1.mod123abc . .
+      (c +8) .)))""", 17)
+
+  testSizeof("""
+   (type ~24 :CharIntObjPacked.0.mod123abc . .
+    (pragmas
+     (packed))
+    (object .
+     (fld :x.1.mod123abc . .
+      (c +8) .)
+     (fld :y.1.mod123abc . .
+      IntIntObj.0.mod123abc .)))""", 17)
+
+  testSizeof("""
+   (type :IntUnion.0.mod123abc . .
+    (pragmas
+     (union))
+    (object .
+     (fld :y.0.mod123abc . .
+      (i +64) .)))""", 8)
+
+  testSizeof("""
+   (type :CharIntUnion.0.mod123abc . .
+    (pragmas
+     (union))
+    (object .
+     (fld :x.0.mod123abc . .
+      (c +8) .)
+     (fld :y.0.mod123abc . .
+      (i +64) .)))""", 8)
+
+  testSizeof("""
+   (type :IntObjFloatUnion.0.mod123abc . .
+    (pragmas
+     (union))
+    (object .
+     (fld :x.0.mod123abc . .
+      (i +64) .)
+     (fld :y.0.mod123abc . .
+      IntIntObj.0.mod123abc .)
+     (fld :z.0.mod123abc . .
+      (f +32) .)))""", 16)
+
+  testSizeof("""
+   (type :XYEnum.0.mod123abc . . .
+    (enum
+     (u +8)
+     (efld :X.0.mod123abc . . E.0.mod123abc
+      (tup +0 "X"))
+     (efld :Y.0.mod123abc . . E.0.mod123abc
+      (tup +1 "Y"))))""", 1)
+
+  testSizeof("""
+   (type :CharCharCaseObj.0.mod123abc . . .
+    (object .
+     (case
+      (fld :k.0.mod123abc . . XYEnum.0.mod123abc .)
+      (of
+       (ranges X.0.mod123abc)
+       (stmts
+        (fld :c.0.mod123abc . .
+         (c +8) .)))
+      (of
+       (ranges Y.0.mod123abc)
+       (stmts
+        (fld :x.0.mod123abc . .
+         (c +8) .))))))""", 2)
+
+  testSizeof("""
+   (type :IntCharCaseObj.0.mod123abc . . .
+    (object .
+     (case
+      (fld :k.0.mod123abc . . XYEnum.0.mod123abc .)
+      (of
+       (ranges X.0.mod123abc)
+       (stmts
+        (fld :c.0.mod123abc . .
+         (i +64) .)))
+      (of
+       (ranges Y.0.mod123abc)
+       (stmts
+        (fld :x.0.mod123abc . .
+         (c +8) .))))))""", 16)

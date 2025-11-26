@@ -10,7 +10,7 @@
 ## NIFC driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, noptions, mangler
+import codegen, noptions, mangler, symparser
 
 when defined(windows):
   import bat
@@ -21,7 +21,7 @@ when defined(enableAsm):
   import amd64 / genasm
 
 const
-  Version = "0.2"
+  Version = "0.2.0"
   Usage = "NIFC Compiler. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
@@ -60,10 +60,10 @@ proc generateBackend(s: var State; action: Action; files: seq[string]; flags: se
   let destExt = if action == atC: ".c" else: ".cpp"
   for i in 0..<files.len-1:
     let inp = files[i]
-    let outp = s.config.nifcacheDir / splitFile(inp).name.mangleFileName & destExt
+    let outp = s.config.nifcacheDir / splitModulePath(inp).name & destExt
     generateCode s, inp, outp, {}
   let inp = files[^1]
-  let outp = s.config.nifcacheDir / splitFile(inp).name.mangleFileName & destExt
+  let outp = s.config.nifcacheDir / splitModulePath(inp).name & destExt
   generateCode s, inp, outp, flags
 
 proc handleCmdLine() =
@@ -182,7 +182,7 @@ proc handleCmdLine() =
       for x in s.selects:
         write h, "#include \"" & extractFilename(x) & "\"\n"
       h.close()
-    let appName = actionTable[currentAction][^1].splitFile.name.mangleFileName
+    let appName = actionTable[currentAction][^1].splitModulePath.name
     if s.config.outputFile == "":
       s.config.outputFile = appName
 

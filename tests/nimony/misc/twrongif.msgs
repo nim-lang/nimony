@@ -1,0 +1,1 @@
+tests/nimony/misc/twrongif.nim(2, 4) Error: expected `bool` but got: int

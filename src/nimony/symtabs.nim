@@ -5,7 +5,7 @@
 # distribution, for details about the copyright.
 
 import std / [tables]
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model
 
 const
@@ -25,21 +25,19 @@ type
     undo: seq[Table[StrId, int]] # len of 'key' to reset tab[key] to.
     up*: Scope
     kind*: ScopeKind
-    rolledBack: bool
 
 proc openShadowScope*(s: Scope) =
   s.undo.add initTable[StrId, int]()
 
 proc commitShadowScope*(s: Scope) =
-  if not s.rolledBack:
-    let newLen = s.undo.len - 1
-    s.undo.shrink newLen
+  let newLen = s.undo.len - 1
+  s.undo.shrink newLen
 
 proc rollbackShadowScope*(s: Scope) =
   let last = s.undo.len - 1
   for k, oldLen in pairs(s.undo[last]):
     s.tab[k].shrink oldLen
-  s.rolledBack = true
+  s.undo.shrink last
 
 proc remember(s: Scope; name: StrId) {.inline.} =
   let last = s.undo.len - 1

@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tnestederrors.nim(4, 3) Error: undeclared identifier: undeclaredVar1
+tests/nimony/errmsgs/tnestederrors.nim(7, 16) Error: expected pragma

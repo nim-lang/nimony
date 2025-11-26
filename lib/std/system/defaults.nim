@@ -22,9 +22,12 @@ template default*[T: ptr](x: typedesc[T]): T = T(nil)
 template default*[T: ref](x: typedesc[T]): T = T(nil)
 template default*(x: typedesc[pointer]): pointer = nil
 
+proc default*[T: distinct](x: typedesc[T]): T {.magic: DefaultDistinct.}
 proc default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}
 proc default*[T: tuple](x: typedesc[T]): T {.magic: DefaultTup.}
 
 proc default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] {.inline, noinit, nodestroy.} =
   for i in low(array[I, T]) .. high(array[I, T]):
     result[i] = default(T)
+
+template default*[T](x: typedesc[set[T]]): set[T] = {}

@@ -51,8 +51,9 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
   result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
-    if c.canSelfExec and needsRecompile(f2, suffixToNif suffix):
-      selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
+    if f1.plugin.len == 0:
+      if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
+        selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
     let moduleName = pool.strings.getOrIncl(f1.name)
     result = identToSym(c, moduleName, ModuleY)
@@ -66,7 +67,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
     publish result, moduleDecl
   else:
     result = c.processedModules[suffix]
-  let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2))
+  let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
   loadInterface suffix, module.iface, result, c.importTab, c.converters, c.methods, exports, mode
 
 proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
@@ -97,21 +98,23 @@ proc doImports(c: var SemContext; files: seq[ImportedFilename]; mode: ImportFilt
   for f in files:
     importSingleFileConsiderExports c, f, origin, mode, info
 
-proc semImport(c: var SemContext; it: var Item) =
-  let info = it.n.info
-  var x = it.n
-  skip it.n
-  inc x # skip the `import`
-
+template maybeCyclic(c: var SemContext; x: var Cursor) =
   if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
     var y = x
+    inc y
     skip y
     if y.substructureKind == PragmasU:
       inc y
       if y.kind == Ident and pool.strings[y.litId] == "cyclic":
         cyclicImport(c, x)
         return
+
+proc semImport(c: var SemContext; it: var Item) =
+  let info = it.n.info
+  var x = it.n
+  skip it.n
+  inc x # skip the `import`
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
@@ -130,15 +133,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `importexcept`
 
-  if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
@@ -159,15 +154,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
   skip it.n
   inc x # skip the `from`
 
-  if x.kind == ParLe and x.exprKind == PragmaxX:
-    inc x
-    var y = x
-    skip y
-    if y.substructureKind == PragmasU:
-      inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-        cyclicImport(c, x)
-        return
+  maybeCyclic(c, x)
 
   var files: seq[ImportedFilename] = @[]
   var hasError = false
@@ -179,7 +166,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
     while x.kind != ParRi:
       if x.kind == ParLe and x.exprKind == NilX:
         # from a import nil
-        discard
+        skip x
       else:
         included.incl takeIdent(x)
     doImports c, files, ImportFilter(kind: FromImport, list: included), info
@@ -206,7 +193,11 @@ proc semExportSymbol(c: var SemContext; n: var Cursor) =
   let info = n.info
   if n.exprKind == DotX:
     var it = Item(n: n, typ: c.types.autoType)
+    let oldPhase = c.phase
+    c.phase = SemcheckBodies
     semExpr c, it
+    c.phase = oldPhase
+    n = it.n
   else:
     let ident = takeIdent(n)
     if ident == StrId(0):
@@ -262,7 +253,7 @@ proc semExport(c: var SemContext; it: var Item) =
     var syms = beginRead(symBuf)
     case syms.kind
     of Ident:
-      c.buildErr info, "undeclared identifier"
+      c.buildErr info, "undeclared identifier: " & pool.strings[syms.litId]
     of Symbol:
       doExport(c, syms.symId, info)
     of ParLe:
@@ -312,7 +303,7 @@ proc semExportExcept(c: var SemContext; it: var Item) =
 
   let moduleSymStart = c.dest.len
   var m = Item(n: x, typ: c.types.autoType)
-  semExpr c, m # get module sym
+  semExpr c, m, {AllowModuleSym} # get module sym
   x = m.n
   let moduleSym = findModuleSymbol(cursorAt(c.dest, moduleSymStart))
   endRead(c.dest)
@@ -330,7 +321,7 @@ proc semExportExcept(c: var SemContext; it: var Item) =
     var syms = beginRead(symBuf)
     case syms.kind
     of Ident:
-      c.buildErr info, "undeclared identifier"
+      c.buildErr info, "undeclared identifier: " & pool.strings[syms.litId]
     of Symbol:
       doExportExcept(c, moduleSym, syms.symId, info)
     of ParLe:

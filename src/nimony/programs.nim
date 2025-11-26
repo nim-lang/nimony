@@ -5,8 +5,9 @@
 # distribution, for details about the copyright.
 
 import std / [syncio, os, tables, sequtils, times, sets]
-include nifprelude
-import nifindexes, symparser, reporters, builtintypes
+include ".." / lib / nifprelude
+import ".." / lib / [nifindexes, symparser]
+import reporters, builtintypes
 import ".." / models / [nifindex_tags]
 
 type
@@ -19,7 +20,7 @@ type
 
   Program* = object
     mods: Table[string, NifModule]
-    dir, main*, ext: string
+    main*: SplittedModulePath
     mem: Table[SymId, TokenBuf]
 
   ImportFilterKind* = enum
@@ -39,10 +40,10 @@ proc newNifModule(infile: string): NifModule =
 
 proc suffixToNif*(suffix: string): string {.inline.} =
   # always imported from semchecked files
-  prog.dir / suffix & ".2.nif"
+  prog.main.dir / suffix & ".s.nif"
 
 proc customToNif*(suffix: string): string {.inline.} =
-  prog.dir / suffix & ".nif"
+  prog.main.dir / suffix & ".nif"
 
 proc needsRecompile*(dep, output: string): bool =
   result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)
@@ -51,7 +52,7 @@ proc load(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
     let infile = suffixToNif suffix
     result = newNifModule(infile)
-    let indexName = infile.changeFileExt".idx.nif"
+    let indexName = infile.changeModuleExt".s.idx.nif"
     #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
     #  createIndex infile
     result.index = readIndex(indexName)
@@ -159,9 +160,11 @@ proc error*(msg: string) {.noreturn.} =
   reportImpl(msg, "[Error] ")
 
 proc bug*(msg: string; c: Cursor) {.noreturn.} =
+  writeStackTrace()
   reportImpl(msg, c, "[Bug] ")
 
 proc bug*(msg: string) {.noreturn.} =
+  writeStackTrace()
   reportImpl(msg, "[Bug] ")
 
 type
@@ -223,6 +226,18 @@ proc loadVTable*(typ: SymId): seq[MethodIndexEntry] =
         return entry.methods
   return @[]
 
+proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
+  # gives top level exported syms of a module
+  result = @[]
+  var m = load(suffix)
+  for k, _ in m.index.public:
+    var base = k
+    extractBasename(base)
+    let strId = pool.strings.getOrIncl(base)
+    if strId == identifier:
+      let symId = pool.syms.getOrIncl(k)
+      result.add symId
+
 proc registerHook*(suffix: string; typ: SymId; op: AttachedOp; hook: SymId; isGeneric: bool) =
   let m: NifModule
   if not prog.mods.hasKey(suffix):
@@ -240,13 +255,20 @@ proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 proc publish*(s: SymId; buf: sink TokenBuf) =
   prog.mem[s] = buf
 
-proc splitModulePath*(s: string): (string, string, string) =
-  var (dir, main, ext) = splitFile(s)
-  let dotPos = find(main, '.')
-  if dotPos >= 0:
-    ext = substr(main, dotPos) & ext
-    main.setLen dotPos
-  result = (dir, main, ext)
+proc publish*(s: SymId; dest: TokenBuf; start: int) =
+  # XXX We really need to find an elegant way to use Cursor here instead of Tokenbuf copies
+  var buf = createTokenBuf(dest.len - start + 1)
+  for i in start..<dest.len:
+    buf.add dest[i]
+  publish s, buf
+
+proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
+  var buf = createTokenBuf(dest.len - start + 3)
+  for i in start..<dest.len:
+    buf.add dest[i]
+  buf.addDotToken() # body is empty for a signature
+  buf.addParRi()
+  publish s, buf
 
 proc publishStringType() =
   # This logic is not strictly necessary for "system.nim" itself, but
@@ -285,29 +307,29 @@ proc publishStringType() =
   publish symId, str
 
 proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
-  let (dir, file, _) = splitModulePath(infile)
-  let (_, _, ext) = splitModulePath(outfile)
-  prog.dir = (if dir.len == 0: getCurrentDir() else: dir)
-  prog.ext = ext
-  prog.main = file
+  prog.main = splitModulePath(infile)
+  let outp = splitModulePath(outfile)
+  if prog.main.dir.len == 0:
+    prog.main.dir = getCurrentDir()
+  prog.main.ext = outp.ext
 
   var m = newNifModule(infile)
 
   if hasIndex:
-    let indexName = infile.changeFileExt".idx.nif"
+    let indexName = infile.changeModuleExt".s.idx.nif"
     #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
     #  createIndex infile
     m.index = readIndex(indexName)
 
   #echo "INPUT IS ", toString(m.buf)
   result = beginRead(m.buf)
-  prog.mods[prog.main] = m
+  prog.mods[prog.main.name] = m
   publishStringType()
 
 proc setupProgramForTesting*(dir, file, ext: string) =
-  prog.dir = dir
-  prog.main = file
-  prog.ext = ext
+  prog.main.dir = dir
+  prog.main.name = file
+  prog.main.ext = ext
   publishStringType()
 
 proc takeParRi*(dest: var TokenBuf; n: var Cursor) =

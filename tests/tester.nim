@@ -47,7 +47,7 @@ proc testIndexer(overwrite: bool) =
   let f = "tests/nifc/hello.nif"
   exec ("src" / "lib" / "nifindexes").addFileExt(ExeExt) & " " & f
 
-  let r = f.withExt(".idx.nif")
+  let r = f.withExt(".s.idx.nif")
   let e = f.withExt(".expected.idx.nif")
   if not os.sameFileContent(r, e):
     if overwrite:

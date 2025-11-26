@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tconstredecl.nim(3, 3) Error: attempt to redeclare: x

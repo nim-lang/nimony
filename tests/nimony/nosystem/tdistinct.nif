@@ -21,17 +21,29 @@
   (typevars 1
    (typevar :T.0.tdiuhv8dm . . . .)) 13
   (pragmas 2
-   (magic 7 TypeDesc)) .) ,8
- (proc 5 :typeof.0.tdiuhv8dm
-  (typeof) . 12
-  (typevars 1
-   (typevar :T.1.tdiuhv8dm . . . .)) 15
-  (params 1
-   (param :x.0 . . 3 T.1.tdiuhv8dm .)) 16
-  (typedesc 1 T.1.tdiuhv8dm) 35
+   (magic 7 TypeDesc)) .) 2,7
+ (type :untyped.0.tdiuhv8dm
+  (untyped) . 9
   (pragmas 2
-   (magic 7 TypeOf)) . .) 10,11
- (type ~8 :string.0.tdiuhv8dm x . . string.0.sysvq0asl) ,13
+   (magic 7 Expr)) .) 14,9
+ (type ~12 :TypeOfMode.0.tdiuhv8dm x . . 2
+  (enum
+   (u +8) ~12,1
+   (efld :typeOfProc.0.tdiuhv8dm x . TypeOfMode.0.tdiuhv8dm
+    (tup +0 "typeOfProc")) ~12,2
+   (efld :typeOfIter.0.tdiuhv8dm x . TypeOfMode.0.tdiuhv8dm
+    (tup +1 "typeOfIter")))) ,13
+ (proc 5 :typeof.0.tdiuhv8dm
+  (typeof) . . 11
+  (params 1
+   (param :x.0 . . 3
+    (untyped) .) 13
+   (param :mode.0 . . ~20,~2 TypeOfMode.0.tdiuhv8dm 7 typeOfIter.0.tdiuhv8dm)) 33
+  (typekind
+   (typedesc)) 53
+  (pragmas 2
+   (magic 7 TypeOf)) . .) 10,17
+ (type ~8 :string.0.tdiuhv8dm x . . string.0.sysvq0asl) ,19
  (proc 5 :\2B.0.tdiuhv8dm
   (add -3) . . 9
   (params 1
@@ -41,7 +53,7 @@
     (i -1) .)) 13
   (i -1) 26
   (pragmas 2
-   (magic 7 "AddI")) . .) ,14
+   (magic 7 "AddI")) . .) ,20
  (proc 5 :\2D.0.tdiuhv8dm
   (sub -3) . . 9
   (params 1
@@ -51,7 +63,7 @@
     (i -1) .)) 13
   (i -1) 26
   (pragmas 2
-   (magic 7 "SubI")) . .) ,16
+   (magic 7 "SubI")) . .) ,22
  (proc 5 :<=.0.tdiuhv8dm
   (le -3) . . 10
   (params 1
@@ -61,10 +73,10 @@
     (i -1) .)) 13
   (bool) 28
   (pragmas 2
-   (magic 7 "LeI")) . .) 9,20
+   (magic 7 "LeI")) . .) 9,26
  (type ~7 :VarId.0.tdiuhv8dm x . . 2
   (distinct 9
-   (i -1))) ,22
+   (i -1))) ,28
  (proc 5 :\2B.1.tdiuhv8dm x . . 9
   (params 1
    (param :x.4 . . 6 VarId.0.tdiuhv8dm .) 4
@@ -81,11 +93,27 @@
        (i -1) x.4)
       (dconv 11,~2
        (i -1) y.3))))
-   (ret result.0))) 4,29
- (gvar :x.0.tdiuhv8dm . . 3 VarId.0.tdiuhv8dm .) 2,31
+   (ret result.0))) 4,35
+ (gvar :x.0.tdiuhv8dm . . 3 VarId.0.tdiuhv8dm .) 2,37
  (asgn ~2 x.0.tdiuhv8dm 4
-  (infix \2B.1.tdiuhv8dm ~2 x.0.tdiuhv8dm 2 x.0.tdiuhv8dm)) 4,33
+  (infix \2B.1.tdiuhv8dm ~2 x.0.tdiuhv8dm 2 x.0.tdiuhv8dm)) 4,39
  (glet :y.0.tdiuhv8dm . . 4
   (i +8) 8
   (conv ~4
-   (i +8) 1 x.0.tdiuhv8dm)))
+   (i +8) 1 x.0.tdiuhv8dm)) 2,9
+ (proc :dollar`.TypeOfMode.0.tdiuhv8dm x . .
+  (params
+   (param :e.0 . . TypeOfMode.0.tdiuhv8dm .)) string.0.sysvq0asl . .
+  (stmts 14
+   (result :result.1 . . string.0.sysvq0asl .) 14
+   (case e.0 ~12,1
+    (of
+     (ranges typeOfProc.0.tdiuhv8dm)
+     (stmts
+      (ret "typeOfProc"))) ~12,2
+    (of
+     (ranges typeOfIter.0.tdiuhv8dm)
+     (stmts
+      (ret "typeOfIter"))))
+   (ret result.1))) 15,13
+ (comment untyped.0.tdiuhv8dm 18 typedesc.0.tdiuhv8dm 1,6 int.0.tdiuhv8dm 1,6 int.0.tdiuhv8dm ~2,6 int.0.tdiuhv8dm 1,7 int.0.tdiuhv8dm 1,7 int.0.tdiuhv8dm ~2,7 int.0.tdiuhv8dm 2,9 int.0.tdiuhv8dm 2,9 int.0.tdiuhv8dm ~2,9 bool.0.tdiuhv8dm 5,13 int.0.tdiuhv8dm ~7,26 int8.0.tdiuhv8dm))

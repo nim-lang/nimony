@@ -11,7 +11,7 @@ import std / assertions
 import ".." / nifc_model
 import ".." / native / slots
 
-import nifstreams except StrId
+import nifstreams
 
 type
   IntReg* = distinct byte
@@ -193,12 +193,13 @@ type
     of InRegFp: regf*: FloatReg
     of InFlag: flag*: TagId
     of JumpMode: label*: int
-    of InData, InTls, InTextSection: data*: StrId
+    of InData: str*: StrId
+    of InTls, InTextSection: data*: SymId
 
 proc immediateLoc*(ival: int64; typ: AsmSlot): Location = Location(typ: typ, kind: ImmediateInt, ival: ival)
 proc immediateLoc*(uval: uint64; typ: AsmSlot): Location = Location(typ: typ, kind: ImmediateUInt, uval: uval)
 proc immediateLoc*(fval: float; typ: AsmSlot): Location = Location(typ: typ, kind: ImmediateFloat, fval: fval)
-proc stringData*(data: StrId): Location = Location(kind: InData, data: data)
+proc stringData*(data: StrId): Location = Location(kind: InData, str: data)
 
 proc allocResultWin64*(a: var RegAllocator;
                        returnType: AsmSlot;

@@ -1,5 +1,5 @@
 ## Hastur - Tester tool for Nimony and its related subsystems (NIFC etc).
-## (c) 2024 Andreas Rumpf
+## (c) 2024-2025 Andreas Rumpf
 
 when defined(windows):
   when defined(gcc):
@@ -14,19 +14,21 @@ import lib / [nifindexes, lineinfos]
 import gear2 / modnames
 
 const
-  Version = "0.6"
+  Version = "0.6.0"
   Usage = "hastur - tester tool for Nimony Version " & Version & """
 
-  (c) 2024 Andreas Rumpf
+  (c) 2024-2025 Andreas Rumpf
 Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   nifc                 run NIFC tests.
-  test <file>          run test <file>.
+  nj                   run NJ (Nimony Jump Elimination) tests.
+  vl                   run VL (Versioned Locations) tests.
+  test <file>/<dir>    run test <file> or <dir>.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
@@ -40,6 +42,7 @@ Options:
   --codegen             track the contents of the code generator too
   --version             show the version
   --help                show this help
+  --forward:OPTION      pass an option to the Nimony compiler
 """
 
 proc quitWithText*(s: string) =
@@ -169,14 +172,18 @@ proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
   result = "nimcache" / name.addFileExt(ext)
 
+proc generatedExeFile(orig: string): string =
+  result = "nimcache" / orig.splitFile.name.addFileExt(ExeExt)
+
 proc removeMakeErrors(output: string): string =
   result = output.strip
   for prefix in ["FAILURE:", "make:"]:
     let lastLine = rfind(result, '\n')
-    if lastLine >= 0 and lastLine + prefix.len < result.len and
-        result[lastLine + 1 .. lastLine + prefix.len] == prefix:
-      result = result[0 .. lastLine].strip
-    else: break
+    if lastLine >= 0:
+      if result.continuesWith(prefix, lastLine+1):
+        result.setLen lastLine
+    elif result.startsWith(prefix):
+      result.setLen 0
 
 proc compareValgrindOutput(s1: string, s2: string): bool =
   # ==90429==
@@ -209,7 +216,7 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
 
         failure c, file, valgrindSpec, testProgramOutput
 
-proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category) =
+proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category; forward: string) =
   #echo "TESTING ", file
   inc c.total
   var nimonycmd = "--isMain"
@@ -221,6 +228,9 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
     nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
   of Compat:
     nimonycmd.add " --compat"
+  if forward.len != 0:
+    nimonycmd.add ' '
+    nimonycmd.add forward
   when defined(linux):
     nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
   else:
@@ -249,7 +259,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
       diffFiles c, file, cfile, nimcacheC, overwrite
 
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       var output = file.changeFileExt(".output")
       if testProgramExitCode != 0:
@@ -269,20 +279,20 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category)
 
     let ast = file.changeFileExt(".nif")
     if ast.fileExists():
-      let nif = generatedFile(file, ".2.nif")
+      let nif = generatedFile(file, ".s.nif")
       diffFiles c, file, ast, nif, overwrite
 
-proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category) =
+proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; forward: string) =
   var files: seq[string] = @[]
   for x in walkDir(dir):
     if x.kind == pcFile and x.path.endsWith(".nim"):
       files.add x.path
   sort files
-  if cat == Compat:
+  if cat in {Compat, Basics}:
     removeDir "nimcache"
   for f in items files:
-    testFile c, f, overwrite, cat
-  if cat == Compat:
+    testFile c, f, overwrite, cat, forward
+  if cat in {Compat, Basics}:
     removeDir "nimcache"
 
 proc parseCategory(path: string): Category =
@@ -300,7 +310,7 @@ proc findCategory(path: string): Category =
       return cat
   return Normal
 
-proc nimonytests(overwrite: bool) =
+proc nimonytests(overwrite: bool; forward: string) =
   ## Run all the nimonytests in the test-suite.
   const TestDir = "tests/nimony"
   let t0 = epochTime()
@@ -308,26 +318,33 @@ proc nimonytests(overwrite: bool) =
   for x in walkDir(TestDir, relative = true):
     let cat = parseCategory x.path
     if x.kind == pcDir:
-      testDir c, TestDir / x.path, overwrite, cat
+      testDir c, TestDir / x.path, overwrite, cat, forward
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
   else:
     echo "SUCCESS."
 
-proc controlflowTests(tool: string; overwrite: bool) =
-  ## Run all the controlflow tests in the test-suite.
-  let testDir = "tests/" & tool
+proc runNifToolTests(tool, testDir, inputExt, expectedExt: string; overwrite: bool) =
+  ## Run tests for a NIF tool.
+  ## - inputExt: extension that input files must have (e.g., ".nif" or ".nj.nif")
+  ## - expectedExt: extension for expected output files (e.g., ".nj.nif" or ".vl.nif")
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   for x in walkDir(testDir, relative = true):
-    if x.kind == pcFile and x.path.endsWith(".nif") and not x.path.contains(".expected.nif"):
+    # To match input, file must end with inputExt but not with any longer output extension.
+    # This prevents .nj.nif and .vl.nif from matching when inputExt is .nif
+    let shouldTest = x.kind == pcFile and x.path.endsWith(inputExt) and
+                     not x.path.contains(expectedExt) and
+                     not x.path.contains(".out.nif") and
+                     not (inputExt == ".nif" and (x.path.endsWith(".nj.nif") or x.path.endsWith(".vl.nif")))
+    if shouldTest:
       inc c.total
       let t = testDir / x.path
       let dest = t.changeFileExt(".out.nif")
       let (msgs, exitcode) = execLocal(tool, os.quoteShell(t) & " " & os.quoteShell(dest))
       if exitcode != 0:
-        failure c, t, tool & " exitcode " & $exitcode, msgs
+        failure c, t, tool & " exitcode 0", "exitcode " & $exitcode & "\n" & msgs
       let msgsFile = t.changeFileExt(".msgs")
       if msgsFile.fileExists():
         if overwrite:
@@ -336,7 +353,7 @@ proc controlflowTests(tool: string; overwrite: bool) =
           let expectedOutput = readFile(msgsFile).strip
           if expectedOutput != msgs.strip:
             failure c, t, expectedOutput, msgs
-      let expected = t.changeFileExt(".expected.nif")
+      let expected = t.changeFileExt(expectedExt)
       if overwrite:
         if expected.fileExists():
           moveFile(dest, expected)
@@ -354,11 +371,35 @@ proc controlflowTests(tool: string; overwrite: bool) =
   else:
     echo "SUCCESS."
 
-proc test(t: string; overwrite: bool; cat: Category) =
+proc controlflowTests(tool: string; overwrite: bool) =
+  ## Run all the controlflow tests in the test-suite.
+  runNifToolTests(tool, "tests/" & tool, ".nif", ".expected.nif", overwrite)
+
+proc njTests(overwrite: bool) =
+  ## Run all the NJ (Nimony Jump Elimination) tests.
+  ## Tests are .nif files in src/njvl/tests/ with expected output in .nj.nif files.
+  runNifToolTests("nj", "src/njvl/tests", ".nif", ".nj.nif", overwrite)
+
+proc vlTests(overwrite: bool) =
+  ## Run all the VL (Versioned Locations) tests.
+  ## Tests are .nif files in src/njvl/tests/ with expected output in .vl.nif files.
+  runNifToolTests("vl", "src/njvl/tests", ".nif", ".vl.nif", overwrite)
+
+proc test(t: string; overwrite: bool; cat: Category; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
-  testFile c, t, overwrite, cat
+  testFile c, t, overwrite, cat, forward
   if c.failures > 0:
     quit "FAILURE: Test failed."
+  else:
+    echo "SUCCESS."
+
+proc testDirCmd(dir: string; overwrite: bool; forward: string) =
+  var c = TestCounters(total: 0, failures: 0)
+  let t0 = epochTime()
+  testDir c, dir, overwrite, findCategory(dir), forward
+  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some tests failed."
   else:
     echo "SUCCESS."
 
@@ -406,7 +447,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
     addTestSpec test.changeFileExt(".msgs"), finalCompilerOutput
   else:
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedFile(ExeExt)
+      let exe = file.generatedExeFile()
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       let ext = if testProgramExitCode != 0: ".exitcode" else: ".output"
       addTestSpec test.changeFileExt(ext), testProgramOutput
@@ -421,7 +462,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
       addTestCode test.changeFileExt(".nim.c"), nimcacheC
 
     if RecordAst in flags:
-      let nif = generatedFile(test, ".2.nif")
+      let nif = generatedFile(test, ".s.nif")
       addTestCode test.changeFileExt(".nif"), nif
 
 proc binDir*(): string =
@@ -456,6 +497,16 @@ proc buildContracts(showProgress = false) =
   let exe = "contracts".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
+proc buildNj(showProgress = false) =
+  exec "nim c src/njvl/nj.nim", showProgress
+  let exe = "nj".addFileExt(ExeExt)
+  robustMoveFile "src/njvl/" & exe, binDir() / exe
+
+proc buildVl(showProgress = false) =
+  exec "nim c src/njvl/vl.nim", showProgress
+  let exe = "vl".addFileExt(ExeExt)
+  robustMoveFile "src/njvl/" & exe, binDir() / exe
+
 proc buildNifc(showProgress = false) =
   exec "nim c src/nifc/nifc.nim", showProgress
   let exe = "nifc".addFileExt(ExeExt)
@@ -465,6 +516,11 @@ proc buildHexer(showProgress = false) =
   exec "nim c src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
+
+proc buildNifmake(showProgress = false) =
+  exec "nim c src/nifmake/nifmake.nim", showProgress
+  let exe = "nifmake".addFileExt(ExeExt)
+  robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -500,8 +556,8 @@ proc hexertests(overwrite: bool) =
   let helloworld = "tests/hexer/hexer_helloworld"
   createIndex helloworld & ".nif", false, NoLineInfo
   createIndex mod1 & ".nif", false, NoLineInfo
-  execHexer mod1 & ".nif"
-  execHexer helloworld & ".nif"
+  execHexer "c " & mod1 & ".nif"
+  execHexer "c " & helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
 proc syncCmd(newBranch: string) =
@@ -528,6 +584,7 @@ proc handleCmdLine =
 
   var flags: set[RecordFlag] = {}
   var overwrite = false
+  var forward = ""
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -543,6 +600,7 @@ proc handleCmdLine =
         of "codegen": flags.incl RecordCodegen
         of "ast": flags.incl RecordAst
         of "overwrite": overwrite = true
+        of "forward": forward = val
         else: writeHelp()
       else:
         args.add key
@@ -561,13 +619,18 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     buildHexer()
-    nimonytests(overwrite)
+    buildNifmake()
+    nimonytests(overwrite, forward)
     nifctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
     controlflowTests("controlflow", overwrite)
     buildContracts()
     controlflowTests("contracts", overwrite)
+    buildNj()
+    njTests(overwrite)
+    buildVl()
+    vlTests(overwrite)
 
   of "controlflow", "cf":
     buildControlflow()
@@ -577,8 +640,17 @@ proc handleCmdLine =
     buildContracts()
     controlflowTests("contracts", overwrite)
 
+  of "nj":
+    buildNj()
+    njTests(overwrite)
+
+  of "vl":
+    buildVl()
+    vlTests(overwrite)
+
   of "build":
     const showProgress = true
+    exec "git submodule update --init"
     case (if args.len > 0: args[0] else: "")
     of "", "all":
       buildNifler(showProgress)
@@ -586,6 +658,9 @@ proc handleCmdLine =
       buildNimony(showProgress)
       buildNifc(showProgress)
       buildHexer(showProgress)
+      buildNifmake(showProgress)
+      buildNj(showProgress)
+      buildVl(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -595,13 +670,19 @@ proc handleCmdLine =
       buildNifc(showProgress)
     of "hexer":
       buildHexer(showProgress)
+    of "nifmake":
+      buildNifmake(showProgress)
+    of "nj":
+      buildNj(showProgress)
+    of "vl":
+      buildVl(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
 
   of "nimony":
     buildNimony()
-    nimonytests(overwrite)
+    nimonytests(overwrite, forward)
   of "nifc":
     buildNifc()
     nifctests(overwrite)
@@ -613,7 +694,10 @@ proc handleCmdLine =
     buildNimony()
     buildNifc()
     if args.len > 0:
-      test args[0], overwrite, findCategory(args[0])
+      if args[0].dirExists():
+        testDirCmd args[0], overwrite, forward
+      else:
+        test args[0], overwrite, findCategory(args[0]), forward
     else:
       quit "`test` takes an argument"
   of "record":

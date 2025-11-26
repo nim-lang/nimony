@@ -57,4 +57,5 @@
    (ref 4 NodeObj.0.tbimvo1d9) 5
    (kv ~4 data.0.tbimvo1d9 2 -123) 17
    (kv ~4 left.0.tbimvo1d9 2 y.0.tbimvo1d9) 27
-   (kv ~5 right.0.tbimvo1d9 2 y.0.tbimvo1d9))))
+   (kv ~5 right.0.tbimvo1d9 2 y.0.tbimvo1d9))) 10,4
+ (comment int.0.tbimvo1d9))

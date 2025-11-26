@@ -1,2 +1,2 @@
 tests/nimony/lookups/tambtypeconv.nim(3, 13) Error: attempt to call routine: 'Foo'
-tests/nimony/lookups/tambtypeconv.nim(3, 12) Error: undeclared field: 'Foo' for type (i -1)
+tests/nimony/lookups/tambtypeconv.nim(3, 12) Error: undeclared field: 'Foo' for type int

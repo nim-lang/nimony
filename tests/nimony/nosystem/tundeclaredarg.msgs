@@ -1,1 +1,1 @@
-tests/nimony/nosystem/tundeclaredarg.nim(5, 5) Error: undeclared identifier
+tests/nimony/nosystem/tundeclaredarg.nim(5, 5) Error: undeclared identifier: abc

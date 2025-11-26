@@ -7,9 +7,9 @@
 ## Types required by semantic checking.
 
 import std / [tables, sets, os, syncio, formatfloat, assertions]
-include nifprelude
-import nimony_model, symtabs, builtintypes, decls, symparser,
-  programs, magics, reporters, nifconfig, nifindexes
+include ".." / lib / nifprelude
+import ".." / lib / [symparser, nifindexes]
+import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints
 
 import ".." / gear2 / modnames
 
@@ -17,6 +17,7 @@ type
   TypeCursor* = Cursor
   SemRoutine* {.acyclic.} = ref object
     kind*: SymKind
+    hasDefer*: bool
     inGeneric*, inLoop*, inBlock*, inInst*: int
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
@@ -32,6 +33,7 @@ const
 type
   ImportedModule* = object
     path*: string
+    fromPlugin*: string
     iface*: Iface
     exports*: Table[SymId, ImportFilter]
 
@@ -70,6 +72,11 @@ type
   ModuleFlag* = enum
     IsSystem, IsMain, SkipSystem
 
+  SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
+  SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
+  SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
+
+
   SemContext* = object
     dest*: TokenBuf
     routine*: SemRoutine
@@ -94,6 +101,8 @@ type
     usedTypevars*: int
     phase*: SemPhase
     canSelfExec*: bool
+    checkedForWriteNifModule*: bool
+    inWhen*: int
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.
@@ -110,9 +119,20 @@ type
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
-    pendingTypePlugins*: Table[SymId, StrId]
-    pendingModulePlugins*: seq[StrId]
+    pendingTypePlugins*: Table[SymId, (StrId, PackedLineInfo)]
+    pendingModulePlugins*: seq[(StrId, PackedLineInfo)]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
+    cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
+    userPragmas*: Table[StrId, TokenBuf]
+    usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
+    pragmaStack*: seq[Cursor] # used to implement {.push.} and {.pop.}
+    executeCall*: SemExecutor
+    semStmtCallback*: SemStmtCallback
+    semGetSize*: SemGetSize
+    passL*: seq[string]
+    passC*: seq[string]
+    genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
+    expanded*: TokenBuf
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

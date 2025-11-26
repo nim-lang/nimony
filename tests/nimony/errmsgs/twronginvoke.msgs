@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/twronginvoke.nim(9, 13) Error: undeclared identifier: BGObj
+tests/nimony/errmsgs/twronginvoke.nim(9, 18) Error: cannot attempt to instantiate a non-type
+tests/nimony/errmsgs/twronginvoke.nim(9, 26) Error: expected type symbol for object constructor

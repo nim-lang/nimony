@@ -31,7 +31,7 @@
   )
 
   (type :MyObject4.m .
-  (union . (fld :a1 . (i +32 (atomic)))
+  (union (fld :a1 . (i +32 (atomic)))
     (fld :a2 . (i +64 (atomic)))
     (fld :a3 . (bool (ro)))
     (fld :a4 . MyObject3.m)

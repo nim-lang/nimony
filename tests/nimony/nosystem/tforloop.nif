@@ -59,7 +59,8 @@
  (for 20
   (call ~7 countup.0.tfov349y21 1 +0 4 +44)
   (unpackflat
-   (let :mycounter.0 . . 9,~6
+   (let :mycounter.0 . . 12,~11
     (i -1) .)) ~2,1
   (stmts
-   (discard 8 mycounter.0))))
+   (discard 8 mycounter.0))) 16,4
+ (comment int.0.tfov349y21 int.0.tfov349y21 ~3 int.0.tfov349y21 ,1 int.0.tfov349y21 ,1 int.0.tfov349y21 ~3,1 int.0.tfov349y21 1,3 int.0.tfov349y21 1,3 int.0.tfov349y21 ~3,3 bool.0.tfov349y21 7,5 int.0.tfov349y21 7,5 int.0.tfov349y21 ~3,5 int.0.tfov349y21))

@@ -18,7 +18,7 @@
   (stmts 4
    (var :s.0 . .
     (i -1) 4 +12) 4,1
-   (let :x.8 . . 12,~5
+   (let :x.8 . . 8,~5
     (i -1) 5
     (hderef
      (call ~1 g.0.tdexr7cz81 1
@@ -57,17 +57,17 @@
   (stmts 4
    (var :x.9 . . 7,~1
     (i -1) 4 x.3) 4,1
-   (var :s.1 . . 12,~8
+   (var :s.1 . . 8,~18
     (i -1) 6
     (hderef
      (call ~2 g1.0.tdexr7cz81 1
       (haddr x.9)))) 4,2
-   (let :y.0 . . 12,~6
+   (let :y.0 . . 8,~19
     (i -1) 6
     (hderef
      (call ~2 g2.0.tdexr7cz81 1
       (haddr s.1)))) 4,3
-   (let :n.0 . . 12,~7
+   (let :n.0 . . 8,~20
     (i -1) 6
     (hderef
      (call ~2 g2.0.tdexr7cz81 3
@@ -119,7 +119,7 @@
   (stmts 4
    (var :x.10 . . 8,~1
     (i -1) 4 x.7) 4,1
-   (let :s1.0 . . 8,~13
+   (let :s1.0 . . 7,~21
     (i -1) 8
     (call ~3 g21.0.tdexr7cz81 1
      (haddr x.10))) 4,2
@@ -132,7 +132,8 @@
     (hderef
      (call ~3 g41.1.tdexr7cz81 1
       (haddr s2.0)))))) 5,41
- (call ~5 foo11.0.tdexr7cz81 1 +12) 14,38
+ (call ~5 foo11.0.tdexr7cz81 1 +12) 14
+ (comment int.0.sysvq0asl 4 int.0.sysvq0asl 1,10 int.0.sysvq0asl 4,10 int.0.sysvq0asl 1,13 int.0.sysvq0asl 4,13 int.0.sysvq0asl ~1,16 int.0.sysvq0asl 2,24 int.0.sysvq0asl ,24 int.0.sysvq0asl ,35 int.0.sysvq0asl) 14,38
  (proc :g31.1.tdexr7cz81 . ~14,~9 .
   (at g31.0.tdexr7cz81 ,~3
    (i -1)) ~3,~9

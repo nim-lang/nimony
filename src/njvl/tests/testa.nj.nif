@@ -1,0 +1,60 @@
+(stmts
+ (proc :echo.0 . . .
+  (params
+   (param :cond.0 . .
+    (bool) .)) . . .
+  (stmts
+   (cfvar :´r.0)
+   (kill ´r.0)))
+ (proc :echo.1 . . .
+  (params
+   (param :cond.0 . .
+    (bool) .))
+  (i +32) . .
+  (stmts
+   (cfvar :´r.0)
+   (kill ´r.0)))
+ (let :a.0 . .
+  (bool)
+  (false))
+ (var :b.0 . .
+  (bool)
+  (true))
+ (cfvar :`j.0.main)
+ (ite a.0
+  (stmts
+   (jtrue `j.0.main))
+  (stmts
+   (ite b.0
+    (stmts
+     (jtrue `j.0.main)) .)))
+ (ite `j.0.main
+  (stmts
+   (call echo.0 "abc")) .)
+ (store
+  (false) b.0)
+ (loop
+  (stmts
+   (cfvar :´g.0))
+  (not ´g.0)
+  (stmts
+   (call echo.0 "pre-condition")
+   (ite a.0
+    (stmts
+     (ite b.0
+      (stmts
+       (jtrue ´g.0))
+      (stmts
+       (call echo.0 "more")))) .)
+   (ite
+    (not ´g.0)
+    (stmts
+     (call echo.0 "code here")) .)
+   (kill ´g.0)
+   (continue .)))
+ (call echo.0 "after loop")
+ (let :`x.1 . .
+  (i +32)
+  (call echo.1 "abc"))
+ (call echo.0 `x.1)
+ (kill a.0 `j.0.main b.0 `x.1))

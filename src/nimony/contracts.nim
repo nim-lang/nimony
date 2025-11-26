@@ -378,12 +378,18 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         analyseArrayConstr c, pc
       of TupconstrX:
         analyseTupConstr c, pc
+      of CastX, ConvX, HconvX:
+        inc pc
+        skip pc # skips type
+        analyseExpr c, pc
+        skipParRi pc
       else:
         inc nested
         inc pc
     if nested == 0: break
 
 proc analyseCallArgs(c: var Context; n: var Cursor) =
+  let callCursor = n
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   analyseExpr c, n # the `fn` itself could be a proc pointer we must ensure was initialized
   assert fnType.isParamsTag
@@ -412,7 +418,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
   let req = extractPragma(fnType, RequiresP)
   if not cursorIsNil(req):
     # ... analyse that the input parameters match the requirements
-    let res = checkReq(c, paramMap, req, n)
+    let res = checkReq(c, paramMap, req, callCursor)
     when isMainModule:
       # XXX Enable when it works
       if res != Proven:
@@ -447,62 +453,6 @@ proc `<`*(a, b: BasicBlockIdx): bool {.borrow.}
 
 proc toBasicBlock*(c: Context; pc: Cursor): BasicBlockIdx {.inline.} =
   result = BasicBlockIdx(cursorToPosition(c.startInstr, pc))
-
-proc eliminateDeadInstructions(c: TokenBuf; start = 0; last = -1): seq[bool] =
-  # Create a sequence to track which instructions are reachable
-  result = newSeq[bool]((if last < 0: c.len else: last + 1) - start)
-  let last = if last < 0: c.len-1 else: min(last, c.len-1)
-
-  # Initialize with the start position
-  var worklist = @[start]
-  var processed = initIntSet()
-
-  # Process the worklist
-  while worklist.len > 0:
-    let pos = worklist.pop()
-    if pos > last or pos in processed:
-      continue
-
-    processed.incl(pos)
-    result[pos - start] = true  # Mark as reachable
-
-    # Handle different instruction types
-    if c[pos].kind == GotoInstr:
-      let diff = c[pos].getInt28
-      if diff != 0:
-        worklist.add(pos + diff)  # Add the target of the jump
-        # For forward jumps, everything between the goto and its target is potentially unreachable
-        if diff > 0:
-          # Don't automatically continue to the next instruction after a goto
-          continue
-    elif cast[TagEnum](c[pos].tag) == IteTagId:
-      # For if-then-else, process the condition and both branches
-      var p = pos + 1
-      # Skip the condition, marking it as reachable
-      while p <= last and c[p].kind != GotoInstr:
-        result[p - start] = true
-        inc p
-
-      if p <= last and c[p].kind == GotoInstr:
-        # Process the then branch target
-        let thenDiff = c[p].getInt28
-        result[p - start] = true  # Mark the goto as reachable
-        worklist.add(p + thenDiff)
-
-        # Move to the else branch
-        inc p
-        if p <= last and c[p].kind == GotoInstr:
-          # Process the else branch target
-          let elseDiff = c[p].getInt28
-          result[p - start] = true  # Mark the goto as reachable
-          worklist.add(p + elseDiff)
-
-          # Don't automatically continue to the next instruction after ITE
-          continue
-
-    # For regular instructions or after processing special instructions,
-    # continue to the next instruction
-    worklist.add(pos + 1)
 
 proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx, BasicBlock] =
   result = initTable[BasicBlockIdx, BasicBlock]()
@@ -598,9 +548,14 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
   elif r.kind == Symbol:
     result.a = getVarId(c, r.symId)
     inc r
+  elif r.exprKind == NilX:
+    result.a = VarId(0)
+    skip r
   else:
     analyseExpr c, pc
     return result
+  if r.exprKind == NilX:
+    wasEquality = false
   if not rightHandSide(c, r, result):
     result.a = InvalidVarId
   # a < b  --> a <= b - 1:
@@ -812,7 +767,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           inc pc
           analyseExpr c, pc
           skipParRi pc
-        of CallS, CmdS:
+        of CallKindsS:
           analyseCall(c, pc)
         of EmitS, InclS, ExclS:
           # not of interest for contract analysis:
@@ -875,6 +830,7 @@ proc checkContracts(c: var Context; n: Cursor) =
 
   c.startInstr = readonlyCursorAt(c.cf, 0)
   c.procCanRaise = false
+  c.typeCache.openScope()
   var body = c.startInstr
   if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
     inc body
@@ -911,6 +867,7 @@ proc checkContracts(c: var Context; n: Cursor) =
           nextIter = true
         else:
           candidates.add cont.elsePart
+  c.typeCache.closeScope()
 
 proc traverseProc(c: var Context; n: var Cursor) =
   let orig = n
@@ -958,7 +915,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
     skip n
   of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS,
      UnpackDeclS, StaticstmtS, AsmS, DeferS,
-     CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
+     CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, BlockS, EmitS, AsgnS, ScopeS,
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
@@ -983,7 +940,7 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
 when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
-    var input = parse(readFile(infile))
+    var input = parseFromFile(infile)
     discard analyzeContracts(input)
     #echo toString(outp, false)
 

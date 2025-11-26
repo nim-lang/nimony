@@ -52,21 +52,21 @@
  (call echo "while 2")
  (goto L66)
  (lab :L87)
- (var :`cf0 . .
+ (var :`cf.0 . .
   (bool) .)
  (ite
   (eq +5 -5)
   (goto L103)
   (goto L111))
  (lab :L103)
- (asgn `cf0
+ (asgn `cf.0
   (eq +6 -6))
  (goto L116)
  (lab :L111)
- (asgn `cf0
+ (asgn `cf.0
   (false))
  (lab :L116)
  (let :my.var . .
   (i -1)
-  (call echo.0 "abc" `cf0))
- (ret))
+  (call echo.0 "abc" `cf.0))
+ (ret .))

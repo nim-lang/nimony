@@ -1,1 +1,1 @@
-tests/nimony/sysbasics/tderefs.nim(2, 1) Error: cannot mutate expression x.0.tdex3tcd51
+tests/nimony/sysbasics/tderefs.nim(2, 1) Error: cannot mutate expression x

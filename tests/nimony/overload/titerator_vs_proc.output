@@ -1,0 +1,14 @@
+proc testIterator(): int
+iterator testIterator(): int
+proc testIterator(x: int): int
+iterator testIterator(x: int): int
+proc testIteratorGenerics[T](x: T): T
+iterator testIteratorGenerics(x: int): int
+proc testIteratorGenerics2(x: int): int
+iterator testIteratorGenerics2[T](x: T): T
+proc testIteratorGenerics3[T](x: T): T
+iterator testIteratorGenerics3[T](x: T): T
+proc testIteratorGenericsTU[T, U](x: T; y: U): T
+iterator testIteratorGenericsTU(x, y: int): int
+proc testIteratorConv(x: float): float
+iterator testIteratorConv(x: int): int

@@ -1,2 +1,20 @@
 tests/nimony/errmsgs/tifconderr.nim(17, 22) Error: undeclared identifier: 'compare'
-tests/nimony/errmsgs/tifconderr.nim(18, 12) Error: expected `bool` but got: (auto)
+tests/nimony/errmsgs/tifconderr.nim(18, 12) Error: Type mismatch at [position]
+c < 0
+[1] expected: string but got: auto (declared in lib/std/system/stringimpl.nim(273, 1))
+[1] expected: int64 but got: auto (declared in lib/std/system/comparisons.nim(79, 1))
+[1] expected: uint16 but got: auto (declared in lib/std/system/comparisons.nim(87, 1))
+[1] expected: pointer but got: auto (declared in lib/std/system/comparisons.nim(64, 1))
+[1] expected: int8 but got: auto (declared in lib/std/system/comparisons.nim(76, 1))
+[1] auto does not match constraint Enum (declared in lib/std/system/comparisons.nim(51, 1))
+[1] expected: float32 but got: auto (declared in lib/std/system/comparisons.nim(99, 1))
+[1] expected: char but got: auto (declared in lib/std/system/comparisons.nim(54, 1))
+[1] expected: uint32 but got: auto (declared in lib/std/system/comparisons.nim(88, 1))
+[1] expected: float64 but got: auto (declared in lib/std/system/comparisons.nim(100, 1))
+[1] expected: uint8 but got: auto (declared in lib/std/system/comparisons.nim(86, 1))
+[1] auto does not match constraint Enum (declared in lib/std/system/comparisons.nim(52, 1))
+[1] expected: uint64 but got: auto (declared in lib/std/system/comparisons.nim(89, 1))
+[1] expected: int32 but got: auto (declared in lib/std/system/comparisons.nim(78, 1))
+[1] expected: set[T] but got: auto (declared in lib/std/system/comparisons.nim(58, 1))
+[1] auto does not match constraint T (declared in lib/std/system/comparisons.nim(48, 1))
+[1] expected: int16 but got: auto (declared in lib/std/system/comparisons.nim(77, 1))

@@ -1,2 +1,2 @@
-tests/nimony/errmsgs/tdot.nim(2, 12) Error: undeclared field: 'foo' for type (i -1)
-tests/nimony/errmsgs/tdot.nim(5, 12) Error: undeclared field: 'bar' for type (i -1)
+tests/nimony/errmsgs/tdot.nim(2, 12) Error: undeclared field: 'foo' for type int
+tests/nimony/errmsgs/tdot.nim(5, 12) Error: undeclared field: 'bar' for type int

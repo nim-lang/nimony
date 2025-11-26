@@ -66,21 +66,30 @@ proc getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
   else:
     default(V)
 
+proc getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
+  ## Quits if the key is not found.
+  let idx = rawGet(t, k, hash(k))
+  assert idx >= 0
+  t.data[idx][1]
+
 when defined(nimony):
-  proc `[]`*[K: Keyable, V](t: Table[K, V]; k: K): var V =
+  proc `[]`*[K: Keyable, V](t: Table[K, V]; k: K): var V {.raises.} =
     let idx = rawGet(t, k, hash(k))
-    assert idx >= 0
+    if idx < 0:
+      raise KeyError
     t.data[idx][1]
 
 else:
-  proc `[]`*[K, V](t: var Table[K, V]; k: K): var V =
+  proc `[]`*[K, V](t: var Table[K, V]; k: K): var V {.raises.} =
     let idx = rawGet(t, k, hash(k))
-    assert idx >= 0
+    if idx < 0:
+      raise KeyError
     t.data[idx][1]
 
-  proc `[]`*[K, V](t: Table[K, V]; k: K): V =
+  proc `[]`*[K, V](t: Table[K, V]; k: K): V {.raises.} =
     let idx = rawGet(t, k, hash(k))
-    assert idx >= 0
+    if idx < 0:
+      raise KeyError
     t.data[idx][1]
 
 proc rawPut[K, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =

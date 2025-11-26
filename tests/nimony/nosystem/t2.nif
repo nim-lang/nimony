@@ -13,17 +13,29 @@
   (typevars 1
    (typevar :T.0.t2er4ggt1 . . . .)) 13
   (pragmas 2
-   (magic 7 TypeDesc)) .) ,6
- (proc 5 :typeof.0.t2er4ggt1
-  (typeof) . 12
-  (typevars 1
-   (typevar :T.1.t2er4ggt1 . . . .)) 15
-  (params 1
-   (param :x.0 . . 3 T.1.t2er4ggt1 .)) 16
-  (typedesc 1 T.1.t2er4ggt1) 35
+   (magic 7 TypeDesc)) .) 2,5
+ (type :untyped.0.t2er4ggt1
+  (untyped) . 9
   (pragmas 2
-   (magic 7 TypeOf)) . .) 10,9
- (type ~8 :string.0.t2er4ggt1 x . . string.0.sysvq0asl) ,12
+   (magic 7 Expr)) .) 14,7
+ (type ~12 :TypeOfMode.0.t2er4ggt1 x . . 2
+  (enum
+   (u +8) ~12,1
+   (efld :typeOfProc.0.t2er4ggt1 x . TypeOfMode.0.t2er4ggt1
+    (tup +0 "typeOfProc")) ~12,2
+   (efld :typeOfIter.0.t2er4ggt1 x . TypeOfMode.0.t2er4ggt1
+    (tup +1 "typeOfIter")))) ,11
+ (proc 5 :typeof.0.t2er4ggt1
+  (typeof) . . 11
+  (params 1
+   (param :x.0 . . 3
+    (untyped) .) 13
+   (param :mode.0 . . ~20,~2 TypeOfMode.0.t2er4ggt1 7 typeOfIter.0.t2er4ggt1)) 33
+  (typekind
+   (typedesc)) 53
+  (pragmas 2
+   (magic 7 TypeOf)) . .) 10,14
+ (type ~8 :string.0.t2er4ggt1 x . . string.0.sysvq0asl) ,17
  (proc 5 :\2B.0.t2er4ggt1
   (add -3) . . 9
   (params 1
@@ -33,7 +45,7 @@
     (i -1) .)) 13
   (i -1) 26
   (pragmas 2
-   (magic 7 "AddI")) . .) ,14
+   (magic 7 "AddI")) . .) ,19
  (proc 5 :foo.0.t2er4ggt1 . . . 8
   (params 1
    (param :x.2 . . 3
@@ -46,18 +58,18 @@
    (var :x.4 . . string.0.sysvq0asl 4 "abc") 7,1
    (asgn ~7 result.0 2 +4) 2,2
    (asgn ~2 x.4 2 "34") ~2,~1
-   (ret result.0))) ,19
+   (ret result.0))) ,24
  (proc 5 :overloaded.0.t2er4ggt1 . . . 15
   (params) . . . 2,1
   (stmts 4
-   (let :someInt.0 . . 7,~8
+   (let :someInt.0 . . 10,~8
     (i -1) 13
     (add
      (i -1) 1 +23 5 +90)) ,1
    (discard 11
     (call ~3 foo.0.t2er4ggt1 3
      (add
-      (i -1) ~2 +34 1 +56) 8 "xyz")))) ,23
+      (i -1) ~2 +34 1 +56) 8 "xyz")))) ,28
  (proc 5 :exprReturn.0.t2er4ggt1 . . . 15
   (params 1
    (param :x.3 . . 3
@@ -67,4 +79,20 @@
    (result :result.1 . . ~15,~11
     (i -1) .)
    (asgn result.1 x.3) ~31
-   (ret result.1))))
+   (ret result.1))) 2,7
+ (proc :dollar`.TypeOfMode.0.t2er4ggt1 x . .
+  (params
+   (param :e.0 . . TypeOfMode.0.t2er4ggt1 .)) string.0.sysvq0asl . .
+  (stmts 14
+   (result :result.2 . . string.0.sysvq0asl .) 14
+   (case e.0 ~12,1
+    (of
+     (ranges typeOfProc.0.t2er4ggt1)
+     (stmts
+      (ret "typeOfProc"))) ~12,2
+    (of
+     (ranges typeOfIter.0.t2er4ggt1)
+     (stmts
+      (ret "typeOfIter"))))
+   (ret result.2))) 15,11
+ (comment untyped.0.t2er4ggt1 18 typedesc.0.t2er4ggt1 1,6 int.0.t2er4ggt1 1,6 int.0.t2er4ggt1 ~2,6 int.0.t2er4ggt1 ~3,8 int.0.t2er4ggt1 6,8 int.0.t2er4ggt1 4,17 int.0.t2er4ggt1 ~5,17 int.0.t2er4ggt1))

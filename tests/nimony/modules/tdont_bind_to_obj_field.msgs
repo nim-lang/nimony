@@ -1,0 +1,3 @@
+tests/nimony/modules/tdont_bind_to_obj_field.nim(5, 1) Error: undeclared identifier: fooField
+tests/nimony/modules/tdont_bind_to_obj_field.nim(6, 9) Error: undeclared identifier: fooField
+tests/nimony/modules/tdont_bind_to_obj_field.nim(7, 9) Error: undeclared identifier: 'fooField'

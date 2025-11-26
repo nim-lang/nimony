@@ -20,3 +20,9 @@ proc main() =
     inc i
 
 main()
+
+
+block:
+  var x = @[1, 2, 3]
+  assert x == @[1, 2, 3]
+  assert x != @[1, 2]

@@ -1,0 +1,41 @@
+(.nif24)
+(stmts
+
+  (proc :echo.0 . . . (params (param :cond.0 . . (bool) .)) . . . (stmts
+  ))
+
+  (proc :echo.1 . . . (params (param :cond.0 . . (bool) .)) (i +32) . . (stmts
+  ))
+
+  (let :a.0 .. (bool) (false))
+  (var :b.0 .. (bool) (true))
+
+  (if (elif (or a.0 b.0)
+    (stmts
+      (call echo.0 "abc")
+    )
+  )
+  )
+
+  (asgn b.0 (false))
+
+  (while (true) (stmts
+    (call echo.0 "pre-condition")
+    (if (elif a.0 (stmts
+
+      (if (elif b.0 (stmts
+        (break .)
+      )))
+
+      (call echo.0 "more")
+    )
+    )
+    )
+    (call echo.0 "code here")
+  )
+  )
+  (call echo.0 "after loop")
+
+  (call echo.0 (call echo.1 "abc"))
+
+)

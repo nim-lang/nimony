@@ -17,7 +17,7 @@ to type `(T, T)`, etc.
 import std/[assertions, tables]
 
 include nifprelude
-import nifindexes, symparser, treemangler, hexer_context
+import nifindexes, symparser, treemangler
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
 
 type
@@ -114,15 +114,15 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       if hasHook(c, typ.symId): return false
       return isTrivialTypeDecl(c, res.decl)
     else:
-      quit "could not load: " & pool.syms[typ.symId]
+      bug "could not load: " & pool.syms[typ.symId]
 
   case typ.typeKind
   of IntT, UIntT, FloatT, BoolT, CharT, PtrT,
      MutT, OutT, SetT,
-     EnumT, HoleyEnumT, VoidT, AutoT, SymKindT, ProctypeT,
+     EnumT, HoleyEnumT, VoidT, AutoT, SymKindT,
      CstringT, PointerT, OrdinalT,
      UarrayT, VarargsT, RangetypeT, TypedescT,
-     ParamsT:
+     RoutineTypes:
     result = true
   of RefT:
     result = false
@@ -140,7 +140,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       skip tup
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
-     TypeKindT, UntypedT, TypedT, IteratorT, ItertypeT:
+     TypeKindT, UntypedT, TypedT, ItertypeT:
     bug "bug here"
 
 # Phase 2: Do the lifting
@@ -157,7 +157,11 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
         copyIntoKind c.dest, HaddrX, c.info:
           copyTree c.dest, paramA
     of attachedDestroy:
-      copyTree c.dest, paramA
+      if isMutFirstParam(s):
+        copyIntoKind c.dest, HaddrX, c.info:
+          copyTree c.dest, paramA
+      else:
+        copyTree c.dest, paramA
     of attachedDup:
       copyTree c.dest, paramB
     of attachedCopy, attachedTrace, attachedSink:
@@ -623,7 +627,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     addSymDef c.dest, sym, c.info
     c.dest.addEmpty3 c.info # export marker, pattern, generics
 
-    c.dest.addParLe ParamsT, c.info
+    c.dest.addParLe ParamsU, c.info
     case c.op
     of attachedDestroy:
       addParam c, paramA, typ
@@ -706,7 +710,7 @@ proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): S
 when isMainModule:
   import std/os
   setupProgramForTesting getCurrentDir() / "nimcache", "test.nim", ".nif"
-  let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
+  let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName), false)
   if res != SymId(0):
     echo pool.syms[res]
   else:

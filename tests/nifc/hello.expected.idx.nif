@@ -2,7 +2,7 @@
 (index
 (public)
 (private
- (kv MyObject.ptr.flexarray +975)
+ (kv MyObject.ptr.flexarray +973)
  (kv MyObject.ptr.object +699)
  (kv MyObject.my.sequence +171)
  (kv MyObject.sequence.base +127))
@@ -12,6 +12,5 @@
 (copy)
 (sinkh)
 (trace)
-(build)
 
 )

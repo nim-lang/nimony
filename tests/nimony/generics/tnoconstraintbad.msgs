@@ -1,0 +1,3 @@
+tests/nimony/generics/tnoconstraintbad.nim(11, 12) Error: Type mismatch at [position]
+result +=? x
+[2] expected: float64 but got: T (declared in tests/nimony/generics/tnoconstraintbad.nim(6, 1))

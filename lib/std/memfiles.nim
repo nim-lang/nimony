@@ -48,8 +48,8 @@ proc setFileSize(fh: OsFileHandle, newFileSize = -1, oldSize = -1): OSErrorCode 
   if newFileSize < 0 or newFileSize == oldSize:
     return result
   when defined(windows):
-    var sizeHigh = int32(newFileSize shr 32)
-    let sizeLow = int32(newFileSize and 0xffffffff)
+    var sizeHigh = LONG((newFileSize shr 32))
+    let sizeLow = LONG((newFileSize and 0xffffffff))
     let status = setFilePointer(fh, sizeLow, addr(sizeHigh), FILE_BEGIN)
     let lastErr = osLastError()
     if (status == INVALID_SET_FILE_POINTER and lastErr.int32 != NO_ERROR) or
@@ -71,7 +71,7 @@ proc setFileSize(fh: OsFileHandle, newFileSize = -1, oldSize = -1): OSErrorCode 
 
 proc open*(filename: string, mode: FileMode = fmRead,
            mappedSize = -1, offset = 0, newFileSize = -1,
-           allowRemap = false, mapFlags = cint(-1)): MemFile =
+           allowRemap = false, mapFlags = cint(-1)): MemFile {.raises.} =
   ## opens a memory mapped file. If this fails, `OSError` is raised.
   ##
   ## `newFileSize` can only be set if the file does not exist and is opened
@@ -108,9 +108,8 @@ proc open*(filename: string, mode: FileMode = fmRead,
   result = default(MemFile)
   # The file can be resized only when write mode is used:
   if mode == fmAppend:
-    # TODO: raise exception when it is supported.
-    #raise newEIO("The append mode is not supported.")
-    quit "The append mode is not supported."
+    # quit "The append mode is not supported."
+    raise BadOperation
 
   assert newFileSize == -1 or mode != fmRead
   var readonly = mode == fmRead
@@ -124,11 +123,11 @@ proc open*(filename: string, mode: FileMode = fmRead,
     let shareMode = FILE_SHARE_READ
     let flags = FILE_FLAG_RANDOM_ACCESS
 
-    template fail(errCode: OSErrorCode, msg: untyped) =
+    template fail(errCode: OSErrorCode, msg: string) =
       rollback()
       if not result.fHandle.isNil: discard closeHandle(result.fHandle)
       if not result.mapHandle.isNil: discard closeHandle(result.mapHandle)
-      raiseOSError(errCode)
+      raiseOSError(errCode, msg)
       # return false
       #raise newException(IOError, msg)
 
@@ -162,15 +161,15 @@ proc open*(filename: string, mode: FileMode = fmRead,
     result.mem = mapViewOfFileEx(
       result.mapHandle,
       if readonly: FILE_MAP_READ else: FILE_MAP_READ or FILE_MAP_WRITE,
-      int32(offset shr 32),
-      int32(offset and 0xffffffff),
+      DWORD(offset shr 32),
+      DWORD(offset and 0xffffffff),
       WinSizeT(if mappedSize == -1: 0 else: mappedSize),
       nil)
 
     if result.mem == nil:
       fail(osLastError(), "error mapping view")
 
-    var hi {.noinit.}: int32
+    var hi: DWORD = DWORD(0)
     let low = getFileSize(result.fHandle, addr(hi))
     if low == INVALID_FILE_SIZE:
       fail(osLastError(), "error getting file size")
@@ -188,7 +187,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
     template fail(errCode: OSErrorCode, msg: string) =
       rollback()
       if result.handle != -1: discard close(result.handle)
-      raiseOSError(errCode)
+      raiseOSError(errCode, msg)
 
     var flags = (if readonly: O_RDONLY else: O_RDWR) or O_CLOEXEC
 
@@ -230,7 +229,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
       if close(result.handle) == 0:
         result.handle = -1
 
-proc close*(f: var MemFile) =
+proc close*(f: var MemFile) {.raises.} =
   ## closes the memory mapped file `f`. All changes are written back to the
   ## file system, if `f` was opened with write access.
 

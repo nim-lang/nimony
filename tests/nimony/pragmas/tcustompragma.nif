@@ -1,0 +1,23 @@
+(.nif24)
+0,1,tests/nimony/pragmas/tcustompragma.nim(stmts 2
+ (pragmas
+  (pragma 6 customPragma) 22 noinit 30 discardable 47
+  (kv ~4 tags 2
+   (bracket))) ,2
+ (proc 5 :foo.0.tcui0hn981 . . . 8
+  (params) 4
+  (i -1) 16
+  (pragmas 8,~2
+   (noinit) 16,~2
+   (discardable) 29,~2
+   (tags 6
+    (bracket))) . 35
+  (stmts
+   (result :result.0 .
+    (pragmas
+     (noinit)) ~31
+    (i -1) .)
+   (discard .) ~35
+   (ret result.0))) 3,4
+ (call ~3 foo.0.tcui0hn981) 4,2
+ (comment int.0.sysvq0asl))

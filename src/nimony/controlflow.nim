@@ -8,8 +8,9 @@
 ## which can be easier to analyze, depending on the used algorithm.
 
 import std/[assertions, intsets]
-include nifprelude
+include ".." / lib / nifprelude
 
+import ".." / models / tags
 import nimony_model, programs, builtintypes, typenav
 from typeprops import isOrdinalType
 
@@ -26,7 +27,7 @@ type
     IsFinally
   BlockOrLoop {.acyclic.} = ref object
     kind: BlockKind
-    sym: SymId # block label or for a routine its `result` symbol
+    sym: SymId # block label
     parent: BlockOrLoop
     breakInstrs: seq[Label]
     contInstrs: seq[Label]
@@ -43,6 +44,8 @@ type
     nextVar: int
     currentBlock: BlockOrLoop
     typeCache: TypeCache
+    resultSym: SymId
+    keepReturns: bool
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
@@ -114,7 +117,7 @@ proc add(dest: var TokenBuf; tar: Target) =
 
 proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
   assert typ.kind != DotToken
-  result = pool.syms.getOrIncl("`cf" & $c.nextVar)
+  result = pool.syms.getOrIncl("`cf." & $c.nextVar)
   inc c.nextVar
   c.dest.addParLe kind, info
   c.dest.addSymDef result, info
@@ -238,7 +241,27 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
   inc n
 
 proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  trExprLoop c, n, tar
+  if c.keepReturns and tar.m == IsAppend:
+    # bind to a temporary variable:
+    let tmp = pool.syms.getOrIncl("`cf." & $c.nextVar)
+    inc c.nextVar
+    let info = n.info
+    c.dest.addParLe LetS, info
+    c.dest.addSymDef tmp, info
+    c.dest.addEmpty2 info # no export marker, no pragmas
+    let typ = c.typeCache.getType(n)
+    c.dest.copyTree typ
+
+    var callTarget = Target(m: IsAppend)
+    trExprLoop c, n, callTarget
+    c.dest.add callTarget
+    c.dest.addParRi()
+
+    if tar.m == IsEmpty:
+      tar = Target(m: IsVar)
+    tar.t.addSymUse tmp, info
+  else:
+    trExprLoop c, n, tar
 
 proc trVoidCall(c: var ControlFlow; n: var Cursor) =
   var tar = Target(m: IsAppend)
@@ -299,10 +322,13 @@ proc trUseExpr(c: var ControlFlow; n: var Cursor) =
 
 proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if tar.m != IsIgnored:
+    var aa = Target(m: IsEmpty)
+    # it may be a `ExprX` so we generate statements before `AsgnS`
+    trExpr c, n, aa
     c.dest.addParLe(AsgnS, n.info)
     assert tar.t.len > 0
     c.dest.add tar
-    trUseExpr c, n
+    c.dest.add aa
     c.dest.addParRi()
   else:
     trStmt c, n
@@ -403,7 +429,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
 
-    selector = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    selector = pool.syms.getOrIncl("`cf." & $c.nextVar)
     inc c.nextVar
     c.dest.addParLe VarS, info
     c.dest.addSymDef selector, info
@@ -556,14 +582,15 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
        CastX, ConvX, BaseobjX, HconvX, DconvX, InfX, NegInfX, NanX, SufX,
        UnpackX, FieldsX, FieldpairsX, EnumToStrX, XorX,
-       IsMainModuleX, DefaultObjX, DefaultTupX, PlusSetX, MinusSetX,
+       IsMainModuleX, DefaultObjX, DefaultTupX, DefaultDistinctX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
-       BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX, FailedX:
+       BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX,
+       FailedX, IsX, EnvpX, DelayX:
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
-    of CompilesX, DeclaredX, DefinedX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:
+    of CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:
       # we want to avoid false dependencies for `sizeof(var)` as it doesn't really "use" the variable:
       tar.t.addDotToken()
       skip n
@@ -616,15 +643,22 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     bug "return outside of routine"
   if control == nil:
     control = it
+  let info = n.info
   inc n # skip `(ret`
-  if (n.kind == Symbol and n.symId == it.sym) or (n.kind == DotToken):
+  if c.keepReturns:
+    var aa = Target(m: IsEmpty)
+    trExpr c, n, aa
+    c.dest.addParLe(RetS, info)
+    c.dest.add aa
+    c.dest.addParRi()
+  elif (n.kind == Symbol and n.symId == c.resultSym) or (n.kind == DotToken):
     discard "do not generate `result = result`"
     inc n
   else:
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, n.info)
-    c.dest.addSymUse it.sym, n.info
+    c.dest.addSymUse c.resultSym, n.info
     c.dest.add aa
     c.dest.addParRi()
   skipParRi n
@@ -704,8 +738,7 @@ proc trFor(c: var ControlFlow; n: var Cursor) =
 
 proc trResult(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
-    if c.currentBlock.kind == IsRoutine:
-      c.currentBlock.sym = n.symId
+    c.resultSym = n.symId
     takeLocalHeader c.typeCache, c.dest, n, ResultY
     trUseExpr c, n
 
@@ -713,7 +746,6 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
   let kind = n.symKind
   let orig = n
   inc n
-  let name = n.symId
   skip n # name
   skip n # export marker
   skip n # pragmas
@@ -724,7 +756,6 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
   trExpr c, n, aa
   n = orig
   copyInto c.dest, n:
-    let sym = n
     takeLocalHeader c.typeCache, c.dest, n, kind
     skip n # value
     c.dest.add aa
@@ -793,7 +824,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   if isComplexLhs(lhs):
     var stmts = createTokenBuf(40)
 
-    let tmp = pool.syms.getOrIncl("`cf" & $c.nextVar)
+    let tmp = pool.syms.getOrIncl("`cf." & $c.nextVar)
     inc c.nextVar
     stmts.addParLe LetS, info
     stmts.addSymDef tmp, info
@@ -818,17 +849,26 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   else:
     endRead c.dest
 
+proc addRet(c: var ControlFlow) =
+  c.dest.addParLe(RetS, NoLineInfo)
+  if c.resultSym != SymId(0):
+    c.dest.addSymUse c.resultSym, NoLineInfo
+  else:
+    c.dest.addDotToken()
+  c.dest.addParRi()
+
 proc trProc(c: var ControlFlow; n: var Cursor) =
+  let decl = n
   let thisProc = BlockOrLoop(kind: IsRoutine, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisProc
   c.typeCache.openScope()
   copyInto c.dest, n:
-    let isConcrete = takeRoutineHeader(c.typeCache, c.dest, n)
+    let isConcrete = takeRoutineHeader(c.typeCache, c.dest, decl, n)
     if isConcrete:
       c.dest.addParLe(StmtsS, n.info)
       trStmt c, n
       for ret in thisProc.breakInstrs: c.patch ret
-      c.dest.addParPair RetS, NoLineInfo
+      addRet c
     else:
       takeTree c.dest, n
       for ret in thisProc.breakInstrs: c.patch ret
@@ -900,7 +940,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
      ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     c.dest.addDotToken()
     skip n
-  of CallS, CmdS, InclS, ExclS, AssumeS, AssertS:
+  of CallKindsS, InclS, ExclS, AssumeS, AssertS:
     trVoidCall c, n
   of YldS, DiscardS, AsmS, DeferS:
     var tar = Target(m: IsAppend)
@@ -915,8 +955,8 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of WhenS:
     bug "`when` statement should have been eliminated"
 
-proc toControlflow*(n: Cursor): TokenBuf =
-  var c = ControlFlow(typeCache: createTypeCache())
+proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
+  var c = ControlFlow(typeCache: createTypeCache(), keepReturns: keepReturns)
   c.typeCache.openScope()
   let sk = n.stmtKind
   var n = n
@@ -928,11 +968,67 @@ proc toControlflow*(n: Cursor): TokenBuf =
     inc n
     while n.kind != ParRi:
       trStmt c, n
-    c.dest.addParPair RetS, NoLineInfo
+    addRet c
     c.dest.addParRi()
   c.typeCache.closeScope()
   result = ensureMove c.dest
   #echo "result: ", codeListing(result)
+
+proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
+  # Create a sequence to track which instructions are reachable
+  result = newSeq[bool]((if last < 0: c.len else: last + 1) - start)
+  let last = if last < 0: c.len-1 else: min(last, c.len-1)
+
+  # Initialize with the start position
+  var worklist = @[start]
+  var processed = initIntSet()
+
+  # Process the worklist
+  while worklist.len > 0:
+    let pos = worklist.pop()
+    if pos > last or pos in processed:
+      continue
+
+    processed.incl(pos)
+    result[pos - start] = true  # Mark as reachable
+
+    # Handle different instruction types
+    if c[pos].kind == GotoInstr:
+      let diff = c[pos].getInt28
+      if diff != 0:
+        worklist.add(pos + diff)  # Add the target of the jump
+        # For forward jumps, everything between the goto and its target is potentially unreachable
+        if diff > 0:
+          # Don't automatically continue to the next instruction after a goto
+          continue
+    elif cast[TagEnum](c[pos].tag) == IteTagId:
+      # For if-then-else, process the condition and both branches
+      var p = pos + 1
+      # Skip the condition, marking it as reachable
+      while p <= last and c[p].kind != GotoInstr:
+        result[p - start] = true
+        inc p
+
+      if p <= last and c[p].kind == GotoInstr:
+        # Process the then branch target
+        let thenDiff = c[p].getInt28
+        result[p - start] = true  # Mark the goto as reachable
+        worklist.add(p + thenDiff)
+
+        # Move to the else branch
+        inc p
+        if p <= last and c[p].kind == GotoInstr:
+          # Process the else branch target
+          let elseDiff = c[p].getInt28
+          result[p - start] = true  # Mark the goto as reachable
+          worklist.add(p + elseDiff)
+
+          # Don't automatically continue to the next instruction after ITE
+          continue
+
+    # For regular instructions or after processing special instructions,
+    # continue to the next instruction
+    worklist.add(pos + 1)
 
 const
   PayloadOffset* = 1'u32 # so that we don't use 0 as a payload
@@ -962,9 +1058,9 @@ proc testOrSetMark*(n: Cursor): bool {.inline.} =
 
 when isMainModule:
   import std / [syncio, os]
-  proc main(infile, outputfile: string) =
-    var input = parse(readFile(infile))
-    var cf = toControlflow(beginRead(input))
+  proc main(infile, outputfile: string; keepReturns: bool) =
+    var input = parseFromFile(infile)
+    var cf = toControlflow(beginRead(input), keepReturns=keepReturns)
     writeFile(outputfile, codeListing(cf))
 
-  main(paramStr(1), paramStr(2))
+  main(paramStr(1), paramStr(2), paramCount() > 2)

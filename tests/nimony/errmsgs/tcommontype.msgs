@@ -1,3 +1,1 @@
-tests/nimony/errmsgs/tcommontype.nim(6, 26) Error: type mismatch: got: (ptr
- (i -1)) but wanted: (ptr
- (uarray T.1.tcoq7zxn71))
+tests/nimony/errmsgs/tcommontype.nim(6, 26) Error: type mismatch: got: ptr int but wanted: ptr UncheckedArray[T]

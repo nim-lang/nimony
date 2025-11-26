@@ -8,29 +8,43 @@
 
 import std / [os, sets, strutils]
 
-import platform
+import ".." / lib / platform
 
-include nifprelude
+include ".." / lib / nifprelude
 
 type
+  TrackMode* = enum
+    TrackNone, TrackUsages, TrackDef
+  TrackPosition* = object
+    mode*: TrackMode
+    line*, col*: int32
+    filename*: string
+
   NifConfig* = object
     defines*: HashSet[string]
     paths*, nimblePaths*: seq[string]
-    currentPath*: string
+    baseDir*: string # base directory for the configuration system
     nifcachePath*: string
     bits*: int
     compat*: bool
     targetCPU*: TSystemCPU
     targetOS*: TSystemOS
+    toTrack*: TrackPosition
+    cc*: string
+    linker*: string
+    ccKey*: string
 
-proc initNifConfig*(): NifConfig =
-  result = NifConfig()
-  result.currentPath = getCurrentDir()
-  result.nifcachePath = "nimcache"
-  result.defines.incl "nimony"
-  result.bits = sizeof(int)*8
-  result.targetCPU = platform.nameToCPU(system.hostCPU)
-  result.targetOS = platform.nameToOS(system.hostOS)
+proc initNifConfig*(baseDir: sink string): NifConfig =
+  result = NifConfig(
+    baseDir: baseDir,
+    nifcachePath: "nimcache",
+    defines: toHashSet(["nimony"]),
+    bits: sizeof(int)*8,
+    targetCPU: platform.nameToCPU(system.hostCPU),
+    targetOS: platform.nameToOS(system.hostOS),
+    cc: "gcc",
+    linker: ""
+  )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
   result = false
@@ -75,7 +89,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       of "intbits":
         inc c
         if c.kind == IntLit:
-          result.bits = pool.integers[c.intId]
+          result.bits = int pool.integers[c.intId]
           inc c
       of "compat":
         inc c
@@ -103,7 +117,7 @@ proc parseNifConfig*(configFile: string; result: var NifConfig) =
 
 proc getOptionsAsOneString*(config: NifConfig): string =
   ## Returns the concatenation of options that affects generated files.
-  result = "--cwd:" & config.currentPath
+  result = "--base:" & config.baseDir
 
   for i in config.defines:
     result.add(" -d:" & i)
@@ -118,6 +132,8 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
   elif cmpIgnoreStyle(symbol, platform.CPU[config.targetCPU].name) == 0:
     result = true
   elif cmpIgnoreStyle(symbol, platform.OS[config.targetOS].name) == 0:
+    result = true
+  elif cmpIgnoreStyle(symbol, config.ccKey) == 0:
     result = true
   else:
     case symbol.normalize

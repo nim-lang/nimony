@@ -6,7 +6,7 @@
 
 ## Cursors into token streams. Suprisingly effective even for more complex algorithms.
 
-import std / assertions
+import std / [assertions, syncio]
 import nifreader, nifstreams, bitabs, lineinfos
 
 type
@@ -27,7 +27,9 @@ proc fromBuffer*(x: openArray[PackedToken]): Cursor {.inline.} =
 proc setSpan*(c: var Cursor; beyondLast: Cursor) {.inline.} =
   c.rem = (cast[int](beyondLast.p) - cast[int](c.p)) div sizeof(PackedToken)
 
-proc load*(c: Cursor): PackedToken {.inline.} = c.p[]
+proc load*(c: Cursor): PackedToken {.inline.} =
+  assert c.p != nil and c.rem > 0
+  c.p[]
 
 proc kind*(c: Cursor): NifKind {.inline.} = c.load.kind
 
@@ -61,6 +63,7 @@ proc unsafeDec*(c: var Cursor) {.inline.} =
   inc c.rem
 
 proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
+  assert diff <= c.rem
   result = Cursor(
      p: cast[ptr PackedToken](cast[uint](c.p) + diff.uint * sizeof(PackedToken).uint),
      rem: c.rem - diff)
@@ -191,6 +194,12 @@ proc toUniqueId*(c: Cursor): int {.inline.} =
 
 proc add*(result: var TokenBuf; c: Cursor) =
   result.add c.load
+
+proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
+  dest.add symToken(s, info)
+
+proc addSymDef*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
+  dest.add symdefToken(s, info)
 
 proc addSubtree*(result: var TokenBuf; c: Cursor) =
   assert c.kind != ParRi, "cursor at end?"
@@ -369,6 +378,18 @@ proc toStringDebug*(b: Cursor; produceLineInfo = true): string =
   let L = if b.kind == ParLe: 1 else: 0
   result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, L), produceLineInfo)
 
+type
+  FileWriteMode* = enum
+    AlwaysWrite,
+    OnlyIfChanged
+
+proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) =
+  let content = "(.nif24)\n" & toString(b)
+  if mode == OnlyIfChanged:
+    let existingContent = try: readFile(filename) except: ""
+    if existingContent == content: return
+  writeFile(filename, content)
+
 proc `$`*(c: Cursor): string = toString(c, false)
 
 template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
@@ -385,12 +406,15 @@ template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInf
   dest.add parRiToken(NoLineInfo)
 
 proc parse*(r: var Stream; dest: var TokenBuf;
-            parentInfo: PackedLineInfo) =
+            parentInfo: PackedLineInfo; debug: bool = false) =
   r.parents[0] = parentInfo
   var nested = 0
   while true:
     let tok = r.next()
     dest.add tok
+    if debug:
+      echo "parsing ", toString([tok], false)
+      if tok.kind == UnknownToken: break
     if tok.kind == EofToken:
       break
     elif tok.kind == ParLe:
@@ -399,8 +423,14 @@ proc parse*(r: var Stream; dest: var TokenBuf;
       dec nested
       if nested == 0: break
 
-proc parse*(input: string; sizeHint = 100): TokenBuf =
+proc parseFromBuffer*(input: string; sizeHint = 100): TokenBuf =
   var r = nifstreams.openFromBuffer(input)
+  result = createTokenBuf(sizeHint)
+  parse(r, result, NoLineInfo)
+
+proc parseFromFile*(filename: string; sizeHint = 100): TokenBuf =
+  var r = nifstreams.open(filename)
+  discard processDirectives(r.r)
   result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 
@@ -432,3 +462,50 @@ proc takeTree*(dest: var TokenBuf; n: var Cursor) =
         raiseAssert "expected ')', but EOF reached"
       else: discard
       inc n
+
+when isMainModule:
+  # test replace
+  block:
+    var dest = createTokenBuf(1)
+    dest.addDotToken()
+    block:
+      let by = [charToken('a', NoLineInfo)]
+      replace dest, fromBuffer(by), 0
+      assert dest[0] == by[0]
+    block:
+      let by2 = [parLeToken(TagId 1, NoLineInfo), parRiToken(NoLineInfo)]
+      replace dest, fromBuffer(by2), 0
+      assert dest.len == 2
+      assert dest[0] == by2[0] and dest[1] == by2[1]
+
+      let by1 = [strToken(StrId 2, NoLineInfo)]
+      replace dest, fromBuffer(by1), 0
+      assert dest.len == 1
+      assert dest[0] == by1[0]
+  block:
+    var dest = createTokenBuf(3)
+    let dest0 = parLeToken(TagId 123, NoLineInfo)
+    dest.add dest0
+    dest.addDotToken()
+    dest.addParRi
+    block:
+      let by = [charToken('a', NoLineInfo)]
+      replace dest, fromBuffer(by), 1
+      assert dest.len == 3
+      assert dest[0] == dest0
+      assert dest[1] == by[0]
+      assert dest[2].kind == ParRi
+
+      let by2 = [parLeToken(TagId 456, NoLineInfo), parRiToken(NoLineInfo)]
+      replace dest, fromBuffer(by2), 1
+      assert dest.len == 4
+      assert dest[0] == dest0
+      assert dest[1] == by2[0] and dest[2] == by2[1]
+      assert dest[3].kind == ParRi
+
+      let by1 = [strToken(StrId 789, NoLineInfo)]
+      replace dest, fromBuffer(by1), 1
+      assert dest.len == 3
+      assert dest[0] == dest0
+      assert dest[1] == by1[0]
+      assert dest[2].kind == ParRi

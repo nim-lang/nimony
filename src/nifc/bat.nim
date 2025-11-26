@@ -1,5 +1,5 @@
 import std/[os, strformat, tables, syncio]
-import noptions, mangler
+import noptions, mangler, symparser
 
 proc generateMakefileForFiles(s: State, files: seq[string],
         action: Action, links: var string): string =
@@ -16,7 +16,7 @@ proc generateMakefileForFiles(s: State, files: seq[string],
   let nifcacheDir = s.config.nifcacheDir
   let destExt = ExtAction[action]
   for i in 0..<files.len:
-    let moduleNames = splitFile(files[i]).name.mangleFileName
+    let moduleNames = splitModulePath(files[i]).name
     links.add " " & nifcacheDir / moduleNames & ".o"
     result.add fmt"{cc} %c_flags% -c " &
           nifcacheDir / moduleNames & fmt"{destExt} -o " &

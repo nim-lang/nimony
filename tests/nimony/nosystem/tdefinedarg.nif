@@ -19,4 +19,5 @@
   (true)) 4,6
  (glet :z.0.tdej0g1hh1 . .
   (bool) 15
-  (false)))
+  (false)) 16,2
+ (comment untyped.0.tdej0g1hh1))

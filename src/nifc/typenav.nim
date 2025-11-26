@@ -20,10 +20,29 @@ proc isImportC*(n: Cursor): bool {.inline.} =
 proc createIntegralType*(m: var Module; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
   if cursorIsNil(result):
-    var buf = nifcursors.parse(name, 3)
+    var buf = nifcursors.parseFromBuffer(name, 3)
     result = cursorAt(buf, 0)
     m.mem.add buf
     m.builtinTypes[name] = result
+
+proc typeOfField(m: var Module; n: var Cursor; fld: SymId): Cursor =
+  if n.substructureKind == FldU:
+    let decl = takeFieldDecl(n)
+    if decl.name.kind == SymbolDef and decl.name.symId == fld:
+      result = decl.typ
+    else:
+      result = default(Cursor)
+  else:
+    result = default(Cursor)
+    let tk = n.typeKind
+    if tk in {ObjectT, UnionT}:
+      inc n
+      if tk == ObjectT:
+        skip n # inheritance
+      while n.kind != ParRi:
+        result = typeOfField(m, n, fld)
+        if not cursorIsNil(result): break
+      inc n
 
 proc getTypeImpl(m: var Module; n: Cursor): Cursor =
   case n.kind
@@ -83,9 +102,25 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       inc result # (arr ...)
     of DotC:
       var a = n.firstSon
+      var objType = getTypeImpl(m, a)
       skip a # skip the object
-      let fld = a
-      result = getTypeImpl(m, fld)
+      let fld = a.symId
+      var counter = 20
+      while counter > 0 and objType.kind == Symbol:
+        dec counter
+        let d = m.defs.getOrDefault(objType.symId)
+        if d.pos != 0:
+          let dd = m.src.cursorAt(d.pos)
+          if dd.stmtKind == TypeS:
+            let decl = asTypeDecl(dd)
+            objType = decl.body
+
+      if objType.typeKind in {ObjectT, UnionT}:
+        result = typeOfField(m, objType, fld)
+        if cursorIsNil(result):
+          result = createIntegralType(m, "(err)")
+      else:
+        result = createIntegralType(m, "(err)")
     of DerefC:
       let x = getTypeImpl(m, n.firstSon)
       assert x.typeKind == PtrT

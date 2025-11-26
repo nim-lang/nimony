@@ -1,0 +1,2 @@
+tests/nimony/mut/polymorphic_items.nim(30, 15) Error: cannot mutate p; binding created here: tests/nimony/mut/polymorphic_items.nim(27, 17)
+tests/nimony/mut/polymorphic_items.nim(31, 5) Error: cannot mutate p; binding created here: tests/nimony/mut/polymorphic_items.nim(27, 17)

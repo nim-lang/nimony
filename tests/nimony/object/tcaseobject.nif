@@ -33,7 +33,9 @@
   (oconstr ~2,23 Foo.0.tcauiaoif
    (kv x.0.tcauiaoif 45,4,lib/std/system/defaults.nim
     (expr
-     (false))))) 4,16
+     (false)))
+   (kv y.0.tcauiaoif 43,6,lib/std/system/defaults.nim
+    (expr +0)))) 4,16
  (asgn ~4 foo.0.tcauiaoif 5
   (oconstr 2,22 Foo.0.tcauiaoif 2
    (kv ~1 x.0.tcauiaoif 2
@@ -49,13 +51,13 @@
      (eq
       (bool) ~2 a.0.tcauiaoif 3
       (false))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,19
  (glet :b.0.tcauiaoif . . 3,~13
   (i -1) 12
@@ -66,13 +68,13 @@
     (not 9,21,tests/nimony/object/tcaseobject.nim
      (eq
       (i +64) ~2 b.0.tcauiaoif 3 +123)) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,21
  (asgn ~4 foo.0.tcauiaoif 5
   (oconstr 2,17 Foo.0.tcauiaoif 2
@@ -89,13 +91,13 @@
       (bool) ~3
       (dot ~3 foo.0.tcauiaoif x.0.tcauiaoif +0) 3
       (true))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,23
  (glet :c.0.tcauiaoif . . 3,~15 string.0.sysvq0asl 15
   (dot ~3 foo.0.tcauiaoif z.0.tcauiaoif +0)) 2,4,lib/std/assertions.nim
@@ -104,13 +106,13 @@
    (elif
     (not 9,25,tests/nimony/object/tcaseobject.nim
      (infix ==.20.sysvq0asl ~2 c.0.tcauiaoif 3 "abc")) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,25
  (glet :d.0.tcauiaoif . . 6,~21
   (bool) 13
@@ -122,13 +124,13 @@
      (eq
       (bool) ~2 d.0.tcauiaoif 3
       (false))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,28
  (gvar :bar.0.tcauiaoif . . 6 Bar.0.tcauiaoif 9
   (oconstr ~3 Bar.0.tcauiaoif
@@ -147,13 +149,13 @@
       (bool) ~3
       (dot ~3 bar.0.tcauiaoif x.1.tcauiaoif +0) 3
       (false))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,31
  (asgn ~4 bar.0.tcauiaoif 5
   (oconstr 1,~3 Bar.0.tcauiaoif 2
@@ -169,13 +171,13 @@
      (eq
       (bool) ~2 e.0.tcauiaoif 3
       (true))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,35
  (gvar :bar2.0.tcauiaoif . . 6,~7 Bar.0.tcauiaoif 7 bar.0.tcauiaoif) 2,4,lib/std/assertions.nim
  (stmts
@@ -186,13 +188,13 @@
       (bool) ~3
       (dot ~4 bar2.0.tcauiaoif x.1.tcauiaoif +0) 3
       (true))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) ,38
  (proc 5 :fx.0.tcauiaoif . . . 7
   (params 1
@@ -262,11 +264,11 @@
       (var :b.0 . . string.0.sysvq0asl 4 ""))) ,5
     (of
      (ranges 3 kc.0.tcauiaoif) 7
-     (stmts 2,116,lib/std/syncio.nim
+     (stmts 2,122,lib/std/syncio.nim
       (stmts 2,1
        (stmts
         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 14,64,tests/nimony/object/tcaseobject.nim +3)) ,2
-       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 4,48
+       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 4,48
  (proc :dollar`.TKind.0.tcauiaoif x . .
   (params
    (param :e.0 . . TKind.0.tcauiaoif .)) string.0.sysvq0asl . .
@@ -285,4 +287,5 @@
      (ranges kc.0.tcauiaoif)
      (stmts
       (ret "kc"))))
-   (ret result.1))))
+   (ret result.1))) 10,4
+ (comment bool.0.sysvq0asl ~5,1 false.0.sysvq0asl ~5,1 false.0.sysvq0asl ~3,2 int.0.sysvq0asl ~5,3 true.0.sysvq0asl ~5,3 true.0.sysvq0asl ~3,5 bool.0.sysvq0asl ,8 bool.0.sysvq0asl ~5,9 false.0.sysvq0asl ~5,9 false.0.sysvq0asl 2,9 true.0.sysvq0asl 2,9 true.0.sysvq0asl 3,11 default.1.sysvq0asl 3,11 default.3.sysvq0asl 3,12 false.0.sysvq0asl ~3,13 bool.0.sysvq0asl 2,14 false.0.sysvq0asl ~10,14 assert.0.assy765wm ~3,15 int.0.sysvq0asl ~10,16 assert.0.assy765wm 3,17 true.0.sysvq0asl 22,17 false.0.sysvq0asl 6,18 true.0.sysvq0asl ~10,18 assert.0.assy765wm ~10,20 assert.0.assy765wm ~3,21 bool.0.sysvq0asl 2,22 false.0.sysvq0asl ~10,22 assert.0.assy765wm 3,24 default.1.sysvq0asl 3,25 false.0.sysvq0asl 6,26 false.0.sysvq0asl ~10,26 assert.0.assy765wm 3,27 true.0.sysvq0asl ~3,28 bool.0.sysvq0asl 2,29 true.0.sysvq0asl ~10,29 assert.0.assy765wm 7,32 true.0.sysvq0asl ~10,32 assert.0.assy765wm 7,39 true.0.sysvq0asl 26,39 false.0.sysvq0asl 1,48 int.0.sysvq0asl 1,49 int.0.sysvq0asl 8,51 float.0.sysvq0asl 8,51 float.0.sysvq0asl ~1,59 echo.0.syn1lfpjv))

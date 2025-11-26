@@ -171,7 +171,7 @@ block:
       of "": result = f
 
     var s = "Andreas"
-    assert foo1(s.cstring) == a
+    assert foo1(s.toCString) == a
 
   block:
     proc foo1(): Result =
@@ -191,7 +191,7 @@ block:
       const y = cstring"hash"
       var x = "Andreas"
       result = none
-      case x.cstring
+      case x.toCString
       of "Andreas", "Rumpf": result = a
       of cstring"aa", "bb": result = b
       of "cc", y, "when": result = c

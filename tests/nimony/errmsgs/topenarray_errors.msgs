@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/topenarray_errors.nim(8, 5) Error: cannot pass x to var/out T parameter
+tests/nimony/errmsgs/topenarray_errors.nim(9, 11) Error: cannot pass x[i] to var/out T parameter

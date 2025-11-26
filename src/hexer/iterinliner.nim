@@ -34,13 +34,18 @@ proc hasContinueStmt(c: Cursor): bool =
 
 proc createDecl(e: var EContext; destSym: SymId;
         typ: var Cursor; value: var Cursor;
-        info: PackedLineInfo; kind: string) =
-  e.dest.add tagToken(kind, info)
+        info: PackedLineInfo; kind: StmtKind; needsAddr: bool) =
+  assert typ.kind != ParRi
+  e.dest.addParLe kind, info
   e.dest.add symdefToken(destSym, info)
   e.dest.addDotToken()
   e.dest.addDotToken()
   takeTree(e, typ)
-  takeTree(e, value)
+  if needsAddr:
+    e.dest.copyIntoKind HaddrX, info:
+      takeTree(e, value)
+  else:
+    takeTree(e, value)
   e.dest.addParRi()
 
 when false:
@@ -80,15 +85,24 @@ proc connectSingleExprToLoopVar(e: var EContext; c: var Cursor;
     inc c
   else:
     var typ = local.typ
-    createDecl(e, destSym, typ, c, info, "var")
+    createDecl(e, destSym, typ, c, info, VarS, needsAddr=false)
 
-proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor) =
+proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor; needsAddr: bool) =
+  assert typ.kind != ParRi
   let local = asLocal(forVar)
   let symId = local.name.symId
   var tupBuf = createTupleAccess(left, i, info)
   var tup = beginRead(tupBuf)
-  var fieldTyp = getTupleFieldType(typ)
-  createDecl(e, symId, fieldTyp, tup, info, "let")
+  var localTyp = local.typ
+  createDecl(e, symId, localTyp, tup, info, LetS, needsAddr)
+
+proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBuf =
+  result = createTokenBuf()
+  if needsDeref:
+    result.copyIntoKind HderefX, info:
+      result.add symToken(s, info)
+  else:
+    result.add symToken(s, info)
 
 proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
@@ -108,38 +122,38 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
     else:
       let tmpId: SymId
       let info: PackedLineInfo
-      var typ = yieldType
+      var typ = yieldType.skipModifier()
+      let needsDeref = yieldType.typeKind in {LentT, MutT}
+      assert typ.typeKind == TupleT
       if c.kind == Symbol:
         tmpId = c.symId
         info = c.info
         inc c
       else:
-        tmpId = pool.syms.getOrIncl(":tmp.l." & $e.getTmpId)
+        tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
         var typ = yieldType
-        createDecl(e, tmpId, typ, c, info, "let")
+        createDecl(e, tmpId, typ, c, info, LetS, needsAddr=false)
 
       inc typ # skips tuple
       for i in 0..<forVars.len:
-        if forVars[i].substructureKind == UnpacktupU:
+        if forVars[i].substructureKind in {UnpacktupU, UnpackflatU}:
           var counter = 0
           var unpackCursor = forVars[i]
           inc unpackCursor
-          var left = createTokenBuf()
-          left.add symToken(tmpId, info)
+          var left = startTupleAccess(tmpId, info, needsDeref)
           let leftTupleAccess = createTupleAccess(left, i, info)
           assert typ.typeKind == TupleT
           inc typ
           while unpackCursor.kind != ParRi:
-            unpackTupleAccess(e, unpackCursor, leftTupleAccess, counter, info, typ)
+            unpackTupleAccess(e, unpackCursor, leftTupleAccess, counter, info, typ, needsDeref)
             inc counter
             skip unpackCursor
             skip typ
           skipParRi(typ)
         else:
-          var left = createTokenBuf()
-          left.add symToken(tmpId, info)
-          unpackTupleAccess(e, forVars[i], left, i, info, typ)
+          var left = startTupleAccess(tmpId, info, needsDeref)
+          unpackTupleAccess(e, forVars[i], left, i, info, typ, needsDeref)
           skip typ
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
@@ -233,7 +247,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       e.dest.add c
       inc c
       let oldName = c.symId
-      let freshLocal = pool.syms.getOrIncl(":tmp.v." & $e.getTmpId)
+      let freshLocal = pool.syms.getOrIncl("`ii." & $e.getTmpId)
       mapping[oldName] = freshLocal
       e.dest.add symdefToken(freshLocal, c.info) # name
 
@@ -311,7 +325,8 @@ proc replaceSymbol(e: var EContext; c: var Cursor; relations: var Table[SymId, S
       e.dest.add c
       inc c
       let oldName = c.symId
-      let newName = pool.syms.getOrIncl(pool.syms[oldName] & ".lf." & $e.instId)
+      let newName = pool.syms.getOrIncl("`lf." & $e.instId)
+      inc e.instId
       relations[oldName] = newName
       e.dest.add symdefToken(newName, c.info)
       inc c
@@ -353,8 +368,9 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
       let name = param.name
       let symId = name.symId
 
-      let newName = pool.syms.getOrIncl(pool.syms[symId] & ".lf." & $e.instId)
-      createDecl(e, newName, typ, iter, name.info, if constructsValue(iter): "var" else: "cursor")
+      let newName = pool.syms.getOrIncl("`lf." & $e.instId)
+      inc e.instId
+      createDecl(e, newName, typ, iter, name.info, if constructsValue(iter): VarS else: CursorS, needsAddr=false)
       relationsMap[symId] = newName
 
       skip params
@@ -445,7 +461,6 @@ proc transformForStmt(e: var EContext; c: var Cursor) =
 
   e.breaks.add lab
 
-  inc e.instId
   inlineIterator(e, forStmt)
 
   discard e.breaks.pop()
@@ -534,12 +549,21 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       e.tmpId = oldTmpId
       takeParRi(e, c)
     of VarS, LetS, CursorS, ResultS:
+      # We transform `var x {.cursor.} = y` into `cursor x = y` here because
+      # this is the first step of the backend pipeline.
+      let before = e.dest.len
       e.dest.add c
       inc c
+      var hasCursorPragma = false
       for i in 0..<LocalValuePos:
+        if i == LocalPragmasPos:
+          if hasPragma(c, CursorP):
+            hasCursorPragma = true
         takeTree(e, c)
       transformStmt(e, c)
       takeParRi(e, c)
+      if hasCursorPragma:
+        e.dest[before] = parLeToken(CursorS, e.dest[before].info)
     of WhileS:
       transformWhileStmt(e, c)
     of BreakS:

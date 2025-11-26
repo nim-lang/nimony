@@ -40,7 +40,8 @@
     (fld :val.3.treckpe1i1 . . string.0.sysvq0asl .))) 4,2
   (gvar :obj.3 . . 6 Foo.3.treckpe1i1 9
    (oconstr ~3 Foo.3.treckpe1i1 4
-    (kv ~3 val.3.treckpe1i1 ~10,3 "abc")))) 3,5
+    (kv ~3 val.3.treckpe1i1 ~10,3 "abc")))) 8,13
+ (comment fooTempl.0.treckpe1i1 ,1 fooTempl.0.treckpe1i1) 3,5
  (proc :foo.1.treckpe1i1 . ~3,~5 .
   (at foo.0.treckpe1i1
    (i -1)) 8,~5

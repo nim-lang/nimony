@@ -20,6 +20,16 @@ stdout.write '\n'
 stdout.write 1'u64
 stdout.write '\n'
 stdout.write 1234567890'u64
+stdout.write '\n'
+stdout.write 0'u32
+stdout.write '\n'
+stdout.write 1'u32
+stdout.write '\n'
+stdout.write int32.low
+stdout.write '\n'
+stdout.write int32.high
+stdout.write '\n'
+stdout.write uint32.high
 
 stdout.write '\n'
 stdout.write 'a'
@@ -76,7 +86,7 @@ assert sizeof(MyTuple) == 3 # MyTuple not declared in c generated code
 
 type
   MyObject = object
-    a, b, c, d: int
+    a, b, c, d: int64
 
 let my = default(MyObject)
 assert sizeof(my) == 32

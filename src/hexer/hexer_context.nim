@@ -10,9 +10,10 @@
 import std / [tables, sets, syncio]
 
 include nifprelude
+import lifter
 import ".." / nimony / [nimony_model, typenav, langmodes]
 
-export RcField, DataField, GeneratedTypeSuffix
+export RcField, DataField
 
 type
   MangleScope* {.acyclic.} = ref object
@@ -26,6 +27,7 @@ type
     requires*: seq[SymId]
     nestedIn*: seq[(StmtKind, SymId)]
     headers*: HashSet[StrId]
+    dynlibs*: Table[StrId, seq[(StrId, SymId)]]
     currentOwner*: SymId
     toMangle*: MangleScope
     strLits*: Table[string, SymId]
@@ -44,6 +46,7 @@ type
 
     localDeclCounters*: int
     activeChecks*: set[CheckMode]
+    liftingCtx*: ref LiftingCtx
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId
@@ -87,9 +90,6 @@ proc error*(e: var EContext; msg: string) {.noreturn.} =
     echo getStackTrace()
   quit 1
 
-
-proc tagToken*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
-  parLeToken(pool.tags.getOrIncl(tag), info)
 
 proc takeParRi*(e: var EContext; c: var Cursor) =
   if c.kind == ParRi:

@@ -1,0 +1,159 @@
+(.nif24)
+(stmts
+
+  (proc :echo.0 . . . (params (param :msg.0 . . (ptr (array 0 (i +8))) .)) . . . (stmts
+  ))
+
+  (proc :test1.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (while (true) (stmts
+      (if (elif a.0 (stmts
+        (break .)
+      )))
+      (call echo.0 "after if without else")
+    ))
+  ))
+
+  (proc :test2.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (while (true) (stmts
+      (if (elif a.0 (stmts
+        (break .)
+      ))
+      (else (stmts
+        (call echo.0 "explicit else")
+      )))
+      (call echo.0 "after if with else")
+    ))
+  ))
+
+  (proc :test3.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (var :b.0 .. (bool) (true))
+    (while (true) (stmts
+      (if (elif a.0 (stmts
+        (if (elif b.0 (stmts
+          (break .)
+        )))
+        (call echo.0 "after inner if")
+      )))
+      (call echo.0 "after outer if")
+    ))
+  ))
+
+  (proc :test4.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (var :b.0 .. (bool) (true))
+    (var :c.0 .. (bool) (false))
+    (while (true) (stmts
+      (if (elif a.0 (stmts
+        (if (elif b.0 (stmts
+          (if (elif c.0 (stmts
+            (break .)
+          )))
+          (call echo.0 "level 2 after")
+        )))
+        (call echo.0 "level 1 after")
+      )))
+      (call echo.0 "level 0 after")
+    ))
+  ))
+
+  (proc :test5.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (if (elif a.0 (stmts
+      (ret .)
+    )))
+    (call echo.0 "after return if")
+  ))
+
+  (proc :test6.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (while (true) (stmts
+      (if (elif a.0 (stmts
+        (break .)
+      )))
+      (call echo.0 "stmt1")
+      (call echo.0 "stmt2")
+      (call echo.0 "stmt3")
+    ))
+  ))
+
+  (proc :test7.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (var :b.0 .. (bool) (true))
+    (while (true) (stmts
+      (if (elif a.0 (stmts
+        (if (elif b.0 (stmts
+          (break .)
+        ))
+        (else (stmts
+          (call echo.0 "inner else")
+        )))
+        (call echo.0 "after inner if-else")
+      )))
+      (call echo.0 "after outer if")
+    ))
+  ))
+
+  (proc :test8.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (block . (stmts
+      (if (elif a.0 (stmts
+        (break .)
+      )))
+      (call echo.0 "after block break")
+    ))
+  ))
+
+  (proc :test9.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (var :b.0 .. (bool) (true))
+    (while (true) (stmts
+      (if (elif a.0 (stmts
+        (break .)
+      )))
+      (call echo.0 "between ifs")
+      (if (elif b.0 (stmts
+        (break .)
+      )))
+      (call echo.0 "after second if")
+    ))
+  ))
+
+  (proc :test10.0 . . . (params) . . . (stmts
+    (cfvar :´r.0)
+    (var :a.0 .. (bool) (false))
+    (var :b.0 .. (bool) (true))
+    (var :c.0 .. (bool) (false))
+    (var :d.0 .. (bool) (true))
+    (while (true) (stmts
+      (call echo.0 "pre-condition")
+      (if (elif a.0 (stmts
+        (if (elif b.0 (stmts
+          (if (elif c.0 (stmts
+            (break .)
+          )))
+          (call echo.0 "c was false")
+        )))
+        (call echo.0 "b check done")
+        (if (elif d.0 (stmts
+          (break .)
+        )))
+        (call echo.0 "d was false")
+      )))
+      (call echo.0 "main body")
+      (continue .)
+    ))
+  ))
+
+)
