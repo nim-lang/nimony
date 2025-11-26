@@ -4689,6 +4689,7 @@ proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
         if singleKeys.len != 0:
           var cur = it.n
           skip cur
+          assert cur.kind != ParRi
           for key in singleKeys:
             arrayBuf.buildTree TupX, key.info:
               arrayBuf.copyTree key
