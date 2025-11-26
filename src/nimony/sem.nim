@@ -4673,19 +4673,36 @@ proc semIs(c: var SemContext; it: var Item) =
   commonType c, it, beforeExpr, expected
 
 proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
+  # we simply transform ``{key: value, key2, key3: value}`` to
+  # ``[(key, value), (key2, value2), (key3, value2)]``
   let info = it.n.info
   inc it.n
   var arrayBuf = createTokenBuf(16)
+  var singleKeys = newSeq[Cursor]()
   arrayBuf.buildTree BracketX, info:
     while it.n.kind != ParRi:
-      assert it.n.substructureKind == KvU
-      let kvInfo = it.n.info
-      inc it.n
-      arrayBuf.buildTree TupX, kvInfo:
-        arrayBuf.takeTree it.n
-        assert it.n.kind != ParRi
-        arrayBuf.takeTree it.n
-      inc it.n
+      if it.n.substructureKind == KvU:
+        let kvInfo = it.n.info
+        inc it.n
+        if singleKeys.len != 0:
+          var cur = it.n
+          skip cur
+          assert cur.kind != ParRi
+          for key in singleKeys:
+            arrayBuf.buildTree TupX, key.info:
+              arrayBuf.copyTree key
+              arrayBuf.copyTree cur
+
+          setLen(singleKeys, 0)
+
+        arrayBuf.buildTree TupX, kvInfo:
+          arrayBuf.takeTree it.n
+          assert it.n.kind != ParRi
+          arrayBuf.takeTree it.n
+        inc it.n
+      else:
+        singleKeys.add it.n
+        skip it.n
 
   var item = Item(n: beginRead(arrayBuf), typ: it.typ)
   semBracket c, item, flags
