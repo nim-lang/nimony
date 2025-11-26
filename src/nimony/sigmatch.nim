@@ -1268,12 +1268,28 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
         takeParRi m.args, call # call
     else:
       # match against `auto`, untyped/varargs should still match
+      let fOrig = f
       singleArgImpl(m, f, arg)
+      if not m.err:
+        m.useArg arg, fOrig # since it was a match, copy it
+        while m.opened > 0:
+          m.args.addParRi()
+          dec m.opened
 
 proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
   if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
     matchEmptyContainer(m, f, arg)
     return
+  if arg.typ.typeKind == AutoT and isEmptyOpenArrayCall(arg.n):
+    if isSomeOpenArrayType(f):
+      # always match generated empty openarray converter call
+      # argument will be instantiated after the call matches
+      if not m.err:
+        m.args.addSubtree arg.n
+      return
+    else:
+      # should not happen, but still match as normal to give proper error
+      discard
   let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:

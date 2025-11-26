@@ -588,6 +588,9 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     if classifyMatch(destMatch) in {EqualMatch, GenericMatch}:
       if isEmptyOpenArray:
         inputMatch.checkEmptyArg = true
+        # make argument type `auto` so sigmatch can identify it and match it
+        # needed if `f` is generic, since we don't know the generic parameters yet
+        inputMatch.returnType = c.types.autoType
       elif isGeneric(fn):
         inputMatch.genericConverter = true
       convMatches.add inputMatch

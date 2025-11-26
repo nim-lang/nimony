@@ -56,3 +56,23 @@ proc execProcess2*(
   discard
 
 execProcess2()
+
+proc emptyGeneric[T](a: T, args: openArray[T]) =
+  assert args.len == 0
+
+emptyGeneric("abc", [])
+emptyGeneric("def", @[])
+
+proc execProcessGeneric*[T](
+    a: T,
+    args: openArray[T] = []) =
+  discard
+
+execProcessGeneric("abc")
+
+proc execProcessGeneric2*[T](
+    a: T,
+    args: openArray[T] = @[]) =
+  discard
+
+execProcessGeneric2("def")
