@@ -28,13 +28,28 @@
    (efld :typeOfProc.0.tvah6culb x . TypeOfMode.0.tvah6culb
     (tup +0 "typeOfProc")) ~12,2
    (efld :typeOfIter.0.tvah6culb x . TypeOfMode.0.tvah6culb
-    (tup +1 "typeOfIter")))) ,11
+    (tup +1 "typeOfIter")))) 2,7
+ (proc :dollar`.TypeOfMode.0.tvah6culb x . .
+  (params
+   (param :e.0 . . TypeOfMode.0.tvah6culb .)) string.0.sysvq0asl . .
+  (stmts 14
+   (result :result.0 . . string.0.sysvq0asl .) 14
+   (case e.0 ~12,1
+    (of
+     (ranges typeOfProc.0.tvah6culb)
+     (stmts
+      (ret "typeOfProc"))) ~12,2
+    (of
+     (ranges typeOfIter.0.tvah6culb)
+     (stmts
+      (ret "typeOfIter"))))
+   (ret result.0))) ,11
  (proc 5 :typeof.0.tvah6culb
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
     (untyped) .) 13
-   (param :mode.0 . . ~20,~2 TypeOfMode.0.tvah6culb 7 typeOfIter.0.tvah6culb)) 33
+   (param :mode.0 . . ~22,~4 TypeOfMode.0.tvah6culb 7 typeOfIter.0.tvah6culb)) 33
   (typekind
    (typedesc)) 53
   (pragmas 2
@@ -142,20 +157,5 @@
    (cmd write.1.tvah6culb 6
     (haddr stdout.0.tvah6culb) 1,11 someVar.0.tvah6culb)) ,2
   (cmd write.0.tvah6culb 6
-   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,7
- (proc :dollar`.TypeOfMode.0.tvah6culb x . .
-  (params
-   (param :e.0 . . TypeOfMode.0.tvah6culb .)) string.0.sysvq0asl . .
-  (stmts 14
-   (result :result.0 . . string.0.sysvq0asl .) 14
-   (case e.0 ~12,1
-    (of
-     (ranges typeOfProc.0.tvah6culb)
-     (stmts
-      (ret "typeOfProc"))) ~12,2
-    (of
-     (ranges typeOfIter.0.tvah6culb)
-     (stmts
-      (ret "typeOfIter"))))
-   (ret result.0))) 15,11
+   (haddr stdout.0.tvah6culb) 14 '\0A')) 15,11
  (comment untyped.0.tvah6culb 18 typedesc.0.tvah6culb 1,5 int.0.tvah6culb 1,5 int.0.tvah6culb ~2,5 int.0.tvah6culb 1,6 int.0.tvah6culb 1,6 int.0.tvah6culb ~2,6 int.0.tvah6culb 2,8 int.0.tvah6culb 2,8 int.0.tvah6culb ~2,8 bool.0.tvah6culb 12,15 char.0.tvah6culb ~11,20 untyped.0.tvah6culb ~15,29 echo.0.tvah6culb ~15,31 echo.0.tvah6culb ~11,33 echo.0.tvah6culb ~15,35 echo.0.tvah6culb))

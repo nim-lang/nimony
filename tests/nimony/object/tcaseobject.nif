@@ -225,7 +225,26 @@
      (efld :kb.0.tcauiaoif . . TKind.0.tcauiaoif
       (tup +1 "kb")) 13
      (efld :kc.0.tcauiaoif . . TKind.0.tcauiaoif
-      (tup +2 "kc")))) 5,2
+      (tup +2 "kc")))) 2,1
+   (proc :dollar`.TKind.0.tcauiaoif . . .
+    (params
+     (param :e.0 . . TKind.0.tcauiaoif .)) string.0.sysvq0asl . .
+    (stmts 8
+     (result :result.1 . . ~5,~40 string.0.sysvq0asl .) 8
+     (case e.0 5
+      (of
+       (ranges ka.0.tcauiaoif)
+       (stmts
+        (ret "ka"))) 9
+      (of
+       (ranges kb.0.tcauiaoif)
+       (stmts
+        (ret "kb"))) 13
+      (of
+       (ranges kc.0.tcauiaoif)
+       (stmts
+        (ret "kc"))))
+     (ret result.1))) 5,2
    (type ~3 :TA.0.tcauiaoif . . . 2
     (object . ~3,1
      (case 5
@@ -268,24 +287,5 @@
       (stmts 2,1
        (stmts
         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 14,64,tests/nimony/object/tcaseobject.nim +3)) ,2
-       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 4,48
- (proc :dollar`.TKind.0.tcauiaoif x . .
-  (params
-   (param :e.0 . . TKind.0.tcauiaoif .)) string.0.sysvq0asl . .
-  (stmts 8
-   (result :result.1 . . ~5,~40 string.0.sysvq0asl .) 8
-   (case e.0 5
-    (of
-     (ranges ka.0.tcauiaoif)
-     (stmts
-      (ret "ka"))) 9
-    (of
-     (ranges kb.0.tcauiaoif)
-     (stmts
-      (ret "kb"))) 13
-    (of
-     (ranges kc.0.tcauiaoif)
-     (stmts
-      (ret "kc"))))
-   (ret result.1))) 10,4
+       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 10,4
  (comment bool.0.sysvq0asl ~5,1 false.0.sysvq0asl ~5,1 false.0.sysvq0asl ~3,2 int.0.sysvq0asl ~5,3 true.0.sysvq0asl ~5,3 true.0.sysvq0asl ~3,5 bool.0.sysvq0asl ,8 bool.0.sysvq0asl ~5,9 false.0.sysvq0asl ~5,9 false.0.sysvq0asl 2,9 true.0.sysvq0asl 2,9 true.0.sysvq0asl 3,11 default.1.sysvq0asl 3,11 default.3.sysvq0asl 3,12 false.0.sysvq0asl ~3,13 bool.0.sysvq0asl 2,14 false.0.sysvq0asl ~10,14 assert.0.assy765wm ~3,15 int.0.sysvq0asl ~10,16 assert.0.assy765wm 3,17 true.0.sysvq0asl 22,17 false.0.sysvq0asl 6,18 true.0.sysvq0asl ~10,18 assert.0.assy765wm ~10,20 assert.0.assy765wm ~3,21 bool.0.sysvq0asl 2,22 false.0.sysvq0asl ~10,22 assert.0.assy765wm 3,24 default.1.sysvq0asl 3,25 false.0.sysvq0asl 6,26 false.0.sysvq0asl ~10,26 assert.0.assy765wm 3,27 true.0.sysvq0asl ~3,28 bool.0.sysvq0asl 2,29 true.0.sysvq0asl ~10,29 assert.0.assy765wm 7,32 true.0.sysvq0asl ~10,32 assert.0.assy765wm 7,39 true.0.sysvq0asl 26,39 false.0.sysvq0asl 1,48 int.0.sysvq0asl 1,49 int.0.sysvq0asl 8,51 float.0.sysvq0asl 8,51 float.0.sysvq0asl ~1,59 echo.0.syn1lfpjv))

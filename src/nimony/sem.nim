@@ -3674,7 +3674,6 @@ proc semCompiles(c: var SemContext; it: var Item) =
   let oldInstantiatedFrom = c.instantiatedFrom.len
   let oldInWhen = c.inWhen
   let oldTemplateInstCounter = c.templateInstCounter
-  let oldPending = c.pending.len
   let oldExpanded = c.expanded.len
   let oldIncludeStackLen = c.includeStack.len
   let oldDebugAllowErrors = c.debugAllowErrors
@@ -3696,7 +3695,6 @@ proc semCompiles(c: var SemContext; it: var Item) =
 
   c.inWhen = oldInWhen
   c.templateInstCounter = oldTemplateInstCounter
-  c.pending.shrink(oldPending)
   c.expanded.shrink(oldExpanded)
   c.debugAllowErrors = oldDebugAllowErrors
 
@@ -3999,7 +3997,7 @@ proc semEnumToStr(c: var SemContext; it: var Item) =
   if containsGenericParams(x.typ):
     discard
   else:
-    let typeSymId = x.typ.symId
+    let typeSymId = x.typ.skipModifier.symId
     let typeName = pool.syms[typeSymId]
     let dollorName = "dollar`." & typeName
     let dollorSymId = pool.syms.getOrIncl(dollorName)
@@ -5315,7 +5313,6 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
       inc i
 
 proc semcheckCore(c: var SemContext; n0: Cursor) =
-  c.pending.add parLeToken(StmtsS, NoLineInfo)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
 
   assert n0.stmtKind == StmtsS
@@ -5337,15 +5334,6 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
   takeToken c, n
   while n.kind != ParRi:
     semStmt c, n, false
-
-  c.pending.addParRi()
-  var cur = beginRead(c.pending)
-  inc cur
-  c.phase = SemcheckBodies
-  while cur.kind != ParRi:
-    semStmt c, cur, false
-  skipParRi(cur)
-  endRead(c.pending)
 
   if c.expanded.len > 0:
     c.dest.addParLe CommentS, c.expanded[0].info
