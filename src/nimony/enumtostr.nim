@@ -8,7 +8,7 @@
 
 include nifprelude
 
-import decls, nimony_model, semdata, sembasics
+import decls, nimony_model, semdata, sembasics, symtabs
 
 proc tagToken(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -73,8 +73,11 @@ proc genEnumToStrProc*(c: var SemContext; typeDecl: var Cursor) =
 
   # TODO: defaults to (nodecl)
   # TODO: static for local functions
-  let exportIdent = pool.strings.getOrIncl("x")
-  c.dest.add identToken(exportIdent, enumSymInfo)
+  if c.currentScope.kind == ToplevelScope:
+    let exportIdent = pool.strings.getOrIncl("x")
+    c.dest.add identToken(exportIdent, enumSymInfo)
+  else:
+    c.dest.addDotToken() # exportIdent
   c.dest.addDotToken()
   c.dest.addDotToken()
 

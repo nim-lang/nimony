@@ -8,12 +8,7 @@
    (efld :Blue1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v
     (tup +1 "Blue1")) 6,1
    (efld :Green1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v
-    (tup +2 "Green1")))) ,5
- (proc 5 :fooColor.0.tdoqc0e0v . . . 14
-  (params) . . . 2,1
-  (stmts 4
-   (let :m.0 . . string.0.sysvq0asl 4
-    (call dollar`.Color1.0.tdoqc0e0v 1 Blue1.0.tdoqc0e0v)))) 2,1
+    (tup +2 "Green1")))) 2,1
  (proc :dollar`.Color1.0.tdoqc0e0v x . .
   (params
    (param :e.0 . . Color1.0.tdoqc0e0v .)) string.0.sysvq0asl . .
@@ -32,4 +27,9 @@
      (ranges Green1.0.tdoqc0e0v)
      (stmts
       (ret "Green1"))))
-   (ret result.0))))
+   (ret result.0))) ,5
+ (proc 5 :fooColor.0.tdoqc0e0v . . . 14
+  (params) . . . 2,1
+  (stmts 4
+   (let :m.0 . . string.0.sysvq0asl 4
+    (call dollar`.Color1.0.tdoqc0e0v 1 Blue1.0.tdoqc0e0v)))))

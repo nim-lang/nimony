@@ -10,29 +10,7 @@
    (efld :a2.0.tene657oj . . A.0.tene657oj
     (tup +2 "a2")) 5,1
    (efld :a3.0.tene657oj . . A.0.tene657oj
-    (tup +3 "a3")))) 7,2
- (type ~2 :B.0.tene657oj . . . 2
-  (onum
-   (i +32) ~2,1
-   (efld ~5 :b0.0.tene657oj . . B.0.tene657oj
-    (tup -1 "b0")) 2,1
-   (efld :b1.0.tene657oj . . B.0.tene657oj
-    (tup +0 "b1")) 6,1
-   (efld :b2.0.tene657oj . . B.0.tene657oj
-    (tup +1 "b2")) 15,1
-   (efld ~5 :b3.0.tene657oj . . B.0.tene657oj
-    (tup +5 "b3")))) 7,4
- (type ~2 :C.0.tene657oj . . . 2
-  (onum
-   (u +16) ~7,1
-   (efld :c0.0.tene657oj . . C.0.tene657oj
-    (tup +0 "c0")) ~3,1
-   (efld :c1.0.tene657oj . . C.0.tene657oj
-    (tup +1 "c1")) 6,1
-   (efld ~5 :c2.0.tene657oj . . C.0.tene657oj
-    (tup +30000 "c2")) 14,1
-   (efld :c3.0.tene657oj . . C.0.tene657oj
-    (tup +30001 "c3")))) 5
+    (tup +3 "a3")))) 5
  (proc :dollar`.A.0.tene657oj x . .
   (params
    (param :e.0 . . A.0.tene657oj .)) string.0.sysvq0asl . .
@@ -55,7 +33,18 @@
      (ranges a3.0.tene657oj)
      (stmts
       (ret "a3"))))
-   (ret result.0))) 5,2
+   (ret result.0))) 7,2
+ (type ~2 :B.0.tene657oj . . . 2
+  (onum
+   (i +32) ~2,1
+   (efld ~5 :b0.0.tene657oj . . B.0.tene657oj
+    (tup -1 "b0")) 2,1
+   (efld :b1.0.tene657oj . . B.0.tene657oj
+    (tup +0 "b1")) 6,1
+   (efld :b2.0.tene657oj . . B.0.tene657oj
+    (tup +1 "b2")) 15,1
+   (efld ~5 :b3.0.tene657oj . . B.0.tene657oj
+    (tup +5 "b3")))) 5,2
  (proc :dollar`.B.0.tene657oj x . .
   (params
    (param :e.1 . . B.0.tene657oj .)) string.0.sysvq0asl . .
@@ -78,7 +67,18 @@
      (ranges ~5 b3.0.tene657oj)
      (stmts
       (ret "b3"))))
-   (ret result.1))) 5,4
+   (ret result.1))) 7,4
+ (type ~2 :C.0.tene657oj . . . 2
+  (onum
+   (u +16) ~7,1
+   (efld :c0.0.tene657oj . . C.0.tene657oj
+    (tup +0 "c0")) ~3,1
+   (efld :c1.0.tene657oj . . C.0.tene657oj
+    (tup +1 "c1")) 6,1
+   (efld ~5 :c2.0.tene657oj . . C.0.tene657oj
+    (tup +30000 "c2")) 14,1
+   (efld :c3.0.tene657oj . . C.0.tene657oj
+    (tup +30001 "c3")))) 5,4
  (proc :dollar`.C.0.tene657oj x . .
   (params
    (param :e.2 . . C.0.tene657oj .)) string.0.sysvq0asl . .

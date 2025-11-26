@@ -35,13 +35,28 @@
    (efld :typeOfProc.0.tte5tld8n x . TypeOfMode.0.tte5tld8n
     (tup +0 "typeOfProc")) ~12,2
    (efld :typeOfIter.0.tte5tld8n x . TypeOfMode.0.tte5tld8n
-    (tup +1 "typeOfIter")))) ,14
+    (tup +1 "typeOfIter")))) 2,10
+ (proc :dollar`.TypeOfMode.0.tte5tld8n x . .
+  (params
+   (param :e.0 . . TypeOfMode.0.tte5tld8n .)) string.0.sysvq0asl . .
+  (stmts 14
+   (result :result.0 . . string.0.sysvq0asl .) 14
+   (case e.0 ~12,1
+    (of
+     (ranges typeOfProc.0.tte5tld8n)
+     (stmts
+      (ret "typeOfProc"))) ~12,2
+    (of
+     (ranges typeOfIter.0.tte5tld8n)
+     (stmts
+      (ret "typeOfIter"))))
+   (ret result.0))) ,14
  (proc 5 :typeof.0.tte5tld8n
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
     (untyped) .) 13
-   (param :mode.0 . . ~20,~2 TypeOfMode.0.tte5tld8n 7 typeOfIter.0.tte5tld8n)) 33
+   (param :mode.0 . . ~22,~4 TypeOfMode.0.tte5tld8n 7 typeOfIter.0.tte5tld8n)) 33
   (typekind
    (typedesc)) 53
   (pragmas 2
@@ -85,10 +100,10 @@
    (param :y.2 . . string.0.sysvq0asl .)) 21
   (i -1) . . 2,1
   (stmts 4
-   (result :result.0 . . 10,~5
+   (result :result.1 . . 10,~5
     (i -1) .) 4
    (var :x.5 . . string.0.sysvq0asl 4 "abc") 7,1
-   (asgn ~7 result.0 23,~4
+   (asgn ~7 result.1 23,~4
     (expr 2
      (add
       (i -1) ~18,4 +4 ~2
@@ -96,7 +111,7 @@
        (add
         (i -1) ~10,4 +2 ~7,4 +89))))) 2,2
    (asgn ~2 x.5 2 "34") ~2,~1
-   (ret result.0))) ,39
+   (ret result.1))) ,39
  (proc 5 :overloaded.0.tte5tld8n . . . 15
   (params) . . . 2,1
   (stmts 4
@@ -125,22 +140,7 @@
  (discard 30,~3
   (expr 1
    (conv ~18,3
-    (u -1) ~12,3 val.0.tte5tld8n))) 2,10
- (proc :dollar`.TypeOfMode.0.tte5tld8n x . .
-  (params
-   (param :e.0 . . TypeOfMode.0.tte5tld8n .)) string.0.sysvq0asl . .
-  (stmts 14
-   (result :result.1 . . string.0.sysvq0asl .) 14
-   (case e.0 ~12,1
-    (of
-     (ranges typeOfProc.0.tte5tld8n)
-     (stmts
-      (ret "typeOfProc"))) ~12,2
-    (of
-     (ranges typeOfIter.0.tte5tld8n)
-     (stmts
-      (ret "typeOfIter"))))
-   (ret result.1))) 15,14
+    (u -1) ~12,3 val.0.tte5tld8n))) 15,14
  (comment untyped.0.tte5tld8n 18 typedesc.0.tte5tld8n 1,16 int.0.tte5tld8n 1,16 int.0.tte5tld8n ~2,16 int.0.tte5tld8n 5,18 int.0.tte5tld8n 5,18 int.0.tte5tld8n ~2,18 int.0.tte5tld8n ~3,20 int.0.tte5tld8n 6,20 int.0.tte5tld8n 5,31 int.0.tte5tld8n 5,10 int.0.tte5tld8n 4,11 float.0.tte5tld8n 8,22 plus.0.tte5tld8n ,22 plus.0.tte5tld8n ~2,34 uint.0.tte5tld8n 3,34 conv.0.tte5tld8n) 19,24
  (type :MyGeneric.0.Igj236q.tte5tld8n .
   (at MyGeneric.0.tte5tld8n 1

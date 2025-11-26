@@ -971,9 +971,16 @@ proc semTypeSection(c: var SemContext; n: var Cursor) =
   if isEnumTypeDecl:
     var enumTypeDecl = tryLoadSym(delayed.s.name)
     assert enumTypeDecl.status == LacksNothing
-    swap c.dest, c.pending
+    var pending = createTokenBuf()
+    swap c.dest, pending
     genEnumToStrProc(c, enumTypeDecl.decl)
-    swap c.dest, c.pending
+    swap c.dest, pending
+
+    var dollorProcDecl = beginRead(pending)
+    var it = Item(n: dollorProcDecl, typ: c.types.autoType)
+    # semchecking is needed for publishing signature
+    # and transforms `ret ...` into `ret result` for `controlflow.nim`
+    semExpr(c, it)
 
   if isRefPtrObj:
     if c.phase > SemcheckTopLevelSyms:
