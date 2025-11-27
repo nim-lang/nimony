@@ -4676,6 +4676,7 @@ proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
   # we simply transform ``{key: value, key2, key3: value}`` to
   # ``[(key, value), (key2, value2), (key3, value2)]``
   let info = it.n.info
+  let orig = it.n
   inc it.n
   var arrayBuf = createTokenBuf(16)
   var singleKeys = newSeq[Cursor]()
@@ -4703,6 +4704,9 @@ proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
       else:
         singleKeys.add it.n
         skip it.n
+
+  if singleKeys.len != 0:
+    c.buildErr info, "illformed AST: " & asNimCode(orig)
 
   var item = Item(n: beginRead(arrayBuf), typ: it.typ)
   semBracket c, item, flags
