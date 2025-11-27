@@ -4676,7 +4676,7 @@ proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
   # we simply transform ``{key: value, key2, key3: value}`` to
   # ``[(key, value), (key2, value2), (key3, value2)]``
   let info = it.n.info
-  var orig = it.n
+  let orig = it.n
   inc it.n
   var arrayBuf = createTokenBuf(16)
   var singleKeys = newSeq[Cursor]()
