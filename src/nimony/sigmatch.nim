@@ -1029,11 +1029,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
     of RangetypeT:
       # for now acts the same as base type
       var a = skipModifier(arg.typ)
-      inc f # skip to base type
-      linearMatch m, f, a
-      skip f
-      skip f
-      expectParRi m, f
+      if a.typeKind == RangetypeT:
+        linearMatch m, f, a
+      else:
+        inc f # skip to base type
+        linearMatch m, f, a
+        skip f
+        skip f
+        expectParRi m, f
     of ArrayT:
       var a = skipModifier(arg.typ)
       matchArrayType m, f, a
