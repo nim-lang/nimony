@@ -1850,7 +1850,7 @@ or a `for` loop variable is allowed:
 
   ```nim
   let t1 = "Hello"
-  var t2: pointer = addr(t2)
+  var t2: pointer = addr(t1)
   echo cast[ptr string](t2)[]
   ```
 
