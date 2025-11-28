@@ -134,10 +134,13 @@ proc endsWith*(s: string; c: char): bool {.inline.} =
 proc strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
 
 proc `$`*(x: cstring): string =
-  let L = int strlen(x)
-  result = newString(L)
-  for i in 0..<result.len:
-    result[i] = x[i]
+  if x == nil:
+    result = ""
+  else:
+    let L = int strlen(x)
+    result = newString(L)
+    for i in 0..<result.len:
+      result[i] = x[i]
 
 proc `$`*(x: char): string =
   result = newString(1)
