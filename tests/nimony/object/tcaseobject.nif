@@ -51,7 +51,7 @@
      (eq
       (bool) ~2 a.0.tcauiaoif 3
       (false))) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -68,7 +68,7 @@
     (not 9,21,tests/nimony/object/tcaseobject.nim
      (eq
       (i +64) ~2 b.0.tcauiaoif 3 +123)) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -91,7 +91,7 @@
       (bool) ~3
       (dot ~3 foo.0.tcauiaoif x.0.tcauiaoif +0) 3
       (true))) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -106,7 +106,7 @@
    (elif
     (not 9,25,tests/nimony/object/tcaseobject.nim
      (infix ==.20.sysvq0asl ~2 c.0.tcauiaoif 3 "abc")) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -124,7 +124,7 @@
      (eq
       (bool) ~2 d.0.tcauiaoif 3
       (false))) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -149,7 +149,7 @@
       (bool) ~3
       (dot ~3 bar.0.tcauiaoif x.1.tcauiaoif +0) 3
       (false))) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -171,7 +171,7 @@
      (eq
       (bool) ~2 e.0.tcauiaoif 3
       (true))) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -188,7 +188,7 @@
       (bool) ~3
       (dot ~4 bar2.0.tcauiaoif x.1.tcauiaoif +0) 3
       (true))) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -283,7 +283,7 @@
       (var :b.0 . . string.0.sysvq0asl 4 ""))) ,5
     (of
      (ranges 3 kc.0.tcauiaoif) 7
-     (stmts 2,122,lib/std/syncio.nim
+     (stmts 2,171,lib/std/syncio.nim
       (stmts 2,1
        (stmts
         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 14,64,tests/nimony/object/tcaseobject.nim +3)) ,2
