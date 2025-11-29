@@ -18,7 +18,7 @@
 
 ## Testing Guidelines
 - Every behavioral change needs a regression under the matching `tests/` directory; use marker comments (`#[  ^errorId ]#`) so Hastur can assert diagnostic ranges.
-- Refresh fixtures with `nim c -r src/hastur test <path> --overwrite` only when you fully understand the delta, because reviewers rely on `.expected` diffs.
+- Refresh fixtures with `nim c -r src/hastur --overwrite test <path>` only when you fully understand the delta, because reviewers rely on `.expected` diffs.
 - Run `nim c -r src/hastur all` before pushing and call out skipped suites or flakes in the PR description.
 
 ## Commit & Pull Request Guidelines
