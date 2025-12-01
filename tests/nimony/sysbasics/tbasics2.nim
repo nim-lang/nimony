@@ -251,3 +251,28 @@ block:
 
   const z = 6.7 == 6.7
   assert z
+
+
+type
+  A = enum
+    off, on
+
+let xxxx = off
+echo $xxxx
+
+block:
+  type
+    A = enum
+      off, on
+
+  let xxxx = off
+  echo $xxxx
+
+
+type
+  A22 = enum
+    off2, on2
+  LevelSetting = array[0..3, A22]
+var level: LevelSetting
+for x in level:
+  echo $x

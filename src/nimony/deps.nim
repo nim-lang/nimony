@@ -744,8 +744,13 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         b.withTree "output":
           b.addStrLit writenifHexedFile
 
+
+    let allRequiredStdlibModules = toHashSet(allNifFiles)
+
     for depNifFile in dependencyNifFiles:
       let depName = depNifFile.splitModulePath.name
+      if depName in allRequiredStdlibModules:
+        continue
       allNifFiles.add(depName)
       let depHexedFile = config.nifcachePath / depName & ".s.nif"
 

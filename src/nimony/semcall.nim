@@ -414,10 +414,14 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         if m.err and not prevErr:
           c.typeMismatch arg.info, defaultValue.typ, param.typ
         inc arg
-      elif m.checkEmptyArg and isEmptyContainer(arg):
+      elif m.checkEmptyArg and (isEmptyContainer(arg) or isEmptyOpenArrayCall(arg)):
         let isCall = arg.exprKind in CallKinds
         let start = c.dest.len
         if isCall:
+          takeToken c, arg
+          takeTree c, arg
+        let isDoubleCall = arg.exprKind in CallKinds # `@` call inside `toOpenArray` call case
+        if isDoubleCall:
           takeToken c, arg
           takeTree c, arg
         takeToken c, arg
@@ -427,9 +431,11 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         else:
           takeTree c, arg
         takeParRi c, arg
+        if isDoubleCall:
+          takeParRi c, arg
         if isCall:
           takeParRi c, arg
-          # instantiate `@` call, done by semchecking:
+          # instantiate `@`/`toOpenArray` call, done by semchecking:
           var callBuf = createTokenBuf(c.dest.len - start)
           for tok in start ..< c.dest.len:
             callBuf.add c.dest[tok]
@@ -525,6 +531,23 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     var inputMatch = createMatch(addr c)
     let candidate = FnCandidate(kind: fn.kind, sym: conv, typ: fn.params)
 
+    var isEmptyOpenArray = false
+    if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n) and
+        # normal overload of `toOpenArray` for arrays:
+        (pool.syms[conv] == "toOpenArray.0." & SystemModuleSuffix or
+          # normal overload of `toOpenArray` for seqs:
+          pool.syms[conv] == "toOpenArray.1." & SystemModuleSuffix):
+      # infer generic params of openarray converter, then match instantiated empty array/seq arg:
+      isEmptyOpenArray = true
+      var returnTypeMatch = createMatch(addr c)
+      var returnType = candidate.typ
+      skip returnType # get to return type
+      typematch(returnTypeMatch, returnType, Item(n: emptyNode(c), typ: f))
+      # if for some reason the openarray type doesn't match the converter:
+      if classifyMatch(returnTypeMatch) notin {EqualMatch, GenericMatch}:
+        continue
+      inputMatch.inferred = returnTypeMatch.inferred
+
     # first match the input argument of `conv` so that the unification algorithm works as expected:
     sigmatch(inputMatch, candidate, [arg], emptyNode(c))
     if classifyMatch(inputMatch) notin {EqualMatch, GenericMatch, SubtypeMatch}:
@@ -532,6 +555,26 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     # use inputMatch.returnType here so the caller doesn't have to instantiate it again:
     if inputMatch.inferred.len != 0 and containsGenericParams(inputMatch.returnType):
       inputMatch.returnType = instantiateType(c, inputMatch.returnType, inputMatch.inferred)
+    if isEmptyOpenArray:
+      # argument is some empty array/seq literal populated with
+      # toOpenArray's generic param as the type,
+      # instantiate the type in the literal relative to the converter's generic params
+      # so that only the generic params of the full call remain (if any exist)
+      var instArgBuf = createTokenBuf(16)
+      var argToInst = beginRead(inputMatch.args)
+      assert isEmptyContainer(argToInst)
+      let isCall = argToInst.exprKind in CallKinds
+      if isCall:
+        takeToken instArgBuf, argToInst
+        takeTree instArgBuf, argToInst # call symbol
+      takeToken instArgBuf, argToInst # array constructor tag
+      instArgBuf.addSubtree instantiateType(c, argToInst, inputMatch.inferred)
+      skip argToInst
+      takeParRi instArgBuf, argToInst # array constructor
+      if isCall:
+        takeParRi instArgBuf, argToInst # call
+      inputMatch.args = instArgBuf
+
     let dest = inputMatch.returnType
     var callBuf = createTokenBuf(16) # dummy call node to use for matching dest type
     callBuf.add parLeToken(HcallX, arg.n.info)
@@ -543,7 +586,12 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     var destMatch = createMatch(addr c)
     typematch(destMatch, fMatch, newArg)
     if classifyMatch(destMatch) in {EqualMatch, GenericMatch}:
-      if isGeneric(fn):
+      if isEmptyOpenArray:
+        inputMatch.checkEmptyArg = true
+        # make argument type `auto` so sigmatch can identify it and match it
+        # needed if `f` is generic, since we don't know the generic parameters yet
+        inputMatch.returnType = c.types.autoType
+      elif isGeneric(fn):
         inputMatch.genericConverter = true
       convMatches.add inputMatch
   let idx = pickBestMatch(c, convMatches)
@@ -695,7 +743,10 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
           var argBuf = createTokenBuf(16)
           argBuf.add parLeToken(HcallX, arg.n.info)
           argBuf.add symToken(convMatch.fn.sym, arg.n.info)
-          if convMatch.genericConverter:
+          if convMatch.checkEmptyArg:
+            # empty openarray converter
+            newMatch.checkEmptyArg = true
+          elif convMatch.genericConverter:
             # instantiate after match
             newMatch.genericConverter = true
           argBuf.add convMatch.args
@@ -728,7 +779,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       if finalFn.sym != SymId(0) and
           # overload of `@` with empty array param:
           pool.syms[finalFn.sym] == "@.1." & SystemModuleSuffix and
-          (AllowEmpty in cs.flags or isSomeSeqType(it.typ)):
+          (AllowEmpty in cs.flags or isSomeSeqType(it.typ) or isSomeOpenArrayType(it.typ)):
         # empty seq will be handled, either by `commonType` now or
         # the call this is an argument of in the case of AllowEmpty
         typeofCallIs c, it, cs.beforeCall, c.types.autoType

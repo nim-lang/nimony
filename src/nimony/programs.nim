@@ -150,7 +150,7 @@ template reportImpl(msg: string; level: string) =
   when defined(debug):
     writeStackTrace()
   write stdout, level
-  write stdout, msg
+  writeLine stdout, msg
   quit 1
 
 proc error*(msg: string; c: Cursor) {.noreturn.} =
