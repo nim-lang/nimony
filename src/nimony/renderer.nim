@@ -1879,12 +1879,14 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
           else:
             afterFirst = true
 
-          assert n.substructureKind == KvU
-          inc n
-          gsub(g, n, c)
-          putWithSpace(g, tkColon, ":")
-          gsub(g, n, c)
-          skipParRi(n)
+          if n.substructureKind == KvU:
+            inc n
+            gsub(g, n, c)
+            putWithSpace(g, tkColon, ":")
+            gsub(g, n, c)
+            skipParRi(n)
+          else:
+            gsub(g, n, c)
       else:
         put(g, tkColon, ":")
 

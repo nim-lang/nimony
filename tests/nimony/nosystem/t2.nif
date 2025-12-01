@@ -24,13 +24,28 @@
    (efld :typeOfProc.0.t2er4ggt1 x . TypeOfMode.0.t2er4ggt1
     (tup +0 "typeOfProc")) ~12,2
    (efld :typeOfIter.0.t2er4ggt1 x . TypeOfMode.0.t2er4ggt1
-    (tup +1 "typeOfIter")))) ,11
+    (tup +1 "typeOfIter")))) 2,7
+ (proc :dollar`.TypeOfMode.0.t2er4ggt1 x . .
+  (params
+   (param :e.0 . . TypeOfMode.0.t2er4ggt1 .)) string.0.sysvq0asl . .
+  (stmts 14
+   (result :result.0 . . string.0.sysvq0asl .) 14
+   (case e.0 ~12,1
+    (of
+     (ranges typeOfProc.0.t2er4ggt1)
+     (stmts
+      (ret "typeOfProc"))) ~12,2
+    (of
+     (ranges typeOfIter.0.t2er4ggt1)
+     (stmts
+      (ret "typeOfIter"))))
+   (ret result.0))) ,11
  (proc 5 :typeof.0.t2er4ggt1
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
     (untyped) .) 13
-   (param :mode.0 . . ~20,~2 TypeOfMode.0.t2er4ggt1 7 typeOfIter.0.t2er4ggt1)) 33
+   (param :mode.0 . . ~22,~4 TypeOfMode.0.t2er4ggt1 7 typeOfIter.0.t2er4ggt1)) 33
   (typekind
    (typedesc)) 53
   (pragmas 2
@@ -53,12 +68,12 @@
    (param :y.1 . . string.0.sysvq0asl .)) 21
   (i -1) . . 2,1
   (stmts 4
-   (result :result.0 . . 10,~3
+   (result :result.1 . . 10,~3
     (i -1) .) 4
    (var :x.4 . . string.0.sysvq0asl 4 "abc") 7,1
-   (asgn ~7 result.0 2 +4) 2,2
+   (asgn ~7 result.1 2 +4) 2,2
    (asgn ~2 x.4 2 "34") ~2,~1
-   (ret result.0))) ,24
+   (ret result.1))) ,24
  (proc 5 :overloaded.0.t2er4ggt1 . . . 15
   (params) . . . 2,1
   (stmts 4
@@ -76,23 +91,8 @@
     (i -1) .)) 10
   (i -1) . . 31
   (stmts
-   (result :result.1 . . ~15,~11
+   (result :result.2 . . ~15,~11
     (i -1) .)
-   (asgn result.1 x.3) ~31
-   (ret result.1))) 2,7
- (proc :dollar`.TypeOfMode.0.t2er4ggt1 x . .
-  (params
-   (param :e.0 . . TypeOfMode.0.t2er4ggt1 .)) string.0.sysvq0asl . .
-  (stmts 14
-   (result :result.2 . . string.0.sysvq0asl .) 14
-   (case e.0 ~12,1
-    (of
-     (ranges typeOfProc.0.t2er4ggt1)
-     (stmts
-      (ret "typeOfProc"))) ~12,2
-    (of
-     (ranges typeOfIter.0.t2er4ggt1)
-     (stmts
-      (ret "typeOfIter"))))
+   (asgn result.2 x.3) ~31
    (ret result.2))) 15,11
  (comment untyped.0.t2er4ggt1 18 typedesc.0.t2er4ggt1 1,6 int.0.t2er4ggt1 1,6 int.0.t2er4ggt1 ~2,6 int.0.t2er4ggt1 ~3,8 int.0.t2er4ggt1 6,8 int.0.t2er4ggt1 4,17 int.0.t2er4ggt1 ~5,17 int.0.t2er4ggt1))

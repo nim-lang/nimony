@@ -1,5 +1,5 @@
 
-import std / [syncio]
+import std / [syncio, assertions]
 
 proc myop(a, b: string): array[1, string] = [a & ";" & b]
 
@@ -11,3 +11,11 @@ const
 
 echo MyConst[0]
 echo MyConst2
+
+proc cantusesomething(): int =
+  echo "hi"
+  42
+
+const s = cantusesomething()
+assert s == 42
+

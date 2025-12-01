@@ -936,10 +936,9 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   else:
     m.error InvalidMatch, f, a
 
-proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
-  # check that `a` is either an instantiation of seq or an invocation to it
+proc tryTypeSymbolBase(a: var Cursor): bool =
+  # returns false if non-type symbol declaration was found
   result = false
-  var a = a
   var i = 0
   while a.kind == Symbol:
     let decl = getTypeSection(a.symId)
@@ -952,6 +951,14 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
       return false
     inc i
     if i == 20: break
+  result = true
+
+proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
+  # check that `a` is either an instantiation of seq or an invocation to it
+  result = false
+  var a = a
+  if not tryTypeSymbolBase(a):
+    return false
   if a.typeKind == InvokeT:
     inc a # tag
     result = a.kind == Symbol and pool.syms[a.symId] == "seq.0." & SystemModuleSuffix
@@ -962,6 +969,23 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
 proc isSomeSeqType*(a: Cursor): bool {.inline.} =
   var dummy = default(Cursor)
   result = isSomeSeqType(a, dummy)
+
+proc isSomeOpenArrayType*(a: Cursor, elemType: var Cursor): bool =
+  # check that `a` is either an instantiation of openArray or an invocation to it
+  result = false
+  var a = a
+  if not tryTypeSymbolBase(a):
+    return false
+  if a.typeKind == InvokeT:
+    inc a # tag
+    result = a.kind == Symbol and pool.syms[a.symId] == "openArray.0." & SystemModuleSuffix
+    if result:
+      inc a
+      elemType = a
+
+proc isSomeOpenArrayType*(a: Cursor): bool {.inline.} =
+  var dummy = default(Cursor)
+  result = isSomeOpenArrayType(a, dummy)
 
 proc getTupleFieldTypeSkipTypedesc(c: Cursor): Cursor =
   result = getTupleFieldType(c)
@@ -1005,11 +1029,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
     of RangetypeT:
       # for now acts the same as base type
       var a = skipModifier(arg.typ)
-      inc f # skip to base type
-      linearMatch m, f, a
-      skip f
-      skip f
-      expectParRi m, f
+      if a.typeKind == RangetypeT:
+        linearMatch m, f, a
+      else:
+        inc f # skip to base type
+        linearMatch m, f, a
+        skip f
+        skip f
+        expectParRi m, f
     of ArrayT:
       var a = skipModifier(arg.typ)
       matchArrayType m, f, a
@@ -1164,6 +1191,23 @@ proc isEmptyCall*(n: Cursor): bool =
 proc isEmptyContainer*(n: Cursor): bool =
   result = isEmptyLiteral(n) or isEmptyCall(n)
 
+proc isEmptyOpenArrayCall*(n: Cursor): bool =
+  if n.exprKind notin CallKinds:
+    return false
+  var n = n
+  inc n
+  result = n.kind == Symbol and
+    # normal overload of `toOpenArray` for arrays:
+    (pool.syms[n.symId] == "toOpenArray.0." & SystemModuleSuffix or
+      # normal overload of `toOpenArray` for seqs:
+      pool.syms[n.symId] == "toOpenArray.1." & SystemModuleSuffix)
+  inc n
+  if not isEmptyContainer(n):
+    return false
+  skip n
+  if n.kind != ParRi:
+    return false
+
 proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInfo) =
   buf.addParLe(RangetypeT, info)
   buf.addSubtree c.types.intType
@@ -1227,12 +1271,28 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
         takeParRi m.args, call # call
     else:
       # match against `auto`, untyped/varargs should still match
+      let fOrig = f
       singleArgImpl(m, f, arg)
+      if not m.err:
+        m.useArg arg, fOrig # since it was a match, copy it
+        while m.opened > 0:
+          m.args.addParRi()
+          dec m.opened
 
 proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
   if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
     matchEmptyContainer(m, f, arg)
     return
+  if arg.typ.typeKind == AutoT and isEmptyOpenArrayCall(arg.n):
+    if isSomeOpenArrayType(f):
+      # always match generated empty openarray converter call
+      # argument will be instantiated after the call matches
+      if not m.err:
+        m.args.addSubtree arg.n
+      return
+    else:
+      # should not happen, but still match as normal to give proper error
+      discard
   let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:

@@ -2766,11 +2766,17 @@ proc semBracket(c: var SemContext, it: var Item; flags: set[SemFlag]) =
         c.dest.addSubtree it.typ
       else:
         buildErr c, info, "empty array needs a specified type"
+      takeParRi c, it.n
     of ArrayT:
       c.dest.addSubtree it.typ
+      takeParRi c, it.n
     else:
-       buildErr c, info, "invalid expected type for array constructor: " & typeToString(it.typ)
-    takeParRi c, it.n
+      # unknown expected type, give empty literal auto type, then match it
+      c.dest.addSubtree c.types.autoType
+      takeParRi c, it.n
+      let expected = it.typ
+      it.typ = c.types.autoType
+      commonType c, it, exprStart, expected
     return
 
   let typeInsertPos = c.dest.len
@@ -2838,11 +2844,17 @@ proc semCurly(c: var SemContext, it: var Item; flags: set[SemFlag]) =
         c.dest.addSubtree it.typ
       else:
         buildErr c, info, "empty set needs a specified type"
+      takeParRi c, it.n
     of SetT:
       c.dest.addSubtree it.typ
+      takeParRi c, it.n
     else:
-      buildErr c, info, "invalid expected type for set constructor: " & typeToString(it.typ)
-    takeParRi c, it.n
+      # unknown expected type, give empty literal auto type, then match it
+      c.dest.addSubtree c.types.autoType
+      takeParRi c, it.n
+      let expected = it.typ
+      it.typ = c.types.autoType
+      commonType c, it, exprStart, expected
     return
 
   let typeInsertPos = c.dest.len
@@ -3662,7 +3674,6 @@ proc semCompiles(c: var SemContext; it: var Item) =
   let oldInstantiatedFrom = c.instantiatedFrom.len
   let oldInWhen = c.inWhen
   let oldTemplateInstCounter = c.templateInstCounter
-  let oldPending = c.pending.len
   let oldExpanded = c.expanded.len
   let oldIncludeStackLen = c.includeStack.len
   let oldDebugAllowErrors = c.debugAllowErrors
@@ -3684,7 +3695,6 @@ proc semCompiles(c: var SemContext; it: var Item) =
 
   c.inWhen = oldInWhen
   c.templateInstCounter = oldTemplateInstCounter
-  c.pending.shrink(oldPending)
   c.expanded.shrink(oldExpanded)
   c.debugAllowErrors = oldDebugAllowErrors
 
@@ -3987,7 +3997,7 @@ proc semEnumToStr(c: var SemContext; it: var Item) =
   if containsGenericParams(x.typ):
     discard
   else:
-    let typeSymId = x.typ.symId
+    let typeSymId = x.typ.skipModifier.symId
     let typeName = pool.syms[typeSymId]
     let dollorName = "dollar`." & typeName
     let dollorSymId = pool.syms.getOrIncl(dollorName)
@@ -4663,19 +4673,40 @@ proc semIs(c: var SemContext; it: var Item) =
   commonType c, it, beforeExpr, expected
 
 proc semTableConstructor(c: var SemContext; it: var Item; flags: set[SemFlag]) =
+  # we simply transform ``{key: value, key2, key3: value}`` to
+  # ``[(key, value), (key2, value2), (key3, value2)]``
   let info = it.n.info
+  let orig = it.n
   inc it.n
   var arrayBuf = createTokenBuf(16)
+  var singleKeys = newSeq[Cursor]()
   arrayBuf.buildTree BracketX, info:
     while it.n.kind != ParRi:
-      assert it.n.substructureKind == KvU
-      let kvInfo = it.n.info
-      inc it.n
-      arrayBuf.buildTree TupX, kvInfo:
-        arrayBuf.takeTree it.n
-        assert it.n.kind != ParRi
-        arrayBuf.takeTree it.n
-      inc it.n
+      if it.n.substructureKind == KvU:
+        let kvInfo = it.n.info
+        inc it.n
+        if singleKeys.len != 0:
+          var cur = it.n
+          skip cur
+          assert cur.kind != ParRi
+          for key in singleKeys:
+            arrayBuf.buildTree TupX, key.info:
+              arrayBuf.copyTree key
+              arrayBuf.copyTree cur
+
+          setLen(singleKeys, 0)
+
+        arrayBuf.buildTree TupX, kvInfo:
+          arrayBuf.takeTree it.n
+          assert it.n.kind != ParRi
+          arrayBuf.takeTree it.n
+        inc it.n
+      else:
+        singleKeys.add it.n
+        skip it.n
+
+  if singleKeys.len != 0:
+    c.buildErr info, "illformed AST: " & asNimCode(orig)
 
   var item = Item(n: beginRead(arrayBuf), typ: it.typ)
   semBracket c, item, flags
@@ -5303,7 +5334,6 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
       inc i
 
 proc semcheckCore(c: var SemContext; n0: Cursor) =
-  c.pending.add parLeToken(StmtsS, NoLineInfo)
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
 
   assert n0.stmtKind == StmtsS
@@ -5325,15 +5355,6 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
   takeToken c, n
   while n.kind != ParRi:
     semStmt c, n, false
-
-  c.pending.addParRi()
-  var cur = beginRead(c.pending)
-  inc cur
-  c.phase = SemcheckBodies
-  while cur.kind != ParRi:
-    semStmt c, cur, false
-  skipParRi(cur)
-  endRead(c.pending)
 
   if c.expanded.len > 0:
     c.dest.addParLe CommentS, c.expanded[0].info

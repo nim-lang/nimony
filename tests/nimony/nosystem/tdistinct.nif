@@ -32,13 +32,28 @@
    (efld :typeOfProc.0.tdiuhv8dm x . TypeOfMode.0.tdiuhv8dm
     (tup +0 "typeOfProc")) ~12,2
    (efld :typeOfIter.0.tdiuhv8dm x . TypeOfMode.0.tdiuhv8dm
-    (tup +1 "typeOfIter")))) ,13
+    (tup +1 "typeOfIter")))) 2,9
+ (proc :dollar`.TypeOfMode.0.tdiuhv8dm x . .
+  (params
+   (param :e.0 . . TypeOfMode.0.tdiuhv8dm .)) string.0.sysvq0asl . .
+  (stmts 14
+   (result :result.0 . . string.0.sysvq0asl .) 14
+   (case e.0 ~12,1
+    (of
+     (ranges typeOfProc.0.tdiuhv8dm)
+     (stmts
+      (ret "typeOfProc"))) ~12,2
+    (of
+     (ranges typeOfIter.0.tdiuhv8dm)
+     (stmts
+      (ret "typeOfIter"))))
+   (ret result.0))) ,13
  (proc 5 :typeof.0.tdiuhv8dm
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
     (untyped) .) 13
-   (param :mode.0 . . ~20,~2 TypeOfMode.0.tdiuhv8dm 7 typeOfIter.0.tdiuhv8dm)) 33
+   (param :mode.0 . . ~22,~4 TypeOfMode.0.tdiuhv8dm 7 typeOfIter.0.tdiuhv8dm)) 33
   (typekind
    (typedesc)) 53
   (pragmas 2
@@ -84,8 +99,8 @@
   (pragmas 2
    (borrow)) . 9
   (stmts
-   (result :result.0 . . 7 VarId.0.tdiuhv8dm .)
-   (asgn result.0
+   (result :result.1 . . 7 VarId.0.tdiuhv8dm .)
+   (asgn result.1
     (dconv 6 VarId.0.tdiuhv8dm
      (add
       (i -1)
@@ -93,27 +108,12 @@
        (i -1) x.4)
       (dconv 11,~2
        (i -1) y.3))))
-   (ret result.0))) 4,35
+   (ret result.1))) 4,35
  (gvar :x.0.tdiuhv8dm . . 3 VarId.0.tdiuhv8dm .) 2,37
  (asgn ~2 x.0.tdiuhv8dm 4
   (infix \2B.1.tdiuhv8dm ~2 x.0.tdiuhv8dm 2 x.0.tdiuhv8dm)) 4,39
  (glet :y.0.tdiuhv8dm . . 4
   (i +8) 8
   (conv ~4
-   (i +8) 1 x.0.tdiuhv8dm)) 2,9
- (proc :dollar`.TypeOfMode.0.tdiuhv8dm x . .
-  (params
-   (param :e.0 . . TypeOfMode.0.tdiuhv8dm .)) string.0.sysvq0asl . .
-  (stmts 14
-   (result :result.1 . . string.0.sysvq0asl .) 14
-   (case e.0 ~12,1
-    (of
-     (ranges typeOfProc.0.tdiuhv8dm)
-     (stmts
-      (ret "typeOfProc"))) ~12,2
-    (of
-     (ranges typeOfIter.0.tdiuhv8dm)
-     (stmts
-      (ret "typeOfIter"))))
-   (ret result.1))) 15,13
+   (i +8) 1 x.0.tdiuhv8dm)) 15,13
  (comment untyped.0.tdiuhv8dm 18 typedesc.0.tdiuhv8dm 1,6 int.0.tdiuhv8dm 1,6 int.0.tdiuhv8dm ~2,6 int.0.tdiuhv8dm 1,7 int.0.tdiuhv8dm 1,7 int.0.tdiuhv8dm ~2,7 int.0.tdiuhv8dm 2,9 int.0.tdiuhv8dm 2,9 int.0.tdiuhv8dm ~2,9 bool.0.tdiuhv8dm 5,13 int.0.tdiuhv8dm ~7,26 int8.0.tdiuhv8dm))

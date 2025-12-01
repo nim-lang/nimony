@@ -132,11 +132,16 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
       else:
         tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
-        var typ = yieldType
-        createDecl(e, tmpId, typ, c, info, LetS, needsAddr=false)
+        var typCur = yieldType
+        createDecl(e, tmpId, typCur, c, info, LetS, needsAddr=false)
 
       inc typ # skips tuple
       for i in 0..<forVars.len:
+        let isKvU = typ.substructureKind == KvU
+        if isKvU:
+          inc typ # skip tag
+          skip typ # skip name
+
         if forVars[i].substructureKind in {UnpacktupU, UnpackflatU}:
           var counter = 0
           var unpackCursor = forVars[i]
@@ -155,6 +160,9 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
           var left = startTupleAccess(tmpId, info, needsDeref)
           unpackTupleAccess(e, forVars[i], left, i, info, typ, needsDeref)
           skip typ
+
+        if isKvU:
+          skipParRi(typ)
 
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
   e.dest.add c
