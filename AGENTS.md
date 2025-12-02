@@ -13,11 +13,8 @@
 
 ## Coding Style & Naming Conventions
 - Stick to Nim’s two-space indentation, UTF-8 files, and `lower_snake_case` module names. Types stay `PascalCase`, procs `camelCase`, and exported symbols need a trailing `*`.
-- Group imports (`import std / [syncio, parseopt]`), keep shared constants in `src/lib`, and compose features through the existing `gear2` helper modules instead of ad-hoc globals.
-- `src/config.nims` enables `nimPreviewSlimSystem`, `--experimental:strictDefs`, and treats `Uninit`, `ProveInit`, and `StdPrefix` warnings as errors, so prefer explicit stdlib prefixes and exhaustive branches.
 
 ## Testing Guidelines
-- Every behavioral change needs a regression under the matching `tests/` directory; use marker comments (`#[  ^errorId ]#`) so Hastur can assert diagnostic ranges.
 - Refresh fixtures with `nim c -r src/hastur --overwrite test <path>` only when you fully understand the delta, because reviewers rely on `.expected` diffs.
 - Run `nim c -r src/hastur all` before pushing and call out skipped suites or flakes in the PR description.
 
