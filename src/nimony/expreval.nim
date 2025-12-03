@@ -442,6 +442,14 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       skipParRi n
       if typ.typeKind == CstringT and val.kind == StringLit:
         result = val
+      elif typ.typeKind == FloatT:
+        if val.kind == FloatLit:
+          result = val
+        else:
+          # treats it as an ordinal value
+          let x = getConstOrdinalValue(val)
+          let f = toFloat64(x)
+          result = floatValue(c, f, nOrig.info)
       elif typ.typeKind == UIntT:
         let x = getConstOrdinalValue(val)
         var err = false
