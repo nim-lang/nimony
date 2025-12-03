@@ -481,7 +481,7 @@
      (i -1) .)
     (let 7 :c.0 . . 31,~5
      (i -1) .))) ~2,1
-  (stmts 2,122,lib/std/syncio.nim
+  (stmts 2,171,lib/std/syncio.nim
    (stmts 2,1
     (stmts
      (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 7,144,tests/nimony/iter/tforloops1.nim i.12)) 2,1
