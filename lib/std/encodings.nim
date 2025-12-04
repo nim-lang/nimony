@@ -263,7 +263,7 @@ when defined(windows):
     result = CodePage(-1)
 
   proc codePageToName*(c: CodePage): string =
-    for value in arrayIter(winEncodings):
+    for value in winEncodings:
       let (no, na) = value
       if no == int(c):
         return if na.len != 0: na else: $no
