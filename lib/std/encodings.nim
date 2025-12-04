@@ -254,16 +254,23 @@ when defined(windows):
     proc getCPInfo(codePage: CodePage, lpCPInfo: var CpInfo): int32 {.
       stdcall, importc: "GetCPInfo", dynlib: "kernel32".}
 
+  # TODO: system iterators for `openarray` is broken!
+  iterator arrayIter[I, T](a: array[I, T]): var T =
+    var i = 0
+    while i < len(a):
+      yield a[i]
+      inc i
+
   proc nameToCodePage*(name: string): CodePage =
     var nameAsInt: int = 0
     if parseBiggestInt(name, nameAsInt) == 0: nameAsInt = -1
-    for value in winEncodings:
+    for value in arrayIter(winEncodings):
       let (no, na) = value
       if no == nameAsInt or eqEncodingNames(na, name): return CodePage(no)
     result = CodePage(-1)
 
   proc codePageToName*(c: CodePage): string =
-    for value in winEncodings:
+    for value in arrayIter(winEncodings):
       let (no, na) = value
       if no == int(c):
         return if na.len != 0: na else: $no
