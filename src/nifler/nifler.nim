@@ -19,12 +19,13 @@ Usage:
   nifler [options] [command] [arguments]
 Command:
   p|parse file.nim [output.nif]         parse project.nim, produce a NIF file
+  deps file.nim [output.deps.nif]       produce only the deps file (imports/includes)
   config project.nim [output.cfg.nif]   produce a NIF file representing the
                                         entire configuration of `project.nim`
 
 Options:
   --portablePaths       keep line information portable accross different OSes
-  --deps                produce a <inputfile>.deps.nif file
+  --deps                also produce a <inputfile>.deps.nif file (for 'parse' command)
   --force, -f           force a rebuild
   --version             show the version
   --help                show this help
@@ -59,7 +60,7 @@ proc handleCmdLine() =
   case action
   of "":
     writeHelp()
-  of "p", "parse":
+  of "p", "parse", "deps":
     if args.len == 0:
       quit "'parse' command takes a filename"
     else:
@@ -71,7 +72,7 @@ proc handleCmdLine() =
           (not deps or (fileExists(depsNif) and getLastModificationTime(depsNif) > getLastModificationTime(inp))):
         discard "nothing to do"
       else:
-        parseFile inp, outp, portablePaths, deps
+        parseFile inp, outp, portablePaths, deps, action == "deps"
   of "config":
     if args.len == 0:
       quit "'config' command takes a filename"

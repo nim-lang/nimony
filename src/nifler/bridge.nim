@@ -688,14 +688,24 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
 
-proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, depsEnabled: bool): TranslationContext =
-  result = TranslationContext(conf: conf, b: nifbuilder.open(outfile),
-    portablePaths: portablePaths, depsEnabled: depsEnabled, lineInfoEnabled: true)
-  if depsEnabled:
-    result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"))
+proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, depsEnabled: bool;
+                              depsOnly = false): TranslationContext =
+  result = TranslationContext(conf: conf,
+    portablePaths: portablePaths, depsEnabled: depsEnabled or depsOnly, lineInfoEnabled: not depsOnly)
+  if depsOnly:
+    # Memory-only builder for main output (will be discarded)
+    result.b = nifbuilder.open(1024)
+    result.deps = nifbuilder.open(outfile)
+  else:
+    result.b = nifbuilder.open(outfile)
+    if depsEnabled:
+      result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"))
 
-proc close*(c: var TranslationContext) =
-  c.b.close()
+proc close*(c: var TranslationContext; depsOnly = false) =
+  if depsOnly:
+    discard "discard main output"
+  else:
+    c.b.close()
   if c.depsEnabled:
     c.deps.endTree()
     c.deps.close()
@@ -720,7 +730,7 @@ template bench(task, body) =
   else:
     body
 
-proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
+proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled, depsOnly: bool) =
   let stream = llStreamOpen(AbsoluteFile thisfile, fmRead)
   if stream == nil:
     quit "cannot open file: " & thisfile
@@ -736,9 +746,9 @@ proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
       closeParser(parser)
       quit QuitFailure
 
-    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled)
+    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled, depsOnly)
 
     bench "moduleToIr":
       moduleToIr(fullTree, tc)
     closeParser(parser)
-    tc.close()
+    tc.close(depsOnly)

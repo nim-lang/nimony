@@ -569,6 +569,7 @@ proc offset*(r: var Reader): int {.inline.} =
 
 proc jumpTo*(r: var Reader; offset: int) {.inline.} =
   r.p = cast[pchar](r.f.mem) +! offset
+  assert r.p >= cast[pchar](r.f.mem) and r.p < r.eof
 
 when isMainModule:
   const test = r"(.nif24)(stmts :\5B\5D=)"
