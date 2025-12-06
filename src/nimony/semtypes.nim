@@ -694,7 +694,13 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       if tryTypeClass(c, n):
         return
       takeToken c, n
-      semLocalTypeImpl c, n, InLocalDecl
+      if exprKind(n) == BracketX:
+        # ptr[T] or ref[T], extract T
+        inc n
+        semLocalTypeImpl c, n, InLocalDecl
+        skipParRi n
+      else:
+        semLocalTypeImpl c, n, InLocalDecl
       if n.kind != ParRi:
         takeTree c, n # notnil, nil
       takeParRi c, n
