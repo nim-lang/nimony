@@ -14,6 +14,11 @@ The current focus is on developing a compiler for a Nim dialect that offers:
 AI has created a good overview of our [compiler architecture](https://deepwiki.com/nim-lang/nimony).
 
 
+## Contributor Guide
+
+New contributors should read [AGENTS.md](AGENTS.md) for repository workflow, coding standards, and testing expectations.
+
+
 ## Getting started
 
 Clone Nimony:
