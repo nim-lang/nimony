@@ -329,9 +329,9 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   if not isNaN(a) and not isNaN(b):
     var err = false
     var operand = asSigned(b, err)
-    if err:
+    if err or operand > high(int).int64:
       error "expression overflow at compile time: " & asNimCode(orig), orig.info
-    let rx = mask(opr(a, operand), bits, isSigned)
+    let rx = mask(opr(a, operand.int), bits, isSigned)
     if isSigned:
       let ri = asSigned(rx, err)
       if err:

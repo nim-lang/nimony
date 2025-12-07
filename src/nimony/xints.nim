@@ -205,6 +205,7 @@ proc mask*(a: xint, bits: int, signed: bool = false): xint =
     val: a.val and mask
   )
   if signed and result.val shr (bits - 1) != 0:
+    # two's complement
     result.val = (not result.val and mask) + 1
     result.neg = not result.neg
 
