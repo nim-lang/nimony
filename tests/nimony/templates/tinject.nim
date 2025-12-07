@@ -21,3 +21,14 @@ let efld: Enum = e1
 assert not declared(gensymProc)
 assert not declared(gensymLocal)
 assert not declared(GensymType)
+
+# issue #1597
+
+template valueTempl(): int {.untyped.} =
+  var x {.inject.} = 1
+  x + 1
+
+proc valueProc*(): int =
+  valueTempl() # Error: attempt to redeclare: x
+
+assert valueProc() == 2

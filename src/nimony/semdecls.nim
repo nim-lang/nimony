@@ -26,8 +26,10 @@ proc semProcBody(c: var SemContext; itB: var Item) =
   else:
     # transform `expr` to `result = expr`:
     if c.routine.resId != SymId(0):
+      var lastSonBuf = createTokenBuf(c.dest.len - beforeLastSon)
+      for tok in beforeLastSon ..< c.dest.len: lastSonBuf.add c.dest[tok]
       shrink c.dest, beforeLastSon
-      var it = Item(n: beforeLastSonCursor, typ: c.routine.returnType)
+      var it = Item(n: beginRead(lastSonBuf), typ: c.routine.returnType)
       semExpr c, it
 
       var prefix = [
