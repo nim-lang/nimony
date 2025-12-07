@@ -26,9 +26,7 @@ proc semProcBody(c: var SemContext; itB: var Item) =
   else:
     # transform `expr` to `result = expr`:
     if c.routine.resId != SymId(0):
-      shrink c.dest, beforeLastSon
-      var it = Item(n: beforeLastSonCursor, typ: c.routine.returnType)
-      semExpr c, it
+      commonType c, it, beforeLastSon, c.routine.returnType
 
       var prefix = [
         parLeToken(AsgnS, lastSonInfo),
