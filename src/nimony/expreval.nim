@@ -347,6 +347,39 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   else:
     cannotEval orig
 
+template evalBitnot(c0: var EvalContext; n: var Cursor) {.dirty.} =
+  let orig = n
+  inc n # tag
+  let isSigned = n.typeKind == IntT
+  var bits = -1
+  case n.typeKind
+  of IntT, UintT:
+    inc n
+    bits = typebits(n.load)
+    skipToEnd n
+  else:
+    error "expected int or uint type for shl, got: " & typeToString(n), n.info
+  if bits < 0: bits = c.c.g.config.bits
+  let a = getConstOrdinalValue propagateError eval(c, n)
+  skipParRi n
+  if not isNaN(a):
+    var err = false
+    let rx = mask(not a, bits, isSigned)
+    if isSigned:
+      let ri = asSigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = intValue(c, ri, orig.info)
+    else:
+      let ru = asUnsigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = uintValue(c, ru, orig.info)
+  else:
+    cannotEval orig
+
 proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
   case typ.typeKind
   of IT:
@@ -597,37 +630,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of BitxorX:
       evalOrdBinOp(c, n, `xor`)
     of BitnotX:
-      let orig = n
-      inc n # tag
-      let isSigned = n.typeKind == IntT
-      var bits = -1
-      case n.typeKind
-      of IntT, UintT:
-        inc n
-        bits = typebits(n.load)
-        skipToEnd n
-      else:
-        error "expected int or uint type for shl, got: " & typeToString(n), n.info
-      if bits < 0: bits = c.c.g.config.bits
-      let a = getConstOrdinalValue propagateError eval(c, n)
-      skipParRi n
-      if not isNaN(a):
-        var err = false
-        let rx = mask(not a, bits, isSigned)
-        if isSigned:
-          let ri = asSigned(rx, err)
-          if err:
-            error "expression overflow at compile time: " & asNimCode(orig), orig.info
-          else:
-            result = intValue(c, ri, orig.info)
-        else:
-          let ru = asUnsigned(rx, err)
-          if err:
-            error "expression overflow at compile time: " & asNimCode(orig), orig.info
-          else:
-            result = uintValue(c, ru, orig.info)
-      else:
-        cannotEval orig
+      evalBitnot(c, n)
     of ShlX:
       evalShiftOp(c, n, `shl`)
     of ShrX, AshrX:
