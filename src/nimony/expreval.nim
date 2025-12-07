@@ -321,7 +321,7 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
     bits = typebits(n.load)
     skipToEnd n
   else:
-    error "expected int or uint type for shl, got: " & typeToString(n), n.info
+    error "expected int or uint type for shift operation, got: " & typeToString(n), n.info
   if bits < 0: bits = c0.c.g.config.bits
   let a = getConstOrdinalValue propagateError eval(c0, n)
   let b = getConstOrdinalValue propagateError eval(c0, n)
@@ -633,8 +633,15 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       evalBitnot(c, n)
     of ShlX:
       evalShiftOp(c, n, `shl`)
-    of ShrX, AshrX:
-      # considered the same for now
+    of ShrX:
+      var typ = n
+      inc typ
+      if typ.typeKind == IntT:
+        error "logical right shift not implemented for signed integers", n.info
+      # for uints, ashr and shr are the same
+      evalShiftOp(c, n, `shr`)
+    of AshrX:
+      # xints.shr keeps the sign the same, so has ashr behavior for signed ints
       evalShiftOp(c, n, `shr`)
     of EqX:
       evalCmpOp(c, n, `==`)

@@ -143,6 +143,7 @@ proc `shl`*(a: xint, b: int): xint =
     result.nan = true
 
 proc `shr`*(a: xint, b: int): xint =
+  # keeps `neg` the same, so sign preserving (ashr)
   if a.nan or b < 0:
     return xint(nan: true)
 
