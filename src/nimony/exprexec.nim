@@ -184,6 +184,7 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDer
   let a = accessObjField(c, param, r.name, needsDeref, depth = depth)
 
   genStringCall(c, "writeNifParLe", "kv")
+  genStringCall(c, "writeNifRaw", " ")
   genStringCall(c, "writeNifSymbol", pool.syms[r.name.symId])
 
   entryPoint(c, fieldType, readOnlyCursorAt(a, 0))
