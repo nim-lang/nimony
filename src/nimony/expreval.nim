@@ -428,7 +428,40 @@ proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; inf
 
 proc evalBitSet*(n, typ: Cursor): seq[uint8]
 
+proc evalOrdinal(c: ptr SemContext, n: Cursor): xint
 
+proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
+  inc n # tag
+  assert n.typeKind == SetT
+  skip n # skip type
+  var a = eval(c, n)
+  var b = evalOrdinal(nil, n)
+  skip n # skips b
+  skipParRi n # skip last parRi
+  assert a.exprKind == SetConstrX, "got " & toString(a)
+  inc a # skip set tag
+  skip a # skip set type
+
+  var isInSet = false
+  while a.kind != ParRi:
+    if a.substructureKind == RangeU:
+      inc a
+      let xa = evalOrdinal(nil, a)
+      skip a
+      let xb = evalOrdinal(nil, a)
+      skip a
+      if b >= xa and b <= xb:
+        isInSet = true
+        break
+      skipParRi(a)
+    else:
+      let xa = evalOrdinal(nil, a)
+      if xa == b:
+        isInSet = true
+        break
+      skip a
+
+  result = boolValue(c, isInSet)
 
 proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   let info = n.info
@@ -706,6 +739,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         cannotEval n
     of PlusSetX, MinusSetX, XorSetX, MulSetX:
       result = evalSetOp(c, n, n.exprKind)
+    of InSetX:
+      result = evalInSet(c, n)
     else:
       if n.tagId == ErrT:
         result = n
