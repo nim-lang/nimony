@@ -389,7 +389,16 @@ proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
   of CT:
     result.add charToken(char x, NoLineInfo)
   else:
-    assert false, "Got unexpected type: " & toString(typ)
+    var hasError = true
+    if typ.kind == Symbol:
+      let sym = tryLoadSym(typ.symId)
+      if sym.status == LacksNothing:
+        var local = asTypeDecl(sym.decl)
+        if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
+          hasError = false
+          result.addIntLit x
+    if hasError:
+      assert false, "Got unexpected type: " & toString(typ)
 
 proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: PackedLineInfo) =
   result.addParLe SetConstrX, info

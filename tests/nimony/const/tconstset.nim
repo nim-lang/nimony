@@ -60,3 +60,12 @@ block:
   const p = n * o
   assert p == {'2', '3'} # {'1', '2', '3'} * {'2', '3', '4'} == {'2', '3'}
 
+block enumsets:
+  type
+    TEnum = enum A, B, C
+  const cset = {A} + {B}
+
+  assert A in cset
+  assert B in cset
+  assert C notin cset
+
