@@ -37,3 +37,21 @@ proc test(): int {.discardable.} =
 
 block:
   test()
+
+
+for i in 1..2: # works
+  break
+
+block: # works
+  for i in 1..2:
+    break
+
+block: # works
+  block:
+    discard 12 + 3
+  for i in 1..2:
+    break
+
+block named: # works
+  if true:
+    break named

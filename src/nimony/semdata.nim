@@ -19,6 +19,7 @@ type
     kind*: SymKind
     hasDefer*: bool
     inGeneric*, inLoop*, inBlock*, inInst*: int
+    breakInLoop*: bool        # whether we are in a loop without block
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
     resId*: SymId
