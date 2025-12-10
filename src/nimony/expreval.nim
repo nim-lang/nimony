@@ -716,6 +716,15 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           var b = propagateError eval(c, n)
           c.values[valPos].addSubtree b
           c.values[valPos].takeToken n
+        elif exprKind == TupconstrX:
+          let isKv = n.substructureKind == KvU
+          if isKv:
+            inc n # tag
+            skip n # key
+          let elem = propagateError eval(c, n)
+          c.values[valPos].addSubtree elem
+          if isKv:
+            inc n
         else:
           let elem = propagateError eval(c, n)
           c.values[valPos].addSubtree elem
