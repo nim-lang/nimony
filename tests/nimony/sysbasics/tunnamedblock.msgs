@@ -1,0 +1,2 @@
+tests/nimony/sysbasics/tunnamedblock.nim(2, 3) Error: Using an unnamed break in a block is not allowed
+tests/nimony/sysbasics/tunnamedblock.nim(6, 5) Error: Using an unnamed break in a block is not allowed

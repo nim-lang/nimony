@@ -1206,8 +1206,11 @@ proc semWhile(c: var SemContext; it: var Item) =
   takeToken c, it.n
   semBoolExpr c, it.n
   inc c.routine.inLoop
+  let oldBreakInLoop = c.routine.breakInLoop
+  c.routine.breakInLoop = true
   withNewScope c:
     semStmt c, it.n, true
+  c.routine.breakInLoop = oldBreakInLoop
   dec c.routine.inLoop
   takeParRi c, it.n
   producesVoid c, info, it.typ
@@ -1217,6 +1220,8 @@ proc semBlock(c: var SemContext; it: var Item) =
   takeToken c, it.n
 
   inc c.routine.inBlock
+  let oldBreakInLoop = c.routine.breakInLoop
+  c.routine.breakInLoop = false
   withNewScope c:
     if it.n.kind == DotToken:
       takeToken c, it.n
@@ -1227,6 +1232,7 @@ proc semBlock(c: var SemContext; it: var Item) =
       publish c, delayed.s.name, declStart
 
     semStmtBranch c, it, true
+  c.routine.breakInLoop = oldBreakInLoop
   dec c.routine.inBlock
 
   takeParRi c, it.n
@@ -1242,6 +1248,8 @@ proc semBreak(c: var SemContext; it: var Item) =
   else:
     if it.n.kind == DotToken:
       wantDot c, it.n
+      if not c.routine.breakInLoop:
+        buildErr c, info, "Using an unnamed break in a block is not allowed"
     else:
       let labelInfo = it.n.info
       var a = Item(n: it.n, typ: c.types.autoType)
@@ -2600,7 +2608,10 @@ proc semFor(c: var SemContext; it: var Item) =
       takeTree c.dest, it.n # don't touch the body
     else:
       inc c.routine.inLoop
+      let oldBreakInLoop = c.routine.breakInLoop
+      c.routine.breakInLoop = true
       semStmt c, it.n, true
+      c.routine.breakInLoop = oldBreakInLoop
       dec c.routine.inLoop
 
   takeParRi c, it.n
