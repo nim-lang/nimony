@@ -463,6 +463,47 @@ proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
 
   result = boolValue(c, isInSet)
 
+# Number of set bits for all values of int8
+const populationCount: array[uint8, uint8] = block:
+    var arr: array[uint8, uint8]
+
+    proc countSetBits(x: uint8): uint8 =
+      return
+        ( x and 0b00000001'u8) +
+        ((x and 0b00000010'u8) shr 1) +
+        ((x and 0b00000100'u8) shr 2) +
+        ((x and 0b00001000'u8) shr 3) +
+        ((x and 0b00010000'u8) shr 4) +
+        ((x and 0b00100000'u8) shr 5) +
+        ((x and 0b01000000'u8) shr 6) +
+        ((x and 0b10000000'u8) shr 7)
+
+
+    for it in low(uint8)..high(uint8):
+      arr[it] = countSetBits(cast[uint8](it))
+
+    arr
+
+proc bitSetCard(x: seq[uint8]): BiggestInt =
+  result = 0
+  for it in x:
+    result.inc int(populationCount[it])
+
+proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
+  let info = n.info
+  inc n # tag
+  assert n.typeKind == SetT
+  skip n # skip type
+  var a = eval(c, n)
+  skipParRi n # skip last parRi
+
+  assert a.exprKind == SetConstrX, "got " & toString(a)
+  var typeA = a
+  inc typeA
+
+  let setA = evalBitSet(a, typeA)
+  result = intValue(c, bitSetCard(setA), info)
+
 proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   let info = n.info
   inc n # tag
@@ -741,6 +782,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       result = evalSetOp(c, n, n.exprKind)
     of InSetX:
       result = evalInSet(c, n)
+    of CardX:
+      result = evalCardSet(c, n)
     else:
       if n.tagId == ErrT:
         result = n
