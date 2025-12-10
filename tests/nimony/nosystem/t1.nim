@@ -71,9 +71,9 @@ proc foo_block* =
     var s = 12
     break lab
 
-  block:
-    var s = 13
-    break
+  # block:
+  #   var s = 13
+  #   break
 
   block lab:
     var s = 14

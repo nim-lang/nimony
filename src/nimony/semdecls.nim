@@ -550,6 +550,7 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
   if kind == TemplateY:
     inc c.routine.inLoop
     inc c.routine.inGeneric
+    c.routine.breakInLoop = true
 
   try:
     c.openScope() # open parameter scope
