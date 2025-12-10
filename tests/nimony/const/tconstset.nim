@@ -96,3 +96,16 @@ block:
 
   const s6 = 13'i8 in cset
   assert not s6
+
+block:
+  const
+    Whitespace = {' ', '\t', '\n', '\r'}
+
+    s1 = card(Whitespace)
+
+    Data = {1'i8, 2, 3, 4, 5}
+    s2 = len(Data)
+
+
+  assert s1 == 4
+  assert s2 == 5
