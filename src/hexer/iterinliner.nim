@@ -582,9 +582,13 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       e.dest.takeToken(c)
       if c.kind == SymbolDef:
         e.breaks.add c.symId
+        e.dest.takeToken(c)
       else:
-        e.breaks.add SymId(0)
-      e.dest.takeToken(c)
+        let info = c.info
+        skip c
+        let s = pool.syms.getOrIncl("`lab." & $getTmpId(e))
+        e.dest.add symdefToken(s, info)
+        e.breaks.add s
       transformStmt(e, c)
       discard e.breaks.pop
       takeParRi(e, c)

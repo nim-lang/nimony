@@ -37,3 +37,6 @@ proc test(): int {.discardable.} =
 
 block:
   test()
+
+block: # errors
+  break
