@@ -843,7 +843,7 @@ proc checkContracts(c: var Context; n: Cursor) =
     for i in 0 ..< BodyPos:
       if i == ProcPragmasPos:
         c.procCanRaise = hasPragma(body, RaisesP)
-        procHasNoinit = hasPragma(body, NoinitP)
+        procHasNoinit = hasPragma(body, NoinitP) or hasPragma(body, NoreturnP)
       skip body
 
   var current = BasicBlockIdx(cursorToPosition(c.cf, body))
