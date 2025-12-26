@@ -234,7 +234,7 @@ proc afterYield*(): Continuation {.semantics: "afterYield".} =
   ## Do not use unless you know what you are doing.
   result = Continuation(fn: nil, env: nil)
 
-proc delay*(x: untyped): Continuation {.magic: "Delay".}
+proc delay*(x: typed): Continuation {.magic: "Delay".}
   ## Delays the execution of a `.passive` proc and returns a continuation representation
   ## this call. Think of it as a `toTask` builtin.
 
