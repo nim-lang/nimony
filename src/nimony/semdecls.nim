@@ -561,7 +561,10 @@ proc semProcImpl(c: var SemContext; it: var Item; kind: SymKind; pass: PassKind;
     semParams c, it.n
     c.routine.returnType = semReturnType(c, it.n)
     var crucial = CrucialPragma(sym: symId)
-    semPragmas c, it.n, crucial, kind
+    let defaultToClosure = (kind in {ProcY, FuncY, IteratorY, ConverterY}) and
+      ((newName != NoSymId) or (c.routine.parent != nil and
+          c.routine.parent.kind != NoSym))
+    semPragmas c, it.n, crucial, kind, defaultToClosure
     c.routine.pragmas = crucial.flags
     if crucial.hasVarargs.isValid:
       addVarargsParameter c, beforeParams, crucial.hasVarargs

@@ -1315,6 +1315,7 @@ type
     hasVarargs: PackedLineInfo
     flags: set[PragmaKind]
     headerFileTok: PackedToken
+    callconv: CallConv
 
 proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   let hasParRi = n.kind == ParLe # if false, has no arguments
@@ -1324,6 +1325,7 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
   case pk
   of NoPragma:
     if kind.isRoutine and (let cc = callConvKind(n); cc != NoCallConv):
+      crucial.callconv = cc
       c.dest.addParLe(cc, n.info)
       inc n
       c.dest.addParRi()
@@ -1495,12 +1497,12 @@ proc semPragma(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kin
       while n.kind != ParRi: skip n
     skipParRi n
 
-proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
+proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; kind: SymKind; defaultToClosure = false) =
   if n.kind == DotToken or n.substructureKind == PragmasU:
     let hasPushedPragma = c.pragmaStack.len != 0
     let emptyPragma = n.kind == DotToken
 
-    if emptyPragma and not hasPushedPragma:
+    if emptyPragma and not hasPushedPragma and not defaultToClosure:
       # there is no pragma
       takeToken c, n
     else:
@@ -1528,6 +1530,14 @@ proc semPragmas(c: var SemContext; n: var Cursor; crucial: var CrucialPragma; ki
               c.dest.addParLe PragmasU, n.info
               pragmaAdded = true
             semPragma c, n2, crucial, kind
+
+      if defaultToClosure and crucial.callconv == NoCallConv and ClosureP notin crucial.flags:
+        if not pragmaAdded:
+          c.dest.addParLe PragmasU, n.info
+          pragmaAdded = true
+        c.dest.add parLeToken(ClosureP, n.info)
+        c.dest.addParRi()
+        crucial.flags.incl ClosureP
 
       if emptyPragma:
         if pragmaAdded:

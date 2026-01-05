@@ -791,6 +791,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
     of RoutineTypes:
       if tryTypeClass(c, n):
         return
+      let rk = n.typeKind
       takeToken c, n
       wantDot c, n # name
       wantDot c, n # export marker
@@ -801,7 +802,7 @@ proc semLocalTypeImpl(c: var SemContext; n: var Cursor; context: TypeDeclContext
       semParams c, n
       semLocalTypeImpl c, n, InReturnTypeDecl
       var crucial = default CrucialPragma
-      semPragmas c, n, crucial, ProcY
+      semPragmas c, n, crucial, ProcY, defaultToClosure = (rk == ProctypeT)
       wantDot c, n # exceptions
       # make it robust against Nifler's output
       if n.kind == ParRi:
