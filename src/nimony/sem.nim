@@ -1066,6 +1066,30 @@ proc findEnumField(decl: EnumDecl; name: StrId): SymId =
     if name == strId:
       return symId
 
+proc tryResolveEnumChoice(c: var SemContext; choice: Cursor; expected: TypeCursor): (SymId, bool) =
+  ## Returns (matched symbol, all are enum fields).
+  ## If matched symbol is 0, either no match or multiple matches.
+  result = (SymId(0), true)
+  var matchCount = 0
+  var f = choice.firstSon
+  while f.kind != ParRi:
+    if f.kind != Symbol:
+      inc f
+      continue
+    let s = fetchSym(c, f.symId)
+    if s.kind != EfldY:
+      result[1] = false
+    else:
+      let res = declToCursor(c, s)
+      if res.status == LacksNothing and
+         typeKind(expected) != AutoT and
+         sameTrees(asLocal(res.decl).typ, expected):
+        result[0] = f.symId
+        inc matchCount
+    inc f
+  if matchCount != 1:
+    result[0] = SymId(0)
+
 proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
                    info: PackedLineInfo; flags: set[SemFlag]): DotExprState =
   let exprStart = c.dest.len
@@ -1873,7 +1897,24 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
           c.buildErr ident.info, "undeclared identifier", ident
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
+    # Try to disambiguate based on expected type (e.g., enum fields in case branches)
     if KeepMagics notin flags and c.routine.kind != TemplateY:
+      let choice = cursorAt(c.dest, start)
+      if choice.exprKind == OchoiceX:
+        let (matchedSym, allEnumFields) = tryResolveEnumChoice(c, choice, expected)
+        endRead(c.dest)
+        if matchedSym != SymId(0):
+          let info = c.dest[start].info
+          c.dest.shrink start
+          c.dest.add symToken(matchedSym, info)
+          semExprSym c, it, fetchSym(c, matchedSym), start, flags
+          return
+        elif allEnumFields and typeKind(expected) == AutoT:
+          # Keep the OchoiceX for later resolution during overload resolution
+          it.typ = c.types.autoType
+          return
+      else:
+        endRead(c.dest)
       c.buildErr c.dest[start].info, "ambiguous identifier"
     it.typ = c.types.autoType
   elif s.kind == BlockY:

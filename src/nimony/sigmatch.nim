@@ -74,6 +74,7 @@ type
     error: MatchError
     firstVarargPosition*: int
     genericConverter*, checkEmptyArg*, insertedParam*: bool
+    resolvedChoice*: bool # true when an OchoiceX was resolved during matching
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -816,6 +817,23 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       matchObjectInheritance m, f, a, fsym, asym, ptrKind
       skip f
 
+proc tryMatchEnumChoice(choice: Cursor; enumTypeSym: SymId): SymId =
+  ## Try to find a unique enum field in the OchoiceX that matches the given enum type.
+  result = SymId(0)
+  var matchCount = 0
+  var f = choice.firstSon
+  while f.kind != ParRi:
+    if f.kind == Symbol:
+      let res = tryLoadSym(f.symId)
+      if res.status == LacksNothing and res.decl.symKind == EfldY:
+        let fieldType = asLocal(res.decl).typ
+        if fieldType.kind == Symbol and sameSymbol(fieldType.symId, enumTypeSym):
+          result = f.symId
+          inc matchCount
+    inc f
+  if matchCount != 1:
+    result = SymId(0)
+
 proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
@@ -851,8 +869,16 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         m.error InvalidMatch, f, a
       else:
         if impl.typeKind in {EnumT, HoleyEnumT}:
-          #echo "ENUM: ", f.toString(false), " ", arg.n.toString(false)
-          m.error InvalidMatch, f, a
+          # Check if arg is an OchoiceX with enum fields that match this enum type
+          if a.typeKind == AutoT and arg.n.exprKind == OchoiceX:
+            let matchedSym = tryMatchEnumChoice(arg.n, fs)
+            if matchedSym != SymId(0):
+              m.args.add symToken(matchedSym, arg.n.info)
+              m.resolvedChoice = true
+            else:
+              m.error InvalidMatch, f, a
+          else:
+            m.error InvalidMatch, f, a
         else:
           singleArgImpl(m, impl, arg)
 
@@ -1296,7 +1322,9 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
   let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:
-    m.useArg arg, fOrig # since it was a match, copy it
+    if not m.resolvedChoice:
+      m.useArg arg, fOrig # since it was a match, copy it
+    m.resolvedChoice = false
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
