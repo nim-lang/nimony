@@ -1083,7 +1083,7 @@ proc tryResolveEnumChoice(c: var SemContext; choice: Cursor; expected: TypeCurso
       let res = declToCursor(c, s)
       if res.status == LacksNothing and
          typeKind(expected) != AutoT and
-         sameTrees(asLocal(res.decl).typ, expected):
+         asLocal(res.decl).typ.symId == expected.symId:
         result[0] = f.symId
         inc matchCount
     inc f
