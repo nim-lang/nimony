@@ -445,6 +445,7 @@ type
   Continuation = object
     thenPart, elsePart: BasicBlockIdx
     conditionalFacts: int
+    noreturnPath: bool  # True if this path contains a noreturn call
 
 const
   NoBasicBlock = BasicBlockIdx(-1)
@@ -686,6 +687,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
   #echo "TRAVERSING BASIC BLOCK: L", toBasicBlock(c, pc).int
   var nested = 0
   var pc = pc
+  var hasNoreturnCall = false  # Track if we encountered a noreturn call
   while true:
     #echo "Instruction is ", toString(pc, false)
     case pc.kind
@@ -693,10 +695,10 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
       # Every goto intruction leaves the basic block.
       let diff = pc.getInt28
       if diff < 0:
-        return Continuation(thenPart: LoopBack, elsePart: NoBasicBlock)
+        return Continuation(thenPart: LoopBack, elsePart: NoBasicBlock, noreturnPath: hasNoreturnCall)
       else:
         # ordinary goto, simply follow it:
-        return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock)
+        return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock, noreturnPath: hasNoreturnCall)
     of ParRi:
       if nested == 0:
         bug "unpaired ')'"
@@ -717,7 +719,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         let a = pc +! pc.getInt28
         inc pc
         let b = pc +! pc.getInt28
-        return Continuation(thenPart: toBasicBlock(c, a), elsePart: toBasicBlock(c, b), conditionalFacts: conditionalFacts)
+        return Continuation(thenPart: toBasicBlock(c, a), elsePart: toBasicBlock(c, b), conditionalFacts: conditionalFacts, noreturnPath: false)
       else:
         let kind = pc.stmtKind
         case kind
@@ -729,7 +731,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           analyseAssert(c, pc)
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
-          return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
+          return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock, noreturnPath: false)
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
           inc pc
           inc nested
@@ -773,8 +775,9 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           skipParRi pc
         of CallKindsS:
           if analyseCall(c, pc):
-            # Call to noreturn function, treat like return
-            return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
+            # Call to noreturn function - mark this path as noreturn
+            # but continue processing to find the successor basic block
+            hasNoreturnCall = true
         of EmitS, InclS, ExclS:
           # not of interest for contract analysis:
           skip pc
@@ -786,7 +789,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
           # declarative junk we don't care about:
           skip pc
-  return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
+  return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock, noreturnPath: false)
 
 proc decAndTest(x: var int): bool {.inline.} =
   dec x
@@ -860,13 +863,15 @@ proc checkContracts(c: var Context; n: Cursor) =
 
     if cont.thenPart > NoBasicBlock:
       let bb = addr(bbs[cont.thenPart])
-      takeFacts(c, bb[], cont.conditionalFacts, false)
+      if not cont.noreturnPath:
+        takeFacts(c, bb[], cont.conditionalFacts, false)
       if decAndTest(bb.indegree):
         current = cont.thenPart
         nextIter = true
     if cont.elsePart > NoBasicBlock:
       let bb = addr(bbs[cont.elsePart])
-      takeFacts(c, bb[], cont.conditionalFacts, true)
+      if not cont.noreturnPath:
+        takeFacts(c, bb[], cont.conditionalFacts, true)
       if decAndTest(bb.indegree):
         if not nextIter:
           current = cont.elsePart
