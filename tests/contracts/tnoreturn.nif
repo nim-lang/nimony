@@ -1,0 +1,26 @@
+(stmts
+  (proc :hello.0 . . . (params) (void) (noreturn) .
+    (stmts
+      (discard .)
+    )
+  )
+  (proc :foo.0 . . . (params) (void) . .
+    (stmts
+      (var :x.0 . . (i +32) .)
+      (if
+        (elif (true)
+          (stmts
+            (asgn x.0 +12)
+          )
+        )
+        (else
+          (stmts
+            (call hello.0)
+          )
+        )
+      )
+      (discard x.0)
+    )
+  )
+  (call foo.0)
+)

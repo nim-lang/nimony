@@ -215,7 +215,7 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
   else:
     result = Unprovable
 
-proc analyseCall(c: var Context; n: var Cursor)
+proc analyseCall(c: var Context; n: var Cursor): bool
 
 proc markedAs(t: Cursor; mark: NimonyOther): bool =
   result = false
@@ -359,7 +359,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
     of ParLe:
       case pc.exprKind
       of CallKinds:
-        analyseCall c, pc
+        discard analyseCall(c, pc)
       of DdotX:
         inc pc
         wantNotNilDeref c, pc
@@ -388,7 +388,8 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         inc pc
     if nested == 0: break
 
-proc analyseCallArgs(c: var Context; n: var Cursor) =
+proc analyseCallArgs(c: var Context; n: var Cursor): bool =
+  ## Returns true if the call is to a noreturn function
   let callCursor = n
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   analyseExpr c, n # the `fn` itself could be a proc pointer we must ensure was initialized
@@ -423,10 +424,13 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
       # XXX Enable when it works
       if res != Proven:
         error "contract violation: ", req
+  # Check if the function has the noreturn pragma
+  result = hasPragma(fnType, NoreturnP)
 
-proc analyseCall(c: var Context; n: var Cursor) =
+proc analyseCall(c: var Context; n: var Cursor): bool =
+  ## Returns true if the call is to a noreturn function
   inc n # skip call instruction
-  analyseCallArgs(c, n)
+  result = analyseCallArgs(c, n)
   skipParRi n
 
 #[
@@ -745,7 +749,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of NoStmt:
           if pc.cfKind == ForbindF:
             inc pc
-            analyseCall c, pc
+            discard analyseCall(c, pc)
             skip pc
             skipParRi pc
           else:
@@ -768,7 +772,9 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           analyseExpr c, pc
           skipParRi pc
         of CallKindsS:
-          analyseCall(c, pc)
+          if analyseCall(c, pc):
+            # Call to noreturn function, treat like return
+            return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
         of EmitS, InclS, ExclS:
           # not of interest for contract analysis:
           skip pc
