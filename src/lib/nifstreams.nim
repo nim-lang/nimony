@@ -189,13 +189,13 @@ proc rawNext(s: var Stream; t: Token): PackedToken =
   of EofToken, UnknownToken, DotToken:
     result = toToken(t.tk, 0'u32, currentInfo)
   of ParLe:
-    let ka = pool.tags.getOrInclFromView(t.s)
+    let ka = pool.tags.getOrInclFromView(t.data)
     result = toToken(ParLe, ka, currentInfo)
     s.parents.add currentInfo
   of Ident, StringLit:
-    result = toToken(t.tk, pool.strings.getOrIncl(decodeStr t), currentInfo)
+    result = toToken(t.tk, pool.strings.getOrIncl(s.r.decodeStr t), currentInfo)
   of Symbol, SymbolDef:
-    result = toToken(t.tk, pool.syms.getOrIncl(decodeStr t), currentInfo)
+    result = toToken(t.tk, pool.syms.getOrIncl(s.r.decodeStr t), currentInfo)
   of CharLit:
     result = toToken(CharLit, uint32 decodeChar(t), currentInfo)
   of IntLit:
