@@ -159,7 +159,7 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
   of EofToken, ParRi:
     result = false
   of ParLe:
-    let tag = pool.tags.getOrIncl(decodeStr t)
+    let tag = pool.tags.getOrIncl(r.decodeStr t)
     if cast[TagEnum](tag) == TypeTagId:
       m.types.add m.src.len
     copyInto(m.src, tag, currentInfo):
@@ -168,31 +168,31 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
         if not progress: break
   of UnknownToken:
     copyInto m.src, ErrT, currentInfo:
-      m.src.addStrLit decodeStr(t), currentInfo
+      m.src.addStrLit r.decodeStr(t), currentInfo
   of DotToken:
     m.src.addDotToken()
   of Ident:
-    m.src.addIdent decodeStr(t), currentInfo
+    m.src.addIdent r.decodeStr(t), currentInfo
   of Symbol:
-    m.src.add symToken(pool.syms.getOrIncl(decodeStr t), currentInfo)
+    m.src.add symToken(pool.syms.getOrIncl(r.decodeStr t), currentInfo)
   of SymbolDef:
     # Remember where to find this symbol:
-    let litId = pool.syms.getOrIncl(decodeStr t)
+    let litId = pool.syms.getOrIncl(r.decodeStr t)
     let pos = m.src.len - 1
     let n = cursorAt(m.src, pos)
     m.defs[litId] = Definition(pos: pos, kind: n.symKind)
     endRead(m.src)
     m.src.add symdefToken(litId, currentInfo)
   of StringLit:
-    m.src.addStrLit decodeStr(t), currentInfo
+    m.src.addStrLit r.decodeStr(t), currentInfo
   of CharLit:
     m.src.add charToken(decodeChar(t), currentInfo)
   of IntLit:
-    m.src.addIntLit parseBiggestInt(decodeStr t), currentInfo
+    m.src.addIntLit parseBiggestInt(r.decodeStr t), currentInfo
   of UIntLit:
-    m.src.addUIntLit parseBiggestUInt(decodeStr t), currentInfo
+    m.src.addUIntLit parseBiggestUInt(r.decodeStr t), currentInfo
   of FloatLit:
-    m.src.add floatToken(pool.floats.getOrIncl(parseFloat(decodeStr t)), currentInfo)
+    m.src.add floatToken(pool.floats.getOrIncl(parseFloat(r.decodeStr t)), currentInfo)
 
 proc parse*(r: var Reader): Module =
   # empirically, (size div 7) is a good estimate for the number of nodes

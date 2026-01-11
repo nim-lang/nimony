@@ -28,7 +28,7 @@ type
     col*, line*: int32
 
   TokenFlag = enum
-    TokenHasEscapes, FilenameHasEscapes
+    TokenHasEscapes, FilenameHasEscapes, TokenHasModuleSuffixExpansion
 
   Token* = object
     tk*: NifKind
@@ -81,7 +81,7 @@ template `-!`(a, b: pchar): int = cast[int](a) - cast[int](b)
 template `^`(p: pchar): char = p[0]
 
 when not defined(nimony):
-  proc rawData*(s: var string): ptr UncheckedArray[char] {.inline.} =
+  proc rawData*(s: string): ptr UncheckedArray[char] {.inline.} =
     assert s.len > 0
     cast[ptr UncheckedArray[char]](addr s[0])
 
@@ -175,7 +175,7 @@ proc decodeChar*(t: Token): char =
     inc p
     result = handleHex(p)
 
-proc decodeStr*(t: Token): string =
+proc decodeStr*(r: Reader; t: Token): string =
   if TokenHasEscapes in t.flags:
     result = ""
     var p = t.data.p
@@ -188,6 +188,11 @@ proc decodeStr*(t: Token): string =
       else:
         result.add ^p
         inc p
+  elif TokenHasModuleSuffixExpansion in t.flags:
+    result = newString(t.data.len + r.thisModule.len)
+    if t.data.len > 0:
+      copyMem(rawData result, t.data.p, t.data.len - 1)
+      copyMem(rawData(result) +! t.data.len, rawData(r.thisModule), r.thisModule.len)
   else:
     result = newString(t.data.len)
     if t.data.len > 0:
@@ -405,10 +410,12 @@ proc next*(r: var Reader): Token =
           inc p
       if result.data.len > 0:
         result.tk = SymbolDef
+        if result.data[result.data.len-1] == '.':
+          result.flags.incl TokenHasModuleSuffixExpansion
         if r.trackDefs:
           while start != r.f.mem:
             if ^start == '(':
-              r.defs[decodeStr result] = start
+              r.defs[r.decodeStr result] = start
               break
             dec start
 
@@ -429,7 +436,12 @@ proc next*(r: var Reader): Token =
           inc p
 
       if result.data.len > 0:
-        result.tk = if hasDot: Symbol else: Ident
+        if hasDot:
+          result.tk = Symbol
+          if result.data[result.data.len-1] == '.':
+            result.flags.incl TokenHasModuleSuffixExpansion
+        else:
+          result.tk = Ident
 
 when false:
   type
@@ -549,4 +561,4 @@ when isMainModule:
   while true:
     let tk = r.next()
     if tk.tk == EofToken: break
-    echo decodeStr tk, " ", tk
+    echo r.decodeStr tk, " ", tk
