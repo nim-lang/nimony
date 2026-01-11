@@ -6,7 +6,7 @@
 
 ## High performance ("zero copies") NIF file reader.
 
-import std / [memfiles, tables, parseutils, assertions, hashes]
+import std / [memfiles, parseutils, assertions]
 import stringviews
 when defined(nimony):
   import std/syncio
@@ -38,12 +38,6 @@ type
     pos*: FilePos
     filename*: StringView
 
-  MetaInfo* = object
-    dialect*: StringView
-    vendor*: StringView
-    platform*: StringView
-    config*: StringView
-
   Reader* = object
     p: pchar
     eof: pointer # so that <= uses the correct comparison, not the cstring crap
@@ -51,10 +45,8 @@ type
     buf: string
     thisModule*: string
     line*: int32 # file position within the NIF file, not affected by line annotations
-    trackDefs*: bool
-    defs: Table[string, pchar]
-    meta: MetaInfo
     indexAt: int  # position of the index
+    unusedNameHint: StringView
 
 proc `$`*(t: Token): string =
   case t.tk
@@ -70,9 +62,6 @@ proc `$`*(t: Token): string =
 template inc(p: pchar; diff = 1) =
   p = cast[pchar](cast[int](p) + diff)
 
-template dec(p: pchar; diff = 1) =
-  p = cast[pchar](cast[int](p) - diff)
-
 template `+!`(p: pchar; diff: int): pchar =
   cast[pchar](cast[int](p) + diff)
 
@@ -84,6 +73,8 @@ when not defined(nimony):
   proc rawData*(s: string): ptr UncheckedArray[char] {.inline.} =
     assert s.len > 0
     cast[ptr UncheckedArray[char]](addr s[0])
+
+proc readDirectives(r: var Reader) # foward declaration
 
 proc open*(filename: string): Reader =
   let f = try:
@@ -103,6 +94,7 @@ proc open*(filename: string): Reader =
       result.thisModule.add c
   result.p = cast[pchar](result.f.mem)
   result.eof = result.p +! result.f.size
+  readDirectives result
 
 proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
   result = Reader(f: default(MemFile), buf: ensureMove buf, thisModule: ensureMove thisModule)
@@ -110,6 +102,7 @@ proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
   result.eof = result.p +! result.buf.len
   result.f.mem = result.p
   result.f.size = result.buf.len
+  readDirectives result
 
 proc close*(r: var Reader) =
   try:
@@ -401,7 +394,6 @@ proc next*(r: var Reader): Token =
 
     of ':':
       useCpuRegisters:
-        var start = p
         inc p
         result.data.p = p
         while p < eof and ^p notin ControlCharsOrWhite:
@@ -412,12 +404,6 @@ proc next*(r: var Reader): Token =
         result.tk = SymbolDef
         if result.data[result.data.len-1] == '.':
           result.flags.incl TokenHasModuleSuffixExpansion
-        if r.trackDefs:
-          while start != r.f.mem:
-            if ^start == '(':
-              r.defs[r.decodeStr result] = start
-              break
-            dec start
 
     of '-', '+':
       result.data.p = r.p
@@ -443,57 +429,6 @@ proc next*(r: var Reader): Token =
         else:
           result.tk = Ident
 
-when false:
-  type
-    RestorePoint* = object
-      p: pchar
-      line: int32
-
-  proc success*(r: RestorePoint): bool {.inline.} = r.p != nil
-
-  proc restore*(r: var Reader; rp: RestorePoint) {.inline.} =
-    r.p = rp.p
-    r.line = rp.line
-
-
-  proc savePos*(r: Reader): RestorePoint {.inline.} =
-    result = RestorePoint(p: r.p, line: r.line)
-
-  proc jumpTo*(r: var Reader; def: string): RestorePoint =
-    assert def.len > 0
-    assert r.trackDefs
-    #assert def[0] != ':' # not correct, could be an escaped ':'
-    var p = r.defs.getOrDefault(def)
-    result = RestorePoint(p: r.p, line: r.line)
-    if p != nil:
-      r.p = p
-      r.line = -1'i32 # unknown
-    else:
-      while true:
-        let t = next(r)
-        if t.tk == SymbolDef:
-          p = r.defs.getOrDefault(def)
-          if p != nil:
-            r.p = p
-            r.line = -1'i32 # unknown
-            return result
-        elif t.tk == EofToken:
-          break
-      # not found, reset position:
-      r.p = result.p
-      r.line = result.line
-      result.p = nil # not found
-
-when false:
-  proc setPosition*(r: var Reader; s: StringView) {.inline.} =
-    assert r.p >= cast[pchar](r.f.mem) and r.p < r.eof
-    r.p = s.p +! s.len
-    r.line = -1'i32 # unknown
-
-  proc span*(r: Reader; offset: int; s: StringView): int {.inline.} =
-    assert s.p >= cast[pchar](r.f.mem) and s.p < r.eof
-    result = (s.p -! cast[pchar](r.f.mem)) - offset
-
 type
   DirectivesResult* = enum
     WrongHeader, WrongMeta, Success
@@ -509,38 +444,44 @@ proc startsWith*(r: Reader; prefix: string): bool =
     inc i
   return false
 
-proc processDirectives*(r: var Reader): DirectivesResult =
-  template handleMeta(r: var Reader; field: untyped) =
-    let value = next(r)
-    if value.tk == StringLit:
-      field = value.data
-    else:
-      result = WrongMeta
-    while true:
-      var closePar = next(r)
-      if closePar.tk in {ParRi, EofToken}: break
+proc readDirectives(r: var Reader) =
+  skipWhitespace r
+  let start = r.p
+  let indexOffsetToken = r.next()
+  if indexOffsetToken.tk == IntLit:
+    r.indexAt = decodeInt indexOffsetToken
+  else:
+    r.p = start
+  skipWhitespace r
+  let startB = r.p
+  let unusedNameHintToken = r.next()
+  if unusedNameHintToken.tk == Symbol:
+    r.unusedNameHint = unusedNameHintToken.data
+  else:
+    r.p = startB
 
-  result = Success
+  while true:
+    skipWhitespace r
+    let startC = r.p
+    let maybeAtom = r.next()
+    if maybeAtom.tk == ParLe:
+      r.p = startC
+      break
+  # skip for backwards compat:
   while true:
     skipWhitespace r
     if r.startsWith("(."):
       let directive = next(r)
       assert directive.tk == ParLe
-      if directive.data == ".vendor":
-        handleMeta r, r.meta.vendor
-      elif directive.data == ".platform":
-        handleMeta r, r.meta.platform
-      elif directive.data == ".dialect":
-        handleMeta r, r.meta.dialect
-      elif directive.data == ".config":
-        handleMeta r, r.meta.config
-      else:
-        # skip unknown directive
-        while true:
-          var closePar = next(r)
-          if closePar.tk in {ParRi, EofToken}: break
+      # skip unknown directive
+      while true:
+        var closePar = next(r)
+        if closePar.tk in {ParRi, EofToken}: break
     else:
       break
+
+proc processDirectives*(r: var Reader): DirectivesResult =
+  result = Success
 
 proc fileSize*(r: var Reader): int {.inline.} =
   r.f.size
