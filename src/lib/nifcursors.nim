@@ -423,8 +423,8 @@ proc parse*(r: var Stream; dest: var TokenBuf;
       dec nested
       if nested == 0: break
 
-proc parseFromBuffer*(input: string; sizeHint = 100): TokenBuf =
-  var r = nifstreams.openFromBuffer(input)
+proc parseFromBuffer*(input: string; thisModule: sink string; sizeHint = 100): TokenBuf =
+  var r = nifstreams.openFromBuffer(input, thisModule)
   result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 

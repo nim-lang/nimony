@@ -49,10 +49,12 @@ type
     eof: pointer # so that <= uses the correct comparison, not the cstring crap
     f: MemFile
     buf: string
+    thisModule*: string
     line*: int32 # file position within the NIF file, not affected by line annotations
     trackDefs*: bool
     defs: Table[string, pchar]
     meta: MetaInfo
+    indexAt: int  # position of the index
 
 proc `$`*(t: Token): string =
   case t.tk
@@ -90,11 +92,20 @@ proc open*(filename: string): Reader =
       when defined(debug) and not defined(nimony): writeStackTrace()
       quit "[Error] cannot open: " & filename
   result = Reader(f: f, p: nil)
+  var skip = false
+  for c in filename:
+    if c == '/' or c == '\\':
+      result.thisModule.setLen 0
+      skip = false
+    elif c == '.':
+      skip = true
+    elif not skip:
+      result.thisModule.add c
   result.p = cast[pchar](result.f.mem)
   result.eof = result.p +! result.f.size
 
-proc openFromBuffer*(buf: sink string): Reader =
-  result = Reader(f: default(MemFile), buf: ensureMove buf)
+proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
+  result = Reader(f: default(MemFile), buf: ensureMove buf, thisModule: ensureMove thisModule)
   result.p = rawData result.buf
   result.eof = result.p +! result.buf.len
   result.f.mem = result.p
@@ -488,15 +499,6 @@ proc startsWith*(r: Reader; prefix: string): bool =
   return false
 
 proc processDirectives*(r: var Reader): DirectivesResult =
-  template handleSubstitutionPair(r: var Reader; valid: set[NifKind]; subs: Table[StringView, (NifKind, StringView)]) =
-    if r.p < r.eof and ^r.p in ControlCharsOrWhite:
-      let key = next(r)
-      if key.tk == Ident:
-        let val = next(r)
-        let closingPar = next(r)
-        if closingPar.tk == ParRi and val.tk in valid:
-          subs[key.s] = (val.tk, val.s)
-
   template handleMeta(r: var Reader; field: untyped) =
     let value = next(r)
     if value.tk == StringLit:
@@ -543,9 +545,12 @@ proc jumpTo*(r: var Reader; offset: int) {.inline.} =
   r.p = cast[pchar](r.f.mem) +! offset
   assert cast[pointer](r.p) >= r.f.mem and r.p < r.eof
 
+proc indexStartsAt*(r: Reader): int =
+  r.indexAt
+
 when isMainModule:
   const test = r"(.nif24)(stmts :\5B\5D=)"
-  var r = openFromBuffer(test)
+  var r = openFromBuffer(test, "")
   while true:
     let tk = r.next()
     if tk.tk == EofToken: break

@@ -914,6 +914,6 @@ when isMainModule:
   )
 
  )"""
-  var buf = parseFromBuffer(inp)
+  var buf = parseFromBuffer(inp, "slaldpees1")
   var n = beginRead(buf)
   discard transformToCps(n, "slaldpees1")
