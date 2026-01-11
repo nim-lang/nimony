@@ -449,7 +449,7 @@ proc readDirectives(r: var Reader) =
   let start = r.p
   let indexOffsetToken = r.next()
   if indexOffsetToken.tk == IntLit:
-    r.indexAt = decodeInt indexOffsetToken
+    r.indexAt = int decodeInt indexOffsetToken
   else:
     r.p = start
   skipWhitespace r
