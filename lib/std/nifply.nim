@@ -51,8 +51,8 @@ type
 proc nifReaderOpen*(filename: string): Reader =
   nifreader.open(filename)
 
-proc nifReaderOpenFromBuffer*(buf: sink string): Reader =
-  nifreader.openFromBuffer(buf)
+proc nifReaderOpenFromBuffer*(buf: sink string; filename: sink string): Reader =
+  nifreader.openFromBuffer(buf, filename)
 
 template expectTree(r: var NifReader; tag: string; body: untyped) =
   let t = r.next
