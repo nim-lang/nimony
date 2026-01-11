@@ -51,7 +51,6 @@ type
     buf: string
     line*: int32 # file position within the NIF file, not affected by line annotations
     trackDefs*: bool
-    isubs, ksubs: Table[StringView, (NifKind, StringView)]
     defs: Table[string, pchar]
     meta: MetaInfo
 
@@ -337,10 +336,6 @@ proc next*(r: var Reader): Token =
         while p < eof and ^p notin ControlCharsOrWhite:
           inc result.s.len
           inc p
-      if r.ksubs.len > 0:
-        let repl = r.ksubs.getOrDefault(result.s)
-        if repl[0] != UnknownToken:
-          result.s = repl[1]
 
     of ')':
       result.tk = ParRi
@@ -399,12 +394,6 @@ proc next*(r: var Reader): Token =
           inc p
       if result.s.len > 0:
         result.tk = SymbolDef
-        if r.isubs.len > 0:
-          let repl = r.isubs.getOrDefault(result.s)
-          if repl[0] == Symbol:
-            result.s = repl[1]
-          else:
-            result.tk = UnknownToken # error
         if r.trackDefs:
           while start != r.f.mem:
             if ^start == '(':
@@ -430,16 +419,6 @@ proc next*(r: var Reader): Token =
 
       if result.s.len > 0:
         result.tk = if hasDot: Symbol else: Ident
-        if r.isubs.len > 0:
-          let repl = r.isubs.getOrDefault(result.s)
-          if repl[0] != UnknownToken:
-            result.tk = repl[0]
-            result.s = repl[1]
-  #if result.tk == UnknownToken:
-  #  for i in 0 .. 100:
-  #    stdout.write r.p[i]
-  #  writeStackTrace()
-  #  quit "huh? "
 
 type
   RestorePoint* = object
@@ -533,14 +512,7 @@ proc processDirectives*(r: var Reader): DirectivesResult =
     inc r.p, Cookie.len
     while true:
       skipWhitespace r
-      if r.startsWith("(.k"):
-        inc r.p, len("(.k")
-        # extension: let node kinds have dots! `(atomic.inc ...)`
-        handleSubstitutionPair r, {Ident, Symbol}, r.ksubs
-      elif r.startsWith("(.i"):
-        inc r.p, len("(.i")
-        handleSubstitutionPair r, {Ident, Symbol, StringLit, CharLit, IntLit, UIntLit, FloatLit}, r.isubs
-      elif r.startsWith("(."):
+      if r.startsWith("(."):
         let directive = next(r)
         assert directive.tk == ParLe
         if directive.s == ".vendor":
