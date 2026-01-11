@@ -49,11 +49,12 @@ type
     eof: pointer # so that <= uses the correct comparison, not the cstring crap
     f: MemFile
     buf: string
+    thisModule*: string
     line*: int32 # file position within the NIF file, not affected by line annotations
     trackDefs*: bool
-    isubs, ksubs: Table[StringView, (NifKind, StringView)]
     defs: Table[string, pchar]
     meta: MetaInfo
+    indexAt: int  # position of the index
 
 proc `$`*(t: Token): string =
   case t.tk
@@ -91,11 +92,20 @@ proc open*(filename: string): Reader =
       when defined(debug) and not defined(nimony): writeStackTrace()
       quit "[Error] cannot open: " & filename
   result = Reader(f: f, p: nil)
+  var skip = false
+  for c in filename:
+    if c == '/' or c == '\\':
+      result.thisModule.setLen 0
+      skip = false
+    elif c == '.':
+      skip = true
+    elif not skip:
+      result.thisModule.add c
   result.p = cast[pchar](result.f.mem)
   result.eof = result.p +! result.f.size
 
-proc openFromBuffer*(buf: sink string): Reader =
-  result = Reader(f: default(MemFile), buf: ensureMove buf)
+proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
+  result = Reader(f: default(MemFile), buf: ensureMove buf, thisModule: ensureMove thisModule)
   result.p = rawData result.buf
   result.eof = result.p +! result.buf.len
   result.f.mem = result.p
@@ -337,10 +347,6 @@ proc next*(r: var Reader): Token =
         while p < eof and ^p notin ControlCharsOrWhite:
           inc result.s.len
           inc p
-      if r.ksubs.len > 0:
-        let repl = r.ksubs.getOrDefault(result.s)
-        if repl[0] != UnknownToken:
-          result.s = repl[1]
 
     of ')':
       result.tk = ParRi
@@ -399,12 +405,6 @@ proc next*(r: var Reader): Token =
           inc p
       if result.s.len > 0:
         result.tk = SymbolDef
-        if r.isubs.len > 0:
-          let repl = r.isubs.getOrDefault(result.s)
-          if repl[0] == Symbol:
-            result.s = repl[1]
-          else:
-            result.tk = UnknownToken # error
         if r.trackDefs:
           while start != r.f.mem:
             if ^start == '(':
@@ -430,16 +430,6 @@ proc next*(r: var Reader): Token =
 
       if result.s.len > 0:
         result.tk = if hasDot: Symbol else: Ident
-        if r.isubs.len > 0:
-          let repl = r.isubs.getOrDefault(result.s)
-          if repl[0] != UnknownToken:
-            result.tk = repl[0]
-            result.s = repl[1]
-  #if result.tk == UnknownToken:
-  #  for i in 0 .. 100:
-  #    stdout.write r.p[i]
-  #  writeStackTrace()
-  #  quit "huh? "
 
 type
   RestorePoint* = object
@@ -509,15 +499,6 @@ proc startsWith*(r: Reader; prefix: string): bool =
   return false
 
 proc processDirectives*(r: var Reader): DirectivesResult =
-  template handleSubstitutionPair(r: var Reader; valid: set[NifKind]; subs: Table[StringView, (NifKind, StringView)]) =
-    if r.p < r.eof and ^r.p in ControlCharsOrWhite:
-      let key = next(r)
-      if key.tk == Ident:
-        let val = next(r)
-        let closingPar = next(r)
-        if closingPar.tk == ParRi and val.tk in valid:
-          subs[key.s] = (val.tk, val.s)
-
   template handleMeta(r: var Reader; field: untyped) =
     let value = next(r)
     if value.tk == StringLit:
@@ -533,14 +514,7 @@ proc processDirectives*(r: var Reader): DirectivesResult =
     inc r.p, Cookie.len
     while true:
       skipWhitespace r
-      if r.startsWith("(.k"):
-        inc r.p, len("(.k")
-        # extension: let node kinds have dots! `(atomic.inc ...)`
-        handleSubstitutionPair r, {Ident, Symbol}, r.ksubs
-      elif r.startsWith("(.i"):
-        inc r.p, len("(.i")
-        handleSubstitutionPair r, {Ident, Symbol, StringLit, CharLit, IntLit, UIntLit, FloatLit}, r.isubs
-      elif r.startsWith("(."):
+      if r.startsWith("(."):
         let directive = next(r)
         assert directive.tk == ParLe
         if directive.s == ".vendor":
@@ -571,9 +545,12 @@ proc jumpTo*(r: var Reader; offset: int) {.inline.} =
   r.p = cast[pchar](r.f.mem) +! offset
   assert cast[pointer](r.p) >= r.f.mem and r.p < r.eof
 
+proc indexStartsAt*(r: Reader): int =
+  r.indexAt
+
 when isMainModule:
   const test = r"(.nif24)(stmts :\5B\5D=)"
-  var r = openFromBuffer(test)
+  var r = openFromBuffer(test, "")
   while true:
     let tk = r.next()
     if tk.tk == EofToken: break

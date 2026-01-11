@@ -161,8 +161,8 @@ proc open*(filename: string): Stream =
   result = Stream(r: nifreader.open(filename))
   result.parents.add NoLineInfo
 
-proc openFromBuffer*(buf: sink string): Stream =
-  result = Stream(r: nifreader.openFromBuffer(buf))
+proc openFromBuffer*(buf: sink string; thisModule: sink string): Stream =
+  result = Stream(r: nifreader.openFromBuffer(buf, thisModule))
   result.parents.add NoLineInfo
 
 proc close*(s: var Stream) = nifreader.close(s.r)
