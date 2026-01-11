@@ -74,36 +74,6 @@ when not defined(nimony):
     assert s.len > 0
     cast[ptr UncheckedArray[char]](addr s[0])
 
-proc readDirectives(r: var Reader) # foward declaration
-
-proc open*(filename: string): Reader =
-  let f = try:
-      memfiles.open(filename)
-    except:
-      when defined(debug) and not defined(nimony): writeStackTrace()
-      quit "[Error] cannot open: " & filename
-  result = Reader(f: f, p: nil)
-  var skip = false
-  for c in filename:
-    if c == '/' or c == '\\':
-      result.thisModule.setLen 0
-      skip = false
-    elif c == '.':
-      skip = true
-    elif not skip:
-      result.thisModule.add c
-  result.p = cast[pchar](result.f.mem)
-  result.eof = result.p +! result.f.size
-  readDirectives result
-
-proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
-  result = Reader(f: default(MemFile), buf: ensureMove buf, thisModule: ensureMove thisModule)
-  result.p = rawData result.buf
-  result.eof = result.p +! result.buf.len
-  result.f.mem = result.p
-  result.f.size = result.buf.len
-  readDirectives result
-
 proc close*(r: var Reader) =
   try:
     memfiles.close(r.f)
@@ -479,6 +449,34 @@ proc readDirectives(r: var Reader) =
         if closePar.tk in {ParRi, EofToken}: break
     else:
       break
+
+proc open*(filename: string): Reader =
+  let f = try:
+      memfiles.open(filename)
+    except:
+      when defined(debug) and not defined(nimony): writeStackTrace()
+      quit "[Error] cannot open: " & filename
+  result = Reader(f: f, p: nil)
+  var skip = false
+  for c in filename:
+    if c == '/' or c == '\\':
+      result.thisModule.setLen 0
+      skip = false
+    elif c == '.':
+      skip = true
+    elif not skip:
+      result.thisModule.add c
+  result.p = cast[pchar](result.f.mem)
+  result.eof = result.p +! result.f.size
+  readDirectives result
+
+proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
+  result = Reader(f: default(MemFile), buf: ensureMove buf, thisModule: ensureMove thisModule)
+  result.p = rawData result.buf
+  result.eof = result.p +! result.buf.len
+  result.f.mem = result.p
+  result.f.size = result.buf.len
+  readDirectives result
 
 proc processDirectives*(r: var Reader): DirectivesResult =
   result = Success
