@@ -435,22 +435,25 @@ proc readDirectives(r: var Reader) =
     else:
       break
 
+proc extractModuleSuffix*(filename: string): string =
+  result = ""
+  var skip = false
+  for c in filename:
+    if c == '/' or c == '\\':
+      result.setLen 0
+      skip = false
+    elif c == '.':
+      skip = true
+    elif not skip:
+      result.add c
+
 proc open*(filename: string): Reader =
   let f = try:
       memfiles.open(filename)
     except:
       when defined(debug) and not defined(nimony): writeStackTrace()
       quit "[Error] cannot open: " & filename
-  result = Reader(f: f, p: nil)
-  var skip = false
-  for c in filename:
-    if c == '/' or c == '\\':
-      result.thisModule.setLen 0
-      skip = false
-    elif c == '.':
-      skip = true
-    elif not skip:
-      result.thisModule.add c
+  result = Reader(f: f, p: nil, thisModule: extractModuleSuffix(filename))
   result.p = cast[pchar](result.f.mem)
   result.eof = result.p +! result.f.size
   readDirectives result

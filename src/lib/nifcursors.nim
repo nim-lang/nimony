@@ -384,7 +384,7 @@ type
     OnlyIfChanged
 
 proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) =
-  let content = "(.nif24)\n" & toString(b)
+  let content = toModuleString(toOpenArray(b.data, 0, b.len-1), "." & extractModuleSuffix(filename))
   if mode == OnlyIfChanged:
     let existingContent = try: readFile(filename) except: ""
     if existingContent == content: return

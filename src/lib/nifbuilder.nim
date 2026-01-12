@@ -161,7 +161,8 @@ proc addSymbol*(b: var Builder; s, dottedSuffix: string) =
   addSep b
   var L = s.len
   if dottedSuffix.len > 0 and s.endsWith(dottedSuffix):
-    L -= dottedSuffix.len + 1
+    L -= dottedSuffix.len
+    inc L
   discard addSymbolImpl(b, s, L)
 
 proc addSymbolDefRetIsGlobal*(b: var Builder; s: string; dottedSuffix = ""): bool =
@@ -170,7 +171,8 @@ proc addSymbolDefRetIsGlobal*(b: var Builder; s: string; dottedSuffix = ""): boo
   b.put ':'
   var L = s.len
   if dottedSuffix.len > 0 and s.endsWith(dottedSuffix):
-    L -= dottedSuffix.len + 1
+    L -= dottedSuffix.len
+    inc L
   result = addSymbolImpl(b, s, L) >= 2
 
 proc addStrLit*(b: var Builder; s: string) =
@@ -341,9 +343,9 @@ proc addHeader*(b: var Builder; vendor = "", dialect = "") =
 proc addHeader26*(b: var Builder): int =
   ## Returns the patch position for the indexat overwrite.
   b.put "(.nif26)\n"
+  result = b.offs + len("(.indexat ")
   b.put "(.indexat                  )\n"
   #                 ^ whitespace essential here for patching without reallocations!
-  result = b.offs + len("(.indexat ")
   #b.put "(.indexat 1_000_000_000)\n"
 
 proc patchIndexAt*(b: var Builder; patchPos: int; indexAt: int) =
