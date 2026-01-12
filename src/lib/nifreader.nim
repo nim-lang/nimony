@@ -415,35 +415,20 @@ proc startsWith*(r: Reader; prefix: string): bool =
   return false
 
 proc readDirectives(r: var Reader) =
-  skipWhitespace r
-  let start = r.p
-  let indexOffsetToken = r.next()
-  if indexOffsetToken.tk == IntLit:
-    r.indexAt = int decodeInt indexOffsetToken
-  else:
-    r.p = start
-  skipWhitespace r
-  let startB = r.p
-  let unusedNameHintToken = r.next()
-  if unusedNameHintToken.tk == Symbol:
-    r.unusedNameHint = unusedNameHintToken.data
-  else:
-    r.p = startB
-
-  while true:
-    skipWhitespace r
-    let startC = r.p
-    let maybeAtom = r.next()
-    if maybeAtom.tk == ParLe:
-      r.p = startC
-      break
-  # skip for backwards compat:
   while true:
     skipWhitespace r
     if r.startsWith("(."):
       let directive = next(r)
       assert directive.tk == ParLe
-      # skip unknown directive
+      if directive.data == ".indexat":
+        let indexAtToken = next(r)
+        if indexAtToken.tk == IntLit:
+          r.indexAt = int decodeInt indexAtToken
+      elif directive.data == ".unusedname":
+        let unusedNameHintToken = next(r)
+        if unusedNameHintToken.tk == Symbol:
+          r.unusedNameHint = unusedNameHintToken.data
+      # skip the rest of the directive:
       while true:
         var closePar = next(r)
         if closePar.tk in {ParRi, EofToken}: break
