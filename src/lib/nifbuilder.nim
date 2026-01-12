@@ -7,6 +7,7 @@
 ## Support code for generating NIF code.
 
 import std / [assertions, syncio, formatfloat, math]
+from std / strutils import endsWith
 
 type
   Mode = enum
@@ -67,7 +68,7 @@ proc put(b: var Builder; s: string) =
     write b.f, s
   else:
     b.buffer.add s
-    b.offs += s.len
+  b.offs += s.len
 
 proc put(b: var Builder; s: char) =
   if b.mode == UsesFile:
@@ -75,7 +76,7 @@ proc put(b: var Builder; s: char) =
     write b.f, s
   else:
     b.buffer.add s
-    b.offs += 1
+  b.offs += 1
 
 proc undoWhitespace(b: var Builder) =
   var i = b.buffer.len - 1
@@ -129,29 +130,48 @@ proc addIdent*(b: var Builder; s: string) =
       else:
         b.put c
 
-proc addSymbolImpl(b: var Builder; s: string) {.inline.} =
+proc addSymbolImpl(b: var Builder; s: string; len: int): int {.inline.} =
+  ## Returns the number of dots in the symbol.
+  result = 0
   if s.len > 0:
     let c = s[0]
     if c in {'.', '0'..'9', '+', '-', '~'} or c.needsEscape:
       b.escape c
     else:
       b.put c
-    for i in 1..<s.len:
+    for i in 1..<len:
       let c = s[i]
       # Symbols imported from C can have a space like "struct foo".
       if c == ' ' or c.needsEscape:
         b.escape c
       else:
+        if c == '.': inc result
         b.put c
 
 proc addSymbol*(b: var Builder; s: string) =
   addSep b
-  addSymbolImpl b, s
+  discard addSymbolImpl(b, s, s.len)
 
 proc addSymbolDef*(b: var Builder; s: string) =
   addSep b
   b.put ':'
-  addSymbolImpl b, s
+  discard addSymbolImpl(b, s, s.len)
+
+proc addSymbol*(b: var Builder; s, dottedSuffix: string) =
+  addSep b
+  var L = s.len
+  if dottedSuffix.len > 0 and s.endsWith(dottedSuffix):
+    L -= dottedSuffix.len + 1
+  discard addSymbolImpl(b, s, L)
+
+proc addSymbolDefRetIsGlobal*(b: var Builder; s: string; dottedSuffix = ""): bool =
+  ## Returns true if the symbol is global.
+  addSep b
+  b.put ':'
+  var L = s.len
+  if dottedSuffix.len > 0 and s.endsWith(dottedSuffix):
+    L -= dottedSuffix.len + 1
+  result = addSymbolImpl(b, s, L) >= 2
 
 proc addStrLit*(b: var Builder; s: string) =
   addSep b
@@ -318,12 +338,33 @@ proc addHeader*(b: var Builder; vendor = "", dialect = "") =
     b.addStrLit dialect
     b.put ")\n"
 
+proc addHeader26*(b: var Builder): int =
+  ## Returns the patch position for the indexat overwrite.
+  b.put "(.nif26)\n"
+  b.put "(.indexat                  )\n"
+  #                 ^ whitespace essential here for patching without reallocations!
+  result = b.offs + len("(.indexat ")
+  #b.put "(.indexat 1_000_000_000)\n"
+
+proc patchIndexAt*(b: var Builder; patchPos: int; indexAt: int) =
+  var s = "+"
+  s.addInt indexAt
+  for i in 0..<s.len:
+    b.buffer[patchPos + i] = s[i]
+
+proc offset*(b: Builder): int {.inline.} =
+  ## Returns the current offset for index generation. The produced value might point to
+  ## whitespace that must first be skipped before the desired element is reached but
+  ## the nifreader will skip the whitespace automatically, so no harm is done.
+  result = b.offs
+
 when isMainModule:
   proc test(b: sink Builder) =
     b.addHeader "tester", "niftest"
     b.withTree "stmts":
       b.addLineInfo 4, 5, "mymodb.nim"
       b.withTree "call":
+        b.addSymbolDef "oh.0.my.god"
         b.addLineInfo 1, 3, "mymod.nim"
         b.addSymbol "foo.3.mymod"
         b.addIntLit 3423
@@ -337,8 +378,8 @@ when isMainModule:
       echo b.extract()
 
   proc main() =
-    var b = open(10)
-    test b
+    #var b = open(10)
+    #test b
 
     var b2 = open"builder_example.nif"
     test b2
