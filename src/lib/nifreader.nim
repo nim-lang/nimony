@@ -152,9 +152,10 @@ proc decodeStr*(r: Reader; t: Token): string =
         result.add ^p
         inc p
   elif TokenHasModuleSuffixExpansion in t.flags:
+    assert r.thisModule.len > 0
     result = newString(t.data.len + r.thisModule.len)
     if t.data.len > 0:
-      copyMem(rawData result, t.data.p, t.data.len - 1)
+      copyMem(rawData result, t.data.p, t.data.len)
       copyMem(rawData(result) +! t.data.len, rawData(r.thisModule), r.thisModule.len)
   else:
     result = newString(t.data.len)
@@ -483,8 +484,9 @@ proc indexStartsAt*(r: Reader): int =
   r.indexAt
 
 when isMainModule:
-  const test = r"(.nif24)(stmts :\5B\5D=)"
-  var r = openFromBuffer(test, "")
+  #const test = r"(.nif24)(stmts :\5B\5D=)"
+  const test = "nimcache/sysvq0asl.s.nif"
+  var r = open(test)
   while true:
     let tk = r.next()
     if tk.tk == EofToken: break
