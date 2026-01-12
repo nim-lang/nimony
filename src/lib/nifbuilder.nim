@@ -13,11 +13,12 @@ type
     UsesMem, UsesFile
   Builder* = object ## A builder can be in-memory or directly write into a file.
                     ## In the end either `extract` or `close` must be called.
-    buf: string
+    buffer: string
     mode: Mode
     compact: bool
     f: File
     nesting: int
+    offs: int
 
   LineInfoFormat = enum
     LineInfoNone, LineInfoCol, LineInfoColLine, LineInfoFile
@@ -31,7 +32,7 @@ proc open*(filename: string; compact = false): Builder =
 proc open*(sizeHint: int; compact = false): Builder =
   ## Opens a new builder with the intent to keep the produced
   ## code in memory.
-  Builder(buf: newStringOfCap(sizeHint), mode: UsesMem, compact: compact)
+  Builder(buffer: newStringOfCap(sizeHint), mode: UsesMem, compact: compact)
 
 proc attachedToFile*(b: Builder): bool {.inline.} = b.mode == UsesFile
 
@@ -41,42 +42,47 @@ proc extract*(b: sink Builder): string =
   when not defined(showBroken):
     assert b.nesting == 0, "unpaired '(' or ')'" & $b.nesting
   assert b.mode == UsesMem, "cannot extract from a file"
-  result = move(b.buf)
+  result = move(b.buffer)
 
 proc close*(b: var Builder) =
   if b.mode == UsesFile:
-    write b.f, b.buf
+    write b.f, b.buffer
     close b.f
   when not defined(showBroken):
     assert b.nesting == 0, "unpaired '(' or ')'"
 
 proc putPending(b: var Builder; s: string) =
-  b.buf.add s
+  b.buffer.add s
+  b.offs += s.len
 
 proc drainPending(b: var Builder) =
   if b.mode == UsesFile:
     # handle pending data:
-    write b.f, b.buf
-    b.buf.setLen 0
+    write b.f, b.buffer
+    b.buffer.setLen 0
 
 proc put(b: var Builder; s: string) =
   if b.mode == UsesFile:
     drainPending b
     write b.f, s
   else:
-    b.buf.add s
+    b.buffer.add s
+    b.offs += s.len
 
 proc put(b: var Builder; s: char) =
   if b.mode == UsesFile:
     drainPending b
     write b.f, s
   else:
-    b.buf.add s
+    b.buffer.add s
+    b.offs += 1
 
 proc undoWhitespace(b: var Builder) =
-  var i = b.buf.len - 1
-  while i >= 0 and b.buf[i] in {' ', '\n'}: dec i
-  b.buf.setLen i+1
+  var i = b.buffer.len - 1
+  while i >= 0 and b.buffer[i] in {' ', '\n'}:
+    dec i
+    b.offs -= 1
+  b.buffer.setLen i+1
 
 
 const
@@ -95,7 +101,7 @@ proc addRaw*(b: var Builder; s: string) =
   put b, s
 
 proc addSep(b: var Builder) =
-  if b.buf.len > 0 and b.buf[b.buf.len-1] in {'\n', ' '}:
+  if b.buffer.len > 0 and b.buffer[b.buffer.len-1] in {'\n', ' '}:
     discard "space not required"
   elif b.nesting != 0:
     b.putPending " "
@@ -174,42 +180,47 @@ proc addCharLit*(b: var Builder; c: char) =
 proc addIntLit*(b: var Builder; i: int64) =
   addSep b
   if i >= 0:
-    b.buf.add '+'
+    b.buffer.add '+'
+    b.offs += 1
   b.put $i
 
 proc addUIntLit*(b: var Builder; u: uint64) =
   addSep b
-  b.buf.add '+'
+  b.buffer.add '+'
   b.put $u
-  b.buf.add 'u'
+  b.buffer.add 'u'
+  b.offs += 2
 
 proc addFloatLit*(b: var Builder; f: float) =
   addSep b
   drainPending b
-  let myLen = b.buf.len
+  let myLen = b.buffer.len
   case classify(f)
-  of fcInf: b.buf.add "(inf)"
-  of fcNan: b.buf.add "(nan)"
-  of fcNegInf: b.buf.add "(neginf)"
-  of fcNegZero: b.buf.add "-0.0"
+  of fcInf: b.buffer.add "(inf)"
+  of fcNan: b.buffer.add "(nan)"
+  of fcNegInf: b.buffer.add "(neginf)"
+  of fcNegZero: b.buffer.add "-0.0"
   of fcNormal, fcSubnormal, fcZero:
     if f >= 0.0:
-      b.buf.add '+'
-    b.buf.addFloat f
-    for i in myLen ..< b.buf.len:
-      if b.buf[i] == 'e': b.buf[i] = 'E'
+      b.buffer.add '+'
+    b.buffer.addFloat f
+    for i in myLen ..< b.buffer.len:
+      if b.buffer[i] == 'e': b.buffer[i] = 'E'
+  b.offs += b.buffer.len - myLen
   if b.mode == UsesFile:
-    b.f.write b.buf
-    b.buf.setLen 0
+    b.f.write b.buffer
+    b.buffer.setLen 0
 
-proc addLine(s: var string; x: int32) =
+proc addLine(b: var Builder; x: int32) =
+  let oldLen = b.buffer.len
   if x < 0:
-    s.add '~'
-    s.addInt(-x)
+    b.buffer.add '~'
+    b.buffer.addInt(-x)
   else:
-    s.addInt(x)
+    b.buffer.addInt(x)
+  b.offs += b.buffer.len - oldLen
 
-template addLineIgnoreZero*(b: var string; x: int32) =
+template addLineIgnoreZero(b: var Builder; x: int32) =
   # Adds a number if it is not zero.
   if x != 0:
     addLine b, x
@@ -226,23 +237,26 @@ proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
   case format
   of LineInfoCol:
     addSep b
-    b.buf.addLine col
+    b.addLine col
   of LineInfoColLine:
     addSep b
-    b.buf.addLineIgnoreZero col
-    b.buf.add ','
-    b.buf.addLine line
+    b.addLineIgnoreZero col
+    b.buffer.add ','
+    b.offs += 1
+    b.addLine line
   of LineInfoFile:
     addSep b
-    b.buf.addLine col
-    b.buf.add ','
-    b.buf.addLine line
-    b.buf.add ','
+    b.addLine col
+    b.buffer.add ','
+    b.addLine line
+    b.buffer.add ','
+    b.offs += 2
     for c in file.items:
       if c.needsEscape:
         b.escape c
       else:
-        b.put c
+        b.buffer.add c
+        b.offs += 1
   of LineInfoNone:
     discard "same line info"
 
