@@ -151,6 +151,10 @@ proc decodeStr*(r: Reader; t: Token): string =
       else:
         result.add ^p
         inc p
+    # Handle module suffix expansion after decoding escapes
+    if TokenHasModuleSuffixExpansion in t.flags:
+      assert r.thisModule.len > 0
+      result.add r.thisModule
   elif TokenHasModuleSuffixExpansion in t.flags:
     assert r.thisModule.len > 0
     result = newString(t.data.len + r.thisModule.len)
