@@ -1,3 +1,8 @@
+when defined(windows):
+  import "../../vendor/errorcodes/src" / errorcodes_windows
+else:
+  import "../../vendor/errorcodes/src" / errorcodes_posix
+
 
 type
   CFile {.importc: "FILE", header: "<stdio.h>".} = object
@@ -20,6 +25,13 @@ type
                          ## at the end. If the file does not exist, it
                          ## will be created.
 
+  FileSeekPos* = enum ## Position relative to which seek should happen.
+                      # The values are ordered so that they match with stdio
+                      # SEEK_SET, SEEK_CUR and SEEK_END respectively.
+    fspSet            ## Seek to absolute value
+    fspCur            ## Seek relative to current position
+    fspEnd            ## Seek relative to end
+
 var
   stdin* {.importc: "stdin", header: "<stdio.h>".}: File
   stdout* {.importc: "stdout", header: "<stdio.h>".}: File
@@ -31,6 +43,43 @@ proc c_fwrite(buf: pointer; size, n: uint; f: File): uint {.
   importc: "fwrite", header: "<stdio.h>".}
 proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
   importc: "fread", header: "<stdio.h>".}
+
+proc c_fgetc(stream: File): cint {.
+  importc: "fgetc", header: "<stdio.h>", tags: [].}
+proc c_ungetc(c: cint, f: File): cint {.
+  importc: "ungetc", header: "<stdio.h>", tags: [].}
+
+
+when defined(windows):
+  when not defined(amd64):
+    proc c_fseek(f: File, offset: int64, whence: cint): cint {.
+      importc: "fseek", header: "<stdio.h>", tags: [].}
+    proc c_ftell(f: File): int64 {.
+      importc: "ftell", header: "<stdio.h>", tags: [].}
+  else:
+    proc c_fseek(f: File, offset: int64, whence: cint): cint {.
+      importc: "_fseeki64", header: "<stdio.h>", tags: [].}
+    when defined(tcc):
+      proc c_fsetpos(f: File, pos: var int64): int32 {.
+        importc: "fsetpos", header: "<stdio.h>", tags: [].}
+      proc c_fgetpos(f: File, pos: var int64): int32 {.
+        importc: "fgetpos", header: "<stdio.h>", tags: [].}
+      proc c_telli64(f: cint): int64 {.
+        importc: "_telli64", header: "<io.h>", tags: [].}
+      proc c_ftell(f: File): int64 =
+        # Taken from https://pt.osdn.net/projects/mingw/scm/git/mingw-org-wsl/blobs/5.4-trunk/mingwrt/mingwex/stdio/ftelli64.c
+        result = -1'i64
+        var pos: int64
+        if c_fgetpos(f, pos) == 0 and c_fsetpos(f, pos) == 0:
+          result = c_telli64(c_fileno(f))
+    else:
+      proc c_ftell(f: File): int64 {.
+        importc: "_ftelli64", header: "<stdio.h>", tags: [].}
+else:
+  proc c_fseek(f: File, offset: int64, whence: cint): cint {.
+    importc: "fseeko", header: "<stdio.h>", tags: [].}
+  proc c_ftell(f: File): int64 {.
+    importc: "ftello", header: "<stdio.h>", tags: [].}
 
 proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
 
@@ -167,3 +216,21 @@ proc tryWriteFile*(file, content: string): bool =
     result = false
 
 proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}
+
+proc endOfFile*(f: File): bool {.tags: [].} =
+  ## Returns true if `f` is at the end.
+  var c = c_fgetc(f)
+  discard c_ungetc(c, f)
+  return c < 0'i32
+
+proc getFilePos*(f: File): int64 {.raises.} =
+  ## Retrieves the current position of the file pointer that is used to
+  ## read from the file `f`. The file's first byte has the index zero.
+  result = c_ftell(f)
+  if result < 0: raise IOError #raiseEIO("cannot retrieve file position")
+
+proc setFilePos*(f: File, pos: int64, relativeTo: FileSeekPos = fspSet) {.sideEffect, raises.} =
+  ## Sets the position of the file pointer that is used for read/write
+  ## operations. The file's first byte has the index zero.
+  if c_fseek(f, pos, cint(relativeTo)) != 0:
+    raise IOError # raiseEIO("cannot set file position")

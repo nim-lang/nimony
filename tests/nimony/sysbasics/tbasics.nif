@@ -225,7 +225,7 @@
  (proc 5 :classify1.0.tbawx6nu81 . . . 14
   (params 1
    (param :s.0 . . 3 string.0.sysvq0asl .)) . . . 2,1
-  (stmts 2,122,lib/std/syncio.nim
+  (stmts 2,171,lib/std/syncio.nim
    (stmts 2,1
     (stmts
      (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 7,77,tests/nimony/sysbasics/tbasics.nim s.0)) ,2
@@ -236,7 +236,7 @@
    (proc 5 :classify.0.tbawx6nu81 . . . 13
     (params 1
      (param :s.4 . . 3 string.0.sysvq0asl .)) . . . 2,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,84,tests/nimony/sysbasics/tbasics.nim s.4)) ,2
@@ -247,7 +247,7 @@
      (proc 5 :classify2.0.tbawx6nu81 . . . 14
       (params 1
        (param :s.5 . . 3 string.0.sysvq0asl .)) . . . 2,1
-      (stmts 2,122,lib/std/syncio.nim
+      (stmts 2,171,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,89,tests/nimony/sysbasics/tbasics.nim s.5)) ,2
@@ -258,7 +258,7 @@
    (proc 5 :classify2.1.tbawx6nu81 . . . 14
     (params 1
      (param :s.6 . . 3 string.0.sysvq0asl .)) . . . 2,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,95,tests/nimony/sysbasics/tbasics.nim s.6)) ,2
@@ -269,7 +269,7 @@
    (proc 5 :classify.1.tbawx6nu81 . . . 13
     (params 1
      (param :s.7 . . 3 string.0.sysvq0asl .)) . . . 2,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,101,tests/nimony/sysbasics/tbasics.nim s.7)) ,2
@@ -282,7 +282,7 @@
      (proc 5 :classify.2.tbawx6nu81 . . . 13
       (params 1
        (param :s.8 . . 3 string.0.sysvq0asl .)) . . . 2,1
-      (stmts 2,122,lib/std/syncio.nim
+      (stmts 2,171,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,108,tests/nimony/sysbasics/tbasics.nim s.8)) ,2
@@ -294,7 +294,7 @@
    (proc 5 :classify.3.tbawx6nu81 . . . 13
     (params 1
      (param :s.9 . . 3 string.0.sysvq0asl .)) . . . 2,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,114,tests/nimony/sysbasics/tbasics.nim s.9)) ,2
@@ -316,7 +316,7 @@
     (not 13,123,tests/nimony/sysbasics/tbasics.nim
      (infix ==.20.sysvq0asl ~3
       (call ~3 bar.0.tbawx6nu81) 3 "1212334")) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,171,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
