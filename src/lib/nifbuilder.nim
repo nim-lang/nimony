@@ -304,16 +304,6 @@ proc addHeader*(b: var Builder; vendor = "", dialect = "") =
     b.addStrLit dialect
     b.put ")\n"
 
-proc addFlags*[T: enum](b: var Builder; kind: string; flags: set[T]) =
-  ## Little helper for converting a set of enum to NIF. If `flags` is
-  ## the empty set, nothing is emitted.
-  if flags == {}:
-    discard "omit empty flags in order to save space"
-  else:
-    withTree b, kind:
-      for x in items(flags):
-        b.addIdent $x
-
 when isMainModule:
   proc test(b: sink Builder) =
     b.addHeader "tester", "niftest"
