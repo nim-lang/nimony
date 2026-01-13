@@ -1,38 +1,39 @@
-(.nif24)
+(.nif26)
+(.indexat +1726            )
 0,1,tests/nimony/generics/texplicitprocinst.nim(stmts
- (proc 5 :foo.0.texhjoap . . 8
+ (proc 5 :foo.0. . . 8
   (typevars 1
-   (typevar :T.0.texhjoap . . . .)) 11
+   (typevar :T.0. . . . .)) 11
   (params 1
-   (param :x.0 . . 3 T.0.texhjoap .)) . . . 20
+   (param :x.0 . . 3 T.0. .)) . . . 20
   (stmts
    (discard .))) ,1
- (proc 5 :foo.1.texhjoap . . 8
+ (proc 5 :foo.1. . . 8
   (typevars 1
-   (typevar :T.1.texhjoap . . . .) 4
-   (typevar :U.0.texhjoap . . . .)) 14
+   (typevar :T.1. . . . .) 4
+   (typevar :U.0. . . . .)) 14
   (params 1
-   (param :x.1 . . 3 T.1.texhjoap .) 7
-   (param :y.0 . . 3 U.0.texhjoap .)) . . . 29
+   (param :x.1 . . 3 T.1. .) 7
+   (param :y.0 . . 3 U.0. .)) . . . 29
   (stmts
    (discard .))) ,3
- (discard 8 foo.2.texhjoap) ,4
- (discard 8 foo.3.texhjoap) 8,5
- (call ~8 foo.2.texhjoap 1 +123) 16,6
- (call ~16 foo.3.texhjoap 1 +123 6 "abc") ,10
+ (discard 8 foo.2.) ,4
+ (discard 8 foo.3.) 8,5
+ (call ~8 foo.2. 1 +123) 16,6
+ (call ~16 foo.3. 1 +123 6 "abc") ,10
  (discard 28
-  (call ~20 importedGeneric.0.texhjoap 1 +123)) 12,3
+  (call ~20 importedGeneric.0. 1 +123)) 12,3
  (comment int.0.sysvq0asl ,1 int.0.sysvq0asl ~8,2 int.0.sysvq0asl ~8,3 int.0.sysvq0asl 12,7 int.0.sysvq0asl) 8,3
- (proc :foo.2.texhjoap . ~8,~3 .
-  (at foo.0.texhjoap 4
+ (proc :foo.2. . ~8,~3 .
+  (at foo.0. 4
    (i -1)) 3,~3
   (params 1
    (param :x.5 . . ,3
     (i -1) .)) ~8,~3 . ~8,~3 . ~8,~3 . 12,~3
   (stmts
    (discard .))) 8,4
- (proc :foo.3.texhjoap . ~8,~3 .
-  (at foo.1.texhjoap 4
+ (proc :foo.3. . ~8,~3 .
+  (at foo.1. 4
    (i -1) 9 string.0.sysvq0asl) 6,~3
   (params 1
    (param :x.6 . . ~3,3
@@ -40,7 +41,7 @@
    (param :y.2 . . ~4,3 string.0.sysvq0asl .)) ~8,~3 . ~8,~3 . ~8,~3 . 21,~3
   (stmts
    (discard .))) 28,10
- (proc :importedGeneric.0.texhjoap . 0,1,tests/nimony/generics/deps/mgenericproc.nim .
+ (proc :importedGeneric.0. . 0,1,tests/nimony/generics/deps/mgenericproc.nim .
   (at importedGeneric.0.mgesx53wa1 ~4
    (i -1)) 24,1,tests/nimony/generics/deps/mgenericproc.nim
   (params 1
@@ -51,4 +52,12 @@
    (result :result.0 . . 24,11,tests/nimony/generics/texplicitprocinst.nim
     (i -1) .) 7
    (asgn ~7 result.0 2 x.7) ~2,~1
-   (ret result.0))))
+   (ret result.0))))0,1,tests/nimony/generics/texplicitprocinst.nim(index
+ (kv foo.0. +91) 9
+ (kv T.0. +37) ,1
+ (kv foo.1. +111) 9,1
+ (kv T.1. +37) 12,1
+ (kv U.0. +29) 8,3
+ (kv foo.2. +428) 8,4
+ (kv foo.3. +165) 28,10
+ (kv importedGeneric.0. +238))

@@ -1,28 +1,34 @@
-(.nif24)
+(.nif26)
+(.indexat +682             )
 0,1,tests/nimony/nosystem/tsetter.nim(stmts 5
- (type :int.0.tseyic8ua1
+ (type :int.0.
   (i -1) . 4
   (pragmas 2
    (magic 7 Int)) .) 9,2
- (type ~4 :Foo.0.tseyic8ua1 . . . 2
+ (type ~4 :Foo.0. . . . 2
   (object .)) ,4
- (proc 5 :bar=.0.tseyic8ua1 . . . 11
+ (proc 5 :bar=.0. . . . 11
   (params 1
-   (param :x.0 . . 3 Foo.0.tseyic8ua1 .) 9
+   (param :x.0 . . 3 Foo.0. .) 9
    (param :y.0 . . 3
     (i -1) .)) . . . 30
   (stmts
    (discard .))) ,5
- (proc 5 :\5B\5D=.0.tseyic8ua1 . . . 10
+ (proc 5 :\5B\5D=.0. . . . 10
   (params 1
-   (param :x.1 . . 3 Foo.0.tseyic8ua1 .) 9
+   (param :x.1 . . 3 Foo.0. .) 9
    (param :y.1 . . 3
     (i -1) .) 17
    (param :z.0 . . 3
     (i -1) .)) . . . 37
   (stmts
    (discard .))) 4,7
- (gvar :foo.0.tseyic8ua1 . . 5 Foo.0.tseyic8ua1 .) ,8
- (call bar=.0.tseyic8ua1 foo.0.tseyic8ua1 10 +123) ,9
- (call \5B\5D=.0.tseyic8ua1 foo.0.tseyic8ua1 4 +123 11 +456) 23,4
- (comment int.0.tseyic8ua1 ~1,1 int.0.tseyic8ua1 7,1 int.0.tseyic8ua1))
+ (gvar :foo.0. . . 5 Foo.0. .) ,8
+ (call bar=.0. foo.0. 10 +123) ,9
+ (call \5B\5D=.0. foo.0. 4 +123 11 +456) 23,4
+ (comment int.0. ~1,1 int.0. 7,1 int.0.))0,1,tests/nimony/nosystem/tsetter.nim(index 5
+ (kv int.0. +83) 9,2
+ (kv Foo.0. +66) ,4
+ (kv bar=.0. +43) ,5
+ (kv \5B\5D=.0. +146) 4,7
+ (kv foo.0. +188))

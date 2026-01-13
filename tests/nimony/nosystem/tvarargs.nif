@@ -1,61 +1,62 @@
-(.nif24)
+(.nif26)
+(.indexat +3754            )
 0,2,tests/nimony/nosystem/tvarargs.nim(stmts 2,1
- (type :int.0.tvah6culb
+ (type :int.0.
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,2
- (type :bool.0.tvah6culb
+ (type :bool.0.
   (bool) . 6
   (pragmas 2
    (magic 7 Bool)) .) 2,3
- (type :char.0.tvah6culb
+ (type :char.0.
   (c +8) . 6
   (pragmas 2
    (magic 7 Char)) .) 2,4
- (type :typedesc.0.tvah6culb
+ (type :typedesc.0.
   (typedesc) 9
   (typevars 1
-   (typevar :T.0.tvah6culb . . . .)) 13
+   (typevar :T.0. . . . .)) 13
   (pragmas 2
    (magic 7 TypeDesc)) .) 2,5
- (type :untyped.0.tvah6culb
+ (type :untyped.0.
   (untyped) . 9
   (pragmas 2
    (magic 7 Expr)) .) 14,7
- (type ~12 :TypeOfMode.0.tvah6culb x . . 2
+ (type ~12 :TypeOfMode.0. x . . 2
   (enum
    (u +8) ~12,1
-   (efld :typeOfProc.0.tvah6culb x . TypeOfMode.0.tvah6culb
+   (efld :typeOfProc.0. x . TypeOfMode.0.
     (tup +0 "typeOfProc")) ~12,2
-   (efld :typeOfIter.0.tvah6culb x . TypeOfMode.0.tvah6culb
+   (efld :typeOfIter.0. x . TypeOfMode.0.
     (tup +1 "typeOfIter")))) 2,7
- (proc :dollar`.TypeOfMode.0.tvah6culb x . .
+ (proc :dollar`.TypeOfMode.0. x . .
   (params
-   (param :e.0 . . TypeOfMode.0.tvah6culb .)) string.0.sysvq0asl . .
+   (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
   (stmts 14
    (result :result.0 . . string.0.sysvq0asl .) 14
    (case e.0 ~12,1
     (of
-     (ranges typeOfProc.0.tvah6culb)
+     (ranges typeOfProc.0.)
      (stmts
       (ret "typeOfProc"))) ~12,2
     (of
-     (ranges typeOfIter.0.tvah6culb)
+     (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
    (ret result.0))) ,11
- (proc 5 :typeof.0.tvah6culb
+ (proc 5 :typeof.0.
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
     (untyped) .) 13
-   (param :mode.0 . . ~22,~4 TypeOfMode.0.tvah6culb 7 typeOfIter.0.tvah6culb)) 33
+   (param :mode.0 . . ~22,~4 TypeOfMode.0. 7 typeOfIter.0.)) 33
   (typekind
    (typedesc)) 53
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,14
- (type ~8 :string.0.tvah6culb x . . string.0.sysvq0asl) ,16
- (proc 5 :\2B.0.tvah6culb
+ (type ~8 :string.0. x . . string.0.sysvq0asl) ,16
+ (proc 5 :\2B.0.
   (add -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -65,7 +66,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,17
- (proc 5 :\2D.0.tvah6culb
+ (proc 5 :\2D.0.
   (sub -3) . . 9
   (params 1
    (param :x.2 . . 6
@@ -75,7 +76,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,19
- (proc 5 :<=.0.tvah6culb
+ (proc 5 :<=.0.
   (le -3) . . 10
   (params 1
    (param :x.3 . . 6
@@ -85,33 +86,33 @@
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) 8,22
- (type ~6 :File.0.tvah6culb x . . 2
+ (type ~6 :File.0. x . . 2
   (object .)) 4,24
- (gvar :stdout.0.tvah6culb . . 8 File.0.tvah6culb .) ,26
- (proc 5 :write.0.tvah6culb . . . 10
+ (gvar :stdout.0. . . 8 File.0. .) ,26
+ (proc 5 :write.0. . . . 10
   (params 1
    (param :f.0 . . 3
-    (mut 4 File.0.tvah6culb) .) 14
+    (mut 4 File.0.) .) 14
    (param :c.0 . . 3
     (c +8) .)) . . . 35
   (stmts
    (discard .))) ,27
- (proc 5 :write.1.tvah6culb . . . 10
+ (proc 5 :write.1. . . . 10
   (params 1
    (param :f.1 . . 3
-    (mut 4 File.0.tvah6culb) .) 14
+    (mut 4 File.0.) .) 14
    (param :s.0 . . string.0.sysvq0asl .)) . . . 37
   (stmts
    (discard .))) ,29
- (cmd write.0.tvah6culb 6
-  (haddr stdout.0.tvah6culb) 14 '\0A') ,31
- (iterator 9 :unpack.0.tvah6culb
+ (cmd write.0. 6
+  (haddr stdout.0.) 14 '\0A') ,31
+ (iterator 9 :unpack.0.
   (unpack) . . 15
   (params) 4
   (untyped) 27
   (pragmas 2
    (magic 7 Unpack)) . .) ,33
- (template 9 :echo.0.tvah6culb x . . 14
+ (template 9 :echo.0. x . . 14
   (params 5
    (param :vanon.0 . .
     (varargs) .)) . 17
@@ -125,37 +126,59 @@
       (untyped) .)) ~2,1
     (expr
      (cmd
-      (ochoice write.0.tvah6culb write.1.tvah6culb) 6 stdout.0.tvah6culb 14 x.4))) ,2
-   (cmd write.0.tvah6culb 6 stdout.0.tvah6culb 14 '\0A'))) 4,38
- (gvar :someVar.0.tvah6culb . . string.0.sysvq0asl 10 "") 2,34
+      (ochoice write.0. write.1.) 6 stdout.0. 14 x.4))) ,2
+   (cmd write.0. 6 stdout.0. 14 '\0A'))) 4,38
+ (gvar :someVar.0. . . string.0.sysvq0asl 10 "") 2,34
  (stmts 2,1
   (stmts
-   (cmd write.1.tvah6culb 6
-    (haddr stdout.0.tvah6culb) 1,5 "a")) 2,1
+   (cmd write.1. 6
+    (haddr stdout.0.) 1,5 "a")) 2,1
   (stmts
-   (cmd write.1.tvah6culb 6
-    (haddr stdout.0.tvah6culb) 6,5 someVar.0.tvah6culb)) 2,1
+   (cmd write.1. 6
+    (haddr stdout.0.) 6,5 someVar.0.)) 2,1
   (stmts
-   (cmd write.1.tvah6culb 6
-    (haddr stdout.0.tvah6culb) 15,5 "b")) ,2
-  (cmd write.0.tvah6culb 6
-   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,34
+   (cmd write.1. 6
+    (haddr stdout.0.) 15,5 "b")) ,2
+  (cmd write.0. 6
+   (haddr stdout.0.) 14 '\0A')) 2,34
  (stmts 2,1
   (stmts
-   (cmd write.1.tvah6culb 6
-    (haddr stdout.0.tvah6culb) 1,7 "xzy")) 2,1
+   (cmd write.1. 6
+    (haddr stdout.0.) 1,7 "xzy")) 2,1
   (stmts
-   (cmd write.0.tvah6culb 6
-    (haddr stdout.0.tvah6culb) 8,7 'c')) ,2
-  (cmd write.0.tvah6culb 6
-   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,34
+   (cmd write.0. 6
+    (haddr stdout.0.) 8,7 'c')) ,2
+  (cmd write.0. 6
+   (haddr stdout.0.) 14 '\0A')) 2,34
  (stmts ,2
-  (cmd write.0.tvah6culb 6
-   (haddr stdout.0.tvah6culb) 14 '\0A')) 2,34
+  (cmd write.0. 6
+   (haddr stdout.0.) 14 '\0A')) 2,34
  (stmts 2,1
   (stmts
-   (cmd write.1.tvah6culb 6
-    (haddr stdout.0.tvah6culb) 1,11 someVar.0.tvah6culb)) ,2
-  (cmd write.0.tvah6culb 6
-   (haddr stdout.0.tvah6culb) 14 '\0A')) 15,11
- (comment untyped.0.tvah6culb 18 typedesc.0.tvah6culb 1,5 int.0.tvah6culb 1,5 int.0.tvah6culb ~2,5 int.0.tvah6culb 1,6 int.0.tvah6culb 1,6 int.0.tvah6culb ~2,6 int.0.tvah6culb 2,8 int.0.tvah6culb 2,8 int.0.tvah6culb ~2,8 bool.0.tvah6culb 12,15 char.0.tvah6culb ~11,20 untyped.0.tvah6culb ~15,29 echo.0.tvah6culb ~15,31 echo.0.tvah6culb ~11,33 echo.0.tvah6culb ~15,35 echo.0.tvah6culb))
+   (cmd write.1. 6
+    (haddr stdout.0.) 1,11 someVar.0.)) ,2
+  (cmd write.0. 6
+   (haddr stdout.0.) 14 '\0A')) 15,11
+ (comment untyped.0. 18 typedesc.0. 1,5 int.0. 1,5 int.0. ~2,5 int.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. 2,8 int.0. 2,8 int.0. ~2,8 bool.0. 12,15 char.0. ~11,20 untyped.0. ~15,29 echo.0. ~15,31 echo.0. ~11,33 echo.0. ~15,35 echo.0.))0,2,tests/nimony/nosystem/tvarargs.nim(index 2,1
+ (kv int.0. +86) 2,2
+ (kv bool.0. +66) 2,3
+ (kv char.0. +68) 2,4
+ (kv typedesc.0. +68) 12,4
+ (kv T.0. +49) 2,5
+ (kv untyped.0. +74) 14,7
+ (kv TypeOfMode.0. +75) 4,8
+ (kv typeOfProc.0. +58) 4,9
+ (kv typeOfIter.0. +75) 2,7
+ (kv dollar`.TypeOfMode.0. +75) ,11
+ (kv typeof.0. +368) 10,14
+ (kv string.0. +230) ,16
+ (kv \2B.0. +51) ,17
+ (kv \2D.0. +177) ,19
+ (kv <=.0. +177) 8,22
+ (kv File.0. +176) 4,24
+ (kv stdout.0. +46) ,26
+ (kv write.0. +39) ,27
+ (kv write.1. +162) ,31
+ (kv unpack.0. +219) ,33
+ (kv echo.0. +113) 4,38
+ (kv someVar.0. +348))

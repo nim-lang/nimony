@@ -1,21 +1,25 @@
-(.nif24)
+(.nif26)
+(.indexat +691             )
 0,1,tests/nimony/types/tscopedtype.nim(stmts ,2
  (block . 2,1
   (stmts 6,1
-   (type ~4 :Foo.0.tsca4az8i1 . . . 2
-    (ref 4 Foo.Obj.0.tsca4az8i1)) 6,1
-   (type ~4 :Foo.Obj.0.tsca4az8i1 . . . 6
+   (type ~4 :Foo.0. . . . 2
+    (ref 4 Foo.Obj.0.)) 6,1
+   (type ~4 :Foo.Obj.0. . . . 6
     (object 10 RootObj.0.sysvq0asl ~8,1
-     (fld :id.0.tsca4az8i1 . . 4
+     (fld :id.0. . . 4
       (i -1) .))) 4,4
    (var :s.0 . . 4,~3
-    (ref 4 Foo.Obj.0.tsca4az8i1) 7
+    (ref 4 Foo.Obj.0.) 7
     (newobj ~3,~3
-     (ref 4 Foo.Obj.0.tsca4az8i1) 3
-     (kv ~2 id.0.tsca4az8i1 2 +12))) 2,122,lib/std/syncio.nim
+     (ref 4 Foo.Obj.0.) 3
+     (kv ~2 id.0. 2 +12))) 2,122,lib/std/syncio.nim
    (stmts 2,1
     (stmts
      (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 8,9,tests/nimony/types/tscopedtype.nim
-      (ddot ~1 s.0 id.0.tsca4az8i1 +0))) ,2
+      (ddot ~1 s.0 id.0. +0))) ,2
     (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 10,5
- (comment int.0.sysvq0asl ~8,3 echo.0.syn1lfpjv))
+ (comment int.0.sysvq0asl ~8,3 echo.0.syn1lfpjv))0,1,tests/nimony/types/tscopedtype.nim(index 8,4
+ (kv Foo.0. +112) 8,4
+ (kv Foo.Obj.0. +56) 6,5
+ (kv id.0. +72))

@@ -1,23 +1,29 @@
-(.nif24)
+(.nif26)
+(.indexat +455             )
 0,1,tests/nimony/nosystem/tdefinedarg.nim(stmts 5
- (type :untyped.0.tdej0g1hh1
+ (type :untyped.0.
   (untyped) . 9
   (pragmas 2
    (magic 7 Expr)) .) ,2
- (proc 5 :defined.0.tdej0g1hh1
+ (proc 5 :defined.0.
   (defined) . . 12
   (params 1
    (param :x.0 . . 3
     (untyped) .)) . 25
   (pragmas 2
    (magic 7 Defined)) . .) 4,4
- (glet :x.0.tdej0g1hh1 . .
+ (glet :x.0. . .
   (bool) 12
   (false)) 4,5
- (glet :y.0.tdej0g1hh1 . .
+ (glet :y.0. . .
   (bool) 12
   (true)) 4,6
- (glet :z.0.tdej0g1hh1 . .
+ (glet :z.0. . .
   (bool) 15
   (false)) 16,2
- (comment untyped.0.tdej0g1hh1))
+ (comment untyped.0.))0,1,tests/nimony/nosystem/tdefinedarg.nim(index 5
+ (kv untyped.0. +87) ,2
+ (kv defined.0. +73) 4,4
+ (kv x.0. +140) 4,5
+ (kv y.0. +44) 4,6
+ (kv z.0. +43))

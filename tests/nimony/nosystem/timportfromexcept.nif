@@ -1,6 +1,7 @@
-(.nif24)
+(.nif26)
+(.indexat +813             )
 0,1,tests/nimony/nosystem/timportfromexcept.nim(stmts 4,4
- (glet :allImported.0.timhjtr28 . . 14
+ (glet :allImported.0. . . 14
   (array 11,2,tests/nimony/nosystem/deps/modexcept.nim
    (i -1)
    (rangetype
@@ -10,7 +11,7 @@
     (i -1)
     (rangetype
      (i -1) +0 +2)) 1 exceptB.0.modvx9hpf 10 fromA.0.modepjal 17 fromC.0.modepjal)) 4,5
- (glet :exceptDeclared.0.timhjtr28 . . 17
+ (glet :exceptDeclared.0. . . 17
   (array
    (bool)
    (rangetype
@@ -23,7 +24,7 @@
    (false) 29
    (true) 48
    (false))) 4,6
- (glet :fromDeclared.0.timhjtr28 . . 17,~1
+ (glet :fromDeclared.0. . . 17,~1
   (array
    (bool)
    (rangetype
@@ -35,4 +36,7 @@
      (i -1) +0 +2)) 10
    (true) 27
    (false) 44
-   (true))))
+   (true))))0,1,tests/nimony/nosystem/timportfromexcept.nim(index 4,4
+ (kv allImported.0. +95) 4,5
+ (kv exceptDeclared.0. +312) 4,6
+ (kv fromDeclared.0. +202))
