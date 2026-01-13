@@ -1110,7 +1110,8 @@ when isMainModule:
   import std/syncio
   import ".." / lib / symparser
   let infile = paramStr(1)
-  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif")
+  var owningBuf = createTokenBuf(300)
+  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif", owningBuf)
   let r = eliminateJumps(n, "main")
   let output = r.toString(false)
   if paramCount() >= 2:
