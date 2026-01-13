@@ -141,7 +141,8 @@ proc tracebackTypeC*(n: Cursor): Cursor =
     unsafeDec result
 
 proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
-  let t = next(r)
+  var t = default(ExpandedToken)
+  next(r, t)
   var currentInfo = parentInfo
   if t.filename.len == 0:
     # relative file position

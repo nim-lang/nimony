@@ -167,7 +167,7 @@ proc openFromBuffer*(buf: sink string; thisModule: sink string): Stream =
 
 proc close*(s: var Stream) = nifreader.close(s.r)
 
-proc rawNext(s: var Stream; t: Token): PackedToken =
+proc rawNext(s: var Stream; t: ExpandedToken): PackedToken =
   var currentInfo = NoLineInfo
   if t.filename.len == 0:
     # relative file position
@@ -206,7 +206,8 @@ proc rawNext(s: var Stream; t: Token): PackedToken =
     result = toToken(FloatLit, pool.floats.getOrIncl(decodeFloat t), currentInfo)
 
 proc next*(s: var Stream): PackedToken =
-  let t = next(s.r)
+  var t = default(ExpandedToken)
+  next(s.r, t)
   result = rawNext(s, t)
 
 proc skip*(s: var Stream; current: PackedToken): PackedToken =
@@ -214,7 +215,8 @@ proc skip*(s: var Stream; current: PackedToken): PackedToken =
     # jump to corresponding ParRi:
     var nested = 0
     while true:
-      let t = next(s.r)
+      var t = default(ExpandedToken)
+      next(s.r, t)
       if t.tk == ParLe: inc nested
       elif t.tk == ParRi:
         if nested == 0: break

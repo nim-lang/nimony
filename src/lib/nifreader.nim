@@ -30,7 +30,7 @@ type
   TokenFlag = enum
     TokenHasEscapes, FilenameHasEscapes, TokenHasModuleSuffixExpansion
 
-  Token* = object
+  ExpandedToken* = object
     tk*: NifKind
     flags: set[TokenFlag]
     kind*: uint16   # for clients to fill in ("known node kinds")
@@ -48,7 +48,7 @@ type
     indexAt: int  # position of the index
     unusedNameHint: StringView
 
-proc `$`*(t: Token): string =
+proc `$`*(t: ExpandedToken): string =
   case t.tk
   of UnknownToken: result = "<unknown token>"
   of EofToken: result = "<eof>"
@@ -130,7 +130,7 @@ proc handleHex(p: pchar): char =
   else: discard
   result = char(output)
 
-proc decodeChar*(t: Token): char =
+proc decodeChar*(t: ExpandedToken): char =
   assert t.tk == CharLit
   result = ^t.data.p
   if result == '\\':
@@ -138,7 +138,7 @@ proc decodeChar*(t: Token): char =
     inc p
     result = handleHex(p)
 
-proc decodeStr*(r: Reader; t: Token): string =
+proc decodeStr*(r: Reader; t: ExpandedToken): string =
   if TokenHasEscapes in t.flags:
     result = ""
     var p = t.data.p
@@ -166,7 +166,7 @@ proc decodeStr*(r: Reader; t: Token): string =
     if t.data.len > 0:
       copyMem(rawData result, t.data.p, t.data.len)
 
-proc decodeFilename*(t: Token): string =
+proc decodeFilename*(t: ExpandedToken): string =
   if FilenameHasEscapes in t.flags:
     result = ""
     var p = t.filename.p
@@ -183,25 +183,25 @@ proc decodeFilename*(t: Token): string =
     result = newString(t.filename.len)
     copyMem(rawData result, t.filename.p, t.filename.len)
 
-proc decodeFloat*(t: Token): BiggestFloat =
+proc decodeFloat*(t: ExpandedToken): BiggestFloat =
   result = 0.0
   assert t.tk == FloatLit
   let res = parseutils.parseBiggestFloat(toOpenArray(t.data.p, 0, t.data.len-1), result)
   assert res == t.data.len
 
-proc decodeUInt*(t: Token): BiggestUInt =
+proc decodeUInt*(t: ExpandedToken): BiggestUInt =
   result = 0
   assert t.tk == UIntLit
   let res = parseutils.parseBiggestUInt(toOpenArray(t.data.p, 0, t.data.len-1), result)
   assert res == t.data.len
 
-proc decodeInt*(t: Token): BiggestInt =
+proc decodeInt*(t: ExpandedToken): BiggestInt =
   result = 0
   assert t.tk == IntLit
   let res = parseutils.parseBiggestInt(toOpenArray(t.data.p, 0, t.data.len-1), result)
   assert res == t.data.len
 
-proc handleNumber(r: var Reader; result: var Token) =
+proc handleNumber(r: var Reader; result: var ExpandedToken) =
   useCpuRegisters:
     if p < eof and ^p in Digits:
       result.tk = IntLit # overwritten if we detect a float or unsigned
@@ -234,7 +234,7 @@ proc handleNumber(r: var Reader; result: var Token) =
         inc p
         # ignore the suffix 'u'
 
-proc handleLineInfo(r: var Reader; result: var Token) =
+proc handleLineInfo(r: var Reader; result: var ExpandedToken) =
   proc integerOutOfRangeError() {.noinline, noreturn.} =
     quit "Parsed integer outside of valid range"
 
@@ -292,10 +292,8 @@ proc handleLineInfo(r: var Reader; result: var Token) =
         inc result.filename.len
         inc p
 
-proc next*(r: var Reader): Token =
-  # Returning a new Token is somewhat unusual but lets clients
-  # create implicit trees on the stack.
-  result = default(Token)
+proc next*(r: var Reader; result: var ExpandedToken) =
+  result = default(ExpandedToken)
   skipWhitespace r
   if r.p >= r.eof:
     result.tk = EofToken
@@ -404,6 +402,10 @@ proc next*(r: var Reader): Token =
         else:
           result.tk = Ident
 
+proc next*(r: var Reader): ExpandedToken {.deprecated: "use the other next instead".} =
+  result = default(ExpandedToken)
+  next r, result
+
 type
   DirectivesResult* = enum
     WrongHeader, WrongMeta, Success
@@ -420,23 +422,24 @@ proc startsWith*(r: Reader; prefix: string): bool =
   return false
 
 proc readDirectives(r: var Reader) =
+  var tok = default(ExpandedToken)
   while true:
     skipWhitespace r
     if r.startsWith("(."):
-      let directive = next(r)
-      assert directive.tk == ParLe
-      if directive.data == ".indexat":
-        let indexAtToken = next(r)
-        if indexAtToken.tk == IntLit:
-          r.indexAt = int decodeInt indexAtToken
-      elif directive.data == ".unusedname":
-        let unusedNameHintToken = next(r)
-        if unusedNameHintToken.tk == Symbol:
-          r.unusedNameHint = unusedNameHintToken.data
+      next(r, tok)
+      assert tok.tk == ParLe
+      if tok.data == ".indexat":
+        next(r, tok)
+        if tok.tk == IntLit:
+          r.indexAt = int decodeInt tok
+      elif tok.data == ".unusedname":
+        next(r, tok)
+        if tok.tk == Symbol:
+          r.unusedNameHint = tok.data
       # skip the rest of the directive:
       while true:
-        var closePar = next(r)
-        if closePar.tk in {ParRi, EofToken}: break
+        next(r, tok)
+        if tok.tk in {ParRi, EofToken}: break
     else:
       break
 
@@ -491,7 +494,8 @@ when isMainModule:
   #const test = r"(.nif24)(stmts :\5B\5D=)"
   const test = "nimcache/sysvq0asl.s.nif"
   var r = open(test)
+  var tok = default(ExpandedToken)
   while true:
-    let tk = r.next()
-    if tk.tk == EofToken: break
-    echo r.decodeStr tk, " ", tk
+    r.next(tok)
+    if tok.tk == EofToken: break
+    echo r.decodeStr tok, " ", tok
