@@ -1,248 +1,294 @@
-(.nif24)
+(.nif26)
+(.indexat +6689            )
 0,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
- (type ~13 :MyObjectBase.0.tho8gh7q4 . . . 2
+ (type ~13 :MyObjectBase.0. . . . 2
   (object . ~13,1
-   (fld :x.0.tho8gh7q4 . . 6
+   (fld :x.0. . . 6
     (i -1) .) ~10,1
-   (fld :y.0.tho8gh7q4 . . 3
+   (fld :y.0. . . 3
     (i -1) .))) 17,4
- (type ~15 :MyObject.0.tho8gh7q4 . ~7
+ (type ~15 :MyObject.0. . ~7
   (typevars 1
-   (typevar :T.0.tho8gh7q4 . . . .) 4
-   (typevar :Y.0.tho8gh7q4 . . . .)) . 2
+   (typevar :T.0. . . . .) 4
+   (typevar :Y.0. . . . .)) . 2
   (object . ~15,1
-   (fld :x.1.tho8gh7q4 . . 6
+   (fld :x.1. . . 6
     (i -1) .) ~12,1
-   (fld :y.1.tho8gh7q4 . . 3
+   (fld :y.1. . . 3
     (i -1) .))) ,7
- (proc 5 :=trace.0.tho8gh7q4 . . . 13
+ (proc 5 :=trace.0. . . . 13
   (params 1
    (param :x.0 . . 3
-    (mut 4 MyObjectBase.0.tho8gh7q4) .) 22
+    (mut 4 MyObjectBase.0.) .) 22
    (param :p.0 . . 3
     (pointer) .)) . . . 2,1
   (stmts
    (discard .))) ,10
- (proc 5 :=wasMoved.0.tho8gh7q4 . . . 16
+ (proc 5 :=wasMoved.0. . . . 16
   (params 1
    (param :x.1 . . 3
-    (mut 4 MyObjectBase.0.tho8gh7q4) .)) . . . 2,1
+    (mut 4 MyObjectBase.0.) .)) . . . 2,1
   (stmts
    (discard .))) ,13
- (proc 5 :=copy.0.tho8gh7q4 . . . 12
+ (proc 5 :=copy.0. . . . 12
   (params 1
    (param :x.2 . . 3
-    (mut 4 MyObjectBase.0.tho8gh7q4) .) 22
-   (param :y.0 . . 3 MyObjectBase.0.tho8gh7q4 .)) . . . 2,1
+    (mut 4 MyObjectBase.0.) .) 22
+   (param :y.0 . . 3 MyObjectBase.0. .)) . . . 2,1
   (stmts
    (discard .))) ,16
- (proc 5 :=sink.0.tho8gh7q4 . . . 12
+ (proc 5 :=sink.0. . . . 12
   (params 1
    (param :x.3 . . 3
-    (mut 4 MyObjectBase.0.tho8gh7q4) .) 22
-   (param :y.1 . . 3 MyObjectBase.0.tho8gh7q4 .)) . . . 2,1
+    (mut 4 MyObjectBase.0.) .) 22
+   (param :y.1 . . 3 MyObjectBase.0. .)) . . . 2,1
   (stmts
    (discard .))) ,19
- (proc 5 :=destroy.0.tho8gh7q4 . . . 15
+ (proc 5 :=destroy.0. . . . 15
   (params 1
-   (param :x.4 . . 3 MyObjectBase.0.tho8gh7q4 .)) . . . 2,1
+   (param :x.4 . . 3 MyObjectBase.0. .)) . . . 2,1
   (stmts
    (discard .))) ,22
- (proc 5 :=wasMoved.1.tho8gh7q4 . . 16
+ (proc 5 :=wasMoved.1. . . 16
   (typevars 1
-   (typevar :T.1.tho8gh7q4 . . . .) 4
-   (typevar :Y.1.tho8gh7q4 . . . .)) 22
+   (typevar :T.1. . . . .) 4
+   (typevar :Y.1. . . . .)) 22
   (params 1
    (param :x.5 . . 3
     (mut 12
-     (at ~8 MyObject.0.tho8gh7q4 1 T.1.tho8gh7q4 4 Y.1.tho8gh7q4)) .)) . . . 2,1
+     (at ~8 MyObject.0. 1 T.1. 4 Y.1.)) .)) . . . 2,1
   (stmts 4
    (let :x.10 . .
     (i -1) 4 +12) 4,1
    (let :y.4 . .
     (i -1) 4 +4))) ,26
- (proc 5 :=copy.1.tho8gh7q4 . . 12
+ (proc 5 :=copy.1. . . 12
   (typevars 1
-   (typevar :T.2.tho8gh7q4 . . . .) 4
-   (typevar :Y.2.tho8gh7q4 . . . .)) 18
+   (typevar :T.2. . . . .) 4
+   (typevar :Y.2. . . . .)) 18
   (params 1
    (param :x.6 . . 3
     (mut 12
-     (at ~8 MyObject.0.tho8gh7q4 1 T.2.tho8gh7q4 4 Y.2.tho8gh7q4)) .) 24
+     (at ~8 MyObject.0. 1 T.2. 4 Y.2.)) .) 24
    (param :y.2 . . 11
-    (at ~8 MyObject.0.tho8gh7q4 1 T.2.tho8gh7q4 4 Y.2.tho8gh7q4) .)) . . . 2,1
+    (at ~8 MyObject.0. 1 T.2. 4 Y.2.) .)) . . . 2,1
   (stmts
    (discard .))) ,29
- (proc 5 :=sink.1.tho8gh7q4 . . 12
+ (proc 5 :=sink.1. . . 12
   (typevars 1
-   (typevar :T.3.tho8gh7q4 . . . .) 4
-   (typevar :Y.3.tho8gh7q4 . . . .)) 18
+   (typevar :T.3. . . . .) 4
+   (typevar :Y.3. . . . .)) 18
   (params 1
    (param :x.7 . . 3
     (mut 12
-     (at ~8 MyObject.0.tho8gh7q4 1 T.3.tho8gh7q4 4 Y.3.tho8gh7q4)) .) 24
+     (at ~8 MyObject.0. 1 T.3. 4 Y.3.)) .) 24
    (param :y.3 . . 11
-    (at ~8 MyObject.0.tho8gh7q4 1 T.3.tho8gh7q4 4 Y.3.tho8gh7q4) .)) . . . 2,1
+    (at ~8 MyObject.0. 1 T.3. 4 Y.3.) .)) . . . 2,1
   (stmts
    (discard .))) ,32
- (proc 5 :=destroy.1.tho8gh7q4 . . 15
+ (proc 5 :=destroy.1. . . 15
   (typevars 1
-   (typevar :T.4.tho8gh7q4 . . . .) 4
-   (typevar :Y.4.tho8gh7q4 . . . .)) 21
+   (typevar :T.4. . . . .) 4
+   (typevar :Y.4. . . . .)) 21
   (params 1
    (param :x.8 . . 11
-    (at ~8 MyObject.0.tho8gh7q4 1 T.4.tho8gh7q4 4 Y.4.tho8gh7q4) .)) . . . 2,1
+    (at ~8 MyObject.0. 1 T.4. 4 Y.4.) .)) . . . 2,1
   (stmts 4
    (let :x.11 . .
     (i -1) 4 +12))) ,35
- (proc 5 :foo.0.tho8gh7q4 . . . 9
+ (proc 5 :foo.0. . . . 9
   (params) . . . 2,1
   (stmts 4
-   (var :obj.0 . . 14 MyObject.0.I76zger.tho8gh7q4 14
-    (oconstr MyObject.0.I76zger.tho8gh7q4
-     (kv x.1.I76zger.tho8gh7q4 43,6,lib/std/system/defaults.nim
+   (var :obj.0 . . 14 MyObject.0.I76zger. 14
+    (oconstr MyObject.0.I76zger.
+     (kv x.1.I76zger. 43,6,lib/std/system/defaults.nim
       (expr +0))
-     (kv y.1.I76zger.tho8gh7q4 43,6,lib/std/system/defaults.nim
+     (kv y.1.I76zger. 43,6,lib/std/system/defaults.nim
       (expr +0)))) 4,2
-   (var :obj2.0 . . 15 MyObject.0.I3kvyeb.tho8gh7q4 15
-    (oconstr MyObject.0.I3kvyeb.tho8gh7q4
-     (kv x.1.I3kvyeb.tho8gh7q4 43,6,lib/std/system/defaults.nim
+   (var :obj2.0 . . 15 MyObject.0.I3kvyeb. 15
+    (oconstr MyObject.0.I3kvyeb.
+     (kv x.1.I3kvyeb. 43,6,lib/std/system/defaults.nim
       (expr +0))
-     (kv y.1.I3kvyeb.tho8gh7q4 43,6,lib/std/system/defaults.nim
+     (kv y.1.I3kvyeb. 43,6,lib/std/system/defaults.nim
       (expr +0)))) 10,4
    (destroy 1 obj.0) 4,6
-   (var :objbase.0 . . 31,~29 MyObjectBase.0.tho8gh7q4 18
-    (oconstr 13,~29 MyObjectBase.0.tho8gh7q4
-     (kv x.0.tho8gh7q4 43,6,lib/std/system/defaults.nim
+   (var :objbase.0 . . 31,~29 MyObjectBase.0. 18
+    (oconstr 13,~29 MyObjectBase.0.
+     (kv x.0. 43,6,lib/std/system/defaults.nim
       (expr +0))
-     (kv y.0.tho8gh7q4 43,6,lib/std/system/defaults.nim
+     (kv y.0. 43,6,lib/std/system/defaults.nim
       (expr +0)))) 4,7
-   (var :objbase2.0 . . 31,~30 MyObjectBase.0.tho8gh7q4 19
-    (oconstr 12,~30 MyObjectBase.0.tho8gh7q4
-     (kv x.0.tho8gh7q4 43,6,lib/std/system/defaults.nim
+   (var :objbase2.0 . . 31,~30 MyObjectBase.0. 19
+    (oconstr 12,~30 MyObjectBase.0.
+     (kv x.0. 43,6,lib/std/system/defaults.nim
       (expr +0))
-     (kv y.0.tho8gh7q4 43,6,lib/std/system/defaults.nim
+     (kv y.0. 43,6,lib/std/system/defaults.nim
       (expr +0)))) 10,8
-   (call 1 =destroy.0.tho8gh7q4 1 objbase2.0) 10,9
-   (call 1 =destroy.0.tho8gh7q4 1 objbase.0))) 3,47
- (call ~3 foo.0.tho8gh7q4) ,49
- (proc 5 :=checkHook.0.tho8gh7q4 . . 17
+   (call 1 =destroy.0. 1 objbase2.0) 10,9
+   (call 1 =destroy.0. 1 objbase.0))) 3,47
+ (call ~3 foo.0.) ,49
+ (proc 5 :=checkHook.0. . . 17
   (typevars 1
-   (typevar :T.5.tho8gh7q4 . . . .) 4
-   (typevar :Y.5.tho8gh7q4 . . . .)) 23
+   (typevar :T.5. . . . .) 4
+   (typevar :Y.5. . . . .)) 23
   (params 1
    (param :x.9 . . 12
-    (at ~8 MyObject.0.tho8gh7q4 1 T.5.tho8gh7q4 4 Y.5.tho8gh7q4) .)) . . . 2,1
+    (at ~8 MyObject.0. 1 T.5. 4 Y.5.) .)) . . . 2,1
   (stmts
    (discard .))) 4,52
- (gvar :obj.0.tho8gh7q4 . . 13 MyObject.0.I76zger.tho8gh7q4 .) 12,53
- (call 1 =checkHook.1.tho8gh7q4 1 obj.0.tho8gh7q4) 10,2
+ (gvar :obj.0. . . 13 MyObject.0.I76zger. .) 12,53
+ (call 1 =checkHook.1. 1 obj.0.) 10,2
  (comment int.0.sysvq0asl int.0.sysvq0asl ,3 int.0.sysvq0asl ,3 int.0.sysvq0asl 28,5 pointer.0.sysvq0asl 19,34 int.0.sysvq0asl 24,34 float.0.sysvq0asl 10,34 default.3.sysvq0asl 10,34 default.3.sysvq0asl 20,36 float.0.sysvq0asl 27,36 int.0.sysvq0asl 11,36 default.3.sysvq0asl 11,36 default.3.sysvq0asl 14,40 default.3.sysvq0asl 14,40 default.3.sysvq0asl 15,41 default.3.sysvq0asl 15,41 default.3.sysvq0asl 8,50 int.0.sysvq0asl 13,50 float.0.sysvq0asl) 12,53
- (proc :=checkHook.1.tho8gh7q4 . ~12,~4 .
-  (at =checkHook.0.tho8gh7q4 17,~17
+ (proc :=checkHook.1. . ~12,~4 .
+  (at =checkHook.0. 17,~17
    (i -1) 22,~17
    (f +64)) 11,~4
   (params 1
-   (param :x.13 . . 12 MyObject.0.I76zger.tho8gh7q4 .)) ~12,~4 . ~12,~4 . ~12,~4 . ~10,~3
+   (param :x.13 . . 12 MyObject.0.I76zger. .)) ~12,~4 . ~12,~4 . ~12,~4 . ~10,~3
   (stmts
    (discard .))) 20,36
- (type :MyObject.0.I76zger.tho8gh7q4 .
-  (at MyObject.0.tho8gh7q4 9
+ (type :MyObject.0.I76zger. .
+  (at MyObject.0. 9
    (i -1) 14
    (f +64)) ~3,~32 . ~1,~32
   (object . ~15,1
-   (fld :x.1.I76zger.tho8gh7q4 . . 6
+   (fld :x.1.I76zger. . . 6
     (i -1) .) ~12,1
-   (fld :y.1.I76zger.tho8gh7q4 . . 3
+   (fld :y.1.I76zger. . . 3
     (i -1) .))) 21,38
- (type :MyObject.0.I3kvyeb.tho8gh7q4 .
-  (at MyObject.0.tho8gh7q4 9
+ (type :MyObject.0.I3kvyeb. .
+  (at MyObject.0. 9
    (f +64) 16
    (i -1)) ~4,~34 . ~2,~34
   (object . ~15,1
-   (fld :x.1.I3kvyeb.tho8gh7q4 . . 6
+   (fld :x.1.I3kvyeb. . . 6
     (i -1) .) ~12,1
-   (fld :y.1.I3kvyeb.tho8gh7q4 . . 3
+   (fld :y.1.I3kvyeb. . . 3
     (i -1) .))) ,32
- (proc :=destroy.2.tho8gh7q4 . .
-  (at =destroy.1.tho8gh7q4 29,4
+ (proc :=destroy.2. . .
+  (at =destroy.1. 29,4
    (i -1) 34,4
    (f +64)) 21
   (params 1
-   (param :x.22 . . 11 MyObject.0.I76zger.tho8gh7q4 .)) . . . 2,1
+   (param :x.22 . . 11 MyObject.0.I76zger. .)) . . . 2,1
   (stmts 4
    (let :x.23 . . 4,~31
     (i -1) 4 +12))) ,22
- (proc :=wasMoved.2.tho8gh7q4 . .
-  (at =wasMoved.1.tho8gh7q4 29,14
+ (proc :=wasMoved.2. . .
+  (at =wasMoved.1. 29,14
    (i -1) 34,14
    (f +64)) 22
   (params 1
    (param :x.24 . . 3
-    (mut 12 MyObject.0.I76zger.tho8gh7q4) .)) . . . 2,1
+    (mut 12 MyObject.0.I76zger.) .)) . . . 2,1
   (stmts 4
    (let :x.25 . . 4,~21
     (i -1) 4 +12) 4,1
    (let :y.9 . . 4,~22
     (i -1) 4 +4))) ,26
- (proc :=copy.2.tho8gh7q4 . .
-  (at =copy.1.tho8gh7q4 29,10
+ (proc :=copy.2. . .
+  (at =copy.1. 29,10
    (i -1) 34,10
    (f +64)) 18
   (params 1
    (param :x.26 . . 3
-    (mut 12 MyObject.0.I76zger.tho8gh7q4) .) 24
-   (param :y.10 . . 11 MyObject.0.I76zger.tho8gh7q4 .)) . . . 2,1
+    (mut 12 MyObject.0.I76zger.) .) 24
+   (param :y.10 . . 11 MyObject.0.I76zger. .)) . . . 2,1
   (stmts
    (discard .))) ,29
- (proc :=sink.2.tho8gh7q4 . .
-  (at =sink.1.tho8gh7q4 29,7
+ (proc :=sink.2. . .
+  (at =sink.1. 29,7
    (i -1) 34,7
    (f +64)) 18
   (params 1
    (param :x.27 . . 3
-    (mut 12 MyObject.0.I76zger.tho8gh7q4) .) 24
-   (param :y.11 . . 11 MyObject.0.I76zger.tho8gh7q4 .)) . . . 2,1
+    (mut 12 MyObject.0.I76zger.) .) 24
+   (param :y.11 . . 11 MyObject.0.I76zger. .)) . . . 2,1
   (stmts
    (discard .))) ,32
- (proc :=destroy.3.tho8gh7q4 . .
-  (at =destroy.1.tho8gh7q4 30,6
+ (proc :=destroy.3. . .
+  (at =destroy.1. 30,6
    (f +64) 37,6
    (i -1)) 21
   (params 1
-   (param :x.28 . . 11 MyObject.0.I3kvyeb.tho8gh7q4 .)) . . . 2,1
+   (param :x.28 . . 11 MyObject.0.I3kvyeb. .)) . . . 2,1
   (stmts 4
    (let :x.29 . . 4,~31
     (i -1) 4 +12))) ,22
- (proc :=wasMoved.3.tho8gh7q4 . .
-  (at =wasMoved.1.tho8gh7q4 30,16
+ (proc :=wasMoved.3. . .
+  (at =wasMoved.1. 30,16
    (f +64) 37,16
    (i -1)) 22
   (params 1
    (param :x.30 . . 3
-    (mut 12 MyObject.0.I3kvyeb.tho8gh7q4) .)) . . . 2,1
+    (mut 12 MyObject.0.I3kvyeb.) .)) . . . 2,1
   (stmts 4
    (let :x.31 . . 4,~21
     (i -1) 4 +12) 4,1
    (let :y.12 . . 4,~22
     (i -1) 4 +4))) ,26
- (proc :=copy.3.tho8gh7q4 . .
-  (at =copy.1.tho8gh7q4 30,12
+ (proc :=copy.3. . .
+  (at =copy.1. 30,12
    (f +64) 37,12
    (i -1)) 18
   (params 1
    (param :x.32 . . 3
-    (mut 12 MyObject.0.I3kvyeb.tho8gh7q4) .) 24
-   (param :y.13 . . 11 MyObject.0.I3kvyeb.tho8gh7q4 .)) . . . 2,1
+    (mut 12 MyObject.0.I3kvyeb.) .) 24
+   (param :y.13 . . 11 MyObject.0.I3kvyeb. .)) . . . 2,1
   (stmts
    (discard .))) ,29
- (proc :=sink.3.tho8gh7q4 . .
-  (at =sink.1.tho8gh7q4 30,9
+ (proc :=sink.3. . .
+  (at =sink.1. 30,9
    (f +64) 37,9
    (i -1)) 18
   (params 1
    (param :x.33 . . 3
-    (mut 12 MyObject.0.I3kvyeb.tho8gh7q4) .) 24
-   (param :y.14 . . 11 MyObject.0.I3kvyeb.tho8gh7q4 .)) . . . 2,1
+    (mut 12 MyObject.0.I3kvyeb.) .) 24
+   (param :y.14 . . 11 MyObject.0.I3kvyeb. .)) . . . 2,1
   (stmts
-   (discard .))))
+   (discard .))))0,1,tests/nimony/sysbasics/thooks.nim(index 15,1
+ (kv MyObjectBase.0. +86) 4,2
+ (kv x.0. +54) 7,2
+ (kv y.0. +40) 17,4
+ (kv MyObject.0. +41) 11,4
+ (kv T.0. +43) 14,4
+ (kv Y.0. +29) 4,5
+ (kv x.1. +50) 7,5
+ (kv y.1. +40) ,7
+ (kv =trace.0. +39) ,10
+ (kv =wasMoved.0. +175) ,13
+ (kv =copy.0. +137) ,16
+ (kv =sink.0. +176) ,19
+ (kv =destroy.0. +176) ,22
+ (kv =wasMoved.1. +124) 17,22
+ (kv T.1. +44) 20,22
+ (kv Y.1. +29) ,26
+ (kv =copy.1. +221) 13,26
+ (kv T.2. +40) 16,26
+ (kv Y.2. +29) ,29
+ (kv =sink.1. +226) 13,29
+ (kv T.3. +40) 16,29
+ (kv Y.3. +29) ,32
+ (kv =destroy.1. +226) 16,32
+ (kv T.4. +43) 19,32
+ (kv Y.4. +29) ,35
+ (kv foo.0. +170) ,49
+ (kv =checkHook.0. +1087) 18,49
+ (kv T.5. +45) 21,49
+ (kv Y.5. +29) 4,52
+ (kv obj.0. +148) 12,53
+ (kv =checkHook.1. +546) 20,36
+ (kv MyObject.0.I76zger. +220) 4,5
+ (kv x.1.I76zger. +109) 7,5
+ (kv y.1.I76zger. +48) 21,38
+ (kv MyObject.0.I3kvyeb. +50) 4,5
+ (kv x.1.I3kvyeb. +109) 7,5
+ (kv y.1.I3kvyeb. +48) ,32
+ (kv =destroy.2. +48) ,22
+ (kv =wasMoved.2. +205) ,26
+ (kv =copy.2. +265) ,29
+ (kv =sink.2. +233) ,32
+ (kv =destroy.3. +231) ,22
+ (kv =wasMoved.3. +205) ,26
+ (kv =copy.3. +266) ,29
+ (kv =sink.3. +233))

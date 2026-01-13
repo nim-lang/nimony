@@ -1,61 +1,70 @@
-(.nif24)
+(.nif26)
+(.indexat +1370            )
 0,1,tests/nimony/nosystem/tbinarytree.nim(stmts 5
- (type :int.0.tbimvo1d9
+ (type :int.0.
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 10,3
- (type ~8 :NodeObj.0.tbimvo1d9 . . . 2
+ (type ~8 :NodeObj.0. . . . 2
   (object . ~8,1
-   (fld :data.0.tbimvo1d9 . . 6
+   (fld :data.0. . . 6
     (i -1) .) ~8,2
-   (fld :left.0.tbimvo1d9 . . 5,1
-    (ref 4 NodeObj.0.tbimvo1d9) .) ~2,2
-   (fld :right.0.tbimvo1d9 . . ~1,1
-    (ref 4 NodeObj.0.tbimvo1d9) .))) 7,6
- (type ~5 :Node.0.tbimvo1d9 . . . 2
-  (ref 4 NodeObj.0.tbimvo1d9)) 4,8
- (gvar :x.0.tbimvo1d9 . . 5,~2
-  (ref 4 NodeObj.0.tbimvo1d9) 8
+   (fld :left.0. . . 5,1
+    (ref 4 NodeObj.0.) .) ~2,2
+   (fld :right.0. . . ~1,1
+    (ref 4 NodeObj.0.) .))) 7,6
+ (type ~5 :Node.0. . . . 2
+  (ref 4 NodeObj.0.)) 4,8
+ (gvar :x.0. . . 5,~2
+  (ref 4 NodeObj.0.) 8
   (newobj ~3,~2
-   (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~4 data.0.tbimvo1d9 2 +123) 16
-   (kv ~4 left.0.tbimvo1d9 2
+   (ref 4 NodeObj.0.) 5
+   (kv ~4 data.0. 2 +123) 16
+   (kv ~4 left.0. 2
     (nil)) 28
-   (kv ~5 right.0.tbimvo1d9 2
+   (kv ~5 right.0. 2
     (nil)))) 7,9
  (asgn ~6
-  (ddot ~1 x.0.tbimvo1d9 data.0.tbimvo1d9 +0) 2 +456) 7,10
+  (ddot ~1 x.0. data.0. +0) 2 +456) 7,10
  (asgn ~6
-  (ddot ~1 x.0.tbimvo1d9 left.0.tbimvo1d9 +0) 6
+  (ddot ~1 x.0. left.0. +0) 6
   (newobj ~4,~4
-   (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~4 data.0.tbimvo1d9 2 +123) 16
-   (kv ~4 left.0.tbimvo1d9 2
+   (ref 4 NodeObj.0.) 5
+   (kv ~4 data.0. 2 +123) 16
+   (kv ~4 left.0. 2
     (nil)) 28
-   (kv ~5 right.0.tbimvo1d9 2
+   (kv ~5 right.0. 2
     (nil)))) 8,11
  (asgn ~7
-  (ddot ~1 x.0.tbimvo1d9 right.0.tbimvo1d9 +0) 2
+  (ddot ~1 x.0. right.0. +0) 2
   (nil)) 13,12
  (asgn ~7
   (ddot ~5
-   (ddot ~1 x.0.tbimvo1d9 left.0.tbimvo1d9 +0) right.0.tbimvo1d9 +0) 2
+   (ddot ~1 x.0. left.0. +0) right.0. +0) 2
   (nil)) 4,13
- (gvar :y.0.tbimvo1d9 . . 5,~7
-  (ref 4 NodeObj.0.tbimvo1d9) 8
+ (gvar :y.0. . . 5,~7
+  (ref 4 NodeObj.0.) 8
   (newobj ~3,~7
-   (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~4 data.0.tbimvo1d9 2 +987) 16
-   (kv ~4 left.0.tbimvo1d9 2
+   (ref 4 NodeObj.0.) 5
+   (kv ~4 data.0. 2 +987) 16
+   (kv ~4 left.0. 2
     (nil)) 28
-   (kv ~5 right.0.tbimvo1d9 2
+   (kv ~5 right.0. 2
     (nil)))) 12,14
  (asgn ~6
   (ddot ~5
-   (ddot ~1 x.0.tbimvo1d9 left.0.tbimvo1d9 +0) left.0.tbimvo1d9 +0) 15
+   (ddot ~1 x.0. left.0. +0) left.0. +0) 15
   (newobj ~18,~8
-   (ref 4 NodeObj.0.tbimvo1d9) 5
-   (kv ~4 data.0.tbimvo1d9 2 -123) 17
-   (kv ~4 left.0.tbimvo1d9 2 y.0.tbimvo1d9) 27
-   (kv ~5 right.0.tbimvo1d9 2 y.0.tbimvo1d9))) 10,4
- (comment int.0.tbimvo1d9))
+   (ref 4 NodeObj.0.) 5
+   (kv ~4 data.0. 2 -123) 17
+   (kv ~4 left.0. 2 y.0.) 27
+   (kv ~5 right.0. 2 y.0.))) 10,4
+ (comment int.0.))0,1,tests/nimony/nosystem/tbinarytree.nim(index 5
+ (kv int.0. +87) 10,3
+ (kv NodeObj.0. +67) 4,4
+ (kv data.0. +47) 4,5
+ (kv left.0. +42) 10,5
+ (kv right.0. +56) 7,6
+ (kv Node.0. +59) 4,8
+ (kv x.0. +53) 4,13
+ (kv y.0. +554))

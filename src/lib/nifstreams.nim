@@ -266,6 +266,23 @@ proc typebits*(n: PackedToken): int =
   else:
     result = 0
 
+proc emitLineInfo(b: var Builder; info, parentInfo: PackedLineInfo) =
+  let rawInfo = unpack(pool.man, info)
+  let file = rawInfo.file
+  var line = rawInfo.line
+  var col = rawInfo.col
+  if file.isValid:
+    var fileAsStr = ""
+    if parentInfo.isValid:
+      let pRawInfo = unpack(pool.man, parentInfo)
+      if file != pRawInfo.file: fileAsStr = pool.files[file]
+      if fileAsStr.len == 0:
+        line = line - pRawInfo.line
+        col = col - pRawInfo.col
+    else:
+      fileAsStr = pool.files[file]
+    b.addLineInfo(col, line, fileAsStr)
+
 proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
   var b = nifbuilder.open(tree.len * 20)
   var stack: seq[PackedLineInfo] = @[]
@@ -273,22 +290,7 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
     let info = tree[n].info
     let k = tree[n].kind
     if produceLineInfo and info.isValid and k != ParRi:
-      let rawInfo = unpack(pool.man, info)
-      let file = rawInfo.file
-      var line = rawInfo.line
-      var col = rawInfo.col
-      if file.isValid:
-        var fileAsStr = ""
-        if stack.len > 0:
-          let pRawInfo = unpack(pool.man, stack[^1])
-          if file != pRawInfo.file: fileAsStr = pool.files[file]
-          if fileAsStr.len == 0:
-            line = line - pRawInfo.line
-            col = col - pRawInfo.col
-        else:
-          fileAsStr = pool.files[file]
-        b.addLineInfo(col, line, fileAsStr)
-
+      emitLineInfo(b, info, if stack.len > 0: stack[^1] else: NoLineInfo)
     case k
     of DotToken:
       b.addEmpty()
@@ -320,3 +322,64 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
       b.addTree(pool.tags[tree[n].tagId])
       stack.add info
   result = b.extract()
+
+proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLineInfo = true): string =
+  ## Like `toString` but produces a full file including the header and an index.
+  var b = nifbuilder.open(tree.len * 20)
+  let patchPos = b.addHeader26()
+  var stack: seq[PackedLineInfo] = @[]
+  var mostRecentOffset = 0
+  var previousOffset = 0
+  var index = nifbuilder.open(tree.len * 2)
+  if tree.len > 0:
+    index.emitLineInfo(tree[0].info, NoLineInfo)
+  index.addTree "index"
+  for n in 0 ..< tree.len:
+    let info = tree[n].info
+    let k = tree[n].kind
+    if produceLineInfo and info.isValid and k != ParRi:
+      emitLineInfo(b, info, if stack.len > 0: stack[^1] else: NoLineInfo)
+    case k
+    of DotToken:
+      b.addEmpty()
+    of Ident:
+      b.addIdent(pool.strings[tree[n].litId])
+    of Symbol:
+      b.addSymbol(pool.syms[tree[n].symId], dottedSuffix)
+    of IntLit:
+      b.addIntLit(pool.integers[tree[n].intId])
+    of UIntLit:
+      b.addUIntLit(pool.uintegers[tree[n].uintId])
+    of FloatLit:
+      b.addFloatLit(pool.floats[tree[n].floatId])
+    of SymbolDef:
+      let symId = tree[n].symId
+      if b.addSymbolDefRetIsGlobal(pool.syms[symId], dottedSuffix):
+        # we need to emit the line information for `kv` entry so that it can stay in sync:
+        emitLineInfo(index, stack[^1], tree[0].info)
+        index.addTree "kv"
+        index.addSymbol(pool.syms[symId], dottedSuffix)
+        index.addIntLit(mostRecentOffset - previousOffset)
+        previousOffset = mostRecentOffset
+        index.endTree()
+    of CharLit:
+      b.addCharLit char(tree[n].uoperand)
+    of StringLit:
+      b.addStrLit(pool.strings[tree[n].litId])
+    of UnknownToken:
+      b.addIdent "<unknown token>"
+    of EofToken:
+      b.addIntLit tree[n].soperand
+    of ParRi:
+      if stack.len > 0:
+        discard stack.pop()
+      b.endTree()
+    of ParLe:
+      mostRecentOffset = b.offset
+      b.addTree(pool.tags[tree[n].tagId])
+      stack.add info
+
+  b.patchIndexAt(patchPos, b.offset)
+  result = b.extract()
+  index.endTree()
+  result.add index.extract()

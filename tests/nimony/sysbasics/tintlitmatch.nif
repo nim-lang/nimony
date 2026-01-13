@@ -1,48 +1,49 @@
-(.nif24)
+(.nif26)
+(.indexat +2064            )
 0,1,tests/nimony/sysbasics/tintlitmatch.nim(stmts
- (proc 5 :foo.0.tin4pj0od1 . . . 8
+ (proc 5 :foo.0. . . . 8
   (params 1
    (param :x.0 . . 3
     (i +16) .)) . . . 21
   (stmts
    (discard .))) ,1
- (proc 5 :bar.0.tin4pj0od1 . . . 8
+ (proc 5 :bar.0. . . . 8
   (params 1
    (param :x.1 . . 3
     (f +64) .)) . . . 21
   (stmts
    (discard .))) 3,2
- (call ~3 foo.0.tin4pj0od1 1
+ (call ~3 foo.0. 1
   (hconv 8,~2
    (i +16) +123)) 3,3
- (call ~3 bar.0.tin4pj0od1 1
+ (call ~3 bar.0. 1
   (hconv 8,~2
    (f +64) +123)) ,4
- (proc 5 :baz.0.tin4pj0od1 . . . 8
+ (proc 5 :baz.0. . . . 8
   (params 1
    (param :x.2 . . 3
     (i +16) .)) . . . 21
   (stmts
    (discard .))) ,5
- (proc 5 :baz.1.tin4pj0od1 . . . 8
+ (proc 5 :baz.1. . . . 8
   (params 1
    (param :x.3 . . 3
     (i -1) .)) . . . 19
   (stmts
    (discard .))) 3,6
- (call ~3 baz.1.tin4pj0od1 1 +123) 4,9
- (gvar :x.0.tin4pj0od1 . . 3
+ (call ~3 baz.1. 1 +123) 4,9
+ (gvar :x.0. . . 3
   (i +32) .) 4,10
- (gvar :y.0.tin4pj0od1 . . 3
+ (gvar :y.0. . . 3
   (i -1) .) ,13
  (discard 10
   (eq
    (i +64) ~2
    (hconv 17,69,lib/std/system/comparisons.nim
-    (i +64) x.0.tin4pj0od1) 3 y.0.tin4pj0od1)) ,14
+    (i +64) x.0.) 3 y.0.)) ,14
  (discard 10
   (eq
-   (i +64) ~2 y.0.tin4pj0od1 6
+   (i +64) ~2 y.0. 6
    (hconv 17,69,lib/std/system/comparisons.nim
     (i +64)
     (conv 1
@@ -53,7 +54,7 @@
    (hconv 17,69,lib/std/system/comparisons.nim
     (i +64)
     (conv 6,~1
-     (i +32) ~3 +123)) 3 y.0.tin4pj0od1)) ,16
+     (i +32) ~3 +123)) 3 y.0.)) ,16
  (discard 16
   (eq
    (i +64) ~5
@@ -84,7 +85,13 @@
     (i +32) ~3 +123))) ,22
  (discard 10
   (eq
-   (i +32) ~2 x.0.tin4pj0od1 3
+   (i +32) ~2 x.0. 3
    (hconv 17,68,lib/std/system/comparisons.nim
     (i +32) +123))) 12
- (comment int16.0.sysvq0asl ,1 float.0.sysvq0asl ,4 int16.0.sysvq0asl ,5 int.0.sysvq0asl ~5,9 int32.0.sysvq0asl ~5,10 int.0.sysvq0asl 5,14 int32.0.sysvq0asl ,15 int32.0.sysvq0asl ,16 int.0.sysvq0asl 11,16 int.0.sysvq0asl ,17 int32.0.sysvq0asl 13,17 int32.0.sysvq0asl ,20 int32.0.sysvq0asl 7,21 int32.0.sysvq0asl))
+ (comment int16.0.sysvq0asl ,1 float.0.sysvq0asl ,4 int16.0.sysvq0asl ,5 int.0.sysvq0asl ~5,9 int32.0.sysvq0asl ~5,10 int.0.sysvq0asl 5,14 int32.0.sysvq0asl ,15 int32.0.sysvq0asl ,16 int.0.sysvq0asl 11,16 int.0.sysvq0asl ,17 int32.0.sysvq0asl 13,17 int32.0.sysvq0asl ,20 int32.0.sysvq0asl 7,21 int32.0.sysvq0asl))0,1,tests/nimony/sysbasics/tintlitmatch.nim(index
+ (kv foo.0. +87) ,1
+ (kv bar.0. +112) ,4
+ (kv baz.0. +222) ,5
+ (kv baz.1. +112) 4,9
+ (kv x.0. +141) 4,10
+ (kv y.0. +37))

@@ -1,11 +1,12 @@
-(.nif24)
+(.nif26)
+(.indexat +8826            )
 0,1,tests/nimony/sysbasics/tbasics.nim(stmts 8,3
- (type ~6 :Array.0.tbawx6nu81 . . . 7
+ (type ~6 :Array.0. . . . 7
   (array 4
    (i -1)
    (rangetype
     (i -1) +0 +4))) 4,5
- (gvar :s.0.tbawx6nu81 . . 4
+ (gvar :s.0. . . 4
   (array
    (i -1)
    (rangetype
@@ -15,12 +16,12 @@
     (i -1)
     (rangetype
      (i -1) +0 +2)) 1 +1 4 +2 7 +3)) 4,6
- (gvar :s2.0.tbawx6nu81 . . 11,~3
+ (gvar :s2.0. . . 11,~3
   (array 4
    (i -1)
    (rangetype
     (i -1) +0 +4)) .) 4,7
- (gvar :s3.0.tbawx6nu81 . . 11,~4
+ (gvar :s3.0. . . 11,~4
   (array 4
    (i -1)
    (rangetype
@@ -30,7 +31,7 @@
     (i -1)
     (rangetype
      (i -1) +0 +4)) 1 +1 4 +2 7 +3 10 +4 13 +5)) ,9
- (proc 5 :foo.0.tbawx6nu81 . . . 9
+ (proc 5 :foo.0. . . . 9
   (params) . . . 2,1
   (stmts 4
    (var :x.2 . . 2,~5
@@ -53,8 +54,8 @@
       (i -1)
       (rangetype
        (i -1) +0 +3)) 1 +5 4 +6 7 +7 10 +8)))) 3,13
- (call ~3 foo.0.tbawx6nu81) ,15
- (proc 5 :foo2.0.tbawx6nu81 . . . 9
+ (call ~3 foo.0.) ,15
+ (proc 5 :foo2.0. . . . 9
   (params 1
    (param :m.0 . . 3
     (i -1) .)) . . . 2,1
@@ -101,8 +102,8 @@
       (tuple 1,~3
        (i -1)
        (i -1))) 1 y.0 4 s.1 7 m1.0)))) 4,22
- (call ~4 foo2.0.tbawx6nu81 1 +12) ,24
- (proc 5 :foo3.0.tbawx6nu81 . . . 9
+ (call ~4 foo2.0. 1 +12) ,24
+ (proc 5 :foo3.0. . . . 9
   (params 1
    (param :x.0 . . 3
     (pointer) .)) . . . 2,1
@@ -126,47 +127,47 @@
     (ptr 4
      (i -1)) 9
     (addr s.2)) 4,2
-   (call ~4 foo3.0.tbawx6nu81 1
+   (call ~4 foo3.0. 1
     (hconv 6,~8
      (pointer) m.3)) 4,3
    (let :m2.0 . . 7,~9
     (pointer) 5
     (cast 5
      (pointer) 14 m.3)) 4,4
-   (call ~4 foo3.0.tbawx6nu81 1 m2.0))) 10,37
- (type ~8 :Foo1314.0.tbawx6nu81 . . . 2
+   (call ~4 foo3.0. 1 m2.0))) 10,37
+ (type ~8 :Foo1314.0. . . . 2
   (object . ~8,1
-   (fld :a.0.tbawx6nu81 . . 15
+   (fld :a.0. . . 15
     (i -1) .) ~5,1
-   (fld :b.0.tbawx6nu81 . . 12
+   (fld :b.0. . . 12
     (i -1) .) ~2,1
-   (fld :c.0.tbawx6nu81 . . 9
+   (fld :c.0. . . 9
     (i -1) .) 1,1
-   (fld :d.0.tbawx6nu81 . . 6
+   (fld :d.0. . . 6
     (i -1) .) 4,1
-   (fld :e.0.tbawx6nu81 . . 3
+   (fld :e.0. . . 3
     (i -1) .))) ,41
- (proc 5 :foo1314.0.tbawx6nu81 . . . 12
+ (proc 5 :foo1314.0. . . . 12
   (params 1
-   (param :x.1 . . 3 Foo1314.0.tbawx6nu81 .)) . . . 2,1
+   (param :x.1 . . 3 Foo1314.0. .)) . . . 2,1
   (stmts 4
    (let :s.3 . . 13,~4
     (i -1) 5
-    (dot ~1 x.1 a.0.tbawx6nu81 +0)))) 4,44
- (gvar :a.1.tbawx6nu81 . . 12,~3 Foo1314.0.tbawx6nu81 11
-  (oconstr 1,~3 Foo1314.0.tbawx6nu81
-   (kv a.0.tbawx6nu81 43,6,lib/std/system/defaults.nim
+    (dot ~1 x.1 a.0. +0)))) 4,44
+ (gvar :a.1. . . 12,~3 Foo1314.0. 11
+  (oconstr 1,~3 Foo1314.0.
+   (kv a.0. 43,6,lib/std/system/defaults.nim
     (expr +0))
-   (kv b.0.tbawx6nu81 43,6,lib/std/system/defaults.nim
+   (kv b.0. 43,6,lib/std/system/defaults.nim
     (expr +0))
-   (kv c.0.tbawx6nu81 43,6,lib/std/system/defaults.nim
+   (kv c.0. 43,6,lib/std/system/defaults.nim
     (expr +0))
-   (kv d.0.tbawx6nu81 43,6,lib/std/system/defaults.nim
+   (kv d.0. 43,6,lib/std/system/defaults.nim
     (expr +0))
-   (kv e.0.tbawx6nu81 43,6,lib/std/system/defaults.nim
+   (kv e.0. 43,6,lib/std/system/defaults.nim
     (expr +0)))) 7,45
- (call ~7 foo1314.0.tbawx6nu81 1 a.1.tbawx6nu81) ,47
- (proc 5 :foo2233.0.tbawx6nu81 . . . 12
+ (call ~7 foo1314.0. 1 a.1.) ,47
+ (proc 5 :foo2233.0. . . . 12
   (params) . 15
   (pragmas 2
    (nimcall)) . 2,1
@@ -181,8 +182,8 @@
      (params) . 3
      (pragmas 2
       (nimcall)) . .) .))) 7,53
- (call ~7 foo2233.0.tbawx6nu81) ,55
- (proc 5 :basictuple.0.tbawx6nu81 . . . 15
+ (call ~7 foo2233.0.) ,55
+ (proc 5 :basictuple.0. . . . 15
   (params) . . . 2,1
   (stmts 4
    (var :t.0 . . 3
@@ -216,13 +217,13 @@
     (tupat t.0 2 +0)) ,5
    (discard 8
     (tupat t.0 2 +1)))) 10,63
- (call ~10 basictuple.0.tbawx6nu81) ,65
+ (call ~10 basictuple.0.) ,65
  (discard 8 "11223") ,67
  (discard 8
   (suf "  dw3euuyghid23u23dhiw\0A" "T")) ,71
  (discard 8
   (suf "136t54321" "T")) ,75
- (proc 5 :classify1.0.tbawx6nu81 . . . 14
+ (proc 5 :classify1.0. . . . 14
   (params 1
    (param :s.0 . . 3 string.0.sysvq0asl .)) . . . 2,1
   (stmts 2,122,lib/std/syncio.nim
@@ -230,10 +231,10 @@
     (stmts
      (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 7,77,tests/nimony/sysbasics/tbasics.nim s.0)) ,2
     (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 9,78
- (call ~9 classify1.0.tbawx6nu81 1 "9123345") ,81
+ (call ~9 classify1.0. 1 "9123345") ,81
  (block . 2,1
   (stmts
-   (proc 5 :classify.0.tbawx6nu81 . . . 13
+   (proc 5 :classify.0. . . . 13
     (params 1
      (param :s.4 . . 3 string.0.sysvq0asl .)) . . . 2,1
     (stmts 2,122,lib/std/syncio.nim
@@ -241,10 +242,10 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,84,tests/nimony/sysbasics/tbasics.nim s.4)) ,2
       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
-   (call ~8 classify.0.tbawx6nu81 1 "9123345") ,4
+   (call ~8 classify.0. 1 "9123345") ,4
    (block . 2,1
     (stmts
-     (proc 5 :classify2.0.tbawx6nu81 . . . 14
+     (proc 5 :classify2.0. . . . 14
       (params 1
        (param :s.5 . . 3 string.0.sysvq0asl .)) . . . 2,1
       (stmts 2,122,lib/std/syncio.nim
@@ -252,10 +253,10 @@
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,89,tests/nimony/sysbasics/tbasics.nim s.5)) ,2
         (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 9,3
-     (call ~9 classify2.0.tbawx6nu81 1 "9123345"))))) ,92
+     (call ~9 classify2.0. 1 "9123345"))))) ,92
  (block . 2,1
   (stmts
-   (proc 5 :classify2.1.tbawx6nu81 . . . 14
+   (proc 5 :classify2.1. . . . 14
     (params 1
      (param :s.6 . . 3 string.0.sysvq0asl .)) . . . 2,1
     (stmts 2,122,lib/std/syncio.nim
@@ -263,10 +264,10 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,95,tests/nimony/sysbasics/tbasics.nim s.6)) ,2
       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 9,3
-   (call ~9 classify2.1.tbawx6nu81 1 "9123345"))) ,98
+   (call ~9 classify2.1. 1 "9123345"))) ,98
  (block . 2,1
   (stmts
-   (proc 5 :classify.1.tbawx6nu81 . . . 13
+   (proc 5 :classify.1. . . . 13
     (params 1
      (param :s.7 . . 3 string.0.sysvq0asl .)) . . . 2,1
     (stmts 2,122,lib/std/syncio.nim
@@ -274,12 +275,12 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,101,tests/nimony/sysbasics/tbasics.nim s.7)) ,2
       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
-   (call ~8 classify.1.tbawx6nu81 1 "9123345"))) ,104
+   (call ~8 classify.1. 1 "9123345"))) ,104
  (block . 2,1
   (stmts
    (block . 2,1
     (stmts
-     (proc 5 :classify.2.tbawx6nu81 . . . 13
+     (proc 5 :classify.2. . . . 13
       (params 1
        (param :s.8 . . 3 string.0.sysvq0asl .)) . . . 2,1
       (stmts 2,122,lib/std/syncio.nim
@@ -287,11 +288,11 @@
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,108,tests/nimony/sysbasics/tbasics.nim s.8)) ,2
         (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
-     (call ~8 classify.2.tbawx6nu81 1 "9123345"))))) ,111
- (proc 5 :foo2.1.tbawx6nu81 . . . 9
+     (call ~8 classify.2. 1 "9123345"))))) ,111
+ (proc 5 :foo2.1. . . . 9
   (params) . . . 2,1
   (stmts
-   (proc 5 :classify.3.tbawx6nu81 . . . 13
+   (proc 5 :classify.3. . . . 13
     (params 1
      (param :s.9 . . 3 string.0.sysvq0asl .)) . . . 2,1
     (stmts 2,122,lib/std/syncio.nim
@@ -299,9 +300,9 @@
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,114,tests/nimony/sysbasics/tbasics.nim s.9)) ,2
       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 8,3
-   (call ~8 classify.3.tbawx6nu81 1 "9123345"))) 4,117
- (call ~4 foo2.1.tbawx6nu81) ,119
- (proc 5 :bar.0.tbawx6nu81 . . . 8
+   (call ~8 classify.3. 1 "9123345"))) 4,117
+ (call ~4 foo2.1.) ,119
+ (proc 5 :bar.0. . . . 8
   (params) 4 string.0.sysvq0asl . . 2,1
   (stmts
    (result :result.0 . . 16,~45 string.0.sysvq0asl .)
@@ -315,7 +316,7 @@
    (elif
     (not 13,123,tests/nimony/sysbasics/tbasics.nim
      (infix ==.20.sysvq0asl ~3
-      (call ~3 bar.0.tbawx6nu81) 3 "1212334")) ~1,1
+      (call ~3 bar.0.) 3 "1212334")) ~1,1
     (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
@@ -324,4 +325,30 @@
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 10,3
- (comment array.0.sysvq0asl 9 int.0.sysvq0asl 3,12 int.0.sysvq0asl 3,21 pointer.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl ~1,7 array.0.sysvq0asl 8,7 int.0.sysvq0asl 10,23 int.0.sysvq0asl 6,30 pointer.0.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl ,53 int.0.sysvq0asl 5,53 int.0.sysvq0asl ~8,73 echo.0.syn1lfpjv ~6,80 echo.0.syn1lfpjv ~4,85 echo.0.syn1lfpjv ~6,91 echo.0.syn1lfpjv ~6,97 echo.0.syn1lfpjv ~4,104 echo.0.syn1lfpjv ~6,110 echo.0.syn1lfpjv ~10,119 assert.0.assy765wm))
+ (comment array.0.sysvq0asl 9 int.0.sysvq0asl 3,12 int.0.sysvq0asl 3,21 pointer.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl ~1,7 array.0.sysvq0asl 8,7 int.0.sysvq0asl 10,23 int.0.sysvq0asl 6,30 pointer.0.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl ,53 int.0.sysvq0asl 5,53 int.0.sysvq0asl ~8,73 echo.0.syn1lfpjv ~6,80 echo.0.syn1lfpjv ~4,85 echo.0.syn1lfpjv ~6,91 echo.0.syn1lfpjv ~6,97 echo.0.syn1lfpjv ~4,104 echo.0.syn1lfpjv ~6,110 echo.0.syn1lfpjv ~10,119 assert.0.assy765wm))0,1,tests/nimony/sysbasics/tbasics.nim(index 8,3
+ (kv Array.0. +86) 4,5
+ (kv s.0. +87) 4,6
+ (kv s2.0. +161) 4,7
+ (kv s3.0. +85) ,9
+ (kv foo.0. +188) ,15
+ (kv foo2.0. +457) ,24
+ (kv foo3.0. +845) 10,37
+ (kv Foo1314.0. +614) 4,38
+ (kv a.0. +47) 7,38
+ (kv b.0. +40) 10,38
+ (kv c.0. +40) 13,38
+ (kv d.0. +38) 16,38
+ (kv e.0. +38) ,41
+ (kv foo1314.0. +40) 4,44
+ (kv a.1. +168) ,47
+ (kv foo2233.0. +404) ,55
+ (kv basictuple.0. +325) ,75
+ (kv classify1.0. +805) 2,82
+ (kv classify.0. +384) 4,87
+ (kv classify2.0. +402) 2,93
+ (kv classify2.1. +424) 2,99
+ (kv classify.1. +403) 4,106
+ (kv classify.2. +430) ,111
+ (kv foo2.1. +401) 2,112
+ (kv classify.3. +56) ,119
+ (kv bar.0. +405))

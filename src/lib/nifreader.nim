@@ -151,10 +151,15 @@ proc decodeStr*(r: Reader; t: Token): string =
       else:
         result.add ^p
         inc p
+    # Handle module suffix expansion after decoding escapes
+    if TokenHasModuleSuffixExpansion in t.flags:
+      assert r.thisModule.len > 0
+      result.add r.thisModule
   elif TokenHasModuleSuffixExpansion in t.flags:
+    assert r.thisModule.len > 0
     result = newString(t.data.len + r.thisModule.len)
     if t.data.len > 0:
-      copyMem(rawData result, t.data.p, t.data.len - 1)
+      copyMem(rawData result, t.data.p, t.data.len)
       copyMem(rawData(result) +! t.data.len, rawData(r.thisModule), r.thisModule.len)
   else:
     result = newString(t.data.len)
@@ -435,22 +440,25 @@ proc readDirectives(r: var Reader) =
     else:
       break
 
+proc extractModuleSuffix*(filename: string): string =
+  result = ""
+  var skip = false
+  for c in filename:
+    if c == '/' or c == '\\':
+      result.setLen 0
+      skip = false
+    elif c == '.':
+      skip = true
+    elif not skip:
+      result.add c
+
 proc open*(filename: string): Reader =
   let f = try:
       memfiles.open(filename)
     except:
       when defined(debug) and not defined(nimony): writeStackTrace()
       quit "[Error] cannot open: " & filename
-  result = Reader(f: f, p: nil)
-  var skip = false
-  for c in filename:
-    if c == '/' or c == '\\':
-      result.thisModule.setLen 0
-      skip = false
-    elif c == '.':
-      skip = true
-    elif not skip:
-      result.thisModule.add c
+  result = Reader(f: f, p: nil, thisModule: extractModuleSuffix(filename))
   result.p = cast[pchar](result.f.mem)
   result.eof = result.p +! result.f.size
   readDirectives result
@@ -480,8 +488,9 @@ proc indexStartsAt*(r: Reader): int =
   r.indexAt
 
 when isMainModule:
-  const test = r"(.nif24)(stmts :\5B\5D=)"
-  var r = openFromBuffer(test, "")
+  #const test = r"(.nif24)(stmts :\5B\5D=)"
+  const test = "nimcache/sysvq0asl.s.nif"
+  var r = open(test)
   while true:
     let tk = r.next()
     if tk.tk == EofToken: break

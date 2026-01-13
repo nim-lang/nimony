@@ -1,104 +1,123 @@
-(.nif24)
+(.nif26)
+(.indexat +2157            )
 0,3,tests/nimony/nosystem/tenumsizes.nim(stmts 7
- (type ~2 :A.0.tene657oj . . . 2
+ (type ~2 :A.0. . . . 2
   (enum
    (u +8) ~7,1
-   (efld :a0.0.tene657oj . . A.0.tene657oj
+   (efld :a0.0. . . A.0.
     (tup +0 "a0")) ~3,1
-   (efld :a1.0.tene657oj . . A.0.tene657oj
+   (efld :a1.0. . . A.0.
     (tup +1 "a1")) 1,1
-   (efld :a2.0.tene657oj . . A.0.tene657oj
+   (efld :a2.0. . . A.0.
     (tup +2 "a2")) 5,1
-   (efld :a3.0.tene657oj . . A.0.tene657oj
+   (efld :a3.0. . . A.0.
     (tup +3 "a3")))) 5
- (proc :dollar`.A.0.tene657oj x . .
+ (proc :dollar`.A.0. x . .
   (params
-   (param :e.0 . . A.0.tene657oj .)) string.0.sysvq0asl . .
+   (param :e.0 . . A.0. .)) string.0.sysvq0asl . .
   (stmts 4
    (result :result.0 . . string.0.sysvq0asl .) 4
    (case e.0 ~7,1
     (of
-     (ranges a0.0.tene657oj)
+     (ranges a0.0.)
      (stmts
       (ret "a0"))) ~3,1
     (of
-     (ranges a1.0.tene657oj)
+     (ranges a1.0.)
      (stmts
       (ret "a1"))) 1,1
     (of
-     (ranges a2.0.tene657oj)
+     (ranges a2.0.)
      (stmts
       (ret "a2"))) 5,1
     (of
-     (ranges a3.0.tene657oj)
+     (ranges a3.0.)
      (stmts
       (ret "a3"))))
    (ret result.0))) 7,2
- (type ~2 :B.0.tene657oj . . . 2
+ (type ~2 :B.0. . . . 2
   (onum
    (i +32) ~2,1
-   (efld ~5 :b0.0.tene657oj . . B.0.tene657oj
+   (efld ~5 :b0.0. . . B.0.
     (tup -1 "b0")) 2,1
-   (efld :b1.0.tene657oj . . B.0.tene657oj
+   (efld :b1.0. . . B.0.
     (tup +0 "b1")) 6,1
-   (efld :b2.0.tene657oj . . B.0.tene657oj
+   (efld :b2.0. . . B.0.
     (tup +1 "b2")) 15,1
-   (efld ~5 :b3.0.tene657oj . . B.0.tene657oj
+   (efld ~5 :b3.0. . . B.0.
     (tup +5 "b3")))) 5,2
- (proc :dollar`.B.0.tene657oj x . .
+ (proc :dollar`.B.0. x . .
   (params
-   (param :e.1 . . B.0.tene657oj .)) string.0.sysvq0asl . .
+   (param :e.1 . . B.0. .)) string.0.sysvq0asl . .
   (stmts 4
    (result :result.1 . . string.0.sysvq0asl .) 4
    (case e.1 ~2,1
     (of
-     (ranges ~5 b0.0.tene657oj)
+     (ranges ~5 b0.0.)
      (stmts
       (ret "b0"))) 2,1
     (of
-     (ranges b1.0.tene657oj)
+     (ranges b1.0.)
      (stmts
       (ret "b1"))) 6,1
     (of
-     (ranges b2.0.tene657oj)
+     (ranges b2.0.)
      (stmts
       (ret "b2"))) 15,1
     (of
-     (ranges ~5 b3.0.tene657oj)
+     (ranges ~5 b3.0.)
      (stmts
       (ret "b3"))))
    (ret result.1))) 7,4
- (type ~2 :C.0.tene657oj . . . 2
+ (type ~2 :C.0. . . . 2
   (onum
    (u +16) ~7,1
-   (efld :c0.0.tene657oj . . C.0.tene657oj
+   (efld :c0.0. . . C.0.
     (tup +0 "c0")) ~3,1
-   (efld :c1.0.tene657oj . . C.0.tene657oj
+   (efld :c1.0. . . C.0.
     (tup +1 "c1")) 6,1
-   (efld ~5 :c2.0.tene657oj . . C.0.tene657oj
+   (efld ~5 :c2.0. . . C.0.
     (tup +30000 "c2")) 14,1
-   (efld :c3.0.tene657oj . . C.0.tene657oj
+   (efld :c3.0. . . C.0.
     (tup +30001 "c3")))) 5,4
- (proc :dollar`.C.0.tene657oj x . .
+ (proc :dollar`.C.0. x . .
   (params
-   (param :e.2 . . C.0.tene657oj .)) string.0.sysvq0asl . .
+   (param :e.2 . . C.0. .)) string.0.sysvq0asl . .
   (stmts 4
    (result :result.2 . . string.0.sysvq0asl .) 4
    (case e.2 ~7,1
     (of
-     (ranges c0.0.tene657oj)
+     (ranges c0.0.)
      (stmts
       (ret "c0"))) ~3,1
     (of
-     (ranges c1.0.tene657oj)
+     (ranges c1.0.)
      (stmts
       (ret "c1"))) 6,1
     (of
-     (ranges ~5 c2.0.tene657oj)
+     (ranges ~5 c2.0.)
      (stmts
       (ret "c2"))) 14,1
     (of
-     (ranges c3.0.tene657oj)
+     (ranges c3.0.)
      (stmts
       (ret "c3"))))
-   (ret result.2))))
+   (ret result.2))))0,3,tests/nimony/nosystem/tenumsizes.nim(index 7
+ (kv A.0. +86) 2,1
+ (kv a0.0. +47) 6,1
+ (kv a1.0. +49) 10,1
+ (kv a2.0. +48) 14,1
+ (kv a3.0. +48) 5
+ (kv dollar`.A.0. +48) 7,2
+ (kv B.0. +440) 7,3
+ (kv b0.0. +48) 11,3
+ (kv b1.0. +51) 15,3
+ (kv b2.0. +48) 24,3
+ (kv b3.0. +49) 5,2
+ (kv dollar`.B.0. +53) 7,4
+ (kv C.0. +446) 2,5
+ (kv c0.0. +48) 6,5
+ (kv c1.0. +49) 15,5
+ (kv c2.0. +48) 23,5
+ (kv c3.0. +56) 5,4
+ (kv dollar`.C.0. +54))

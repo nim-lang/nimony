@@ -1,4 +1,5 @@
-(.nif24)
+(.nif26)
+(.indexat +614             )
 0,1,tests/nimony/nosystem/twhen.nim(stmts 2,3
  (stmts
   (discard 8 "good")) 2,10
@@ -10,7 +11,7 @@
   (discard 8 "good")) 2,25
  (stmts
   (discard 8 "good")) ,27
- (proc 5 :not.0.twho7opw81
+ (proc 5 :not.0.
   (not) . . 11
   (params 1
    (param :x.0 . . 3
@@ -22,4 +23,5 @@
   (discard 8 "good")) 2,35
  (stmts
   (discard 8 "good")) 5,2
- (comment true.0.mwhzgh6nt1 ,5 false.0.mwhzgh6nt1 ,10 isMainModule.0.mwhzgh6nt1 10,25 bool.0.mwhzgh6nt1 6,25 bool.0.mwhzgh6nt1 4,27 true.0.mwhzgh6nt1))
+ (comment true.0.mwhzgh6nt1 ,5 false.0.mwhzgh6nt1 ,10 isMainModule.0.mwhzgh6nt1 10,25 bool.0.mwhzgh6nt1 6,25 bool.0.mwhzgh6nt1 4,27 true.0.mwhzgh6nt1))0,1,tests/nimony/nosystem/twhen.nim(index ,27
+ (kv not.0. +257))
