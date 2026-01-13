@@ -672,6 +672,7 @@ proc lowerExprs*(n: Cursor; moduleSuffix: string; goal = ElimExprs): TokenBuf =
   #echo "PRODUCED: ", result.toString(false)
 
 when isMainModule:
-  let n = setupProgram("debug.txt", "debug.out")
+  var owningBuf = createTokenBuf(300)
+  let n = setupProgram("debug.txt", "debug.out", owningBuf)
   let r = lowerExprs(n, "main")
   echo r.toString(false)

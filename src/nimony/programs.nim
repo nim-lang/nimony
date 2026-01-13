@@ -14,7 +14,6 @@ type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
 
   NifModule = ref object
-    buf: TokenBuf
     stream: Stream
     index: NifIndex
 
@@ -36,7 +35,6 @@ var
 proc newNifModule(infile: string): NifModule =
   result = NifModule(stream: nifstreams.open(infile))
   discard processDirectives(result.stream.r)
-  result.buf = fromStream(result.stream)
 
 proc suffixToNif*(suffix: string): string {.inline.} =
   # always imported from semchecked files
@@ -306,7 +304,7 @@ proc publishStringType() =
 
   publish symId, str
 
-proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
+proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=false): Cursor =
   prog.main = splitModulePath(infile)
   let outp = splitModulePath(outfile)
   if prog.main.dir.len == 0:
@@ -322,7 +320,9 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
     m.index = readIndex(indexName)
 
   #echo "INPUT IS ", toString(m.buf)
-  result = beginRead(m.buf)
+  owningBuf = fromStream(m.stream)
+
+  result = beginRead(owningBuf)
   prog.mods[prog.main.name] = m
   publishStringType()
 
