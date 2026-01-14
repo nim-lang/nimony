@@ -335,7 +335,7 @@ proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLin
   var index = nifbuilder.open(tree.len * 2)
   if tree.len > 0:
     index.emitLineInfo(tree[0].info, NoLineInfo)
-  index.addTree "index"
+  index.addTree ".index"
   for n in 0 ..< tree.len:
     let info = tree[n].info
     let k = tree[n].kind

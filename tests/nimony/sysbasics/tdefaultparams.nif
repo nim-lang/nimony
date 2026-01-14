@@ -119,7 +119,7 @@
    (param :y.12 . . ~10,~16
     (i -1) 9 +7)) ~4,~18 . ~4,~18 . ~4,~18 . ~2,~17
   (stmts
-   (discard .))))0,1,tests/nimony/sysbasics/tdefaultparams.nim(index
+   (discard .))))0,1,tests/nimony/sysbasics/tdefaultparams.nim(.index
  (h foo1.0. +89) ,3
  (h foo2.0. +184) ,7
  (h foo3.0. +234) ,10

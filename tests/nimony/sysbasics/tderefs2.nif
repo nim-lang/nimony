@@ -163,7 +163,7 @@
     (mut ~2,~16
      (i -1)) .) 7
    (asgn ~7 result.7 2 x.14) ~2,~1
-   (ret result.7))))0,1,tests/nimony/sysbasics/tderefs2.nim(index
+   (ret result.7))))0,1,tests/nimony/sysbasics/tderefs2.nim(.index
  (h g.0. +83) ,3
  (h foo.0. +242) ,10
  (h g1.0. +213) ,13

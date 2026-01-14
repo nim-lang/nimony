@@ -96,7 +96,7 @@
     (i -1) .)
    (asgn result.2 x.3) ~31
    (ret result.2))) 15,11
- (comment untyped.0. 18 typedesc.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. ~3,8 int.0. 6,8 int.0. 4,17 int.0. ~5,17 int.0.))0,2,tests/nimony/nosystem/t2.nim(index 2,1
+ (comment untyped.0. 18 typedesc.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. ~3,8 int.0. 6,8 int.0. 4,17 int.0. ~5,17 int.0.))0,2,tests/nimony/nosystem/t2.nim(.index 2,1
  (x int.0. +80) 2,3
  (x float.0. +66) 2,4
  (x typedesc.0. +71) 12,4

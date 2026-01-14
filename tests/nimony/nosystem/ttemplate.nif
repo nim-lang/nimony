@@ -154,7 +154,7 @@
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
    (fld :x.0.Ibr3ivb1. . . 15,4
-    (f +64) .))))0,2,tests/nimony/nosystem/ttemplate.nim(index 2,1
+    (f +64) .))))0,2,tests/nimony/nosystem/ttemplate.nim(.index 2,1
  (x int.0. +87) 2,3
  (x float.0. +66) 2,4
  (x char.0. +71) 2,6

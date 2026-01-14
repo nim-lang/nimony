@@ -21,5 +21,5 @@
    (discard .) ~35
    (ret result.0))) 3,4
  (call ~3 foo.0.) 4,2
- (comment int.0.sysvq0asl))0,1,tests/nimony/pragmas/tcustompragma.nim(index ,2
+ (comment int.0.sysvq0asl))0,1,tests/nimony/pragmas/tcustompragma.nim(.index ,2
  (h foo.0. +186))

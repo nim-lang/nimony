@@ -1022,7 +1022,7 @@
           (dot ~1 s.17 data.0.Iq4ofkp1. +0)))))) 40
      (else 6
       (expr +0)))) ~2,~1
-   (ret result.11))))0,1,tests/nimony/sysbasics/temptyseq.nim(index
+   (ret result.11))))0,1,tests/nimony/sysbasics/temptyseq.nim(.index
  (h foo.0. +84) ,4
  (h bar.0. +218) 9,4
  (h T.0. +37) 4,8

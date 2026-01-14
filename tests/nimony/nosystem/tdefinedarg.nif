@@ -21,7 +21,7 @@
  (glet :z.0. . .
   (bool) 15
   (false)) 16,2
- (comment untyped.0.))0,1,tests/nimony/nosystem/tdefinedarg.nim(index 5
+ (comment untyped.0.))0,1,tests/nimony/nosystem/tdefinedarg.nim(.index 5
  (x untyped.0. +87) ,2
  (x defined.0. +73) 4,4
  (h x.0. +140) 4,5

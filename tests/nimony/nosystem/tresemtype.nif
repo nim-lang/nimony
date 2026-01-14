@@ -67,7 +67,7 @@
      (fld :val.5. . . string.0.sysvq0asl .))) 4,2
    (var :obj.5 . . 6 Foo.5. 9
     (oconstr ~3 Foo.5. 4
-     (kv ~3 val.5. 2 x.5))))))0,3,tests/nimony/nosystem/tresemtype.nim(index
+     (kv ~3 val.5. 2 x.5))))))0,3,tests/nimony/nosystem/tresemtype.nim(.index
  (h foo.0. +84) 9
  (h T.0. +37) 11,1
  (h Foo.0. +94) 4,2

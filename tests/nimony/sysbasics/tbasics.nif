@@ -325,7 +325,7 @@
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 10,3
- (comment array.0.sysvq0asl 9 int.0.sysvq0asl 3,12 int.0.sysvq0asl 3,21 pointer.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl ~1,7 array.0.sysvq0asl 8,7 int.0.sysvq0asl 10,23 int.0.sysvq0asl 6,30 pointer.0.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl ,53 int.0.sysvq0asl 5,53 int.0.sysvq0asl ~8,73 echo.0.syn1lfpjv ~6,80 echo.0.syn1lfpjv ~4,85 echo.0.syn1lfpjv ~6,91 echo.0.syn1lfpjv ~6,97 echo.0.syn1lfpjv ~4,104 echo.0.syn1lfpjv ~6,110 echo.0.syn1lfpjv ~10,119 assert.0.assy765wm))0,1,tests/nimony/sysbasics/tbasics.nim(index 8,3
+ (comment array.0.sysvq0asl 9 int.0.sysvq0asl 3,12 int.0.sysvq0asl 3,21 pointer.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl ~1,7 array.0.sysvq0asl 8,7 int.0.sysvq0asl 10,23 int.0.sysvq0asl 6,30 pointer.0.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl ,53 int.0.sysvq0asl 5,53 int.0.sysvq0asl ~8,73 echo.0.syn1lfpjv ~6,80 echo.0.syn1lfpjv ~4,85 echo.0.syn1lfpjv ~6,91 echo.0.syn1lfpjv ~6,97 echo.0.syn1lfpjv ~4,104 echo.0.syn1lfpjv ~6,110 echo.0.syn1lfpjv ~10,119 assert.0.assy765wm))0,1,tests/nimony/sysbasics/tbasics.nim(.index 8,3
  (h Array.0. +86) 4,5
  (h s.0. +87) 4,6
  (h s2.0. +161) 4,7

@@ -110,7 +110,7 @@
   (i -1) 24,~4
   (pragmas 2
    (importc 9 "fpclassify") ~36,~5
-   (header 8 "<math.h>")) ~19,~4 . ~19,~4 .))0,1,tests/nimony/pragmas/tpushpop.nim(index 41,4
+   (header 8 "<math.h>")) ~19,~4 . ~19,~4 .))0,1,tests/nimony/pragmas/tpushpop.nim(.index 41,4
  (h TestStruct1.0. +86) 4,5
  (h x.0. +130) 4,8
  (h tests1.0. +137) ,11

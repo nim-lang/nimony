@@ -127,7 +127,7 @@
    (fld :left.0.Itet59r. . . 8,~3
     (ref 11 NodeObj.0.Itet59r.) .) ~5,2
    (fld :right.0.Itet59r. . . 2,~3
-    (ref 11 NodeObj.0.Itet59r.) .))))0,1,tests/nimony/nosystem/tgenericbinarytree.nim(index 5
+    (ref 11 NodeObj.0.Itet59r.) .))))0,1,tests/nimony/nosystem/tgenericbinarytree.nim(.index 5
  (x int.0. +94) 10,3
  (h Node.0. +67) 7,3
  (h T.0. +38) 13,4

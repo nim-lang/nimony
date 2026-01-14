@@ -88,7 +88,7 @@
    (i +32) ~2 x.0. 3
    (hconv 17,68,lib/std/system/comparisons.nim
     (i +32) +123))) 12
- (comment int16.0.sysvq0asl ,1 float.0.sysvq0asl ,4 int16.0.sysvq0asl ,5 int.0.sysvq0asl ~5,9 int32.0.sysvq0asl ~5,10 int.0.sysvq0asl 5,14 int32.0.sysvq0asl ,15 int32.0.sysvq0asl ,16 int.0.sysvq0asl 11,16 int.0.sysvq0asl ,17 int32.0.sysvq0asl 13,17 int32.0.sysvq0asl ,20 int32.0.sysvq0asl 7,21 int32.0.sysvq0asl))0,1,tests/nimony/sysbasics/tintlitmatch.nim(index
+ (comment int16.0.sysvq0asl ,1 float.0.sysvq0asl ,4 int16.0.sysvq0asl ,5 int.0.sysvq0asl ~5,9 int32.0.sysvq0asl ~5,10 int.0.sysvq0asl 5,14 int32.0.sysvq0asl ,15 int32.0.sysvq0asl ,16 int.0.sysvq0asl 11,16 int.0.sysvq0asl ,17 int32.0.sysvq0asl 13,17 int32.0.sysvq0asl ,20 int32.0.sysvq0asl 7,21 int32.0.sysvq0asl))0,1,tests/nimony/sysbasics/tintlitmatch.nim(.index
  (h foo.0. +87) ,1
  (h bar.0. +112) ,4
  (h baz.0. +222) ,5

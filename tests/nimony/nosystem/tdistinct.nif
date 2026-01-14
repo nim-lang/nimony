@@ -117,7 +117,7 @@
   (i +8) 8
   (conv ~4
    (i +8) 1 x.0.)) 15,13
- (comment untyped.0. 18 typedesc.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. 1,7 int.0. 1,7 int.0. ~2,7 int.0. 2,9 int.0. 2,9 int.0. ~2,9 bool.0. 5,13 int.0. ~7,26 int8.0.))0,2,tests/nimony/nosystem/tdistinct.nim(index 2,1
+ (comment untyped.0. 18 typedesc.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. 1,7 int.0. 1,7 int.0. ~2,7 int.0. 2,9 int.0. 2,9 int.0. ~2,9 bool.0. 5,13 int.0. ~7,26 int8.0.))0,2,tests/nimony/nosystem/tdistinct.nim(.index 2,1
  (x int.0. +87) 2,2
  (x bool.0. +66) 2,3
  (x char.0. +68) 2,5

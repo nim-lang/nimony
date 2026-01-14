@@ -8,7 +8,7 @@
    (fld :z.0. . . 3
     (i -1) .) ~2,7
    (fld :a.0. . . 3 string.0.sysvq0asl .))) 9,5
- (comment int.0.sysvq0asl ~2,1 int.0.sysvq0asl))0,1,tests/nimony/when/twhenobject.nim(index 6,1
+ (comment int.0.sysvq0asl ~2,1 int.0.sysvq0asl))0,1,tests/nimony/when/twhenobject.nim(.index 6,1
  (h Foo.0. +85) 6,5
  (h y.0. +43) 4,6
  (h z.0. +39) 6,8

@@ -33,7 +33,7 @@
   (params) . . . 2,1
   (stmts 4
    (let :m.0 . . string.0.sysvq0asl 4
-    (call dollar`.Color1.0. 1 Blue1.0.)))))0,1,tests/nimony/sysbasics/tdollar.nim(index 9,1
+    (call dollar`.Color1.0. 1 Blue1.0.)))))0,1,tests/nimony/sysbasics/tdollar.nim(.index 9,1
  (h Color1.0. +86) 4,2
  (h Red1.0. +52) 10,2
  (h Blue1.0. +58) 17,2

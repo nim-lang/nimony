@@ -22,7 +22,7 @@
  (gvar :foo.0. . . 5 Foo.0. .) ,6
  (call bar=.0. foo.0. 10 +123) ,7
  (call \5B\5D=.0. foo.0. 4 +123 11 +456) 23,2
- (comment int.0.sysvq0asl ~1,1 int.0.sysvq0asl 7,1 int.0.sysvq0asl))0,1,tests/nimony/sysbasics/tsettersys.nim(index 9
+ (comment int.0.sysvq0asl ~1,1 int.0.sysvq0asl 7,1 int.0.sysvq0asl))0,1,tests/nimony/sysbasics/tsettersys.nim(.index 9
  (h Foo.0. +87) ,2
  (h bar=.0. +43) ,3
  (h \5B\5D=.0. +146) 4,5
