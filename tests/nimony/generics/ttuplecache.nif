@@ -149,26 +149,26 @@
      (kv ~1 x string.0.sysvq0asl) 10
      (kv ~1 y
       (i -1))) .))))0,3,tests/nimony/generics/ttuplecache.nim(index 9,1
- (kv Foo.0. +89) 6,1
- (kv T.0. +37) 4,2
- (kv data.0. +49) ,5
- (kv initFooInt.0. +36) ,8
- (kv initFooTup.0. +246) ,12
- (kv initFooGeneric.0. +340) 20,12
- (kv T.1. +49) 4,15
- (kv x.0. +302) 4,16
- (kv x1.0. +217) 4,17
- (kv x2.0. +94) 4,19
- (kv y.0. +100) 4,20
- (kv y1.0. +220) 4,21
- (kv y2.0. +104) 22,15
- (kv initFooGeneric.1. +269) 22,19
- (kv initFooGeneric.2. +485) 7,5
- (kv Foo.0.Iw8bgj. +489) 4,2
- (kv data.0.Iw8bgj. +79) 7,8
- (kv Foo.0.Ildbpdf1. +52) 4,2
- (kv data.0.Ildbpdf1. +108) 11,12
- (kv Foo.0.Iv5bnz4. +85) 4,2
- (kv data.0.Iv5bnz4. +147) 11,12
- (kv Foo.0.Iarhs7y1. +122) 4,2
- (kv data.0.Iarhs7y1. +149))
+ (h Foo.0. +89) 6,1
+ (h T.0. +37) 4,2
+ (h data.0. +49) ,5
+ (h initFooInt.0. +36) ,8
+ (h initFooTup.0. +246) ,12
+ (h initFooGeneric.0. +340) 20,12
+ (h T.1. +49) 4,15
+ (h x.0. +302) 4,16
+ (h x1.0. +217) 4,17
+ (h x2.0. +94) 4,19
+ (h y.0. +100) 4,20
+ (h y1.0. +220) 4,21
+ (h y2.0. +104) 22,15
+ (h initFooGeneric.1. +269) 22,19
+ (h initFooGeneric.2. +485) 7,5
+ (h Foo.0.Iw8bgj. +489) 4,2
+ (h data.0.Iw8bgj. +79) 7,8
+ (h Foo.0.Ildbpdf1. +52) 4,2
+ (h data.0.Ildbpdf1. +108) 11,12
+ (h Foo.0.Iv5bnz4. +85) 4,2
+ (h data.0.Iv5bnz4. +147) 11,12
+ (h Foo.0.Iarhs7y1. +122) 4,2
+ (h data.0.Iarhs7y1. +149))

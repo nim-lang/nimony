@@ -39,7 +39,7 @@
    (stmts
     (discard .)))) 13,4
  (comment array.0.sysvq0asl 11 int.0.sysvq0asl ~6,~3 array.0.sysvq0asl 5,~3 int.0.sysvq0asl ~9,3 len.1.sysvq0asl))0,1,tests/nimony/const/tconstarrlen.nim(index 6
- (kv Len.0. +85) 4,1
- (kv a.0. +41) 11,4
- (kv FooArray.0. +82) 4,6
- (kv b.0. +91))
+ (h Len.0. +85) 4,1
+ (h a.0. +41) 11,4
+ (h FooArray.0. +82) 4,6
+ (h b.0. +91))

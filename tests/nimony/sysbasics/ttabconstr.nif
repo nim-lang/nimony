@@ -224,7 +224,7 @@
         (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
        (cmd quit.0.syn1lfpjv 5 +1))))))) 21,2
  (comment array.0.sysvq0asl 9 int.0.sysvq0asl 1,1 array.0.sysvq0asl 11,1 int.0.sysvq0asl 16,1 int.0.sysvq0asl 1,2 array.0.sysvq0asl 19,2 int.0.sysvq0asl 1,3 array.0.sysvq0asl 11,3 int.0.sysvq0asl 17,3 int.0.sysvq0asl 22,3 int.0.sysvq0asl ~19,12 assert.0.assy765wm ~19,13 assert.0.assy765wm ~19,14 assert.0.assy765wm ~19,15 assert.0.assy765wm ~19,16 assert.0.assy765wm ~19,17 assert.0.assy765wm))0,1,tests/nimony/sysbasics/ttabconstr.nim(index ,2
- (kv emptyArray.0. +88) ,3
- (kv tableIntInt.0. +173) ,4
- (kv tableStrInt.0. +205) ,5
- (kv tableIntTup.0. +211))
+ (h emptyArray.0. +88) ,3
+ (h tableIntInt.0. +173) ,4
+ (h tableStrInt.0. +205) ,5
+ (h tableIntTup.0. +211))

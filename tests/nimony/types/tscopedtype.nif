@@ -20,6 +20,6 @@
       (ddot ~1 s.0 id.0. +0))) ,2
     (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 10,5
  (comment int.0.sysvq0asl ~8,3 echo.0.syn1lfpjv))0,1,tests/nimony/types/tscopedtype.nim(index 8,4
- (kv Foo.0. +112) 8,4
- (kv Foo.Obj.0. +56) 6,5
- (kv id.0. +72))
+ (h Foo.0. +112) 8,4
+ (h Foo.Obj.0. +56) 6,5
+ (h id.0. +72))

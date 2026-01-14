@@ -326,29 +326,29 @@
       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 10,3
  (comment array.0.sysvq0asl 9 int.0.sysvq0asl 3,12 int.0.sysvq0asl 3,21 pointer.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl 9,35 int.0.sysvq0asl ~1,7 array.0.sysvq0asl 8,7 int.0.sysvq0asl 10,23 int.0.sysvq0asl 6,30 pointer.0.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl 5,41 default.3.sysvq0asl ,53 int.0.sysvq0asl 5,53 int.0.sysvq0asl ~8,73 echo.0.syn1lfpjv ~6,80 echo.0.syn1lfpjv ~4,85 echo.0.syn1lfpjv ~6,91 echo.0.syn1lfpjv ~6,97 echo.0.syn1lfpjv ~4,104 echo.0.syn1lfpjv ~6,110 echo.0.syn1lfpjv ~10,119 assert.0.assy765wm))0,1,tests/nimony/sysbasics/tbasics.nim(index 8,3
- (kv Array.0. +86) 4,5
- (kv s.0. +87) 4,6
- (kv s2.0. +161) 4,7
- (kv s3.0. +85) ,9
- (kv foo.0. +188) ,15
- (kv foo2.0. +457) ,24
- (kv foo3.0. +845) 10,37
- (kv Foo1314.0. +614) 4,38
- (kv a.0. +47) 7,38
- (kv b.0. +40) 10,38
- (kv c.0. +40) 13,38
- (kv d.0. +38) 16,38
- (kv e.0. +38) ,41
- (kv foo1314.0. +40) 4,44
- (kv a.1. +168) ,47
- (kv foo2233.0. +404) ,55
- (kv basictuple.0. +325) ,75
- (kv classify1.0. +805) 2,82
- (kv classify.0. +384) 4,87
- (kv classify2.0. +402) 2,93
- (kv classify2.1. +424) 2,99
- (kv classify.1. +403) 4,106
- (kv classify.2. +430) ,111
- (kv foo2.1. +401) 2,112
- (kv classify.3. +56) ,119
- (kv bar.0. +405))
+ (h Array.0. +86) 4,5
+ (h s.0. +87) 4,6
+ (h s2.0. +161) 4,7
+ (h s3.0. +85) ,9
+ (h foo.0. +188) ,15
+ (h foo2.0. +457) ,24
+ (h foo3.0. +845) 10,37
+ (h Foo1314.0. +614) 4,38
+ (h a.0. +47) 7,38
+ (h b.0. +40) 10,38
+ (h c.0. +40) 13,38
+ (h d.0. +38) 16,38
+ (h e.0. +38) ,41
+ (h foo1314.0. +40) 4,44
+ (h a.1. +168) ,47
+ (h foo2233.0. +404) ,55
+ (h basictuple.0. +325) ,75
+ (h classify1.0. +805) 2,82
+ (h classify.0. +384) 4,87
+ (h classify2.0. +402) 2,93
+ (h classify2.1. +424) 2,99
+ (h classify.1. +403) 4,106
+ (h classify.2. +430) ,111
+ (h foo2.1. +401) 2,112
+ (h classify.3. +56) ,119
+ (h bar.0. +405))

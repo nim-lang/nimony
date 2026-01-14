@@ -111,14 +111,14 @@
   (pragmas 2
    (importc 9 "fpclassify") ~36,~5
    (header 8 "<math.h>")) ~19,~4 . ~19,~4 .))0,1,tests/nimony/pragmas/tpushpop.nim(index 41,4
- (kv TestStruct1.0. +86) 4,5
- (kv x.0. +130) 4,8
- (kv tests1.0. +137) ,11
- (kv cos.0. +46) ,13
- (kv sin.0. +330) ,15
- (kv c_fpclassify.0. +334) 18,15
- (kv T.0. +47) 18,16
- (kv c_fpNormal.0. +356) ,22
- (kv foo.0. +687) ,30
- (kv getchar.0. +295) 19,19
- (kv c_fpclassify.1. +316))
+ (h TestStruct1.0. +86) 4,5
+ (h x.0. +130) 4,8
+ (h tests1.0. +137) ,11
+ (h cos.0. +46) ,13
+ (h sin.0. +330) ,15
+ (h c_fpclassify.0. +334) 18,15
+ (h T.0. +47) 18,16
+ (h c_fpNormal.0. +356) ,22
+ (h foo.0. +687) ,30
+ (h getchar.0. +295) 19,19
+ (h c_fpclassify.1. +316))

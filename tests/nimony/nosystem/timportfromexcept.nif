@@ -37,6 +37,6 @@
    (true) 27
    (false) 44
    (true))))0,1,tests/nimony/nosystem/timportfromexcept.nim(index 4,4
- (kv allImported.0. +95) 4,5
- (kv exceptDeclared.0. +312) 4,6
- (kv fromDeclared.0. +202))
+ (h allImported.0. +95) 4,5
+ (h exceptDeclared.0. +312) 4,6
+ (h fromDeclared.0. +202))
