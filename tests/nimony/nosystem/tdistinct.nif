@@ -117,24 +117,24 @@
   (i +8) 8
   (conv ~4
    (i +8) 1 x.0.)) 15,13
- (comment untyped.0. 18 typedesc.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. 1,7 int.0. 1,7 int.0. ~2,7 int.0. 2,9 int.0. 2,9 int.0. ~2,9 bool.0. 5,13 int.0. ~7,26 int8.0.))0,2,tests/nimony/nosystem/tdistinct.nim(index 2,1
- (kv int.0. +87) 2,2
- (kv bool.0. +66) 2,3
- (kv char.0. +68) 2,5
- (kv int8.0. +68) 2,6
- (kv typedesc.0. +68) 12,6
- (kv T.0. +49) 2,7
- (kv untyped.0. +74) 14,9
- (kv TypeOfMode.0. +75) 4,10
- (kv typeOfProc.0. +58) 4,11
- (kv typeOfIter.0. +75) 2,9
- (kv dollar`.TypeOfMode.0. +75) ,13
- (kv typeof.0. +368) 10,17
- (kv string.0. +230) ,19
- (kv \2B.0. +51) ,20
- (kv \2D.0. +177) ,22
- (kv <=.0. +177) 9,26
- (kv VarId.0. +176) ,28
- (kv \2B.1. +58) 4,35
- (kv x.0. +366) 4,39
- (kv y.0. +91))
+ (comment untyped.0. 18 typedesc.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. 1,7 int.0. 1,7 int.0. ~2,7 int.0. 2,9 int.0. 2,9 int.0. ~2,9 bool.0. 5,13 int.0. ~7,26 int8.0.))0,2,tests/nimony/nosystem/tdistinct.nim(.index 2,1
+ (x int.0. +87) 2,2
+ (x bool.0. +66) 2,3
+ (x char.0. +68) 2,5
+ (x int8.0. +68) 2,6
+ (x typedesc.0. +68) 12,6
+ (h T.0. +49) 2,7
+ (x untyped.0. +74) 14,9
+ (x TypeOfMode.0. +75) 4,10
+ (x typeOfProc.0. +58) 4,11
+ (x typeOfIter.0. +75) 2,9
+ (x dollar`.TypeOfMode.0. +75) ,13
+ (x typeof.0. +368) 10,17
+ (x string.0. +230) ,19
+ (x \2B.0. +51) ,20
+ (x \2D.0. +177) ,22
+ (x <=.0. +177) 9,26
+ (x VarId.0. +176) ,28
+ (x \2B.1. +58) 4,35
+ (h x.0. +366) 4,39
+ (h y.0. +91))

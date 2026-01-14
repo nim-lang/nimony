@@ -13,5 +13,5 @@
     (i -1) .)
    (discard .) ~29
    (ret result.0))) 4
- (comment int.0.sysvq0asl))0,1,tests/nimony/sysbasics/tresultnoinit.nim(index
- (kv foo.0. +88))
+ (comment int.0.sysvq0asl))0,1,tests/nimony/sysbasics/tresultnoinit.nim(.index
+ (h foo.0. +88))

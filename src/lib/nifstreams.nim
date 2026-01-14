@@ -335,7 +335,7 @@ proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLin
   var index = nifbuilder.open(tree.len * 2)
   if tree.len > 0:
     index.emitLineInfo(tree[0].info, NoLineInfo)
-  index.addTree "index"
+  index.addTree ".index"
   for n in 0 ..< tree.len:
     let info = tree[n].info
     let k = tree[n].kind
@@ -359,7 +359,10 @@ proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLin
       if b.addSymbolDefRetIsGlobal(pool.syms[symId], dottedSuffix):
         # we need to emit the line information for `kv` entry so that it can stay in sync:
         emitLineInfo(index, stack[^1], tree[0].info)
-        index.addTree "kv"
+        if n+1 >= tree.len or (tree[n+1].kind == DotToken):
+          index.addTree "h" # no export marker --> hidden
+        else:
+          index.addTree "x" # export marker --> exported
         index.addSymbol(pool.syms[symId], dottedSuffix)
         index.addIntLit(mostRecentOffset - previousOffset)
         previousOffset = mostRecentOffset

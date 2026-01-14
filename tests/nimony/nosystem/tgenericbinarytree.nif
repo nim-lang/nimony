@@ -127,23 +127,23 @@
    (fld :left.0.Itet59r. . . 8,~3
     (ref 11 NodeObj.0.Itet59r.) .) ~5,2
    (fld :right.0.Itet59r. . . 2,~3
-    (ref 11 NodeObj.0.Itet59r.) .))))0,1,tests/nimony/nosystem/tgenericbinarytree.nim(index 5
- (kv int.0. +94) 10,3
- (kv Node.0. +67) 7,3
- (kv T.0. +38) 13,4
- (kv NodeObj.0. +78) 10,4
- (kv T.1. +42) 4,5
- (kv data.0. +50) 4,6
- (kv left.0. +37) 10,6
- (kv right.0. +81) 4,8
- (kv x.0. +83) 4,13
- (kv y.0. +671) ,16
- (kv foo.0. +480) 9,16
- (kv T.2. +37) 4,19
- (kv a.0. +516) 11,19
- (kv foo.1. +171) 12,8
- (kv Node.0.Ikmiisb. +552) 23,3
- (kv NodeObj.0.Itet59r. +101) 4,5
- (kv data.0.Itet59r. +94) 4,6
- (kv left.0.Itet59r. +53) 10,6
- (kv right.0.Itet59r. +74))
+    (ref 11 NodeObj.0.Itet59r.) .))))0,1,tests/nimony/nosystem/tgenericbinarytree.nim(.index 5
+ (x int.0. +94) 10,3
+ (h Node.0. +67) 7,3
+ (h T.0. +38) 13,4
+ (h NodeObj.0. +78) 10,4
+ (h T.1. +42) 4,5
+ (h data.0. +50) 4,6
+ (h left.0. +37) 10,6
+ (h right.0. +81) 4,8
+ (h x.0. +83) 4,13
+ (h y.0. +671) ,16
+ (h foo.0. +480) 9,16
+ (h T.2. +37) 4,19
+ (h a.0. +516) 11,19
+ (h foo.1. +171) 12,8
+ (h Node.0.Ikmiisb. +552) 23,3
+ (h NodeObj.0.Itet59r. +101) 4,5
+ (h data.0.Itet59r. +94) 4,6
+ (h left.0.Itet59r. +53) 10,6
+ (h right.0.Itet59r. +74))

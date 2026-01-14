@@ -23,5 +23,5 @@
   (false)) ,5
  (cmd callme.0. 7 +0 10 +1 13 "abc" 20 '\09' 58,~5
   (false)) 18
- (comment int.0.sysvq0asl int.0.sysvq0asl 24 char.0.sysvq0asl 33 bool.0.sysvq0asl 40 false.0.sysvq0asl 8,2 true.0.sysvq0asl))0,2,tests/nimony/overload/tnamedparams.nim(index
- (kv callme.0. +86))
+ (comment int.0.sysvq0asl int.0.sysvq0asl 24 char.0.sysvq0asl 33 bool.0.sysvq0asl 40 false.0.sysvq0asl 8,2 true.0.sysvq0asl))0,2,tests/nimony/overload/tnamedparams.nim(.index
+ (h callme.0. +86))

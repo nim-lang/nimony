@@ -36,9 +36,9 @@
  (glet :x.0. . . 1,~3
   (bool) 10
   (true)) 5
- (comment bool.0. ~3,1 false.0. ~3,1 false.0. 8,1 true.0. 8,1 true.0. 2,3 bool.0. 9,3 true.0.))0,1,tests/nimony/nosystem/tbool.nim(index 26
- (kv bool.0. +82) 10,1
- (kv false.0. +93) 20,1
- (kv true.0. +74) 5
- (kv dollar`.bool.0. +70) 4,3
- (kv x.0. +352))
+ (comment bool.0. ~3,1 false.0. ~3,1 false.0. 8,1 true.0. 8,1 true.0. 2,3 bool.0. 9,3 true.0.))0,1,tests/nimony/nosystem/tbool.nim(.index 26
+ (x bool.0. +82) 10,1
+ (x false.0. +93) 20,1
+ (x true.0. +74) 5
+ (x dollar`.bool.0. +70) 4,3
+ (h x.0. +352))

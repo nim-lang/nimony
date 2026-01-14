@@ -437,9 +437,16 @@ proc readDirectives(r: var Reader) =
         if tok.tk == Symbol:
           r.unusedNameHint = tok.data
       # skip the rest of the directive:
+      var nested = 0
       while true:
         next(r, tok)
-        if tok.tk in {ParRi, EofToken}: break
+        case tok.tk
+        of ParLe: inc nested
+        of ParRi:
+          if nested == 0: break
+          dec nested
+        of EofToken: break
+        else: discard
     else:
       break
 

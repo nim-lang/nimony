@@ -8,4 +8,4 @@
  (stmts
   (discard 8 "good")) 2,18
  (stmts
-  (discard 8 "good")))0,1,tests/nimony/sysbasics/tdefinedwhen.nim(index)
+  (discard 8 "good")))0,1,tests/nimony/sysbasics/tdefinedwhen.nim(.index)

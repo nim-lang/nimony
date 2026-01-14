@@ -21,9 +21,9 @@
  (glet :z.0. . .
   (bool) 15
   (false)) 16,2
- (comment untyped.0.))0,1,tests/nimony/nosystem/tdefinedarg.nim(index 5
- (kv untyped.0. +87) ,2
- (kv defined.0. +73) 4,4
- (kv x.0. +140) 4,5
- (kv y.0. +44) 4,6
- (kv z.0. +43))
+ (comment untyped.0.))0,1,tests/nimony/nosystem/tdefinedarg.nim(.index 5
+ (x untyped.0. +87) ,2
+ (x defined.0. +73) 4,4
+ (h x.0. +140) 4,5
+ (h y.0. +44) 4,6
+ (h z.0. +43))

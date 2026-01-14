@@ -26,9 +26,9 @@
  (gvar :foo.0. . . 5 Foo.0. .) ,8
  (call bar=.0. foo.0. 10 +123) ,9
  (call \5B\5D=.0. foo.0. 4 +123 11 +456) 23,4
- (comment int.0. ~1,1 int.0. 7,1 int.0.))0,1,tests/nimony/nosystem/tsetter.nim(index 5
- (kv int.0. +83) 9,2
- (kv Foo.0. +66) ,4
- (kv bar=.0. +43) ,5
- (kv \5B\5D=.0. +146) 4,7
- (kv foo.0. +188))
+ (comment int.0. ~1,1 int.0. 7,1 int.0.))0,1,tests/nimony/nosystem/tsetter.nim(.index 5
+ (x int.0. +83) 9,2
+ (h Foo.0. +66) ,4
+ (h bar=.0. +43) ,5
+ (h \5B\5D=.0. +146) 4,7
+ (h foo.0. +188))

@@ -289,33 +289,33 @@
        (stmts
         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 14,64,tests/nimony/object/tcaseobject.nim +3)) ,2
        (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 10,4
- (comment bool.0.sysvq0asl ~5,1 false.0.sysvq0asl ~5,1 false.0.sysvq0asl ~3,2 int.0.sysvq0asl ~5,3 true.0.sysvq0asl ~5,3 true.0.sysvq0asl ~3,5 bool.0.sysvq0asl ,8 bool.0.sysvq0asl ~5,9 false.0.sysvq0asl ~5,9 false.0.sysvq0asl 2,9 true.0.sysvq0asl 2,9 true.0.sysvq0asl 3,11 default.1.sysvq0asl 3,11 default.3.sysvq0asl 3,12 false.0.sysvq0asl ~3,13 bool.0.sysvq0asl 2,14 false.0.sysvq0asl ~10,14 assert.0.assy765wm ~3,15 int.0.sysvq0asl ~10,16 assert.0.assy765wm 3,17 true.0.sysvq0asl 22,17 false.0.sysvq0asl 6,18 true.0.sysvq0asl ~10,18 assert.0.assy765wm ~10,20 assert.0.assy765wm ~3,21 bool.0.sysvq0asl 2,22 false.0.sysvq0asl ~10,22 assert.0.assy765wm 3,24 default.1.sysvq0asl 3,25 false.0.sysvq0asl 6,26 false.0.sysvq0asl ~10,26 assert.0.assy765wm 3,27 true.0.sysvq0asl ~3,28 bool.0.sysvq0asl 2,29 true.0.sysvq0asl ~10,29 assert.0.assy765wm 7,32 true.0.sysvq0asl ~10,32 assert.0.assy765wm 7,39 true.0.sysvq0asl 26,39 false.0.sysvq0asl 1,48 int.0.sysvq0asl 1,49 int.0.sysvq0asl 8,51 float.0.sysvq0asl 8,51 float.0.sysvq0asl ~1,59 echo.0.syn1lfpjv))0,1,tests/nimony/object/tcaseobject.nim(index 9,3
- (kv Foo.0. +87) 7,4
- (kv x.0. +54) 4,6
- (kv y.0. +93) 4,8
- (kv z.0. +98) 4,9
- (kv t.0. +48) 9,11
- (kv Bar.0. +50) 7,12
- (kv x.1. +54) 4,15
- (kv foo.0. +130) 4,17
- (kv a.0. +301) 4,19
- (kv b.0. +599) 4,23
- (kv c.0. +1288) 4,25
- (kv d.0. +607) 4,28
- (kv bar.0. +599) 4,32
- (kv e.0. +847) 4,35
- (kv bar2.0. +598) ,38
- (kv fx.0. +604) 10,48
- (kv TKind.0. +486) 17,48
- (kv ka.0. +54) 21,48
- (kv kb.0. +54) 25,48
- (kv kc.0. +55) 4,48
- (kv dollar`.TKind.0. +58) 7,49
- (kv TA.0. +423) 11,50
- (kv k.0. +59) 8,52
- (kv x.2. +90) 8,53
- (kv y.1. +47) 13,54
- (kv a.1. +99) 16,54
- (kv b.1. +50) 12,55
- (kv c.1. +80) 15,55
- (kv d.1. +47))
+ (comment bool.0.sysvq0asl ~5,1 false.0.sysvq0asl ~5,1 false.0.sysvq0asl ~3,2 int.0.sysvq0asl ~5,3 true.0.sysvq0asl ~5,3 true.0.sysvq0asl ~3,5 bool.0.sysvq0asl ,8 bool.0.sysvq0asl ~5,9 false.0.sysvq0asl ~5,9 false.0.sysvq0asl 2,9 true.0.sysvq0asl 2,9 true.0.sysvq0asl 3,11 default.1.sysvq0asl 3,11 default.3.sysvq0asl 3,12 false.0.sysvq0asl ~3,13 bool.0.sysvq0asl 2,14 false.0.sysvq0asl ~10,14 assert.0.assy765wm ~3,15 int.0.sysvq0asl ~10,16 assert.0.assy765wm 3,17 true.0.sysvq0asl 22,17 false.0.sysvq0asl 6,18 true.0.sysvq0asl ~10,18 assert.0.assy765wm ~10,20 assert.0.assy765wm ~3,21 bool.0.sysvq0asl 2,22 false.0.sysvq0asl ~10,22 assert.0.assy765wm 3,24 default.1.sysvq0asl 3,25 false.0.sysvq0asl 6,26 false.0.sysvq0asl ~10,26 assert.0.assy765wm 3,27 true.0.sysvq0asl ~3,28 bool.0.sysvq0asl 2,29 true.0.sysvq0asl ~10,29 assert.0.assy765wm 7,32 true.0.sysvq0asl ~10,32 assert.0.assy765wm 7,39 true.0.sysvq0asl 26,39 false.0.sysvq0asl 1,48 int.0.sysvq0asl 1,49 int.0.sysvq0asl 8,51 float.0.sysvq0asl 8,51 float.0.sysvq0asl ~1,59 echo.0.syn1lfpjv))0,1,tests/nimony/object/tcaseobject.nim(.index 9,3
+ (h Foo.0. +87) 7,4
+ (h x.0. +54) 4,6
+ (h y.0. +93) 4,8
+ (h z.0. +98) 4,9
+ (h t.0. +48) 9,11
+ (h Bar.0. +50) 7,12
+ (h x.1. +54) 4,15
+ (h foo.0. +130) 4,17
+ (h a.0. +301) 4,19
+ (h b.0. +599) 4,23
+ (h c.0. +1288) 4,25
+ (h d.0. +607) 4,28
+ (h bar.0. +599) 4,32
+ (h e.0. +847) 4,35
+ (h bar2.0. +598) ,38
+ (h fx.0. +604) 10,48
+ (h TKind.0. +486) 17,48
+ (h ka.0. +54) 21,48
+ (h kb.0. +54) 25,48
+ (h kc.0. +55) 4,48
+ (h dollar`.TKind.0. +58) 7,49
+ (h TA.0. +423) 11,50
+ (h k.0. +59) 8,52
+ (h x.2. +90) 8,53
+ (h y.1. +47) 13,54
+ (h a.1. +99) 16,54
+ (h b.1. +50) 12,55
+ (h c.1. +80) 15,55
+ (h d.1. +47))

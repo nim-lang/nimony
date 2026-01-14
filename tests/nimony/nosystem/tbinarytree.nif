@@ -59,12 +59,12 @@
    (kv ~4 data.0. 2 -123) 17
    (kv ~4 left.0. 2 y.0.) 27
    (kv ~5 right.0. 2 y.0.))) 10,4
- (comment int.0.))0,1,tests/nimony/nosystem/tbinarytree.nim(index 5
- (kv int.0. +87) 10,3
- (kv NodeObj.0. +67) 4,4
- (kv data.0. +47) 4,5
- (kv left.0. +42) 10,5
- (kv right.0. +56) 7,6
- (kv Node.0. +59) 4,8
- (kv x.0. +53) 4,13
- (kv y.0. +554))
+ (comment int.0.))0,1,tests/nimony/nosystem/tbinarytree.nim(.index 5
+ (x int.0. +87) 10,3
+ (h NodeObj.0. +67) 4,4
+ (h data.0. +47) 4,5
+ (h left.0. +42) 10,5
+ (h right.0. +56) 7,6
+ (h Node.0. +59) 4,8
+ (h x.0. +53) 4,13
+ (h y.0. +554))

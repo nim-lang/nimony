@@ -52,12 +52,12 @@
    (result :result.0 . . 24,11,tests/nimony/generics/texplicitprocinst.nim
     (i -1) .) 7
    (asgn ~7 result.0 2 x.7) ~2,~1
-   (ret result.0))))0,1,tests/nimony/generics/texplicitprocinst.nim(index
- (kv foo.0. +91) 9
- (kv T.0. +37) ,1
- (kv foo.1. +111) 9,1
- (kv T.1. +37) 12,1
- (kv U.0. +29) 8,3
- (kv foo.2. +428) 8,4
- (kv foo.3. +165) 28,10
- (kv importedGeneric.0. +238))
+   (ret result.0))))0,1,tests/nimony/generics/texplicitprocinst.nim(.index
+ (h foo.0. +91) 9
+ (h T.0. +37) ,1
+ (h foo.1. +111) 9,1
+ (h T.1. +37) 12,1
+ (h U.0. +29) 8,3
+ (h foo.2. +428) 8,4
+ (h foo.3. +165) 28,10
+ (h importedGeneric.0. +238))
