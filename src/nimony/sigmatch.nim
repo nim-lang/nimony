@@ -74,7 +74,6 @@ type
     error: MatchError
     firstVarargPosition*: int
     genericConverter*, checkEmptyArg*, insertedParam*: bool
-    resolvedChoice*: bool # true when an OchoiceX was resolved during matching
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -869,16 +868,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         m.error InvalidMatch, f, a
       else:
         if impl.typeKind in {EnumT, HoleyEnumT}:
-          # Check if arg is an OchoiceX with enum fields that match this enum type
-          if a.typeKind == AutoT and arg.n.exprKind == OchoiceX:
-            let matchedSym = tryMatchEnumChoice(arg.n, fs)
-            if matchedSym != SymId(0):
-              m.args.add symToken(matchedSym, arg.n.info)
-              m.resolvedChoice = true
-            else:
-              m.error InvalidMatch, f, a
-          else:
-            m.error InvalidMatch, f, a
+          m.error InvalidMatch, f, a
         else:
           singleArgImpl(m, impl, arg)
 
@@ -1319,12 +1309,15 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
     else:
       # should not happen, but still match as normal to give proper error
       discard
+  if arg.n.exprKind == OchoiceX:
+    let matchedSym = tryMatchEnumChoice(arg.n, f.symId)
+    if matchedSym != SymId(0):
+      m.args.add symToken(matchedSym, arg.n.info)
+      return
   let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:
-    if not m.resolvedChoice:
-      m.useArg arg, fOrig # since it was a match, copy it
-    m.resolvedChoice = false
+    m.useArg arg, fOrig # since it was a match, copy it
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
