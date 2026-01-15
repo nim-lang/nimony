@@ -1873,21 +1873,20 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
           c.buildErr ident.info, "undeclared identifier", ident
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
-    # Try to disambiguate based on expected type (e.g., enum fields in case branches)
-    if KeepMagics notin flags and c.routine.kind != TemplateY and typeKind(expected) != AutoT:
-      let choice = cursorAt(c.dest, start)
-      let matchedSym = tryMatchEnumChoice(choice, expected.symId)
-      endRead(c.dest)
-      if matchedSym != SymId(0):
-        let info = c.dest[start].info
-        c.dest.shrink start
-        c.dest.add symToken(matchedSym, info)
-        semExprSym c, it, fetchSym(c, matchedSym), start, flags
-      else:
-        c.buildErr c.dest[start].info, "ambiguous identifier"
-        it.typ = c.types.autoType
-    else:
-      it.typ = c.types.autoType
+    if KeepMagics notin flags and c.routine.kind != TemplateY:
+      # Try to disambiguate based on expected type (e.g., enum fields in case branches)
+      if typeKind(expected) != AutoT:
+        let choice = cursorAt(c.dest, start)
+        let matchedSym = tryMatchEnumChoice(choice, expected.symId)
+        endRead(c.dest)
+        if matchedSym != SymId(0):
+          let info = c.dest[start].info
+          c.dest.shrink start
+          c.dest.add symToken(matchedSym, info)
+          semExprSym c, it, fetchSym(c, matchedSym), start, flags
+          return
+      c.buildErr c.dest[start].info, "ambiguous identifier"
+    it.typ = c.types.autoType
   elif s.kind == BlockY:
     it.typ = c.types.autoType
   elif s.kind in {TypeY, TypevarY}:
