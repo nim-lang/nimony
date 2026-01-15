@@ -1066,23 +1066,6 @@ proc findEnumField(decl: EnumDecl; name: StrId): SymId =
     if name == strId:
       return symId
 
-proc tryResolveEnumChoice(c: var SemContext; choice: Cursor; expected: TypeCursor): SymId =
-  result = SymId(0)
-  var f = choice.firstSon
-  while f.kind != ParRi:
-    if f.kind != Symbol:
-      inc f
-      continue
-    let s = fetchSym(c, f.symId)
-    if s.kind != EfldY:
-      break
-    let res = declToCursor(c, s)
-    if res.status == LacksNothing and
-        typeKind(expected) != AutoT and
-        asLocal(res.decl).typ.symId == expected.symId:
-      return f.symId
-    inc f
-
 proc tryBuiltinDot(c: var SemContext; it: var Item; lhs: Item; fieldName: StrId;
                    info: PackedLineInfo; flags: set[SemFlag]): DotExprState =
   let exprStart = c.dest.len
@@ -1891,9 +1874,9 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
     # Try to disambiguate based on expected type (e.g., enum fields in case branches)
-    if KeepMagics notin flags and c.routine.kind != TemplateY:
+    if KeepMagics notin flags and c.routine.kind != TemplateY and typeKind(expected) != AutoT:
       let choice = cursorAt(c.dest, start)
-      let matchedSym = tryResolveEnumChoice(c, choice, expected)
+      let matchedSym = tryMatchEnumChoice(choice, expected.symId)
       endRead(c.dest)
       if matchedSym != SymId(0):
         let info = c.dest[start].info

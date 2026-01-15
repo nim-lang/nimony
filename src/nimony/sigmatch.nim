@@ -817,7 +817,7 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       matchObjectInheritance m, f, a, fsym, asym, ptrKind
       skip f
 
-proc tryMatchEnumChoice(choice: Cursor; enumTypeSym: SymId): SymId =
+proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
   ## Try to find a unique enum field in the OchoiceX that matches the given enum type.
   result = SymId(0)
   var matchCount = 0
