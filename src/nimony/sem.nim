@@ -5390,7 +5390,8 @@ proc semcheckCore(c: var SemContext; n0: Cursor) =
 
 proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
-  var n0 = setupProgram(infile, outfile)
+  var owningBuf = createTokenBuf(300)
+  var n0 = setupProgram(infile, outfile, owningBuf)
   var c = SemContext(
     dest: createTokenBuf(),
     types: createBuiltinTypes(),

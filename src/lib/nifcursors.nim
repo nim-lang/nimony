@@ -384,7 +384,7 @@ type
     OnlyIfChanged
 
 proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) =
-  let content = "(.nif24)\n" & toString(b)
+  let content = toModuleString(toOpenArray(b.data, 0, b.len-1), "." & extractModuleSuffix(filename))
   if mode == OnlyIfChanged:
     let existingContent = try: readFile(filename) except: ""
     if existingContent == content: return
@@ -423,8 +423,8 @@ proc parse*(r: var Stream; dest: var TokenBuf;
       dec nested
       if nested == 0: break
 
-proc parseFromBuffer*(input: string; sizeHint = 100): TokenBuf =
-  var r = nifstreams.openFromBuffer(input)
+proc parseFromBuffer*(input: string; thisModule: sink string; sizeHint = 100): TokenBuf =
+  var r = nifstreams.openFromBuffer(input, thisModule)
   result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 

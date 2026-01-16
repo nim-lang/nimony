@@ -1,10 +1,15 @@
-(.nif24)
+(.nif26)
+(.indexat +303             )
 0,1,tests/nimony/when/twhenobject.nim(stmts 6,1
- (type ~4 :Foo.0.twh699we9 . . . 2
+ (type ~4 :Foo.0. . . . 2
   (object . ~2,4
-   (fld :y.0.twh699we9 . . 3
+   (fld :y.0. . . 3
     (i -1) .) ~4,5
-   (fld :z.0.twh699we9 . . 3
+   (fld :z.0. . . 3
     (i -1) .) ~2,7
-   (fld :a.0.twh699we9 . . 3 string.0.sysvq0asl .))) 9,5
- (comment int.0.sysvq0asl ~2,1 int.0.sysvq0asl))
+   (fld :a.0. . . 3 string.0.sysvq0asl .))) 9,5
+ (comment int.0.sysvq0asl ~2,1 int.0.sysvq0asl))0,1,tests/nimony/when/twhenobject.nim(.index 6,1
+ (h Foo.0. +85) 6,5
+ (h y.0. +43) 4,6
+ (h z.0. +39) 6,8
+ (h a.0. +39))

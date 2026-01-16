@@ -1,46 +1,47 @@
-(.nif24)
+(.nif26)
+(.indexat +3987            )
 0,3,tests/nimony/generics/ttuplecache.nim(stmts 9,1
- (type ~7 :Foo.0.ttuv4zf4c1 . ~4
+ (type ~7 :Foo.0. . ~4
   (typevars 1
-   (typevar :T.0.ttuv4zf4c1 . . . .)) . 2
+   (typevar :T.0. . . . .)) . 2
   (object . ~7,1
-   (fld :data.0.ttuv4zf4c1 . . 6 T.0.ttuv4zf4c1 .))) ,5
- (proc 5 :initFooInt.0.ttuv4zf4c1 . . . 15
-  (params) 7 Foo.0.Iw8bgj.ttuv4zf4c1 . . 2,1
+   (fld :data.0. . . 6 T.0. .))) ,5
+ (proc 5 :initFooInt.0. . . . 15
+  (params) 7 Foo.0.Iw8bgj. . . 2,1
   (stmts 8
-   (result :result.0 . . ~3,~1 Foo.0.Iw8bgj.ttuv4zf4c1 .) 8
+   (result :result.0 . . ~3,~1 Foo.0.Iw8bgj. .) 8
    (asgn result.0
-    (oconstr ~3,~1 Foo.0.Iw8bgj.ttuv4zf4c1 5
-     (kv ~4 data.0.Iw8bgj.ttuv4zf4c1 2 +0))) ~2,~1
+    (oconstr ~3,~1 Foo.0.Iw8bgj. 5
+     (kv ~4 data.0.Iw8bgj. 2 +0))) ~2,~1
    (ret result.0))) ,8
- (proc 5 :initFooTup.0.ttuv4zf4c1 . . . 15
-  (params) 7 Foo.0.Ildbpdf1.ttuv4zf4c1 . . 2,2
+ (proc 5 :initFooTup.0. . . . 15
+  (params) 7 Foo.0.Ildbpdf1. . . 2,2
   (stmts 15
-   (result :result.1 . . ~10,~2 Foo.0.Ildbpdf1.ttuv4zf4c1 .) 15
+   (result :result.1 . . ~10,~2 Foo.0.Ildbpdf1. .) 15
    (asgn result.1
-    (oconstr ~10,~2 Foo.0.Ildbpdf1.ttuv4zf4c1 5
-     (kv ~4 data.0.Ildbpdf1.ttuv4zf4c1 2
+    (oconstr ~10,~2 Foo.0.Ildbpdf1. 5
+     (kv ~4 data.0.Ildbpdf1. 2
       (tupconstr ~16,~2
        (tuple 1
         (i -1) 6
         (i -1)) 1 +0 4 +0)))) ~2,~2
    (ret result.1))) ,12
- (proc 5 :initFooGeneric.0.ttuv4zf4c1 . . 19
+ (proc 5 :initFooGeneric.0. . . 19
   (typevars 1
-   (typevar :T.1.ttuv4zf4c1 . . . .)) 22
+   (typevar :T.1. . . . .)) 22
   (params 1
-   (param :x.0 . . 3 T.1.ttuv4zf4c1 .)) 11
-  (at ~3 Foo.0.ttuv4zf4c1 1 T.1.ttuv4zf4c1) . . 2,1
+   (param :x.0 . . 3 T.1. .)) 11
+  (at ~3 Foo.0. 1 T.1.) . . 2,1
   (stmts 6
    (result :result.2 . . 3,~1
-    (at ~3 Foo.0.ttuv4zf4c1 1 T.1.ttuv4zf4c1) .) 6
+    (at ~3 Foo.0. 1 T.1.) .) 6
    (asgn result.2
     (oconstr 3,~1
-     (at ~3 Foo.0.ttuv4zf4c1 1 T.1.ttuv4zf4c1) 5
+     (at ~3 Foo.0. 1 T.1.) 5
      (kv ~4 data 2 x.0))) ~2,~1
    (ret result.2))) 4,15
- (glet :x.0.ttuv4zf4c1 . . 7,~3 Foo.0.Iv5bnz4.ttuv4zf4c1 18
-  (call ~14 initFooGeneric.1.ttuv4zf4c1 1
+ (glet :x.0. . . 7,~3 Foo.0.Iv5bnz4. 18
+  (call ~14 initFooGeneric.1. 1
    (tupconstr 2
     (tuple
      (kv ~1 a
@@ -48,15 +49,15 @@
      (kv ~1 b string.0.sysvq0asl)) 2
     (kv ~1 a 2 +1) 8
     (kv ~1 b 2 "abc")))) 4,16
- (glet :x1.0.ttuv4zf4c1 . . 4,~11
+ (glet :x1.0. . . 4,~11
   (i -1) 16
   (tupat ~5
-   (dot ~1 x.0.ttuv4zf4c1 data.0.Iv5bnz4.ttuv4zf4c1 +0) +0)) 4,17
- (glet :x2.0.ttuv4zf4c1 . . 4 string.0.sysvq0asl 19
+   (dot ~1 x.0. data.0.Iv5bnz4. +0) +0)) 4,17
+ (glet :x2.0. . . 4 string.0.sysvq0asl 19
   (tupat ~5
-   (dot ~1 x.0.ttuv4zf4c1 data.0.Iv5bnz4.ttuv4zf4c1 +0) +1)) 4,19
- (glet :y.0.ttuv4zf4c1 . . 7,~7 Foo.0.Iarhs7y1.ttuv4zf4c1 18
-  (call ~14 initFooGeneric.2.ttuv4zf4c1 1
+   (dot ~1 x.0. data.0.Iv5bnz4. +0) +1)) 4,19
+ (glet :y.0. . . 7,~7 Foo.0.Iarhs7y1. 18
+  (call ~14 initFooGeneric.2. 1
    (tupconstr 2
     (tuple
      (kv ~1 x string.0.sysvq0asl) 10
@@ -64,16 +65,16 @@
       (i -1))) 2
     (kv ~1 x 2 "def") 12
     (kv ~1 y 2 +2)))) 4,20
- (glet :y1.0.ttuv4zf4c1 . . 4,~3 string.0.sysvq0asl 19
+ (glet :y1.0. . . 4,~3 string.0.sysvq0asl 19
   (tupat ~5
-   (dot ~1 y.0.ttuv4zf4c1 data.0.Iarhs7y1.ttuv4zf4c1 +0) +0)) 4,21
- (glet :y2.0.ttuv4zf4c1 . . 4,~16
+   (dot ~1 y.0. data.0.Iarhs7y1. +0) +0)) 4,21
+ (glet :y2.0. . . 4,~16
   (i -1) 16
   (tupat ~5
-   (dot ~1 y.0.ttuv4zf4c1 data.0.Iarhs7y1.ttuv4zf4c1 +0) +1)) 8,5
+   (dot ~1 y.0. data.0.Iarhs7y1. +0) +1)) 8,5
  (comment int.0.sysvq0asl 1,3 int.0.sysvq0asl 6,3 int.0.sysvq0asl ~2,1 int.0.sysvq0asl ~1,5 int.0.sysvq0asl 4,5 int.0.sysvq0asl ,11 int.0.sysvq0asl ,16 int.0.sysvq0asl) 22,15
- (proc :initFooGeneric.1.ttuv4zf4c1 . ~22,~3 .
-  (at initFooGeneric.0.ttuv4zf4c1 3
+ (proc :initFooGeneric.1. . ~22,~3 .
+  (at initFooGeneric.0. 3
    (tuple
     (kv ~1 a
      (i -1)) 6
@@ -83,15 +84,15 @@
     (tuple
      (kv ~1 a
       (i -1)) 6
-     (kv ~1 b string.0.sysvq0asl)) .)) ~11,~3 Foo.0.Iv5bnz4.ttuv4zf4c1 ~22,~3 . ~22,~3 . ~20,~2
+     (kv ~1 b string.0.sysvq0asl)) .)) ~11,~3 Foo.0.Iv5bnz4. ~22,~3 . ~22,~3 . ~20,~2
   (stmts 6
-   (result :result.3 . . 3,~1 Foo.0.Iv5bnz4.ttuv4zf4c1 .) 6
+   (result :result.3 . . 3,~1 Foo.0.Iv5bnz4. .) 6
    (asgn result.3
-    (oconstr 3,~1 Foo.0.Iv5bnz4.ttuv4zf4c1 5
-     (kv ~4 data.0.Iv5bnz4.ttuv4zf4c1 2 x.3))) ~2,~1
+    (oconstr 3,~1 Foo.0.Iv5bnz4. 5
+     (kv ~4 data.0.Iv5bnz4. 2 x.3))) ~2,~1
    (ret result.3))) 22,19
- (proc :initFooGeneric.2.ttuv4zf4c1 . ~22,~7 .
-  (at initFooGeneric.0.ttuv4zf4c1 3
+ (proc :initFooGeneric.2. . ~22,~7 .
+  (at initFooGeneric.0. 3
    (tuple
     (kv ~1 x string.0.sysvq0asl) 10
     (kv ~1 y
@@ -101,50 +102,73 @@
     (tuple
      (kv ~1 x string.0.sysvq0asl) 10
      (kv ~1 y
-      (i -1))) .)) ~11,~7 Foo.0.Iarhs7y1.ttuv4zf4c1 ~22,~7 . ~22,~7 . ~20,~6
+      (i -1))) .)) ~11,~7 Foo.0.Iarhs7y1. ~22,~7 . ~22,~7 . ~20,~6
   (stmts 6
-   (result :result.4 . . 3,~1 Foo.0.Iarhs7y1.ttuv4zf4c1 .) 6
+   (result :result.4 . . 3,~1 Foo.0.Iarhs7y1. .) 6
    (asgn result.4
-    (oconstr 3,~1 Foo.0.Iarhs7y1.ttuv4zf4c1 5
-     (kv ~4 data.0.Iarhs7y1.ttuv4zf4c1 2 x.4))) ~2,~1
+    (oconstr 3,~1 Foo.0.Iarhs7y1. 5
+     (kv ~4 data.0.Iarhs7y1. 2 x.4))) ~2,~1
    (ret result.4))) 7,5
- (type :Foo.0.Iw8bgj.ttuv4zf4c1 .
-  (at Foo.0.ttuv4zf4c1 1
+ (type :Foo.0.Iw8bgj. .
+  (at Foo.0. 1
    (i -1)) 2,~4 . 4,~4
   (object . ~7,1
-   (fld :data.0.Iw8bgj.ttuv4zf4c1 . . 4,3
+   (fld :data.0.Iw8bgj. . . 4,3
     (i -1) .))) 7,8
- (type :Foo.0.Ildbpdf1.ttuv4zf4c1 .
-  (at Foo.0.ttuv4zf4c1 1
+ (type :Foo.0.Ildbpdf1. .
+  (at Foo.0. 1
    (tuple 1
     (i -1) 6
     (i -1))) 2,~7 . 4,~7
   (object . ~7,1
-   (fld :data.0.Ildbpdf1.ttuv4zf4c1 . . 4,6
+   (fld :data.0.Ildbpdf1. . . 4,6
     (tuple 1
      (i -1) 6
      (i -1)) .))) 11,12
- (type :Foo.0.Iv5bnz4.ttuv4zf4c1 .
-  (at Foo.0.ttuv4zf4c1 14,3
+ (type :Foo.0.Iv5bnz4. .
+  (at Foo.0. 14,3
    (tuple
     (kv ~1 a
      (i -1)) 6
     (kv ~1 b string.0.sysvq0asl))) ~2,~11 . ,~11
   (object . ~7,1
-   (fld :data.0.Iv5bnz4.ttuv4zf4c1 . . 21,13
+   (fld :data.0.Iv5bnz4. . . 21,13
     (tuple
      (kv ~1 a
       (i -1)) 6
      (kv ~1 b string.0.sysvq0asl)) .))) 11,12
- (type :Foo.0.Iarhs7y1.ttuv4zf4c1 .
-  (at Foo.0.ttuv4zf4c1 14,7
+ (type :Foo.0.Iarhs7y1. .
+  (at Foo.0. 14,7
    (tuple
     (kv ~1 x string.0.sysvq0asl) 10
     (kv ~1 y
      (i -1)))) ~2,~11 . ,~11
   (object . ~7,1
-   (fld :data.0.Iarhs7y1.ttuv4zf4c1 . . 21,17
+   (fld :data.0.Iarhs7y1. . . 21,17
     (tuple
      (kv ~1 x string.0.sysvq0asl) 10
      (kv ~1 y
-      (i -1))) .))))
+      (i -1))) .))))0,3,tests/nimony/generics/ttuplecache.nim(.index 9,1
+ (h Foo.0. +89) 6,1
+ (h T.0. +37) 4,2
+ (h data.0. +49) ,5
+ (h initFooInt.0. +36) ,8
+ (h initFooTup.0. +246) ,12
+ (h initFooGeneric.0. +340) 20,12
+ (h T.1. +49) 4,15
+ (h x.0. +302) 4,16
+ (h x1.0. +217) 4,17
+ (h x2.0. +94) 4,19
+ (h y.0. +100) 4,20
+ (h y1.0. +220) 4,21
+ (h y2.0. +104) 22,15
+ (h initFooGeneric.1. +269) 22,19
+ (h initFooGeneric.2. +485) 7,5
+ (h Foo.0.Iw8bgj. +489) 4,2
+ (h data.0.Iw8bgj. +79) 7,8
+ (h Foo.0.Ildbpdf1. +52) 4,2
+ (h data.0.Ildbpdf1. +108) 11,12
+ (h Foo.0.Iv5bnz4. +85) 4,2
+ (h data.0.Iv5bnz4. +147) 11,12
+ (h Foo.0.Iarhs7y1. +122) 4,2
+ (h data.0.Iarhs7y1. +149))

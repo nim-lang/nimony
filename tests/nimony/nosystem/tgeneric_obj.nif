@@ -1,115 +1,116 @@
-(.nif24)
+(.nif26)
+(.indexat +6588            )
 0,2,tests/nimony/nosystem/tgeneric_obj.nim(stmts 2,1
- (type :int.0.tge7jvqqk1
+ (type :int.0.
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,3
- (type :float.0.tge7jvqqk1
+ (type :float.0.
   (f +64) . 7
   (pragmas 2
    (magic 7 Float)) .) 2,4
- (type :char.0.tge7jvqqk1
+ (type :char.0.
   (c +8) . 6
   (pragmas 2
    (magic 7 Char)) .) 2,5
- (type :uint8.0.tge7jvqqk1
+ (type :uint8.0.
   (u +8) . 7
   (pragmas 2
    (magic 7 UInt8)) .) 2,7
- (type :set.0.tge7jvqqk1
+ (type :set.0.
   (set) 4
   (typevars 1
-   (typevar :T.0.tge7jvqqk1 . . . .)) 8
+   (typevar :T.0. . . . .)) 8
   (pragmas 2
    (magic 7 Set)) .) 2,8
- (type :array.0.tge7jvqqk1
+ (type :array.0.
   (array) 7
   (typevars 1
-   (typevar :Index.0.tge7jvqqk1 . . . .) 8
-   (typevar :T.1.tge7jvqqk1 . . . .)) 18
+   (typevar :Index.0. . . . .) 8
+   (typevar :T.1. . . . .)) 18
   (pragmas 2
    (magic 7 Array)) .) 2,9
- (type :typedesc.0.tge7jvqqk1
+ (type :typedesc.0.
   (typedesc) 9
   (typevars 1
-   (typevar :T.2.tge7jvqqk1 . . . .)) 13
+   (typevar :T.2. . . . .)) 13
   (pragmas 2
    (magic 7 TypeDesc)) .) 2,10
- (type :untyped.0.tge7jvqqk1
+ (type :untyped.0.
   (untyped) . 9
   (pragmas 2
    (magic 7 Expr)) .) 14,12
- (type ~12 :TypeOfMode.0.tge7jvqqk1 x . . 2
+ (type ~12 :TypeOfMode.0. x . . 2
   (enum
    (u +8) ~12,1
-   (efld :typeOfProc.0.tge7jvqqk1 x . TypeOfMode.0.tge7jvqqk1
+   (efld :typeOfProc.0. x . TypeOfMode.0.
     (tup +0 "typeOfProc")) ~12,2
-   (efld :typeOfIter.0.tge7jvqqk1 x . TypeOfMode.0.tge7jvqqk1
+   (efld :typeOfIter.0. x . TypeOfMode.0.
     (tup +1 "typeOfIter")))) 2,12
- (proc :dollar`.TypeOfMode.0.tge7jvqqk1 x . .
+ (proc :dollar`.TypeOfMode.0. x . .
   (params
-   (param :e.0 . . TypeOfMode.0.tge7jvqqk1 .)) string.0.sysvq0asl . .
+   (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
   (stmts 14
    (result :result.0 . . string.0.sysvq0asl .) 14
    (case e.0 ~12,1
     (of
-     (ranges typeOfProc.0.tge7jvqqk1)
+     (ranges typeOfProc.0.)
      (stmts
       (ret "typeOfProc"))) ~12,2
     (of
-     (ranges typeOfIter.0.tge7jvqqk1)
+     (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
    (ret result.0))) ,16
- (proc 5 :typeof.0.tge7jvqqk1
+ (proc 5 :typeof.0.
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
     (untyped) .) 13
-   (param :mode.0 . . ~22,~4 TypeOfMode.0.tge7jvqqk1 7 typeOfIter.0.tge7jvqqk1)) 33
+   (param :mode.0 . . ~22,~4 TypeOfMode.0. 7 typeOfIter.0.)) 33
   (typekind
    (typedesc)) 53
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,19
- (type ~8 :string.0.tge7jvqqk1 x . . string.0.sysvq0asl) 4,21
- (gvar :myset.0.tge7jvqqk1 . . 10
+ (type ~8 :string.0. x . . string.0.sysvq0asl) 4,21
+ (gvar :myset.0. . . 10
   (set 1
    (u +8)) .) 4,22
- (gvar :myarr.0.tge7jvqqk1 . . 12
+ (gvar :myarr.0. . . 12
   (array 4
    (i -1)
    (rangetype
     (i -1) +0 +2)) .) 4,23
- (glet :u8.0.tge7jvqqk1 . .
+ (glet :u8.0. . .
   (u +8) 5
   (suf +3u "u8")) 6,24
- (asgn ~6 myset.0.tge7jvqqk1 2
+ (asgn ~6 myset.0. 2
   (setconstr 6,~3
    (set 1
     (u +8)) 1
-   (suf +1u "u8") 7 u8.0.tge7jvqqk1 11
+   (suf +1u "u8") 7 u8.0. 11
    (suf +5u "u8") 17
    (range
     (suf +7u "u8") 6
     (suf +9u "u8")))) 6,25
- (asgn ~6 myarr.0.tge7jvqqk1 2
+ (asgn ~6 myarr.0. 2
   (aconstr 8,~3
    (array 4
     (i -1)
     (rangetype
      (i -1) +0 +2)) 1 +1 4 +2 7 +3)) 15,28
- (type ~13 :MyGeneric.0.tge7jvqqk1 . ~4
+ (type ~13 :MyGeneric.0. . ~4
   (typevars 1
-   (typevar :T.3.tge7jvqqk1 . . . .)) . 2
+   (typevar :T.3. . . . .)) . 2
   (object . ~13,1
-   (fld :x.0.tge7jvqqk1 . . 3 T.3.tge7jvqqk1 .))) 2,32
- (gvar :myglob.0.tge7jvqqk1 . . 17 MyGeneric.0.I8smrpu.tge7jvqqk1 .) 2,33
- (gvar :other.0.tge7jvqqk1 . . 16 MyGeneric.0.Iliphp3.tge7jvqqk1 .) 9,35
+   (fld :x.0. . . 3 T.3. .))) 2,32
+ (gvar :myglob.0. . . 17 MyGeneric.0.I8smrpu. .) 2,33
+ (gvar :other.0. . . 16 MyGeneric.0.Iliphp3. .) 9,35
  (asgn ~3
-  (dot ~6 myglob.0.tge7jvqqk1 x.0.I8smrpu.tge7jvqqk1 +0) 2 +56) 8,36
+  (dot ~6 myglob.0. x.0.I8smrpu. +0) 2 +56) 8,36
  (asgn ~3
-  (dot ~5 other.0.tge7jvqqk1 x.0.Iliphp3.tge7jvqqk1 +0) 2 +79.0) ,38
- (proc 5 :\2B.0.tge7jvqqk1
+  (dot ~5 other.0. x.0.Iliphp3. +0) 2 +79.0) ,38
+ (proc 5 :\2B.0.
   (add -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -119,11 +120,11 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,40
- (template 9 :foobar.0.tge7jvqqk1 . . . 15
+ (template 9 :foobar.0. . . . 15
   (params) . . . 2,1
   (stmts
    (break .))) ,43
- (proc 5 :foo.0.tge7jvqqk1 . . . 8
+ (proc 5 :foo.0. . . . 8
   (params 1
    (param :x.2 . . 3
     (i -1) .) 9
@@ -136,7 +137,7 @@
    (asgn ~7 result.1 2 +4) 2,2
    (asgn ~2 x.5 2 "34") ~2,~1
    (ret result.1))) ,48
- (proc 5 :overloaded.0.tge7jvqqk1 . . . 15
+ (proc 5 :overloaded.0. . . . 15
   (params) . . . 2,1
   (stmts 4
    (let :someInt.0 . . 10,~11
@@ -144,45 +145,45 @@
     (add
      (i -1) 1 +23 5 +90)) ,1
    (discard 11
-    (call ~3 foo.0.tge7jvqqk1 3
+    (call ~3 foo.0. 3
      (add
       (i -1) ~2 +34 1 +56) 8 "xyz")))) 16,53
- (type ~14 :HSlice.0.tge7jvqqk1 x ~7
+ (type ~14 :HSlice.0. x ~7
   (typevars 1
-   (typevar :T.4.tge7jvqqk1 . . . .) 4
-   (typevar :U.0.tge7jvqqk1 . . . .)) . 2
+   (typevar :T.4. . . . .) 4
+   (typevar :U.0. . . . .)) . 2
   (object . ~14,1
-   (fld :a.0.tge7jvqqk1 . . 3 T.4.tge7jvqqk1 .) ~14,2
-   (fld :b.0.tge7jvqqk1 . . 3 U.0.tge7jvqqk1 .))) 12,56
- (type ~10 :Slice.0.tge7jvqqk1 x ~4
+   (fld :a.0. . . 3 T.4. .) ~14,2
+   (fld :b.0. . . 3 U.0. .))) 12,56
+ (type ~10 :Slice.0. x ~4
   (typevars 1
-   (typevar :T.5.tge7jvqqk1 . . . .)) . 8
-  (at ~6 HSlice.0.tge7jvqqk1 1 T.5.tge7jvqqk1 4 T.5.tge7jvqqk1)) ,58
- (proc 5 :\2E..0.tge7jvqqk1 x . 10
+   (typevar :T.5. . . . .)) . 8
+  (at ~6 HSlice.0. 1 T.5. 4 T.5.)) ,58
+ (proc 5 :\2E..0. x . 10
   (typevars 1
-   (typevar :T.6.tge7jvqqk1 . . . .) 4
-   (typevar :U.1.tge7jvqqk1 . . . .)) 16
+   (typevar :T.6. . . . .) 4
+   (typevar :U.1. . . . .)) 16
   (params 1
-   (param :a.0 . . 3 T.6.tge7jvqqk1 .) 7
-   (param :b.0 . . 3 U.1.tge7jvqqk1 .)) 20
-  (at ~6 HSlice.0.tge7jvqqk1 1 T.6.tge7jvqqk1 4 U.1.tge7jvqqk1) . . 45
+   (param :a.0 . . 3 T.6. .) 7
+   (param :b.0 . . 3 U.1. .)) 20
+  (at ~6 HSlice.0. 1 T.6. 4 U.1.) . . 45
   (stmts
    (result :result.2 . . ~25
-    (at ~6 HSlice.0.tge7jvqqk1 1 T.6.tge7jvqqk1 4 U.1.tge7jvqqk1) .)
+    (at ~6 HSlice.0. 1 T.6. 4 U.1.) .)
    (discard .) ~45
    (ret result.2))) 4,61
- (gvar :myarr2.0.tge7jvqqk1 . . 12,~39
+ (gvar :myarr2.0. . . 12,~39
   (array 4
    (i -1)
    (rangetype
-    (i -1) +0 +2)) 27 myarr.0.tge7jvqqk1) 7,62
- (asgn ~7 myarr2.0.tge7jvqqk1 2
+    (i -1) +0 +2)) 27 myarr.0.) 7,62
+ (asgn ~7 myarr2.0. 2
   (aconstr 7,~40
    (array 4
     (i -1)
     (rangetype
      (i -1) +0 +2)) 1 +4 4 +5 7 +6)) 4,64
- (gvar :m3.0.tge7jvqqk1 . . 9
+ (gvar :m3.0. . . 9
   (array 4
    (i -1)
    (rangetype
@@ -192,45 +193,45 @@
     (i -1)
     (rangetype
      (i -1) +0 +3)) 1 +1 4 +2 7 +3 10 +45)) 4,65
- (gvar :x3.0.tge7jvqqk1 . . 9
+ (gvar :x3.0. . . 9
   (array 7
    (i -1)
    (rangetype
-    (i -1) 1 +4 4 +7)) 23 m3.0.tge7jvqqk1) 3,66
- (asgn ~3 x3.0.tge7jvqqk1 2
+    (i -1) 1 +4 4 +7)) 23 m3.0.) 3,66
+ (asgn ~3 x3.0. 2
   (aconstr 8,~2
    (array 4
     (i -1)
     (rangetype
      (i -1) +0 +3)) 1 +2 4 +3 7 +4 10 +5)) ,68
- (proc 5 :foo.1.tge7jvqqk1 . . 8
+ (proc 5 :foo.1. . . 8
   (typevars 1
-   (typevar :I.0.tge7jvqqk1 . . . .) 4
-   (typevar :T.7.tge7jvqqk1 . . . .)) 14
+   (typevar :I.0. . . . .) 4
+   (typevar :T.7. . . . .)) 14
   (params 1
    (param :x.3 . . 8
-    (array 4 T.7.tge7jvqqk1 1 I.0.tge7jvqqk1) .)) . . . 33
+    (array 4 T.7. 1 I.0.) .)) . . . 33
   (stmts
    (discard .))) 3,69
- (call ~3 foo.2.tge7jvqqk1 1 myarr2.0.tge7jvqqk1) ,71
- (proc 5 :identity.0.tge7jvqqk1 . . 13
+ (call ~3 foo.2. 1 myarr2.0.) ,71
+ (proc 5 :identity.0. . . 13
   (typevars 1
-   (typevar :I.1.tge7jvqqk1 . . . .) 4
-   (typevar :T.8.tge7jvqqk1 . . . .)) 19
+   (typevar :I.1. . . . .) 4
+   (typevar :T.8. . . . .)) 19
   (params 1
    (param :x.4 . . 8
-    (array 4 T.8.tge7jvqqk1 1 I.1.tge7jvqqk1) .)) 23
-  (array 4 T.8.tge7jvqqk1 1 I.1.tge7jvqqk1) . . 2,1
+    (array 4 T.8. 1 I.1.) .)) 23
+  (array 4 T.8. 1 I.1.) . . 2,1
   (stmts 7
    (result :result.3 . . 19,~1
-    (array 4 T.8.tge7jvqqk1 1 I.1.tge7jvqqk1) .) 7
+    (array 4 T.8. 1 I.1.) .) 7
    (asgn ~7 result.3 2 x.4) ~2,~1
    (ret result.3))) 7,73
- (asgn ~7 myarr2.0.tge7jvqqk1 10
-  (call ~8 identity.1.tge7jvqqk1 1 myarr2.0.tge7jvqqk1)) 15,16
- (comment untyped.0.tge7jvqqk1 18 typedesc.0.tge7jvqqk1 1,22 int.0.tge7jvqqk1 1,22 int.0.tge7jvqqk1 ~2,22 int.0.tge7jvqqk1 ~3,27 int.0.tge7jvqqk1 6,27 int.0.tge7jvqqk1 3,52 array.0.tge7jvqqk1 8,55 array.0.tge7jvqqk1 3,55 array.0.tge7jvqqk1 ~4,5 set.0.tge7jvqqk1 ,5 uint8.0.tge7jvqqk1 ~4,6 array.0.tge7jvqqk1 5,6 int.0.tge7jvqqk1 5,16 int.0.tge7jvqqk1 4,17 float.0.tge7jvqqk1 ~3,45 array.0.tge7jvqqk1 9,45 int.0.tge7jvqqk1 ~7,48 array.0.tge7jvqqk1 2,48 int.0.tge7jvqqk1 ~7,49 array.0.tge7jvqqk1 5,49 int.0.tge7jvqqk1) 3,69
- (proc :foo.2.tge7jvqqk1 . ~3,~1 .
-  (at foo.1.tge7jvqqk1 13,~47
+ (asgn ~7 myarr2.0. 10
+  (call ~8 identity.1. 1 myarr2.0.)) 15,16
+ (comment untyped.0. 18 typedesc.0. 1,22 int.0. 1,22 int.0. ~2,22 int.0. ~3,27 int.0. 6,27 int.0. 3,52 array.0. 8,55 array.0. 3,55 array.0. ~4,5 set.0. ,5 uint8.0. ~4,6 array.0. 5,6 int.0. 5,16 int.0. 4,17 float.0. ~3,45 array.0. 9,45 int.0. ~7,48 array.0. 2,48 int.0. ~7,49 array.0. 5,49 int.0.) 3,69
+ (proc :foo.2. . ~3,~1 .
+  (at foo.1. 13,~47
    (rangetype
     (i -1) +0 +2) 17,~47
    (i -1)) 11,~1
@@ -242,8 +243,8 @@
       (i -1) +0 +2)) .)) ~3,~1 . ~3,~1 . ~3,~1 . 30,~1
   (stmts
    (discard .))) 17,73
- (proc :identity.1.tge7jvqqk1 . ~17,~2 .
-  (at identity.0.tge7jvqqk1 ~1,~51
+ (proc :identity.1. . ~17,~2 .
+  (at identity.0. ~1,~51
    (rangetype
     (i -1) +0 +2) 3,~51
    (i -1)) 2,~2
@@ -265,15 +266,70 @@
       (i -1) +0 +2)) .) 7
    (asgn ~7 result.4 2 x.9) ~2,~1
    (ret result.4))) 19,32
- (type :MyGeneric.0.I8smrpu.tge7jvqqk1 .
-  (at MyGeneric.0.tge7jvqqk1 1
+ (type :MyGeneric.0.I8smrpu. .
+  (at MyGeneric.0. 1
    (i -1)) ~4,~4 . ~2,~4
   (object . ~13,1
-   (fld :x.0.I8smrpu.tge7jvqqk1 . . 16,3
+   (fld :x.0.I8smrpu. . . 16,3
     (i -1) .))) 18,33
- (type :MyGeneric.0.Iliphp3.tge7jvqqk1 .
-  (at MyGeneric.0.tge7jvqqk1 1
+ (type :MyGeneric.0.Iliphp3. .
+  (at MyGeneric.0. 1
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
-   (fld :x.0.Iliphp3.tge7jvqqk1 . . 15,4
-    (f +64) .))))
+   (fld :x.0.Iliphp3. . . 15,4
+    (f +64) .))))0,2,tests/nimony/nosystem/tgeneric_obj.nim(.index 2,1
+ (x int.0. +90) 2,3
+ (x float.0. +66) 2,4
+ (x char.0. +71) 2,5
+ (x uint8.0. +68) 2,7
+ (x set.0. +70) 7,7
+ (h T.0. +39) 2,8
+ (x array.0. +68) 10,8
+ (h Index.0. +43) 17,8
+ (h T.1. +33) 2,9
+ (x typedesc.0. +71) 12,9
+ (h T.2. +49) 2,10
+ (x untyped.0. +75) 14,12
+ (x TypeOfMode.0. +76) 4,13
+ (x typeOfProc.0. +58) 4,14
+ (x typeOfIter.0. +75) 2,12
+ (x dollar`.TypeOfMode.0. +76) ,16
+ (x typeof.0. +368) 10,19
+ (x string.0. +230) 4,21
+ (h myset.0. +52) 4,22
+ (h myarr.0. +52) 4,23
+ (h u8.0. +86) 15,28
+ (h MyGeneric.0. +341) 12,28
+ (h T.3. +44) 4,29
+ (h x.0. +50) 2,32
+ (h myglob.0. +35) 2,33
+ (h other.0. +54) ,38
+ (x \2B.0. +171) ,40
+ (h foobar.0. +177) ,43
+ (h foo.0. +82) ,48
+ (h overloaded.0. +328) 16,53
+ (x HSlice.0. +239) 10,53
+ (h T.4. +41) 13,53
+ (h U.0. +29) 4,54
+ (h a.0. +50) 4,55
+ (h b.0. +34) 12,56
+ (x Slice.0. +36) 9,56
+ (h T.5. +40) ,58
+ (x \2E..0. +71) 11,58
+ (h T.6. +39) 14,58
+ (h U.1. +29) 4,61
+ (h myarr2.0. +269) 4,64
+ (h m3.0. +220) 4,65
+ (h x3.0. +179) ,68
+ (h foo.1. +212) 9,68
+ (h I.0. +37) 12,68
+ (h T.7. +29) ,71
+ (h identity.0. +168) 14,71
+ (h I.1. +43) 17,71
+ (h T.8. +29) 3,69
+ (h foo.2. +629) 17,73
+ (h identity.1. +274) 19,32
+ (h MyGeneric.0.I8smrpu. +500) 4,29
+ (h x.0.I8smrpu. +95) 18,33
+ (h MyGeneric.0.Iliphp3. +53) 4,29
+ (h x.0.Iliphp3. +96))

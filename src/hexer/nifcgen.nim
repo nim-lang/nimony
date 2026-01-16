@@ -2021,7 +2021,9 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     )
   c.openMangleScope()
 
-  var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", true)
+  var owningBuf = createTokenBuf(300)
+
+  var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", owningBuf, true)
   var dest = transform(c, c0, mp.name)
 
   var n = beginRead(dest)
