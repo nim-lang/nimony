@@ -1,6 +1,7 @@
-(.nif24)
+(.nif26)
+(.indexat +316             )
 0,1,tests/nimony/sysbasics/tresultnoinit.nim(stmts
- (proc 5 :foo.0.tremd49gb1 . . . 8
+ (proc 5 :foo.0. . . . 8
   (params) 4
   (i -1) 16
   (pragmas 2
@@ -12,4 +13,5 @@
     (i -1) .)
    (discard .) ~29
    (ret result.0))) 4
- (comment int.0.sysvq0asl))
+ (comment int.0.sysvq0asl))0,1,tests/nimony/sysbasics/tresultnoinit.nim(.index
+ (h foo.0. +88))

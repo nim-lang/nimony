@@ -20,7 +20,7 @@ proc isImportC*(n: Cursor): bool {.inline.} =
 proc createIntegralType*(m: var Module; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
   if cursorIsNil(result):
-    var buf = nifcursors.parseFromBuffer(name, 3)
+    var buf = nifcursors.parseFromBuffer(name, "<invalid>", 3)
     result = cursorAt(buf, 0)
     m.mem.add buf
     m.builtinTypes[name] = result

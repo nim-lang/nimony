@@ -1,120 +1,170 @@
-(.nif24)
+(.nif26)
+(.indexat +3561            )
 0,1,tests/nimony/sysbasics/trefobject.nim(stmts 9
- (type ~4 :Foo.0.tre8amq6m . . . 2
-  (ref 4 Foo.Obj.0.tre8amq6m)) 9
- (type ~4 :Foo.Obj.0.tre8amq6m . . . 6
+ (type ~4 :Foo.0. . . . 2
+  (ref 4 Foo.Obj.0.)) 9
+ (type ~4 :Foo.Obj.0. . . . 6
   (object . ~13,1
-   (fld :x.0.tre8amq6m . . 3
+   (fld :x.0. . . 3
     (i -1) .) ~13,2
-   (fld :parent.0.tre8amq6m . . 9,~2
-    (ref 4 Foo.Obj.0.tre8amq6m) .))) 4,4
- (gvar :foo.0.tre8amq6m . . 7,~4
-  (ref 4 Foo.Obj.0.tre8amq6m) .) 10,7
- (type ~8 :Node.0.tre8amq6m . ~4
+   (fld :parent.0. . . 9,~2
+    (ref 4 Foo.Obj.0.) .))) 4,4
+ (gvar :foo.0. . . 7,~4
+  (ref 4 Foo.Obj.0.) .) 10,7
+ (type ~8 :Node.0. . ~4
   (typevars 1
-   (typevar :T.0.tre8amq6m . . . .)) . 2
+   (typevar :T.0. . . . .)) . 2
   (ref 4
-   (at Node.Obj.0.tre8amq6m ~9 T.0.tre8amq6m))) 10,7
- (type ~8 :Node.Obj.0.tre8amq6m . ~4
+   (at Node.Obj.0. ~9 T.0.))) 10,7
+ (type ~8 :Node.Obj.0. . ~4
   (typevars 1
-   (typevar :T.1.tre8amq6m . . . .)) . 6
+   (typevar :T.1. . . . .)) . 6
   (object . ~12,1
-   (fld :val.0.tre8amq6m . . 5 T.1.tre8amq6m .) ~12,2
-   (fld :left.0.tre8amq6m . . 8,~2
+   (fld :val.0. . . 5 T.1. .) ~12,2
+   (fld :left.0. . . 8,~2
     (ref 4
-     (at Node.Obj.0.tre8amq6m 6,2 T.1.tre8amq6m)) .) ~6,2
-   (fld :right.0.tre8amq6m . . 2,~2
+     (at Node.Obj.0. 6,2 T.1.)) .) ~6,2
+   (fld :right.0. . . 2,~2
     (ref 4
-     (at Node.Obj.0.tre8amq6m 6,2 T.1.tre8amq6m)) .))) 4,11
- (gvar :node.0.tre8amq6m . . 8,~4
-  (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .) 14,14
- (type ~12 :Forward1.0.tre8amq6m . ~4
+     (at Node.Obj.0. 6,2 T.1.)) .))) 4,11
+ (gvar :node.0. . . 8,~4
+  (ref 4 Node.Obj.0.Iiz3k2p1.) .) 14,14
+ (type ~12 :Forward1.0. . ~4
   (typevars 1
-   (typevar :T.2.tre8amq6m . . . .)) . 2
+   (typevar :T.2. . . . .)) . 2
   (object . ~12,1
-   (fld :x.1.tre8amq6m . . 16,1
+   (fld :x.1. . . 16,1
     (ref 4
-     (at ForwardNode1.Obj.0.tre8amq6m ~4,~1 T.2.tre8amq6m)) .))) 18,16
- (type ~16 :ForwardNode1.0.tre8amq6m . ~4
+     (at ForwardNode1.Obj.0. ~4,~1 T.2.)) .))) 18,16
+ (type ~16 :ForwardNode1.0. . ~4
   (typevars 1
-   (typevar :T.3.tre8amq6m . . . .)) . 2
+   (typevar :T.3. . . . .)) . 2
   (ref 4
-   (at ForwardNode1.Obj.0.tre8amq6m ~9 T.3.tre8amq6m))) 18,16
- (type ~16 :ForwardNode1.Obj.0.tre8amq6m . ~4
+   (at ForwardNode1.Obj.0. ~9 T.3.))) 18,16
+ (type ~16 :ForwardNode1.Obj.0. . ~4
   (typevars 1
-   (typevar :T.4.tre8amq6m . . . .)) . 6
+   (typevar :T.4. . . . .)) . 6
   (object . ~20,1
-   (fld :val.1.tre8amq6m . . 5 T.4.tre8amq6m .) ~20,2
-   (fld :left.1.tre8amq6m . . 16,~2
+   (fld :val.1. . . 5 T.4. .) ~20,2
+   (fld :left.1. . . 16,~2
     (ref 4
-     (at ForwardNode1.Obj.0.tre8amq6m 6,2 T.4.tre8amq6m)) .) ~14,2
-   (fld :right.1.tre8amq6m . . 10,~2
+     (at ForwardNode1.Obj.0. 6,2 T.4.)) .) ~14,2
+   (fld :right.1. . . 10,~2
     (ref 4
-     (at ForwardNode1.Obj.0.tre8amq6m 6,2 T.4.tre8amq6m)) .))) 4,20
- (gvar :forwardNode1.0.tre8amq6m . . 16,~4
-  (ref 4 ForwardNode1.Obj.0.I93upex.tre8amq6m) .) 11,23
- (type ~9 :Forward2.0.tre8amq6m . . . 2
+     (at ForwardNode1.Obj.0. 6,2 T.4.)) .))) 4,20
+ (gvar :forwardNode1.0. . . 16,~4
+  (ref 4 ForwardNode1.Obj.0.I93upex.) .) 11,23
+ (type ~9 :Forward2.0. . . . 2
   (object . ~9,1
-   (fld :x.2.tre8amq6m . . 16,1
-    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m) .))) 18,25
- (type ~16 :ForwardNode2.0.tre8amq6m . ~4
+   (fld :x.2. . . 16,1
+    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.) .))) 18,25
+ (type ~16 :ForwardNode2.0. . ~4
   (typevars 1
-   (typevar :T.5.tre8amq6m . . . .)) . 2
+   (typevar :T.5. . . . .)) . 2
   (ref 4
-   (at ForwardNode2.Obj.0.tre8amq6m ~9 T.5.tre8amq6m))) 18,25
- (type ~16 :ForwardNode2.Obj.0.tre8amq6m . ~4
+   (at ForwardNode2.Obj.0. ~9 T.5.))) 18,25
+ (type ~16 :ForwardNode2.Obj.0. . ~4
   (typevars 1
-   (typevar :T.6.tre8amq6m . . . .)) . 6
+   (typevar :T.6. . . . .)) . 6
   (object . ~20,1
-   (fld :val.3.tre8amq6m . . 5 T.6.tre8amq6m .) ~20,2
-   (fld :left.3.tre8amq6m . . 16,~2
+   (fld :val.3. . . 5 T.6. .) ~20,2
+   (fld :left.3. . . 16,~2
     (ref 4
-     (at ForwardNode2.Obj.0.tre8amq6m 6,2 T.6.tre8amq6m)) .) ~14,2
-   (fld :right.3.tre8amq6m . . 10,~2
+     (at ForwardNode2.Obj.0. 6,2 T.6.)) .) ~14,2
+   (fld :right.3. . . 10,~2
     (ref 4
-     (at ForwardNode2.Obj.0.tre8amq6m 6,2 T.6.tre8amq6m)) .))) 4,29
- (gvar :forwardNode2.0.tre8amq6m . . 16,~4
-  (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m) .) 5,1
+     (at ForwardNode2.Obj.0. 6,2 T.6.)) .))) 4,29
+ (gvar :forwardNode2.0. . . 16,~4
+  (ref 4 ForwardNode2.Obj.0.Ikl0rjv.) .) 5,1
  (comment int.0.sysvq0asl 15,23 int.0.sysvq0asl 10,10 int.0.sysvq0asl 26,19 int.0.sysvq0asl 26,28 int.0.sysvq0asl) 19,24
- (type :ForwardNode2.0.Ishmn651.tre8amq6m .
-  (at ForwardNode2.0.tre8amq6m 1
+ (type :ForwardNode2.0.Ishmn651. .
+  (at ForwardNode2.0. 1
    (i -1)) ~1,1 . 1,1
-  (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m)) 24,25
- (type :ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m .
-  (at ForwardNode2.Obj.0.tre8amq6m ~4,~1
+  (ref 4 ForwardNode2.Obj.0.Ikl0rjv.)) 24,25
+ (type :ForwardNode2.Obj.0.Ikl0rjv. .
+  (at ForwardNode2.Obj.0. ~4,~1
    (i -1)) ~6 .
   (object . ~20,1
-   (fld :val.2.tre8amq6m . . 16,~2
+   (fld :val.2. . . 16,~2
     (i -1) .) ~20,2
-   (fld :left.2.tre8amq6m . . 16,~2
-    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m) .) ~14,2
-   (fld :right.2.tre8amq6m . . 10,~2
-    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.tre8amq6m) .))) 14,11
- (type :Node.0.Isesnzm1.tre8amq6m .
-  (at Node.0.tre8amq6m 1
+   (fld :left.2. . . 16,~2
+    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.) .) ~14,2
+   (fld :right.2. . . 10,~2
+    (ref 4 ForwardNode2.Obj.0.Ikl0rjv.) .))) 14,11
+ (type :Node.0.Isesnzm1. .
+  (at Node.0. 1
    (i -1)) ~4,~4 . ~2,~4
-  (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m)) 16,7
- (type :Node.Obj.0.Iiz3k2p1.tre8amq6m .
-  (at Node.Obj.0.tre8amq6m ~1,4
+  (ref 4 Node.Obj.0.Iiz3k2p1.)) 16,7
+ (type :Node.Obj.0.Iiz3k2p1. .
+  (at Node.Obj.0. ~1,4
    (i -1)) ~6 .
   (object . ~12,1
-   (fld :val.0.Iiz3k2p1.tre8amq6m . . 11,3
+   (fld :val.0.Iiz3k2p1. . . 11,3
     (i -1) .) ~12,2
-   (fld :left.0.Iiz3k2p1.tre8amq6m . . 8,~2
-    (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .) ~6,2
-   (fld :right.0.Iiz3k2p1.tre8amq6m . . 2,~2
-    (ref 4 Node.Obj.0.Iiz3k2p1.tre8amq6m) .))) 30,20
- (type :ForwardNode1.0.Iee6hkd1.tre8amq6m .
-  (at ForwardNode1.0.tre8amq6m 1
+   (fld :left.0.Iiz3k2p1. . . 8,~2
+    (ref 4 Node.Obj.0.Iiz3k2p1.) .) ~6,2
+   (fld :right.0.Iiz3k2p1. . . 2,~2
+    (ref 4 Node.Obj.0.Iiz3k2p1.) .))) 30,20
+ (type :ForwardNode1.0.Iee6hkd1. .
+  (at ForwardNode1.0. 1
    (i -1)) ~12,~4 . ~10,~4
-  (ref 4 ForwardNode1.Obj.0.I93upex.tre8amq6m)) 24,16
- (type :ForwardNode1.Obj.0.I93upex.tre8amq6m .
-  (at ForwardNode1.Obj.0.tre8amq6m 7,4
+  (ref 4 ForwardNode1.Obj.0.I93upex.)) 24,16
+ (type :ForwardNode1.Obj.0.I93upex. .
+  (at ForwardNode1.Obj.0. 7,4
    (i -1)) ~6 .
   (object . ~20,1
-   (fld :val.1.I93upex.tre8amq6m . . 27,3
+   (fld :val.1.I93upex. . . 27,3
     (i -1) .) ~20,2
-   (fld :left.1.I93upex.tre8amq6m . . 16,~2
-    (ref 4 ForwardNode1.Obj.0.I93upex.tre8amq6m) .) ~14,2
-   (fld :right.1.I93upex.tre8amq6m . . 10,~2
-    (ref 4 ForwardNode1.Obj.0.I93upex.tre8amq6m) .))))
+   (fld :left.1.I93upex. . . 16,~2
+    (ref 4 ForwardNode1.Obj.0.I93upex.) .) ~14,2
+   (fld :right.1.I93upex. . . 10,~2
+    (ref 4 ForwardNode1.Obj.0.I93upex.) .))))0,1,tests/nimony/sysbasics/trefobject.nim(.index 9
+ (h Foo.0. +87) 9
+ (h Foo.Obj.0. +50) 2,1
+ (h x.0. +48) 2,2
+ (h parent.0. +40) 4,4
+ (h foo.0. +60) 10,7
+ (h Node.0. +53) 7,7
+ (h T.0. +38) 10,7
+ (h Node.Obj.0. +76) 7,7
+ (h T.1. +42) 4,8
+ (h val.0. +50) 4,9
+ (h left.0. +36) 10,9
+ (h right.0. +77) 4,11
+ (h node.0. +80) 14,14
+ (h Forward1.0. +65) 11,14
+ (h T.2. +43) 4,15
+ (h x.1. +50) 18,16
+ (h ForwardNode1.0. +87) 15,16
+ (h T.3. +47) 18,16
+ (h ForwardNode1.Obj.0. +85) 15,16
+ (h T.4. +51) 4,17
+ (h val.1. +50) 4,18
+ (h left.1. +36) 10,18
+ (h right.1. +87) 4,20
+ (h forwardNode1.0. +89) 11,23
+ (h Forward2.0. +81) 4,24
+ (h x.2. +48) 18,25
+ (h ForwardNode2.0. +74) 15,25
+ (h T.5. +47) 18,25
+ (h ForwardNode2.Obj.0. +85) 15,25
+ (h T.6. +51) 4,26
+ (h val.3. +50) 4,27
+ (h left.3. +36) 10,27
+ (h right.3. +87) 4,29
+ (h forwardNode2.0. +89) 19,24
+ (h ForwardNode2.0.Ishmn651. +200) 24,25
+ (h ForwardNode2.Obj.0.Ikl0rjv. +126) 4,26
+ (h val.2. +104) 4,27
+ (h left.2. +46) 10,27
+ (h right.2. +76) 14,11
+ (h Node.0.Isesnzm1. +79) 16,7
+ (h Node.Obj.0.Iiz3k2p1. +105) 4,8
+ (h val.0.Iiz3k2p1. +88) 4,9
+ (h left.0.Iiz3k2p1. +54) 10,9
+ (h right.0.Iiz3k2p1. +76) 30,20
+ (h ForwardNode1.0.Iee6hkd1. +80) 24,16
+ (h ForwardNode1.Obj.0.I93upex. +131) 4,17
+ (h val.1.I93upex. +102) 4,18
+ (h left.1.I93upex. +53) 10,18
+ (h right.1.I93upex. +84))

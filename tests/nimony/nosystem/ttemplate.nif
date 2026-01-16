@@ -1,79 +1,80 @@
-(.nif24)
+(.nif26)
+(.indexat +3781            )
 0,2,tests/nimony/nosystem/ttemplate.nim(stmts 2,1
- (type :int.0.tte5tld8n
+ (type :int.0.
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,3
- (type :float.0.tte5tld8n
+ (type :float.0.
   (f +64) . 7
   (pragmas 2
    (magic 7 Float)) .) 2,4
- (type :char.0.tte5tld8n
+ (type :char.0.
   (c +8) . 6
   (pragmas 2
    (magic 7 Char)) .) 2,6
- (type :array.0.tte5tld8n
+ (type :array.0.
   (array) 7
   (typevars 1
-   (typevar :Index.0.tte5tld8n . . . .) 8
-   (typevar :T.0.tte5tld8n . . . .)) 18
+   (typevar :Index.0. . . . .) 8
+   (typevar :T.0. . . . .)) 18
   (pragmas 2
    (magic 7 Array)) .) 2,7
- (type :typedesc.0.tte5tld8n
+ (type :typedesc.0.
   (typedesc) 9
   (typevars 1
-   (typevar :T.1.tte5tld8n . . . .)) 13
+   (typevar :T.1. . . . .)) 13
   (pragmas 2
    (magic 7 TypeDesc)) .) 2,8
- (type :untyped.0.tte5tld8n
+ (type :untyped.0.
   (untyped) . 9
   (pragmas 2
    (magic 7 Expr)) .) 14,10
- (type ~12 :TypeOfMode.0.tte5tld8n x . . 2
+ (type ~12 :TypeOfMode.0. x . . 2
   (enum
    (u +8) ~12,1
-   (efld :typeOfProc.0.tte5tld8n x . TypeOfMode.0.tte5tld8n
+   (efld :typeOfProc.0. x . TypeOfMode.0.
     (tup +0 "typeOfProc")) ~12,2
-   (efld :typeOfIter.0.tte5tld8n x . TypeOfMode.0.tte5tld8n
+   (efld :typeOfIter.0. x . TypeOfMode.0.
     (tup +1 "typeOfIter")))) 2,10
- (proc :dollar`.TypeOfMode.0.tte5tld8n x . .
+ (proc :dollar`.TypeOfMode.0. x . .
   (params
-   (param :e.0 . . TypeOfMode.0.tte5tld8n .)) string.0.sysvq0asl . .
+   (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
   (stmts 14
    (result :result.0 . . string.0.sysvq0asl .) 14
    (case e.0 ~12,1
     (of
-     (ranges typeOfProc.0.tte5tld8n)
+     (ranges typeOfProc.0.)
      (stmts
       (ret "typeOfProc"))) ~12,2
     (of
-     (ranges typeOfIter.0.tte5tld8n)
+     (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
    (ret result.0))) ,14
- (proc 5 :typeof.0.tte5tld8n
+ (proc 5 :typeof.0.
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
     (untyped) .) 13
-   (param :mode.0 . . ~22,~4 TypeOfMode.0.tte5tld8n 7 typeOfIter.0.tte5tld8n)) 33
+   (param :mode.0 . . ~22,~4 TypeOfMode.0. 7 typeOfIter.0.)) 33
   (typekind
    (typedesc)) 53
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,17
- (type ~8 :string.0.tte5tld8n x . . string.0.sysvq0asl) 15,20
- (type ~13 :MyGeneric.0.tte5tld8n . ~4
+ (type ~8 :string.0. x . . string.0.sysvq0asl) 15,20
+ (type ~13 :MyGeneric.0. . ~4
   (typevars 1
-   (typevar :T.2.tte5tld8n . . . .)) . 2
+   (typevar :T.2. . . . .)) . 2
   (object . ~13,1
-   (fld :x.0.tte5tld8n . . 3 T.2.tte5tld8n .))) 2,24
- (gvar :myglob.0.tte5tld8n . . 17 MyGeneric.0.Igj236q.tte5tld8n .) 2,25
- (gvar :other.0.tte5tld8n . . 16 MyGeneric.0.Ibr3ivb1.tte5tld8n .) 9,27
+   (fld :x.0. . . 3 T.2. .))) 2,24
+ (gvar :myglob.0. . . 17 MyGeneric.0.Igj236q. .) 2,25
+ (gvar :other.0. . . 16 MyGeneric.0.Ibr3ivb1. .) 9,27
  (asgn ~3
-  (dot ~6 myglob.0.tte5tld8n x.0.Igj236q.tte5tld8n +0) 2 +56) 8,28
+  (dot ~6 myglob.0. x.0.Igj236q. +0) 2 +56) 8,28
  (asgn ~3
-  (dot ~5 other.0.tte5tld8n x.0.Ibr3ivb1.tte5tld8n +0) 2 +79.0) ,30
- (proc 5 :\2B.0.tte5tld8n
+  (dot ~5 other.0. x.0.Ibr3ivb1. +0) 2 +79.0) ,30
+ (proc 5 :\2B.0.
   (add -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -83,7 +84,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,32
- (template 9 :plus.0.tte5tld8n . . . 13
+ (template 9 :plus.0. . . . 13
   (params 1
    (param :x.2 . . 6
     (i -1) .) 4
@@ -93,7 +94,7 @@
   (stmts 2
    (add
     (i -1) ~2 x.2 2 y.1))) ,34
- (proc 5 :foo.0.tte5tld8n . . . 8
+ (proc 5 :foo.0. . . . 8
   (params 1
    (param :x.3 . . 3
     (i -1) .) 9
@@ -112,7 +113,7 @@
         (i -1) ~10,4 +2 ~7,4 +89))))) 2,2
    (asgn ~2 x.5 2 "34") ~2,~1
    (ret result.1))) ,39
- (proc 5 :overloaded.0.tte5tld8n . . . 15
+ (proc 5 :overloaded.0. . . . 15
   (params) . . . 2,1
   (stmts 4
    (let :someInt.0 . . 10,~10
@@ -120,37 +121,69 @@
     (add
      (i -1) 1 +23 5 +90)) ,1
    (discard 11
-    (call ~3 foo.0.tte5tld8n 3
+    (call ~3 foo.0. 3
      (add
       (i -1) ~2 +34 1 +56) 8 "xyz")))) 5,43
- (type :uint.0.tte5tld8n
+ (type :uint.0.
   (u -1) . 6
   (pragmas 2
    (magic 7 UInt)) .) ,45
- (template 9 :conv.0.tte5tld8n . . 13
+ (template 9 :conv.0. . . 13
   (typevars 1
-   (typevar :T.3.tte5tld8n . . . .)) 16
+   (typevar :T.3. . . . .)) 16
   (params 1
    (param :x.4 . . 3
-    (i -1) .)) 10 T.3.tte5tld8n . . 30
+    (i -1) .)) 10 T.3. . . 30
   (stmts 1
-   (conv ~1 T.3.tte5tld8n 1 x.4))) 4,47
- (glet :val.0.tte5tld8n . .
+   (conv ~1 T.3. 1 x.4))) 4,47
+ (glet :val.0. . .
   (i -1) 6 +123) ,48
  (discard 30,~3
   (expr 1
    (conv ~18,3
-    (u -1) ~12,3 val.0.tte5tld8n))) 15,14
- (comment untyped.0.tte5tld8n 18 typedesc.0.tte5tld8n 1,16 int.0.tte5tld8n 1,16 int.0.tte5tld8n ~2,16 int.0.tte5tld8n 5,18 int.0.tte5tld8n 5,18 int.0.tte5tld8n ~2,18 int.0.tte5tld8n ~3,20 int.0.tte5tld8n 6,20 int.0.tte5tld8n 5,31 int.0.tte5tld8n 5,10 int.0.tte5tld8n 4,11 float.0.tte5tld8n 8,22 plus.0.tte5tld8n ,22 plus.0.tte5tld8n ~2,34 uint.0.tte5tld8n 3,34 conv.0.tte5tld8n) 19,24
- (type :MyGeneric.0.Igj236q.tte5tld8n .
-  (at MyGeneric.0.tte5tld8n 1
+    (u -1) ~12,3 val.0.))) 15,14
+ (comment untyped.0. 18 typedesc.0. 1,16 int.0. 1,16 int.0. ~2,16 int.0. 5,18 int.0. 5,18 int.0. ~2,18 int.0. ~3,20 int.0. 6,20 int.0. 5,31 int.0. 5,10 int.0. 4,11 float.0. 8,22 plus.0. ,22 plus.0. ~2,34 uint.0. 3,34 conv.0.) 19,24
+ (type :MyGeneric.0.Igj236q. .
+  (at MyGeneric.0. 1
    (i -1)) ~4,~4 . ~2,~4
   (object . ~13,1
-   (fld :x.0.Igj236q.tte5tld8n . . 16,3
+   (fld :x.0.Igj236q. . . 16,3
     (i -1) .))) 18,25
- (type :MyGeneric.0.Ibr3ivb1.tte5tld8n .
-  (at MyGeneric.0.tte5tld8n 1
+ (type :MyGeneric.0.Ibr3ivb1. .
+  (at MyGeneric.0. 1
    (f +64)) ~3,~5 . ~1,~5
   (object . ~13,1
-   (fld :x.0.Ibr3ivb1.tte5tld8n . . 15,4
-    (f +64) .))))
+   (fld :x.0.Ibr3ivb1. . . 15,4
+    (f +64) .))))0,2,tests/nimony/nosystem/ttemplate.nim(.index 2,1
+ (x int.0. +87) 2,3
+ (x float.0. +66) 2,4
+ (x char.0. +71) 2,6
+ (x array.0. +68) 10,6
+ (h Index.0. +43) 17,6
+ (h T.0. +33) 2,7
+ (x typedesc.0. +71) 12,7
+ (h T.1. +49) 2,8
+ (x untyped.0. +74) 14,10
+ (x TypeOfMode.0. +76) 4,11
+ (x typeOfProc.0. +58) 4,12
+ (x typeOfIter.0. +75) 2,10
+ (x dollar`.TypeOfMode.0. +76) ,14
+ (x typeof.0. +368) 10,17
+ (x string.0. +230) 15,20
+ (h MyGeneric.0. +53) 12,20
+ (h T.2. +44) 4,21
+ (h x.0. +50) 2,24
+ (h myglob.0. +35) 2,25
+ (h other.0. +54) ,30
+ (x \2B.0. +173) ,32
+ (h plus.0. +177) ,34
+ (h foo.0. +185) ,39
+ (h overloaded.0. +439) 5,43
+ (x uint.0. +238) ,45
+ (h conv.0. +68) 14,45
+ (h T.3. +43) 4,47
+ (h val.0. +136) 19,24
+ (h MyGeneric.0.Igj236q. +346) 4,21
+ (h x.0.Igj236q. +95) 18,25
+ (h MyGeneric.0.Ibr3ivb1. +53) 4,21
+ (h x.0.Ibr3ivb1. +97))

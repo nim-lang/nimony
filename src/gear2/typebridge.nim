@@ -355,7 +355,7 @@ proc repair(n: PNode; r: var RContext; tag: string): PNode =
     result = n
     let typ = result[0].typ
     result = result[1]
-    result.typ() = typ
+    result.typ = typ
   of "suf":
     result = n[0]
     case n[1].strVal

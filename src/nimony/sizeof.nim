@@ -275,7 +275,7 @@ when isMainModule:
 
   proc testSizeof(srcNif: string; expectedSize: int) =
     let symId = block:
-      var srcBuf = parseFromBuffer srcNif
+      var srcBuf = parseFromBuffer(srcNif, "<invalid>")
       var n = beginRead srcBuf
       assert n.stmtKind == TypeS
       inc n

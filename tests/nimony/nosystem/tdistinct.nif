@@ -1,65 +1,66 @@
-(.nif24)
+(.nif26)
+(.indexat +2690            )
 0,2,tests/nimony/nosystem/tdistinct.nim(stmts 2,1
- (type :int.0.tdiuhv8dm
+ (type :int.0.
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,2
- (type :bool.0.tdiuhv8dm
+ (type :bool.0.
   (bool) . 6
   (pragmas 2
    (magic 7 Bool)) .) 2,3
- (type :char.0.tdiuhv8dm
+ (type :char.0.
   (c +8) . 6
   (pragmas 2
    (magic 7 Char)) .) 2,5
- (type :int8.0.tdiuhv8dm
+ (type :int8.0.
   (i +8) . 6
   (pragmas 2
    (magic 7 Int8)) .) 2,6
- (type :typedesc.0.tdiuhv8dm
+ (type :typedesc.0.
   (typedesc) 9
   (typevars 1
-   (typevar :T.0.tdiuhv8dm . . . .)) 13
+   (typevar :T.0. . . . .)) 13
   (pragmas 2
    (magic 7 TypeDesc)) .) 2,7
- (type :untyped.0.tdiuhv8dm
+ (type :untyped.0.
   (untyped) . 9
   (pragmas 2
    (magic 7 Expr)) .) 14,9
- (type ~12 :TypeOfMode.0.tdiuhv8dm x . . 2
+ (type ~12 :TypeOfMode.0. x . . 2
   (enum
    (u +8) ~12,1
-   (efld :typeOfProc.0.tdiuhv8dm x . TypeOfMode.0.tdiuhv8dm
+   (efld :typeOfProc.0. x . TypeOfMode.0.
     (tup +0 "typeOfProc")) ~12,2
-   (efld :typeOfIter.0.tdiuhv8dm x . TypeOfMode.0.tdiuhv8dm
+   (efld :typeOfIter.0. x . TypeOfMode.0.
     (tup +1 "typeOfIter")))) 2,9
- (proc :dollar`.TypeOfMode.0.tdiuhv8dm x . .
+ (proc :dollar`.TypeOfMode.0. x . .
   (params
-   (param :e.0 . . TypeOfMode.0.tdiuhv8dm .)) string.0.sysvq0asl . .
+   (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
   (stmts 14
    (result :result.0 . . string.0.sysvq0asl .) 14
    (case e.0 ~12,1
     (of
-     (ranges typeOfProc.0.tdiuhv8dm)
+     (ranges typeOfProc.0.)
      (stmts
       (ret "typeOfProc"))) ~12,2
     (of
-     (ranges typeOfIter.0.tdiuhv8dm)
+     (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
    (ret result.0))) ,13
- (proc 5 :typeof.0.tdiuhv8dm
+ (proc 5 :typeof.0.
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
     (untyped) .) 13
-   (param :mode.0 . . ~22,~4 TypeOfMode.0.tdiuhv8dm 7 typeOfIter.0.tdiuhv8dm)) 33
+   (param :mode.0 . . ~22,~4 TypeOfMode.0. 7 typeOfIter.0.)) 33
   (typekind
    (typedesc)) 53
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,17
- (type ~8 :string.0.tdiuhv8dm x . . string.0.sysvq0asl) ,19
- (proc 5 :\2B.0.tdiuhv8dm
+ (type ~8 :string.0. x . . string.0.sysvq0asl) ,19
+ (proc 5 :\2B.0.
   (add -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -69,7 +70,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,20
- (proc 5 :\2D.0.tdiuhv8dm
+ (proc 5 :\2D.0.
   (sub -3) . . 9
   (params 1
    (param :x.2 . . 6
@@ -79,7 +80,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,22
- (proc 5 :<=.0.tdiuhv8dm
+ (proc 5 :<=.0.
   (le -3) . . 10
   (params 1
    (param :x.3 . . 6
@@ -89,19 +90,19 @@
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) 9,26
- (type ~7 :VarId.0.tdiuhv8dm x . . 2
+ (type ~7 :VarId.0. x . . 2
   (distinct 9
    (i -1))) ,28
- (proc 5 :\2B.1.tdiuhv8dm x . . 9
+ (proc 5 :\2B.1. x . . 9
   (params 1
-   (param :x.4 . . 6 VarId.0.tdiuhv8dm .) 4
-   (param :y.3 . . 3 VarId.0.tdiuhv8dm .)) 15 VarId.0.tdiuhv8dm 30
+   (param :x.4 . . 6 VarId.0. .) 4
+   (param :y.3 . . 3 VarId.0. .)) 15 VarId.0. 30
   (pragmas 2
    (borrow)) . 9
   (stmts
-   (result :result.1 . . 7 VarId.0.tdiuhv8dm .)
+   (result :result.1 . . 7 VarId.0. .)
    (asgn result.1
-    (dconv 6 VarId.0.tdiuhv8dm
+    (dconv 6 VarId.0.
      (add
       (i -1)
       (dconv 11,~2
@@ -109,11 +110,31 @@
       (dconv 11,~2
        (i -1) y.3))))
    (ret result.1))) 4,35
- (gvar :x.0.tdiuhv8dm . . 3 VarId.0.tdiuhv8dm .) 2,37
- (asgn ~2 x.0.tdiuhv8dm 4
-  (infix \2B.1.tdiuhv8dm ~2 x.0.tdiuhv8dm 2 x.0.tdiuhv8dm)) 4,39
- (glet :y.0.tdiuhv8dm . . 4
+ (gvar :x.0. . . 3 VarId.0. .) 2,37
+ (asgn ~2 x.0. 4
+  (infix \2B.1. ~2 x.0. 2 x.0.)) 4,39
+ (glet :y.0. . . 4
   (i +8) 8
   (conv ~4
-   (i +8) 1 x.0.tdiuhv8dm)) 15,13
- (comment untyped.0.tdiuhv8dm 18 typedesc.0.tdiuhv8dm 1,6 int.0.tdiuhv8dm 1,6 int.0.tdiuhv8dm ~2,6 int.0.tdiuhv8dm 1,7 int.0.tdiuhv8dm 1,7 int.0.tdiuhv8dm ~2,7 int.0.tdiuhv8dm 2,9 int.0.tdiuhv8dm 2,9 int.0.tdiuhv8dm ~2,9 bool.0.tdiuhv8dm 5,13 int.0.tdiuhv8dm ~7,26 int8.0.tdiuhv8dm))
+   (i +8) 1 x.0.)) 15,13
+ (comment untyped.0. 18 typedesc.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. 1,7 int.0. 1,7 int.0. ~2,7 int.0. 2,9 int.0. 2,9 int.0. ~2,9 bool.0. 5,13 int.0. ~7,26 int8.0.))0,2,tests/nimony/nosystem/tdistinct.nim(.index 2,1
+ (x int.0. +87) 2,2
+ (x bool.0. +66) 2,3
+ (x char.0. +68) 2,5
+ (x int8.0. +68) 2,6
+ (x typedesc.0. +68) 12,6
+ (h T.0. +49) 2,7
+ (x untyped.0. +74) 14,9
+ (x TypeOfMode.0. +75) 4,10
+ (x typeOfProc.0. +58) 4,11
+ (x typeOfIter.0. +75) 2,9
+ (x dollar`.TypeOfMode.0. +75) ,13
+ (x typeof.0. +368) 10,17
+ (x string.0. +230) ,19
+ (x \2B.0. +51) ,20
+ (x \2D.0. +177) ,22
+ (x <=.0. +177) 9,26
+ (x VarId.0. +176) ,28
+ (x \2B.1. +58) 4,35
+ (h x.0. +366) 4,39
+ (h y.0. +91))

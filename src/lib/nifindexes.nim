@@ -286,9 +286,12 @@ proc writeFileAndIndex*(outfile: string; content: TokenBuf) =
   createIndex(outfile, true, content[0].info)
 
 type
+  IndexVisibility* = enum
+    Hidden, Exported
   NifIndexEntry* = object
     offset*: int
     info*: PackedLineInfo
+    vis*: IndexVisibility
   HooksPerType* = object
     a*: array[AttachedOp, (SymId, bool)]
 
@@ -300,7 +303,7 @@ type
     classes*: seq[ClassIndexEntry]
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
-proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
+proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; vis: IndexVisibility) =
   var previousOffset = 0
   var t = next(s)
   var nested = 1
@@ -320,7 +323,7 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]) =
         t = next(s) # skip Symbol
         if t.kind == IntLit:
           let offset = int pool.integers[t.intId] + previousOffset
-          tab[key] = NifIndexEntry(offset: offset, info: info)
+          tab[key] = NifIndexEntry(offset: offset, info: info, vis: vis)
           previousOffset = offset
         else:
           assert false, "invalid (kv) construct: IntLit expected"
@@ -478,12 +481,12 @@ proc readIndex*(indexName: string): NifIndex =
   if t.tag == TagId(IndexIdx):
     t = next(s)
     if t.tag == TagId(PublicIdx):
-      readSection s, result.public
+      readSection s, result.public, Exported
     else:
       assert false, "'public' expected"
     t = next(s)
     if t.tag == TagId(PrivateIdx):
-      readSection s, result.private
+      readSection s, result.private, Hidden
     else:
       assert false, "'private' expected"
     t = next(s)

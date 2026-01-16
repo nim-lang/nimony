@@ -26,7 +26,7 @@ proc fatal*(msg: string) =
   quit msg
 
 proc setupInput(c: var Context; buffer: string) =
-  var s = nifstreams.openFromBuffer(buffer)
+  var s = nifstreams.openFromBuffer(buffer, "")
   let res = processDirectives(s.r)
   assert res == Success
   c.input = default(TokenBuf)
