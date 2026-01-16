@@ -820,16 +820,16 @@ proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
   ## Try to find a unique enum field in the OchoiceX that matches the given enum type.
   result = SymId(0)
   var matchCount = 0
-  var f = choice.firstSon
-  while f.kind != ParRi:
-    if f.kind == Symbol:
-      let res = tryLoadSym(f.symId)
+  var a = choice.firstSon
+  while a.kind != ParRi:
+    if a.kind == Symbol:
+      let res = tryLoadSym(a.symId)
       if res.status == LacksNothing and res.decl.symKind == EfldY:
         let fieldType = asLocal(res.decl).typ
         if fieldType.kind == Symbol and sameSymbol(fieldType.symId, enumTypeSym):
-          result = f.symId
+          result = a.symId
           inc matchCount
-    inc f
+    inc a
   if matchCount != 1:
     result = SymId(0)
 
