@@ -31,6 +31,9 @@ proc typecheck(c: var SemContext; info: PackedLineInfo; got, expected: TypeCurso
     discard "fine"
   elif isVoidType(expected) and isVoidType(got):
     discard "fine"
+  elif isVoidType(expected) and typeKind(got) == UntypedT:
+    # untyped is compatible with void in template contexts
+    discard "fine"
   else:
     c.typeMismatch info, got, expected
 
