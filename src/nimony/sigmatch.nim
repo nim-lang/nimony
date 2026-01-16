@@ -74,6 +74,7 @@ type
     error: MatchError
     firstVarargPosition*: int
     genericConverter*, checkEmptyArg*, insertedParam*: bool
+    skipAddingArg: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -868,6 +869,12 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         m.error InvalidMatch, f, a
       else:
         if impl.typeKind in {EnumT, HoleyEnumT}:
+          if arg.n.exprKind == OchoiceX:
+            let matchedSym = tryMatchEnumChoice(arg.n, f.symId)
+            if matchedSym != SymId(0):
+              m.args.add symToken(matchedSym, arg.n.info)
+              m.skipAddingArg = true
+              return
           m.error InvalidMatch, f, a
         else:
           singleArgImpl(m, impl, arg)
@@ -1309,15 +1316,12 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
     else:
       # should not happen, but still match as normal to give proper error
       discard
-  if arg.n.exprKind == OchoiceX and f.kind == Symbol:
-    let matchedSym = tryMatchEnumChoice(arg.n, f.symId)
-    if matchedSym != SymId(0):
-      m.args.add symToken(matchedSym, arg.n.info)
-      return
   let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:
-    m.useArg arg, fOrig # since it was a match, copy it
+    if not m.skipAddingArg:
+      m.useArg arg, fOrig # since it was a match, copy it
+    m.skipAddingArg = false
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
