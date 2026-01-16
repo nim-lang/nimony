@@ -136,6 +136,22 @@ proc buildSymChoice*(c: var SemContext; identifier: StrId; info: PackedLineInfo;
     c.dest.shrink oldLen
     c.dest.add identToken(identifier, info)
 
+proc addSymChoiceSyms*(c: var SemContext; identifier: StrId; marker: var HashSet[SymId]; info: PackedLineInfo) =
+  # like rawBuildSymChoice but adds to an existing symchoice, ignoring duplicates
+  var it = c.currentScope
+  while it != nil:
+    for sym in it.tab.getOrDefault(identifier):
+      if not marker.containsOrIncl(sym.name):
+        c.dest.addSymUse sym, info
+    it = it.up
+  # mirror considerImportedSymbols:
+  for moduleId in c.importTab.getOrDefault(identifier):
+    # prevent copies
+    let candidates = addr c.importedModules[moduleId].iface[identifier]
+    for defId in candidates[]:
+      if not marker.containsOrIncl(defId):
+        c.dest.add symToken(defId, info)
+
 proc isDeclared*(c: var SemContext; name: StrId): bool =
   var scope = c.currentScope
   while scope != nil:
