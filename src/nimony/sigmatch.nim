@@ -1309,7 +1309,7 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
     else:
       # should not happen, but still match as normal to give proper error
       discard
-  if arg.n.exprKind == OchoiceX:
+  if arg.n.exprKind == OchoiceX and f.kind == Symbol:
     let matchedSym = tryMatchEnumChoice(arg.n, f.symId)
     if matchedSym != SymId(0):
       m.args.add symToken(matchedSym, arg.n.info)
