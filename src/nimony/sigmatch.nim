@@ -73,8 +73,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*, checkEmptyArg*, insertedParam*: bool
-    skipAddingArg: bool
+    genericConverter*, refineArgType*, insertedParam*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -870,10 +869,12 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       else:
         if impl.typeKind in {EnumT, HoleyEnumT}:
           if arg.n.exprKind == OchoiceX:
-            let matchedSym = tryMatchEnumChoice(arg.n, f.symId)
+            let matchedSym = tryMatchEnumChoice(arg.n, fs)
             if matchedSym != SymId(0):
-              m.args.add symToken(matchedSym, arg.n.info)
-              m.skipAddingArg = true
+              m.refineArgType = true
+              m.args.addParLe HconvX, m.argInfo
+              m.args.addSubtree f
+              inc m.opened
               return
           m.error InvalidMatch, f, a
         else:
@@ -1263,7 +1264,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
     if not m.err:
       if containsGenericParams(f): # maybe restrict to params of this routine
         # element type needs to be instantiated:
-        m.checkEmptyArg = true
+        m.refineArgType = true
       m.args.add arg.n.load # copy tag
       m.args.takeTree f
       m.args.addParRi()
@@ -1274,7 +1275,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
       if not m.err:
         # call to `@` needs to be instantiated/template expanded,
         # also the element type needs to be instantiated if generic:
-        m.checkEmptyArg = true
+        m.refineArgType = true
         # keep the call to `@` but give the array constructor the element type:
         var call = arg.n
         m.args.add call.load # copy call tag
@@ -1319,9 +1320,7 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
   let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:
-    if not m.skipAddingArg:
-      m.useArg arg, fOrig # since it was a match, copy it
-    m.skipAddingArg = false
+    m.useArg arg, fOrig # since it was a match, copy it
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
