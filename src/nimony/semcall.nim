@@ -388,7 +388,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; a
       sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
 proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[CallArg]) =
-  if not (m.genericConverter or m.checkEmptyArg or m.insertedParam):
+  if not (m.genericConverter or m.refineArgType or m.insertedParam):
     c.dest.add m.args
   else:
     m.args.addParRi()
@@ -414,7 +414,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         if m.err and not prevErr:
           c.typeMismatch arg.info, defaultValue.typ, param.typ
         inc arg
-      elif m.checkEmptyArg and (isEmptyContainer(arg) or isEmptyOpenArrayCall(arg)):
+      elif m.refineArgType and (isEmptyContainer(arg) or isEmptyOpenArrayCall(arg)):
         let isCall = arg.exprKind in CallKinds
         let start = c.dest.len
         if isCall:
@@ -502,6 +502,10 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
           else: discard
           takeToken c, arg
           if nested == 0: break
+      elif m.refineArgType and arg.exprKind == HconvX:
+        var item = Item(n: arg, typ: c.types.autoType)
+        semConv c, item
+        arg = item.n
       else:
         takeTree c, arg
       skip f # should not be parri
@@ -587,7 +591,7 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     typematch(destMatch, fMatch, newArg)
     if classifyMatch(destMatch) in {EqualMatch, GenericMatch}:
       if isEmptyOpenArray:
-        inputMatch.checkEmptyArg = true
+        inputMatch.refineArgType = true
         # make argument type `auto` so sigmatch can identify it and match it
         # needed if `f` is generic, since we don't know the generic parameters yet
         inputMatch.returnType = c.types.autoType
@@ -743,9 +747,9 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
           var argBuf = createTokenBuf(16)
           argBuf.add parLeToken(HcallX, arg.n.info)
           argBuf.add symToken(convMatch.fn.sym, arg.n.info)
-          if convMatch.checkEmptyArg:
+          if convMatch.refineArgType:
             # empty openarray converter
-            newMatch.checkEmptyArg = true
+            newMatch.refineArgType = true
           elif convMatch.genericConverter:
             # instantiate after match
             newMatch.genericConverter = true
