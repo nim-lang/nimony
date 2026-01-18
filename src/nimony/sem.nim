@@ -1900,7 +1900,6 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
           let info = c.dest[start].info
           c.dest.shrink start
           c.dest.add symToken(matchedSym, info)
-          semExprSym c, it, fetchSym(c, matchedSym), start, flags
           return
       c.buildErr c.dest[start].info, "ambiguous identifier"
     it.typ = c.types.autoType
