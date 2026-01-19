@@ -76,6 +76,10 @@ type
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
 
+  ToplevelEntry* = object
+    symId*: SymId # symbol defined at toplevel, can be SymId(0) for other entries
+    ast*: Cursor
+    phase*: SemPhase
 
   SemContext* = object
     #dest*: TokenBuf
@@ -133,6 +137,8 @@ type
     passC*: seq[string]
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
+    toplevelEntries*: seq[ToplevelEntry]
+    moduleLineInfo*: PackedLineInfo # line info for the module's StmtsS wrapper
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

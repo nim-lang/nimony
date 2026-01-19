@@ -5181,6 +5181,82 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase): Toke
   # clear pragmaStack in case {.pop.} was not called
   c.pragmaStack.setLen(0)
 
+proc extractToplevelSymId(n: Cursor): SymId =
+  ## Extracts the symbol ID from a toplevel declaration, or returns SymId(0)
+  ## for statements that don't define a symbol.
+  var n = n
+  let sk = stmtKind(n)
+  case sk
+  of ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS:
+    inc n # skip tag
+    if n.kind == SymbolDef:
+      result = n.symId
+    else:
+      result = SymId(0)
+  of TypeS:
+    inc n # skip tag
+    if n.kind == SymbolDef:
+      result = n.symId
+    else:
+      result = SymId(0)
+  of VarS, GvarS, LetS, GletS, ConstS, TvarS, TletS, CursorS:
+    inc n # skip tag
+    if n.kind == SymbolDef:
+      result = n.symId
+    else:
+      result = SymId(0)
+  else:
+    result = SymId(0)
+
+proc collectToplevelEntries(c: var SemContext; buf: var TokenBuf) =
+  ## Parses the phase 1 output buffer and collects all toplevel entries.
+  c.toplevelEntries.setLen(0)
+  var n = beginRead(buf)
+  assert n.stmtKind == StmtsS
+  c.moduleLineInfo = n.info # preserve line info for the StmtsS wrapper
+  inc n # skip StmtsS tag
+  while n.kind != ParRi:
+    let entry = ToplevelEntry(
+      symId: extractToplevelSymId(n),
+      ast: n,
+      phase: SemcheckTopLevelSyms
+    )
+    c.toplevelEntries.add entry
+    skip n
+  endRead(buf)
+
+proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): TokenBuf =
+  ## Phase 1: Register toplevel symbols. Returns the output buffer and
+  ## populates c.toplevelEntries with cursors pointing into the returned buffer.
+  ## The caller must keep the returned buffer alive while entries are used.
+  result = phaseX(c, dest, n, SemcheckTopLevelSyms)
+  collectToplevelEntries(c, result)
+
+proc semToplevelEntry(c: var SemContext; dest: var TokenBuf; entry: var ToplevelEntry) =
+  ## Semantic check a single toplevel entry for the current phase.
+  var n = entry.ast
+  semStmt c, dest, n, false
+  entry.phase = c.phase
+
+proc phase2(c: var SemContext; dest: var TokenBuf): TokenBuf =
+  ## Phase 2: Check signatures by iterating over toplevel entries.
+  c.phase = SemcheckSignatures
+  dest.addParLe(StmtsS, c.moduleLineInfo)
+  for i in 0..<c.toplevelEntries.len:
+    semToplevelEntry(c, dest, c.toplevelEntries[i])
+  dest.addParRi()
+  result = move dest
+  c.pragmaStack.setLen(0)
+  # Re-collect entries from the phase 2 output since new statements may have been added
+  collectToplevelEntries(c, result)
+
+proc phase3(c: var SemContext; dest: var TokenBuf) =
+  ## Phase 3: Check bodies by iterating over toplevel entries.
+  c.phase = SemcheckBodies
+  dest.addParLe(StmtsS, c.moduleLineInfo)
+  for i in 0..<c.toplevelEntries.len:
+    semToplevelEntry(c, dest, c.toplevelEntries[i])
+
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
   var typevars = decl.typevars
@@ -5361,16 +5437,12 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
   #echo "PHASE 1"
-  var n1 = phaseX(c, dest, n0, SemcheckTopLevelSyms)
+  var n1 = phase1(c, dest, n0)
   #echo "PHASE 2: ", toString(n1)
-  var n2 = phaseX(c, dest, beginRead(n1), SemcheckSignatures)
+  var n2 = phase2(c, dest)
 
-  #echo "PHASE 3: ", toString(n2)
-  var n = beginRead(n2)
-  c.phase = SemcheckBodies
-  takeToken dest, n
-  while n.kind != ParRi:
-    semStmt c, dest, n, false
+  #echo "PHASE 3"
+  phase3(c, dest)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, c.expanded[0].info
@@ -5386,7 +5458,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       requestMethods(c, dest, val, res.decl)
       dest.copyTree res.decl
   instantiateGenericHooks c, dest
-  takeParRi dest, n
+  dest.addParRi()
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
@@ -5418,7 +5490,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     executeCall: exprexec.executeCall,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize)
-  
+
   var dest = createTokenBuf()
 
   for magic in ["typeof", "compiles", "defined", "declared"]:
