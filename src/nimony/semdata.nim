@@ -78,7 +78,7 @@ type
 
 
   SemContext* = object
-    dest*: TokenBuf
+    #dest*: TokenBuf
     routine*: SemRoutine
     currentScope*: Scope
     g*: ProgramContext
