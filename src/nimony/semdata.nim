@@ -137,8 +137,6 @@ type
     passC*: seq[string]
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
-    toplevelEntries*: seq[ToplevelEntry]
-    moduleLineInfo*: PackedLineInfo # line info for the module's StmtsS wrapper
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

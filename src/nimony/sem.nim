@@ -5208,12 +5208,13 @@ proc extractToplevelSymId(n: Cursor): SymId =
   else:
     result = SymId(0)
 
-proc collectToplevelEntries(c: var SemContext; buf: var TokenBuf) =
-  ## Parses the phase 1 output buffer and collects all toplevel entries.
-  c.toplevelEntries.setLen(0)
+proc collectToplevelEntries(buf: var TokenBuf): (seq[ToplevelEntry], PackedLineInfo) =
+  ## Parses a buffer and returns toplevel entries with cursors pointing into it,
+  ## along with the module's line info.
+  var entries: seq[ToplevelEntry] = @[]
   var n = beginRead(buf)
   assert n.stmtKind == StmtsS
-  c.moduleLineInfo = n.info # preserve line info for the StmtsS wrapper
+  let moduleLineInfo = n.info
   inc n # skip StmtsS tag
   while n.kind != ParRi:
     let entry = ToplevelEntry(
@@ -5221,41 +5222,46 @@ proc collectToplevelEntries(c: var SemContext; buf: var TokenBuf) =
       ast: n,
       phase: SemcheckTopLevelSyms
     )
-    c.toplevelEntries.add entry
+    entries.add entry
     skip n
   endRead(buf)
+  result = (entries, moduleLineInfo)
 
-proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): TokenBuf =
-  ## Phase 1: Register toplevel symbols. Returns the output buffer and
-  ## populates c.toplevelEntries with cursors pointing into the returned buffer.
+proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, seq[ToplevelEntry], PackedLineInfo) =
+  ## Phase 1: Register toplevel symbols. Returns the output buffer along with
+  ## toplevel entries (cursors pointing into the buffer) and the module line info.
   ## The caller must keep the returned buffer alive while entries are used.
-  result = phaseX(c, dest, n, SemcheckTopLevelSyms)
-  collectToplevelEntries(c, result)
+  var buf = phaseX(c, dest, n, SemcheckTopLevelSyms)
+  let (entries, lineInfo) = collectToplevelEntries(buf)
+  result = (move buf, entries, lineInfo)
 
-proc semToplevelEntry(c: var SemContext; dest: var TokenBuf; entry: var ToplevelEntry) =
+proc semToplevelEntry(c: var SemContext; dest: var TokenBuf; entry: ToplevelEntry) =
   ## Semantic check a single toplevel entry for the current phase.
   var n = entry.ast
   semStmt c, dest, n, false
-  entry.phase = c.phase
 
-proc phase2(c: var SemContext; dest: var TokenBuf): TokenBuf =
+proc phase2(c: var SemContext; entries: seq[ToplevelEntry]; moduleLineInfo: PackedLineInfo): (TokenBuf, seq[ToplevelEntry]) =
   ## Phase 2: Check signatures by iterating over toplevel entries.
+  ## Returns the output buffer and re-collected entries for phase 3.
   c.phase = SemcheckSignatures
-  dest.addParLe(StmtsS, c.moduleLineInfo)
-  for i in 0..<c.toplevelEntries.len:
-    semToplevelEntry(c, dest, c.toplevelEntries[i])
+  var dest = createTokenBuf()
+  dest.addParLe(StmtsS, moduleLineInfo)
+  for entry in entries:
+    semToplevelEntry(c, dest, entry)
   dest.addParRi()
-  result = move dest
   c.pragmaStack.setLen(0)
-  # Re-collect entries from the phase 2 output since new statements may have been added
-  collectToplevelEntries(c, result)
+  # Re-collect entries from the output since new statements may have been added
+  let (newEntries, _) = collectToplevelEntries(dest)
+  result = (move dest, newEntries)
 
-proc phase3(c: var SemContext; dest: var TokenBuf) =
+proc phase3(c: var SemContext; entries: seq[ToplevelEntry]; moduleLineInfo: PackedLineInfo): TokenBuf =
   ## Phase 3: Check bodies by iterating over toplevel entries.
+  ## Returns the final output buffer.
   c.phase = SemcheckBodies
-  dest.addParLe(StmtsS, c.moduleLineInfo)
-  for i in 0..<c.toplevelEntries.len:
-    semToplevelEntry(c, dest, c.toplevelEntries[i])
+  result = createTokenBuf()
+  result.addParLe(StmtsS, moduleLineInfo)
+  for entry in entries:
+    semToplevelEntry(c, result, entry)
 
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
@@ -5437,12 +5443,11 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
   #echo "PHASE 1"
-  var n1 = phase1(c, dest, n0)
-  #echo "PHASE 2: ", toString(n1)
-  var n2 = phase2(c, dest)
-
+  var (n1, entries1, moduleLineInfo) = phase1(c, dest, n0)
+  #echo "PHASE 2"
+  var (n2, entries2) = phase2(c, entries1, moduleLineInfo)
   #echo "PHASE 3"
-  phase3(c, dest)
+  dest = phase3(c, entries2, moduleLineInfo)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, c.expanded[0].info
