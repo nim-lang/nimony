@@ -11,7 +11,7 @@ proc semInclude(c: var SemContext; it: var Item) =
     filenameVal(x, files, hasError, allowAs = false)
 
   if hasError:
-    c.buildErr info, "wrong `include` statement"
+    c.buildErr c.dest, info, "wrong `include` statement"
   else:
     for f1 in items(files):
       let f2 = resolveFile(c.g.config.paths, getFile(info), f1.path)
@@ -36,7 +36,7 @@ proc semInclude(c: var SemContext; it: var Item) =
           m.add shortenDir c.includeStack[i]
           m.add " -> "
         m.add shortenDir f2
-        c.buildErr info, "recursive include: " & m
+        c.buildErr c.dest, info, "recursive include: " & m
 
   producesVoid c, info, it.typ
 
@@ -45,7 +45,7 @@ proc importSingleFile(c: var SemContext; f1: ImportedFilename; origin: string;
                       info: PackedLineInfo): SymId =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
-    c.buildErr info, "file not found: " & f2
+    c.buildErr c.dest, info, "file not found: " & f2
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
   result = SymId(0)
@@ -91,7 +91,7 @@ proc importSingleFileConsiderExports(c: var SemContext; f1: ImportedFilename; or
     exports = newExports
 
 proc cyclicImport(c: var SemContext; x: var Cursor) =
-  c.buildErr x.info, "cyclic module imports are not implemented"
+  c.buildErr c.dest, x.info, "cyclic module imports are not implemented"
 
 proc doImports(c: var SemContext; files: seq[ImportedFilename]; mode: ImportFilter; info: PackedLineInfo) =
   let origin = getFile(info)
@@ -121,7 +121,7 @@ proc semImport(c: var SemContext; it: var Item) =
   while x.kind != ParRi:
     filenameVal(x, files, hasError, allowAs = true)
   if hasError:
-    c.buildErr info, "wrong `import` statement"
+    c.buildErr c.dest, info, "wrong `import` statement"
   else:
     doImports c, files, ImportFilter(kind: ImportAll), info
 
@@ -139,7 +139,7 @@ proc semImportExcept(c: var SemContext; it: var Item) =
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
   if hasError:
-    c.buildErr info, "wrong `import except` statement"
+    c.buildErr c.dest, info, "wrong `import except` statement"
   else:
     var excluded = initHashSet[StrId]()
     while x.kind != ParRi:
@@ -160,7 +160,7 @@ proc semFromImport(c: var SemContext; it: var Item) =
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
   if hasError:
-    c.buildErr info, "wrong `from import` statement"
+    c.buildErr c.dest, info, "wrong `from import` statement"
   else:
     var included = initHashSet[StrId]()
     while x.kind != ParRi:
@@ -201,9 +201,9 @@ proc semExportSymbol(c: var SemContext; n: var Cursor) =
   else:
     let ident = takeIdent(n)
     if ident == StrId(0):
-      c.buildErr info, "not an identifier"
+      c.buildErr c.dest, info, "not an identifier"
       return
-    discard buildSymChoice(c, ident, info, FindAll)
+    discard buildSymChoice(c, c.dest, ident, info, FindAll)
 
 proc doExport(c: var SemContext; sym: SymId; info: PackedLineInfo) =
   let res = tryLoadSym(sym)
@@ -215,11 +215,11 @@ proc doExport(c: var SemContext; sym: SymId; info: PackedLineInfo) =
     let name = pool.syms[sym]
     let suffix = extractModule(name)
     if suffix == "":
-      c.buildErr info, "cannot export non-global symbol"
+      c.buildErr c.dest, info, "cannot export non-global symbol"
       return
     elif suffix == c.thisModuleSuffix:
       # XXX
-      c.buildErr info, "exporting local symbol not implemented"
+      c.buildErr c.dest, info, "exporting local symbol not implemented"
       return
     let moduleSym = c.processedModules[suffix]
     var basename = ensureMove name
@@ -253,7 +253,7 @@ proc semExport(c: var SemContext; it: var Item) =
     var syms = beginRead(symBuf)
     case syms.kind
     of Ident:
-      c.buildErr info, "undeclared identifier: " & pool.strings[syms.litId]
+      c.buildErr c.dest, info, "undeclared identifier: " & pool.strings[syms.litId]
     of Symbol:
       doExport(c, syms.symId, info)
     of ParLe:
@@ -267,9 +267,9 @@ proc semExport(c: var SemContext; it: var Item) =
           doExport(c, syms.symId, info)
           inc syms
       else:
-        c.buildErr info, "not an identifier for `export`"
+        c.buildErr c.dest, info, "not an identifier for `export`"
     else:
-      c.buildErr info, "not an identifier for `export`"
+      c.buildErr c.dest, info, "not an identifier for `export`"
 
   producesVoid c, info, it.typ
 
@@ -309,7 +309,7 @@ proc semExportExcept(c: var SemContext; it: var Item) =
   endRead(c.dest)
   c.dest.shrink moduleSymStart
   if moduleSym == SymId(0):
-    c.buildErr info, "expected module for `export except`"
+    c.buildErr c.dest, info, "expected module for `export except`"
     return
 
   while x.kind != ParRi:
@@ -321,7 +321,7 @@ proc semExportExcept(c: var SemContext; it: var Item) =
     var syms = beginRead(symBuf)
     case syms.kind
     of Ident:
-      c.buildErr info, "undeclared identifier: " & pool.strings[syms.litId]
+      c.buildErr c.dest, info, "undeclared identifier: " & pool.strings[syms.litId]
     of Symbol:
       doExportExcept(c, moduleSym, syms.symId, info)
     of ParLe:
@@ -335,8 +335,8 @@ proc semExportExcept(c: var SemContext; it: var Item) =
           doExportExcept(c, moduleSym, syms.symId, info)
           inc syms
       else:
-        c.buildErr info, "not an identifier for `export`"
+        c.buildErr c.dest, info, "not an identifier for `export`"
     else:
-      c.buildErr info, "not an identifier for `export`"
+      c.buildErr c.dest, info, "not an identifier for `export`"
 
   producesVoid c, info, it.typ

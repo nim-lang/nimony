@@ -141,9 +141,7 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
       skip f
 
   if templ.body.kind == DotToken:
-    swap c.dest, dest
-    c.buildErr info, "cannot expand template from prototype; possibly a recursive template call"
-    swap c.dest, dest
+    c.buildErr dest, info, "cannot expand template from prototype; possibly a recursive template call"
   else:
     expandTemplateImpl c, dest, e, templ.body
 

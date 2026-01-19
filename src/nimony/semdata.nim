@@ -177,9 +177,6 @@ proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
     result = cursorAt(newBuf, 0)
     c.typeMem[key] = newBuf
 
-proc typeToCursor*(c: var SemContext; start: int): TypeCursor =
-  typeToCursor(c, c.dest, start)
-
 template emptyNode*(c: var SemContext): Cursor =
   # XXX find a better solution for this
   c.types.voidType
