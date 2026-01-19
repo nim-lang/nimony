@@ -22,6 +22,7 @@ import ".." / models / [tags, nifindex_tags]
 
 proc semStmt(c: var SemContext; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; it: var Item; isNewScope: bool)
+proc semConv(c: var SemContext; it: var Item)
 
 proc typeMismatch(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; got, expected: TypeCursor) =
   c.buildErr dest, info, "type mismatch: got: " & typeToString(got) & " but wanted: " & typeToString(expected)
@@ -223,7 +224,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
         else:
           let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
           c.dest[c.dest.len-1].setSymId inst.targetSym
-      # ignore checkEmptyArg case, probably environment is generic
+      # ignore refineArgType case, probably environment is generic
       c.dest.add convMatch.args
       c.dest.addParRi()
       it.typ = expected
@@ -233,7 +234,7 @@ proc commonType(c: var SemContext; it: var Item; argBegin: int; expected: TypeCu
       c.typeMismatch c.dest, info, it.typ, expected
   else:
     shrink c.dest, argBegin
-    if m.checkEmptyArg and cursorAt(m.args, 0).exprKind in CallKinds:
+    if m.refineArgType and cursorAt(m.args, 0).exprKind in CallKinds:
       # empty seq call, semcheck
       var call = Item(n: beginRead(m.args), typ: c.types.autoType)
       semCall c, call, {}
@@ -821,6 +822,22 @@ proc semConvArg(c: var SemContext; destType: Cursor; arg: Item; info: PackedLine
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT}
 
   var srcType = skipModifier(arg.typ)
+
+  # Check if arg contains a symchoice that needs resolution for enum types
+  if arg.n.exprKind in {OchoiceX, CchoiceX}:
+    # Try to resolve the symchoice based on the destination type
+    var destSym = destType
+    if destSym.kind == Symbol:
+      let destSymId = destSym.symId
+      let impl = typeImpl(destSymId)
+      if impl.typeKind in {EnumT, HoleyEnumT}:
+        # Try to match the enum choice
+        let matchedSym = tryMatchEnumChoice(arg.n, destSymId)
+        if matchedSym != SymId(0):
+          # Successfully resolved the overload choice
+          c.dest.add symToken(matchedSym, info)
+          return
+    # If we couldn't resolve it, fall through to normal error handling
 
   # distinct type conversion?
   var isDistinct = false
@@ -1877,6 +1894,16 @@ proc semExprSym(c: var SemContext; it: var Item; s: Sym; start: int; flags: set[
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
     if KeepMagics notin flags and c.routine.kind != TemplateY:
+      # Try to disambiguate based on expected type (e.g., enum fields in case branches)
+      if typeKind(expected) != AutoT:
+        let choice = cursorAt(c.dest, start)
+        let matchedSym = tryMatchEnumChoice(choice, expected.symId)
+        endRead(c.dest)
+        if matchedSym != SymId(0):
+          let info = c.dest[start].info
+          c.dest.shrink start
+          c.dest.add symToken(matchedSym, info)
+          return
       c.buildErr c.dest, c.dest[start].info, "ambiguous identifier"
     it.typ = c.types.autoType
   elif s.kind == BlockY:
