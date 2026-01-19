@@ -4,19 +4,19 @@ proc fetchCallableType(c: var SemContext; n: Cursor; s: Sym): TypeCursor =
   if s.kind == NoSym:
     let s = getIdent(n)
     if s != StrId(0):
-      c.buildErr n.info, "undeclared identifier: " & pool.strings[s]
+      c.buildErr c.dest, n.info, "undeclared identifier: " & pool.strings[s]
     else:
-      c.buildErr n.info, "undeclared identifier"
+      c.buildErr c.dest, n.info, "undeclared identifier"
     result = c.types.autoType
   else:
-    let res = declToCursor(c, s)
+    let res = declToCursor(c, c.dest, s)
     if res.status == LacksNothing:
       var d = res.decl
       if s.kind.isLocal:
         skipToLocalType d
       result = d
     else:
-      c.buildErr n.info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
+      c.buildErr c.dest, n.info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
       result = c.types.autoType
 
 proc pickBestMatch(c: var SemContext; m: openArray[Match]; flags: set[SemFlag] = {}): int =
@@ -104,7 +104,7 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
   var expandedInto = createTokenBuf(30)
 
   let s = fetchSym(c, fnId)
-  let res = declToCursor(c, s)
+  let res = declToCursor(c, c.dest, s)
   if res.status == LacksNothing:
     let args = cursorAt(c.dest, beforeCall + 2)
     let firstVarargMatch = cursorAt(c.dest, beforeCall + 2 + m.firstVarargPosition)
@@ -129,7 +129,7 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
       # untyped return type ignored, maybe could be handled in commonType
       discard
     of VoidT:
-      typecheck(c, aInfo, a.typ, returnType)
+      typecheck(c, c.dest, aInfo, a.typ, returnType)
     else:
       commonType c, a, beforeCall, returnType
     dec c.routine.inInst
@@ -137,7 +137,7 @@ proc semTemplateCall(c: var SemContext; it: var Item; fnId: SymId; beforeCall: i
     it.kind = a.kind
     typeofCallIs c, it, beforeCall, a.typ
   else:
-    c.buildErr it.n.info, "could not load symbol: " & pool.syms[fnId] & "; errorCode: " & $res.status
+    c.buildErr c.dest, it.n.info, "could not load symbol: " & pool.syms[fnId] & "; errorCode: " & $res.status
 
 type
   FnCandidates = object
@@ -276,7 +276,7 @@ proc untypedCall(c: var SemContext; it: var Item; cs: var CallState) =
     c.dest.addSubtree a.n
   # untyped propagates to the result type:
   typeofCallIs c, it, cs.beforeCall, c.types.untypedType
-  takeParRi c, it.n
+  takeParRi c.dest, it.n
 
 proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
   let beforeExpr = c.dest.len
@@ -294,13 +294,13 @@ proc semConvFromCall(c: var SemContext; it: var Item; cs: CallState) =
       typeBuf.addParRi()
       var item = Item(n: beginRead(typeBuf), typ: it.typ)
       semLocalTypeExpr(c, item)
-      takeParRi c, it.n
+      takeParRi c.dest, it.n
       it.typ = item.typ
       return
   c.dest.add parLeToken(ConvX, info)
   c.dest.copyTree destType
   semConvArg(c, destType, Item(n: cs.args[0].n, typ: cs.args[0].typ), info, beforeExpr)
-  takeParRi c, it.n
+  takeParRi c.dest, it.n
   let expected = it.typ
   it.typ = destType
   commonType c, it, beforeExpr, expected
@@ -412,29 +412,29 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         typematch(m, param.typ, defaultValue)
         swap m.args, c.dest
         if m.err and not prevErr:
-          c.typeMismatch arg.info, defaultValue.typ, param.typ
+          c.typeMismatch c.dest, arg.info, defaultValue.typ, param.typ
         inc arg
       elif m.checkEmptyArg and (isEmptyContainer(arg) or isEmptyOpenArrayCall(arg)):
         let isCall = arg.exprKind in CallKinds
         let start = c.dest.len
         if isCall:
-          takeToken c, arg
-          takeTree c, arg
+          takeToken c.dest, arg
+          takeTree c.dest, arg
         let isDoubleCall = arg.exprKind in CallKinds # `@` call inside `toOpenArray` call case
         if isDoubleCall:
-          takeToken c, arg
-          takeTree c, arg
-        takeToken c, arg
+          takeToken c.dest, arg
+          takeTree c.dest, arg
+        takeToken c.dest, arg
         if containsGenericParams(arg):
           c.dest.addSubtree instantiateType(c, arg, m.inferred)
           skip arg
         else:
-          takeTree c, arg
-        takeParRi c, arg
+          takeTree c.dest, arg
+        takeParRi c.dest, arg
         if isDoubleCall:
-          takeParRi c, arg
+          takeParRi c.dest, arg
         if isCall:
-          takeParRi c, arg
+          takeParRi c.dest, arg
           # instantiate `@`/`toOpenArray` call, done by semchecking:
           var callBuf = createTokenBuf(c.dest.len - start)
           for tok in start ..< c.dest.len:
@@ -447,31 +447,31 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
         while true:
           case arg.exprKind
           of HconvX:
-            takeToken c, arg
+            takeToken c.dest, arg
             c.dest.takeTree arg # skip type
             inc nested
           of BaseobjX:
-            takeToken c, arg
+            takeToken c.dest, arg
             # genericConverter is reused for object conversions to generic types
             if containsGenericParams(arg):
               c.dest.addSubtree instantiateType(c, arg, m.inferred)
               skip arg
             else:
-              takeTree c, arg
+              takeTree c.dest, arg
             c.dest.takeTree arg # skip intlit
             inc nested
           of HderefX, HaddrX:
-            takeToken c, arg
+            takeToken c.dest, arg
             inc nested
           else:
             break
         if arg.exprKind == HcallX:
           let convInfo = arg.info
-          takeToken c, arg
+          takeToken c.dest, arg
           inc nested
           if arg.kind == Symbol:
             let sym = arg.symId
-            takeToken c, arg
+            takeToken c.dest, arg
             let res = tryLoadSym(sym)
             if res.status == LacksNothing and res.decl.symKind == ConverterY:
               let routine = asRoutine(res.decl)
@@ -484,7 +484,7 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
                 buildTypeArgs(convMatch)
                 if convMatch.err:
                   # adding type args errored
-                  buildErr c, convInfo, getErrorMsg(convMatch)
+                  buildErr c, c.dest, convInfo, getErrorMsg(convMatch)
                 elif c.routine.inGeneric == 0:
                   let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
                   c.dest[c.dest.len-1].setSymId inst.targetSym
@@ -500,10 +500,10 @@ proc addArgsInstConverters(c: var SemContext; m: var Match; origArgs: openArray[
           of ParLe: inc nested
           of ParRi: dec nested
           else: discard
-          takeToken c, arg
+          takeToken c.dest, arg
           if nested == 0: break
       else:
-        takeTree c, arg
+        takeTree c.dest, arg
       skip f # should not be parri
       inc i
     assert f.kind == ParRi
@@ -656,16 +656,16 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
           m.add createMatch(addr c)
           sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
       else:
-        buildErr c, cs.fn.n.info, "`choice` node does not contain `symbol`"
+        buildErr c, c.dest, cs.fn.n.info, "`choice` node does not contain `symbol`"
       inc f
     considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
     if m.len == 0:
       # symchoice contained no callable symbols and no typebound ops
       assert cs.fnName != StrId(0)
-      buildErr c, cs.fn.n.info, "attempt to call routine: '" & pool.strings[cs.fnName] & "'"
+      buildErr c, c.dest, cs.fn.n.info, "attempt to call routine: '" & pool.strings[cs.fnName] & "'"
   elif cs.fn.n.kind == Ident:
     # error should have been given above already:
-    # buildErr c, fn.n.info, "attempt to call undeclared routine"
+    # buildErr c, c.dest, fn.n.info, "attempt to call undeclared routine"
     discard
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
     closeArgsScope c, cs
@@ -689,14 +689,14 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       assert cs.fnName != StrId(0)
       var choiceBuf = createTokenBuf(16)
       swap c.dest, choiceBuf
-      discard buildSymChoice(c, cs.fnName, cs.fn.n.info, FindAll)
+      discard buildSymChoice(c, c.dest, cs.fnName, cs.fn.n.info, FindAll)
       swap c.dest, choiceBuf
       # could store choiceBuf in CallState but cs.fn should not outlive it
       cs.fn = Item(n: beginRead(choiceBuf), typ: c.types.autoType, kind: CchoiceY)
       resolveOverloads(c, it, cs)
       return
     else:
-      buildErr c, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
+      buildErr c, c.dest, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
   var idx = pickBestMatch(c, m, cs.flags)
 
   if idx < 0:
@@ -771,7 +771,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
     closeArgsScope c, cs, merge = finalFn.kind notin {MacroY, TemplateY}
     let isMagic = c.addFn(finalFn, cs.fn.n, m[idx])
     addArgsInstConverters(c, m[idx], cs.args)
-    takeParRi c, it.n
+    takeParRi c.dest, it.n
     buildTypeArgs(m[idx])
 
     if m[idx].err:
@@ -784,7 +784,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
         # the call this is an argument of in the case of AllowEmpty
         typeofCallIs c, it, cs.beforeCall, c.types.autoType
       else:
-        buildErr c, cs.callNode.info, getErrorMsg(m[idx])
+        buildErr c, c.dest, cs.callNode.info, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
       if c.templateInstCounter <= MaxNestedTemplates:
         c.expanded.addSymUse finalFn.sym, cs.callNode.info
@@ -793,7 +793,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
           semTemplateCall c, it, finalFn.sym, cs.beforeCall, m[idx]
         dec c.templateInstCounter
       else:
-        buildErr c, cs.callNode.info, "recursion limit exceeded for template expansions"
+        buildErr c, c.dest, cs.callNode.info, "recursion limit exceeded for template expansions"
     elif isMagic == MagicCallNeedsSemcheck:
       # semcheck produced magic expression
       var magicExprBuf = createTokenBuf(c.dest.len - cs.beforeCall)
@@ -804,7 +804,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       semExpr c, magicExpr, cs.flags
       it.typ = magicExpr.typ
     elif finalFn.kind == IteratorY and PreferIterators notin cs.flags:
-      buildErr c, cs.callNode.info, "Iterators can be called only in `for` statements"
+      buildErr c, c.dest, cs.callNode.info, "Iterators can be called only in `for` statements"
     elif m[idx].inferred.len > 0:
       var matched = m[idx]
       let returnType: Cursor
@@ -877,7 +877,7 @@ proc resolveOverloads(c: var SemContext; it: var Item; cs: var CallState) =
       if cs.fnName != StrId(0):
         errorMsg.add pool.strings[cs.fnName]
       errorMsg.add "'"
-    buildErr c, cs.callNode.info, errorMsg, erroredN
+    buildErr c, c.dest, cs.callNode.info, errorMsg, erroredN
 
 proc getFnIdent(c: var SemContext): StrId =
   var n = beginRead(c.dest)
@@ -960,7 +960,7 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
         swap c.dest, cs.genericDest
         while cs.fn.n.kind != ParRi:
           semLocalTypeImpl c, cs.fn.n, AllowValues
-        takeParRi c, cs.fn.n
+        takeParRi c.dest, cs.fn.n
         swap c.dest, cs.genericDest
         it.n = cs.fn.n
         c.dest.addSubtree lhs.n
@@ -1035,11 +1035,11 @@ proc semCall(c: var SemContext; it: var Item; flags: set[SemFlag]; source: Trans
     let named = arg.n.substructureKind == VvU
     if named:
       cs.hasNamedArgs = true
-      takeToken c, arg.n
-      takeTree c, arg.n
+      takeToken c.dest, arg.n
+      takeTree c.dest, arg.n
     semExpr c, arg, {AllowEmpty}
     if named:
-      takeParRi c, arg.n
+      takeParRi c.dest, arg.n
     if arg.typ.typeKind == UntypedT:
       skipSemCheck = true
     it.n = arg.n

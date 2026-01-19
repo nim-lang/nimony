@@ -13,16 +13,16 @@ import decls, nimony_model, semdata, sembasics, symtabs
 proc tagToken(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
 
-proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId, enumSymId: SymId) =
-  c.dest.add tagToken("case", enumDecl.info)
-  c.dest.add symToken(symId, enumDecl.info)
+proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var Cursor; symId, enumSymId: SymId) =
+  dest.add tagToken("case", enumDecl.info)
+  dest.add symToken(symId, enumDecl.info)
   inc enumDecl # skips enum
   skip enumDecl # skips base type
   while enumDecl.kind != ParRi:
     let enumDeclInfo = enumDecl.info
-    c.dest.add tagToken("of", enumDeclInfo)
+    dest.add tagToken("of", enumDeclInfo)
 
-    c.dest.add tagToken("ranges", enumDeclInfo)
+    dest.add tagToken("ranges", enumDeclInfo)
 
     inc enumDecl
     let symId = enumDecl.symId
@@ -43,65 +43,65 @@ proc genEnumToStrProcCase(c: var SemContext; enumDecl: var Cursor; symId, enumSy
     while enumDecl.kind == ParLe and enumDecl.tagId == ErrT:
       skip enumDecl
 
-    c.dest.add symToken(symId, symInfo)
-    c.dest.addParRi() # set
+    dest.add symToken(symId, symInfo)
+    dest.addParRi() # set
 
-    c.dest.add tagToken("stmts", enumDeclInfo)
-    c.dest.add tagToken("ret", enumDeclInfo)
+    dest.add tagToken("stmts", enumDeclInfo)
+    dest.add tagToken("ret", enumDeclInfo)
     if fieldValue.kind == StringLit:
-      c.dest.add strToken(fieldValue.litId, enumDeclInfo)
+      dest.add strToken(fieldValue.litId, enumDeclInfo)
     else:
       # handle errors
-      c.dest.addSubtree fieldValue
+      dest.addSubtree fieldValue
 
-    c.dest.addParRi() # ret
-    c.dest.addParRi() # stmts
+    dest.addParRi() # ret
+    dest.addParRi() # stmts
 
-    c.dest.addParRi() # of
+    dest.addParRi() # of
 
-  c.dest.addParRi() # case
+  dest.addParRi() # case
 
-proc genEnumToStrProc*(c: var SemContext; typeDecl: var Cursor) =
+proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Cursor) =
   let decl = asTypeDecl(typeDecl)
   let enumSymId = decl.name.symId
   let enumSymInfo = decl.name.info
   let dollorName = "dollar`." & pool.syms[enumSymId]
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
-  c.dest.add tagToken("proc", enumSymInfo)
-  c.dest.add symdefToken(dollorSymId, enumSymInfo)
+  dest.add tagToken("proc", enumSymInfo)
+  dest.add symdefToken(dollorSymId, enumSymInfo)
 
   # TODO: defaults to (nodecl)
   # TODO: static for local functions
   if c.currentScope.kind == ToplevelScope:
     let exportIdent = pool.strings.getOrIncl("x")
-    c.dest.add identToken(exportIdent, enumSymInfo)
+    dest.add identToken(exportIdent, enumSymInfo)
   else:
-    c.dest.addDotToken() # exportIdent
-  c.dest.addDotToken()
-  c.dest.addDotToken()
+    dest.addDotToken() # exportIdent
+  dest.addDotToken()
+  dest.addDotToken()
 
   var paramName = "e"
   c.makeLocalSym(paramName)
   let paramSymId = pool.syms.getOrIncl(paramName)
-  c.dest.add tagToken("params", enumSymInfo)
-  c.dest.add tagToken("param", enumSymInfo)
-  c.dest.add symdefToken(paramSymId, enumSymInfo)
-  c.dest.addDotToken()
-  c.dest.addDotToken()
-  c.dest.add symToken(enumSymId, enumSymInfo)
-  c.dest.addDotToken()
-  c.dest.addParRi() # param
-  c.dest.addParRi() # params
+  dest.add tagToken("params", enumSymInfo)
+  dest.add tagToken("param", enumSymInfo)
+  dest.add symdefToken(paramSymId, enumSymInfo)
+  dest.addDotToken()
+  dest.addDotToken()
+  dest.add symToken(enumSymId, enumSymInfo)
+  dest.addDotToken()
+  dest.addParRi() # param
+  dest.addParRi() # params
 
-  c.dest.addSubtree c.types.stringType
+  dest.addSubtree c.types.stringType
 
-  c.dest.addDotToken()
-  c.dest.addDotToken()
+  dest.addDotToken()
+  dest.addDotToken()
 
-  c.dest.add tagToken("stmts", enumSymInfo)
+  dest.add tagToken("stmts", enumSymInfo)
   var body = decl.body
-  genEnumToStrProcCase(c, body, paramSymId, enumSymId)
-  c.dest.addParRi() # stmts
+  genEnumToStrProcCase(c, dest, body, paramSymId, enumSymId)
+  dest.addParRi() # stmts
 
-  c.dest.addParRi() # proc
+  dest.addParRi() # proc

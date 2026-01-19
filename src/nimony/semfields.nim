@@ -113,7 +113,7 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
         if names.len == 3:
           iter.fieldVar2 = names[2]
       else:
-        buildErr c, unpackInfo, "wrong number of variables"
+        buildErr c, c.dest, unpackInfo, "wrong number of variables"
         skipToEnd it.n
         return
     else:
@@ -122,11 +122,11 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
         if names.len == 2:
           iter.fieldVar2 = names[1]
       else:
-        buildErr c, unpackInfo, "wrong number of variables"
+        buildErr c, c.dest, unpackInfo, "wrong number of variables"
         skipToEnd it.n
         return
   else:
-    buildErr c, unpackInfo, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
+    buildErr c, c.dest, unpackInfo, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
     skipToEnd it.n
     return
 
@@ -140,11 +140,11 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
   if obj2.kind != ParRi:
     iter.obj2 = obj2
     if iter.fieldVar2 == StrId(0):
-      buildErr c, unpackInfo, "wrong number of variables"
+      buildErr c, c.dest, unpackInfo, "wrong number of variables"
       skipToEnd it.n
       return
   elif iter.fieldVar2 != StrId(0):
-    buildErr c, unpackInfo, "wrong number of variables"
+    buildErr c, c.dest, unpackInfo, "wrong number of variables"
     skipToEnd it.n
     return
   let body = it.n
@@ -168,14 +168,14 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
         # iterating over fields of typevar, leave entire loop completely untyped
         var ctx = createUntypedContext(addr c, UntypedGeneric)
         var origRead = orig
-        semTemplBody ctx, origRead
+        semTemplBody ctx, c.dest, origRead
         producesVoid c, orig.info, it.typ
         return
       if objType.typeKind != ObjectT:
-        c.buildErr call.info, "cannot iterate over fields of type: " & typeToString(objType)
+        c.buildErr c.dest, call.info, "cannot iterate over fields of type: " & typeToString(objType)
         return
     else:
-      c.buildErr call.info, "cannot iterate over fields of type: " & typeToString(objType)
+      c.buildErr c.dest, call.info, "cannot iterate over fields of type: " & typeToString(objType)
       return
 
   var iterBuf = createTokenBuf(64)
