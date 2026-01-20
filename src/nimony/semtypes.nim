@@ -232,17 +232,15 @@ proc semRangeTypeFromExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; 
   dest.addParLe(RangetypeT, info)
   var it = Item(n: n, typ: c.types.autoType)
   var valuesBuf = createTokenBuf(4)
-  swap dest, valuesBuf
 
   # expression needs to be fully evaluated, switch to body phase
   var phase = SemcheckBodies
   swap c.phase, phase
-  semExpr c, dest, it
+  semExpr c, valuesBuf, it
   removeModifier(it.typ)
-  semExpr c, dest, it
+  semExpr c, valuesBuf, it
 
   swap c.phase, phase
-  swap dest, valuesBuf
   n = it.n
   # insert base type:
   dest.addSubtree it.typ
@@ -336,9 +334,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     inc argCount
     let argInfo = n.info
     var argBuf = createTokenBuf(16)
-    swap dest, argBuf
-    semLocalTypeImpl c, dest, n, AllowValues
-    swap dest, argBuf
+    semLocalTypeImpl c, argBuf, n, AllowValues
     var addArg = true
     if cursorIsNil(params) or params.kind == ParRi:
       # will error later from param/arg count not matching
@@ -393,16 +389,12 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       var phase = SemcheckTopLevelSyms
       var topLevel = createTokenBuf(30)
       swap c.phase, phase
-      swap dest, topLevel
       var tn = beginRead(sub)
-      semTypeSection c, dest, tn
-      swap dest, topLevel
+      semTypeSection c, topLevel, tn
       c.phase = SemcheckSignatures
       var instance = createTokenBuf(30)
-      swap dest, instance
       tn = beginRead(topLevel)
-      semTypeSection c, dest, tn
-      swap dest, instance
+      semTypeSection c, instance, tn
       swap c.phase, phase
       c.currentScope = oldScope
       publish targetSym, ensureMove instance
@@ -425,9 +417,7 @@ proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
     semRangeTypeFromExpr c, dest, n, info
   else:
     var indexBuf = createTokenBuf(4)
-    swap dest, indexBuf
-    semLocalTypeImpl c, dest, n, AllowValues
-    swap dest, indexBuf
+    semLocalTypeImpl c, indexBuf, n, AllowValues
     var index = cursorAt(indexBuf, 0)
     if index.typeKind == RangetypeT:
       # direct range type
@@ -476,10 +466,8 @@ proc semRangeType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
   takeToken dest, n
   semLocalTypeImpl c, dest, n, InLocalDecl
   var valuesBuf = createTokenBuf(4)
-  swap dest, valuesBuf
-  semLocalTypeImpl c, dest, n, AllowValues
-  semLocalTypeImpl c, dest, n, AllowValues
-  swap dest, valuesBuf
+  semLocalTypeImpl c, valuesBuf, n, AllowValues
+  semLocalTypeImpl c, valuesBuf, n, AllowValues
   var values = cursorAt(valuesBuf, 0)
   addRangeValues c, dest, values
   takeParRi dest, n
