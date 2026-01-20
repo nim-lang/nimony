@@ -19,7 +19,9 @@ type
 
   SemPhase* = enum
     SemcheckTopLevelSyms,
+    SemcheckSignaturesInProgress,  ## currently processing signature (cycle detection)
     SemcheckSignatures,
+    SemcheckBodiesInProgress,      ## currently processing body (cycle detection)
     SemcheckBodies
 
   ToplevelEntry* = object

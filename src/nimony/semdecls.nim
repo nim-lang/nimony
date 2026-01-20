@@ -1004,7 +1004,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
   of SemcheckTopLevelSyms:
     dest.takeTree it.n
     return
-  of SemcheckSignatures:
+  of SemcheckSignaturesInProgress, SemcheckSignatures:
     var kindTag = it.n
     while kindTag.stmtKind == UnpackdeclS:
       inc kindTag # unpackdecl tag
@@ -1015,7 +1015,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
     if kind != ConstY:
       dest.takeTree it.n
       return
-  of SemcheckBodies: discard
+  of SemcheckBodiesInProgress, SemcheckBodies: discard
 
   let info = it.n.info
   inc it.n # skip tag

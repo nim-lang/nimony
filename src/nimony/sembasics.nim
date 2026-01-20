@@ -386,6 +386,8 @@ proc declareOverloadableSym*(c: var SemContext; dest: var TokenBuf; it: var Item
 proc success*(s: SymStatus): bool {.inline.} = s in {OkNew, OkExisting, OkExistingFresh}
 proc success*(s: DelayedSym): bool {.inline.} = success s.status
 
+proc markSymInProgress*(c: var SemContext; s: SymId)  # forward decl
+
 proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind): DelayedSym =
   let info = n.info
   if n.kind == Ident:
@@ -407,6 +409,9 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
     result = DelayedSym(status: status, lit: symToIdent(s.name), s: s, info: info)
     dest.add n
     inc n
+    # Mark toplevel declarations as InProgress for cycle detection
+    if kind in {TypeY, ProcY, FuncY, IteratorY, ConverterY, MethodY, TemplateY, MacroY}:
+      markSymInProgress(c, s.name)
   elif n.kind == DotToken:
     var name = "`anon"
     c.makeLocalSym(name)
@@ -437,6 +442,14 @@ proc addSymForwardError*(c: var SemContext; s: DelayedSym): bool =
     result = addNonOverloadable(c.currentScope, s.lit, s.s) == Conflict
   else:
     result = false
+
+proc markSymInProgress*(c: var SemContext; s: SymId) =
+  ## Mark a symbol as being processed (for cycle detection in phase 2/3)
+  if s != SymId(0) and prog.mem.hasKey(s):
+    if c.phase == SemcheckSignatures:
+      prog.mem[s].phase = SemcheckSignaturesInProgress
+    elif c.phase == SemcheckBodies:
+      prog.mem[s].phase = SemcheckBodiesInProgress
 
 proc publish*(c: var SemContext; dest: var TokenBuf; s: SymId; start: int) =
   assert s != SymId(0)
