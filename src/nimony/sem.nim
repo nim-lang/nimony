@@ -1188,7 +1188,6 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   inc it.n # skip tag
   var lhsBuf = createTokenBuf(4)
   var lhs = Item(n: it.n, typ: c.types.autoType)
-  # hint: swap removed
   semExpr c, lhsBuf, lhs, {AllowModuleSym}
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
@@ -1694,7 +1693,6 @@ proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; f
     var usingBuf = false
     for phase in low(SemPhase) ..< c.phase:
       var buf = createTokenBuf()
-      swap dest, buf
       var phase = phase
       swap c.phase, phase
       var it2 = Item(typ: it.typ)
@@ -1702,11 +1700,10 @@ proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; f
         it2.n = beginRead(lastBuf)
       else:
         it2.n = it.n
-      semExpr c, dest, it2
+      semExpr c, buf, it2
       if not usingBuf:
         it.n = it2.n
       swap c.phase, phase
-      swap dest, buf
       lastBuf = buf
       usingBuf = true
     let lastN = it.n
@@ -1949,17 +1946,13 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
   var subscript = Item(n: it.n, typ: c.types.autoType)
   inc subscript.n # tag
   var subscriptLhsBuf = createTokenBuf(4)
-  swap dest, subscriptLhsBuf
   var subscriptLhs = Item(n: subscript.n, typ: c.types.autoType)
-  semExpr c, dest, subscriptLhs, {KeepMagics}
-  swap dest, subscriptLhsBuf
+  semExpr c, subscriptLhsBuf, subscriptLhs, {KeepMagics}
   let afterSubscriptLhs = subscriptLhs.n
   subscript.n = afterSubscriptLhs
   subscriptLhs.n = cursorAt(subscriptLhsBuf, 0)
   var subscriptBuf = createTokenBuf(8)
-  swap dest, subscriptBuf
-  let builtin = tryBuiltinSubscript(c, dest, subscript, subscriptLhs)
-  swap dest, subscriptBuf
+  let builtin = tryBuiltinSubscript(c, subscriptBuf, subscript, subscriptLhs)
   if builtin:
     # build regular assignment:
     dest.addParLe(AsgnS, info)
@@ -1993,10 +1986,8 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: Packe
   var dot = Item(n: it.n, typ: c.types.autoType)
   inc dot.n # tag
   var dotLhsBuf = createTokenBuf(4)
-  swap dest, dotLhsBuf
   var dotLhs = Item(n: dot.n, typ: c.types.autoType)
-  semExpr c, dest, dotLhs, {KeepMagics}
-  swap dest, dotLhsBuf
+  semExpr c, dotLhsBuf, dotLhs, {KeepMagics}
   dot.n = dotLhs.n
   dotLhs.n = cursorAt(dotLhsBuf, 0)
   let fieldName = takeIdent(dot.n)
@@ -2005,9 +1996,7 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: Packe
     inc dot.n
   skipParRi dot.n
   var dotBuf = createTokenBuf(8)
-  swap dest, dotBuf
-  let builtin = tryBuiltinDot(c, dest, dot, dotLhs, fieldName, dotInfo, {}) != FailedDot
-  swap dest, dotBuf
+  let builtin = tryBuiltinDot(c, dotBuf, dot, dotLhs, fieldName, dotInfo, {}) != FailedDot
   if builtin:
     # build regular assignment:
     dest.addParLe(AsgnS, info)
@@ -2564,9 +2553,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
       # try implicit iterator call
       var callBuf = createTokenBuf(32)
       callBuf.addParLe(CallX, callInfo)
-      swap dest, callBuf
-      discard buildSymChoice(c, dest, pool.strings.getOrIncl(name), info, FindAll)
-      swap dest, callBuf
+      discard buildSymChoice(c, callBuf, pool.strings.getOrIncl(name), info, FindAll)
       for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
       callBuf.addParRi()
       let argType = iterCall.typ
@@ -3120,9 +3107,7 @@ proc semTupleConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
 proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
   var callBuf = createTokenBuf(16)
   callBuf.addParLe(CallX, info)
-  swap dest, callBuf
-  discard buildSymChoice(c, dest, pool.strings.getOrIncl("default"), info, FindAll)
-  swap dest, callBuf
+  discard buildSymChoice(c, callBuf, pool.strings.getOrIncl("default"), info, FindAll)
   callBuf.addSubtree typ
   callBuf.addParRi()
   var it = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
@@ -3455,9 +3440,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
               fieldBuf.add symToken(field.sym, fieldInfo)
             # maybe add inheritance depth too somehow?
             var val = Item(n: it.n, typ: field.typ)
-            swap dest, fieldBuf
-            semExpr c, dest, val
-            swap dest, fieldBuf
+            semExpr c, fieldBuf, val
             it.n = val.n
         else:
           c.buildErr dest, fieldInfo, "undeclared field: '" & pool.strings[fieldName] & "' for type " & typeToString(it.typ)
@@ -3759,12 +3742,10 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   dest.add parLeToken(AtX, info)
   dest.add parLeToken(CchoiceX, info)
   var argBuf = createTokenBuf(16)
-  swap dest, argBuf
   var argRead = it.n
   while argRead.kind != ParRi:
-    semLocalTypeImpl c, dest, argRead, AllowValues
+    semLocalTypeImpl c, argBuf, argRead, AllowValues
   takeParRi dest, argRead
-  swap dest, argBuf
   let args = cursorAt(argBuf, 0)
   var matches = 0
   var lastMatch = default(Match)
@@ -3881,10 +3862,8 @@ proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var n = it.n
   inc n # tag
   var lhsBuf = createTokenBuf(4)
-  swap dest, lhsBuf
   var lhs = Item(n: n, typ: c.types.autoType)
-  semExpr c, dest, lhs, {KeepMagics}
-  swap dest, lhsBuf
+  semExpr c, lhsBuf, lhs, {KeepMagics}
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
   semBuiltinSubscript(c, dest, it, lhs)
@@ -3949,9 +3928,7 @@ proc semConv(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var destType = semLocalType(c, dest, it.n)
   var arg = Item(n: it.n, typ: c.types.autoType)
   var argBuf = createTokenBuf(16)
-  swap dest, argBuf
-  semExpr c, dest, arg
-  swap dest, argBuf
+  semExpr c, argBuf, arg
   it.n = arg.n
   arg.n = cursorAt(argBuf, 0)
   semConvArg(c, dest, destType, arg, info, beforeExpr)
@@ -4006,9 +3983,7 @@ proc semEnumToStr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var x = Item(n: it.n, typ: c.types.autoType)
 
   var exprTokenBuf = createTokenBuf()
-  swap dest, exprTokenBuf
-  semExpr c, dest, x
-  swap dest, exprTokenBuf
+  semExpr c, exprTokenBuf, x
   it.n = x.n
   if containsGenericParams(x.typ):
     discard
