@@ -282,7 +282,7 @@ when isMainModule:
       assert n.kind == SymbolDef
       let result = n.symId
       endRead srcBuf
-      publish result, srcBuf
+      publish result, srcBuf, SemcheckBodies
       result
     var symBuf = createTokenBuf(1)
     symBuf.add symToken(symId, NoLineInfo)

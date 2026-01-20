@@ -410,7 +410,7 @@ proc trAsNamedType(c: var EContext; n: var Cursor) =
     # Convert NifC type decl to Nim-gear2 type decl by
     # inserting empty export marker and type vars
     buf.insert [dotToken(NoLineInfo), dotToken(NoLineInfo)], 1
-    programs.publish val, buf
+    programs.publish val, buf, SemcheckBodies
   # regardless of what we had to do, we still need to add the typename:
   if k == RefT:
     c.dest.add tagToken("ptr", info)

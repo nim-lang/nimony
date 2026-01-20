@@ -17,10 +17,25 @@ type
     stream: Stream
     index: NifIndex
 
+  SemPhase* = enum
+    SemcheckTopLevelSyms,
+    SemcheckSignatures,
+    SemcheckBodies
+
+  ToplevelEntry* = object
+    buffer*: TokenBuf  # semchecked result (for lookups)
+    phase*: SemPhase
+
+  ToplevelEntries* = object
+    ## Stores toplevel entries with both ordered access and SymId-based lookup.
+    ## Supports entries without SymIds (e.g., when statements, imports).
+    entries: seq[ToplevelEntry]
+    bySymId: Table[SymId, int]  # maps SymId to index in entries
+
   Program* = object
     mods: Table[string, NifModule]
     main*: SplittedModulePath
-    mem: Table[SymId, TokenBuf]
+    mem*: ToplevelEntries
 
   ImportFilterKind* = enum
     ImportAll, FromImport, ImportExcept
@@ -31,6 +46,46 @@ type
 
 var
   prog*: Program
+
+# -------------- ToplevelEntries methods --------------
+
+proc len*(t: ToplevelEntries): int {.inline.} = t.entries.len
+
+proc hasKey*(t: ToplevelEntries; s: SymId): bool {.inline.} =
+  t.bySymId.hasKey(s)
+
+proc `[]`*(t: ToplevelEntries; s: SymId): lent ToplevelEntry {.inline.} =
+  t.entries[t.bySymId[s]]
+
+proc `[]`*(t: var ToplevelEntries; s: SymId): var ToplevelEntry {.inline.} =
+  t.entries[t.bySymId[s]]
+
+proc `[]=`*(t: var ToplevelEntries; s: SymId; entry: sink ToplevelEntry) =
+  ## Add or update an entry with a SymId key.
+  if t.bySymId.hasKey(s):
+    t.entries[t.bySymId[s]] = entry
+  else:
+    let idx = t.entries.len
+    t.entries.add entry
+    t.bySymId[s] = idx
+
+proc add*(t: var ToplevelEntries; entry: sink ToplevelEntry) =
+  ## Add an entry without a SymId (e.g., when statement, import).
+  t.entries.add entry
+
+iterator items*(t: ToplevelEntries): lent ToplevelEntry =
+  for e in t.entries:
+    yield e
+
+iterator mitems*(t: var ToplevelEntries): var ToplevelEntry =
+  for e in t.entries.mitems:
+    yield e
+
+iterator pairs*(t: ToplevelEntries): (int, lent ToplevelEntry) =
+  for i, e in t.entries.pairs:
+    yield (i, e)
+
+# -------------- end ToplevelEntries methods --------------
 
 proc newNifModule(infile: string): NifModule =
   result = NifModule(stream: nifstreams.open(infile))
@@ -174,7 +229,7 @@ type
 
 proc tryLoadSym*(s: SymId): LoadResult =
   if prog.mem.hasKey(s):
-    result = LoadResult(status: LacksNothing, decl: cursorAt(prog.mem[s], 0))
+    result = LoadResult(status: LacksNothing, decl: cursorAt(prog.mem[s].buffer, 0))
   else:
     let nifName = pool.syms[s]
     let modname = extractModule(nifName)
@@ -182,17 +237,17 @@ proc tryLoadSym*(s: SymId): LoadResult =
       result = LoadResult(status: LacksModuleName)
     else:
       var m = load(modname)
-      var entry = m.index.public.getOrDefault(nifName)
-      if entry.offset == 0:
-        entry = m.index.private.getOrDefault(nifName)
-      if entry.offset == 0:
+      var indexEntry = m.index.public.getOrDefault(nifName)
+      if indexEntry.offset == 0:
+        indexEntry = m.index.private.getOrDefault(nifName)
+      if indexEntry.offset == 0:
         result = LoadResult(status: LacksOffset)
       else:
-        m.stream.r.jumpTo entry.offset
+        m.stream.r.jumpTo indexEntry.offset
         var buf = createTokenBuf(30)
-        nifcursors.parse(m.stream, buf, entry.info)
+        nifcursors.parse(m.stream, buf, indexEntry.info)
         let decl = cursorAt(buf, 0)
-        prog.mem[s] = ensureMove(buf)
+        prog.mem[s] = ToplevelEntry(buffer: ensureMove(buf), phase: SemcheckBodies)
         result = LoadResult(status: LacksNothing, decl: decl)
 
 proc tryLoadHook*(op: AttachedOp; typ: SymId; wantGeneric: bool): SymId =
@@ -250,15 +305,25 @@ proc registerHook*(suffix: string; typ: SymId; op: AttachedOp; hook: SymId; isGe
 
 proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 
-proc publish*(s: SymId; buf: sink TokenBuf) =
-  prog.mem[s] = buf
+proc getEntry*(s: SymId): ptr ToplevelEntry {.inline.} =
+  ## Returns a pointer to the entry for mutation. Use with care.
+  if prog.mem.hasKey(s):
+    result = addr prog.mem[s]
+  else:
+    result = nil
 
-proc publish*(s: SymId; dest: TokenBuf; start: int) =
-  # XXX We really need to find an elegant way to use Cursor here instead of Tokenbuf copies
+proc publish*(s: SymId; buf: sink TokenBuf; phase = SemcheckBodies) =
+  if prog.mem.hasKey(s):
+    prog.mem[s].buffer = buf
+    prog.mem[s].phase = phase
+  else:
+    prog.mem[s] = ToplevelEntry(buffer: buf, phase: phase)
+
+proc publish*(s: SymId; dest: TokenBuf; start: int; phase = SemcheckBodies) =
   var buf = createTokenBuf(dest.len - start + 1)
   for i in start..<dest.len:
     buf.add dest[i]
-  publish s, buf
+  publish s, buf, phase
 
 proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   var buf = createTokenBuf(dest.len - start + 3)
@@ -266,7 +331,7 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
     buf.add dest[i]
   buf.addDotToken() # body is empty for a signature
   buf.addParRi()
-  publish s, buf
+  publish s, buf, SemcheckSignatures
 
 proc publishStringType() =
   # This logic is not strictly necessary for "system.nim" itself, but
@@ -302,7 +367,7 @@ proc publishStringType() =
           str.add intToken(pool.integers.getOrIncl(-1), NoLineInfo)
         str.addDotToken() # default value
 
-  publish symId, str
+  publish symId, str, SemcheckBodies
 
 proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=false): Cursor =
   prog.main = splitModulePath(infile)

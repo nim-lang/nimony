@@ -644,8 +644,8 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
             else:
               dest.copyTree value.typ
             dest.addDotToken() # default value
-          programs.publish(value.field, dest, beforeField)
-  programs.publish(objType, dest, beforeType)
+          programs.publish(value.field, dest, beforeField, SemcheckBodies)
+  programs.publish(objType, dest, beforeType, SemcheckBodies)
 
 proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
                     paramsBegin, paramsEnd: int; origParams: Cursor) =

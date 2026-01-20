@@ -60,10 +60,7 @@ type
     exported*: bool
     rootOwner*: SymId # generic root of owner type
 
-  SemPhase* = enum
-    SemcheckTopLevelSyms,
-    SemcheckSignatures,
-    SemcheckBodies
+  # SemPhase and ToplevelEntry are now in programs.nim
 
   MetaInfo* = object
     includedFiles*: seq[string] # will become part of the index file
@@ -75,12 +72,6 @@ type
   SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
-
-  ToplevelEntry* = object
-    symId*: SymId # symbol defined at toplevel, can be SymId(0) for other entries
-    ast*: Cursor
-    body*: Cursor # for routines: cursor to body; invalid for non-routines
-    phase*: SemPhase
 
   SemContext* = object
     #dest*: TokenBuf
@@ -105,6 +96,7 @@ type
     processedModules*: Table[string, SymId] # suffix to sym
     usedTypevars*: int
     phase*: SemPhase
+    moduleSyms*: seq[SymId]  ## toplevel symbols of current module, in order of declaration
     canSelfExec*: bool
     checkedForWriteNifModule*: bool
     inWhen*: int

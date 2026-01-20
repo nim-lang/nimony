@@ -283,7 +283,7 @@ proc declToCursor*(c: var SemContext; dest: var TokenBuf; s: Sym): LoadResult =
       else: discard
       inc pos
     result = LoadResult(status: LacksNothing, decl: cursorAt(buf, 0))
-    publish s.name, buf
+    programs.publish s.name, buf, c.phase
   else:
     result = LoadResult(status: LacksPosition)
 
@@ -443,7 +443,10 @@ proc publish*(c: var SemContext; dest: var TokenBuf; s: SymId; start: int) =
   var buf = createTokenBuf(dest.len - start + 1)
   for i in start..<dest.len:
     buf.add dest[i]
-  programs.publish s, buf
+  programs.publish s, buf, c.phase
+  # Track module entries during phase 1
+  if c.phase == SemcheckTopLevelSyms:
+    c.moduleSyms.add s
 
 # -------------------------------------------------------------------------------------------------
 

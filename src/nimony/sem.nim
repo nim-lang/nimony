@@ -5159,93 +5159,43 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase): Toke
   # clear pragmaStack in case {.pop.} was not called
   c.pragmaStack.setLen(0)
 
-proc extractToplevelSymId(n: Cursor): SymId =
-  ## Extracts the symbol ID from a toplevel declaration, or returns SymId(0)
-  ## for statements that don't define a symbol.
-  var n = n
-  let sk = stmtKind(n)
-  case sk
-  of ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS:
-    inc n # skip tag
-    if n.kind == SymbolDef:
-      result = n.symId
-    else:
-      result = SymId(0)
-  of TypeS:
-    inc n # skip tag
-    if n.kind == SymbolDef:
-      result = n.symId
-    else:
-      result = SymId(0)
-  of VarS, GvarS, LetS, GletS, ConstS, TvarS, TletS, CursorS:
-    inc n # skip tag
-    if n.kind == SymbolDef:
-      result = n.symId
-    else:
-      result = SymId(0)
-  else:
-    result = SymId(0)
-
-proc collectToplevelEntries(buf: var TokenBuf): (seq[ToplevelEntry], PackedLineInfo) =
-  ## Parses a buffer and returns toplevel entries with cursors pointing into it,
-  ## along with the module's line info. For routines, also stores a cursor to the body.
-  var entries: seq[ToplevelEntry] = @[]
+proc getModuleLineInfo(buf: var TokenBuf): PackedLineInfo =
+  ## Get the line info from the module's StmtsS tag.
   var n = beginRead(buf)
   assert n.stmtKind == StmtsS
-  let moduleLineInfo = n.info
+  result = n.info
+  endRead(buf)
+
+proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) =
+  ## Iterate over toplevel statements in buf and semcheck each one.
+  var n = beginRead(buf)
+  assert n.stmtKind == StmtsS
   inc n # skip StmtsS tag
   while n.kind != ParRi:
-    var body = default(Cursor)
-    let sk = stmtKind(n)
-    if sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS}:
-      let routine = asRoutine(n, SkipInclBody)
-      body = routine.body
-    let entry = ToplevelEntry(
-      symId: extractToplevelSymId(n),
-      ast: n,
-      body: body,
-      phase: SemcheckTopLevelSyms
-    )
-    entries.add entry
-    skip n
+    semStmt c, dest, n, false
   endRead(buf)
-  result = (entries, moduleLineInfo)
 
-proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, seq[ToplevelEntry], PackedLineInfo) =
-  ## Phase 1: Register toplevel symbols. Returns the output buffer along with
-  ## toplevel entries (cursors pointing into the buffer) and the module line info.
-  ## The caller must keep the returned buffer alive while entries are used.
+proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, PackedLineInfo) =
+  ## Phase 1: Register toplevel symbols.
   var buf = phaseX(c, dest, n, SemcheckTopLevelSyms)
-  let (entries, lineInfo) = collectToplevelEntries(buf)
-  result = (move buf, entries, lineInfo)
+  let lineInfo = getModuleLineInfo(buf)
+  result = (move buf, lineInfo)
 
-proc semToplevelEntry(c: var SemContext; dest: var TokenBuf; entry: ToplevelEntry) =
-  ## Semantic check a single toplevel entry for the current phase.
-  var n = entry.ast
-  semStmt c, dest, n, false
-
-proc phase2(c: var SemContext; entries: seq[ToplevelEntry]; moduleLineInfo: PackedLineInfo): (TokenBuf, seq[ToplevelEntry]) =
-  ## Phase 2: Check signatures by iterating over toplevel entries.
-  ## Returns the output buffer and re-collected entries for phase 3.
+proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
+  ## Phase 2: Check signatures.
   c.phase = SemcheckSignatures
-  var dest = createTokenBuf()
-  dest.addParLe(StmtsS, moduleLineInfo)
-  for entry in entries:
-    semToplevelEntry(c, dest, entry)
-  dest.addParRi()
+  result = createTokenBuf()
+  result.addParLe(StmtsS, moduleLineInfo)
+  semToplevelStmts(c, result, buf)
+  result.addParRi()
   c.pragmaStack.setLen(0)
-  # Re-collect entries from the output since new statements may have been added
-  let (newEntries, _) = collectToplevelEntries(dest)
-  result = (move dest, newEntries)
 
-proc phase3(c: var SemContext; entries: seq[ToplevelEntry]; moduleLineInfo: PackedLineInfo): TokenBuf =
-  ## Phase 3: Check bodies by iterating over toplevel entries.
-  ## Returns the final output buffer.
+proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
+  ## Phase 3: Check bodies.
   c.phase = SemcheckBodies
   result = createTokenBuf()
   result.addParLe(StmtsS, moduleLineInfo)
-  for entry in entries:
-    semToplevelEntry(c, result, entry)
+  semToplevelStmts(c, result, buf)
 
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
@@ -5427,11 +5377,11 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
   #echo "PHASE 1"
-  var (n1, entries1, moduleLineInfo) = phase1(c, dest, n0)
+  var (buf1, moduleLineInfo) = phase1(c, dest, n0)
   #echo "PHASE 2"
-  var (n2, entries2) = phase2(c, entries1, moduleLineInfo)
+  var buf2 = phase2(c, buf1, moduleLineInfo)
   #echo "PHASE 3"
-  dest = phase3(c, entries2, moduleLineInfo)
+  dest = phase3(c, buf2, moduleLineInfo)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, c.expanded[0].info
