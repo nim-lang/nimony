@@ -3742,10 +3742,13 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   dest.add parLeToken(AtX, info)
   dest.add parLeToken(CchoiceX, info)
   var argBuf = createTokenBuf(16)
+  swap dest, argBuf
   var argRead = it.n
   while argRead.kind != ParRi:
-    semLocalTypeImpl c, argBuf, argRead, AllowValues
+    semLocalTypeImpl c, dest, argRead, AllowValues
   takeParRi dest, argRead
+  swap dest, argBuf
+  # XXX investigate this further, seems odd and prevents us from eliminating the swaps:
   let args = cursorAt(argBuf, 0)
   var matches = 0
   var lastMatch = default(Match)
