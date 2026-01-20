@@ -445,9 +445,7 @@ proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
   let root = nominalRoot(c.routine.returnType)
   if root == SymId(0) and not c.g.config.compat:
     var errBuf = createTokenBuf(16)
-    swap dest, errBuf
-    buildErr c, dest, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
-    swap dest, errBuf
+    buildErr c, errBuf, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
     dest.insert errBuf, declStart
   else:
     c.converters.mgetOrPut(root, @[]).add(symId)
@@ -485,9 +483,7 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
     let typ = typeToString(params)
     dest.endRead()
     var errBuf = createTokenBuf(16)
-    swap dest, errBuf
-    buildErr c, dest, info, "cannot attach method to type " & typ
-    swap dest, errBuf
+    buildErr c, errBuf, info, "cannot attach method to type " & typ
     dest.insert errBuf, declStart
   else:
     dest.endRead()
@@ -773,9 +769,7 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
     let name = identToSym(c, "`anonproc", ProcY)
 
     var anons = createTokenBuf()
-    swap dest, anons
-    semProcImpl c, dest, it, kind, pass, name
-    swap dest, anons
+    semProcImpl c, anons, it, kind, pass, name
     dest.add parLeToken(ExprX, info)
     dest.add parLeToken(StmtsS, info)
     let anonTypePos = dest.len
@@ -984,9 +978,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       var topLevelRead = beginRead(innerObjDecl)
       var phase = SemcheckTopLevelSyms
       swap c.phase, phase
-      swap dest, topLevelDest
-      semTypeSection c, dest, topLevelRead
-      swap dest, topLevelDest
+      semTypeSection c, topLevelDest, topLevelRead
       swap c.phase, phase
       innerObjDecl = topLevelDest
     if c.phase > SemcheckSignatures:
@@ -995,9 +987,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       var sigRead = beginRead(innerObjDecl)
       var phase = SemcheckSignatures
       swap c.phase, phase
-      swap dest, sigDest
-      semTypeSection c, dest, sigRead
-      swap dest, sigDest
+      semTypeSection c, sigDest, sigRead
       swap c.phase, phase
       innerObjDecl = sigDest
     var decl = beginRead(innerObjDecl)
@@ -1032,9 +1022,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var tup = Item(n: it.n, typ: c.types.autoType)
   let tupInfo = tup.n.info
   var tupBuf = createTokenBuf(16)
-  swap dest, tupBuf
-  semExpr c, dest, tup
-  swap dest, tupBuf
+  semExpr c, tupBuf, tup
   it.n = tup.n
   let tupleType = skipModifier(tup.typ)
   if tupleType.typeKind != TupleT:

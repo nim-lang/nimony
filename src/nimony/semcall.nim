@@ -812,11 +812,8 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
         dest[cs.beforeCall+1].setSymId inst.targetSym
         var instReturnType = createTokenBuf(16)
-        # XXX remove this swap once tests are green otherwise:
-        swap dest, instReturnType
         var subsReturnType = inst.returnType
-        returnType = semReturnType(c, dest, subsReturnType)
-        swap dest, instReturnType
+        returnType = semReturnType(c, instReturnType, subsReturnType)
       else:
         if isMagic == NonMagicCall and cs.hasGenericArgs:
           # add back explicit generic args since we cannot instantiate
@@ -942,10 +939,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     inc cs.fn.n # skip tag
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
-    # XXX See if this swap can be removed:
-    swap dest, lhsBuf
-    semExpr c, dest, lhs, {KeepMagics, AllowUndeclared} # don't consider all overloads
-    swap dest, lhsBuf
+    semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared} # don't consider all overloads
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
     var maybeRoutine = lhs.n
@@ -979,9 +973,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     var lhsBuf = createTokenBuf(4)
     let lhsOrig = cs.fn.n
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
-    swap dest, lhsBuf
-    semExpr c, dest, lhs, {AllowModuleSym}
-    swap dest, lhsBuf
+    semExpr c, lhsBuf, lhs, {AllowModuleSym}
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
     let fieldNameCursor = cs.fn.n
