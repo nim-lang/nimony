@@ -96,7 +96,6 @@ type
     processedModules*: Table[string, SymId] # suffix to sym
     usedTypevars*: int
     phase*: SemPhase
-    moduleSyms*: seq[SymId]  ## toplevel symbols of current module, in order of declaration
     canSelfExec*: bool
     checkedForWriteNifModule*: bool
     inWhen*: int

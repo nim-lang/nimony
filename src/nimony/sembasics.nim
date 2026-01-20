@@ -457,9 +457,6 @@ proc publish*(c: var SemContext; dest: var TokenBuf; s: SymId; start: int) =
   for i in start..<dest.len:
     buf.add dest[i]
   programs.publish s, buf, c.phase
-  # Track module entries during phase 1
-  if c.phase == SemcheckTopLevelSyms:
-    c.moduleSyms.add s
 
 # -------------------------------------------------------------------------------------------------
 
