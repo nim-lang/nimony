@@ -79,6 +79,7 @@ type
   ToplevelEntry* = object
     symId*: SymId # symbol defined at toplevel, can be SymId(0) for other entries
     ast*: Cursor
+    body*: Cursor # for routines: cursor to body; invalid for non-routines
     phase*: SemPhase
 
   SemContext* = object

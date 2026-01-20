@@ -5210,16 +5210,22 @@ proc extractToplevelSymId(n: Cursor): SymId =
 
 proc collectToplevelEntries(buf: var TokenBuf): (seq[ToplevelEntry], PackedLineInfo) =
   ## Parses a buffer and returns toplevel entries with cursors pointing into it,
-  ## along with the module's line info.
+  ## along with the module's line info. For routines, also stores a cursor to the body.
   var entries: seq[ToplevelEntry] = @[]
   var n = beginRead(buf)
   assert n.stmtKind == StmtsS
   let moduleLineInfo = n.info
   inc n # skip StmtsS tag
   while n.kind != ParRi:
+    var body = default(Cursor)
+    let sk = stmtKind(n)
+    if sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS}:
+      let routine = asRoutine(n, SkipInclBody)
+      body = routine.body
     let entry = ToplevelEntry(
       symId: extractToplevelSymId(n),
       ast: n,
+      body: body,
       phase: SemcheckTopLevelSyms
     )
     entries.add entry
