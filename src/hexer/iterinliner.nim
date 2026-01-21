@@ -534,7 +534,7 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       if isLocalDecl(iter.symId):
         var buf = createTokenBuf()
         takeTree(buf, c)
-        publish iter.symId, buf, SemcheckBodies
+        publish iter.symId, buf
       else:
         skip(c)
     of TemplateS:

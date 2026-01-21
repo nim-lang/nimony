@@ -25,7 +25,7 @@ proc publishHooks*(n: var Cursor) =
         var dest = createTokenBuf()
         takeTree(dest, n)
         let sym = decl.name.symId
-        publish sym, dest, SemcheckBodies
+        publish sym, dest
       else:
         inc n
         inc nested

@@ -667,8 +667,8 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
             var n = field.typ
             tre(c, dest, n) # type might need an environment parameter
             dest.addDotToken() # no default value
-          programs.publish(field.field, dest, beforeField, SemcheckBodies)
-    programs.publish(objType, dest, beforeType, SemcheckBodies)
+          programs.publish(field.field, dest, beforeField)
+    programs.publish(objType, dest, beforeType)
 
 proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)

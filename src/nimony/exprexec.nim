@@ -140,7 +140,7 @@ proc requestProc(c: var LiftingCtx; t: TypeCursor): SymId =
     genProcHeader(c, header, result, t)
     header.addEmpty() # body is empty
     header.addParRi() # close ProcS declaration
-    programs.publish(result, header, SemcheckBodies)
+    programs.publish(result, header)
 
 when not defined(nimony):
   proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf)

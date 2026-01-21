@@ -606,7 +606,7 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
 proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
   var buf = createTokenBuf(100)
   for i in procStart ..< dest.len: buf.add dest[i]
-  programs.publish(sym, buf, SemcheckBodies)
+  programs.publish(sym, buf)
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   let paramA = pool.syms.getOrIncl("dest.0")
