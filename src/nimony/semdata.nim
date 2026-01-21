@@ -129,6 +129,7 @@ type
     passC*: seq[string]
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
+    forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
