@@ -23,6 +23,7 @@ import ".." / models / [tags, nifindex_tags]
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
 proc semConv(c: var SemContext; dest: var TokenBuf; it: var Item)
+proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): LoadResult
 
 proc typeMismatch(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; got, expected: TypeCursor) =
   c.buildErr dest, info, "type mismatch: got: " & typeToString(got) & " but wanted: " & typeToString(expected)
@@ -593,7 +594,8 @@ proc semConstStrExprIgnoreTopLevel(c: var SemContext; dest: var TokenBuf; n: var
   of SemcheckTopLevelSyms:
     # XXX `const`s etc are not evaluated yet
     dest.takeTree n
-  of SemcheckSignatures, SemcheckBodies:
+  of SemcheckSignaturesInProgress, SemcheckSignatures,
+     SemcheckBodiesInProgress, SemcheckBodies:
     semConstStrExpr(c, dest, n)
 
 proc semConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
@@ -1688,10 +1690,14 @@ type CaseMode = enum
 proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: CaseMode)
 
 proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; firstPhase: SemPhase) =
+  # Only consider "real" phases, not InProgress markers
+  const realPhases = [SemcheckTopLevelSyms, SemcheckSignatures, SemcheckBodies]
   if c.phase <= firstPhase:
     var lastBuf = default(TokenBuf)
     var usingBuf = false
-    for phase in low(SemPhase) ..< c.phase:
+    for phase in realPhases:
+      if phase >= c.phase:
+        break
       var buf = createTokenBuf()
       var phase = phase
       swap c.phase, phase
@@ -2238,7 +2244,8 @@ proc semWhen(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # but this was already not possible in original Nim
     dest.takeTree it.n
     return
-  of SemcheckSignatures, SemcheckBodies:
+  of SemcheckSignaturesInProgress, SemcheckSignatures,
+     SemcheckBodiesInProgress, SemcheckBodies:
     discard
 
   inc c.inWhen
@@ -5159,6 +5166,76 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase): Toke
   # clear pragmaStack in case {.pop.} was not called
   c.pragmaStack.setLen(0)
 
+proc getModuleLineInfo(buf: var TokenBuf): PackedLineInfo =
+  ## Get the line info from the module's StmtsS tag.
+  var n = beginRead(buf)
+  assert n.stmtKind == StmtsS
+  result = n.info
+  endRead(buf)
+
+type
+  EnsurePhaseResult* = enum
+    PhaseOk,        ## Symbol is now at the required phase
+    PhaseCycle,     ## Cyclic dependency detected
+    PhaseNotFound   ## Symbol not in prog.mem
+
+proc ensurePhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): EnsurePhaseResult =
+  ## Check if a symbol has been processed to at least targetPhase.
+  ## Used for cycle detection during phase 2/3.
+  if not prog.mem.hasKey(symId):
+    return PhaseNotFound  # Symbol not in mem (external or not yet registered)
+
+  let currentPhase = prog.mem[symId].phase
+  if currentPhase >= targetPhase:
+    return PhaseOk  # Already at or past target phase
+
+  # Cycle detection: check for InProgress markers
+  if currentPhase in {SemcheckSignaturesInProgress, SemcheckBodiesInProgress}:
+    return PhaseCycle
+
+  # Symbol not yet at target phase - this is a forward reference
+  # The caller should handle this appropriately
+  result = PhaseOk
+
+proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): LoadResult =
+  ## Load a symbol, checking for cycles.
+  ## For current module symbols in progress, returns cycle error.
+  let phaseRes = ensurePhase(c, symId, targetPhase)
+  if phaseRes == PhaseCycle:
+    return LoadResult(status: LacksOffset)  # Cycle detected
+  result = tryLoadSym(symId)
+
+proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) =
+  ## Iterate over toplevel statements in buf and semcheck each one.
+  var n = beginRead(buf)
+  assert n.stmtKind == StmtsS
+  inc n # skip StmtsS tag
+  while n.kind != ParRi:
+    semStmt c, dest, n, false
+  endRead(buf)
+
+proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, PackedLineInfo) =
+  ## Phase 1: Register toplevel symbols.
+  var buf = phaseX(c, dest, n, SemcheckTopLevelSyms)
+  let lineInfo = getModuleLineInfo(buf)
+  result = (move buf, lineInfo)
+
+proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
+  ## Phase 2: Check signatures.
+  c.phase = SemcheckSignatures
+  result = createTokenBuf()
+  result.addParLe(StmtsS, moduleLineInfo)
+  semToplevelStmts(c, result, buf)
+  result.addParRi()
+  c.pragmaStack.setLen(0)
+
+proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
+  ## Phase 3: Check bodies.
+  c.phase = SemcheckBodies
+  result = createTokenBuf()
+  result.addParLe(StmtsS, moduleLineInfo)
+  semToplevelStmts(c, result, buf)
+
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
   var typevars = decl.typevars
@@ -5339,16 +5416,11 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
   #echo "PHASE 1"
-  var n1 = phaseX(c, dest, n0, SemcheckTopLevelSyms)
-  #echo "PHASE 2: ", toString(n1)
-  var n2 = phaseX(c, dest, beginRead(n1), SemcheckSignatures)
-
-  #echo "PHASE 3: ", toString(n2)
-  var n = beginRead(n2)
-  c.phase = SemcheckBodies
-  takeToken dest, n
-  while n.kind != ParRi:
-    semStmt c, dest, n, false
+  var (buf1, moduleLineInfo) = phase1(c, dest, n0)
+  #echo "PHASE 2"
+  var buf2 = phase2(c, buf1, moduleLineInfo)
+  #echo "PHASE 3"
+  dest = phase3(c, buf2, moduleLineInfo)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, c.expanded[0].info
@@ -5364,7 +5436,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       requestMethods(c, dest, val, res.decl)
       dest.copyTree res.decl
   instantiateGenericHooks c, dest
-  takeParRi dest, n
+  dest.addParRi()
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
@@ -5396,7 +5468,7 @@ proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set
     executeCall: exprexec.executeCall,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize)
-  
+
   var dest = createTokenBuf()
 
   for magic in ["typeof", "compiles", "defined", "declared"]:

@@ -64,7 +64,7 @@ proc importSingleFile(c: var SemContext; dest: var TokenBuf; f1: ImportedFilenam
     var moduleDecl = createTokenBuf(2)
     moduleDecl.addParLe(ModuleY, info)
     moduleDecl.addParRi()
-    publish result, moduleDecl
+    publish result, moduleDecl, SemcheckBodies
   else:
     result = c.processedModules[suffix]
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
