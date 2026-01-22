@@ -51,12 +51,14 @@ type
   Command = enum
     None, SingleModule, GenerateIdx, Execute, Idetools
 
-proc singleModule(infile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
-  if not semos.fileExists(infile):
-    quit "cannot find " & infile
-  else:
-    let outfile = infile.changeModuleExt(".s.nif")
-    semcheck(infile, outfile, ensureMove config, moduleFlags, "", false)
+proc processModules(infiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
+  for infile in infiles:
+    if not semos.fileExists(infile):
+      quit "cannot find " & infile
+  var outfiles: seq[string] = @[]
+  for infile in infiles:
+    outfiles.add infile.changeModuleExt(".s.nif")
+  semcheck(infiles, outfiles, ensureMove config, moduleFlags, "", false)
 
 proc executeNif(files: seq[string]; config: sink NifConfig) =
   # file 0 is special as it is the main file. We need to run injectDerefs on it first.
@@ -187,9 +189,9 @@ proc handleCmdLine() =
   of None:
     quit "command missing"
   of SingleModule:
-    if args.len != 1:
-      quit "want exactly 1 command line argument"
-    singleModule(args[0], ensureMove config, moduleFlags)
+    if args.len < 1:
+      quit "want at least 1 command line argument"
+    processModules(args, ensureMove config, moduleFlags)
   of GenerateIdx:
     if args.len != 1:
       quit "want exactly 1 command line argument"

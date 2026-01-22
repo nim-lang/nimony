@@ -5451,8 +5451,21 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   else:
     quit 1
 
-proc semcheck*(infile, outfile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
+proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
+  ## Semantic check one or more modules.
+  ## For single modules (len=1), this is the normal case.
+  ## For multiple modules, they form a cycle group and are processed together.
+  assert infiles.len == outfiles.len
+  assert infiles.len > 0
+
+  # For now, only support single module. Cyclic modules need more work.
+  if infiles.len > 1:
+    quit "cyclic module groups not yet implemented"
+
+  let infile = infiles[0]
+  let outfile = outfiles[0]
+
   var owningBuf = createTokenBuf(300)
   var n0 = setupProgram(infile, outfile, owningBuf)
   var c = SemContext(
