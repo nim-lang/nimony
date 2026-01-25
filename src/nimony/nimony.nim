@@ -71,7 +71,7 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
-  semcheck(src, dest, ensureMove config, moduleFlags, commandLineArgs, true)
+  semcheck(@[src], @[dest], ensureMove config, moduleFlags, commandLineArgs, true)
 
 type
   Command = enum

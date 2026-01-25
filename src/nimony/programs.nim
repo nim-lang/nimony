@@ -7,6 +7,7 @@
 import std / [syncio, os, tables, sequtils, times, sets]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
+import ".." / gear2 / modnames
 import reporters, builtintypes
 import ".." / models / [nifindex_tags]
 
@@ -99,6 +100,15 @@ iterator pairs*(t: ToplevelEntries): (int, lent ToplevelEntry) =
 proc newNifModule(infile: string): NifModule =
   result = NifModule(stream: nifstreams.open(infile))
   discard processDirectives(result.stream.r)
+
+proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArray[string]): Cursor =
+  ## Load a module's content into owningBuf and return a cursor to it.
+  ## Also registers the module in prog.mods.
+  let m = newNifModule(infile)
+  owningBuf = fromStream(m.stream)
+  result = beginRead(owningBuf)
+  let suffix = moduleSuffix(infile, paths)
+  prog.mods[suffix] = m
 
 proc suffixToNif*(suffix: string): string {.inline.} =
   # always imported from semchecked files
