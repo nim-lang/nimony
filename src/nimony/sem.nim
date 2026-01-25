@@ -2806,6 +2806,8 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     discard
 
   var firstKeyType = c.types.autoType
+  var currentIndex = createXint(0'i64)
+  var hasFirstIdx = false
   template semElem(c: var SemContext, dest: var TokenBuf, elem: var Item, it: Item) =
     if elem.n.substructureKind == KvU:
       var indexType = c.types.autoType
@@ -2818,10 +2820,17 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
         indexType = firstKeyType
       inc elem.n # skip KvU
       var key = Item(n: elem.n, typ: indexType)
-      let start = dest.len
-      semExpr c, dest, key
-      if firstKeyType.typeKind == AutoT: firstKeyType = key.typ
-      dest.shrink start
+      var keyBuf = createTokenBuf(16)
+      semExpr c, keyBuf, key
+      if firstKeyType.typeKind == AutoT:
+        firstKeyType = key.typ
+      let val = evalOrdinal(c, cursorAt(keyBuf, 0))
+      if not isNaN(val):
+        if not hasFirstIdx:
+          hasFirstIdx = true
+        elif val-currentIndex != createXint(1'i64):
+          c.buildErr(dest, cursorAt(keyBuf, 0).info, "invalid order in array constructor")
+        currentIndex = val
       elem.n = key.n
       semExpr c, dest, elem
       skipParRi elem.n
