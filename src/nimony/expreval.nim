@@ -767,8 +767,18 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           if isKv:
             inc n
         else:
-          let elem = propagateError eval(c, n)
-          c.values[valPos].addSubtree elem
+          if n.substructureKind == KvU:
+            c.values[valPos].add n
+            inc n
+            let key = propagateError eval(c, n)
+            c.values[valPos].addSubtree key
+            let val = propagateError eval(c, n)
+            c.values[valPos].addSubtree val
+            c.values[valPos].add n
+            inc n
+          else:
+            let elem = propagateError eval(c, n)
+            c.values[valPos].addSubtree elem
       takeParRi c.values[valPos], n
       result = cursorAt(c.values[valPos], 0)
     of CallKinds:

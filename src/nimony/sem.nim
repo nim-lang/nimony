@@ -2805,15 +2805,37 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   else:
     discard
 
-  # XXX index types, `index: value` etc not implemented
-  semExpr c, dest, elem
+  var firstKeyType = c.types.autoType
+  template semElem(c: var SemContext, dest: var TokenBuf, elem: var Item, it: Item) =
+    if elem.n.substructureKind == KvU:
+      var indexType = c.types.autoType
+      if it.typ.typeKind == ArrayT:
+        var it2 = it.typ
+        inc it2 # skip ArrayT
+        skip it2 # skip element type
+        indexType = it2
+      elif firstKeyType.typeKind != AutoT:
+        indexType = firstKeyType
+      inc elem.n # skip KvU
+      var key = Item(n: elem.n, typ: indexType)
+      let start = dest.len
+      semExpr c, dest, key
+      if firstKeyType.typeKind == AutoT: firstKeyType = key.typ
+      dest.shrink start
+      elem.n = key.n
+      semExpr c, dest, elem
+      skipParRi elem.n
+    else:
+      semExpr c, dest, elem
+
+  semElem(c, dest, elem, it)
   if freshElemType:
     # do not save modifier in array type unless it was annotated as such
     # also do not expect it from subsequent elements
     removeModifier(elem.typ)
   var count = 1
   while elem.n.kind != ParRi:
-    semExpr c, dest, elem
+    semElem(c, dest, elem, it)
     inc count
   it.n = elem.n
   takeParRi dest, it.n
@@ -2821,7 +2843,10 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   dest.buildTree ArrayT, info:
     dest.addSubtree elem.typ
     dest.addParLe(RangetypeT, info)
-    dest.addSubtree c.types.intType
+    var idxType = c.types.intType
+    if firstKeyType.typeKind != AutoT:
+      idxType = firstKeyType
+    dest.addSubtree idxType
     dest.addIntLit(0, info)
     dest.addIntLit(count - 1, info)
     dest.addParRi()
@@ -2952,7 +2977,23 @@ proc semArrayConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     c.buildErr dest, info, "expected array type for array constructor, got: " & typeToString(t)
   while elem.n.kind != ParRi:
-    semExpr c, dest, elem
+    if elem.n.substructureKind == KvU:
+      var indexType = c.types.autoType
+      if it.typ.typeKind == ArrayT:
+        var it2 = it.typ
+        inc it2 # skip ArrayT
+        skip it2 # skip element type
+        indexType = it2
+      inc elem.n # skip KvU
+      var key = Item(n: elem.n, typ: indexType)
+      let start = dest.len
+      semExpr c, dest, key
+      dest.shrink start
+      elem.n = key.n
+      semExpr c, dest, elem
+      skipParRi elem.n
+    else:
+      semExpr c, dest, elem
   it.n = elem.n
   takeParRi dest, it.n
   commonType c, dest, it, start, expected
