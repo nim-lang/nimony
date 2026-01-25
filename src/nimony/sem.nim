@@ -2993,23 +2993,7 @@ proc semArrayConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     c.buildErr dest, info, "expected array type for array constructor, got: " & typeToString(t)
   while elem.n.kind != ParRi:
-    if elem.n.substructureKind == KvU:
-      var indexType = c.types.autoType
-      if it.typ.typeKind == ArrayT:
-        var it2 = it.typ
-        inc it2 # skip ArrayT
-        skip it2 # skip element type
-        indexType = it2
-      inc elem.n # skip KvU
-      var key = Item(n: elem.n, typ: indexType)
-      let start = dest.len
-      semExpr c, dest, key
-      dest.shrink start
-      elem.n = key.n
-      semExpr c, dest, elem
-      skipParRi elem.n
-    else:
-      semExpr c, dest, elem
+    semExpr c, dest, elem
   it.n = elem.n
   takeParRi dest, it.n
   commonType c, dest, it, start, expected
