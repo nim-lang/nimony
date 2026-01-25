@@ -76,6 +76,13 @@ proc add*(t: var ToplevelEntries; entry: sink ToplevelEntry) =
   ## Add an entry without a SymId (e.g., when statement, import).
   t.entries.add entry
 
+proc del*(t: var ToplevelEntries; s: SymId) =
+  ## Remove an entry by SymId. The entry is cleared but not removed from the seq.
+  if t.bySymId.hasKey(s):
+    let idx = t.bySymId[s]
+    t.entries[idx].buffer = default(TokenBuf)  # clear the buffer
+    t.bySymId.del(s)
+
 iterator items*(t: ToplevelEntries): lent ToplevelEntry =
   for e in t.entries:
     yield e
