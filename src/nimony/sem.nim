@@ -2807,6 +2807,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
 
   var firstKeyType = c.types.autoType
   var currentIndex = createXint(0'i64)
+  var firstIdx = createXint(0'i64)
   var hasFirstIdx = false
   template semElem(c: var SemContext, dest: var TokenBuf, elem: var Item, it: Item) =
     if elem.n.substructureKind == KvU:
@@ -2827,15 +2828,20 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
       let val = evalOrdinal(c, cursorAt(keyBuf, 0))
       if not isNaN(val):
         if not hasFirstIdx:
+          firstIdx = val
           hasFirstIdx = true
-        elif val-currentIndex != createXint(1'i64):
+        elif val - currentIndex != createXint(1'i64):
           c.buildErr(dest, cursorAt(keyBuf, 0).info, "invalid order in array constructor")
         currentIndex = val
       elem.n = key.n
       semExpr c, dest, elem
       skipParRi elem.n
     else:
-      semExpr c, dest, elem
+      if hasFirstIdx:
+        inc currentIndex
+      else:
+        hasFirstIdx = true
+      semExpr c, dest, elem      
 
   semElem(c, dest, elem, it)
   if freshElemType:
@@ -2856,8 +2862,9 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     if firstKeyType.typeKind != AutoT:
       idxType = firstKeyType
     dest.addSubtree idxType
-    dest.addIntLit(0, info)
-    dest.addIntLit(count - 1, info)
+    var serr = false
+    dest.addIntLit(asSigned(firstIdx, serr), info)
+    dest.addIntLit(asSigned(firstIdx + createXint(count.int64 - 1), serr), info)
     dest.addParRi()
   let expected = it.typ
   it.typ = typeToCursor(c, dest, typeStart)
