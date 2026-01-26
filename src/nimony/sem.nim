@@ -2763,6 +2763,46 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
   takeParRi dest, it.n
   commonType c, dest, it, beforeExpr, typ
 
+type ArrayConstrContext = object
+  firstKeyType: TypeCursor
+  currentIndex: xint
+  firstIdx: xint
+  hasFirstIdx: bool
+
+proc semArrayConstrElem(c: var SemContext, dest: var TokenBuf, elem: var Item, it: Item, arrCtx: var ArrayConstrContext) =
+  if elem.n.substructureKind == KvU:
+    var indexType = c.types.autoType
+    if it.typ.typeKind == ArrayT:
+      var it2 = it.typ
+      inc it2 # skip ArrayT
+      skip it2 # skip element type
+      indexType = it2
+    elif arrCtx.firstKeyType.typeKind != AutoT:
+      indexType = arrCtx.firstKeyType
+    inc elem.n # skip KvU
+    var key = Item(n: elem.n, typ: indexType)
+    var keyBuf = createTokenBuf(16)
+    semExpr c, keyBuf, key
+    if arrCtx.firstKeyType.typeKind == AutoT:
+      arrCtx.firstKeyType = key.typ
+    let val = evalOrdinal(c, cursorAt(keyBuf, 0))
+    if not isNaN(val):
+      if not arrCtx.hasFirstIdx:
+        arrCtx.firstIdx = val
+        arrCtx.hasFirstIdx = true
+      elif val - arrCtx.currentIndex != createXint(1'i64):
+        c.buildErr(dest, cursorAt(keyBuf, 0).info, "invalid order in array constructor")
+      arrCtx.currentIndex = val
+    elem.n = key.n
+    semExpr c, dest, elem
+    skipParRi elem.n
+  else:
+    if arrCtx.hasFirstIdx:
+      inc arrCtx.currentIndex
+    else:
+      arrCtx.hasFirstIdx = true
+    semExpr c, dest, elem    
+
 proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemFlag]) =
   let exprStart = dest.len
   let info = it.n.info
@@ -2805,52 +2845,21 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   else:
     discard
 
-  var firstKeyType = c.types.autoType
-  var currentIndex = createXint(0'i64)
-  var firstIdx = createXint(0'i64)
-  var hasFirstIdx = false
-  template semElem(c: var SemContext, dest: var TokenBuf, elem: var Item, it: Item) =
-    if elem.n.substructureKind == KvU:
-      var indexType = c.types.autoType
-      if it.typ.typeKind == ArrayT:
-        var it2 = it.typ
-        inc it2 # skip ArrayT
-        skip it2 # skip element type
-        indexType = it2
-      elif firstKeyType.typeKind != AutoT:
-        indexType = firstKeyType
-      inc elem.n # skip KvU
-      var key = Item(n: elem.n, typ: indexType)
-      var keyBuf = createTokenBuf(16)
-      semExpr c, keyBuf, key
-      if firstKeyType.typeKind == AutoT:
-        firstKeyType = key.typ
-      let val = evalOrdinal(c, cursorAt(keyBuf, 0))
-      if not isNaN(val):
-        if not hasFirstIdx:
-          firstIdx = val
-          hasFirstIdx = true
-        elif val - currentIndex != createXint(1'i64):
-          c.buildErr(dest, cursorAt(keyBuf, 0).info, "invalid order in array constructor")
-        currentIndex = val
-      elem.n = key.n
-      semExpr c, dest, elem
-      skipParRi elem.n
-    else:
-      if hasFirstIdx:
-        inc currentIndex
-      else:
-        hasFirstIdx = true
-      semExpr c, dest, elem      
+  var ctx = ArrayConstrContext(
+    firstKeyType: c.types.autoType,
+    currentIndex: createXint(0'i64),
+    firstIdx: createXint(0'i64),
+    hasFirstIdx: false
+  )
 
-  semElem(c, dest, elem, it)
+  semArrayConstrElem(c, dest, elem, it, ctx)
   if freshElemType:
     # do not save modifier in array type unless it was annotated as such
     # also do not expect it from subsequent elements
     removeModifier(elem.typ)
   var count = 1
   while elem.n.kind != ParRi:
-    semElem(c, dest, elem, it)
+    semArrayConstrElem(c, dest, elem, it, ctx)
     inc count
   it.n = elem.n
   takeParRi dest, it.n
@@ -2859,12 +2868,12 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     dest.addSubtree elem.typ
     dest.addParLe(RangetypeT, info)
     var idxType = c.types.intType
-    if firstKeyType.typeKind != AutoT:
-      idxType = firstKeyType
+    if ctx.firstKeyType.typeKind != AutoT:
+      idxType = ctx.firstKeyType
     dest.addSubtree idxType
     var serr = false
-    dest.addIntLit(asSigned(firstIdx, serr), info)
-    dest.addIntLit(asSigned(firstIdx + createXint(count.int64 - 1), serr), info)
+    dest.addIntLit(asSigned(ctx.firstIdx, serr), info)
+    dest.addIntLit(asSigned(ctx.firstIdx + createXint(count.int64 - 1), serr), info)
     dest.addParRi()
   let expected = it.typ
   it.typ = typeToCursor(c, dest, typeStart)
