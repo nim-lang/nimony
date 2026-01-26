@@ -253,6 +253,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         if n.kind == StringLit:
           result.extern = n.litId
           inc n
+        result.flags.incl isExtern
         skipParRi n
       of HeaderP:
         inc n
