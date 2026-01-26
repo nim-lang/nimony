@@ -218,12 +218,13 @@ proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: NifcSym) =
         inc nested
         if n.pragmaKind in {ImportcP, ImportcppP, ExportcP}:
           extern = externName(symId, n)
+        inc n
       of ParRi:
         dec nested
+        inc n
+        if nested == 0: break
       else:
-        discard
-      inc n
-      if nested == 0: break
+        inc n
     m.defs[symId] = Definition(pos: decl, kind: kind, extern: extern)
 
 proc detectToplevelDecls(m: var MainModule) =
@@ -239,14 +240,15 @@ proc detectToplevelDecls(m: var MainModule) =
       of ProcS, VarS, ConstS, GvarS, TvarS:
         processToplevelDecl(m, n, n.symKind)
       else:
+        inc n
         inc nested
     of ParRi:
       assert nested > 0
       dec nested
+      inc n
     else:
-      discard
+      inc n
     if nested == 0: break
-    inc n
 
 proc parse*(r: var Reader): MainModule =
   # empirically, (size div 7) is a good estimate for the number of nodes
