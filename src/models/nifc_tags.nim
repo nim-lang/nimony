@@ -129,7 +129,7 @@ type
     NoPragma
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
-    AttrP = (ord(AttrTagId), "attr")  ## general attribute annoation
+    AttrP = (ord(AttrTagId), "attr")  ## general attribute annotation
     VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` proc annotation
     WasP = (ord(WasTagId), "was")
     SelectanyP = (ord(SelectanyTagId), "selectany")
@@ -140,10 +140,14 @@ type
     RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation
     ErrsP = (ord(ErrsTagId), "errs")  ## proc annotation
     StaticP = (ord(StaticTagId), "static")  ## `static` type or annotation
+    ImportcP = (ord(ImportcTagId), "importc")  ## `importc` pragma
+    ImportcppP = (ord(ImportcppTagId), "importcpp")  ## `importcpp` pragma
+    ExportcP = (ord(ExportcTagId), "exportc")  ## `exportc` pragma
+    HeaderP = (ord(HeaderTagId), "header")  ## `header` pragma
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
 
 proc rawTagIsNifcPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, VarargsTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, PackedTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, VarargsTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId}
 
 type
   NifcTypeQualifier* = enum

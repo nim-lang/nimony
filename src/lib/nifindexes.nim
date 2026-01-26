@@ -517,5 +517,42 @@ proc readIndex*(indexName: string): NifIndex =
   else:
     assert false, "expected 'index' tag"
 
+proc readEmbeddedIndex*(s: var Stream): Table[string, NifIndexEntry] =
+  ## Reads the simple embedded index (index (kv sym offset)...) from indexStartsAt position.
+  result = initTable[string, NifIndexEntry]()
+  let indexPos = indexStartsAt(s.r)
+  if indexPos <= 0:
+    return result
+  let contentPos = offset(s.r)  # Save position
+  s.r.jumpTo(indexPos)
+
+  var previousOffset = 0
+  var t = next(s)
+  let exportedTagId = pool.tags.getOrIncl("x")
+  if t.kind == ParLe and pool.tags[t.tagId] == ".index":
+    t = next(s)
+    while t.kind != EofToken and t.kind != ParRi:
+      if t.kind == ParLe:
+        let vis = if t.tagId == exportedTagId: Exported else: Hidden
+        let info = t.info
+        t = next(s)  # skip (kv
+        var key = ""
+        if t.kind == Symbol:
+          key = pool.syms[t.symId]
+        else:
+          raiseAssert "invalid (kv) in .index: symbol expected"
+        t = next(s)  # skip symbol
+        if t.kind == IntLit:
+          let offset = int(pool.integers[t.intId]) + previousOffset
+          result[key] = NifIndexEntry(offset: offset, info: info, vis: vis)
+          previousOffset = offset
+        t = next(s)  # skip offset
+        if t.kind == ParRi:
+          t = next(s)  # skip )
+      else:
+        t = next(s)
+
+  s.r.jumpTo(contentPos)  # Restore position
+
 when isMainModule:
   createIndex paramStr(1), false, NoLineInfo

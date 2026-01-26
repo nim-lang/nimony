@@ -199,11 +199,11 @@
 | `(pointer)` | NimonyType | `pointer` type |
 | `(ordinal)` | NimonyType | `ordinal` type |
 | `(magic STR)` | NimonyPragma | `magic` pragma |
-| `(importc X)` | NimonyPragma | `importc` pragma |
-| `(importcpp X)` | NimonyPragma | `importcpp` pragma |
+| `(importc X)` | NimonyPragma, NifcPragma | `importc` pragma |
+| `(importcpp X)` | NimonyPragma, NifcPragma | `importcpp` pragma |
 | `(dynlib X)` | NimonyPragma | `dynlib` pragma |
-| `(exportc X)` | NimonyPragma | `exportc` pragma |
-| `(header X)` | NimonyPragma | `header` pragma |
+| `(exportc X)` | NimonyPragma, NifcPragma | `exportc` pragma |
+| `(header X)` | NimonyPragma, NifcPragma | `header` pragma |
 | `(threadvar)` | NimonyPragma | `threadvar` pragma |
 | `(global)` | NimonyPragma | `global` pragma |
 | `(discardable)` | NimonyPragma | `discardable` pragma |
