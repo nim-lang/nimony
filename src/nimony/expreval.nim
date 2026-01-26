@@ -750,7 +750,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         # add type
         takeTree c.values[valPos], n
       while n.kind != ParRi:
-        if exprKind == SetConstrX and n.substructureKind == RangeU:
+        if (exprKind == SetConstrX and n.substructureKind == RangeU) or
+           (exprKind == AconstrX and n.substructureKind == KvU):
           c.values[valPos].takeToken n
           var a = propagateError eval(c, n)
           c.values[valPos].addSubtree a
