@@ -245,7 +245,14 @@ proc getNumberQualifier(c: var GeneratedCode; n: Cursor): string =
     else:
       # TODO: cpp doesn't support _Atomic
       result = ""
-  of RestrictQ, NoQualifier, CppRefQ:
+  of RestrictQ, CppRefQ:
+    error c.m, "expected number qualifier but got: ", n
+  of NoQualifier:
+    #if n.pragmaKind == HeaderP:
+    #  useHeader
+    #  result = ""
+    #else:
+    # XXX Implement importc etc for basic numeric types!
     error c.m, "expected number qualifier but got: ", n
 
 proc getPtrQualifier(c: var GeneratedCode; n: Cursor; isCppRef: var bool): string =
@@ -282,24 +289,16 @@ template atom(c: var GeneratedCode; s, name: string; isConst: bool) =
   maybeAddName(c, name, isConst)
 
 proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isConst: bool; isBool = false) =
-  if isBool:
-    inc n
-    while n.kind != ParRi:
-      c.add getNumberQualifier(c, n)
-      skip n
-    atom(c, typeName, name, isConst)
-    inc n
-  else:
-    var s = ""
-    inc n
-    assert n.kind == IntLit
-    s = typeName & integralBits(n)
-    inc n
-    while n.kind != ParRi:
-      c.add getNumberQualifier(c, n)
-      skip n
-    skipParRi n
-    atom(c, s, name, isConst)
+  var s = ""
+  inc n
+  assert n.kind == IntLit
+  s = typeName & integralBits(n)
+  inc n
+  while n.kind != ParRi:
+    c.add getNumberQualifier(c, n)
+    skip n
+  skipParRi n
+  atom(c, s, name, isConst)
 
 proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string; isConst: bool) =
   inc n
@@ -391,7 +390,12 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   of FT:
     atomNumber(c, n, "NF", name, isConst)
   of BoolT:
-    atomNumber(c, n, "NB8", name, isConst, isBool = true)
+    inc n
+    while n.kind != ParRi:
+      c.add getNumberQualifier(c, n)
+      skip n
+    atom(c, "NB8", name, isConst)
+    inc n
   of CT:
     atomNumber(c, n, "NC", name, isConst)
   of NoType:

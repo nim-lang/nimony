@@ -107,10 +107,10 @@
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |
 | `(cppref)` | NifcTypeQualifier | type qualifier for NIFC that provides a C++ reference |
-| `(i INTLIT)` | NifcType, NimonyType | `int` builtin type |
-| `(u INTLIT)` | NifcType, NimonyType | `uint` builtin type |
-| `(f INTLIT)` | NifcType, NimonyType | `float` builtin type |
-| `(c INTLIT)` | NifcType, NimonyType | `char` builtin type |
+| `(i INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `int` builtin type |
+| `(u INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `uint` builtin type |
+| `(f INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `float` builtin type |
+| `(c INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `char` builtin type |
 | `(bool)` | NifcType, NimonyType | `bool` builtin type |
 | `(void)` | NifcType, NimonyType | `void` return type |
 | `(ptr T)` | NifcType, NimonyType, NiflerKind | `ptr` type contructor |

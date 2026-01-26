@@ -16,10 +16,6 @@ import ".." / nimony / [nimony_model, typenav, langmodes]
 export RcField, DataField
 
 type
-  MangleScope* {.acyclic.} = ref object
-    tab: Table[SymId, string]
-    parent: MangleScope
-
   EContext* = object
     dir*, main*, ext*: string
     dest*: TokenBuf
@@ -28,8 +24,8 @@ type
     nestedIn*: seq[(StmtKind, SymId)]
     headers*: HashSet[StrId]
     dynlibs*: Table[StrId, seq[(StrId, SymId)]]
+    dynlibSyms*: Table[SymId, SymId]
     currentOwner*: SymId
-    toMangle*: MangleScope
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]
     pending*: TokenBuf
@@ -51,29 +47,6 @@ type
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId
   inc e.tmpId
-
-proc openMangleScope*(e: var EContext) =
-  e.toMangle = MangleScope(tab: initTable[SymId, string](), parent: e.toMangle)
-  e.typeCache.openScope()
-
-proc closeMangleScope*(e: var EContext) =
-  e.toMangle = e.toMangle.parent
-  e.typeCache.closeScope()
-
-proc registerMangle*(e: var EContext; s: SymId; ext: string) =
-  e.toMangle.tab[s] = ext
-
-proc registerMangleInParent*(e: var EContext; s: SymId; ext: string) =
-  e.toMangle.parent.tab[s] = ext
-
-proc maybeMangle*(e: var EContext; s: SymId): string =
-  var it {.cursor.} = e.toMangle
-  while it != nil:
-    result = it.tab.getOrDefault(s)
-    if result != "":
-      return result
-    it = it.parent
-  return ""
 
 proc error*(e: var EContext; msg: string; c: Cursor) {.noreturn.} =
   write stdout, "[Error] "
