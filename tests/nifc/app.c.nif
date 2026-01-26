@@ -1,6 +1,6 @@
 (.nif24)
 (stmts
-  (proc :main.c . (i +32) . (stmts
+  (proc :main.0.m . (i +32) (pragmas (exportc)) (stmts
 
     (var :x.mangled . (f +32) +1.2)
     (var :y.mangled . (f +64) +1.223)

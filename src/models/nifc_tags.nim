@@ -171,8 +171,9 @@ type
     EfldY = (ord(EfldTagId), "efld")  ## enum field declaration
     FldY = (ord(FldTagId), "fld")  ## field declaration
     ProcY = (ord(ProcTagId), "proc")  ## proc declaration
+    TypeY = (ord(TypeTagId), "type")  ## type declaration
     LabY = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction
 
 proc rawTagIsNifcSym*(raw: TagEnum): bool {.inline.} =
-  raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, EfldTagId, FldTagId, ProcTagId, LabTagId}
+  raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, EfldTagId, FldTagId, ProcTagId, TypeTagId, LabTagId}
 

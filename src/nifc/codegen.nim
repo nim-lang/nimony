@@ -14,7 +14,7 @@ from std / os import changeFileExt, splitFile, extractFilename
 from std / sequtils import insert
 
 include ".." / lib / nifprelude
-import mangler, nifc_model, cprelude, noptions, typenav, symparser
+import mangler, nifc_model, cprelude, noptions, typenav, symparser, nifmodules
 
 type
   Token = distinct uint32
@@ -88,7 +88,7 @@ type
     nextTemp: int
 
   GeneratedCode* = object
-    m: Module
+    m: MainModule
     includes: seq[Token]
     includedHeaders: IntSet
     protos: seq[Token]
@@ -99,14 +99,14 @@ type
     tokens: BiTable[Token, string]
     headerFile: seq[Token]
     generatedTypes: HashSet[SymId]
-    requestedSyms: HashSet[string]
+    requestedSyms: HashSet[SymId]
     flags: set[GenFlag]
     inToplevel: bool
     objConstrNeedsType: bool
     bits: int
     currentProc: CurrentProc
 
-proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]; bits: int): GeneratedCode =
+proc initGeneratedCode*(m: sink MainModule, flags: set[GenFlag]; bits: int): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
       fileIds: initPackedSet[FileId](), flags: flags, inToplevel: true,
       objConstrNeedsType: true, bits: bits)
@@ -156,7 +156,7 @@ proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
     else:
       write f, c.tokens[x]
 
-proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
+proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = n.info
   if info.isValid:
     let rawInfo = unpack(pool.man, info)
@@ -300,7 +300,7 @@ proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo): string =
         result = pool.syms[lit]
         extractBasename(result)
     else:
-      result = mangle(pool.syms[lit])
+      result = mangleToC(pool.syms[lit])
     c.add result
   else:
     result = ""
@@ -330,9 +330,9 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
 proc genParam(c: var GeneratedCode; n: var Cursor) =
   var d = takeParamDecl(n)
   if d.name.kind == SymbolDef:
-    let lit = d.name.symId
-    c.m.registerLocal(lit, d.typ)
-    let name = mangle(pool.syms[lit])
+    let s = d.name.symId
+    c.m.registerLocal(s, d.typ)
+    let name = mangleDecl(c, d.name, d.pragmas)
     genType c, d.typ, name
     genParamPragmas c, d.pragmas
   else:
@@ -465,10 +465,10 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
   if d.name.kind == SymbolDef:
     let lit = d.name.symId
     c.m.registerLocal(lit, d.typ)
-    let name = mangle(pool.syms[lit])
+    let name = mangleDecl(c, d.name, d.pragmas)
     let beforeDecl = c.code.len
 
-    if toExtern or isImportC(d.name):
+    if toExtern or isImportC(c.m, d.name):
       c.add ExternKeyword
 
     if vk == IsThreadlocal:
@@ -576,7 +576,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     c.add "void"
   c.add ParRi
 
-  if isExtern or c.requestedSyms.contains(name):
+  if isExtern or c.requestedSyms.contains(prc.name.symId):
     # symbol was used before its declaration has been processed so
     # add a signature:
     for i in signatureBegin ..< c.code.len:

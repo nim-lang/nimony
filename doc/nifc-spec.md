@@ -25,8 +25,7 @@ Name mangling is performed by NIFC. The following assumptions are made:
   names in Nim. The original names can be made available via a `was` annotation. See the
   grammar for further details.
 
-Names ending in `.c` are mangled by removing the `.c` suffix. For other names the `.` is
-replaced by `_` and `_` is encoded as `Q_`.
+For other names the `.` is replaced by `_` and `_` is encoded as `Q_`.
 
 By design names not imported from C contain a digit somewhere and thus cannot conflict with
 a keyword from C or C++.
@@ -207,7 +206,11 @@ CallingConvention ::= (cdecl) | (stdcall) | (safecall) | (syscall)  |
                       (fastcall) | (thiscall) | (noconv) | (member)
 
 Attribute ::= (attr StringLiteral)
-ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) | (selectany) | Attribute |
+
+CommonPragmas ::= (was Identifier) | Attribute | (importc StringLiteral?) |
+                  (importcpp StringLiteral?) | (exportc StringLiteral?)
+
+ProcPragma ::= CommonPragmas | (inline) | (noinline) | CallingConvention | (varargs) | (selectany) |
             | (raises) | (errs)
 
 ProcTypePragma ::= CallingConvention | (varargs) | Attribute
@@ -215,11 +218,11 @@ ProcTypePragma ::= CallingConvention | (varargs) | Attribute
 ProcTypePragmas ::= Empty | (pragmas ProcTypePragma+)
 ProcPragmas ::= Empty | (pragmas ProcPragma+)
 
-CommonPragma ::= (align Number) | (was Identifier) | Attribute
+CommonPragma ::= (align Number) | CommonPragmas
 VarPragma ::= CommonPragma | (static)
 VarPragmas ::= Empty | (pragmas VarPragma+)
 
-ParamPragma ::= (was Identifier) | Attribute
+ParamPragma ::= CommonPragmas
 ParamPragmas ::= Empty | (pragmas ParamPragma+)
 
 FieldPragma ::= CommonPragma | (bits Number)

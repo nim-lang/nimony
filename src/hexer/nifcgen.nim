@@ -1923,9 +1923,6 @@ proc importSymbol(c: var EContext; s: SymId) =
       # XXX This is a stupid hack to avoid producing (imp (imp ...))
       inc c.inImpSection
       c.dest.add tagToken("imp", n.info)
-      if pool.syms[s] == "=wasmoved_SX50ath0pat4k2dls.0.tem6twvye1":
-        writeStackTrace()
-        echo "IMPORTING ", pool.syms[s]
       trStmt c, n, TraverseSig
       c.dest.addParRi()
       dec c.inImpSection

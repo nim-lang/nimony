@@ -72,7 +72,7 @@
 | `(method D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | method declaration |
 | `(macro D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | macro declaration |
 | `(template D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | template declaration |
-| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NiflerKind, NifIndexKind | type declaration |
+| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndexKind | type declaration |
 | `(block .D X)` | NimonyStmt, NimonySym, NiflerKind | block declaration |
 | `(module)` | NimonySym | module declaration |
 | `(cchoice X X*)` | NimonyExpr, NimonySym | closed choice |

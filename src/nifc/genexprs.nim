@@ -56,7 +56,7 @@ proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
 proc genCall(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
-  let isCfn = isImportC(n)
+  let isCfn = isImportC(c.m, n)
   genx c, n
   c.add ParLe
   var i = 0
@@ -73,7 +73,7 @@ proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
   skip n # skip error action
-  let isCfn = isImportC(n)
+  let isCfn = isImportC(c.m, n)
   genx c, n
   c.add ParLe
   var i = 0
@@ -103,9 +103,9 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
   of NoExpr:
     if n.kind == Symbol:
-      let name = mangle(pool.syms[n.symId])
+      c.requestedSyms.incl n.symId
+      let name = mangleSym(c, n.symId)
       c.add name
-      c.requestedSyms.incl name
       inc n
     else:
       error c.m, "expected expression but got: ", n
@@ -377,7 +377,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     c.add ParLe
     genType c, n
     c.add Comma
-    let name = mangle(pool.syms[n.symId])
+    let name = mangleSym(c, n.symId)
     inc n
     c.add name
     c.add ParRi

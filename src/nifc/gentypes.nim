@@ -26,10 +26,10 @@ type
     lookedAt: IntSet
     lookedAtBodies: HashSet[SymId]
 
-proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor)
-proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor)
+proc traverseObjectBody(m: MainModule; o: var TypeOrder; t: Cursor)
+proc traverseProctypeBody(m: MainModule; o: var TypeOrder; t: Cursor)
 
-proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
+proc recordDependencyImpl(m: MainModule; o: var TypeOrder; parent, child: Cursor;
                           viaPointer: var bool) =
   var ch = child
   while true:
@@ -76,14 +76,10 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
       # follow the symbol to its definition:
       let id = ch.symId
       let def = m.defs.getOrDefault(id)
-      if def.pos == 0:
-        if pool.syms[id].endsWith(".c"):
-          # imported from c, no need to check dependency
-          discard
-        else:
-          error m, "undeclared symbol: ", ch
+      if def.kind == NoSym:
+        error m, "undeclared symbol: ", ch
       else:
-        var n = readonlyCursorAt(m.src, def.pos)
+        var n = def.pos
         let decl = asTypeDecl(n)
         if not containsOrIncl(o.lookedAtBodies, decl.name.symId) or viaPointer:
           # For `viaPointer` we must traverse it again, in a shallow manner or
@@ -93,11 +89,11 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
     else:
       discard "uninteresting type as we only focus on the required struct declarations"
 
-proc recordDependency(m: Module; o: var TypeOrder; parent, child: Cursor) =
+proc recordDependency(m: MainModule; o: var TypeOrder; parent, child: Cursor) =
   var viaPointer = false
   recordDependencyImpl m, o, parent, child, viaPointer
 
-proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor) =
+proc traverseObjectBody(m: MainModule; o: var TypeOrder; t: Cursor) =
   let kind = t.typeKind
   var n = t
   inc n
@@ -134,7 +130,7 @@ proc traverseObjectBody(m: Module; o: var TypeOrder; t: Cursor) =
     else:
       error m, "unexpected token inside object: ", n
 
-proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor) =
+proc traverseProctypeBody(m: MainModule; o: var TypeOrder; t: Cursor) =
   var n = t
   let procType = takeProcType(n)
   var param = procType.params
@@ -147,9 +143,8 @@ proc traverseProctypeBody(m: Module; o: var TypeOrder; t: Cursor) =
       recordDependencyImpl m, o, t, paramDecl.typ, viaPointer
   recordDependencyImpl m, o, t, procType.returnType, viaPointer
 
-proc traverseTypes(m: Module; o: var TypeOrder) =
-  for ch in m.types:
-    let n = readonlyCursorAt(m.src, ch)
+proc traverseTypes(m: MainModule; o: var TypeOrder) =
+  for n in m.types:
     let decl = asTypeDecl(n)
     let t = decl.body
     case t.typeKind
@@ -377,6 +372,13 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
     c.add "void"
   c.add ParRi
 
+proc mangleSym(c: GeneratedCode; s: SymId): string =
+  let x = c.m.defs.getOrDefault(s)
+  if x.kind != NoSym and x.extern != StrId(0):
+    result = pool.strings[x.extern]
+  else:
+    result = mangleToC(pool.syms[s])
+
 proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   case n.typeKind
   of VoidT:
@@ -394,7 +396,7 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
     atomNumber(c, n, "NC", name, isConst)
   of NoType:
     if n.kind == Symbol:
-      atom(c, mangle(pool.syms[n.symId]), name, isConst)
+      atom(c, mangleSym(c, n.symId), name, isConst)
       inc n
     else:
       error c.m, "node is not a type: ", n
@@ -412,12 +414,19 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   of ParamsT, UnionT, ObjectT, EnumT, ArrayT:
     error c.m, "nominal type not allowed here: ", n
 
-proc mangleField(c: var GeneratedCode; n: Cursor): string =
-  if n.kind in {Symbol, SymbolDef}:
-    result = mangle(pool.syms[n.symId])
+proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor): string =
+  if n.kind == SymbolDef:
+    if pragmas.kind == ParLe:
+      var p = pragmas.firstSon
+      while p.kind != ParRi:
+        if p.pragmaKind in {ImportcP, ImportcppP, ExportcP}:
+          let litId = externName(n.symId, p)
+          return pool.strings[litId]
+        skip p
+    result = mangleToC(pool.syms[n.symId])
   else:
     result = "InvalidFieldName"
-    error c.m, "field name must be a SymDef, but got: ", n
+    error c.m, "declaration must have a SymbolDef, but got: ", n
 
 proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
   let kind = n.typeKind
@@ -443,7 +452,7 @@ proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
     of ParLe:
       if n.substructureKind == FldU:
         var decl = takeFieldDecl(n)
-        let f = mangleField(c, decl.name)
+        let f = mangleDecl(c, decl.name, decl.pragmas)
         var bits = 0'i64
         genFieldPragmas c, decl.pragmas, bits
         genType c, decl.typ, f
@@ -483,7 +492,7 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
     if n.substructureKind == EfldU:
       inc n
       if n.kind == SymbolDef:
-        let enumFieldName = mangle(pool.syms[n.symId])
+        let enumFieldName = mangleToC(pool.syms[n.symId])
         inc n
         c.add "#define "
         c.add enumFieldName
@@ -530,7 +539,7 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
   for (d, declKeyword) in o.forwardedDecls.s:
     var n = d
     let decl = takeTypeDecl(n)
-    let s = mangle(pool.syms[decl.name.symId])
+    let s = mangleDecl(c, decl.name, decl.pragmas)
     c.add declKeyword
     c.add s
     c.add Space
@@ -541,7 +550,7 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
     var n = d
     var decl = takeTypeDecl(n)
     if not c.generatedTypes.containsOrIncl(decl.name.symId):
-      let s = mangle(pool.syms[decl.name.symId])
+      let s = mangleDecl(c, decl.name, decl.pragmas)
       case decl.body.typeKind
       of ArrayT:
         c.add declKeyword

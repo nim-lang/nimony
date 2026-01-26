@@ -2,7 +2,7 @@
 (stmts
   (incl "<stdio.h>")
   (incl "<assert.h>")
-  (type 1,1,hello.nim :MyObject.c . (object . ))
+  (type 1,1,hello.nim :MyObject.0.m . (object . ))
   (type :MyProc.e . (proctype . (params) (void) . ))
   (type :MyEnum.e . (enum (u +8)
     (efld :ValueA +0)
@@ -38,13 +38,13 @@
   )
   )
 
-  (proc :foo.c . (void) . (stmts
+  (proc :foo.0.m . (void) . (stmts
     (ret .)
   ))
 
-  (nodecl (proc :foo2.c . (void) . (stmts
+  (nodecl (proc :foo2.0.m . (void) . (stmts
     (var :x.0 . (i +32 (ro)) +12)
-    (call assert.c (eq x.0 +12))
+    (call assert.0.m (eq x.0 +12))
   )))
 
   (type :MyObject.ptr.flexarray .

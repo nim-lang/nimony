@@ -205,7 +205,7 @@ proc genCaseCond(c: var GeneratedCode; n: var Cursor) =
 proc genLabel(c: var GeneratedCode; n: var Cursor) =
   inc n
   if n.kind == SymbolDef:
-    let name = mangle(pool.syms[n.symId])
+    let name = mangleToC(pool.syms[n.symId])
     c.add name
     c.add Colon
     c.add Semicolon
@@ -217,7 +217,7 @@ proc genLabel(c: var GeneratedCode; n: var Cursor) =
 proc genGoto(c: var GeneratedCode; n: var Cursor) =
   inc n
   if n.kind == Symbol:
-    let name = mangle(pool.syms[n.symId])
+    let name = mangleToC(pool.syms[n.symId])
     c.add GotoKeyword
     c.add name
     c.add Semicolon

@@ -79,6 +79,12 @@ proc splitSymName*(s: string): SplittedSymName =
     dec i
   return SplittedSymName(name: s, module: "")
 
+proc `$`*(s: SplittedSymName): string =
+  if s.module.len > 0:
+    result = s.name & "." & s.module
+  else:
+    result = s.name
+
 proc extractVersionedBasename*(s: string): string =
   # From "abc.12.Mod132a3bc" extract "abc.12".
   var i = s.len - 2
@@ -149,6 +155,12 @@ proc changeModuleExt*(s, ext: string): string =
     result.add "." & ext
   else:
     result.add ext
+
+proc `$`*(s: SplittedModulePath): string =
+  result = s.dir
+  if result.len > 0: result.add "/"
+  result.add s.name
+  result.add s.ext
 
 when isMainModule:
   import std/[assertions]

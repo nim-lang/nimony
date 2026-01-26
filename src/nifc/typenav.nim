@@ -11,13 +11,10 @@ include "../lib" / nifprelude
 
 import nifc_model, mangler
 
-proc isImportC*(m: Module; typ: Cursor): bool =
-  result = typ.kind == Symbol and pool.syms[typ.symId].isImportC
+proc isImportC*(m: MainModule; n: Cursor): bool =
+  result = n.kind in {Symbol, SymbolDef} and m.defs.getOrDefault(n.symId).extern != StrId(0)
 
-proc isImportC*(n: Cursor): bool {.inline.} =
-  result = n.kind in {Symbol, SymbolDef} and pool.syms[n.symId].isImportC
-
-proc createIntegralType*(m: var Module; name: string): Cursor =
+proc createIntegralType*(m: var MainModule; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
   if cursorIsNil(result):
     var buf = nifcursors.parseFromBuffer(name, "<invalid>", 3)
@@ -25,7 +22,7 @@ proc createIntegralType*(m: var Module; name: string): Cursor =
     m.mem.add buf
     m.builtinTypes[name] = result
 
-proc typeOfField(m: var Module; n: var Cursor; fld: SymId): Cursor =
+proc typeOfField(m: var MainModule; n: var Cursor; fld: SymId): Cursor =
   if n.substructureKind == FldU:
     let decl = takeFieldDecl(n)
     if decl.name.kind == SymbolDef and decl.name.symId == fld:
@@ -44,7 +41,7 @@ proc typeOfField(m: var Module; n: var Cursor; fld: SymId): Cursor =
         if not cursorIsNil(result): break
       inc n
 
-proc getTypeImpl(m: var Module; n: Cursor): Cursor =
+proc getTypeImpl(m: var MainModule; n: Cursor): Cursor =
   case n.kind
   of DotToken, Ident, SymbolDef:
     result = createIntegralType(m, "(err)")
@@ -56,8 +53,8 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
         return res
       it = it.parent
     let d = m.defs.getOrDefault(n.symId)
-    if d.pos != 0:
-      result = getTypeImpl(m, m.src.cursorAt(d.pos))
+    if d.kind != NoSym:
+      result = getTypeImpl(m, d.pos)
     else:
       # importC types are not defined
       result = createIntegralType(m, "(err)")
@@ -94,8 +91,8 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       # array type is an alias
       if result.kind == Symbol:
         let d = m.defs.getOrDefault(result.symId)
-        if d.pos != 0:
-          let dd = m.src.cursorAt(d.pos)
+        if d.kind != NoSym:
+          let dd = d.pos
           if dd.stmtKind == TypeS:
             let decl = asTypeDecl(dd)
             result = decl.body
@@ -109,8 +106,8 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
       while counter > 0 and objType.kind == Symbol:
         dec counter
         let d = m.defs.getOrDefault(objType.symId)
-        if d.pos != 0:
-          let dd = m.src.cursorAt(d.pos)
+        if d.kind != NoSym:
+          let dd = d.pos
           if dd.stmtKind == TypeS:
             let decl = asTypeDecl(dd)
             objType = decl.body
@@ -181,22 +178,19 @@ proc getTypeImpl(m: var Module; n: Cursor): Cursor =
   else:
     result = createIntegralType(m, "(err)")
 
-proc getType*(m: var Module; n: Cursor; skipAliases = true): Cursor =
+proc getType*(m: var MainModule; n: Cursor; skipAliases = true): Cursor =
   result = getTypeImpl(m, n)
   if skipAliases:
     var counter = 20
     while counter > 0 and result.kind == Symbol:
       dec counter
       let d = m.defs.getOrDefault(result.symId)
-      if d.pos != 0:
-        let dd = m.src.cursorAt(d.pos)
+      if d.kind != NoSym:
+        let dd = d.pos
         if dd.stmtKind == TypeS:
           let decl = asTypeDecl(dd)
           result = decl.body
         else:
           break
       else:
-        if result.isImportC:
-          break
-        else:
-          raiseAssert "could not load: " & pool.syms[result.symId]
+        raiseAssert "could not load: " & pool.syms[result.symId]
