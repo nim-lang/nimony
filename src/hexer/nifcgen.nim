@@ -1958,11 +1958,7 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string
   # Close the stmts wrapper
   result.addParRi()
 
-  # Write with vendor/dialect metadata
-  var b = nifbuilder.open(destfileName)
-  b.addHeader "hexer", "nifc"
-  b.addRaw toString(result)
-  b.close()
+  writeFile result, destfileName, OnlyIfChanged
 
 proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
   # dynlib init:
