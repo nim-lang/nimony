@@ -225,47 +225,82 @@ include selectany
 
 type
   ProcFlag = enum
-    isSelectAny, isVarargs
+    isSelectAny, isVarargs, isExtern, isInline, isNoInline, isNoDecl
+  PragmaInfo = object
+    flags: set[ProcFlag]
+    extern, attr: StrId
+    callConv: CallConv
 
-proc genProcPragmas(c: var GeneratedCode; n: var Cursor;
-                    flags: var set[ProcFlag]) =
-  # ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) |
-  #               (selectany) | Attribute | (raises) | (errs)
+proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
+  result = PragmaInfo()
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
     inc n
     while n.kind != ParRi:
       case n.pragmaKind
-      of NoPragma, AlignP, BitsP, VectorP, NodeclP, StaticP, PackedP:
+      of NoPragma, AlignP, BitsP, VectorP, StaticP, PackedP:
         if n.callConvKind != NoCallConv:
+          result.callConv = n.callConvKind
           skip n
         else:
           error c.m, "invalid proc pragma: ", n
-      of InlineP, NoinlineP:
-        discard "already handled"
+      of NodeclP:
+        result.flags.incl isNoDecl
         skip n
+      of ImportcppP, ImportcP, ExportcP:
+        inc n
+        if n.kind == StringLit:
+          result.extern = n.litId
+          inc n
+        skipParRi n
+      of HeaderP:
+        inc n
+        if n.kind != StringLit:
+          error c.m, "expected string literal in header pragma but got: ", n
+        else:
+          inclHeader(c, pool.strings[n.litId])
+          inc n
+        skipParRi n
       of VarargsP:
-        flags.incl isVarargs
+        result.flags.incl isVarargs
         skip n
       of SelectanyP:
-        flags.incl isSelectAny
-        skip n
-      of AttrP:
-        discard "already handled"
+        result.flags.incl isSelectAny
         skip n
       of WasP:
         genWasPragma c, n
       of ErrsP, RaisesP:
         skip n
+      of InlineP:
+        result.flags.incl isInline
+        skip n
+      of NoinlineP:
+        result.flags.incl isNoInline
+        skip n
+      of AttrP:
+        inc n
+        if n.kind != StringLit:
+          error c.m, "expected string literal in attr pragma but got: ", n
+        else:
+          result.attr = n.litId
+        inc n
+        skipParRi n
     inc n # ParRi
   else:
     error c.m, "expected proc pragmas but got: ", n
 
-proc genSymDef(c: var GeneratedCode; n: Cursor): string =
+proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo): string =
   if n.kind == SymbolDef:
     let lit = n.symId
-    result = mangle(pool.syms[lit])
+    if isExtern in prag.flags:
+      if prag.extern != StrId(0):
+        result = pool.strings[prag.extern]
+      else:
+        result = pool.syms[lit]
+        extractBasename(result)
+    else:
+      result = mangle(pool.syms[lit])
     c.add result
   else:
     result = ""
@@ -491,46 +526,25 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   if isExtern:
     c.add ExternKeyword
 
-  var lastCallConv = NoCallConv
-  var lastAttrString = ""
-  if prc.pragmas.kind == ParLe:
-    var p = prc.pragmas.firstSon
-    while p.kind != ParRi:
-      case p.pragmaKind
-      of InlineP:
-        c.add StaticKeyword
-        c.add "inline "
-        skip p
-      of NoinlineP:
-        c.add "N_NOINLINE "
-        skip p
-      of AttrP:
-        inc p
-        lastAttrString = "__attribute__((" & pool.strings[p.litId] & ")) "
-        inc p
-        skipParRi p
-      of ErrsP, RaisesP, VarargsP, SelectanyP:
-        skip p
-      of WasP:
-        genWasPragma c, p
-      else:
-        if p.callConvKind != NoCallConv:
-          lastCallConv = p.callConvKind
-          skip p
-        else:
-          error c.m, "invalid pragma: ", p
+  let prag = parseProcPragmas(c, prc.pragmas)
+  if isInline in prag.flags:
+    c.add StaticKeyword
+    c.add "inline "
+  elif isNoInline in prag.flags:
+    c.add "N_NOINLINE "
 
   let name: string
-  if lastCallConv != NoCallConv:
-    c.add callingConvToStr(lastCallConv)
+  if prag.callConv != NoCallConv:
+    c.add callingConvToStr(prag.callConv)
     c.add ParLe
     if prc.returnType.kind == DotToken:
       c.add "void"
     else:
       genType c, prc.returnType
     c.add Comma
-    c.add lastAttrString
-    name = genSymDef(c, prc.name)
+    if prag.attr != StrId(0):
+      c.add "__attribute__((" & pool.strings[prag.attr] & ")) "
+    name = genSymDef(c, prc.name, prag)
     c.add ParRi
   else:
     if prc.returnType.kind == DotToken:
@@ -538,11 +552,9 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     else:
       genType c, prc.returnType
     c.add Space
-    c.add lastAttrString
-    name = genSymDef(c, prc.name)
-
-  var flags: set[ProcFlag] = {}
-  genProcPragmas c, prc.pragmas, flags
+    if prag.attr != StrId(0):
+      c.add "__attribute__((" & pool.strings[prag.attr] & ")) "
+    name = genSymDef(c, prc.name, prag)
 
   c.add ParLe
 
@@ -555,7 +567,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       inc params
     skipParRi p
 
-  if isVarargs in flags:
+  if isVarargs in prag.flags:
     if params > 0: c.add Comma
     c.add "..."
     inc params
@@ -571,10 +583,10 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       c.protos.add c.code[i]
     c.protos.add Token Semicolon
 
-  if isExtern:
+  if isExtern or isNoDecl in prag.flags:
     c.code.setLen signatureBegin
   else:
-    if isSelectAny in flags:
+    if isSelectAny in prag.flags:
       genRoutineGuardBegin(c, name)
     c.add CurlyLe
     let beforeBody = c.code.len
@@ -582,7 +594,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     if c.currentProc.needsOverflowFlag:
       addOverflowDecl c, c.code, beforeBody
     c.add CurlyRi
-    if isSelectAny in flags:
+    if isSelectAny in prag.flags:
       genRoutineGuardEnd(c)
   c.m.closeScope()
   c.inToplevel = true
