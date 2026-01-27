@@ -1037,7 +1037,7 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
     trType c, n, flags
   takeParRi c, n
   swap dst, c.dest
-  if NodeclP in prag.flags or isGeneric:
+  if isGeneric:
     discard "do not add to c.dest"
   else:
     c.dest.add dst
