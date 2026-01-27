@@ -523,9 +523,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
       error c, "type expected but got: ", n
     of IntT, UintT, FloatT, CharT, BoolT, AutoT, SymKindT:
-      c.loop n:
-        c.dest.add n
-        inc n
+      takeTree c.dest, n
     of MutT, LentT:
       c.dest.add tagToken("ptr", n.info)
       inc n
@@ -863,6 +861,7 @@ proc buildProcType(c: var EContext; thisProc: Cursor): SymId =
 
 proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   let thisProc = n
+  c.typeCache.openScope()
   var dst = createTokenBuf(50)
   swap c.dest, dst
   #let toPatch = c.dest.len
@@ -972,6 +971,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.dynlibSyms[newSym] = pool.syms.getOrIncl(dynlibName)
 
   discard setOwner(c, oldOwner)
+  c.typeCache.closeScope()
   c.resultSym = oldResultSym
 
 proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
@@ -1740,6 +1740,7 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
         c.loop n:
           trStmt c, n, mode
     of ScopeS:
+      c.typeCache.openScope()
       if mode == TraverseTopLevel:
         inc n
         while n.kind notin {EofToken, ParRi}:
@@ -1750,6 +1751,7 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
         inc n
         c.loop n:
           trStmt c, n, mode
+      c.typeCache.closeScope()
     of VarS, LetS, CursorS:
       trLocal c, n, VarY, mode
     of ResultS:
@@ -1967,6 +1969,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     activeChecks: flags,
     liftingCtx: createLiftingCtx(mp.name, bits)
     )
+  c.typeCache.openScope()
 
   var owningBuf = createTokenBuf(300)
 
@@ -2011,6 +2014,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   let destfileName = c.dir / c.main & ".x.nif"
 
   var outputBuf = writeOutput(c, rootInfo, destfileName)
+  c.typeCache.closeScope()
 
   # Use the in-memory buffer to avoid re-reading the file we just wrote
   writeDceOutput outputBuf, c.dir / c.main & ".dce.nif"
