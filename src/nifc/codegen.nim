@@ -359,7 +359,7 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[NifcPragma] =
         skipParRi n
       of WasP:
         genWasPragma c, n
-      of StaticP, ImportcP, ImportcppP, ExportcP, HeaderP:
+      of StaticP, ImportcP, ImportcppP, ExportcP, HeaderP, NodeclP:
         result.incl pk
         skip n
       else:

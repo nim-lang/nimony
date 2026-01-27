@@ -233,26 +233,6 @@ proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) 
   else:
     error c.m, "expected field pragmas but got: ", n
 
-proc getNumberQualifier(c: var GeneratedCode; n: Cursor): string =
-  case n.typeQual
-  of RoQ:
-    result = "const "
-  of AtomicQ:
-    if c.m.config.backend == backendC:
-      result = "_Atomic "
-    else:
-      # TODO: cpp doesn't support _Atomic
-      result = ""
-  of RestrictQ, CppRefQ:
-    error c.m, "expected number qualifier but got: ", n
-  of NoQualifier:
-    #if n.pragmaKind == HeaderP:
-    #  useHeader
-    #  result = ""
-    #else:
-    # XXX Implement importc etc for basic numeric types!
-    error c.m, "expected number qualifier but got: ", n
-
 proc getPtrQualifier(c: var GeneratedCode; n: Cursor; isCppRef: var bool): string =
   case n.typeQual
   of RoQ:
@@ -453,7 +433,7 @@ proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor; skipDecl: var bool): s
         of ExportcP:
           let litId = externName(n.symId, p)
           result = pool.strings[litId]
-        of HeaderP:
+        of HeaderP, NodeclP:
           skipDecl = true
         else:
           discard
