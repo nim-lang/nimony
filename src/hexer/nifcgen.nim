@@ -522,7 +522,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
     case n.typeKind
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
       error c, "type expected but got: ", n
-    of IntT, UintT, FloatT, CharT, BoolT, AutoT, SymKindT:
+    of IntT, UintT, FloatT, CharT, BoolT, AutoT, SymKindT, VarargsT:
       takeTree c.dest, n
     of MutT, LentT:
       c.dest.add tagToken("ptr", n.info)
@@ -649,7 +649,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
           trAsNamedType(c, arrCursor)
       skip n
       skipParRi c, n
-    of VoidT, VarargsT, NiltT, ConceptT, InvokeT, ItertypeT:
+    of VoidT, NiltT, ConceptT, InvokeT, ItertypeT:
       error c, "unimplemented type: ", n
   else:
     error c, "type expected but got: ", n
@@ -1504,10 +1504,7 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   closeGenPragmas c, genPragmas
 
   c.typeCache.registerLocal(s, symKind, n)
-  if tag == ParamY and typeKind(n) == VarargsT:
-    skip n
-  else:
-    trType c, n
+  trType c, n
 
   if mode == TraverseSig:
     if localDecl.substructureKind == ParamU:

@@ -172,11 +172,9 @@ template integralBits(t: Cursor): string =
   else: # 8, 16, 32, 64 etc.
     $res
 
-proc genProcTypePragma(c: var GeneratedCode; n: Cursor; isVarargs: var bool) =
-  # ProcTypePragma ::= CallingConvention | (varargs) | Attribute
+proc genProcTypePragma(c: var GeneratedCode; n: Cursor) =
+  # ProcTypePragma ::= CallingConvention | Attribute
   case n.pragmaKind
-  of VarargsP:
-    isVarargs = true
   of AttrP:
     c.add " __attribute__((" & toString(n.firstSon, false) & "))"
   else:
@@ -185,13 +183,13 @@ proc genProcTypePragma(c: var GeneratedCode; n: Cursor; isVarargs: var bool) =
     else:
       error c.m, "invalid proc type pragma: ", n
 
-proc genProcTypePragmas(c: var GeneratedCode; n: var Cursor; isVarargs: var bool) =
+proc genProcTypePragmas(c: var GeneratedCode; n: var Cursor) =
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
     inc n
     while n.kind != ParRi:
-      genProcTypePragma(c, n, isVarargs)
+      genProcTypePragma(c, n)
       skip n
     inc n
   else:
@@ -357,7 +355,6 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
       if cc != NoCallConv:
         lastCallConv = cc
       skip p
-  var isVarargs = false
   if lastCallConv != NoCallConv:
     c.add callingConvToStr(lastCallConv)
     c.add "_PTR"
@@ -369,7 +366,7 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
       genType c, ret
     c.add Comma
     var pragmas = decl.pragmas
-    genProcTypePragmas c, pragmas, isVarargs
+    genProcTypePragmas c, pragmas
     maybeAddName(c, name, isConst)
     c.add ParRi
   else:
@@ -381,7 +378,7 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
     c.add Space
     c.add ParLe
     var pragmas = decl.pragmas
-    genProcTypePragmas c, pragmas, isVarargs
+    genProcTypePragmas c, pragmas
     c.add Star # "(*fn)"
     maybeAddName(c, name, isConst)
     c.add ParRi
@@ -395,9 +392,6 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
       genType c, param.typ
       inc i
 
-  if isVarargs:
-    if i > 0: c.add Comma
-    c.add "..."
   if i == 0:
     c.add "void"
   c.add ParRi
@@ -441,6 +435,8 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
     skipParRi n
   of ProctypeT:
     genProcType(c, n, name, isConst)
+  of VarargsT:
+    c.add "..."
   of ParamsT, UnionT, ObjectT, EnumT, ArrayT:
     error c.m, "nominal type not allowed here: ", n
 

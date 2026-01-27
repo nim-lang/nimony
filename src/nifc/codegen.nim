@@ -225,7 +225,7 @@ include selectany
 
 type
   ProcFlag = enum
-    isSelectAny, isVarargs, isExtern, isInline, isNoInline, isNoDecl
+    isSelectAny, isExtern, isInline, isNoInline, isNoDecl
   PragmaInfo = object
     flags: set[ProcFlag]
     extern, attr: StrId
@@ -263,9 +263,6 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
           inclHeader(c, pool.strings[n.litId])
           inc n
         skipParRi n
-      of VarargsP:
-        result.flags.incl isVarargs
-        skip n
       of SelectanyP:
         result.flags.incl isSelectAny
         skip n
@@ -572,11 +569,6 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       genParam c, p
       inc params
     skipParRi p
-
-  if isVarargs in prag.flags:
-    if params > 0: c.add Comma
-    c.add "..."
-    inc params
 
   if params == 0:
     c.add "void"

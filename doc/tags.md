@@ -130,7 +130,7 @@
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
 | `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
 | `(attr STR)` | NifcPragma | general attribute annotation |
-| `(varargs)` | NifcPragma, NimonyPragma, NimonyType | `varargs` proc annotation |
+| `(varargs)` | NimonyPragma, NimonyType, NifcType | `varargs` proc annotation |
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |

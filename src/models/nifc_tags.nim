@@ -102,9 +102,10 @@ type
     ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor
     FlexarrayT = (ord(FlexarrayTagId), "flexarray")  ## `flexarray` type constructor
     AptrT = (ord(AptrTagId), "aptr")  ## "pointer to array of" type constructor
+    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` proc annotation
 
 proc rawTagIsNifcType*(raw: TagEnum): bool {.inline.} =
-  raw in {ParamsTagId, UnionTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, FlexarrayTagId, AptrTagId}
+  raw in {ParamsTagId, UnionTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, FlexarrayTagId, AptrTagId, VarargsTagId}
 
 type
   NifcOther* = enum
@@ -130,7 +131,6 @@ type
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
     AttrP = (ord(AttrTagId), "attr")  ## general attribute annotation
-    VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` proc annotation
     WasP = (ord(WasTagId), "was")
     SelectanyP = (ord(SelectanyTagId), "selectany")
     AlignP = (ord(AlignTagId), "align")
@@ -147,7 +147,7 @@ type
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
 
 proc rawTagIsNifcPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, VarargsTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId}
 
 type
   NifcTypeQualifier* = enum

@@ -195,6 +195,7 @@ Type ::= Symbol |
          (c IntBits IntQualifier*) | # character types
          (bool IntQualifier*) |
          (void) |
+         (varargs) |
          (ptr Type PtrQualifier* (cppref)?) | # pointer to a single object
          (flexarray Type) |
          (aptr Type PtrQualifier*) | # pointer to an array of objects
@@ -210,10 +211,10 @@ Attribute ::= (attr StringLiteral)
 CommonPragmas ::= (was Identifier) | Attribute | (importc StringLiteral?) |
                   (importcpp StringLiteral?) | (exportc StringLiteral?)
 
-ProcPragma ::= CommonPragmas | (inline) | (noinline) | CallingConvention | (varargs) | (selectany) |
+ProcPragma ::= CommonPragmas | (inline) | (noinline) | CallingConvention | (selectany) |
             | (raises) | (errs)
 
-ProcTypePragma ::= CallingConvention | (varargs) | Attribute
+ProcTypePragma ::= CallingConvention | Attribute
 
 ProcTypePragmas ::= Empty | (pragmas ProcTypePragma+)
 ProcPragmas ::= Empty | (pragmas ProcPragma+)
@@ -263,8 +264,8 @@ Notes:
 - `proctype` has an Empty node where `proc` has a name so that the parameters are
   always the 2nd child followed by the return type and calling convention. This
   makes the node structure more regular and can simplify a type checker.
-- `varargs` is modelled as a pragma instead of a fancy special syntax for parameter
-  declarations.
+- `varargs` is modelled as a special type but it must be combined with a named parameter
+  just like any other parameters.
 - The type `flexarray` can only be used for a last field in an object declaration.
 - The pragma `selectany` can be used to merge proc bodies that have the same name.
   It is used for generic procs so that only one generic instances remains in the
