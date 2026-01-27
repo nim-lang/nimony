@@ -248,7 +248,14 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
       of NodeclP:
         result.flags.incl isNoDecl
         skip n
-      of ImportcppP, ImportcP, ExportcP:
+      of ImportcppP, ImportcP:
+        inc n
+        if n.kind == StringLit:
+          result.extern = n.litId
+          inc n
+        result.flags.incl {isExtern, isNoDecl}
+        skipParRi n
+      of ExportcP:
         inc n
         if n.kind == StringLit:
           result.extern = n.litId
@@ -574,7 +581,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     c.add "void"
   c.add ParRi
 
-  if isExtern or c.requestedSyms.contains(prc.name.symId):
+  if (isNoDecl notin prag.flags) and (isExtern or c.requestedSyms.contains(prc.name.symId)):
     # symbol was used before its declaration has been processed so
     # add a signature:
     for i in signatureBegin ..< c.code.len:
