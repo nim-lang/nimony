@@ -444,14 +444,23 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   of ParamsT, UnionT, ObjectT, EnumT, ArrayT:
     error c.m, "nominal type not allowed here: ", n
 
-proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor): string =
+proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor; skipDecl: var bool): string =
   if n.kind == SymbolDef:
     if pragmas.kind == ParLe:
       var p = pragmas.firstSon
       while p.kind != ParRi:
-        if p.pragmaKind in {ImportcP, ImportcppP, ExportcP}:
+        case p.pragmaKind
+        of ImportcP, ImportcppP:
+          skipDecl = true
           let litId = externName(n.symId, p)
           return pool.strings[litId]
+        of ExportcP:
+          let litId = externName(n.symId, p)
+          return pool.strings[litId]
+        of HeaderP:
+          skipDecl = true
+        else:
+          discard
         skip p
     result = mangleToC(pool.syms[n.symId])
   else:
@@ -482,14 +491,16 @@ proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
     of ParLe:
       if n.substructureKind == FldU:
         var decl = takeFieldDecl(n)
-        let f = mangleDecl(c, decl.name, decl.pragmas)
-        var bits = 0'i64
-        genFieldPragmas c, decl.pragmas, bits
-        genType c, decl.typ, f
-        if bits > 0:
-          c.add " : "
-          c.add $bits
-        c.add Semicolon
+        var skipDecl = false
+        let f = mangleDecl(c, decl.name, decl.pragmas, skipDecl)
+        if not skipDecl:
+          var bits = 0'i64
+          genFieldPragmas c, decl.pragmas, bits
+          genType c, decl.typ, f
+          if bits > 0:
+            c.add " : "
+            c.add $bits
+          c.add Semicolon
       elif n.typeKind == ObjectT:
         inc nested
         inc n
@@ -556,12 +567,15 @@ proc parseTypePragmas(c: var GeneratedCode; n: Cursor): set[NifcPragma] =
   if n.substructureKind == PragmasU:
     inc n
     while n.kind != ParRi:
-      case n.pragmaKind:
-      of PackedP:
-        result.incl PackedP
+      let pk = n.pragmaKind
+      case pk
+      of PackedP, ImportcP, ImportcppP:
+        result.incl pk
+        skip n
+      of HeaderP, ExportcP:
         skip n
       else:
-        error c.m, "got unexpected pragma: ", n
+        error c.m, "got unexpected type pragma: ", n
   elif n.kind != DotToken:
     error c.m, "expected type pragmas but got: ", n
 
@@ -569,18 +583,22 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
   for (d, declKeyword) in o.forwardedDecls.s:
     var n = d
     let decl = takeTypeDecl(n)
-    let s = mangleDecl(c, decl.name, decl.pragmas)
-    c.add declKeyword
-    c.add s
-    c.add Space
-    c.add s
-    c.add Semicolon
+    var skipDecl = false
+    let s = mangleDecl(c, decl.name, decl.pragmas, skipDecl)
+    if not skipDecl:
+      c.add declKeyword
+      c.add s
+      c.add Space
+      c.add s
+      c.add Semicolon
 
   for (d, declKeyword) in o.ordered.s:
     var n = d
     var decl = takeTypeDecl(n)
     if not c.generatedTypes.containsOrIncl(decl.name.symId):
-      let s = mangleDecl(c, decl.name, decl.pragmas)
+      var skipDecl = false
+      let s = mangleDecl(c, decl.name, decl.pragmas, skipDecl)
+      if skipDecl: continue
       case decl.body.typeKind
       of ArrayT:
         c.add declKeyword

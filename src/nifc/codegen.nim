@@ -333,7 +333,8 @@ proc genParam(c: var GeneratedCode; n: var Cursor) =
   if d.name.kind == SymbolDef:
     let s = d.name.symId
     c.m.registerLocal(s, d.typ)
-    let name = mangleDecl(c, d.name, d.pragmas)
+    var skipDecl = false
+    let name = mangleDecl(c, d.name, d.pragmas, skipDecl)
     genType c, d.typ, name
     genParamPragmas c, d.pragmas
   else:
@@ -466,7 +467,8 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
   if d.name.kind == SymbolDef:
     let lit = d.name.symId
     c.m.registerLocal(lit, d.typ)
-    let name = mangleDecl(c, d.name, d.pragmas)
+    var skipDecl = false
+    let name = mangleDecl(c, d.name, d.pragmas, skipDecl)
     let beforeDecl = c.code.len
 
     if toExtern or isImportC(c.m, d.name):
@@ -489,7 +491,9 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       genVarInitValue c, d.value
       if vk != IsLocal and not mustMoveToInit: c.objConstrNeedsType = true
 
-    if vk == IsLocal and c.inToplevel:
+    if skipDecl:
+      setLen c.code, beforeDecl
+    elif vk == IsLocal and c.inToplevel:
       for i in beforeDecl ..< c.code.len:
         c.init.add c.code[i]
       setLen c.code, beforeDecl
