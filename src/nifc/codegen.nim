@@ -210,16 +210,16 @@ proc callingConvToStr(cc: CallConv): string =
   of Member: "N_NOCONV"
   of Nimcall: "N_NIMCALL"
 
-include gentypes
-
-# Procs
-
 proc inclHeader(c: var GeneratedCode, name: string) =
   let header = c.tokens.getOrIncl(name)
   if not c.includedHeaders.containsOrIncl(int header):
     c.includes.add Token(IncludeKeyword)
     c.includes.add header
     c.includes.add Token NewLine
+
+include gentypes
+
+# Procs
 
 include selectany
 

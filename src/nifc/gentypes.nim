@@ -288,15 +288,46 @@ template atom(c: var GeneratedCode; s, name: string; isConst: bool) =
   c.add s
   maybeAddName(c, name, isConst)
 
-proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isConst: bool; isBool = false) =
-  var s = ""
+proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isConst: bool) =
   inc n
-  assert n.kind == IntLit
-  s = typeName & integralBits(n)
-  inc n
+  var s = typeName
+  if n.kind == IntLit:
+    s.add integralBits(n)
+    inc n
   while n.kind != ParRi:
-    c.add getNumberQualifier(c, n)
-    skip n
+    case n.typeQual
+    of RoQ:
+      c.add "const "
+      skip n
+    of AtomicQ:
+      if c.m.config.backend == backendC:
+        c.add "_Atomic "
+      else:
+        # TODO: cpp doesn't support _Atomic
+        discard
+      skip n
+    of RestrictQ, CppRefQ:
+      error c.m, "expected number qualifier but got: ", n
+    of NoQualifier:
+      case n.pragmaKind
+      of HeaderP:
+        inc n
+        if n.kind == StringLit:
+          inclHeader c, pool.strings[n.litId]
+          inc n
+        else:
+          error c.m, "header pragma requires a string literal but got: ", n
+        skipParRi n
+      of ImportcP, ImportcppP:
+        inc n
+        if n.kind == StringLit:
+          s = pool.strings[n.litId]
+          inc n
+        else:
+          error c.m, "importc/importcpp type requires a string literal but got: ", n
+        skipParRi n
+      else:
+        error c.m, "expected number qualifier but got: ", n
   skipParRi n
   atom(c, s, name, isConst)
 
@@ -390,12 +421,7 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   of FT:
     atomNumber(c, n, "NF", name, isConst)
   of BoolT:
-    inc n
-    while n.kind != ParRi:
-      c.add getNumberQualifier(c, n)
-      skip n
-    atom(c, "NB8", name, isConst)
-    inc n
+    atomNumber(c, n, "NB8", name, isConst)
   of CT:
     atomNumber(c, n, "NC", name, isConst)
   of NoType:
