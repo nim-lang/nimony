@@ -22,11 +22,15 @@ proc createIntegralType*(m: var MainModule; name: string): Cursor =
     m.mem.add buf
     m.builtinTypes[name] = result
 
-proc typeOfField(m: var MainModule; n: var Cursor; fld: SymId): Cursor =
+type
+  FieldSelector* = enum
+    FieldType, FieldPragmas
+
+proc typeOfField*(m: var MainModule; n: var Cursor; fld: SymId; sel = FieldType): Cursor =
   if n.substructureKind == FldU:
     let decl = takeFieldDecl(n)
     if decl.name.kind == SymbolDef and decl.name.symId == fld:
-      result = decl.typ
+      result = if sel == FieldType: decl.typ else: decl.pragmas
     else:
       result = default(Cursor)
   else:
@@ -37,7 +41,7 @@ proc typeOfField(m: var MainModule; n: var Cursor; fld: SymId): Cursor =
       if tk == ObjectT:
         skip n # inheritance
       while n.kind != ParRi:
-        result = typeOfField(m, n, fld)
+        result = typeOfField(m, n, fld, sel)
         if not cursorIsNil(result): break
       inc n
 

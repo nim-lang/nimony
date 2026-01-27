@@ -420,26 +420,29 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   of ParamsT, UnionT, ObjectT, EnumT, ArrayT:
     error c.m, "nominal type not allowed here: ", n
 
+proc mangleField(c: var GeneratedCode; s: SymId; pragmas: Cursor; skipDecl: var bool): string =
+  if pragmas.kind == ParLe:
+    var p = pragmas.firstSon
+    result = ""
+    while p.kind != ParRi:
+      case p.pragmaKind
+      of ImportcP, ImportcppP:
+        let litId = externName(s, p)
+        result = pool.strings[litId] # but keep looping to detect HeaderP
+      of ExportcP:
+        let litId = externName(s, p)
+        result = pool.strings[litId]
+      of HeaderP, NodeclP:
+        skipDecl = true
+      else:
+        discard
+      skip p
+    if result.len > 0: return result
+  result = mangleToC(pool.syms[s])
+
 proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor; skipDecl: var bool): string =
   if n.kind == SymbolDef:
-    if pragmas.kind == ParLe:
-      var p = pragmas.firstSon
-      result = ""
-      while p.kind != ParRi:
-        case p.pragmaKind
-        of ImportcP, ImportcppP:
-          let litId = externName(n.symId, p)
-          result = pool.strings[litId] # but keep looping to detect HeaderP
-        of ExportcP:
-          let litId = externName(n.symId, p)
-          result = pool.strings[litId]
-        of HeaderP, NodeclP:
-          skipDecl = true
-        else:
-          discard
-        skip p
-      if result.len > 0: return result
-    result = mangleToC(pool.syms[n.symId])
+    result = mangleField(c, n.symId, pragmas, skipDecl)
   else:
     result = "InvalidFieldName"
     error c.m, "declaration must have a SymbolDef, but got: ", n

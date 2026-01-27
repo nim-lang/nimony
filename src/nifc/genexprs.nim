@@ -99,6 +99,18 @@ proc genDeref(c: var GeneratedCode; n: var Cursor) =
     skip n
   skipParRi n
 
+proc genField(c: var GeneratedCode; fld: Cursor; objType: Cursor) =
+  if fld.kind == Symbol:
+    let s = fld.symId
+    let pragmas = typeOfField(c.m, objType, s, FieldPragmas)
+    if not cursorIsNil(pragmas):
+      var skipDecl = false
+      c.add mangleField(c, s, pragmas, skipDecl)
+    else:
+      c.add mangleSym(c, s)
+  else:
+    error c.m, "expected field name but got: ", n
+
 proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -130,6 +142,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
     skipParRi n
   of DotC:
     inc n
+    var objType = getType(c.m, n)
     genx c, n
     var fld = n
     skip n
@@ -140,7 +153,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
         c.add ".Q"
         dec inh
     c.add Dot
-    genx c, fld
+    genField c, fld, objType
     skipParRi n
   of ErrvC:
     if {gfMainModule, gfHasError} * c.flags == {}:
