@@ -444,20 +444,21 @@ proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor; skipDecl: var bool): s
   if n.kind == SymbolDef:
     if pragmas.kind == ParLe:
       var p = pragmas.firstSon
+      result = ""
       while p.kind != ParRi:
         case p.pragmaKind
         of ImportcP, ImportcppP:
-          skipDecl = true
           let litId = externName(n.symId, p)
-          return pool.strings[litId]
+          result = pool.strings[litId] # but keep looping to detect HeaderP
         of ExportcP:
           let litId = externName(n.symId, p)
-          return pool.strings[litId]
+          result = pool.strings[litId]
         of HeaderP:
           skipDecl = true
         else:
           discard
         skip p
+      if result.len > 0: return result
     result = mangleToC(pool.syms[n.symId])
   else:
     result = "InvalidFieldName"
