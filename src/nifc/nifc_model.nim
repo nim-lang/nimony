@@ -202,7 +202,7 @@ proc externName*(s: SymId; n: Cursor): StrId =
     extractBasename base
     result = pool.strings.getOrIncl(base)
 
-proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: NifcSym) =
+proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: NifcSym; pragmasAt: int) =
   let decl = n
   inc n
   if n.kind != SymbolDef:
@@ -210,21 +210,22 @@ proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: NifcSym) =
   else:
     let symId = n.symId
     inc n
-    var nested = 1
+    for i in 1..<pragmasAt: skip n
     var extern = StrId(0)
-    while true:
-      case n.kind
-      of ParLe:
-        inc nested
+    if n.substructureKind == PragmasU:
+      inc n
+      while n.kind != ParRi:
         if n.pragmaKind in {ImportcP, ImportcppP, ExportcP}:
           extern = externName(symId, n)
-        inc n
-      of ParRi:
-        dec nested
-        inc n
-        if nested == 0: break
-      else:
-        inc n
+        skip n
+      inc n
+    elif n.kind == DotToken:
+      discard "ok"
+    else:
+      raiseAssert "pragmas not at the correct position"
+    while n.kind != ParRi:
+      skip n
+    inc n
     m.defs[symId] = Definition(pos: decl, kind: kind, extern: extern)
 
 proc detectToplevelDecls(m: var MainModule) =
@@ -236,9 +237,11 @@ proc detectToplevelDecls(m: var MainModule) =
       case n.stmtKind
       of TypeS:
         m.types.add n
-        processToplevelDecl(m, n, TypeY)
-      of ProcS, VarS, ConstS, GvarS, TvarS:
-        processToplevelDecl(m, n, n.symKind)
+        processToplevelDecl(m, n, TypeY, 1)
+      of ProcS:
+        processToplevelDecl(m, n, ProcY, 3)
+      of VarS, ConstS, GvarS, TvarS:
+        processToplevelDecl(m, n, n.symKind, 1)
       else:
         inc n
         inc nested
