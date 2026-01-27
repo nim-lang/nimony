@@ -340,14 +340,15 @@ proc genParam(c: var GeneratedCode; n: var Cursor) =
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
-proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
-  result = NoPragma
+proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[NifcPragma] =
+  result = {}
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
     inc n
     while n.kind != ParRi:
-      case n.pragmaKind
+      let pk = n.pragmaKind
+      case pk
       of AlignP:
         inc n
         c.add " NIM_ALIGN(" & $pool.integers[n.intId] & ")"
@@ -360,8 +361,8 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
         skipParRi n
       of WasP:
         genWasPragma c, n
-      of StaticP:
-        result = StaticP
+      of StaticP, ImportcP, ImportcppP, ExportcP, HeaderP:
+        result.incl pk
         skip n
       else:
         error c.m, "invalid pragma: ", n
@@ -477,8 +478,8 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     if vk == IsThreadlocal:
       c.add "__thread "
     genType c, d.typ, name, isConst = vk == IsConst
-    let vis = genVarPragmas(c, d.pragmas)
-    if vis == StaticP or useStatic:
+    let flags = genVarPragmas(c, d.pragmas)
+    if StaticP in flags or useStatic:
       c.code.insert(Token(StaticKeyword), beforeDecl)
     let beforeInit = c.code.len
 

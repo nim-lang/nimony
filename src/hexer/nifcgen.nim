@@ -736,7 +736,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           inc n
           if n.kind notin {StringLit, Ident}:
             error c, "expected string literal or ident, but got: ", n
-          result.flags.incl NodeclP
+          result.flags.incl MagicP
           inc n
         of ImportcP, ImportcppP:
           inc n
@@ -764,14 +764,12 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           inc n
           expectStrLit c, n
           result.header = n.litId
-          result.flags.incl NodeclP
           inc n
         of DynlibP:
           inc n
           expectStrLit c, n
           result.dynlib = n.litId
           result.flags.incl DynlibP
-          result.flags.incl NodeclP
           inc n
         of AlignP:
           inc n
@@ -951,7 +949,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     skip n
   takeParRi c, n
   swap dst, c.dest
-  if NodeclP in prag.flags or isGeneric:
+  if MagicP in prag.flags or isGeneric:
     discard "do not add to c.dest"
   elif prag.flags * {ImportcP, ImportcppP} != {} and c.inImpSection == 0:
     c.dest.add tagToken("imp", n.info)
@@ -1505,11 +1503,9 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
     c.addKeyVal genPragmas, "bits", intToken(prag.bits, pinfo), pinfo
   closeGenPragmas c, genPragmas
 
-  var nodecl = prag.flags.contains(NodeclP)
   c.typeCache.registerLocal(s, symKind, n)
   if tag == ParamY and typeKind(n) == VarargsT:
     skip n
-    nodecl = true
   else:
     trType c, n
 
@@ -1524,8 +1520,6 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   else:
     trExpr c, n
   takeParRi c, n
-  if nodecl:
-    c.dest.shrink toPatch
   if prag.header != StrId(0):
     c.headers.incl prag.header
 
@@ -1873,10 +1867,6 @@ proc importSymbol(c: var EContext; s: SymId) =
           if {InlineP, DynlibP} * prag.flags != {}:
             transformInlineRoutines(c, n)
             return
-
-        if NodeclP in prag.flags and prag.header != StrId(0):
-          c.headers.incl prag.header
-          return
 
       # XXX This is a stupid hack to avoid producing (imp (imp ...))
       inc c.inImpSection
