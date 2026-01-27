@@ -875,16 +875,8 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   inc n
   let (s, sinfo) = getSymDef(c, n)
 
-  let newSym: SymId
-
-  if mode == TraverseInner:
-    # namePos
-    newSym = makeLocalSymId(c, s)
-    c.dest.add symdefToken(newSym, sinfo)
-  else:
-    # namePos
-    newSym = s
-    c.dest.add symdefToken(s, sinfo)
+  let newSym = s
+  c.dest.add symdefToken(s, sinfo)
   c.offer s
 
   var isGeneric = false
@@ -988,14 +980,8 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   let (s, sinfo) = getSymDef(c, n)
   let oldOwner = setOwner(c, s)
 
-  let newSym: SymId
-
-  if mode == TraverseInner and not isDistinct:
-    newSym = makeLocalSymId(c, s)
-    c.dest.add symdefToken(newSym, sinfo)
-  else:
-    newSym = s
-    c.dest.add symdefToken(s, sinfo)
+  let newSym = s
+  c.dest.add symdefToken(s, sinfo)
   c.offer s
 
   var isGeneric = n.kind == ParLe
