@@ -248,14 +248,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
       of NodeclP:
         result.flags.incl isNoDecl
         skip n
-      of ImportcppP, ImportcP:
-        inc n
-        if n.kind == StringLit:
-          result.extern = n.litId
-          inc n
-        result.flags.incl {isExtern, isNoDecl}
-        skipParRi n
-      of ExportcP:
+      of ImportcppP, ImportcP, ExportcP:
         inc n
         if n.kind == StringLit:
           result.extern = n.litId
@@ -268,6 +261,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
           error c.m, "expected string literal in header pragma but got: ", n
         else:
           inclHeader(c, pool.strings[n.litId])
+          result.flags.incl isNoDecl
           inc n
         skipParRi n
       of SelectanyP:

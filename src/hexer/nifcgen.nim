@@ -149,6 +149,10 @@ proc externPragmas(c: var EContext; genPragmas: var GenPragmas; prag: CollectedP
       c.addKeyVal genPragmas, extKind, strToken(prag.extern, pinfo), pinfo
     else:
       c.addKey genPragmas, extKind, pinfo
+  if NodeclP in prag.flags:
+    c.addKey genPragmas, "nodecl", pinfo
+  if prag.header != StrId(0):
+    c.addKeyVal genPragmas, "header", strToken(prag.header, pinfo), pinfo
 
 proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.add n # fld
