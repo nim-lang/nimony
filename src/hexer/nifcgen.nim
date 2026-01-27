@@ -1862,6 +1862,8 @@ proc importSymbol(c: var EContext; s: SymId) =
         let prag = parsePragmas(c, pragmas)
         if isR:
           if {InlineP, DynlibP} * prag.flags != {}:
+            let newName = makeLocalSymId(c, s)
+            c.dynlibSyms[s] = newName
             transformInlineRoutines(c, n)
             return
 
