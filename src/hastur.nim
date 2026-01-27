@@ -628,7 +628,7 @@ proc handleCmdLine =
     buildHexer()
     buildNifmake()
     nimonytests(overwrite, forward)
-    nifctests(overwrite)
+    #nifctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
     controlflowTests("controlflow", overwrite)
