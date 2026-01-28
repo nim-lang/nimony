@@ -414,7 +414,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
   var x2 = x
   let xTemp = evalOnce(c, dest, x2)
   if xk in {RefT, PtrT}:
-    # nil check, always false in old compiler
+    # nil check, always false in old compiler <- that is not true!
     dest.addParLe(IfS, info)
     copyIntoKind dest, ElifU, info:
       copyIntoKind dest, EqX, info:
@@ -424,7 +424,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
           useTemp dest, xTemp, info
         dest.addParPair(NilX, info)
       copyIntoKind dest, ExprX, info:
-        dest.addParPair(FalseX, info)
+        dest.addParPair(TrueX, info)
     dest.addParLe(ElseU, info)
   copyIntoKind dest, ExprX, info:
     copyIntoKind dest, StmtsS, info:
