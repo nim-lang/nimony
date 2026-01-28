@@ -226,8 +226,10 @@ proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) 
         bits = pool.integers[n.intId]
         skip n
         skipParRi n
+      of ExportcP, ImportcP, ImportcppP:
+        skip n
       else:
-        error c.m, "invalid proc type pragma: ", n
+        error c.m, "invalid field pragma: ", n
     inc n
   else:
     error c.m, "expected field pragmas but got: ", n
