@@ -25,8 +25,7 @@ Name mangling is performed by NIFC. The following assumptions are made:
   names in Nim. The original names can be made available via a `was` annotation. See the
   grammar for further details.
 
-Names ending in `.c` are mangled by removing the `.c` suffix. For other names the `.` is
-replaced by `_` and `_` is encoded as `Q_`.
+For other names the `.` is replaced by `_` and `_` is encoded as `Q_`.
 
 By design names not imported from C contain a digit somewhere and thus cannot conflict with
 a keyword from C or C++.
@@ -196,6 +195,7 @@ Type ::= Symbol |
          (c IntBits IntQualifier*) | # character types
          (bool IntQualifier*) |
          (void) |
+         (varargs) |
          (ptr Type PtrQualifier* (cppref)?) | # pointer to a single object
          (flexarray Type) |
          (aptr Type PtrQualifier*) | # pointer to an array of objects
@@ -207,19 +207,23 @@ CallingConvention ::= (cdecl) | (stdcall) | (safecall) | (syscall)  |
                       (fastcall) | (thiscall) | (noconv) | (member)
 
 Attribute ::= (attr StringLiteral)
-ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) | (selectany) | Attribute |
+
+CommonPragmas ::= (was Identifier) | Attribute | (importc StringLiteral?) |
+                  (importcpp StringLiteral?) | (exportc StringLiteral?)
+
+ProcPragma ::= CommonPragmas | (inline) | (noinline) | CallingConvention | (selectany) |
             | (raises) | (errs)
 
-ProcTypePragma ::= CallingConvention | (varargs) | Attribute
+ProcTypePragma ::= CallingConvention | Attribute
 
 ProcTypePragmas ::= Empty | (pragmas ProcTypePragma+)
 ProcPragmas ::= Empty | (pragmas ProcPragma+)
 
-CommonPragma ::= (align Number) | (was Identifier) | Attribute
+CommonPragma ::= (align Number) | CommonPragmas
 VarPragma ::= CommonPragma | (static)
 VarPragmas ::= Empty | (pragmas VarPragma+)
 
-ParamPragma ::= (was Identifier) | Attribute
+ParamPragma ::= CommonPragmas
 ParamPragmas ::= Empty | (pragmas ParamPragma+)
 
 FieldPragma ::= CommonPragma | (bits Number)
@@ -260,8 +264,8 @@ Notes:
 - `proctype` has an Empty node where `proc` has a name so that the parameters are
   always the 2nd child followed by the return type and calling convention. This
   makes the node structure more regular and can simplify a type checker.
-- `varargs` is modelled as a pragma instead of a fancy special syntax for parameter
-  declarations.
+- `varargs` is modelled as a special type but it must be combined with a named parameter
+  just like any other parameters.
 - The type `flexarray` can only be used for a last field in an object declaration.
 - The pragma `selectany` can be used to merge proc bodies that have the same name.
   It is used for generic procs so that only one generic instances remains in the

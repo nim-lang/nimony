@@ -28,15 +28,15 @@ The phases of compilation are:
 
 1. Pure parsing (nifler): Turn Nim code into a dialect of NIF.
 2. Semantic checking phase 1 (nimony): symbol lookups, type checking, template&macro expansions.
-3. Semantic checking phase 2 (nimony): Effect inference.
+3. Semantic checking phase 2 (nimony): Effect inference. **Not implemented yet.**
 4. Inject derefs (and the corresponding mutation checking) (nimony).
 5. Iterator inlining (hexer).
-6. Lambda lifting (hexer). **Not implemented yet.**
+6. Lambda lifting (hexer).
 7. Inject dups (hexer).
 8. Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct) (hexer).
 9. Inject destructors (hexer).
 10. Map builtins like `new` and `+` to "compiler procs" (hexer).
-11. Translate exception handling (hexer). **Not implemented yet.**
+11. Translate exception handling (hexer).
 12. Generate NIFC code (hexer).
 
 These phases have been collected into different tools with dedicated names.

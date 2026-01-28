@@ -14,7 +14,7 @@ from std / os import changeFileExt, splitFile, extractFilename
 from std / sequtils import insert
 
 include ".." / lib / nifprelude
-import mangler, nifc_model, cprelude, noptions, typenav, symparser
+import mangler, nifc_model, cprelude, noptions, typenav, symparser, nifmodules
 
 type
   Token = distinct uint32
@@ -88,7 +88,7 @@ type
     nextTemp: int
 
   GeneratedCode* = object
-    m: Module
+    m: MainModule
     includes: seq[Token]
     includedHeaders: IntSet
     protos: seq[Token]
@@ -99,14 +99,14 @@ type
     tokens: BiTable[Token, string]
     headerFile: seq[Token]
     generatedTypes: HashSet[SymId]
-    requestedSyms: HashSet[string]
+    requestedSyms: HashSet[SymId]
     flags: set[GenFlag]
     inToplevel: bool
     objConstrNeedsType: bool
     bits: int
     currentProc: CurrentProc
 
-proc initGeneratedCode*(m: sink Module, flags: set[GenFlag]; bits: int): GeneratedCode =
+proc initGeneratedCode*(m: sink MainModule, flags: set[GenFlag]; bits: int): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
       fileIds: initPackedSet[FileId](), flags: flags, inToplevel: true,
       objConstrNeedsType: true, bits: bits)
@@ -156,7 +156,7 @@ proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
     else:
       write f, c.tokens[x]
 
-proc error(m: Module; msg: string; n: Cursor) {.noreturn.} =
+proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = n.info
   if info.isValid:
     let rawInfo = unpack(pool.man, info)
@@ -210,22 +210,33 @@ proc callingConvToStr(cc: CallConv): string =
   of Member: "N_NOCONV"
   of Nimcall: "N_NIMCALL"
 
+proc inclHeader(c: var GeneratedCode; lit: StrId) =
+  let headerAsStr {.cursor.} = pool.strings[lit]
+  let header = c.tokens.getOrIncl(headerAsStr)
+  if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
+    if headerAsStr[0] == '#':
+      # keeps the #include statements as they are
+      c.includes.add header
+    else:
+      c.includes.add Token(IncludeKeyword)
+      if headerAsStr[0] == '<':
+        c.includes.add header
+      else:
+        c.includes.add Token(DoubleQuote)
+        c.includes.add header
+        c.includes.add Token(DoubleQuote)
+
+    c.includes.add Token NewLine
+
 include gentypes
 
 # Procs
-
-proc inclHeader(c: var GeneratedCode, name: string) =
-  let header = c.tokens.getOrIncl(name)
-  if not c.includedHeaders.containsOrIncl(int header):
-    c.includes.add Token(IncludeKeyword)
-    c.includes.add header
-    c.includes.add Token NewLine
 
 include selectany
 
 type
   ProcFlag = enum
-    isSelectAny, isVarargs, isExtern, isInline, isNoInline, isNoDecl
+    isSelectAny, isExtern, isInline, isNoInline, isNoDecl
   PragmaInfo = object
     flags: set[ProcFlag]
     extern, attr: StrId
@@ -253,18 +264,17 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         if n.kind == StringLit:
           result.extern = n.litId
           inc n
+        result.flags.incl isExtern
         skipParRi n
       of HeaderP:
         inc n
         if n.kind != StringLit:
           error c.m, "expected string literal in header pragma but got: ", n
         else:
-          inclHeader(c, pool.strings[n.litId])
+          inclHeader(c, n.litId)
+          result.flags.incl isNoDecl
           inc n
         skipParRi n
-      of VarargsP:
-        result.flags.incl isVarargs
-        skip n
       of SelectanyP:
         result.flags.incl isSelectAny
         skip n
@@ -300,7 +310,7 @@ proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo): string =
         result = pool.syms[lit]
         extractBasename(result)
     else:
-      result = mangle(pool.syms[lit])
+      result = mangleToC(pool.syms[lit])
     c.add result
   else:
     result = ""
@@ -330,22 +340,24 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
 proc genParam(c: var GeneratedCode; n: var Cursor) =
   var d = takeParamDecl(n)
   if d.name.kind == SymbolDef:
-    let lit = d.name.symId
-    c.m.registerLocal(lit, d.typ)
-    let name = mangle(pool.syms[lit])
+    let s = d.name.symId
+    c.m.registerLocal(s, d.typ)
+    var skipDecl = false
+    let name = mangleDecl(c, d.name, d.pragmas, skipDecl)
     genType c, d.typ, name
     genParamPragmas c, d.pragmas
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
-proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
-  result = NoPragma
+proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[NifcPragma] =
+  result = {}
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
     inc n
     while n.kind != ParRi:
-      case n.pragmaKind
+      let pk = n.pragmaKind
+      case pk
       of AlignP:
         inc n
         c.add " NIM_ALIGN(" & $pool.integers[n.intId] & ")"
@@ -358,8 +370,8 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): NifcPragma =
         skipParRi n
       of WasP:
         genWasPragma c, n
-      of StaticP:
-        result = StaticP
+      of StaticP, ImportcP, ImportcppP, ExportcP, HeaderP, NodeclP:
+        result.incl pk
         skip n
       else:
         error c.m, "invalid pragma: ", n
@@ -465,17 +477,18 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
   if d.name.kind == SymbolDef:
     let lit = d.name.symId
     c.m.registerLocal(lit, d.typ)
-    let name = mangle(pool.syms[lit])
+    var skipDecl = false
+    let name = mangleDecl(c, d.name, d.pragmas, skipDecl)
     let beforeDecl = c.code.len
 
-    if toExtern or isImportC(d.name):
+    if toExtern or isImportC(c.m, d.name):
       c.add ExternKeyword
 
     if vk == IsThreadlocal:
       c.add "__thread "
     genType c, d.typ, name, isConst = vk == IsConst
-    let vis = genVarPragmas(c, d.pragmas)
-    if vis == StaticP or useStatic:
+    let flags = genVarPragmas(c, d.pragmas)
+    if StaticP in flags or useStatic:
       c.code.insert(Token(StaticKeyword), beforeDecl)
     let beforeInit = c.code.len
 
@@ -488,7 +501,9 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       genVarInitValue c, d.value
       if vk != IsLocal and not mustMoveToInit: c.objConstrNeedsType = true
 
-    if vk == IsLocal and c.inToplevel:
+    if skipDecl:
+      setLen c.code, beforeDecl
+    elif vk == IsLocal and c.inToplevel:
       for i in beforeDecl ..< c.code.len:
         c.init.add c.code[i]
       setLen c.code, beforeDecl
@@ -567,16 +582,11 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       inc params
     skipParRi p
 
-  if isVarargs in prag.flags:
-    if params > 0: c.add Comma
-    c.add "..."
-    inc params
-
   if params == 0:
     c.add "void"
   c.add ParRi
 
-  if isExtern or c.requestedSyms.contains(name):
+  if (isNoDecl notin prag.flags) and (isExtern or c.requestedSyms.contains(prc.name.symId)):
     # symbol was used before its declaration has been processed so
     # add a signature:
     for i in signatureBegin ..< c.code.len:
@@ -602,24 +612,11 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
 
 proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n
-  let lit = n.litId
-  let headerAsStr {.cursor.} = pool.strings[lit]
-  let header = c.tokens.getOrIncl(headerAsStr)
-  inc n
-  if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
-    if headerAsStr[0] == '#':
-      # keeps the #include statements as they are
-      c.includes.add header
-    else:
-      c.includes.add Token(IncludeKeyword)
-      if headerAsStr[0] == '<':
-        c.includes.add header
-      else:
-        c.includes.add Token(DoubleQuote)
-        c.includes.add header
-        c.includes.add Token(DoubleQuote)
-
-    c.includes.add Token NewLine
+  if n.kind == StringLit:
+    inclHeader c, n.litId
+    inc n
+  else:
+    error c.m, "incl tag expected a string literal but got: ", n
   skipParRi n
 
 proc genImp(c: var GeneratedCode; n: var Cursor) =

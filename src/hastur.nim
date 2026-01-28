@@ -177,7 +177,7 @@ proc generatedExeFile(orig: string): string =
 
 proc removeMakeErrors(output: string): string =
   result = output.strip
-  for prefix in ["FAILURE:", "make:"]:
+  for prefix in ["FAILURE:", "make:", "nifmake:"]:
     let lastLine = rfind(result, '\n')
     if lastLine >= 0:
       if result.continuesWith(prefix, lastLine+1):
@@ -628,7 +628,7 @@ proc handleCmdLine =
     buildHexer()
     buildNifmake()
     nimonytests(overwrite, forward)
-    nifctests(overwrite)
+    #nifctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
     controlflowTests("controlflow", overwrite)

@@ -8,41 +8,43 @@
 
 import std / [hashes, tables, assertions, strutils]
 include "../lib" / nifprelude
-import noptions
+import noptions, nifmodules, symparser
 import ".." / models / [nifc_tags, callconv_tags, tags]
 export nifc_tags, callconv_tags
 
 type
   Definition* = object
-    pos*: int
+    pos*: Cursor # points into MainModule.src
     kind*: NifcSym
+    extern*: StrId
 
   TypeScope* {.acyclic.} = ref object
     locals*: Table[SymId, Cursor]
     parent*: TypeScope
 
-  Module* = object
+  MainModule* = object
     src*: TokenBuf
-    types*: seq[int]
+    types*: seq[Cursor] # points into MainModule.src
     defs*: Table[SymId, Definition]
     filename*: string
     config*: ConfigRef
     mem*: seq[TokenBuf] # for intermediate results such as computed types
     builtinTypes*: Table[string, Cursor]
     current*: TypeScope
+    prog: NifProgram
 
 proc bug*(msg: string) {.noreturn.} =
   when defined(debug):
     writeStackTrace()
   quit "BUG: " & msg
 
-proc registerLocal*(c: var Module; s: SymId; typ: Cursor) =
+proc registerLocal*(c: var MainModule; s: SymId; typ: Cursor) =
   c.current.locals[s] = typ
 
-proc openScope*(c: var Module) =
+proc openScope*(c: var MainModule) =
   c.current = TypeScope(locals: initTable[SymId, Cursor](), parent: c.current)
 
-proc closeScope*(c: var Module) =
+proc closeScope*(c: var MainModule) =
   c.current = c.current.parent
 
 proc skipParRi*(n: var Cursor) =
@@ -140,7 +142,11 @@ proc tracebackTypeC*(n: Cursor): Cursor =
   while result.stmtKind != TypeS:
     unsafeDec result
 
-proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
+proc firstSon*(n: Cursor): Cursor {.inline.} =
+  result = n
+  inc result
+
+proc parse*(r: var Reader; m: var MainModule; parentInfo: PackedLineInfo): bool =
   var t = default(ExpandedToken)
   next(r, t)
   var currentInfo = parentInfo
@@ -161,8 +167,6 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
     result = false
   of ParLe:
     let tag = pool.tags.getOrIncl(r.decodeStr t)
-    if cast[TagEnum](tag) == TypeTagId:
-      m.types.add m.src.len
     copyInto(m.src, tag, currentInfo):
       while true:
         let progress = parse(r, m, currentInfo)
@@ -177,13 +181,7 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
   of Symbol:
     m.src.add symToken(pool.syms.getOrIncl(r.decodeStr t), currentInfo)
   of SymbolDef:
-    # Remember where to find this symbol:
-    let litId = pool.syms.getOrIncl(r.decodeStr t)
-    let pos = m.src.len - 1
-    let n = cursorAt(m.src, pos)
-    m.defs[litId] = Definition(pos: pos, kind: n.symKind)
-    endRead(m.src)
-    m.src.add symdefToken(litId, currentInfo)
+    m.src.add symdefToken(pool.syms.getOrIncl(r.decodeStr t), currentInfo)
   of StringLit:
     m.src.addStrLit r.decodeStr(t), currentInfo
   of CharLit:
@@ -195,15 +193,76 @@ proc parse*(r: var Reader; m: var Module; parentInfo: PackedLineInfo): bool =
   of FloatLit:
     m.src.add floatToken(pool.floats.getOrIncl(parseFloat(r.decodeStr t)), currentInfo)
 
-proc parse*(r: var Reader): Module =
+proc externName*(s: SymId; n: Cursor): StrId =
+  let nn = n.firstSon
+  if nn.kind == StringLit:
+    result = nn.litId
+  else:
+    var base = pool.syms[s]
+    extractBasename base
+    result = pool.strings.getOrIncl(base)
+
+proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: NifcSym; pragmasAt: int) =
+  let decl = n
+  inc n
+  if n.kind != SymbolDef:
+    raiseAssert "Expected SymbolDef after toplevel declaration"
+  else:
+    let symId = n.symId
+    inc n
+    for i in 1..<pragmasAt: skip n
+    var extern = StrId(0)
+    if n.substructureKind == PragmasU:
+      inc n
+      while n.kind != ParRi:
+        if n.pragmaKind in {ImportcP, ImportcppP, ExportcP}:
+          extern = externName(symId, n)
+        skip n
+      inc n
+    elif n.kind == DotToken:
+      discard "ok"
+    else:
+      raiseAssert "pragmas not at the correct position"
+    while n.kind != ParRi:
+      skip n
+    inc n
+    m.defs[symId] = Definition(pos: decl, kind: kind, extern: extern)
+
+proc detectToplevelDecls(m: var MainModule) =
+  var n = cursorAt(m.src, 0)
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      case n.stmtKind
+      of TypeS:
+        m.types.add n
+        processToplevelDecl(m, n, TypeY, 1)
+      of ProcS:
+        processToplevelDecl(m, n, ProcY, 3)
+      of VarS, ConstS, GvarS, TvarS:
+        processToplevelDecl(m, n, n.symKind, 1)
+      else:
+        inc n
+        inc nested
+    of ParRi:
+      assert nested > 0
+      dec nested
+      inc n
+    else:
+      inc n
+    if nested == 0: break
+
+proc parse*(r: var Reader): MainModule =
   # empirically, (size div 7) is a good estimate for the number of nodes
   # in the file:
   let nodeCount = r.fileSize div 7
-  result = Module(src: createTokenBuf(nodeCount))
+  result = MainModule(src: createTokenBuf(nodeCount))
   discard parse(r, result, NoLineInfo)
   freeze(result.src)
+  detectToplevelDecls(result)
 
-proc load*(filename: string): Module =
+proc load*(filename: string): MainModule =
   var r = nifreader.open(filename)
   case nifreader.processDirectives(r)
   of Success:
@@ -220,10 +279,6 @@ proc parLeToken*(t: NifcType; info = NoLineInfo): PackedToken =
   result = parLeToken(TagId(t), info)
 
 # Read helpers:
-
-proc firstSon*(n: Cursor): Cursor {.inline.} =
-  result = n
-  inc result
 
 template elementType*(n: Cursor): Cursor = n.firstSon
 

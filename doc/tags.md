@@ -72,7 +72,7 @@
 | `(method D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | method declaration |
 | `(macro D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | macro declaration |
 | `(template D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | template declaration |
-| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NiflerKind, NifIndexKind | type declaration |
+| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndexKind | type declaration |
 | `(block .D X)` | NimonyStmt, NimonySym, NiflerKind | block declaration |
 | `(module)` | NimonySym | module declaration |
 | `(cchoice X X*)` | NimonyExpr, NimonySym | closed choice |
@@ -107,10 +107,10 @@
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |
 | `(cppref)` | NifcTypeQualifier | type qualifier for NIFC that provides a C++ reference |
-| `(i INTLIT)` | NifcType, NimonyType | `int` builtin type |
-| `(u INTLIT)` | NifcType, NimonyType | `uint` builtin type |
-| `(f INTLIT)` | NifcType, NimonyType | `float` builtin type |
-| `(c INTLIT)` | NifcType, NimonyType | `char` builtin type |
+| `(i INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `int` builtin type |
+| `(u INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `uint` builtin type |
+| `(f INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `float` builtin type |
+| `(c INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `char` builtin type |
 | `(bool)` | NifcType, NimonyType | `bool` builtin type |
 | `(void)` | NifcType, NimonyType | `void` return type |
 | `(ptr T)` | NifcType, NimonyType, NiflerKind | `ptr` type contructor |
@@ -130,7 +130,7 @@
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
 | `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
 | `(attr STR)` | NifcPragma | general attribute annotation |
-| `(varargs)` | NifcPragma, NimonyPragma, NimonyType | `varargs` proc annotation |
+| `(varargs)` | NimonyPragma, NimonyType, NifcType | `varargs` proc annotation |
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |

@@ -298,7 +298,7 @@ proc executeCommand(command: string): bool =
     result = false
 
 proc failed(arg: string) =
-  stdout.write "make: "
+  stdout.write "nifmake: "
   stdout.writeLine arg
 
 type

@@ -70,13 +70,7 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
             if sowner.len > 0 and s notin result[sowner]:
               worklist.add(s)
 
-proc toNifcName(sym: SymId): SymId =
-  var symName = pool.syms[sym]
-  if symName[symName.high] == ExternMarker:
-    translateExtern symName
-    result = pool.syms.getOrIncl(symName)
-  else:
-    result = sym
+template toNifcName(sym: SymId): SymId = sym
 
 proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: ResolveTable) =
   case n.kind

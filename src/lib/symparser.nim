@@ -31,14 +31,6 @@ proc extractBasename*(s: var string) =
 proc genericTypeName*(key, modname: string): string =
   result = "`t.0.I" & key & "." & modname
 
-const
-  ExternMarker* = '\t'
-
-proc toExtern*(externName, modname: string): string {.inline.} =
-  # This minor hack allows us to keep the module origin while also encoding
-  # we need to map it to the `name.c` form that NIFC expects:
-  result = externName & ".00." & modname & ExternMarker
-
 proc extractModule*(s: string): string =
   # From "abc.12.Mod132a3bc" extract "Mod132a3bc".
   # From "abc.12" extract "".
@@ -48,19 +40,9 @@ proc extractModule*(s: string): string =
       if s[i+1] in {'0'..'9'}:
         return ""
       else:
-        let mend = if s[s.high] == ExternMarker: s.high-1 else: s.high
-        return substr(s, i+1, mend)
+        return substr(s, i+1)
     dec i
   return ""
-
-proc translateExtern*(s: var string) =
-  if s[s.high] == ExternMarker:
-    var i = 1
-    while i < s.len:
-      if s[i] == '.': break
-      inc i
-    s.setLen i
-    s.add ".c"
 
 type
   SplittedSymName* = object
@@ -74,10 +56,15 @@ proc splitSymName*(s: string): SplittedSymName =
       if s[i+1] in {'0'..'9'}:
         return SplittedSymName(name: s, module: "")
       else:
-        let mend = if s[s.high] == ExternMarker: s.high-1 else: s.high
-        return SplittedSymName(name: substr(s, 0, i-1), module: substr(s, i+1, mend))
+        return SplittedSymName(name: substr(s, 0, i-1), module: substr(s, i+1))
     dec i
   return SplittedSymName(name: s, module: "")
+
+proc `$`*(s: SplittedSymName): string =
+  if s.module.len > 0:
+    result = s.name & "." & s.module
+  else:
+    result = s.name
 
 proc extractVersionedBasename*(s: string): string =
   # From "abc.12.Mod132a3bc" extract "abc.12".
@@ -149,6 +136,12 @@ proc changeModuleExt*(s, ext: string): string =
     result.add "." & ext
   else:
     result.add ext
+
+proc `$`*(s: SplittedModulePath): string =
+  result = s.dir
+  if result.len > 0: result.add "/"
+  result.add s.name
+  result.add s.ext
 
 when isMainModule:
   import std/[assertions]
