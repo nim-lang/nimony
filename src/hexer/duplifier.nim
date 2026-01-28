@@ -411,7 +411,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           n = ri
           skip n
     elif isLastRead(c, ri):
-      if isNotFirstAsgn and potentialSelfAsgn(le, ri):
+      if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
         let tmp = tempOfTrArg(c, ri, leType)
         callWasMoved c, ri, leType
@@ -432,7 +432,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         callWasMoved c, ri, leType
     else:
       # XXX We should really prefer to simply call `=copy(x, y)` here.
-      if isNotFirstAsgn and potentialSelfAsgn(le, ri):
+      if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
         let tmp = tempOfTrArg(c, le, leType)
         copyInto c.dest, n:
