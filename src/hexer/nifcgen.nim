@@ -1477,8 +1477,8 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   c.offer s
 
   var genPragmas = openGenPragmas()
-
-  externPragmas c, genPragmas, prag, pinfo
+  if tag != ParamY:
+    externPragmas c, genPragmas, prag, pinfo
 
   if ThreadvarP in prag.flags:
     c.dest[toPatch] = tagToken("tvar", vinfo)
