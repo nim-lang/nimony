@@ -291,7 +291,7 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isC
       of HeaderP:
         inc n
         if n.kind == StringLit:
-          inclHeader c, pool.strings[n.litId]
+          inclHeader c, n.litId
           inc n
         else:
           error c.m, "header pragma requires a string literal but got: ", n

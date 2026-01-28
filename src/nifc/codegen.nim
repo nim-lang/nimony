@@ -210,11 +210,22 @@ proc callingConvToStr(cc: CallConv): string =
   of Member: "N_NOCONV"
   of Nimcall: "N_NIMCALL"
 
-proc inclHeader(c: var GeneratedCode, name: string) =
-  let header = c.tokens.getOrIncl(name)
-  if not c.includedHeaders.containsOrIncl(int header):
-    c.includes.add Token(IncludeKeyword)
-    c.includes.add header
+proc inclHeader(c: var GeneratedCode; lit: StrId) =
+  let headerAsStr {.cursor.} = pool.strings[lit]
+  let header = c.tokens.getOrIncl(headerAsStr)
+  if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
+    if headerAsStr[0] == '#':
+      # keeps the #include statements as they are
+      c.includes.add header
+    else:
+      c.includes.add Token(IncludeKeyword)
+      if headerAsStr[0] == '<':
+        c.includes.add header
+      else:
+        c.includes.add Token(DoubleQuote)
+        c.includes.add header
+        c.includes.add Token(DoubleQuote)
+
     c.includes.add Token NewLine
 
 include gentypes
@@ -260,7 +271,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         if n.kind != StringLit:
           error c.m, "expected string literal in header pragma but got: ", n
         else:
-          inclHeader(c, pool.strings[n.litId])
+          inclHeader(c, n.litId)
           result.flags.incl isNoDecl
           inc n
         skipParRi n
@@ -601,24 +612,11 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
 
 proc genInclude(c: var GeneratedCode; n: var Cursor) =
   inc n
-  let lit = n.litId
-  let headerAsStr {.cursor.} = pool.strings[lit]
-  let header = c.tokens.getOrIncl(headerAsStr)
-  inc n
-  if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
-    if headerAsStr[0] == '#':
-      # keeps the #include statements as they are
-      c.includes.add header
-    else:
-      c.includes.add Token(IncludeKeyword)
-      if headerAsStr[0] == '<':
-        c.includes.add header
-      else:
-        c.includes.add Token(DoubleQuote)
-        c.includes.add header
-        c.includes.add Token(DoubleQuote)
-
-    c.includes.add Token NewLine
+  if n.kind == StringLit:
+    inclHeader c, n.litId
+    inc n
+  else:
+    error c.m, "incl tag expected a string literal but got: ", n
   skipParRi n
 
 proc genImp(c: var GeneratedCode; n: var Cursor) =
