@@ -945,7 +945,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     skip n
   takeParRi c, n
   swap dst, c.dest
-  if MagicP in prag.flags or isGeneric:
+  if prag.flags * {MagicP, DynlibP} != {} or isGeneric:
     discard "do not add to c.dest"
   elif prag.flags * {ImportcP, ImportcppP} != {} and c.inImpSection == 0:
     c.dest.add tagToken("imp", n.info)
