@@ -102,14 +102,15 @@ proc genDeref(c: var GeneratedCode; n: var Cursor) =
 proc genField(c: var GeneratedCode; fld: Cursor; objType: Cursor) =
   if fld.kind == Symbol:
     let s = fld.symId
-    let pragmas = typeOfField(c.m, objType, s, FieldPragmas)
+    var t = objType
+    let pragmas = typeOfField(c.m, t, s, FieldPragmas)
     if not cursorIsNil(pragmas):
       var skipDecl = false
       c.add mangleField(c, s, pragmas, skipDecl)
     else:
       c.add mangleSym(c, s)
   else:
-    error c.m, "expected field name but got: ", n
+    error c.m, "expected field name but got: ", fld
 
 proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
