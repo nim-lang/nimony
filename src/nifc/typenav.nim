@@ -182,22 +182,26 @@ proc getTypeImpl(m: var MainModule; n: Cursor): Cursor =
   else:
     result = createIntegralType(m, "(err)")
 
+proc navigateToObjectBody*(m: var MainModule; n: Cursor): Cursor =
+  var counter = 20
+  result = n
+  while counter > 0 and result.kind == Symbol:
+    dec counter
+    let d = m.defs.getOrDefault(result.symId)
+    if d.kind != NoSym:
+      let dd = d.pos
+      if dd.stmtKind == TypeS:
+        let decl = asTypeDecl(dd)
+        result = decl.body
+      else:
+        break
+    else:
+      raiseAssert "could not load: " & pool.syms[result.symId]
+
 proc getType*(m: var MainModule; n: Cursor; skipAliases = true): Cursor =
   result = getTypeImpl(m, n)
   if skipAliases:
-    var counter = 20
-    while counter > 0 and result.kind == Symbol:
-      dec counter
-      let d = m.defs.getOrDefault(result.symId)
-      if d.kind != NoSym:
-        let dd = d.pos
-        if dd.stmtKind == TypeS:
-          let decl = asTypeDecl(dd)
-          result = decl.body
-        else:
-          break
-      else:
-        raiseAssert "could not load: " & pool.syms[result.symId]
+    result = navigateToObjectBody(m, result)
 
 proc getNominalType*(m: var MainModule; n: Cursor): Cursor =
   # arrays are nominal types in NIFC too! so we must not skip "aliases" here and

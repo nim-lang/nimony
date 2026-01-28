@@ -99,16 +99,28 @@ proc genDeref(c: var GeneratedCode; n: var Cursor) =
     skip n
   skipParRi n
 
-proc genField(c: var GeneratedCode; fld: Cursor; objType: Cursor) =
+proc genField(c: var GeneratedCode; fld: Cursor; objBody: Cursor; objTypeIsImported: bool) =
   if fld.kind == Symbol:
     let s = fld.symId
-    var t = objType
+    var t = objBody
     let pragmas = typeOfField(c.m, t, s, FieldPragmas)
-    if not cursorIsNil(pragmas):
-      var skipDecl = false
-      c.add mangleField(c, s, pragmas, skipDecl)
+    if not cursorIsNil(pragmas) and pragmas.kind == ParLe:
+      var p = pragmas.firstSon
+      while p.kind != ParRi:
+        case p.pragmaKind
+        of ImportcP, ImportcppP, ExportcP:
+          let litId = externName(s, p)
+          c.add pool.strings[litId]
+          return
+        else:
+          discard
+        skip p
+    var x = pool.syms[s]
+    if objTypeIsImported:
+      extractBasename x
+      c.add x
     else:
-      c.add mangleSym(c, s)
+      c.add mangleToC(x)
   else:
     error c.m, "expected field name but got: ", fld
 
@@ -151,7 +163,8 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
     skipParRi n
   of DotC:
     inc n
-    var objType = getType(c.m, n)
+    let objType = getNominalType(c.m, n)
+    let objBody = navigateToObjectBody(c.m, objType)
     genx c, n
     var fld = n
     skip n
@@ -162,7 +175,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
         c.add ".Q"
         dec inh
     c.add Dot
-    genField c, fld, objType
+    genField c, fld, objBody, c.m.isImportC(objType)
     skipParRi n
   of ErrvC:
     if {gfMainModule, gfHasError} * c.flags == {}:
@@ -326,6 +339,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     skipParRi n
   of OconstrC:
     inc n
+    let objType = n
+    let objBody = navigateToObjectBody(c.m, n)
     c.objConstrType(n)
     c.add CurlyLe
     var i = 0
@@ -344,7 +359,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
           for _ in 0 ..< d:
             c.add "Q"
             c.add Dot
-        c.genx n
+        c.genField n, objBody, c.m.isImportC(objType)
+        inc n
         c.add AsgnOpr
         c.genx n
         if n.kind != ParRi: skip n
