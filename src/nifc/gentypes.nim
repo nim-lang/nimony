@@ -164,13 +164,12 @@ proc traverseTypes(m: MainModule; o: var TypeOrder) =
       o.ordered.add n, TypedefKeyword
     else: discard
 
-template integralBits(t: Cursor): string =
+proc integralBits(t: Cursor): string {.inline.} =
   let res = pool.integers[t.intId]
-  case res
-  of -1:
-    ""
+  if res == -1:
+    result = ""
   else: # 8, 16, 32, 64 etc.
-    $res
+    result = $res
 
 proc genProcTypePragma(c: var GeneratedCode; n: Cursor) =
   # ProcTypePragma ::= CallingConvention | Attribute
@@ -268,10 +267,12 @@ template atom(c: var GeneratedCode; s, name: string; isConst: bool) =
 
 proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isConst: bool) =
   inc n
-  var s = typeName
+  var s: string
   if n.kind == IntLit:
-    s.add integralBits(n)
+    s = typeName & integralBits(n)
     inc n
+  else:
+    s = typeName
   while n.kind != ParRi:
     case n.typeQual
     of RoQ:
