@@ -198,3 +198,9 @@ proc getType*(m: var MainModule; n: Cursor; skipAliases = true): Cursor =
           break
       else:
         raiseAssert "could not load: " & pool.syms[result.symId]
+
+proc getNominalType*(m: var MainModule; n: Cursor): Cursor =
+  # arrays are nominal types in NIFC too! so we must not skip "aliases" here and
+  # also exploit this to be able to look at its pragmas. Importc'ed arrays
+  # are very special in that they don't have the `a` struct wrapper.
+  result = getTypeImpl(m, n)

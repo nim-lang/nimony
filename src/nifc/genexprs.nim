@@ -112,6 +112,14 @@ proc genField(c: var GeneratedCode; fld: Cursor; objType: Cursor) =
   else:
     error c.m, "expected field name but got: ", fld
 
+proc isImportedArray(c: var GeneratedCode; n: Cursor): bool =
+  if n.exprKind == DotC:
+    let nn = n.firstSon
+    var objType = getNominalType(c.m, nn)
+    result = c.m.isImportC(objType)
+  else:
+    result = false
+
 proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -125,9 +133,9 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   of DerefC: genDeref c, n
   of AtC:
     inc n
-    let arrType = getType(c.m, n)
+    let needsAwrapper = not isImportedArray(c, n)
     genx c, n
-    if not (c.m.isImportC(arrType) or arrType.typeKind == NoType):
+    if needsAwrapper:
       c.add Dot
       c.add "a"
     c.add BracketLe
@@ -223,13 +231,13 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
   # If we take the address of an array expression, add the `.a` field access.
   let inCallImportC = gfInCallImportC in c.flags
   inc n
+  let needsAwrapper = not isImportedArray(c, n)
   let arrType = getType(c.m, n)
   c.add ParLe
   let ampAt = c.code.len
   c.add "&"
   genx c, n
-  if arrType.typeKind == ArrayT and not (c.m.isImportC(arrType) or arrType.typeKind == NoType) and
-        inCallImportC:
+  if arrType.typeKind == ArrayT and needsAwrapper and inCallImportC:
     c.add ".a[0]"
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:
