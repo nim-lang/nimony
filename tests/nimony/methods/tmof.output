@@ -23,5 +23,5 @@ true
 false
 true
 Obj2
-nil of Obj: false
-nil of Obj2: false
+nil of Obj: true
+nil of Obj2: true
