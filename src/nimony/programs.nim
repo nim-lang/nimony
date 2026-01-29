@@ -374,7 +374,7 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   buf.addParRi()
   publish s, buf, SemcheckSignatures
 
-proc publishStringType() =
+proc publishStringType*() =
   # This logic is not strictly necessary for "system.nim" itself, but
   # for modules that emulate system via --isSystem.
   let symId = pool.syms.getOrIncl(StringName)

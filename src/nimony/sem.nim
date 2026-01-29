@@ -5527,6 +5527,8 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
 
   var owningBuf = createTokenBuf(300)
   var n0 = setupProgram(infile, outfile, owningBuf)
+  if SkipSystem in moduleFlags:
+    programs.publishStringType()
   var c = SemContext(
     types: createBuiltinTypes(),
     thisModuleSuffix: prog.main.name,
