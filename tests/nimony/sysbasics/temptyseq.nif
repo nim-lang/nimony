@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +28894           )
+(.indexat +29560           )
 0,1,tests/nimony/sysbasics/temptyseq.nim(stmts
  (proc 5 :foo.0. . . . 8
   (params 1
@@ -276,7 +276,16 @@
    (ret result.5))) 15
  (type :seq.0.Ipe57hg. .
   (at seq.0.sysvq0asl 1
-   (i -1)) 10,4,lib/std/system/seqimpl.nim . 12,4,lib/std/system/seqimpl.nim
+   (i -1)) 10,4,lib/std/system/seqimpl.nim
+  (pragmas
+   (destroy =destroy.0.)
+   (wasmoved =wasMoved.0.)
+   (dup =dup.0.)
+   (copy =copy.0.)
+   (destroy =destroy.1.sysvq0asl)
+   (wasmoved =wasMoved.1.sysvq0asl)
+   (dup =dup.1.sysvq0asl)
+   (copy =copy.1.sysvq0asl)) 12,4,lib/std/system/seqimpl.nim
   (object . ~8,1
    (fld :len.3.Ipe57hg. . . 5
     (i -1) .) ~8,2
@@ -286,7 +295,16 @@
       (i -1))) .))) 16,60,lib/std/system/seqimpl.nim
  (type :seq.0.Iw9f2pq. .
   (at seq.0.sysvq0asl
-   (f +64)) ~6,~56 . ~4,~56
+   (f +64)) ~6,~56
+  (pragmas
+   (destroy =destroy.1.)
+   (wasmoved =wasMoved.1.)
+   (dup =dup.1.)
+   (copy =copy.1.)
+   (destroy =destroy.1.sysvq0asl)
+   (wasmoved =wasMoved.1.sysvq0asl)
+   (dup =dup.1.sysvq0asl)
+   (copy =copy.1.sysvq0asl)) ~4,~56
   (object . ~8,1
    (fld :len.3.Iw9f2pq. . . 5
     (i -1) .) ~8,2
@@ -296,7 +314,16 @@
       (f +64))) .))) 10,8
  (type :seq.0.Iq4ofkp1. .
   (at seq.0.sysvq0asl 1
-   (u +8)) 10,4,lib/std/system/seqimpl.nim . 12,4,lib/std/system/seqimpl.nim
+   (u +8)) 10,4,lib/std/system/seqimpl.nim
+  (pragmas
+   (destroy =destroy.2.)
+   (wasmoved =wasMoved.2.)
+   (dup =dup.2.)
+   (copy =copy.2.)
+   (destroy =destroy.1.sysvq0asl)
+   (wasmoved =wasMoved.1.sysvq0asl)
+   (dup =dup.1.sysvq0asl)
+   (copy =copy.1.sysvq0asl)) 12,4,lib/std/system/seqimpl.nim
   (object . ~8,1
    (fld :len.3.Iq4ofkp1. . . 5
     (i -1) .) ~8,2
@@ -1035,13 +1062,13 @@
  (h memSizeInBytes.1. +718) 35,64,lib/std/system/seqimpl.nim
  (h memSizeInBytes.2. +638) 15
  (h seq.0.Ipe57hg. +690) 4,5,lib/std/system/seqimpl.nim
- (h len.3.Ipe57hg. +143) 4,6,lib/std/system/seqimpl.nim
+ (h len.3.Ipe57hg. +365) 4,6,lib/std/system/seqimpl.nim
  (h data.0.Ipe57hg. +49) 16,60,lib/std/system/seqimpl.nim
  (h seq.0.Iw9f2pq. +151) 4,5,lib/std/system/seqimpl.nim
- (h len.3.Iw9f2pq. +92) 4,6,lib/std/system/seqimpl.nim
+ (h len.3.Iw9f2pq. +314) 4,6,lib/std/system/seqimpl.nim
  (h data.0.Iw9f2pq. +49) 10,8
  (h seq.0.Iq4ofkp1. +82) 4,5,lib/std/system/seqimpl.nim
- (h len.3.Iq4ofkp1. +144) 4,6,lib/std/system/seqimpl.nim
+ (h len.3.Iq4ofkp1. +366) 4,6,lib/std/system/seqimpl.nim
  (h data.0.Iq4ofkp1. +50) 0,11,lib/std/system/seqimpl.nim
  (h =destroy.0. +151) 0,19,lib/std/system/seqimpl.nim
  (h =wasMoved.0. +1011) 0,74,lib/std/system/seqimpl.nim

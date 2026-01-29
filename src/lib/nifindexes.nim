@@ -97,14 +97,6 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
       inc n
 
 type
-  AttachedOp* = enum # this one can be used as an array index
-    attachedDestroy,
-    attachedWasMoved,
-    attachedDup,
-    attachedCopy,
-    attachedSink,
-    attachedTrace
-
   HookIndexEntry* = object
     typ*, hook*: SymId
     isGeneric*: bool
@@ -118,40 +110,9 @@ type
     methods*: seq[MethodIndexEntry]
 
   IndexSections* = object
-    hooks*: array[AttachedOp, seq[HookIndexEntry]]
     converters*: seq[(SymId, SymId)] # string is for compat with `methods`
     classes*: seq[ClassIndexEntry]
     exportBuf*: TokenBuf
-
-proc hookName*(op: AttachedOp): string =
-  case op
-  of attachedDestroy: "destroy"
-  of attachedWasMoved: "wasmoved"
-  of attachedDup: "dup"
-  of attachedCopy: "copy"
-  of attachedSink: "sinkh"
-  of attachedTrace: "trace"
-
-proc hookToTag(op: AttachedOp): TagId =
-  case op
-  of attachedDestroy: TagId(DestroyIdx)
-  of attachedWasMoved: TagId(WasmovedIdx)
-  of attachedDup: TagId(DupIdx)
-  of attachedCopy: TagId(CopyIdx)
-  of attachedSink: TagId(SinkhIdx)
-  of attachedTrace: TagId(TraceIdx)
-
-proc getHookSection(tag: TagId; values: openArray[HookIndexEntry]): TokenBuf =
-  result = createTokenBuf(30)
-  result.addParLe tag
-
-  for v in values:
-    let t = if v.isGeneric: TagId(VvIdx) else: TagId(KvIdx)
-    result.buildTree t, NoLineInfo:
-      result.add symToken(v.typ, NoLineInfo)
-      result.add symToken(v.hook, NoLineInfo)
-
-  result.addParRi()
 
 proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   result = createTokenBuf(30)
@@ -246,13 +207,6 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   content.add toString(private)
   content.add "\n"
 
-  for op in AttachedOp:
-    let tag = hookToTag(op)
-    let hookSectionBuf = getHookSection(tag, sections.hooks[op])
-
-    content.add toString(hookSectionBuf)
-    content.add "\n"
-
   if sections.converters.len != 0:
     let converterSectionBuf = getSymbolSection(TagId(ConverterIdx), sections.converters)
 
@@ -292,12 +246,9 @@ type
     offset*: int
     info*: PackedLineInfo
     vis*: IndexVisibility
-  HooksPerType* = object
-    a*: array[AttachedOp, (SymId, bool)]
 
   NifIndex* = object
     public*, private*: Table[string, NifIndexEntry]
-    hooks*: Table[SymId, HooksPerType]
     converters*: seq[(string, string)] # map of dest types to converter symbols
     #methods*: seq[(string, string)] # map of dest types to method symbols
     classes*: seq[ClassIndexEntry]
@@ -342,44 +293,6 @@ proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; vis: Inde
       t = next(s)
     else:
       assert false, "expected (kv) construct"
-      #t = next(s)
-
-proc readHookSection(s: var Stream; tab: var Table[SymId, HooksPerType]; op: AttachedOp) =
-  var t = next(s)
-  var nested = 1
-  while t.kind != EofToken:
-    if t.kind == ParLe:
-      inc nested
-      if t.tagId == TagId(KvIdx) or t.tagId == TagId(VvIdx):
-        let isGeneric = t.tagId == TagId(VvIdx)
-        t = next(s)
-        var key = SymId(0)
-        if t.kind == Symbol:
-          key = t.symId
-        else:
-          raiseAssert "invalid (kv) construct: symbol expected"
-        t = next(s) # skip Symbol
-        if t.kind == Symbol:
-          if not tab.hasKey(key):
-            tab[key] = HooksPerType(a: default(array[AttachedOp, (SymId, bool)]))
-          tab[key].a[op] = (t.symId, isGeneric)
-        else:
-          assert false, "invalid (kv) construct: symbol expected"
-        t = next(s) # skip Symbol 2
-        if t.kind == ParRi:
-          t = next(s)
-          dec nested
-        else:
-          assert false, "invalid (kv) construct: ')' expected"
-      else:
-        assert false, "expected (kv) or (vv) construct"
-    elif t.kind == ParRi:
-      dec nested
-      if nested == 0:
-        break
-      t = next(s)
-    else:
-      assert false, "expected (kv) or (vv) construct"
       #t = next(s)
 
 proc readSymbolSection(s: var Stream; tab: var seq[(string, string)]) =
@@ -490,10 +403,6 @@ proc readIndex*(indexName: string): NifIndex =
     else:
       assert false, "'private' expected"
     t = next(s)
-    for op in AttachedOp:
-      if t.kind == ParLe and pool.tags[t.tag] == hookName(op):
-        readHookSection(s, result.hooks, op)
-        t = next(s)
     if t.tag == TagId(ConverterIdx):
       readSymbolSection(s, result.converters)
       t = next(s)

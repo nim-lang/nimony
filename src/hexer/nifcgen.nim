@@ -732,67 +732,78 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
         of NoPragma:
           let cc = n.callConvKind
           if cc == NoCallConv:
-            error c, "unknown pragma: ", n
+            if hookKind(n.tagId) != NoHook:
+              skip n
+            else:
+              error c, "unknown pragma: ", n
           else:
             result.callConv = cc
-          inc n
+            inc n
+            skipParRi c, n
         of MagicP:
           inc n
           if n.kind notin {StringLit, Ident}:
             error c, "expected string literal or ident, but got: ", n
           result.flags.incl MagicP
           inc n
+          skipParRi c, n
         of ImportcP, ImportcppP:
           inc n
           expectStrLit c, n
           result.extern = n.litId
           result.flags.incl pk
           inc n
+          skipParRi c, n
         of ExportcP:
           inc n
           expectStrLit c, n
           result.extern = n.litId
           result.flags.incl pk
           inc n
+          skipParRi c, n
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
            InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP,
            InheritableP, PureP, ClosureP, PackedP, UnionP, IncompleteStructP:
           result.flags.incl pk
           inc n
+          skipParRi c, n
         of BorrowP:
           result.flags.incl InlineP
           result.flags.incl pk
           inc n
+          skipParRi c, n
         of HeaderP:
           inc n
           expectStrLit c, n
           result.header = n.litId
           inc n
+          skipParRi c, n
         of DynlibP:
           inc n
           expectStrLit c, n
           result.dynlib = n.litId
           result.flags.incl DynlibP
           inc n
+          skipParRi c, n
         of AlignP:
           inc n
           expectIntLit c, n
           result.align = n.intId
           inc n
+          skipParRi c, n
         of BitsP:
           inc n
           expectIntLit c, n
           result.bits = n.intId
           inc n
+          skipParRi c, n
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
            BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP:
           skip n
-          continue
         of BuildP, EmitP, PushP, PopP, PassLP, PassCP:
           bug "unreachable"
-        skipParRi c, n
       else:
         error c, "unknown pragma: ", n
   else:

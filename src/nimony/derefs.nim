@@ -22,6 +22,9 @@ There are 4 cases:
 Now also does some simple checks for `raise` statements:
 - Only a routine marked as `.raises` can call another routine marked as `.raises`.
 
+Also adds lifetime tracking hooks to type declarations so that Hexer can find them
+easily.
+
 ]##
 
 import std / [assertions, tables]
@@ -52,6 +55,7 @@ type
     dest: TokenBuf
     r: CurrentRoutine
     typeCache: TypeCache
+    hooks: Table[SymId, HooksPerType]
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
@@ -714,6 +718,41 @@ proc trFor(c: var Context; n: var Cursor) =
   else:
     bug "illformed for loop"
 
+proc addHookDecls(dest: var TokenBuf; hooks: HooksPerType) =
+  for op in low(AttachedOp)..high(AttachedOp):
+    let s = hooks.a[op]
+    if s != SymId(0):
+      dest.addParLe hookToTag(op), NoLineInfo
+      dest.addSymUse s, NoLineInfo
+      dest.addParRi()
+
+proc trType(c: var Context; n: var Cursor) =
+  takeToken c.dest, n
+  var s = SymId(0)
+  if n.kind == SymbolDef:
+    s = n.symId
+  c.dest.takeTree n # the symbol definition
+  c.dest.takeTree n # exported
+  c.dest.takeTree n # typevars
+  # pragmas:
+  if s != SymId(0) and c.hooks.hasKey(s):
+    if n.kind == DotToken:
+      c.dest.addParLe PragmasU, n.info
+      inc n
+      addHookDecls c.dest, c.hooks[s]
+      c.dest.addParRi()
+    else:
+      c.dest.takeToken n # existing pragma tag
+      addHookDecls c.dest, c.hooks[s]
+      while n.kind != ParRi:
+        c.dest.takeTree n # existing individual pragmas
+      c.dest.add n
+      inc n
+  else:
+    c.dest.takeTree n # pragmas
+  c.dest.takeTree n # body
+  c.dest.takeParRi n
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
@@ -808,15 +847,18 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.openScope()
         trSons c, n, WantT
         c.typeCache.closeScope()
+      of TypeS:
+        trType c, n
       else:
         if isDeclarative(n):
           takeTree c.dest, n
         else:
           trSons c, n, WantT
 
-proc injectDerefs*(n: Cursor): TokenBuf =
+proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType]): TokenBuf =
   var c = Context(typeCache: createTypeCache(),
-    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf())
+    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
+    hooks: ensureMove(hooks))
   c.typeCache.openScope()
   var n2 = n
   var n3 = n

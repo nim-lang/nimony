@@ -8,7 +8,7 @@ import std / [syncio, os, tables, sequtils, times, sets]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
 import ".." / gear2 / modnames
-import reporters, builtintypes
+import reporters, builtintypes, decls, nimony_model
 import ".." / models / [nifindex_tags]
 
 type
@@ -207,38 +207,6 @@ proc loadInterface*(suffix: string; iface: var Iface;
     mergeFilter(exportFilter, filter)
     exports.add (path, ensureMove exportFilter)
 
-template reportImpl(msg: string; c: Cursor; level: string) =
-  when defined(debug):
-    writeStackTrace()
-  write stdout, level
-  if isValid(c.info):
-    write stdout, infoToStr(c.info)
-    write stdout, " "
-  write stdout, msg
-  writeLine stdout, toString(c, false)
-  quit 1
-
-template reportImpl(msg: string; level: string) =
-  when defined(debug):
-    writeStackTrace()
-  write stdout, level
-  writeLine stdout, msg
-  quit 1
-
-proc error*(msg: string; c: Cursor) {.noreturn.} =
-  reportImpl(msg, c, "[Error] ")
-
-proc error*(msg: string) {.noreturn.} =
-  reportImpl(msg, "[Error] ")
-
-proc bug*(msg: string; c: Cursor) {.noreturn.} =
-  writeStackTrace()
-  reportImpl(msg, c, "[Bug] ")
-
-proc bug*(msg: string) {.noreturn.} =
-  writeStackTrace()
-  reportImpl(msg, "[Bug] ")
-
 type
   LoadStatus* = enum
     LacksModuleName, LacksOffset, LacksPosition, LacksNothing
@@ -269,24 +237,90 @@ proc tryLoadSym*(s: SymId): LoadResult =
         prog.mem[s] = ToplevelEntry(buffer: ensureMove(buf), phase: SemcheckBodies)
         result = LoadResult(status: LacksNothing, decl: decl)
 
-proc tryLoadHook*(op: AttachedOp; typ: SymId; wantGeneric: bool): SymId =
-  let nifName = pool.syms[typ]
-  let modname = extractModule(nifName)
+type
+  AttachedOp* = enum # this one can be used as an array index
+    attachedDestroy,
+    attachedWasMoved,
+    attachedDup,
+    attachedCopy,
+    attachedSink,
+    attachedTrace
+
+  HooksPerType* = object
+    a*: array[AttachedOp, SymId]
+
+proc hookName*(op: AttachedOp): string =
+  case op
+  of attachedDestroy: "destroy"
+  of attachedWasMoved: "wasmoved"
+  of attachedDup: "dup"
+  of attachedCopy: "copy"
+  of attachedSink: "sinkh"
+  of attachedTrace: "trace"
+
+proc hookToTag*(op: AttachedOp): TagId =
+  case op
+  of attachedDestroy: TagId(DestroyIdx)
+  of attachedWasMoved: TagId(WasmovedIdx)
+  of attachedDup: TagId(DupIdx)
+  of attachedCopy: TagId(CopyIdx)
+  of attachedSink: TagId(SinkhIdx)
+  of attachedTrace: TagId(TraceIdx)
+
+proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
   result = SymId(0)
-  if modname != "":
-    var m = load(modname)
-    if m.index.hooks.hasKey(typ):
-      let res = m.index.hooks[typ].a[op]
-      if res[1] == wantGeneric: result = res[0]
+  let d = tryLoadSym(typ)
+  if d.status == LacksNothing:
+    let hooktag = hookToTag(op)
+    let typedef = asTypeDecl(d.decl)
+    var n = typedef.pragmas
+    if n.kind == ParLe:
+      var nested = 0
+      while true:
+        case n.kind
+        of ParLe:
+          if n.tagId == hooktag:
+            inc n
+            if n.kind == Symbol:
+              result = n.symId
+              break
+          inc nested
+        of ParRi:
+          dec nested
+          if nested == 0: break
+        else: discard
+        inc n
 
 proc tryLoadAllHooks*(typ: SymId): HooksPerType =
-  let nifName = pool.syms[typ]
-  let modname = extractModule(nifName)
-  result = HooksPerType(a: default(array[AttachedOp, (SymId, bool)]))
-  if modname != "":
-    var m = load(modname)
-    if m.index.hooks.hasKey(typ):
-      result = m.index.hooks[typ]
+  template setRes(op: AttachedOp) =
+    inc n
+    if n.kind == Symbol:
+      result.a[op] = n.symId
+
+  result = HooksPerType(a: default(array[AttachedOp, SymId]))
+  let d = tryLoadSym(typ)
+  if d.status == LacksNothing:
+    let typedef = asTypeDecl(d.decl)
+    var n = typedef.pragmas
+    if n.kind == ParLe:
+      var nested = 0
+      while true:
+        case n.kind
+        of ParLe:
+          case hookKind(n.tagId)
+          of NoHook: discard
+          of WasmovedH: setRes attachedWasMoved
+          of DestroyH: setRes attachedDestroy
+          of DupH: setRes attachedDup
+          of CopyH: setRes attachedCopy
+          of SinkhH: setRes attachedSink
+          of TraceH: setRes attachedTrace
+          inc nested
+        of ParRi:
+          dec nested
+          if nested == 0: break
+        else: discard
+        inc n
 
 proc loadVTable*(typ: SymId): seq[MethodIndexEntry] =
   let nifName = pool.syms[typ]
@@ -309,18 +343,6 @@ proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
     if strId == identifier:
       let symId = pool.syms.getOrIncl(k)
       result.add symId
-
-proc registerHook*(suffix: string; typ: SymId; op: AttachedOp; hook: SymId; isGeneric: bool) =
-  let m: NifModule
-  if not prog.mods.hasKey(suffix):
-    let infile = suffixToNif suffix
-    m = newNifModule(infile)
-    prog.mods[suffix] = m
-  else:
-    m = prog.mods[suffix]
-  if not m.index.hooks.hasKey(typ):
-    m.index.hooks[typ] = HooksPerType(a: default(array[AttachedOp, (SymId, bool)]))
-  m.index.hooks[typ].a[op] = (hook, isGeneric)
 
 proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 
@@ -352,7 +374,7 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   buf.addParRi()
   publish s, buf, SemcheckSignatures
 
-proc publishStringType() =
+proc publishStringType*() =
   # This logic is not strictly necessary for "system.nim" itself, but
   # for modules that emulate system via --isSystem.
   let symId = pool.syms.getOrIncl(StringName)
@@ -408,7 +430,7 @@ proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=fa
 
   result = beginRead(owningBuf)
   prog.mods[prog.main.name] = m
-  publishStringType()
+  #publishStringType()
 
 proc setupProgramForTesting*(dir, file, ext: string) =
   prog.main.dir = dir

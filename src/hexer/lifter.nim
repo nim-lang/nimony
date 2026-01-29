@@ -20,6 +20,17 @@ include nifprelude
 import nifindexes, symparser, treemangler
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
 
+proc isMutFirstParam*(destroyProc: SymId): bool =
+  result = false
+  let res = tryLoadSym(destroyProc)
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    var params = routine.params
+    inc params
+    let firstParam = asLocal(params)
+    if firstParam.typ.typeKind in {MutT, OutT}:
+      result = true
+
 type
   TypeCursor = Cursor
 
@@ -49,7 +60,7 @@ when not defined(nimony):
 proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
   result = c.nominalTypeToHook[op].getOrDefault(s)
   if result == SymId(0):
-    result = tryLoadHook(op, s, false)
+    result = tryLoadHook(op, s)
     if result != SymId(0):
       c.nominalTypeToHook[op][s] = result
 

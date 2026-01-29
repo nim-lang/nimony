@@ -515,7 +515,8 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
 
   let toDeref = cursorAt(c.dest, beforeUsercode)
   #echo "synthesized ", toString(toDeref)
-  let withDerefs = injectDerefs(toDeref)
+  let typeHooksCopy = s.typeHooks
+  let withDerefs = injectDerefs(toDeref, typeHooksCopy)
   endRead(c.dest)
   c.dest.shrink beforeUsercode
   # do not copy the `(stmts)` here:

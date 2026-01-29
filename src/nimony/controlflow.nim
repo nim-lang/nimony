@@ -11,7 +11,7 @@ import std/[assertions, intsets]
 include ".." / lib / nifprelude
 
 import ".." / models / tags
-import nimony_model, programs, builtintypes, typenav
+import nimony_model, programs, builtintypes, typenav, decls
 from typeprops import isOrdinalType
 
 const

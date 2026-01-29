@@ -104,7 +104,8 @@ type
                              # to forward command line args properly.
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
-    hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
+    #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
+    typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
     methods*: Table[SymId, seq[SymId]]

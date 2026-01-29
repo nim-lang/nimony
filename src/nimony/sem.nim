@@ -1329,7 +1329,7 @@ type
     headerFileTok: PackedToken
 
 proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
-  let hasParRi = n.kind == ParLe # if false, has no arguments
+  var hasParRi = n.kind == ParLe # if false, has no arguments
   if n.substructureKind == KvU:
     inc n
   let pk = pragmaKind(n)
@@ -1339,6 +1339,9 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       dest.addParLe(cc, n.info)
       inc n
       dest.addParRi()
+    elif n.kind == ParLe and kind == TypeY and (let hk = hookKind(n.tagId); hk != NoHook):
+      dest.takeTree n
+      hasParRi = false
     else:
       let name = getIdent(n)
       if name != StrId(0) and name in c.userPragmas and not hasParRi:
@@ -2801,7 +2804,7 @@ proc semArrayConstrElem(c: var SemContext, dest: var TokenBuf, elem: var Item, i
       inc arrCtx.currentIndex
     else:
       arrCtx.hasFirstIdx = true
-    semExpr c, dest, elem    
+    semExpr c, dest, elem
 
 proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemFlag]) =
   let exprStart = dest.len
@@ -5198,7 +5201,7 @@ proc writeOutput(c: var SemContext; dest: TokenBuf; outfile: string) =
   writeFile dest, outfile
   let root = dest[0].info
   createIndex outfile, root, true,
-    IndexSections(hooks: move c.hookIndexLog,
+    IndexSections(
       converters: move c.converterIndexMap,
       classes: move c.classIndexMap,
       exportBuf: buildIndexExports(c))
@@ -5295,11 +5298,18 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
 
   let symId = typevars.symId
 
-  let hooks = tryLoadAllHooks(symId)
+  # For types from the current module, use typeHooks (hooks haven't been embedded
+  # in type pragmas yet - that happens in injectDerefs at the end).
+  # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
+  let moduleSuffix = extractModule(pool.syms[symId])
+  let hooks = if moduleSuffix == c.thisModuleSuffix:
+      c.typeHooks.getOrDefault(symId)
+    else:
+      tryLoadAllHooks(symId)
   var needsSomething = false
   for op in low(AttachedOp)..high(AttachedOp):
     let h = hooks.a[op]
-    if h[0] != NoSymId and h[1]:
+    if h != NoSymId:
       needsSomething = true
       break
   if not needsSomething: return
@@ -5316,9 +5326,8 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
     takeTree(typeArgs, typevars)
 
   for op in low(AttachedOp)..high(AttachedOp):
-    let h = hooks.a[op]
-    let hook = h[0]
-    if hook != NoSymId and h[1]:
+    let hook = hooks.a[op]
+    if hook != NoSymId:
       let res = tryLoadSym(hook)
       if res.status == LacksNothing:
         let info = res.decl.info
@@ -5497,7 +5506,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf)
+    dest = injectDerefs(finalBuf, c.typeHooks)
   else:
     quit 1
 
@@ -5518,6 +5527,8 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
 
   var owningBuf = createTokenBuf(300)
   var n0 = setupProgram(infile, outfile, owningBuf)
+  if SkipSystem in moduleFlags:
+    programs.publishStringType()
   var c = SemContext(
     types: createBuiltinTypes(),
     thisModuleSuffix: prog.main.name,

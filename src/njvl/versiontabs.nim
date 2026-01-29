@@ -13,7 +13,7 @@
 
 import std/[tables, assertions]
 include ".." / lib / nifprelude
-import ".." / nimony / [nimony_model, programs]
+import ".." / nimony / [nimony_model, decls]
 
 type
   VersionTab* = object
