@@ -491,8 +491,10 @@ proc hookToAttachedOp(op: HookKind): AttachedOp =
 
 proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isGeneric: bool) =
   let attachedOp = hookToAttachedOp(op)
-  c.hookIndexLog[attachedOp].add HookIndexEntry(typ: obj, hook: symId, isGeneric: isGeneric)
-  programs.registerHook(c.thisModuleSuffix, obj, attachedOp, symId, isGeneric)
+  # track per-type for embedding in type declarations:
+  if not c.typeHooks.hasKey(obj):
+    c.typeHooks[obj] = HooksPerType(a: default(array[AttachedOp, SymId]))
+  c.typeHooks[obj].a[attachedOp] = symId
 
 proc getHookName(symId: SymId): string =
   result = pool.syms[symId]

@@ -2801,7 +2801,7 @@ proc semArrayConstrElem(c: var SemContext, dest: var TokenBuf, elem: var Item, i
       inc arrCtx.currentIndex
     else:
       arrCtx.hasFirstIdx = true
-    semExpr c, dest, elem    
+    semExpr c, dest, elem
 
 proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemFlag]) =
   let exprStart = dest.len
@@ -5198,7 +5198,7 @@ proc writeOutput(c: var SemContext; dest: TokenBuf; outfile: string) =
   writeFile dest, outfile
   let root = dest[0].info
   createIndex outfile, root, true,
-    IndexSections(hooks: move c.hookIndexLog,
+    IndexSections(
       converters: move c.converterIndexMap,
       classes: move c.classIndexMap,
       exportBuf: buildIndexExports(c))
@@ -5299,7 +5299,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   var needsSomething = false
   for op in low(AttachedOp)..high(AttachedOp):
     let h = hooks.a[op]
-    if h[0] != NoSymId and h[1]:
+    if h != NoSymId:
       needsSomething = true
       break
   if not needsSomething: return
@@ -5316,9 +5316,8 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
     takeTree(typeArgs, typevars)
 
   for op in low(AttachedOp)..high(AttachedOp):
-    let h = hooks.a[op]
-    let hook = h[0]
-    if hook != NoSymId and h[1]:
+    let hook = hooks.a[op]
+    if hook != NoSymId:
       let res = tryLoadSym(hook)
       if res.status == LacksNothing:
         let info = res.decl.info
@@ -5497,7 +5496,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf)
+    dest = injectDerefs(finalBuf, c.typeHooks)
   else:
     quit 1
 

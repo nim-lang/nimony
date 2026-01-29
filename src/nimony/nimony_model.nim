@@ -102,6 +102,12 @@ proc cfKind*(c: Cursor): ControlFlowKind {.inline.} =
   else:
     result = NoControlFlow
 
+proc hookKind*(x: TagId): HookKind {.inline} =
+  if rawTagIsHookKind(cast[TagEnum](x)):
+    result = cast[HookKind](x)
+  else:
+    result = NoHook
+
 template isParamsTag*(c: Cursor): bool = c.tagEnum == ParamsTagId
 
 # Outdated aliases:
