@@ -1329,7 +1329,7 @@ type
     headerFileTok: PackedToken
 
 proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
-  let hasParRi = n.kind == ParLe # if false, has no arguments
+  var hasParRi = n.kind == ParLe # if false, has no arguments
   if n.substructureKind == KvU:
     inc n
   let pk = pragmaKind(n)
@@ -1339,6 +1339,9 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       dest.addParLe(cc, n.info)
       inc n
       dest.addParRi()
+    elif n.kind == ParLe and kind == TypeY and (let hk = hookKind(n.tagId); hk != NoHook):
+      dest.takeTree n
+      hasParRi = false
     else:
       let name = getIdent(n)
       if name != StrId(0) and name in c.userPragmas and not hasParRi:
@@ -5295,7 +5298,14 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
 
   let symId = typevars.symId
 
-  let hooks = tryLoadAllHooks(symId)
+  # For types from the current module, use typeHooks (hooks haven't been embedded
+  # in type pragmas yet - that happens in injectDerefs at the end).
+  # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
+  let moduleSuffix = extractModule(pool.syms[symId])
+  let hooks = if moduleSuffix == c.thisModuleSuffix:
+      c.typeHooks.getOrDefault(symId)
+    else:
+      tryLoadAllHooks(symId)
   var needsSomething = false
   for op in low(AttachedOp)..high(AttachedOp):
     let h = hooks.a[op]

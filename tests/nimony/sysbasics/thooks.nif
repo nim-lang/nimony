@@ -1,7 +1,13 @@
 (.nif26)
-(.indexat +6689            )
+(.indexat +7114            )
 0,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
- (type ~13 :MyObjectBase.0. . . . 2
+ (type ~13 :MyObjectBase.0. . .
+  (pragmas
+   (destroy =destroy.0.)
+   (wasmoved =wasMoved.0.)
+   (copy =copy.0.)
+   (sinkh =sink.0.)
+   (trace =trace.0.)) 2
   (object . ~13,1
    (fld :x.0. . . 6
     (i -1) .) ~10,1
@@ -10,7 +16,12 @@
  (type ~15 :MyObject.0. . ~7
   (typevars 1
    (typevar :T.0. . . . .) 4
-   (typevar :Y.0. . . . .)) . 2
+   (typevar :Y.0. . . . .))
+  (pragmas
+   (destroy =destroy.1.)
+   (wasmoved =wasMoved.1.)
+   (copy =copy.1.)
+   (sinkh =sink.1.)) 2
   (object . ~15,1
    (fld :x.1. . . 6
     (i -1) .) ~12,1
@@ -150,7 +161,12 @@
  (type :MyObject.0.I76zger. .
   (at MyObject.0. 9
    (i -1) 14
-   (f +64)) ~3,~32 . ~1,~32
+   (f +64)) ~3,~32
+  (pragmas
+   (destroy =destroy.2.)
+   (wasmoved =wasMoved.2.)
+   (copy =copy.2.)
+   (sinkh =sink.2.)) ~1,~32
   (object . ~15,1
    (fld :x.1.I76zger. . . 6
     (i -1) .) ~12,1
@@ -159,7 +175,12 @@
  (type :MyObject.0.I3kvyeb. .
   (at MyObject.0. 9
    (f +64) 16
-   (i -1)) ~4,~34 . ~2,~34
+   (i -1)) ~4,~34
+  (pragmas
+   (destroy =destroy.3.)
+   (wasmoved =wasMoved.3.)
+   (copy =copy.3.)
+   (sinkh =sink.3.)) ~2,~34
   (object . ~15,1
    (fld :x.1.I3kvyeb. . . 6
     (i -1) .) ~12,1
@@ -248,12 +269,12 @@
   (stmts
    (discard .))))0,1,tests/nimony/sysbasics/thooks.nim(.index 15,1
  (h MyObjectBase.0. +86) 4,2
- (h x.0. +54) 7,2
+ (h x.0. +176) 7,2
  (h y.0. +40) 17,4
  (h MyObject.0. +41) 11,4
  (h T.0. +43) 14,4
  (h Y.0. +29) 4,5
- (h x.1. +50) 7,5
+ (h x.1. +151) 7,5
  (h y.1. +40) ,7
  (h =trace.0. +39) ,10
  (h =wasMoved.0. +175) ,13
@@ -279,10 +300,10 @@
  (h obj.0. +148) 12,53
  (h =checkHook.1. +546) 20,36
  (h MyObject.0.I76zger. +220) 4,5
- (h x.1.I76zger. +109) 7,5
+ (h x.1.I76zger. +210) 7,5
  (h y.1.I76zger. +48) 21,38
  (h MyObject.0.I3kvyeb. +50) 4,5
- (h x.1.I3kvyeb. +109) 7,5
+ (h x.1.I3kvyeb. +210) 7,5
  (h y.1.I3kvyeb. +48) ,32
  (h =destroy.2. +48) ,22
  (h =wasMoved.2. +205) ,26
