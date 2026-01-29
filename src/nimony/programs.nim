@@ -430,7 +430,7 @@ proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=fa
 
   result = beginRead(owningBuf)
   prog.mods[prog.main.name] = m
-  publishStringType()
+  #publishStringType()
 
 proc setupProgramForTesting*(dir, file, ext: string) =
   prog.main.dir = dir
