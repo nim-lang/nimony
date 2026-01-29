@@ -276,7 +276,7 @@ proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
     var n = typedef.pragmas
     if n.kind == ParLe:
       var nested = 0
-      while n.kind != ParRi:
+      while true:
         case n.kind
         of ParLe:
           if n.tagId == hooktag:
@@ -304,7 +304,7 @@ proc tryLoadAllHooks*(typ: SymId): HooksPerType =
     var n = typedef.pragmas
     if n.kind == ParLe:
       var nested = 0
-      while n.kind != ParRi:
+      while true:
         case n.kind
         of ParLe:
           case hookKind(n.tagId)
