@@ -9,7 +9,7 @@
 
 # We produce C code as a list of tokens.
 
-import std / [assertions, syncio, tables, sets, intsets, formatfloat, strutils, packedsets]
+import std / [assertions, syncio, tables, sets, intsets, formatfloat, packedsets]
 from std / os import changeFileExt, splitFile, extractFilename
 from std / sequtils import insert
 

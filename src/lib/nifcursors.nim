@@ -439,6 +439,10 @@ proc isLastSon*(n: Cursor): bool =
   skip n
   result = n.kind == ParRi
 
+proc firstSon*(n: Cursor): Cursor {.inline.} =
+  result = n
+  inc result
+
 proc takeToken*(buf: var TokenBuf; n: var Cursor) {.inline.} =
   buf.add n
   inc n

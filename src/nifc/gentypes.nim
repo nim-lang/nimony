@@ -26,10 +26,10 @@ type
     lookedAt: IntSet
     lookedAtBodies: HashSet[SymId]
 
-proc traverseObjectBody(m: MainModule; o: var TypeOrder; t: Cursor)
-proc traverseProctypeBody(m: MainModule; o: var TypeOrder; t: Cursor)
+proc traverseObjectBody(m: var MainModule; o: var TypeOrder; t: Cursor)
+proc traverseProctypeBody(m: var MainModule; o: var TypeOrder; t: Cursor)
 
-proc recordDependencyImpl(m: MainModule; o: var TypeOrder; parent, child: Cursor;
+proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cursor;
                           viaPointer: var bool) =
   var ch = child
   while true:
@@ -75,8 +75,8 @@ proc recordDependencyImpl(m: MainModule; o: var TypeOrder; parent, child: Cursor
     if ch.kind == Symbol:
       # follow the symbol to its definition:
       let id = ch.symId
-      let def = m.defs.getOrDefault(id)
-      if def.kind == NoSym:
+      let def = m.getDeclOrNil(id)
+      if def == nil:
         error m, "undeclared symbol: ", ch
       else:
         var n = def.pos
@@ -89,11 +89,11 @@ proc recordDependencyImpl(m: MainModule; o: var TypeOrder; parent, child: Cursor
     else:
       discard "uninteresting type as we only focus on the required struct declarations"
 
-proc recordDependency(m: MainModule; o: var TypeOrder; parent, child: Cursor) =
+proc recordDependency(m: var MainModule; o: var TypeOrder; parent, child: Cursor) =
   var viaPointer = false
   recordDependencyImpl m, o, parent, child, viaPointer
 
-proc traverseObjectBody(m: MainModule; o: var TypeOrder; t: Cursor) =
+proc traverseObjectBody(m: var MainModule; o: var TypeOrder; t: Cursor) =
   let kind = t.typeKind
   var n = t
   inc n
@@ -130,7 +130,7 @@ proc traverseObjectBody(m: MainModule; o: var TypeOrder; t: Cursor) =
     else:
       error m, "unexpected token inside object: ", n
 
-proc traverseProctypeBody(m: MainModule; o: var TypeOrder; t: Cursor) =
+proc traverseProctypeBody(m: var MainModule; o: var TypeOrder; t: Cursor) =
   var n = t
   let procType = takeProcType(n)
   var param = procType.params
@@ -143,7 +143,7 @@ proc traverseProctypeBody(m: MainModule; o: var TypeOrder; t: Cursor) =
       recordDependencyImpl m, o, t, paramDecl.typ, viaPointer
   recordDependencyImpl m, o, t, procType.returnType, viaPointer
 
-proc traverseTypes(m: MainModule; o: var TypeOrder) =
+proc traverseTypes(m: var MainModule; o: var TypeOrder) =
   for n in m.types:
     let decl = asTypeDecl(n)
     let t = decl.body
@@ -379,9 +379,9 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
     c.add "void"
   c.add ParRi
 
-proc mangleSym(c: GeneratedCode; s: SymId): string =
-  let x = c.m.defs.getOrDefault(s)
-  if x.kind != NoSym and x.extern != StrId(0):
+proc mangleSym(c: var GeneratedCode; s: SymId): string =
+  let x = c.m.getDeclOrNil(s)
+  if x != nil and x.extern != StrId(0):
     result = pool.strings[x.extern]
   else:
     result = mangleToC(pool.syms[s])

@@ -243,10 +243,6 @@ proc isDeclarative*(n: Cursor): bool =
 proc isCompileTimeType*(n: Cursor): bool {.inline.} =
   n.typeKind in {TypeKindT, TypedescT, SymKindT, OrT, AndT, NotT, ConceptT, StaticT}
 
-proc firstSon*(n: Cursor): Cursor {.inline.} =
-  result = n
-  inc result
-
 proc hookName*(op: HookKind): string =
   case op
   of DestroyH: "destroy"
