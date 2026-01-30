@@ -253,11 +253,11 @@ proc detectToplevelDecls(m: var MainModule) =
       inc n
     if nested == 0: break
 
-proc parse*(r: var Reader): MainModule =
+proc parse(r: var Reader; filename: string): MainModule =
   # empirically, (size div 7) is a good estimate for the number of nodes
   # in the file:
   let nodeCount = r.fileSize div 7
-  result = MainModule(src: createTokenBuf(nodeCount))
+  result = MainModule(src: createTokenBuf(nodeCount), prog: setupNifProgram(splitModulePath(filename)))
   discard parse(r, result, NoLineInfo)
   freeze(result.src)
   detectToplevelDecls(result)
@@ -271,7 +271,7 @@ proc load*(filename: string): MainModule =
     quit "nif files must start with Version directive"
   of WrongMeta:
     quit "the format of meta information is wrong!"
-  result = parse(r)
+  result = parse(r, filename)
   result.filename = filename
   r.close
 
