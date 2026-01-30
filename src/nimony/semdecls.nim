@@ -815,6 +815,14 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     producesVoid c, dest, info, it.typ
   publish c, dest, symId, declStart
 
+  # Compile macro plugins for macro declarations with bodies
+  if kind == MacroY and pass == checkBody:
+    let macroDecl = cursorAt(dest, declStart)
+    let macroBinPath = compileMacroPlugin(c.g.config.nifcachePath, macroDecl, symId, info)
+    endRead(dest)
+    if macroBinPath.len > 0:
+      c.compiledMacros[symId] = macroBinPath
+
 proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
   # find all macro/template identifiers in pragmas to invoke them with parent proc definition
   result = newSeq[Cursor]()
