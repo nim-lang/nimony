@@ -9,10 +9,11 @@
 import std / [tables, assertions]
 include "../lib" / nifprelude
 
-import nifc_model, mangler
+import nifc_model, nifmodules
 
 proc isImportC*(m: MainModule; n: Cursor): bool =
-  result = n.kind in {Symbol, SymbolDef} and m.defs.getOrDefault(n.symId).extern != StrId(0)
+  result = n.kind in {Symbol, SymbolDef} and
+      m.defs.getOrDefault(n.symId).extern != StrId(0)
 
 proc createIntegralType*(m: var MainModule; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
