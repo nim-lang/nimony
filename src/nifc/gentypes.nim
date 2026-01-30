@@ -75,8 +75,8 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
     if ch.kind == Symbol:
       # follow the symbol to its definition:
       let id = ch.symId
-      let def = m.getDecl(id)
-      if def.kind == NoSym:
+      let def = m.getDeclOrNil(id)
+      if def == nil:
         error m, "undeclared symbol: ", ch
       else:
         var n = def.pos
@@ -380,8 +380,8 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
   c.add ParRi
 
 proc mangleSym(c: var GeneratedCode; s: SymId): string =
-  let x = c.m.getDecl(s)
-  if x.kind != NoSym and x.extern != StrId(0):
+  let x = c.m.getDeclOrNil(s)
+  if x != nil and x.extern != StrId(0):
     result = pool.strings[x.extern]
   else:
     result = mangleToC(pool.syms[s])

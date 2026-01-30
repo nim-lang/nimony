@@ -12,8 +12,7 @@ include "../lib" / nifprelude
 import nifc_model, nifmodules
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =
-  result = n.kind in {Symbol, SymbolDef} and
-      m.getDecl(n.symId).extern != StrId(0)
+  result = n.kind in {Symbol, SymbolDef} and m.getExtern(n.symId) != StrId(0)
 
 proc createIntegralType*(m: var MainModule; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
@@ -57,8 +56,8 @@ proc getTypeImpl(m: var MainModule; n: Cursor): Cursor =
       if not cursorIsNil(res):
         return res
       it = it.parent
-    let d = m.getDecl(n.symId)
-    if d.kind != NoSym:
+    let d = m.getDeclOrNil(n.symId)
+    if d != nil:
       result = getTypeImpl(m, d.pos)
     else:
       # importC types are not defined
@@ -95,8 +94,8 @@ proc getTypeImpl(m: var MainModule; n: Cursor): Cursor =
       result = arrayType
       # array type is an alias
       if result.kind == Symbol:
-        let d = m.getDecl(result.symId)
-        if d.kind != NoSym:
+        let d = m.getDeclOrNil(result.symId)
+        if d != nil:
           let dd = d.pos
           if dd.stmtKind == TypeS:
             let decl = asTypeDecl(dd)
@@ -110,8 +109,8 @@ proc getTypeImpl(m: var MainModule; n: Cursor): Cursor =
       var counter = 20
       while counter > 0 and objType.kind == Symbol:
         dec counter
-        let d = m.getDecl(objType.symId)
-        if d.kind != NoSym:
+        let d = m.getDeclOrNil(objType.symId)
+        if d != nil:
           let dd = d.pos
           if dd.stmtKind == TypeS:
             let decl = asTypeDecl(dd)
@@ -188,8 +187,8 @@ proc navigateToObjectBody*(m: var MainModule; n: Cursor): Cursor =
   result = n
   while counter > 0 and result.kind == Symbol:
     dec counter
-    let d = m.getDecl(result.symId)
-    if d.kind != NoSym:
+    let d = m.getDeclOrNil(result.symId)
+    if d != nil:
       let dd = d.pos
       if dd.stmtKind == TypeS:
         let decl = asTypeDecl(dd)

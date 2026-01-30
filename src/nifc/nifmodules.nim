@@ -99,9 +99,11 @@ type
     defs: Table[SymId, Definition]
     prog: NifProgram
 
-proc getDecl*(c: var MainModule; s: SymId): ptr Definition =
+proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
-    var buf = lookupDeclaration(c.prog, splitSymName(pool.syms[s]))
+    let splitted = splitSymName(pool.syms[s])
+    if splitted.module == "": return nil
+    var buf = lookupDeclaration(c.prog, splitted)
     var pos = beginRead(buf)
     var n = pos.firstSon
     if n.kind == SymbolDef:
@@ -119,6 +121,13 @@ proc getDecl*(c: var MainModule; s: SymId): ptr Definition =
     else:
       raiseAssert "Expected SymbolDef after toplevel declaration"
   result = addr c.defs[s]
+
+proc getExtern*(c: var MainModule; s: SymId): StrId =
+  let d = c.getDeclOrNil(s)
+  if d != nil:
+    result = d.extern
+  else:
+    result = StrId(0)
 
 proc registerLocal*(c: var MainModule; s: SymId; typ: Cursor) =
   c.current.locals[s] = typ
