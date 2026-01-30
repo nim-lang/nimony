@@ -637,6 +637,27 @@ proc genImp(c: var GeneratedCode; n: var Cursor) =
       error c.m, "expected declaration for `imp` but got: ", n
   skipParRi n
 
+proc genImportedSyms(c: var GeneratedCode) =
+  # needs a good old fixpoint iteration as we expand the graph of imported symbols.
+  while true:
+    let fsyms = move c.m.requestedForeignSyms
+    if fsyms.len == 0: break
+    for fsym in fsyms:
+      var n = fsym
+      case fsym.stmtKind
+      of ProcS:
+        genProcDecl c, n, true
+      of VarS:
+        discard "we need to ignore local variables of the form x.0.suffix here which are still produced sometimes by Nimony..."
+      of GvarS:
+        genVar c, n, IsGlobal, true
+      of TvarS:
+        genVar c, n, IsThreadlocal, true
+      of ConstS:
+        genVar c, n, IsConst, true
+      else:
+        discard "uninteresting symbol"
+
 proc genNodecl(c: var GeneratedCode; n: var Cursor) =
   let signatureBegin = c.code.len
   inc n
@@ -655,7 +676,10 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   # TopLevelConstruct ::= ExternDecl | ProcDecl | VarDecl | ConstDecl |
   #                       TypeDecl | Include | EmitStmt
   case n.stmtKind
-  of ImpS: genImp c, n
+  of ImpS:
+    # ignore `(imp)` statement, cross-module declarations are handled by
+    # the logic in nifmodules.nim!
+    skip n
   of InclS: genInclude c, n
   of ProcS: genProcDecl c, n, false
   of VarS, GvarS, TvarS: genStmt c, n
@@ -683,6 +707,7 @@ proc traverseCode(c: var GeneratedCode; n: var Cursor) =
     inc n
     while n.kind != ParRi: genToplevel(c, n)
     # missing `inc n` here is intentional
+    genImportedSyms c
   else:
     error c.m, "expected `stmts` but got: ", n
 

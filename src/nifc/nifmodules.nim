@@ -18,8 +18,8 @@ type
   Definition* = object
     pos*: Cursor # points into MainModule.src
     kind*: NifcSym
-    extern*: StrId
-    buf: TokenBuf     # can be empty for symbols that are in the main module
+    extern*: StrId # extracted from the pragmas and store here as it is so frequently queried
+    buf: TokenBuf # can be empty for symbols that are in the main module
 
   NifProgram* = object # a NIF program is a set of NIF modules
     mods: Table[string, NifModule]
@@ -98,17 +98,18 @@ type
     current*: TypeScope
     defs: Table[SymId, Definition]
     prog: NifProgram
+    requestedForeignSyms*: seq[Cursor]
 
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
     let splitted = splitSymName(pool.syms[s])
     if splitted.module == "": return nil
     var buf = lookupDeclaration(c.prog, splitted)
-    var pos = beginRead(buf)
-    var n = pos.firstSon
-    if n.kind == SymbolDef:
-      let sk = n.symKind
+    let pos = beginRead(buf)
+    if pos.firstSon.kind == SymbolDef:
+      let sk = pos.symKind
       var extern = StrId(0)
+      var n = pos
       case sk
       of TypeY:
         extern = extractExtern(n, 1)
@@ -118,6 +119,7 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
         extern = extractExtern(n, 1)
       else: discard
       c.defs[s] = Definition(pos: pos, kind: sk, extern: extern, buf: ensureMove(buf))
+      c.requestedForeignSyms.add pos
     else:
       raiseAssert "Expected SymbolDef after toplevel declaration"
   result = addr c.defs[s]
@@ -205,6 +207,9 @@ proc detectToplevelDecls(m: var MainModule) =
         processToplevelDecl(m, n, ProcY, 3)
       of VarS, ConstS, GvarS, TvarS:
         processToplevelDecl(m, n, n.symKind, 1)
+      of ImpS:
+        # ignore `(imp)` statement, it is a legacy:
+        skip n
       else:
         inc n
         inc nested
