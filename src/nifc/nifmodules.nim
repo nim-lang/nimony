@@ -15,15 +15,15 @@ type
     stream: nifstreams.Stream
     index: Table[string, NifIndexEntry]  # Simple embedded index for offsets
 
-  CacheEntry = object
+  Definition* = object
+    pos*: Cursor # points into MainModule.src
+    kind*: NifcSym
+    extern*: StrId
     buf: TokenBuf     # can be empty for symbols that are in the main module
-    extern: StrId
-    decl: Cursor
 
   NifProgram* = object # a NIF program is a set of NIF modules
     mods: Table[string, NifModule]
     scheme: SplittedModulePath
-    cache: Table[SymId, CacheEntry]
 
 proc setupNifProgram*(scheme: sink SplittedModulePath): NifProgram =
   result = NifProgram(scheme: scheme, mods: initTable[string, NifModule]())
@@ -83,20 +83,7 @@ proc extractExtern(n: var Cursor; pragmasAt: int): StrId =
       skip n
     inc n
 
-proc getDecl*(c: var NifProgram; s: SymId): Cursor =
-  if c.cache.hasKey(s):
-    result = c.cache[s].decl
-  else:
-    var buf = lookupDeclaration(c, splitSymName(pool.syms[s]))
-    result = beginRead(buf)
-    c.cache[s] = CacheEntry(buf: ensureMove(buf), decl: result)
-
 type
-  Definition* = object
-    pos*: Cursor # points into MainModule.src
-    kind*: NifcSym
-    extern*: StrId
-
   TypeScope* {.acyclic.} = ref object
     locals*: Table[SymId, Cursor]
     parent*: TypeScope
@@ -104,13 +91,34 @@ type
   MainModule* = object
     src*: TokenBuf
     types*: seq[Cursor] # points into MainModule.src
-    defs*: Table[SymId, Definition]
     filename*: string
     config*: ConfigRef
     mem*: seq[TokenBuf] # for intermediate results such as computed types
     builtinTypes*: Table[string, Cursor]
     current*: TypeScope
+    defs: Table[SymId, Definition]
     prog: NifProgram
+
+proc getDecl*(c: var MainModule; s: SymId): ptr Definition =
+  if not c.defs.hasKey(s):
+    var buf = lookupDeclaration(c.prog, splitSymName(pool.syms[s]))
+    var pos = beginRead(buf)
+    var n = pos.firstSon
+    if n.kind == SymbolDef:
+      let sk = n.symKind
+      var extern = StrId(0)
+      case sk
+      of TypeY:
+        extern = extractExtern(n, 1)
+      of ProcY:
+        extern = extractExtern(n, 3)
+      of VarY, ConstY, GvarY, TvarY:
+        extern = extractExtern(n, 1)
+      else: discard
+      c.defs[s] = Definition(pos: pos, kind: sk, extern: extern, buf: ensureMove(buf))
+    else:
+      raiseAssert "Expected SymbolDef after toplevel declaration"
+  result = addr c.defs[s]
 
 proc registerLocal*(c: var MainModule; s: SymId; typ: Cursor) =
   c.current.locals[s] = typ
