@@ -235,10 +235,8 @@ include gentypes
 include selectany
 
 type
-  ProcFlag = enum
-    isSelectAny, isExtern, isInline, isNoInline, isNoDecl
   PragmaInfo = object
-    flags: set[ProcFlag]
+    flags: set[NifcPragma]
     extern, attr: StrId
     callConv: CallConv
 
@@ -249,7 +247,8 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
   elif n.substructureKind == PragmasU:
     inc n
     while n.kind != ParRi:
-      case n.pragmaKind
+      let pk = n.pragmaKind
+      case pk
       of NoPragma, AlignP, BitsP, VectorP, StaticP, PackedP:
         if n.callConvKind != NoCallConv:
           result.callConv = n.callConvKind
@@ -257,14 +256,14 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         else:
           error c.m, "invalid proc pragma: ", n
       of NodeclP:
-        result.flags.incl isNoDecl
+        result.flags.incl NodeclP
         skip n
       of ImportcppP, ImportcP, ExportcP:
         inc n
         if n.kind == StringLit:
           result.extern = n.litId
           inc n
-        result.flags.incl isExtern
+        result.flags.incl pk
         skipParRi n
       of HeaderP:
         inc n
@@ -272,21 +271,21 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
           error c.m, "expected string literal in header pragma but got: ", n
         else:
           inclHeader(c, n.litId)
-          result.flags.incl isNoDecl
+          result.flags.incl pk
           inc n
         skipParRi n
       of SelectanyP:
-        result.flags.incl isSelectAny
+        result.flags.incl pk
         skip n
       of WasP:
         genWasPragma c, n
       of ErrsP, RaisesP:
         skip n
       of InlineP:
-        result.flags.incl isInline
+        result.flags.incl pk
         skip n
       of NoinlineP:
-        result.flags.incl isNoInline
+        result.flags.incl pk
         skip n
       of AttrP:
         inc n
@@ -303,7 +302,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
 proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo): string =
   if n.kind == SymbolDef:
     let lit = n.symId
-    if isExtern in prag.flags:
+    if {ImportcP, ImportcppP, ExportcP} * prag.flags != {}:
       if prag.extern != StrId(0):
         result = pool.strings[prag.extern]
       else:
@@ -370,7 +369,16 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[NifcPragma] =
         skipParRi n
       of WasP:
         genWasPragma c, n
-      of StaticP, ImportcP, ImportcppP, ExportcP, HeaderP, NodeclP:
+      of HeaderP:
+        inc n
+        if n.kind != StringLit:
+          error c.m, "expected string literal in header pragma but got: ", n
+        else:
+          inclHeader(c, n.litId)
+          result.incl pk
+          skip n
+        skipParRi n
+      of StaticP, ImportcP, ImportcppP, ExportcP, NodeclP:
         result.incl pk
         skip n
       else:
@@ -538,15 +546,15 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   let signatureBegin = c.code.len
   var prc = takeProcDecl(n)
 
-  if isExtern:
-    c.add ExternKeyword
-
   let prag = parseProcPragmas(c, prc.pragmas)
-  if isInline in prag.flags:
+  if InlineP in prag.flags:
     c.add StaticKeyword
     c.add "inline "
-  elif isNoInline in prag.flags:
-    c.add "N_NOINLINE "
+  else:
+    if isExtern:
+      c.add ExternKeyword
+    if NoinlineP in prag.flags:
+      c.add "N_NOINLINE "
 
   let name: string
   if prag.callConv != NoCallConv:
@@ -586,17 +594,15 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     c.add "void"
   c.add ParRi
 
-  if (isNoDecl notin prag.flags) and (isExtern or c.requestedSyms.contains(prc.name.symId)):
-    # symbol was used before its declaration has been processed so
-    # add a signature:
+  if {NodeclP, HeaderP} * prag.flags != {}:
+    c.code.setLen signatureBegin
+  elif ({ImportcP, ImportcppP} * prag.flags != {} and InlineP notin prag.flags) or
+      c.requestedSyms.contains(prc.name.symId):
     for i in signatureBegin ..< c.code.len:
       c.protos.add c.code[i]
     c.protos.add Token Semicolon
-
-  if isExtern or isNoDecl in prag.flags:
-    c.code.setLen signatureBegin
   else:
-    if isSelectAny in prag.flags:
+    if SelectanyP in prag.flags:
       genRoutineGuardBegin(c, name)
     c.add CurlyLe
     let beforeBody = c.code.len
@@ -604,7 +610,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     if c.currentProc.needsOverflowFlag:
       addOverflowDecl c, c.code, beforeBody
     c.add CurlyRi
-    if isSelectAny in prag.flags:
+    if SelectAnyP in prag.flags:
       genRoutineGuardEnd(c)
   c.m.closeScope()
   c.inToplevel = true
@@ -724,14 +730,17 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   var c = initGeneratedCode(m, flags, s.bits)
   c.m.openScope()
 
+  var n = beginRead(c.m.src)
+  traverseCode c, n
+
+  let realCode = move c.code
+  # now that we have seen the full code, we also know all the involved types:
   var co = TypeOrder()
   traverseTypes(c.m, co)
 
   generateTypes(c, co)
   let typeDecls = move c.code
 
-  var n = beginRead(c.m.src)
-  traverseCode c, n
   var f = CppFile(f: open(outp, fmWrite))
   f.write "#define NIM_INTBITS " & $s.bits & "\n"
   f.write Prelude
@@ -745,7 +754,7 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   # so that v-tables can be generated protos must be written before data:
   writeTokenSeq f, c.protos, c
   writeTokenSeq f, c.data, c
-  writeTokenSeq f, c.code, c
+  writeTokenSeq f, realCode, c
 
   if gfProducesMainProc in c.flags:
     f.write "int cmdCount;\n"

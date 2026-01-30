@@ -37,7 +37,6 @@ type
     exceptLabels*: seq[SymId] # how to translate `except`
     instId*: int # per forStmt
     tmpId*: int # per proc
-    inImpSection*: int
     resultSym*: SymId
 
     localDeclCounters*: int

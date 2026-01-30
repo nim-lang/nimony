@@ -112,6 +112,7 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
       var n = pos
       case sk
       of TypeY:
+        c.types.add pos
         extern = extractExtern(n, 1)
       of ProcY:
         extern = extractExtern(n, 3)

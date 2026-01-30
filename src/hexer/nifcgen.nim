@@ -958,10 +958,6 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   swap dst, c.dest
   if prag.flags * {MagicP, DynlibP} != {} or isGeneric:
     discard "do not add to c.dest"
-  elif prag.flags * {ImportcP, ImportcppP} != {} and c.inImpSection == 0:
-    c.dest.add tagToken("imp", n.info)
-    c.dest.add dst
-    c.dest.addParRi()
   else:
     c.dest.add dst
   if prag.header != StrId(0):
@@ -1834,48 +1830,8 @@ proc transformInlineRoutines(c: var EContext; n: var Cursor) =
   swap c.dest, swapped
 
   trStmt c, d, TraverseSig
-  let oldInImpSection = c.inImpSection
-  c.inImpSection = 0
   while d.kind != ParRi:
     trStmt c, d, TraverseAll
-  c.inImpSection = oldInImpSection
-
-proc importSymbol(c: var EContext; s: SymId) =
-  let res = tryLoadSym(s)
-  if res.status == LacksNothing:
-    var n = res.decl
-    let kind = n.symKind
-    case kind
-    of TypeY:
-      trTypeDecl c, n, TraverseSig
-    of EfldY:
-      # import full enum type:
-      let typ = asLocal(n).typ
-      assert typ.kind == Symbol
-      c.demand typ.symId
-    else:
-      let isR = isRoutine(kind)
-      if isR or isLocal(kind):
-        var pragmas = if isR:
-                        asRoutine(n).pragmas
-                      else:
-                        asLocal(n).pragmas
-        let prag = parsePragmas(c, pragmas)
-        if isR:
-          if {InlineP, DynlibP} * prag.flags != {}:
-            let newName = makeLocalSymId(c, s)
-            c.dynlibSyms[s] = newName
-            transformInlineRoutines(c, n)
-            return
-
-      # XXX This is a stupid hack to avoid producing (imp (imp ...))
-      inc c.inImpSection
-      c.dest.add tagToken("imp", n.info)
-      trStmt c, n, TraverseSig
-      c.dest.addParRi()
-      dec c.inImpSection
-  else:
-    error c, "could not find symbol: " & pool.syms[s]
 
 proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string): TokenBuf =
   # Prepass: patch symbols that need mangling in c.dest
@@ -1980,23 +1936,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     error c, "expected (stmts) but got: ", n
   swap c.dest, toplevels
 
-
-  # fix point expansion:
-  while true:
-    let batch = c.requires.move
-    if batch.len == 0: break
-    for imp in batch:
-      if not c.declared.contains(imp):
-        importSymbol(c, imp)
-
   initDynlib(c, rootInfo)
-
-  if c.dynlibs.len > 0:
-    let loadLibrary = pool.syms.getOrIncl("nimLoadLibrary.0." & SystemModuleSuffix)
-    let getProcAddr = pool.syms.getOrIncl("nimGetProcAddr.0." & SystemModuleSuffix)
-    if not c.declared.contains(loadLibrary):
-      importSymbol(c, loadLibrary)
-      importSymbol(c, getProcAddr)
 
   c.dest.add toplevels
   c.dest.add c.pending
