@@ -601,6 +601,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     for i in signatureBegin ..< c.code.len:
       c.protos.add c.code[i]
     c.protos.add Token Semicolon
+    c.code.setLen signatureBegin  # Remove signature from code since it's now in protos
   else:
     if SelectanyP in prag.flags:
       genRoutineGuardBegin(c, name)
