@@ -464,4 +464,5 @@ proc readEmbeddedIndex*(s: var Stream): Table[string, NifIndexEntry] =
   s.r.jumpTo(contentPos)  # Restore position
 
 when isMainModule:
+  import std / [os]
   createIndex paramStr(1), false, NoLineInfo
