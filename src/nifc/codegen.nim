@@ -596,13 +596,14 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
 
   if {NodeclP, HeaderP} * prag.flags != {}:
     c.code.setLen signatureBegin
-  elif InlineP notin prag.flags and ({ImportcP, ImportcppP} * prag.flags != {} or
-      c.requestedSyms.contains(prc.name.symId)):
+  elif InlineP notin prag.flags and (isExtern or {ImportcP, ImportcppP} * prag.flags != {}):
+    # External/imported function without body - just prototype
     for i in signatureBegin ..< c.code.len:
       c.protos.add c.code[i]
     c.protos.add Token Semicolon
     c.code.setLen signatureBegin  # Remove signature from code since it's now in protos
   else:
+    # Local function with body - generate prototype if requested by other modules
     if c.requestedSyms.contains(prc.name.symId):
       for i in signatureBegin ..< c.code.len:
         c.protos.add c.code[i]
