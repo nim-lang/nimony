@@ -29,6 +29,18 @@ type
 proc traverseObjectBody(m: var MainModule; o: var TypeOrder; t: Cursor)
 proc traverseProctypeBody(m: var MainModule; o: var TypeOrder; t: Cursor)
 
+proc usesHeader(pragmas: Cursor): bool =
+  if pragmas.kind == ParLe:
+    var p = pragmas.firstSon
+    while p.kind != ParRi:
+      case p.pragmaKind
+      of HeaderP, NodeclP:
+        return true
+      else:
+        discard
+      skip p
+  return false
+
 proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cursor;
                           viaPointer: var bool) =
   var ch = child
@@ -58,8 +70,8 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
       o.forwardedDecls.add parent, TypedefStruct
     else:
       if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
-         var viaPointer = false
-         recordDependencyImpl m, o, ch, ch.firstSon, viaPointer
+        var viaPointer = false
+        recordDependencyImpl m, o, ch, ch.firstSon, viaPointer
       o.ordered.add tracebackTypeC(ch), TypedefStruct
   of EnumT:
     # enums do not depend on anything so always safe to generate them
@@ -82,6 +94,13 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
         var n = def.pos
         let decl = asTypeDecl(n)
         let alreadyFullyProcessed = decl.name.symId in o.lookedAtBodies
+        if not alreadyFullyProcessed and usesHeader(decl.pragmas):
+          # we need to fake a forward decl here so that
+          #   SysThread {.importc: "pthread_t",
+          #        header: "<sys/types.h>" .} = distinct culong
+          # Will trigger the header include!
+          o.forwardedDecls.add def.pos, TypedefKeyword
+
         if viaPointer:
           # For `viaPointer` we must traverse it (possibly again), in a shallow manner or
           # else we might miss crucial forward declarations. This case is triggered
