@@ -19,13 +19,8 @@ type
   EContext* = object
     dir*, main*, ext*: string
     dest*: TokenBuf
-    declared*: HashSet[SymId]
-    requires*: seq[SymId]
     nestedIn*: seq[(StmtKind, SymId)]
-    headers*: HashSet[StrId]
     dynlibs*: Table[StrId, seq[(SymId, StrId, SymId)]]
-    dynlibSyms*: Table[SymId, SymId]
-    currentOwner*: SymId
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]
     pending*: TokenBuf

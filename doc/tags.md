@@ -138,9 +138,8 @@
 | `(align X)` | NifcPragma, NimonyPragma | |
 | `(bits X)`| NifcPragma, NimonyPragma | |
 | `(vector)` | NifcPragma | |
-| `(imp S)` | NifcStmt | import declaration |
 | `(nodecl)` | NifcPragma, NimonyPragma | `nodecl` annotation |
-| `(incl X X)`; `(incl STR)` | NifcStmt, NimonyStmt | `#include` statement or `incl` set operation |
+| `(incl X X)` | NimonyStmt | `incl` set operation |
 | `(excl X X)` | NimonyStmt | `excl` set operation |
 | `(include X+)` | NimonyStmt, NiflerKind | `include` statement |
 | `(import X+)` | NimonyStmt, NiflerKind | `import` statement |

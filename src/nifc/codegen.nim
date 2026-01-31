@@ -623,33 +623,6 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   c.inToplevel = true
   c.currentProc = oldProc
 
-proc genInclude(c: var GeneratedCode; n: var Cursor) =
-  inc n
-  if n.kind == StringLit:
-    inclHeader c, n.litId
-    inc n
-  else:
-    error c.m, "incl tag expected a string literal but got: ", n
-  skipParRi n
-
-proc genImp(c: var GeneratedCode; n: var Cursor) =
-  inc n
-  case n.stmtKind
-  of ProcS: genProcDecl c, n, true
-  of VarS:
-    # XXX Disallow this: You can only import global variables!
-    genVar c, n, IsGlobal, true
-  of GvarS:
-    genVar c, n, IsGlobal, true
-  of TvarS:
-    genVar c, n, IsThreadlocal, true
-  of ConstS:
-    genVar c, n, IsConst, true
-  else:
-    if n.kind != ParRi:
-      error c.m, "expected declaration for `imp` but got: ", n
-  skipParRi n
-
 proc genImportedSyms(c: var GeneratedCode) =
   # needs a good old fixpoint iteration as we expand the graph of imported symbols.
   while true:
@@ -689,11 +662,6 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   # TopLevelConstruct ::= ExternDecl | ProcDecl | VarDecl | ConstDecl |
   #                       TypeDecl | Include | EmitStmt
   case n.stmtKind
-  of ImpS:
-    # ignore `(imp)` statement, cross-module declarations are handled by
-    # the logic in nifmodules.nim!
-    skip n
-  of InclS: genInclude c, n
   of ProcS: genProcDecl c, n, false
   of VarS, GvarS, TvarS: genStmt c, n
   of ConstS: genVar c, n, IsConst

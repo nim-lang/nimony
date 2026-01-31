@@ -208,9 +208,6 @@ proc detectToplevelDecls(m: var MainModule) =
         processToplevelDecl(m, n, ProcY, 3)
       of VarS, ConstS, GvarS, TvarS:
         processToplevelDecl(m, n, n.symKind, 1)
-      of ImpS:
-        # ignore `(imp)` statement, it is a legacy:
-        skip n
       else:
         inc n
         inc nested

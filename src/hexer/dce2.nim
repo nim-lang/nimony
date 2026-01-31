@@ -98,20 +98,6 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
           tr dest, n, alive, resolved
         dest.takeToken n
 
-    of ImpS:
-      dest.takeToken n # Imp
-      if n.stmtKind in {ProcS, VarS, ConstS, GvarS, TvarS, TypeS}:
-        # prevent the logic for ProcS, etc from being applied to `imp` declarations:
-        dest.takeToken n
-        while n.kind != ParRi:
-          tr dest, n, alive, resolved
-        dest.takeToken n
-      else:
-        while n.kind != ParRi:
-          tr dest, n, alive, resolved
-        dest.takeToken n
-      assert n.kind == ParRi
-      dest.takeToken n
     of ProcS, VarS, ConstS, GvarS, TvarS:
       let head = n.load()
       inc n
