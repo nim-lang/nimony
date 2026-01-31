@@ -966,10 +966,7 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   if prag.dynlib != StrId(0):
     let typeSym = buildProcType(c, thisProc)
 
-    c.dynlibs.mgetOrPut(prag.dynlib, @[]).add (prag.extern, typeSym)
-
-    var dynlibName = "Dl." & pool.strings[prag.extern] & "." & c.main
-    c.dynlibSyms[newSym] = pool.syms.getOrIncl(dynlibName)
+    c.dynlibs.mgetOrPut(prag.dynlib, @[]).add (newSym, prag.extern, typeSym)
 
   discard setOwner(c, oldOwner)
   c.typeCache.closeScope()
@@ -1883,9 +1880,8 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
     c.dest.addParRi()
 
     # nimGetProcAddr
-    for (val, typeSym) in vals:
+    for (varName, val, typeSym) in vals:
       let procName = pool.strings[val]
-      let varName = pool.syms.getOrIncl "Dl." & pool.strings[val] & "." & c.main
       c.dest.add tagToken("gvar", rootInfo)
       c.dest.add symdefToken(varName, rootInfo)
       c.offer varName

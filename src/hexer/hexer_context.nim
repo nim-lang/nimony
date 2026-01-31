@@ -23,7 +23,7 @@ type
     requires*: seq[SymId]
     nestedIn*: seq[(StmtKind, SymId)]
     headers*: HashSet[StrId]
-    dynlibs*: Table[StrId, seq[(StrId, SymId)]]
+    dynlibs*: Table[StrId, seq[(SymId, StrId, SymId)]]
     dynlibSyms*: Table[SymId, SymId]
     currentOwner*: SymId
     strLits*: Table[string, SymId]
