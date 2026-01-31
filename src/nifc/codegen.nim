@@ -596,13 +596,18 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
 
   if {NodeclP, HeaderP} * prag.flags != {}:
     c.code.setLen signatureBegin
-  elif ({ImportcP, ImportcppP} * prag.flags != {} and InlineP notin prag.flags) or
-      c.requestedSyms.contains(prc.name.symId):
+  elif InlineP notin prag.flags and ({ImportcP, ImportcppP} * prag.flags != {} or
+      c.requestedSyms.contains(prc.name.symId)):
     for i in signatureBegin ..< c.code.len:
       c.protos.add c.code[i]
     c.protos.add Token Semicolon
     c.code.setLen signatureBegin  # Remove signature from code since it's now in protos
   else:
+    if c.requestedSyms.contains(prc.name.symId):
+      for i in signatureBegin ..< c.code.len:
+        c.protos.add c.code[i]
+      c.protos.add Token Semicolon
+
     if SelectanyP in prag.flags:
       genRoutineGuardBegin(c, name)
     c.add CurlyLe
