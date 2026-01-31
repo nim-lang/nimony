@@ -255,7 +255,7 @@ proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) 
         bits = pool.integers[n.intId]
         skip n
         skipParRi n
-      of ExportcP, ImportcP, ImportcppP:
+      of ExportcP, ImportcP, ImportcppP, NodeclP:
         skip n
       else:
         error c.m, "invalid field pragma: ", n
@@ -336,6 +336,8 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isC
         else:
           error c.m, "importc/importcpp type requires a string literal but got: ", n
         skipParRi n
+      of NodeclP:
+        skip n
       else:
         error c.m, "expected number qualifier but got: ", n
   skipParRi n
@@ -581,7 +583,7 @@ proc parseTypePragmas(c: var GeneratedCode; n: Cursor): set[NifcPragma] =
     while n.kind != ParRi:
       let pk = n.pragmaKind
       case pk
-      of PackedP, ImportcP, ImportcppP:
+      of PackedP, ImportcP, ImportcppP, NodeclP:
         result.incl pk
         skip n
       of HeaderP:
