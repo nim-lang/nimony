@@ -5506,7 +5506,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf, c.typeHooks)
+    dest = injectDerefs(finalBuf, c.typeHooks, c.thisModuleSuffix, c.g.config.bits)
   else:
     quit 1
 

@@ -956,55 +956,9 @@ proc trDeref(c: var Context; n: var Cursor) =
     c.dest.addIntLit(0, info) # inheritance
   takeParRi c.dest, n
 
-proc trTypeDecl(c: var Context; n: var Cursor) =
-  ## For non-generic nominal types (objects and distincts), request all hooks
-  ## and add them as pragmas so they are generated in the module where the type is declared.
-  let typ = n
-  let info = n.info
-  c.dest.takeToken n # (type
-  takeTree c.dest, n # name
-  takeTree c.dest, n # exported
-  if n.substructureKind == TypevarsU:
-    # isGeneric, nothing to do:
-    while n.kind != ParRi:
-      takeTree c.dest, n
-  else:
-    takeTree c.dest, n # typevars
-    let pragmas = n
-    skip n
-    if n.typeKind notin {ObjectT, DistinctT, RefT}:
-      n = pragmas
-      takeTree c.dest, n
-    else:
-      n = pragmas
-      if pragmas.kind == DotToken:
-        c.dest.addParLe PragmasU, info
-        inc n
-      else:
-        c.dest.takeToken n
-        # keep the existing pragmas:
-        while n.kind != ParRi:
-          takeTree c.dest, n
-        skipParRi n
-
-      # forge hooks:
-      for op in low(AttachedOp)..high(AttachedOp):
-        let hookProc = getHook(c.lifter[], op, typ, info)
-        if hookProc != NoSymId:
-          c.dest.addParLe hookToTag(op), NoLineInfo
-          c.dest.addSymUse hookProc, NoLineInfo
-          c.dest.addParRi()
-
-      c.dest.addParRi() # close pragmas section
-    # copy the body of the type:
-    takeTree c.dest, n
-  takeParRi c.dest, n
-
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
     trLocation c, n, e
-  elif n.stmtKind == TypeS:
-    trTypeDecl c, n
   elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit, FloatLit, DotToken} or isDeclarative(n):
     takeTree c.dest, n
   else:

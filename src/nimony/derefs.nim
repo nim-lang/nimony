@@ -32,6 +32,7 @@ import std / [assertions, tables]
 include nifprelude
 
 import ".." / models / tags
+import ".." / hexer / lifter
 import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops
 
 type
@@ -56,6 +57,7 @@ type
     r: CurrentRoutine
     typeCache: TypeCache
     hooks: Table[SymId, HooksPerType]
+    lifter: ref LiftingCtx
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
@@ -727,17 +729,34 @@ proc addHookDecls(dest: var TokenBuf; hooks: HooksPerType) =
       dest.addParRi()
 
 proc trType(c: var Context; n: var Cursor) =
-  takeToken c.dest, n
+  ## Processes type declarations, adding hook pragmas for nominal types.
+  ## For types with custom hooks (from sem), use those.
+  ## For non-generic nominal types (objects/distincts), generate hooks via lifter.
+  let typ = n
+  let info = n.info
+  takeToken c.dest, n # (type
   var s = SymId(0)
   if n.kind == SymbolDef:
     s = n.symId
   c.dest.takeTree n # the symbol definition
   c.dest.takeTree n # exported
+  let isGeneric = n.substructureKind == TypevarsU
   c.dest.takeTree n # typevars
+
+  # Check if this is a non-generic nominal type that needs hooks generated
+  var needsForgedHooks = false
+  if not isGeneric:
+    # Check if it's a nominal type (object, distinct, or ref to object)
+    var checkBody = n
+    skip checkBody # skip pragmas
+    let bk = checkBody.typeKind
+    needsForgedHooks = bk in {ObjectT, DistinctT, RefT}
+
   # pragmas:
   if s != SymId(0) and c.hooks.hasKey(s):
+    # Type has custom hooks from semantic analysis
     if n.kind == DotToken:
-      c.dest.addParLe PragmasU, n.info
+      c.dest.addParLe PragmasU, info
       inc n
       addHookDecls c.dest, c.hooks[s]
       c.dest.addParRi()
@@ -748,6 +767,24 @@ proc trType(c: var Context; n: var Cursor) =
         c.dest.takeTree n # existing individual pragmas
       c.dest.add n
       inc n
+  elif needsForgedHooks:
+    # Non-generic nominal type - generate hooks via lifter
+    if n.kind == DotToken:
+      c.dest.addParLe PragmasU, info
+      inc n
+    else:
+      c.dest.takeToken n # existing pragma tag
+      while n.kind != ParRi:
+        c.dest.takeTree n # existing individual pragmas
+      skipParRi n
+    # Generate hooks via lifter:
+    for op in low(AttachedOp)..high(AttachedOp):
+      let hookProc = getHook(c.lifter[], op, typ, info)
+      if hookProc != SymId(0):
+        c.dest.addParLe hookToTag(op), NoLineInfo
+        c.dest.addSymUse hookProc, NoLineInfo
+        c.dest.addParRi()
+    c.dest.addParRi() # close pragmas
   else:
     c.dest.takeTree n # pragmas
   c.dest.takeTree n # body
@@ -855,10 +892,12 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         else:
           trSons c, n, WantT
 
-proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType]): TokenBuf =
+proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
+                   thisModuleSuffix: string; bits: int): TokenBuf =
   var c = Context(typeCache: createTypeCache(),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
-    hooks: ensureMove(hooks))
+    hooks: ensureMove(hooks),
+    lifter: createLiftingCtx(thisModuleSuffix, bits))
   c.typeCache.openScope()
   var n2 = n
   var n3 = n
@@ -867,6 +906,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType]): TokenBuf 
     # clean up dots that sem might have introduced for moving inner generic instances:
     if n2.kind == DotToken: inc n2
     else: tr(c, n2, WantT)
+  genMissingHooks c.lifter[]
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
   # Must close the `(stmts)` here **after** `checkForDangerousLocations`
