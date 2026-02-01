@@ -678,10 +678,7 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
     while n.kind != ParRi: genToplevel c, n
     skipParRi n
   else:
-    if n.pragmaKind == NodeclP:
-      genNodecl c, n
-    else:
-      error c.m, "expected top level construct but got: ", n
+    error c.m, "expected top level construct but got: ", n
 
 proc traverseCode(c: var GeneratedCode; n: var Cursor) =
   if n.stmtKind == StmtsS:
