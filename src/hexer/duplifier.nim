@@ -968,16 +968,13 @@ proc trTypeDecl(c: var Context; n: var Cursor) =
     # isGeneric, nothing to do:
     while n.kind != ParRi:
       takeTree c.dest, n
-    c.dest.takeToken n # ParRi
   else:
     takeTree c.dest, n # typevars
     let pragmas = n
     skip n
     if n.typeKind notin {ObjectT, DistinctT, RefT}:
       n = pragmas
-      while n.kind != ParRi:
-        takeTree c.dest, n
-      c.dest.takeToken n # ParRi
+      takeTree c.dest, n
     else:
       n = pragmas
       if pragmas.kind == DotToken:
@@ -1001,7 +998,7 @@ proc trTypeDecl(c: var Context; n: var Cursor) =
       c.dest.addParRi() # close pragmas section
     # copy the body of the type:
     takeTree c.dest, n
-    takeParRi c.dest, n
+  takeParRi c.dest, n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
