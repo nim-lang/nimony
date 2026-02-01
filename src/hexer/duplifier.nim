@@ -959,9 +959,9 @@ proc trDeref(c: var Context; n: var Cursor) =
 proc trTypeDecl(c: var Context; n: var Cursor) =
   ## For non-generic nominal types (objects and distincts), request all hooks
   ## and add them as pragmas so they are generated in the module where the type is declared.
+  let typ = n
   let info = n.info
   c.dest.takeToken n # (type
-  let s = n.symId
   takeTree c.dest, n # name
   takeTree c.dest, n # exported
   if n.substructureKind == TypevarsU:
@@ -973,7 +973,7 @@ proc trTypeDecl(c: var Context; n: var Cursor) =
     takeTree c.dest, n # typevars
     let pragmas = n
     skip n
-    if n.typeKind notin {ObjectT, DistinctT}:
+    if n.typeKind notin {ObjectT, DistinctT, RefT}:
       n = pragmas
       while n.kind != ParRi:
         takeTree c.dest, n
@@ -982,11 +982,14 @@ proc trTypeDecl(c: var Context; n: var Cursor) =
       n = pragmas
       if pragmas.kind == DotToken:
         c.dest.addParLe PragmasU, info
-      inc n # pragma dot or `(pragmas ...` tag
+        inc n
+      else:
+        inc n
+        # keep the existing pragmas:
+        while n.kind != ParRi:
+          takeTree c.dest, n
+        skipParRi n
 
-      var typeBuf = createTokenBuf(1)
-      typeBuf.add symToken(s, NoLineInfo)
-      var typ = beginRead(typeBuf)
       # forge hooks:
       for op in low(AttachedOp)..high(AttachedOp):
         let hookProc = getHook(c.lifter[], op, typ, info)
@@ -995,13 +998,7 @@ proc trTypeDecl(c: var Context; n: var Cursor) =
           c.dest.addSymUse hookProc, NoLineInfo
           c.dest.addParRi()
 
-      if pragmas.kind == DotToken:
-        c.dest.addParRi()
-      else:
-        # keep the existing pragmas:
-        while n.kind != ParRi:
-          takeTree c.dest, n
-        c.dest.takeToken n # ParRi
+      c.dest.addParRi() # close pragmas section
       # copy the rest of the type:
       takeTree c.dest, n
       takeParRi c.dest, n

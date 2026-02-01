@@ -150,9 +150,14 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
         return false
       skip tup
     result = true
-  of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
+  of NoType:
+    if typ.stmtKind == TypeS:
+      result = isTrivialTypeDecl(c, typ)
+    else:
+      bug "bug in isTrival computation"
+  of ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
      TypeKindT, UntypedT, TypedT, ItertypeT:
-    bug "bug here"
+    bug "bug in isTrival computation"
 
 # Phase 2: Do the lifting
 
