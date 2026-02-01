@@ -956,9 +956,79 @@ proc trDeref(c: var Context; n: var Cursor) =
     c.dest.addIntLit(0, info) # inheritance
   takeParRi c.dest, n
 
+proc addHookDecls(dest: var TokenBuf; hooks: HooksPerType) =
+  for op in low(AttachedOp)..high(AttachedOp):
+    let s = hooks.a[op]
+    if s != SymId(0):
+      dest.addParLe hookToTag(op), NoLineInfo
+      dest.addSymUse s, NoLineInfo
+      dest.addParRi()
+
+proc trTypeDecl(c: var Context; n: var Cursor) =
+  ## For non-generic nominal types (objects and distincts), request all hooks
+  ## and add them as pragmas so they are generated in the module where the type is declared.
+  let decl = asTypeDecl(n)
+  let info = n.info
+
+  # Skip generic types (they have type parameters)
+  if decl.typevars.kind != DotToken:
+    takeTree c.dest, n
+    return
+
+  let bodyKind = decl.body.typeKind
+  if bodyKind notin {ObjectT, DistinctT}:
+    takeTree c.dest, n
+    return
+
+  # Request all hooks for this type
+  var typeBuf = createTokenBuf(1)
+  typeBuf.add symToken(decl.name.symId, NoLineInfo)
+  var typeCursor = beginRead(typeBuf)
+
+  var hooks = default HooksPerType
+  for op in low(AttachedOp)..high(AttachedOp):
+    hooks.a[op] = getHook(c.lifter[], op, typeCursor, NoLineInfo)
+
+  # Now copy the type declaration with hooks added to pragmas
+  c.dest.add n # (type
+  inc n
+  copyTree c.dest, decl.name
+  copyTree c.dest, decl.exported
+  copyTree c.dest, decl.typevars
+
+  # Handle pragmas - add hook declarations
+  var pragmas = decl.pragmas
+  if pragmas.kind == DotToken:
+    c.dest.addParLe PragmasU, info
+    addHookDecls c.dest, hooks
+    c.dest.addParRi()
+    skip n # skip name
+    skip n # skip exported
+    skip n # skip typevars
+    inc n  # skip DotToken for pragmas
+  else:
+    skip n # skip name
+    skip n # skip exported
+    skip n # skip typevars
+    c.dest.add n # (pragmas
+    inc n
+    addHookDecls c.dest, hooks
+    while n.kind != ParRi:
+      copyTree c.dest, n
+      skip n
+    c.dest.add n # )
+    inc n
+
+  copyTree c.dest, decl.body
+  skip n # skip body
+  c.dest.add n # )
+  inc n
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
     trLocation c, n, e
+  elif n.stmtKind == TypeS:
+    trTypeDecl c, n
   elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit, FloatLit, DotToken} or isDeclarative(n):
     takeTree c.dest, n
   else:
