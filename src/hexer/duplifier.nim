@@ -999,9 +999,9 @@ proc trTypeDecl(c: var Context; n: var Cursor) =
           c.dest.addParRi()
 
       c.dest.addParRi() # close pragmas section
-      # copy the rest of the type:
-      takeTree c.dest, n
-      takeParRi c.dest, n
+    # copy the body of the type:
+    takeTree c.dest, n
+    takeParRi c.dest, n
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
