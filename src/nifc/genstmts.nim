@@ -440,7 +440,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     c.add Semicolon
     if onErrAction.kind != DotToken:
       genOnError(c, onErrAction)
-  of ProcS, TypeS, ImpS, InclS:
+  of ProcS, TypeS:
     error c.m, "expected statement but got: ", n
   of KeepovfS:
     genKeepOverflow c, n

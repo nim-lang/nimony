@@ -157,7 +157,7 @@ type
     YldS = (ord(YldTagId), "yld")  ## yield statement
     StmtsS = (ord(StmtsTagId), "stmts")  ## list of statements
     PragmasS = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
-    InclS = (ord(InclTagId), "incl")  ## `#include` statement or `incl` set operation
+    InclS = (ord(InclTagId), "incl")  ## `incl` set operation
     ExclS = (ord(ExclTagId), "excl")  ## `excl` set operation
     IncludeS = (ord(IncludeTagId), "include")  ## `include` statement
     ImportS = (ord(ImportTagId), "import")  ## `import` statement

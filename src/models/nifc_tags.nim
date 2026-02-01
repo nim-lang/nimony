@@ -74,15 +74,13 @@ type
     JmpS = (ord(JmpTagId), "jmp")  ## jump/goto instruction
     RetS = (ord(RetTagId), "ret")  ## `return` instruction
     StmtsS = (ord(StmtsTagId), "stmts")  ## list of statements
-    ImpS = (ord(ImpTagId), "imp")  ## import declaration
-    InclS = (ord(InclTagId), "incl")  ## `#include` statement or `incl` set operation
     DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement
     TryS = (ord(TryTagId), "try")  ## `try` statement
     RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
     OnerrS = (ord(OnerrTagId), "onerr")  ## error handling statement
 
 proc rawTagIsNifcStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, ImpTagId, InclTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId}
 
 type
   NifcType* = enum

@@ -29,6 +29,18 @@ type
 proc traverseObjectBody(m: var MainModule; o: var TypeOrder; t: Cursor)
 proc traverseProctypeBody(m: var MainModule; o: var TypeOrder; t: Cursor)
 
+proc usesHeader(pragmas: Cursor): bool =
+  if pragmas.kind == ParLe:
+    var p = pragmas.firstSon
+    while p.kind != ParRi:
+      case p.pragmaKind
+      of HeaderP, NodeclP:
+        return true
+      else:
+        discard
+      skip p
+  return false
+
 proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cursor;
                           viaPointer: var bool) =
   var ch = child
@@ -58,8 +70,8 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
       o.forwardedDecls.add parent, TypedefStruct
     else:
       if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
-         var viaPointer = false
-         recordDependencyImpl m, o, ch, ch.firstSon, viaPointer
+        var viaPointer = false
+        recordDependencyImpl m, o, ch, ch.firstSon, viaPointer
       o.ordered.add tracebackTypeC(ch), TypedefStruct
   of EnumT:
     # enums do not depend on anything so always safe to generate them
@@ -81,10 +93,23 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
       else:
         var n = def.pos
         let decl = asTypeDecl(n)
-        if not containsOrIncl(o.lookedAtBodies, decl.name.symId) or viaPointer:
-          # For `viaPointer` we must traverse it again, in a shallow manner or
+        let alreadyFullyProcessed = decl.name.symId in o.lookedAtBodies
+        if not alreadyFullyProcessed and usesHeader(decl.pragmas):
+          # we need to fake a forward decl here so that
+          #   SysThread {.importc: "pthread_t",
+          #        header: "<sys/types.h>" .} = distinct culong
+          # Will trigger the header include!
+          o.forwardedDecls.add def.pos, TypedefKeyword
+
+        if viaPointer:
+          # For `viaPointer` we must traverse it (possibly again), in a shallow manner or
           # else we might miss crucial forward declarations. This case is triggered
           # by the `Continuation` type.
+          recordDependencyImpl m, o, n, decl.body, viaPointer
+        elif not alreadyFullyProcessed:
+          # First time seeing this type for full processing (not via pointer).
+          # Mark it as fully processed before recursing to handle cycles.
+          o.lookedAtBodies.incl decl.name.symId
           recordDependencyImpl m, o, n, decl.body, viaPointer
     else:
       discard "uninteresting type as we only focus on the required struct declarations"
@@ -144,7 +169,10 @@ proc traverseProctypeBody(m: var MainModule; o: var TypeOrder; t: Cursor) =
   recordDependencyImpl m, o, t, procType.returnType, viaPointer
 
 proc traverseTypes(m: var MainModule; o: var TypeOrder) =
-  for n in m.types:
+  var i = 0
+  # m.types can actually grow while we are traversing it, so we need to use a while loop:
+  while i < m.types.len:
+    let n = m.types[i]
     let decl = asTypeDecl(n)
     let t = decl.body
     case t.typeKind
@@ -163,6 +191,7 @@ proc traverseTypes(m: var MainModule; o: var TypeOrder) =
     of EnumT:
       o.ordered.add n, TypedefKeyword
     else: discard
+    inc i
 
 proc integralBits(t: Cursor): string {.inline.} =
   let res = pool.integers[t.intId]
@@ -226,7 +255,7 @@ proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) 
         bits = pool.integers[n.intId]
         skip n
         skipParRi n
-      of ExportcP, ImportcP, ImportcppP:
+      of ExportcP, ImportcP, ImportcppP, NodeclP:
         skip n
       else:
         error c.m, "invalid field pragma: ", n
@@ -307,6 +336,8 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isC
         else:
           error c.m, "importc/importcpp type requires a string literal but got: ", n
         skipParRi n
+      of NodeclP:
+        skip n
       else:
         error c.m, "expected number qualifier but got: ", n
   skipParRi n
@@ -552,10 +583,18 @@ proc parseTypePragmas(c: var GeneratedCode; n: Cursor): set[NifcPragma] =
     while n.kind != ParRi:
       let pk = n.pragmaKind
       case pk
-      of PackedP, ImportcP, ImportcppP:
+      of PackedP, ImportcP, ImportcppP, NodeclP:
         result.incl pk
         skip n
-      of HeaderP, ExportcP:
+      of HeaderP:
+        inc n
+        if n.kind != StringLit:
+          error c.m, "expected string literal in header pragma but got: ", n
+        else:
+          inclHeader(c, n.litId)
+          inc n
+        skipParRi n
+      of ExportcP:
         skip n
       else:
         error c.m, "got unexpected type pragma: ", n
@@ -574,6 +613,9 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
       c.add Space
       c.add s
       c.add Semicolon
+    else:
+      # do not miss a `.header` pragma:
+      discard parseTypePragmas(c, decl.pragmas)
 
   for (d, declKeyword) in o.ordered.s:
     var n = d
@@ -581,7 +623,10 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
     if not c.generatedTypes.containsOrIncl(decl.name.symId):
       var skipDecl = false
       let s = mangleDecl(c, decl.name, decl.pragmas, skipDecl)
-      if skipDecl: continue
+      if skipDecl:
+        # do not miss a `.header` pragma:
+        discard parseTypePragmas(c, decl.pragmas)
+        continue
       case decl.body.typeKind
       of ArrayT:
         c.add declKeyword

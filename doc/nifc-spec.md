@@ -233,12 +233,8 @@ TypePragma ::= CommonPragma | (vector Number)
 TypePragmas ::= Empty | (pragmas TypePragma+)
 
 
-ExternDecl ::= (imp ProcDecl | VarDecl | ConstDecl)
-IgnoreDecl ::= (nodecl ProcDecl | VarDecl | ConstDecl)
-Include ::= (incl StringLiteral)
-
-TopLevelConstruct ::= ExternDecl | IgnoreDecl | ProcDecl | VarDecl | ConstDecl |
-                      TypeDecl | Include | EmitStmt | Call | CallCanRaise |
+TopLevelConstruct ::= ProcDecl | VarDecl | ConstDecl |
+                      TypeDecl | EmitStmt | Call | CallCanRaise |
                       TryStmt | RaiseStmt | AsgnStmt | KeepOverflowStmt |
                       IfStmt | WhileStmt | CaseStmt | LabelStmt | JumpStmt |
                       ScopeStmt | DiscardStmt
