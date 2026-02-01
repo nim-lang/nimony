@@ -329,6 +329,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
           if t.typeKind == RefT:
             result = t
             inc result
+        elif pool.syms[s] == VTableField:
+          # VTableField is a magic internal field for RTTI - treat as pointer type
+          result = c.builtins.cstringType
         if cursorIsNil(result):
           when defined(debug):
             writeStackTrace()
