@@ -67,7 +67,8 @@ import std / [assertions, sets, tables]
 include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
-  builtintypes, langmodes, renderer, reporters, controlflow, typeprops]
+  builtintypes, langmodes, renderer, reporters, typeprops]
+import ".." / njvl / nj
 import hexer_context
 
 # TODO:
@@ -130,7 +131,6 @@ type
     yieldConts: Table[int, int]
     labels: Table[int, int]
     cf: TokenBuf
-    reachable: seq[bool]
     resultSym: SymId
     upcomingState: int
     counter: int
@@ -560,51 +560,74 @@ proc isPassiveCall(c: var Context; n: PackedToken): bool =
   return false
 
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
-  c.currentProc.cf = toControlflow(iter, keepReturns = true)
-  c.currentProc.reachable = eliminateDeadInstructions(c.currentProc.cf)
+  # Instead of lowering to a CFG, work on a copy of the original tree and
+  # derive suspension points directly from structured constructs.
+  # Transform the iterator/proc via the NJ pass to structured NJVL without jumps.
+  # Wrap the single proc into a temporary `(stmts ...)` so NJ can process it:
+  var wrapper = createTokenBuf(10)
+  wrapper.addParLe StmtsS, NoLineInfo
+  wrapper.copyTree iter
+  wrapper.addParRi()
+  var wcur = beginRead(wrapper)
+  c.currentProc.cf = eliminateJumps(wcur, c.thisModuleSuffix)
 
-  # Now compute basic blocks considering only reachable instructions
+  # Compute suspension points (labels) and mapping from suspension sites to next state.
   c.currentProc.labels = initTable[int, int]()
+  c.currentProc.yieldConts = initTable[int, int]()
   var nextLabel = 0
-  for i in 0..<c.currentProc.cf.len:
-    if c.currentProc.reachable[i]:
-      if c.currentProc.cf[i].kind == GotoInstr:
-        let diff = c.currentProc.cf[i].getInt28
-        if i+diff > 0 and i+diff < c.currentProc.cf.len and c.currentProc.reachable[i+diff]:
-          c.currentProc.labels[i+diff] = nextLabel
-          inc nextLabel
-      elif c.currentProc.cf[i].stmtKind == YldS or
-          (c.currentProc.cf[i].exprKind in CallKinds and isPassiveCall(c, c.currentProc.cf[i+1])):
-        # after a yield we also have a suspension point (a label):
-        var nested = 1
-        c.currentProc.yieldConts[i] = nextLabel
-        for j in i+1..<c.currentProc.cf.len:
-          case c.currentProc.cf[j].kind
-          of ParLe: inc nested
-          of ParRi:
-            dec nested
-            if nested == 0:
-              c.currentProc.labels[j+1] = nextLabel
-              inc nextLabel
-              break
-          else:
-            discard
+  block gather:
+    var cur = beginRead(c.currentProc.cf)
+    # Walk to the body first
+    inc cur # ProcS
+    for _ in 0..<BodyPos:
+      skip cur
+    # Now scan the body subtree and record labels after YldS and passive calls
+    var scan = cur
+    var depth = 1
+    while true:
+      let pos = cursorToPosition(c.currentProc.cf, scan)
+      if scan.kind == ParLe:
+        let sk = scan.stmtKind
+        let ek = scan.exprKind
+        if sk == YldS or (ek in CallKinds and isPassiveCall(c, c.currentProc.cf[pos+1])):
+          # Record mapping from the start of this construct to its continuation state
+          c.currentProc.yieldConts[pos] = nextLabel
+          # Skip to matching ParRi to find the "after statement" label position
+          var nested = 1
+          var j = pos + 1
+          while j < c.currentProc.cf.len and nested > 0:
+            case c.currentProc.cf[j].kind
+            of ParLe: inc nested
+            of ParRi: dec nested
+            else: discard
+            inc j
+          # j now points to the token after the matching ParRi
+          if j <= c.currentProc.cf.len:
+            c.currentProc.labels[j] = nextLabel
+            inc nextLabel
+        inc scan
+      elif scan.kind == ParRi:
+        dec depth
+        if depth == 0: break gather
+        inc scan
+      else:
+        inc scan
 
-  # analyze which locals are used across basic blocks:
+  # Analyze which locals escape across suspension points using the same label map
   var n = beginRead(c.currentProc.cf)
   inc n # ProcS
   for i in 0..<BodyPos: skip n
   escapingLocals(c, n)
 
-  # compile the state machine:
+  # Compile the state machine by splitting at label positions
   assert n.stmtKind == StmtsS
   dest.takeToken n
   dest.add init
   declareContinuationResult c, dest, NoLineInfo
   var subProcs = 0
   while n.kind != ParRi:
-    let pos = cursorToPosition(c.currentProc.cf, n)
-    let state = c.currentProc.labels.getOrDefault(pos, -1)
+    let p = cursorToPosition(c.currentProc.cf, n)
+    let state = c.currentProc.labels.getOrDefault(p, -1)
     if state != -1:
       if subProcs == 0:
         gotoNextState(c, dest, state, n.info)
@@ -807,20 +830,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n
     else:
       takeTree dest, n
-  of GotoInstr:
-    let pos = cursorToPosition(c.currentProc.cf, n)
-    # XXX Find a better solution for this.
-    if not c.currentProc.reachable[pos]:
-      skip n
-      return
-    let diff = n.getInt28
-    let target = pos + diff
-    let state = c.currentProc.labels.getOrDefault(target, -1)
-    if state != -1:
-      gotoNextState(c, dest, state, n.info)
-    else:
-      bug "goto target not found"
-    inc n
+  of UnknownToken:
+    # Pass through unknown tokens conservatively
+    takeTree dest, n
   of ParLe:
     case n.stmtKind
     of LocalDecls - {ResultS}:
