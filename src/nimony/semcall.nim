@@ -763,6 +763,9 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         matchAdded = true
     if matchAdded: # m.len != L
       idx = pickBestMatch(c, m, cs.flags)
+    if idx < 0 and cs.hasNamedArgs:
+      # restore original args for error message generation:
+      cs.args = csArgsOrig
 
   if idx >= 0:
     dest.add cs.callNode
