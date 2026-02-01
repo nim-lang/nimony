@@ -981,7 +981,7 @@ proc trTypeDecl(c: var Context; n: var Cursor) =
         c.dest.addParLe PragmasU, info
         inc n
       else:
-        inc n
+        c.dest.takeToken n
         # keep the existing pragmas:
         while n.kind != ParRi:
           takeTree c.dest, n

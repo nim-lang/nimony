@@ -591,19 +591,25 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     #let fn = lift(c, typ)
     #maybeCallHook c, fn, paramA, paramB
 
+proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
+  if typ.stmtKind == TypeS:
+    c.dest.addSymUse typ.firstSon.symId, c.info
+  else:
+    copyTree c.dest, typ
+
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
   copyIntoKind(c.dest, ParamY, c.info):
     addSymDef c.dest, param, c.info
     c.dest.addEmpty2 c.info # export marker, pragmas
     copyIntoKind(c.dest, modifier, c.info):
-      copyTree c.dest, typ
+      addParamType c, typ
     c.dest.addEmpty c.info # value
 
 proc addParam(c: var LiftingCtx; param: SymId; typ: TypeCursor) =
   copyIntoKind(c.dest, ParamY, c.info):
     addSymDef c.dest, param, c.info
     c.dest.addEmpty2 c.info # export marker, pragmas
-    copyTree c.dest, typ
+    addParamType c, typ
     c.dest.addEmpty c.info # value
 
 proc maybeAddResultDecl(c: var LiftingCtx; res: SymId; typ: TypeCursor) =
@@ -611,7 +617,7 @@ proc maybeAddResultDecl(c: var LiftingCtx; res: SymId; typ: TypeCursor) =
     copyIntoKind(c.dest, VarS, c.info):
       addSymDef c.dest, res, c.info
       c.dest.addEmpty2 c.info # export marker, pragmas
-      copyTree c.dest, typ
+      addParamType c, typ
       c.dest.addEmpty c.info # value
 
 proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
@@ -656,7 +662,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     of attachedDup:
       addParam c, paramB, typ
       c.dest.addParRi()
-      c.dest.copyTree typ
+      c.addParamType typ
     of attachedCopy, attachedSink:
       addParamWithModifier c, paramA, typ, MutT
       addParam c, paramB, typ
@@ -687,8 +693,6 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
         unravelRef(c, a, paramTreeA, paramTreeB)
       else:
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
-      when false:
-        # XXX re-enable this critical check!
         if c.dest.len == beforeUnravel:
           var t = typ
           if t.stmtKind == TypeS:
