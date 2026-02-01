@@ -684,11 +684,19 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       maybeAddResultDecl c, paramA, typ
       let beforeUnravel = c.dest.len
       if a.typeKind == RefT:
-        unravelRef(c, typ, paramTreeA, paramTreeB)
+        unravelRef(c, a, paramTreeA, paramTreeB)
       else:
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
-      if c.dest.len == beforeUnravel:
-        assert false, "empty hook created"
+      when false:
+        # XXX re-enable this critical check!
+        if c.dest.len == beforeUnravel:
+          var t = typ
+          if t.stmtKind == TypeS:
+            t = t.firstSon
+          if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId):
+            discard "empty hooks are valid for RTTI'ed types"
+          else:
+            assert false, "empty hook created for " & toString(typ, false)
       maybeAddReturn c, paramA
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:

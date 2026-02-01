@@ -627,6 +627,10 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
 
 proc toTypeImpl*(n: Cursor): Cursor =
   result = n
+  if n.stmtKind == TypeS:
+    var local = asTypeDecl(n)
+    result = local.body
+
   var counter = 20
   while counter > 0 and result.kind == Symbol:
     dec counter
