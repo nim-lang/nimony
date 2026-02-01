@@ -58,6 +58,7 @@ type
     typeCache: TypeCache
     hooks: Table[SymId, HooksPerType]
     lifter: ref LiftingCtx
+    typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
@@ -732,7 +733,6 @@ proc trType(c: var Context; n: var Cursor) =
   ## Processes type declarations, adding hook pragmas for nominal types.
   ## For types with custom hooks (from sem), use those.
   ## For non-generic nominal types (objects/distincts), generate hooks via lifter.
-  let typ = n
   let info = n.info
   takeToken c.dest, n # (type
   var s = SymId(0)
@@ -777,9 +777,13 @@ proc trType(c: var Context; n: var Cursor) =
       while n.kind != ParRi:
         c.dest.takeTree n # existing individual pragmas
       skipParRi n
-    # Generate hooks via lifter:
+    # Generate hooks via lifter - create Symbol buffer that stays alive:
+    var buf = createTokenBuf(1)
+    buf.addSymUse s, info
+    let typeCursor = cursorAt(buf, 0)
+    c.typeSymBufs.add buf
     for op in low(AttachedOp)..high(AttachedOp):
-      let hookProc = getHook(c.lifter[], op, typ, info)
+      let hookProc = getHook(c.lifter[], op, typeCursor, info)
       if hookProc != SymId(0):
         c.dest.addParLe hookToTag(op), NoLineInfo
         c.dest.addSymUse hookProc, NoLineInfo
@@ -906,7 +910,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
     # clean up dots that sem might have introduced for moving inner generic instances:
     if n2.kind == DotToken: inc n2
     else: tr(c, n2, WantT)
-  genMissingHooks c.lifter[]
+  genMissingHooks c.lifter[], c.dest
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
   # Must close the `(stmts)` here **after** `checkForDangerousLocations`

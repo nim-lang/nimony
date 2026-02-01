@@ -150,13 +150,9 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
         return false
       skip tup
     result = true
-  of NoType:
-    if typ.stmtKind == TypeS:
-      result = isTrivialTypeDecl(c, typ)
-    else:
-      bug "bug in isTrival computation"
-  of ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
+  of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
      TypeKindT, UntypedT, TypedT, ItertypeT:
+    echo "isTrivial: ", toString(typ, false)
     bug "bug in isTrival computation"
 
 # Phase 2: Do the lifting
@@ -592,10 +588,7 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     #maybeCallHook c, fn, paramA, paramB
 
 proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
-  if typ.stmtKind == TypeS:
-    c.dest.addSymUse typ.firstSon.symId, c.info
-  else:
-    copyTree c.dest, typ
+  copyTree c.dest, typ
 
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
   copyIntoKind(c.dest, ParamY, c.info):
@@ -695,8 +688,6 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
         if c.dest.len == beforeUnravel:
           var t = typ
-          if t.stmtKind == TypeS:
-            t = t.firstSon
           if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId):
             discard "empty hooks are valid for RTTI'ed types"
           else:
@@ -720,6 +711,11 @@ proc genMissingHooks*(c: var LiftingCtx) =
       c.routineKind = ProcY
       c.calledErrorHook = NoLineInfo
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
+
+proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
+  genMissingHooks(c)
+  if c.dest.len > 0:
+    dest.add c.dest
 
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int): ref LiftingCtx =
   (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY)
