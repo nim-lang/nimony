@@ -1,9 +1,16 @@
 (.nif26)
-(.indexat +995             )
+(.indexat +3453            )
 0,1,tests/nimony/types/tscopedtype.nim(stmts ,2
  (block . 2,1
   (stmts 6,1
-   (type ~4 :Foo.0. . . . 2
+   (type ~4 :Foo.0. . .
+    (pragmas
+     (destroy =destroy_SX46oo0tsca4az8i1.0.)
+     (wasmoved =wasmoved_SX46oo0tsca4az8i1.0.)
+     (dup =dup_SX46oo0tsca4az8i1.0.)
+     (copy =copy_SX46oo0tsca4az8i1.0.)
+     (sinkh =sinkh_SX46oo0tsca4az8i1.0.)
+     (trace =trace_SX46oo0tsca4az8i1.0.)) 2
     (ref 4 Foo.Obj.0.)) 6,1
    (type ~4 :Foo.Obj.0. . .
     (pragmas
@@ -22,6 +29,92 @@
       (ddot ~1 s.0 id.0. +0))) ,2
     (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))) 10,5
  (comment int.0.sysvq0asl ~8,3 echo.0.syn1lfpjv) 8,4
+ (proc :=destroy_SX46oo0tsca4az8i1.0. . . .
+  (params
+   (param :dest.0 . . Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (if
+    (elif dest.0
+     (stmts
+      (if
+       (elif
+        (call arcDec.0.sysvq0asl
+         (addr
+          (dot
+           (deref dest.0) r.0 +0)))
+        (stmts
+         (call deallocFixed.0.sysvq0asl dest.0))))))))) 8,4
+ (proc :=wasmoved_SX46oo0tsca4az8i1.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut Foo.0.) .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (asgn
+    (deref dest.0)
+    (nil)))) 8,4
+ (proc :=dup_SX46oo0tsca4az8i1.0. . . .
+  (params
+   (param :src.0 . . Foo.0. .)) Foo.0.
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (var :dest.0 . . Foo.0. .)
+   (if
+    (elif src.0
+     (stmts
+      (call arcInc.0.sysvq0asl
+       (addr
+        (dot
+         (deref src.0) r.0 +0))))))
+   (asgn dest.0 src.0)
+   (ret dest.0))) 8,4
+ (proc :=copy_SX46oo0tsca4az8i1.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut Foo.0.) .)
+   (param :src.0 . . Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (if
+    (elif src.0
+     (stmts
+      (call arcInc.0.sysvq0asl
+       (addr
+        (dot
+         (deref src.0) r.0 +0))))))
+   (call =destroy_ArefSX46ooX4fbj0tsca4az8i1.0. dest.0)
+   (asgn dest.0 src.0))) 8,4
+ (proc :=sinkh_SX46oo0tsca4az8i1.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut Foo.0.) .)
+   (param :src.0 . . Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (if
+    (elif src.0
+     (stmts
+      (call arcInc.0.sysvq0asl
+       (addr
+        (dot
+         (deref src.0) r.0 +0))))))
+   (call =destroy_ArefSX46ooX4fbj0tsca4az8i1.0. dest.0)
+   (asgn dest.0 src.0))) 8,4
+ (proc :=trace_SX46oo0tsca4az8i1.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut Foo.0.) .)
+   (param :src.0 . .
+    (pointer) .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts)) 8,4
  (proc :=wasmoved_SX46ooX4fbj0tsca4az8i1.0. . . .
   (params
    (param :dest.0 . .
@@ -32,8 +125,33 @@
    (asgn
     (dot
      (deref dest.0) `vt.0 +1)
-    (call getRtti.0.sysvq0asl dest.0)))))0,1,tests/nimony/types/tscopedtype.nim(.index 8,4
+    (call getRtti.0.sysvq0asl dest.0)))) 8,4
+ (proc :=destroy_ArefSX46ooX4fbj0tsca4az8i1.0. . . .
+  (params
+   (param :dest.0 . . 2
+    (ref 4 Foo.Obj.0.) .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (if
+    (elif dest.0
+     (stmts
+      (if
+       (elif
+        (call arcDec.0.sysvq0asl
+         (addr
+          (dot
+           (deref dest.0) r.0 +0)))
+        (stmts
+         (call deallocFixed.0.sysvq0asl dest.0))))))))))0,1,tests/nimony/types/tscopedtype.nim(.index 8,4
  (h Foo.0. +112) 8,4
- (h Foo.Obj.0. +56) 6,5
+ (h Foo.Obj.0. +318) 6,5
  (h id.0. +136) 8,4
- (h =wasmoved_SX46ooX4fbj0tsca4az8i1.0. +454))
+ (h =destroy_SX46oo0tsca4az8i1.0. +454) 8,4
+ (h =wasmoved_SX46oo0tsca4az8i1.0. +360) 8,4
+ (h =dup_SX46oo0tsca4az8i1.0. +183) 8,4
+ (h =copy_SX46oo0tsca4az8i1.0. +330) 8,4
+ (h =sinkh_SX46oo0tsca4az8i1.0. +378) 8,4
+ (h =trace_SX46oo0tsca4az8i1.0. +379) 8,4
+ (h =wasmoved_SX46ooX4fbj0tsca4az8i1.0. +179) 8,4
+ (h =destroy_ArefSX46ooX4fbj0tsca4az8i1.0. +240))

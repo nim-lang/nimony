@@ -278,14 +278,14 @@
   (at seq.0.sysvq0asl 1
    (i -1)) 10,4,lib/std/system/seqimpl.nim
   (pragmas
-   (destroy =destroy.0.)
-   (wasmoved =wasMoved.0.)
-   (dup =dup.0.)
-   (copy =copy.0.)
    (destroy =destroy.1.sysvq0asl)
    (wasmoved =wasMoved.1.sysvq0asl)
    (dup =dup.1.sysvq0asl)
-   (copy =copy.1.sysvq0asl)) 12,4,lib/std/system/seqimpl.nim
+   (copy =copy.1.sysvq0asl)
+   (destroy =destroy.0.)
+   (wasmoved =wasMoved.0.)
+   (dup =dup.0.)
+   (copy =copy.0.)) 12,4,lib/std/system/seqimpl.nim
   (object . ~8,1
    (fld :len.3.Ipe57hg. . . 5
     (i -1) .) ~8,2
@@ -297,14 +297,14 @@
   (at seq.0.sysvq0asl
    (f +64)) ~6,~56
   (pragmas
-   (destroy =destroy.1.)
-   (wasmoved =wasMoved.1.)
-   (dup =dup.1.)
-   (copy =copy.1.)
    (destroy =destroy.1.sysvq0asl)
    (wasmoved =wasMoved.1.sysvq0asl)
    (dup =dup.1.sysvq0asl)
-   (copy =copy.1.sysvq0asl)) ~4,~56
+   (copy =copy.1.sysvq0asl)
+   (destroy =destroy.1.)
+   (wasmoved =wasMoved.1.)
+   (dup =dup.1.)
+   (copy =copy.1.)) ~4,~56
   (object . ~8,1
    (fld :len.3.Iw9f2pq. . . 5
     (i -1) .) ~8,2
@@ -316,14 +316,14 @@
   (at seq.0.sysvq0asl 1
    (u +8)) 10,4,lib/std/system/seqimpl.nim
   (pragmas
-   (destroy =destroy.2.)
-   (wasmoved =wasMoved.2.)
-   (dup =dup.2.)
-   (copy =copy.2.)
    (destroy =destroy.1.sysvq0asl)
    (wasmoved =wasMoved.1.sysvq0asl)
    (dup =dup.1.sysvq0asl)
-   (copy =copy.1.sysvq0asl)) 12,4,lib/std/system/seqimpl.nim
+   (copy =copy.1.sysvq0asl)
+   (destroy =destroy.2.)
+   (wasmoved =wasMoved.2.)
+   (dup =dup.2.)
+   (copy =copy.2.)) 12,4,lib/std/system/seqimpl.nim
   (object . ~8,1
    (fld :len.3.Iq4ofkp1. . . 5
     (i -1) .) ~8,2
