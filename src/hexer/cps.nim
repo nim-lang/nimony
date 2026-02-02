@@ -316,7 +316,6 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   skip n # skip type; it is `Continuation` and uninteresting here
-  const nested = 1
 
   if n.exprKind in CallKinds and n.firstSon.kind == Symbol:
     let fn = n.firstSon.symId
@@ -325,8 +324,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind ErrT, n.info:
       dest.addStrLit "`delay` takes a call expression"
     skip n
-  for i in 0..<nested:
-    skipParRi n
+  skipParRi n
 
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
   if n.exprKind notin CallKinds: return SymId(0)
@@ -462,7 +460,8 @@ proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packed
   inc n # yield/return
   if n.kind == DotToken or (n.kind == Symbol and n.symId == c.currentProc.resultSym):
     inc n
-  elif isVoidType(getType(c.typeCache, n)):
+  elif isVoidType(getType(c.typeCache, n)) and n.kind != Symbol:
+    # void type for Symbol can happen for `raise` statements:
     tr c, dest, n
   else:
     dest.copyIntoKind AsgnS, info:
@@ -491,17 +490,19 @@ proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.currentProc.upcomingState = oldState
 
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # return x -->
+  # return/raise x -->
   # this.res[] = x
-  # return this.caller
-  let info = n.info
+  # return/raise this.caller
+  let head = n.load()
+  let info = head.info
   returnValue(c, dest, n, info)
-  dest.copyIntoKind RetS, info:
-    dest.copyIntoKind DotX, info:
-      dest.copyIntoKind DerefX, info:
-        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
-      dest.addIntLit 1, info # field is in superclass
+  dest.add head
+  dest.copyIntoKind DotX, info:
+    dest.copyIntoKind DerefX, info:
+      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+    dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+    dest.addIntLit 1, info # field is in superclass
+  dest.addParRi()
 
 proc escapingLocals(c: var Context; n: Cursor) =
   if n.kind == DotToken: return
@@ -559,39 +560,98 @@ proc isPassiveCall(c: var Context; n: PackedToken): bool =
       return true
   return false
 
+proc findDelayX(c: var Context; n: Cursor): Cursor =
+  var nested = 0
+  var n = n
+  while true:
+    case n.kind
+    of ParLe:
+      if n.exprKind == DelayX:
+        inc n
+        skip n # type
+        return n
+      inc nested
+    of ParRi:
+      dec nested
+    else:
+      discard
+    if nested == 0:
+      break
+    inc n
+  return default(Cursor)
+
+proc skipButHandleGoto(c: var Context; n: var Cursor; nextLabel: var int) =
+  if n.kind == ParLe:
+    var nested = 0
+    while true:
+      inc n
+      case n.kind
+      of ParRi:
+        if nested == 0: break
+        dec nested
+      of ParLe: inc nested
+      of GotoInstr:
+        let diff = n.getInt28
+        let i = cursorToPosition(c.currentProc.cf, n)
+        if i+diff > 0 and i+diff < c.currentProc.cf.len and c.currentProc.reachable[i+diff]:
+          c.currentProc.labels[i+diff] = nextLabel
+          inc nextLabel
+      else:
+        discard
+  inc n
+
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
   c.currentProc.cf = toControlflow(iter, keepReturns = true)
   c.currentProc.reachable = eliminateDeadInstructions(c.currentProc.cf)
 
   # Now compute basic blocks considering only reachable instructions
   c.currentProc.labels = initTable[int, int]()
+
   var nextLabel = 0
-  for i in 0..<c.currentProc.cf.len:
-    if c.currentProc.reachable[i]:
-      if c.currentProc.cf[i].kind == GotoInstr:
-        let diff = c.currentProc.cf[i].getInt28
+
+  var n = beginRead(c.currentProc.cf)
+  inc n # ProcS
+  for i in 0..<BodyPos: skip n
+  var nextStmtIsLabel = false
+  assert n.stmtKind == StmtsS
+  inc n
+  while n.kind != ParRi:
+    if nextStmtIsLabel:
+      nextStmtIsLabel = false
+      let i = cursorToPosition(c.currentProc.cf, n)
+      c.currentProc.labels[i] = nextLabel
+      inc nextLabel
+
+    if n.kind == GotoInstr:
+      let i = cursorToPosition(c.currentProc.cf, n)
+      if c.currentProc.reachable[i]:
+        let diff = n.getInt28
         if i+diff > 0 and i+diff < c.currentProc.cf.len and c.currentProc.reachable[i+diff]:
           c.currentProc.labels[i+diff] = nextLabel
           inc nextLabel
-      elif c.currentProc.cf[i].stmtKind == YldS or
-          (c.currentProc.cf[i].exprKind in CallKinds and isPassiveCall(c, c.currentProc.cf[i+1])):
+    elif n.stmtKind == YldS or
+        (n.exprKind in CallKinds and isPassiveCall(c, n.firstSon.load)):
+      let i = cursorToPosition(c.currentProc.cf, n)
+      if c.currentProc.reachable[i]:
         # after a yield we also have a suspension point (a label):
-        var nested = 1
         c.currentProc.yieldConts[i] = nextLabel
-        for j in i+1..<c.currentProc.cf.len:
-          case c.currentProc.cf[j].kind
-          of ParLe: inc nested
-          of ParRi:
-            dec nested
-            if nested == 0:
-              c.currentProc.labels[j+1] = nextLabel
-              inc nextLabel
-              break
-          else:
-            discard
+        nextStmtIsLabel = true
+    else:
+      let d = findDelayX(c, n)
+      if not cursorIsNil(d):
+        let i = cursorToPosition(c.currentProc.cf, n)
+        if c.currentProc.reachable[i]:
+          # after a yield we also have a suspension point (a label):
+          c.currentProc.yieldConts[i] = nextLabel
+          let j = cursorToPosition(c.currentProc.cf, d)
+          c.currentProc.yieldConts[j] = nextLabel
+          nextStmtIsLabel = true
+    skipButHandleGoto(c, n, nextLabel)
+
+  endRead c.currentProc.cf
 
   # analyze which locals are used across basic blocks:
-  var n = beginRead(c.currentProc.cf)
+  n = beginRead(c.currentProc.cf)
   inc n # ProcS
   for i in 0..<BodyPos: skip n
   escapingLocals(c, n)
@@ -841,8 +901,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     of YldS:
       trYield c, dest, n
-    of RetS:
-      trReturn c, dest, n
+    of RetS, RaiseS:
+      if c.currentProc.kind == IsNormal:
+        trSons(c, dest, n)
+      else:
+        trReturn c, dest, n
     of AsgnS:
       trAsgn c, dest, n
     of ScopeS:
