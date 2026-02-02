@@ -57,12 +57,25 @@ type
 when not defined(nimony):
   proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool
 
+proc isGenericHook(hookSym: SymId): bool =
+  ## Check if a hook is generic (has type parameters)
+  let res = tryLoadSym(hookSym)
+  if res.status == LacksNothing:
+    let r = asRoutine(res.decl)
+    result = r.typevars.substructureKind == TypevarsU
+  else:
+    result = false
+
 proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
   result = c.nominalTypeToHook[op].getOrDefault(s)
   if result == SymId(0):
     result = tryLoadHook(op, s)
     if result != SymId(0):
-      c.nominalTypeToHook[op][s] = result
+      # Filter out generic hooks - they need instantiation first
+      if isGenericHook(result):
+        result = SymId(0)
+      else:
+        c.nominalTypeToHook[op][s] = result
 
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
   result = loadHook(c, c.op, s) != SymId(0)
