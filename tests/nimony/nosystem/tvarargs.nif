@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3754            )
+(.indexat +3764            )
 0,2,tests/nimony/nosystem/tvarargs.nim(stmts 2,1
  (type :int.0.
   (i -1) . 5
@@ -86,7 +86,8 @@
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) 8,22
- (type ~6 :File.0. x . . 2
+ (type ~6 :File.0. x .
+  (pragmas) 2
   (object .)) 4,24
  (gvar :stdout.0. . . 8 File.0. .) ,26
  (proc 5 :write.0. . . . 10
@@ -176,7 +177,7 @@
  (x \2D.0. +177) ,19
  (x <=.0. +177) 8,22
  (x File.0. +176) 4,24
- (h stdout.0. +46) ,26
+ (h stdout.0. +56) ,26
  (h write.0. +39) ,27
  (h write.1. +162) ,31
  (x unpack.0. +219) ,33
