@@ -746,11 +746,11 @@ proc trType(c: var Context; n: var Cursor) =
   # Check if this is a non-generic nominal type that needs hooks generated
   var needsForgedHooks = false
   if not isGeneric and s != SymId(0):
-    # Check if it's a nominal type (object, distinct) - not ref, hexer handles those
+    # Check if it's a nominal type (object, distinct, ref)
     var checkBody = n
     skip checkBody # skip pragmas
     let bk = checkBody.typeKind
-    needsForgedHooks = bk in {ObjectT, DistinctT}
+    needsForgedHooks = bk in {ObjectT, DistinctT, RefT}
 
   # pragmas:
   if s != SymId(0) and c.hooks.hasKey(s):
