@@ -33,7 +33,7 @@ include nifprelude
 
 import ".." / models / tags
 import ".." / hexer / lifter
-import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops
+import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops, vtables_frontend
 
 type
   Expects = enum
@@ -57,6 +57,7 @@ type
     r: CurrentRoutine
     typeCache: TypeCache
     hooks: Table[SymId, HooksPerType]
+    methods: Table[SymId, seq[(string, SymId)]] # class -> (methodKey, methodSym) for vtables
     lifter: ref LiftingCtx
     typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
 
@@ -729,6 +730,16 @@ proc addHookDecls(dest: var TokenBuf; hooks: HooksPerType) =
       dest.addSymUse s, NoLineInfo
       dest.addParRi()
 
+proc addMethodsDecl(dest: var TokenBuf; methods: seq[(string, SymId)]) =
+  if methods.len > 0:
+    dest.addParLe MethodsP, NoLineInfo
+    for (key, sym) in methods:
+      dest.addParLe KvU, NoLineInfo
+      dest.addStrLit key, NoLineInfo
+      dest.addSymUse sym, NoLineInfo
+      dest.addParRi()
+    dest.addParRi()
+
 proc trType(c: var Context; n: var Cursor) =
   ## Processes type declarations, adding hook pragmas for nominal types.
   ## For types with custom hooks (from sem), use those.
@@ -750,23 +761,27 @@ proc trType(c: var Context; n: var Cursor) =
     var checkBody = n
     skip checkBody # skip pragmas
     let bk = checkBody.typeKind
-    needsForgedHooks = bk in {ObjectT, DistinctT}
+    needsForgedHooks = bk in {ObjectT, DistinctT, RefT}
+
+  # Check if type has methods (for vtables)
+  let hasMethods = s != SymId(0) and c.methods.hasKey(s)
 
   # pragmas:
-  if s != SymId(0) and c.hooks.hasKey(s):
-    # Type has custom hooks from semantic analysis
+  if s != SymId(0) and (c.hooks.hasKey(s) or hasMethods):
+    # Type has custom hooks or methods from semantic analysis
     if n.kind == DotToken:
       c.dest.addParLe PragmasU, info
       inc n
-      addHookDecls c.dest, c.hooks[s]
-      c.dest.addParRi()
     else:
       c.dest.takeToken n # existing pragma tag
-      addHookDecls c.dest, c.hooks[s]
       while n.kind != ParRi:
         c.dest.takeTree n # existing individual pragmas
-      c.dest.add n
-      inc n
+      skipParRi n
+    if c.hooks.hasKey(s):
+      addHookDecls c.dest, c.hooks[s]
+    if hasMethods:
+      addMethodsDecl c.dest, c.methods[s]
+    c.dest.addParRi()
   elif needsForgedHooks:
     # Non-generic nominal type - generate hooks via lifter
     if n.kind == DotToken:
@@ -782,12 +797,25 @@ proc trType(c: var Context; n: var Cursor) =
     buf.addSymUse s, info
     let typeCursor = cursorAt(buf, 0)
     c.typeSymBufs.add buf
+    # Collect methods for RTTI types (destroy/trace need to be methods)
+    let isRtti = hasRtti(s)
+    var rttiMethods = default seq[(string, SymId)]
     for op in low(AttachedOp)..high(AttachedOp):
       let hookProc = getHook(c.lifter[], op, typeCursor, info)
       if hookProc != SymId(0):
         c.dest.addParLe hookToTag(op), NoLineInfo
         c.dest.addSymUse hookProc, NoLineInfo
         c.dest.addParRi()
+        # For RTTI types, destroy/trace are methods - add them with known signature
+        if isRtti and op in {attachedDestroy, attachedTrace}:
+          let key = case op
+            of attachedDestroy: destroyMethodKey()
+            of attachedTrace: traceMethodKey()
+            else: ""
+          rttiMethods.add((key, hookProc))
+    # Emit methods pragma for RTTI types
+    if rttiMethods.len > 0:
+      addMethodsDecl c.dest, rttiMethods
     c.dest.addParRi() # close pragmas
   else:
     c.dest.takeTree n # pragmas
@@ -897,10 +925,12 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
           trSons c, n, WantT
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
+                   methods: sink Table[SymId, seq[(string, SymId)]];
                    thisModuleSuffix: string; bits: int): TokenBuf =
   var c = Context(typeCache: createTypeCache(),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
     hooks: ensureMove(hooks),
+    methods: ensureMove(methods),
     lifter: createLiftingCtx(thisModuleSuffix, bits))
   c.typeCache.openScope()
   var n2 = n

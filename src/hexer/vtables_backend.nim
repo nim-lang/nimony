@@ -150,7 +150,7 @@ proc loadVTable(c: var Context; cls: SymId) =
       loadVTable c, inh
 
   # now apply the diff:
-  let diff = programs.loadVTable(cls)
+  let diff = vtables_frontend.loadVTable(cls)
   var dest = VTable(display: @[], methods: @[], state: Others)
   if parent != SymId(0):
     dest.methods = c.vtables[parent].methods

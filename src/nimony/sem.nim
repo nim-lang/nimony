@@ -1503,6 +1503,12 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     else:
       buildErr c, dest, n.info, "`semantics` pragma takes a string literal"
     dest.addParRi()
+  of MethodsP:
+    dest.add parLeToken(pk, n.info)
+    inc n
+    while n.kind != ParRi:
+      dest.takeTree n
+    dest.addParRi()
   if hasParRi:
     if n.kind != ParRi:
       if n.exprKind != ErrX:
@@ -5203,7 +5209,6 @@ proc writeOutput(c: var SemContext; dest: TokenBuf; outfile: string) =
   createIndex outfile, root, true,
     IndexSections(
       converters: move c.converterIndexMap,
-      classes: move c.classIndexMap,
       exportBuf: buildIndexExports(c))
   writeNewDepsFile c, outfile
 
@@ -5390,7 +5395,7 @@ proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Curso
   var instanceMethods = c.methods.getOrDefault(s, @[])
   for m in c.methods.getOrDefault(base, @[]):
     if m notin instanceMethods:
-      instantiateMethodForType(c, dest, m, s)
+      instantiateMethodForType(c, dest, m[1], s)
       instanceMethods.add m
       c.methods.mgetOrPut(s, @[]).add m
 
@@ -5506,7 +5511,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf, c.typeHooks, c.thisModuleSuffix, c.g.config.bits)
+    dest = injectDerefs(finalBuf, c.typeHooks, c.methods, c.thisModuleSuffix, c.g.config.bits)
   else:
     quit 1
 

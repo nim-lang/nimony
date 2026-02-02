@@ -57,3 +57,55 @@ proc methodKey*(name: string; a: Cursor): string =
   b.addKeyw $props.usesRaises
   b.addKeyw $props.usesClosure
   result = name & ":" & b.extract()
+
+proc destroyMethodKey*(): string =
+  ## Known method key for =destroy hooks (no extra params, void return, default pragmas)
+  var b = createMangler(60)
+  b.addEmpty() # void return type
+  b.addKeyw "ccNone"
+  b.addKeyw "raisesUnknown"
+  b.addKeyw "closureNo"
+  result = "=destroy:" & b.extract()
+
+proc traceMethodKey*(): string =
+  ## Known method key for =trace hooks (pointer param, void return, default pragmas)
+  var b = createMangler(60)
+  b.addKeyw "pointer" # marker param type
+  b.addEmpty() # void return type
+  b.addKeyw "ccNone"
+  b.addKeyw "raisesUnknown"
+  b.addKeyw "closureNo"
+  result = "=trace:" & b.extract()
+
+type
+  MethodIndexEntry = object
+    fn*: SymId
+    signature*: StrId
+
+proc loadVTable*(typ: SymId): seq[MethodIndexEntry] =
+  ## Load vtable methods from the type's (methods (kv key symId) ...) pragma.
+  result = @[]
+  let res = tryLoadSym(typ)
+  if res.status == LacksNothing:
+    let typeDecl = asTypeDecl(res.decl)
+    var pragmas = typeDecl.pragmas
+    if pragmas.kind == ParLe:
+      inc pragmas # skip (pragmas
+      while pragmas.kind != ParRi:
+        if pragmas.kind == ParLe and pragmas.pragmaKind == MethodsP:
+          inc pragmas # skip (methods
+          while pragmas.kind == ParLe and pragmas.substructureKind == KvU:
+            inc pragmas # skip (kv
+            if pragmas.kind == StringLit:
+              let signature = pragmas.litId
+              inc pragmas
+              if pragmas.kind == Symbol:
+                let methodSym = pragmas.symId
+                result.add MethodIndexEntry(fn: methodSym, signature: signature)
+                inc pragmas
+              skipParRi pragmas
+            else:
+              skip pragmas
+          skipParRi pragmas # skip methods )
+        else:
+          skip pragmas

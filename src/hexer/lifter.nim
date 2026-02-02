@@ -727,8 +727,13 @@ proc genMissingHooks*(c: var LiftingCtx) =
     let reqs = move(c.requests)
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
-      c.routineKind = ProcY
       c.calledErrorHook = NoLineInfo
+      # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
+      let t = reqs[i].typ
+      if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId) and reqs[i].op in {attachedDestroy, attachedTrace}:
+        c.routineKind = MethodY
+      else:
+        c.routineKind = ProcY
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
@@ -741,10 +746,14 @@ proc createLiftingCtx*(thisModuleSuffix: string, bits: int): ref LiftingCtx =
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
-  c.routineKind = ProcY
   c.calledErrorHook = NoLineInfo
   c.info = info
   let t = if typ.typeKind == SinkT: typ.firstSon else: typ
+  # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
+  if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId) and op in {attachedDestroy, attachedTrace}:
+    c.routineKind = MethodY
+  else:
+    c.routineKind = ProcY
   result = lift(c, t)
 
 proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): SymId =

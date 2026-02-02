@@ -108,8 +108,7 @@ type
     typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
-    methods*: Table[SymId, seq[SymId]]
-    classIndexMap*: seq[ClassIndexEntry]
+    methods*: Table[SymId, seq[(string, SymId)]]
     exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf

@@ -313,3 +313,4 @@
 | `(pop)`      | NimonyPragma | `pop` pragma |
 | `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |
+| `(methods (kv STR Y)+)`  | NimonyPragma | `methods` pragma lists vtable methods for a type |
