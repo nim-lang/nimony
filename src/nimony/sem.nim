@@ -17,6 +17,9 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec
 
+when defined(useNjvlContracts):
+  import contracts_njvl
+
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
 
@@ -5500,7 +5503,10 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true: #defined(enableContracts):
-      var moreErrors = analyzeContracts(afterSem)
+      when defined(useNjvlContracts):
+        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
+      else:
+        var moreErrors = analyzeContracts(afterSem)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:
