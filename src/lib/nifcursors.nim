@@ -359,7 +359,7 @@ proc toString*(b: TokenBuf; produceLineInfo = true): string =
 proc toString*(b: TokenBuf; first: int; produceLineInfo = true): string =
   var last = first
   var nested = 0
-  while true:
+  while last < b.len:
     case b[last].kind
     of ParLe:
       inc nested
@@ -368,6 +368,7 @@ proc toString*(b: TokenBuf; first: int; produceLineInfo = true): string =
     else: discard
     if nested == 0: break
     inc last
+  if last == b.len: dec last
   result = nifstreams.toString(toOpenArray(b.data, first, last), produceLineInfo)
 
 proc toString*(b: Cursor; produceLineInfo = true): string =
