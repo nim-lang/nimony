@@ -17,7 +17,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec
 
-when defined(useCfgContracts):
+when true: #defined(useCfgContracts):
   import contracts
 else:
   import contracts_njvl
