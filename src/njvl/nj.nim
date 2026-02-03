@@ -737,6 +737,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var ww = beginRead(w)
     trWhileTrue c, dest, ww
     endRead w
+    dest.addParRi() # close "loop"
 
 proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
                         selector: SymId; selectorType: Cursor; info: PackedLineInfo) =
@@ -1039,6 +1040,11 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
       b.hasParLe = true
       takeThisParRi = true
     else:
+      when false:
+        if g[0] >= 0 and not b.hasParLe:
+          # Guard was emitted, which added (stmts to output.
+          # Mark that we've conceptually consumed a ParLe.
+          b.hasParLe = true
       inc n
     var g2 = (-1, NoSymId)
     while n.kind != ParRi:
