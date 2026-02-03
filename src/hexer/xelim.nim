@@ -55,7 +55,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
 
 type
   Mode = enum
-    IsEmpty, IsAppend, IsIgnored, IsCfvar
+    IsEmpty, IsAppend, IsBound, IsIgnored, IsCfvar
   Target = object
     m: Mode
     t: TokenBuf
@@ -168,7 +168,7 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       trExpr c, dest, n, tar
 
 proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if tar.m == IsEmpty:
+  if tar.m in {IsEmpty, IsBound}:
     tar.m = IsAppend
   else:
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
@@ -180,33 +180,33 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
   inc n
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if tar.m == IsAppend and c.goal == TowardsNjvl:
+  if tar.m in {IsAppend, IsEmpty} and c.goal == TowardsNjvl:
     # bind to a temporary variable:
+    let info = n.info
+    let typ = c.typeCache.getType(n)
+
+    # Process the call into a temporary buffer so that any nested let
+    # declarations are emitted before this one starts:
+    var nestedDest = createTokenBuf(30)
+    var callTarget = Target(m: IsBound)
+    trExprLoop c, nestedDest, n, callTarget
+
+    # Emit nested statements first
+    dest.add nestedDest
+
+    # Now create the let binding for this call
     let tmp = pool.syms.getOrIncl("`x." & $c.counter)
     inc c.counter
-    let info = n.info
     dest.addParLe LetS, info
     dest.addSymDef tmp, info
     dest.addEmpty2 info # no export marker, no pragmas
-    let typ = c.typeCache.getType(n)
     dest.copyTree typ
-
-    var callTarget = Target(m: IsAppend)
-    trExprLoop c, dest, n, callTarget
     dest.add callTarget
     dest.addParRi()
 
     tar.t.addSymUse tmp, info
   else:
     trExprLoop c, dest, n, tar
-
-proc trExprToTarget(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if c.goal == TowardsNjvl and n.exprKind in CallKinds:
-    # we know here that the function call will be bound to a location, so do not bind it
-    # to a temporary variable!
-    trExprLoop c, dest, n, tar
-  else:
-    trExpr c, dest, n, tar
 
 proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # IMPORTANT: Stores into `tar` helper!
@@ -486,8 +486,8 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeTree tmp, n # pragmas
     c.typeCache.registerLocal(name, kind, n)
     takeTree tmp, n # type
-    var v = Target(m: IsEmpty)
-    trExprToTarget c, dest, n, v
+    var v = Target(m: IsBound)
+    trExpr c, dest, n, v
     tmp.add v
   dest.add tmp
 
@@ -528,7 +528,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
     assert n.kind != ParRi
-    takeTree dest, n
+    if n.exprKind == PragmaxX:
+      copyInto(dest, n):
+        takeTree dest, n  # pragmas
+        trStmt c, dest, n  # body
+    else:
+      takeTree dest, n
   of IfS, WhenS:
     var tar = Target(m: IsIgnored)
     trIf c, dest, n, tar
@@ -552,7 +557,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of DiscardS:
     if c.goal == TowardsNjvl:
       inc n
-      var tar = Target(m: IsAppend)
+      var tar = Target(m: IsBound)
       trExpr c, dest, n, tar
       # we must bind the result to a temporary variable!
       let tmp = pool.syms.getOrIncl("`x." & $c.counter)
@@ -583,9 +588,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      # we cannot use `trExprToTarget` here because it is not correct
-      # for procs that can raise.
-      trExpr c, dest, n, tar
+      if c.goal == TowardsNjvl:
+        trExpr c, dest, n, tar
+      else:
+        tar.m = IsBound
+        trExpr c, dest, n, tar
     dest.add tar
 
   of AsmS, DeferS:
@@ -651,9 +658,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       of BlockS:
         trBlock c, dest, n, tar
       else:
-        copyInto tar.t, n:
-          while n.kind != ParRi:
-            trExpr c, dest, n, tar
+        trExprLoop c, dest, n, tar
   of ParRi:
     bug "unexpected ')' inside"
 

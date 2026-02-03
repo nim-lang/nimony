@@ -1081,6 +1081,10 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   else:
     if n.njvlKind == CfVarV:
       trCfVarDecl c, dest, n
+    elif n.exprKind == PragmaxX:
+      copyInto(dest, n):
+        takeTree dest, n  # pragmas
+        trGuardedStmts c, b, dest, n  # body
     else:
       trExpr c, dest, n
 

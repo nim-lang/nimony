@@ -5505,7 +5505,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true: #defined(enableContracts):
-      when defined(useCfgContracts):
+      when true: # defined(useCfgContracts):
         var moreErrors = analyzeContracts(afterSem)
       else:
         var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
