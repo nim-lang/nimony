@@ -528,12 +528,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
     assert n.kind != ParRi
-    if n.exprKind == PragmaxX:
-      copyInto(dest, n):
-        takeTree dest, n  # pragmas
-        trStmt c, dest, n  # body
-    else:
-      takeTree dest, n
+    takeTree dest, n
+  of PragmaxS:
+    copyInto(dest, n):
+      takeTree dest, n  # pragmas
+      trStmt c, dest, n  # body
   of IfS, WhenS:
     var tar = Target(m: IsIgnored)
     trIf c, dest, n, tar

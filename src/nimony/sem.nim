@@ -17,7 +17,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec
 
-when true: #defined(useCfgContracts):
+when not defined(useNj):
   import contracts
 else:
   import contracts_njvl
@@ -4836,6 +4836,8 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
+      of PragmaxS:
+        semPragmaExpr c, dest, it
       of ImportasS, StaticstmtS, BindS, MixinS, AsmS:
         buildErr c, dest, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
@@ -5505,7 +5507,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true: #defined(enableContracts):
-      when true: # defined(useCfgContracts):
+      when not defined(useNj):
         var moreErrors = analyzeContracts(afterSem)
       else:
         var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
