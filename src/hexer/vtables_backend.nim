@@ -669,6 +669,16 @@ proc processMethods(c: var Context) =
           var methodName = pool.syms[m.name]
           extractBasename methodName
           processMethod c, m, methodName
+      # Also load methods from the frontend pragmas (for imported generic instances)
+      let diff = vtables_frontend.loadVTable(cls)
+      for entry in diff:
+        let sig = pool.strings[entry.signature]
+        let idx = c.vtables[cls].signatureToIndex.getOrDefault(sig, -1)
+        if idx == -1:
+          c.vtables[cls].methods.add entry.fn
+          c.vtables[cls].signatureToIndex[sig] = c.vtables[cls].methods.len - 1
+        else:
+          c.vtables[cls].methods[idx] = entry.fn
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:

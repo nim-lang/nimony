@@ -588,6 +588,13 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
       symToRegister = dest[beforeGenericParams+1].symId
     c.methods.mgetOrPut(root, @[]).add((pool.strings[signature], symToRegister))
 
+    # Also add to c.classes for vtable generation
+    let methodEntry = MethodIndexEntry(fn: symToRegister, signature: signature)
+    if root in c.classes:
+      c.classes[root].methods.add methodEntry
+    else:
+      c.classes[root] = ClassEntry(methods: @[methodEntry])
+
 proc hookThatShouldBeMethod(c: var SemContext; dest: var TokenBuf; hk: HookKind; beforeParams: int): bool =
   case hk
   of DestroyH, TraceH:

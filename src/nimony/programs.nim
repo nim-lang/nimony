@@ -14,9 +14,9 @@ import ".." / models / [nifindex_tags]
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
 
-  NifModule = ref object
+  NifModule* = ref object
     stream: Stream
-    index: NifIndex
+    index*: NifIndex
 
   SemPhase* = enum
     SemcheckTopLevelSyms,
@@ -120,7 +120,7 @@ proc customToNif*(suffix: string): string {.inline.} =
 proc needsRecompile*(dep, output: string): bool =
   result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)
 
-proc load(suffix: string): NifModule =
+proc load*(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
     let infile = suffixToNif suffix
     result = newNifModule(infile)

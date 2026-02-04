@@ -73,6 +73,15 @@ type
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
 
+  MethodIndexEntry* = object
+    fn*: SymId
+    signature*: StrId
+
+  ClassEntry* = object
+    methods*: seq[MethodIndexEntry]
+
+  Classes* = Table[SymId, ClassEntry]
+
   SemContext* = object
     #dest*: TokenBuf
     routine*: SemRoutine
@@ -109,6 +118,7 @@ type
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
     methods*: Table[SymId, seq[(string, SymId)]]
+    classes*: Classes # class entries with methods for vtables
     exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf

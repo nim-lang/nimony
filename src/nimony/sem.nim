@@ -5350,8 +5350,9 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
       else:
         quit "BUG: Could not load hook: " & pool.syms[hook]
 
-proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, typeInstSym: SymId) =
+proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, typeInstSym: SymId): SymId =
   # check if instance actually matches method
+  # Returns the instantiated method symbol, or SymId(0) if not applicable
   let res = tryLoadSym(methodSym)
   assert res.status == LacksNothing
   let procDecl = asRoutine(res.decl)
@@ -5376,12 +5377,13 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
       if name notin inferred:
         c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.syms[methodSym] &
           ", cannot infer generic parameter " & pool.syms[name]
-        return
+        return SymId(0)
       typeArgsBuf.addSubtree inferred[name]
-    discard requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
+    let instance = requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
+    return instance.targetSym
   else:
     # method did not match, fine, consider it unavailable for this instance
-    discard
+    return SymId(0)
 
 proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Cursor) =
   let decl = asTypeDecl(decl)
@@ -5392,12 +5394,36 @@ proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Curso
 
   let base = typevars.symId
 
-  var instanceMethods = c.methods.getOrDefault(s, @[])
-  for m in c.methods.getOrDefault(base, @[]):
-    if m notin instanceMethods:
-      instantiateMethodForType(c, dest, m[1], s)
-      instanceMethods.add m
-      c.methods.mgetOrPut(s, @[]).add m
+  # Load methods from the base type (from c.classes or type pragmas)
+  var baseMethods: seq[MethodIndexEntry]
+
+  # First check if we have a ClassEntry for the base
+  if base in c.classes:
+    baseMethods = c.classes[base].methods
+  else:
+    # Try loading from type pragmas
+    baseMethods = vtables_frontend.loadVTable(base)
+    if baseMethods.len > 0:
+      # Create a ClassEntry for the base
+      c.classes[base] = ClassEntry(methods: baseMethods)
+
+  # Create a ClassEntry for the generic instance with instantiated methods
+  var instanceMethods: seq[MethodIndexEntry] = @[]
+  for baseMethod in baseMethods:
+    # Instantiate the method for this type instance
+    let instantiatedSym = instantiateMethodForType(c, dest, baseMethod.fn, s)
+    if instantiatedSym != SymId(0):
+      # Use the instantiated symbol, not the base symbol
+      instanceMethods.add MethodIndexEntry(fn: instantiatedSym, signature: baseMethod.signature)
+
+  # Store the ClassEntry for this instance
+  if instanceMethods.len > 0:
+    c.classes[s] = ClassEntry(methods: instanceMethods)
+
+  # Also update c.methods for compatibility with existing code
+  for entry in instanceMethods:
+    let sig = pool.strings[entry.signature]
+    c.methods.mgetOrPut(s, @[]).add (sig, entry.fn)
 
 proc addSelfModuleSym(c: var SemContext; path: string) =
   let name = moduleNameFromPath(path)
@@ -5511,7 +5537,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf, c.typeHooks, c.methods, c.thisModuleSuffix, c.g.config.bits)
+    dest = injectDerefs(finalBuf, c.typeHooks, c.methods, c.classes, c.thisModuleSuffix, c.g.config.bits)
   else:
     quit 1
 

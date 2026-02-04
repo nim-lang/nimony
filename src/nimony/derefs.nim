@@ -33,7 +33,7 @@ include nifprelude
 
 import ".." / models / tags
 import ".." / hexer / lifter
-import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops, vtables_frontend
+import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops, vtables_frontend, semdata
 
 type
   Expects = enum
@@ -57,7 +57,8 @@ type
     r: CurrentRoutine
     typeCache: TypeCache
     hooks: Table[SymId, HooksPerType]
-    methods: Table[SymId, seq[(string, SymId)]] # class -> (methodKey, methodSym) for vtables
+    methods: Table[SymId, seq[(string, SymId)]] # class -> (methodKey, methodSym) for vtables (deprecated)
+    classes: semdata.Classes # class entries with methods for vtables
     lifter: ref LiftingCtx
     typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
 
@@ -764,7 +765,15 @@ proc trType(c: var Context; n: var Cursor) =
     needsForgedHooks = bk in {ObjectT, DistinctT, RefT}
 
   # Check if type has methods (for vtables)
-  let hasMethods = s != SymId(0) and c.methods.hasKey(s)
+  # Use the new c.classes table for method information
+  var hasMethods = false
+  var methodsToAdd: seq[(string, SymId)] = @[]
+  if s != SymId(0) and s in c.classes:
+    hasMethods = true
+    # Convert MethodIndexEntry to (string, SymId) format for addMethodsDecl
+    for entry in c.classes[s].methods:
+      let sig = pool.strings[entry.signature]
+      methodsToAdd.add (sig, entry.fn)
 
   # pragmas:
   if s != SymId(0) and (c.hooks.hasKey(s) or hasMethods):
@@ -780,7 +789,7 @@ proc trType(c: var Context; n: var Cursor) =
     if c.hooks.hasKey(s):
       addHookDecls c.dest, c.hooks[s]
     if hasMethods:
-      addMethodsDecl c.dest, c.methods[s]
+      addMethodsDecl c.dest, methodsToAdd
     c.dest.addParRi()
   elif needsForgedHooks:
     # Non-generic nominal type - generate hooks via lifter
@@ -926,11 +935,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    methods: sink Table[SymId, seq[(string, SymId)]];
+                   classes: sink semdata.Classes;
                    thisModuleSuffix: string; bits: int): TokenBuf =
   var c = Context(typeCache: createTypeCache(),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
     hooks: ensureMove(hooks),
     methods: ensureMove(methods),
+    classes: ensureMove(classes),
     lifter: createLiftingCtx(thisModuleSuffix, bits))
   c.typeCache.openScope()
   var n2 = n

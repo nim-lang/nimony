@@ -10,10 +10,11 @@
 ## between modules that kills parallelism. So we prepare the vtables
 ## in the frontend and make them part of a module's interface.
 
+import std/assertions
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys
 import nimony_model, decls, programs, typenav,
-  renderer, typeprops, sigmatch
+  renderer, sigmatch, semdata
 
 when false:
   # maybe we can use this later to provide better error messages
@@ -77,35 +78,51 @@ proc traceMethodKey*(): string =
   b.addKeyw "closureNo"
   result = "=trace:" & b.extract()
 
-type
-  MethodIndexEntry = object
-    fn*: SymId
-    signature*: StrId
-
-proc loadVTable*(typ: SymId): seq[MethodIndexEntry] =
+proc loadVTable*(typ: SymId): seq[semdata.MethodIndexEntry] =
   ## Load vtable methods from the type's (methods (kv key symId) ...) pragma.
+  ## For generic instances, also loads methods from the generic base.
   result = @[]
   let res = tryLoadSym(typ)
-  if res.status == LacksNothing:
-    let typeDecl = asTypeDecl(res.decl)
-    var pragmas = typeDecl.pragmas
-    if pragmas.kind == ParLe:
-      inc pragmas # skip (pragmas
-      while pragmas.kind != ParRi:
-        if pragmas.kind == ParLe and pragmas.pragmaKind == MethodsP:
-          inc pragmas # skip (methods
-          while pragmas.kind == ParLe and pragmas.substructureKind == KvU:
-            inc pragmas # skip (kv
-            if pragmas.kind == StringLit:
-              let signature = pragmas.litId
+  if res.status != LacksNothing:
+    return
+  # Try to process as type - asTypeDecl will work for TypeY symbols
+  # For non-types, pragmas cursor will be invalid and we'll return early
+  let typeDecl = asTypeDecl(res.decl)
+  var pragmas = typeDecl.pragmas
+  if pragmas.kind == ParLe:
+    inc pragmas # skip (pragmas
+    while pragmas.kind != ParRi:
+      if pragmas.kind == ParLe and pragmas.pragmaKind == MethodsP:
+        inc pragmas # skip (methods
+        while pragmas.kind == ParLe and pragmas.substructureKind == KvU:
+          inc pragmas # skip (kv
+          if pragmas.kind == StringLit:
+            let signature = pragmas.litId
+            inc pragmas
+            if pragmas.kind == Symbol:
+              let methodSym = pragmas.symId
+              result.add semdata.MethodIndexEntry(fn: methodSym, signature: signature)
               inc pragmas
-              if pragmas.kind == Symbol:
-                let methodSym = pragmas.symId
-                result.add MethodIndexEntry(fn: methodSym, signature: signature)
-                inc pragmas
-              skipParRi pragmas
-            else:
-              skip pragmas
-          skipParRi pragmas # skip methods )
-        else:
-          skip pragmas
+            skipParRi pragmas
+          else:
+            skip pragmas
+        skipParRi pragmas # skip methods )
+      else:
+        skip pragmas
+
+  # If this is a generic instance, also check the generic base and merge methods
+  if typeDecl.typevars.kind == ParLe and typeDecl.typevars.typeKind == InvokeT:
+    var baseTypeCursor = typeDecl.typevars
+    inc baseTypeCursor
+    if baseTypeCursor.kind == Symbol:
+      let baseSymId = baseTypeCursor.symId
+      # Recursively load methods from the base (but don't go infinite)
+      if baseSymId != typ:
+        let baseMethods = loadVTable(baseSymId)
+        # Merge base methods with instance methods (instance methods override)
+        var signatures = newSeq[StrId]()
+        for entry in result:
+          signatures.add entry.signature
+        for baseEntry in baseMethods:
+          if baseEntry.signature notin signatures:
+            result.add baseEntry
