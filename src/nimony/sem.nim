@@ -15,8 +15,13 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec,
+  semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec,
   macro_plugin
+
+when not defined(useNj):
+  import contracts
+else:
+  import contracts_njvl
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -1503,6 +1508,12 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       takeToken dest, n
     else:
       buildErr c, dest, n.info, "`semantics` pragma takes a string literal"
+    dest.addParRi()
+  of MethodsP:
+    dest.add parLeToken(pk, n.info)
+    inc n
+    while n.kind != ParRi:
+      dest.takeTree n
     dest.addParRi()
   if hasParRi:
     if n.kind != ParRi:
@@ -4832,6 +4843,8 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
+      of PragmaxS:
+        semPragmaExpr c, dest, it
       of ImportasS, StaticstmtS, BindS, MixinS, AsmS:
         buildErr c, dest, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
@@ -5204,7 +5217,6 @@ proc writeOutput(c: var SemContext; dest: TokenBuf; outfile: string) =
   createIndex outfile, root, true,
     IndexSections(
       converters: move c.converterIndexMap,
-      classes: move c.classIndexMap,
       exportBuf: buildIndexExports(c))
   writeNewDepsFile c, outfile
 
@@ -5346,8 +5358,9 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
       else:
         quit "BUG: Could not load hook: " & pool.syms[hook]
 
-proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, typeInstSym: SymId) =
+proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, typeInstSym: SymId): SymId =
   # check if instance actually matches method
+  # Returns the instantiated method symbol, or SymId(0) if not applicable
   let res = tryLoadSym(methodSym)
   assert res.status == LacksNothing
   let procDecl = asRoutine(res.decl)
@@ -5372,12 +5385,13 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
       if name notin inferred:
         c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.syms[methodSym] &
           ", cannot infer generic parameter " & pool.syms[name]
-        return
+        return SymId(0)
       typeArgsBuf.addSubtree inferred[name]
-    discard requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
+    let instance = requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
+    return instance.targetSym
   else:
     # method did not match, fine, consider it unavailable for this instance
-    discard
+    return SymId(0)
 
 proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Cursor) =
   let decl = asTypeDecl(decl)
@@ -5388,12 +5402,31 @@ proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Curso
 
   let base = typevars.symId
 
-  var instanceMethods = c.methods.getOrDefault(s, @[])
-  for m in c.methods.getOrDefault(base, @[]):
-    if m notin instanceMethods:
-      instantiateMethodForType(c, dest, m, s)
-      instanceMethods.add m
-      c.methods.mgetOrPut(s, @[]).add m
+  # Load methods from the base type (from c.classes or type pragmas)
+  var baseMethods: seq[MethodIndexEntry]
+
+  # First check if we have a ClassEntry for the base
+  if base in c.classes:
+    baseMethods = c.classes[base].methods
+  else:
+    # Try loading from type pragmas
+    baseMethods = vtables_frontend.loadVTable(base)
+    if baseMethods.len > 0:
+      # Create a ClassEntry for the base
+      c.classes[base] = ClassEntry(methods: baseMethods)
+
+  # Create a ClassEntry for the generic instance with instantiated methods
+  var instanceMethods: seq[MethodIndexEntry] = @[]
+  for baseMethod in baseMethods:
+    # Instantiate the method for this type instance
+    let instantiatedSym = instantiateMethodForType(c, dest, baseMethod.fn, s)
+    if instantiatedSym != SymId(0):
+      # Use the instantiated symbol, not the base symbol
+      instanceMethods.add MethodIndexEntry(fn: instantiatedSym, signature: baseMethod.signature)
+
+  # Store the ClassEntry for this instance
+  if instanceMethods.len > 0:
+    c.classes[s] = ClassEntry(methods: instanceMethods)
 
 proc addSelfModuleSym(c: var SemContext; path: string) =
   let name = moduleNameFromPath(path)
@@ -5501,13 +5534,16 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true: #defined(enableContracts):
-      var moreErrors = analyzeContracts(afterSem)
+      when not defined(useNj):
+        var moreErrors = analyzeContracts(afterSem)
+      else:
+        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf, c.typeHooks)
+    dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
   else:
     quit 1
 

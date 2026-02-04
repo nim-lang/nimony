@@ -729,6 +729,10 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
           inc pc
           inc nested
+        of PragmaxS:
+          inc pc
+          skip pc # pragmas
+          inc nested
         of LocalDecls:
           inc pc
           let name = pc.symId
@@ -905,6 +909,11 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
     while n.kind != ParRi:
       traverseToplevel(c, n)
     c.toplevelStmts.add n
+    skipParRi n
+  of PragmaxS:
+    inc n
+    skip n
+    traverseToplevel(c, n)
     skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     traverseProc(c, n)

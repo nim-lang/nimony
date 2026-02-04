@@ -188,9 +188,11 @@ proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: PackedLineInfo): (
       dest.addParLe StmtsS, info # then section
       break
 
-proc maybeCloseGuard(c: var Context; dest: var TokenBuf; g: (int, SymId)) =
+proc maybeCloseGuard(c: var Context; dest: var TokenBuf; g: (int, SymId); mustCloseScope: bool) =
   let idx = g[0]
   if idx >= 0:
+    if mustCloseScope:
+      closeScope c, dest, NoLineInfo
     dest.addParRi() # then section of ite
     dest.addDotToken() # no else section
     dest.addParRi() # "ite"
@@ -198,8 +200,11 @@ proc maybeCloseGuard(c: var Context; dest: var TokenBuf; g: (int, SymId)) =
         g[1] == c.current.guards[idx].cond:
       # enable again as we are not under the guard anymore:
       c.current.guards[idx].active = true
+  else:
+    if mustCloseScope:
+      closeScope c, dest, NoLineInfo
 
-proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
+proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor; mustCloseScope: bool)
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
@@ -322,7 +327,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           c.current.errorTracker = c.current.resultSym
 
         declareCfVar c, dest, retFlag
-        trGuardedStmts c, b, dest, n
+        trGuardedStmts c, b, dest, n, false
         closeBasicBlock c, b, dest
         closeScope c, dest, info
       c.typeCache.closeScope()
@@ -533,6 +538,16 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skipParRi n
   dest.addParRi()
 
+proc countSons(dest: var TokenBuf; d: int): int =
+  var n = cursorAt(dest, d)
+  result = 0
+  assert n.kind == ParLe
+  inc n
+  while n.kind != ParRi:
+    skip n
+    inc result
+  endRead(dest)
+
 proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   # we assume here that xelim already produced a single elif-else construct here
   let info = n.info
@@ -544,9 +559,8 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
 
   openScope c
   var b = BasicBlock(openElseBranches: 0, hasParLe: false, leavesWith: -1)
-  trGuardedStmts c, b, dest, n
+  trGuardedStmts c, b, dest, n, true
   closeBasicBlock c, b, dest
-  closeScope c, dest, info
   skipParRi n # end of `elif`
 
   if n.kind != ParRi:
@@ -561,14 +575,14 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
       c.current.guards[b.leavesWith].active = false
 
     var thenB = BasicBlock(openElseBranches: 0, hasParLe: false, leavesWith: -1)
-    trGuardedStmts c, thenB, dest, n
+    trGuardedStmts c, thenB, dest, n, true
     closeBasicBlock c, thenB, dest
-    closeScope c, dest, info
     skipParRi n
     dest.takeParRi n # "ite"
 
     if b.leavesWith >= 0:
       c.current.guards[b.leavesWith].active = oldActive
+
   elif b.leavesWith >= 0:
     skipParRi n
     c.current.guards[b.leavesWith].active = false
@@ -628,10 +642,9 @@ proc trBlock(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Curs
   let s = addGuard(c, Guard(cond: guard, active: false, blockName: blockName))
 
   var b = BasicBlock(openElseBranches: 0, hasParLe: outerB.hasParLe, leavesWith: -1)
-  trGuardedStmts c, b, dest, n
+  trGuardedStmts c, b, dest, n, true
   closeBasicBlock c, b, dest
   removeGuard c, s
-  closeScope c, dest, n.info
 
 
 proc findBreakSplitPoint(n: Cursor): int =
@@ -684,7 +697,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var breakSplitPoint = findBreakSplitPoint(n)
     inc n # into the loop body statement list
     while n.kind != ParRi and breakSplitPoint >= 1:
-      trGuardedStmts c, b, dest, n
+      trGuardedStmts c, b, dest, n, false
       dec breakSplitPoint
 
     closeBasicBlock c, b, dest
@@ -698,12 +711,12 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var g = (-1, NoSymId)
     while n.kind != ParRi:
       if g[0] < 0: g = maybeEmitGuard(c, dest, n.info)
-      trGuardedStmts c, b2, dest, n
-    maybeCloseGuard(c, dest, g)
+      trGuardedStmts c, b2, dest, n, false
+    maybeCloseGuard(c, dest, g, false)
     closeBasicBlock c, b2, dest
+    closeScope c, dest, NoLineInfo
     skipParRi n # end of body statement list
 
-    closeScope c, dest, info
     # last statement of our loop body is the `continue`:
     dest.copyIntoKind ContinueS, info:
       dest.addDotToken() # no `join` information yet
@@ -737,6 +750,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var ww = beginRead(w)
     trWhileTrue c, dest, ww
     endRead w
+    dest.addParRi() # close "loop"
 
 proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
                         selector: SymId; selectorType: Cursor; info: PackedLineInfo) =
@@ -783,7 +797,7 @@ proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
 
 proc trGuardedStmtsBlock(c: var Context; dest: var TokenBuf; n: var Cursor; hasParLe = false) =
   var b = BasicBlock(openElseBranches: 0, hasParLe: hasParLe, leavesWith: -1)
-  trGuardedStmts c, b, dest, n
+  trGuardedStmts c, b, dest, n, false
   closeBasicBlock c, b, dest
 
 proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1025,32 +1039,34 @@ proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeParRi n # ParRi
   c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
 
-proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
+proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor; mustCloseScope: bool) =
   let g = maybeEmitGuard(c, dest, n.info)
 
+  var takeThisParRi = false
   case n.stmtKind
   of StmtsS, ScopeS:
     # Statement lists should introduce a guard scope like block statements
     # This ensures guards activated by statements are checked for subsequent statements
     # flat nested statements list:
-    var takeThisParRi = false
     if not b.hasParLe and g[0] < 0:
       dest.takeToken n
       b.hasParLe = true
       takeThisParRi = true
     else:
+      when false:
+        if g[0] >= 0 and not b.hasParLe:
+          # Guard was emitted, which added (stmts to output.
+          # Mark that we've conceptually consumed a ParLe.
+          b.hasParLe = true
       inc n
     var g2 = (-1, NoSymId)
     while n.kind != ParRi:
       # we need to figure out guards as long as we are still in the basic block
       # so that we can merge `guard a; guard b;` into `guard (a; b)`
       if g2[0] < 0: g2 = maybeEmitGuard(c, dest, n.info)
-      trGuardedStmts(c, b, dest, n)
-    maybeCloseGuard(c, dest, g2)
-    if takeThisParRi:
-      dest.takeToken n # ParRi
-    else:
-      inc n
+      trGuardedStmts(c, b, dest, n, false)
+    inc n # ParRi
+    maybeCloseGuard(c, dest, g2, false)
 
   of AsgnS:
     trAsgn c, dest, n
@@ -1081,10 +1097,16 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   else:
     if n.njvlKind == CfVarV:
       trCfVarDecl c, dest, n
+    elif n.exprKind == PragmaxX:
+      copyInto(dest, n):
+        takeTree dest, n  # pragmas
+        trGuardedStmts c, b, dest, n, false  # body
     else:
       trExpr c, dest, n
 
-  maybeCloseGuard(c, dest, g)
+  maybeCloseGuard(c, dest, g, mustCloseScope)
+  if takeThisParRi:
+    dest.addParRi()
 
 proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(counter: 0, typeCache: createTypeCache(),
@@ -1098,9 +1120,9 @@ proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
   inc n
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
   while n.kind != ParRi:
-    trGuardedStmts c, b, result, n
-  closeBasicBlock c, b, result
+    trGuardedStmts c, b, result, n, false
   closeScope c, result, n.info
+  closeBasicBlock c, b, result
   result.addParRi()
   endRead elimExprs
   #echo "PRODUCED: ", result.toString(false)

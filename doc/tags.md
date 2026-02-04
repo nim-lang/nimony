@@ -134,13 +134,12 @@
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |
-| `(pragmax X (pragmas ...))` | NimonyExpr, NiflerKind | pragma expressions |
+| `(pragmax X (pragmas ...))` | NimonyExpr, NimonyStmt, NiflerKind | pragma expressions |
 | `(align X)` | NifcPragma, NimonyPragma | |
 | `(bits X)`| NifcPragma, NimonyPragma | |
 | `(vector)` | NifcPragma | |
-| `(imp S)` | NifcStmt | import declaration |
 | `(nodecl)` | NifcPragma, NimonyPragma | `nodecl` annotation |
-| `(incl X X)`; `(incl STR)` | NifcStmt, NimonyStmt | `#include` statement or `incl` set operation |
+| `(incl X X)` | NimonyStmt | `incl` set operation |
 | `(excl X X)` | NimonyStmt | `excl` set operation |
 | `(include X+)` | NimonyStmt, NiflerKind | `include` statement |
 | `(import X+)` | NimonyStmt, NiflerKind | `import` statement |
@@ -314,3 +313,4 @@
 | `(pop)`      | NimonyPragma | `pop` pragma |
 | `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |
+| `(methods (kv STR Y)+)`  | NimonyPragma | `methods` pragma lists vtable methods for a type |

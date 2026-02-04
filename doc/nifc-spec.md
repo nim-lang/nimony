@@ -1,7 +1,7 @@
 NIFC dialect
 ============
 
-NIFC is a dialect of NIF designed to be very close to C. Its benefits are:
+NIFC is a dialect of [NIF](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) designed to be very close to C. Its benefits are:
 
 - Easier to generate than generating C/C++ code directly.
 - Has all the NIF related tooling support.
@@ -10,6 +10,13 @@ NIFC is a dialect of NIF designed to be very close to C. Its benefits are:
   single element and `aptr` which points to an array of elements.
 - Inheritance is modelled directly in the type system as opposed to C's quirky type aliasing
   rule that is concerned with aliasings between a struct and its first element.
+- Leverages NIF's module system to avoid C/C++'s possible "one definition rule" violations: A symbol has one definition and can be used in client modules by simply referring to it by name.
+
+
+Module system
+-------------
+
+NIFC uses NIF's module system. Read the [nifspec.md](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) for more details.
 
 
 Name mangling
@@ -209,7 +216,7 @@ CallingConvention ::= (cdecl) | (stdcall) | (safecall) | (syscall)  |
 Attribute ::= (attr StringLiteral)
 
 CommonPragmas ::= (was Identifier) | Attribute | (importc StringLiteral?) |
-                  (importcpp StringLiteral?) | (exportc StringLiteral?)
+                  (importcpp StringLiteral?) | (exportc StringLiteral?) | (nodecl)
 
 ProcPragma ::= CommonPragmas | (inline) | (noinline) | CallingConvention | (selectany) |
             | (raises) | (errs)
@@ -233,12 +240,8 @@ TypePragma ::= CommonPragma | (vector Number)
 TypePragmas ::= Empty | (pragmas TypePragma+)
 
 
-ExternDecl ::= (imp ProcDecl | VarDecl | ConstDecl)
-IgnoreDecl ::= (nodecl ProcDecl | VarDecl | ConstDecl)
-Include ::= (incl StringLiteral)
-
-TopLevelConstruct ::= ExternDecl | IgnoreDecl | ProcDecl | VarDecl | ConstDecl |
-                      TypeDecl | Include | EmitStmt | Call | CallCanRaise |
+TopLevelConstruct ::= ProcDecl | VarDecl | ConstDecl |
+                      TypeDecl | EmitStmt | Call | CallCanRaise |
                       TryStmt | RaiseStmt | AsgnStmt | KeepOverflowStmt |
                       IfStmt | WhileStmt | CaseStmt | LabelStmt | JumpStmt |
                       ScopeStmt | DiscardStmt
@@ -282,8 +285,7 @@ Notes:
 - `type` can only be used to introduce a name for a nominal type (that is a type which
   is only compatible to itself) or for a proc type for code compression purposes. Arbitrary
   aliases for types **cannot** be used! Rationale: Implementation simplicity.
-- `nodecl` is an import mechanism like `imp` but the declarations come from a header file
-  and are not to be declared in the resulting C/C++ code.
+- `nodecl` is a pragma that indicates that the declaration should not be emitted in the resulting C/C++ code.
 - `var` is always a local variable, `gvar` is a global variable and `tvar` a thread local
   variable.
 - `SCOPE` indicates the construct introduces a new local scope for variables.
@@ -324,6 +326,13 @@ Declaration order
 -----------------
 
 NIFC allows for an arbitrary order of declarations without the need for forward declarations.
+
+
+Include files
+-------------
+
+NIFC generates the required include files by inspecting the `(header)` pragmas.
+
 
 Exceptions
 ----------

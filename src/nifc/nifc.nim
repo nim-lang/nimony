@@ -10,7 +10,7 @@
 ## NIFC driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, noptions, mangler, symparser
+import codegen, noptions, symparser
 
 when defined(windows):
   import bat

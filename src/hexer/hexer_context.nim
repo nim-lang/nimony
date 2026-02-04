@@ -19,13 +19,8 @@ type
   EContext* = object
     dir*, main*, ext*: string
     dest*: TokenBuf
-    declared*: HashSet[SymId]
-    requires*: seq[SymId]
     nestedIn*: seq[(StmtKind, SymId)]
-    headers*: HashSet[StrId]
-    dynlibs*: Table[StrId, seq[(StrId, SymId)]]
-    dynlibSyms*: Table[SymId, SymId]
-    currentOwner*: SymId
+    dynlibs*: Table[StrId, seq[(SymId, StrId, SymId)]]
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]
     pending*: TokenBuf
@@ -37,7 +32,6 @@ type
     exceptLabels*: seq[SymId] # how to translate `except`
     instId*: int # per forStmt
     tmpId*: int # per proc
-    inImpSection*: int
     resultSym*: SymId
 
     localDeclCounters*: int
