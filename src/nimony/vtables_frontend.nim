@@ -109,20 +109,3 @@ proc loadVTable*(typ: SymId): seq[semdata.MethodIndexEntry] =
         skipParRi pragmas # skip methods )
       else:
         skip pragmas
-
-  # If this is a generic instance, also check the generic base and merge methods
-  if typeDecl.typevars.kind == ParLe and typeDecl.typevars.typeKind == InvokeT:
-    var baseTypeCursor = typeDecl.typevars
-    inc baseTypeCursor
-    if baseTypeCursor.kind == Symbol:
-      let baseSymId = baseTypeCursor.symId
-      # Recursively load methods from the base (but don't go infinite)
-      if baseSymId != typ:
-        let baseMethods = loadVTable(baseSymId)
-        # Merge base methods with instance methods (instance methods override)
-        var signatures = newSeq[StrId]()
-        for entry in result:
-          signatures.add entry.signature
-        for baseEntry in baseMethods:
-          if baseEntry.signature notin signatures:
-            result.add baseEntry
