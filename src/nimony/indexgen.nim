@@ -6,7 +6,7 @@
 
 ## Nimony index generator.
 
-import std / [os, assertions, sets, tables]
+import std / [os, assertions, sets, syncio, tables]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
 import decls, nimony_model, programs, semos
@@ -64,6 +64,8 @@ proc indexFromNif*(infile: string) =
   let root = n.info
   var converterIndexMap = default seq[(SymId, SymId)]
   var exports = default Table[string, HashSet[SymId]]  # Module suffix -> symbols to export in the module
+  var toBuild = createTokenBuf()
+  let compileTag = pool.strings.getOrIncl("compile")
 
   assert n.stmtKind == StmtsS
   inc n
@@ -94,6 +96,37 @@ proc indexFromNif*(infile: string) =
           exports.mgetOrPut(suffix).incl sym
           inc n
         inc n
+      of PragmasS:
+        var x = n
+        let root = n
+        skip n
+        inc x
+        if x.substructureKind == KvU:
+          inc x
+          if x.kind == Ident and x.litId == compileTag:
+            # In Nim 2, compile pragma can take three forms.
+            # `{.compile: ("file.c", "$1.o").}` form is not supported.
+            inc x
+            if x.kind == StringLit:
+              toBuild.buildTree TagId(TupX), NoLineInfo:
+                toBuild.addStrLit "C"
+                toBuild.add x
+                toBuild.addStrLit ""
+            else:
+              error " Error: Unsupported compile pragma form.", root
+        elif x.stmtKind == CallS:
+          inc x
+          if x.kind == Ident and x.litId == compileTag:
+            inc x
+            assert x.kind == StringLit
+            toBuild.buildTree TagId(TupX), NoLineInfo:
+              toBuild.addStrLit "C"
+              toBuild.add x
+              inc x
+              if x.kind == StringLit:
+                toBuild.add x
+              else:
+                toBuild.addStrLit ""
       else:
         skip n
     else:
@@ -107,3 +140,10 @@ proc indexFromNif*(infile: string) =
     IndexSections(
       converters: move converterIndexMap,
       exportBuf: exportBuf)
+
+  var content = "(.nif24)\n"
+  if toBuild.len > 0:
+    content.add "(build\n"
+    content.add toString(toBuild)
+    content.add ")"
+  writeFile changeFileExt(infile, ".deps.nif"), content
