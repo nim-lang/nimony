@@ -622,6 +622,12 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)
+      of DotX:
+        takeToken dest, n
+        tre c, dest, n
+        takeTree dest, n # don't look up field names here
+        if n.kind != ParRi: takeTree dest, n # optional inheritance depth
+        takeParRi dest, n
       of EnvpX:
         let info = n.info
         inc n

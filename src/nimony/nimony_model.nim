@@ -135,7 +135,7 @@ const
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
   RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT}
 
-proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv;
+proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv|PragmaKind;
                info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
 

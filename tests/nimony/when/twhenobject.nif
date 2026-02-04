@@ -1,15 +1,81 @@
 (.nif26)
-(.indexat +303             )
+(.indexat +1676            )
 0,1,tests/nimony/when/twhenobject.nim(stmts 6,1
- (type ~4 :Foo.0. . . . 2
+ (type ~4 :Foo.0. . .
+  (pragmas
+   (destroy =destroy_SX46oo0twh699we9.0.)
+   (wasmoved =wasmoved_SX46oo0twh699we9.0.)
+   (dup =dup_SX46oo0twh699we9.0.)
+   (copy =copy_SX46oo0twh699we9.0.)) 2
   (object . ~2,4
    (fld :y.0. . . 3
     (i -1) .) ~4,5
    (fld :z.0. . . 3
     (i -1) .) ~2,7
    (fld :a.0. . . 3 string.0.sysvq0asl .))) 9,5
- (comment int.0.sysvq0asl ~2,1 int.0.sysvq0asl))0,1,tests/nimony/when/twhenobject.nim(.index 6,1
+ (comment int.0.sysvq0asl ~2,1 int.0.sysvq0asl) 6,1
+ (proc :=destroy_SX46oo0twh699we9.0. . . .
+  (params
+   (param :dest.0 . . Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (call =destroy.2.sysvq0asl
+    (dot dest.0 a.0. +0)))) 6,1
+ (proc :=wasmoved_SX46oo0twh699we9.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut Foo.0.) .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (call =wasMoved.2.sysvq0asl
+    (haddr
+     (dot
+      (hderef dest.0) a.0. +0))))) 6,1
+ (proc :=dup_SX46oo0twh699we9.0. . . .
+  (params
+   (param :src.0 . . Foo.0. .)) Foo.0.
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (var :dest.0 . . Foo.0. .)
+   (asgn
+    (dot dest.0 y.0. +0)
+    (dot src.0 y.0. +0))
+   (asgn
+    (dot dest.0 z.0. +0)
+    (dot src.0 z.0. +0))
+   (asgn
+    (dot dest.0 a.0. +0)
+    (call =dup.2.sysvq0asl
+     (dot src.0 a.0. +0)))
+   (ret dest.0))) 6,1
+ (proc :=copy_SX46oo0twh699we9.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut Foo.0.) .)
+   (param :src.0 . . Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (asgn
+    (dot
+     (hderef dest.0) y.0. +0)
+    (dot src.0 y.0. +0))
+   (asgn
+    (dot
+     (hderef dest.0) z.0. +0)
+    (dot src.0 z.0. +0))
+   (call =copy.2.sysvq0asl
+    (dot
+     (hderef dest.0) a.0. +0)
+    (dot src.0 a.0. +0)))))0,1,tests/nimony/when/twhenobject.nim(.index 6,1
  (h Foo.0. +85) 6,5
- (h y.0. +43) 4,6
+ (h y.0. +209) 4,6
  (h z.0. +39) 6,8
- (h a.0. +39))
+ (h a.0. +39) 6,1
+ (h =destroy_SX46oo0twh699we9.0. +100) 6,1
+ (h =wasmoved_SX46oo0twh699we9.0. +188) 6,1
+ (h =dup_SX46oo0twh699we9.0. +228) 6,1
+ (h =copy_SX46oo0twh699we9.0. +384))

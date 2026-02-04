@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +7114            )
+(.indexat +7100            )
 0,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
  (type ~13 :MyObjectBase.0. . .
   (pragmas
@@ -161,7 +161,7 @@
  (type :MyObject.0.I76zger. .
   (at MyObject.0. 9
    (i -1) 14
-   (f +64)) ~3,~32
+   (f +64))
   (pragmas
    (destroy =destroy.2.)
    (wasmoved =wasMoved.2.)
@@ -175,7 +175,7 @@
  (type :MyObject.0.I3kvyeb. .
   (at MyObject.0. 9
    (f +64) 16
-   (i -1)) ~4,~34
+   (i -1))
   (pragmas
    (destroy =destroy.3.)
    (wasmoved =wasMoved.3.)
@@ -300,10 +300,10 @@
  (h obj.0. +148) 12,53
  (h =checkHook.1. +546) 20,36
  (h MyObject.0.I76zger. +220) 4,5
- (h x.1.I76zger. +210) 7,5
+ (h x.1.I76zger. +203) 7,5
  (h y.1.I76zger. +48) 21,38
  (h MyObject.0.I3kvyeb. +50) 4,5
- (h x.1.I3kvyeb. +210) 7,5
+ (h x.1.I3kvyeb. +203) 7,5
  (h y.1.I3kvyeb. +48) ,32
  (h =destroy.2. +48) ,22
  (h =wasMoved.2. +205) ,26

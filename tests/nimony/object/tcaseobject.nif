@@ -1,7 +1,12 @@
 (.nif26)
-(.indexat +9381            )
+(.indexat +15349           )
 0,1,tests/nimony/object/tcaseobject.nim(stmts 9,3
- (type ~4 :Foo.0. . . . 2
+ (type ~4 :Foo.0. . .
+  (pragmas
+   (destroy =destroy_SX46oo0tcauiaoif.0.)
+   (wasmoved =wasmoved_SX46oo0tcauiaoif.0.)
+   (dup =dup_SX46oo0tcauiaoif.0.)
+   (copy =copy_SX46oo0tcauiaoif.0.)) 2
   (object . ~9,1
    (case 5
     (fld :x.0. . . 3
@@ -19,7 +24,8 @@
       (fld :z.0. . . 3 string.0.sysvq0asl .) ,1
       (fld :t.0. . . 3
        (bool) .)))))) 9,11
- (type ~4 :Bar.0. . . . 2
+ (type ~4 :Bar.0. . .
+  (pragmas) 2
   (object . ~9,1
    (case 5
     (fld :x.1. . . 3
@@ -246,7 +252,12 @@
        (stmts
         (ret "kc"))))
      (ret result.1))) 5,2
-   (type ~3 :TA.0. . . . 2
+   (type ~3 :TA.0. . .
+    (pragmas
+     (destroy =destroy_SX54X410tcauiaoif.0.)
+     (wasmoved =wasmoved_SX54X410tcauiaoif.0.)
+     (dup =dup_SX54X410tcauiaoif.0.)
+     (copy =copy_SX54X410tcauiaoif.0.)) 2
     (object . ~3,1
      (case 5
       (fld :k.0. . . 3 TKind.0. .) ,1
@@ -289,14 +300,280 @@
        (stmts
         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 14,64,tests/nimony/object/tcaseobject.nim +3)) ,2
        (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 10,4
- (comment bool.0.sysvq0asl ~5,1 false.0.sysvq0asl ~5,1 false.0.sysvq0asl ~3,2 int.0.sysvq0asl ~5,3 true.0.sysvq0asl ~5,3 true.0.sysvq0asl ~3,5 bool.0.sysvq0asl ,8 bool.0.sysvq0asl ~5,9 false.0.sysvq0asl ~5,9 false.0.sysvq0asl 2,9 true.0.sysvq0asl 2,9 true.0.sysvq0asl 3,11 default.1.sysvq0asl 3,11 default.3.sysvq0asl 3,12 false.0.sysvq0asl ~3,13 bool.0.sysvq0asl 2,14 false.0.sysvq0asl ~10,14 assert.0.assy765wm ~3,15 int.0.sysvq0asl ~10,16 assert.0.assy765wm 3,17 true.0.sysvq0asl 22,17 false.0.sysvq0asl 6,18 true.0.sysvq0asl ~10,18 assert.0.assy765wm ~10,20 assert.0.assy765wm ~3,21 bool.0.sysvq0asl 2,22 false.0.sysvq0asl ~10,22 assert.0.assy765wm 3,24 default.1.sysvq0asl 3,25 false.0.sysvq0asl 6,26 false.0.sysvq0asl ~10,26 assert.0.assy765wm 3,27 true.0.sysvq0asl ~3,28 bool.0.sysvq0asl 2,29 true.0.sysvq0asl ~10,29 assert.0.assy765wm 7,32 true.0.sysvq0asl ~10,32 assert.0.assy765wm 7,39 true.0.sysvq0asl 26,39 false.0.sysvq0asl 1,48 int.0.sysvq0asl 1,49 int.0.sysvq0asl 8,51 float.0.sysvq0asl 8,51 float.0.sysvq0asl ~1,59 echo.0.syn1lfpjv))0,1,tests/nimony/object/tcaseobject.nim(.index 9,3
+ (comment bool.0.sysvq0asl ~5,1 false.0.sysvq0asl ~5,1 false.0.sysvq0asl ~3,2 int.0.sysvq0asl ~5,3 true.0.sysvq0asl ~5,3 true.0.sysvq0asl ~3,5 bool.0.sysvq0asl ,8 bool.0.sysvq0asl ~5,9 false.0.sysvq0asl ~5,9 false.0.sysvq0asl 2,9 true.0.sysvq0asl 2,9 true.0.sysvq0asl 3,11 default.1.sysvq0asl 3,11 default.3.sysvq0asl 3,12 false.0.sysvq0asl ~3,13 bool.0.sysvq0asl 2,14 false.0.sysvq0asl ~10,14 assert.0.assy765wm ~3,15 int.0.sysvq0asl ~10,16 assert.0.assy765wm 3,17 true.0.sysvq0asl 22,17 false.0.sysvq0asl 6,18 true.0.sysvq0asl ~10,18 assert.0.assy765wm ~10,20 assert.0.assy765wm ~3,21 bool.0.sysvq0asl 2,22 false.0.sysvq0asl ~10,22 assert.0.assy765wm 3,24 default.1.sysvq0asl 3,25 false.0.sysvq0asl 6,26 false.0.sysvq0asl ~10,26 assert.0.assy765wm 3,27 true.0.sysvq0asl ~3,28 bool.0.sysvq0asl 2,29 true.0.sysvq0asl ~10,29 assert.0.assy765wm 7,32 true.0.sysvq0asl ~10,32 assert.0.assy765wm 7,39 true.0.sysvq0asl 26,39 false.0.sysvq0asl 1,48 int.0.sysvq0asl 1,49 int.0.sysvq0asl 8,51 float.0.sysvq0asl 8,51 float.0.sysvq0asl ~1,59 echo.0.syn1lfpjv) 7,49
+ (proc :=destroy_SX46oo0tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . . 2,~46 Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~5,~45
+   (case 5,45
+    (dot dest.0 x.0. +0) ,1
+    (of
+     (ranges 3
+      (false)) 2,1
+     (stmts)) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 z.0. +0))))))) 7,49
+ (proc :=wasmoved_SX46oo0tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut 2,~46 Foo.0.) .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~5,~45
+   (case 5,45
+    (dot
+     (hderef dest.0) x.0. +0) ,1
+    (of
+     (ranges 3
+      (false)) 2,1
+     (stmts)) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (call =wasMoved.2.sysvq0asl
+       (haddr
+        (dot
+         (hderef dest.0) z.0. +0)))))))) 7,49
+ (proc :=dup_SX46oo0tcauiaoif.0. . . .
+  (params
+   (param :src.0 . . 2,~46 Foo.0. .)) 2,~46 Foo.0.
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (var :dest.0 . . 2,~46 Foo.0. .)
+   (asgn
+    (dot dest.0 x.0. +0)
+    (dot src.0 x.0. +0)) ~5,~45
+   (case 5,45
+    (dot dest.0 x.0. +0) ,1
+    (of
+     (ranges 3
+      (false)) 2,1
+     (stmts 3,43
+      (asgn
+       (dot dest.0 y.0. +0)
+       (dot src.0 y.0. +0)))) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (asgn
+       (dot dest.0 z.0. +0)
+       (call =dup.2.sysvq0asl
+        (dot src.0 z.0. +0))) 3,41
+      (asgn
+       (dot dest.0 t.0. +0)
+       (dot src.0 t.0. +0)))))
+   (ret dest.0))) 7,49
+ (proc :=copy_SX46oo0tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut 2,~46 Foo.0.) .)
+   (param :src.0 . . 2,~46 Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~5,~45
+   (case 5,45
+    (dot dest.0 x.0. +0) ,1
+    (of
+     (ranges 3
+      (false)) 2,1
+     (stmts)) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 z.0. +0)))))
+   (asgn
+    (dot
+     (hderef dest.0) x.0. +0)
+    (dot src.0 x.0. +0)) ~5,~45
+   (case 5,45
+    (dot
+     (hderef dest.0) x.0. +0) ,1
+    (of
+     (ranges 3
+      (false)) 2,1
+     (stmts 3,43
+      (asgn
+       (dot
+        (hderef dest.0) y.0. +0)
+       (dot src.0 y.0. +0)))) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (call =copy.2.sysvq0asl
+       (dot
+        (hderef dest.0) z.0. +0)
+       (dot src.0 z.0. +0)) 3,41
+      (asgn
+       (dot
+        (hderef dest.0) t.0. +0)
+       (dot src.0 t.0. +0))))))) 7,49
+ (proc :=destroy_SX54X410tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . . TA.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~1,1
+   (case 1,~1
+    (dot dest.0 k.0. +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts)) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 a.1. +0)) 1,~5
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 b.1. +0)))) ,5
+    (else
+     (stmts))))) 7,49
+ (proc :=wasmoved_SX54X410tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut TA.0.) .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~1,1
+   (case 1,~1
+    (dot
+     (hderef dest.0) k.0. +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts)) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (call =wasMoved.2.sysvq0asl
+       (haddr
+        (dot
+         (hderef dest.0) a.1. +0))) 1,~5
+      (call =wasMoved.2.sysvq0asl
+       (haddr
+        (dot
+         (hderef dest.0) b.1. +0))))) ,5
+    (else
+     (stmts))))) 7,49
+ (proc :=dup_SX54X410tcauiaoif.0. . . .
+  (params
+   (param :src.0 . . TA.0. .)) TA.0.
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (var :dest.0 . . TA.0. .)
+   (asgn
+    (dot dest.0 k.0. +0)
+    (dot src.0 k.0. +0)) ~1,1
+   (case 1,~1
+    (dot dest.0 k.0. +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts ~1,~3
+      (asgn
+       (dot dest.0 x.2. +0)
+       (dot src.0 x.2. +0)) ~1,~3
+      (asgn
+       (dot dest.0 y.1. +0)
+       (dot src.0 y.1. +0)))) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (asgn
+       (dot dest.0 a.1. +0)
+       (call =dup.2.sysvq0asl
+        (dot src.0 a.1. +0))) 1,~5
+      (asgn
+       (dot dest.0 b.1. +0)
+       (call =dup.2.sysvq0asl
+        (dot src.0 b.1. +0))))) ,5
+    (else
+     (stmts 1,~6
+      (asgn
+       (dot dest.0 c.1. +0)
+       (dot src.0 c.1. +0)) 1,~6
+      (asgn
+       (dot dest.0 d.1. +0)
+       (dot src.0 d.1. +0)))))
+   (ret dest.0))) 7,49
+ (proc :=copy_SX54X410tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut TA.0.) .)
+   (param :src.0 . . TA.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~1,1
+   (case 1,~1
+    (dot dest.0 k.0. +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts)) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 a.1. +0)) 1,~5
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 b.1. +0)))) ,5
+    (else
+     (stmts)))
+   (asgn
+    (dot
+     (hderef dest.0) k.0. +0)
+    (dot src.0 k.0. +0)) ~1,1
+   (case 1,~1
+    (dot
+     (hderef dest.0) k.0. +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts ~1,~3
+      (asgn
+       (dot
+        (hderef dest.0) x.2. +0)
+       (dot src.0 x.2. +0)) ~1,~3
+      (asgn
+       (dot
+        (hderef dest.0) y.1. +0)
+       (dot src.0 y.1. +0)))) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (call =copy.2.sysvq0asl
+       (dot
+        (hderef dest.0) a.1. +0)
+       (dot src.0 a.1. +0)) 1,~5
+      (call =copy.2.sysvq0asl
+       (dot
+        (hderef dest.0) b.1. +0)
+       (dot src.0 b.1. +0)))) ,5
+    (else
+     (stmts 1,~6
+      (asgn
+       (dot
+        (hderef dest.0) c.1. +0)
+       (dot src.0 c.1. +0)) 1,~6
+      (asgn
+       (dot
+        (hderef dest.0) d.1. +0)
+       (dot src.0 d.1. +0))))))))0,1,tests/nimony/object/tcaseobject.nim(.index 9,3
  (h Foo.0. +87) 7,4
- (h x.0. +54) 4,6
+ (h x.0. +220) 4,6
  (h y.0. +93) 4,8
  (h z.0. +98) 4,9
  (h t.0. +48) 9,11
  (h Bar.0. +50) 7,12
- (h x.1. +54) 4,15
+ (h x.1. +64) 4,15
  (h foo.0. +130) 4,17
  (h a.0. +301) 4,19
  (h b.0. +599) 4,23
@@ -312,10 +589,18 @@
  (h kc.0. +55) 4,48
  (h dollar`.TKind.0. +58) 7,49
  (h TA.0. +423) 11,50
- (h k.0. +59) 8,52
+ (h k.0. +239) 8,52
  (h x.2. +90) 8,53
  (h y.1. +47) 13,54
  (h a.1. +99) 16,54
  (h b.1. +50) 12,55
  (h c.1. +80) 15,55
- (h d.1. +47))
+ (h d.1. +47) 7,49
+ (h =destroy_SX46oo0tcauiaoif.0. +1726) 7,49
+ (h =wasmoved_SX46oo0tcauiaoif.0. +370) 7,49
+ (h =dup_SX46oo0tcauiaoif.0. +430) 7,49
+ (h =copy_SX46oo0tcauiaoif.0. +671) 7,49
+ (h =destroy_SX54X410tcauiaoif.0. +953) 7,49
+ (h =wasmoved_SX54X410tcauiaoif.0. +437) 7,49
+ (h =dup_SX54X410tcauiaoif.0. +532) 7,49
+ (h =copy_SX54X410tcauiaoif.0. +910))

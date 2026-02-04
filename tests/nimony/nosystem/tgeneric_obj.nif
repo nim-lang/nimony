@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +6588            )
+(.indexat +6596            )
 0,2,tests/nimony/nosystem/tgeneric_obj.nim(stmts 2,1
  (type :int.0.
   (i -1) . 5
@@ -268,13 +268,15 @@
    (ret result.4))) 19,32
  (type :MyGeneric.0.I8smrpu. .
   (at MyGeneric.0. 1
-   (i -1)) ~4,~4 . ~2,~4
+   (i -1))
+  (pragmas) ~2,~4
   (object . ~13,1
    (fld :x.0.I8smrpu. . . 16,3
     (i -1) .))) 18,33
  (type :MyGeneric.0.Iliphp3. .
   (at MyGeneric.0. 1
-   (f +64)) ~3,~5 . ~1,~5
+   (f +64))
+  (pragmas) ~1,~5
   (object . ~13,1
    (fld :x.0.Iliphp3. . . 15,4
     (f +64) .))))0,2,tests/nimony/nosystem/tgeneric_obj.nim(.index 2,1
@@ -330,6 +332,6 @@
  (h foo.2. +629) 17,73
  (h identity.1. +274) 19,32
  (h MyGeneric.0.I8smrpu. +500) 4,29
- (h x.0.I8smrpu. +95) 18,33
+ (h x.0.I8smrpu. +99) 18,33
  (h MyGeneric.0.Iliphp3. +53) 4,29
- (h x.0.Iliphp3. +96))
+ (h x.0.Iliphp3. +100))

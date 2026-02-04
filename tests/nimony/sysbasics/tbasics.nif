@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +8826            )
+(.indexat +8836            )
 0,1,tests/nimony/sysbasics/tbasics.nim(stmts 8,3
  (type ~6 :Array.0. . . . 7
   (array 4
@@ -135,7 +135,8 @@
     (cast 5
      (pointer) 14 m.3)) 4,4
    (call ~4 foo3.0. 1 m2.0))) 10,37
- (type ~8 :Foo1314.0. . . . 2
+ (type ~8 :Foo1314.0. . .
+  (pragmas) 2
   (object . ~8,1
    (fld :a.0. . . 15
     (i -1) .) ~5,1
@@ -334,7 +335,7 @@
  (h foo2.0. +457) ,24
  (h foo3.0. +845) 10,37
  (h Foo1314.0. +614) 4,38
- (h a.0. +47) 7,38
+ (h a.0. +57) 7,38
  (h b.0. +40) 10,38
  (h c.0. +40) 13,38
  (h d.0. +38) 16,38

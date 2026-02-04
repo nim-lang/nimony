@@ -317,10 +317,23 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         if pool.syms[s] == DataField and
             obj.exprKind in {DerefX, HderefX}:
           inc obj
-          let typ = getTypeImpl(c, obj, flags)
-          if typ.typeKind == RefT:
-            result = typ
+          var t = getTypeImpl(c, obj, flags)
+          if t.kind == Symbol:
+            var counter = 20
+            while counter > 0 and t.kind == Symbol:
+              dec counter
+              let res = tryLoadSym(t.symId)
+              if res.status == LacksNothing and res.decl.stmtKind == TypeS:
+                let decl = asTypeDecl(res.decl)
+                t = decl.body
+              else:
+                break
+          if t.typeKind == RefT:
+            result = t
             inc result
+        elif pool.syms[s] == VTableField:
+          # VTableField is a magic internal field for RTTI - treat as pointer type
+          result = c.builtins.cstringType
         if cursorIsNil(result):
           when defined(debug):
             writeStackTrace()
