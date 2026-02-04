@@ -22,11 +22,12 @@ In order to not be too annoying in the case of a contract violation, the
 compiler emits a warning (that can be suppressed or turned into an error).
 ]##
 
-import std / [assertions, tables, sets]
+import std / [assertions, tables, sets, strutils]
 
 include nifprelude
 
 import ".." / models / tags
+import ".." / lib / symparser
 import ".." / njvl / [njvl_model, vl]
 import nimony_model, programs, decls, typenav, sembasics, reporters,
        renderer, typeprops, inferle, xints
@@ -37,6 +38,7 @@ type
     typeCache: TypeCache
     directlyInitialized: HashSet[SymId]
     writesTo: seq[SymId]
+    paramBaseNames: HashSet[string]
     errors: TokenBuf
     procCanRaise: bool
     moduleSuffix: string
@@ -56,6 +58,32 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor)
 proc analyseCall(c: var NjvlContext; n: var Cursor)
 
 template getVarId(c: var NjvlContext; symId: SymId): VarId = VarId(symId)
+
+proc isParamSym(symId: SymId): bool =
+  let res = tryLoadSym(symId)
+  result = res.status == LacksNothing and
+    (res.decl.symKind == ParamY or res.decl.substructureKind == ParamU)
+
+proc baseParamName(symName: string): string =
+  var name = symName
+  let moduleName = extractModule(symName)
+  if moduleName.len > 0:
+    let cut = name.len - moduleName.len - 1
+    if cut >= 0:
+      name = name[0 ..< cut]
+  let lastDot = name.rfind('.')
+  if lastDot >= 0:
+    var onlyDigits = true
+    for i in lastDot + 1 ..< name.len:
+      if name[i] notin {'0'..'9'}:
+        onlyDigits = false
+        break
+    if onlyDigits:
+      name = name[0 ..< lastDot]
+  result = name
+
+proc isXelimTemp(symName: string; moduleSuffix: string): bool =
+  symName.startsWith("`x.") and symName.endsWith("." & moduleSuffix)
 
 # --- Fact extraction from conditions ---
 
@@ -436,8 +464,16 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       let x = getLocalInfo(c.typeCache, symId)
       if x.kind in {VarY, LetY, CursorY}:
         if symId notin c.directlyInitialized and symId notin c.writesTo:
-          buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
-          c.writesTo.add symId
+          let symName = pool.syms[symId]
+          if isXelimTemp(symName, c.moduleSuffix):
+            c.directlyInitialized.incl symId
+          elif isParamSym(symId):
+            c.directlyInitialized.incl symId
+          elif baseParamName(symName) in c.paramBaseNames:
+            c.directlyInitialized.incl symId
+          else:
+            buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
+            c.writesTo.add symId
       inc pc
     of SymbolDef:
       bug "symbol definition in expression"
@@ -657,6 +693,7 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
 
 proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   let kind = n.symKind
+  let isParamDecl = kind == ParamY or n.substructureKind == ParamU
   inc n
   let name = n.symId
   skip n # name
@@ -665,7 +702,11 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   skip n # pragmas
   c.typeCache.registerLocal(name, cast[SymKind](kind), n)
   skip n # type
-  if n.kind != DotToken or skipInitCheck:
+  if isParamDecl:
+    c.paramBaseNames.incl baseParamName(pool.syms[name])
+  elif isXelimTemp(pool.syms[name], c.moduleSuffix):
+    c.directlyInitialized.incl name
+  if isParamDecl or n.kind != DotToken or skipInitCheck:
     c.directlyInitialized.incl name
   traverseExpr c, n
   skipParRi n
@@ -719,6 +760,18 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
     else:
       error "contract violation: ", orig
   skipParRi n
+
+proc registerProcParams(c: var NjvlContext; decl: Cursor) =
+  let r = asRoutine(decl, SkipExclBody)
+  c.typeCache.registerParams(r.name.symId, decl, r.params)
+  var p = r.params
+  if p.kind == ParLe:
+    inc p
+    while p.kind != ParRi:
+      let param = takeLocal(p, SkipFinalParRi)
+      c.paramBaseNames.incl baseParamName(pool.syms[param.name.symId])
+      if param.typ.typeKind != OutT:
+        c.directlyInitialized.incl param.name.symId
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   case n.njvlKind
@@ -834,7 +887,12 @@ proc traverseProc(c: var NjvlContext; n: Cursor) =
   var n = n
   c.facts = createFacts()
   c.procCanRaise = false
+  c.directlyInitialized.clear()
+  c.writesTo.setLen(0)
+  c.paramBaseNames.clear()
   c.typeCache.openScope()
+
+  registerProcParams(c, n)
 
   var body = n
   if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
