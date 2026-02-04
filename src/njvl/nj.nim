@@ -327,8 +327,9 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           c.current.errorTracker = c.current.resultSym
 
         declareCfVar c, dest, retFlag
-        trGuardedStmts c, b, dest, n, true
+        trGuardedStmts c, b, dest, n, false
         closeBasicBlock c, b, dest
+        closeScope c, dest, info
       c.typeCache.closeScope()
     else:
       takeTree dest, n
@@ -711,8 +712,9 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.kind != ParRi:
       if g[0] < 0: g = maybeEmitGuard(c, dest, n.info)
       trGuardedStmts c, b2, dest, n, false
-    maybeCloseGuard(c, dest, g, true)
+    maybeCloseGuard(c, dest, g, false)
     closeBasicBlock c, b2, dest
+    closeScope c, dest, NoLineInfo
     skipParRi n # end of body statement list
 
     # last statement of our loop body is the `continue`:
