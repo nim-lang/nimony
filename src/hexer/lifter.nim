@@ -78,7 +78,9 @@ proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
         c.nominalTypeToHook[op][s] = result
 
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
-  result = loadHook(c, c.op, s) != SymId(0)
+  result = c.nominalTypeToHook[c.op].hasKey(s)
+  if not result:
+    result = tryLoadHook(c.op, s) != SymId(0)
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
