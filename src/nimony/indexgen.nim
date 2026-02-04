@@ -70,7 +70,7 @@ proc indexFromNif*(infile: string) =
   while n.kind != ParRi:
     if n.kind == ParLe:
       case n.stmtKind:
-      of ProcS, FuncS, ConverterS:
+      of ProcS, FuncS, ConverterS, MethodS:
         let kind = n.stmtKind
         let routine = takeRoutine(n, SkipFinalParRi)
         let symId = routine.name.symId
