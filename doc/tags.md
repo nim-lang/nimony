@@ -134,7 +134,7 @@
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |
-| `(pragmax X (pragmas ...))` | NimonyExpr, NiflerKind | pragma expressions |
+| `(pragmax X (pragmas ...))` | NimonyExpr, NimonyStmt, NiflerKind | pragma expressions |
 | `(align X)` | NifcPragma, NimonyPragma | |
 | `(bits X)`| NifcPragma, NimonyPragma | |
 | `(vector)` | NifcPragma | |

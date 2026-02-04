@@ -14,6 +14,7 @@ include ".." / lib / nifprelude
 
 import std/tables
 from std/strutils import endsWith
+import ".." / njvl / njvl_model
 import nimony_model, builtintypes, decls, programs
 
 const
@@ -231,7 +232,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         skip n # label or DotToken
         result = getTypeImpl(c, n, flags)
       else:
-        discard
+        if njvlKind(n) == VV:
+          result = getTypeImpl(c, n.firstSon, flags)
     else:
       case n.substructureKind
       of RangesU, RangeU:

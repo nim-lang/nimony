@@ -1659,6 +1659,11 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
         trKeepovf c, n
       else:
         error c, "unknown statement: ", n
+    of PragmaxS:
+      inc n
+      skip n
+      trStmt c, n, mode
+      skipParRi n
     of StmtsS:
       if mode == TraverseTopLevel:
         inc n

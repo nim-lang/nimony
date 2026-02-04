@@ -15,7 +15,12 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, contracts, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec
+  semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec
+
+when not defined(useNj):
+  import contracts
+else:
+  import contracts_njvl
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
@@ -4837,6 +4842,8 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         of OrT, AndT, NotT, InvokeT:
           # should be handled in respective expression kinds
           discard
+      of PragmaxS:
+        semPragmaExpr c, dest, it
       of ImportasS, StaticstmtS, BindS, MixinS, AsmS:
         buildErr c, dest, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
@@ -5526,7 +5533,10 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true: #defined(enableContracts):
-      var moreErrors = analyzeContracts(afterSem)
+      when not defined(useNj):
+        var moreErrors = analyzeContracts(afterSem)
+      else:
+        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:

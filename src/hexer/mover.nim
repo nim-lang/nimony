@@ -216,6 +216,10 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
           inc pc
           inc nested
+        of PragmaxS:
+          inc pc
+          skip pc # pragma itself
+          inc nested
         of LocalDecls:
           inc pc
           if root != NoSymId and pc.kind == SymbolDef and pc.symId == root:
