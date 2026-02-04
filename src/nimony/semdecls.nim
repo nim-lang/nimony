@@ -586,7 +586,6 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
     var symToRegister = symId
     if methodIsInstance:
       symToRegister = dest[beforeGenericParams+1].symId
-    c.methods.mgetOrPut(root, @[]).add((pool.strings[signature], symToRegister))
 
     # Also add to c.classes for vtable generation
     let methodEntry = MethodIndexEntry(fn: symToRegister, signature: signature)

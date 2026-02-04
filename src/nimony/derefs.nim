@@ -57,7 +57,6 @@ type
     r: CurrentRoutine
     typeCache: TypeCache
     hooks: Table[SymId, HooksPerType]
-    methods: Table[SymId, seq[(string, SymId)]] # class -> (methodKey, methodSym) for vtables (deprecated)
     classes: semdata.Classes # class entries with methods for vtables
     lifter: ref LiftingCtx
     typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
@@ -934,13 +933,11 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
           trSons c, n, WantT
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
-                   methods: sink Table[SymId, seq[(string, SymId)]];
-                   classes: sink semdata.Classes;
+                   classes: sink Classes;
                    thisModuleSuffix: string; bits: int): TokenBuf =
   var c = Context(typeCache: createTypeCache(),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
     hooks: ensureMove(hooks),
-    methods: ensureMove(methods),
     classes: ensureMove(classes),
     lifter: createLiftingCtx(thisModuleSuffix, bits))
   c.typeCache.openScope()

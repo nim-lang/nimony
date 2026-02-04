@@ -117,7 +117,6 @@ type
     typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
-    methods*: Table[SymId, seq[(string, SymId)]]
     classes*: Classes # class entries with methods for vtables
     exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking

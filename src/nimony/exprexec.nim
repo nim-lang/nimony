@@ -516,9 +516,8 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   let toDeref = cursorAt(c.dest, beforeUsercode)
   #echo "synthesized ", toString(toDeref)
   let typeHooksCopy = s.typeHooks
-  var emptyMethods = default Table[SymId, seq[(string, SymId)]]
   var emptyClasses = default semdata.Classes
-  let withDerefs = injectDerefs(toDeref, typeHooksCopy, emptyMethods, emptyClasses, s.thisModuleSuffix, s.g.config.bits)
+  let withDerefs = injectDerefs(toDeref, typeHooksCopy, emptyClasses, s.thisModuleSuffix, s.g.config.bits)
   endRead(c.dest)
   c.dest.shrink beforeUsercode
   # do not copy the `(stmts)` here:

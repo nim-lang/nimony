@@ -5420,11 +5420,6 @@ proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Curso
   if instanceMethods.len > 0:
     c.classes[s] = ClassEntry(methods: instanceMethods)
 
-  # Also update c.methods for compatibility with existing code
-  for entry in instanceMethods:
-    let sig = pool.strings[entry.signature]
-    c.methods.mgetOrPut(s, @[]).add (sig, entry.fn)
-
 proc addSelfModuleSym(c: var SemContext; path: string) =
   let name = moduleNameFromPath(path)
   let nameId = pool.strings.getOrIncl(name)
@@ -5537,7 +5532,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf, c.typeHooks, c.methods, c.classes, c.thisModuleSuffix, c.g.config.bits)
+    dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
   else:
     quit 1
 
