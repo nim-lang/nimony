@@ -5296,7 +5296,6 @@ proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo
 
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
-  let instSym = (if decl.name.kind == SymbolDef: decl.name.symId else: SymId(0))
   var typevars = decl.typevars
   assert classifyType(c, typevars) == InvokeT
   inc typevars
@@ -5331,12 +5330,6 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
     typevarsSeq.add typevars
     takeTree(typeArgs, typevars)
 
-  template setTypeHook(op: AttachedOp; hook: SymId) =
-    if instSym != SymId(0) and hook != SymId(0):
-      if not c.typeHooks.hasKey(instSym):
-        c.typeHooks[instSym] = HooksPerType(a: default(array[AttachedOp, SymId]))
-      c.typeHooks[instSym].a[op] = hook
-
   for op in low(AttachedOp)..high(AttachedOp):
     let hook = hooks.a[op]
     if hook != NoSymId:
@@ -5344,20 +5337,16 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
       if res.status == LacksNothing:
         let info = res.decl.info
         let procDecl = asRoutine(res.decl)
-        let isGeneric = procDecl.typevars.substructureKind == TypevarsU
-        if isGeneric:
-          var typevarsStart = procDecl.typevars
-          inc typevarsStart # skips typevars tag
-          var counter = 0
-          while typevarsStart.kind != ParRi:
-            let name = asTypevar(typevarsStart).name.symId
-            inferred[name] = typevarsSeq[counter]
-            skip typevarsStart # skip the typevar tree
-            inc counter
-          let instance = requestRoutineInstance(c, hook, typeArgs, inferred, info)
-          setTypeHook(op, instance.targetSym)
-        else:
-          setTypeHook(op, hook)
+        var typevarsStart = procDecl.typevars
+        inc typevarsStart # skips typevars tag
+
+        var counter = 0
+        while typevarsStart.kind != ParRi:
+          let name = asTypevar(typevarsStart).name.symId
+          inferred[name] = typevarsSeq[counter]
+          skip typevarsStart # skip the typevar tree
+          inc counter
+        discard requestRoutineInstance(c, hook, typeArgs, inferred, info)
       else:
         quit "BUG: Could not load hook: " & pool.syms[hook]
 
