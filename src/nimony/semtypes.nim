@@ -160,6 +160,22 @@ proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   takeParRi dest, n
   takeParRi dest, n
 
+proc copyPragmasWithoutHooks(dest: var TokenBuf; pragmas: Cursor) =
+  var n = pragmas
+  if n.kind == DotToken:
+    dest.addDotToken()
+    return
+  if n.kind != ParLe:
+    dest.copyTree pragmas
+    return
+  takeToken dest, n # pragmas tag
+  while n.kind != ParRi:
+    if n.kind == ParLe and hookKind(n.tagId) != NoHook:
+      skip n
+    else:
+      dest.takeTree n
+  takeParRi dest, n
+
 proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
                              info: PackedLineInfo; instSuffix: string;
                              origin, targetSym: SymId; decl: TypeDecl; args: Cursor) =
@@ -171,6 +187,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
   ]#
   var inferred = initTable[SymId, Cursor]()
   var err = 0
+
   dest.buildTree TypeS, info:
     dest.add symdefToken(targetSym, info)
     dest.addDotToken() # export
@@ -191,8 +208,8 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
         err = -1
       elif typevars.kind != ParRi:
         err = 1
-    # take the pragmas from the origin:
-    dest.copyTree decl.pragmas
+    # take the pragmas from the origin, but drop hook pragmas
+    copyPragmasWithoutHooks(dest, decl.pragmas)
     if err == 0:
       var sc = SubsContext(params: addr inferred, instSuffix: instSuffix)
       subs(c, dest, sc, decl.body)

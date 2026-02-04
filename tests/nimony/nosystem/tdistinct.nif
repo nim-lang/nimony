@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +2690            )
+(.indexat +2700            )
 0,2,tests/nimony/nosystem/tdistinct.nim(stmts 2,1
  (type :int.0.
   (i -1) . 5
@@ -90,7 +90,8 @@
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) 9,26
- (type ~7 :VarId.0. x . . 2
+ (type ~7 :VarId.0. x .
+  (pragmas) 2
   (distinct 9
    (i -1))) ,28
  (proc 5 :\2B.1. x . . 9
@@ -135,6 +136,6 @@
  (x \2D.0. +177) ,22
  (x <=.0. +177) 9,26
  (x VarId.0. +176) ,28
- (x \2B.1. +58) 4,35
+ (x \2B.1. +68) 4,35
  (h x.0. +366) 4,39
  (h y.0. +91))
