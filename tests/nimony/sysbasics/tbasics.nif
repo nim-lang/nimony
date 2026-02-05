@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +8836            )
+(.indexat +8825            )
 0,1,tests/nimony/sysbasics/tbasics.nim(stmts 8,3
  (type ~6 :Array.0. . . . 7
   (array 4
@@ -138,15 +138,15 @@
  (type ~8 :Foo1314.0. . .
   (pragmas) 2
   (object . ~8,1
-   (fld :a.0. . . 15
+   (fld :a.0 . . 15
     (i -1) .) ~5,1
-   (fld :b.0. . . 12
+   (fld :b.0 . . 12
     (i -1) .) ~2,1
-   (fld :c.0. . . 9
+   (fld :c.0 . . 9
     (i -1) .) 1,1
-   (fld :d.0. . . 6
+   (fld :d.0 . . 6
     (i -1) .) 4,1
-   (fld :e.0. . . 3
+   (fld :e.0 . . 3
     (i -1) .))) ,41
  (proc 5 :foo1314.0. . . . 12
   (params 1
@@ -154,18 +154,18 @@
   (stmts 4
    (let :s.3 . . 13,~4
     (i -1) 5
-    (dot ~1 x.1 a.0. +0)))) 4,44
+    (dot ~1 x.1 a.0 +0)))) 4,44
  (gvar :a.1. . . 12,~3 Foo1314.0. 11
   (oconstr 1,~3 Foo1314.0.
-   (kv a.0. 43,6,lib/std/system/defaults.nim
+   (kv a.0 43,6,lib/std/system/defaults.nim
     (expr +0))
-   (kv b.0. 43,6,lib/std/system/defaults.nim
+   (kv b.0 43,6,lib/std/system/defaults.nim
     (expr +0))
-   (kv c.0. 43,6,lib/std/system/defaults.nim
+   (kv c.0 43,6,lib/std/system/defaults.nim
     (expr +0))
-   (kv d.0. 43,6,lib/std/system/defaults.nim
+   (kv d.0 43,6,lib/std/system/defaults.nim
     (expr +0))
-   (kv e.0. 43,6,lib/std/system/defaults.nim
+   (kv e.0 43,6,lib/std/system/defaults.nim
     (expr +0)))) 7,45
  (call ~7 foo1314.0. 1 a.1.) ,47
  (proc 5 :foo2233.0. . . . 12
@@ -334,15 +334,10 @@
  (h foo.0. +188) ,15
  (h foo2.0. +457) ,24
  (h foo3.0. +845) 10,37
- (h Foo1314.0. +614) 4,38
- (h a.0. +57) 7,38
- (h b.0. +40) 10,38
- (h c.0. +40) 13,38
- (h d.0. +38) 16,38
- (h e.0. +38) ,41
- (h foo1314.0. +40) 4,44
- (h a.1. +168) ,47
- (h foo2233.0. +404) ,55
+ (h Foo1314.0. +614) ,41
+ (h foo1314.0. +248) 4,44
+ (h a.1. +167) ,47
+ (h foo2233.0. +399) ,55
  (h basictuple.0. +325) ,75
  (h classify1.0. +805) 2,82
  (h classify.0. +384) 4,87

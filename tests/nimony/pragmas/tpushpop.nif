@@ -1,12 +1,12 @@
 (.nif26)
-(.indexat +3048            )
+(.indexat +3047            )
 0,1,tests/nimony/pragmas/tpushpop.nim(stmts 41,4
  (type ~39 :TestStruct1.0. . . ~27
   (pragmas 2
    (importc 9 "TestStruct1") ~7,~2
    (header 8 "pushpop.h")) 2
   (object . ~39,1
-   (fld :x.0. .
+   (fld :x.0 .
     (pragmas 3,~3
      (header 8 "pushpop.h")) 37,40,lib/std/system/ctypes.nim
     (i +32
@@ -111,9 +111,8 @@
   (pragmas 2
    (importc 9 "fpclassify") ~36,~5
    (header 8 "<math.h>")) ~19,~4 . ~19,~4 .))0,1,tests/nimony/pragmas/tpushpop.nim(.index 41,4
- (h TestStruct1.0. +86) 4,5
- (h x.0. +130) 4,8
- (h tests1.0. +137) ,11
+ (h TestStruct1.0. +86) 4,8
+ (h tests1.0. +266) ,11
  (h cos.0. +46) ,13
  (h sin.0. +330) ,15
  (h c_fpclassify.0. +334) 18,15
