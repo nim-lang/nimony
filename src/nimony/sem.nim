@@ -378,15 +378,18 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
         else:
           dest.add n # keep Symbol as it was
     of SymbolDef:
-      let s = n.symId
-      let newDef =
-        if sc.instSuffix != "" and not isField:
-          # Don't apply instantiation suffix to field names
-          newInstSymId(c, s, sc.instSuffix)
-        else:
-          newSymId(c, s)
-      sc.newVars[s] = newDef
-      dest.add symdefToken(newDef, n.info)
+      if isField:
+        dest.add n
+      else:
+        let s = n.symId
+        let newDef =
+          if sc.instSuffix != "":
+            # Don't apply instantiation suffix to field names
+            newInstSymId(c, s, sc.instSuffix)
+          else:
+            newSymId(c, s)
+        sc.newVars[s] = newDef
+        dest.add symdefToken(newDef, n.info)
     of ParLe:
       isField = n.substructureKind == FldU
       dest.add n
