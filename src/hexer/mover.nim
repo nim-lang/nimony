@@ -100,12 +100,23 @@ proc containsUsage(tree: var Cursor; x: Cursor): bool =
       result = true
     case tree.kind
     of ParLe:
+      if tree.exprKind == DotX:
+        inc tree
+        if containsUsage(tree, x):
+          result = true
+        while tree.kind != ParRi:
+          skip tree
+      elif tree.substructureKind == KvU:
+        inc tree
+        skip tree
+      else:
+        inc tree
       inc nested
     of ParRi:
+      inc tree
       dec nested
     else:
-      discard
-    inc tree
+      inc tree
     if nested == 0: break
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
@@ -119,13 +130,25 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
       if tree.symId == r:
         # MUST continue here as we must `skip tree` properly
         result = true
+      inc tree
     of ParLe:
+      if tree.exprKind == DotX:
+        inc tree
+        if containsRoot(tree, x):
+          result = true
+        while tree.kind != ParRi:
+          skip tree
+      elif tree.substructureKind == KvU:
+        inc tree
+        skip tree # key ignored for object construction!
+      else:
+        inc tree
       inc nested
     of ParRi:
       dec nested
+      inc tree
     else:
-      discard
-    inc tree
+      inc tree
     if nested == 0: break
 
 proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): int =
@@ -208,7 +231,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
           if containsUsage(pc, x):
             # only partially writes to 's' --> can't sink 's', so this def reads 's'
             # or maybe writes to 's' --> can't sink 's'
-            otherUsage = pc
+            otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
           skipParRi pc
         of RetS:
@@ -233,7 +256,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
           # proceed with its value here
         of NoStmt, CallKindsS, DiscardS, EmitS, InclS, ExclS:
           if containsRoot(pc, x):
-            otherUsage = pc
+            otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
            IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
