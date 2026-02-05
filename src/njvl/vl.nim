@@ -17,7 +17,7 @@
 import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav]
-import ".." / hexer / [mover]
+import ".." / hexer / [mover, passes]
 
 import versiontabs, nj, njvl_model
 
@@ -279,7 +279,11 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(typeCache: createTypeCache(), vt: createVersionTab())
   c.typeCache.openScope()
   result = createTokenBuf(300)
-  var elimJumps = eliminateJumps(n, moduleSuffix)
+  var initialBuf = createTokenBuf(300)
+  initialBuf.addSubtree(n)
+  var pass = initPass(move initialBuf, moduleSuffix, "xelim_njvl", 0)
+  eliminateJumps(pass)
+  var elimJumps = ensureMove(pass.dest)
   var n = beginRead(elimJumps)
   assert n.stmtKind == StmtsS, $n.kind
   result.add n

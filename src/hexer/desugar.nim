@@ -4,7 +4,7 @@ import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
-import hexer_context
+import hexer_context, passes
 
 type
   Context = object
@@ -778,17 +778,16 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   of ParRi:
     bug "unexpected ')' inside"
 
-proc desugar*(n: Cursor; moduleSuffix: string; activeChecks: set[CheckMode]): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
+proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
+  var n = pass.n  # Extract cursor locally
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr c, result, n, isTopScope = true
+  tr c, pass.dest, n, isTopScope = true
 
-  assert result[result.len-1].kind == ParRi
-  shrink(result, result.len-1)
+  assert pass.dest[pass.dest.len-1].kind == ParRi
+  shrink(pass.dest, pass.dest.len-1)
 
-  result.add c.pending
-  result.addParRi()
+  pass.dest.add c.pending
+  pass.dest.addParRi()
 
   c.typeCache.closeScope()

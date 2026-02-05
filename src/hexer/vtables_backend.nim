@@ -17,7 +17,7 @@ import std/[assertions, tables]
 
 include nifprelude
 import ".." / lib / tinyhashes
-import nifindexes, symparser, treemangler
+import nifindexes, symparser, treemangler, passes
 import ".." / nimony / [nimony_model, decls, programs, typenav,
   renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
@@ -816,32 +816,28 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
             dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
 
-proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =
+proc transformVTables*(pass: var Pass; needsXelim: var bool) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(
     typeCache: createTypeCache(),
-    moduleSuffix: moduleSuffix,
+    moduleSuffix: pass.moduleSuffix,
     needsXelim: needsXelim,
     getRttiSym: pool.syms.getOrIncl("getRtti.0." & SystemModuleSuffix)
   )
   c.typeCache.openScope()
 
-  var dest = createTokenBuf(300)
-
   var n2 = n
   collectMethods c, n2
   processMethods c
 
-  var n = n
   assert n.stmtKind == StmtsS
-  dest.add n
+  pass.dest.add n
   inc n
 
-  emitVTables c, dest
+  emitVTables c, pass.dest
 
-  while n.kind != ParRi: tr c, dest, n
-  dest.addParRi()
+  while n.kind != ParRi: tr c, pass.dest, n
+  pass.dest.addParRi()
 
   c.typeCache.closeScope()
   needsXelim = c.needsXelim
-
-  result = ensureMove dest
