@@ -33,7 +33,7 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
       result = NoPragma
   elif c.kind == Ident:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
-    if rawTagIsNimonyPragma(cast[TagEnum](tagId)):
+    if tagId.int >= 0 and tagId.int <= high(TagEnum).int and rawTagIsNimonyPragma(cast[TagEnum](tagId)):
       result = cast[NimonyPragma](tagId)
     else:
       result = NoPragma

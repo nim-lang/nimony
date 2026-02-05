@@ -95,6 +95,7 @@ proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; 
   var tup = beginRead(tupBuf)
   var localTyp = local.typ
   createDecl(e, symId, localTyp, tup, info, LetS, needsAddr)
+  endRead(tupBuf)
 
 proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBuf =
   result = createTokenBuf()
@@ -221,6 +222,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       discard e.continues.pop()
       var forCursor = beginRead(forStmtBuf)
       transformForStmt(e, forCursor)
+      endRead(forStmtBuf)
     of WhileS:
       e.dest.add c
       inc c
@@ -272,10 +274,26 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       inlineLoopBody(e, c, mapping)
       e.dest.takeParRi(c)
     else:
-      e.dest.add c
-      inc c
-      e.loop c:
+      if c.substructureKind == KvU:
+        # In KvU: first element is field name, don't substitute it
+        e.dest.add c
+        inc c
+        e.dest.takeTree c
+        while c.kind != ParRi:
+          inlineLoopBody(e, c, mapping)
+        takeParRi(e, c)
+      elif c.exprKind in {DotX, DdotX}:
+        e.dest.add c
+        inc c
         inlineLoopBody(e, c, mapping)
+        while c.kind != ParRi:
+          e.dest.takeTree c
+        takeParRi(e, c)
+      else:
+        e.dest.add c
+        inc c
+        e.loop c:
+          inlineLoopBody(e, c, mapping)
   else:
     takeTree(e, c)
 
@@ -343,10 +361,26 @@ proc replaceSymbol(e: var EContext; c: var Cursor; relations: var Table[SymId, S
       e.loop(c):
         replaceSymbol(e, c, relations)
     else:
-      e.dest.add c
-      inc c
-      e.loop(c):
+      if c.substructureKind == KvU:
+        # In KvU: first element is field name, don't substitute it
+        e.dest.add c
+        inc c
+        e.dest.takeTree c
+        while c.kind != ParRi:
+          replaceSymbol(e, c, relations)
+        takeParRi(e, c)
+      elif c.exprKind in {DotX, DdotX}:
+        e.dest.add c
+        inc c
         replaceSymbol(e, c, relations)
+        while c.kind != ParRi:
+          e.dest.takeTree c
+        takeParRi(e, c)
+      else:
+        e.dest.add c
+        inc c
+        e.loop(c):
+          replaceSymbol(e, c, relations)
   of Symbol:
     let s = c.symId
     if relations.hasKey(s):
@@ -395,11 +429,12 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
     swap(e.dest, bodyBuf)
     var body = cursorAt(preBodyBuf, 0)
     transformStmt(e, body)
+    endRead(preBodyBuf)
     swap(e.dest, bodyBuf)
 
     var transformedBody = beginRead(bodyBuf)
     inlineIteratorBody(e, transformedBody, forStmt, routine.retType)
-
+    endRead(bodyBuf)
   else:
     error e, "could not find symbol: " & pool.syms[iterSym]
 

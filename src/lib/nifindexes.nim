@@ -122,67 +122,7 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
 
 proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
   let indexName = changeModuleExt(infile, ".s.idx.nif")
-
-  var s = nifstreams.open(infile)
-  discard processDirectives(s.r)
-  var target = -1
-  var previousPublicTarget = 0
-  var previousPrivateTarget = 0
-  var tagId = TagId(0)
-
-  var public = createTokenBuf(30)
-  var private = createTokenBuf(30)
-  public.addParLe TagId(PublicIdx), root
-  private.addParLe TagId(PrivateIdx), root
-  var buf = createTokenBuf(100)
-  var stack: seq[PackedLineInfo] = @[root]
-  while true:
-    let offs = offset(s.r)
-    let t = next(s)
-    if t.kind == EofToken: break
-    buf.add t
-    if t.kind == ParLe:
-      stack.add t.info
-      target = offs
-      tagId = t.tagId
-    elif t.kind == ParRi:
-      if stack.len > 1:
-        discard stack.pop()
-    elif t.kind == SymbolDef:
-      #let symInfo = t.info
-      let sym = t.symId
-      if pool.syms[sym].isImportant:
-        let tb = next(s)
-        buf.add tb
-        # object field symbols are always private so that identifiers outside of dot or
-        # object constructors are not bound to them.
-        let isPublic = tb.kind != DotToken and tagId != TagId(FldTagId)
-        var dest =
-          if isPublic:
-            addr(public)
-          else:
-            addr(private)
-        let diff = if isPublic: target - previousPublicTarget
-                  else: target - previousPrivateTarget
-        dest[].buildTree TagId(KvIdx), stack[^2]:
-          dest[].add symToken(sym, NoLineInfo)
-          dest[].add intToken(pool.integers.getOrIncl(diff), NoLineInfo)
-        if isPublic:
-          previousPublicTarget = target
-        else:
-          previousPrivateTarget = target
-
-        if tb.kind == ParLe: stack.add tb.info
-
-  public.addParRi()
-  private.addParRi()
-  close s
-
   var content = "(.nif24)\n(index\n"
-  content.add toString(public)
-  content.add "\n"
-  content.add toString(private)
-  content.add "\n"
 
   if sections.converters.len != 0:
     let converterSectionBuf = getSymbolSection(TagId(ConverterIdx), sections.converters)
@@ -195,6 +135,10 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     content.add "\n"
 
   if buildChecksum:
+    var s = nifstreams.open(infile)
+    discard processDirectives(s.r)
+    var buf = fromStream(s)
+    close s
     var checksum = newSha1State()
     processForChecksum(checksum, buf)
     let final = SecureHash checksum.finalize()
@@ -219,50 +163,8 @@ type
     vis*: IndexVisibility
 
   NifIndex* = object
-    public*, private*: Table[string, NifIndexEntry]
     converters*: seq[(string, string)] # map of dest types to converter symbols
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
-
-proc readSection(s: var Stream; tab: var Table[string, NifIndexEntry]; vis: IndexVisibility) =
-  var previousOffset = 0
-  var t = next(s)
-  var nested = 1
-  while t.kind != EofToken:
-    let info = t.info
-    if t.kind == ParLe:
-      inc nested
-      if t.tagId == TagId(KvIdx):
-        t = next(s)
-        var key: string
-        if t.kind == Symbol:
-          key = pool.syms[t.symId]
-        elif t.kind == Ident:
-          key = pool.strings[t.litId]
-        else:
-          raiseAssert "invalid (kv) construct: symbol expected"
-        t = next(s) # skip Symbol
-        if t.kind == IntLit:
-          let offset = int pool.integers[t.intId] + previousOffset
-          tab[key] = NifIndexEntry(offset: offset, info: info, vis: vis)
-          previousOffset = offset
-        else:
-          assert false, "invalid (kv) construct: IntLit expected"
-        t = next(s) # skip offset
-        if t.kind == ParRi:
-          t = next(s)
-          dec nested
-        else:
-          assert false, "invalid (kv) construct: ')' expected"
-      else:
-        assert false, "expected (kv) construct"
-    elif t.kind == ParRi:
-      dec nested
-      if nested == 0:
-        break
-      t = next(s)
-    else:
-      assert false, "expected (kv) construct"
-      #t = next(s)
 
 proc readSymbolSection(s: var Stream; tab: var seq[(string, string)]) =
   var t = next(s)
@@ -314,37 +216,42 @@ proc readIndex*(indexName: string): NifIndex =
 
   result = default(NifIndex)
   var t = next(s)
-  if t.tag == TagId(IndexIdx):
-    t = next(s)
-    if t.tag == TagId(PublicIdx):
-      readSection s, result.public, Exported
-    else:
-      assert false, "'public' expected"
-    t = next(s)
-    if t.tag == TagId(PrivateIdx):
-      readSection s, result.private, Hidden
-    else:
-      assert false, "'private' expected"
-    t = next(s)
-    if t.tag == TagId(ConverterIdx):
-      readSymbolSection(s, result.converters)
-      t = next(s)
-
-    while t.tag == TagId(ExportIdx) or t.tag == TagId(FromexportIdx) or t.tag == TagId(ExportexceptIdx):
-      let kind = cast[NifIndexKind](t.tag)
-      t = next(s)
-      assert t.kind == StringLit
-      let path = pool.strings[t.litId]
-      t = next(s)
-      var names: seq[StrId] = @[]
-      while t.kind != ParRi:
-        assert t.kind == Ident
-        names.add t.litId
-        t = next(s)
-      result.exports.add (path, kind, names)
-      t = next(s)
-  else:
+  if t.tag != TagId(IndexIdx):
     assert false, "expected 'index' tag"
+  t = next(s)
+  while t.kind != ParRi and t.kind != EofToken:
+    if t.kind == ParLe:
+      case t.tagId
+      of TagId(ConverterIdx):
+        readSymbolSection(s, result.converters)
+        t = next(s)
+      of TagId(ExportIdx), TagId(FromexportIdx), TagId(ExportexceptIdx):
+        let kind = cast[NifIndexKind](t.tag)
+        t = next(s)
+        assert t.kind == StringLit
+        let path = pool.strings[t.litId]
+        t = next(s)
+        var names: seq[StrId] = @[]
+        while t.kind != ParRi:
+          assert t.kind == Ident
+          names.add t.litId
+          t = next(s)
+        result.exports.add (path, kind, names)
+        t = next(s)
+      else:
+        var nested = 1
+        t = next(s)
+        while t.kind != EofToken:
+          case t.kind
+          of ParLe: inc nested
+          of ParRi:
+            dec nested
+            if nested == 0: break
+          else: discard
+          t = next(s)
+        t = next(s)
+    else:
+      t = next(s)
 
 proc readEmbeddedIndex*(s: var Stream): Table[string, NifIndexEntry] =
   ## Reads the simple embedded index (index (kv sym offset)...) from indexStartsAt position.

@@ -71,9 +71,22 @@ proc skipParRi(n: var Cursor) =
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
-  copyInto dest, n:
+  if n.substructureKind == KvU:
+    dest.takeToken n
+    dest.takeTree n # key
     while n.kind != ParRi:
       tr(c, dest, n, isTopScope)
+    dest.takeParRi n
+  elif n.exprKind in {DotX, DdotX}:
+    dest.takeToken n
+    tr(c, dest, n, isTopScope)
+    while n.kind != ParRi:
+      dest.takeTree n
+    dest.takeParRi n
+  else:
+    copyInto dest, n:
+      while n.kind != ParRi:
+        tr(c, dest, n, isTopScope)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind

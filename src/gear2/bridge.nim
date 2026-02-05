@@ -37,6 +37,8 @@ type
 
   RModule* = object
     index: NifIndex
+    public: Table[string, NifIndexEntry]
+    private: Table[string, NifIndexEntry]
     s: Stream
   RContext* = object
     owner: PSym
@@ -65,10 +67,19 @@ proc openNifModule*(r: var RContext; modname: string) =
   if r.modules.hasKey(modname): return
   if r.thisModule.len == 0: r.thisModule = modname
   let filename = r.conf.nimcacheDir & "/" & modname & ".nif"
-  r.modules[modname] = RModule(
-    index: readIndex(r.confi.nimcacheDir & "/" & modname & ".idx.nif"),
-    s: nifstreams.open(filename)
-  )
+  var public = initTable[string, NifIndexEntry]()
+  var private = initTable[string, NifIndexEntry]()
+  var stream = nifstreams.open(filename)
+  let embedded = readEmbeddedIndex(stream)
+  if embedded.len > 0:
+    for k, v in embedded:
+      if v.vis == Exported:
+        public[k] = v
+      else:
+        private[k] = v
+  let indexName = r.confi.nimcacheDir & "/" & modname & ".idx.nif"
+  let index = readIndex(indexName)
+  r.modules[modname] = RModule(index: index, public: public, private: private, s: stream)
 
 proc toFileIndexCached(c: var RContext; f: FileId): FileIndex =
   if f == FileId(0):
@@ -617,7 +628,7 @@ proc createConf(): ConfigRef =
 
 proc loadInterface*(r: var RContext; module: PSym; suffix: string) =
   let m = addr(r.modules[suffix])
-  for k, v in m.index.public:
+  for k, v in m.public:
     #var isGlobal = false
     #let asNimName = extractBasename(k, isGlobal)
     #echo "LOADING ", k

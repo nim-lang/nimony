@@ -297,6 +297,12 @@ proc makeGlobalSym*(c: var SemContext; result: var string) =
   result.add '.'
   result.add c.thisModuleSuffix
 
+proc makeFieldSym*(c: var SemContext; result: var string) =
+  var counter = addr c.globals.mgetOrPut(result, -1)
+  counter[] += 1
+  result.add '.'
+  result.addInt counter[]
+
 proc makeLocalSym*(c: var SemContext; result: var string) =
   var counter = addr c.locals.mgetOrPut(result, -1)
   counter[] += 1
@@ -320,8 +326,10 @@ proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
     # XXX activate this later!
     for i in 0..<name.len:
       if name[i] == '.': name[i] = ' '
-  if c.currentScope.kind == ToplevelScope or
-      kind in {FldY, EfldY, TypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY}:
+  if kind == FldY:
+    c.makeFieldSym(name)
+  elif c.currentScope.kind == ToplevelScope or
+      kind in {TypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)

@@ -575,6 +575,12 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
     while n.kind != ParRi: skip n
     skipParRi n
 
+proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  copyInto dest, n:
+    dest.takeTree n # key
+    while n.kind != ParRi:
+      tre(c, dest, n)
+
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
@@ -645,6 +651,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         if n.typeKind in RoutineTypes:
           treProcType(c, dest, n)
+        elif n.substructureKind == KvU:
+          treKv(c, dest, n)
         else:
           treSons(c, dest, n)
   of ParRi:
