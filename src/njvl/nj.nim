@@ -12,7 +12,7 @@
 import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
-import ".." / hexer / [xelim, mover]
+import ".." / hexer / [xelim, mover, passes]
 import njvl_model
 
 #[
@@ -1113,7 +1113,11 @@ proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
                   thisModuleSuffix: moduleSuffix)
   c.openScope()
   result = createTokenBuf(300)
-  var elimExprs = lowerExprs(n, moduleSuffix, TowardsNjvl)
+  var initialBuf = createTokenBuf(300)
+  initialBuf.addSubtree(n)
+  var pass = initPass(move initialBuf, moduleSuffix, "xelim_njvl", 0)
+  lowerExprs(pass, TowardsNjvl)
+  var elimExprs = ensureMove(pass.dest)
   var n = beginRead(elimExprs)
   assert n.stmtKind == StmtsS, $n.kind
   result.add n

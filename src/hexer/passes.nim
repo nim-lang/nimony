@@ -31,8 +31,7 @@ Example usage:
 
 ]##
 
-import ../lib/nifcursors
-import nifstreams
+import ../lib/[nifcursors, nifstreams]
 
 type
   Pass* = object
