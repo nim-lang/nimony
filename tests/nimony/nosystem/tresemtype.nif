@@ -55,11 +55,11 @@
    (type ~4 :Foo.4. . .
     (pragmas) 2
     (object . ~9,1
-     (fld :val.2 . .
+     (fld :val.0 . .
       (i -1) .))) 4,2
    (var :obj.4 . . 6 Foo.4. 9
     (oconstr ~3 Foo.4. 4
-     (kv ~3 val.2 2 x.4))))) 3,6
+     (kv ~3 val.0 2 x.4))))) 3,6
  (proc :foo.2. . ~3,~6 .
   (at foo.0. string.0.sysvq0asl) 8,~6
   (params 1
@@ -68,10 +68,10 @@
    (type ~4 :Foo.5. . .
     (pragmas) 2
     (object . ~9,1
-     (fld :val.3 . . string.0.sysvq0asl .))) 4,2
+     (fld :val.0 . . string.0.sysvq0asl .))) 4,2
    (var :obj.5 . . 6 Foo.5. 9
     (oconstr ~3 Foo.5. 4
-     (kv ~3 val.3 2 x.5))))))0,3,tests/nimony/nosystem/tresemtype.nim(.index
+     (kv ~3 val.0 2 x.5))))))0,3,tests/nimony/nosystem/tresemtype.nim(.index
  (h foo.0. +84) 9
  (h T.0. +37) 11,1
  (h Foo.0. +94) ,8

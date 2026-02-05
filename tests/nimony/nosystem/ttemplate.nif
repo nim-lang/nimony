@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3788            )
+(.indexat +3750            )
 0,2,tests/nimony/nosystem/ttemplate.nim(stmts 2,1
  (type :int.0.
   (i -1) . 5
@@ -71,9 +71,9 @@
  (gvar :myglob.0. . . 17 MyGeneric.0.Igj236q. .) 2,25
  (gvar :other.0. . . 16 MyGeneric.0.Ibr3ivb1. .) 9,27
  (asgn ~3
-  (dot ~6 myglob.0. x.0.Igj236q. +0) 2 +56) 8,28
+  (dot ~6 myglob.0. x.0 +0) 2 +56) 8,28
  (asgn ~3
-  (dot ~5 other.0. x.0.Ibr3ivb1. +0) 2 +79.0) ,30
+  (dot ~5 other.0. x.0 +0) 2 +79.0) ,30
  (proc 5 :\2B.0.
   (add -3) . . 9
   (params 1
@@ -148,14 +148,14 @@
    (i -1))
   (pragmas) ~2,~4
   (object . ~13,1
-   (fld :x.0.Igj236q. . . 16,3
+   (fld :x.0 . . 16,3
     (i -1) .))) 18,25
  (type :MyGeneric.0.Ibr3ivb1. .
   (at MyGeneric.0. 1
    (f +64))
   (pragmas) ~1,~5
   (object . ~13,1
-   (fld :x.0.Ibr3ivb1. . . 15,4
+   (fld :x.0 . . 15,4
     (f +64) .))))0,2,tests/nimony/nosystem/ttemplate.nim(.index 2,1
  (x int.0. +87) 2,3
  (x float.0. +66) 2,4
@@ -176,7 +176,7 @@
  (h T.2. +44) 2,24
  (h myglob.0. +84) 2,25
  (h other.0. +54) ,30
- (x \2B.0. +173) ,32
+ (x \2B.0. +154) ,32
  (h plus.0. +177) ,34
  (h foo.0. +185) ,39
  (h overloaded.0. +439) 5,43
@@ -184,7 +184,5 @@
  (h conv.0. +68) 14,45
  (h T.3. +43) 4,47
  (h val.0. +136) 19,24
- (h MyGeneric.0.Igj236q. +346) 4,21
- (h x.0.Igj236q. +99) 18,25
- (h MyGeneric.0.Ibr3ivb1. +53) 4,21
- (h x.0.Ibr3ivb1. +101))
+ (h MyGeneric.0.Igj236q. +346) 18,25
+ (h MyGeneric.0.Ibr3ivb1. +143))
