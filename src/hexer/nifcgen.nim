@@ -1878,4 +1878,4 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   c.typeCache.closeScope()
 
   # Use the in-memory buffer to avoid re-reading the file we just wrote
-  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif"
+  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif", "." & c.main
