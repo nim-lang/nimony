@@ -194,10 +194,12 @@ proc skipToObjectBody(n: Cursor): Cursor =
     let d = getTypeSection(result.symId)
     if d.kind == TypeY:
       result = d.body
+      if result.typeKind in {PtrT, RefT}:
+        inc result
     else:
       break
 
-proc typeOfField*(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
+proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
   if n.substructureKind == FldU:
     let decl = takeLocal(n, SkipFinalParRi)
     if decl.name.kind == SymbolDef and decl.name.symId == fld:
@@ -254,6 +256,10 @@ proc typeOfField*(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       if not cursorIsNil(baseObj):
         var b = skipToObjectBody baseObj
         result = typeOfField(c, b, fld)
+
+proc lookupField*(c: var TypeCache; typ: Cursor; fld: SymId): Cursor =
+  var body = skipToObjectBody(typ)
+  result = typeOfField(c, body, fld)
 
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   result = c.builtins.autoType # to indicate error
