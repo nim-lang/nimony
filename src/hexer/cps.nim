@@ -68,7 +68,7 @@ include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters, controlflow, typeprops]
-import hexer_context
+import hexer_context, passes
 
 # TODO:
 # - transform `for` loops into trampoline code
@@ -874,17 +874,17 @@ proc generateContinuationProcImpl(): Cursor =
       return t.body
   return default(Cursor)
 
-proc transformToCps*(n: var Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(thisModuleSuffix: moduleSuffix,
+proc transformToCps*(pass: var Pass) =
+  var n = pass.n  # Extract cursor locally
+  var c = Context(thisModuleSuffix: pass.moduleSuffix,
     afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix),
     continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
-  result = createTokenBuf()
   assert n.stmtKind == StmtsS
-  result.takeToken n
+  pass.dest.takeToken n
   while n.kind != ParRi:
-    tr(c, result, n)
-  result.takeToken n # ParRi
+    tr(c, pass.dest, n)
+  pass.dest.takeToken n # ParRi
   c.typeCache.closeScope()
 
 when isMainModule:

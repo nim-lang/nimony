@@ -24,7 +24,7 @@ import std / [sets, assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, builtintypes]
 import ".." / models / tags
-import duplifier, eraiser
+import duplifier, eraiser, passes
 
 type
   Context = object
@@ -464,13 +464,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc injectConstParamDerefs*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
+proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim,
     tupleVars: localsThatBecomeTuples(n))
   c.retType = c.typeCache.builtins.voidType
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr(c, result, n)
+  tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
   needsXelim = c.needsXelim
