@@ -272,10 +272,25 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       inlineLoopBody(e, c, mapping)
       e.dest.takeParRi(c)
     else:
-      e.dest.add c
-      inc c
-      e.loop c:
-        inlineLoopBody(e, c, mapping)
+      if c.substructureKind == KvU:
+        # In KvU: first element is field name, don't substitute it
+        e.dest.add c
+        inc c
+        e.dest.takeTree c
+        while c.kind != ParRi:
+          inlineLoopBody(e, c, mapping)
+      elif c.exprKind in {DotX, DdotX}:
+        e.dest.add c
+        inc c
+        e.dest.takeTree c
+        while c.kind != ParRi:
+          inlineLoopBody(e, c, mapping)
+        takeParRi(e, c)
+      else:
+        e.dest.add c
+        inc c
+        e.loop c:
+          inlineLoopBody(e, c, mapping)
   else:
     takeTree(e, c)
 
@@ -343,10 +358,25 @@ proc replaceSymbol(e: var EContext; c: var Cursor; relations: var Table[SymId, S
       e.loop(c):
         replaceSymbol(e, c, relations)
     else:
-      e.dest.add c
-      inc c
-      e.loop(c):
+      if c.substructureKind == KvU:
+        # In KvU: first element is field name, don't substitute it
+        e.dest.add c
+        inc c
+        e.dest.takeTree c
+        while c.kind != ParRi:
+          replaceSymbol(e, c, relations)
+      elif c.exprKind in {DotX, DdotX}:
+        e.dest.add c
+        inc c
         replaceSymbol(e, c, relations)
+        while c.kind != ParRi:
+          e.dest.takeTree c
+        takeParRi(e, c)
+      else:
+        e.dest.add c
+        inc c
+        e.loop(c):
+          replaceSymbol(e, c, relations)
   of Symbol:
     let s = c.symId
     if relations.hasKey(s):
