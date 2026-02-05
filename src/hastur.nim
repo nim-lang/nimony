@@ -673,6 +673,7 @@ proc handleCmdLine =
     of "nimony":
       buildNimsem(showProgress)
       buildNimony(showProgress)
+      buildHexer(showProgress)
     of "nifc":
       buildNifc(showProgress)
     of "hexer":

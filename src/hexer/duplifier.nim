@@ -826,12 +826,20 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
   c.dest.addParRi() # finish the StmtListExpr
 
 proc trLocationNonOwner(c: var Context; n: var Cursor) =
-  c.dest.add n
-  inc n
-  tr c, n, WantNonOwner
-  while n.kind != ParRi:
-    tr(c, n, DontCare)
-  takeParRi c.dest, n
+  if n.kind == ParLe and n.exprKind == DotX:
+    c.dest.add n
+    inc n
+    tr c, n, WantNonOwner
+    while n.kind != ParRi:
+      takeTree c.dest, n
+    takeParRi c.dest, n
+  else:
+    c.dest.add n
+    inc n
+    tr c, n, WantNonOwner
+    while n.kind != ParRi:
+      tr(c, n, DontCare)
+    takeParRi c.dest, n
 
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # `x` does not own its value as it can be read multiple times.

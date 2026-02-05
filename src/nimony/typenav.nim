@@ -15,7 +15,7 @@ include ".." / lib / nifprelude
 import std/tables
 from std/strutils import endsWith
 import ".." / njvl / njvl_model
-import nimony_model, builtintypes, decls, programs
+import nimony_model, builtintypes, decls, programs, typeprops
 
 const
   RcField* = "r.0"
@@ -186,6 +186,41 @@ type
     BeStrict
     SkipAliases
 
+proc skipToObjectBody(n: Cursor): Cursor =
+  var counter = 20
+  result = n
+  while counter > 0 and result.kind == Symbol:
+    dec counter
+    let d = getTypeSection(result.symId)
+    if d.kind == TypeY:
+      result = d.body
+    else:
+      break
+
+proc typeOfField*(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
+  if n.substructureKind == FldU:
+    let decl = takeLocal(n, SkipFinalParRi)
+    if decl.name.kind == SymbolDef and decl.name.symId == fld:
+      result = decl.typ
+    else:
+      result = default(Cursor)
+  else:
+    result = default(Cursor)
+    let tk = n.typeKind
+    if tk in {ObjectT, TupleT}:
+      inc n
+      var baseObj = default(Cursor)
+      if tk == ObjectT:
+        baseObj = n
+        skip n # inheritance
+      while n.kind != ParRi:
+        result = typeOfField(c, n, fld)
+        if not cursorIsNil(result): return result
+      inc n
+      if not cursorIsNil(baseObj):
+        var b = skipToObjectBody baseObj
+        result = typeOfField(c, b, fld)
+
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   result = c.builtins.autoType # to indicate error
   case exprKind(n)
@@ -305,41 +340,22 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of NilX:
     result = c.builtins.nilType
   of DotX, DdotX:
-    result = n
-    inc result # skip "dot"
-    var obj = result
-    skip result # obj
-    # typeof(obj.field) == typeof field
-    if result.kind == Symbol:
-      let s = result.symId
-      result = lookupSymbol(c, s)
-      if cursorIsNil(result):
-        if pool.syms[s] == DataField and
-            obj.exprKind in {DerefX, HderefX}:
-          inc obj
-          var t = getTypeImpl(c, obj, flags)
-          if t.kind == Symbol:
-            var counter = 20
-            while counter > 0 and t.kind == Symbol:
-              dec counter
-              let res = tryLoadSym(t.symId)
-              if res.status == LacksNothing and res.decl.stmtKind == TypeS:
-                let decl = asTypeDecl(res.decl)
-                t = decl.body
-              else:
-                break
-          if t.typeKind == RefT:
-            result = t
-            inc result
-        elif pool.syms[s] == VTableField:
-          # VTableField is a magic internal field for RTTI - treat as pointer type
-          result = c.builtins.cstringType
-        if cursorIsNil(result):
-          when defined(debug):
-            writeStackTrace()
-          quit "could not find symbol: " & pool.syms[s]
-    else:
-      result = getTypeImpl(c, result, flags)
+    var n = n
+    inc n # skip "dot"
+    var obj = n
+    skip n # object expression
+    let fld = n.symId
+
+    var objType = skipToObjectBody getTypeImpl(c, obj, flags)
+
+    result = typeOfField(c, objType, fld)
+    if cursorIsNil(result):
+      if pool.syms[fld] == VTableField or pool.syms[fld] == DataField:
+        # VTableField is a magic internal field for RTTI - treat as pointer type
+        result = c.builtins.cstringType
+      else:
+        result = c.builtins.autoType
+
   of DerefX, HderefX:
     result = getTypeImpl(c, n.firstSon, flags)
     if typeKind(result) in {RefT, PtrT, MutT, OutT, LentT}:

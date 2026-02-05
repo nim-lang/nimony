@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3789            )
+(.indexat +3788            )
 0,2,tests/nimony/nosystem/ttemplate.nim(stmts 2,1
  (type :int.0.
   (i -1) . 5
@@ -67,7 +67,7 @@
   (typevars 1
    (typevar :T.2. . . . .)) . 2
   (object . ~13,1
-   (fld :x.0. . . 3 T.2. .))) 2,24
+   (fld :x.0 . . 3 T.2. .))) 2,24
  (gvar :myglob.0. . . 17 MyGeneric.0.Igj236q. .) 2,25
  (gvar :other.0. . . 16 MyGeneric.0.Ibr3ivb1. .) 9,27
  (asgn ~3
@@ -173,9 +173,8 @@
  (x typeof.0. +368) 10,17
  (x string.0. +230) 15,20
  (h MyGeneric.0. +53) 12,20
- (h T.2. +44) 4,21
- (h x.0. +50) 2,24
- (h myglob.0. +35) 2,25
+ (h T.2. +44) 2,24
+ (h myglob.0. +84) 2,25
  (h other.0. +54) ,30
  (x \2B.0. +173) ,32
  (h plus.0. +177) ,34
