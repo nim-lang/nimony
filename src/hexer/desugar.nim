@@ -75,11 +75,11 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = fals
     dest.takeToken n
     dest.takeTree n # key
     while n.kind != ParRi:
-      tr(c, dest, n)
+      tr(c, dest, n, isTopScope)
     dest.takeParRi n
   elif n.exprKind in {DotX, DdotX}:
     dest.takeToken n
-    tr(c, dest, n)
+    tr(c, dest, n, isTopScope)
     while n.kind != ParRi:
       dest.takeTree n
     dest.takeParRi n

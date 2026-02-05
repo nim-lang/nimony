@@ -95,6 +95,7 @@ proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; 
   var tup = beginRead(tupBuf)
   var localTyp = local.typ
   createDecl(e, symId, localTyp, tup, info, LetS, needsAddr)
+  endRead(tupBuf)
 
 proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBuf =
   result = createTokenBuf()
@@ -221,6 +222,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       discard e.continues.pop()
       var forCursor = beginRead(forStmtBuf)
       transformForStmt(e, forCursor)
+      endRead(forStmtBuf)
     of WhileS:
       e.dest.add c
       inc c
@@ -279,6 +281,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
         e.dest.takeTree c
         while c.kind != ParRi:
           inlineLoopBody(e, c, mapping)
+        takeParRi(e, c)
       elif c.exprKind in {DotX, DdotX}:
         e.dest.add c
         inc c
@@ -365,6 +368,7 @@ proc replaceSymbol(e: var EContext; c: var Cursor; relations: var Table[SymId, S
         e.dest.takeTree c
         while c.kind != ParRi:
           replaceSymbol(e, c, relations)
+        takeParRi(e, c)
       elif c.exprKind in {DotX, DdotX}:
         e.dest.add c
         inc c
@@ -425,11 +429,12 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
     swap(e.dest, bodyBuf)
     var body = cursorAt(preBodyBuf, 0)
     transformStmt(e, body)
+    endRead(preBodyBuf)
     swap(e.dest, bodyBuf)
 
     var transformedBody = beginRead(bodyBuf)
     inlineIteratorBody(e, transformedBody, forStmt, routine.retType)
-
+    endRead(bodyBuf)
   else:
     error e, "could not find symbol: " & pool.syms[iterSym]
 
