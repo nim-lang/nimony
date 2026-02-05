@@ -189,6 +189,8 @@ type
 proc skipToObjectBody(n: Cursor): Cursor =
   var counter = 20
   result = n
+  if result.typeKind in {PtrT, RefT}:
+    inc result
   while counter > 0 and result.kind == Symbol:
     dec counter
     let d = getTypeSection(result.symId)
@@ -390,9 +392,26 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
 
     result = typeOfField(c, objType, fld)
     if cursorIsNil(result):
-      if pool.syms[fld] == VTableField or pool.syms[fld] == DataField:
+      if pool.syms[fld] == VTableField:
         # VTableField is a magic internal field for RTTI - treat as pointer type
         result = c.builtins.cstringType
+      elif pool.syms[fld] == DataField and
+            obj.exprKind in {DerefX, HderefX}:
+        inc obj
+        var t = getTypeImpl(c, obj, flags)
+        if t.kind == Symbol:
+          var counter = 20
+          while counter > 0 and t.kind == Symbol:
+            dec counter
+            let res = tryLoadSym(t.symId)
+            if res.status == LacksNothing and res.decl.stmtKind == TypeS:
+              let decl = asTypeDecl(res.decl)
+              t = decl.body
+            else:
+              break
+        if t.typeKind == RefT:
+          result = t
+          inc result
       else:
         result = c.builtins.autoType
 
@@ -400,6 +419,15 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = getTypeImpl(c, n.firstSon, flags)
     if typeKind(result) == SinkT:
       inc result
+
+    var counter = 20
+    while counter > 0 and result.kind == Symbol:
+      dec counter
+      let d = getTypeSection(result.symId)
+      if d.kind == TypeY:
+        result = d.body
+      else:
+        break
     if typeKind(result) in {RefT, PtrT, MutT, OutT, LentT}:
       inc result
     else:
