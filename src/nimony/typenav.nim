@@ -21,9 +21,9 @@ const
   RcField* = "r.0"
   DataField* = "d.0"
   VTableField* = "`vt.0"
-  DisplayLenField* = "dl.0."
-  DisplayField* = "dy.0."
-  MethodsField* = "mt.0."
+  DisplayLenField* = "dl.0"
+  DisplayField* = "dy.0"
+  MethodsField* = "mt.0"
 
 type
   LocalInfo* = object
@@ -204,6 +204,40 @@ proc typeOfField*(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       result = decl.typ
     else:
       result = default(Cursor)
+  elif n.substructureKind == StmtsU:
+    inc n
+    while n.kind != ParRi:
+      result = typeOfField(c, n, fld)
+      if not cursorIsNil(result): return result
+    skipParRi n
+    result = default(Cursor)
+  elif n.substructureKind == CaseU:
+    inc n
+    result = typeOfField(c, n, fld) # selector field
+    if not cursorIsNil(result): return result
+    while n.kind != ParRi:
+      case n.substructureKind
+      of OfU:
+        inc n
+        skip n # ranges
+        inc n # stmts
+        while n.kind != ParRi:
+          result = typeOfField(c, n, fld)
+          if not cursorIsNil(result): return result
+        skipParRi n # stmts
+        skipParRi n # of
+      of ElseU:
+        inc n
+        inc n # stmts
+        while n.kind != ParRi:
+          result = typeOfField(c, n, fld)
+          if not cursorIsNil(result): return result
+        skipParRi n # stmts
+        skipParRi n # else
+      else:
+        skip n
+    skipParRi n
+    result = default(Cursor)
   else:
     result = default(Cursor)
     let tk = n.typeKind
@@ -358,6 +392,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
 
   of DerefX, HderefX:
     result = getTypeImpl(c, n.firstSon, flags)
+    if typeKind(result) == SinkT:
+      inc result
     if typeKind(result) in {RefT, PtrT, MutT, OutT, LentT}:
       inc result
     else:
