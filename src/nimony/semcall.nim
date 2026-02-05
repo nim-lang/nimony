@@ -797,6 +797,35 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         dec c.templateInstCounter
       else:
         buildErr c, dest, cs.callNode.info, "recursion limit exceeded for template expansions"
+    elif finalFn.kind == MacroY:
+      # Run compiled macro plugin
+      if finalFn.sym in c.compiledMacros:
+        # Serialize arguments to NIF
+        var argsBuf = createTokenBuf(30)
+        argsBuf.addParLe StmtsS, cs.callNode.info
+        for a in cs.args:
+          argsBuf.addSubtree a.n
+        argsBuf.addParRi()
+
+        # Run the macro plugin
+        var expandedInto = createTokenBuf(30)
+        let success = runMacroPlugin(c.g.config.nifcachePath, expandedInto,
+                                      cs.callNode.info, finalFn.sym, argsBuf)
+        if success:
+          # Shrink dest to before the call and semcheck the expanded output
+          dest.shrink cs.beforeCall
+          expandedInto.addParRi() # extra token so final `inc` doesn't break
+          var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
+          let aInfo = a.n.info
+          inc c.routine.inInst
+          semExpr c, dest, a
+          dec c.routine.inInst
+          it.kind = a.kind
+          typeofCallIs c, dest, it, cs.beforeCall, a.typ
+        else:
+          buildErr c, dest, cs.callNode.info, "macro plugin execution failed"
+      else:
+        buildErr c, dest, cs.callNode.info, "macro '" & pool.syms[finalFn.sym] & "' not compiled"
     elif isMagic == MagicCallNeedsSemcheck:
       # semcheck produced magic expression
       var magicExprBuf = createTokenBuf(dest.len - cs.beforeCall)

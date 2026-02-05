@@ -15,7 +15,8 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec
+  semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec,
+  macro_plugin
 
 when not defined(useNj):
   import contracts
