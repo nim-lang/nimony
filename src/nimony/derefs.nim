@@ -557,6 +557,21 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trAsgnRhs c, le, n, e
   takeParRi c, n
 
+proc trSonsLocation(c: var Context; n: var Cursor; e: Expects) =
+  if n.kind != ParLe:
+    takeToken c, n
+  elif n.exprKind in {DotX, DdotX}:
+    takeToken c, n
+    tr c, n, e
+    while n.kind != ParRi:
+      takeTree c.dest, n
+    takeParRi c, n
+  else:
+    takeToken c, n
+    while n.kind != ParRi:
+      tr c, n, e
+    takeParRi c, n
+
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # Idea: A variable like `x` does not own its value as it can be read multiple times.
   let typ = getType(c.typeCache, n)
@@ -568,34 +583,34 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
-        trSons c, n, WantT
+        trSonsLocation c, n, WantT
     else:
       if (k in {MutT, LentT} and not isViewType(typ.firstSon)) or k == OutT:
         if c.dest[c.dest.len-1].tag == TagId(HderefTagId):
-          trSons c, n, WantT
+          trSonsLocation c, n, WantT
         else:
           c.dest.addParLe(HderefX, n.info)
-          trSons c, n, WantT
+          trSonsLocation c, n, WantT
           c.dest.addParRi()
       else:
-        trSons c, n, WantT
+        trSonsLocation c, n, WantT
   elif e.wantMutable:
     if e == WantVarTResult:
       c.dest.addParLe(HaddrX, n.info)
       if n.kind == Symbol:
         takeToken c, n
       else:
-        trSons c, n, WantT
+        trSonsLocation c, n, WantT
       c.dest.addParRi()
     elif borrowsFromReadonly(c, n):
       cannotPassToVar c.dest, n.info, n
       skip n
     else:
       c.dest.addParLe(HaddrX, n.info)
-      trSons c, n, WantT
+      trSonsLocation c, n, WantT
       c.dest.addParRi()
   else:
-    trSons c, n, WantT
+    trSonsLocation c, n, WantT
 
 proc trLocal(c: var Context; n: var Cursor) =
   let kind = n.symKind
