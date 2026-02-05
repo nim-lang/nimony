@@ -282,9 +282,9 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       elif c.exprKind in {DotX, DdotX}:
         e.dest.add c
         inc c
-        e.dest.takeTree c
+        inlineLoopBody(e, c, mapping)
         while c.kind != ParRi:
-          inlineLoopBody(e, c, mapping)
+          e.dest.takeTree c
         takeParRi(e, c)
       else:
         e.dest.add c
