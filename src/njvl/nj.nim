@@ -1108,28 +1108,23 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   if takeThisParRi:
     dest.addParRi()
 
-proc eliminateJumps*(n: Cursor; moduleSuffix: string): TokenBuf =
+proc eliminateJumps*(pass: var Pass) =
   var c = Context(counter: 0, typeCache: createTypeCache(),
-                  thisModuleSuffix: moduleSuffix)
+                  thisModuleSuffix: pass.moduleSuffix)
   c.openScope()
-  result = createTokenBuf(300)
-  var initialBuf = createTokenBuf(300)
-  initialBuf.addSubtree(n)
-  var pass = initPass(move initialBuf, moduleSuffix, "xelim_njvl", 0)
   lowerExprs(pass, TowardsNjvl)
-  var elimExprs = ensureMove(pass.dest)
-  var n = beginRead(elimExprs)
+  pass.prepareForNext("elimjumps")
+  var n = pass.n
   assert n.stmtKind == StmtsS, $n.kind
-  result.add n
+  pass.dest.add n
   inc n
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
   while n.kind != ParRi:
-    trGuardedStmts c, b, result, n, false
-  closeScope c, result, n.info
-  closeBasicBlock c, b, result
-  result.addParRi()
-  endRead elimExprs
-  #echo "PRODUCED: ", result.toString(false)
+    trGuardedStmts c, b, pass.dest, n, false
+  closeScope c, pass.dest, n.info
+  closeBasicBlock c, b, pass.dest
+  pass.dest.addParRi()
+  #echo "PRODUCED: ", pass.dest.toString(false)
 
 when isMainModule:
   from std/os import paramStr, paramCount
@@ -1138,8 +1133,11 @@ when isMainModule:
   let infile = paramStr(1)
   var owningBuf = createTokenBuf(300)
   let n = setupProgram(infile, infile.changeModuleExt".njvl.nif", owningBuf)
-  let r = eliminateJumps(n, "main")
-  let output = r.toString(false)
+  var initialBuf = createTokenBuf(300)
+  initialBuf.addSubtree(n)
+  var pass = initPass(move initialBuf, "main", "xelim_njvl", 0)
+  eliminateJumps(pass)
+  let output = pass.dest.toString(false)
   if paramCount() >= 2:
     # Write to specified output file
     let outfile = paramStr(2)
