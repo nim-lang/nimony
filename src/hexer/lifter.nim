@@ -400,10 +400,14 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
     var parent = n
     if parent.typeKind in {RefT, PtrT}:
       inc parent
-    #unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
-    let fn = lift(c, parent)
-    # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
-    maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB), forceStatic = true
+    if c.op == attachedWasMoved:
+      # this ensures we don't touch the RTTI field and overwrite it
+      # with the wrong v-table pointer!
+      unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
+    else:
+      let fn = lift(c, parent)
+      # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
+      maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB), forceStatic = true
 
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB, depth
