@@ -366,6 +366,12 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
     else:
       error "illformed AST inside object: ", n
 
+proc baseobjOf(c: var LiftingCtx; typ: Cursor; x: TokenBuf): TokenBuf =
+  result = createTokenBuf(6)
+  copyIntoKind result, BaseobjX, c.info:
+    copyTree result, typ
+    result.add intToken(pool.integers.getOrIncl(+1), c.info)
+    copyTree result, x
 
 proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: int) =
   var n = n
@@ -378,7 +384,10 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
     var parent = n
     if parent.typeKind in {RefT, PtrT}:
       inc parent
-    unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
+    #unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
+    let fn = lift(c, parent)
+    maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB)
+
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB, depth
 
