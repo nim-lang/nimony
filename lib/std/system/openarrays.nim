@@ -10,18 +10,22 @@ proc `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and
 proc `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem
 
+# special cased in compiler as "toOpenArray.0.<system suffix>" for empty array type inference:
 converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline.} =
   if len(x) == 0:
     openArray[T](a: nil, len: 0)
   else:
     openArray[T](a: cast[ptr UncheckedArray[T]](addr(x)), len: len(x))
 
+# special cased in compiler as "toOpenArray.1.<system suffix>" for empty seq type inference:
 converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline.} =
   openArray[T](a: rawData(s), len: s.len)
 
 converter toOpenArray*(s: string): openArray[char] {.inline.} =
   openArray[char](a: rawData(s), len: s.len)
 
+func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
+func low*[T](a: openArray[T]): int {.inline.} = 0
 func len*[T](a: openArray[T]): int {.inline.} = a.len
 
 type

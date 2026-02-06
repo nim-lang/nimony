@@ -28,7 +28,7 @@ The phases of compilation are:
 
 1. Pure parsing (nifler): Turn Nim code into a dialect of NIF.
 2. Semantic checking phase 1 (nimony): symbol lookups, type checking, template&macro expansions.
-3. Semantic checking phase 2 (nimony): Effect inference.
+3. Semantic checking phase 2 (nimony): Effect inference. **Not implemented yet.**
 4. Inject derefs (and the corresponding mutation checking) (nimony).
 5. Iterator inlining (hexer).
 6. Lambda lifting (hexer).
@@ -47,7 +47,7 @@ These phases have been collected into different tools with dedicated names.
 NIF is a general purpose text format designed for compiler construction. Think of it as a "JSON for compilers". NIF has a short precise specification and a Nim library implementation.
 
 While NIF is almost a classical Lisp, it innovates in these aspects:
-1. It uses a separate namespace for tags ("builtins") and source code identifiers. It is most  extensible and supports a wide range of abstraction levels. Code that is very high level can be represented effectively as well as code that is close to machine code.
+1. It uses a separate namespace for tags ("builtins") and source code identifiers. It is most extensible and supports a wide range of abstraction levels. Code that is very high level can be represented effectively as well as code that is close to machine code.
 2. Line information is carried around during all phases of compilation for easy debugging and code introspection tools. The line information is based on the difference between a parent and its child node so that the resulting text representation is kept small.
 3. Declaration and use of a symbol are clearly distinguished in the syntax allowing for many different tasks to be implemented with a fraction of the usual complexity: "find definition", "find all uses" and "inline this code snippet" are particularly easy to implement.
 4. There is an additional format called Nif-index that allows for the lazy on-demand loading of symbols. This is most essential for incremental compilations.

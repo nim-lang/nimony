@@ -359,7 +359,7 @@ proc toString*(b: TokenBuf; produceLineInfo = true): string =
 proc toString*(b: TokenBuf; first: int; produceLineInfo = true): string =
   var last = first
   var nested = 0
-  while true:
+  while last < b.len:
     case b[last].kind
     of ParLe:
       inc nested
@@ -368,6 +368,7 @@ proc toString*(b: TokenBuf; first: int; produceLineInfo = true): string =
     else: discard
     if nested == 0: break
     inc last
+  if last == b.len: dec last
   result = nifstreams.toString(toOpenArray(b.data, first, last), produceLineInfo)
 
 proc toString*(b: Cursor; produceLineInfo = true): string =
@@ -384,7 +385,7 @@ type
     OnlyIfChanged
 
 proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) =
-  let content = "(.nif24)\n" & toString(b)
+  let content = toModuleString(toOpenArray(b.data, 0, b.len-1), "." & extractModuleSuffix(filename))
   if mode == OnlyIfChanged:
     let existingContent = try: readFile(filename) except: ""
     if existingContent == content: return
@@ -423,8 +424,8 @@ proc parse*(r: var Stream; dest: var TokenBuf;
       dec nested
       if nested == 0: break
 
-proc parseFromBuffer*(input: string; sizeHint = 100): TokenBuf =
-  var r = nifstreams.openFromBuffer(input)
+proc parseFromBuffer*(input: string; thisModule: sink string; sizeHint = 100): TokenBuf =
+  var r = nifstreams.openFromBuffer(input, thisModule)
   result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 
@@ -438,6 +439,10 @@ proc isLastSon*(n: Cursor): bool =
   var n = n
   skip n
   result = n.kind == ParRi
+
+proc firstSon*(n: Cursor): Cursor {.inline.} =
+  result = n
+  inc result
 
 proc takeToken*(buf: var TokenBuf; n: var Cursor) {.inline.} =
   buf.add n

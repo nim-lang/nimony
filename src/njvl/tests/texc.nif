@@ -1,0 +1,21 @@
+(.nif24)
+(stmts
+
+  (proc :echo.0 . . . (params (param :cond.0 . . (bool) .)) . (pragmas (raises)) . (stmts
+  ))
+
+  (proc :test . . . (params) . . . (stmts
+    (try
+      (stmts
+        (call echo.0 "abc")
+        (call echo.0 "xyz")
+      )
+
+      (fin (stmts
+        (call echo.0 "regardless")
+      ))
+    )
+  
+  ))
+)
+

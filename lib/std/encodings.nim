@@ -54,11 +54,10 @@ else:
       dest {.exportc.}, src {.exportc.}: CodePage
 
 
-proc raiseEncodingError(msg: string) =
+proc raiseEncodingError(msg: string) {.raises.} =
   ## Raises an `EncodingError` with the given `msg`.
   # raise newException(EncodingError, msg)
-  # TODO: use raises
-  quit("EncodingError: " & msg)
+  raise ValueError
 
 
 when defined(windows):
@@ -349,7 +348,7 @@ proc getCurrentEncoding*(uiApp = false): string =
   else:
     result = "UTF-8"
 
-proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter =
+proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter {.raises.} =
   ## Opens a converter that can convert from `srcEncoding` to `destEncoding`.
   ## Raises `EncodingError` if it cannot fulfill the request.
   when not defined(windows):

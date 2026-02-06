@@ -1,27 +1,34 @@
-(.nif24)
+(.nif26)
+(.indexat +15253           )
 0,1,tests/nimony/object/tcaseobject.nim(stmts 9,3
- (type ~4 :Foo.0.tcauiaoif . . . 2
+ (type ~4 :Foo.0. . .
+  (pragmas
+   (destroy =destroy_SX46oo0tcauiaoif.0.)
+   (wasmoved =wasmoved_SX46oo0tcauiaoif.0.)
+   (dup =dup_SX46oo0tcauiaoif.0.)
+   (copy =copy_SX46oo0tcauiaoif.0.)) 2
   (object . ~9,1
    (case 5
-    (fld :x.0.tcauiaoif . . 3
+    (fld :x.0 . . 3
      (bool) .) ,1
     (of
      (ranges 3
       (false)) 2,1
      (stmts
-      (fld :y.0.tcauiaoif . . 3
+      (fld :y.0 . . 3
        (i -1) .))) ,3
     (of
      (ranges 3
       (true)) 2,1
      (stmts
-      (fld :z.0.tcauiaoif . . 3 string.0.sysvq0asl .) ,1
-      (fld :t.0.tcauiaoif . . 3
+      (fld :z.0 . . 3 string.0.sysvq0asl .) ,1
+      (fld :t.0 . . 3
        (bool) .)))))) 9,11
- (type ~4 :Bar.0.tcauiaoif . . . 2
+ (type ~4 :Bar.0. . .
+  (pragmas) 2
   (object . ~9,1
    (case 5
-    (fld :x.1.tcauiaoif . . 3
+    (fld :x.1 . . 3
      (bool) .) ,1
     (of
      (ranges 3
@@ -29,59 +36,59 @@
       (true)) 16
      (stmts
       (nil)))))) 4,15
- (gvar :foo.0.tcauiaoif . . 7,23 Foo.0.tcauiaoif 9
-  (oconstr ~2,23 Foo.0.tcauiaoif
-   (kv x.0.tcauiaoif 45,4,lib/std/system/defaults.nim
+ (gvar :foo.0. . . 7,23 Foo.0. 9
+  (oconstr ~2,23 Foo.0.
+   (kv x.0 45,4,lib/std/system/defaults.nim
     (expr
      (false)))
-   (kv y.0.tcauiaoif 43,6,lib/std/system/defaults.nim
+   (kv y.0 43,6,lib/std/system/defaults.nim
     (expr +0)))) 4,16
- (asgn ~4 foo.0.tcauiaoif 5
-  (oconstr 2,22 Foo.0.tcauiaoif 2
-   (kv ~1 x.0.tcauiaoif 2
+ (asgn ~4 foo.0. 5
+  (oconstr 2,22 Foo.0. 2
+   (kv ~1 x.0 2
     (false)) 12
-   (kv ~1 y.0.tcauiaoif 2 +123))) 4,17
- (glet :a.0.tcauiaoif . . 6,~13
+   (kv ~1 y.0 2 +123))) 4,17
+ (glet :a.0. . . 6,~13
   (bool) 13
-  (dot ~3 foo.0.tcauiaoif x.0.tcauiaoif +0)) 2,4,lib/std/assertions.nim
+  (dot ~3 foo.0. x.0 +0)) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
     (not 9,19,tests/nimony/object/tcaseobject.nim
      (eq
-      (bool) ~2 a.0.tcauiaoif 3
+      (bool) ~2 a.0. 3
       (false))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,19
- (glet :b.0.tcauiaoif . . 3,~13
+ (glet :b.0. . . 3,~13
   (i -1) 12
-  (dot ~3 foo.0.tcauiaoif y.0.tcauiaoif +0)) 2,4,lib/std/assertions.nim
+  (dot ~3 foo.0. y.0 +0)) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
     (not 9,21,tests/nimony/object/tcaseobject.nim
      (eq
-      (i +64) ~2 b.0.tcauiaoif 3 +123)) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+      (i +64) ~2 b.0. 3 +123)) ~1,1
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,21
- (asgn ~4 foo.0.tcauiaoif 5
-  (oconstr 2,17 Foo.0.tcauiaoif 2
-   (kv ~1 x.0.tcauiaoif 2
+ (asgn ~4 foo.0. 5
+  (oconstr 2,17 Foo.0. 2
+   (kv ~1 x.0 2
     (true)) 11
-   (kv ~1 z.0.tcauiaoif 2 "abc") 21
-   (kv ~1 t.0.tcauiaoif 2
+   (kv ~1 z.0 2 "abc") 21
+   (kv ~1 t.0 2
     (false)))) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
@@ -89,57 +96,57 @@
     (not 13,23,tests/nimony/object/tcaseobject.nim
      (eq
       (bool) ~3
-      (dot ~3 foo.0.tcauiaoif x.0.tcauiaoif +0) 3
+      (dot ~3 foo.0. x.0 +0) 3
       (true))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,23
- (glet :c.0.tcauiaoif . . 3,~15 string.0.sysvq0asl 15
-  (dot ~3 foo.0.tcauiaoif z.0.tcauiaoif +0)) 2,4,lib/std/assertions.nim
+ (glet :c.0. . . 3,~15 string.0.sysvq0asl 15
+  (dot ~3 foo.0. z.0 +0)) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
     (not 9,25,tests/nimony/object/tcaseobject.nim
-     (infix ==.20.sysvq0asl ~2 c.0.tcauiaoif 3 "abc")) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+     (infix ==.20.sysvq0asl ~2 c.0. 3 "abc")) ~1,1
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,25
- (glet :d.0.tcauiaoif . . 6,~21
+ (glet :d.0. . . 6,~21
   (bool) 13
-  (dot ~3 foo.0.tcauiaoif t.0.tcauiaoif +0)) 2,4,lib/std/assertions.nim
+  (dot ~3 foo.0. t.0 +0)) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
     (not 9,27,tests/nimony/object/tcaseobject.nim
      (eq
-      (bool) ~2 d.0.tcauiaoif 3
+      (bool) ~2 d.0. 3
       (false))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,28
- (gvar :bar.0.tcauiaoif . . 6 Bar.0.tcauiaoif 9
-  (oconstr ~3 Bar.0.tcauiaoif
-   (kv x.1.tcauiaoif 45,4,lib/std/system/defaults.nim
+ (gvar :bar.0. . . 6 Bar.0. 9
+  (oconstr ~3 Bar.0.
+   (kv x.1 45,4,lib/std/system/defaults.nim
     (expr
      (false))))) 4,29
- (asgn ~4 bar.0.tcauiaoif 5
-  (oconstr 1,~1 Bar.0.tcauiaoif 2
-   (kv ~1 x.1.tcauiaoif 2
+ (asgn ~4 bar.0. 5
+  (oconstr 1,~1 Bar.0. 2
+   (kv ~1 x.1 2
     (false)))) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
@@ -147,145 +154,441 @@
     (not 13,31,tests/nimony/object/tcaseobject.nim
      (eq
       (bool) ~3
-      (dot ~3 bar.0.tcauiaoif x.1.tcauiaoif +0) 3
+      (dot ~3 bar.0. x.1 +0) 3
       (false))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,31
- (asgn ~4 bar.0.tcauiaoif 5
-  (oconstr 1,~3 Bar.0.tcauiaoif 2
-   (kv ~1 x.1.tcauiaoif 2
+ (asgn ~4 bar.0. 5
+  (oconstr 1,~3 Bar.0. 2
+   (kv ~1 x.1 2
     (true)))) 4,32
- (glet :e.0.tcauiaoif . . 6,~28
+ (glet :e.0. . . 6,~28
   (bool) 13
-  (dot ~3 bar.0.tcauiaoif x.1.tcauiaoif +0)) 2,4,lib/std/assertions.nim
+  (dot ~3 bar.0. x.1 +0)) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
     (not 9,34,tests/nimony/object/tcaseobject.nim
      (eq
-      (bool) ~2 e.0.tcauiaoif 3
+      (bool) ~2 e.0. 3
       (true))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) 4,35
- (gvar :bar2.0.tcauiaoif . . 6,~7 Bar.0.tcauiaoif 7 bar.0.tcauiaoif) 2,4,lib/std/assertions.nim
+ (gvar :bar2.0. . . 6,~7 Bar.0. 7 bar.0.) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
     (not 14,37,tests/nimony/object/tcaseobject.nim
      (eq
       (bool) ~3
-      (dot ~4 bar2.0.tcauiaoif x.1.tcauiaoif +0) 3
+      (dot ~4 bar2.0. x.1 +0) 3
       (true))) ~1,1
-    (stmts 2,116,lib/std/syncio.nim
+    (stmts 2,122,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 35,3,lib/std/assertions.nim "")) ,2
-      (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
+      (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')) ,1
      (cmd quit.0.syn1lfpjv 5 +1))))) ,38
- (proc 5 :fx.0.tcauiaoif . . . 7
+ (proc 5 :fx.0. . . . 7
   (params 1
-   (param :x.0 . . 3 Foo.0.tcauiaoif .)) 10 Foo.0.tcauiaoif . . 2,1
+   (param :x.0 . . 3 Foo.0. .)) 10 Foo.0. . . 2,1
   (stmts 4
-   (result :result.0 . . 5,~1 Foo.0.tcauiaoif .) 4
-   (let :s.0 . . 5,~1 Foo.0.tcauiaoif 4 x.0) ,1
+   (result :result.0 . . 5,~1 Foo.0. .) 4
+   (let :s.0 . . 5,~1 Foo.0. 4 x.0) ,1
    (ret 7 s.0) ~2,~1
    (ret result.0))) ,42
  (block . 2,1
   (stmts 4
-   (var :x.1 . . 5,~5 Foo.0.tcauiaoif 7
-    (oconstr ~2,~5 Foo.0.tcauiaoif 2
-     (kv ~1 x.0.tcauiaoif 2
+   (var :x.1 . . 5,~5 Foo.0. 7
+    (oconstr ~2,~5 Foo.0. 2
+     (kv ~1 x.0 2
       (true)) 11
-     (kv ~1 z.0.tcauiaoif 2 "abc") 21
-     (kv ~1 t.0.tcauiaoif 2
+     (kv ~1 z.0 2 "abc") 21
+     (kv ~1 t.0 2
       (false)))) ,1
    (discard 10
-    (call ~2 fx.0.tcauiaoif 1 x.1)))) ,46
+    (call ~2 fx.0. 1 x.1)))) ,46
  (block . 2,1
   (stmts 8,1
-   (type ~6 :TKind.0.tcauiaoif . . . 2
+   (type ~6 :TKind.0. . . . 2
     (enum
      (u +8) 5
-     (efld :ka.0.tcauiaoif . . TKind.0.tcauiaoif
+     (efld :ka.0. . . TKind.0.
       (tup +0 "ka")) 9
-     (efld :kb.0.tcauiaoif . . TKind.0.tcauiaoif
+     (efld :kb.0. . . TKind.0.
       (tup +1 "kb")) 13
-     (efld :kc.0.tcauiaoif . . TKind.0.tcauiaoif
-      (tup +2 "kc")))) 5,2
-   (type ~3 :TA.0.tcauiaoif . . . 2
+     (efld :kc.0. . . TKind.0.
+      (tup +2 "kc")))) 2,1
+   (proc :dollar`.TKind.0. . . .
+    (params
+     (param :e.0 . . TKind.0. .)) string.0.sysvq0asl . .
+    (stmts 8
+     (result :result.1 . . ~5,~40 string.0.sysvq0asl .) 8
+     (case e.0 5
+      (of
+       (ranges ka.0.)
+       (stmts
+        (ret "ka"))) 9
+      (of
+       (ranges kb.0.)
+       (stmts
+        (ret "kb"))) 13
+      (of
+       (ranges kc.0.)
+       (stmts
+        (ret "kc"))))
+     (ret result.1))) 5,2
+   (type ~3 :TA.0. . .
+    (pragmas
+     (destroy =destroy_SX54X410tcauiaoif.0.)
+     (wasmoved =wasmoved_SX54X410tcauiaoif.0.)
+     (dup =dup_SX54X410tcauiaoif.0.)
+     (copy =copy_SX54X410tcauiaoif.0.)) 2
     (object . ~3,1
      (case 5
-      (fld :k.0.tcauiaoif . . 3 TKind.0.tcauiaoif .) ,1
+      (fld :k.0 . . 3 TKind.0. .) ,1
       (of
-       (ranges 3 ka.0.tcauiaoif) 2,1
+       (ranges 3 ka.0.) 2,1
        (stmts
-        (fld :x.2.tcauiaoif . . 3
+        (fld :x.2 . . 3
          (i -1) .) ,1
-        (fld :y.1.tcauiaoif . . 3
+        (fld :y.1 . . 3
          (i -1) .))) ,4
       (of
-       (ranges 3 kb.0.tcauiaoif)
+       (ranges 3 kb.0.)
        (stmts 7
-        (fld :a.1.tcauiaoif . . 6 string.0.sysvq0asl .) 10
-        (fld :b.1.tcauiaoif . . 3 string.0.sysvq0asl .))) ,5
+        (fld :a.1 . . 6 string.0.sysvq0asl .) 10
+        (fld :b.1 . . 3 string.0.sysvq0asl .))) ,5
       (else
        (stmts 6
-        (fld :c.1.tcauiaoif . . 6
+        (fld :c.1 . . 6
          (f +64) .) 9
-        (fld :d.1.tcauiaoif . . 3
+        (fld :d.1 . . 3
          (f +64) .)))))) 4,10
-   (var :s.1 . . 11,~9 TKind.0.tcauiaoif 4 ka.0.tcauiaoif) ,11
+   (var :s.1 . . 11,~9 TKind.0. 4 ka.0.) ,11
    (case 5 s.1 ,1
     (of
-     (ranges 3 ka.0.tcauiaoif) 2,1
+     (ranges 3 ka.0.) 2,1
      (stmts 4
       (var :x.2 . .
        (i -1) 7 +1) 7
       (var :y.0 . .
        (i -1) 4 +1))) ,3
     (of
-     (ranges 3 kb.0.tcauiaoif) 2,1
+     (ranges 3 kb.0.) 2,1
      (stmts 4
       (var :a.0 . . string.0.sysvq0asl 7 "") 7
       (var :b.0 . . string.0.sysvq0asl 4 ""))) ,5
     (of
-     (ranges 3 kc.0.tcauiaoif) 7
-     (stmts 2,116,lib/std/syncio.nim
+     (ranges 3 kc.0.) 7
+     (stmts 2,122,lib/std/syncio.nim
       (stmts 2,1
        (stmts
         (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 14,64,tests/nimony/object/tcaseobject.nim +3)) ,2
-       (cmd write.5.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 4,48
- (proc :dollar`.TKind.0.tcauiaoif x . .
+       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A'))))))) 10,4
+ (comment bool.0.sysvq0asl ~5,1 false.0.sysvq0asl ~5,1 false.0.sysvq0asl ~3,2 int.0.sysvq0asl ~5,3 true.0.sysvq0asl ~5,3 true.0.sysvq0asl ~3,5 bool.0.sysvq0asl ,8 bool.0.sysvq0asl ~5,9 false.0.sysvq0asl ~5,9 false.0.sysvq0asl 2,9 true.0.sysvq0asl 2,9 true.0.sysvq0asl 3,11 default.1.sysvq0asl 3,11 default.3.sysvq0asl 3,12 false.0.sysvq0asl ~3,13 bool.0.sysvq0asl 2,14 false.0.sysvq0asl ~10,14 assert.0.assy765wm ~3,15 int.0.sysvq0asl ~10,16 assert.0.assy765wm 3,17 true.0.sysvq0asl 22,17 false.0.sysvq0asl 6,18 true.0.sysvq0asl ~10,18 assert.0.assy765wm ~10,20 assert.0.assy765wm ~3,21 bool.0.sysvq0asl 2,22 false.0.sysvq0asl ~10,22 assert.0.assy765wm 3,24 default.1.sysvq0asl 3,25 false.0.sysvq0asl 6,26 false.0.sysvq0asl ~10,26 assert.0.assy765wm 3,27 true.0.sysvq0asl ~3,28 bool.0.sysvq0asl 2,29 true.0.sysvq0asl ~10,29 assert.0.assy765wm 7,32 true.0.sysvq0asl ~10,32 assert.0.assy765wm 7,39 true.0.sysvq0asl 26,39 false.0.sysvq0asl 1,48 int.0.sysvq0asl 1,49 int.0.sysvq0asl 8,51 float.0.sysvq0asl 8,51 float.0.sysvq0asl ~1,59 echo.0.syn1lfpjv) 7,49
+ (proc :=destroy_SX46oo0tcauiaoif.0. . . .
   (params
-   (param :e.0 . . TKind.0.tcauiaoif .)) string.0.sysvq0asl . .
-  (stmts 8
-   (result :result.1 . . ~5,~40 string.0.sysvq0asl .) 8
-   (case e.0 5
+   (param :dest.0 . . 2,~46 Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~5,~45
+   (case 5,45
+    (dot dest.0 x.0 +0) ,1
     (of
-     (ranges ka.0.tcauiaoif)
-     (stmts
-      (ret "ka"))) 9
+     (ranges 3
+      (false)) 2,1
+     (stmts)) ,3
     (of
-     (ranges kb.0.tcauiaoif)
-     (stmts
-      (ret "kb"))) 13
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 z.0 +0))))))) 7,49
+ (proc :=wasmoved_SX46oo0tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut 2,~46 Foo.0.) .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~5,~45
+   (case 5,45
+    (dot
+     (hderef dest.0) x.0 +0) ,1
     (of
-     (ranges kc.0.tcauiaoif)
-     (stmts
-      (ret "kc"))))
-   (ret result.1))) 10,4
- (comment bool.0.sysvq0asl ~5,1 false.0.sysvq0asl ~5,1 false.0.sysvq0asl ~3,2 int.0.sysvq0asl ~5,3 true.0.sysvq0asl ~5,3 true.0.sysvq0asl ~3,5 bool.0.sysvq0asl ,8 bool.0.sysvq0asl ~5,9 false.0.sysvq0asl ~5,9 false.0.sysvq0asl 2,9 true.0.sysvq0asl 2,9 true.0.sysvq0asl 3,11 default.1.sysvq0asl 3,11 default.3.sysvq0asl 3,12 false.0.sysvq0asl ~3,13 bool.0.sysvq0asl 2,14 false.0.sysvq0asl ~10,14 assert.0.assy765wm ~3,15 int.0.sysvq0asl ~10,16 assert.0.assy765wm 3,17 true.0.sysvq0asl 22,17 false.0.sysvq0asl 6,18 true.0.sysvq0asl ~10,18 assert.0.assy765wm ~10,20 assert.0.assy765wm ~3,21 bool.0.sysvq0asl 2,22 false.0.sysvq0asl ~10,22 assert.0.assy765wm 3,24 default.1.sysvq0asl 3,25 false.0.sysvq0asl 6,26 false.0.sysvq0asl ~10,26 assert.0.assy765wm 3,27 true.0.sysvq0asl ~3,28 bool.0.sysvq0asl 2,29 true.0.sysvq0asl ~10,29 assert.0.assy765wm 7,32 true.0.sysvq0asl ~10,32 assert.0.assy765wm 7,39 true.0.sysvq0asl 26,39 false.0.sysvq0asl 1,48 int.0.sysvq0asl 1,49 int.0.sysvq0asl 8,51 float.0.sysvq0asl 8,51 float.0.sysvq0asl ~1,59 echo.0.syn1lfpjv))
+     (ranges 3
+      (false)) 2,1
+     (stmts)) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (call =wasMoved.2.sysvq0asl
+       (haddr
+        (dot
+         (hderef dest.0) z.0 +0)))))))) 7,49
+ (proc :=dup_SX46oo0tcauiaoif.0. . . .
+  (params
+   (param :src.0 . . 2,~46 Foo.0. .)) 2,~46 Foo.0.
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (var :dest.0 . . 2,~46 Foo.0. .)
+   (asgn
+    (dot dest.0 x.0 +0)
+    (dot src.0 x.0 +0)) ~5,~45
+   (case 5,45
+    (dot dest.0 x.0 +0) ,1
+    (of
+     (ranges 3
+      (false)) 2,1
+     (stmts 3,43
+      (asgn
+       (dot dest.0 y.0 +0)
+       (dot src.0 y.0 +0)))) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (asgn
+       (dot dest.0 z.0 +0)
+       (call =dup.2.sysvq0asl
+        (dot src.0 z.0 +0))) 3,41
+      (asgn
+       (dot dest.0 t.0 +0)
+       (dot src.0 t.0 +0)))))
+   (ret dest.0))) 7,49
+ (proc :=copy_SX46oo0tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut 2,~46 Foo.0.) .)
+   (param :src.0 . . 2,~46 Foo.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~5,~45
+   (case 5,45
+    (dot dest.0 x.0 +0) ,1
+    (of
+     (ranges 3
+      (false)) 2,1
+     (stmts)) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 z.0 +0)))))
+   (asgn
+    (dot
+     (hderef dest.0) x.0 +0)
+    (dot src.0 x.0 +0)) ~5,~45
+   (case 5,45
+    (dot
+     (hderef dest.0) x.0 +0) ,1
+    (of
+     (ranges 3
+      (false)) 2,1
+     (stmts 3,43
+      (asgn
+       (dot
+        (hderef dest.0) y.0 +0)
+       (dot src.0 y.0 +0)))) ,3
+    (of
+     (ranges 3
+      (true)) 2,1
+     (stmts 3,41
+      (call =copy.2.sysvq0asl
+       (dot
+        (hderef dest.0) z.0 +0)
+       (dot src.0 z.0 +0)) 3,41
+      (asgn
+       (dot
+        (hderef dest.0) t.0 +0)
+       (dot src.0 t.0 +0))))))) 7,49
+ (proc :=destroy_SX54X410tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . . TA.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~1,1
+   (case 1,~1
+    (dot dest.0 k.0 +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts)) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 a.1 +0)) 1,~5
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 b.1 +0)))) ,5
+    (else
+     (stmts))))) 7,49
+ (proc :=wasmoved_SX54X410tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut TA.0.) .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~1,1
+   (case 1,~1
+    (dot
+     (hderef dest.0) k.0 +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts)) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (call =wasMoved.2.sysvq0asl
+       (haddr
+        (dot
+         (hderef dest.0) a.1 +0))) 1,~5
+      (call =wasMoved.2.sysvq0asl
+       (haddr
+        (dot
+         (hderef dest.0) b.1 +0))))) ,5
+    (else
+     (stmts))))) 7,49
+ (proc :=dup_SX54X410tcauiaoif.0. . . .
+  (params
+   (param :src.0 . . TA.0. .)) TA.0.
+  (pragmas
+   (nodestroy)) .
+  (stmts
+   (var :dest.0 . . TA.0. .)
+   (asgn
+    (dot dest.0 k.0 +0)
+    (dot src.0 k.0 +0)) ~1,1
+   (case 1,~1
+    (dot dest.0 k.0 +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts ~1,~3
+      (asgn
+       (dot dest.0 x.2 +0)
+       (dot src.0 x.2 +0)) ~1,~3
+      (asgn
+       (dot dest.0 y.1 +0)
+       (dot src.0 y.1 +0)))) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (asgn
+       (dot dest.0 a.1 +0)
+       (call =dup.2.sysvq0asl
+        (dot src.0 a.1 +0))) 1,~5
+      (asgn
+       (dot dest.0 b.1 +0)
+       (call =dup.2.sysvq0asl
+        (dot src.0 b.1 +0))))) ,5
+    (else
+     (stmts 1,~6
+      (asgn
+       (dot dest.0 c.1 +0)
+       (dot src.0 c.1 +0)) 1,~6
+      (asgn
+       (dot dest.0 d.1 +0)
+       (dot src.0 d.1 +0)))))
+   (ret dest.0))) 7,49
+ (proc :=copy_SX54X410tcauiaoif.0. . . .
+  (params
+   (param :dest.0 . .
+    (mut TA.0.) .)
+   (param :src.0 . . TA.0. .)) .
+  (pragmas
+   (nodestroy)) .
+  (stmts ~1,1
+   (case 1,~1
+    (dot dest.0 k.0 +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts)) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 a.1 +0)) 1,~5
+      (call =destroy.2.sysvq0asl
+       (dot dest.0 b.1 +0)))) ,5
+    (else
+     (stmts)))
+   (asgn
+    (dot
+     (hderef dest.0) k.0 +0)
+    (dot src.0 k.0 +0)) ~1,1
+   (case 1,~1
+    (dot
+     (hderef dest.0) k.0 +0) ,1
+    (of
+     (ranges 3 ka.0.) 2,1
+     (stmts ~1,~3
+      (asgn
+       (dot
+        (hderef dest.0) x.2 +0)
+       (dot src.0 x.2 +0)) ~1,~3
+      (asgn
+       (dot
+        (hderef dest.0) y.1 +0)
+       (dot src.0 y.1 +0)))) ,4
+    (of
+     (ranges 3 kb.0.)
+     (stmts 1,~5
+      (call =copy.2.sysvq0asl
+       (dot
+        (hderef dest.0) a.1 +0)
+       (dot src.0 a.1 +0)) 1,~5
+      (call =copy.2.sysvq0asl
+       (dot
+        (hderef dest.0) b.1 +0)
+       (dot src.0 b.1 +0)))) ,5
+    (else
+     (stmts 1,~6
+      (asgn
+       (dot
+        (hderef dest.0) c.1 +0)
+       (dot src.0 c.1 +0)) 1,~6
+      (asgn
+       (dot
+        (hderef dest.0) d.1 +0)
+       (dot src.0 d.1 +0))))))))0,1,tests/nimony/object/tcaseobject.nim(.index 9,3
+ (h Foo.0. +87) 9,11
+ (h Bar.0. +505) 4,15
+ (h foo.0. +193) 4,17
+ (h a.0. +297) 4,19
+ (h b.0. +598) 4,23
+ (h c.0. +1283) 4,25
+ (h d.0. +606) 4,28
+ (h bar.0. +598) 4,32
+ (h e.0. +843) 4,35
+ (h bar2.0. +597) ,38
+ (h fx.0. +603) 10,48
+ (h TKind.0. +483) 17,48
+ (h ka.0. +54) 21,48
+ (h kb.0. +54) 25,48
+ (h kc.0. +55) 4,48
+ (h dollar`.TKind.0. +58) 7,49
+ (h TA.0. +423) 7,49
+ (h =destroy_SX46oo0tcauiaoif.0. +2371) 7,49
+ (h =wasmoved_SX46oo0tcauiaoif.0. +368) 7,49
+ (h =dup_SX46oo0tcauiaoif.0. +428) 7,49
+ (h =copy_SX46oo0tcauiaoif.0. +662) 7,49
+ (h =destroy_SX54X410tcauiaoif.0. +942) 7,49
+ (h =wasmoved_SX54X410tcauiaoif.0. +434) 7,49
+ (h =dup_SX54X410tcauiaoif.0. +529) 7,49
+ (h =copy_SX54X410tcauiaoif.0. +895))

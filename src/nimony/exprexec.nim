@@ -184,6 +184,7 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDer
   let a = accessObjField(c, param, r.name, needsDeref, depth = depth)
 
   genStringCall(c, "writeNifParLe", "kv")
+  genStringCall(c, "writeNifRaw", " ")
   genStringCall(c, "writeNifSymbol", pool.syms[r.name.symId])
 
   entryPoint(c, fieldType, readOnlyCursorAt(a, 0))
@@ -514,7 +515,9 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
 
   let toDeref = cursorAt(c.dest, beforeUsercode)
   #echo "synthesized ", toString(toDeref)
-  let withDerefs = injectDerefs(toDeref)
+  let typeHooksCopy = s.typeHooks
+  var emptyClasses = default semdata.Classes
+  let withDerefs = injectDerefs(toDeref, typeHooksCopy, emptyClasses, s.thisModuleSuffix, s.g.config.bits)
   endRead(c.dest)
   c.dest.shrink beforeUsercode
   # do not copy the `(stmts)` here:

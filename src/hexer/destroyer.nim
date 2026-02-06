@@ -45,7 +45,7 @@ interprets this `=` as `=bitcopy`.
 
 import std / [assertions, tables]
 include nifprelude
-import nifindexes, symparser, treemangler
+import nifindexes, symparser, treemangler, passes
 import ".." / nimony / [nimony_model, programs, typenav, decls]
 import lifter
 
@@ -134,8 +134,8 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       result.add n
       inc n
 
-proc leaveScope(c: var Context; s: var Scope) =
-  if s.finallySection != default(Cursor):
+proc leaveScope(c: var Context; s: var Scope; kind = Other) =
+  if kind != OtherPreventFinally and s.finallySection != default(Cursor):
     var freshVars = createFreshVars(c, s.finallySection)
     var n = beginRead(freshVars)
     tr c, n
@@ -201,8 +201,7 @@ proc trRaise(c: var Context; n: var Cursor) =
   ]#
   var it = addr(c.currentScope)
   while it != nil:
-    if it.kind != OtherPreventFinally:
-      leaveScope(c, it[])
+    leaveScope(c, it[], it.kind)
     it = it.parent
   takeTree c.dest, n
 
@@ -231,8 +230,7 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
       inc body
     else:
       tr c, body
-    if kind != OtherPreventFinally:
-      leaveScope(c, c.currentScope)
+    leaveScope(c, c.currentScope, kind)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
@@ -385,11 +383,11 @@ proc tr(c: var Context; n: var Cursor) =
         c.dest.add n
         inc n
 
-proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
+proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, currentScope: createEntryScope(n.info),
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
-    dest: createTokenBuf(400))
-  var n = n
+    dest: move(pass.dest))
   assert n.stmtKind == StmtsS
   c.dest.add n
   inc n
@@ -399,4 +397,4 @@ proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
   leaveScope c, c.currentScope
   takeParRi(c.dest, n)
   genMissingHooks lifter[]
-  result = ensureMove c.dest
+  pass.dest = ensureMove c.dest

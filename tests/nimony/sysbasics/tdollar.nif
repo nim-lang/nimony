@@ -1,35 +1,42 @@
-(.nif24)
+(.nif26)
+(.indexat +867             )
 0,1,tests/nimony/sysbasics/tdollar.nim(stmts 9,1
- (type ~7 :Color1.0.tdoqc0e0v . . . 2
+ (type ~7 :Color1.0. . . . 2
   (enum
    (u +8) ~7,1
-   (efld :Red1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v
+   (efld :Red1.0. . . Color1.0.
     (tup +0 "Red1")) ~1,1
-   (efld :Blue1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v
+   (efld :Blue1.0. . . Color1.0.
     (tup +1 "Blue1")) 6,1
-   (efld :Green1.0.tdoqc0e0v . . Color1.0.tdoqc0e0v
-    (tup +2 "Green1")))) ,5
- (proc 5 :fooColor.0.tdoqc0e0v . . . 14
-  (params) . . . 2,1
-  (stmts 4
-   (let :m.0 . . string.0.sysvq0asl 4
-    (call dollar`.Color1.0.tdoqc0e0v 1 Blue1.0.tdoqc0e0v)))) 2,1
- (proc :dollar`.Color1.0.tdoqc0e0v x . .
+   (efld :Green1.0. . . Color1.0.
+    (tup +2 "Green1")))) 2,1
+ (proc :dollar`.Color1.0. x . .
   (params
-   (param :e.0 . . Color1.0.tdoqc0e0v .)) string.0.sysvq0asl . .
+   (param :e.0 . . Color1.0. .)) string.0.sysvq0asl . .
   (stmts 9
    (result :result.0 . . string.0.sysvq0asl .) 9
    (case e.0 ~7,1
     (of
-     (ranges Red1.0.tdoqc0e0v)
+     (ranges Red1.0.)
      (stmts
       (ret "Red1"))) ~1,1
     (of
-     (ranges Blue1.0.tdoqc0e0v)
+     (ranges Blue1.0.)
      (stmts
       (ret "Blue1"))) 6,1
     (of
-     (ranges Green1.0.tdoqc0e0v)
+     (ranges Green1.0.)
      (stmts
       (ret "Green1"))))
-   (ret result.0))))
+   (ret result.0))) ,5
+ (proc 5 :fooColor.0. . . . 14
+  (params) . . . 2,1
+  (stmts 4
+   (let :m.0 . . string.0.sysvq0asl 4
+    (call dollar`.Color1.0. 1 Blue1.0.)))))0,1,tests/nimony/sysbasics/tdollar.nim(.index 9,1
+ (h Color1.0. +86) 4,2
+ (h Red1.0. +52) 10,2
+ (h Blue1.0. +58) 17,2
+ (h Green1.0. +59) 2,1
+ (x dollar`.Color1.0. +63) ,5
+ (h fooColor.0. +404))

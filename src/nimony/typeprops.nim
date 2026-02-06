@@ -10,7 +10,7 @@ const
 
 proc typebits*(config: NifConfig; n: PackedToken): int =
   if n.kind == IntLit:
-    result = pool.integers[n.intId]
+    result = int pool.integers[n.intId]
   elif n.kind == InlineInt:
     result = n.soperand
   else:
@@ -641,7 +641,7 @@ proc toTypeImpl*(n: Cursor): Cursor =
 when isMainModule:
   when false: # tests sum of products
     proc test(s: string) =
-      var typBuf = parseFromBuffer(s)
+      var typBuf = parseFromBuffer(s, "<invalid>")
       var buf = createTokenBuf(64)
       var typ = beginRead(typBuf)
       echo "input: ", typ

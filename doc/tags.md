@@ -72,7 +72,7 @@
 | `(method D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | method declaration |
 | `(macro D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | macro declaration |
 | `(template D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | template declaration |
-| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NiflerKind, NifIndexKind | type declaration |
+| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndexKind | type declaration |
 | `(block .D X)` | NimonyStmt, NimonySym, NiflerKind | block declaration |
 | `(module)` | NimonySym | module declaration |
 | `(cchoice X X*)` | NimonyExpr, NimonySym | closed choice |
@@ -107,10 +107,10 @@
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |
 | `(cppref)` | NifcTypeQualifier | type qualifier for NIFC that provides a C++ reference |
-| `(i INTLIT)` | NifcType, NimonyType | `int` builtin type |
-| `(u INTLIT)` | NifcType, NimonyType | `uint` builtin type |
-| `(f INTLIT)` | NifcType, NimonyType | `float` builtin type |
-| `(c INTLIT)` | NifcType, NimonyType | `char` builtin type |
+| `(i INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `int` builtin type |
+| `(u INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `uint` builtin type |
+| `(f INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `float` builtin type |
+| `(c INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `char` builtin type |
 | `(bool)` | NifcType, NimonyType | `bool` builtin type |
 | `(void)` | NifcType, NimonyType | `void` return type |
 | `(ptr T)` | NifcType, NimonyType, NiflerKind | `ptr` type contructor |
@@ -129,18 +129,17 @@
 | `(inline)` | NifcPragma, NimonyPragma, NifIndexKind | `inline` proc annotation |
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
 | `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
-| `(attr STR)` | NifcPragma | general attribute annoation |
-| `(varargs)` | NifcPragma, NimonyPragma, NimonyType | `varargs` proc annotation |
+| `(attr STR)` | NifcPragma | general attribute annotation |
+| `(varargs)` | NimonyPragma, NimonyType, NifcType | `varargs` proc annotation |
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |
-| `(pragmax X (pragmas ...))` | NimonyExpr, NiflerKind | pragma expressions |
+| `(pragmax X (pragmas ...))` | NimonyExpr, NimonyStmt, NiflerKind | pragma expressions |
 | `(align X)` | NifcPragma, NimonyPragma | |
 | `(bits X)`| NifcPragma, NimonyPragma | |
 | `(vector)` | NifcPragma | |
-| `(imp S)` | NifcStmt | import declaration |
 | `(nodecl)` | NifcPragma, NimonyPragma | `nodecl` annotation |
-| `(incl X X)`; `(incl STR)` | NifcStmt, NimonyStmt | `#include` statement or `incl` set operation |
+| `(incl X X)` | NimonyStmt | `incl` set operation |
 | `(excl X X)` | NimonyStmt | `excl` set operation |
 | `(include X+)` | NimonyStmt, NiflerKind | `include` statement |
 | `(import X+)` | NimonyStmt, NiflerKind | `import` statement |
@@ -199,11 +198,11 @@
 | `(pointer)` | NimonyType | `pointer` type |
 | `(ordinal)` | NimonyType | `ordinal` type |
 | `(magic STR)` | NimonyPragma | `magic` pragma |
-| `(importc X)` | NimonyPragma | `importc` pragma |
-| `(importcpp X)` | NimonyPragma | `importcpp` pragma |
+| `(importc X)` | NimonyPragma, NifcPragma | `importc` pragma |
+| `(importcpp X)` | NimonyPragma, NifcPragma | `importcpp` pragma |
 | `(dynlib X)` | NimonyPragma | `dynlib` pragma |
-| `(exportc X)` | NimonyPragma | `exportc` pragma |
-| `(header X)` | NimonyPragma | `header` pragma |
+| `(exportc X)` | NimonyPragma, NifcPragma | `exportc` pragma |
+| `(header X)` | NimonyPragma, NifcPragma | `header` pragma |
 | `(threadvar)` | NimonyPragma | `threadvar` pragma |
 | `(global)` | NimonyPragma | `global` pragma |
 | `(discardable)` | NimonyPragma | `discardable` pragma |
@@ -314,3 +313,4 @@
 | `(pop)`      | NimonyPragma | `pop` pragma |
 | `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |
+| `(methods (kv STR Y)+)`  | NimonyPragma | `methods` pragma lists vtable methods for a type |

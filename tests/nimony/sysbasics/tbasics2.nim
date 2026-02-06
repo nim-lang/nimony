@@ -211,3 +211,68 @@ block:
   type
     Foo = object
       cFileName: array[0..MAX_PATH - 1, int]
+
+type
+  ProcType = proc (x: int) {.nimcall.}
+
+var call: ProcType = ProcType(nil)
+call = proc (x: int) = discard x
+call(1)
+
+block:
+  type
+    Obj = object of RootObj
+      id: proc (x: int)
+      name: int
+
+    ObjRef = ref Obj
+
+  proc foo(fuck: ObjRef)  =
+    fuck.id(21)
+
+  proc fooCallback(x: int) =
+    discard x
+
+  var obj = ObjRef(id: fooCallback)
+
+  foo(obj)
+
+const fooxx = 5
+when fooxx != 5:
+  echo "hi"
+
+
+block:
+  const x = 1 == 2
+  assert not x
+
+  const y = 8 == 8
+  assert y
+
+  const z = 6.7 == 6.7
+  assert z
+
+
+type
+  A = enum
+    off, on
+
+let xxxx = off
+echo $xxxx
+
+block:
+  type
+    A = enum
+      off, on
+
+  let xxxx = off
+  echo $xxxx
+
+
+type
+  A22 = enum
+    off2, on2
+  LevelSetting = array[0..3, A22]
+var level: LevelSetting
+for x in level:
+  echo $x

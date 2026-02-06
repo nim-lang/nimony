@@ -24,9 +24,10 @@ import syncio, assertions, strutils
 
 #----------------------------------------------------
 
-template chr(x: int32): char =
-  ## TODO: fixes type inference
-  chr(int(x))
+when not defined(cpu32):
+  template chr(x: int32): char =
+    ## TODO: fixes type inference
+    chr(int(x))
 
 # proc `<=%`(x, y: int): bool {.inline.} =
 #   ## Treats `x` and `y` as unsigned and compares them.
@@ -45,10 +46,6 @@ proc `<%`(x, y: int8): bool {.inline.} = cast[uint8](x) < cast[uint8](y)
 proc `<%`(x, y: int16): bool {.inline.} = cast[uint16](x) < cast[uint16](y)
 proc `<%`(x, y: int32): bool {.inline.} = cast[uint32](x) < cast[uint32](y)
 proc `<%`(x, y: int64): bool {.inline.} = cast[uint64](x) < cast[uint64](y)
-
-
-template high[T](s: openArray[T]): int =
-  len(s)-1
 
 proc add(x: var string, y: openArray[char]) =
   ## Concatenates `x` and `y` in place. `y` must not overlap with `x` to

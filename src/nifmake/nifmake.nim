@@ -147,12 +147,12 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
           prefix = pool.strings[n.litId]
           inc n
         if n.kind == IntLit:
-          a = pool.integers[n.intId]
+          a = int pool.integers[n.intId]
           if a < 0: a = L + a
           b = a
           inc n
         if n.kind == IntLit:
-          b = pool.integers[n.intId]
+          b = int pool.integers[n.intId]
           if b < 0: b = L + b
           inc n
         var suffix = ""
@@ -298,7 +298,7 @@ proc executeCommand(command: string): bool =
     result = false
 
 proc failed(arg: string) =
-  stdout.write "make: "
+  stdout.write "nifmake: "
   stdout.writeLine arg
 
 type
@@ -564,7 +564,7 @@ Examples:
   quit(0)
 
 proc writeVersion() =
-  echo "nifmake 0.1.0"
+  echo "nifmake 0.2.0"
   quit(0)
 
 proc main() =

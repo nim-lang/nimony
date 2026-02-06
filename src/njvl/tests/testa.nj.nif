@@ -57,4 +57,4 @@
   (i +32)
   (call echo.1 "abc"))
  (call echo.0 `x.1)
- (kill a.0 `j.0.main b.0 `x.1))
+ (kill a.0 b.0 `j.0.main `x.1))

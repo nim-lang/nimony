@@ -1,4 +1,4 @@
-import std/assertions
+import std/[assertions, strutils]
 
 proc main() =
   discard "abc" == "abc"
@@ -39,7 +39,7 @@ block:
 
 # --- cstring tests ---
 
-func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
+# func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 proc printf(format: cstring) {.importc: "printf", varargs, header: "<stdio.h>", nodecl.}
 
 const abc = cstring "abc\n"
@@ -143,3 +143,16 @@ block: # issue #1444
   assert substr("abc", 3, 1) == ""
   assert substr("abc", 3, 2) == ""
   assert substr("abc", 3, 3) == ""
+
+block:
+  var s = "12234"
+  var m = prepareMutationAt(s, 1)
+  assert m == '2'
+
+
+block:
+  var cstr: cstring = nil
+
+  assert len(cstr) == 0
+  var newstr: string = $cstr
+  assert newstr == ""

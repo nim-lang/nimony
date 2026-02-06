@@ -133,3 +133,12 @@ block tbreak:
         echo x, " ", y
 
   main()
+
+
+iterator mark*(): tuple[key: int, val: (int, int)] =
+  for i in 0..2:
+    yield (i, (i, i))
+
+
+for i, (a, c) in mark():
+  echo i, c

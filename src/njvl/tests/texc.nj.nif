@@ -1,0 +1,38 @@
+(stmts
+ (proc :echo.0 . . .
+  (params
+   (param :cond.0 . .
+    (bool) .)) .
+  (pragmas
+   (raises)) .
+  (stmts
+   (result :`result.1 . . ErrorCode.0.sysvq0asl .)
+   (store Success.0.sysvq0asl `result.1)
+   (cfvar :´r.0)
+   (kill ´r.0)))
+ (proc :test . . .
+  (params) . . .
+  (stmts
+   (cfvar :´r.0)
+   (let :´err.2 . . ErrorCode.0.sysvq0asl Success.0.sysvq0asl)
+   (cfvar :´g.1)
+   (let :`g.3 . . ErrorCode.0.sysvq0asl
+    (call echo.0 "abc"))
+   (ite `g.3
+    (stmts)
+    (stmts
+     (let :`g.4 . . ErrorCode.0.sysvq0asl
+      (call echo.0 "xyz"))
+     (ite `g.4
+      (stmts)
+      (stmts))))
+   (kill ´g.1)
+   (let :`g.5 . . ErrorCode.0.sysvq0asl
+    (call echo.0 "regardless"))
+   (ite `g.5
+    (stmts)
+    (stmts))
+   (ite
+    (neq ´err.2 Success.0.sysvq0asl)
+    (stmts) .)
+   (kill ´r.0))))

@@ -95,6 +95,7 @@ proc unpackTupleAccess(e: var EContext; forVar: Cursor; left: TokenBuf; i: int; 
   var tup = beginRead(tupBuf)
   var localTyp = local.typ
   createDecl(e, symId, localTyp, tup, info, LetS, needsAddr)
+  endRead(tupBuf)
 
 proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBuf =
   result = createTokenBuf()
@@ -132,11 +133,16 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
       else:
         tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
-        var typ = yieldType
-        createDecl(e, tmpId, typ, c, info, LetS, needsAddr=false)
+        var typCur = yieldType
+        createDecl(e, tmpId, typCur, c, info, LetS, needsAddr=false)
 
       inc typ # skips tuple
       for i in 0..<forVars.len:
+        let isKvU = typ.substructureKind == KvU
+        if isKvU:
+          inc typ # skip tag
+          skip typ # skip name
+
         if forVars[i].substructureKind in {UnpacktupU, UnpackflatU}:
           var counter = 0
           var unpackCursor = forVars[i]
@@ -156,6 +162,9 @@ proc createYieldMapping(e: var EContext; c: var Cursor, vars: Cursor, yieldType:
           unpackTupleAccess(e, forVars[i], left, i, info, typ, needsDeref)
           skip typ
 
+        if isKvU:
+          skipParRi(typ)
+
 proc transformBreakStmt(e: var EContext; c: var Cursor) =
   e.dest.add c
   inc c
@@ -169,12 +178,14 @@ proc transformBreakStmt(e: var EContext; c: var Cursor) =
   takeParRi e, c
 
 proc transformContinueStmt(e: var EContext; c: var Cursor) =
-  e.dest.add tagToken("break", c.info)
-  inc c
   if e.continues.len > 0 and e.continues[^1] != SymId(0):
+    e.dest.add tagToken("break", c.info)
+    inc c
     let lab = e.continues[^1]
     e.dest.add symToken(lab, c.info)
   else:
+    e.dest.add c
+    inc c
     e.dest.addDotToken()
   inc c # dotToken
   takeParRi e, c
@@ -211,6 +222,7 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       discard e.continues.pop()
       var forCursor = beginRead(forStmtBuf)
       transformForStmt(e, forCursor)
+      endRead(forStmtBuf)
     of WhileS:
       e.dest.add c
       inc c
@@ -262,10 +274,26 @@ proc inlineLoopBody(e: var EContext; c: var Cursor; mapping: var Table[SymId, Sy
       inlineLoopBody(e, c, mapping)
       e.dest.takeParRi(c)
     else:
-      e.dest.add c
-      inc c
-      e.loop c:
+      if c.substructureKind == KvU:
+        # In KvU: first element is field name, don't substitute it
+        e.dest.add c
+        inc c
+        e.dest.takeTree c
+        while c.kind != ParRi:
+          inlineLoopBody(e, c, mapping)
+        takeParRi(e, c)
+      elif c.exprKind in {DotX, DdotX}:
+        e.dest.add c
+        inc c
         inlineLoopBody(e, c, mapping)
+        while c.kind != ParRi:
+          e.dest.takeTree c
+        takeParRi(e, c)
+      else:
+        e.dest.add c
+        inc c
+        e.loop c:
+          inlineLoopBody(e, c, mapping)
   else:
     takeTree(e, c)
 
@@ -333,10 +361,26 @@ proc replaceSymbol(e: var EContext; c: var Cursor; relations: var Table[SymId, S
       e.loop(c):
         replaceSymbol(e, c, relations)
     else:
-      e.dest.add c
-      inc c
-      e.loop(c):
+      if c.substructureKind == KvU:
+        # In KvU: first element is field name, don't substitute it
+        e.dest.add c
+        inc c
+        e.dest.takeTree c
+        while c.kind != ParRi:
+          replaceSymbol(e, c, relations)
+        takeParRi(e, c)
+      elif c.exprKind in {DotX, DdotX}:
+        e.dest.add c
+        inc c
         replaceSymbol(e, c, relations)
+        while c.kind != ParRi:
+          e.dest.takeTree c
+        takeParRi(e, c)
+      else:
+        e.dest.add c
+        inc c
+        e.loop(c):
+          replaceSymbol(e, c, relations)
   of Symbol:
     let s = c.symId
     if relations.hasKey(s):
@@ -385,11 +429,12 @@ proc inlineIterator(e: var EContext; forStmt: ForStmt) =
     swap(e.dest, bodyBuf)
     var body = cursorAt(preBodyBuf, 0)
     transformStmt(e, body)
+    endRead(preBodyBuf)
     swap(e.dest, bodyBuf)
 
     var transformedBody = beginRead(bodyBuf)
     inlineIteratorBody(e, transformedBody, forStmt, routine.retType)
-
+    endRead(bodyBuf)
   else:
     error e, "could not find symbol: " & pool.syms[iterSym]
 
@@ -574,9 +619,13 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       e.dest.takeToken(c)
       if c.kind == SymbolDef:
         e.breaks.add c.symId
+        e.dest.takeToken(c)
       else:
-        e.breaks.add SymId(0)
-      e.dest.takeToken(c)
+        let info = c.info
+        skip c
+        let s = pool.syms.getOrIncl("`lab." & $getTmpId(e))
+        e.dest.add symdefToken(s, info)
+        e.breaks.add s
       transformStmt(e, c)
       discard e.breaks.pop
       takeParRi(e, c)

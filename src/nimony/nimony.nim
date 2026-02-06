@@ -21,7 +21,7 @@ import ".." / gear2 / modnames
 import sem, nifconfig, semos, semdata, deps, langmodes
 
 const
-  Version = "0.2"
+  Version = "0.2.0"
   Usage = "Nimony Compiler. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf
@@ -71,7 +71,7 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
-  semcheck(src, dest, ensureMove config, moduleFlags, commandLineArgs, true)
+  semcheck(@[src], @[dest], ensureMove config, moduleFlags, commandLineArgs, true)
 
 type
   Command = enum

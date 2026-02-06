@@ -10,7 +10,7 @@
 ## NIFC driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, noptions, mangler, symparser
+import codegen, noptions, symparser
 
 when defined(windows):
   import bat
@@ -21,7 +21,7 @@ when defined(enableAsm):
   import amd64 / genasm
 
 const
-  Version = "0.2"
+  Version = "0.2.0"
   Usage = "NIFC Compiler. Version " & Version & """
 
   (c) 2024 Andreas Rumpf

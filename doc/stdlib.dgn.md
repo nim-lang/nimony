@@ -327,6 +327,10 @@ Converts a Nim string to a C string.
 
 Prepares a string for mutation. String literals are "copy on write", so you need to call `prepareMutation` before modifying strings via `addr`.
 
+####prepareMutationAt
+
+Prepares the given string for mutation and returns an addressable
+reference to the character at index `i`.
 
 ####&
 
@@ -949,6 +953,14 @@ A concept that describes what a type must fullfill in order to be considered has
 ####hash
 
 The overloaded `hash` operation returns the hash of a value.
+
+####hashIgnoreStyle
+
+Efficient hashing of strings; style is ignored.
+
+####hashIgnoreCase
+
+Efficient hashing of strings; case is ignored.
 
 ####nextTry
 

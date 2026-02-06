@@ -326,6 +326,16 @@ typedef NU8 NU;
 #  error "Cannot define NIM_THREADVAR"
 #endif
 
+/* define NIM_STATIC_ASSERT */
+#if defined(__cplusplus)
+#define NIM_STATIC_ASSERT(x, msg) static_assert((x), msg)
+#else
+#define NIM_STATIC_ASSERT(x, msg) _Static_assert((x), msg)
+#endif
+
+// Test to see if Nim and the C compiler agree on the size of a pointer.
+NIM_STATIC_ASSERT(sizeof(NI) == sizeof(void*) && NIM_INTBITS == sizeof(NI)*8, "Pointer size mismatch between Nim and C/C++ backend. You probably need to setup the backend compiler for target CPU.");
+
 N_INLINE(NB8, _Qnifc_div_sll_overflow)(long long int a, long long int b, long long int *res) {
   if (b == 0) {
     *res = 0;
@@ -415,8 +425,8 @@ N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, 
 }
 NIM_THREADVAR NB8 NIFC_ERR_;
 typedef union Foo_0_tun261nex{
-  NI x_0_tun261nex;
-  NC8 c_0_tun261nex;}
+  NI x_0;
+  NC8 c_0;}
 Foo_0_tun261nex;
 Foo_0_tun261nex x_1_tun261nex;
 int cmdCount;
@@ -424,6 +434,6 @@ NC8 **cmdLine;
 int main(int argc, char **argv) {
   cmdCount = argc;
   cmdLine = (NC8**)argv;
-x_1_tun261nex.c_0_tun261nex = (NC8)'a';
+x_1_tun261nex.c_0 = (NC8)'a';
 }
 

@@ -373,6 +373,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addStrLit nifc
       b.addStrLit "c"
       b.addStrLit "--compileOnly"
+      b.addStrLit "--bits:" & $c.config.bits
       b.addKeyw "args"
       if commandLineArgsNifc.len > 0:
         for arg in commandLineArgsNifc.split(' '):
@@ -743,8 +744,13 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         b.withTree "output":
           b.addStrLit writenifHexedFile
 
+
+    let allRequiredStdlibModules = toHashSet(allNifFiles)
+
     for depNifFile in dependencyNifFiles:
       let depName = depNifFile.splitModulePath.name
+      if depName in allRequiredStdlibModules:
+        continue
       allNifFiles.add(depName)
       let depHexedFile = config.nifcachePath / depName & ".s.nif"
 

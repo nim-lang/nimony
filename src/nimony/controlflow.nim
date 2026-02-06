@@ -11,7 +11,7 @@ import std/[assertions, intsets]
 include ".." / lib / nifprelude
 
 import ".." / models / tags
-import nimony_model, programs, builtintypes, typenav
+import nimony_model, programs, builtintypes, typenav, decls
 from typeprops import isOrdinalType
 
 const
@@ -880,16 +880,10 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
-    if n.exprKind == PragmaxX:
-      inc n
-      skip n # ignore pragmas
-      trStmt c, n
-      skipParRi n
-    else:
-      var aa = Target(m: IsAppend)
-      trExpr c, n, aa
-      if aa.t.len > 0:
-        c.dest.add aa
+    var aa = Target(m: IsAppend)
+    trExpr c, n, aa
+    if aa.t.len > 0:
+      c.dest.add aa
   of IfS:
     var aa = Target(m: IsIgnored)
     trIf c, n, aa
@@ -952,6 +946,11 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     c.dest.add head
     c.dest.add tar
     c.dest.addParRi()
+  of PragmaxS:
+    inc n
+    skip n # ignore pragmas
+    trStmt c, n
+    skipParRi n
   of WhenS:
     bug "`when` statement should have been eliminated"
 

@@ -7,21 +7,40 @@
 import std / [syncio, os, tables, sequtils, times, sets]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
-import reporters, builtintypes
+import ".." / gear2 / modnames
+import reporters, builtintypes, decls, nimony_model
 import ".." / models / [nifindex_tags]
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
 
-  NifModule = ref object
-    buf: TokenBuf
+  NifModule* = ref object
     stream: Stream
-    index: NifIndex
+    index*: NifIndex
+    public*: Table[string, NifIndexEntry]
+    private*: Table[string, NifIndexEntry]
+
+  SemPhase* = enum
+    SemcheckTopLevelSyms,
+    SemcheckSignaturesInProgress,  ## currently processing signature (cycle detection)
+    SemcheckSignatures,
+    SemcheckBodiesInProgress,      ## currently processing body (cycle detection)
+    SemcheckBodies
+
+  ToplevelEntry* = object
+    buffer*: TokenBuf  # semchecked result (for lookups)
+    phase*: SemPhase
+
+  ToplevelEntries* = object
+    ## Stores toplevel entries with both ordered access and SymId-based lookup.
+    ## Supports entries without SymIds (e.g., when statements, imports).
+    entries: seq[ToplevelEntry]
+    bySymId: Table[SymId, int]  # maps SymId to index in entries
 
   Program* = object
     mods: Table[string, NifModule]
     main*: SplittedModulePath
-    mem: Table[SymId, TokenBuf]
+    mem*: ToplevelEntries
 
   ImportFilterKind* = enum
     ImportAll, FromImport, ImportExcept
@@ -33,10 +52,75 @@ type
 var
   prog*: Program
 
+# -------------- ToplevelEntries methods --------------
+
+proc len*(t: ToplevelEntries): int {.inline.} = t.entries.len
+
+proc hasKey*(t: ToplevelEntries; s: SymId): bool {.inline.} =
+  t.bySymId.hasKey(s)
+
+proc `[]`*(t: ToplevelEntries; s: SymId): lent ToplevelEntry {.inline.} =
+  t.entries[t.bySymId[s]]
+
+proc `[]`*(t: var ToplevelEntries; s: SymId): var ToplevelEntry {.inline.} =
+  t.entries[t.bySymId[s]]
+
+proc `[]=`*(t: var ToplevelEntries; s: SymId; entry: sink ToplevelEntry) =
+  ## Add or update an entry with a SymId key.
+  if t.bySymId.hasKey(s):
+    t.entries[t.bySymId[s]] = entry
+  else:
+    let idx = t.entries.len
+    t.entries.add entry
+    t.bySymId[s] = idx
+
+proc add*(t: var ToplevelEntries; entry: sink ToplevelEntry) =
+  ## Add an entry without a SymId (e.g., when statement, import).
+  t.entries.add entry
+
+proc del*(t: var ToplevelEntries; s: SymId) =
+  ## Remove an entry by SymId. The entry is cleared but not removed from the seq.
+  if t.bySymId.hasKey(s):
+    let idx = t.bySymId[s]
+    t.entries[idx].buffer = default(TokenBuf)  # clear the buffer
+    t.bySymId.del(s)
+
+iterator items*(t: ToplevelEntries): lent ToplevelEntry =
+  for e in t.entries:
+    yield e
+
+iterator mitems*(t: var ToplevelEntries): var ToplevelEntry =
+  for e in t.entries.mitems:
+    yield e
+
+iterator pairs*(t: ToplevelEntries): (int, lent ToplevelEntry) =
+  for i, e in t.entries.pairs:
+    yield (i, e)
+
+# -------------- end ToplevelEntries methods --------------
+
 proc newNifModule(infile: string): NifModule =
-  result = NifModule(stream: nifstreams.open(infile))
+  result = NifModule(stream: nifstreams.open(infile),
+                     public: initTable[string, NifIndexEntry](),
+                     private: initTable[string, NifIndexEntry]())
   discard processDirectives(result.stream.r)
-  result.buf = fromStream(result.stream)
+
+proc addEmbeddedIndex(public, private: var Table[string, NifIndexEntry];
+                      embedded: Table[string, NifIndexEntry]) =
+  for k, v in embedded:
+    if v.vis == Exported:
+      public[k] = v
+    else:
+      private[k] = v
+
+proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArray[string]): Cursor =
+  ## Load a module's content into owningBuf and return a cursor to it.
+  ## Also registers the module in prog.mods.
+  let m = newNifModule(infile)
+  owningBuf = fromStream(m.stream)
+  result = beginRead(owningBuf)
+  let suffix = moduleSuffix(infile, paths)
+  prog.mods[suffix] = m
 
 proc suffixToNif*(suffix: string): string {.inline.} =
   # always imported from semchecked files
@@ -48,13 +132,15 @@ proc customToNif*(suffix: string): string {.inline.} =
 proc needsRecompile*(dep, output: string): bool =
   result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)
 
-proc load(suffix: string): NifModule =
+proc load*(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
     let infile = suffixToNif suffix
     result = newNifModule(infile)
+    result.index = default(NifIndex)
+    let embedded = readEmbeddedIndex(result.stream)
+    if embedded.len > 0:
+      addEmbeddedIndex(result.public, result.private, embedded)
     let indexName = infile.changeModuleExt".s.idx.nif"
-    #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
-    #  createIndex infile
     result.index = readIndex(indexName)
     prog.mods[suffix] = result
   else:
@@ -89,14 +175,14 @@ proc filterAllows*(f: ImportFilter; name: StrId): bool =
 
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
-                    converters, methods: var Table[SymId, seq[SymId]];
+                    converters: var Table[SymId, seq[SymId]];
                     exports: var seq[(string, ImportFilter)];
                     filter: ImportFilter) =
   let m = load(suffix)
   let alreadyLoaded = iface.len != 0
   var marker = filter.list
   let negateMarker = filter.kind == FromImport
-  for k, _ in m.index.public:
+  for k, _ in m.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
@@ -118,9 +204,6 @@ proc loadInterface*(suffix: string; iface: var Iface;
       let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
       let val = pool.syms.getOrIncl(v)
       converters.mgetOrPut(key, @[]).addUnique(val)
-  for class in m.index.classes:
-    for mt in class.methods:
-      methods.mgetOrPut(class.cls, @[]).addUnique(mt.fn)
   for ex in m.index.exports:
     let (path, kind, names) = ex
     let filterKind =
@@ -135,38 +218,6 @@ proc loadInterface*(suffix: string; iface: var Iface;
     mergeFilter(exportFilter, filter)
     exports.add (path, ensureMove exportFilter)
 
-template reportImpl(msg: string; c: Cursor; level: string) =
-  when defined(debug):
-    writeStackTrace()
-  write stdout, level
-  if isValid(c.info):
-    write stdout, infoToStr(c.info)
-    write stdout, " "
-  write stdout, msg
-  writeLine stdout, toString(c, false)
-  quit 1
-
-template reportImpl(msg: string; level: string) =
-  when defined(debug):
-    writeStackTrace()
-  write stdout, level
-  write stdout, msg
-  quit 1
-
-proc error*(msg: string; c: Cursor) {.noreturn.} =
-  reportImpl(msg, c, "[Error] ")
-
-proc error*(msg: string) {.noreturn.} =
-  reportImpl(msg, "[Error] ")
-
-proc bug*(msg: string; c: Cursor) {.noreturn.} =
-  writeStackTrace()
-  reportImpl(msg, c, "[Bug] ")
-
-proc bug*(msg: string) {.noreturn.} =
-  writeStackTrace()
-  reportImpl(msg, "[Bug] ")
-
 type
   LoadStatus* = enum
     LacksModuleName, LacksOffset, LacksPosition, LacksNothing
@@ -176,7 +227,7 @@ type
 
 proc tryLoadSym*(s: SymId): LoadResult =
   if prog.mem.hasKey(s):
-    result = LoadResult(status: LacksNothing, decl: cursorAt(prog.mem[s], 0))
+    result = LoadResult(status: LacksNothing, decl: cursorAt(prog.mem[s].buffer, 0))
   else:
     let nifName = pool.syms[s]
     let modname = extractModule(nifName)
@@ -184,53 +235,109 @@ proc tryLoadSym*(s: SymId): LoadResult =
       result = LoadResult(status: LacksModuleName)
     else:
       var m = load(modname)
-      var entry = m.index.public.getOrDefault(nifName)
-      if entry.offset == 0:
-        entry = m.index.private.getOrDefault(nifName)
-      if entry.offset == 0:
+      var indexEntry = m.public.getOrDefault(nifName)
+      if indexEntry.offset == 0:
+        indexEntry = m.private.getOrDefault(nifName)
+      if indexEntry.offset == 0:
         result = LoadResult(status: LacksOffset)
       else:
-        m.stream.r.jumpTo entry.offset
+        m.stream.r.jumpTo indexEntry.offset
         var buf = createTokenBuf(30)
-        nifcursors.parse(m.stream, buf, entry.info)
+        nifcursors.parse(m.stream, buf, indexEntry.info)
         let decl = cursorAt(buf, 0)
-        prog.mem[s] = ensureMove(buf)
+        prog.mem[s] = ToplevelEntry(buffer: ensureMove(buf), phase: SemcheckBodies)
         result = LoadResult(status: LacksNothing, decl: decl)
 
-proc tryLoadHook*(op: AttachedOp; typ: SymId; wantGeneric: bool): SymId =
-  let nifName = pool.syms[typ]
-  let modname = extractModule(nifName)
+type
+  AttachedOp* = enum # this one can be used as an array index
+    attachedDestroy,
+    attachedWasMoved,
+    attachedDup,
+    attachedCopy,
+    attachedSink,
+    attachedTrace
+
+  HooksPerType* = object
+    a*: array[AttachedOp, SymId]
+
+proc hookName*(op: AttachedOp): string =
+  case op
+  of attachedDestroy: "destroy"
+  of attachedWasMoved: "wasmoved"
+  of attachedDup: "dup"
+  of attachedCopy: "copy"
+  of attachedSink: "sinkh"
+  of attachedTrace: "trace"
+
+proc hookToTag*(op: AttachedOp): TagId =
+  case op
+  of attachedDestroy: TagId(DestroyIdx)
+  of attachedWasMoved: TagId(WasmovedIdx)
+  of attachedDup: TagId(DupIdx)
+  of attachedCopy: TagId(CopyIdx)
+  of attachedSink: TagId(SinkhIdx)
+  of attachedTrace: TagId(TraceIdx)
+
+proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
   result = SymId(0)
-  if modname != "":
-    var m = load(modname)
-    if m.index.hooks.hasKey(typ):
-      let res = m.index.hooks[typ].a[op]
-      if res[1] == wantGeneric: result = res[0]
+  let d = tryLoadSym(typ)
+  if d.status == LacksNothing:
+    let hooktag = hookToTag(op)
+    let typedef = asTypeDecl(d.decl)
+    var n = typedef.pragmas
+    if n.kind == ParLe:
+      var nested = 0
+      while true:
+        case n.kind
+        of ParLe:
+          if n.tagId == hooktag:
+            inc n
+            if n.kind == Symbol:
+              result = n.symId
+              break
+          inc nested
+        of ParRi:
+          dec nested
+          if nested == 0: break
+        else: discard
+        inc n
 
 proc tryLoadAllHooks*(typ: SymId): HooksPerType =
-  let nifName = pool.syms[typ]
-  let modname = extractModule(nifName)
-  result = HooksPerType(a: default(array[AttachedOp, (SymId, bool)]))
-  if modname != "":
-    var m = load(modname)
-    if m.index.hooks.hasKey(typ):
-      result = m.index.hooks[typ]
+  template setRes(op: AttachedOp) =
+    inc n
+    if n.kind == Symbol:
+      result.a[op] = n.symId
 
-proc loadVTable*(typ: SymId): seq[MethodIndexEntry] =
-  let nifName = pool.syms[typ]
-  let modname = extractModule(nifName)
-  if modname != "":
-    var m = load(modname)
-    for entry in m.index.classes:
-      if entry.cls == typ:
-        return entry.methods
-  return @[]
+  result = HooksPerType(a: default(array[AttachedOp, SymId]))
+  let d = tryLoadSym(typ)
+  if d.status == LacksNothing:
+    let typedef = asTypeDecl(d.decl)
+    var n = typedef.pragmas
+    if n.kind == ParLe:
+      var nested = 0
+      while true:
+        case n.kind
+        of ParLe:
+          case hookKind(n.tagId)
+          of NoHook: discard
+          of WasmovedH: setRes attachedWasMoved
+          of DestroyH: setRes attachedDestroy
+          of DupH: setRes attachedDup
+          of CopyH: setRes attachedCopy
+          of SinkhH: setRes attachedSink
+          of TraceH: setRes attachedTrace
+          inc nested
+        of ParRi:
+          dec nested
+          if nested == 0: break
+        else: discard
+        inc n
 
 proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
   # gives top level exported syms of a module
   result = @[]
   var m = load(suffix)
-  for k, _ in m.index.public:
+  for k, _ in m.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
@@ -238,29 +345,27 @@ proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
       let symId = pool.syms.getOrIncl(k)
       result.add symId
 
-proc registerHook*(suffix: string; typ: SymId; op: AttachedOp; hook: SymId; isGeneric: bool) =
-  let m: NifModule
-  if not prog.mods.hasKey(suffix):
-    let infile = suffixToNif suffix
-    m = newNifModule(infile)
-    prog.mods[suffix] = m
-  else:
-    m = prog.mods[suffix]
-  if not m.index.hooks.hasKey(typ):
-    m.index.hooks[typ] = HooksPerType(a: default(array[AttachedOp, (SymId, bool)]))
-  m.index.hooks[typ].a[op] = (hook, isGeneric)
-
 proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
 
-proc publish*(s: SymId; buf: sink TokenBuf) =
-  prog.mem[s] = buf
+proc getEntry*(s: SymId): ptr ToplevelEntry {.inline.} =
+  ## Returns a pointer to the entry for mutation. Use with care.
+  if prog.mem.hasKey(s):
+    result = addr prog.mem[s]
+  else:
+    result = nil
 
-proc publish*(s: SymId; dest: TokenBuf; start: int) =
-  # XXX We really need to find an elegant way to use Cursor here instead of Tokenbuf copies
+proc publish*(s: SymId; buf: sink TokenBuf; phase = SemcheckBodies) =
+  if prog.mem.hasKey(s):
+    prog.mem[s].buffer = buf
+    prog.mem[s].phase = phase
+  else:
+    prog.mem[s] = ToplevelEntry(buffer: buf, phase: phase)
+
+proc publish*(s: SymId; dest: TokenBuf; start: int; phase = SemcheckBodies) =
   var buf = createTokenBuf(dest.len - start + 1)
   for i in start..<dest.len:
     buf.add dest[i]
-  publish s, buf
+  publish s, buf, phase
 
 proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   var buf = createTokenBuf(dest.len - start + 3)
@@ -268,9 +373,9 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
     buf.add dest[i]
   buf.addDotToken() # body is empty for a signature
   buf.addParRi()
-  publish s, buf
+  publish s, buf, SemcheckSignatures
 
-proc publishStringType() =
+proc publishStringType*() =
   # This logic is not strictly necessary for "system.nim" itself, but
   # for modules that emulate system via --isSystem.
   let symId = pool.syms.getOrIncl(StringName)
@@ -304,9 +409,9 @@ proc publishStringType() =
           str.add intToken(pool.integers.getOrIncl(-1), NoLineInfo)
         str.addDotToken() # default value
 
-  publish symId, str
+  publish symId, str, SemcheckBodies
 
-proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
+proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=false): Cursor =
   prog.main = splitModulePath(infile)
   let outp = splitModulePath(outfile)
   if prog.main.dir.len == 0:
@@ -316,15 +421,19 @@ proc setupProgram*(infile, outfile: string; hasIndex=false): Cursor =
   var m = newNifModule(infile)
 
   if hasIndex:
+    m.index = default(NifIndex)
+    let embedded = readEmbeddedIndex(m.stream)
+    if embedded.len > 0:
+      addEmbeddedIndex(m.public, m.private, embedded)
     let indexName = infile.changeModuleExt".s.idx.nif"
-    #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
-    #  createIndex infile
     m.index = readIndex(indexName)
 
   #echo "INPUT IS ", toString(m.buf)
-  result = beginRead(m.buf)
+  owningBuf = fromStream(m.stream)
+
+  result = beginRead(owningBuf)
   prog.mods[prog.main.name] = m
-  publishStringType()
+  #publishStringType()
 
 proc setupProgramForTesting*(dir, file, ext: string) =
   prog.main.dir = dir

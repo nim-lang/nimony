@@ -17,7 +17,7 @@
 import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav]
-import ".." / hexer / [mover]
+import ".." / hexer / [mover, passes]
 
 import versiontabs, nj, njvl_model
 
@@ -265,8 +265,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trLocal c, dest, n
     of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS, RetS:
       bug "construct should have been eliminated: " & $n.stmtKind
+    of TemplateS, TypeS:
+      takeTree dest, n
     of ContinueS:
-      skip n
+      takeTree dest, n
     else:
       dest.takeToken n
       while n.kind != ParRi:
@@ -277,7 +279,11 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(typeCache: createTypeCache(), vt: createVersionTab())
   c.typeCache.openScope()
   result = createTokenBuf(300)
-  var elimJumps = eliminateJumps(n, moduleSuffix)
+  var initialBuf = createTokenBuf(300)
+  initialBuf.addSubtree(n)
+  var pass = initPass(move initialBuf, moduleSuffix, "xelim_njvl", 0)
+  eliminateJumps(pass)
+  var elimJumps = ensureMove(pass.dest)
   var n = beginRead(elimJumps)
   assert n.stmtKind == StmtsS, $n.kind
   result.add n
@@ -293,7 +299,8 @@ when isMainModule:
   import std/syncio
   import ".." / lib / symparser
   let infile = paramStr(1)
-  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif")
+  var owningBuf = createTokenBuf(300)
+  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif", owningBuf)
   let r = toNjvl(n, "main")
   let output = r.toString(false)
   if paramCount() >= 2:

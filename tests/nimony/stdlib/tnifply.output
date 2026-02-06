@@ -2,12 +2,12 @@ Foo.0.tni7snh9s
 Bar.0.tni7snh9s
 Foo.0.tni7snh9s
 Bar.0.tni7snh9s
-fooFieldX.0.tni7snh9s = 123
-barFieldX.0.tni7snh9s = bar field
-barFieldY.0.tni7snh9s = 456
-fooFieldX.0.tni7snh9s = 123
-barFieldX.0.tni7snh9s = bar field
-barFieldY.0.tni7snh9s = 456
+fooFieldX.0 = 123
+barFieldX.0 = bar field
+barFieldY.0 = 456
+fooFieldX.0 = 123
+barFieldX.0 = bar field
+barFieldY.0 = 456
 "hello"
 +123
 +123u
@@ -16,15 +16,15 @@ barFieldY.0.tni7snh9s = 456
 (false)
 (conv TestEnum.0.tni7snh9s +0u)
 (oconstr Foo.0.tni7snh9s
- (kv fooFieldX.0.tni7snh9s +123))(oconstr Bar.0.tni7snh9s
- (kv barFieldX.0.tni7snh9s "bar field X")
- (kv barFieldY.0.tni7snh9s +321))(oconstr FooBar.0.tni7snh9s
- (kv foo.0.tni7snh9s
+ (kv fooFieldX.0 +123))(oconstr Bar.0.tni7snh9s
+ (kv barFieldX.0 "bar field X")
+ (kv barFieldY.0 +321))(oconstr FooBar.0.tni7snh9s
+ (kv foo.0
   (oconstr Foo.0.tni7snh9s
-   (kv fooFieldX.0.tni7snh9s +321)))
- (kv bar.0.tni7snh9s
+   (kv fooFieldX.0 +321)))
+ (kv bar.0
   (oconstr Bar.0.tni7snh9s
-   (kv barFieldX.0.tni7snh9s "bar")
-   (kv barFieldY.0.tni7snh9s +567.5)))
- (kv en.0.tni7snh9s
+   (kv barFieldX.0 "bar")
+   (kv barFieldY.0 +567.5)))
+ (kv en.0
   (conv TestEnum.0.tni7snh9s +1u)))

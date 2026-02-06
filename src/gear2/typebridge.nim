@@ -296,9 +296,9 @@ proc loadSym*(m: var RModule; nifName: string; entry: NifIndexEntry; r: var RCon
   result = n[0].sym
 
 proc loadSym*(m: var RModule; nifName: string; r: var RContext): PSym =
-  var entry = m.index.public.getOrDefault(nifName)
+  var entry = m.public.getOrDefault(nifName)
   if entry.offset == 0:
-    entry = m.index.private.getOrDefault(nifName)
+    entry = m.private.getOrDefault(nifName)
   result = loadSym(m, nifName, entry, r)
 
 proc loadSym*(nifName: string; r: var RContext): PSym =
@@ -355,7 +355,7 @@ proc repair(n: PNode; r: var RContext; tag: string): PNode =
     result = n
     let typ = result[0].typ
     result = result[1]
-    result.typ() = typ
+    result.typ = typ
   of "suf":
     result = n[0]
     case n[1].strVal

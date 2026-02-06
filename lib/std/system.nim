@@ -86,8 +86,8 @@ proc `$`*(x: uint64): string =
 proc `$`*(x: int64): string =
   if x < 0:
     if x > -10:
-      result = NegTen[-x]
-    if x == -9223372036854775808:
+      result = NegTen[int(-x)]
+    elif x == -9223372036854775808:
       result = "-" & $cast[uint64](x)
     else:
       result = "-" & $(0-x)
@@ -95,6 +95,9 @@ proc `$`*(x: int64): string =
     result.add char(x + int64('0'))
   else:
     result = $cast[uint64](x)
+
+proc `$`*(x: int32): string =
+  $(int64(x))
 
 proc addInt*(s: var string; x: int64) {.inline.} =
   s.add $x

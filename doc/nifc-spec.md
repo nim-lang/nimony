@@ -1,7 +1,7 @@
 NIFC dialect
 ============
 
-NIFC is a dialect of NIF designed to be very close to C. Its benefits are:
+NIFC is a dialect of [NIF](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) designed to be very close to C. Its benefits are:
 
 - Easier to generate than generating C/C++ code directly.
 - Has all the NIF related tooling support.
@@ -10,6 +10,13 @@ NIFC is a dialect of NIF designed to be very close to C. Its benefits are:
   single element and `aptr` which points to an array of elements.
 - Inheritance is modelled directly in the type system as opposed to C's quirky type aliasing
   rule that is concerned with aliasings between a struct and its first element.
+- Leverages NIF's module system to avoid C/C++'s possible "one definition rule" violations: A symbol has one definition and can be used in client modules by simply referring to it by name.
+
+
+Module system
+-------------
+
+NIFC uses NIF's module system. Read the [nifspec.md](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) for more details.
 
 
 Name mangling
@@ -25,8 +32,7 @@ Name mangling is performed by NIFC. The following assumptions are made:
   names in Nim. The original names can be made available via a `was` annotation. See the
   grammar for further details.
 
-Names ending in `.c` are mangled by removing the `.c` suffix. For other names the `.` is
-replaced by `_` and `_` is encoded as `Q_`.
+For other names the `.` is replaced by `_` and `_` is encoded as `Q_`.
 
 By design names not imported from C contain a digit somewhere and thus cannot conflict with
 a keyword from C or C++.
@@ -196,6 +202,7 @@ Type ::= Symbol |
          (c IntBits IntQualifier*) | # character types
          (bool IntQualifier*) |
          (void) |
+         (varargs) |
          (ptr Type PtrQualifier* (cppref)?) | # pointer to a single object
          (flexarray Type) |
          (aptr Type PtrQualifier*) | # pointer to an array of objects
@@ -207,19 +214,23 @@ CallingConvention ::= (cdecl) | (stdcall) | (safecall) | (syscall)  |
                       (fastcall) | (thiscall) | (noconv) | (member)
 
 Attribute ::= (attr StringLiteral)
-ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) | (selectany) | Attribute |
+
+CommonPragmas ::= (was Identifier) | Attribute | (importc StringLiteral?) |
+                  (importcpp StringLiteral?) | (exportc StringLiteral?) | (nodecl)
+
+ProcPragma ::= CommonPragmas | (inline) | (noinline) | CallingConvention | (selectany) |
             | (raises) | (errs)
 
-ProcTypePragma ::= CallingConvention | (varargs) | Attribute
+ProcTypePragma ::= CallingConvention | Attribute
 
 ProcTypePragmas ::= Empty | (pragmas ProcTypePragma+)
 ProcPragmas ::= Empty | (pragmas ProcPragma+)
 
-CommonPragma ::= (align Number) | (was Identifier) | Attribute
+CommonPragma ::= (align Number) | CommonPragmas
 VarPragma ::= CommonPragma | (static)
 VarPragmas ::= Empty | (pragmas VarPragma+)
 
-ParamPragma ::= (was Identifier) | Attribute
+ParamPragma ::= CommonPragmas
 ParamPragmas ::= Empty | (pragmas ParamPragma+)
 
 FieldPragma ::= CommonPragma | (bits Number)
@@ -229,12 +240,8 @@ TypePragma ::= CommonPragma | (vector Number)
 TypePragmas ::= Empty | (pragmas TypePragma+)
 
 
-ExternDecl ::= (imp ProcDecl | VarDecl | ConstDecl)
-IgnoreDecl ::= (nodecl ProcDecl | VarDecl | ConstDecl)
-Include ::= (incl StringLiteral)
-
-TopLevelConstruct ::= ExternDecl | IgnoreDecl | ProcDecl | VarDecl | ConstDecl |
-                      TypeDecl | Include | EmitStmt | Call | CallCanRaise |
+TopLevelConstruct ::= ProcDecl | VarDecl | ConstDecl |
+                      TypeDecl | EmitStmt | Call | CallCanRaise |
                       TryStmt | RaiseStmt | AsgnStmt | KeepOverflowStmt |
                       IfStmt | WhileStmt | CaseStmt | LabelStmt | JumpStmt |
                       ScopeStmt | DiscardStmt
@@ -260,8 +267,8 @@ Notes:
 - `proctype` has an Empty node where `proc` has a name so that the parameters are
   always the 2nd child followed by the return type and calling convention. This
   makes the node structure more regular and can simplify a type checker.
-- `varargs` is modelled as a pragma instead of a fancy special syntax for parameter
-  declarations.
+- `varargs` is modelled as a special type but it must be combined with a named parameter
+  just like any other parameters.
 - The type `flexarray` can only be used for a last field in an object declaration.
 - The pragma `selectany` can be used to merge proc bodies that have the same name.
   It is used for generic procs so that only one generic instances remains in the
@@ -278,8 +285,7 @@ Notes:
 - `type` can only be used to introduce a name for a nominal type (that is a type which
   is only compatible to itself) or for a proc type for code compression purposes. Arbitrary
   aliases for types **cannot** be used! Rationale: Implementation simplicity.
-- `nodecl` is an import mechanism like `imp` but the declarations come from a header file
-  and are not to be declared in the resulting C/C++ code.
+- `nodecl` is a pragma that indicates that the declaration should not be emitted in the resulting C/C++ code.
 - `var` is always a local variable, `gvar` is a global variable and `tvar` a thread local
   variable.
 - `SCOPE` indicates the construct introduces a new local scope for variables.
@@ -320,6 +326,13 @@ Declaration order
 -----------------
 
 NIFC allows for an arbitrary order of declarations without the need for forward declarations.
+
+
+Include files
+-------------
+
+NIFC generates the required include files by inspecting the `(header)` pragmas.
+
 
 Exceptions
 ----------
