@@ -425,8 +425,8 @@ N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, 
 }
 NIM_THREADVAR NB8 NIFC_ERR_;
 typedef union Foo_0_tun261nex{
-  NI x_0_tun261nex;
-  NC8 c_0_tun261nex;}
+  NI x_0;
+  NC8 c_0;}
 Foo_0_tun261nex;
 Foo_0_tun261nex x_1_tun261nex;
 int cmdCount;
@@ -434,6 +434,6 @@ NC8 **cmdLine;
 int main(int argc, char **argv) {
   cmdCount = argc;
   cmdLine = (NC8**)argv;
-x_1_tun261nex.c_0_tun261nex = (NC8)'a';
+x_1_tun261nex.c_0 = (NC8)'a';
 }
 

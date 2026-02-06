@@ -17,7 +17,7 @@ import std/[assertions, tables]
 
 include nifprelude
 import ".." / lib / tinyhashes
-import nifindexes, symparser, treemangler
+import nifindexes, symparser, treemangler, passes
 import ".." / nimony / [nimony_model, decls, programs, typenav,
   renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
@@ -255,7 +255,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
               root = parent
               inc level
             genVtableField c, dest, beginRead(tempUseBuf), ClassInfo(root: root, level: level, ptrKind: typ.typeKind), info
-          dest.addSymUse pool.syms.getOrIncl(MethodsField & SystemModuleSuffix), info
+          dest.addSymUse pool.syms.getOrIncl(MethodsField), info
           dest.addIntLit 0, info # this is getting stupid...
         let idx = getMethodIndex(c, cls, fn)
         dest.addIntLit idx, info
@@ -452,7 +452,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
         copyIntoKind dest, DotX, info:
           copyIntoKind dest, DerefX, info:
             dest.addSymUse vtabTempSym, info
-          dest.copyIntoSymUse pool.syms.getOrIncl(DisplayLenField & SystemModuleSuffix), info
+          dest.copyIntoSymUse pool.syms.getOrIncl(DisplayLenField), info
           dest.addIntLit 0, info
 
       # Second expression: vtab.display[level] == hash(T)
@@ -464,7 +464,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
           copyIntoKind dest, DotX, info:
             copyIntoKind dest, DerefX, info:
               dest.addSymUse vtabTempSym, info
-            dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), info
+            dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField), info
             dest.addIntLit 0, info
           dest.addIntLit level, info
 
@@ -779,12 +779,12 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(DisplayLenField & SystemModuleSuffix), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayLenField), NoLineInfo
         dest.addIntLit vtab.display.len, NoLineInfo
         dest.addParRi() # KvU
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayField), NoLineInfo
         if displayName != SymId(0):
           #dest.copyIntoKind AddrX, NoLineInfo:
           # cast to pointer type to remove `const` modifier in C
@@ -798,7 +798,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.addParRi() # KvU
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(MethodsField & SystemModuleSuffix), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(MethodsField), NoLineInfo
         if vtab.methods.len > 0:
           dest.addParLe AconstrX, NoLineInfo
           # array constructor also starts with a type, yuck:
@@ -816,32 +816,28 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
             dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
 
-proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =
+proc transformVTables*(pass: var Pass; needsXelim: var bool) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(
     typeCache: createTypeCache(),
-    moduleSuffix: moduleSuffix,
+    moduleSuffix: pass.moduleSuffix,
     needsXelim: needsXelim,
     getRttiSym: pool.syms.getOrIncl("getRtti.0." & SystemModuleSuffix)
   )
   c.typeCache.openScope()
 
-  var dest = createTokenBuf(300)
-
   var n2 = n
   collectMethods c, n2
   processMethods c
 
-  var n = n
   assert n.stmtKind == StmtsS
-  dest.add n
+  pass.dest.add n
   inc n
 
-  emitVTables c, dest
+  emitVTables c, pass.dest
 
-  while n.kind != ParRi: tr c, dest, n
-  dest.addParRi()
+  while n.kind != ParRi: tr c, pass.dest, n
+  pass.dest.addParRi()
 
   c.typeCache.closeScope()
   needsXelim = c.needsXelim
-
-  result = ensureMove dest

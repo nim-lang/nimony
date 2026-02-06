@@ -68,7 +68,7 @@ include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters, controlflow, typeprops]
-import hexer_context
+import hexer_context, passes
 
 # TODO:
 # - transform `for` loops into trampoline code
@@ -106,11 +106,11 @@ const
   ContinuationName = "Continuation.0." & SystemModuleSuffix
   RootObjName = "CoroutineBase.0." & SystemModuleSuffix
   EnvParamName = "`this.0"
-  FnFieldName = "fn.0." & SystemModuleSuffix
-  EnvFieldName = "env.0." & SystemModuleSuffix
-  CallerFieldName = "caller.0." & SystemModuleSuffix
+  FnFieldName = "fn.0"
+  EnvFieldName = "env.0"
+  CallerFieldName = "caller.0"
   ResultParamName = "`result.0"
-  ResultFieldNamePrefix = "`result.0."
+  ResultFieldName = "`result.0"
   CallerParamName = "`caller.0"
 
 type
@@ -470,7 +470,7 @@ proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packed
         dest.copyIntoKind DotX, info:
           dest.copyIntoKind DerefX, info:
             dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-          dest.addSymUse pool.syms.getOrIncl(ResultFieldNamePrefix & c.thisModuleSuffix), info
+          dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
       tr c, dest, n
   skipParRi n
 
@@ -529,7 +529,7 @@ proc escapingLocals(c: var Context; n: Cursor) =
       skip n # pragmas
       c.currentProc.localToEnv[mine] = EnvField(
         objType: coroTypeForProc(c, c.procStack[^1]),
-        field: if sk == ResultS: pool.syms.getOrIncl(ResultFieldNamePrefix & c.thisModuleSuffix) else: localToFieldname(c, mine),
+        field: if sk == ResultS: pool.syms.getOrIncl(ResultFieldName) else: localToFieldname(c, mine),
         pragmas: pragmas,
         typ: n,
         def: currentState,
@@ -711,7 +711,7 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
           dest.copyTree retType
         dest.addDotToken() # default value
       init.copyIntoKind KvU, info:
-        init.addSymUse pool.syms.getOrIncl(ResultFieldNamePrefix & c.thisModuleSuffix), info
+        init.addSymUse pool.syms.getOrIncl(ResultFieldName), info
         init.addSymUse pool.syms.getOrIncl(ResultParamName), info
     # final parameter is always the `caller` continuation:
     dest.copyIntoKind ParamU, info:
@@ -874,17 +874,17 @@ proc generateContinuationProcImpl(): Cursor =
       return t.body
   return default(Cursor)
 
-proc transformToCps*(n: var Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(thisModuleSuffix: moduleSuffix,
+proc transformToCps*(pass: var Pass) =
+  var n = pass.n  # Extract cursor locally
+  var c = Context(thisModuleSuffix: pass.moduleSuffix,
     afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix),
     continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
-  result = createTokenBuf()
   assert n.stmtKind == StmtsS
-  result.takeToken n
+  pass.dest.takeToken n
   while n.kind != ParRi:
-    tr(c, result, n)
-  result.takeToken n # ParRi
+    tr(c, pass.dest, n)
+  pass.dest.takeToken n # ParRi
   c.typeCache.closeScope()
 
 when isMainModule:

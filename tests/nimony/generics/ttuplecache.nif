@@ -1,18 +1,18 @@
 (.nif26)
-(.indexat +10055           )
+(.indexat +9828            )
 0,3,tests/nimony/generics/ttuplecache.nim(stmts 9,1
  (type ~7 :Foo.0. . ~4
   (typevars 1
    (typevar :T.0. . . . .)) . 2
   (object . ~7,1
-   (fld :data.0. . . 6 T.0. .))) ,5
+   (fld :data.0 . . 6 T.0. .))) ,5
  (proc 5 :initFooInt.0. . . . 15
   (params) 7 Foo.0.Iw8bgj. . . 2,1
   (stmts 8
    (result :result.0 . . ~3,~1 Foo.0.Iw8bgj. .) 8
    (asgn result.0
     (oconstr ~3,~1 Foo.0.Iw8bgj. 5
-     (kv ~4 data.0.Iw8bgj. 2 +0))) ~2,~1
+     (kv ~4 data.0 2 +0))) ~2,~1
    (ret result.0))) ,8
  (proc 5 :initFooTup.0. . . . 15
   (params) 7 Foo.0.Ildbpdf1. . . 2,2
@@ -20,7 +20,7 @@
    (result :result.1 . . ~10,~2 Foo.0.Ildbpdf1. .) 15
    (asgn result.1
     (oconstr ~10,~2 Foo.0.Ildbpdf1. 5
-     (kv ~4 data.0.Ildbpdf1. 2
+     (kv ~4 data.0 2
       (tupconstr ~16,~2
        (tuple 1
         (i -1) 6
@@ -52,10 +52,10 @@
  (glet :x1.0. . . 4,~11
   (i -1) 16
   (tupat ~5
-   (dot ~1 x.0. data.0.Iv5bnz4. +0) +0)) 4,17
+   (dot ~1 x.0. data.0 +0) +0)) 4,17
  (glet :x2.0. . . 4 string.0.sysvq0asl 19
   (tupat ~5
-   (dot ~1 x.0. data.0.Iv5bnz4. +0) +1)) 4,19
+   (dot ~1 x.0. data.0 +0) +1)) 4,19
  (glet :y.0. . . 7,~7 Foo.0.Iarhs7y1. 18
   (call ~14 initFooGeneric.2. 1
    (tupconstr 2
@@ -67,11 +67,11 @@
     (kv ~1 y 2 +2)))) 4,20
  (glet :y1.0. . . 4,~3 string.0.sysvq0asl 19
   (tupat ~5
-   (dot ~1 y.0. data.0.Iarhs7y1. +0) +0)) 4,21
+   (dot ~1 y.0. data.0 +0) +0)) 4,21
  (glet :y2.0. . . 4,~16
   (i -1) 16
   (tupat ~5
-   (dot ~1 y.0. data.0.Iarhs7y1. +0) +1)) 8,5
+   (dot ~1 y.0. data.0 +0) +1)) 8,5
  (comment int.0.sysvq0asl 1,3 int.0.sysvq0asl 6,3 int.0.sysvq0asl ~2,1 int.0.sysvq0asl ~1,5 int.0.sysvq0asl 4,5 int.0.sysvq0asl ,11 int.0.sysvq0asl ,16 int.0.sysvq0asl) 22,15
  (proc :initFooGeneric.1. . ~22,~3 .
   (at initFooGeneric.0. 3
@@ -89,7 +89,7 @@
    (result :result.3 . . 3,~1 Foo.0.Iv5bnz4. .) 6
    (asgn result.3
     (oconstr 3,~1 Foo.0.Iv5bnz4. 5
-     (kv ~4 data.0.Iv5bnz4. 2 x.3))) ~2,~1
+     (kv ~4 data.0 2 x.3))) ~2,~1
    (ret result.3))) 22,19
  (proc :initFooGeneric.2. . ~22,~7 .
   (at initFooGeneric.0. 3
@@ -107,14 +107,14 @@
    (result :result.4 . . 3,~1 Foo.0.Iarhs7y1. .) 6
    (asgn result.4
     (oconstr 3,~1 Foo.0.Iarhs7y1. 5
-     (kv ~4 data.0.Iarhs7y1. 2 x.4))) ~2,~1
+     (kv ~4 data.0 2 x.4))) ~2,~1
    (ret result.4))) 7,5
  (type :Foo.0.Iw8bgj. .
   (at Foo.0. 1
    (i -1))
   (pragmas) 4,~4
   (object . ~7,1
-   (fld :data.0.Iw8bgj. . . 4,3
+   (fld :data.0 . . 4,3
     (i -1) .))) 7,8
  (type :Foo.0.Ildbpdf1. .
   (at Foo.0. 1
@@ -123,7 +123,7 @@
     (i -1)))
   (pragmas) 4,~7
   (object . ~7,1
-   (fld :data.0.Ildbpdf1. . . 4,6
+   (fld :data.0 . . 4,6
     (tuple 1
      (i -1) 6
      (i -1)) .))) 11,12
@@ -139,7 +139,7 @@
    (dup =dup_SX46oo0X49v5bnz4ttuv4zf4c1.0.)
    (copy =copy_SX46oo0X49v5bnz4ttuv4zf4c1.0.)) ,~11
   (object . ~7,1
-   (fld :data.0.Iv5bnz4. . . 21,13
+   (fld :data.0 . . 21,13
     (tuple
      (kv ~1 a
       (i -1)) 6
@@ -156,7 +156,7 @@
    (dup =dup_SX46oo0X49arhs7y1ttuv4zf4c1.0.)
    (copy =copy_SX46oo0X49arhs7y1ttuv4zf4c1.0.)) ,~11
   (object . ~7,1
-   (fld :data.0.Iarhs7y1. . . 21,17
+   (fld :data.0 . . 21,17
     (tuple
      (kv ~1 x string.0.sysvq0asl) 10
      (kv ~1 y
@@ -168,7 +168,7 @@
    (nodestroy)) .
   (stmts
    (call =destroy_AtupleAiS64ZSstring0sysvq0asl.0.
-    (dot dest.0 data.0.Iv5bnz4. +0)))) 11,12
+    (dot dest.0 data.0 +0)))) 11,12
  (proc :=wasmoved_SX46oo0X49v5bnz4ttuv4zf4c1.0. . . .
   (params
    (param :dest.0 . .
@@ -179,7 +179,7 @@
    (call =wasmoved_AtupleAiS64ZSstring0sysvq0asl.0.
     (haddr
      (dot
-      (hderef dest.0) data.0.Iv5bnz4. +0))))) 11,12
+      (hderef dest.0) data.0 +0))))) 11,12
  (proc :=dup_SX46oo0X49v5bnz4ttuv4zf4c1.0. . . .
   (params
    (param :src.0 . . Foo.0.Iv5bnz4. .)) Foo.0.Iv5bnz4.
@@ -188,9 +188,9 @@
   (stmts
    (var :dest.0 . . Foo.0.Iv5bnz4. .)
    (asgn
-    (dot dest.0 data.0.Iv5bnz4. +0)
+    (dot dest.0 data.0 +0)
     (call =dup_AtupleAiS64ZSstring0sysvq0asl.0.
-     (dot src.0 data.0.Iv5bnz4. +0)))
+     (dot src.0 data.0 +0)))
    (ret dest.0))) 11,12
  (proc :=copy_SX46oo0X49v5bnz4ttuv4zf4c1.0. . . .
   (params
@@ -202,8 +202,8 @@
   (stmts
    (call =copy_AtupleAiS64ZSstring0sysvq0asl.0.
     (dot
-     (hderef dest.0) data.0.Iv5bnz4. +0)
-    (dot src.0 data.0.Iv5bnz4. +0)))) 11,12
+     (hderef dest.0) data.0 +0)
+    (dot src.0 data.0 +0)))) 11,12
  (proc :=destroy_SX46oo0X49arhs7y1ttuv4zf4c1.0. . . .
   (params
    (param :dest.0 . . Foo.0.Iarhs7y1. .)) .
@@ -211,7 +211,7 @@
    (nodestroy)) .
   (stmts
    (call =destroy_AtupleSstring0sysvq0aslAiS64.0.
-    (dot dest.0 data.0.Iarhs7y1. +0)))) 11,12
+    (dot dest.0 data.0 +0)))) 11,12
  (proc :=wasmoved_SX46oo0X49arhs7y1ttuv4zf4c1.0. . . .
   (params
    (param :dest.0 . .
@@ -222,7 +222,7 @@
    (call =wasmoved_AtupleSstring0sysvq0aslAiS64.0.
     (haddr
      (dot
-      (hderef dest.0) data.0.Iarhs7y1. +0))))) 11,12
+      (hderef dest.0) data.0 +0))))) 11,12
  (proc :=dup_SX46oo0X49arhs7y1ttuv4zf4c1.0. . . .
   (params
    (param :src.0 . . Foo.0.Iarhs7y1. .)) Foo.0.Iarhs7y1.
@@ -231,9 +231,9 @@
   (stmts
    (var :dest.0 . . Foo.0.Iarhs7y1. .)
    (asgn
-    (dot dest.0 data.0.Iarhs7y1. +0)
+    (dot dest.0 data.0 +0)
     (call =dup_AtupleSstring0sysvq0aslAiS64.0.
-     (dot src.0 data.0.Iarhs7y1. +0)))
+     (dot src.0 data.0 +0)))
    (ret dest.0))) 11,12
  (proc :=copy_SX46oo0X49arhs7y1ttuv4zf4c1.0. . . .
   (params
@@ -245,8 +245,8 @@
   (stmts
    (call =copy_AtupleSstring0sysvq0aslAiS64.0.
     (dot
-     (hderef dest.0) data.0.Iarhs7y1. +0)
-    (dot src.0 data.0.Iarhs7y1. +0)))) 11,12
+     (hderef dest.0) data.0 +0)
+    (dot src.0 data.0 +0)))) 11,12
  (proc :=destroy_AtupleAiS64ZSstring0sysvq0asl.0. . . .
   (params
    (param :dest.0 . . 14,3
@@ -404,37 +404,32 @@
      (hderef dest.0) +1)
     (tupat src.0 +1)))))0,3,tests/nimony/generics/ttuplecache.nim(.index 9,1
  (h Foo.0. +89) 6,1
- (h T.0. +37) 4,2
- (h data.0. +49) ,5
- (h initFooInt.0. +36) ,8
- (h initFooTup.0. +246) ,12
- (h initFooGeneric.0. +340) 20,12
+ (h T.0. +37) ,5
+ (h initFooInt.0. +84) ,8
+ (h initFooTup.0. +238) ,12
+ (h initFooGeneric.0. +330) 20,12
  (h T.1. +49) 4,15
  (h x.0. +302) 4,16
  (h x1.0. +217) 4,17
- (h x2.0. +94) 4,19
- (h y.0. +100) 4,20
+ (h x2.0. +85) 4,19
+ (h y.0. +91) 4,20
  (h y1.0. +220) 4,21
- (h y2.0. +104) 22,15
- (h initFooGeneric.1. +269) 22,19
- (h initFooGeneric.2. +485) 7,5
- (h Foo.0.Iw8bgj. +489) 4,2
- (h data.0.Iw8bgj. +84) 7,8
- (h Foo.0.Ildbpdf1. +52) 4,2
- (h data.0.Ildbpdf1. +113) 11,12
- (h Foo.0.Iv5bnz4. +85) 4,2
- (h data.0.Iv5bnz4. +346) 11,12
- (h Foo.0.Iarhs7y1. +122) 4,2
- (h data.0.Iarhs7y1. +352) 11,12
- (h =destroy_SX46oo0X49v5bnz4ttuv4zf4c1.0. +124) 11,12
- (h =wasmoved_SX46oo0X49v5bnz4ttuv4zf4c1.0. +240) 11,12
- (h =dup_SX46oo0X49v5bnz4ttuv4zf4c1.0. +280) 11,12
- (h =copy_SX46oo0X49v5bnz4ttuv4zf4c1.0. +345) 11,12
- (h =destroy_SX46oo0X49arhs7y1ttuv4zf4c1.0. +332) 11,12
- (h =wasmoved_SX46oo0X49arhs7y1ttuv4zf4c1.0. +242) 11,12
- (h =dup_SX46oo0X49arhs7y1ttuv4zf4c1.0. +282) 11,12
- (h =copy_SX46oo0X49arhs7y1ttuv4zf4c1.0. +350) 11,12
- (h =destroy_AtupleAiS64ZSstring0sysvq0asl.0. +336) 11,12
+ (h y2.0. +94) 22,15
+ (h initFooGeneric.1. +259) 22,19
+ (h initFooGeneric.2. +476) 7,5
+ (h Foo.0.Iw8bgj. +479) 7,8
+ (h Foo.0.Ildbpdf1. +128) 11,12
+ (h Foo.0.Iv5bnz4. +188) 11,12
+ (h Foo.0.Iarhs7y1. +459) 11,12
+ (h =destroy_SX46oo0X49v5bnz4ttuv4zf4c1.0. +466) 11,12
+ (h =wasmoved_SX46oo0X49v5bnz4ttuv4zf4c1.0. +231) 11,12
+ (h =dup_SX46oo0X49v5bnz4ttuv4zf4c1.0. +271) 11,12
+ (h =copy_SX46oo0X49v5bnz4ttuv4zf4c1.0. +327) 11,12
+ (h =destroy_SX46oo0X49arhs7y1ttuv4zf4c1.0. +314) 11,12
+ (h =wasmoved_SX46oo0X49arhs7y1ttuv4zf4c1.0. +232) 11,12
+ (h =dup_SX46oo0X49arhs7y1ttuv4zf4c1.0. +272) 11,12
+ (h =copy_SX46oo0X49arhs7y1ttuv4zf4c1.0. +330) 11,12
+ (h =destroy_AtupleAiS64ZSstring0sysvq0asl.0. +316) 11,12
  (h =wasmoved_AtupleAiS64ZSstring0sysvq0asl.0. +274) 11,12
  (h =dup_AtupleAiS64ZSstring0sysvq0asl.0. +318) 11,12
  (h =copy_AtupleAiS64ZSstring0sysvq0asl.0. +542) 11,12

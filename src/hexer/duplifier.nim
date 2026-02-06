@@ -31,7 +31,7 @@ It follows that we're only interested in Call expressions here, or similar
 
 import std / [assertions]
 include nifprelude
-import nifindexes, symparser, treemangler, lifter, mover, hexer_context
+import nifindexes, symparser, treemangler, lifter, mover, hexer_context, passes
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 
 type
@@ -826,12 +826,20 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
   c.dest.addParRi() # finish the StmtListExpr
 
 proc trLocationNonOwner(c: var Context; n: var Cursor) =
-  c.dest.add n
-  inc n
-  tr c, n, WantNonOwner
-  while n.kind != ParRi:
-    tr(c, n, DontCare)
-  takeParRi c.dest, n
+  if n.kind == ParLe and n.exprKind == DotX:
+    c.dest.add n
+    inc n
+    tr c, n, WantNonOwner
+    while n.kind != ParRi:
+      takeTree c.dest, n
+    takeParRi c.dest, n
+  else:
+    c.dest.add n
+    inc n
+    tr c, n, WantNonOwner
+    while n.kind != ParRi:
+      tr(c, n, DontCare)
+    takeParRi c.dest, n
 
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # `x` does not own its value as it can be read multiple times.
@@ -1089,11 +1097,11 @@ proc checkForMoveTypes(c: var Context; n: Cursor): int =
     if nested == 0: break
     inc n
 
-proc injectDups*(n: Cursor; moduleSuffix: string; source: var TokenBuf; lifter: ref LiftingCtx): TokenBuf =
+proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
-    dest: createTokenBuf(400), source: addr source, moduleSuffix: moduleSuffix)
+    dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix)
   c.typeCache.openScope()
-  var n = n
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]
 
@@ -1105,4 +1113,4 @@ proc injectDups*(n: Cursor; moduleSuffix: string; source: var TokenBuf; lifter: 
   if errorCount > 0:
     quit 1
 
-  result = ensureMove(c.dest)
+  pass.dest = ensureMove(c.dest)

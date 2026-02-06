@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +7100            )
+(.indexat +7020            )
 0,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
  (type ~13 :MyObjectBase.0. . .
   (pragmas
@@ -9,9 +9,9 @@
    (sinkh =sink.0.)
    (trace =trace.0.)) 2
   (object . ~13,1
-   (fld :x.0. . . 6
+   (fld :x.0 . . 6
     (i -1) .) ~10,1
-   (fld :y.0. . . 3
+   (fld :y.0 . . 3
     (i -1) .))) 17,4
  (type ~15 :MyObject.0. . ~7
   (typevars 1
@@ -23,9 +23,9 @@
    (copy =copy.1.)
    (sinkh =sink.1.)) 2
   (object . ~15,1
-   (fld :x.1. . . 6
+   (fld :x.1 . . 6
     (i -1) .) ~12,1
-   (fld :y.1. . . 3
+   (fld :y.1 . . 3
     (i -1) .))) ,7
  (proc 5 :=trace.0. . . . 13
   (params 1
@@ -112,28 +112,28 @@
   (stmts 4
    (var :obj.0 . . 14 MyObject.0.I76zger. 14
     (oconstr MyObject.0.I76zger.
-     (kv x.1.I76zger. 43,6,lib/std/system/defaults.nim
+     (kv x.1 43,6,lib/std/system/defaults.nim
       (expr +0))
-     (kv y.1.I76zger. 43,6,lib/std/system/defaults.nim
+     (kv y.1 43,6,lib/std/system/defaults.nim
       (expr +0)))) 4,2
    (var :obj2.0 . . 15 MyObject.0.I3kvyeb. 15
     (oconstr MyObject.0.I3kvyeb.
-     (kv x.1.I3kvyeb. 43,6,lib/std/system/defaults.nim
+     (kv x.1 43,6,lib/std/system/defaults.nim
       (expr +0))
-     (kv y.1.I3kvyeb. 43,6,lib/std/system/defaults.nim
+     (kv y.1 43,6,lib/std/system/defaults.nim
       (expr +0)))) 10,4
    (destroy 1 obj.0) 4,6
    (var :objbase.0 . . 31,~29 MyObjectBase.0. 18
     (oconstr 13,~29 MyObjectBase.0.
-     (kv x.0. 43,6,lib/std/system/defaults.nim
+     (kv x.0 43,6,lib/std/system/defaults.nim
       (expr +0))
-     (kv y.0. 43,6,lib/std/system/defaults.nim
+     (kv y.0 43,6,lib/std/system/defaults.nim
       (expr +0)))) 4,7
    (var :objbase2.0 . . 31,~30 MyObjectBase.0. 19
     (oconstr 12,~30 MyObjectBase.0.
-     (kv x.0. 43,6,lib/std/system/defaults.nim
+     (kv x.0 43,6,lib/std/system/defaults.nim
       (expr +0))
-     (kv y.0. 43,6,lib/std/system/defaults.nim
+     (kv y.0 43,6,lib/std/system/defaults.nim
       (expr +0)))) 10,8
    (call 1 =destroy.0. 1 objbase2.0) 10,9
    (call 1 =destroy.0. 1 objbase.0))) 3,47
@@ -168,9 +168,9 @@
    (copy =copy.2.)
    (sinkh =sink.2.)) ~1,~32
   (object . ~15,1
-   (fld :x.1.I76zger. . . 6
+   (fld :x.1 . . 6
     (i -1) .) ~12,1
-   (fld :y.1.I76zger. . . 3
+   (fld :y.1 . . 3
     (i -1) .))) 21,38
  (type :MyObject.0.I3kvyeb. .
   (at MyObject.0. 9
@@ -182,9 +182,9 @@
    (copy =copy.3.)
    (sinkh =sink.3.)) ~2,~34
   (object . ~15,1
-   (fld :x.1.I3kvyeb. . . 6
+   (fld :x.1 . . 6
     (i -1) .) ~12,1
-   (fld :y.1.I3kvyeb. . . 3
+   (fld :y.1 . . 3
     (i -1) .))) ,32
  (proc :=destroy.2. . .
   (at =destroy.1. 29,4
@@ -268,15 +268,11 @@
    (param :y.14 . . 11 MyObject.0.I3kvyeb. .)) . . . 2,1
   (stmts
    (discard .))))0,1,tests/nimony/sysbasics/thooks.nim(.index 15,1
- (h MyObjectBase.0. +86) 4,2
- (h x.0. +176) 7,2
- (h y.0. +40) 17,4
- (h MyObject.0. +41) 11,4
+ (h MyObjectBase.0. +86) 17,4
+ (h MyObject.0. +255) 11,4
  (h T.0. +43) 14,4
- (h Y.0. +29) 4,5
- (h x.1. +151) 7,5
- (h y.1. +40) ,7
- (h =trace.0. +39) ,10
+ (h Y.0. +29) ,7
+ (h =trace.0. +228) ,10
  (h =wasMoved.0. +175) ,13
  (h =copy.0. +137) ,16
  (h =sink.0. +176) ,19
@@ -294,18 +290,14 @@
  (h T.4. +43) 19,32
  (h Y.4. +29) ,35
  (h foo.0. +170) ,49
- (h =checkHook.0. +1087) 18,49
+ (h =checkHook.0. +1047) 18,49
  (h T.5. +45) 21,49
  (h Y.5. +29) 4,52
  (h obj.0. +148) 12,53
  (h =checkHook.1. +546) 20,36
- (h MyObject.0.I76zger. +220) 4,5
- (h x.1.I76zger. +203) 7,5
- (h y.1.I76zger. +48) 21,38
- (h MyObject.0.I3kvyeb. +50) 4,5
- (h x.1.I3kvyeb. +203) 7,5
- (h y.1.I3kvyeb. +48) ,32
- (h =destroy.2. +48) ,22
+ (h MyObject.0.I76zger. +220) 21,38
+ (h MyObject.0.I3kvyeb. +283) ,32
+ (h =destroy.2. +281) ,22
  (h =wasMoved.2. +205) ,26
  (h =copy.2. +265) ,29
  (h =sink.2. +233) ,32

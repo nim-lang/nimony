@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +6596            )
+(.indexat +6557            )
 0,2,tests/nimony/nosystem/tgeneric_obj.nim(stmts 2,1
  (type :int.0.
   (i -1) . 5
@@ -103,13 +103,13 @@
   (typevars 1
    (typevar :T.3. . . . .)) . 2
   (object . ~13,1
-   (fld :x.0. . . 3 T.3. .))) 2,32
+   (fld :x.0 . . 3 T.3. .))) 2,32
  (gvar :myglob.0. . . 17 MyGeneric.0.I8smrpu. .) 2,33
  (gvar :other.0. . . 16 MyGeneric.0.Iliphp3. .) 9,35
  (asgn ~3
-  (dot ~6 myglob.0. x.0.I8smrpu. +0) 2 +56) 8,36
+  (dot ~6 myglob.0. x.0 +0) 2 +56) 8,36
  (asgn ~3
-  (dot ~5 other.0. x.0.Iliphp3. +0) 2 +79.0) ,38
+  (dot ~5 other.0. x.0 +0) 2 +79.0) ,38
  (proc 5 :\2B.0.
   (add -3) . . 9
   (params 1
@@ -153,8 +153,8 @@
    (typevar :T.4. . . . .) 4
    (typevar :U.0. . . . .)) . 2
   (object . ~14,1
-   (fld :a.0. . . 3 T.4. .) ~14,2
-   (fld :b.0. . . 3 U.0. .))) 12,56
+   (fld :a.0 . . 3 T.4. .) ~14,2
+   (fld :b.0 . . 3 U.0. .))) 12,56
  (type ~10 :Slice.0. x ~4
   (typevars 1
    (typevar :T.5. . . . .)) . 8
@@ -271,14 +271,14 @@
    (i -1))
   (pragmas) ~2,~4
   (object . ~13,1
-   (fld :x.0.I8smrpu. . . 16,3
+   (fld :x.0 . . 16,3
     (i -1) .))) 18,33
  (type :MyGeneric.0.Iliphp3. .
   (at MyGeneric.0. 1
    (f +64))
   (pragmas) ~1,~5
   (object . ~13,1
-   (fld :x.0.Iliphp3. . . 15,4
+   (fld :x.0 . . 15,4
     (f +64) .))))0,2,tests/nimony/nosystem/tgeneric_obj.nim(.index 2,1
  (x int.0. +90) 2,3
  (x float.0. +66) 2,4
@@ -302,20 +302,17 @@
  (h myarr.0. +52) 4,23
  (h u8.0. +86) 15,28
  (h MyGeneric.0. +341) 12,28
- (h T.3. +44) 4,29
- (h x.0. +50) 2,32
- (h myglob.0. +35) 2,33
+ (h T.3. +44) 2,32
+ (h myglob.0. +84) 2,33
  (h other.0. +54) ,38
- (x \2B.0. +171) ,40
+ (x \2B.0. +153) ,40
  (h foobar.0. +177) ,43
  (h foo.0. +82) ,48
  (h overloaded.0. +328) 16,53
  (x HSlice.0. +239) 10,53
  (h T.4. +41) 13,53
- (h U.0. +29) 4,54
- (h a.0. +50) 4,55
- (h b.0. +34) 12,56
- (x Slice.0. +36) 9,56
+ (h U.0. +29) 12,56
+ (x Slice.0. +118) 9,56
  (h T.5. +40) ,58
  (x \2E..0. +71) 11,58
  (h T.6. +39) 14,58
@@ -331,7 +328,5 @@
  (h T.8. +29) 3,69
  (h foo.2. +629) 17,73
  (h identity.1. +274) 19,32
- (h MyGeneric.0.I8smrpu. +500) 4,29
- (h x.0.I8smrpu. +99) 18,33
- (h MyGeneric.0.Iliphp3. +53) 4,29
- (h x.0.Iliphp3. +100))
+ (h MyGeneric.0.I8smrpu. +500) 18,33
+ (h MyGeneric.0.Iliphp3. +143))

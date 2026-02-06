@@ -17,6 +17,8 @@ type
   NifModule* = ref object
     stream: Stream
     index*: NifIndex
+    public*: Table[string, NifIndexEntry]
+    private*: Table[string, NifIndexEntry]
 
   SemPhase* = enum
     SemcheckTopLevelSyms,
@@ -98,8 +100,18 @@ iterator pairs*(t: ToplevelEntries): (int, lent ToplevelEntry) =
 # -------------- end ToplevelEntries methods --------------
 
 proc newNifModule(infile: string): NifModule =
-  result = NifModule(stream: nifstreams.open(infile))
+  result = NifModule(stream: nifstreams.open(infile),
+                     public: initTable[string, NifIndexEntry](),
+                     private: initTable[string, NifIndexEntry]())
   discard processDirectives(result.stream.r)
+
+proc addEmbeddedIndex(public, private: var Table[string, NifIndexEntry];
+                      embedded: Table[string, NifIndexEntry]) =
+  for k, v in embedded:
+    if v.vis == Exported:
+      public[k] = v
+    else:
+      private[k] = v
 
 proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArray[string]): Cursor =
   ## Load a module's content into owningBuf and return a cursor to it.
@@ -124,9 +136,11 @@ proc load*(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
     let infile = suffixToNif suffix
     result = newNifModule(infile)
+    result.index = default(NifIndex)
+    let embedded = readEmbeddedIndex(result.stream)
+    if embedded.len > 0:
+      addEmbeddedIndex(result.public, result.private, embedded)
     let indexName = infile.changeModuleExt".s.idx.nif"
-    #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
-    #  createIndex infile
     result.index = readIndex(indexName)
     prog.mods[suffix] = result
   else:
@@ -168,7 +182,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
   let alreadyLoaded = iface.len != 0
   var marker = filter.list
   let negateMarker = filter.kind == FromImport
-  for k, _ in m.index.public:
+  for k, _ in m.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
@@ -221,9 +235,9 @@ proc tryLoadSym*(s: SymId): LoadResult =
       result = LoadResult(status: LacksModuleName)
     else:
       var m = load(modname)
-      var indexEntry = m.index.public.getOrDefault(nifName)
+      var indexEntry = m.public.getOrDefault(nifName)
       if indexEntry.offset == 0:
-        indexEntry = m.index.private.getOrDefault(nifName)
+        indexEntry = m.private.getOrDefault(nifName)
       if indexEntry.offset == 0:
         result = LoadResult(status: LacksOffset)
       else:
@@ -323,7 +337,7 @@ proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
   # gives top level exported syms of a module
   result = @[]
   var m = load(suffix)
-  for k, _ in m.index.public:
+  for k, _ in m.public:
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
@@ -407,9 +421,11 @@ proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=fa
   var m = newNifModule(infile)
 
   if hasIndex:
+    m.index = default(NifIndex)
+    let embedded = readEmbeddedIndex(m.stream)
+    if embedded.len > 0:
+      addEmbeddedIndex(m.public, m.private, embedded)
     let indexName = infile.changeModuleExt".s.idx.nif"
-    #if not fileExists(indexName) or getLastModificationTime(indexName) < getLastModificationTime(infile):
-    #  createIndex infile
     m.index = readIndex(indexName)
 
   #echo "INPUT IS ", toString(m.buf)

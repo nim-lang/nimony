@@ -422,16 +422,20 @@ proc checkReq(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor
 
 proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
   inc n
+  let objType = n
   skip n # type
   while n.kind != ParRi:
     assert n.substructureKind == KvU
     inc n
-    let expected = getType(c.typeCache, n)
+    assert n.kind == Symbol
+    let expected = lookupField(c.typeCache, objType, n.symId)
+    assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
     skip n # field name
     checkNilMatch c, n, expected
     skip n # value
     if n.kind != ParRi:
-      skip n # optional inheritance
+      # optional inheritance
+      skip n
     skipParRi n
   skipParRi n
 

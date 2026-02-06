@@ -14,6 +14,7 @@
 import std / [assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
+import passes
 
 type
   Goal* = enum
@@ -664,19 +665,18 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   of ParRi:
     bug "unexpected ')' inside"
 
-proc lowerExprs*(n: Cursor; moduleSuffix: string; goal = ElimExprs): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, goal: goal)
+proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
+  var n = pass.n  # Extract cursor locally
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
   assert n.stmtKind == StmtsS, $n.kind
-  result.add n
+  pass.dest.add n
   inc n
   while n.kind != ParRi:
-    trStmt c, result, n
-  result.addParRi()
+    trStmt c, pass.dest, n
+  pass.dest.addParRi()
   c.typeCache.closeScope()
-  #echo "PRODUCED: ", result.toString(false)
+  #echo "PRODUCED: ", pass.dest.toString(false)
 
 when isMainModule:
   var owningBuf = createTokenBuf(300)

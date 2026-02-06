@@ -361,6 +361,7 @@ proc addFreshSyms(c: var SemContext, sc: var SubsContext) =
 proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Cursor) =
   var nested = 0
   var n = body
+  var isField = false
   while true:
     case n.kind
     of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
@@ -377,15 +378,20 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
         else:
           dest.add n # keep Symbol as it was
     of SymbolDef:
-      let s = n.symId
-      let newDef =
-        if sc.instSuffix != "":
-          newInstSymId(c, s, sc.instSuffix)
-        else:
-          newSymId(c, s)
-      sc.newVars[s] = newDef
-      dest.add symdefToken(newDef, n.info)
+      if isField:
+        dest.add n
+      else:
+        let s = n.symId
+        let newDef =
+          if sc.instSuffix != "":
+            # Don't apply instantiation suffix to field names
+            newInstSymId(c, s, sc.instSuffix)
+          else:
+            newSymId(c, s)
+        sc.newVars[s] = newDef
+        dest.add symdefToken(newDef, n.info)
     of ParLe:
+      isField = n.substructureKind == FldU
       dest.add n
       inc nested
     of ParRi:

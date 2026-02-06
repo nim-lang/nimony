@@ -1770,7 +1770,7 @@ proc transformInlineRoutines(c: var EContext; n: var Cursor) =
   toTransform.copyIntoKind StmtsS, n.info:
     takeTree(toTransform, n)
   var t = beginRead(toTransform)
-  var dest = transform(c, t, c.main)
+  var dest = transform(c, t, c.main, c.bits)
   var d = beginRead(dest)
 
   inc d # skips (stmts
@@ -1851,7 +1851,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   var owningBuf = createTokenBuf(300)
 
   var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", owningBuf, true)
-  var dest = transform(c, c0, mp.name)
+  var dest = transform(c, c0, mp.name, c.bits)
 
   var n = beginRead(dest)
   let rootInfo = n.info
@@ -1878,4 +1878,4 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   c.typeCache.closeScope()
 
   # Use the in-memory buffer to avoid re-reading the file we just wrote
-  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif"
+  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif", "." & c.main
