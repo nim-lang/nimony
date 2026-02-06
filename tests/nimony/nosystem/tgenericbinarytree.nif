@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +11010           )
+(.indexat +11020           )
 0,1,tests/nimony/nosystem/tgenericbinarytree.nim(stmts 5
  (type :int.0.
   (i -1) . 5
@@ -156,11 +156,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX4eodeX4fbj0X49tet59rtge70unlm.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 23,3
  (proc :=wasmoved_SX4eode0X49kmiisbtge70unlm.0. . . .
   (params
@@ -185,7 +185,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 23,3
  (proc :=copy_SX4eode0X49kmiisbtge70unlm.0. . . .
@@ -202,7 +202,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. dest.0)
    (asgn dest.0 src.0))) 23,3
  (proc :=sinkh_SX4eode0X49kmiisbtge70unlm.0. . . .
@@ -219,7 +219,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. dest.0)
    (asgn dest.0 src.0))) 23,3
  (proc :=trace_SX4eode0X49kmiisbtge70unlm.0. . . .
@@ -345,11 +345,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX4eodeX4fbj0X49tet59rtge70unlm.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 23,3
  (proc :=wasmoved_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. . . .
   (params
@@ -378,7 +378,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 23,3
  (proc :=copy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. . . .
@@ -397,7 +397,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. dest.0)
    (asgn dest.0 src.0))) 23,3
  (proc :=sinkh_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. . . .
@@ -416,7 +416,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. dest.0)
    (asgn dest.0 src.0))) 23,3
  (proc :=trace_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. . . .
@@ -443,11 +443,11 @@
  (h Node.0.Ikmiisb. +516) 23,3
  (h NodeObj.0.Itet59r. +397) 23,3
  (h =destroy_SX4eode0X49kmiisbtge70unlm.0. +597) 23,3
- (h =wasmoved_SX4eode0X49kmiisbtge70unlm.0. +494) 23,3
+ (h =wasmoved_SX4eode0X49kmiisbtge70unlm.0. +496) 23,3
  (h =dup_SX4eode0X49kmiisbtge70unlm.0. +208) 23,3
- (h =copy_SX4eode0X49kmiisbtge70unlm.0. +385) 23,3
- (h =sinkh_SX4eode0X49kmiisbtge70unlm.0. +427) 23,3
- (h =trace_SX4eode0X49kmiisbtge70unlm.0. +428) 23,3
+ (h =copy_SX4eode0X49kmiisbtge70unlm.0. +386) 23,3
+ (h =sinkh_SX4eode0X49kmiisbtge70unlm.0. +428) 23,3
+ (h =trace_SX4eode0X49kmiisbtge70unlm.0. +429) 23,3
  (h =destroy_SX4eodeX4fbj0X49tet59rtge70unlm.0. +204) 23,3
  (h =wasmoved_SX4eodeX4fbj0X49tet59rtge70unlm.0. +331) 23,3
  (h =dup_SX4eodeX4fbj0X49tet59rtge70unlm.0. +400) 23,3
@@ -455,8 +455,8 @@
  (h =sinkh_SX4eodeX4fbj0X49tet59rtge70unlm.0. +533) 23,3
  (h =trace_SX4eodeX4fbj0X49tet59rtge70unlm.0. +536) 23,3
  (h =destroy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +413) 23,3
- (h =wasmoved_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +517) 23,3
+ (h =wasmoved_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +519) 23,3
  (h =dup_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +232) 23,3
- (h =copy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +434) 23,3
- (h =sinkh_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +465) 23,3
- (h =trace_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +466))
+ (h =copy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +435) 23,3
+ (h =sinkh_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +466) 23,3
+ (h =trace_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +467))

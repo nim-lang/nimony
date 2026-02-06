@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +37559           )
+(.indexat +37599           )
 0,1,tests/nimony/sysbasics/trefobject.nim(stmts 9
  (type ~4 :Foo.0. . .
   (pragmas
@@ -196,11 +196,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX46ooX4fbj0tre8amq6m.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 24,16
  (proc :=wasmoved_SX46oo0tre8amq6m.0. . . .
   (params
@@ -225,7 +225,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 24,16
  (proc :=copy_SX46oo0tre8amq6m.0. . . .
@@ -242,7 +242,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46ooX4fbj0tre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=sinkh_SX46oo0tre8amq6m.0. . . .
@@ -259,7 +259,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46ooX4fbj0tre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=trace_SX46oo0tre8amq6m.0. . . .
@@ -430,11 +430,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 24,16
  (proc :=wasmoved_SX46orwardX4eode20X49shmn651tre8amq6m.0. . . .
   (params
@@ -459,7 +459,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 24,16
  (proc :=copy_SX46orwardX4eode20X49shmn651tre8amq6m.0. . . .
@@ -476,7 +476,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=sinkh_SX46orwardX4eode20X49shmn651tre8amq6m.0. . . .
@@ -493,7 +493,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=trace_SX46orwardX4eode20X49shmn651tre8amq6m.0. . . .
@@ -618,11 +618,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX4eodeX4fbj0X49iz3k2p1tre8amq6m.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 24,16
  (proc :=wasmoved_SX4eode0X49sesnzm1tre8amq6m.0. . . .
   (params
@@ -647,7 +647,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 24,16
  (proc :=copy_SX4eode0X49sesnzm1tre8amq6m.0. . . .
@@ -664,7 +664,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=sinkh_SX4eode0X49sesnzm1tre8amq6m.0. . . .
@@ -681,7 +681,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=trace_SX4eode0X49sesnzm1tre8amq6m.0. . . .
@@ -806,11 +806,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX46orwardX4eode1X4fbj0X4993upextre8amq6m.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 24,16
  (proc :=wasmoved_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. . . .
   (params
@@ -835,7 +835,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 24,16
  (proc :=copy_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. . . .
@@ -852,7 +852,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=sinkh_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. . . .
@@ -869,7 +869,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=trace_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. . . .
@@ -995,11 +995,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX46ooX4fbj0tre8amq6m.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 24,16
  (proc :=wasmoved_ArefSX46ooX4fbj0tre8amq6m.0. . . .
   (params
@@ -1028,7 +1028,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 24,16
  (proc :=copy_ArefSX46ooX4fbj0tre8amq6m.0. . . .
@@ -1047,7 +1047,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46ooX4fbj0tre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=sinkh_ArefSX46ooX4fbj0tre8amq6m.0. . . .
@@ -1066,7 +1066,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46ooX4fbj0tre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=trace_ArefSX46ooX4fbj0tre8amq6m.0. . . .
@@ -1094,11 +1094,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 24,16
  (proc :=wasmoved_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. . . .
   (params
@@ -1127,7 +1127,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 24,16
  (proc :=copy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. . . .
@@ -1146,7 +1146,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=sinkh_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. . . .
@@ -1165,7 +1165,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=trace_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. . . .
@@ -1193,11 +1193,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX4eodeX4fbj0X49iz3k2p1tre8amq6m.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 24,16
  (proc :=wasmoved_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. . . .
   (params
@@ -1226,7 +1226,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 24,16
  (proc :=copy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. . . .
@@ -1245,7 +1245,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=sinkh_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. . . .
@@ -1264,7 +1264,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=trace_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. . . .
@@ -1292,11 +1292,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX46orwardX4eode1X4fbj0X4993upextre8amq6m.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 24,16
  (proc :=wasmoved_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. . . .
   (params
@@ -1325,7 +1325,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 24,16
  (proc :=copy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. . . .
@@ -1344,7 +1344,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=sinkh_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. . . .
@@ -1363,7 +1363,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. dest.0)
    (asgn dest.0 src.0))) 24,16
  (proc :=trace_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. . . .
@@ -1404,11 +1404,11 @@
  (h ForwardNode1.0.Iee6hkd1. +603) 24,16
  (h ForwardNode1.Obj.0.I93upex. +492) 24,16
  (h =destroy_SX46oo0tre8amq6m.0. +688) 24,16
- (h =wasmoved_SX46oo0tre8amq6m.0. +468) 24,16
+ (h =wasmoved_SX46oo0tre8amq6m.0. +470) 24,16
  (h =dup_SX46oo0tre8amq6m.0. +192) 24,16
- (h =copy_SX46oo0tre8amq6m.0. +355) 24,16
- (h =sinkh_SX46oo0tre8amq6m.0. +394) 24,16
- (h =trace_SX46oo0tre8amq6m.0. +395) 24,16
+ (h =copy_SX46oo0tre8amq6m.0. +356) 24,16
+ (h =sinkh_SX46oo0tre8amq6m.0. +395) 24,16
+ (h =trace_SX46oo0tre8amq6m.0. +396) 24,16
  (h =destroy_SX46ooX4fbj0tre8amq6m.0. +188) 24,16
  (h =wasmoved_SX46ooX4fbj0tre8amq6m.0. +228) 24,16
  (h =dup_SX46ooX4fbj0tre8amq6m.0. +268) 24,16
@@ -1422,11 +1422,11 @@
  (h =sinkh_SX46orward20tre8amq6m.0. +325) 24,16
  (h =trace_SX46orward20tre8amq6m.0. +327) 24,16
  (h =destroy_SX46orwardX4eode20X49shmn651tre8amq6m.0. +306) 24,16
- (h =wasmoved_SX46orwardX4eode20X49shmn651tre8amq6m.0. +524) 24,16
+ (h =wasmoved_SX46orwardX4eode20X49shmn651tre8amq6m.0. +526) 24,16
  (h =dup_SX46orwardX4eode20X49shmn651tre8amq6m.0. +228) 24,16
- (h =copy_SX46orwardX4eode20X49shmn651tre8amq6m.0. +421) 24,16
- (h =sinkh_SX46orwardX4eode20X49shmn651tre8amq6m.0. +465) 24,16
- (h =trace_SX46orwardX4eode20X49shmn651tre8amq6m.0. +466) 24,16
+ (h =copy_SX46orwardX4eode20X49shmn651tre8amq6m.0. +422) 24,16
+ (h =sinkh_SX46orwardX4eode20X49shmn651tre8amq6m.0. +466) 24,16
+ (h =trace_SX46orwardX4eode20X49shmn651tre8amq6m.0. +467) 24,16
  (h =destroy_SX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +224) 24,16
  (h =wasmoved_SX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +374) 24,16
  (h =dup_SX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +443) 24,16
@@ -1434,11 +1434,11 @@
  (h =sinkh_SX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +586) 24,16
  (h =trace_SX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +589) 24,16
  (h =destroy_SX4eode0X49sesnzm1tre8amq6m.0. +456) 24,16
- (h =wasmoved_SX4eode0X49sesnzm1tre8amq6m.0. +499) 24,16
+ (h =wasmoved_SX4eode0X49sesnzm1tre8amq6m.0. +501) 24,16
  (h =dup_SX4eode0X49sesnzm1tre8amq6m.0. +212) 24,16
- (h =copy_SX4eode0X49sesnzm1tre8amq6m.0. +393) 24,16
- (h =sinkh_SX4eode0X49sesnzm1tre8amq6m.0. +434) 24,16
- (h =trace_SX4eode0X49sesnzm1tre8amq6m.0. +435) 24,16
+ (h =copy_SX4eode0X49sesnzm1tre8amq6m.0. +394) 24,16
+ (h =sinkh_SX4eode0X49sesnzm1tre8amq6m.0. +435) 24,16
+ (h =trace_SX4eode0X49sesnzm1tre8amq6m.0. +436) 24,16
  (h =destroy_SX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +208) 24,16
  (h =wasmoved_SX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +343) 24,16
  (h =dup_SX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +412) 24,16
@@ -1446,11 +1446,11 @@
  (h =sinkh_SX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +551) 24,16
  (h =trace_SX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +554) 24,16
  (h =destroy_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +425) 24,16
- (h =wasmoved_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +523) 24,16
+ (h =wasmoved_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +525) 24,16
  (h =dup_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +227) 24,16
- (h =copy_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +418) 24,16
- (h =sinkh_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +463) 24,16
- (h =trace_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +464) 24,16
+ (h =copy_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +419) 24,16
+ (h =sinkh_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +464) 24,16
+ (h =trace_SX46orwardX4eode10X49ee6hkd1tre8amq6m.0. +465) 24,16
  (h =destroy_SX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +223) 24,16
  (h =wasmoved_SX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +371) 24,16
  (h =dup_SX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +440) 24,16
@@ -1458,26 +1458,26 @@
  (h =sinkh_SX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +580) 24,16
  (h =trace_SX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +583) 24,16
  (h =destroy_ArefSX46ooX4fbj0tre8amq6m.0. +453) 24,16
- (h =wasmoved_ArefSX46ooX4fbj0tre8amq6m.0. +493) 24,16
+ (h =wasmoved_ArefSX46ooX4fbj0tre8amq6m.0. +495) 24,16
  (h =dup_ArefSX46ooX4fbj0tre8amq6m.0. +218) 24,16
- (h =copy_ArefSX46ooX4fbj0tre8amq6m.0. +410) 24,16
- (h =sinkh_ArefSX46ooX4fbj0tre8amq6m.0. +436) 24,16
- (h =trace_ArefSX46ooX4fbj0tre8amq6m.0. +437) 24,16
+ (h =copy_ArefSX46ooX4fbj0tre8amq6m.0. +411) 24,16
+ (h =sinkh_ArefSX46ooX4fbj0tre8amq6m.0. +437) 24,16
+ (h =trace_ArefSX46ooX4fbj0tre8amq6m.0. +438) 24,16
  (h =destroy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +214) 24,16
- (h =wasmoved_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +547) 24,16
+ (h =wasmoved_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +549) 24,16
  (h =dup_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +252) 24,16
- (h =copy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +472) 24,16
- (h =sinkh_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +504) 24,16
- (h =trace_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +505) 24,16
+ (h =copy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +473) 24,16
+ (h =sinkh_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +505) 24,16
+ (h =trace_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. +506) 24,16
  (h =destroy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +248) 24,16
- (h =wasmoved_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +524) 24,16
+ (h =wasmoved_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +526) 24,16
  (h =dup_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +238) 24,16
- (h =copy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +448) 24,16
- (h =sinkh_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +476) 24,16
- (h =trace_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +477) 24,16
+ (h =copy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +449) 24,16
+ (h =sinkh_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +477) 24,16
+ (h =trace_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. +478) 24,16
  (h =destroy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +234) 24,16
- (h =wasmoved_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +545) 24,16
+ (h =wasmoved_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +547) 24,16
  (h =dup_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +250) 24,16
- (h =copy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +466) 24,16
- (h =sinkh_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +500) 24,16
- (h =trace_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +501))
+ (h =copy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +467) 24,16
+ (h =sinkh_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +501) 24,16
+ (h =trace_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. +502))

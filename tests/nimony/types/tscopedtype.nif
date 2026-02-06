@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3450            )
+(.indexat +3455            )
 0,1,tests/nimony/types/tscopedtype.nim(stmts ,2
  (block . 2,1
   (stmts 6,1
@@ -43,7 +43,7 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 8,4
  (proc :=wasmoved_SX46oo0tsca4az8i1.0. . . .
@@ -69,7 +69,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 8,4
  (proc :=copy_SX46oo0tsca4az8i1.0. . . .
@@ -86,7 +86,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46ooX4fbj0tsca4az8i1.0. dest.0)
    (asgn dest.0 src.0))) 8,4
  (proc :=sinkh_SX46oo0tsca4az8i1.0. . . .
@@ -103,7 +103,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX46ooX4fbj0tsca4az8i1.0. dest.0)
    (asgn dest.0 src.0))) 8,4
  (proc :=trace_SX46oo0tsca4az8i1.0. . . .
@@ -124,7 +124,7 @@
   (stmts
    (asgn
     (dot
-     (deref dest.0) `vt.0 +1)
+     (deref dest.0) vt.00 +1)
     (call getRtti.0.sysvq0asl dest.0)))) 8,4
  (proc :=destroy_ArefSX46ooX4fbj0tsca4az8i1.0. . . .
   (params
@@ -141,16 +141,16 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call deallocFixed.0.sysvq0asl dest.0))))))))))0,1,tests/nimony/types/tscopedtype.nim(.index 8,4
  (h Foo.0. +112) 8,4
  (h Foo.Obj.0. +318) 8,4
  (h =destroy_SX46oo0tsca4az8i1.0. +587) 8,4
- (h =wasmoved_SX46oo0tsca4az8i1.0. +360) 8,4
+ (h =wasmoved_SX46oo0tsca4az8i1.0. +361) 8,4
  (h =dup_SX46oo0tsca4az8i1.0. +183) 8,4
- (h =copy_SX46oo0tsca4az8i1.0. +330) 8,4
- (h =sinkh_SX46oo0tsca4az8i1.0. +378) 8,4
- (h =trace_SX46oo0tsca4az8i1.0. +379) 8,4
+ (h =copy_SX46oo0tsca4az8i1.0. +331) 8,4
+ (h =sinkh_SX46oo0tsca4az8i1.0. +379) 8,4
+ (h =trace_SX46oo0tsca4az8i1.0. +380) 8,4
  (h =wasmoved_SX46ooX4fbj0tsca4az8i1.0. +179) 8,4
  (h =destroy_ArefSX46ooX4fbj0tsca4az8i1.0. +240))

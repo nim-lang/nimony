@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +8486            )
+(.indexat +8496            )
 0,1,tests/nimony/nosystem/tbinarytree.nim(stmts 5
  (type :int.0.
   (i -1) . 5
@@ -187,11 +187,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX4eodeX4fbj0tbimvo1d9.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 7,6
  (proc :=wasmoved_SX4eode0tbimvo1d9.0. . . .
   (params
@@ -216,7 +216,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 7,6
  (proc :=copy_SX4eode0tbimvo1d9.0. . . .
@@ -233,7 +233,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0tbimvo1d9.0. dest.0)
    (asgn dest.0 src.0))) 7,6
  (proc :=sinkh_SX4eode0tbimvo1d9.0. . . .
@@ -250,7 +250,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0tbimvo1d9.0. dest.0)
    (asgn dest.0 src.0))) 7,6
  (proc :=trace_SX4eode0tbimvo1d9.0. . . .
@@ -277,11 +277,11 @@
         (call arcDec.0.sysvq0asl
          (addr
           (dot
-           (deref dest.0) r.0 +0)))
+           (deref dest.0) r.00 +0)))
         (stmts
          (call =destroy_SX4eodeX4fbj0tbimvo1d9.0.
           (dot
-           (deref dest.0) d.0 +0))
+           (deref dest.0) d.00 +0))
          (call deallocFixed.0.sysvq0asl dest.0))))))))) 7,6
  (proc :=wasmoved_ArefSX4eodeX4fbj0tbimvo1d9.0. . . .
   (params
@@ -310,7 +310,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (asgn dest.0 src.0)
    (ret dest.0))) 7,6
  (proc :=copy_ArefSX4eodeX4fbj0tbimvo1d9.0. . . .
@@ -329,7 +329,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0tbimvo1d9.0. dest.0)
    (asgn dest.0 src.0))) 7,6
  (proc :=sinkh_ArefSX4eodeX4fbj0tbimvo1d9.0. . . .
@@ -348,7 +348,7 @@
       (call arcInc.0.sysvq0asl
        (addr
         (dot
-         (deref src.0) r.0 +0))))))
+         (deref src.0) r.00 +0))))))
    (call =destroy_ArefSX4eodeX4fbj0tbimvo1d9.0. dest.0)
    (asgn dest.0 src.0))) 7,6
  (proc :=trace_ArefSX4eodeX4fbj0tbimvo1d9.0. . . .
@@ -373,14 +373,14 @@
  (h =sinkh_SX4eodeX4fbj0tbimvo1d9.0. +499) 7,6
  (h =trace_SX4eodeX4fbj0tbimvo1d9.0. +502) 7,6
  (h =destroy_SX4eode0tbimvo1d9.0. +382) 7,6
- (h =wasmoved_SX4eode0tbimvo1d9.0. +461) 7,6
+ (h =wasmoved_SX4eode0tbimvo1d9.0. +463) 7,6
  (h =dup_SX4eode0tbimvo1d9.0. +184) 7,6
- (h =copy_SX4eode0tbimvo1d9.0. +333) 7,6
- (h =sinkh_SX4eode0tbimvo1d9.0. +380) 7,6
- (h =trace_SX4eode0tbimvo1d9.0. +381) 7,6
+ (h =copy_SX4eode0tbimvo1d9.0. +334) 7,6
+ (h =sinkh_SX4eode0tbimvo1d9.0. +381) 7,6
+ (h =trace_SX4eode0tbimvo1d9.0. +382) 7,6
  (h =destroy_ArefSX4eodeX4fbj0tbimvo1d9.0. +180) 7,6
- (h =wasmoved_ArefSX4eodeX4fbj0tbimvo1d9.0. +487) 7,6
+ (h =wasmoved_ArefSX4eodeX4fbj0tbimvo1d9.0. +489) 7,6
  (h =dup_ArefSX4eodeX4fbj0tbimvo1d9.0. +211) 7,6
- (h =copy_ArefSX4eodeX4fbj0tbimvo1d9.0. +391) 7,6
- (h =sinkh_ArefSX4eodeX4fbj0tbimvo1d9.0. +424) 7,6
- (h =trace_ArefSX4eodeX4fbj0tbimvo1d9.0. +425))
+ (h =copy_ArefSX4eodeX4fbj0tbimvo1d9.0. +392) 7,6
+ (h =sinkh_ArefSX4eodeX4fbj0tbimvo1d9.0. +425) 7,6
+ (h =trace_ArefSX4eodeX4fbj0tbimvo1d9.0. +426))
