@@ -18,9 +18,9 @@ import ".." / njvl / njvl_model
 import nimony_model, builtintypes, decls, programs, typeprops
 
 const
-  RcField* = "r.0"
-  DataField* = "d.0"
-  VTableField* = "`vt.0"
+  RcField* = "r.00"
+  DataField* = "d.00"
+  VTableField* = "vt.00"
   DisplayLenField* = "dl.0"
   DisplayField* = "dy.0"
   MethodsField* = "mt.0"
