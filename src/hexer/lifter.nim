@@ -14,7 +14,7 @@ to type `(T, T)`, etc.
 
 ]##
 
-import std/[assertions, tables]
+import std/[assertions, tables, strutils]
 
 include nifprelude
 import nifindexes, symparser, treemangler
@@ -51,6 +51,7 @@ type
     hookNames: Table[string, int]
     thisModuleSuffix: string
     bits*: int
+    frontendHooks*: ptr Table[SymId, HooksPerType] # hooks from frontend, not yet in type pragmas
 
 # Phase 1: Determine if the =hook is trivial:
 
@@ -69,7 +70,11 @@ proc isGenericHook(hookSym: SymId): bool =
 proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
   result = c.nominalTypeToHook[op].getOrDefault(s)
   if result == SymId(0):
-    result = tryLoadHook(op, s)
+    # Check frontend hooks first (for current module during derefs pass)
+    if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
+      result = c.frontendHooks[][s].a[op]
+    if result == SymId(0):
+      result = tryLoadHook(op, s)
     if result != SymId(0):
       # Filter out generic hooks - they need instantiation first
       if isGenericHook(result):
@@ -80,7 +85,11 @@ proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
   result = c.nominalTypeToHook[c.op].hasKey(s)
   if not result:
-    result = tryLoadHook(c.op, s) != SymId(0)
+    # Check frontend hooks first
+    if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
+      result = c.frontendHooks[][s].a[c.op] != SymId(0)
+    if not result:
+      result = tryLoadHook(c.op, s) != SymId(0)
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
@@ -172,7 +181,11 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
 
 # Phase 2: Do the lifting
 
-proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
+proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceStatic = false) =
+  # proccall wraps a call: (proccall (call fn args...))
+  # forceStatic=true generates static dispatch for parent hook calls
+  if forceStatic:
+    c.dest.addParLe ProccallX, c.info
   copyIntoKind c.dest, CallX, c.info:
     copyIntoSymUse c.dest, s, c.info
     case c.op
@@ -194,6 +207,8 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
     of attachedCopy, attachedTrace, attachedSink:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
+  if forceStatic:
+    c.dest.addParRi()
 
 proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
   case c.op
@@ -233,7 +248,8 @@ proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
       c.requests.add GenHookRequest(sym: result, typ: t, op: op)
       c.structuralTypeToHook[op][key] = result
 
-proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
+proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceStatic = false) =
+  ## forceStatic=true generates static dispatch for parent hook calls
   if s != NoSymId:
     let res = tryLoadSym(s)
     if res.status == LacksNothing:
@@ -243,9 +259,9 @@ proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
     if c.op == attachedDup:
       copyIntoKind c.dest, AsgnS, c.info:
         copyTree c.dest, paramA
-        genCallHook c, s, paramA, paramB
+        genCallHook c, s, paramA, paramB, forceStatic
     else:
-      genCallHook c, s, paramA, paramB
+      genCallHook c, s, paramA, paramB, forceStatic
 
 proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # Goal: We produce a call to some function. Maybe this function must be
@@ -366,6 +382,12 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
     else:
       error "illformed AST inside object: ", n
 
+proc baseobjOf(c: var LiftingCtx; typ: Cursor; x: TokenBuf): TokenBuf =
+  result = createTokenBuf(6)
+  copyIntoKind result, BaseobjX, c.info:
+    copyTree result, typ
+    result.add intToken(pool.integers.getOrIncl(+1), c.info)
+    copyTree result, x
 
 proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: int) =
   var n = n
@@ -378,7 +400,15 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
     var parent = n
     if parent.typeKind in {RefT, PtrT}:
       inc parent
-    unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
+    if c.op == attachedWasMoved:
+      # this ensures we don't touch the RTTI field and overwrite it
+      # with the wrong v-table pointer!
+      unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
+    else:
+      let fn = lift(c, parent)
+      # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
+      maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB), forceStatic = true
+
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB, depth
 
@@ -743,8 +773,8 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
   if c.dest.len > 0:
     dest.add c.dest
 
-proc createLiftingCtx*(thisModuleSuffix: string, bits: int): ref LiftingCtx =
-  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY)
+proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil): ref LiftingCtx =
+  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY, frontendHooks: frontendHooks)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
