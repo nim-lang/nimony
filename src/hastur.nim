@@ -29,6 +29,9 @@ Commands:
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
   test <file>/<dir>    run test <file> or <dir>.
+  bug [file]           build nimony+hexer and compile <file> to fill nimcache/.
+                       If no file is provided `bug.nim` is used.
+  rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
@@ -167,6 +170,46 @@ proc toCommand(cat: Category): string =
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
+
+const
+  HasturSessionFile = "hastur_session.txt"
+
+proc extractToolCmd(output: string): string =
+  result = ""
+  var i = 0
+  while i < output.len:
+    if output.continuesWith("nifmake: ", i):
+      inc i, len("nifmake: ")
+      var tool = ""
+      var skip = false
+      while i < output.len and output[i] != ' ':
+        if output[i] in {'\'', '/'}:
+          tool.setLen 0
+        elif output[i] == '.':
+          skip = true
+        else:
+          if not skip:
+            tool.add output[i]
+        inc i
+      if tool.len > 0:
+        result = "nim c -r src/" & tool & "/" & tool & ".nim "
+        while i < output.len and output[i] != '\n':
+          result.add output[i]
+          inc i
+        # the first `nifmake` line is of interest:
+        return result
+    else:
+      inc i
+
+proc loadSessionCmd(): string =
+  try:
+    result = readFile(HasturSessionFile).strip
+  except IOError:
+    result = ""
+
+proc saveSessionCmd(cmd: string) =
+  if cmd.len > 0:
+    writeFile(HasturSessionFile, cmd)
 
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
@@ -585,6 +628,36 @@ proc pullpush(cmd: string) =
     quit "FAILURE: " & output
   exec "git " & cmd & " origin " & output.strip()
 
+proc bugCmd(args: seq[string]; forward: string) =
+  if not fileExists("bin/nimony".addFileExt(ExeExt)):
+    buildNimsem()
+    buildNimony()
+    buildHexer()
+  var cmd = "c"
+  if forward.len != 0:
+    cmd.add ' '
+    cmd.add forward
+  for arg in items(args):
+    cmd.add ' '
+    cmd.add quoteShell(arg)
+  let (output, exitCode) = execLocal("nimony", cmd)
+  if exitCode != 0:
+    stdout.write("FAILURE " & cmd & "\n")
+    if output.len > 0:
+      stdout.write(output)
+    let toolCmd = extractToolCmd(output)
+    if toolCmd.len > 0:
+      saveSessionCmd(toolCmd)
+    quit 1
+  if output.len > 0:
+    stdout.write(output)
+
+proc repCmd() =
+  let cmd = loadSessionCmd()
+  if cmd.len == 0:
+    quit "no session to repeat"
+  exec cmd
+
 proc handleCmdLine =
   var primaryCmd = ""
   var args: seq[string] = @[]
@@ -708,6 +781,12 @@ proc handleCmdLine =
         test args[0], overwrite, findCategory(args[0]), forward
     else:
       quit "`test` takes an argument"
+  of "bug", "debug":
+    if args.len == 0:
+      args = @["bug.nim"]
+    bugCmd(args, forward)
+  of "rep":
+    repCmd()
   of "record":
     buildNimony()
     if args.len == 2:
