@@ -34,3 +34,8 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 - Reproduce with the smallest input file possible and use `nimcache/` diffs.
 - Use `hastur test <file>` or `hastur test <dir>` to validate a regression.
 - Many tests live in `tests/nimony/` and are a good source of minimal cases.
+- Use `hastur bug` and `hastur rep` for quick turnaround times during development.
+
+## Tests results overwrite
+
+Tests often include large amounts of produced NIF code. Use `hastur --overwrite` to overwrite all test results or `hastur --overwrite test ...` to overwrite a specific test case. The resulting diffs are always part of the code review process.
