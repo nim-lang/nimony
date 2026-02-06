@@ -399,6 +399,23 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
       tr c, dest, n
 
+proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  dest.takeToken n
+  takeTree dest, n # type
+  while n.kind != ParRi:
+    if n.substructureKind == KvU:
+      takeToken dest, n
+      takeTree dest, n # key
+      tr c, dest, n
+      if n.kind != ParRi:
+        # optional inheritance
+        takeTree dest, n
+      takeParRi dest, n
+    else:
+      # V-Table:
+      takeTree dest, n
+  takeParRi dest, n
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var nested = 0
   while true:
@@ -432,6 +449,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.add n
           inc n
           inc nested
+      of DotX:
+        dest.takeToken n
+        tr c, dest, n
+        while n.kind != ParRi:
+          dest.takeTree n
+        dest.takeParRi n
+      of OconstrX:
+        trObjConstr c, dest, n
       of FailedX:
         trFailed c, dest, n
       else:
