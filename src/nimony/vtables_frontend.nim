@@ -14,7 +14,7 @@ import std/assertions
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys
 import nimony_model, decls, programs, typenav,
-  renderer, sigmatch, semdata
+  renderer, sigmatch, semdata, typeprops
 
 when false:
   # maybe we can use this later to provide better error messages
@@ -41,7 +41,7 @@ when false:
     else:
       return false
 
-proc methodKey*(name: string; a: Cursor): string =
+proc methodKeyImpl(name: string; a: Cursor): string =
   # First parameter was the class type and has already been skipped here!
   var a = a
   var b = createMangler(60)
@@ -77,6 +77,17 @@ proc traceMethodKey*(): string =
   b.addKeyw "raisesUnknown"
   b.addKeyw "closureNo"
   result = "=trace:" & b.extract()
+
+proc methodKey*(methodName: string; paramRest: Cursor): string =
+  ## Compute the method signature key for vtable matching.
+  ## For =destroy and =trace hooks, uses canonical signatures to ensure proper override matching.
+  ## For other methods, mangles the params and return type.
+  if methodName == "=destroy":
+    result = destroyMethodKey()
+  elif methodName == "=trace":
+    result = traceMethodKey()
+  else:
+    result = methodKeyImpl(methodName, paramRest)
 
 proc loadVTable*(typ: SymId): seq[semdata.MethodIndexEntry] =
   ## Load vtable methods from the type's (methods (kv key symId) ...) pragma.

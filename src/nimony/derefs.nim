@@ -954,7 +954,9 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
     hooks: ensureMove(hooks),
     classes: ensureMove(classes),
-    lifter: createLiftingCtx(thisModuleSuffix, bits))
+    lifter: nil) # set below after hooks is moved
+  # Pass address of hooks to lifter so it can look up hooks from current module
+  c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks)
   c.typeCache.openScope()
   var n2 = n
   var n3 = n
