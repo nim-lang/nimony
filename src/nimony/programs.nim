@@ -271,12 +271,12 @@ proc hookName*(op: AttachedOp): string =
 
 proc hookToTag*(op: AttachedOp): TagId =
   case op
-  of attachedDestroy: TagId(DestroyIdx)
-  of attachedWasMoved: TagId(WasmovedIdx)
-  of attachedDup: TagId(DupIdx)
-  of attachedCopy: TagId(CopyIdx)
-  of attachedSink: TagId(SinkhIdx)
-  of attachedTrace: TagId(TraceIdx)
+  of attachedDestroy: TagId(DestroyH)
+  of attachedWasMoved: TagId(WasmovedH)
+  of attachedDup: TagId(DupH)
+  of attachedCopy: TagId(CopyH)
+  of attachedSink: TagId(SinkhH)
+  of attachedTrace: TagId(TraceH)
 
 proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
   result = SymId(0)
