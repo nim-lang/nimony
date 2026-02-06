@@ -185,6 +185,7 @@ proc extractToolCmd(output: string): string =
       while i < output.len and output[i] != ' ':
         if output[i] in {'\'', '/'}:
           tool.setLen 0
+          skip = false
         elif output[i] == '.':
           skip = true
         else:
