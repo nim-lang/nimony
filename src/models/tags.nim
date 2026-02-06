@@ -289,8 +289,6 @@ type
     AsmTagId
     DeferTagId
     IndexTagId
-    PublicTagId
-    PrivateTagId
     InjectTagId
     GensymTagId
     ErrorTagId
@@ -606,32 +604,30 @@ const
     ("asm", 284),
     ("defer", 285),
     ("index", 286),
-    ("public", 287),
-    ("private", 288),
-    ("inject", 289),
-    ("gensym", 290),
-    ("error", 291),
-    ("report", 292),
-    ("tags", 293),
-    ("deprecated", 294),
-    ("sideEffect", 295),
-    ("keepOverflowFlag", 296),
-    ("semantics", 297),
-    ("inheritable", 298),
-    ("base", 299),
-    ("pure", 300),
-    ("final", 301),
-    ("pragma", 302),
-    ("internalTypeName", 303),
-    ("internalFieldPairs", 304),
-    ("failed", 305),
-    ("is", 306),
-    ("envp", 307),
-    ("packed", 308),
-    ("passive", 309),
-    ("push", 310),
-    ("pop", 311),
-    ("passL", 312),
-    ("passC", 313),
-    ("methods", 314)
+    ("inject", 287),
+    ("gensym", 288),
+    ("error", 289),
+    ("report", 290),
+    ("tags", 291),
+    ("deprecated", 292),
+    ("sideEffect", 293),
+    ("keepOverflowFlag", 294),
+    ("semantics", 295),
+    ("inheritable", 296),
+    ("base", 297),
+    ("pure", 298),
+    ("final", 299),
+    ("pragma", 300),
+    ("internalTypeName", 301),
+    ("internalFieldPairs", 302),
+    ("failed", 303),
+    ("is", 304),
+    ("envp", 305),
+    ("packed", 306),
+    ("passive", 307),
+    ("push", 308),
+    ("pop", 309),
+    ("passL", 310),
+    ("passC", 311),
+    ("methods", 312)
   ]

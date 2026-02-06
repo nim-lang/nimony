@@ -272,12 +272,12 @@
 | `(inset T X X)` | NimonyExpr | |
 | `(card T X)` | NimonyExpr | |
 | `(emove X)` | NimonyExpr | |
-| `(destroy X)` | NimonyExpr, NifIndexKind, HookKind | |
-| `(dup X)` | NimonyExpr, NifIndexKind, HookKind| |
-| `(copy X X)` | NimonyExpr, NifIndexKind, HookKind | |
-| `(wasmoved X)` | NimonyExpr, NifIndexKind, HookKind | |
-| `(sinkh X X)` | NimonyExpr, NifIndexKind, HookKind | |
-| `(trace X X)` | NimonyExpr, NifIndexKind, HookKind | |
+| `(destroy X)` | NimonyExpr, HookKind | |
+| `(dup X)` | NimonyExpr, HookKind| |
+| `(copy X X)` | NimonyExpr, HookKind | |
+| `(wasmoved X)` | NimonyExpr, HookKind | |
+| `(sinkh X X)` | NimonyExpr, HookKind | |
+| `(trace X X)` | NimonyExpr, HookKind | |
 | `(errv)` | NifcExpr | error flag for `NIFC` |
 | `(staticstmt S)` | NimonyStmt, NiflerKind | `static` statement |
 | `(bind Y+)` | NimonyStmt, NiflerKind | `bind` statement |
@@ -285,9 +285,7 @@
 | `(using (params...)+)` | NimonyStmt, NiflerKind | `using` statement |
 | `(asm X+)` | NimonyStmt, NiflerKind | `asm` statement |
 | `(defer X)` | NimonyStmt, NiflerKind | `defer` statement |
-| `(index (public ...) (private ...) (hooks ...) (converter ...) (method ...) (build ...))` | NifIndexKind | index section |
-| `(public (kv Y INTLIT*)` | NifIndexKind | public section |
-| `(private (kv Y INTLIT*))` | NifIndexKind | private section |
+| `(index (build ...))` | NifIndexKind | index section |
 | `(inject)` | NimonyPragma | `inject` pragma |
 | `(gensym)` | NimonyPragma | `gensym` pragma |
 | `(error X?)` | NimonyPragma | `error` pragma |

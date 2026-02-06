@@ -83,8 +83,7 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           else:
             skip n
         skipToEnd n
-      of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, IndexIdx, PublicIdx, PrivateIdx,
-         DestroyIdx, DupIdx, CopyIdx, WasmovedIdx, SinkhIdx, TraceIdx,
+      of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, IndexIdx,
          ExportIdx, FromexportIdx, ExportexceptIdx:
         inc n
         inc nested
