@@ -29,6 +29,7 @@ Commands:
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
   test <file>/<dir>    run test <file> or <dir>.
+  debug <file>         build nimony+hexer and compile <file> to fill nimcache/.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
@@ -585,6 +586,22 @@ proc pullpush(cmd: string) =
     quit "FAILURE: " & output
   exec "git " & cmd & " origin " & output.strip()
 
+proc debugCmd(args: seq[string]; forward: string) =
+  if args.len == 0:
+    quit "`debug` takes an argument"
+  if not fileExists("bin/nimony".addFileExt(ExeExt)):
+    buildNimsem()
+    buildNimony()
+    buildHexer()
+  var cmd = "c"
+  if forward.len != 0:
+    cmd.add ' '
+    cmd.add forward
+  for arg in items(args):
+    cmd.add ' '
+    cmd.add quoteShell(arg)
+  exec "nimony", cmd
+
 proc handleCmdLine =
   var primaryCmd = ""
   var args: seq[string] = @[]
@@ -708,6 +725,8 @@ proc handleCmdLine =
         test args[0], overwrite, findCategory(args[0]), forward
     else:
       quit "`test` takes an argument"
+  of "debug":
+    debugCmd(args, forward)
   of "record":
     buildNimony()
     if args.len == 2:
