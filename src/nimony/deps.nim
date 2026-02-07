@@ -24,7 +24,8 @@ include nifprelude
 
 type
   FilePair = object
-    nimFile: string
+    nimFile: string # can now also be a .nif file. This is used for the eval feature where Nimony
+                    # calls itself for an extracted code snippet that must run at compile time.
     modname: string
 
 proc indexFile(config: NifConfig; f: FilePair; bundle: string): string =
@@ -281,6 +282,9 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
       processDep c, n, current
 
 proc execNifler(c: var DepContext; f: FilePair) =
+  # File can be a .nif file, if so, we don't need to run nifler.
+  if f.nimFile.endsWith(".nif"):
+    return
   let output = c.config.parsedFile(f)
   let depsFile = c.config.depsFile(f)
   if not c.forceRebuild and semos.fileExists(output) and
@@ -614,6 +618,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         let f = c.config.parsedFile(v.files[i])
         if not seenFiles.containsOrIncl(f):
           let nimFile = v.files[i].nimFile
+          if nimFile.endsWith(".nif"):
+            continue
           b.withTree "do":
             b.addIdent "nifler"
             b.withTree "input":
@@ -824,26 +830,6 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
     " -j run " & quoteShell(buildFile)
   exec(nifmakeCmd)
   exec(exeFile)
-
-proc buildGraphFromParsedNif*(config: sink NifConfig; parsedNifFile: string; forceRebuild, silentMake: bool;
-    commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
-    passC, passL: string, executableArgs: string) =
-  ## Build graph starting from a .p.nif file (parsed NIF) instead of .nim source.
-  ## This runs the full pipeline: nimsem -> hexer -> nifc -> cc -> link
-  let nifmake = findTool("nifmake")
-  let mainName = splitModulePath(parsedNifFile).name
-  let semmedFile = config.nifcachePath / mainName & ".s.nif"
-
-  # First run nimsem on the .p.nif file
-  let nimonyExe = findTool("nimsem")
-  var semCmd = quoteShell(nimonyExe) & " m"
-  if IsMain in moduleFlags:
-    semCmd &= " --isMain"
-  semCmd &= " " & commandLineArgs & " " & quoteShell(parsedNifFile)
-  exec semCmd
-
-  # Now run the backend pipeline using buildGraphForEval with the semchecked file
-  buildGraphForEval(config, semmedFile, @[], forceRebuild, silentMake, moduleFlags)
 
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;

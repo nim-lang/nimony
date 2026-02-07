@@ -366,7 +366,7 @@ proc prepareEval*(c: var SemContext): string =
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
   #echo "HEREES ", toString(src, false)
-  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".px.nif")
+  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
   writeFileAndIndex(progfile, src)
 
   let (output, exitCode) = runProgram(progfile, usedModules)

@@ -275,8 +275,8 @@ proc compileProgram(c: var CmdOptions) =
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
   of SemCheckNif:
     createDir(c.config.nifcachePath)
-    # compile a .p.nif file through the full pipeline
-    buildGraphFromParsedNif c.config, c.args[0], c.forceRebuild, c.silentMake,
+    # compile full project modules
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
 
