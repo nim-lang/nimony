@@ -72,6 +72,7 @@ type
   SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
+  ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
 
   MethodIndexEntry* = object
     fn*: SymId
@@ -134,6 +135,7 @@ type
     executeCall*: SemExecutor
     semStmtCallback*: SemStmtCallback
     semGetSize*: SemGetSize
+    forceInstantiate*: ForceInstantiate
     passL*: seq[string]
     passC*: seq[string]
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places

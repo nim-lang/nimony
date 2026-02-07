@@ -24,7 +24,8 @@ include nifprelude
 
 type
   FilePair = object
-    nimFile: string
+    nimFile: string # can now also be a .nif file. This is used for the eval feature where Nimony
+                    # calls itself for an extracted code snippet that must run at compile time.
     modname: string
 
 proc indexFile(config: NifConfig; f: FilePair; bundle: string): string =
@@ -281,6 +282,9 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
       processDep c, n, current
 
 proc execNifler(c: var DepContext; f: FilePair) =
+  # File can be a .nif file, if so, we don't need to run nifler.
+  if f.nimFile.endsWith(".nif"):
+    return
   let output = c.config.parsedFile(f)
   let depsFile = c.config.depsFile(f)
   if not c.forceRebuild and semos.fileExists(output) and
@@ -614,6 +618,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         let f = c.config.parsedFile(v.files[i])
         if not seenFiles.containsOrIncl(f):
           let nimFile = v.files[i].nimFile
+          if nimFile.endsWith(".nif"):
+            continue
           b.withTree "do":
             b.addIdent "nifler"
             b.withTree "input":

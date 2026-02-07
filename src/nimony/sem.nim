@@ -685,6 +685,10 @@ proc semStmtCallback(c: var SemContext; dest: var TokenBuf; n: Cursor) =
   semStmt c, dest, n, false
   c.phase = oldPhase
 
+proc forceInstantiateCallback(c: var SemContext; dest: var TokenBuf) =
+  ## Force instantiation of pending generic procs. Used by exprexec to ensure
+  ## generic bodies are available before compile-time evaluation.
+  instantiateGenerics(c, dest)
 
 proc semGetSize(c: var SemContext; n: Cursor; strict=false): xint =
   getSize(n, c.g.config.bits div 8, strict)
@@ -5583,7 +5587,8 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     pending: createTokenBuf(),
     executeCall: exprexec.executeCall,
     semStmtCallback: semStmtCallback,
-    semGetSize: semGetSize)
+    semGetSize: semGetSize,
+    forceInstantiate: forceInstantiateCallback)
 
   var dest = createTokenBuf()
 
