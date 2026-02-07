@@ -22,14 +22,15 @@ In order to not be too annoying in the case of a contract violation, the
 compiler emits a warning (that can be suppressed or turned into an error).
 ]##
 
-import std / [assertions, tables, sets]
+import std / [assertions, tables, sets, strutils]
 
 include nifprelude
 
 import ".." / models / tags
+import ".." / lib / symparser
 import ".." / njvl / [njvl_model, vl]
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-       renderer, typeprops, inferle, xints
+  renderer, typeprops, inferle, xints
 
 type
   NjvlContext = object
@@ -661,6 +662,7 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
 
 proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   let kind = n.symKind
+  let isParamDecl = kind == ParamY or n.substructureKind == ParamU
   inc n
   let name = n.symId
   skip n # name
@@ -669,7 +671,11 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   skip n # pragmas
   c.typeCache.registerLocal(name, cast[SymKind](kind), n)
   skip n # type
-  if n.kind != DotToken or skipInitCheck:
+  if isParamDecl:
+    c.paramBaseNames.incl baseParamName(pool.syms[name])
+  elif isXelimTemp(pool.syms[name], c.moduleSuffix):
+    c.directlyInitialized.incl name
+  if isParamDecl or n.kind != DotToken or skipInitCheck:
     c.directlyInitialized.incl name
   traverseExpr c, n
   skipParRi n
@@ -723,6 +729,18 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
     else:
       error "contract violation: ", orig
   skipParRi n
+
+proc registerProcParams(c: var NjvlContext; decl: Cursor) =
+  let r = asRoutine(decl, SkipExclBody)
+  c.typeCache.registerParams(r.name.symId, decl, r.params)
+  var p = r.params
+  if p.kind == ParLe:
+    inc p
+    while p.kind != ParRi:
+      let param = takeLocal(p, SkipFinalParRi)
+      c.paramBaseNames.incl baseParamName(pool.syms[param.name.symId])
+      if param.typ.typeKind != OutT:
+        c.directlyInitialized.incl param.name.symId
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   case n.njvlKind
@@ -838,7 +856,12 @@ proc traverseProc(c: var NjvlContext; n: Cursor) =
   var n = n
   c.facts = createFacts()
   c.procCanRaise = false
+  c.directlyInitialized.clear()
+  c.writesTo.setLen(0)
+  c.paramBaseNames.clear()
   c.typeCache.openScope()
+
+  registerProcParams(c, n)
 
   var body = n
   if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
