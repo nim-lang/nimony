@@ -343,10 +343,9 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
     close s
 
 proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
-  let nimonyExe = findTool("nimsem")
-  var cmd = quoteShell(nimonyExe) & " e " & quoteShell(file)
-  for module in usedModules:
-    cmd &= " " & quoteShell(module)
+  # Use nimony s to compile and run the .p.nif file through the full pipeline
+  let nimonyExe = findTool("nimony")
+  var cmd = quoteShell(nimonyExe) & " s -r " & quoteShell(file)
   result = execCmdEx(cmd)
 
 const
@@ -367,7 +366,7 @@ proc prepareEval*(c: var SemContext): string =
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
   #echo "HEREES ", toString(src, false)
-  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".2.nif")
+  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".px.nif")
   writeFileAndIndex(progfile, src)
 
   let (output, exitCode) = runProgram(progfile, usedModules)

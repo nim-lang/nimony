@@ -825,6 +825,26 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   exec(nifmakeCmd)
   exec(exeFile)
 
+proc buildGraphFromParsedNif*(config: sink NifConfig; parsedNifFile: string; forceRebuild, silentMake: bool;
+    commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
+    passC, passL: string, executableArgs: string) =
+  ## Build graph starting from a .p.nif file (parsed NIF) instead of .nim source.
+  ## This runs the full pipeline: nimsem -> hexer -> nifc -> cc -> link
+  let nifmake = findTool("nifmake")
+  let mainName = splitModulePath(parsedNifFile).name
+  let semmedFile = config.nifcachePath / mainName & ".s.nif"
+
+  # First run nimsem on the .p.nif file
+  let nimonyExe = findTool("nimsem")
+  var semCmd = quoteShell(nimonyExe) & " m"
+  if IsMain in moduleFlags:
+    semCmd &= " --isMain"
+  semCmd &= " " & commandLineArgs & " " & quoteShell(parsedNifFile)
+  exec semCmd
+
+  # Now run the backend pipeline using buildGraphForEval with the semchecked file
+  buildGraphForEval(config, semmedFile, @[], forceRebuild, silentMake, moduleFlags)
+
 proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string, executableArgs: string) =

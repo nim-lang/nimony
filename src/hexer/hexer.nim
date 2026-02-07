@@ -18,7 +18,7 @@ multiple different steps.
 - Iterator inlining.
 - Lambda lifting.
 - Inject dups.
-- Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct).
+- Lower control flow expressions to control flow statements (eliminate the expr/nkStmtListExpr construct).
 - Inject destructors.
 - Map builtins like `new` and `+` to "compiler procs".
 - Translate exception handling.
