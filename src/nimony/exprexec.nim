@@ -10,6 +10,7 @@ include nifprelude
 import ".." / lib / nifchecksums
 from std / os import `/`
 import std / [assertions, sets, tables]
+import ".." / models / tags
 import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops,
   typenav, typekeys, expreval, semos, derefs
 
@@ -72,14 +73,48 @@ proc collectSyms(n: Cursor; stack: var seq[SymId]) =
 
 proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   ## Convert all Symbols and SymbolDefs to Idents so that the semchecker can resolve them fresh.
+  ## Also eliminates choice nodes (ochoice, cchoice) by turning them back to idents.
   ## This allows the compiled code to go through the full nimony pipeline.
-  for i in 0 ..< c.dest.len:
-    if c.dest[i].kind in {Symbol, SymbolDef}:
-      let sym = c.dest[i].symId
+  var newDest = createTokenBuf(c.dest.len)
+  var n = beginRead(c.dest)
+  var nested = 0
+  while true:
+    case n.kind
+    of Symbol, SymbolDef:
+      let sym = n.symId
       var name = pool.syms[sym]
-      extractBasename name  # Get just the identifier part (e.g., "inc" from "inc.0.sysvq0asl")
+      extractBasename name
       let identId = pool.strings.getOrIncl(name)
-      c.dest[i] = identToken(identId, c.dest[i].info)
+      newDest.add identToken(identId, n.info)
+      inc n
+    of ParLe:
+      if n.exprKind in {OchoiceX, CchoiceX}:
+        inc n
+        if n.kind == Symbol:
+          let sym = n.symId
+          var name = pool.syms[sym]
+          extractBasename name
+          let identId = pool.strings.getOrIncl(name)
+          newDest.add identToken(identId, n.info)
+          skipToEnd(n)
+        else:
+          newDest.add n
+          inc nested
+          inc n
+      else:
+        newDest.add n
+        inc nested
+        inc n
+    of ParRi:
+      newDest.add n
+      dec nested
+      if nested == 0: break
+      inc n
+    else:
+      newDest.add n
+      inc n
+  endRead(c.dest)
+  c.dest = ensureMove newDest
 
 proc isGenericInstance(decl: Cursor): bool =
   ## Check if a routine declaration is a generic instance (has InvokeT in typevars)
@@ -530,9 +565,9 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
       c.dest.addIdent "std", info
       c.dest.addIdent "writenif", info
 
-  # Add import for the current module so that local symbols are available
-  c.dest.copyIntoKind ImportS, info:
-    c.dest.addStrLit s.g.config.nifcachePath / s.thisModuleSuffix, info
+  # Note: we don't import the current module here because rewriteSymsToIdents
+  # converts all symbols to identifiers, which will be resolved fresh by the semchecker.
+  # System is auto-imported, and std/syncio is added via the deps file.
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
