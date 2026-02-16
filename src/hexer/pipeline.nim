@@ -56,6 +56,11 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("lambdalift")
   elimLambdas(pass)
 
+  # Pass 6: Inject Raising Calls (Exception Handling)
+  pass.prepareForNext("eraiser")
+  var needsXelimIgnored = false
+  injectRaisingCalls(pass, c.bits div 8, needsXelimIgnored)
+
   # Pass 4: Lower Expressions (first time)
   pass.prepareForNext("xelim1")
   lowerExprs(pass)
@@ -64,10 +69,6 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("duplifier")
   injectDups(pass, c.liftingCtx)
 
-  # Pass 6: Inject Raising Calls (Exception Handling)
-  pass.prepareForNext("eraiser")
-  var needsXelimIgnored = false
-  injectRaisingCalls(pass, c.bits div 8, needsXelimIgnored)
 
   # Pass 7: Lower Expressions (second time, after raises)
   pass.prepareForNext("xelim2")
