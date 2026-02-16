@@ -138,6 +138,7 @@ type
     forceInstantiate*: ForceInstantiate
     passL*: seq[string]
     passC*: seq[string]
+    importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
     forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
