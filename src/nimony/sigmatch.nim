@@ -721,7 +721,7 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
 
-proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
+proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
   let fbase = skipTypeInstSym(fsym)
   var diff = 1
   var objbody = objtypeImpl(asym)

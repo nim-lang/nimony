@@ -14,7 +14,7 @@ import std/assertions
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys
 import nimony_model, decls, programs, typenav,
-  renderer, sigmatch, semdata, typeprops
+  renderer, sigmatch, semdata, typeprops, builtintypes
 
 when false:
   # maybe we can use this later to provide better error messages
