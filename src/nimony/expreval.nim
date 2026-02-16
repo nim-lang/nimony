@@ -9,7 +9,7 @@
 import std / assertions
 
 include ".." / lib / nifprelude
-import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops
+import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops, langmodes
 
 type
   EvalContext* = object

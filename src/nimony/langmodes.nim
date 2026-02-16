@@ -11,6 +11,9 @@ type
     BoundCheck
     RangeCheck
 
+  ModuleFlag* = enum
+    IsSystem, IsMain, SkipSystem
+
 const
   DefaultSettings* = {BoundCheck, RangeCheck}
 

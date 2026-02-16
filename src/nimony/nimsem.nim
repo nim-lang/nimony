@@ -12,7 +12,7 @@ import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen, programs, symparser
-import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs, idetools
+import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs, idetools, cli, langmodes
 
 const
   Version = "0.2"
@@ -82,27 +82,6 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
     moduleFlags = {}
   )
 
-proc parseTrack(s: string; mode: TrackMode): TrackPosition =
-  # --------------------------------------------------------------------------
-  # Format:  file,line,col
-  # --------------------------------------------------------------------------
-  var i = 0
-  var line = 0'i32
-  var col = 0'i32
-  while i < s.len and s[i] != ',':
-    inc i
-  let filenameEnd = i
-  if i < s.len and s[i] == ',': inc i
-
-  while i < s.len and s[i] in {'0'..'9'}:
-    line = line * 10'i32 + (ord(s[i]) - ord('0')).int32
-    inc i
-  if i < s.len and s[i] == ',': inc i
-  while i < s.len and s[i] in {'0'..'9'}:
-    col = col * 10'i32 + (ord(s[i]) - ord('0')).int32
-    inc i
-  result = TrackPosition(mode: mode, line: line, col: col, filename: s.substr(0, filenameEnd-1))
-
 proc handleCmdLine() =
   var args: seq[string] = @[]
   var cmd = Command.None
@@ -130,65 +109,14 @@ proc handleCmdLine() =
 
     of cmdLongOption, cmdShortOption:
       var forwardArg = true
-      case normalize(key)
-      of "base": config.baseDir = val
-      of "help", "h": writeHelp()
-      of "version", "v": writeVersion()
-      of "forcebuild", "f", "ff": forceRebuild = true
-      of "compat": config.compat = true
-      of "path", "p": config.paths.add val
-      of "define", "d": config.defines.incl val
-      of "nosystem": moduleFlags.incl SkipSystem
-      of "issystem":
-        moduleFlags.incl IsSystem
-        forwardArg = false
-      of "ismain":
-        moduleFlags.incl IsMain
-        forwardArg = false
-      of "bits":
-        case val
-        of "64": config.bits = 64
-        of "32": config.bits = 32
-        of "16": config.bits = 16
-        else: quit "invalid value for --bits"
-      of "cpu":
-        if not config.setTargetCPU(val):
-          quit "unknown CPU: " & val
-      of "os":
-        if not config.setTargetOS(val):
-          quit "unknown OS: " & val
-      of "app":
-        case normalize(val)
-        of "console":
-          config.appType = appConsole
-        of "gui":
-          config.appType = appGui
-        of "lib":
-          config.appType = appLib
-        of "staticlib":
-          config.appType = appStaticLib
-        else:
-          quit "invalid value for --app; expected console, gui, lib, or staticlib"
-      of "flags":
-        discard "nothing to do here yet, but forward these"
-      of "cc":
-        config.cc = val
-        config.ccKey = extractCCKey(val)
-      of "linker":
-        config.linker = val
-      of "nimcache":
-        config.nifcachePath = val
-      of "usages":
-        if config.toTrack.mode == TrackNone:
-          config.toTrack = parseTrack(val, TrackUsages)
-        else:
-          quit "only one --usages or --def can be used"
-      of "def":
-        if config.toTrack.mode == TrackNone:
-          config.toTrack = parseTrack(val, TrackDef)
-        else:
-          quit "only one --usages or --def can be used"
-      else: writeHelp()
+      var forwardArgNifc = false  # nimsem doesn't use this, but needed for parseCommonOption
+      if parseCommonOption(key, val, config, moduleFlags, forwardArg, forwardArgNifc,
+                          helpMsg = Usage, versionMsg = Version & "\n"):
+        discard "handled by common CLI parser"
+      else:
+        case normalize(key)
+        of "forcebuild", "f", "ff": forceRebuild = true
+        else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key
         if val.len > 0:
