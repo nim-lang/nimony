@@ -24,7 +24,8 @@ include nifprelude
 
 type
   FilePair = object
-    nimFile: string
+    nimFile: string # can now also be a .nif file. This is used for the eval feature where Nimony
+                    # calls itself for an extracted code snippet that must run at compile time.
     modname: string
 
 proc indexFile(config: NifConfig; f: FilePair; bundle: string): string =
@@ -86,7 +87,12 @@ type
     passC: seq[string]
 
 proc toPair(c: DepContext; f: string): FilePair =
-  FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
+  if f.endsWith(".nif"):
+    # For .p.nif files (e.g. from compile-time eval snippets), extract the
+    # module suffix directly from the filename rather than recomputing it:
+    FilePair(nimFile: f, modname: extractModuleSuffix(f))
+  else:
+    FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node)
@@ -281,6 +287,9 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
       processDep c, n, current
 
 proc execNifler(c: var DepContext; f: FilePair) =
+  # File can be a .nif file, if so, we don't need to run nifler.
+  if f.nimFile.endsWith(".nif"):
+    return
   let output = c.config.parsedFile(f)
   let depsFile = c.config.depsFile(f)
   if not c.forceRebuild and semos.fileExists(output) and
@@ -614,6 +623,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         let f = c.config.parsedFile(v.files[i])
         if not seenFiles.containsOrIncl(f):
           let nimFile = v.files[i].nimFile
+          if nimFile.endsWith(".nif"):
+            continue
           b.withTree "do":
             b.addIdent "nifler"
             b.withTree "input":

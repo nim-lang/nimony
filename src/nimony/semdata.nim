@@ -72,6 +72,7 @@ type
   SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
+  ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
 
   MethodIndexEntry* = object
     fn*: SymId
@@ -134,8 +135,10 @@ type
     executeCall*: SemExecutor
     semStmtCallback*: SemStmtCallback
     semGetSize*: SemGetSize
+    forceInstantiate*: ForceInstantiate
     passL*: seq[string]
     passC*: seq[string]
+    importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
     forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name

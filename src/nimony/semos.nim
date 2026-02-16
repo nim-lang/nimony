@@ -343,10 +343,9 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
     close s
 
 proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
-  let nimonyExe = findTool("nimsem")
-  var cmd = quoteShell(nimonyExe) & " e " & quoteShell(file)
-  for module in usedModules:
-    cmd &= " " & quoteShell(module)
+  # Use nimony s to compile and run the .p.nif file through the full pipeline
+  let nimonyExe = findTool("nimony")
+  var cmd = quoteShell(nimonyExe) & " s -r " & quoteShell(file)
   result = execCmdEx(cmd)
 
 const
@@ -366,9 +365,17 @@ proc prepareEval*(c: var SemContext): string =
 
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
-  #echo "HEREES ", toString(src, false)
-  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".2.nif")
+  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
   writeFileAndIndex(progfile, src)
+
+  # Write the .p.deps.nif file so that `nimony s` can find the imports:
+  if c.importSnippets.len > 0:
+    var deps = createTokenBuf(c.importSnippets.len + 4)
+    deps.addParLe StmtsS, NoLineInfo
+    deps.add c.importSnippets
+    deps.addParRi()
+    let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
+    writeFile deps, depsFile
 
   let (output, exitCode) = runProgram(progfile, usedModules)
   if exitCode != 0:

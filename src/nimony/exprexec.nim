@@ -10,6 +10,7 @@ include nifprelude
 import ".." / lib / nifchecksums
 from std / os import `/`
 import std / [assertions, sets, tables]
+import ".." / models / tags
 import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops,
   typenav, typekeys, expreval, semos, derefs
 
@@ -70,15 +71,55 @@ proc collectSyms(n: Cursor; stack: var seq[SymId]) =
       else: discard
       inc n
 
-proc rewriteSyms*(c: var SynthesizeSerializerCtx) =
-  for i in 0 ..< c.dest.len:
-    if c.dest[i].kind in {Symbol, SymbolDef}:
-      let m = splitSymName(pool.syms[c.dest[i].symId])
-      if m.module == c.thisModuleSuffix:
-        let newSym = pool.syms.getOrIncl(m.name & "." & c.newModuleSuffix)
-        c.dest[i].setSymId newSym
+proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
+  ## Convert all Symbols and SymbolDefs to Idents so that the semchecker can resolve them fresh.
+  ## Also eliminates choice nodes (ochoice, cchoice) by turning them back to idents.
+  ## This allows the compiled code to go through the full nimony pipeline.
+  var newDest = createTokenBuf(c.dest.len)
+  var n = beginRead(c.dest)
+  var nested = 0
+  while true:
+    case n.kind
+    of Symbol, SymbolDef:
+      let sym = n.symId
+      var name = pool.syms[sym]
+      extractBasename name
+      let identId = pool.strings.getOrIncl(name)
+      newDest.add identToken(identId, n.info)
+      inc n
+    of ParLe:
+      if n.exprKind in {OchoiceX, CchoiceX}:
+        inc n
+        if n.kind == Symbol:
+          let sym = n.symId
+          var name = pool.syms[sym]
+          extractBasename name
+          let identId = pool.strings.getOrIncl(name)
+          newDest.add identToken(identId, n.info)
+          skipToEnd(n)
+        else:
+          newDest.add n
+          inc nested
+          inc n
+      else:
+        newDest.add n
+        inc nested
+        inc n
+    of ParRi:
+      newDest.add n
+      dec nested
+      if nested == 0: break
+      inc n
+    else:
+      newDest.add n
+      inc n
+  endRead(c.dest)
+  c.dest = ensureMove newDest
 
 proc collectUsedSyms(c: var SynthesizeSerializerCtx; s: var SemContext; routine: Routine) =
+  ## Collect all symbols used by the routine and add their declarations to dest.
+  ## Since we'll convert all symbols to identifiers, the semchecker will resolve them fresh.
+  ## We don't call semStmtCallback here - just copy the declarations as-is.
   var stack = newSeq[SymId]()
   var handledSyms = initHashSet[SymId]()
   stack.add routine.name.symId
@@ -93,13 +134,11 @@ proc collectUsedSyms(c: var SynthesizeSerializerCtx; s: var SemContext; routine:
         let res = tryLoadSym(sym)
         if res.status == LacksNothing:
           let before = c.dest.len
-          # we need to copy res.decl here as it aliases prog.mem which the semchecker will overwrite nilly-willy!
-          var newDecl = createTokenBuf(50)
-          newDecl.addSubtree res.decl
-          s.semStmtCallback(s, c.dest, cursorAt(newDecl, 0))
+          # Just copy the declaration as-is - don't re-semcheck it.
+          # The full nimony pipeline will handle semchecking after we convert symbols to idents.
+          c.dest.addSubtree res.decl
           collectSyms(cursorAt(c.dest, before), stack)
           endRead(c.dest)
-          #dest.addSubtreeAndSyms res.decl, stack
       elif owner.len > 0:
         c.usedModules.incl(s.g.config.nifcachePath / owner)
 
@@ -492,6 +531,21 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
 
   c.dest.addParLe StmtsS, info
 
+  # Add import for std/writenif so that setup, teardown, writeNifInt, etc. are available
+  c.dest.copyIntoKind ImportS, info:
+    c.dest.copyIntoKind InfixX, info:
+      c.dest.addIdent "/", info
+      c.dest.addIdent "std", info
+      c.dest.addIdent "writenif", info
+
+  # Add all imports from the original module so that identifiers are resolvable:
+  if s.importSnippets.len > 0:
+    var cur = beginRead(s.importSnippets)
+    for i in 0 ..< s.importSnippets.len:
+      c.dest.add cur.load
+      inc cur
+    endRead(s.importSnippets)
+
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
     c.dest.addStrLit s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif", info
@@ -513,20 +567,7 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
       # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
       entryPoint(c, retType, call)
 
-  let toDeref = cursorAt(c.dest, beforeUsercode)
-  #echo "synthesized ", toString(toDeref)
-  let typeHooksCopy = s.typeHooks
-  var emptyClasses = default semdata.Classes
-  let withDerefs = injectDerefs(toDeref, typeHooksCopy, emptyClasses, s.thisModuleSuffix, s.g.config.bits)
-  endRead(c.dest)
-  c.dest.shrink beforeUsercode
-  # do not copy the `(stmts)` here:
-  assert withDerefs.len >= 2
-  assert withDerefs[0].kind == ParLe
-  assert withDerefs[withDerefs.len-1].kind == ParRi
-  for i in 1..<withDerefs.len-1:
-    c.dest.add withDerefs[i]
-
+  # Skip injectDerefs - the full nimony pipeline will handle it after semcheck
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
 
@@ -535,7 +576,7 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   genMissingProcs c
   c.dest.addParRi() # StmtsS
 
-  rewriteSyms c
+  rewriteSymsToIdents c
 
   if c.errorMsg.len > 0:
     result = ensureMove c.errorMsg

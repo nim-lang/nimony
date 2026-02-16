@@ -75,7 +75,7 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
 
 type
   Command = enum
-    None, SingleModule, FullProject, CheckProject
+    None, SingleModule, FullProject, CheckProject, SemCheckNif
 
 proc dispatchBasicCommand(key: string): Command =
   case key.normalize:
@@ -85,6 +85,8 @@ proc dispatchBasicCommand(key: string): Command =
     FullProject
   of "check":
     CheckProject
+  of "s":
+    SemCheckNif
   else:
     quit "command expected"
 
@@ -271,6 +273,12 @@ proc compileProgram(c: var CmdOptions) =
     # check full project modules
     buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
+  of SemCheckNif:
+    createDir(c.config.nifcachePath)
+    # compile full project modules
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
+      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
+      c.passC, c.passL, c.executableArgs
 
 when isMainModule:
   var c = createCmdOptions(determineBaseDir())
