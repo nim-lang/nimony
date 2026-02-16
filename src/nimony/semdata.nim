@@ -21,6 +21,7 @@ type
     inGeneric*, inLoop*, inBlock*, inInst*: int
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
+    raisesType*: TypeCursor  # Type from .raises pragma (e.g., ErrorCode, MyError)
     resId*: SymId
     parent*: SemRoutine
 
