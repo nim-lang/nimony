@@ -69,9 +69,11 @@ proc importSingleFile(c: var SemContext; dest: var TokenBuf; f1: ImportedFilenam
     result = c.processedModules[suffix]
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
   loadInterface suffix, module.iface, result, c.importTab, c.converters, exports, mode
-  # Track NIF snippet for this import using absolute path, for use by exprexec:
-  c.importSnippets.buildTree ImportS, info:
-    c.importSnippets.addStrLit f2.toAbsolutePath
+  # Track NIF snippet for this import using absolute path, for use by exprexec.
+  # Skip system.nim since it's auto-imported and would cause cycles:
+  if not f1.isSystem and suffix != SystemModuleSuffix:
+    c.importSnippets.buildTree ImportS, info:
+      c.importSnippets.addStrLit f2.toAbsolutePath
 
 proc importSingleFile(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
