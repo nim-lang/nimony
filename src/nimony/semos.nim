@@ -366,10 +366,26 @@ proc prepareEval*(c: var SemContext): string =
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
   #echo "HEREES ", toString(src, false)
-  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
+  # The dep system uses `moduleSuffix(nimFile, paths)` to derive filenames.
+  # We create a dummy `.nim` file so that `moduleSuffix` maps it correctly
+  # to the `.p.nif` and `.p.deps.nif` files:
+  let dummyNim = c.g.config.nifcachePath / srcName.addFileExt(".nim")
+  syncio.writeFile(dummyNim, "")
+  let modSuffix = moduleSuffix(dummyNim, c.g.config.paths)
+
+  let progfile = c.g.config.nifcachePath / modSuffix.addFileExt(".p.nif")
   writeFileAndIndex(progfile, src)
 
-  let (output, exitCode) = runProgram(progfile, usedModules)
+  # Write the .p.deps.nif file so that `nimony s` can find the imports:
+  if c.importSnippets.len > 0:
+    var deps = createTokenBuf(c.importSnippets.len + 4)
+    deps.addParLe StmtsS, NoLineInfo
+    deps.add c.importSnippets
+    deps.addParRi()
+    let depsFile = c.g.config.nifcachePath / modSuffix & ".p.deps.nif"
+    writeFile deps, depsFile
+
+  let (output, exitCode) = runProgram(dummyNim, usedModules)
   if exitCode != 0:
     result = ensureMove(output)
   else:

@@ -565,9 +565,13 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
       c.dest.addIdent "std", info
       c.dest.addIdent "writenif", info
 
-  # Note: we don't import the current module here because rewriteSymsToIdents
-  # converts all symbols to identifiers, which will be resolved fresh by the semchecker.
-  # System is auto-imported, and std/syncio is added via the deps file.
+  # Add all imports from the original module so that identifiers are resolvable:
+  if s.importSnippets.len > 0:
+    var cur = beginRead(s.importSnippets)
+    for i in 0 ..< s.importSnippets.len:
+      c.dest.add cur.load
+      inc cur
+    endRead(s.importSnippets)
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
