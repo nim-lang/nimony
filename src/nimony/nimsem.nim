@@ -37,6 +37,8 @@ Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
+  --app:console|gui|lib|staticlib
+                            set the application type (default: console)
   --base:PATH               set the base directory for the configuration system
   --nimcache:PATH           set the path used for generated files
   --flags:FLAGS             undocumented flags
@@ -155,6 +157,18 @@ proc handleCmdLine() =
       of "os":
         if not config.setTargetOS(val):
           quit "unknown OS: " & val
+      of "app":
+        case normalize(val)
+        of "console":
+          config.appType = appConsole
+        of "gui":
+          config.appType = appGui
+        of "lib":
+          config.appType = appLib
+        of "staticlib":
+          config.appType = appStaticLib
+        else:
+          quit "invalid value for --app; expected console, gui, lib, or staticlib"
       of "flags":
         discard "nothing to do here yet, but forward these"
       of "cc":

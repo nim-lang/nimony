@@ -18,6 +18,12 @@ type
   Action* = enum
     atNone, atC, atCpp, atNative
 
+  AppType* = enum
+    appConsole = "console"   # executable with console
+    appGui = "gui"           # executable with GUI (no console on Windows)
+    appLib = "lib"           # dynamic library (dll/so/dylib)
+    appStaticLib = "staticlib" # static library (.a/.lib)
+
   ConfigRef* {.acyclic.} = ref object ## every global configuration
     cCompiler*: SystemCC
     backend*: Backend
@@ -25,6 +31,7 @@ type
     optimizeLevel*: OptimizeLevel
     nifcacheDir*: string
     outputFile*: string
+    appType*: AppType
 
   State* = object
     selects*: seq[string] # names of modules with functions with selectany pragmas

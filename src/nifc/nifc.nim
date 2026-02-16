@@ -39,6 +39,8 @@ Options:
   --lineDir:on|off          generation of #line directive on|off
   --bits:N                  `(i -1)` has N bits; possible values: 64, 32, 16
   --nimcache:PATH           set the path used for generated files
+  --app:console|gui|lib|staticlib
+                            set the application type (default: console)
   --version                 show the version
   --help                    show this help
 """
@@ -80,6 +82,7 @@ proc handleCmdLine() =
   else:
     s.config.cCompiler = ccGcc
   s.config.nifcacheDir = "nimcache"
+  s.config.appType = appConsole # console is the default
 
   for kind, key, val in getopt():
     case kind
@@ -150,6 +153,18 @@ proc handleCmdLine() =
         s.config.nifcacheDir = val
       of "out", "o":
         s.config.outputFile = val
+      of "app":
+        case normalize(val)
+        of "console":
+          s.config.appType = appConsole
+        of "gui":
+          s.config.appType = appGui
+        of "lib":
+          s.config.appType = appLib
+        of "staticlib":
+          s.config.appType = appStaticLib
+        else:
+          quit "invalid value for --app; expected console, gui, lib, or staticlib"
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
 
@@ -160,7 +175,8 @@ proc handleCmdLine() =
       of atC, atCpp:
         let isLast = (if compileOnly: isMain else: currentAction == action)
         var flags = if isLast: {gfMainModule} else: {}
-        if isMain:
+        # Only produce main() for console/gui apps, not for libraries
+        if isMain and s.config.appType in {appConsole, appGui}:
           flags.incl gfProducesMainProc
         generateBackend(s, action, actionTable[action], flags)
       of atNative:

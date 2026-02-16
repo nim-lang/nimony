@@ -55,6 +55,8 @@ Options:
   --cc:C_COMPILER           set the C compiler; can be a path to the compiler's
                             executable or a name
   --linker:LINKER           set the linker
+  --app:console|gui|lib|staticlib
+                            set the application type (default: console)
   --version                 show the version
   --help                    show this help
 """
@@ -196,6 +198,20 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           of "on": c.checkModes.incl BoundCheck
           of "off": c.checkModes.excl BoundCheck
           else: quit "invalid value for --boundchecks"
+        of "app":
+          forwardArg = true  # Must forward to nimsem for defines to work!
+          forwardArgNifc = true
+          case normalize(val)
+          of "console":
+            c.config.appType = appConsole
+          of "gui":
+            c.config.appType = appGui
+          of "lib":
+            c.config.appType = appLib
+          of "staticlib":
+            c.config.appType = appStaticLib
+          else:
+            quit "invalid value for --app; expected console, gui, lib, or staticlib"
         of "silentmake":
           c.silentMake = true
           forwardArg = false
