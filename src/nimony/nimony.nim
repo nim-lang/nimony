@@ -18,7 +18,7 @@ import ".." / lib / [tooldirs, argsfinder]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
-import sem, nifconfig, semos, semdata, deps, langmodes
+import sem, nifconfig, semos, semdata, deps, langmodes, cli
 
 const
   Version = "0.2.0"
@@ -155,97 +155,52 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
       else:
         var forwardArg = true
         var forwardArgNifc = false
-        case normalize(key)
-        of "help", "h": writeHelp()
-        of "version", "v": writeVersion()
-        of "forcebuild", "f": c.forceRebuild = true
-        of "ff":
-          c.fullRebuild = true
-          c.forceRebuild = true
-        of "run", "r":
-          c.doRun = true
-          if c.cmd == FullProject and c.args.len >= 1:
-            c.forwardArgsToExecutable = true
-          forwardArg = false
-        of "compat": c.config.compat = true
-        of "path", "p":
+        # Handle special cases first, then try common parser
+        let keyNorm = normalize(key)
+        if keyNorm == "path" or keyNorm == "p":
+          # Special handling for --path due to FromArgsFile check
           if mode == FromArgsFile:
             quit "`--path` in `.args` file is forbidden. Use a `nimony.paths` file instead."
           c.config.paths.add val
-        of "define", "d": c.config.defines.incl val
-        of "nosystem": c.moduleFlags.incl SkipSystem
-        of "issystem":
-          c.moduleFlags.incl IsSystem
-          forwardArg = false
-        of "ismain":
-          c.moduleFlags.incl IsMain
-          forwardArg = false
-        of "bits":
-          case val
-          of "64": c.config.bits = 64
-          of "32": c.config.bits = 32
-          of "16": c.config.bits = 16
-          else: quit "invalid value for --bits"
-        of "cpu":
-          if not c.config.setTargetCPU(val):
-            quit "unknown CPU: " & val
-        of "os":
-          if not c.config.setTargetOS(val):
-            quit "unknown OS: " & val
-        of "boundchecks":
-          forwardArg = false
-          case val
-          of "on": c.checkModes.incl BoundCheck
-          of "off": c.checkModes.excl BoundCheck
-          else: quit "invalid value for --boundchecks"
-        of "app":
-          forwardArg = true  # Must forward to nimsem for defines to work!
-          forwardArgNifc = true
-          case normalize(val)
-          of "console":
-            c.config.appType = appConsole
-          of "gui":
-            c.config.appType = appGui
-          of "lib":
-            c.config.appType = appLib
-          of "staticlib":
-            c.config.appType = appStaticLib
-          else:
-            quit "invalid value for --app; expected console, gui, lib, or staticlib"
-        of "silentmake":
-          c.silentMake = true
-          forwardArg = false
-        of "ischild":
-          # undocumented command line option, by design
-          c.isChild = true
-          forwardArg = false
-        of "passc":
-          if c.passC.len > 0:
-            c.passC.add " "
-          c.passC.add val
-          forwardArg = false
-        of "passl":
-          if c.passL.len > 0:
-            c.passL.add " "
-          c.passL.add val
-          forwardArg = false
-        of "nimcache":
-          c.config.nifcachePath = val
-          forwardArgNifc = true
-        of "cc":
-          c.config.cc = val
-          c.config.ccKey = extractCCKey(val)
-        of "linker":
-          c.config.linker = val
-        of "usages":
-          # set for deps.nim:
-          c.config.toTrack.mode = TrackUsages
-          forwardArg = true
-        of "def":
-          # set for deps.nim:
-          c.config.toTrack.mode = TrackDef
-          forwardArg = true
-        else: writeHelp()
+        elif parseCommonOption(key, val, c.config, c.moduleFlags, forwardArg, forwardArgNifc,
+                              helpMsg = Usage, versionMsg = Version & "\n"):
+          discard "handled by common CLI parser"
+        else:
+          # Handle nimony-specific options
+          case keyNorm
+          of "forcebuild", "f": c.forceRebuild = true
+          of "ff":
+            c.fullRebuild = true
+            c.forceRebuild = true
+          of "run", "r":
+            c.doRun = true
+            if c.cmd == FullProject and c.args.len >= 1:
+              c.forwardArgsToExecutable = true
+            forwardArg = false
+          of "boundchecks":
+            forwardArg = false
+            case val
+            of "on": c.checkModes.incl BoundCheck
+            of "off": c.checkModes.excl BoundCheck
+            else: quit "invalid value for --boundchecks"
+          of "silentmake":
+            c.silentMake = true
+            forwardArg = false
+          of "ischild":
+            # undocumented command line option, by design
+            c.isChild = true
+            forwardArg = false
+          of "passc":
+            if c.passC.len > 0:
+              c.passC.add " "
+            c.passC.add val
+            forwardArg = false
+          of "passl":
+            if c.passL.len > 0:
+              c.passL.add " "
+            c.passL.add val
+            forwardArg = false
+          else: writeHelp()
         if forwardArg:
           c.commandLineArgs.add " --" & key
           if val.len > 0:

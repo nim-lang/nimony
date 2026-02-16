@@ -16,7 +16,7 @@
 
 import std/[os, tables, sets, syncio, assertions, strutils, times]
 import semos, nifconfig, nimony_model, nifindexes, symparser
-import ".." / gear2 / modnames, semdata
+import ".." / gear2 / modnames, semdata, langmodes
 import ".." / lib / [tooldirs, platform]
 import ".." / models / nifindex_tags
 

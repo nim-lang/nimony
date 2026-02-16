@@ -9,7 +9,7 @@
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
 import ".." / lib / [symparser, nifindexes]
-import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints
+import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints, langmodes
 
 import ".." / gear2 / modnames
 
@@ -65,9 +65,6 @@ type
   MetaInfo* = object
     includedFiles*: seq[string] # will become part of the index file
     importedFiles*: seq[string] # likewise
-
-  ModuleFlag* = enum
-    IsSystem, IsMain, SkipSystem
 
   SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
