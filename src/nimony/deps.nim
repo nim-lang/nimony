@@ -17,7 +17,7 @@
 import std/[os, tables, sets, syncio, assertions, strutils, times]
 import semos, nifconfig, nimony_model, nifindexes, symparser
 import ".." / gear2 / modnames, semdata
-import ".." / lib / tooldirs
+import ".." / lib / [tooldirs, platform]
 import ".." / models / nifindex_tags
 
 include nifprelude
@@ -45,7 +45,22 @@ proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.m
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
 proc exeFile(config: NifConfig; f: FilePair): string =
-  config.nifcachePath / f.nimFile.splitFile.name.addFileExt(ExeExt)
+  let baseName = f.nimFile.splitFile.name
+  case config.appType
+  of appConsole, appGui:
+    config.nifcachePath / baseName.addFileExt(ExeExt)
+  of appLib:
+    if config.targetOS == osWindows:
+      config.nifcachePath / baseName.addFileExt("dll")
+    elif config.targetOS in {osMacosx, osIos}:
+      config.nifcachePath / ("lib" & baseName & ".dylib")
+    else:
+      config.nifcachePath / ("lib" & baseName & ".so")
+  of appStaticLib:
+    if config.targetOS == osWindows:
+      config.nifcachePath / baseName.addFileExt("lib")
+    else:
+      config.nifcachePath / ("lib" & baseName & ".a")
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -398,6 +413,9 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addSymbolDef "cc"
       b.addStrLit c.config.cc
       b.addStrLit "-c"
+      # Add -fPIC for shared libraries
+      if c.config.appType == appLib:
+        b.addStrLit "-fPIC"
       if passC.len > 0:
         for arg in passC.split(' '):
           if arg.len > 0:
@@ -410,24 +428,56 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addStrLit "-o"
       b.addKeyw "output"
 
-    # Command for linking
+    # Command for linking/archiving
     if c.cmd in {DoCompile, DoRun}:
-      b.withTree "cmd":
-        b.addSymbolDef "link"
-        b.addStrLit c.config.linker
-        b.addStrLit "-o"
-        b.addKeyw "output"
-        b.withTree "input":
-          b.addIntLit 0
-          b.addIntLit -1  # all inputs
-        b.withTree "argsext":
-          b.addStrLit ".linker.args"
-        if passL.len > 0:
-          for arg in passL.split(' '):
-            if arg.len > 0:
-              b.addStrLit arg
-        for i in c.passL:
-          b.addStrLit i
+      case c.config.appType
+      of appStaticLib:
+        # Static library: use ar to create archive
+        b.withTree "cmd":
+          b.addSymbolDef "link"
+          b.addStrLit "ar"
+          b.addStrLit "rcs"
+          b.addKeyw "output"
+          b.withTree "input":
+            b.addIntLit 0
+            b.addIntLit -1  # all inputs
+      of appLib:
+        # Dynamic library: use linker with -shared
+        b.withTree "cmd":
+          b.addSymbolDef "link"
+          b.addStrLit c.config.linker
+          b.addStrLit "-shared"
+          b.addStrLit "-o"
+          b.addKeyw "output"
+          b.withTree "input":
+            b.addIntLit 0
+            b.addIntLit -1  # all inputs
+          b.withTree "argsext":
+            b.addStrLit ".linker.args"
+          if passL.len > 0:
+            for arg in passL.split(' '):
+              if arg.len > 0:
+                b.addStrLit arg
+          for i in c.passL:
+            b.addStrLit i
+      of appConsole, appGui:
+        # Executable: use linker normally
+        b.withTree "cmd":
+          b.addSymbolDef "link"
+          b.addStrLit c.config.linker
+          b.addStrLit "-o"
+          b.addKeyw "output"
+          b.withTree "input":
+            b.addIntLit 0
+            b.addIntLit -1  # all inputs
+          b.withTree "argsext":
+            b.addStrLit ".linker.args"
+          if passL.len > 0:
+            for arg in passL.split(' '):
+              if arg.len > 0:
+                b.addStrLit arg
+          for i in c.passL:
+            b.addStrLit i
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
