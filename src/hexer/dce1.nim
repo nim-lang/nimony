@@ -45,6 +45,19 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         if n.kind == SymbolDef:
           if isInstantiation(symName):
             a.offers.incl(n.symId)
+      elif n.substructureKind == PragmasU:
+        # Check if this pragma section contains exportc
+        # If so, mark the owner as a root (exportc symbols are entry points)
+        inc n
+        var hasExportc = false
+        while n.kind != ParRi:
+          if n.kind == ParLe and n.pragmaKind == ExportcP:
+            hasExportc = true
+          tr n, a, owner
+        inc n
+        if hasExportc and owner != SymId(0):
+          a.roots.incl(owner)
+        return
       else:
         inc n
       while n.kind != ParRi:
