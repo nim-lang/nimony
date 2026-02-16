@@ -116,33 +116,6 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   endRead(c.dest)
   c.dest = ensureMove newDest
 
-proc isGenericInstance(decl: Cursor): bool =
-  ## Check if a routine declaration is a generic instance (has InvokeT in typevars)
-  if isRoutine(decl.symKind):
-    let r = asRoutine(decl)
-    result = r.typevars.typeKind == InvokeT
-  else:
-    result = false
-
-proc getGenericOrigin(decl: Cursor): (string, SymId) =
-  ## For a generic instance, extract the module and symbol of the origin generic
-  let r = asRoutine(decl)
-  var invoke = r.typevars
-  inc invoke # skip (invoke
-  if invoke.kind == Symbol:
-    let originSym = invoke.symId
-    result = (extractModule(pool.syms[originSym]), originSym)
-  else:
-    result = ("", SymId(0))
-
-proc hasEmptyBody(decl: Cursor): bool =
-  ## Check if a routine declaration has an empty body
-  if isRoutine(decl.symKind):
-    let r = asRoutine(decl, SkipInclBody)
-    result = r.body.kind == DotToken
-  else:
-    result = false
-
 proc collectUsedSyms(c: var SynthesizeSerializerCtx; s: var SemContext; routine: Routine) =
   ## Collect all symbols used by the routine and add their declarations to dest.
   ## Since we'll convert all symbols to identifiers, the semchecker will resolve them fresh.

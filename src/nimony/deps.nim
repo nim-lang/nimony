@@ -87,7 +87,12 @@ type
     passC: seq[string]
 
 proc toPair(c: DepContext; f: string): FilePair =
-  FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
+  if f.endsWith(".nif"):
+    # For .p.nif files (e.g. from compile-time eval snippets), extract the
+    # module suffix directly from the filename rather than recomputing it:
+    FilePair(nimFile: f, modname: extractModuleSuffix(f))
+  else:
+    FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node)
