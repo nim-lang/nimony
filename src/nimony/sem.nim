@@ -2683,9 +2683,20 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, dest, a
-    # Type check: raised type must match the .raises pragma type
+    # Type check: raised type must be a subtype of the .raises pragma type
     if not cursorIsNil(c.routine.raisesType) and typeKind(c.routine.raisesType) != AutoT:
-      typecheck c, dest, info, a.typ, c.routine.raisesType
+      # Allow exact match or subtype (inheritance)
+      let raisedType = skipModifier(a.typ)
+      let expectedType = skipModifier(c.routine.raisesType)
+      var compatible = sameTrees(raisedType, expectedType)
+      # Check if raisedType is a subtype of expectedType (inheritance)
+      if not compatible and raisedType.kind == Symbol and expectedType.kind == Symbol:
+        # Use sigmatch's inheritance checking instead of manual chain walking
+        var m = createMatch(addr c)
+        matchObjectInheritance(m, expectedType, raisedType, expectedType.symId, raisedType.symId, NoType)
+        compatible = not m.err
+      if not compatible:
+        c.typeMismatch dest, info, a.typ, c.routine.raisesType
     it.n = a.n
   takeParRi dest, it.n
   producesNoReturn c, dest, info, it.typ
