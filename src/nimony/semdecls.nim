@@ -759,6 +759,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     var crucial = CrucialPragma(sym: symId)
     semPragmas c, dest, it.n, crucial, kind
     c.routine.pragmas = crucial.flags
+    c.routine.raisesType = crucial.raisesType
     if crucial.hasVarargs.isValid:
       addVarargsParameter c, dest, beforeParams, crucial.hasVarargs
     if crucial.magic.len > 0:

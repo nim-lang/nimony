@@ -1341,6 +1341,7 @@ type
     bits: int
     hasVarargs: PackedLineInfo
     flags: set[PragmaKind]
+    raisesType: TypeCursor  # Type from .raises pragma
     headerFileTok: PackedToken
 
 proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
@@ -1492,13 +1493,21 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     inc n
     if hasParRi and n.kind != ParRi:
       var nn = n
-      takeTree dest, n
+      let typeStart = dest.len
+      # Sem-check the type properly
+      crucial.raisesType = semLocalType(c, dest, n)
+      # TODO: validate that type supports "x != default(T)" interpretation
       dest.addParRi()
       if nn.exprKind == BracketX and nn.firstSon.kind == ParRi:
         # `raises: []` means "does not raise":
         crucial.flags.excl pk
         dest.shrink oldLen
+        crucial.raisesType = default(TypeCursor)
     else:
+      # No type specified - default to system.ErrorCode
+      let typeStart = dest.len
+      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
+      crucial.raisesType = c.typeToCursor(dest, typeStart)
       dest.addParRi()
   of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
     buildErr c, dest, n.info, "pragma not supported"
@@ -2146,11 +2155,8 @@ proc semIf(c: var SemContext; dest: var TokenBuf; it: var Item) =
     producesVoid c, dest, info, it.typ
 
 proc semExceptionType(c: var SemContext; dest: var TokenBuf; it: var Item): TypeCursor =
-  let start = dest.len
   result = semLocalType(c, dest, it.n)
-  if result.kind != Symbol or pool.syms[result.symId] != ErrorCodeName:
-    dest.shrink start
-    buildErr c, dest, it.n.info, "type in `except` must be `system.ErrorCode`"
+  # Allow any exception type - validation for "x != default(T)" semantics can come later
 
 proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
@@ -2677,10 +2683,20 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, dest, a
-    if a.typ.kind == Symbol and pool.syms[a.typ.symId] == ErrorCodeName:
-      discard "ok"
-    else:
-      buildErr c, dest, info, "only type `system.ErrorCode` is allowed to be raised"
+    # Type check: raised type must be a subtype of the .raises pragma type
+    if not cursorIsNil(c.routine.raisesType) and typeKind(c.routine.raisesType) != AutoT:
+      # Allow exact match or subtype (inheritance)
+      let raisedType = skipModifier(a.typ)
+      let expectedType = skipModifier(c.routine.raisesType)
+      var compatible = sameTrees(raisedType, expectedType)
+      # Check if raisedType is a subtype of expectedType (inheritance)
+      if not compatible and raisedType.kind == Symbol and expectedType.kind == Symbol:
+        # Use sigmatch's inheritance checking instead of manual chain walking
+        var m = createMatch(addr c)
+        matchObjectInheritance(m, expectedType, raisedType, expectedType.symId, raisedType.symId, NoType)
+        compatible = not m.err
+      if not compatible:
+        c.typeMismatch dest, info, a.typ, c.routine.raisesType
     it.n = a.n
   takeParRi dest, it.n
   producesNoReturn c, dest, info, it.typ

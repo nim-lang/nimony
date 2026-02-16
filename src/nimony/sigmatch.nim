@@ -604,6 +604,7 @@ type
   ProcProperties* = object
     cc*: CallConv
     usesRaises*: bool
+    raisesType*: Cursor  # The actual exception type from .raises pragma
     usesClosure*: bool
 
 proc extractProcProps*(c: var Cursor): ProcProperties =
@@ -616,6 +617,11 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
         result.cc = res
       elif c.pragmaKind == RaisesP:
         result.usesRaises = true
+        # Extract the raises type from the pragma
+        var raisesNode = c
+        inc raisesNode
+        if raisesNode.kind != ParRi:
+          result.raisesType = raisesNode
       elif c.pragmaKind == ClosureP:
         result.usesClosure = true
       skip c
@@ -715,7 +721,7 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
 
-proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
+proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
   let fbase = skipTypeInstSym(fsym)
   var diff = 1
   var objbody = objtypeImpl(asym)

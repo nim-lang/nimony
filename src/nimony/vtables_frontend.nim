@@ -14,7 +14,7 @@ import std/assertions
 include nifprelude
 import nifindexes, symparser, treemangler, typekeys
 import nimony_model, decls, programs, typenav,
-  renderer, sigmatch, semdata, typeprops
+  renderer, sigmatch, semdata, typeprops, builtintypes
 
 when false:
   # maybe we can use this later to provide better error messages
@@ -55,7 +55,20 @@ proc methodKeyImpl(name: string; a: Cursor): string =
   # handle pragmas:
   let props = extractProcProps(a)
   b.addKeyw $props.cc
-  b.addKeyw $props.usesRaises
+  # Mangle the raises type, not just a boolean
+  if props.usesRaises:
+    if not cursorIsNil(props.raisesType):
+      b.addKeyw "raises"
+      mangle b, props.raisesType, Frontend
+    else:
+      # .raises without type defaults to ErrorCode - mangle the default
+      b.addKeyw "raises"
+      var errorCodeBuf = createTokenBuf(1)
+      errorCodeBuf.addSymUse pool.syms.getOrIncl(ErrorCodeName), NoLineInfo
+      let errorCodeCursor = cursorAt(errorCodeBuf, 0)
+      mangle b, errorCodeCursor, Frontend
+  else:
+    b.addKeyw "raisesNo"
   b.addKeyw $props.usesClosure
   result = name & ":" & b.extract()
 
@@ -64,7 +77,7 @@ proc destroyMethodKey*(): string =
   var b = createMangler(60)
   b.addEmpty() # void return type
   b.addKeyw "ccNone"
-  b.addKeyw "raisesUnknown"
+  b.addKeyw "raisesNo"  # Hooks don't raise
   b.addKeyw "closureNo"
   result = "=destroy:" & b.extract()
 
@@ -74,7 +87,7 @@ proc traceMethodKey*(): string =
   b.addKeyw "pointer" # marker param type
   b.addEmpty() # void return type
   b.addKeyw "ccNone"
-  b.addKeyw "raisesUnknown"
+  b.addKeyw "raisesNo"  # Hooks don't raise
   b.addKeyw "closureNo"
   result = "=trace:" & b.extract()
 
