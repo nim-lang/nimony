@@ -31,6 +31,9 @@ proc getVersion*(v: VersionTab, symId: SymId): int =
   # 0 is the initial version, -1 indicates the symbol is untracked.
   v.currentVersion.getOrDefault(symId, -1)
 
+proc killVar*(v: var VersionTab, symId: SymId) =
+  v.currentVersion.del symId
+
 proc openSection*(v: var VersionTab) =
   v.history.addParLe StmtsS, NoLineInfo
 
@@ -76,6 +79,14 @@ proc combineJoin*(v: var VersionTab; mode: JoinMode): Table[SymId, JoinVar] =
     dec i
   if i >= 0:
     v.history.shrink(i)
+  # Filter out symbols that have been killed (not in currentVersion)
+  var toRemove: seq[SymId] = @[]
+  for s, counters in result.mpairs:
+    if s notin v.currentVersion:
+      # Symbol was killed, don't include it in the join
+      toRemove.add s
+  for s in toRemove:
+    result.del s
   # now add the `join` information to the history:
   for s, counters in result.mpairs:
     let baseVersion = v.currentVersion.getOrDefault(s, 0)

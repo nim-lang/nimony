@@ -240,7 +240,13 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
-  dest.takeTree n
+  dest.takeToken n
+  while n.kind != ParRi:
+    assert n.kind == Symbol
+    let s = n.symId
+    killVar c.vt, s
+    dest.takeToken n
+  dest.takeParRi n
 
 proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeToken n
