@@ -81,12 +81,17 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isLocalDecl(symId):
         c.typeCache.registerLocal(symId, r.kind, decl)
       c.typeCache.openScope()
+      # Fresh version table per procedure so params/history from other procs don't leak into joins.
+      # Save/restore parent vt so nested procs don't clobber the outer procedure's state.
+      let parentVt = move c.vt
+      c.vt = createVersionTab()
       trParams c, r.params
       let info = n.info
       setupProc c, n
       copyIntoKind dest, StmtsS, info:
         trStmt c, dest, n
       c.typeCache.closeScope()
+      c.vt = ensureMove parentVt
     else:
       takeTree dest, n
   c.current = ensureMove oldProc
@@ -274,7 +279,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trUnknown c, dest, n
   of JtrueV:
     trJtrue c, dest, n
-  of AssumeV, AssertV, ContinueV, VV:
+  of ContinueV:
+    # we produce a filled `continue` statement in trLoop
+    skip n
+  of AssumeV, AssertV, VV:
     takeTree dest, n
   of NoVTag:
     case n.stmtKind
@@ -289,7 +297,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of TemplateS, TypeS:
       takeTree dest, n
     of ContinueS:
-      takeTree dest, n
+      skip n
     else:
       dest.takeToken n
       while n.kind != ParRi:

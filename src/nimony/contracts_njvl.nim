@@ -549,9 +549,20 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   let valueStart = n
   traverseExpr c, n
 
-  # Now handle the destination
+  # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
+  var destSymId = NoSymId
+  var destIsVersioned = false
   if n.kind == Symbol:
-    let symId = n.symId
+    destSymId = n.symId
+  elif n.kind == ParLe and n.tagEnum == VTagId:
+    destIsVersioned = true
+    inc n # skip "v" tag
+    if n.kind == Symbol:
+      destSymId = n.symId
+    # else malformed, destSymId stays NoSymId
+
+  if destSymId != NoSymId:
+    let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY}:
       if symId in c.directlyInitialized or symId in c.writesTo:
@@ -579,7 +590,12 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
       c.facts.add isNotNil(fact.a)
 
-    inc n # skip the symbol
+    if destIsVersioned:
+      inc n # skip symbol
+      skip n # version
+      skipParRi n # close (v ...)
+    else:
+      inc n # skip the symbol
   else:
     traverseExpr c, n
 
@@ -889,6 +905,8 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
   # Convert to NJVL first
   var njvlBuf = toNjvl(n, moduleSuffix)
   endRead input
+
+  #echo "NJVL IR: ", toString(njvlBuf, false)
 
   # Now analyze the NJVL IR
   var c = NjvlContext(
