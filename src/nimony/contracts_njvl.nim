@@ -673,7 +673,6 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
 
 proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   let kind = n.symKind
-  let isParamDecl = kind == ParamY or n.substructureKind == ParamU
   inc n
   let name = n.symId
   skip n # name
@@ -682,11 +681,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   skip n # pragmas
   c.typeCache.registerLocal(name, cast[SymKind](kind), n)
   skip n # type
-  if isParamDecl:
-    c.paramBaseNames.incl baseParamName(pool.syms[name])
-  elif isXelimTemp(pool.syms[name], c.moduleSuffix):
-    c.directlyInitialized.incl name
-  if isParamDecl or n.kind != DotToken or skipInitCheck:
+  if n.kind != DotToken or skipInitCheck:
     c.directlyInitialized.incl name
   traverseExpr c, n
   skipParRi n
@@ -741,17 +736,32 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
       contractViolation(c, orig, fact, report)
   skipParRi n
 
-proc registerProcParams(c: var NjvlContext; decl: Cursor) =
-  let r = asRoutine(decl, SkipExclBody)
-  c.typeCache.registerParams(r.name.symId, decl, r.params)
-  var p = r.params
-  if p.kind == ParLe:
-    inc p
-    while p.kind != ParRi:
-      let param = takeLocal(p, SkipFinalParRi)
-      c.paramBaseNames.incl baseParamName(pool.syms[param.name.symId])
-      if param.typ.typeKind != OutT:
-        c.directlyInitialized.incl param.name.symId
+proc traverseProc(c: var NjvlContext; n: var Cursor) =
+  c.facts = createFacts()
+  c.directlyInitialized.clear()
+  c.writesTo = @[]
+  c.procCanRaise = false
+  c.directlyInitialized.clear()
+  c.writesTo.setLen(0)
+  c.typeCache.openScope()
+
+  inc n
+  var isGeneric = false
+  for i in 0 ..< BodyPos:
+    if i == ProcPragmasPos:
+      c.procCanRaise = hasPragma(n, RaisesP)
+    elif i == TypevarsPos:
+      isGeneric = n.substructureKind == TypevarsU
+    skip n
+
+  # Analyze body
+  if not isGeneric:
+    traverseStmt c, n
+  else:
+    skip n
+  skipParRi n
+
+  c.typeCache.closeScope()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   case n.njvlKind
@@ -805,10 +815,10 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       skip n
     of RetS:
       inc n
-      if n.kind != ParRi and n.kind != DotToken:
-        traverseExpr c, n
-      while n.kind != ParRi:
+      if n.kind == DotToken:
         inc n
+      elif n.kind != ParRi:
+        traverseExpr c, n
       skipParRi n
     of CallKindsS:
       analyseCall c, n
@@ -848,34 +858,6 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
           inc n
         else:
           inc n
-
-proc traverseProc(c: var NjvlContext; n: var Cursor) =
-  c.facts = createFacts()
-  c.directlyInitialized.clear()
-  c.writesTo = @[]
-  c.procCanRaise = false
-  c.directlyInitialized.clear()
-  c.writesTo.setLen(0)
-  c.paramBaseNames.clear()
-  c.typeCache.openScope()
-
-  inc n
-  var isGeneric = false
-  for i in 0 ..< BodyPos:
-    if i == ProcPragmasPos:
-      c.procCanRaise = hasPragma(n, RaisesP)
-    elif i == GenericParamsPos:
-      isGeneric = n.substructureKind == TypevarsU
-    skip n
-
-  # Analyze body
-  if not isGeneric:
-    traverseStmt c, n
-  else:
-    skip n
-  skipParRi n
-
-  c.typeCache.closeScope()
 
 proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
   case n.stmtKind

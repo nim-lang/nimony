@@ -131,11 +131,27 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     case n.exprKind
     of CallKinds:
       trCall c, dest, n
+    of DotX, DdotX:
+      dest.takeToken n
+      inc n
+      trExpr c, dest, n
+      # field name:
+      dest.takeTree n
+      if n.kind != ParRi:
+        # inheritance depth:
+        takeTree dest, n
+      dest.addParRi()
     else:
-      dest.takeToken n
-      while n.kind != ParRi:
+      if n.substructureKind == KvU:
+        dest.takeToken n
+        dest.takeTree n # key, don't versionize!
         trExpr c, dest, n
-      dest.takeToken n
+        takeParRi dest, n
+      else:
+        dest.takeToken n
+        while n.kind != ParRi:
+          trExpr c, dest, n
+        dest.takeToken n
   of ParRi: bug "Unmatched ParRi"
 
 proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
