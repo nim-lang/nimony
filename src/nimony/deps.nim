@@ -75,6 +75,7 @@ type
     active: int
     isSystem: bool
     plugin: string
+    cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -191,6 +192,25 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLin
   else:
     current.deps.add existingNode
 
+proc importCyclicModule(c: var DepContext; f1: string; info: PackedLineInfo;
+                        current: Node) =
+  ## Merge a cyclic import target into the current node's cycle group.
+  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+  if not semos.fileExists(f2): return
+  let p = c.toPair(f2)
+  if c.processedModules.hasKey(p.modname):
+    return # already part of this or another node
+  # Add to current node as a cyclic group member:
+  let idx = current.files.len
+  current.files.add p
+  current.cyclicFiles.add idx
+  c.processedModules[p.modname] = current.id
+  # Traverse the cyclic module's deps as part of this node:
+  let oldActive = current.active
+  current.active = idx
+  traverseDeps c, p, current
+  current.active = oldActive
+
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
@@ -199,6 +219,7 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   # ignore conditional imports:
   if x.stmtKind == WhenS: return
   while x.kind != ParRi:
+    var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
       var y = x
       inc y
@@ -206,13 +227,16 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
       if y.substructureKind == PragmasU:
         inc y
         if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-          continue
+          isCyclic = true
 
     var files: seq[ImportedFilename] = @[]
     var hasError = false
     filenameVal(x, files, hasError, allowAs = true)
     if hasError:
       discard "ignore wrong `import` statement"
+    elif isCyclic:
+      for f in files:
+        importCyclicModule c, f.path, info, current
     else:
       for f in files:
         if f.plugin.len == 0:
@@ -579,11 +603,17 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     # Input: cached config file
     b.withTree "input":
       b.addStrLit c.config.cachedConfigFile()
-    # Outputs: semmed file and index file
+    # Outputs: semmed file and index file for primary module
     b.withTree "output":
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin)
+    # Outputs for cyclic group members:
+    for idx in v.cyclicFiles:
+      b.withTree "output":
+        b.addStrLit c.config.semmedFile(v.files[idx], v.plugin)
+      b.withTree "output":
+        b.addStrLit c.config.indexFile(v.files[idx], v.plugin)
 
 proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
   #[ An import plugin fills `nimcache/<plugin>` for us. It is our job to
