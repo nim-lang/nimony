@@ -705,7 +705,9 @@ proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     if hk != NoHook:
       let objCursor = semHook(c, dest, hookName, beforeParams, symId, info)
       let obj = getObjSymId(c, objCursor)
-      registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
+      # Only register when signature is valid (obj != 0); checkTypeHook may have buildErr'd
+      if obj != SymId(0):
+        registerHook(c, obj, symId, hk, c.routine.inGeneric > 0)
     takeToken dest, it.n
   elif BorrowP in crucial.flags and pass in {checkGenericInst, checkBody}:
     if kind notin {ProcY, FuncY, ConverterY, TemplateY, MethodY}:

@@ -68,11 +68,9 @@
      (call echo.0 "code here")) .
     (stmts))
    (kill ´g.0)
-   (continue .)
    (continue
     (join `j.0.main +4 +3 +2)
-    (join b.0 +2 +1 +0)
-    (join ´g.0 +2 +1 +0))))
+    (join b.0 +2 +1 +0))))
  (call echo.0 "after loop")
  (let :`x.1 . .
   (i +32)

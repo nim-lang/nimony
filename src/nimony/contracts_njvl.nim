@@ -22,14 +22,15 @@ In order to not be too annoying in the case of a contract violation, the
 compiler emits a warning (that can be suppressed or turned into an error).
 ]##
 
-import std / [assertions, tables, sets]
+import std / [assertions, tables, sets, strutils]
 
 include nifprelude
 
 import ".." / models / tags
+import ".." / lib / symparser
 import ".." / njvl / [njvl_model, vl]
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-       renderer, typeprops, inferle, xints
+  renderer, typeprops, inferle, xints
 
 type
   NjvlContext = object
@@ -49,6 +50,14 @@ proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
     c.errors.add strToken(pool.strings.getOrIncl(msg), info)
+
+proc contractViolation(c: var NjvlContext; orig: Cursor; fact: LeXplusC; report: bool) =
+  if report:
+    echo "known facts in this context: "
+    for i in 0 ..< c.facts.len:
+      echo c.facts[i]
+    echo "canonical fact: ", fact
+  error "contract violation: ", orig
 
 # Forward declarations
 proc traverseStmt(c: var NjvlContext; n: var Cursor)
@@ -540,9 +549,20 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   let valueStart = n
   traverseExpr c, n
 
-  # Now handle the destination
+  # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
+  var destSymId = NoSymId
+  var destIsVersioned = false
   if n.kind == Symbol:
-    let symId = n.symId
+    destSymId = n.symId
+  elif n.kind == ParLe and n.tagEnum == VTagId:
+    destIsVersioned = true
+    inc n # skip "v" tag
+    if n.kind == Symbol:
+      destSymId = n.symId
+    # else malformed, destSymId stays NoSymId
+
+  if destSymId != NoSymId:
+    let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY}:
       if symId in c.directlyInitialized or symId in c.writesTo:
@@ -570,7 +590,12 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
       c.facts.add isNotNil(fact.a)
 
-    inc n # skip the symbol
+    if destIsVersioned:
+      inc n # skip symbol
+      skip n # version
+      skipParRi n # close (v ...)
+    else:
+      inc n # skip the symbol
   else:
     traverseExpr c, n
 
@@ -584,6 +609,11 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   let savedFacts = save(c.facts)
   let condFacts = analyseCondition(c, n)
 
+  # Copy condition facts for else-branch negation (only single fact can be negated)
+  var condFactsList: seq[LeXplusC] = @[]
+  if condFacts == 1:
+    condFactsList.add c.facts[c.facts.len - 1]
+
   # Then branch - has positive condition facts
   c.typeCache.openScope()
   traverseStmt c, n
@@ -591,14 +621,12 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   let thenFacts = c.facts
   let thenWritesTo = c.writesTo
 
-  # Restore facts and negate for else branch
+  # Restore facts and add negated condition for else branch (single fact only)
   restore(c.facts, savedFacts)
-  if condFacts > 0:
-    # Re-add condition facts but negated
-    var tempCursor = n
-    # We already moved past the condition, so we need to work with what we have
-    # For now, just analyze else without negated facts (conservative)
-    discard
+  for f in condFactsList:
+    var negated = f
+    negateFact(negated)
+    c.facts.add negated
 
   # Else branch
   c.typeCache.openScope()
@@ -706,7 +734,7 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
     error "invalid assert: ", orig
   elif implies(c.facts, fact):
     if shouldError:
-      error "contract violation: ", orig
+      contractViolation(c, orig, fact, report)
     elif wasEquality:
       if implies(c.facts, fact.geXplusC):
         if report: echo "OK ", fact
@@ -714,15 +742,42 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
         if shouldError:
           if report: echo "OK (could indeed not prove) ", fact
         else:
-          error "contract violation: ", orig
+          contractViolation(c, orig, fact, report)
     else:
       if report: echo "OK ", fact
   else:
     if shouldError:
       if report: echo "OK (could indeed not prove) ", fact
     else:
-      error "contract violation: ", orig
+      contractViolation(c, orig, fact, report)
   skipParRi n
+
+proc traverseProc(c: var NjvlContext; n: var Cursor) =
+  c.facts = createFacts()
+  c.directlyInitialized.clear()
+  c.writesTo = @[]
+  c.procCanRaise = false
+  c.directlyInitialized.clear()
+  c.writesTo.setLen(0)
+  c.typeCache.openScope()
+
+  inc n
+  var isGeneric = false
+  for i in 0 ..< BodyPos:
+    if i == ProcPragmasPos:
+      c.procCanRaise = hasPragma(n, RaisesP)
+    elif i == TypevarsPos:
+      isGeneric = n.substructureKind == TypevarsU
+    skip n
+
+  # Analyze body
+  if not isGeneric:
+    traverseStmt c, n
+  else:
+    skip n
+  skipParRi n
+
+  c.typeCache.closeScope()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   case n.njvlKind
@@ -768,42 +823,18 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     of LocalDecls:
       traverseLocal c, n
     of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS:
-      # Nested routine - analyze separately
+      # Nested routine - analyze and advance past it
       c.typeCache.openScope()
-      let orig = n
-      let r = takeRoutine(n, SkipExclBody)
-      skip n # effects
-      if not isGeneric(r):
-        var nested = 0
-        while true:
-          let sk = n.stmtKind
-          if sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
-            # Don't recurse into nested procs here
-            skip n
-          elif sk in {MacroS, TemplateS, TypeS, CommentS, PragmasS}:
-            skip n
-          elif n.kind == ParLe:
-            inc nested
-            inc n
-          elif n.kind == ParRi:
-            dec nested
-            inc n
-            if nested == 0: break
-          else:
-            inc n
-            if nested == 0: break
-      else:
-        skip n # body
-      skipParRi n # proc decl end
+      traverseProc c, n
       c.typeCache.closeScope()
     of TemplateS, TypeS, CommentS, PragmasS:
       skip n
     of RetS:
       inc n
-      if n.kind != ParRi and n.kind != DotToken:
-        traverseExpr c, n
-      while n.kind != ParRi:
+      if n.kind == DotToken:
         inc n
+      elif n.kind != ParRi:
+        traverseExpr c, n
       skipParRi n
     of CallKindsS:
       analyseCall c, n
@@ -814,9 +845,19 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     of EmitS, InclS, ExclS:
       skip n
     of NoStmt:
-      # Could be a call or expression
       if n.exprKind in CallKinds:
         analyseCall c, n
+      elif n.exprKind == PragmaxX:
+        inc n
+        skip n
+        traverseStmt c, n
+        skipParRi n
+      elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
+        inc n
+        traverseExpr c, n
+        while n.kind != ParRi:
+          traverseExpr c, n
+        skipParRi n
       else:
         traverseExpr c, n
     else:
@@ -834,25 +875,6 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
         else:
           inc n
 
-proc traverseProc(c: var NjvlContext; n: Cursor) =
-  var n = n
-  c.facts = createFacts()
-  c.procCanRaise = false
-  c.typeCache.openScope()
-
-  var body = n
-  if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
-    inc body
-    for i in 0 ..< BodyPos:
-      if i == ProcPragmasPos:
-        c.procCanRaise = hasPragma(body, RaisesP)
-      skip body
-
-  # Analyze body
-  traverseStmt c, body
-
-  c.typeCache.closeScope()
-
 proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
@@ -860,33 +882,13 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     while n.kind != ParRi:
       traverseToplevel c, n
     skipParRi n
-  of ProcS, FuncS, IteratorS, ConverterS, MethodS:
-    let orig = n
-    let r = takeRoutine(n, SkipExclBody)
-    skip n # effects
-    if not isGeneric(r):
-      traverseProc c, orig
-      # Skip the body we already processed
-      var nested = 0
-      while true:
-        let sk = n.stmtKind
-        if sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
-          traverseToplevel c, n
-        elif sk in {MacroS, TemplateS, TypeS, CommentS, PragmasS}:
-          skip n
-        elif n.kind == ParLe:
-          inc nested
-          inc n
-        elif n.kind == ParRi:
-          dec nested
-          inc n
-          if nested == 0: break
-        else:
-          inc n
-          if nested == 0: break
-    else:
-      skip n # body
+  of PragmaxS:
+    inc n
+    skip n
+    traverseToplevel c, n
     skipParRi n
+  of ProcS, FuncS, IteratorS, ConverterS, MethodS:
+    traverseProc c, n
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,
      ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      ExportS,
@@ -903,6 +905,8 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
   # Convert to NJVL first
   var njvlBuf = toNjvl(n, moduleSuffix)
   endRead input
+
+  #echo "NJVL IR: ", toString(njvlBuf, false)
 
   # Now analyze the NJVL IR
   var c = NjvlContext(

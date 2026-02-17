@@ -5245,7 +5245,7 @@ proc writeOutput(c: var SemContext; dest: TokenBuf; outfile: string) =
       exportBuf: buildIndexExports(c))
   writeNewDepsFile c, outfile
 
-proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase): TokenBuf =
+proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
   assert n.stmtKind == StmtsS
   c.phase = x
   var n = n
@@ -5253,7 +5253,6 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase): Toke
   while n.kind != ParRi:
     semStmt c, dest, n, false
   takeParRi dest, n
-  result = move dest
   # clear pragmaStack in case {.pop.} was not called
   c.pragmaStack.setLen(0)
 
@@ -5307,9 +5306,9 @@ proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) 
 
 proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, PackedLineInfo) =
   ## Phase 1: Register toplevel symbols.
-  var buf = phaseX(c, dest, n, SemcheckTopLevelSyms)
-  let lineInfo = getModuleLineInfo(buf)
-  result = (move buf, lineInfo)
+  phaseX(c, dest, n, SemcheckTopLevelSyms)
+  let lineInfo = getModuleLineInfo(dest)
+  result = (move dest, lineInfo)
 
 proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
   ## Phase 2: Check signatures.

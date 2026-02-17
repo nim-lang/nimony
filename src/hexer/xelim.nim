@@ -69,11 +69,14 @@ type
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
 
+proc tempSymName(c: var Context): string {.inline.} =
+  result = "`x." & $c.counter
+  inc c.counter
+
 proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info
   let typ = getType(c.typeCache, n)
-  let s = "`x." & $c.counter & "." & c.thisModuleSuffix
-  inc c.counter
+  let s = tempSymName(c)
   result = pool.syms.getOrIncl(s)
   copyIntoKind dest, VarS, info:
     dest.addSymDef result, info
@@ -83,8 +86,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
     dest.addDotToken() # value
 
 proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo): SymId =
-  let s = "`x." & $c.counter & "." & c.thisModuleSuffix
-  inc c.counter
+  let s = tempSymName(c)
   result = pool.syms.getOrIncl(s)
   copyIntoKind dest, VarS, info:
     dest.addSymDef result, info
@@ -196,8 +198,7 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     dest.add nestedDest
 
     # Now create the let binding for this call
-    let tmp = pool.syms.getOrIncl("`x." & $c.counter)
-    inc c.counter
+    let tmp = pool.syms.getOrIncl(tempSymName(c))
     dest.addParLe LetS, info
     dest.addSymDef tmp, info
     dest.addEmpty2 info # no export marker, no pragmas
