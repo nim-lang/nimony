@@ -133,14 +133,13 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trCall c, dest, n
     of DotX, DdotX:
       dest.takeToken n
-      inc n
       trExpr c, dest, n
       # field name:
       dest.takeTree n
       if n.kind != ParRi:
         # inheritance depth:
         takeTree dest, n
-      dest.addParRi()
+      dest.takeParRi n
     else:
       if n.substructureKind == KvU:
         dest.takeToken n
