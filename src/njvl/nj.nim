@@ -752,6 +752,20 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     endRead w
     dest.addParRi() # close "loop"
 
+proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # Now that sem.nim uses NJ too, we need to deal with for loops.
+  # We currently map them to `while true` and ignore the
+  # iterator call and variables! XXX We need to find a better way
+  # here, at least map `for x in i()` to `let x = i()` inside the
+  # loop body.
+  let info = n.info
+  inc n
+  dest.add tagToken("loop", info)
+  skip n # for loop iterator call
+  skip n # for loop variables
+  trWhileTrue c, dest, n
+  dest.takeParRi n # close "loop"
+
 proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
                         selector: SymId; selectorType: Cursor; info: PackedLineInfo) =
   ## Build condition for one of-branch using OrX for multiple ranges/values
@@ -1076,6 +1090,8 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     trCase c, dest, n
   of WhileS:
     trWhile c, dest, n
+  of ForS:
+    trFor c, dest, n
   of LocalDecls:
     trLocal c, b, dest, n
   of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
