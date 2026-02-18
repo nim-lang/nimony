@@ -20,6 +20,9 @@ else:
 when defined(enableAsm):
   import amd64 / genasm
 
+when defined(enableLLVM):
+  import llvm
+
 const
   Version = "0.2.0"
   Usage = "NIFC Compiler. Version " & Version & """
@@ -100,14 +103,14 @@ proc handleCmdLine() =
         currentAction = atNative
         if not hasKey(actionTable, atNative):
           actionTable[atNative] = @[]
+      of "llvm":
+        currentAction = atLLVM
+        if not hasKey(actionTable, atLLVM):
+          actionTable[atLLVM] = @[]
       else:
         case currentAction
-        of atC:
-          actionTable[atC].add key
-        of atCpp:
-          actionTable[atCpp].add key
-        of atNative:
-          actionTable[atNative].add key
+        of atC, atCpp, atNative, atLLVM:
+          actionTable[currentAction].add key
         of atNone:
           quit "invalid command: " & key
     of cmdLongOption, cmdShortOption:
@@ -179,6 +182,15 @@ proc handleCmdLine() =
         if isMain and s.config.appType in {appConsole, appGui}:
           flags.incl gfProducesMainProc
         generateBackend(s, action, actionTable[action], flags)
+      of atLLVM:
+        let isLast = (if compileOnly: isMain else: currentAction == action)
+        var flags = if isLast: {gfMainModule} else: {}
+        if isMain:
+          flags.incl gfProducesMainProc
+        when defined(enableLLVM):
+          for inp in items actionTable[action]:
+            let outp = changeFileExt(inp, ".ll")
+            generateLLVMCode(s, inp, s.config.nifcacheDir / outp, flags)
       of atNative:
         let args = actionTable[action]
         if args.len == 0:
