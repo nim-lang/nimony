@@ -92,6 +92,7 @@ proc `$`*(x: int64): string =
     else:
       result = "-" & $(0-x)
   elif x < 10:
+    result = ""
     result.add char(x + int64('0'))
   else:
     result = $cast[uint64](x)
@@ -191,7 +192,7 @@ type
     dy: ptr UncheckedArray[uint32]
     mt: UncheckedArray[pointer]
 
-proc getRtti(dummy: pointer): ptr Rtti {.nodecl.} = discard "patched by vtables.nim"
+proc getRtti(dummy: pointer): ptr Rtti {.nodecl, noinit.} = discard "patched by vtables.nim"
 
 func ord*[T: Ordinal|enum](x: T): int {.inline.} =
   ## Returns the internal `int` value of `x`, including for enum with holes
