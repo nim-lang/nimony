@@ -17,7 +17,10 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes
 
-when not defined(useNj):
+const
+  useNj = true
+
+when not useNj:
   import contracts
 else:
   import contracts_njvl
@@ -5558,7 +5561,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true: #defined(enableContracts):
-      when not defined(useNj):
+      when not useNj:
         var moreErrors = analyzeContracts(afterSem)
       else:
         var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)

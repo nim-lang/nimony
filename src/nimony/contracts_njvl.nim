@@ -492,6 +492,14 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc pc
     if nested == 0: break
 
+proc extractSymId(n: Cursor): SymId {.inline.} =
+  if n.kind == Symbol:
+    result = n.symId
+  elif n.kind == ParLe and n.tagEnum == VTagId:
+    result = n.firstSon.symId
+  else:
+    result = NoSymId
+
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
@@ -506,8 +514,9 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     paramMap[param.name.symId] = paramMap.len+1
     let pk = param.typ.typeKind
     if pk == OutT:
-      if n.kind == Symbol:
-        c.writesTo.add n.symId
+      let s = extractSymId(n)
+      if s != NoSymId:
+        c.writesTo.add s
     elif pk == VarargsT:
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
