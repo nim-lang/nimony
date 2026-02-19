@@ -150,6 +150,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.takeToken n
         dest.takeTree n # key, don't versionize!
         trExpr c, dest, n
+        if n.kind != ParRi:
+          # inheritance depth:
+          takeTree dest, n
         takeParRi dest, n
       else:
         dest.takeToken n
