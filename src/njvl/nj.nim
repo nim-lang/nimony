@@ -607,6 +607,7 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
       for i in countdown(c.current.guards.len - 1, 0):
         inc entries
         if c.current.guards[i].blockName == n.symId: break
+      inc n
     else:
       bug "invalid `break` structure"
 
