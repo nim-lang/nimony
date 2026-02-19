@@ -478,6 +478,18 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.add tar
       trStmt c, dest, n
 
+proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  let head = n.load()
+  inc n
+  var tar = Target(m: IsEmpty)
+  trExpr c, dest, n, tar # iterator call
+  dest.add head
+  dest.add tar
+  takeTree dest, n # for loop variables
+  trStmt c, dest, n
+  dest.takeParRi n
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tmp = createTokenBuf(30)
   let kind = n.symKind
@@ -582,6 +594,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   of WhileS:
     trWhile c, dest, n
+  of ForS:
+    trFor c, dest, n
   of CallKindsS, InclS, ExclS:
     trStmtCall c, dest, n
   of AsgnS:
@@ -611,7 +625,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsIgnored)
     trBlock c, dest, n, tar
   of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-     ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
+     IncludeS, ImportS, FromimportS, ImportExceptS,
      ExportS, CommentS, AssumeS, AssertS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     takeTree dest, n
