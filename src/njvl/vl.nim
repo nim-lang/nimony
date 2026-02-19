@@ -183,7 +183,11 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeSection c.vt
   openSection c.vt
   openScope c.typeCache
-  trStmt c, dest, n
+  if n.kind != ParRi:
+    trStmt c, dest, n
+  else:
+    # repair broken ite statements (missing else):
+    dest.addDotToken()
   closeScope c.typeCache
   closeSection c.vt
   # join information is optional here:
