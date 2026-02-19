@@ -170,7 +170,7 @@ template withErrorContext*(c: var SemContext; info: PackedLineInfo; body: untype
     popErrorContext(c)
 
 proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg: string; orig: Cursor) =
-  when defined(debug):
+  when defined(debugBuildErr):
     if not c.debugAllowErrors:
       writeStackTrace()
       for instFrom in items(c.instantiatedFrom):

@@ -624,9 +624,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     condFactsList.add c.facts[c.facts.len - 1]
 
   # Then branch - has positive condition facts
-  c.typeCache.openScope()
   traverseStmt c, n
-  c.typeCache.closeScope()
   let thenFacts = c.facts
   let thenWritesTo = c.writesTo
 
@@ -638,12 +636,10 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     c.facts.add negated
 
   # Else branch
-  c.typeCache.openScope()
   if n.kind == DotToken:
     inc n # empty else
   else:
     traverseStmt c, n
-  c.typeCache.closeScope()
 
   # Merge facts from both branches
   # Use conservative approach: only keep facts that hold in both branches
@@ -667,7 +663,6 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   inc n # skip loop tag
 
   # Pre-condition statements
-  c.typeCache.openScope()
   traverseStmt c, n
 
   # Analyze loop condition
@@ -684,8 +679,6 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
 
   # Loop body
   traverseStmt c, n
-
-  c.typeCache.closeScope()
 
   # After loop, we know the condition is false (if we exited normally)
   restore(c.facts, savedFacts)
@@ -768,7 +761,6 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.procCanRaise = false
   c.directlyInitialized.clear()
   c.writesTo.setLen(0)
-  c.typeCache.openScope()
 
   inc n
   var isGeneric = false
@@ -785,8 +777,6 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   else:
     skip n
   skipParRi n
-
-  c.typeCache.closeScope()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   case n.njvlKind
