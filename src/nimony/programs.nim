@@ -97,6 +97,10 @@ iterator pairs*(t: ToplevelEntries): (int, lent ToplevelEntry) =
   for i, e in t.entries.pairs:
     yield (i, e)
 
+iterator symIds*(t: ToplevelEntries): SymId =
+  for s in t.bySymId.keys:
+    yield s
+
 # -------------- end ToplevelEntries methods --------------
 
 proc newNifModule(infile: string): NifModule =
@@ -120,6 +124,15 @@ proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArra
   owningBuf = fromStream(m.stream)
   result = beginRead(owningBuf)
   let suffix = moduleSuffix(infile, paths)
+  prog.mods[suffix] = m
+
+proc loadCycleGroupModule*(infile: string; owningBuf: var TokenBuf): Cursor =
+  ## Load a cycle group member's content. Uses splitModulePath for the suffix
+  ## (correct for .p.nif files from nimcache).
+  let m = newNifModule(infile)
+  owningBuf = fromStream(m.stream)
+  result = beginRead(owningBuf)
+  let suffix = splitModulePath(infile).name
   prog.mods[suffix] = m
 
 proc suffixToNif*(suffix: string): string {.inline.} =

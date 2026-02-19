@@ -231,7 +231,14 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
 
     var files: seq[ImportedFilename] = @[]
     var hasError = false
-    filenameVal(x, files, hasError, allowAs = true)
+    if isCyclic:
+      # Manually parse the pragmax: enter it, parse the inner filename, skip the pragma
+      inc x # enter PragmaxX
+      filenameVal(x, files, hasError, allowAs = false)
+      skip x # skip (pragmas cyclic)
+      inc x  # skip closing ParRi of PragmaxX
+    else:
+      filenameVal(x, files, hasError, allowAs = true)
     if hasError:
       discard "ignore wrong `import` statement"
     elif isCyclic:
@@ -587,6 +594,10 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
         b.addStrLit "--isSystem"
       elif isMain:
         b.addStrLit "--isMain"
+      # Module files are passed as args (primary first, then cyclic members)
+      b.addStrLit c.config.parsedFile(v.files[0])
+      for idx in v.cyclicFiles:
+        b.addStrLit c.config.parsedFile(v.files[idx])
     # Input: parsed file
     var seenDeps = initHashSet[string]()
     for f in v.files:
@@ -653,8 +664,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
             b.addStrLit arg
       b.addStrLit "m"
       b.addKeyw "args"
-      b.withTree "input":
-        b.addIntLit 0  # main parsed file
+      # Module files are passed via (args) in each (do nimsem) block
 
     if cmd == DoCheck:
       b.withTree "cmd":

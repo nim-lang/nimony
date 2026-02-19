@@ -139,6 +139,7 @@ type
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
     forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
+    deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

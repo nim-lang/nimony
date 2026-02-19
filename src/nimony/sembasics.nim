@@ -25,7 +25,15 @@ template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind
 
 proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: PackedLineInfo): int =
   result = 0
+  let nameStr = pool.strings[name]
+  if nameStr == "fromB" or nameStr == "fromA":
+    echo "DEBUG considerImportedSymbols: looking up '", nameStr, "' (StrId=", name.int, ")"
+    echo "DEBUG importTab has ", c.importTab.len, " entries"
+    for k, v in c.importTab:
+      echo "DEBUG   importTab[", pool.strings[k], " (", k.int, ")] = ", v.len, " modules"
   for moduleId in c.importTab.getOrDefault(name):
+    if nameStr == "fromB" or nameStr == "fromA":
+      echo "DEBUG   found moduleId=", moduleId.int, " for '", nameStr, "'"
     # prevent copies
     let candidates = addr c.importedModules[moduleId].iface[name]
     inc result, candidates[].len
