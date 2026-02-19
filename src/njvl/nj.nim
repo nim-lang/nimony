@@ -753,18 +753,32 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi() # close "loop"
 
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # Now that sem.nim uses NJ too, we need to deal with for loops.
-  # We currently map them to `while true` and ignore the
-  # iterator call and variables! XXX We need to find a better way
-  # here, at least map `for x in i()` to `let x = i()` inside the
-  # loop body.
+  # Map `for x in i()` to `(loop ... (stmts (let x type i()) body))` so the
+  # loop variable is bound from the iterator at the start of the body.
   let info = n.info
-  inc n
+  let fs = asForStmt(n)
+  var letCur = fs.vars
+  if letCur.stmtKind == StmtsS:
+    inc letCur
+  inc letCur
+  let symId = letCur.symId
+  var bodyBuf = createTokenBuf(50)
+  bodyBuf.copyIntoKind StmtsS, info:
+    bodyBuf.copyIntoKind LetS, info:
+      takeTree bodyBuf, letCur
+      takeTree bodyBuf, letCur
+      takeTree bodyBuf, letCur
+      c.typeCache.registerLocal(symId, LetY, letCur)
+      bodyBuf.copyTree letCur
+      skip letCur
+      bodyBuf.copyTree fs.iter
+    bodyBuf.copyTree fs.body
   dest.add tagToken("loop", info)
-  skip n # for loop iterator call
-  skip n # for loop variables
-  trWhileTrue c, dest, n
-  dest.takeParRi n # close "loop"
+  var bodyCursor = beginRead(bodyBuf)
+  trWhileTrue c, dest, bodyCursor
+  endRead bodyBuf
+  skip n
+  dest.addParRi()
 
 proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
                         selector: SymId; selectorType: Cursor; info: PackedLineInfo) =
