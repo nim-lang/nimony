@@ -199,7 +199,13 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
 
     # Now create the let binding for this call
     let tmp = pool.syms.getOrIncl(tempSymName(c))
-    dest.addParLe LetS, info
+    # `call() = 4` via a `var T` cannot be bound to a let variable
+    # as the analysis in constracts_njvl is too simplistic.
+    # It would produce: "Cannot reassign a let variable".
+    if typ.typeKind == MutT:
+      dest.addParLe VarS, info
+    else:
+      dest.addParLe LetS, info
     dest.addSymDef tmp, info
     dest.addEmpty2 info # no export marker, no pragmas
     dest.copyTree typ
