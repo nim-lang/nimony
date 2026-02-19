@@ -646,7 +646,7 @@ proc trBlock(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Curs
   trGuardedStmts c, b, dest, n, true
   closeBasicBlock c, b, dest
   removeGuard c, s
-
+  skipParRi n
 
 proc findBreakSplitPoint(n: Cursor): int =
   # search for pattern `if cond: break` as all statements before that
