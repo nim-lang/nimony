@@ -41,6 +41,7 @@ type
     errors: TokenBuf
     procCanRaise: bool
     moduleSuffix: string
+    nestedProcs: int
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -756,7 +757,8 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.facts = createFacts()
-  c.directlyInitialized.clear()
+  if c.nestedProcs <= 1:
+    c.directlyInitialized.clear()
   c.writesTo = @[]
   c.procCanRaise = false
   c.writesTo.setLen(0)
@@ -823,7 +825,9 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS:
       # Nested routine - analyze and advance past it
       c.typeCache.openScope()
+      inc c.nestedProcs
       traverseProc c, n
+      dec c.nestedProcs
       c.typeCache.closeScope()
     of TemplateS, TypeS, CommentS, PragmasS:
       skip n
@@ -886,7 +890,9 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     traverseToplevel c, n
     skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
+    inc c.nestedProcs
     traverseProc c, n
+    dec c.nestedProcs
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,
      ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      ExportS,
