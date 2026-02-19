@@ -755,30 +755,13 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Map `for x in i()` to `(loop ... (stmts (let x type i()) body))` so the
   # loop variable is bound from the iterator at the start of the body.
-  let info = n.info
-  let fs = asForStmt(n)
-  var letCur = fs.vars
-  if letCur.stmtKind == StmtsS:
-    inc letCur
-  inc letCur
-  let symId = letCur.symId
-  var bodyBuf = createTokenBuf(50)
-  bodyBuf.copyIntoKind StmtsS, info:
-    bodyBuf.copyIntoKind LetS, info:
-      takeTree bodyBuf, letCur
-      takeTree bodyBuf, letCur
-      takeTree bodyBuf, letCur
-      c.typeCache.registerLocal(symId, LetY, letCur)
-      bodyBuf.copyTree letCur
-      skip letCur
-      bodyBuf.copyTree fs.iter
-    bodyBuf.copyTree fs.body
-  dest.add tagToken("loop", info)
-  var bodyCursor = beginRead(bodyBuf)
-  trWhileTrue c, dest, bodyCursor
-  endRead bodyBuf
-  skip n
-  dest.addParRi()
+  dest.add tagToken("loop", n.info)
+  let d = dest.len
+  inc n
+  skip n # for loop iterator call
+  skip n # for loop variables
+  trWhileTrue c, dest, n
+  dest.takeParRi n # close "loop"
 
 proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
                         selector: SymId; selectorType: Cursor; info: PackedLineInfo) =
