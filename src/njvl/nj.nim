@@ -756,7 +756,6 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Map `for x in i()` to `(loop ... (stmts (let x type i()) body))` so the
   # loop variable is bound from the iterator at the start of the body.
   dest.add tagToken("loop", n.info)
-  let d = dest.len
   inc n
   skip n # for loop iterator call
   skip n # for loop variables

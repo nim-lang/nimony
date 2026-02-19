@@ -43,7 +43,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
           # More than one son is always complex:
           return true
         inc nested
-      elif goal == TowardsNjvl and n.exprKind in CallKinds:
+      elif goal == TowardsNjvl and n.exprKind in (CallKinds+{AndX, OrX}):
         return true
       else:
         inc n
