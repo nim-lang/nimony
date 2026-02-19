@@ -759,7 +759,6 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.directlyInitialized.clear()
   c.writesTo = @[]
   c.procCanRaise = false
-  c.directlyInitialized.clear()
   c.writesTo.setLen(0)
 
   inc n
