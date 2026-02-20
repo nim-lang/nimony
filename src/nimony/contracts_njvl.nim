@@ -465,6 +465,12 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       case pc.exprKind
       of CallKinds:
         analyseCall c, pc
+      of DotX:
+        inc pc
+        traverseExpr c, pc # object
+        skip pc # field name
+        if pc.kind != ParRi: skip pc # inheritance depth
+        skipParRi pc
       of DdotX:
         inc pc
         wantNotNilDeref c, pc
