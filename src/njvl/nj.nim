@@ -241,19 +241,19 @@ proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; 
     else:
       dest.addSymUse c.current.errorTracker, info
 
-proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; constSym: SymId; info: PackedLineInfo) =
+proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; tracker, constSym: SymId; info: PackedLineInfo) =
   ## Store a constant (like Success) to errorTracker.
   assert constSym != NoSymId
-  assert c.current.errorTracker != NoSymId
+  assert tracker != NoSymId
   dest.copyIntoKind StoreV, info:
     dest.addSymUse constSym, info
     if c.current.mode == TupleRaise:
       dest.addParLe TupatX, info
-      dest.addSymUse c.current.errorTracker, info
+      dest.addSymUse tracker, info
       dest.addIntLit 0, info
       dest.addParRi()
     else:
-      dest.addSymUse c.current.errorTracker, info
+      dest.addSymUse tracker, info
 
 proc declareResultVar(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
   copyIntoKind dest, ResultS, info:
@@ -916,7 +916,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
     tracker = pool.syms.getOrIncl("´err." & $c.current.tmpCounter)
     inc c.current.tmpCounter
     # Declare and initialize to Success
-    dest.copyIntoKind LetS, info:
+    dest.copyIntoKind VarS, info:
       dest.addSymDef tracker, info
       dest.addDotToken() # export marker
       dest.addDotToken() # pragmas
@@ -967,7 +967,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
         trGuardedStmtsBlock c, dest, n, true
 
         # Mark exception as handled by resetting error tracker to Success
-        storeConstToErrorTracker(c, dest, pool.syms.getOrIncl(SuccessName), info)
+        storeConstToErrorTracker(c, dest, tracker, pool.syms.getOrIncl(SuccessName), info)
 
         closeScope c, dest, info
         skipParRi n
