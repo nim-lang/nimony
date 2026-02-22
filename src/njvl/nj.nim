@@ -956,7 +956,11 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
         if n.stmtKind == LetS:
           inc n
           let excVar = n.symId
-          c.typeCache.takeLocalHeader(dest, n, LetY)
+          inc n # symbol
+          skip n # export marker
+          skip n # pragmas
+          c.typeCache.registerLocal(excVar, LetY, n)
+          skip n # type
           # Initialize: e = errorTracker
           copyIntoKind dest, StoreV, info:
             useErrorTracker(c, dest, tracker, info)
