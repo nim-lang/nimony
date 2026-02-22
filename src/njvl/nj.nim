@@ -213,18 +213,18 @@ proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
   dest.addParRi()
   c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
 
-proc useErrorTracker(c: Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc useErrorTracker(c: Context; dest: var TokenBuf; errorTracker: SymId; info: PackedLineInfo) =
   ## Emit the correct expression to read the error code from errorTracker.
   ## In TupleRaise mode, errorTracker is a tuple and we need (tupat errorTracker +0).
   ## In VoidRaise/NoRaise mode, errorTracker is a plain ErrorCode variable.
-  assert c.current.errorTracker != NoSymId
+  assert errorTracker != NoSymId
   if c.current.mode == TupleRaise:
     dest.addParLe TupatX, info
-    dest.addSymUse c.current.errorTracker, info
+    dest.addSymUse errorTracker, info
     dest.addIntLit 0, info
     dest.addParRi()
   else:
-    dest.addSymUse c.current.errorTracker, info
+    dest.addSymUse errorTracker, info
 
 proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; info: PackedLineInfo) =
   ## Emit the correct store to set the error code in errorTracker from a source expression.
@@ -954,11 +954,12 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
 
         # If there's an exception variable (let e: ErrorCode), declare and initialize it
         if n.stmtKind == LetS:
+          inc n
           let excVar = n.symId
           c.typeCache.takeLocalHeader(dest, n, LetY)
           # Initialize: e = errorTracker
           copyIntoKind dest, StoreV, info:
-            useErrorTracker(c, dest, info)
+            useErrorTracker(c, dest, tracker, info)
             dest.addSymUse excVar, info
           assert n.kind == DotToken
           inc n # skip value (should be dot)
@@ -987,7 +988,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
     # Check the error tracker, not the guard (guards are monotonic and can't be reset)
     dest.copyIntoKind IteV, info:
       dest.copyIntoKind NeqX, info:
-        useErrorTracker(c, dest, info)
+        useErrorTracker(c, dest, tracker, info)
         dest.addSymUse pool.syms.getOrIncl(SuccessName), info
       dest.copyIntoKind StmtsS, info:
         raiseGuards(c, dest, info)
