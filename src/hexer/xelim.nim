@@ -602,7 +602,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n, tar
       dest.add head
       dest.add tar
-    dest.addParRi()
+      dest.addParRi()
     skipParRi n
 
   of WhileS:
