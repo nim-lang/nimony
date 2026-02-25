@@ -73,9 +73,13 @@ proc tempSymName(c: var Context): string {.inline.} =
   result = "`x." & $c.counter
   inc c.counter
 
+proc getType(c: var Context; n: Cursor): Cursor =
+  result = getType(c.typeCache, n)
+  assert result.typeKind != AutoT, "cannot compute type of: " & toString(n, false)
+
 proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info
-  let typ = getType(c.typeCache, n)
+  let typ = getType(c, n)
   let s = tempSymName(c)
   result = pool.syms.getOrIncl(s)
   copyIntoKind dest, VarS, info:
@@ -100,7 +104,7 @@ proc add(dest: var TokenBuf; tar: Target) =
 
 proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
   var tar = Target(m: IsEmpty)
-  let typ = getType(c.typeCache, n)
+  let typ = getType(c, n)
   trExpr c, dest, n, tar
 
   if typ.typeKind in {VoidT, AutoT}:
@@ -186,7 +190,7 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
   if tar.m in {IsAppend, IsEmpty} and c.goal == TowardsNjvl:
     # bind to a temporary variable:
     let info = n.info
-    let typ = c.typeCache.getType(n)
+    let typ = getType(c, n)
 
     # Process the call into a temporary buffer so that any nested let
     # declarations are emitted before this one starts:
@@ -576,6 +580,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of DiscardS:
     if c.goal == TowardsNjvl:
       inc n
+      let typ = getType(c, n)
       var tar = Target(m: IsBound)
       trExpr c, dest, n, tar
       # we must bind the result to a temporary variable!
@@ -585,7 +590,6 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParLe LetS, info
       dest.addSymDef tmp, info
       dest.addEmpty2 info # no export marker, no pragmas
-      let typ = c.typeCache.getType(n)
       dest.copyTree typ
       dest.add tar
     else:

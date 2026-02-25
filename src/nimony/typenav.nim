@@ -473,6 +473,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     var n = n
     inc n # into tuple
     var tupType = getTypeImpl(c, n, flags)
+    tupType = skipModifier(tupType)
     if tupType.typeKind == TupleT:
       skip n # skip tuple expression
       if n.kind == IntLit:
