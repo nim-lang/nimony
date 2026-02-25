@@ -5572,6 +5572,8 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
+    if c.genericInnerProcs.len > 0:
+      reorderInnerGenericInstances(c, afterSem)
     when true: #defined(enableContracts):
       when not useNj:
         var moreErrors = analyzeContracts(afterSem)
@@ -5579,8 +5581,6 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
         var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
-    if c.genericInnerProcs.len > 0:
-      reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
     dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
   else:
