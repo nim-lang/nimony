@@ -909,7 +909,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
   # If the proc can raise, use resultSym; otherwise create a local tracker
   let oldErrorTracker = c.current.errorTracker
   var tracker: SymId
-  if c.current.mode != NoRaise:
+  if c.current.mode != NoRaise and c.current.resultSym != NoSymId:
     tracker = c.current.resultSym
   else:
     # Need a local variable to track errors within this try block
@@ -933,7 +933,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
     # Make the try block think we're in a VoidRaise context
     c.current.mode = VoidRaise
 
-  inc n # into the loop body statement list
+  inc n # into the try
   trGuardedStmtsBlock c, dest, n, outerB.hasParLe
 
   # Restore original mode and errorTracker
@@ -1001,6 +1001,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
     c.current.mode = oldMode
     c.current.errorTracker = oldErrorTracker
   removeGuard c, s
+  skipParRi n
 
 
 proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
