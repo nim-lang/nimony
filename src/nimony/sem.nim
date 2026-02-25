@@ -5659,8 +5659,8 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
       ms.c = initSemContext(prog.main.name, sharedConfig, moduleFlags,
                             commandLineArgs, canSelfExec)
     else:
-      ms.n0 = loadCycleGroupModule(infiles[i], ms.owningBuf)
       let suffix = splitModulePath(infiles[i]).name
+      ms.n0 = loadModule(infiles[i], ms.owningBuf, suffix)
       ms.c = initSemContext(suffix, sharedConfig, moduleFlags,
                             commandLineArgs, canSelfExec)
     ms.dest = createTokenBuf()

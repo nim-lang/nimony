@@ -126,13 +126,11 @@ proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArra
   let suffix = moduleSuffix(infile, paths)
   prog.mods[suffix] = m
 
-proc loadCycleGroupModule*(infile: string; owningBuf: var TokenBuf): Cursor =
-  ## Load a cycle group member's content. Uses splitModulePath for the suffix
-  ## (correct for .p.nif files from nimcache).
+proc loadModule*(infile: string; owningBuf: var TokenBuf; suffix: string): Cursor =
+  ## Load a module's content and register it under the given suffix.
   let m = newNifModule(infile)
   owningBuf = fromStream(m.stream)
   result = beginRead(owningBuf)
-  let suffix = splitModulePath(infile).name
   prog.mods[suffix] = m
 
 proc suffixToNif*(suffix: string): string {.inline.} =
