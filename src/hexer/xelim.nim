@@ -544,7 +544,6 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
     else:
       trStmt c, dest, n
 
-
   if tar.m != IsIgnored:
     tar.t.addSymUse tmp, n.info
 
@@ -595,6 +594,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addEmpty2 info # no export marker, no pragmas
         dest.copyTree typ
         dest.add tar
+        dest.addParRi()
     else:
       var tar = Target(m: IsEmpty)
       let head = n
