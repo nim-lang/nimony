@@ -5562,12 +5562,10 @@ proc addIfAbsent[T](s: var seq[T]; x: T) =
   s.add x
 
 proc resolveCyclicImports(c: var SemContext) =
-  ## After phase1 of all cycle group members, populate importTab and iface
+  ## After phase2 of all cycle group members, populate importTab and iface
   ## for deferred cyclic imports by scanning prog.mem.
-  echo "DEBUG resolveCyclicImports: deferredCyclicImports.len=", c.deferredCyclicImports.len
+  ## (Proc symbols are published to prog.mem only during phase2, not phase1.)
   for (targetSuffix, moduleSym) in c.deferredCyclicImports:
-    echo "DEBUG resolving targetSuffix=", targetSuffix, " moduleSym=", moduleSym.int
-    var count = 0
     let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule())
     for symId in prog.mem.symIds:
       let symName = pool.syms[symId]
@@ -5578,9 +5576,6 @@ proc resolveCyclicImports(c: var SemContext) =
         let nameId = pool.strings.getOrIncl(baseName)
         c.importTab.mgetOrPut(nameId, @[]).addIfAbsent(moduleSym)
         module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
-        inc count
-        echo "DEBUG   sym: ", symName, " base='", baseName, "' nameId=", nameId.int
-    echo "DEBUG resolved ", count, " symbols for ", targetSuffix
 
 proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[ModuleFlag];
                     commandLineArgs: string; canSelfExec: bool): SemContext =

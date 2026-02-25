@@ -143,9 +143,8 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
           else:
             moduleSym = c.processedModules[suffix]
           discard c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
-          # Defer the actual interface loading until after phase1
+          # Defer the actual interface loading until after phase2
           c.deferredCyclicImports.add (suffix, moduleSym)
-          echo "DEBUG cyclicImport: suffix=", suffix, " moduleSym=", moduleSym.int, " f2=", f2
     else:
       # Non-cyclic import in same statement; skip it (should not happen in practice)
       skip x
