@@ -580,18 +580,21 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of DiscardS:
     if c.goal == TowardsNjvl:
       inc n
-      let typ = getType(c, n)
-      var tar = Target(m: IsBound)
-      trExpr c, dest, n, tar
-      # we must bind the result to a temporary variable!
-      let tmp = pool.syms.getOrIncl("`x." & $c.counter)
-      inc c.counter
-      let info = n.info
-      dest.addParLe LetS, info
-      dest.addSymDef tmp, info
-      dest.addEmpty2 info # no export marker, no pragmas
-      dest.copyTree typ
-      dest.add tar
+      if n.kind == DotToken:
+        dest.takeToken n
+      else:
+        let typ = getType(c, n)
+        var tar = Target(m: IsBound)
+        trExpr c, dest, n, tar
+        # we must bind the result to a temporary variable!
+        let tmp = pool.syms.getOrIncl("`x." & $c.counter)
+        inc c.counter
+        let info = n.info
+        dest.addParLe LetS, info
+        dest.addSymDef tmp, info
+        dest.addEmpty2 info # no export marker, no pragmas
+        dest.copyTree typ
+        dest.add tar
     else:
       var tar = Target(m: IsEmpty)
       let head = n
