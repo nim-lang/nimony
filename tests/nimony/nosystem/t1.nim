@@ -89,10 +89,6 @@ proc foo_block* =
 proc testPragmaInline*() {.inline.} =
   let data = 1
 
-proc createData(): tuple[a: int, b: string] =
-  var s: tuple[a: int, b: string]
-  result = s
-
 proc `==`*(x, y: int): bool {.magic: "EqI".}
 
 proc whileStmt =
