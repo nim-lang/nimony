@@ -292,8 +292,6 @@ proc trResultExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  echo "trProcDecl ", toString(n, false)
-
   let decl = n
   var r = asRoutine(n)
   let oldProc = move c.current
