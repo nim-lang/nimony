@@ -5647,7 +5647,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true:
-      when not defined(useNj):
+      when not useNj:
         var moreErrors = analyzeContracts(afterSem)
       else:
         var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
