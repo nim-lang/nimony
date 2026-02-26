@@ -240,6 +240,11 @@ proc needsRebuild(dag: var Dag; node: Node): bool =
   ## Check if a node needs to be rebuilt
   result = false
 
+  # Nodes with no outputs are side-effectful (e.g. idetools printing to stdout);
+  # always run them.
+  if node.outputs.len == 0:
+    return true
+
   # Check if any output is missing
   for output in node.outputs:
     if not fileExists(output):

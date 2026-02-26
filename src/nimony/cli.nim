@@ -27,6 +27,8 @@ proc parseTrack(s: string; mode: TrackMode): TrackPosition =
   while i < s.len and s[i] in {'0'..'9'}:
     col = col * 10'i32 + (ord(s[i]) - ord('0')).int32
     inc i
+  # Editors use 1-based columns; NIF uses 0-based. Convert here so callers don't have to.
+  if col > 0: dec col
   result = TrackPosition(mode: mode, line: line, col: col, filename: s.substr(0, filenameEnd-1))
 
 proc parseCommonOption*(key, val: string; config: var NifConfig;
