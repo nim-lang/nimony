@@ -30,7 +30,7 @@ import ".." / models / tags
 import ".." / lib / symparser
 import ".." / njvl / [njvl_model, vl]
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-  renderer, typeprops, inferle, xints
+  renderer, typeprops, inferle, xints, builtintypes
 
 type
   NjvlContext = object
@@ -238,6 +238,13 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
     else:
       let r = analysableRoot(c, n)
       if r == NoSymId:
+        # account for the fact that NJ already introduced tuples for the error handling:
+        var n = n
+        if n.exprKind == TupconstrX:
+          inc n
+          skip n # skip type
+          if n.kind == Symbol and pool.syms[n.symId] == ("Success.0." & SystemModuleSuffix):
+            inc n
         if n.exprKind == NewobjX and c.procCanRaise:
           discard "fine, nil value is mapped to OOM by the compiler"
         else:
