@@ -27,7 +27,14 @@ proc parseTrack(s: string; mode: TrackMode): TrackPosition =
   while i < s.len and s[i] in {'0'..'9'}:
     col = col * 10'i32 + (ord(s[i]) - ord('0')).int32
     inc i
-  result = TrackPosition(mode: mode, line: line, col: col, filename: s.substr(0, filenameEnd-1))
+  # Editors use 1-based columns; NIF uses 0-based. Convert here so callers don't have to.
+  if col > 0: dec col
+  var filename = s.substr(0, filenameEnd-1)
+  when defined(windows):
+    # NIF files store paths with forward slashes (portablePaths); normalize here.
+    for c in mitems(filename):
+      if c == '\\': c = '/'
+  result = TrackPosition(mode: mode, line: line, col: col, filename: filename)
 
 proc parseCommonOption*(key, val: string; config: var NifConfig;
                         moduleFlags: var set[ModuleFlag];

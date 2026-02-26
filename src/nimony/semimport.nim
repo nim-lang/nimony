@@ -96,7 +96,58 @@ proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: 
     exports = newExports
 
 proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
-  c.buildErr dest, x.info, "cyclic module imports are not implemented"
+  ## Handle `import foo {.cyclic.}`. Registers the module sym and records
+  ## the import for deferred resolution (after phase1 of all cycle group members).
+  let info = x.info
+  while x.kind != ParRi:
+    var isCyclic = false
+    if x.kind == ParLe and x.exprKind == PragmaxX:
+      var y = x
+      inc y
+      skip y
+      if y.substructureKind == PragmasU:
+        inc y
+        if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+          isCyclic = true
+
+    if isCyclic:
+      # Manually parse the pragmax wrapper to extract the filename
+      inc x # enter PragmaxX
+      var files: seq[ImportedFilename] = @[]
+      var hasError = false
+      filenameVal(x, files, hasError, allowAs = false)
+      skip x # skip (pragmas cyclic)
+      inc x  # skip closing ParRi of PragmaxX
+
+      if not hasError:
+        let origin = getFile(info)
+        for f1 in files:
+          let f2 = resolveFile(c.g.config.paths, origin, f1.path)
+          if not semos.fileExists(f2):
+            c.buildErr dest, info, "file not found: " & f2
+            continue
+          let suffix = moduleSuffix(f2, c.g.config.paths)
+          var moduleSym: SymId
+          if not c.processedModules.contains(suffix):
+            c.meta.importedFiles.add f2
+            let moduleName = pool.strings.getOrIncl(f1.name)
+            moduleSym = identToSym(c, moduleName, ModuleY)
+            c.processedModules[suffix] = moduleSym
+            let s = Sym(kind: ModuleY, name: moduleSym, pos: ImportedPos)
+            if f1.name != "":
+              c.currentScope.addOverloadable(moduleName, s)
+            var moduleDecl = createTokenBuf(2)
+            moduleDecl.addParLe(ModuleY, info)
+            moduleDecl.addParRi()
+            publish moduleSym, moduleDecl, SemcheckBodies
+          else:
+            moduleSym = c.processedModules[suffix]
+          discard c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
+          # Defer the actual interface loading until after phase2
+          c.deferredCyclicImports.add (suffix, moduleSym)
+    else:
+      # Non-cyclic import in same statement; skip it (should not happen in practice)
+      skip x
 
 proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilename]; mode: ImportFilter; info: PackedLineInfo) =
   let origin = getFile(info)

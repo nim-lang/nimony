@@ -145,10 +145,16 @@ proc extractMarkers(s: string): seq[LineInfo] =
     inc i
     inc col
 
-proc markersToCmdLine(s: seq[LineInfo]): string =
+proc markersToCmdLine(s: seq[LineInfo]; file: string): string =
   result = ""
   for x in items(s):
-    result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
+    case x.filename
+    of "usages":
+      result.add " --usages:" & file & "," & $x.line & "," & $x.col
+    of "def":
+      result.add " --def:" & file & "," & $x.line & "," & $x.col
+    else:
+      result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
 
 proc execLocal(exe, cmd: string): (string, int) =
   let bin = "bin" / exe.addFileExt(ExeExt)
@@ -166,7 +172,8 @@ type
 proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
-  of Normal, Tracked, Compat, Valgrind: "c --silentMake"
+  of Tracked: "check --silentMake"
+  of Normal, Compat, Valgrind: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
@@ -269,7 +276,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
   of Basics:
     nimonycmd.add " --noSystem"
   of Tracked:
-    nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
+    nimonycmd.add markersToCmdLine(extractMarkers(readFile(file)), file)
   of Compat:
     nimonycmd.add " --compat"
   if forward.len != 0:
@@ -293,6 +300,8 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
         writeFile(msgs, strippedOutput)
       failure c, file, msgSpec, strippedOutput
     expectedExitCode = if msgSpec.contains(ErrorKeyword): 1 else: 0
+  elif overwrite and cat == Tracked:
+    writeFile(msgs, removeMakeErrors(compilerOutput))
   if compilerExitCode != expectedExitCode:
     failure c, file, "compiler exitcode " & $expectedExitCode, compilerOutput & "\nexitcode " & $compilerExitCode
 
