@@ -5571,30 +5571,34 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   else:
     quit 1
 
-proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-               commandLineArgs: sink string; canSelfExec: bool) =
-  ## Semantic check one or more modules.
-  ## For single modules (len=1), this is the normal case.
-  ## For multiple modules, they form a cycle group and are processed together.
-  assert infiles.len == outfiles.len
-  assert infiles.len > 0
+proc addIfAbsent[T](s: var seq[T]; x: T) =
+  for y in s:
+    if y == x: return
+  s.add x
 
-  # For now, only support single module. Cyclic modules need more work.
-  if infiles.len > 1:
-    quit "cyclic module groups not yet implemented"
+proc resolveCyclicImports(c: var SemContext) =
+  ## After phase2 of all cycle group members, populate importTab and iface
+  ## for deferred cyclic imports by scanning prog.mem.
+  ## (Proc symbols are published to prog.mem only during phase2, not phase1.)
+  for (targetSuffix, moduleSym) in c.deferredCyclicImports:
+    let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule())
+    for symId in prog.mem.symIds:
+      let symName = pool.syms[symId]
+      let modSuffix = extractModule(symName)
+      if modSuffix == targetSuffix:
+        var baseName = symName
+        extractBasename(baseName)
+        let nameId = pool.strings.getOrIncl(baseName)
+        c.importTab.mgetOrPut(nameId, @[]).addIfAbsent(moduleSym)
+        module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
 
-  let infile = infiles[0]
-  let outfile = outfiles[0]
-
-  var owningBuf = createTokenBuf(300)
-  var n0 = setupProgram(infile, outfile, owningBuf)
-  if SkipSystem in moduleFlags:
-    programs.publishStringType()
-  var c = SemContext(
+proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[ModuleFlag];
+                    commandLineArgs: string; canSelfExec: bool): SemContext =
+  result = SemContext(
     types: createBuiltinTypes(),
-    thisModuleSuffix: prog.main.name,
+    thisModuleSuffix: suffix,
     moduleFlags: moduleFlags,
-    g: ProgramContext(config: config),
+    g: config,
     phase: SemcheckTopLevelSyms,
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
@@ -5604,11 +5608,142 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
     forceInstantiate: forceInstantiateCallback)
+  for magic in ["typeof", "compiles", "defined", "declared"]:
+    result.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
+
+proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
+  ## Post-processing after phase3: generics, contracts, derefs.
+  if c.expanded.len > 0:
+    dest.addParLe CommentS, c.expanded[0].info
+    dest.add c.expanded
+    dest.addParRi()
+
+  instantiateGenerics c, dest
+  for val in c.typeInstDecls:
+    let s = fetchSym(c, val)
+    let res = declToCursor(c, dest, s)
+    if res.status == LacksNothing:
+      requestHookInstance(c, res.decl)
+      requestMethods(c, dest, val, res.decl)
+      dest.copyTree res.decl
+  instantiateGenericHooks c, dest
+  dest.addParRi()
+
+  if reportErrors(dest) == 0:
+    var afterSem = move dest
+    when true:
+      when not defined(useNj):
+        var moreErrors = analyzeContracts(afterSem)
+      else:
+        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
+      if reporters.reportErrors(moreErrors) > 0:
+        quit 1
+    if c.genericInnerProcs.len > 0:
+      reorderInnerGenericInstances(c, afterSem)
+    var finalBuf = beginRead afterSem
+    dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+  else:
+    quit 1
+
+type
+  ModuleState = object
+    owningBuf: TokenBuf
+    n0: Cursor
+    c: SemContext
+    dest: TokenBuf
+    outfile: string
+    buf1: TokenBuf
+    moduleLineInfo: PackedLineInfo
+
+proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
+                        moduleFlags: set[ModuleFlag];
+                        commandLineArgs: string; canSelfExec: bool) =
+  ## Semantic check multiple modules that form a cycle group.
+  ## All modules are processed through each phase together:
+  ## phase1(all) -> resolve cyclic imports -> phase2(all) -> phase3(all).
+  let sharedConfig = ProgramContext(config: config)
+  if SkipSystem in moduleFlags:
+    programs.publishStringType()
+
+  var modules = newSeqOfCap[ModuleState](infiles.len)
+  for i in 0..<infiles.len:
+    var ms = ModuleState(outfile: outfiles[i])
+    ms.owningBuf = createTokenBuf(300)
+    if i == 0:
+      ms.n0 = setupProgram(infiles[i], outfiles[i], ms.owningBuf)
+      ms.c = initSemContext(prog.main.name, sharedConfig, moduleFlags,
+                            commandLineArgs, canSelfExec)
+    else:
+      let suffix = splitModulePath(infiles[i]).name
+      ms.n0 = loadModule(infiles[i], ms.owningBuf, suffix)
+      ms.c = initSemContext(suffix, sharedConfig, moduleFlags,
+                            commandLineArgs, canSelfExec)
+    ms.dest = createTokenBuf()
+    modules.add ensureMove ms
+
+  # Setup: create scopes and import system for each module
+  for i in 0..<modules.len:
+    modules[i].c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
+    let path = getFile(modules[i].n0.info)
+    addSelfModuleSym(modules[i].c, path)
+    if {SkipSystem, IsSystem} * moduleFlags == {}:
+      let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
+      importSingleFile(modules[i].c, modules[i].dest, systemFile, "", ImportFilter(kind: ImportAll), modules[i].n0.info)
+
+  # Phase 1: Register toplevel symbols for ALL modules
+  for i in 0..<modules.len:
+    var (buf1, lineInfo) = phase1(modules[i].c, modules[i].dest, modules[i].n0)
+    modules[i].buf1 = ensureMove buf1
+    modules[i].moduleLineInfo = lineInfo
+
+  # Phase 2: Check signatures for ALL modules
+  # This publishes proc symbols to prog.mem via publishSignature
+  for i in 0..<modules.len:
+    var buf2 = phase2(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
+    modules[i].buf1 = ensureMove buf2
+
+  # After phase2: resolve deferred cyclic imports from prog.mem
+  # (proc symbols are only published during phase2, not phase1)
+  for i in 0..<modules.len:
+    if modules[i].c.deferredCyclicImports.len > 0:
+      resolveCyclicImports(modules[i].c)
+
+  # Phase 3: Check bodies for ALL modules
+  for i in 0..<modules.len:
+    modules[i].dest = phase3(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
+
+  # Post-processing and output for each module
+  for i in 0..<modules.len:
+    semcheckPostProcess modules[i].c, modules[i].dest
+    if reportErrors(modules[i].dest) == 0:
+      writeOutput modules[i].c, modules[i].dest, modules[i].outfile
+    else:
+      quit 1
+
+proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag];
+               commandLineArgs: sink string; canSelfExec: bool) =
+  ## Semantic check one or more modules.
+  ## For single modules (len=1), this is the normal case.
+  ## For multiple modules, they form a cycle group and are processed together.
+  assert infiles.len == outfiles.len
+  assert infiles.len > 0
+
+  if infiles.len > 1:
+    semcheckCycleGroup(infiles, outfiles, ensureMove config, moduleFlags,
+                       commandLineArgs, canSelfExec)
+    return
+
+  let infile = infiles[0]
+  let outfile = outfiles[0]
+
+  var owningBuf = createTokenBuf(300)
+  var n0 = setupProgram(infile, outfile, owningBuf)
+  if SkipSystem in moduleFlags:
+    programs.publishStringType()
+  var c = initSemContext(prog.main.name, ProgramContext(config: config),
+                         moduleFlags, commandLineArgs, canSelfExec)
 
   var dest = createTokenBuf()
-
-  for magic in ["typeof", "compiles", "defined", "declared"]:
-    c.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
 
   while true:
     semcheckCore c, dest, n0

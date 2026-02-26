@@ -97,6 +97,10 @@ iterator pairs*(t: ToplevelEntries): (int, lent ToplevelEntry) =
   for i, e in t.entries.pairs:
     yield (i, e)
 
+iterator symIds*(t: ToplevelEntries): SymId =
+  for s in t.bySymId.keys:
+    yield s
+
 # -------------- end ToplevelEntries methods --------------
 
 proc newNifModule(infile: string): NifModule =
@@ -120,6 +124,13 @@ proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArra
   owningBuf = fromStream(m.stream)
   result = beginRead(owningBuf)
   let suffix = moduleSuffix(infile, paths)
+  prog.mods[suffix] = m
+
+proc loadModule*(infile: string; owningBuf: var TokenBuf; suffix: string): Cursor =
+  ## Load a module's content and register it under the given suffix.
+  let m = newNifModule(infile)
+  owningBuf = fromStream(m.stream)
+  result = beginRead(owningBuf)
   prog.mods[suffix] = m
 
 proc suffixToNif*(suffix: string): string {.inline.} =
