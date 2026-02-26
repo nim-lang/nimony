@@ -272,11 +272,11 @@ proc trResultExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   case c.current.mode
   of VoidRaise:
-    assert n.kind == DotToken
-    inc n
-    copyIntoKind dest, StoreV, info:
+    if n.kind == DotToken:
+      inc n
       dest.addSymUse pool.syms.getOrIncl(SuccessName), info
-      dest.addSymUse c.current.resultSym, info
+    else:
+      trExpr c, dest, n
   of TupleRaise:
     # wrap it a tuple constructor:
     copyIntoKind dest, TupconstrX, info:
@@ -1015,9 +1015,12 @@ proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
       inc n
     else:
       assert c.current.resultSym != NoSymId, "could not find `result` symbol"
-      dest.copyIntoKind StoreV, info:
-        trResultExpr c, dest, n
-        dest.addSymUse c.current.resultSym, info
+      if n.kind == Symbol and n.symId == c.current.resultSym:
+        inc n
+      else:
+        dest.copyIntoKind StoreV, info:
+          trResultExpr c, dest, n
+          dest.addSymUse c.current.resultSym, info
     skipParRi n
 
   dest.add tagToken("jtrue", info)
