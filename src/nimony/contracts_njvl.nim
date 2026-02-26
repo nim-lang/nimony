@@ -36,7 +36,7 @@ type
   NjvlContext = object
     facts: Facts           # From inferle.nim - tracks le/notnil facts
     typeCache: TypeCache
-    directlyInitialized: HashSet[SymId]
+    directlyInitialized: seq[HashSet[SymId]]
     writesTo: seq[SymId]
     errors: TokenBuf
     procCanRaise: bool
@@ -441,6 +441,12 @@ proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
     skip expected # type of the next field
   skipParRi n
 
+proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
+  for s in mitems c.directlyInitialized:
+    if symId in s:
+      return true
+  return false
+
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
   var nested = 0
   while true:
@@ -449,7 +455,7 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
       if x.kind in {VarY, LetY, CursorY}:
-        if symId notin c.directlyInitialized and symId notin c.writesTo:
+        if not isDirectlyInitialized(c, symId) and symId notin c.writesTo:
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
           c.writesTo.add symId
       inc pc
@@ -581,7 +587,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY}:
-      if symId in c.directlyInitialized or symId in c.writesTo:
+      if isDirectlyInitialized(c, symId) or symId in c.writesTo:
         c.buildErr n.info, "invalid reassignment to `let` variable"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
@@ -707,7 +713,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   c.typeCache.registerLocal(name, cast[SymKind](kind), n)
   skip n # type
   if n.kind != DotToken or skipInitCheck:
-    c.directlyInitialized.incl name
+    c.directlyInitialized[^1].incl name
   traverseExpr c, n
   skipParRi n
 
@@ -763,11 +769,9 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.facts = createFacts()
-  if c.nestedProcs <= 1:
-    c.directlyInitialized.clear()
-  c.writesTo = @[]
+  c.directlyInitialized.add initHashSet[SymId]()
   c.procCanRaise = false
-  c.writesTo.setLen(0)
+  let oldWritesTo = move c.writesTo
 
   inc n
   var isGeneric = false
@@ -784,6 +788,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   else:
     skip n
   skipParRi n
+  c.writesTo = oldWritesTo
+  discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   case n.njvlKind
@@ -921,7 +927,8 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
   # Now analyze the NJVL IR
   var c = NjvlContext(
     typeCache: createTypeCache(),
-    moduleSuffix: moduleSuffix
+    moduleSuffix: moduleSuffix,
+    directlyInitialized: @[initHashSet[SymId]()]
   )
   c.typeCache.openScope()
 
