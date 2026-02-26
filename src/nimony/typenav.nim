@@ -390,7 +390,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     skip n # object expression
     let fld = n.symId
 
-    var objType = skipToObjectBody getTypeImpl(c, obj, flags)
+    var objType = skipToObjectBody skipModifier getTypeImpl(c, obj, flags)
 
     result = typeOfField(c, objType, fld)
     if cursorIsNil(result):
