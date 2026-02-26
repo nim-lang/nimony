@@ -900,7 +900,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  openScope c
+
 
   let guard = pool.syms.getOrIncl("´g." & $c.current.tmpCounter)
   inc c.current.tmpCounter
@@ -933,6 +933,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
     # Make the try block think we're in a VoidRaise context
     c.current.mode = VoidRaise
 
+  openScope c
   inc n # into the try
   trGuardedStmtsBlock c, dest, n, outerB.hasParLe
 
