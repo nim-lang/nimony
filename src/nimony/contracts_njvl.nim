@@ -637,9 +637,13 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     condFactsList.add c.facts[c.facts.len - 1]
 
   # Then branch - has positive condition facts
+  let oldWritesToLen = c.writesTo.len
   traverseStmt c, n
   let thenFacts = c.facts
-  let thenWritesTo = c.writesTo
+  var thenWritesTo = newSeqOfCap[SymId](c.writesTo.len - oldWritesToLen)
+  for i in oldWritesToLen ..< c.writesTo.len:
+    thenWritesTo.add c.writesTo[i]
+  c.writesTo.shrink oldWritesToLen
 
   # Restore facts and add negated condition for else branch (single fact only)
   restore(c.facts, savedFacts)
@@ -654,16 +658,18 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   else:
     traverseStmt c, n
 
+  var elseWritesTo = newSeqOfCap[SymId](c.writesTo.len - oldWritesToLen)
+  for i in oldWritesToLen ..< c.writesTo.len:
+    elseWritesTo.add c.writesTo[i]
+  c.writesTo.shrink oldWritesToLen
+
   # Merge facts from both branches
   # Use conservative approach: only keep facts that hold in both branches
   c.facts = merge(thenFacts, 0, c.facts, false)
 
-  # Merge writesTo: keep only what's written in both branches
-  var mergedWritesTo: seq[SymId] = @[]
   for s in thenWritesTo:
-    if s in c.writesTo:
-      mergedWritesTo.add s
-  c.writesTo = mergedWritesTo
+    if s in elseWritesTo:
+      c.writesTo.add s
 
   # Skip optional join information
   if n.kind == ParLe and n.stmtKind == StmtsS:
