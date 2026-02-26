@@ -1024,6 +1024,11 @@ proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
           dest.addSymUse c.current.resultSym, info
     skipParRi n
 
+  # We need to keep `return` information so that we can easily detect `let x = if cond: 3 else: return`
+  # XXX If NJ worked as advertised this would not be necessary.
+  dest.addParLe RetS, info
+  dest.addParRi()
+
   dest.add tagToken("jtrue", info)
   # we also need to break out of everything:
   for i in countdown(c.current.guards.len - 1, 0):

@@ -299,9 +299,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trProcDecl c, dest, n
     of LocalDecls:
       trLocal c, dest, n
-    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS, RetS:
+    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS:
       bug "construct should have been eliminated: " & $n.stmtKind
-    of TemplateS, TypeS:
+    of TemplateS, TypeS, RetS:
       takeTree dest, n
     of ContinueS:
       skip n

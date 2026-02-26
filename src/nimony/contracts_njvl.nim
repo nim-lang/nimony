@@ -40,6 +40,7 @@ type
     writesTo: seq[SymId]
     errors: TokenBuf
     procCanRaise: bool
+    basicBlockIsNoReturn: bool
     moduleSuffix: string
     nestedProcs: int
 
@@ -523,6 +524,11 @@ proc extractSymId(n: Cursor): SymId {.inline.} =
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
+  var fnPragmas = fnType
+  skip fnPragmas # params
+  skip fnPragmas # return type
+  if hasPragma(fnPragmas, NoReturnP):
+    c.basicBlockIsNoReturn = true
   traverseExpr c, n # the `fn` itself
   assert fnType.isParamsTag
   inc fnType
@@ -645,6 +651,8 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   # Then branch - has positive condition facts
   let oldWritesToLen = c.writesTo.len
+  let beforeIteIsNoReturn = c.basicBlockIsNoReturn
+  c.basicBlockIsNoReturn = false
   traverseStmt c, n
   let thenFacts = c.facts
   var thenWritesTo = newSeqOfCap[SymId](c.writesTo.len - oldWritesToLen)
@@ -659,12 +667,16 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     negateFact(negated)
     c.facts.add negated
 
+  let thenIsNoReturn = c.basicBlockIsNoReturn
+  c.basicBlockIsNoReturn = false
   # Else branch
   if n.kind == DotToken:
     inc n # empty else
   else:
     traverseStmt c, n
+  let elseIsNoReturn = c.basicBlockIsNoReturn
 
+  c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
   var elseWritesTo = newSeqOfCap[SymId](c.writesTo.len - oldWritesToLen)
   for i in oldWritesToLen ..< c.writesTo.len:
     elseWritesTo.add c.writesTo[i]
@@ -674,9 +686,16 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   # Use conservative approach: only keep facts that hold in both branches
   c.facts = merge(thenFacts, 0, c.facts, false)
 
-  for s in thenWritesTo:
-    if s in elseWritesTo:
+  if thenIsNoReturn:
+    for s in elseWritesTo:
       c.writesTo.add s
+  elif elseIsNoReturn:
+    for s in thenWritesTo:
+      c.writesTo.add s
+  else:
+    for s in thenWritesTo:
+      if s in elseWritesTo:
+        c.writesTo.add s
 
   # Skip optional join information
   if n.kind == ParLe and n.stmtKind == StmtsS:
@@ -863,6 +882,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       elif n.kind != ParRi:
         traverseExpr c, n
       skipParRi n
+      c.basicBlockIsNoReturn = true
     of CallKindsS:
       analyseCall c, n
     of DiscardS, YldS:

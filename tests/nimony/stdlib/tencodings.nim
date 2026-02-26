@@ -104,8 +104,8 @@ when defined(windows):
       assert(result == "")
 
 block:
-  var cp1252: string
-  var ibm850: string
+  var cp1252: string = ""
+  var ibm850: string = ""
   let orig = "öäüß"
   noRaise:
     cp1252 = convert(orig, "CP1252", "UTF-8")
