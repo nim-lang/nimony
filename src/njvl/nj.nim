@@ -848,9 +848,8 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var iteCount = 0
 
   while n.substructureKind == OfU:
-    inc n  # into OfU
-
     if n == finalBranch:
+      inc n  # into OfU
       # Final exhaustive branch - no condition needed, just emit body
       skip n  # skip ranges
       openScope c
@@ -859,6 +858,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
       skipParRi n
       break
 
+    inc n  # into OfU
     # Emit ite (or itec for first branch to mark case origin)
     if iteCount == 0:
       dest.add tagToken("itec", info)
