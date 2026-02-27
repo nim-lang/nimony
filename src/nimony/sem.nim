@@ -1350,7 +1350,7 @@ proc resolveHeaderPath*(raw: string; currentFile: string; config: NifConfig): st
   if raw.len == 0 or raw[0] in {'<', '#'}: return raw
   if "${path}" notin raw and "${nifcache}" notin raw: return raw
   let resolvedFile = if currentFile.isAbsolute: absolutePath(currentFile)
-    elif config.baseDir.len > 0 and '/' notin currentFile: absolutePath(normalizedPath(config.baseDir & "/" & currentFile))
+    elif config.baseDir.len > 0 and '/' notin currentFile and '\\' notin currentFile: absolutePath(normalizedPath(joinPath(config.baseDir, currentFile)))
     else: absolutePath(currentFile)
   result = replaceSubs(raw, resolvedFile, config)
   result = toAbsolutePath(result, absoluteParentDir(resolvedFile))

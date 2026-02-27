@@ -64,6 +64,8 @@ proc toRelativePath*(f: string, dir: string): string =
   if not f.isAbsolute: return f
   result = f.relativePath(dir)
 
+proc joinPath*(head, tail: string): string = head / tail
+
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
 
