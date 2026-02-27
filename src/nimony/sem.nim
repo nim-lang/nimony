@@ -9,7 +9,7 @@
 ## type checking.
 
 import std / [tables, sets, syncio, formatfloat, assertions, strutils]
-from std/os import changeFileExt, getCurrentDir
+from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -1344,6 +1344,17 @@ type
     raisesType: TypeCursor  # Type from .raises pragma
     headerFileTok: PackedToken
 
+proc resolveHeaderPath*(raw: string; currentFile: string; config: NifConfig): string =
+  ## Resolves header pragma paths. Only converts to absolute when ${path} or
+  ## ${nifcache} is used; other headers (e.g. "bar.h", "<stdio.h>") stay as-is.
+  if raw.len == 0 or raw[0] in {'<', '#'}: return raw
+  if "${path}" notin raw and "${nifcache}" notin raw: return raw
+  let resolvedFile = if currentFile.isAbsolute: absolutePath(currentFile)
+    elif config.baseDir.len > 0 and '/' notin currentFile: absolutePath(normalizedPath(config.baseDir & "/" & currentFile))
+    else: absolutePath(currentFile)
+  result = replaceSubs(raw, resolvedFile, config)
+  result = toAbsolutePath(result, absoluteParentDir(resolvedFile))
+
 proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   var hasParRi = n.kind == ParLe # if false, has no arguments
   if n.substructureKind == KvU:
@@ -1418,9 +1429,10 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       let idx = dest.len - 1
       let tok = dest[idx]
       if tok.kind == StringLit:
-        var name = replaceSubs(pool.strings[tok.litId], info.getFile(), c.g.config)
-        name = name.toRelativePath(c.g.config.nifcachePath)
-        dest[idx] = strToken(pool.strings.getOrIncl(name), tok.info)
+        let raw = pool.strings[tok.litId]
+        let name = resolveHeaderPath(raw, info.getFile(), c.g.config)
+        if name != raw:
+          dest[idx] = strToken(pool.strings.getOrIncl(name), tok.info)
       crucial.headerFileTok = dest[idx]
     # Finalize expression
     dest.addParRi()
