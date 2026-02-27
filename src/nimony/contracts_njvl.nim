@@ -671,7 +671,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     # condition is a cfvar known to be true: only then-branch runs
     skip n  # skip condition
     traverseStmt c, n  # then branch
-    if n.kind != DotToken: skip n else: inc n  # skip else
+    skip n  # skip else
     if n.kind == ParLe and n.stmtKind == StmtsS: skip n  # skip join
     skipParRi n
     return
