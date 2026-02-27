@@ -10,7 +10,7 @@ when defined(windows):
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
-import lib / [nifindexes, lineinfos]
+import lib / [nifindexes, lineinfos, argsfinder]
 import gear2 / modnames
 
 const
@@ -220,14 +220,22 @@ proc saveSessionCmd(cmd: string) =
   if cmd.len > 0:
     writeFile(HasturSessionFile, cmd)
 
+proc pathsForFile(file: string): seq[string] =
+  result = @[]
+  let baseDir = file.splitFile.dir
+  if baseDir.len > 0:
+    let pathsFile = findArgs(baseDir, "nimony.paths")
+    if pathsFile.len > 0:
+      processPathsFile pathsFile, result
+
 proc generatedFile(orig, ext: string): string =
-  let name = modnames.moduleSuffix(orig, [])
+  let name = modnames.moduleSuffix(orig, pathsForFile(orig))
   # Backend (DCE and after) is in nimcache/<mainmod>/, see deps.nim; .s.nif is shared
   result = if ext == ".s.nif": "nimcache" / name.addFileExt(ext)
            else: "nimcache" / name / name.addFileExt(ext)
 
 proc generatedExeFile(orig: string): string =
-  let name = modnames.moduleSuffix(orig, [])
+  let name = modnames.moduleSuffix(orig, pathsForFile(orig))
   result = "nimcache" / name / orig.splitFile.name.addFileExt(ExeExt)
 
 proc removeMakeErrors(output: string): string =
