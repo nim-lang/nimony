@@ -10,7 +10,8 @@
 # We produce C code as a list of tokens.
 
 import std / [assertions, syncio, tables, sets, intsets, formatfloat, packedsets]
-from std / os import changeFileExt, splitFile, extractFilename
+from std / syncio import readFile, writeFile
+from std / os import changeFileExt, splitFile, extractFilename, fileExists
 from std / sequtils import insert
 
 include ".." / lib / nifprelude
@@ -120,10 +121,10 @@ proc add*(c: var GeneratedCode; s: string) {.inline.} =
 
 type
   CppFile = object
-    f: File
+    buf: string  # write to buffer, then writeFileIfChanged at end
 
-proc write(f: var CppFile; s: string) = write(f.f, s)
-proc write(f: var CppFile; c: char) = write(f.f, c)
+proc write(f: var CppFile; s: string) = f.buf.add s
+proc write(f: var CppFile; c: char) = f.buf.add c
 
 proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
   var indent = 0
@@ -713,7 +714,7 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   generateTypes(c, co)
   let typeDecls = move c.code
 
-  var f = CppFile(f: open(outp, fmWrite))
+  var f = CppFile()
   f.write "#define NIM_INTBITS " & $s.bits & "\n"
   f.write Prelude
   if gfMainModule in c.flags:
@@ -743,7 +744,11 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
       addOverflowDecl c, c.init, 0
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
-  f.f.close
+
+  if fileExists(outp) and readFile(outp) == f.buf:
+    discard "unchanged, keep mtime for incremental builds"
+  else:
+    writeFile outp, f.buf
 
   if c.headerFile.len > 0:
     let selectHeader = outp.changeFileExt(".h")
