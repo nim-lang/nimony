@@ -37,30 +37,38 @@ proc deps2File(config: NifConfig; f: FilePair): string = config.nifcachePath / f
 proc semmedFile(config: NifConfig; f: FilePair; bundle: string): string =
   config.nifcachePath / bundle / f.modname & ".s.nif"
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
-proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c.nif"
+proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".c.nif"
 
-proc cFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c"
-proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".o"
+proc cFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".c"
+proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".o"
 
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
-proc exeFile(config: NifConfig; f: FilePair): string =
+# DCE and everything after is main-specific (different DCE outcomes); use backendDir.
+proc exeFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let baseName = f.nimFile.splitFile.name
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   case config.appType
   of appConsole, appGui:
-    config.nifcachePath / baseName.addFileExt(ExeExt)
+    base / baseName.addFileExt(ExeExt)
   of appLib:
     if config.targetOS == osWindows:
-      config.nifcachePath / baseName.addFileExt("dll")
+      base / baseName.addFileExt("dll")
     elif config.targetOS in {osMacosx, osIos}:
-      config.nifcachePath / ("lib" & baseName & ".dylib")
+      base / ("lib" & baseName & ".dylib")
     else:
-      config.nifcachePath / ("lib" & baseName & ".so")
+      base / ("lib" & baseName & ".so")
   of appStaticLib:
     if config.targetOS == osWindows:
-      config.nifcachePath / baseName.addFileExt("lib")
+      base / baseName.addFileExt("lib")
     else:
-      config.nifcachePath / ("lib" & baseName & ".a")
+      base / ("lib" & baseName & ".a")
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -407,6 +415,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
     b.addStrLit hexer
     b.addStrLit "d"
     b.addStrLit "--bits:" & $bits
+    b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
       b.addIntLit -1  # all inputs
@@ -444,6 +453,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addSymbolDef "cc"
       b.addStrLit c.config.cc
       b.addStrLit "-c"
+      # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
+      b.addStrLit "-Wno-attributes"
       # Add -fPIC for shared libraries
       if c.config.appType == appLib:
         b.addStrLit "-fPIC"
@@ -512,13 +523,17 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
+      let backend = c.rootNode.files[0].modname  # DCE and after are main-specific
+      let backendDir = c.config.nifcachePath / backend
       b.withTree "do":
         b.addIdent "dce"
+        b.withTree "args":
+          b.addStrLit "--outdir:" & backendDir
         for n in c.nodes:
           b.withTree "input":
             b.addStrLit c.config.hexedFile(n.files[0])
           b.withTree "output":
-            b.addStrLit c.config.nifcFile(n.files[0])
+            b.addStrLit c.config.nifcFile(n.files[0], backend)
 
       # Link executable
       b.withTree "do":
@@ -526,22 +541,22 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         # Input: all object files
         var objFiles = initHashSet[string]()
         for cfile in c.toBuild:
-          let obj = c.config.nifcachePath / cfile.obj
+          let obj = c.config.nifcachePath / backend / cfile.obj
           if not objFiles.containsOrIncl(obj):
             b.withTree "input":
               b.addStrLit obj
         for v in c.nodes:
-          let obj = c.config.objFile(v.files[0])
+          let obj = c.config.objFile(v.files[0], backend)
           if not objFiles.containsOrIncl(obj):
             b.withTree "input":
               b.addStrLit obj
         b.withTree "output":
-          b.addStrLit c.config.exeFile(c.rootNode.files[0])
+          b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
       objFiles.clear()
       # Build object files from C files with custom args
       for cfile in c.toBuild:
-        let obj = c.config.nifcachePath / cfile.obj
+        let obj = c.config.nifcachePath / backend / cfile.obj
         if not objFiles.containsOrIncl(obj):
           b.withTree "do":
             b.addIdent "cc"
@@ -553,27 +568,29 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
               b.addStrLit obj
 
       for i, v in pairs c.nodes:
-        let obj = c.config.objFile(v.files[0])
+        let obj = c.config.objFile(v.files[0], backend)
         if not objFiles.containsOrIncl(obj):
           b.withTree "do":
             b.addIdent "cc"
             b.withTree "input":
-              b.addStrLit c.config.cFile(v.files[0])
+              b.addStrLit c.config.cFile(v.files[0], backend)
             b.withTree "output":
               b.addStrLit obj
 
         # Build C files from .c.nif files
         b.withTree "do":
           b.addIdent "nifc"
+          b.withTree "args":
+            b.addStrLit "--nimcache:" & backendDir
           if i == 0:
             b.withTree "args":
               b.addStrLit "--isMain"
           b.withTree "input":
-            b.addStrLit c.config.nifcFile(v.files[0])
+            b.addStrLit c.config.nifcFile(v.files[0], backend)
           b.withTree "output":
-            b.addStrLit c.config.cFile(v.files[0])
+            b.addStrLit c.config.cFile(v.files[0], backend)
 
-        # Build .c.nif files from .s.nif files
+        # Build .c.nif files from .s.nif files (hexer output shared, not backend)
         b.withTree "do":
           b.addIdent "hexer"
           b.withTree "input":
@@ -793,6 +810,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addSymbolDef "cc"
       b.addStrLit config.cc
       b.addStrLit "-c"
+      b.addStrLit "-Wno-attributes"
       if config.baseDir.len > 0:
         b.addStrLit "-I" & config.baseDir
       b.addKeyw "args"
@@ -926,7 +944,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   exec(nifmakeCmd)
   exec(exeFile)
 
-proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
+proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake, profile: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string, executableArgs: string) =
   let nifler = findTool("nifler")
@@ -947,6 +965,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
+    (if profile: " --profile" else: "") &
     " --base:" & quoteShell(config.baseDir) &
     " -j run "
   exec nifmakeCommand & quoteShell(buildFilename)
@@ -956,7 +975,10 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     # It is generated by nimsem and doesn't contains modules imported under `when false:`.
     # https://github.com/nim-lang/nimony/issues/985
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
+    let backend = c.config.nifcachePath / c.rootNode.files[0].modname
+    createDir(backend)
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
     exec nifmakeCommand & quoteShell(buildFinalFilename)
     if cmd == DoRun:
-      exec c.config.exeFile(c.rootNode.files[0]) & executableArgs
+      let backend = c.rootNode.files[0].modname
+      exec c.config.exeFile(c.rootNode.files[0], backend) & executableArgs

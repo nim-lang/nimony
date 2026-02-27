@@ -48,6 +48,7 @@ Options:
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
   --silentMake              suppresses make output
+  --profile                 print nifmake timing profile of executed commands
   --nimcache:PATH           set the path used for generated files
   --boundchecks:on|off      turn bound checks on or off
   --usages:file,line,col    list usages of the symbol at the given position
@@ -101,6 +102,7 @@ type
     forceRebuild: bool
     fullRebuild: bool
     silentMake: bool
+    profile: bool
     doRun: bool
     isChild: bool
     forwardArgsToExecutable: bool
@@ -120,6 +122,7 @@ proc createCmdOptions(baseDir: sink string): CmdOptions =
     forceRebuild: false,
     fullRebuild: false,
     silentMake: false,
+    profile: false,
     doRun: false,
     moduleFlags: {},
     config: initNifConfig(baseDir),
@@ -186,6 +189,9 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           of "silentmake":
             c.silentMake = true
             forwardArg = false
+          of "profile":
+            c.profile = true
+            forwardArg = false
           of "ischild":
             # undocumented command line option, by design
             c.isChild = true
@@ -236,18 +242,18 @@ proc compileProgram(c: var CmdOptions) =
   of FullProject:
     createDir(c.config.nifcachePath)
     # compile full project modules
-    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
   of CheckProject:
     createDir(c.config.nifcachePath)
     # check full project modules
-    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
   of SemCheckNif:
     createDir(c.config.nifcachePath)
     # compile full project modules
-    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
 
