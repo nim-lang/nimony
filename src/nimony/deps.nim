@@ -453,6 +453,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addSymbolDef "cc"
       b.addStrLit c.config.cc
       b.addStrLit "-c"
+      # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
+      b.addStrLit "-Wno-attributes"
       # Add -fPIC for shared libraries
       if c.config.appType == appLib:
         b.addStrLit "-fPIC"
@@ -808,6 +810,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addSymbolDef "cc"
       b.addStrLit config.cc
       b.addStrLit "-c"
+      b.addStrLit "-Wno-attributes"
       if config.baseDir.len > 0:
         b.addStrLit "-I" & config.baseDir
       b.addKeyw "args"
