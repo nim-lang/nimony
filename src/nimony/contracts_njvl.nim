@@ -75,6 +75,13 @@ proc extractSymId(n: Cursor): SymId {.inline.} =
   else:
     result = NoSymId
 
+proc skipSymbol(r: var Cursor): SymId {.inline.} =
+  ## Consume a bare Symbol or (v sym version) node and return its SymId.
+  ## Returns NoSymId (without advancing) if r is neither.
+  result = extractSymId(r)
+  if result != NoSymId:
+    if r.kind == Symbol: inc r else: skip r
+
 proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
   ## Returns +1 if the condition is a cfvar known to be true,
   ## -1 if it is `(not cf)` where cf is known true, 0 otherwise.
@@ -102,10 +109,9 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
   if pc.exprKind in {AddX, SubX}:
     inc pc
     skip pc # type
-    if pc.kind == Symbol:
-      let symId2 = pc.symId
+    let symId2 = skipSymbol(pc)
+    if symId2 != NoSymId:
       fact.b = getVarId(c, symId2)
-      inc pc
       if pc.kind == IntLit:
         fact.c = fact.c + createXint(pool.integers[pc.intId])
         result = true
@@ -120,11 +126,9 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
       traverseExpr c, pc
       traverseExpr c, pc
     skipParRi pc
-  elif pc.kind == Symbol:
-    let symId2 = pc.symId
+  elif (let symId2 = skipSymbol(pc); symId2 != NoSymId):
     fact.b = getVarId(c, symId2)
     result = true
-    inc pc
   elif pc.kind == IntLit:
     fact.b = VarId(0)
     fact.c = fact.c + createXint(pool.integers[pc.intId])
@@ -172,9 +176,8 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     result.a = VarId(0)
     result.c = -createXint(pool.uintegers[r.uintId])
     inc r
-  elif r.kind == Symbol:
-    result.a = getVarId(c, r.symId)
-    inc r
+  elif (let sa = skipSymbol(r); sa != NoSymId):
+    result.a = getVarId(c, sa)
   elif r.exprKind == NilX:
     result.a = VarId(0)
     skip r
@@ -244,8 +247,9 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
       skip n # skip intlit
     else:
       break
-  if n.kind == Symbol:
-    result = n.symId
+  let s = extractSymId(n)
+  if s != NoSymId:
+    result = s
     let x = getLocalInfo(c.typeCache, result)
     if x.kind == GvarY:
       # assume sharing of global variables between threads
