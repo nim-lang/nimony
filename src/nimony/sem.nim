@@ -5242,14 +5242,14 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
         for i in c.passC:
           deps.addStrLit i
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
-  writeFile deps, depsFile
+  writeFile(deps, depsFile, OnlyIfChanged)
 
 proc writeOutput(c: var SemContext; dest: TokenBuf; outfile: string) =
   #var b = nifbuilder.open(outfile)
   #b.addHeader "nimony", "nim-sem"
   #b.addRaw toString(dest)
   #b.close()
-  writeFile dest, outfile
+  writeFile(dest, outfile, OnlyIfChanged)
   let root = dest[0].info
   createIndex outfile, root, true,
     IndexSections(

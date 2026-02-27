@@ -143,7 +143,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     let final = SecureHash checksum.finalize()
     content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
-  writeFile(indexName, content)
+  let existingContent = try: readFile(indexName) except: ""
+  if existingContent != content:
+    writeFile(indexName, content)
 
 proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
   createIndex(infile, root, buildChecksum,
