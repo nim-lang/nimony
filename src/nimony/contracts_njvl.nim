@@ -161,7 +161,7 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     inc r
     skip r # skip type
   elif xk == EqX:
-    wasEquality = true
+    wasEquality = negations == 0  # negated equality is inequality, not equality
     inc r
     skip r # skip type
   else:
@@ -746,10 +746,11 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   let condFact = translateCond(c, condCursor, wasEquality)
   skip n # skip condition expression
 
-  # Conservative approach for loops:
-  # We don't know how many times the loop runs, so we can't trust facts
-  # about variables that might be modified in the loop body.
-  # For simplicity, we analyze the body but reset facts afterwards.
+  # Add condition fact so body is analyzed knowing condition is true
+  if condFact.isValid:
+    c.facts.add condFact
+    if wasEquality:
+      c.facts.add condFact.geXplusC
 
   # Loop body
   traverseStmt c, n

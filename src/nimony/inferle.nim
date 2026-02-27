@@ -24,7 +24,7 @@ type
     x: seq[LeXplusC]
 
   RestorePoint* = object
-    xlen: int
+    snapshot: seq[LeXplusC]
 
 const
   InvalidVarId* = VarId(-1)
@@ -60,10 +60,10 @@ proc isNotNil*(a: VarId): LeXplusC =
 proc isNil*(a: VarId): LeXplusC =
   LeXplusC(a: a, b: VarId(0), c: createXint(0'i64)) # a <= 0
 
-proc save*(f: Facts): RestorePoint = RestorePoint(xlen: f.x.len)
+proc save*(f: Facts): RestorePoint = RestorePoint(snapshot: f.x)
 
 proc restore*(f: var Facts; r: RestorePoint) =
-  f.x.shrink r.xlen
+  f.x = r.snapshot
 
 proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
