@@ -604,7 +604,7 @@ Options:
   --verbose             Show verbose output
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.
-  -p, --profile         Print timing profile of executed commands to stderr.
+  --profile             Print timing profile of executed commands to stderr.
 
 Examples:
   nifmake run build.nif

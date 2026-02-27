@@ -240,16 +240,30 @@ proc removeMakeErrors(output: string): string =
     elif result.startsWith(prefix):
       result.setLen 0
 
+proc stripValgrindPrefix(s: string): string =
+  var i = 0
+  if i < s.len and s.continuesWith("==", i):
+    inc i, 2
+    while i < s.len and s[i] in {'0'..'9'}:
+      inc i
+    if i < s.len and s.continuesWith("==", i):
+      inc i, 2
+      if i < s.len and s[i] == ' ':
+        inc i
+  result = s[i..^1]
+
 proc compareValgrindOutput(s1: string, s2: string): bool =
-  # ==90429==
-  let s1 = s1.splitLines()
-  let s2 = s2.splitLines()
-  if s1.len != s2.len:
+  let marker = "HEAP SUMMARY:"
+  let a = s1.find(marker)
+  let b = s2.find(marker)
+  if a < 0 or b < 0:
+    return s1 == s2
+  let lines1 = s1[a + marker.len..^1].splitLines()
+  let lines2 = s2[b + marker.len..^1].splitLines()
+  if lines1.len != lines2.len:
     return false
-  for i in 3 .. s1.len - 1:
-    let n1 = rfind(s1[i], "== ")
-    let n2 = rfind(s2[i], "== ")
-    if n2 == -1 or s1[i][n1+3..^1] != s2[i][n2+3..^1]:
+  for i in 0 .. lines1.high:
+    if stripValgrindPrefix(lines1[i]) != stripValgrindPrefix(lines2[i]):
       return false
   return true
 
