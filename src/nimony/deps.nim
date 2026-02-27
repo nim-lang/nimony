@@ -926,7 +926,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   exec(nifmakeCmd)
   exec(exeFile)
 
-proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
+proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake, profile: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string, executableArgs: string) =
   let nifler = findTool("nifler")
@@ -947,6 +947,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
+    (if profile: " --profile" else: "") &
     " --base:" & quoteShell(config.baseDir) &
     " -j run "
   exec nifmakeCommand & quoteShell(buildFilename)

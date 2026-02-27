@@ -46,6 +46,7 @@ Options:
   --version             show the version
   --help                show this help
   --forward:OPTION      pass an option to the Nimony compiler
+  --release             build in release mode
 """
 
 proc quitWithText*(s: string) =
@@ -525,53 +526,58 @@ proc robustMoveFile(src, dest: string) =
   if fileExists(src):
     moveFile src, dest
 
+var release = false
+
+proc nimcPrefix(): string =
+  (if release: "nim c -d:release " else: "nim c ")
+
 proc buildNifler(showProgress = false) =
-  exec "nim c src/nifler/nifler.nim", showProgress
+  exec nimcPrefix() & "src/nifler/nifler.nim", showProgress
   let exe = "nifler".addFileExt(ExeExt)
   robustMoveFile "src/nifler/" & exe, binDir() / exe
 
 proc buildNimsem(showProgress = false) =
-  exec "nim c src/nimony/nimsem.nim", showProgress
+  exec nimcPrefix() & "src/nimony/nimsem.nim", showProgress
   let exe = "nimsem".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNimony(showProgress = false) =
-  exec "nim c src/nimony/nimony.nim", showProgress
+  exec nimcPrefix() & "src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildControlflow(showProgress = false) =
-  exec "nim c src/nimony/controlflow.nim", showProgress
+  exec nimcPrefix() & "src/nimony/controlflow.nim", showProgress
   let exe = "controlflow".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildContracts(showProgress = false) =
-  exec "nim c src/nimony/contracts.nim", showProgress
+  exec nimcPrefix() & "src/nimony/contracts.nim", showProgress
   let exe = "contracts".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNj(showProgress = false) =
-  exec "nim c src/njvl/nj.nim", showProgress
+  exec nimcPrefix() & "src/njvl/nj.nim", showProgress
   let exe = "nj".addFileExt(ExeExt)
   robustMoveFile "src/njvl/" & exe, binDir() / exe
 
 proc buildVl(showProgress = false) =
-  exec "nim c src/njvl/vl.nim", showProgress
+  exec nimcPrefix() & "src/njvl/vl.nim", showProgress
   let exe = "vl".addFileExt(ExeExt)
   robustMoveFile "src/njvl/" & exe, binDir() / exe
 
 proc buildNifc(showProgress = false) =
-  exec "nim c src/nifc/nifc.nim", showProgress
+  exec nimcPrefix() & "src/nifc/nifc.nim", showProgress
   let exe = "nifc".addFileExt(ExeExt)
   robustMoveFile "src/nifc/" & exe, binDir() / exe
 
 proc buildHexer(showProgress = false) =
-  exec "nim c src/hexer/hexer.nim", showProgress
+  exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
 
 proc buildNifmake(showProgress = false) =
-  exec "nim c src/nifmake/nifmake.nim", showProgress
+  exec nimcPrefix() & "src/nifmake/nifmake.nim", showProgress
   let exe = "nifmake".addFileExt(ExeExt)
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
@@ -691,6 +697,7 @@ proc handleCmdLine =
         of "ast": flags.incl RecordAst
         of "overwrite": overwrite = true
         of "forward": forward = val
+        of "release": release = true
         else: writeHelp()
       else:
         args.add key
