@@ -222,10 +222,13 @@ proc saveSessionCmd(cmd: string) =
 
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, [])
-  result = "nimcache" / name.addFileExt(ext)
+  # Backend (DCE and after) is in nimcache/<mainmod>/, see deps.nim; .s.nif is shared
+  result = if ext == ".s.nif": "nimcache" / name.addFileExt(ext)
+           else: "nimcache" / name / name.addFileExt(ext)
 
 proc generatedExeFile(orig: string): string =
-  result = "nimcache" / orig.splitFile.name.addFileExt(ExeExt)
+  let name = modnames.moduleSuffix(orig, [])
+  result = "nimcache" / name / orig.splitFile.name.addFileExt(ExeExt)
 
 proc removeMakeErrors(output: string): string =
   result = output.strip

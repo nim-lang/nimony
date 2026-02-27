@@ -9,7 +9,7 @@
 
 ## Dead code elimination and generic instance merging.
 
-import std / [tables, sets, assertions]
+import std / [os, tables, sets, assertions]
 include nifprelude
 
 import symparser, dce1
@@ -164,15 +164,20 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
     dest.takeToken n
   of ParRi: raiseAssert "ParRi should not be encountered here"
 
-proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable) =
+proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; outdir: string) =
   var buf = parseFromFile(file)
   var n = beginRead(buf)
   var dest = createTokenBuf(buf.len)
   tr dest, n, live, resolved
   endRead(buf)
-  writeFile(dest, file.changeModuleExt ".c.nif", OnlyIfChanged)
+  let outPath =
+    if outdir.len > 0:
+      outdir / splitModulePath(file).name & ".c.nif"
+    else:
+      file.changeModuleExt ".c.nif"
+  writeFile(dest, outPath, OnlyIfChanged)
 
-proc deadCodeElimination*(files: openArray[string]) =
+proc deadCodeElimination*(files: openArray[string]; outdir: string) =
   var graphs = initTable[string, ModuleAnalysis]()
   for file in files:
     let modName = splitModulePath(file).name
@@ -184,4 +189,4 @@ proc deadCodeElimination*(files: openArray[string]) =
   # TODO: we could do this step in parallel:
   for file in files:
     let modName = splitModulePath(file).name
-    rewriteModule(file, live[modName], resolved)
+    rewriteModule(file, live[modName], resolved, outdir)
