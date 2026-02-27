@@ -37,12 +37,13 @@ type
     facts: Facts           # From inferle.nim - tracks le/notnil facts
     typeCache: TypeCache
     directlyInitialized: seq[HashSet[SymId]]
-    writesTo: seq[SymId]
+    writesTo: IteTracker[SymId]
     errors: TokenBuf
     procCanRaise: bool
     basicBlockIsNoReturn: bool
     moduleSuffix: string
     nestedProcs: int
+    knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -65,6 +66,32 @@ proc contractViolation(c: var NjvlContext; orig: Cursor; fact: LeXplusC; report:
 proc traverseStmt(c: var NjvlContext; n: var Cursor)
 proc traverseExpr(c: var NjvlContext; pc: var Cursor)
 proc analyseCall(c: var NjvlContext; n: var Cursor)
+
+proc extractSymId(n: Cursor): SymId {.inline.} =
+  if n.kind == Symbol:
+    result = n.symId
+  elif n.kind == ParLe and n.tagEnum == VTagId:
+    result = n.firstSon.symId
+  else:
+    result = NoSymId
+
+proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
+  ## Returns +1 if the condition is a cfvar known to be true,
+  ## -1 if it is `(not cf)` where cf is known true, 0 otherwise.
+  ## After vl.nim, cfvars appear as `(v sym N)` so we use extractSymId.
+  let s = extractSymId(n)
+  if s != NoSymId and s in c.knownTrueCfVars:
+    result = 1
+  elif n.exprKind == NotX:
+    var inner = n
+    inc inner  # skip NotX tag
+    let s2 = extractSymId(inner)
+    if s2 != NoSymId and s2 in c.knownTrueCfVars:
+      result = -1
+    else:
+      result = 0
+  else:
+    result = 0
 
 template getVarId(c: var NjvlContext; symId: SymId): VarId = VarId(symId)
 
@@ -513,13 +540,6 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc pc
     if nested == 0: break
 
-proc extractSymId(n: Cursor): SymId {.inline.} =
-  if n.kind == Symbol:
-    result = n.symId
-  elif n.kind == ParLe and n.tagEnum == VTagId:
-    result = n.firstSon.symId
-  else:
-    result = NoSymId
 
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
@@ -640,8 +660,30 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   ## Handle (ite cond then else [join])
   inc n # skip ite/itec tag
 
+  # Fast path: if the condition's truth value is known from cfvar state,
+  # only traverse the live branch and skip the dead one.
+  let knownVal = cfCondKnownValue(c, n)
+  if knownVal == 1:
+    # condition is a cfvar known to be true: only then-branch runs
+    skip n  # skip condition
+    traverseStmt c, n  # then branch
+    if n.kind != DotToken: skip n else: inc n  # skip else
+    if n.kind == ParLe and n.stmtKind == StmtsS: skip n  # skip join
+    skipParRi n
+    return
+  elif knownVal == -1:
+    # condition is (not cf) with cf known true: only else-branch runs
+    skip n  # skip condition
+    skip n  # skip then branch
+    if n.kind != DotToken: traverseStmt c, n else: inc n  # else
+    if n.kind == ParLe and n.stmtKind == StmtsS: skip n  # skip join
+    skipParRi n
+    return
+
   # Analyze condition and extract facts
   let savedFacts = save(c.facts)
+  var writesSp = c.writesTo.split()
+  var cfSp = c.knownTrueCfVars.split()
   let condFacts = analyseCondition(c, n)
 
   # Copy condition facts for else-branch negation (only single fact can be negated)
@@ -650,17 +692,14 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     condFactsList.add c.facts[c.facts.len - 1]
 
   # Then branch - has positive condition facts
-  let oldWritesToLen = c.writesTo.len
   let beforeIteIsNoReturn = c.basicBlockIsNoReturn
   c.basicBlockIsNoReturn = false
   traverseStmt c, n
   let thenFacts = c.facts
-  var thenWritesTo = newSeqOfCap[SymId](c.writesTo.len - oldWritesToLen)
-  for i in oldWritesToLen ..< c.writesTo.len:
-    thenWritesTo.add c.writesTo[i]
-  c.writesTo.shrink oldWritesToLen
+  c.writesTo.thenDone(writesSp)
+  c.knownTrueCfVars.thenDone(cfSp)
 
-  # Restore facts and add negated condition for else branch (single fact only)
+  # Restore facts for else branch
   restore(c.facts, savedFacts)
   for f in condFactsList:
     var negated = f
@@ -677,25 +716,11 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   let elseIsNoReturn = c.basicBlockIsNoReturn
 
   c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
-  var elseWritesTo = newSeqOfCap[SymId](c.writesTo.len - oldWritesToLen)
-  for i in oldWritesToLen ..< c.writesTo.len:
-    elseWritesTo.add c.writesTo[i]
-  c.writesTo.shrink oldWritesToLen
 
-  # Merge facts from both branches
-  # Use conservative approach: only keep facts that hold in both branches
+  # Merge: only keep facts/writes/cfvars that hold in both branches
   c.facts = merge(thenFacts, 0, c.facts, false)
-
-  if thenIsNoReturn:
-    for s in elseWritesTo:
-      c.writesTo.add s
-  elif elseIsNoReturn:
-    for s in thenWritesTo:
-      c.writesTo.add s
-  else:
-    for s in thenWritesTo:
-      if s in elseWritesTo:
-        c.writesTo.add s
+  c.writesTo.join(writesSp, thenIsNoReturn, elseIsNoReturn)
+  c.knownTrueCfVars.join(cfSp, thenIsNoReturn, elseIsNoReturn)
 
   # Skip optional join information
   if n.kind == ParLe and n.stmtKind == StmtsS:
@@ -804,6 +829,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.directlyInitialized.add initHashSet[SymId]()
   c.procCanRaise = false
   let oldWritesTo = move c.writesTo
+  let oldKnownTrueCfVars = move c.knownTrueCfVars
 
   inc n
   var isGeneric = false
@@ -821,6 +847,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
     skip n
   skipParRi n
   c.writesTo = oldWritesTo
+  c.knownTrueCfVars = oldKnownTrueCfVars
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
@@ -841,8 +868,14 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     skip n # symdef
     skipParRi n
   of JtrueV:
-    # Jump hint - skip
-    skip n
+    # (jtrue cf1 cf2 ...) - cfvars listed here are now known true on this path.
+    # vl.nim emits bare symbols inside jtrue (the versioning happens for uses after it).
+    inc n
+    while n.kind != ParRi:
+      assert n.kind == Symbol
+      c.knownTrueCfVars.add n.symId
+      inc n
+    inc n  # ParRi
   of KillV:
     # Variable going out of scope - skip
     skip n
