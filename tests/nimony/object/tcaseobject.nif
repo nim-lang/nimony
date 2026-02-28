@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +15253           )
+(.indexat +15259           )
 0,1,tests/nimony/object/tcaseobject.nim(stmts 9,3
  (type ~4 :Foo.0. . .
   (pragmas
@@ -347,7 +347,7 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (var :dest.0 . . 2,~46 Foo.0. .)
+   (result :dest.0 . . 2,~46 Foo.0. .)
    (asgn
     (dot dest.0 x.0 +0)
     (dot src.0 x.0 +0)) ~5,~45
@@ -471,7 +471,7 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (var :dest.0 . . TA.0. .)
+   (result :dest.0 . . TA.0. .)
    (asgn
     (dot dest.0 k.0 +0)
     (dot src.0 k.0 +0)) ~1,1
@@ -587,8 +587,8 @@
  (h =destroy_SX46oo0tcauiaoif.0. +2371) 7,49
  (h =wasmoved_SX46oo0tcauiaoif.0. +368) 7,49
  (h =dup_SX46oo0tcauiaoif.0. +428) 7,49
- (h =copy_SX46oo0tcauiaoif.0. +662) 7,49
+ (h =copy_SX46oo0tcauiaoif.0. +665) 7,49
  (h =destroy_SX54X410tcauiaoif.0. +942) 7,49
  (h =wasmoved_SX54X410tcauiaoif.0. +434) 7,49
  (h =dup_SX54X410tcauiaoif.0. +529) 7,49
- (h =copy_SX54X410tcauiaoif.0. +895))
+ (h =copy_SX54X410tcauiaoif.0. +898))
