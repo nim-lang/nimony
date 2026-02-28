@@ -554,10 +554,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar
     else:
-      assert n.kind != ParRi
-      copyInto(dest, n):
-        while n.kind != ParRi:
-          trStmt c, dest, n
+      takeTree dest, n
   of PragmaxS:
     copyInto(dest, n):
       takeTree dest, n  # pragmas
