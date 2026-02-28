@@ -6,7 +6,7 @@
 
 ## Read the configuration from the `.cfg.nif` file.
 
-import std / [os, sets, strutils]
+import std / [os, sets, strutils, sequtils]
 
 import ".." / lib / platform
 
@@ -27,7 +27,7 @@ type
     appStaticLib = "staticlib" # static library (.a/.lib)
 
   NifConfig* = object
-    defines*: HashSet[string]
+    defines*: seq[string]
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
@@ -41,11 +41,14 @@ type
     ccKey*: string
     appType*: AppType
 
+proc addDefine*(config: var NifConfig; symbol: string) =
+  config.defines.addUnique symbol
+
 proc initNifConfig*(baseDir: sink string): NifConfig =
   result = NifConfig(
     baseDir: baseDir,
     nifcachePath: "nimcache",
-    defines: toHashSet(["nimony"]),
+    defines: @["nimony"],
     bits: sizeof(int)*8,
     targetCPU: platform.nameToCPU(system.hostCPU),
     targetOS: platform.nameToOS(system.hostOS),
@@ -80,7 +83,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
         inc c
         while c.kind != ParRi:
           if c.kind == StringLit:
-            result.defines.incl pool.strings[c.litId]
+            result.defines.addUnique pool.strings[c.litId]
           inc c
       of "paths":
         inc c

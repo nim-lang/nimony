@@ -59,7 +59,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "path", "p":
     config.paths.add val
   of "define", "d":
-    config.defines.incl val
+    config.addDefine val
   of "nosystem":
     moduleFlags.incl SkipSystem
   of "issystem":
