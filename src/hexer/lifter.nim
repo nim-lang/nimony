@@ -658,7 +658,7 @@ proc addParam(c: var LiftingCtx; param: SymId; typ: TypeCursor) =
 
 proc maybeAddResultDecl(c: var LiftingCtx; res: SymId; typ: TypeCursor) =
   if c.op == attachedDup:
-    copyIntoKind(c.dest, VarS, c.info):
+    copyIntoKind(c.dest, ResultS, c.info):
       addSymDef c.dest, res, c.info
       c.dest.addEmpty2 c.info # export marker, pragmas
       addParamType c, typ
