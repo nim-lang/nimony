@@ -1143,6 +1143,7 @@ proc eliminateJumps*(pass: var Pass) =
   lowerExprs(pass, TowardsNjvl)
   pass.prepareForNext("elimjumps")
   var n = pass.n
+  #echo "after xelim: ", toString(n, false)
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.add n
   inc n

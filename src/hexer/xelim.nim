@@ -550,8 +550,14 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
-    assert n.kind != ParRi
-    takeTree dest, n
+    if n.exprKind == ExprX:
+      var tar = Target(m: IsEmpty)
+      trExpr c, dest, n, tar
+    else:
+      assert n.kind != ParRi
+      copyInto(dest, n):
+        while n.kind != ParRi:
+          trStmt c, dest, n
   of PragmaxS:
     copyInto(dest, n):
       takeTree dest, n  # pragmas

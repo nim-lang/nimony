@@ -67,18 +67,23 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
   #    nkElifBranch, nkElifExpr, nkElseExpr, nkBlockStmt, nkBlockExpr,
   #    nkHiddenStdConv, nkHiddenSubConv, nkHiddenDeref}
   while it.kind == ParLe and (stmtKind(it) in {StmtsS, BlockS} or exprKind(it) == ExprX):
-    if exprKind(it) == ExprX and dest.len != 0:
-      let pos = cursorToPosition(dest, it)
-      dest[pos] = parLeToken(StmtsS, dest[pos].info)
-    inc it
-    var last = it
-    while true:
-      skip it
-      if it.kind == ParRi:
-        it = last
-        break
-      else:
-        last = it
+    # Unwrap ExprX by advancing to the last son (the value); do not mutate the tree to StmtsS.
+    # `if (let e = f(); e != 0)` should keep ExprX so xelim sees stmt/expr distinction.
+    if exprKind(it) == ExprX:
+      inc it
+      while not isLastSon(it):
+        skip it
+      # it now points to the last son (the expression); continue unwrapping if needed
+    else:
+      inc it
+      var last = it
+      while true:
+        skip it
+        if it.kind == ParRi:
+          it = last
+          break
+        else:
+          last = it
 
   if it.kind != ParLe: return false
   case stmtKind(it)
