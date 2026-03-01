@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +11020           )
+(.indexat +11029           )
 0,1,tests/nimony/nosystem/tgenericbinarytree.nim(stmts 5
  (type :int.0.
   (i -1) . 5
@@ -178,7 +178,7 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (var :dest.0 . . ~11,5 Node.0.Ikmiisb. .)
+   (result :dest.0 . . ~11,5 Node.0.Ikmiisb. .)
    (if
     (elif src.0
      (stmts
@@ -262,7 +262,7 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (var :dest.0 . . NodeObj.0.Itet59r. .)
+   (result :dest.0 . . NodeObj.0.Itet59r. .)
    (asgn
     (dot dest.0 data.0 +0)
     (dot src.0 data.0 +0))
@@ -370,7 +370,7 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (var :dest.0 . . ~11
+   (result :dest.0 . . ~11
     (ref 11 NodeObj.0.Itet59r.) .)
    (if
     (elif src.0
@@ -445,18 +445,18 @@
  (h =destroy_SX4eode0X49kmiisbtge70unlm.0. +597) 23,3
  (h =wasmoved_SX4eode0X49kmiisbtge70unlm.0. +496) 23,3
  (h =dup_SX4eode0X49kmiisbtge70unlm.0. +208) 23,3
- (h =copy_SX4eode0X49kmiisbtge70unlm.0. +386) 23,3
+ (h =copy_SX4eode0X49kmiisbtge70unlm.0. +389) 23,3
  (h =sinkh_SX4eode0X49kmiisbtge70unlm.0. +428) 23,3
  (h =trace_SX4eode0X49kmiisbtge70unlm.0. +429) 23,3
  (h =destroy_SX4eodeX4fbj0X49tet59rtge70unlm.0. +204) 23,3
  (h =wasmoved_SX4eodeX4fbj0X49tet59rtge70unlm.0. +331) 23,3
  (h =dup_SX4eodeX4fbj0X49tet59rtge70unlm.0. +400) 23,3
- (h =copy_SX4eodeX4fbj0X49tet59rtge70unlm.0. +533) 23,3
+ (h =copy_SX4eodeX4fbj0X49tet59rtge70unlm.0. +536) 23,3
  (h =sinkh_SX4eodeX4fbj0X49tet59rtge70unlm.0. +533) 23,3
  (h =trace_SX4eodeX4fbj0X49tet59rtge70unlm.0. +536) 23,3
  (h =destroy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +413) 23,3
  (h =wasmoved_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +519) 23,3
  (h =dup_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +232) 23,3
- (h =copy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +435) 23,3
+ (h =copy_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +438) 23,3
  (h =sinkh_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +466) 23,3
  (h =trace_ArefSX4eodeX4fbj0X49tet59rtge70unlm.0. +467))

@@ -632,6 +632,7 @@ proc trWhile(c: var ControlFlow; n: var Cursor) =
   c.currentBlock = c.currentBlock.parent
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
+  let orig = n
   var it {.cursor.} = c.currentBlock
   var control {.cursor.}: BlockOrLoop = nil
   while it != nil and it.kind != IsRoutine:
@@ -655,6 +656,8 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     discard "do not generate `result = result`"
     inc n
   else:
+    if c.resultSym == NoSymId:
+      bug "result symbol not found " & toString(orig, false)
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, n.info)
