@@ -712,6 +712,8 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var g = (-1, NoSymId)
     while n.kind != ParRi:
       if g[0] < 0: g = maybeEmitGuard(c, dest, n.info)
+      elif g[0] < c.current.guards.len and g[1] == c.current.guards[g[0]].cond:
+        c.current.guards[g[0]].active = false
       trGuardedStmts c, b2, dest, n, false
     maybeCloseGuard(c, dest, g, false)
     closeBasicBlock c, b2, dest
@@ -1090,6 +1092,14 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
       # we need to figure out guards as long as we are still in the basic block
       # so that we can merge `guard a; guard b;` into `guard (a; b)`
       if g2[0] < 0: g2 = maybeEmitGuard(c, dest, n.info)
+      elif g2[0] < c.current.guards.len and g2[1] == c.current.guards[g2[0]].cond:
+        # Prevent redundant guard emission: a VoidRaise/TupleRaise call inside an
+        # if-body may re-activate the guard via raiseGuards without setting b.leavesWith
+        # (only explicit `raise`/`return`/`break` set leavesWith). This causes the
+        # per-statement `g` in the recursive trGuardedStmts call to emit a sibling
+        # `(ite cond a .)(ite cond d .)` instead of merging into `(ite cond (a d) .)`.
+        # Since we are already inside the g2 guard scope, deactivate the guard here.
+        c.current.guards[g2[0]].active = false
       trGuardedStmts(c, b, dest, n, false)
     inc n # ParRi
     maybeCloseGuard(c, dest, g2, false)
