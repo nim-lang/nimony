@@ -297,7 +297,10 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let oldProc = move c.current
   c.current = CurrentProc(tmpCounter: 1, returnType: r.retType)
   if hasPragma(r.pragmas, RaisesP):
-    if isVoidType(r.retType):
+    # Iterators don't have a `result` variable (semdecls.declareResult skips them)
+    # and their bodies are not tuple-transformed by eraiser/constparams.
+    # Use VoidRaise so we create a synthetic error-tracking variable instead.
+    if isVoidType(r.retType) or r.kind == IteratorY:
       c.current.mode = VoidRaise
     else:
       c.current.mode = TupleRaise
@@ -1053,7 +1056,7 @@ proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
       inc n
       bug "reraise not implemented"
     else:
-      assert c.current.errorTracker != NoSymId, "could not find error tracker"
+      assert c.current.errorTracker != NoSymId, "raise outside a .raises proc or try section"
       storeToErrorTracker(c, dest, n, info)
     skipParRi n
   raiseGuards(c, dest, info)
