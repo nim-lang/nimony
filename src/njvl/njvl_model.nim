@@ -62,8 +62,8 @@ iterator since*[T](t: IteTracker[T]; cp: int): lent T =
 type
   SplitPoint*[T] = object
     ## Returned by `split`; passed to `thenDone` and `join`.
-    cp: int
-    thenData: seq[T]
+    cp*: int
+    thenData*: seq[T]
 
 proc split*[T](t: IteTracker[T]): SplitPoint[T] {.inline.} =
   ## Begin an ite traversal. Snapshot the current position.

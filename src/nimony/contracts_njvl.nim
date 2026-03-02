@@ -44,6 +44,8 @@ type
     moduleSuffix: string
     nestedProcs: int
     knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
+    cfvarFalseImpliesInit: Table[SymId, HashSet[SymId]]  # when cf is false → these were init
+    impliedInitStack: seq[HashSet[SymId]]  # stacked additions for nested `if not cf`
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -81,6 +83,15 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
   result = extractSymId(r)
   if result != NoSymId:
     if r.kind == Symbol: inc r else: skip r
+
+proc conditionCfvarForNot(c: Cursor): SymId =
+  ## If condition is `(not cfvar)`, return the cfvar's SymId. Else NoSymId.
+  var r = c
+  if r.exprKind == NotX:
+    inc r
+    result = extractSymId(r)
+  else:
+    result = NoSymId
 
 proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
   ## Returns +1 if the condition is a cfvar known to be true,
@@ -486,6 +497,21 @@ proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
       return true
   return false
 
+proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
+  ## True if symId is known initialized (directly, via writesTo, or via cfvar correlation).
+  if isDirectlyInitialized(c, symId) or symId in c.writesTo:
+    return true
+  for layer in c.impliedInitStack:
+    if symId in layer:
+      return true
+  return false
+
+proc pushImpliedInit(c: var NjvlContext; implied: HashSet[SymId]) =
+  c.impliedInitStack.add implied
+
+proc popImpliedInit(c: var NjvlContext) =
+  discard c.impliedInitStack.pop()
+
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
   var nested = 0
   while true:
@@ -494,7 +520,7 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
       if x.kind in {VarY, LetY, CursorY}:
-        if not isDirectlyInitialized(c, symId) and symId notin c.writesTo:
+        if not isEffectivelyInitialized(c, symId):
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
           c.writesTo.add symId
       inc pc
@@ -684,6 +710,9 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     skipParRi n
     return
 
+  # Condition may be (not cfvar) - capture for correlation before analyseCondition consumes it
+  let condCf = conditionCfvarForNot(n)
+
   # Analyze condition and extract facts
   let savedFacts = save(c.facts)
   var writesSp = c.writesTo.split()
@@ -696,9 +725,14 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     condFactsList.add c.facts[c.facts.len - 1]
 
   # Then branch - has positive condition facts
+  # When condition is (not cf), correlate: cf false => we took else of prior ite => use implied inits
+  if condCf != NoSymId:
+    pushImpliedInit(c, c.cfvarFalseImpliesInit.getOrDefault(condCf))
   let beforeIteIsNoReturn = c.basicBlockIsNoReturn
   c.basicBlockIsNoReturn = false
   traverseStmt c, n
+  if condCf != NoSymId:
+    popImpliedInit(c)
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
   c.knownTrueCfVars.thenDone(cfSp)
@@ -720,6 +754,13 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   let elseIsNoReturn = c.basicBlockIsNoReturn
 
   c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
+
+  # Record correlation: when cfvar (set in then) is false => else-branch writes were performed
+  var elseWrites = initHashSet[SymId]()
+  for item in c.writesTo.since(writesSp.cp):
+    elseWrites.incl item
+  for cf in cfSp.thenData:
+    c.cfvarFalseImpliesInit.mgetOrPut(cf, initHashSet[SymId]()).incl elseWrites
 
   # Merge: only keep facts/writes/cfvars that hold in both branches
   c.facts = merge(thenFacts, 0, c.facts, false)
@@ -835,6 +876,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.procCanRaise = false
   let oldWritesTo = move c.writesTo
   let oldKnownTrueCfVars = move c.knownTrueCfVars
+  let oldCfvarFalseImpliesInit = move c.cfvarFalseImpliesInit
+  let oldImpliedInitStack = move c.impliedInitStack
 
   inc n
   var isGeneric = false
@@ -853,6 +896,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   skipParRi n
   c.writesTo = oldWritesTo
   c.knownTrueCfVars = oldKnownTrueCfVars
+  c.cfvarFalseImpliesInit = oldCfvarFalseImpliesInit
+  c.impliedInitStack = oldImpliedInitStack
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =

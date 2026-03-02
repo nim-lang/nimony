@@ -110,10 +110,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # We can later push them around.
   dest.takeToken n
   while n.kind != ParRi:
-    if n.njvlKind == UnknownV:
-      trUnknown c, dest, n
-    else:
-      trExpr c, dest, n
+    trExpr c, dest, n
   dest.takeToken n
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =

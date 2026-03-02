@@ -338,7 +338,14 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
   c.current = ensureMove oldProc
 
-proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): ExceptionMode =
+type
+  CallInfo = object
+    isNoReturn: bool
+    mode: ExceptionMode
+    mutates: seq[SymId]
+    info: PackedLineInfo
+
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
   assert isParamsTag(fnType)
   var pragmas = fnType
@@ -346,29 +353,24 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): ExceptionMode =
   let retType = pragmas
   skip pragmas
   let canRaise = hasPragma(pragmas, RaisesP)
-
-  result =
-    if canRaise:
-      (if isVoidType(retType): VoidRaise else: TupleRaise)
-    else: NoRaise
+  let isNoReturn = hasPragma(pragmas, NoreturnP)
 
   let info = n.info
+  result = CallInfo(isNoReturn: isNoReturn, mode:
+    if canRaise:
+      (if isVoidType(retType): VoidRaise else: TupleRaise)
+    else: NoRaise,
+    info: info
+  )
   dest.add n
   inc n # skip `(call)`
   trExpr c, dest, n # handle `fn`
-  var mutates: seq[SymId] = @[]
   while n.kind != ParRi:
     if n.exprKind == HaddrX:
       let r = rootOf(n, CanFollowCalls)
       if r != NoSymId:
-        mutates.add r
+        result.mutates.add r
     trExpr c, dest, n
-  # we make `unknown` part of the `call` for now. This will be cleaned up
-  # in the `versionizer` pass!
-  for s in mutates:
-    dest.add tagToken("unknown", info)
-    dest.addSymUse s, info
-    dest.addParRi() # unknown
   dest.takeParRi n
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -397,14 +399,34 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeToken n
   of ParRi: bug "Unmatched ParRi"
 
-proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): ExceptionMode =
+proc emitReturnGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  dest.add tagToken("jtrue", info)
+  # we also need to break out of everything:
+  for i in countdown(c.current.guards.len - 1, 0):
+    let cond = c.current.guards[i].cond
+    assert cond != NoSymId
+    c.current.guards[i].active = true
+    dest.addSymUse cond, info
+  dest.addParRi()
+
+proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
+  # we make `unknown` part of the `call` for now. This will be cleaned up
+  # in the `versionizer` pass!
+  for s in callInfo.mutates:
+    dest.add tagToken("unknown", callInfo.info)
+    dest.addSymUse s, callInfo.info
+    dest.addParRi() # unknown
+  if callInfo.isNoReturn:
+    emitReturnGuards(c, dest, callInfo.info)
+
+proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   # Indicates that the expression is about to be bound to a location.
   # Hence a `call` expression is valid here.
   if n.exprKind in CallKinds:
     result = trCall(c, dest, n)
   else:
     trExpr c, dest, n
-    result = NoRaise
+    result = CallInfo(isNoReturn: false, mode: NoRaise, mutates: @[], info: n.info)
 
 proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   let before = dest.len
@@ -425,8 +447,8 @@ proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
 proc trStmtCall(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   let before = dest.len
   let info = n.info
-  let m = trCall(c, dest, n)
-  case m
+  let callInfo = trCall(c, dest, n)
+  case callInfo.mode
   of NoRaise:
     discard "nothing to do"
   of VoidRaise:
@@ -454,6 +476,7 @@ proc trStmtCall(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cu
 
   of TupleRaise:
     bug "value should have been discarded"
+  callIsOver(c, dest, callInfo)
 
 proc replayLocalHeader(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
@@ -486,18 +509,21 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   takeTree dest, n # type
 
   let info = n.info
-  let m = trBoundExpr(c, dest, n)
+  let callInfo = trBoundExpr(c, dest, n)
   skipParRi n
   # the `raise` statement must follow the var declaration!
-  case m
+  case callInfo.mode
   of NoRaise:
     dest.addParRi()
+    callIsOver(c, dest, callInfo)
   of VoidRaise:
     dest.addParRi()
+    callIsOver(c, dest, callInfo)
     bug "value should have been discarded"
   of TupleRaise:
     # we also need to patch the type!
     dest.addParRi()
+    callIsOver(c, dest, callInfo)
     var decl = createTokenBuf(10)
     decl.copyTree cursorAt(dest, beforeHead)
     endRead dest
@@ -1034,15 +1060,8 @@ proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
   dest.addParLe RetS, info
   dest.addParRi()
 
-  dest.add tagToken("jtrue", info)
-  # we also need to break out of everything:
-  for i in countdown(c.current.guards.len - 1, 0):
-    let cond = c.current.guards[i].cond
-    assert cond != NoSymId
-    c.current.guards[i].active = true
-    dest.addSymUse cond, info
+  emitReturnGuards(c, dest, info)
 
-  dest.addParRi()
   b.leavesWith = c.current.guards.len-1
 
 proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
