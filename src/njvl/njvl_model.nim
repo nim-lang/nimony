@@ -79,11 +79,15 @@ proc join*[T](t: var IteTracker[T]; s: SplitPoint[T]; thenNoReturn, elseNoReturn
   ## Call after the else-branch: merge both branches into the tracker.
   ## If thenNoReturn, keep only else items (then never reaches the join point).
   ## If elseNoReturn, keep only then items. Otherwise keep the intersection.
+  ## When thenNoReturn and else is empty, pre-ite is preserved by rollback;
+  ## also add thenData since the except may have stored before noreturn (e.g. quit).
   var elseData: seq[T] = @[]
   for item in t.since(s.cp): elseData.add item
   t.rollback(s.cp)
   if thenNoReturn:
     for item in elseData: t.add item
+    if elseData.len == 0:
+      for item in s.thenData: t.add item
   elif elseNoReturn:
     for item in s.thenData: t.add item
   else:
