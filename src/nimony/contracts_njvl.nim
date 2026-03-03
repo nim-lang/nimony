@@ -43,6 +43,7 @@ type
     basicBlockIsNoReturn: bool
     moduleSuffix: string
     nestedProcs: int
+    knownCfVars: HashSet[SymId]
     knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
     cfvarFalseImpliesInit: Table[SymId, HashSet[SymId]]  # when cf is false → these were init
     impliedInitStack: seq[HashSet[SymId]]  # stacked additions for nested `if not cf`
@@ -84,12 +85,14 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
   if result != NoSymId:
     if r.kind == Symbol: inc r else: skip r
 
-proc conditionCfvarForNot(c: Cursor): SymId =
+proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
   ## If condition is `(not cfvar)`, return the cfvar's SymId. Else NoSymId.
-  var r = c
+  var r = n
   if r.exprKind == NotX:
     inc r
     result = extractSymId(r)
+    if result != NoSymId and result notin c.knownCfVars:
+      result = NoSymId
   else:
     result = NoSymId
 
@@ -711,7 +714,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     return
 
   # Condition may be (not cfvar) - capture for correlation before analyseCondition consumes it
-  let condCf = conditionCfvarForNot(n)
+  let condCf = conditionCfvarForNot(c, n)
 
   # Analyze condition and extract facts
   let savedFacts = save(c.facts)
@@ -878,7 +881,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldKnownTrueCfVars = move c.knownTrueCfVars
   let oldCfvarFalseImpliesInit = move c.cfvarFalseImpliesInit
   let oldImpliedInitStack = move c.impliedInitStack
-
+  let oldKnownCfVars = move c.knownCfVars
   inc n
   var isGeneric = false
   for i in 0 ..< BodyPos:
@@ -898,6 +901,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.knownTrueCfVars = oldKnownTrueCfVars
   c.cfvarFalseImpliesInit = oldCfvarFalseImpliesInit
   c.impliedInitStack = oldImpliedInitStack
+  c.knownCfVars = oldKnownCfVars
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
@@ -913,8 +917,9 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   of AssertV:
     traverseAssert c, n
   of CfvarV:
-    # Control flow variable declaration - just skip
+    # Control flow variable declaration
     inc n
+    c.knownCfVars.incl n.symId
     skip n # symdef
     skipParRi n
   of JtrueV:
