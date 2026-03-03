@@ -291,18 +291,23 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
       doMark pc
   return true
 
-proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo): bool =
+proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo;
+                cf: var TokenBuf): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
   #echo "Input is: ", toString(buf, false)
   let oldInfos = prepare(buf)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
-  var cf = toControlflow(beginRead buf)
-  freeze cf
+  var needsRead = false
+  if cf.len == 0:
+    needsRead = true
+    cf = toControlflow(beginRead buf)
+    freeze cf
   #echo "CF IS ", codeListing(cf)
   var other = default Cursor
   result = isLastReadImpl(cf, idx.uint32, other)
-  endRead buf
+  if needsRead:
+    endRead buf
   restore(buf, oldInfos)
   if other.cursorIsNil:
     otherUsage = NoLineInfo
@@ -329,10 +334,11 @@ when isMainModule:
     bug "no 'ensureMove' found"
 
   proc test(s: string; expected: bool) =
-    var input = parse(s)
+    var input = parseFromBuffer(s, "")
     var otherUsage = NoLineInfo
     let n = findX(beginRead(input))
-    let res = isLastUse(n, input, otherUsage)
+    var cf = createTokenBuf(300)
+    let res = isLastUse(n, input, otherUsage, cf)
     if res != expected:
       echo "FAILED Test case: ", s
 
