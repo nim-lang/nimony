@@ -553,6 +553,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if n.exprKind == ExprX:
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar
+      if tar.m == IsAppend:
+        dest.add tar
     else:
       takeTree dest, n
   of PragmaxS:
