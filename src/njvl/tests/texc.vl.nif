@@ -17,7 +17,7 @@
   (stmts
    (stmts
     (cfvar :´r.0)
-    (let :´err.2 . . ErrorCode.0.sysvq0asl Success.0.sysvq0asl)
+    (var :´err.2 . . ErrorCode.0.sysvq0asl Success.0.sysvq0asl)
     (cfvar :´g.1)
     (let :`g.3 . . ErrorCode.0.sysvq0asl
      (call echo.0 "abc"))
@@ -33,7 +33,6 @@
        (stmts)
        (stmts)))
      (stmts))
-    (kill ´g.1)
     (let :`g.5 . . ErrorCode.0.sysvq0asl
      (call echo.0 "regardless"))
     (ite
@@ -46,4 +45,4 @@
       (v ´err.2 +0) Success.0.sysvq0asl)
      (stmts) .
      (stmts))
-    (kill ´r.0)))))
+    (kill ´g.1 ´r.0)))))
