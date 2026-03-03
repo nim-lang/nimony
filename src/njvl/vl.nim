@@ -110,10 +110,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # We can later push them around.
   dest.takeToken n
   while n.kind != ParRi:
-    if n.njvlKind == UnknownV:
-      trUnknown c, dest, n
-    else:
-      trExpr c, dest, n
+    trExpr c, dest, n
   dest.takeToken n
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -150,6 +147,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.takeToken n
         dest.takeTree n # key, don't versionize!
         trExpr c, dest, n
+        if n.kind != ParRi:
+          # inheritance depth:
+          takeTree dest, n
         takeParRi dest, n
       else:
         dest.takeToken n
@@ -183,7 +183,11 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeSection c.vt
   openSection c.vt
   openScope c.typeCache
-  trStmt c, dest, n
+  if n.kind != ParRi:
+    trStmt c, dest, n
+  else:
+    # repair broken ite statements (missing else):
+    dest.addDotToken()
   closeScope c.typeCache
   closeSection c.vt
   # join information is optional here:
@@ -292,9 +296,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trProcDecl c, dest, n
     of LocalDecls:
       trLocal c, dest, n
-    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS, RetS:
+    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS:
       bug "construct should have been eliminated: " & $n.stmtKind
-    of TemplateS, TypeS:
+    of TemplateS, TypeS, RetS:
       takeTree dest, n
     of ContinueS:
       skip n

@@ -43,7 +43,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
           # More than one son is always complex:
           return true
         inc nested
-      elif goal == TowardsNjvl and n.exprKind in CallKinds:
+      elif goal == TowardsNjvl and n.exprKind in (CallKinds+{AndX, OrX}):
         return true
       else:
         inc n
@@ -73,9 +73,13 @@ proc tempSymName(c: var Context): string {.inline.} =
   result = "`x." & $c.counter
   inc c.counter
 
+proc getType(c: var Context; n: Cursor): Cursor =
+  result = getType(c.typeCache, n)
+  assert result.typeKind != AutoT, "cannot compute type of: " & toString(n, false)
+
 proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info
-  let typ = getType(c.typeCache, n)
+  let typ = getType(c, n)
   let s = tempSymName(c)
   result = pool.syms.getOrIncl(s)
   copyIntoKind dest, VarS, info:
@@ -100,7 +104,7 @@ proc add(dest: var TokenBuf; tar: Target) =
 
 proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
   var tar = Target(m: IsEmpty)
-  let typ = getType(c.typeCache, n)
+  let typ = getType(c, n)
   trExpr c, dest, n, tar
 
   if typ.typeKind in {VoidT, AutoT}:
@@ -186,7 +190,7 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
   if tar.m in {IsAppend, IsEmpty} and c.goal == TowardsNjvl:
     # bind to a temporary variable:
     let info = n.info
-    let typ = c.typeCache.getType(n)
+    let typ = getType(c, n)
 
     # Process the call into a temporary buffer so that any nested let
     # declarations are emitted before this one starts:
@@ -199,7 +203,13 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
 
     # Now create the let binding for this call
     let tmp = pool.syms.getOrIncl(tempSymName(c))
-    dest.addParLe LetS, info
+    # `call() = 4` via a `var T` cannot be bound to a let variable
+    # as the analysis in constracts_njvl is too simplistic.
+    # It would produce: "Cannot reassign a let variable".
+    if typ.typeKind == MutT:
+      dest.addParLe VarS, info
+    else:
+      dest.addParLe LetS, info
     dest.addSymDef tmp, info
     dest.addEmpty2 info # no export marker, no pragmas
     dest.copyTree typ
@@ -478,6 +488,18 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.add tar
       trStmt c, dest, n
 
+proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  let head = n.load()
+  inc n
+  var tar = Target(m: IsEmpty)
+  trExpr c, dest, n, tar # iterator call
+  dest.add head
+  dest.add tar
+  takeTree dest, n # for loop variables
+  trStmt c, dest, n
+  dest.takeParRi n
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tmp = createTokenBuf(30)
   let kind = n.symKind
@@ -522,15 +544,19 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
     else:
       trStmt c, dest, n
 
-
   if tar.m != IsIgnored:
     tar.t.addSymUse tmp, n.info
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
-    assert n.kind != ParRi
-    takeTree dest, n
+    if n.exprKind == ExprX:
+      var tar = Target(m: IsEmpty)
+      trExpr c, dest, n, tar
+      if tar.m == IsAppend:
+        dest.add tar
+    else:
+      takeTree dest, n
   of PragmaxS:
     copyInto(dest, n):
       takeTree dest, n  # pragmas
@@ -558,18 +584,22 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of DiscardS:
     if c.goal == TowardsNjvl:
       inc n
-      var tar = Target(m: IsBound)
-      trExpr c, dest, n, tar
-      # we must bind the result to a temporary variable!
-      let tmp = pool.syms.getOrIncl("`x." & $c.counter)
-      inc c.counter
-      let info = n.info
-      dest.addParLe LetS, info
-      dest.addSymDef tmp, info
-      dest.addEmpty2 info # no export marker, no pragmas
-      let typ = c.typeCache.getType(n)
-      dest.copyTree typ
-      dest.add tar
+      if n.kind == DotToken:
+        dest.takeToken n
+      else:
+        let typ = getType(c, n)
+        var tar = Target(m: IsBound)
+        trExpr c, dest, n, tar
+        # we must bind the result to a temporary variable!
+        let tmp = pool.syms.getOrIncl("`x." & $c.counter)
+        inc c.counter
+        let info = n.info
+        dest.addParLe LetS, info
+        dest.addSymDef tmp, info
+        dest.addEmpty2 info # no export marker, no pragmas
+        dest.copyTree typ
+        dest.add tar
+        dest.addParRi()
     else:
       var tar = Target(m: IsEmpty)
       let head = n
@@ -577,11 +607,13 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n, tar
       dest.add head
       dest.add tar
-    dest.addParRi()
+      dest.addParRi()
     skipParRi n
 
   of WhileS:
     trWhile c, dest, n
+  of ForS:
+    trFor c, dest, n
   of CallKindsS, InclS, ExclS:
     trStmtCall c, dest, n
   of AsgnS:
@@ -605,13 +637,13 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.add tar
   of LocalDecls:
     trLocal c, dest, n
-  of ProcS, FuncS, MacroS, MethodS, ConverterS:
+  of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
     trProc c, dest, n
   of BlockS:
     var tar = Target(m: IsIgnored)
     trBlock c, dest, n, tar
-  of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-     ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
+  of TemplateS, TypeS, EmitS, BreakS, ContinueS,
+     IncludeS, ImportS, FromimportS, ImportExceptS,
      ExportS, CommentS, AssumeS, AssertS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     takeTree dest, n

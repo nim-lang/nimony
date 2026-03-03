@@ -17,7 +17,10 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes
 
-when not defined(useNj):
+const
+  useNj = false # disabled for now so that we can merge the work
+
+when not useNj:
   import contracts
 else:
   import contracts_njvl
@@ -64,18 +67,23 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
   #    nkElifBranch, nkElifExpr, nkElseExpr, nkBlockStmt, nkBlockExpr,
   #    nkHiddenStdConv, nkHiddenSubConv, nkHiddenDeref}
   while it.kind == ParLe and (stmtKind(it) in {StmtsS, BlockS} or exprKind(it) == ExprX):
-    if exprKind(it) == ExprX and dest.len != 0:
-      let pos = cursorToPosition(dest, it)
-      dest[pos] = parLeToken(StmtsS, dest[pos].info)
-    inc it
-    var last = it
-    while true:
-      skip it
-      if it.kind == ParRi:
-        it = last
-        break
-      else:
-        last = it
+    # Unwrap ExprX by advancing to the last son (the value); do not mutate the tree to StmtsS.
+    # `if (let e = f(); e != 0)` should keep ExprX so xelim sees stmt/expr distinction.
+    if exprKind(it) == ExprX:
+      inc it
+      while not isLastSon(it):
+        skip it
+      # it now points to the last son (the expression); continue unwrapping if needed
+    else:
+      inc it
+      var last = it
+      while true:
+        skip it
+        if it.kind == ParRi:
+          it = last
+          break
+        else:
+          last = it
 
   if it.kind != ParLe: return false
   case stmtKind(it)
@@ -5569,15 +5577,15 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
+    if c.genericInnerProcs.len > 0:
+      reorderInnerGenericInstances(c, afterSem)
     when true: #defined(enableContracts):
-      when not defined(useNj):
+      when not useNj:
         var moreErrors = analyzeContracts(afterSem)
       else:
         var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
-    if c.genericInnerProcs.len > 0:
-      reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
     dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
   else:
@@ -5644,7 +5652,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true:
-      when not defined(useNj):
+      when not useNj:
         var moreErrors = analyzeContracts(afterSem)
       else:
         var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)

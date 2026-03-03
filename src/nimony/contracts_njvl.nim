@@ -30,17 +30,23 @@ import ".." / models / tags
 import ".." / lib / symparser
 import ".." / njvl / [njvl_model, vl]
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-  renderer, typeprops, inferle, xints
+  renderer, typeprops, inferle, xints, builtintypes
 
 type
   NjvlContext = object
     facts: Facts           # From inferle.nim - tracks le/notnil facts
     typeCache: TypeCache
-    directlyInitialized: HashSet[SymId]
-    writesTo: seq[SymId]
+    directlyInitialized: seq[HashSet[SymId]]
+    writesTo: IteTracker[SymId]
     errors: TokenBuf
     procCanRaise: bool
+    basicBlockIsNoReturn: bool
     moduleSuffix: string
+    nestedProcs: int
+    knownCfVars: HashSet[SymId]
+    knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
+    cfvarFalseImpliesInit: Table[SymId, HashSet[SymId]]  # when cf is false → these were init
+    impliedInitStack: seq[HashSet[SymId]]  # stacked additions for nested `if not cf`
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -64,6 +70,50 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor)
 proc traverseExpr(c: var NjvlContext; pc: var Cursor)
 proc analyseCall(c: var NjvlContext; n: var Cursor)
 
+proc extractSymId(n: Cursor): SymId {.inline.} =
+  if n.kind == Symbol:
+    result = n.symId
+  elif n.kind == ParLe and n.tagEnum == VTagId:
+    result = n.firstSon.symId
+  else:
+    result = NoSymId
+
+proc skipSymbol(r: var Cursor): SymId {.inline.} =
+  ## Consume a bare Symbol or (v sym version) node and return its SymId.
+  ## Returns NoSymId (without advancing) if r is neither.
+  result = extractSymId(r)
+  if result != NoSymId:
+    if r.kind == Symbol: inc r else: skip r
+
+proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
+  ## If condition is `(not cfvar)`, return the cfvar's SymId. Else NoSymId.
+  var r = n
+  if r.exprKind == NotX:
+    inc r
+    result = extractSymId(r)
+    if result != NoSymId and result notin c.knownCfVars:
+      result = NoSymId
+  else:
+    result = NoSymId
+
+proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
+  ## Returns +1 if the condition is a cfvar known to be true,
+  ## -1 if it is `(not cf)` where cf is known true, 0 otherwise.
+  ## After vl.nim, cfvars appear as `(v sym N)` so we use extractSymId.
+  let s = extractSymId(n)
+  if s != NoSymId and s in c.knownTrueCfVars:
+    result = 1
+  elif n.exprKind == NotX:
+    var inner = n
+    inc inner  # skip NotX tag
+    let s2 = extractSymId(inner)
+    if s2 != NoSymId and s2 in c.knownTrueCfVars:
+      result = -1
+    else:
+      result = 0
+  else:
+    result = 0
+
 template getVarId(c: var NjvlContext; symId: SymId): VarId = VarId(symId)
 
 # --- Fact extraction from conditions ---
@@ -73,10 +123,9 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
   if pc.exprKind in {AddX, SubX}:
     inc pc
     skip pc # type
-    if pc.kind == Symbol:
-      let symId2 = pc.symId
+    let symId2 = skipSymbol(pc)
+    if symId2 != NoSymId:
       fact.b = getVarId(c, symId2)
-      inc pc
       if pc.kind == IntLit:
         fact.c = fact.c + createXint(pool.integers[pc.intId])
         result = true
@@ -91,11 +140,9 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
       traverseExpr c, pc
       traverseExpr c, pc
     skipParRi pc
-  elif pc.kind == Symbol:
-    let symId2 = pc.symId
+  elif (let symId2 = skipSymbol(pc); symId2 != NoSymId):
     fact.b = getVarId(c, symId2)
     result = true
-    inc pc
   elif pc.kind == IntLit:
     fact.b = VarId(0)
     fact.c = fact.c + createXint(pool.integers[pc.intId])
@@ -128,7 +175,7 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     inc r
     skip r # skip type
   elif xk == EqX:
-    wasEquality = true
+    wasEquality = negations == 0  # negated equality is inequality, not equality
     inc r
     skip r # skip type
   else:
@@ -143,9 +190,8 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     result.a = VarId(0)
     result.c = -createXint(pool.uintegers[r.uintId])
     inc r
-  elif r.kind == Symbol:
-    result.a = getVarId(c, r.symId)
-    inc r
+  elif (let sa = skipSymbol(r); sa != NoSymId):
+    result.a = getVarId(c, sa)
   elif r.exprKind == NilX:
     result.a = VarId(0)
     skip r
@@ -215,8 +261,9 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
       skip n # skip intlit
     else:
       break
-  if n.kind == Symbol:
-    result = n.symId
+  let s = extractSymId(n)
+  if s != NoSymId:
+    result = s
     let x = getLocalInfo(c.typeCache, result)
     if x.kind == GvarY:
       # assume sharing of global variables between threads
@@ -237,6 +284,13 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
     else:
       let r = analysableRoot(c, n)
       if r == NoSymId:
+        # account for the fact that NJ already introduced tuples for the error handling:
+        var n = n
+        if n.exprKind == TupconstrX:
+          inc n
+          skip n # skip type
+          if n.kind == Symbol and pool.syms[n.symId] == ("Success.0." & SystemModuleSuffix):
+            inc n
         if n.exprKind == NewobjX and c.procCanRaise:
           discard "fine, nil value is mapped to OOM by the compiler"
         else:
@@ -440,6 +494,27 @@ proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
     skip expected # type of the next field
   skipParRi n
 
+proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
+  for s in mitems c.directlyInitialized:
+    if symId in s:
+      return true
+  return false
+
+proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
+  ## True if symId is known initialized (directly, via writesTo, or via cfvar correlation).
+  if isDirectlyInitialized(c, symId) or symId in c.writesTo:
+    return true
+  for layer in c.impliedInitStack:
+    if symId in layer:
+      return true
+  return false
+
+proc pushImpliedInit(c: var NjvlContext; implied: HashSet[SymId]) =
+  c.impliedInitStack.add implied
+
+proc popImpliedInit(c: var NjvlContext) =
+  discard c.impliedInitStack.pop()
+
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
   var nested = 0
   while true:
@@ -448,7 +523,7 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
       if x.kind in {VarY, LetY, CursorY}:
-        if symId notin c.directlyInitialized and symId notin c.writesTo:
+        if not isEffectivelyInitialized(c, symId):
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
           c.writesTo.add symId
       inc pc
@@ -464,6 +539,12 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       case pc.exprKind
       of CallKinds:
         analyseCall c, pc
+      of DotX:
+        inc pc
+        traverseExpr c, pc # object
+        skip pc # field name
+        if pc.kind != ParRi: skip pc # inheritance depth
+        skipParRi pc
       of DdotX:
         inc pc
         wantNotNilDeref c, pc
@@ -492,9 +573,15 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc pc
     if nested == 0: break
 
+
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
+  var fnPragmas = fnType
+  skip fnPragmas # params
+  skip fnPragmas # return type
+  if hasPragma(fnPragmas, NoReturnP):
+    c.basicBlockIsNoReturn = true
   traverseExpr c, n # the `fn` itself
   assert fnType.isParamsTag
   inc fnType
@@ -506,8 +593,9 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     paramMap[param.name.symId] = paramMap.len+1
     let pk = param.typ.typeKind
     if pk == OutT:
-      if n.kind == Symbol:
-        c.writesTo.add n.symId
+      let s = extractSymId(n)
+      if s != NoSymId:
+        c.writesTo.add s
     elif pk == VarargsT:
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
@@ -565,7 +653,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY}:
-      if symId in c.directlyInitialized or symId in c.writesTo:
+      if isDirectlyInitialized(c, symId) or symId in c.writesTo:
         c.buildErr n.info, "invalid reassignment to `let` variable"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
@@ -605,8 +693,33 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   ## Handle (ite cond then else [join])
   inc n # skip ite/itec tag
 
+  # Fast path: if the condition's truth value is known from cfvar state,
+  # only traverse the live branch and skip the dead one.
+  let knownVal = cfCondKnownValue(c, n)
+  if knownVal == 1:
+    # condition is a cfvar known to be true: only then-branch runs
+    skip n  # skip condition
+    traverseStmt c, n  # then branch
+    skip n  # skip else
+    if n.kind == ParLe and n.stmtKind == StmtsS: skip n  # skip join
+    skipParRi n
+    return
+  elif knownVal == -1:
+    # condition is (not cf) with cf known true: only else-branch runs
+    skip n  # skip condition
+    skip n  # skip then branch
+    if n.kind != DotToken: traverseStmt c, n else: inc n  # else
+    if n.kind == ParLe and n.stmtKind == StmtsS: skip n  # skip join
+    skipParRi n
+    return
+
+  # Condition may be (not cfvar) - capture for correlation before analyseCondition consumes it
+  let condCf = conditionCfvarForNot(c, n)
+
   # Analyze condition and extract facts
   let savedFacts = save(c.facts)
+  var writesSp = c.writesTo.split()
+  var cfSp = c.knownTrueCfVars.split()
   let condFacts = analyseCondition(c, n)
 
   # Copy condition facts for else-branch negation (only single fact can be negated)
@@ -615,37 +728,47 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     condFactsList.add c.facts[c.facts.len - 1]
 
   # Then branch - has positive condition facts
-  c.typeCache.openScope()
+  # When condition is (not cf), correlate: cf false => we took else of prior ite => use implied inits
+  if condCf != NoSymId:
+    pushImpliedInit(c, c.cfvarFalseImpliesInit.getOrDefault(condCf))
+  let beforeIteIsNoReturn = c.basicBlockIsNoReturn
+  c.basicBlockIsNoReturn = false
   traverseStmt c, n
-  c.typeCache.closeScope()
+  if condCf != NoSymId:
+    popImpliedInit(c)
   let thenFacts = c.facts
-  let thenWritesTo = c.writesTo
+  c.writesTo.thenDone(writesSp)
+  c.knownTrueCfVars.thenDone(cfSp)
 
-  # Restore facts and add negated condition for else branch (single fact only)
+  # Restore facts for else branch
   restore(c.facts, savedFacts)
   for f in condFactsList:
     var negated = f
     negateFact(negated)
     c.facts.add negated
 
+  let thenIsNoReturn = c.basicBlockIsNoReturn
+  c.basicBlockIsNoReturn = false
   # Else branch
-  c.typeCache.openScope()
   if n.kind == DotToken:
     inc n # empty else
   else:
     traverseStmt c, n
-  c.typeCache.closeScope()
+  let elseIsNoReturn = c.basicBlockIsNoReturn
 
-  # Merge facts from both branches
-  # Use conservative approach: only keep facts that hold in both branches
+  c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
+
+  # Record correlation: when cfvar (set in then) is false => else-branch writes were performed
+  var elseWrites = initHashSet[SymId]()
+  for item in c.writesTo.since(writesSp.cp):
+    elseWrites.incl item
+  for cf in cfSp.thenData:
+    c.cfvarFalseImpliesInit.mgetOrPut(cf, initHashSet[SymId]()).incl elseWrites
+
+  # Merge: only keep facts/writes/cfvars that hold in both branches
   c.facts = merge(thenFacts, 0, c.facts, false)
-
-  # Merge writesTo: keep only what's written in both branches
-  var mergedWritesTo: seq[SymId] = @[]
-  for s in thenWritesTo:
-    if s in c.writesTo:
-      mergedWritesTo.add s
-  c.writesTo = mergedWritesTo
+  c.writesTo.join(writesSp, thenIsNoReturn, elseIsNoReturn)
+  c.knownTrueCfVars.join(cfSp, thenIsNoReturn, elseIsNoReturn)
 
   # Skip optional join information
   if n.kind == ParLe and n.stmtKind == StmtsS:
@@ -658,7 +781,6 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   inc n # skip loop tag
 
   # Pre-condition statements
-  c.typeCache.openScope()
   traverseStmt c, n
 
   # Analyze loop condition
@@ -668,15 +790,14 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   let condFact = translateCond(c, condCursor, wasEquality)
   skip n # skip condition expression
 
-  # Conservative approach for loops:
-  # We don't know how many times the loop runs, so we can't trust facts
-  # about variables that might be modified in the loop body.
-  # For simplicity, we analyze the body but reset facts afterwards.
+  # Add condition fact so body is analyzed knowing condition is true
+  if condFact.isValid:
+    c.facts.add condFact
+    if wasEquality:
+      c.facts.add condFact.geXplusC
 
   # Loop body
   traverseStmt c, n
-
-  c.typeCache.closeScope()
 
   # After loop, we know the condition is false (if we exited normally)
   restore(c.facts, savedFacts)
@@ -698,7 +819,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   c.typeCache.registerLocal(name, cast[SymKind](kind), n)
   skip n # type
   if n.kind != DotToken or skipInitCheck:
-    c.directlyInitialized.incl name
+    c.directlyInitialized[^1].incl name
   traverseExpr c, n
   skipParRi n
 
@@ -754,13 +875,13 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.facts = createFacts()
-  c.directlyInitialized.clear()
-  c.writesTo = @[]
+  c.directlyInitialized.add initHashSet[SymId]()
   c.procCanRaise = false
-  c.directlyInitialized.clear()
-  c.writesTo.setLen(0)
-  c.typeCache.openScope()
-
+  let oldWritesTo = move c.writesTo
+  let oldKnownTrueCfVars = move c.knownTrueCfVars
+  let oldCfvarFalseImpliesInit = move c.cfvarFalseImpliesInit
+  let oldImpliedInitStack = move c.impliedInitStack
+  let oldKnownCfVars = move c.knownCfVars
   inc n
   var isGeneric = false
   for i in 0 ..< BodyPos:
@@ -776,8 +897,12 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   else:
     skip n
   skipParRi n
-
-  c.typeCache.closeScope()
+  c.writesTo = oldWritesTo
+  c.knownTrueCfVars = oldKnownTrueCfVars
+  c.cfvarFalseImpliesInit = oldCfvarFalseImpliesInit
+  c.impliedInitStack = oldImpliedInitStack
+  c.knownCfVars = oldKnownCfVars
+  discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   case n.njvlKind
@@ -792,13 +917,20 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   of AssertV:
     traverseAssert c, n
   of CfvarV:
-    # Control flow variable declaration - just skip
+    # Control flow variable declaration
     inc n
+    c.knownCfVars.incl n.symId
     skip n # symdef
     skipParRi n
   of JtrueV:
-    # Jump hint - skip
-    skip n
+    # (jtrue cf1 cf2 ...) - cfvars listed here are now known true on this path.
+    # vl.nim emits bare symbols inside jtrue (the versioning happens for uses after it).
+    inc n
+    while n.kind != ParRi:
+      assert n.kind == Symbol
+      c.knownTrueCfVars.add n.symId
+      inc n
+    inc n  # ParRi
   of KillV:
     # Variable going out of scope - skip
     skip n
@@ -825,7 +957,9 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS:
       # Nested routine - analyze and advance past it
       c.typeCache.openScope()
+      inc c.nestedProcs
       traverseProc c, n
+      dec c.nestedProcs
       c.typeCache.closeScope()
     of TemplateS, TypeS, CommentS, PragmasS:
       skip n
@@ -836,6 +970,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       elif n.kind != ParRi:
         traverseExpr c, n
       skipParRi n
+      c.basicBlockIsNoReturn = true
     of CallKindsS:
       analyseCall c, n
     of DiscardS, YldS:
@@ -888,7 +1023,9 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     traverseToplevel c, n
     skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
+    inc c.nestedProcs
     traverseProc c, n
+    dec c.nestedProcs
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,
      ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      ExportS,
@@ -911,7 +1048,8 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
   # Now analyze the NJVL IR
   var c = NjvlContext(
     typeCache: createTypeCache(),
-    moduleSuffix: moduleSuffix
+    moduleSuffix: moduleSuffix,
+    directlyInitialized: @[initHashSet[SymId]()]
   )
   c.typeCache.openScope()
 

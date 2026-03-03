@@ -308,6 +308,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc n
         skip n # label or DotToken
         result = getTypeImpl(c, n, flags)
+      of StmtsS, RetS:
+        result = c.builtins.voidType
       else:
         if njvlKind(n) == VV:
           result = getTypeImpl(c, n.firstSon, flags)
@@ -388,7 +390,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     skip n # object expression
     let fld = n.symId
 
-    var objType = skipToObjectBody getTypeImpl(c, obj, flags)
+    var objType = skipToObjectBody skipModifier getTypeImpl(c, obj, flags)
 
     result = typeOfField(c, objType, fld)
     if cursorIsNil(result):
@@ -473,6 +475,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     var n = n
     inc n # into tuple
     var tupType = getTypeImpl(c, n, flags)
+    tupType = skipModifier(tupType)
     if tupType.typeKind == TupleT:
       skip n # skip tuple expression
       if n.kind == IntLit:
