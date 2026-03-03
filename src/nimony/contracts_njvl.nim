@@ -96,6 +96,12 @@ proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
   else:
     result = NoSymId
 
+proc conditionCfvarDirect(c: NjvlContext; n: Cursor): SymId =
+  ## If condition is directly a cfvar (not negated), return its SymId. Else NoSymId.
+  result = extractSymId(n)
+  if result != NoSymId and result notin c.knownCfVars:
+    result = NoSymId
+
 proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
   ## Returns +1 if the condition is a cfvar known to be true,
   ## -1 if it is `(not cf)` where cf is known true, 0 otherwise.
@@ -580,8 +586,6 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   var fnPragmas = fnType
   skip fnPragmas # params
   skip fnPragmas # return type
-  if hasPragma(fnPragmas, NoReturnP):
-    c.basicBlockIsNoReturn = true
   traverseExpr c, n # the `fn` itself
   assert fnType.isParamsTag
   inc fnType
@@ -713,8 +717,9 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     skipParRi n
     return
 
-  # Condition may be (not cfvar) - capture for correlation before analyseCondition consumes it
+  # Condition may be (not cfvar) or directly a cfvar - capture before analyseCondition consumes it
   let condCf = conditionCfvarForNot(c, n)
+  let condDirectCf = conditionCfvarDirect(c, n)
 
   # Analyze condition and extract facts
   let savedFacts = save(c.facts)
@@ -765,10 +770,33 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   for cf in cfSp.thenData:
     c.cfvarFalseImpliesInit.mgetOrPut(cf, initHashSet[SymId]()).incl elseWrites
 
+  # Symmetric: cfvars set in else-branch → when cf is false, then-branch writes are initialized.
+  # Example: `if n >= 0: x = 45 else: quit 1` emits `jtrue r` in else; when r is false,
+  # the then-branch ran, so x is initialized.
+  var thenWrites = initHashSet[SymId]()
+  for item in writesSp.thenData:
+    thenWrites.incl item
+  for cf in c.knownTrueCfVars.since(cfSp.cp):
+    c.cfvarFalseImpliesInit.mgetOrPut(cf, initHashSet[SymId]()).incl thenWrites
+
+  # Guard-ite: condition is `(not cf)`, so then-branch runs exactly when cf is false.
+  # Example: `(ite (not g.M) (stmts store x.64) .)` — when g.M is false, x.64 is written.
+  if condCf != NoSymId and thenWrites.len > 0:
+    c.cfvarFalseImpliesInit.mgetOrPut(condCf, initHashSet[SymId]()).incl thenWrites
+
   # Merge: only keep facts/writes/cfvars that hold in both branches
   c.facts = merge(thenFacts, 0, c.facts, false)
   c.writesTo.join(writesSp, thenIsNoReturn, elseIsNoReturn)
   c.knownTrueCfVars.join(cfSp, thenIsNoReturn, elseIsNoReturn)
+
+  # If the condition was a direct cfvar and the then-branch was a leaving path (evidenced by
+  # cfvars set via jtrue in then), sequential code past this ite can only be reached when
+  # cfvar was false. Apply cfvarFalseImpliesInit[condDirectCf] directly to writesTo.
+  # Example: `(ite ´g.0 (stmts quit jtrue ´r.0) .)` — after this, ´g.0 must be false,
+  # so variables initialized only when ´g.0=false are now known initialized.
+  if condDirectCf != NoSymId and cfSp.thenData.len > 0:
+    for sym in c.cfvarFalseImpliesInit.getOrDefault(condDirectCf):
+      c.writesTo.add sym
 
   # Skip optional join information
   if n.kind == ParLe and n.stmtKind == StmtsS:

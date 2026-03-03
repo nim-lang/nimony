@@ -13,7 +13,7 @@
 
 import std / [assertions]
 include ".." / lib / nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
+import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops]
 import passes
 
 type
@@ -191,6 +191,11 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     # bind to a temporary variable:
     let info = n.info
     let typ = getType(c, n)
+
+    if isVoidType(typ):
+      # can happen for `quit` used inside an expression context.
+      trExprLoop c, dest, n, tar
+      return
 
     # Process the call into a temporary buffer so that any nested let
     # declarations are emitted before this one starts:
