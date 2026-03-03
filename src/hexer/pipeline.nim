@@ -65,6 +65,8 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("xelim1")
   lowerExprs(pass)
 
+  echo "after xelim1: ", toString(pass.n, false)
+
   # Pass 5: Inject Duplication Points
   pass.prepareForNext("duplifier")
   injectDups(pass, c.liftingCtx)

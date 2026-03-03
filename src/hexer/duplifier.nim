@@ -47,6 +47,7 @@ type
     resultSym: SymId
     source: ptr TokenBuf
     moduleSuffix: string
+    cf: TokenBuf
 
   Expects = enum
     DontCare,
@@ -83,7 +84,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
       canAnalyse = false
     if canAnalyse:
       var otherUsage = NoLineInfo
-      result = isLastUse(n, c.source[], otherUsage)
+      result = isLastUse(n, c.source[], otherUsage, c.cf)
       if ReportLastUse in c.flags:
         echo infoToStr(n.info), " LastUse: ", result
 
