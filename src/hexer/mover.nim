@@ -298,13 +298,16 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo;
   let oldInfos = prepare(buf)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
+  var needsRead = false
   if cf.len == 0:
+    needsRead = true
     cf = toControlflow(beginRead buf)
     freeze cf
   #echo "CF IS ", codeListing(cf)
   var other = default Cursor
   result = isLastReadImpl(cf, idx.uint32, other)
-  endRead buf
+  if needsRead:
+    endRead buf
   restore(buf, oldInfos)
   if other.cursorIsNil:
     otherUsage = NoLineInfo
