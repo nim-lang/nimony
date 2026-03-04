@@ -386,7 +386,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
               failed commands[i]
           return false
         for nId in nodeIds:
-          let node = addr dag.nodes[ nId ]
+          let node = addr dag.nodes[nId]
           for o in node.outputs:
             dag.timestampCache[o] = getLastModificationTime(o)
   else:
@@ -409,7 +409,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
           failed expandedCmd
           return false
         for o in node.outputs:
-            dag.timestampCache[o] = getLastModificationTime(o)
+          dag.timestampCache[o] = getLastModificationTime(o)
         if profile != nil:
           let sec = toSeconds(getMonoTime() - start)
           profile[].recordCmdTime(cmdName, sec)
