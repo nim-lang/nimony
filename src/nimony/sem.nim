@@ -18,7 +18,7 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes
 
 const
-  useNj = false # disabled for now so that we can merge the work
+  useNj = true # disabled for now so that we can merge the work
 
 when not useNj:
   import contracts
