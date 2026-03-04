@@ -1023,6 +1023,9 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
 
     inc n # into FinU
     openScope c
+    # The finally body must always execute. Deactivate the try guard so `maybeEmitGuard`
+    # does not wrap the finally body in `(ite (not guard) ...)`.
+    c.current.guards[s.at].active = false
     trGuardedStmtsBlock c, dest, n, true
     closeScope c, dest, info
     skipParRi n

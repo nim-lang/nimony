@@ -19,7 +19,6 @@
    (let :`g.3 . . ErrorCode.0.sysvq0asl
     (call echo.0 "abc"))
    (ite `g.3
-    (stmts)
     (stmts
      (let :`g.4 . . ErrorCode.0.sysvq0asl
       (call echo.0 "xyz"))
@@ -29,7 +28,8 @@
    (let :`g.5 . . ErrorCode.0.sysvq0asl
     (call echo.0 "regardless"))
    (ite `g.5
-    (stmts)
+    (stmts
+     (jtrue ´g.1))
     (stmts))
    (ite
     (neq ´err.2 Success.0.sysvq0asl)
