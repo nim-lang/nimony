@@ -31,6 +31,7 @@ import ".." / lib / symparser
 import ".." / njvl / [njvl_model, vl]
 import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes
+import writesets
 
 type
   NjvlContext = object
@@ -40,13 +41,13 @@ type
     writesTo: IteTracker[SymId]
     errors: TokenBuf
     procCanRaise: bool
-    basicBlockIsNoReturn: bool
+    basicBlockIsNoReturn: bool  # set by noreturn calls (fallback when no active guards)
     moduleSuffix: string
     nestedProcs: int
     knownCfVars: HashSet[SymId]
     knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
-    cfvarFalseImpliesInit: Table[SymId, HashSet[SymId]]  # when cf is false → these were init
-    impliedInitStack: seq[HashSet[SymId]]  # stacked additions for nested `if not cf`
+    writeSets: WriteSets               # per-ite write-set implications (TokenBuf-based)
+    falseCfvars: seq[SymId]            # cfvars currently known false (from `(ite (not cf) ...)` nesting)
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -94,6 +95,12 @@ proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
     if result != NoSymId and result notin c.knownCfVars:
       result = NoSymId
   else:
+    result = NoSymId
+
+proc conditionCfvarDirect(c: NjvlContext; n: Cursor): SymId =
+  ## If condition is directly a cfvar (not negated), return its SymId. Else NoSymId.
+  result = extractSymId(n)
+  if result != NoSymId and result notin c.knownCfVars:
     result = NoSymId
 
 proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
@@ -501,19 +508,13 @@ proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
   return false
 
 proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
-  ## True if symId is known initialized (directly, via writesTo, or via cfvar correlation).
+  ## True if symId is known initialized (directly, via writesTo, or via cfvar implication).
   if isDirectlyInitialized(c, symId) or symId in c.writesTo:
     return true
-  for layer in c.impliedInitStack:
-    if symId in layer:
+  for cf in c.falseCfvars:
+    if symId in c.writeSets.impliedWhenFalse(cf, c.knownCfVars):
       return true
   return false
-
-proc pushImpliedInit(c: var NjvlContext; implied: HashSet[SymId]) =
-  c.impliedInitStack.add implied
-
-proc popImpliedInit(c: var NjvlContext) =
-  discard c.impliedInitStack.pop()
 
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
   var nested = 0
@@ -713,8 +714,9 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     skipParRi n
     return
 
-  # Condition may be (not cfvar) - capture for correlation before analyseCondition consumes it
+  # Condition may be (not cfvar) or directly a cfvar - capture before analyseCondition consumes it
   let condCf = conditionCfvarForNot(c, n)
+  let condDirectCf = conditionCfvarDirect(c, n)
 
   # Analyze condition and extract facts
   let savedFacts = save(c.facts)
@@ -727,18 +729,20 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if condFacts == 1:
     condFactsList.add c.facts[c.facts.len - 1]
 
-  # Then branch - has positive condition facts
-  # When condition is (not cf), correlate: cf false => we took else of prior ite => use implied inits
+  # Then branch: when condition is `(not cf)`, cf is false inside this branch.
   if condCf != NoSymId:
-    pushImpliedInit(c, c.cfvarFalseImpliesInit.getOrDefault(condCf))
+    c.falseCfvars.add condCf
   let beforeIteIsNoReturn = c.basicBlockIsNoReturn
   c.basicBlockIsNoReturn = false
   traverseStmt c, n
   if condCf != NoSymId:
-    popImpliedInit(c)
+    discard c.falseCfvars.pop()
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
   c.knownTrueCfVars.thenDone(cfSp)
+  # A branch is no-return iff it unconditionally activated a cfvar via (jtrue ...),
+  # OR if a noreturn proc was called (basicBlockIsNoReturn, needed when no active guards).
+  let thenIsNoReturn = cfSp.thenData.len > 0 or c.basicBlockIsNoReturn
 
   # Restore facts for else branch
   restore(c.facts, savedFacts)
@@ -747,28 +751,39 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     negateFact(negated)
     c.facts.add negated
 
-  let thenIsNoReturn = c.basicBlockIsNoReturn
   c.basicBlockIsNoReturn = false
   # Else branch
   if n.kind == DotToken:
     inc n # empty else
   else:
     traverseStmt c, n
-  let elseIsNoReturn = c.basicBlockIsNoReturn
+  let elseIsNoReturn = c.knownTrueCfVars.checkpoint() > cfSp.cp or c.basicBlockIsNoReturn
 
   c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
 
-  # Record correlation: when cfvar (set in then) is false => else-branch writes were performed
-  var elseWrites = initHashSet[SymId]()
-  for item in c.writesTo.since(writesSp.cp):
-    elseWrites.incl item
-  for cf in cfSp.thenData:
-    c.cfvarFalseImpliesInit.mgetOrPut(cf, initHashSet[SymId]()).incl elseWrites
+  # Record implication for this ite: captures writes and jtrue'd cfvars from each branch.
+  # `guard` is the cfvar from a `(not guard)` condition (condCf), if any.
+  c.writeSets.openRecord(condCf)
+  for item in writesSp.thenData: c.writeSets.emitThen(item)
+  for cf in cfSp.thenData: c.writeSets.emitThen(cf)
+  c.writeSets.separateRecord()
+  for item in c.writesTo.since(writesSp.cp): c.writeSets.emitElse(item)
+  for cf in c.knownTrueCfVars.since(cfSp.cp): c.writeSets.emitElse(cf)
+  c.writeSets.closeRecord()
 
   # Merge: only keep facts/writes/cfvars that hold in both branches
   c.facts = merge(thenFacts, 0, c.facts, false)
   c.writesTo.join(writesSp, thenIsNoReturn, elseIsNoReturn)
   c.knownTrueCfVars.join(cfSp, thenIsNoReturn, elseIsNoReturn)
+
+  # If the condition was a direct cfvar and the then-branch was a leaving path (evidenced by
+  # cfvars set via jtrue in then), sequential code past this ite can only be reached when
+  # cfvar was false. Query implications to find vars now known initialized.
+  # Example: `(ite ´g.0 (stmts quit jtrue ´r.0) .)` — after this, ´g.0 must be false,
+  # so variables initialized only when ´g.0=false are now known initialized.
+  if condDirectCf != NoSymId and cfSp.thenData.len > 0:
+    for sym in c.writeSets.impliedWhenFalse(condDirectCf, c.knownCfVars):
+      c.writesTo.add sym
 
   # Skip optional join information
   if n.kind == ParLe and n.stmtKind == StmtsS:
@@ -879,8 +894,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.procCanRaise = false
   let oldWritesTo = move c.writesTo
   let oldKnownTrueCfVars = move c.knownTrueCfVars
-  let oldCfvarFalseImpliesInit = move c.cfvarFalseImpliesInit
-  let oldImpliedInitStack = move c.impliedInitStack
+  let savedWriteSetsScopeIdx = c.writeSets.pushScope()
+  let oldFalseCfvars = move c.falseCfvars
   let oldKnownCfVars = move c.knownCfVars
   inc n
   var isGeneric = false
@@ -899,8 +914,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   skipParRi n
   c.writesTo = oldWritesTo
   c.knownTrueCfVars = oldKnownTrueCfVars
-  c.cfvarFalseImpliesInit = oldCfvarFalseImpliesInit
-  c.impliedInitStack = oldImpliedInitStack
+  c.writeSets.popScope(savedWriteSetsScopeIdx)
+  c.falseCfvars = oldFalseCfvars
   c.knownCfVars = oldKnownCfVars
   discard c.directlyInitialized.pop()
 
@@ -961,16 +976,8 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       traverseProc c, n
       dec c.nestedProcs
       c.typeCache.closeScope()
-    of TemplateS, TypeS, CommentS, PragmasS:
+    of TemplateS, TypeS, CommentS, PragmasS, RetS:
       skip n
-    of RetS:
-      inc n
-      if n.kind == DotToken:
-        inc n
-      elif n.kind != ParRi:
-        traverseExpr c, n
-      skipParRi n
-      c.basicBlockIsNoReturn = true
     of CallKindsS:
       analyseCall c, n
     of DiscardS, YldS:
@@ -1049,7 +1056,8 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
   var c = NjvlContext(
     typeCache: createTypeCache(),
     moduleSuffix: moduleSuffix,
-    directlyInitialized: @[initHashSet[SymId]()]
+    directlyInitialized: @[initHashSet[SymId]()],
+    writeSets: createWriteSets()
   )
   c.typeCache.openScope()
 

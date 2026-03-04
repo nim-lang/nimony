@@ -23,26 +23,36 @@
      (call echo.0 "abc"))
     (ite
      (v `g.3 +0)
-     (stmts)
      (stmts
-      (let :`g.4 . . ErrorCode.0.sysvq0asl
-       (call echo.0 "xyz"))
+      (jtrue ´g.1))
+     (stmts
       (ite
-       (v `g.4 +0)
-       (stmts)
-       (stmts)
+       (not
+        (v ´g.1 +1))
+       (stmts
+        (let :`g.4 . . ErrorCode.0.sysvq0asl
+         (call echo.0 "xyz"))
+        (ite
+         (v `g.4 +0)
+         (stmts
+          (jtrue ´g.1))
+         (stmts)
+         (stmts))) .
        (stmts)))
-     (stmts))
+     (stmts
+      (join ´g.1 +3 +1 +2)))
     (let :`g.5 . . ErrorCode.0.sysvq0asl
      (call echo.0 "regardless"))
     (ite
      (v `g.5 +0)
-     (stmts)
+     (stmts
+      (jtrue ´g.1))
      (stmts)
      (stmts))
     (ite
      (neq
       (v ´err.2 +0) Success.0.sysvq0asl)
-     (stmts) .
+     (stmts
+      (jtrue ´g.1)) .
      (stmts))
     (kill ´g.1 ´r.0)))))

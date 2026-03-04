@@ -133,7 +133,6 @@
     (false))
    (ite a.0
     (stmts
-     (ret)
      (jtrue ´r.0))
     (stmts
      (call echo.0 "after return if")))

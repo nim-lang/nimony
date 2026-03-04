@@ -432,15 +432,16 @@ proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   let before = dest.len
   dest.add tagToken("jtrue", info)
   var produced = 0
-  # we also need to break out of everything, until a `try` guard is found
+  # Break out of everything up to and INCLUDING the innermost try guard.
+  # The try guard itself must be set so the except handler fires.
   for i in countdown(c.current.guards.len - 1, 0):
-    if c.current.guards[i].isTryGuard:
-      break
     let cond = c.current.guards[i].cond
     assert cond != NoSymId
     c.current.guards[i].active = true
     dest.addSymUse cond, info
     inc produced
+    if c.current.guards[i].isTryGuard:
+      break  # include the try guard, then stop (don't propagate further up)
   dest.addParRi()
   if produced == 0: dest.shrink before
 
@@ -1001,6 +1002,12 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
           inc n # skip value (should be dot)
           skipParRi n # close let
 
+        # The except handler executes only when `guard=true` (established by the outer
+        # `(ite guard ...)` we just opened). Deactivate the guard so `maybeEmitGuard`
+        # does not wrap the handler body in a spurious `(ite (not guard) ...)` — that
+        # inner ite would be dead code, but it buries any `jtrue` calls and prevents
+        # contracts analysis from seeing that the handler is a leaving path.
+        c.current.guards[s.at].active = false
         trGuardedStmtsBlock c, dest, n, true
 
         # Mark exception as handled by resetting error tracker to Success
@@ -1016,6 +1023,9 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
 
     inc n # into FinU
     openScope c
+    # The finally body must always execute. Deactivate the try guard so `maybeEmitGuard`
+    # does not wrap the finally body in `(ite (not guard) ...)`.
+    c.current.guards[s.at].active = false
     trGuardedStmtsBlock c, dest, n, true
     closeScope c, dest, info
     skipParRi n
@@ -1054,11 +1064,6 @@ proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
           trResultExpr c, dest, n
           dest.addSymUse c.current.resultSym, info
     skipParRi n
-
-  # We need to keep `return` information so that we can easily detect `let x = if cond: 3 else: return`
-  # XXX If NJ worked as advertised this would not be necessary.
-  dest.addParLe RetS, info
-  dest.addParRi()
 
   emitReturnGuards(c, dest, info)
 
