@@ -1065,11 +1065,6 @@ proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
           dest.addSymUse c.current.resultSym, info
     skipParRi n
 
-  # We need to keep `return` information so that we can easily detect `let x = if cond: 3 else: return`
-  # XXX If NJ worked as advertised this would not be necessary.
-  dest.addParLe RetS, info
-  dest.addParRi()
-
   emitReturnGuards(c, dest, info)
 
   b.leavesWith = c.current.guards.len-1

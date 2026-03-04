@@ -41,7 +41,7 @@ type
     writesTo: IteTracker[SymId]
     errors: TokenBuf
     procCanRaise: bool
-    basicBlockIsNoReturn: bool
+    basicBlockIsNoReturn: bool  # set by noreturn calls (fallback when no active guards)
     moduleSuffix: string
     nestedProcs: int
     knownCfVars: HashSet[SymId]
@@ -740,6 +740,9 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
   c.knownTrueCfVars.thenDone(cfSp)
+  # A branch is no-return iff it unconditionally activated a cfvar via (jtrue ...),
+  # OR if a noreturn proc was called (basicBlockIsNoReturn, needed when no active guards).
+  let thenIsNoReturn = cfSp.thenData.len > 0 or c.basicBlockIsNoReturn
 
   # Restore facts for else branch
   restore(c.facts, savedFacts)
@@ -748,14 +751,13 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     negateFact(negated)
     c.facts.add negated
 
-  let thenIsNoReturn = c.basicBlockIsNoReturn
   c.basicBlockIsNoReturn = false
   # Else branch
   if n.kind == DotToken:
     inc n # empty else
   else:
     traverseStmt c, n
-  let elseIsNoReturn = c.basicBlockIsNoReturn
+  let elseIsNoReturn = c.knownTrueCfVars.checkpoint() > cfSp.cp or c.basicBlockIsNoReturn
 
   c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
 
@@ -974,16 +976,8 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       traverseProc c, n
       dec c.nestedProcs
       c.typeCache.closeScope()
-    of TemplateS, TypeS, CommentS, PragmasS:
+    of TemplateS, TypeS, CommentS, PragmasS, RetS:
       skip n
-    of RetS:
-      inc n
-      if n.kind == DotToken:
-        inc n
-      elif n.kind != ParRi:
-        traverseExpr c, n
-      skipParRi n
-      c.basicBlockIsNoReturn = true
     of CallKindsS:
       analyseCall c, n
     of DiscardS, YldS:
