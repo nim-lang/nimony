@@ -586,6 +586,8 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   var fnPragmas = fnType
   skip fnPragmas # params
   skip fnPragmas # return type
+  if hasPragma(fnPragmas, NoReturnP):
+    c.basicBlockIsNoReturn = true
   traverseExpr c, n # the `fn` itself
   assert fnType.isParamsTag
   inc fnType
