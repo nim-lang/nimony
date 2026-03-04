@@ -348,7 +348,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
         if Force in opt or dag.needsRebuild(node[]):
-          dag.removeOutdatedArtifacts(node[], opt)
+          if Force in opt:
+            dag.removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
             echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
@@ -384,12 +385,17 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
             if p == Running:
               failed commands[i]
           return false
+        for nId in nodeIds:
+          let node = addr dag.nodes[ nId ]
+          for o in node.outputs:
+            dag.timestampCache[o] = getLastModificationTime(o)
   else:
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
       if Force in opt or dag.needsRebuild(node[]):
-        dag.removeOutdatedArtifacts(node[], opt)
+        if Force in opt:
+          dag.removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
@@ -402,6 +408,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
             profile[].recordCmdTime(cmdName, toSeconds(getMonoTime() - start))
           failed expandedCmd
           return false
+        for o in node.outputs:
+            dag.timestampCache[o] = getLastModificationTime(o)
         if profile != nil:
           let sec = toSeconds(getMonoTime() - start)
           profile[].recordCmdTime(cmdName, sec)
