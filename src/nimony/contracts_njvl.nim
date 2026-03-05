@@ -740,9 +740,11 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
   c.knownTrueCfVars.thenDone(cfSp)
-  # A branch is no-return iff it unconditionally activated a cfvar via (jtrue ...),
-  # OR if a noreturn proc was called (basicBlockIsNoReturn, needed when no active guards).
-  let thenIsNoReturn = cfSp.thenData.len > 0 or c.basicBlockIsNoReturn
+  # A branch is truly no-return only when a noreturn proc was called. Activating a cfvar
+  # via (jtrue ...) is NOT enough: both branches still fall through to the ite's join point.
+  # For return/raise/break, subsequent code is wrapped in guard ites; the writeSets
+  # impliedWhenFalse mechanism handles init-tracking in those cases correctly.
+  let thenIsNoReturn = c.basicBlockIsNoReturn
 
   # Restore facts for else branch
   restore(c.facts, savedFacts)
@@ -757,7 +759,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     inc n # empty else
   else:
     traverseStmt c, n
-  let elseIsNoReturn = c.knownTrueCfVars.checkpoint() > cfSp.cp or c.basicBlockIsNoReturn
+  let elseIsNoReturn = c.basicBlockIsNoReturn
 
   c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
 
