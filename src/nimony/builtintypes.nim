@@ -25,8 +25,8 @@ proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inl
 const
   SystemModuleSuffix* = "sysvq0asl" # "sys9azlf"
   StringName* = "string.0." & SystemModuleSuffix
-  StringAField* = "a.0." & SystemModuleSuffix
-  StringIField* = "i.0." & SystemModuleSuffix
+  StringAField* = "a.0"
+  StringIField* = "i.0"
   ErrorCodeName* = "ErrorCode.0." & SystemModuleSuffix
   SuccessName* = "Success.0." & SystemModuleSuffix
 

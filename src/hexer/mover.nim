@@ -100,12 +100,23 @@ proc containsUsage(tree: var Cursor; x: Cursor): bool =
       result = true
     case tree.kind
     of ParLe:
+      if tree.exprKind == DotX:
+        inc tree
+        if containsUsage(tree, x):
+          result = true
+        while tree.kind != ParRi:
+          skip tree
+      elif tree.substructureKind == KvU:
+        inc tree
+        skip tree
+      else:
+        inc tree
       inc nested
     of ParRi:
+      inc tree
       dec nested
     else:
-      discard
-    inc tree
+      inc tree
     if nested == 0: break
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
@@ -119,13 +130,25 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
       if tree.symId == r:
         # MUST continue here as we must `skip tree` properly
         result = true
+      inc tree
     of ParLe:
+      if tree.exprKind == DotX:
+        inc tree
+        if containsRoot(tree, x):
+          result = true
+        while tree.kind != ParRi:
+          skip tree
+      elif tree.substructureKind == KvU:
+        inc tree
+        skip tree # key ignored for object construction!
+      else:
+        inc tree
       inc nested
     of ParRi:
       dec nested
+      inc tree
     else:
-      discard
-    inc tree
+      inc tree
     if nested == 0: break
 
 proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): int =
@@ -208,13 +231,17 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
           if containsUsage(pc, x):
             # only partially writes to 's' --> can't sink 's', so this def reads 's'
             # or maybe writes to 's' --> can't sink 's'
-            otherUsage = pc
+            otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
           skipParRi pc
         of RetS:
           break
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
           inc pc
+          inc nested
+        of PragmaxS:
+          inc pc
+          skip pc # pragma itself
           inc nested
         of LocalDecls:
           inc pc
@@ -229,7 +256,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
           # proceed with its value here
         of NoStmt, CallKindsS, DiscardS, EmitS, InclS, ExclS:
           if containsRoot(pc, x):
-            otherUsage = pc
+            otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
            IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
@@ -264,18 +291,23 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
       doMark pc
   return true
 
-proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo): bool =
+proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo;
+                cf: var TokenBuf): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
   #echo "Input is: ", toString(buf, false)
   let oldInfos = prepare(buf)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
-  var cf = toControlflow(beginRead buf)
-  freeze cf
+  var needsRead = false
+  if cf.len == 0:
+    needsRead = true
+    cf = toControlflow(beginRead buf)
+    freeze cf
   #echo "CF IS ", codeListing(cf)
   var other = default Cursor
   result = isLastReadImpl(cf, idx.uint32, other)
-  endRead buf
+  if needsRead:
+    endRead buf
   restore(buf, oldInfos)
   if other.cursorIsNil:
     otherUsage = NoLineInfo
@@ -302,10 +334,11 @@ when isMainModule:
     bug "no 'ensureMove' found"
 
   proc test(s: string; expected: bool) =
-    var input = parse(s)
+    var input = parseFromBuffer(s, "")
     var otherUsage = NoLineInfo
     let n = findX(beginRead(input))
-    let res = isLastUse(n, input, otherUsage)
+    var cf = createTokenBuf(300)
+    let res = isLastUse(n, input, otherUsage, cf)
     if res != expected:
       echo "FAILED Test case: ", s
 

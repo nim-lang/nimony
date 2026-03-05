@@ -11,7 +11,7 @@ import std/[assertions, intsets]
 include ".." / lib / nifprelude
 
 import ".." / models / tags
-import nimony_model, programs, builtintypes, typenav
+import nimony_model, programs, builtintypes, typenav, decls
 from typeprops import isOrdinalType
 
 const
@@ -632,6 +632,7 @@ proc trWhile(c: var ControlFlow; n: var Cursor) =
   c.currentBlock = c.currentBlock.parent
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
+  let orig = n
   var it {.cursor.} = c.currentBlock
   var control {.cursor.}: BlockOrLoop = nil
   while it != nil and it.kind != IsRoutine:
@@ -655,6 +656,8 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     discard "do not generate `result = result`"
     inc n
   else:
+    if c.resultSym == NoSymId:
+      bug "result symbol not found " & toString(orig, false)
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, n.info)
@@ -880,16 +883,10 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
-    if n.exprKind == PragmaxX:
-      inc n
-      skip n # ignore pragmas
-      trStmt c, n
-      skipParRi n
-    else:
-      var aa = Target(m: IsAppend)
-      trExpr c, n, aa
-      if aa.t.len > 0:
-        c.dest.add aa
+    var aa = Target(m: IsAppend)
+    trExpr c, n, aa
+    if aa.t.len > 0:
+      c.dest.add aa
   of IfS:
     var aa = Target(m: IsIgnored)
     trIf c, n, aa
@@ -952,6 +949,11 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     c.dest.add head
     c.dest.add tar
     c.dest.addParRi()
+  of PragmaxS:
+    inc n
+    skip n # ignore pragmas
+    trStmt c, n
+    skipParRi n
   of WhenS:
     bug "`when` statement should have been eliminated"
 

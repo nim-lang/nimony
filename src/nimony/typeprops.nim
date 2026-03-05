@@ -641,7 +641,7 @@ proc toTypeImpl*(n: Cursor): Cursor =
 when isMainModule:
   when false: # tests sum of products
     proc test(s: string) =
-      var typBuf = parseFromBuffer(s)
+      var typBuf = parseFromBuffer(s, "<invalid>")
       var buf = createTokenBuf(64)
       var typ = beginRead(typBuf)
       echo "input: ", typ

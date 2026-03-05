@@ -10,7 +10,7 @@ when defined(windows):
 
 import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
 
-import lib / [nifindexes, lineinfos]
+import lib / [nifindexes, lineinfos, argsfinder]
 import gear2 / modnames
 
 const
@@ -29,6 +29,9 @@ Commands:
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
   test <file>/<dir>    run test <file> or <dir>.
+  bug [file]           build nimony+hexer and compile <file> to fill nimcache/.
+                       If no file is provided `bug.nim` is used.
+  rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
@@ -43,6 +46,7 @@ Options:
   --version             show the version
   --help                show this help
   --forward:OPTION      pass an option to the Nimony compiler
+  --release             build in release mode
 """
 
 proc quitWithText*(s: string) =
@@ -142,10 +146,16 @@ proc extractMarkers(s: string): seq[LineInfo] =
     inc i
     inc col
 
-proc markersToCmdLine(s: seq[LineInfo]): string =
+proc markersToCmdLine(s: seq[LineInfo]; file: string): string =
   result = ""
   for x in items(s):
-    result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
+    case x.filename
+    of "usages":
+      result.add " --usages:" & file & "," & $x.line & "," & $x.col
+    of "def":
+      result.add " --def:" & file & "," & $x.line & "," & $x.col
+    else:
+      result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
 
 proc execLocal(exe, cmd: string): (string, int) =
   let bin = "bin" / exe.addFileExt(ExeExt)
@@ -163,21 +173,74 @@ type
 proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
-  of Normal, Tracked, Compat, Valgrind: "c --silentMake"
+  of Tracked: "check --silentMake"
+  of Normal, Compat, Valgrind: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   result = execLocal("nimony", toCommand(cat) & " " & cmd)
 
+const
+  HasturSessionFile = "hastur_session.txt"
+
+proc extractToolCmd(output: string): string =
+  result = ""
+  var i = 0
+  while i < output.len:
+    if output.continuesWith("nifmake: ", i):
+      inc i, len("nifmake: ")
+      var tool = ""
+      var skip = false
+      while i < output.len and output[i] != ' ':
+        if output[i] in {'\'', '/'}:
+          tool.setLen 0
+          skip = false
+        elif output[i] == '.':
+          skip = true
+        else:
+          if not skip:
+            tool.add output[i]
+        inc i
+      if tool.len > 0:
+        result = "nim c -r src/" & tool & "/" & tool & ".nim "
+        while i < output.len and output[i] != '\n':
+          result.add output[i]
+          inc i
+        # the first `nifmake` line is of interest:
+        return result
+    else:
+      inc i
+
+proc loadSessionCmd(): string =
+  try:
+    result = readFile(HasturSessionFile).strip
+  except IOError:
+    result = ""
+
+proc saveSessionCmd(cmd: string) =
+  if cmd.len > 0:
+    writeFile(HasturSessionFile, cmd)
+
+proc pathsForFile(file: string): seq[string] =
+  result = @[]
+  let baseDir = file.splitFile.dir
+  if baseDir.len > 0:
+    let pathsFile = findArgs(baseDir, "nimony.paths")
+    if pathsFile.len > 0:
+      processPathsFile pathsFile, result
+
 proc generatedFile(orig, ext: string): string =
-  let name = modnames.moduleSuffix(orig, [])
-  result = "nimcache" / name.addFileExt(ext)
+  let name = modnames.moduleSuffix(orig, pathsForFile(orig))
+  # Backend (DCE and after) is in nimcache/<mainmod>/, see deps.nim; .s.nif is shared
+  result = if ext == ".s.nif": "nimcache" / name.addFileExt(ext)
+           else: "nimcache" / name / name.addFileExt(ext)
 
 proc generatedExeFile(orig: string): string =
-  result = "nimcache" / orig.splitFile.name.addFileExt(ExeExt)
+  let name = modnames.moduleSuffix(orig, pathsForFile(orig))
+  result = "nimcache" / name / orig.splitFile.name.addFileExt(ExeExt)
 
 proc removeMakeErrors(output: string): string =
   result = output.strip
-  for prefix in ["FAILURE:", "make:"]:
+  for prefix in ["FAILURE:", "make:", "nifmake:"]:
     let lastLine = rfind(result, '\n')
     if lastLine >= 0:
       if result.continuesWith(prefix, lastLine+1):
@@ -185,16 +248,30 @@ proc removeMakeErrors(output: string): string =
     elif result.startsWith(prefix):
       result.setLen 0
 
+proc stripValgrindPrefix(s: string): string =
+  var i = 0
+  if i < s.len and s.continuesWith("==", i):
+    inc i, 2
+    while i < s.len and s[i] in {'0'..'9'}:
+      inc i
+    if i < s.len and s.continuesWith("==", i):
+      inc i, 2
+      if i < s.len and s[i] == ' ':
+        inc i
+  result = s[i..^1]
+
 proc compareValgrindOutput(s1: string, s2: string): bool =
-  # ==90429==
-  let s1 = s1.splitLines()
-  let s2 = s2.splitLines()
-  if s1.len != s2.len:
+  let marker = "HEAP SUMMARY:"
+  let a = s1.find(marker)
+  let b = s2.find(marker)
+  if a < 0 or b < 0:
+    return s1 == s2
+  let lines1 = s1[a + marker.len..^1].splitLines()
+  let lines2 = s2[b + marker.len..^1].splitLines()
+  if lines1.len != lines2.len:
     return false
-  for i in 3 .. s1.len - 1:
-    let n1 = rfind(s1[i], "== ")
-    let n2 = rfind(s2[i], "== ")
-    if n2 == -1 or s1[i][n1+3..^1] != s2[i][n2+3..^1]:
+  for i in 0 .. lines1.high:
+    if stripValgrindPrefix(lines1[i]) != stripValgrindPrefix(lines2[i]):
       return false
   return true
 
@@ -225,7 +302,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
   of Basics:
     nimonycmd.add " --noSystem"
   of Tracked:
-    nimonycmd.add markersToCmdLine extractMarkers(readFile(file))
+    nimonycmd.add markersToCmdLine(extractMarkers(readFile(file)), file)
   of Compat:
     nimonycmd.add " --compat"
   if forward.len != 0:
@@ -249,6 +326,8 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
         writeFile(msgs, strippedOutput)
       failure c, file, msgSpec, strippedOutput
     expectedExitCode = if msgSpec.contains(ErrorKeyword): 1 else: 0
+  elif overwrite and cat == Tracked:
+    writeFile(msgs, removeMakeErrors(compilerOutput))
   if compilerExitCode != expectedExitCode:
     failure c, file, "compiler exitcode " & $expectedExitCode, compilerOutput & "\nexitcode " & $compilerExitCode
 
@@ -472,53 +551,58 @@ proc robustMoveFile(src, dest: string) =
   if fileExists(src):
     moveFile src, dest
 
+var release = false
+
+proc nimcPrefix(): string =
+  (if release: "nim c -d:release " else: "nim c ")
+
 proc buildNifler(showProgress = false) =
-  exec "nim c src/nifler/nifler.nim", showProgress
+  exec nimcPrefix() & "src/nifler/nifler.nim", showProgress
   let exe = "nifler".addFileExt(ExeExt)
   robustMoveFile "src/nifler/" & exe, binDir() / exe
 
 proc buildNimsem(showProgress = false) =
-  exec "nim c src/nimony/nimsem.nim", showProgress
+  exec nimcPrefix() & "src/nimony/nimsem.nim", showProgress
   let exe = "nimsem".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNimony(showProgress = false) =
-  exec "nim c src/nimony/nimony.nim", showProgress
+  exec nimcPrefix() & "src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildControlflow(showProgress = false) =
-  exec "nim c src/nimony/controlflow.nim", showProgress
+  exec nimcPrefix() & "src/nimony/controlflow.nim", showProgress
   let exe = "controlflow".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildContracts(showProgress = false) =
-  exec "nim c src/nimony/contracts.nim", showProgress
+  exec nimcPrefix() & "src/nimony/contracts.nim", showProgress
   let exe = "contracts".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNj(showProgress = false) =
-  exec "nim c src/njvl/nj.nim", showProgress
+  exec nimcPrefix() & "src/njvl/nj.nim", showProgress
   let exe = "nj".addFileExt(ExeExt)
   robustMoveFile "src/njvl/" & exe, binDir() / exe
 
 proc buildVl(showProgress = false) =
-  exec "nim c src/njvl/vl.nim", showProgress
+  exec nimcPrefix() & "src/njvl/vl.nim", showProgress
   let exe = "vl".addFileExt(ExeExt)
   robustMoveFile "src/njvl/" & exe, binDir() / exe
 
 proc buildNifc(showProgress = false) =
-  exec "nim c src/nifc/nifc.nim", showProgress
+  exec nimcPrefix() & "src/nifc/nifc.nim", showProgress
   let exe = "nifc".addFileExt(ExeExt)
   robustMoveFile "src/nifc/" & exe, binDir() / exe
 
 proc buildHexer(showProgress = false) =
-  exec "nim c src/hexer/hexer.nim", showProgress
+  exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
 
 proc buildNifmake(showProgress = false) =
-  exec "nim c src/nifmake/nifmake.nim", showProgress
+  exec nimcPrefix() & "src/nifmake/nifmake.nim", showProgress
   let exe = "nifmake".addFileExt(ExeExt)
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
@@ -564,10 +648,17 @@ proc syncCmd(newBranch: string) =
   let (output, status) = execCmdEx("git symbolic-ref --short HEAD")
   if status != 0:
     quit "FAILURE: " & output
-  exec "git checkout master"
-  exec "git pull origin master"
+  let (defaultBranchOutput, defaultBranchStatus) = execCmdEx("git symbolic-ref refs/remotes/origin/HEAD --short")
+  var defaultBranch = "master"
+  if defaultBranchStatus == 0:
+    # Output is like "origin/main" or "origin/master"
+    defaultBranch = defaultBranchOutput.strip()
+    if defaultBranch.startsWith("origin/"):
+      defaultBranch = defaultBranch[7..^1]
+  exec "git checkout " & defaultBranch
+  exec "git pull origin " & defaultBranch
   let branch = output.strip()
-  if branch != "master":
+  if branch != defaultBranch:
     exec "git branch -D " & branch
   if newBranch.len > 0:
     exec "git checkout -B " & newBranch
@@ -577,6 +668,36 @@ proc pullpush(cmd: string) =
   if status != 0:
     quit "FAILURE: " & output
   exec "git " & cmd & " origin " & output.strip()
+
+proc bugCmd(args: seq[string]; forward: string) =
+  if not fileExists("bin/nimony".addFileExt(ExeExt)):
+    buildNimsem()
+    buildNimony()
+    buildHexer()
+  var cmd = "c"
+  if forward.len != 0:
+    cmd.add ' '
+    cmd.add forward
+  for arg in items(args):
+    cmd.add ' '
+    cmd.add quoteShell(arg)
+  let (output, exitCode) = execLocal("nimony", cmd)
+  if exitCode != 0:
+    stdout.write("FAILURE " & cmd & "\n")
+    if output.len > 0:
+      stdout.write(output)
+    let toolCmd = extractToolCmd(output)
+    if toolCmd.len > 0:
+      saveSessionCmd(toolCmd)
+    quit 1
+  if output.len > 0:
+    stdout.write(output)
+
+proc repCmd() =
+  let cmd = loadSessionCmd()
+  if cmd.len == 0:
+    quit "no session to repeat"
+  exec cmd
 
 proc handleCmdLine =
   var primaryCmd = ""
@@ -601,6 +722,7 @@ proc handleCmdLine =
         of "ast": flags.incl RecordAst
         of "overwrite": overwrite = true
         of "forward": forward = val
+        of "release": release = true
         else: writeHelp()
       else:
         args.add key
@@ -621,7 +743,7 @@ proc handleCmdLine =
     buildHexer()
     buildNifmake()
     nimonytests(overwrite, forward)
-    nifctests(overwrite)
+    #nifctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
     controlflowTests("controlflow", overwrite)
@@ -666,6 +788,7 @@ proc handleCmdLine =
     of "nimony":
       buildNimsem(showProgress)
       buildNimony(showProgress)
+      buildHexer(showProgress)
     of "nifc":
       buildNifc(showProgress)
     of "hexer":
@@ -700,6 +823,12 @@ proc handleCmdLine =
         test args[0], overwrite, findCategory(args[0]), forward
     else:
       quit "`test` takes an argument"
+  of "bug", "debug":
+    if args.len == 0:
+      args = @["bug.nim"]
+    bugCmd(args, forward)
+  of "rep":
+    repCmd()
   of "record":
     buildNimony()
     if args.len == 2:

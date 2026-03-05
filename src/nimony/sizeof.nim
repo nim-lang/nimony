@@ -275,14 +275,14 @@ when isMainModule:
 
   proc testSizeof(srcNif: string; expectedSize: int) =
     let symId = block:
-      var srcBuf = parseFromBuffer srcNif
+      var srcBuf = parseFromBuffer(srcNif, "<invalid>")
       var n = beginRead srcBuf
       assert n.stmtKind == TypeS
       inc n
       assert n.kind == SymbolDef
       let result = n.symId
       endRead srcBuf
-      publish result, srcBuf
+      publish result, srcBuf, SemcheckBodies
       result
     var symBuf = createTokenBuf(1)
     symBuf.add symToken(symId, NoLineInfo)

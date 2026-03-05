@@ -1,0 +1,1 @@
+tests/nimony/exceptions/tsubtype_fail.nim(13, 3) Error: type mismatch: got: BaseError but wanted: DerivedError

@@ -60,6 +60,16 @@ proc addOverloadable*(s: Scope; name: StrId; sym: Sym) =
     s.remember name
     s.tab.mgetOrPut(name, @[]).add sym
 
+proc removeOverloadable*(s: Scope; name: StrId; symId: SymId) =
+  ## Remove a symbol from the overload set. Used for forward declaration merging.
+  if s.tab.hasKey(name):
+    var syms = s.tab[name]
+    for i in countdown(syms.high, 0):
+      if syms[i].name == symId:
+        syms.delete(i)
+        break
+    s.tab[name] = syms
+
 type
   AddStatus* = enum
     Conflict, Success

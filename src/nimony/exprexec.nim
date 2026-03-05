@@ -10,6 +10,7 @@ include nifprelude
 import ".." / lib / nifchecksums
 from std / os import `/`
 import std / [assertions, sets, tables]
+import ".." / models / tags
 import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops,
   typenav, typekeys, expreval, semos, derefs
 
@@ -40,7 +41,7 @@ type
     sym: SymId
     typ: TypeCursor
 
-  LiftingCtx = object
+  SynthesizeSerializerCtx = object
     dest: TokenBuf
     info: PackedLineInfo
     routineKind: SymKind
@@ -70,15 +71,55 @@ proc collectSyms(n: Cursor; stack: var seq[SymId]) =
       else: discard
       inc n
 
-proc rewriteSyms*(c: var LiftingCtx) =
-  for i in 0 ..< c.dest.len:
-    if c.dest[i].kind in {Symbol, SymbolDef}:
-      let m = splitSymName(pool.syms[c.dest[i].symId])
-      if m.module == c.thisModuleSuffix:
-        let newSym = pool.syms.getOrIncl(m.name & "." & c.newModuleSuffix)
-        c.dest[i].setSymId newSym
+proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
+  ## Convert all Symbols and SymbolDefs to Idents so that the semchecker can resolve them fresh.
+  ## Also eliminates choice nodes (ochoice, cchoice) by turning them back to idents.
+  ## This allows the compiled code to go through the full nimony pipeline.
+  var newDest = createTokenBuf(c.dest.len)
+  var n = beginRead(c.dest)
+  var nested = 0
+  while true:
+    case n.kind
+    of Symbol, SymbolDef:
+      let sym = n.symId
+      var name = pool.syms[sym]
+      extractBasename name
+      let identId = pool.strings.getOrIncl(name)
+      newDest.add identToken(identId, n.info)
+      inc n
+    of ParLe:
+      if n.exprKind in {OchoiceX, CchoiceX}:
+        inc n
+        if n.kind == Symbol:
+          let sym = n.symId
+          var name = pool.syms[sym]
+          extractBasename name
+          let identId = pool.strings.getOrIncl(name)
+          newDest.add identToken(identId, n.info)
+          skipToEnd(n)
+        else:
+          newDest.add n
+          inc nested
+          inc n
+      else:
+        newDest.add n
+        inc nested
+        inc n
+    of ParRi:
+      newDest.add n
+      dec nested
+      if nested == 0: break
+      inc n
+    else:
+      newDest.add n
+      inc n
+  endRead(c.dest)
+  c.dest = ensureMove newDest
 
-proc collectUsedSyms(c: var LiftingCtx; s: var SemContext; routine: Routine) =
+proc collectUsedSyms(c: var SynthesizeSerializerCtx; s: var SemContext; routine: Routine) =
+  ## Collect all symbols used by the routine and add their declarations to dest.
+  ## Since we'll convert all symbols to identifiers, the semchecker will resolve them fresh.
+  ## We don't call semStmtCallback here - just copy the declarations as-is.
   var stack = newSeq[SymId]()
   var handledSyms = initHashSet[SymId]()
   stack.add routine.name.symId
@@ -93,17 +134,15 @@ proc collectUsedSyms(c: var LiftingCtx; s: var SemContext; routine: Routine) =
         let res = tryLoadSym(sym)
         if res.status == LacksNothing:
           let before = c.dest.len
-          # we need to copy res.decl here as it aliases prog.mem which the semchecker will overwrite nilly-willy!
-          var newDecl = createTokenBuf(50)
-          newDecl.addSubtree res.decl
-          s.semStmtCallback(s, c.dest, cursorAt(newDecl, 0))
+          # Just copy the declaration as-is - don't re-semcheck it.
+          # The full nimony pipeline will handle semchecking after we convert symbols to idents.
+          c.dest.addSubtree res.decl
           collectSyms(cursorAt(c.dest, before), stack)
           endRead(c.dest)
-          #dest.addSubtreeAndSyms res.decl, stack
       elif owner.len > 0:
         c.usedModules.incl(s.g.config.nifcachePath / owner)
 
-proc generateName(c: var LiftingCtx; key: string): string =
+proc generateName(c: var SynthesizeSerializerCtx; key: string): string =
   result = "`toNif" & "_" & key
   var counter = addr c.hookNames.mgetOrPut(result, -1)
   counter[] += 1
@@ -112,7 +151,7 @@ proc generateName(c: var LiftingCtx; key: string): string =
   result.add '.'
   result.add c.thisModuleSuffix # will later be rewired to use `c.newModuleSuffix`
 
-proc genProcHeader(c: var LiftingCtx; dest: var TokenBuf; sym: SymId; typ: TypeCursor) =
+proc genProcHeader(c: var SynthesizeSerializerCtx; dest: var TokenBuf; sym: SymId; typ: TypeCursor) =
   # Leaves the declaration open at the position of the body.
   dest.addParLe ProcS, c.info
   addSymDef dest, sym, c.info
@@ -127,7 +166,7 @@ proc genProcHeader(c: var LiftingCtx; dest: var TokenBuf; sym: SymId; typ: TypeC
   dest.addEmpty() # pragmas
   dest.addEmpty c.info # exc
 
-proc requestProc(c: var LiftingCtx; t: TypeCursor): SymId =
+proc requestProc(c: var SynthesizeSerializerCtx; t: TypeCursor): SymId =
   let key = mangle(t, Frontend, c.bits)
   result = c.structuralTypeToProc.getOrDefault(key)
   if result == SymId(0):
@@ -143,19 +182,19 @@ proc requestProc(c: var LiftingCtx; t: TypeCursor): SymId =
     programs.publish(result, header)
 
 when not defined(nimony):
-  proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf)
-  proc entryPoint(c: var LiftingCtx; orig: TypeCursor; arg: Cursor)
+  proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf)
+  proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor)
 
-proc genStringCall(c: var LiftingCtx; name, arg: string) =
+proc genStringCall(c: var SynthesizeSerializerCtx; name, arg: string) =
   c.dest.copyIntoKind CallS, c.info:
     c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addStrLit arg, c.info
 
-proc genParRiCall(c: var LiftingCtx) =
+proc genParRiCall(c: var SynthesizeSerializerCtx) =
   c.dest.copyIntoKind CallS, c.info:
     c.dest.addSymUse pool.syms.getOrIncl("writeNifParRi.0." & writeNifModuleSuffix), c.info
 
-proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; needsDeref: bool; depth = 0): TokenBuf =
+proc accessObjField(c: var SynthesizeSerializerCtx; obj: TokenBuf; name: Cursor; needsDeref: bool; depth = 0): TokenBuf =
   assert name.kind == SymbolDef
   let nameSym = name.symId
   result = createTokenBuf(4)
@@ -169,14 +208,14 @@ proc accessObjField(c: var LiftingCtx; obj: TokenBuf; name: Cursor; needsDeref: 
     result.addIntLit(depth, c.info)
   freeze result
 
-proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int): TokenBuf =
+proc accessTupField(c: var SynthesizeSerializerCtx; tup: TokenBuf; idx: int): TokenBuf =
   result = createTokenBuf(4)
   copyIntoKind(result, TupatX, c.info):
     copyTree result, tup
     result.add intToken(pool.integers.getOrIncl(idx), c.info)
   freeze result
 
-proc unravelObjField(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
+proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
   assert r.kind == FldY
   # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
@@ -190,7 +229,7 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDer
   entryPoint(c, fieldType, readOnlyCursorAt(a, 0))
   genParRiCall c
 
-proc unravelObjFields(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
+proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
   while n.kind != ParRi:
     case n.substructureKind
     of CaseU:
@@ -235,7 +274,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; param: TokenBuf; needsDe
       error "illformed AST inside object: ", n
 
 
-proc unravelObj(c: var LiftingCtx; orig: Cursor; param: TokenBuf; depth: int) =
+proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; depth: int) =
   genStringCall(c, "writeNifParLe", "oconstr")
   # we simply generate the type as a raw string:
   genStringCall(c, "writeNifRaw", toString(orig, false))
@@ -256,7 +295,7 @@ proc unravelObj(c: var LiftingCtx; orig: Cursor; param: TokenBuf; depth: int) =
   unravelObjFields c, n, param, needsDeref, depth
   genParRiCall c
 
-proc unravelTuple(c: var LiftingCtx;
+proc unravelTuple(c: var SynthesizeSerializerCtx;
                   orig: Cursor; param: TokenBuf) =
   assert orig.typeKind == TupleT
   genStringCall(c, "writeNifParLe", "tupconstr")
@@ -276,14 +315,14 @@ proc unravelTuple(c: var LiftingCtx;
   genParRiCall c
 
 
-proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId): TokenBuf =
+proc accessArrayAt(c: var SynthesizeSerializerCtx; arr: TokenBuf; indexVar: SymId): TokenBuf =
   result = createTokenBuf(4)
   copyIntoKind result, ArrAtX, c.info:
     copyTree result, arr
     copyIntoSymUse result, indexVar, c.info
   freeze result
 
-proc indexVarLowerThanArrayLen(c: var LiftingCtx; indexVar: SymId; arrayLen: xint) =
+proc indexVarLowerThanArrayLen(c: var SynthesizeSerializerCtx; indexVar: SymId; arrayLen: xint) =
   copyIntoKind c.dest, LtX, c.info:
     copyIntoKind c.dest, IntT, c.info:
       c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
@@ -298,11 +337,11 @@ proc indexVarLowerThanArrayLen(c: var LiftingCtx; indexVar: SymId; arrayLen: xin
       assert(not err)
       c.dest.add uintToken(pool.uintegers.getOrIncl(ualen), c.info)
 
-proc addIntType(c: var LiftingCtx) =
+proc addIntType(c: var SynthesizeSerializerCtx) =
   copyIntoKind c.dest, IntT, c.info:
     c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
 
-proc incIndexVar(c: var LiftingCtx; indexVar: SymId) =
+proc incIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
   copyIntoKind c.dest, AsgnS, c.info:
     copyIntoSymUse c.dest, indexVar, c.info
     copyIntoKind c.dest, AddX, c.info:
@@ -310,14 +349,14 @@ proc incIndexVar(c: var LiftingCtx; indexVar: SymId) =
       copyIntoSymUse c.dest, indexVar, c.info
       c.dest.add intToken(pool.integers.getOrIncl(+1), c.info)
 
-proc declareIndexVar(c: var LiftingCtx; indexVar: SymId) =
+proc declareIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
   copyIntoKind c.dest, VarY, c.info:
     addSymDef c.dest, indexVar, c.info
     c.dest.addEmpty2 c.info # not exported, no pragmas
     addIntType c
     c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
 
-proc unravelArray(c: var LiftingCtx;
+proc unravelArray(c: var SynthesizeSerializerCtx;
                   orig: Cursor; param: TokenBuf) =
   assert orig.typeKind == ArrayT
   let arrayLen = getArrayLen(orig)
@@ -341,7 +380,7 @@ proc unravelArray(c: var LiftingCtx;
       incIndexVar c, indexVar
   genParRiCall c
 
-proc unravelSet(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
+proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   assert orig.typeKind == SetT
   let baseType = orig.firstSon
   let maxValue = bitsetSizeInBytes(orig) * createXint(8'i64)
@@ -370,7 +409,7 @@ proc unravelSet(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
       incIndexVar c, indexVar
   genParRiCall c
 
-proc unravelEnum(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
+proc unravelEnum(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   c.dest.addParLe CaseS, c.info
   c.dest.add param
   var enumDecl = orig
@@ -387,12 +426,12 @@ proc unravelEnum(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
         genStringCall(c, "writeNifSymbol", pool.syms[esym])
   c.dest.addParRi() # case
 
-proc primitiveCall(c: var LiftingCtx; name: string; arg: Cursor) =
+proc primitiveCall(c: var SynthesizeSerializerCtx; name: string; arg: Cursor) =
   c.dest.copyIntoKind CallS, c.info:
     c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addSubtree arg
 
-proc entryPoint(c: var LiftingCtx; orig: TypeCursor; arg: Cursor) =
+proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
   if isStringType(orig):
     primitiveCall(c, "writeNifStr", arg)
     return
@@ -428,7 +467,7 @@ proc entryPoint(c: var LiftingCtx; orig: TypeCursor; arg: Cursor) =
       c.dest.addSymUse procId, c.info
       c.dest.addSubtree arg
 
-proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
+proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   if isSomeStringType(orig):
     entryPoint(c, orig, readOnlyCursorAt(param, 0))
     return
@@ -455,7 +494,7 @@ proc unravel(c: var LiftingCtx; orig: TypeCursor; param: TokenBuf) =
      SymkindT, TypekindT, TypedescT, UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     c.errorMsg = "unsupported type for compile-time evaluation: " & asNimCode(orig)
 
-proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
+proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
   let paramA = pool.syms.getOrIncl(ParamSymName)
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
@@ -468,13 +507,13 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     let beforeUnravel = c.dest.len
     unravel(c, typ, paramTreeA)
     if c.dest.len == beforeUnravel:
-      assert false, "empty hook created"
+      assert false, "empty serializer created"
   c.dest.addParRi() # close ProcS declaration
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
     c.dest[procStart] = parLeToken(MethodS, c.info)
 
-proc genMissingProcs*(c: var LiftingCtx) =
+proc genMissingProcs*(c: var SynthesizeSerializerCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
   while c.requests.len > 0:
     let reqs = move(c.requests)
@@ -486,11 +525,26 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   let prepResult = semos.prepareEval(s)
   if prepResult.len > 0: return prepResult
 
-  var c = LiftingCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits,
+  var c = SynthesizeSerializerCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits,
     errorMsg: "", thisModuleSuffix: s.thisModuleSuffix,
     newModuleSuffix: s.thisModuleSuffix.substr(0, 2) & computeChecksum(mangle(call, Frontend, s.g.config.bits)))
 
   c.dest.addParLe StmtsS, info
+
+  # Add import for std/writenif so that setup, teardown, writeNifInt, etc. are available
+  c.dest.copyIntoKind ImportS, info:
+    c.dest.copyIntoKind InfixX, info:
+      c.dest.addIdent "/", info
+      c.dest.addIdent "std", info
+      c.dest.addIdent "writenif", info
+
+  # Add all imports from the original module so that identifiers are resolvable:
+  if s.importSnippets.len > 0:
+    var cur = beginRead(s.importSnippets)
+    for i in 0 ..< s.importSnippets.len:
+      c.dest.add cur.load
+      inc cur
+    endRead(s.importSnippets)
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
@@ -513,18 +567,7 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
       # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
       entryPoint(c, retType, call)
 
-  let toDeref = cursorAt(c.dest, beforeUsercode)
-  #echo "synthesized ", toString(toDeref)
-  let withDerefs = injectDerefs(toDeref)
-  endRead(c.dest)
-  c.dest.shrink beforeUsercode
-  # do not copy the `(stmts)` here:
-  assert withDerefs.len >= 2
-  assert withDerefs[0].kind == ParLe
-  assert withDerefs[withDerefs.len-1].kind == ParRi
-  for i in 1..<withDerefs.len-1:
-    c.dest.add withDerefs[i]
-
+  # Skip injectDerefs - the full nimony pipeline will handle it after semcheck
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
 
@@ -533,7 +576,7 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
   genMissingProcs c
   c.dest.addParRi() # StmtsS
 
-  rewriteSyms c
+  rewriteSymsToIdents c
 
   if c.errorMsg.len > 0:
     result = ensureMove c.errorMsg

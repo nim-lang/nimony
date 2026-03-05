@@ -51,13 +51,13 @@ type
 proc nifReaderOpen*(filename: string): Reader =
   nifreader.open(filename)
 
-proc nifReaderOpenFromBuffer*(buf: sink string): Reader =
-  nifreader.openFromBuffer(buf)
+proc nifReaderOpenFromBuffer*(buf: sink string; filename: sink string): Reader =
+  nifreader.openFromBuffer(buf, filename)
 
 template expectTree(r: var NifReader; tag: string; body: untyped) =
   let t = r.next
   assert t.tk == ParLe
-  assert t.s == tag
+  assert t.data == tag
   body
   let t2 = r.next
   assert t2.tk == ParRi
@@ -65,7 +65,7 @@ template expectTree(r: var NifReader; tag: string; body: untyped) =
 proc expectSymbol(r: var NifReader; sym: string) =
   let t = r.next
   assert t.tk == Symbol
-  assert t.s == sym
+  assert t.data == sym
 
 proc fromNif*[T: not typedesc](r: var NifReader; x: var T) {.untyped, inline.} =
   x = r.fromNif T
@@ -73,7 +73,7 @@ proc fromNif*[T: not typedesc](r: var NifReader; x: var T) {.untyped, inline.} =
 proc fromNif*(r: var NifReader; t: typedesc[string]): string =
   let t = r.next
   assert t.tk == StringLit
-  result = $t.s
+  result = $t.data
 
 proc fromNif*(r: var NifReader; t: typedesc[int]): int =
   let t = r.next
@@ -90,12 +90,12 @@ proc fromNif*(r: var NifReader; t: typedesc[float]): float =
 proc fromNif*(r: var NifReader; t: typedesc[bool]): bool =
   let t = r.next
 
-  if t.s == "true":
+  if t.data == "true":
     result = true
-  elif t.s == "false":
+  elif t.data == "false":
     result = false
   else:
-    assert false, "got unexpected token: " & $t.s
+    assert false, "got unexpected token: " & $t.data
 
   let t2 = r.next
   assert t2.tk == ParRi

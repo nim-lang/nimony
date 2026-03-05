@@ -8,7 +8,7 @@ type
 proc p(): Myref not nil {.raises.} = Myref(x: 5)
 
 proc hah2 {.raises.} =
-  var r: nil Myref
+  var r: Myref not nil
   r = p()
   echo r[].x
 

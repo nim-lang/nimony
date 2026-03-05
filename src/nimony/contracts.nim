@@ -301,11 +301,14 @@ proc wantNotNilDeref(c: var Context; n: Cursor) =
 
 proc analyseOconstr(c: var Context; n: var Cursor) =
   inc n
+  let objType = n
   skip n # type
   while n.kind != ParRi:
     assert n.substructureKind == KvU
     inc n
-    let expected = getType(c.typeCache, n)
+    assert n.kind == Symbol
+    let expected = lookupField(c.typeCache, objType, n.symId)
+    assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
     skip n # field name
     checkNilMatch c, n, expected
     skip n # value
@@ -730,6 +733,10 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
           inc pc
           inc nested
+        of PragmaxS:
+          inc pc
+          skip pc # pragmas
+          inc nested
         of LocalDecls:
           inc pc
           let name = pc.symId
@@ -915,6 +922,11 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
     while n.kind != ParRi:
       traverseToplevel(c, n)
     c.toplevelStmts.add n
+    skipParRi n
+  of PragmaxS:
+    inc n
+    skip n
+    traverseToplevel(c, n)
     skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     traverseProc(c, n)

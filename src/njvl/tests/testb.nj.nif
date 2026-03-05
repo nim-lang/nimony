@@ -208,4 +208,82 @@
      (jtrue ´g.1))
     (stmts
      (call echo.0 "after block break")))
-   (kill ´r.0 a.0 ´g.1))))
+   (kill ´r.0 a.0 ´g.1)))
+ (proc :test9.0 . . .
+  (params) . . .
+  (stmts
+   (cfvar :´r.0)
+   (cfvar :´r.0)
+   (var :a.0 . .
+    (bool)
+    (false))
+   (var :b.0 . .
+    (bool)
+    (true))
+   (loop
+    (stmts
+     (cfvar :´g.1))
+    (not ´g.1)
+    (stmts
+     (ite a.0
+      (stmts
+       (jtrue ´g.1))
+      (stmts
+       (call echo.0 "between ifs")
+       (ite b.0
+        (stmts
+         (jtrue ´g.1))
+        (stmts
+         (call echo.0 "after second if")))))
+     (kill ´g.1)
+     (continue .)))
+   (kill ´r.0 a.0 b.0)))
+ (proc :test10.0 . . .
+  (params) . . .
+  (stmts
+   (cfvar :´r.0)
+   (cfvar :´r.0)
+   (var :a.0 . .
+    (bool)
+    (false))
+   (var :b.0 . .
+    (bool)
+    (true))
+   (var :c.0 . .
+    (bool)
+    (false))
+   (var :d.0 . .
+    (bool)
+    (true))
+   (loop
+    (stmts
+     (cfvar :´g.1))
+    (not ´g.1)
+    (stmts
+     (call echo.0 "pre-condition")
+     (ite a.0
+      (stmts
+       (ite b.0
+        (stmts
+         (ite c.0
+          (stmts
+           (jtrue ´g.1))
+          (stmts
+           (call echo.0 "c was false")))) .)
+       (ite
+        (not ´g.1)
+        (stmts
+         (call echo.0 "b check done")
+         (ite d.0
+          (stmts
+           (jtrue ´g.1))
+          (stmts
+           (call echo.0 "d was false")) .)))) .)
+     (ite
+      (not ´g.1)
+      (stmts
+       (call echo.0 "main body")
+       (continue .)) .)
+     (kill ´g.1)
+     (continue .)))
+   (kill ´r.0 a.0 d.0 c.0 b.0))))

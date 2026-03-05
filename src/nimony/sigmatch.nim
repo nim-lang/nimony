@@ -73,7 +73,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*, checkEmptyArg*, insertedParam*: bool
+    genericConverter*, refineArgType*, insertedParam*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -604,6 +604,7 @@ type
   ProcProperties* = object
     cc*: CallConv
     usesRaises*: bool
+    raisesType*: Cursor  # The actual exception type from .raises pragma
     usesClosure*: bool
 
 proc extractProcProps*(c: var Cursor): ProcProperties =
@@ -616,6 +617,11 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
         result.cc = res
       elif c.pragmaKind == RaisesP:
         result.usesRaises = true
+        # Extract the raises type from the pragma
+        var raisesNode = c
+        inc raisesNode
+        if raisesNode.kind != ParRi:
+          result.raisesType = raisesNode
       elif c.pragmaKind == ClosureP:
         result.usesClosure = true
       skip c
@@ -715,7 +721,7 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
 
-proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
+proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
   let fbase = skipTypeInstSym(fsym)
   var diff = 1
   var objbody = objtypeImpl(asym)
@@ -816,6 +822,23 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       matchObjectInheritance m, f, a, fsym, asym, ptrKind
       skip f
 
+proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
+  ## Try to find a unique enum field in the OchoiceX that matches the given enum type.
+  result = SymId(0)
+  var matchCount = 0
+  var a = choice.firstSon
+  while a.kind != ParRi:
+    if a.kind == Symbol:
+      let res = tryLoadSym(a.symId)
+      if res.status == LacksNothing and res.decl.symKind == EfldY:
+        let fieldType = asLocal(res.decl).typ
+        if fieldType.kind == Symbol and sameSymbol(fieldType.symId, enumTypeSym):
+          result = a.symId
+          inc matchCount
+    inc a
+  if matchCount != 1:
+    result = SymId(0)
+
 proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
@@ -851,7 +874,14 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         m.error InvalidMatch, f, a
       else:
         if impl.typeKind in {EnumT, HoleyEnumT}:
-          #echo "ENUM: ", f.toString(false), " ", arg.n.toString(false)
+          if arg.n.exprKind == OchoiceX:
+            let matchedSym = tryMatchEnumChoice(arg.n, fs)
+            if matchedSym != SymId(0):
+              m.refineArgType = true
+              m.args.addParLe HconvX, m.argInfo
+              m.args.addSubtree f
+              inc m.opened
+              return
           m.error InvalidMatch, f, a
         else:
           singleArgImpl(m, impl, arg)
@@ -1240,7 +1270,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
     if not m.err:
       if containsGenericParams(f): # maybe restrict to params of this routine
         # element type needs to be instantiated:
-        m.checkEmptyArg = true
+        m.refineArgType = true
       m.args.add arg.n.load # copy tag
       m.args.takeTree f
       m.args.addParRi()
@@ -1251,7 +1281,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
       if not m.err:
         # call to `@` needs to be instantiated/template expanded,
         # also the element type needs to be instantiated if generic:
-        m.checkEmptyArg = true
+        m.refineArgType = true
         # keep the call to `@` but give the array constructor the element type:
         var call = arg.n
         m.args.add call.load # copy call tag

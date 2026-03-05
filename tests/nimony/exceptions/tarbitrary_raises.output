@@ -1,0 +1,2 @@
+Testing arbitrary types in .raises pragma
+Success: arbitrary types work in .raises
