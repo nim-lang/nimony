@@ -41,6 +41,7 @@ type
     startInstr: Cursor
     errors: TokenBuf
     procCanRaise: bool
+    resId: SymId
 
 proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -739,6 +740,8 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of LocalDecls:
           inc pc
           let name = pc.symId
+          if kind == ResultS:
+            c.resId = name
           skip pc # name
           skip pc # export marker
           let skipInitCheck = hasPragma(pc, NoinitP)
@@ -830,6 +833,7 @@ proc pushFacts(c: var Context; bb: var BasicBlock) =
     c.facts.add bb.indegreeFacts[i]
 
 proc checkContracts(c: var Context; n: Cursor) =
+  let info = n.info
   c.cf = toControlflow(n)
   c.facts = createFacts()
   freeze c.cf
@@ -837,6 +841,8 @@ proc checkContracts(c: var Context; n: Cursor) =
 
   c.startInstr = readonlyCursorAt(c.cf, 0)
   c.procCanRaise = false
+  var procHasNoinit = false
+  c.resId = NoSymId
   c.typeCache.openScope()
   var body = c.startInstr
   if body.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
@@ -844,6 +850,7 @@ proc checkContracts(c: var Context; n: Cursor) =
     for i in 0 ..< BodyPos:
       if i == ProcPragmasPos:
         c.procCanRaise = hasPragma(body, RaisesP)
+        procHasNoinit = hasPragma(body, NoinitP) or hasPragma(body, NoreturnP)
       skip body
 
   var current = BasicBlockIdx(cursorToPosition(c.cf, body))
@@ -874,6 +881,9 @@ proc checkContracts(c: var Context; n: Cursor) =
           nextIter = true
         else:
           candidates.add cont.elsePart
+
+  if c.resId != NoSymId and (not procHasNoinit) and c.resId notin c.writesTo:
+    c.buildErr info, "cannot prove that result has been initialized"
   c.typeCache.closeScope()
 
 proc traverseProc(c: var Context; n: var Cursor) =
