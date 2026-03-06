@@ -564,7 +564,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
   of LocationIsConst:
     buildLocalErr c.dest, n.info, "cannot mutate expression " & asNimCode(n)
     tr c, n, e
-    tr c, n, e
+    skip n
+    #tr c, n, e
   else:
     trAsgnRhs c, le, n, e
   takeParRi c, n
