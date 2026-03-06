@@ -894,6 +894,7 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
   skipParRi n
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
+  let decl = n
   c.facts = createFacts()
   c.directlyInitialized.add initHashSet[SymId]()
   c.procCanRaise = false
@@ -903,12 +904,15 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldFalseCfvars = move c.falseCfvars
   let oldKnownCfVars = move c.knownCfVars
   inc n
+  let symId = n.symId
   var isGeneric = false
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
       c.procCanRaise = hasPragma(n, RaisesP)
     elif i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
+    elif i == ParamsPos:
+      c.typeCache.registerParams(symId, decl, n)
     skip n
 
   # Analyze body
