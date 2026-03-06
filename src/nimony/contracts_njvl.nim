@@ -72,6 +72,9 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor)
 proc analyseCall(c: var NjvlContext; n: var Cursor)
 
 proc extractSymId(n: Cursor): SymId {.inline.} =
+  var n = n
+  if n.exprKind in {HaddrX, HderefX}: inc n
+
   if n.kind == Symbol:
     result = n.symId
   elif n.kind == ParLe and n.tagEnum == VTagId:
@@ -84,7 +87,7 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
   ## Returns NoSymId (without advancing) if r is neither.
   result = extractSymId(r)
   if result != NoSymId:
-    if r.kind == Symbol: inc r else: skip r
+    skip r
 
 proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
   ## If condition is `(not cfvar)`, return the cfvar's SymId. Else NoSymId.

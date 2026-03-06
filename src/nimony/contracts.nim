@@ -405,9 +405,11 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
     paramMap[param.name.symId] = paramMap.len+1
     let pk = param.typ.typeKind
     if pk == OutT:
-      if n.kind == Symbol:
+      var arg = n
+      if arg.exprKind == HaddrX: inc arg
+      if arg.kind == Symbol:
         # is now initialized:
-        c.writesTo.add n.symId
+        c.writesTo.add arg.symId
     elif pk == VarargsT:
       # do not advance formal parameter:
       fnType = previousFormalParam
