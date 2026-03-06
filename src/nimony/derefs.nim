@@ -405,7 +405,9 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     var body = n
     tr c, n, c.r.returnExpects
     if c.r.dangerousLocations.len > 0:
+      c.dest.shrink c.dest.len - 1
       checkForDangerousLocations c, body
+      c.dest.addParRi()
     takeParRi c, n
   swap c.r, r
   c.typeCache.closeScope()
