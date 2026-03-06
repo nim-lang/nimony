@@ -500,17 +500,21 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       trCallArgs(c, n, fnType)
       takeParRi c, n
     else:
-      cannotPassToVar c.dest, info, callExpr
       while n.kind != ParRi: skip n
-      takeParRi c, n
+      inc n # skip ParRi without emitting into callBuf
+      swap c.dest, callBuf # restore original dest; discard partial callBuf
+      cannotPassToVar c.dest, info, callExpr
+      return
   elif e.wantMutable:
     if isViewType(retType) and firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
       takeParRi c, n
     else:
-      cannotPassToVar c.dest, info, callExpr
       while n.kind != ParRi: skip n
-      takeParRi c, n
+      inc n # skip ParRi without emitting into callBuf
+      swap c.dest, callBuf # restore original dest; discard partial callBuf
+      cannotPassToVar c.dest, info, callExpr
+      return
   else:
     trCallArgs(c, n, fnType)
     takeParRi c, n

@@ -189,7 +189,18 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     inc r
     skip r # skip type
   else:
-    traverseExpr c, pc
+    # Check for a bare symbol/hderef/haddr (truthy ref check: `if x:` means `x != nil`)
+    let sa = extractSymId(r)
+    if sa != NoSymId:
+      result = isNotNil(getVarId(c, sa))
+      skip r
+      while negations > 0:
+        negateFact(result)
+        dec negations
+        skipParRi r
+      pc = r
+    else:
+      traverseExpr c, pc
     return result
 
   if r.kind == IntLit:
@@ -1047,8 +1058,6 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
   # Convert to NJVL first
   var njvlBuf = toNjvl(n, moduleSuffix)
   endRead input
-
-  #echo "NJVL IR: ", toString(njvlBuf, false)
 
   # Now analyze the NJVL IR
   var c = NjvlContext(
