@@ -361,19 +361,22 @@ proc mapSymbol(c: var NjvlContext; paramMap: Table[SymId, int]; call: Cursor; sy
   let pos = paramMap.getOrDefault(symId)
   if pos > 0:
     let arg = call.argAt(pos)
-    if arg.kind == Symbol:
-      result = getVarId(c, arg.symId)
+    let sid = extractSymId(arg)
+    if sid != NoSymId:
+      result = getVarId(c, sid)
 
 proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
   var r = req
   var a = InvalidVarId
   var b = InvalidVarId
   var cnst = createXint(0'i32)
-  if r.kind == Symbol:
-    a = mapSymbol(c, paramMap, call, r.symId)
+  let sid = extractSymId(r)
+  if sid != NoSymId:
+    a = mapSymbol(c, paramMap, call, sid)
     inc r
-  if r.kind == Symbol:
-    b = mapSymbol(c, paramMap, call, r.symId)
+  let rid = extractSymId(r)
+  if rid != NoSymId:
+    b = mapSymbol(c, paramMap, call, rid)
     inc r
   elif r.kind == IntLit:
     b = VarId(0)
@@ -386,8 +389,9 @@ proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Curs
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
     skip r # type
-    if r.kind == Symbol:
-      b = mapSymbol(c, paramMap, call, r.symId)
+    let cid = extractSymId(r)
+    if cid != NoSymId:
+      b = mapSymbol(c, paramMap, call, cid)
       inc r
       if r.kind == IntLit:
         cnst = createXint(pool.integers[r.intId])
@@ -642,17 +646,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   traverseExpr c, n
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
-  var destSymId = NoSymId
-  var destIsVersioned = false
-  if n.kind == Symbol:
-    destSymId = n.symId
-  elif n.kind == ParLe and n.tagEnum == VTagId:
-    destIsVersioned = true
-    inc n # skip "v" tag
-    if n.kind == Symbol:
-      destSymId = n.symId
-    # else malformed, destSymId stays NoSymId
-
+  let destSymId = extractSymId(n)
   if destSymId != NoSymId:
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
@@ -682,12 +676,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
       c.facts.add isNotNil(fact.a)
 
-    if destIsVersioned:
-      inc n # skip symbol
-      skip n # version
-      skipParRi n # close (v ...)
-    else:
-      inc n # skip the symbol
+    skip n
   else:
     traverseExpr c, n
 
