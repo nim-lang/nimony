@@ -238,7 +238,14 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   else:
     result = false
 
-proc checkTupleConstrBorrowing(c: var Context; n: Cursor) =
+type
+  LvalueStatus = enum
+    Valid
+    InvalidBorrow
+    LocationIsConst
+
+proc checkTupleConstrBorrowing(c: var Context; n: Cursor): LvalueStatus =
+  result = Valid
   var n = n
   inc n
 
@@ -256,6 +263,7 @@ proc checkTupleConstrBorrowing(c: var Context; n: Cursor) =
     if fieldType.typeKind in {MutT, LentT, OutT}:
       if not validBorrowsFrom(c, n):
         buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
+        return InvalidBorrow
 
     skip n
 
@@ -272,13 +280,17 @@ proc trReturn(c: var Context; n: var Cursor) =
   if isResultUsage(c, n):
     takeTree c.dest, n
   else:
-    let err = c.r.returnExpects == WantVarTResult and not validBorrowsFrom(c, n)
+    var err = c.r.returnExpects == WantVarTResult and not validBorrowsFrom(c, n)
     if err:
       buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
     else:
       if n.exprKind == TupConstrX:
-        checkTupleConstrBorrowing(c, n)
-      tr c, n, c.r.returnExpects
+        if checkTupleConstrBorrowing(c, n) != Valid:
+          err = true
+      if not err:
+        tr c, n, c.r.returnExpects
+      else:
+        skip n
   takeParRi c, n
 
 proc wantMutable(e: Expects): bool {.inline.} =
@@ -520,12 +532,6 @@ proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
   else:
     tr c, ri, e
 
-type
-  LvalueStatus = enum
-    Valid
-    InvalidBorrow
-    LocationIsConst
-
 proc trAsgn(c: var Context; n: var Cursor) =
   takeToken c, n
   var e = WantT
@@ -540,7 +546,11 @@ proc trAsgn(c: var Context; n: var Cursor) =
     else:
       tr c, n, e
       if n.exprKind == TupConstrX:
-        checkTupleConstrBorrowing(c, n)
+        if checkTupleConstrBorrowing(c, n) != Valid:
+          # already emitted an error:
+          skip n
+          takeParRi c, n
+          return
   elif borrowsFromReadonly(c, n, allowLet=true):
     err = LocationIsConst
   else:
