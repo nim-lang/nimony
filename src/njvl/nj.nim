@@ -1166,6 +1166,9 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
       copyInto(dest, n):
         takeTree dest, n  # pragmas
         trGuardedStmts c, b, dest, n, false  # body
+    elif n.exprKind == ProccallX:
+      copyInto dest, n:
+        trStmtCall c, b, dest, n
     else:
       trExpr c, dest, n
 

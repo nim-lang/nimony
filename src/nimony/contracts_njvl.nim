@@ -72,6 +72,9 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor)
 proc analyseCall(c: var NjvlContext; n: var Cursor)
 
 proc extractSymId(n: Cursor): SymId {.inline.} =
+  var n = n
+  if n.exprKind in {HaddrX, HderefX}: inc n
+
   if n.kind == Symbol:
     result = n.symId
   elif n.kind == ParLe and n.tagEnum == VTagId:
@@ -84,7 +87,7 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
   ## Returns NoSymId (without advancing) if r is neither.
   result = extractSymId(r)
   if result != NoSymId:
-    if r.kind == Symbol: inc r else: skip r
+    skip r
 
 proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
   ## If condition is `(not cfvar)`, return the cfvar's SymId. Else NoSymId.
@@ -186,7 +189,18 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     inc r
     skip r # skip type
   else:
-    traverseExpr c, pc
+    # Check for a bare symbol/hderef/haddr (truthy ref check: `if x:` means `x != nil`)
+    let sa = extractSymId(r)
+    if sa != NoSymId:
+      result = isNotNil(getVarId(c, sa))
+      skip r
+      while negations > 0:
+        negateFact(result)
+        dec negations
+        skipParRi r
+      pc = r
+    else:
+      traverseExpr c, pc
     return result
 
   if r.kind == IntLit:
@@ -358,19 +372,22 @@ proc mapSymbol(c: var NjvlContext; paramMap: Table[SymId, int]; call: Cursor; sy
   let pos = paramMap.getOrDefault(symId)
   if pos > 0:
     let arg = call.argAt(pos)
-    if arg.kind == Symbol:
-      result = getVarId(c, arg.symId)
+    let sid = extractSymId(arg)
+    if sid != NoSymId:
+      result = getVarId(c, sid)
 
 proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
   var r = req
   var a = InvalidVarId
   var b = InvalidVarId
   var cnst = createXint(0'i32)
-  if r.kind == Symbol:
-    a = mapSymbol(c, paramMap, call, r.symId)
+  let sid = extractSymId(r)
+  if sid != NoSymId:
+    a = mapSymbol(c, paramMap, call, sid)
     inc r
-  if r.kind == Symbol:
-    b = mapSymbol(c, paramMap, call, r.symId)
+  let rid = extractSymId(r)
+  if rid != NoSymId:
+    b = mapSymbol(c, paramMap, call, rid)
     inc r
   elif r.kind == IntLit:
     b = VarId(0)
@@ -383,8 +400,9 @@ proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Curs
   elif (let op = r.exprKind; op in {AddX, SubX}):
     inc r
     skip r # type
-    if r.kind == Symbol:
-      b = mapSymbol(c, paramMap, call, r.symId)
+    let cid = extractSymId(r)
+    if cid != NoSymId:
+      b = mapSymbol(c, paramMap, call, cid)
       inc r
       if r.kind == IntLit:
         cnst = createXint(pool.integers[r.intId])
@@ -639,17 +657,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   traverseExpr c, n
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
-  var destSymId = NoSymId
-  var destIsVersioned = false
-  if n.kind == Symbol:
-    destSymId = n.symId
-  elif n.kind == ParLe and n.tagEnum == VTagId:
-    destIsVersioned = true
-    inc n # skip "v" tag
-    if n.kind == Symbol:
-      destSymId = n.symId
-    # else malformed, destSymId stays NoSymId
-
+  let destSymId = extractSymId(n)
   if destSymId != NoSymId:
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
@@ -679,12 +687,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
       c.facts.add isNotNil(fact.a)
 
-    if destIsVersioned:
-      inc n # skip symbol
-      skip n # version
-      skipParRi n # close (v ...)
-    else:
-      inc n # skip the symbol
+    skip n
   else:
     traverseExpr c, n
 
@@ -891,6 +894,7 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
   skipParRi n
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
+  let decl = n
   c.facts = createFacts()
   c.directlyInitialized.add initHashSet[SymId]()
   c.procCanRaise = false
@@ -900,12 +904,15 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldFalseCfvars = move c.falseCfvars
   let oldKnownCfVars = move c.knownCfVars
   inc n
+  let symId = n.symId
   var isGeneric = false
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
       c.procCanRaise = hasPragma(n, RaisesP)
     elif i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
+    elif i == ParamsPos:
+      c.typeCache.registerParams(symId, decl, n)
     skip n
 
   # Analyze body
@@ -1051,8 +1058,6 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
   # Convert to NJVL first
   var njvlBuf = toNjvl(n, moduleSuffix)
   endRead input
-
-  #echo "NJVL IR: ", toString(njvlBuf, false)
 
   # Now analyze the NJVL IR
   var c = NjvlContext(

@@ -238,7 +238,14 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   else:
     result = false
 
-proc checkTupleConstrBorrowing(c: var Context; n: Cursor) =
+type
+  LvalueStatus = enum
+    Valid
+    InvalidBorrow
+    LocationIsConst
+
+proc checkTupleConstrBorrowing(c: var Context; n: Cursor): LvalueStatus =
+  result = Valid
   var n = n
   inc n
 
@@ -256,6 +263,7 @@ proc checkTupleConstrBorrowing(c: var Context; n: Cursor) =
     if fieldType.typeKind in {MutT, LentT, OutT}:
       if not validBorrowsFrom(c, n):
         buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
+        return InvalidBorrow
 
     skip n
 
@@ -272,13 +280,17 @@ proc trReturn(c: var Context; n: var Cursor) =
   if isResultUsage(c, n):
     takeTree c.dest, n
   else:
-    let err = c.r.returnExpects == WantVarTResult and not validBorrowsFrom(c, n)
+    var err = c.r.returnExpects == WantVarTResult and not validBorrowsFrom(c, n)
     if err:
       buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
     else:
       if n.exprKind == TupConstrX:
-        checkTupleConstrBorrowing(c, n)
-      tr c, n, c.r.returnExpects
+        if checkTupleConstrBorrowing(c, n) != Valid:
+          err = true
+      if not err:
+        tr c, n, c.r.returnExpects
+      else:
+        skip n
   takeParRi c, n
 
 proc wantMutable(e: Expects): bool {.inline.} =
@@ -393,7 +405,9 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     var body = n
     tr c, n, c.r.returnExpects
     if c.r.dangerousLocations.len > 0:
+      c.dest.shrink c.dest.len - 1
       checkForDangerousLocations c, body
+      c.dest.addParRi()
     takeParRi c, n
   swap c.r, r
   c.typeCache.closeScope()
@@ -488,15 +502,21 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       trCallArgs(c, n, fnType)
       takeParRi c, n
     else:
+      while n.kind != ParRi: skip n
+      inc n # skip ParRi without emitting into callBuf
+      swap c.dest, callBuf # restore original dest; discard partial callBuf
       cannotPassToVar c.dest, info, callExpr
-      skipToEnd n
+      return
   elif e.wantMutable:
     if isViewType(retType) and firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
       takeParRi c, n
     else:
+      while n.kind != ParRi: skip n
+      inc n # skip ParRi without emitting into callBuf
+      swap c.dest, callBuf # restore original dest; discard partial callBuf
       cannotPassToVar c.dest, info, callExpr
-      skipToEnd n
+      return
   else:
     trCallArgs(c, n, fnType)
     takeParRi c, n
@@ -520,12 +540,6 @@ proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
   else:
     tr c, ri, e
 
-type
-  LvalueStatus = enum
-    Valid
-    InvalidBorrow
-    LocationIsConst
-
 proc trAsgn(c: var Context; n: var Cursor) =
   takeToken c, n
   var e = WantT
@@ -540,7 +554,11 @@ proc trAsgn(c: var Context; n: var Cursor) =
     else:
       tr c, n, e
       if n.exprKind == TupConstrX:
-        checkTupleConstrBorrowing(c, n)
+        if checkTupleConstrBorrowing(c, n) != Valid:
+          # already emitted an error:
+          skip n
+          takeParRi c, n
+          return
   elif borrowsFromReadonly(c, n, allowLet=true):
     err = LocationIsConst
   else:
@@ -552,7 +570,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
   of LocationIsConst:
     buildLocalErr c.dest, n.info, "cannot mutate expression " & asNimCode(n)
     tr c, n, e
-    tr c, n, e
+    skip n
+    #tr c, n, e
   else:
     trAsgnRhs c, le, n, e
   takeParRi c, n
