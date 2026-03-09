@@ -1102,7 +1102,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
 
   publish c, dest, delayed.s.name, declStart
 
-  if isEnumTypeDecl:
+  if isEnumTypeDecl and c.routine.kind != TemplateY:
     var enumTypeDecl = tryLoadSym(delayed.s.name)
     assert enumTypeDecl.status == LacksNothing
     var pending = createTokenBuf()
