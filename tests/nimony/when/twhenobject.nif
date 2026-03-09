@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +1662            )
+(.indexat +1688            )
 0,1,tests/nimony/when/twhenobject.nim(stmts 6,1
  (type ~4 :Foo.0. . .
   (pragmas
@@ -39,7 +39,9 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (result :dest.0 . . Foo.0. .)
+   (result :dest.0 .
+    (pragmas
+     (noinit)) Foo.0. .)
    (asgn
     (dot dest.0 y.0 +0)
     (dot src.0 y.0 +0))
@@ -75,4 +77,4 @@
  (h =destroy_SX46oo0twh699we9.0. +384) 6,1
  (h =wasmoved_SX46oo0twh699we9.0. +187) 6,1
  (h =dup_SX46oo0twh699we9.0. +227) 6,1
- (h =copy_SX46oo0twh699we9.0. +381))
+ (h =copy_SX46oo0twh699we9.0. +407))

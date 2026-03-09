@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3458            )
+(.indexat +3484            )
 0,1,tests/nimony/types/tscopedtype.nim(stmts ,2
  (block . 2,1
   (stmts 6,1
@@ -62,7 +62,9 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (result :dest.0 . . Foo.0. .)
+   (result :dest.0 .
+    (pragmas
+     (noinit)) Foo.0. .)
    (if
     (elif src.0
      (stmts
@@ -149,7 +151,7 @@
  (h =destroy_SX46oo0tsca4az8i1.0. +587) 8,4
  (h =wasmoved_SX46oo0tsca4az8i1.0. +361) 8,4
  (h =dup_SX46oo0tsca4az8i1.0. +183) 8,4
- (h =copy_SX46oo0tsca4az8i1.0. +334) 8,4
+ (h =copy_SX46oo0tsca4az8i1.0. +360) 8,4
  (h =sinkh_SX46oo0tsca4az8i1.0. +379) 8,4
  (h =trace_SX46oo0tsca4az8i1.0. +380) 8,4
  (h =wasmoved_SX46ooX4fbj0tsca4az8i1.0. +179) 8,4
