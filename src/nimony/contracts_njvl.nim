@@ -541,7 +541,7 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
     of Symbol:
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
-      if x.kind in {VarY, LetY, CursorY}:
+      if x.kind in {VarY, LetY, CursorY, ResultY}:
         if not isEffectivelyInitialized(c, symId):
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
           c.writesTo.add symId
