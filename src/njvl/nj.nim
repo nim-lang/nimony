@@ -586,6 +586,8 @@ proc trAsgn(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor
       of VoidRaise:
         bug "void-raise call on right-hand side of result assignment"
       return
+    elif symId == c.current.resultSym:
+      trResultExpr c, dest, n
     else:
       trExpr c, dest, n
     # add `result` later due to the changed order for `(store X result)`
