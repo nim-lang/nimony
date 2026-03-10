@@ -82,6 +82,14 @@ proc extractSymId(n: Cursor): SymId {.inline.} =
   else:
     result = NoSymId
 
+proc extractSymIdForStore(n: Cursor): SymId =
+  # idea both (etupat result.0 +0) and (etupat result.0 +1) create
+  # a full store to `result.0`.
+  var n = n
+  if n.njvlKind == EtupatV:
+    inc n
+  result = extractSymId(n)
+
 proc skipSymbol(r: var Cursor): SymId {.inline.} =
   ## Consume a bare Symbol or (v sym version) node and return its SymId.
   ## Returns NoSymId (without advancing) if r is neither.
@@ -657,7 +665,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   traverseExpr c, n
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
-  let destSymId = extractSymId(n)
+  let destSymId = extractSymIdForStore(n)
   if destSymId != NoSymId:
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
@@ -969,6 +977,8 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   of VV:
     # Versioned variable reference - should not appear as statement
     skip n
+  of EtupatV:
+    traverseExpr c, n
   of NoVTag:
     case n.stmtKind
     of StmtsS, ScopeS, BlockS:

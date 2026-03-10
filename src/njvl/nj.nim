@@ -145,6 +145,10 @@ type
     thisModuleSuffix: string
     current: CurrentProc
 
+proc addParLe*(dest: var TokenBuf; kind: NjvlKind;
+               info = NoLineInfo) =
+  dest.add parLeToken(cast[TagId](kind), info)
+
 proc openScope(c: var Context) =
   c.typeCache.openScope()
 
@@ -219,7 +223,7 @@ proc useErrorTracker(c: Context; dest: var TokenBuf; errorTracker: SymId; info: 
   ## In VoidRaise/NoRaise mode, errorTracker is a plain ErrorCode variable.
   assert errorTracker != NoSymId
   if c.current.mode == TupleRaise:
-    dest.addParLe TupatX, info
+    dest.addParLe EtupatV, info
     dest.addSymUse errorTracker, info
     dest.addIntLit 0, info
     dest.addParRi()
@@ -234,7 +238,7 @@ proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; 
   dest.copyIntoKind StoreV, info:
     trExpr c, dest, value
     if c.current.mode == TupleRaise:
-      dest.addParLe TupatX, info
+      dest.addParLe EtupatV, info
       dest.addSymUse c.current.errorTracker, info
       dest.addIntLit 0, info
       dest.addParRi()
@@ -248,7 +252,7 @@ proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; tracker, constSym:
   dest.copyIntoKind StoreV, info:
     dest.addSymUse constSym, info
     if c.current.mode == TupleRaise:
-      dest.addParLe TupatX, info
+      dest.addParLe EtupatV, info
       dest.addSymUse tracker, info
       dest.addIntLit 0, info
       dest.addParRi()
@@ -378,7 +382,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of Symbol:
     if c.current.tupleVars.contains(n.symId):
       let info = n.info
-      copyIntoKind dest, TupatX, info:
+      copyIntoKind dest, EtupatV, info:
         dest.addSymUse n.symId, info
         dest.addIntLit 1, info
       inc n
@@ -538,7 +542,7 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
 
     # Manually emit ite to control whether we close it (for optimization)
     dest.add tagToken("ite", info)
-    dest.addParLe TupatX, info # condition
+    dest.addParLe EtupatV, info # condition
     dest.addSymUse symId, info # XXX write that later as `e != Success`
     dest.addIntLit 0, info
     dest.addParRi() # close tupat

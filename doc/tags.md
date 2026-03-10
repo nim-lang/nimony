@@ -161,6 +161,7 @@
 | `(itec X S S)` | NjvlKind | if-then-else (that was a `case`) |
 | `(loop S X S S)` | NjvlKind | `loop` components are (before-cond, cond, loop-body, after) |
 | `(v X INT_LIT)` | NjvlKind | `versioned` locations |
+| `(etupat X INT_LIT)` | NjvlKind | tupat expression for error handling |
 | `(unknown X)` | NjvlKind | location's contents is unknown at this point |
 | `(jtrue Y+)` | NjvlKind | set variables v1, v2, ... to `(true)`; hint this should become a jump |
 | `(cfvar D)` | NjvlKind | declare a new control flow variable `D` of type `bool` initialized to `false` |

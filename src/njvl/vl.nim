@@ -288,7 +288,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip n
   of AssumeV, AssertV, VV:
     takeTree dest, n
-  of NoVTag:
+  of NoVTag, EtupatV:
     case n.stmtKind
     of NoStmt:
       trExpr c, dest, n
