@@ -114,6 +114,7 @@ when supportedSystem:
     ## * `symlinkExists proc`_
     when defined(windows):
       var filename = filename
+      result = false
       wrapUnary(a, getFileAttributesW, filename):
         if a != -1'i32:
           result = (a and FILE_ATTRIBUTE_DIRECTORY) == 0'i32
@@ -132,6 +133,7 @@ when supportedSystem:
     ## * `fileExists proc`_
     ## * `symlinkExists proc`_
     when defined(windows):
+      result = false
       var dir = dir
       wrapUnary(a, getFileAttributesW, dir):
         if a != -1'i32:
@@ -151,6 +153,7 @@ when supportedSystem:
     ## * `fileExists proc`_
     ## * `dirExists proc`_
     when defined(windows):
+      result = false
       var link = link
       wrapUnary(a, getFileAttributesW, link):
         if a != -1'i32:
