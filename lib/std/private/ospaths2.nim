@@ -212,17 +212,15 @@ proc splitPath*(path: string): tuple[head, tail: string] {.
       sepPos = i
       break
   if sepPos >= 0:
-    result.head = substr(path, 0,
-        if sepPos >= 1: sepPos-1 else: 0
-    )
-    result.tail = substr(path, sepPos+1)
+    result = (
+      substr(path, 0,
+        if sepPos >= 1: sepPos-1 else: 0),
+      substr(path, sepPos+1))
   else:
     when doslikeFileSystem:
-      result.head = drive
-      result.tail = splitpath
+      result = (drive, splitpath)
     else:
-      result.head = ""
-      result.tail = path
+      result = ("", path)
 
 proc isAbsolute*(path: string): bool {.noSideEffect, raises: [].} =
   ## Checks whether a given `path` is absolute.
@@ -644,14 +642,14 @@ proc splitFile*(path: string): tuple[dir, name, ext: string] {.
     const stop = 0
   for i in countdown(len(path) - 1, stop):
     if path[i] in {DirSep, AltSep} or i == 0:
+      var dir = ""
       if path[i] in {DirSep, AltSep}:
-        result.dir = substr(path, 0, if i >= 1: i - 1 else: 0)
+        dir = substr(path, 0, if i >= 1: i - 1 else: 0)
         namePos = i + 1
       if dotPos > i:
-        result.name = substr(path, namePos, dotPos - 1)
-        result.ext = substr(path, dotPos)
+        result = (dir, substr(path, namePos, dotPos - 1), substr(path, dotPos))
       else:
-        result.name = substr(path, namePos)
+        result = (dir, substr(path, namePos), "")
       break
     elif path[i] == ExtSep and i > 0 and i < len(path) - 1 and
          path[i - 1] notin {DirSep, AltSep} and
