@@ -754,6 +754,14 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     # Save arg info before traverseExpr advances n
     let argInfo = n.info
     let isMut = n.exprKind == HaddrX
+    # Validate borrowable path for haddr arguments (call-scoped borrows)
+    if isMut:
+      var inner = n
+      inc inner # skip haddr tag
+      let bc = checkBorrowable(inner, false)
+      if bc == NotBorrowable:
+        buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
+          "': path is not borrowable; use 'addr' to override or a temporary move"
     let argPath = extractPath(c, n)
     argPaths.add (argPath, isMut, argInfo)
     if pk == OutT:
@@ -995,13 +1003,20 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     c.resultSym = name
   if isInline:
     c.inlineVars[name] = n
-  # Detect borrow: (haddr X) as init expression starts a borrow
+  # Detect borrow: (haddr X) as init expression starts a borrow.
+  # Validate that the path is borrowable (no deref in the middle, no calls).
+  # Explicit `addr` in the path is an escape hatch ("unchecked").
   if n.kind == ParLe and n.exprKind == HaddrX:
     var inner = n
     inc inner # skip haddr tag
-    let path = extractPath(c, inner)
-    if path.len > 0:
-      c.activeBorrows.add BorrowInfo(path: path, borrower: name, info: n.info)
+    let bc = checkBorrowable(inner, false)
+    if bc == NotBorrowable:
+      buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
+        "': path is not borrowable; use 'addr' to override or a temporary move"
+    else:
+      let path = extractPath(c, inner)
+      if path.len > 0:
+        c.activeBorrows.add BorrowInfo(path: path, borrower: name, info: n.info)
   traverseExpr c, n
   skipParRi n
 
