@@ -20,9 +20,8 @@ block:
     discard
 
 iterator testIteratorGenerics(x: int): int = echo "iterator testIteratorGenerics(x: int): int"
-proc testIteratorGenerics[T](x: T): T =
+proc testIteratorGenerics[T](x: T): T {.noinit.} =
   echo "proc testIteratorGenerics[T](x: T): T"
-  result = default(T)
 
 block:
   var x = testIteratorGenerics(0)
@@ -40,9 +39,8 @@ block:
     discard
 
 iterator testIteratorGenerics3[T](x: T): T = echo "iterator testIteratorGenerics3[T](x: T): T"
-proc testIteratorGenerics3[T](x: T): T =
+proc testIteratorGenerics3[T](x: T): T {.noinit.} =
   echo "proc testIteratorGenerics3[T](x: T): T"
-  result = default(T)
 
 block:
   var x = testIteratorGenerics3(0)
@@ -50,9 +48,8 @@ block:
     discard
 
 iterator testIteratorGenericsTU(x, y: int): int = echo "iterator testIteratorGenericsTU(x, y: int): int"
-proc testIteratorGenericsTU[T, U](x: T; y: U): T =
+proc testIteratorGenericsTU[T, U](x: T; y: U): T {.noinit.} =
   echo "proc testIteratorGenericsTU[T, U](x: T; y: U): T"
-  result = default(T)
 
 block:
   var x = testIteratorGenericsTU(0, 1)

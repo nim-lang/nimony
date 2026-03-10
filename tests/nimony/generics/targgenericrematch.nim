@@ -1,6 +1,6 @@
 # issue #693
 
-proc foo[T](): T = default(T)
+proc foo[T](): T {.noinit.} = discard
 proc bar[T](x: T) = discard
 
 # Compiles without errors
