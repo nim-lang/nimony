@@ -359,8 +359,9 @@ proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter {.
       raiseEncodingError("cannot create encoding converter from " &
         srcEncoding & " to " & destEncoding)
   else:
-    result.dest = nameToCodePage(destEncoding)
-    result.src = nameToCodePage(srcEncoding)
+    result = EncodingConverter(
+      dest: nameToCodePage(destEncoding),
+      src: nameToCodePage(srcEncoding))
     if int(result.dest) == -1:
       raiseEncodingError("cannot find encoding " & destEncoding)
     if int(result.src) == -1:
