@@ -634,15 +634,15 @@ proc splitFile*(path: string): tuple[dir, name, ext: string] {.
 
   var namePos = 0
   var dotPos = 0
+  var dir = ""
   when doslikeFileSystem:
     let (drive, _) = splitDrive(path)
     let stop = len(drive)
-    result.dir = drive
+    dir = drive
   else:
     const stop = 0
   for i in countdown(len(path) - 1, stop):
     if path[i] in {DirSep, AltSep} or i == 0:
-      var dir = ""
       if path[i] in {DirSep, AltSep}:
         dir = substr(path, 0, if i >= 1: i - 1 else: 0)
         namePos = i + 1
