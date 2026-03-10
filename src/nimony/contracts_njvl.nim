@@ -848,11 +848,11 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   skip n # export marker
   let skipInitCheck = hasPragma(n, NoinitP)
   skip n # pragmas
-  c.typeCache.registerLocal(name, cast[SymKind](kind), n)
+  c.typeCache.registerLocal(name, kind, n)
   skip n # type
   if n.kind != DotToken or skipInitCheck:
     c.directlyInitialized[^1].incl name
-  if cast[SymKind](kind) == ResultY:
+  if kind == ResultY:
     c.resultSym = name
   traverseExpr c, n
   skipParRi n
@@ -945,15 +945,15 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
     elif i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
     elif i == ParamsPos:
-      let savedParams = n
-      c.typeCache.registerParams(symId, decl, n)
-      if savedParams.kind == ParLe:
-        var p = savedParams
+      if n.kind == ParLe:
+        var p = n
         inc p
         while p.kind != ParRi:
           let r = takeLocal(p, SkipFinalParRi)
+          c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT:
             outParams.add r.name.symId
+      c.typeCache.registerLocal(symId, ProcY, decl)
     skip n
 
   # Analyze body
