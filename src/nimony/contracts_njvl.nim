@@ -894,16 +894,18 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
   skipParRi n
 
 proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
-  ## Like isEffectivelyInitialized but also checks writeSets.impliedWhenFalse for
-  ## every declared cfvar. At proc end falseCfvars is empty, yet guard-wrapped writes
-  ## `(ite (not ´r.0) (stmts store result ...) .)` are recorded in writeSets with
-  ## guard=´r.0.  If result is in impliedWhenFalse(cf) for any cf in knownCfVars,
-  ## then every control-flow path that reaches the proc end did write result.
+  ## Checks if `symId` is provably initialized at the end of a proc.
+  ## At proc end, falseCfvars is empty, so we check writeSets implications directly.
+  ## We check both directions: impliedWhenFalse (sym written when cfvar is false,
+  ## e.g. result set via `result = expr` in guard-wrapped code) and impliedWhenTrue
+  ## (sym written in the same branch as a jtrue, e.g. result set via `return expr`
+  ## where the return also jtrue's the return guard).
   let eff = isEffectivelyInitialized(c, symId)
   if eff: return true
   for cf in c.knownCfVars:
-    let implied = c.writeSets.impliedWhenFalse(cf, c.knownCfVars)
-    if symId in implied:
+    if symId in c.writeSets.impliedWhenFalse(cf, c.knownCfVars):
+      return true
+    if symId in c.writeSets.impliedWhenTrue(cf, c.knownCfVars):
       return true
   return false
 
