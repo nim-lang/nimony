@@ -864,8 +864,8 @@ when not defined(nimscript) and supportedSystem:
           res = newWideCString(L).toWideCString()
           bufsize = L
         else:
-          result = res$L
-          break
+          return res$L
+      raiseOSError(osLastError())
     else:
       var bufsize = 1024 # should be enough
       result = newString(bufsize)
