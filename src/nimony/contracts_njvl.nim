@@ -44,6 +44,7 @@ type
     moduleSuffix: string
     nestedProcs: int
     knownCfVars: HashSet[SymId]
+    inlineVars: Table[SymId, Cursor] # var -> to its init expression
     knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
     writeSets: WriteSets               # per-ite write-set implications (TokenBuf-based)
     falseCfvars: seq[SymId]            # cfvars currently known false (from `(ite (not cf) ...)` nesting)

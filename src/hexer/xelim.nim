@@ -216,7 +216,13 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     else:
       dest.addParLe LetS, info
     dest.addSymDef tmp, info
-    dest.addEmpty2 info # no export marker, no pragmas
+    dest.addEmpty info # no export marker
+    # Mark these temporaries as (inline) so that the analysis
+    # in contracts_njvl remembers the value. This is necessary
+    # for borrow checking which is defined on the original source
+    # code expressions!
+    dest.copyIntoKind PragmasS, info:
+      dest.copyIntoKind InlineP, info: discard
     dest.copyTree typ
     dest.add callTarget
     dest.addParRi()
