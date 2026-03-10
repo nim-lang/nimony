@@ -1,6 +1,6 @@
 # issue #693
 
-proc foo[T](): T = discard
+proc foo[T](): T = default(T)
 proc bar[T](x: T) = discard
 
 # Compiles without errors

@@ -30,7 +30,7 @@ block:
   assert typeof(f.x) is int
   assert typeof(f.y) is string
 
-proc foo(): int = discard
+proc foo(): int = result = 0
 iterator foo(): float = discard
 
 assert typeof(foo(), typeOfProc) is int
@@ -40,7 +40,7 @@ assert typeof(foo(), TypeofModeConst1) is int
 const TypeofModeConst2 = typeOfIter
 assert typeof(foo(), TypeofModeConst2) is float
 
-proc foo(x: int): string = discard
+proc foo(x: int): string = ""
 iterator foo(x: int): char = discard
 
 assert typeof(foo(0), typeOfProc) is string
