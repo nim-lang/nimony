@@ -116,12 +116,12 @@ proc impliedWhenFalse*(ws: WriteSets; cf: SymId; knownCfVars: HashSet[SymId]): H
         let s = ws.history[j].symId
         if s notin knownCfVars: result.incl s
 
-proc impliedWhenTrue*(ws: WriteSets; cf: SymId; knownCfVars: HashSet[SymId]): HashSet[SymId] =
-  ## Returns the set of syms known initialized when cfvar ``cf`` is true.
-  ## Logic per record:
-  ##   - ``cf`` in then-set → other then-set vars were written in the same branch
-  ##   - ``cf`` in else-set → other else-set vars were written in the same branch
-  ##   - ``guard == cf``    → condition is ``(not cf)``, cf true means else-branch ran
+proc impliedByIte*(ws: WriteSets; cf: SymId; knownCfVars: HashSet[SymId]): HashSet[SymId] =
+  ## Returns the set of syms provably initialized regardless of ``cf``'s value.
+  ## If ``cf`` appears anywhere in a record (as guard, in then-set, or in else-set),
+  ## then all non-cfvar syms from *both* branches are implied. This is sound because
+  ## cf must be either true or false, and the union of impliedWhenFalse ∪ impliedWhenTrue
+  ## simplifies to this single condition.
   result = initHashSet[SymId]()
   var i = ws.startIdx
   while i < ws.history.len:
@@ -149,13 +149,10 @@ proc impliedWhenTrue*(ws: WriteSets; cf: SymId; knownCfVars: HashSet[SymId]): Ha
     let elseEnd = i
     assert ws.history[i].kind == ParRi; inc i
     assert ws.history[i].kind == ParRi; inc i
-    # When cf is true: cf was jtrue'd, so the branch containing cf ran.
-    # All non-cfvar syms in that same branch were also written.
-    if cfInThen:
+    if guard == cf or cfInThen or cfInElse:
       for j in thenStart ..< thenEnd:
         let s = ws.history[j].symId
         if s notin knownCfVars: result.incl s
-    if cfInElse or guard == cf:
       for j in elseStart ..< elseEnd:
         let s = ws.history[j].symId
         if s notin knownCfVars: result.incl s

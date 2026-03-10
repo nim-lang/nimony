@@ -73,7 +73,9 @@
     (join `j.0.main +4 +3 +2)
     (join b.0 +2 +1 +0))))
  (call echo.0 "after loop")
- (let :`x.1 . .
+ (let :`x.1 .
+  (pragmas
+   (inline))
   (i +32)
   (call echo.1 "abc"))
  (call echo.0
