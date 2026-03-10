@@ -1220,6 +1220,11 @@ proc eliminateJumps*(pass: var Pass) =
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.add n
   inc n
+  # Add a top-level return guard so that noreturn calls at module level
+  # have a cfvar to set via jtrue, enabling the cfvar-based init tracking:
+  let topFlag = pool.syms.getOrIncl("´r.0." & c.thisModuleSuffix)
+  c.current.guards.add Guard(cond: topFlag, active: false)
+  declareCfVar c, pass.dest, topFlag
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
   while n.kind != ParRi:
     trGuardedStmts c, b, pass.dest, n, false
