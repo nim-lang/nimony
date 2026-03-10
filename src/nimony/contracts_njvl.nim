@@ -47,6 +47,10 @@ type
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
     knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
     writeSets: WriteSets               # per-ite write-set implications (TokenBuf-based)
+<<<<<<< araq-borrow-checking
+=======
+    falseCfvars: seq[SymId]            # cfvars currently known false (from `(ite (not cf) ...)` nesting)
+>>>>>>> master
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
@@ -734,7 +738,13 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if condFacts == 1:
     condFactsList.add c.facts[c.facts.len - 1]
 
+<<<<<<< araq-borrow-checking
   # Then branch
+=======
+  # Then branch: when condition is `(not cf)`, cf is false inside this branch.
+  if condCf != NoSymId:
+    c.falseCfvars.add condCf
+>>>>>>> master
   traverseStmt c, n
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
@@ -765,7 +775,11 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   # Conservative merge: only keep facts/writes/cfvars that hold in both branches.
   # Variables written in only one branch are tracked via writeSets and resolved
+<<<<<<< araq-borrow-checking
   # through the cfvar implication mechanism (impliedWhenFalse, impliedByIte).
+=======
+  # through the falseCfvars + impliedWhenFalse mechanism inside guard ites.
+>>>>>>> master
   c.facts = merge(thenFacts, 0, c.facts, false)
   c.writesTo.join(writesSp)
   c.knownTrueCfVars.join(cfSp)
@@ -886,6 +900,7 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
 
 proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
   ## Checks if `symId` is provably initialized at the end of a proc.
+<<<<<<< araq-borrow-checking
   ## Uses `impliedByIte`: if a cfvar cf appears anywhere in a writeSets record
   ## (as guard, in then-set, or in else-set), then all non-cfvar vars from both
   ## branches of that record are provably initialized.
@@ -893,6 +908,19 @@ proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
   if eff: return true
   for cf in c.knownCfVars:
     if symId in c.writeSets.impliedByIte(cf, c.knownCfVars):
+=======
+  ## At proc end, falseCfvars is empty, so we check writeSets implications directly.
+  ## We check both directions: impliedWhenFalse (sym written when cfvar is false,
+  ## e.g. result set via `result = expr` in guard-wrapped code) and impliedWhenTrue
+  ## (sym written in the same branch as a jtrue, e.g. result set via `return expr`
+  ## where the return also jtrue's the return guard).
+  let eff = isEffectivelyInitialized(c, symId)
+  if eff: return true
+  for cf in c.knownCfVars:
+    if symId in c.writeSets.impliedWhenFalse(cf, c.knownCfVars):
+      return true
+    if symId in c.writeSets.impliedWhenTrue(cf, c.knownCfVars):
+>>>>>>> master
       return true
   return false
 
@@ -936,9 +964,16 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
     let info = decl.info
     # Emulate a "use result" / "use outParam" check at proc end.
     # In-body writes are wrapped in (ite (not ´r.0) ...) guards, so they appear in
+<<<<<<< araq-borrow-checking
     # writeSets but not in writesTo after the conservative join.
     # We check all declared cfvars: result is provably set if cf appears
     # anywhere in a writeSets record that also mentions result.
+=======
+    # writeSets.impliedWhenFalse but not in writesTo after the join.
+    # We check all declared cfvars: result is provably set if it is in
+    # impliedWhenFalse(cf) for any cf in knownCfVars (the same check the
+    # in-body "use x" path exercises when falseCfvars is non-empty).
+>>>>>>> master
     # Skip importc/importcpp procs: they have no Nim body and satisfy their
     # out-params / result contract at the C level.
     if not isExternProc:
