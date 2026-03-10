@@ -1,4 +1,5 @@
 (stmts
+ (cfvar :´r.0.main)
  (proc :echo.0 . . .
   (params
    (param :msg.0 . .
@@ -208,7 +209,7 @@
      (jtrue ´g.1))
     (stmts
      (call echo.0 "after block break")))
-   (kill ´r.0 a.0 ´g.1)))
+   (kill ´g.1 ´r.0 a.0)))
  (proc :test9.0 . . .
   (params) . . .
   (stmts
@@ -286,4 +287,5 @@
        (continue .)) .)
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0 d.0 c.0 b.0))))
+   (kill ´r.0 a.0 d.0 c.0 b.0)))
+ (kill ´r.0.main))
