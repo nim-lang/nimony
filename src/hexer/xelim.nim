@@ -624,9 +624,19 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of AsgnS:
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
+    # Peek at the LHS: if it is the `result` variable, do not extract a
+    # call on the RHS to a temporary.  nj.nim's trAsgn handles the call
+    # directly via trBoundExpr and emits the "was successful?" branching
+    # after the store, which is both simpler and avoids borrow-checking
+    # trouble caused by the extra temporary.
+    var lhsIsResult = false
+    if c.goal == TowardsNjvl:
+      let peek = n.firstSon
+      lhsIsResult = peek.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
       if c.goal == TowardsNjvl:
+        if lhsIsResult: tar.m = IsBound  # keep call in-place, no temp
         trExpr c, dest, n, tar
       else:
         tar.m = IsBound

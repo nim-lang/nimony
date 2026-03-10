@@ -51,6 +51,7 @@ block: # isEmptyOrWhitespace
 
 block: # split iterator
   proc testSplit(s: string; seps: set[char] = Whitespace; maxsplit: int = -1): seq[string] =
+    result = @[]
     for s in split(s, seps, maxsplit):
       result.add s
 

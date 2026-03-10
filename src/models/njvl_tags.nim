@@ -11,6 +11,7 @@ type
     ItecV = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
     LoopV = (ord(LoopTagId), "loop")  ## `loop` components are (before-cond, cond, loop-body, after)
     VV = (ord(VTagId), "v")  ## `versioned` locations
+    EtupatV = (ord(EtupatTagId), "etupat")  ## tupat expression for error handling
     UnknownV = (ord(UnknownTagId), "unknown")  ## location's contents is unknown at this point
     JtrueV = (ord(JtrueTagId), "jtrue")  ## set variables v1, v2, ... to `(true)`; hint this should become a jump
     CfvarV = (ord(CfvarTagId), "cfvar")  ## declare a new control flow variable `D` of type `bool` initialized to `false`
@@ -19,5 +20,5 @@ type
     AssertV = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
 
 proc rawTagIsNjvlKind*(raw: TagEnum): bool {.inline.} =
-  raw in {StoreTagId, ContinueTagId, IteTagId, ItecTagId, LoopTagId, VTagId, UnknownTagId, JtrueTagId, CfvarTagId, KillTagId, AssumeTagId, AssertTagId}
+  raw in {StoreTagId, ContinueTagId, IteTagId, ItecTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, CfvarTagId, KillTagId, AssumeTagId, AssertTagId}
 

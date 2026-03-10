@@ -263,6 +263,26 @@ proc lookupField*(c: var TypeCache; typ: Cursor; fld: SymId): Cursor =
   var body = skipToObjectBody(typ)
   result = typeOfField(c, body, fld)
 
+proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor
+
+proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
+  result = c.builtins.autoType # to indicate error
+  var n = n
+  inc n # into tuple
+  var tupType = getTypeImpl(c, n, flags)
+  tupType = skipModifier(tupType)
+  if tupType.typeKind == TupleT:
+    skip n # skip tuple expression
+    if n.kind == IntLit:
+      var idx = pool.integers[n.intId]
+      inc tupType # into the tuple type
+      while idx > 0:
+        skip tupType
+        dec idx
+      result = getTupleFieldType(tupType)
+  elif BeStrict in flags:
+    assert false, "wanted tuple type but got: " & toString(tupType, false)
+
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   result = c.builtins.autoType # to indicate error
   case exprKind(n)
@@ -311,8 +331,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       of StmtsS, RetS:
         result = c.builtins.voidType
       else:
-        if njvlKind(n) == VV:
+        case njvlKind(n)
+        of VV:
           result = getTypeImpl(c, n.firstSon, flags)
+        of EtupatV:
+          result = tupatType(c, n, flags)
+        else: discard
     else:
       case n.substructureKind
       of RangesU, RangeU:
@@ -472,21 +496,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
   of TupatX:
-    var n = n
-    inc n # into tuple
-    var tupType = getTypeImpl(c, n, flags)
-    tupType = skipModifier(tupType)
-    if tupType.typeKind == TupleT:
-      skip n # skip tuple expression
-      if n.kind == IntLit:
-        var idx = pool.integers[n.intId]
-        inc tupType # into the tuple type
-        while idx > 0:
-          skip tupType
-          dec idx
-        result = getTupleFieldType(tupType)
-    elif BeStrict in flags:
-      assert false, "wanted tuple type but got: " & toString(tupType, false)
+    result = tupatType(c, n, flags)
   of BracketX:
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.firstSon, flags)

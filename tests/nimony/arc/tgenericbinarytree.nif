@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +11024           )
+(.indexat +11102           )
 0,1,tests/nimony/arc/tgenericbinarytree.nim(stmts 5
  (type :int.0.
   (i -1) . 5
@@ -178,7 +178,9 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (result :dest.0 . . ~11,5 Node.0.I7ocb84. .)
+   (result :dest.0 .
+    (pragmas
+     (noinit)) ~11,5 Node.0.I7ocb84. .)
    (if
     (elif src.0
      (stmts
@@ -262,7 +264,9 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (result :dest.0 . . NodeObj.0.Ihirja6. .)
+   (result :dest.0 .
+    (pragmas
+     (noinit)) NodeObj.0.Ihirja6. .)
    (asgn
     (dot dest.0 data.0 +0)
     (dot src.0 data.0 +0))
@@ -370,7 +374,9 @@
   (pragmas
    (nodestroy)) .
   (stmts
-   (result :dest.0 . . ~11
+   (result :dest.0 .
+    (pragmas
+     (noinit)) ~11
     (ref 11 NodeObj.0.Ihirja6.) .)
    (if
     (elif src.0
@@ -445,18 +451,18 @@
  (h =destroy_SX4eode0X497ocb84tge84fu91.0. +597) 23,3
  (h =wasmoved_SX4eode0X497ocb84tge84fu91.0. +496) 23,3
  (h =dup_SX4eode0X497ocb84tge84fu91.0. +208) 23,3
- (h =copy_SX4eode0X497ocb84tge84fu91.0. +389) 23,3
+ (h =copy_SX4eode0X497ocb84tge84fu91.0. +415) 23,3
  (h =sinkh_SX4eode0X497ocb84tge84fu91.0. +428) 23,3
  (h =trace_SX4eode0X497ocb84tge84fu91.0. +429) 23,3
  (h =destroy_SX4eodeX4fbj0X49hirja6tge84fu91.0. +204) 23,3
  (h =wasmoved_SX4eodeX4fbj0X49hirja6tge84fu91.0. +331) 23,3
  (h =dup_SX4eodeX4fbj0X49hirja6tge84fu91.0. +400) 23,3
- (h =copy_SX4eodeX4fbj0X49hirja6tge84fu91.0. +536) 23,3
+ (h =copy_SX4eodeX4fbj0X49hirja6tge84fu91.0. +562) 23,3
  (h =sinkh_SX4eodeX4fbj0X49hirja6tge84fu91.0. +533) 23,3
  (h =trace_SX4eodeX4fbj0X49hirja6tge84fu91.0. +536) 23,3
  (h =destroy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +413) 23,3
  (h =wasmoved_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +519) 23,3
  (h =dup_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +232) 23,3
- (h =copy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +438) 23,3
+ (h =copy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +464) 23,3
  (h =sinkh_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +466) 23,3
  (h =trace_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +467))
