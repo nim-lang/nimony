@@ -159,6 +159,56 @@ proc extractPath(c: NjvlContext; n: Cursor): BorrowPath =
   result = @[]
   extractBorrowPath(c, n, result)
 
+type
+  BorrowableCheck = enum
+    IsBorrowable       ## simple path: symbols, dots, array access
+    NotBorrowable      ## deref in middle of path or function call
+    HasAddr            ## path contains explicit `addr` — unsafe escape hatch
+
+proc checkBorrowable(n: Cursor; seenFieldAccess: bool): BorrowableCheck =
+  ## Walk the path expression inward. `seenFieldAccess` tracks whether we've
+  ## already seen a dot/array access outside the current position.
+  ## A deref after a field access means "deref in the middle" → not borrowable.
+  if n.kind == ParLe:
+    let ek = n.exprKind
+    if ek == AddrX:
+      return HasAddr
+    elif ek in {DotX, DdotX, TupatX, ArrAtX, AtX, PatX}:
+      var r = n
+      inc r
+      return checkBorrowable(r, true)
+    elif ek in {HderefX, DerefX}:
+      if seenFieldAccess:
+        return NotBorrowable # deref in middle of path
+      var r = n
+      inc r
+      return checkBorrowable(r, false)
+    elif ek == HaddrX:
+      var r = n
+      inc r
+      return checkBorrowable(r, seenFieldAccess)
+    elif ek in ConvKinds:
+      var r = n
+      inc r
+      skip r # type
+      return checkBorrowable(r, seenFieldAccess)
+    elif ek == BaseobjX:
+      var r = n
+      inc r
+      skip r # type
+      skip r # intlit
+      return checkBorrowable(r, seenFieldAccess)
+    elif ek in CallKinds:
+      return NotBorrowable # function call in path
+    elif n.njvlKind in {VV, EtupatV}:
+      return IsBorrowable
+    else:
+      return NotBorrowable
+  elif n.kind == Symbol:
+    return IsBorrowable
+  else:
+    return NotBorrowable
+
 proc pathsOverlap(a, b: BorrowPath): bool =
   ## Two paths overlap if one is a prefix of the other (or they are equal).
   ## Disjoint siblings (e.g. a.b vs a.c) do not overlap.
@@ -694,7 +744,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   inc fnType
   var paramMap = initTable[SymId, int]()
   # Collect argument paths for aliasing check
-  var argPaths: seq[tuple[path: BorrowPath, isMut: bool, info: PackedLineInfo]]
+  var argPaths: seq[tuple[path: BorrowPath, isMut: bool, info: PackedLineInfo]] = @[]
   while n.kind != ParRi:
     let previousFormalParam = fnType
     assert fnType.kind != ParRi
