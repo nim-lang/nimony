@@ -41,13 +41,13 @@ type
     writesTo: IteTracker[SymId]
     errors: TokenBuf
     procCanRaise: bool
-    basicBlockIsNoReturn: bool  # set by noreturn calls (fallback when no active guards)
     moduleSuffix: string
     nestedProcs: int
     knownCfVars: HashSet[SymId]
     knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
     writeSets: WriteSets               # per-ite write-set implications (TokenBuf-based)
     falseCfvars: seq[SymId]            # cfvars currently known false (from `(ite (not cf) ...)` nesting)
+    resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -607,8 +607,6 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   var fnPragmas = fnType
   skip fnPragmas # params
   skip fnPragmas # return type
-  if hasPragma(fnPragmas, NoReturnP):
-    c.basicBlockIsNoReturn = true
   traverseExpr c, n # the `fn` itself
   assert fnType.isParamsTag
   inc fnType
@@ -743,19 +741,12 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   # Then branch: when condition is `(not cf)`, cf is false inside this branch.
   if condCf != NoSymId:
     c.falseCfvars.add condCf
-  let beforeIteIsNoReturn = c.basicBlockIsNoReturn
-  c.basicBlockIsNoReturn = false
   traverseStmt c, n
   if condCf != NoSymId:
     discard c.falseCfvars.pop()
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
   c.knownTrueCfVars.thenDone(cfSp)
-  # A branch is truly no-return only when a noreturn proc was called. Activating a cfvar
-  # via (jtrue ...) is NOT enough: both branches still fall through to the ite's join point.
-  # For return/raise/break, subsequent code is wrapped in guard ites; the writeSets
-  # impliedWhenFalse mechanism handles init-tracking in those cases correctly.
-  let thenIsNoReturn = c.basicBlockIsNoReturn
 
   # Restore facts for else branch
   restore(c.facts, savedFacts)
@@ -764,15 +755,11 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     negateFact(negated)
     c.facts.add negated
 
-  c.basicBlockIsNoReturn = false
   # Else branch
   if n.kind == DotToken:
     inc n # empty else
   else:
     traverseStmt c, n
-  let elseIsNoReturn = c.basicBlockIsNoReturn
-
-  c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
 
   # Record implication for this ite: captures writes and jtrue'd cfvars from each branch.
   # `guard` is the cfvar from a `(not guard)` condition (condCf), if any.
@@ -784,13 +771,15 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   for cf in c.knownTrueCfVars.since(cfSp.cp): c.writeSets.emitElse(cf)
   c.writeSets.closeRecord()
 
-  # Merge: only keep facts/writes/cfvars that hold in both branches
+  # Conservative merge: only keep facts/writes/cfvars that hold in both branches.
+  # Variables written in only one branch are tracked via writeSets and resolved
+  # through the falseCfvars + impliedWhenFalse mechanism inside guard ites.
   c.facts = merge(thenFacts, 0, c.facts, false)
-  c.writesTo.join(writesSp, thenIsNoReturn, elseIsNoReturn)
-  c.knownTrueCfVars.join(cfSp, thenIsNoReturn, elseIsNoReturn)
+  c.writesTo.join(writesSp)
+  c.knownTrueCfVars.join(cfSp)
 
-  # If the condition was a direct cfvar and the then-branch was a leaving path (evidenced by
-  # cfvars set via jtrue in then), sequential code past this ite can only be reached when
+  # If the condition was a direct cfvar and the then-branch activated cfvars via jtrue
+  # (a leaving path), sequential code past this ite can only be reached when the
   # cfvar was false. Query implications to find vars now known initialized.
   # Example: `(ite ´g.0 (stmts quit jtrue ´r.0) .)` — after this, ´g.0 must be false,
   # so variables initialized only when ´g.0=false are now known initialized.
@@ -844,10 +833,12 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   skip n # export marker
   let skipInitCheck = hasPragma(n, NoinitP)
   skip n # pragmas
-  c.typeCache.registerLocal(name, cast[SymKind](kind), n)
+  c.typeCache.registerLocal(name, kind, n)
   skip n # type
   if n.kind != DotToken or skipInitCheck:
     c.directlyInitialized[^1].incl name
+  if kind == ResultY:
+    c.resultSym = name
   traverseExpr c, n
   skipParRi n
 
@@ -901,6 +892,22 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
       contractViolation(c, orig, fact, report)
   skipParRi n
 
+proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
+  ## Checks if `symId` is provably initialized at the end of a proc.
+  ## At proc end, falseCfvars is empty, so we check writeSets implications directly.
+  ## We check both directions: impliedWhenFalse (sym written when cfvar is false,
+  ## e.g. result set via `result = expr` in guard-wrapped code) and impliedWhenTrue
+  ## (sym written in the same branch as a jtrue, e.g. result set via `return expr`
+  ## where the return also jtrue's the return guard).
+  let eff = isEffectivelyInitialized(c, symId)
+  if eff: return true
+  for cf in c.knownCfVars:
+    if symId in c.writeSets.impliedWhenFalse(cf, c.knownCfVars):
+      return true
+    if symId in c.writeSets.impliedWhenTrue(cf, c.knownCfVars):
+      return true
+  return false
+
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let decl = n
   c.facts = createFacts()
@@ -911,21 +918,49 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let savedWriteSetsScopeIdx = c.writeSets.pushScope()
   let oldFalseCfvars = move c.falseCfvars
   let oldKnownCfVars = move c.knownCfVars
+  let oldResultSym = c.resultSym
+  c.resultSym = NoSymId
   inc n
   let symId = n.symId
   var isGeneric = false
+  var isExternProc = false
+  var outParams: seq[SymId] = @[]
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
       c.procCanRaise = hasPragma(n, RaisesP)
+      isExternProc = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP)
     elif i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
     elif i == ParamsPos:
-      c.typeCache.registerParams(symId, decl, n)
+      if n.kind == ParLe:
+        var p = n
+        inc p
+        while p.kind != ParRi:
+          let r = takeLocal(p, SkipFinalParRi)
+          c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
+          if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
+            outParams.add r.name.symId
+      c.typeCache.registerLocal(symId, ProcY, decl)
     skip n
 
   # Analyze body
   if not isGeneric:
     traverseStmt c, n
+    let info = decl.info
+    # Emulate a "use result" / "use outParam" check at proc end.
+    # In-body writes are wrapped in (ite (not ´r.0) ...) guards, so they appear in
+    # writeSets.impliedWhenFalse but not in writesTo after the join.
+    # We check all declared cfvars: result is provably set if it is in
+    # impliedWhenFalse(cf) for any cf in knownCfVars (the same check the
+    # in-body "use x" path exercises when falseCfvars is non-empty).
+    # Skip importc/importcpp procs: they have no Nim body and satisfy their
+    # out-params / result contract at the C level.
+    if not isExternProc:
+      if c.resultSym != NoSymId and not isInitializedAtProcEnd(c, c.resultSym):
+        buildErr c, info, "cannot prove that " & pool.syms[c.resultSym] & " has been initialized"
+      for sym in outParams:
+        if not isInitializedAtProcEnd(c, sym):
+          buildErr c, info, "cannot prove that " & pool.syms[sym] & " has been initialized"
   else:
     skip n
   skipParRi n
@@ -934,6 +969,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.writeSets.popScope(savedWriteSetsScopeIdx)
   c.falseCfvars = oldFalseCfvars
   c.knownCfVars = oldKnownCfVars
+  c.resultSym = oldResultSym
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
@@ -956,7 +992,9 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     skipParRi n
   of JtrueV:
     # (jtrue cf1 cf2 ...) - cfvars listed here are now known true on this path.
-    # vl.nim emits bare symbols inside jtrue (the versioning happens for uses after it).
+    # NJ emits jtrue after noreturn calls and leaving paths (return/break/raise).
+    # The cfvar information is used at join points to determine which branches are
+    # leaving paths, enabling the writeSets implication mechanism.
     inc n
     while n.kind != ParRi:
       assert n.kind == Symbol
@@ -1005,6 +1043,12 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       skipParRi n
     of EmitS, InclS, ExclS:
       skip n
+    of PragmaxS:
+      inc n
+      skip n # pragmas
+      while n.kind != ParRi:
+        traverseStmt c, n
+      skipParRi n
     of NoStmt:
       if n.exprKind in CallKinds:
         analyseCall c, n

@@ -650,11 +650,12 @@ proc splitFile*(path: string): tuple[dir, name, ext: string] {.
         result = (dir, substr(path, namePos, dotPos - 1), substr(path, dotPos))
       else:
         result = (dir, substr(path, namePos), "")
-      break
+      return result
     elif path[i] == ExtSep and i > 0 and i < len(path) - 1 and
          path[i - 1] notin {DirSep, AltSep} and
          path[i + 1] != ExtSep and dotPos == 0:
       dotPos = i
+  result = (dir, "", "")
 
 proc extractFilename*(path: string): string {.
   noSideEffect.} =
@@ -863,8 +864,8 @@ when not defined(nimscript) and supportedSystem:
           res = newWideCString(L).toWideCString()
           bufsize = L
         else:
-          result = res$L
-          break
+          return res$L
+      raiseOSError(osLastError())
     else:
       var bufsize = 1024 # should be enough
       result = newString(bufsize)

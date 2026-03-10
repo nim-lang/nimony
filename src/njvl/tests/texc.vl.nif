@@ -1,4 +1,5 @@
 (stmts
+ (cfvar :´r.0.main)
  (proc :echo.0 . . .
   (params
    (param :cond.0 . .
@@ -55,4 +56,5 @@
      (stmts
       (jtrue ´g.1)) .
      (stmts))
-    (kill ´g.1 ´r.0)))))
+    (kill ´r.0 ´g.1))))
+ (kill ´r.0.main))
