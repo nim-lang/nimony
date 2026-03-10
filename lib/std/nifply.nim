@@ -96,6 +96,7 @@ proc fromNif*(r: var NifReader; t: typedesc[bool]): bool =
     result = false
   else:
     assert false, "got unexpected token: " & $t.data
+    result = false
 
   let t2 = r.next
   assert t2.tk == ParRi
@@ -106,7 +107,7 @@ proc fromNif*[E: enum](r: var NifReader; t: typedesc[E]): E =
     let val = r.next
     result = E decodeUInt val
 
-proc fromNif*[O: object](r: var NifReader; t: typedesc[O]): O =
+proc fromNif*[O: object](r: var NifReader; t: typedesc[O]): O {.noinit.} =
   r.expectTree "oconstr":
     r.expectSymbol internalTypeName O
     for name, f in internalFieldPairs(result):

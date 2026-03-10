@@ -798,7 +798,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   # cfvar was false. Query implications to find vars now known initialized.
   # Example: `(ite ´g.0 (stmts quit jtrue ´r.0) .)` — after this, ´g.0 must be false,
   # so variables initialized only when ´g.0=false are now known initialized.
-  if condDirectCf != NoSymId and cfSp.thenData.len > 0:
+  if condDirectCf != NoSymId and (cfSp.thenData.len > 0 or thenIsNoReturn):
     for sym in c.writeSets.impliedWhenFalse(condDirectCf, c.knownCfVars):
       c.writesTo.add sym
 
@@ -951,7 +951,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
         while p.kind != ParRi:
           let r = takeLocal(p, SkipFinalParRi)
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
-          if r.typ.typeKind == OutT:
+          if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
             outParams.add r.name.symId
       c.typeCache.registerLocal(symId, ProcY, decl)
     skip n
