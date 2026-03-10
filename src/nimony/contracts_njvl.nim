@@ -41,7 +41,6 @@ type
     writesTo: IteTracker[SymId]
     errors: TokenBuf
     procCanRaise: bool
-    basicBlockIsNoReturn: bool  # set by noreturn calls (fallback when no active guards)
     moduleSuffix: string
     nestedProcs: int
     knownCfVars: HashSet[SymId]
@@ -608,8 +607,6 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   var fnPragmas = fnType
   skip fnPragmas # params
   skip fnPragmas # return type
-  if hasPragma(fnPragmas, NoReturnP):
-    c.basicBlockIsNoReturn = true
   traverseExpr c, n # the `fn` itself
   assert fnType.isParamsTag
   inc fnType
@@ -744,19 +741,12 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   # Then branch: when condition is `(not cf)`, cf is false inside this branch.
   if condCf != NoSymId:
     c.falseCfvars.add condCf
-  let beforeIteIsNoReturn = c.basicBlockIsNoReturn
-  c.basicBlockIsNoReturn = false
   traverseStmt c, n
   if condCf != NoSymId:
     discard c.falseCfvars.pop()
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
   c.knownTrueCfVars.thenDone(cfSp)
-  # A branch is truly no-return only when a noreturn proc was called. Activating a cfvar
-  # via (jtrue ...) is NOT enough: both branches still fall through to the ite's join point.
-  # For return/raise/break, subsequent code is wrapped in guard ites; the writeSets
-  # impliedWhenFalse mechanism handles init-tracking in those cases correctly.
-  let thenIsNoReturn = c.basicBlockIsNoReturn
 
   # Restore facts for else branch
   restore(c.facts, savedFacts)
@@ -765,15 +755,11 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     negateFact(negated)
     c.facts.add negated
 
-  c.basicBlockIsNoReturn = false
   # Else branch
   if n.kind == DotToken:
     inc n # empty else
   else:
     traverseStmt c, n
-  let elseIsNoReturn = c.basicBlockIsNoReturn
-
-  c.basicBlockIsNoReturn = beforeIteIsNoReturn or (elseIsNoReturn and thenIsNoReturn)
 
   # Record implication for this ite: captures writes and jtrue'd cfvars from each branch.
   # `guard` is the cfvar from a `(not guard)` condition (condCf), if any.
@@ -785,20 +771,19 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   for cf in c.knownTrueCfVars.since(cfSp.cp): c.writeSets.emitElse(cf)
   c.writeSets.closeRecord()
 
-  # Merge: only keep facts/writes/cfvars that hold in both branches.
-  # If the then-branch activated any cfvar via jtrue (a "leaving" path),
-  # treat it like thenIsNoReturn for writesTo: the else-branch is the
-  # only continuation, so its writes are unconditionally reachable.
+  # Conservative merge: only keep facts/writes/cfvars that hold in both branches.
+  # Variables written in only one branch are tracked via writeSets and resolved
+  # through the falseCfvars + impliedWhenFalse mechanism inside guard ites.
   c.facts = merge(thenFacts, 0, c.facts, false)
-  c.writesTo.join(writesSp, thenIsNoReturn, elseIsNoReturn)
-  c.knownTrueCfVars.join(cfSp, thenIsNoReturn, elseIsNoReturn)
+  c.writesTo.join(writesSp)
+  c.knownTrueCfVars.join(cfSp)
 
-  # If the condition was a direct cfvar and the then-branch was a leaving path (evidenced by
-  # cfvars set via jtrue in then), sequential code past this ite can only be reached when
+  # If the condition was a direct cfvar and the then-branch activated cfvars via jtrue
+  # (a leaving path), sequential code past this ite can only be reached when the
   # cfvar was false. Query implications to find vars now known initialized.
   # Example: `(ite ´g.0 (stmts quit jtrue ´r.0) .)` — after this, ´g.0 must be false,
   # so variables initialized only when ´g.0=false are now known initialized.
-  if condDirectCf != NoSymId and (cfSp.thenData.len > 0 or thenIsNoReturn):
+  if condDirectCf != NoSymId and cfSp.thenData.len > 0:
     for sym in c.writeSets.impliedWhenFalse(condDirectCf, c.knownCfVars):
       c.writesTo.add sym
 
@@ -1005,14 +990,13 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     skipParRi n
   of JtrueV:
     # (jtrue cf1 cf2 ...) - cfvars listed here are now known true on this path.
-    # vl.nim emits bare symbols inside jtrue (the versioning happens for uses after it).
-    # Only track cfvars in live code: if basicBlockIsNoReturn is already set (e.g. after
-    # a `quit` call), we're in dead code and the jtrue has no meaning at the join point.
+    # NJ emits jtrue after noreturn calls and leaving paths (return/break/raise).
+    # The cfvar information is used at join points to determine which branches are
+    # leaving paths, enabling the writeSets implication mechanism.
     inc n
     while n.kind != ParRi:
       assert n.kind == Symbol
-      if not c.basicBlockIsNoReturn:
-        c.knownTrueCfVars.add n.symId
+      c.knownTrueCfVars.add n.symId
       inc n
     inc n  # ParRi
   of KillV:
