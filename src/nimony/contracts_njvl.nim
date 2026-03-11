@@ -111,7 +111,7 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
 
 # --- Borrow checking ---
 
-proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo) =
+proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
   if n.kind == ParLe:
@@ -121,7 +121,7 @@ proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo) =
         result.mode = NotBorrowable
       var r = n
       inc r
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
       skip r # skip object subtree
       if r.kind == Symbol:
         result.path.add r.symId
@@ -129,57 +129,63 @@ proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo) =
       result.mode = HasAddr
       var r = n
       inc r
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
     elif ek == DerefX:
       if result.mode != HasAddr:
         result.mode = NotBorrowable
       var r = n
       inc r
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
     elif ek in {HaddrX, HderefX}:
       var r = n
       inc r
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
     elif ek in {TupatX, ArrAtX, AtX, PatX}:
       # Array/tuple access: recurse into container, don't distinguish indices
       var r = n
       inc r
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
     elif ek in ConvKinds:
       var r = n
       inc r
       skip r # type
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
     elif ek == BaseobjX:
       var r = n
       inc r
       skip r # type
       skip r # intlit
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
     elif ek in CallKinds:
       # we borrow from the first argument of the call:
       var r = n
       inc r
       skip r # fn
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
     elif n.njvlKind == EtupatV:
       var r = n
       inc r
-      extractBorrowPath(c, r, result)
+      extractBorrowPath(c, r, result, followInlineVars)
     elif n.njvlKind == VV:
-      extractBorrowPath(c, n.firstSon, result)
+      extractBorrowPath(c, n.firstSon, result, followInlineVars)
   elif n.kind == Symbol:
     let s = n.symId
-    if s in c.inlineVars:
-      extractBorrowPath(c, c.inlineVars[s], result)
+    if followInlineVars and s in c.inlineVars:
+      extractBorrowPath(c, c.inlineVars[s], result, followInlineVars)
     else:
       if result.mode != HasAddr:
         result.mode = IsBorrowable
       result.path.add s
 
-proc extractPath(c: NjvlContext; n: Cursor): BorrowInfo =
+proc extractPath(c: NjvlContext; n: Cursor; followInlineVars=true): BorrowInfo =
   result = BorrowInfo(path: @[], mode: NotBorrowable, info: n.info)
-  extractBorrowPath(c, n, result)
+  extractBorrowPath(c, n, result, followInlineVars)
+
+proc `$`(b: BorrowInfo): string =
+  result = "BorrowInfo(mode: " & $b.mode & ", path: "
+  for i in 0 ..< b.path.len:
+    result.add " :: " & pool.syms[b.path[i]]
+  result.add ")"
 
 proc pathsOverlap(a, b: BorrowInfo): bool =
   ## Two paths overlap if one is a prefix of the other (or they are equal).
@@ -721,7 +727,7 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
       else:
         mutPaths.add m
     else:
-      let m = extractPath(c, n)
+      let m = extractPath(c, n, followInlineVars = false)
       if m.mode == IsBorrowable:
         immPaths.add m
     skip n
@@ -729,12 +735,19 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
   for i in 0 ..< mutPaths.len:
     for j in 0 ..< immPaths.len:
       if pathsOverlap(mutPaths[i], immPaths[j]):
+        when false:
+          echo "mutPaths[i]: ", mutPaths[i]
+          echo "immPaths[j]: ", immPaths[j]
         buildErr c, mutPaths[i].info, "mutable argument aliases with immutable parameter"
-        break
+        quit 1
+        #break
   # Mutable argument must not overlap with any other mutable argument:
   for i in 0 ..< mutPaths.len:
     for j in 0 ..< mutPaths.len:
       if i != j and pathsOverlap(mutPaths[i], mutPaths[j]):
+        when false:
+          echo "mutPaths[i]: ", mutPaths[i]
+          echo "mutPaths[j]: ", mutPaths[j]
         buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
         break
 
