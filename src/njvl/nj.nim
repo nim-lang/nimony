@@ -834,30 +834,34 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     endRead w
     dest.addParRi() # close "loop"
 
-proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): TokenBuf =
-  ## If the for-loop iterates with a borrowing iterator (yields var T or lent T),
-  ## produce a synthetic `(let _fb.N . . int (haddr firstArg))` local that
-  ## represents the borrow from the collection. This lets the borrow checker
-  ## detect mutations of the collection during iteration.
-  result = createTokenBuf(0)
-  # Check if any loop variable has MutT or LentT type (borrowing yield):
-  var vars = forStmt.vars
-  var hasBorrowingIter = false
-  if vars.substructureKind == UnpackflatU:
+proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) =
+  var vars = vars
+  if vars.substructureKind in {UnpackflatU, UnpacktupU}:
     inc vars
     while vars.kind != ParRi:
-      let local = asLocal(vars)
-      if local.typ.typeKind in {MutT, LentT}:
-        hasBorrowingIter = true
-        break
+      addForBorrowDecls dest, vars, firstArgBuf
       skip vars
-  elif vars.symKind in {LetY, VarY, CursorY}:
+  elif isLocal(vars.symKind):
     let local = asLocal(vars)
     if local.typ.typeKind in {MutT, LentT}:
-      hasBorrowingIter = true
+      var localDecl = vars
+      dest.addParLe(if local.typ.typeKind == MutT: VarS else: LetS, vars.info)
+      inc localDecl # skip original local-decl tag
+      takeTree dest, localDecl # name
+      takeTree dest, localDecl # export marker
+      takeTree dest, localDecl # pragmas
+      takeTree dest, localDecl # type
+      dest.addParLe HaddrX, vars.info
+      dest.add firstArgBuf
+      dest.addParRi()
+      dest.addParRi()
 
-  if not hasBorrowingIter:
-    return
+proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): TokenBuf =
+  ## If the for-loop iterates with a borrowing iterator (yields var T or lent T),
+  ## initialize the corresponding loop variables with a fake `(haddr firstArg)`.
+  ## This lets contract analysis treat the real loop binders as borrowers so
+  ## their borrow lifetime naturally ends with the generated `(kill ...)`.
+  result = createTokenBuf(0)
 
   # Extract the first argument of the iterator call (the collection).
   # After xelim, the iter call may have been extracted to a temporary:
@@ -866,44 +870,28 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): T
   var firstArgBuf = createTokenBuf(0)
   var iterCall = forStmt.iter
   if iterCall.kind == ParLe and iterCall.exprKind in CallKinds:
-    # Direct call (not extracted by xelim):
-    inc iterCall # skip call tag
-    skip iterCall # skip callee
+    inc iterCall
+    skip iterCall
     if iterCall.kind != ParRi:
       firstArgBuf = createTokenBuf(8)
       firstArgBuf.addSubtree iterCall
   elif iterCall.kind == ParLe and iterCall.exprKind in {HderefX, HaddrX}:
-    # Extracted by xelim: (hderef temp) — look up temp's original call first arg
-    inc iterCall # skip hderef/haddr tag
+    inc iterCall
     if iterCall.kind == Symbol:
       let tempSym = iterCall.symId
       if tempSym in c.callFirstArgs:
         firstArgBuf = createTokenBuf(8)
         firstArgBuf.addSubtree beginRead(c.callFirstArgs[tempSym])
   elif iterCall.kind == Symbol:
-    # Direct symbol reference — look up if it was a call result
     let tempSym = iterCall.symId
     if tempSym in c.callFirstArgs:
       firstArgBuf = createTokenBuf(8)
-      firstArgBuf.add beginRead(c.callFirstArgs[tempSym])
+      firstArgBuf.addSubtree beginRead(c.callFirstArgs[tempSym])
 
-  if firstArgBuf.len > 0:
-    # Create synthetic borrow local: (let `_fb.N . . int (haddr firstArg))
-    let borrowSym = pool.syms.getOrIncl("`_fb." & $c.current.tmpCounter)
-    inc c.current.tmpCounter
+  if firstArgBuf.len == 0:
+    return
 
-    result = createTokenBuf(16)
-    result.addParLe LetS, info
-    result.addSymDef borrowSym, info
-    result.addDotToken() # export marker
-    result.addDotToken() # pragmas
-    result.copyTree c.typeCache.builtins.intType # placeholder type
-    result.addParLe HaddrX, info
-    result.add firstArgBuf # the first argument of the original call
-    result.addParRi() # close haddr
-    result.addParRi() # close let
-
-    c.typeCache.registerLocal(borrowSym, LetY, c.typeCache.builtins.intType)
+  addForBorrowDecls result, forStmt.vars, firstArgBuf
 
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Map `for x in i()` to `(loop ... (stmts (let x type i()) body))` so the
