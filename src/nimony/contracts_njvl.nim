@@ -739,8 +739,7 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
           echo "mutPaths[i]: ", mutPaths[i]
           echo "immPaths[j]: ", immPaths[j]
         buildErr c, mutPaths[i].info, "mutable argument aliases with immutable parameter"
-        quit 1
-        #break
+        break
   # Mutable argument must not overlap with any other mutable argument:
   for i in 0 ..< mutPaths.len:
     for j in 0 ..< mutPaths.len:
